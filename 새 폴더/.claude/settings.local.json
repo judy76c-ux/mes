@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --check:*)",
+      "Bash(node -e:*)",
+      "Bash(python3 -c \":*)",
+      "Bash(python -c \":*)",
+      "Bash(python /tmp/check_quotes.py)",
+      "Bash(echo \"Exit: $?\")",
+      "Bash(grep -o \"寃?[^<>\"\"\\\\`]*\" \"F:/AI/생산일보/js/modules/injection.js\")",
+      "Bash(python /tmp/fix_korean.py)",
+      "Bash(python fix_korean.py)",
+      "Bash(python3 -:*)",
+      "Bash(python3 -c \"import sys; sys.stdout.buffer.write\\(sys.stdin.buffer.read\\(\\)\\)\")",
+      "Bash(\"F:/AI/생산일보/diagnose.py\":*)",
+      "Bash(python \"F:/AI/생산일보/diagnose.py\")",
+      "Bash(\"F:/AI/생산일보/diagnose2.py\":*)",
+      "Bash(python \"F:/AI/생산일보/diagnose2.py\")",
+      "Bash(for f in \"F:\\\\AI\\\\생산일보\\\\js\\\\modules\\\\dashboard.js\" \"F:\\\\AI\\\\생산일보\\\\js\\\\modules\\\\production-plan.js\" \"F:\\\\AI\\\\생산일보\\\\js\\\\modules\\\\paint-inventory.js\" \"F:\\\\AI\\\\생산일보\\\\js\\\\modules\\\\painting.js\" \"F:\\\\AI\\\\생산일보\\\\js\\\\modules\\\\shipping.js\" \"F:\\\\AI\\\\생산일보\\\\js\\\\modules\\\\settings.js\" \"F:\\\\AI\\\\생산일보\\\\js\\\\sampling-table.js\" \"F:\\\\AI\\\\생산일보\\\\js\\\\app.js\")",
+      "Bash(do node --check \"$f\")",
+      "Bash(echo \"OK: $f\")",
+      "Bash(done)",
+      "Bash(node -c \"F:\\\\AI\\\\생산일보\\\\js\\\\modules\\\\painting.js\")",
+      "Bash(dir index.html)",
+      "Bash(xargs wc -l)",
+      "Read(//f/AI/**)",
+      "Bash(node -c \"./생산일보/js/modules/laser.js\")",
+      "Bash(python3:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(find F:AI생산일보 -name *.js -type f)"
+    ]
+  }
+}

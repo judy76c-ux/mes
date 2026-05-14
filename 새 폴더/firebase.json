@@ -1,0 +1,31 @@
+{
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "hosting": {
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**",
+      "**/*.exe",
+      "**/*.dll",
+      "**/*.sh",
+      "**/*.bat",
+      ".git/**",
+      ".gitignore",
+      "README.md",
+      "*.md",
+      "package.json",
+      "package-lock.json",
+      "node_modules/**"
+    ],
+    "cleanUrls": true,
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}
