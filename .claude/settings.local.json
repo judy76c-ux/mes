@@ -53,7 +53,30 @@
       "Bash(powershell -Command \"\\(Get-Content 'F:\\\\\\\\AI\\\\\\\\생산일보\\\\\\\\js\\\\\\\\modules\\\\\\\\production_mgmt.js' -Encoding UTF8 -Raw\\) -replace '커스텀 스테이션을 삭제할까요\\\\?', '커스텀 세부공정을 삭제할까요?' | Set-Content 'F:\\\\\\\\AI\\\\\\\\생산일보\\\\\\\\js\\\\\\\\modules\\\\\\\\production_mgmt.js' -Encoding UTF8\")",
       "Bash(powershell -Command \"\\(Get-Content 'F:\\\\\\\\AI\\\\\\\\생산일보\\\\\\\\js\\\\\\\\modules\\\\\\\\production_mgmt.js' -Encoding UTF8 -Raw\\) -replace '기본 스테이션을 숨길까요\\\\?', '기본 세부공정을 숨길까요?' | Set-Content 'F:\\\\\\\\AI\\\\\\\\생산일보\\\\\\\\js\\\\\\\\modules\\\\\\\\production_mgmt.js' -Encoding UTF8\")",
       "Bash(powershell -Command \"\\(Get-Content 'F:\\\\\\\\AI\\\\\\\\생산일보\\\\\\\\js\\\\\\\\modules\\\\\\\\production_mgmt.js' -Encoding UTF8 -Raw\\) -replace '공정/스테이션', '공정/세부공정' | Set-Content 'F:\\\\\\\\AI\\\\\\\\생산일보\\\\\\\\js\\\\\\\\modules\\\\\\\\production_mgmt.js' -Encoding UTF8\")",
-      "PowerShell(\\(Get-Content \"F:\\\\AI\\\\생산일보\\\\js\\\\modules\\\\production_mgmt.js\" | Measure-Object -Line\\).Lines)"
+      "PowerShell(\\(Get-Content \"F:\\\\AI\\\\생산일보\\\\js\\\\modules\\\\production_mgmt.js\" | Measure-Object -Line\\).Lines)",
+      "Bash(curl -s --max-time 5 \"http://192.168.10.15:3000/api/docs/products\")",
+      "Bash(curl -s --max-time 5 \"http://192.168.10.15:3000/api/docs/inj_insp_standards\")",
+      "Bash(curl -s --max-time 5 \"http://192.168.10.15:3000/api/docs/defect_types\")",
+      "Bash(curl -s --max-time 3 \"http://192.168.10.15:3000/\")",
+      "Bash(ping -n 1 192.168.10.15)",
+      "Bash(ping -n 1 192.168.10.104)",
+      "Bash(curl -s --max-time 3 \"http://192.168.10.15:8080\")",
+      "Bash(curl -s --max-time 3 \"http://192.168.10.15:8888\")",
+      "Bash(curl -s --max-time 3 \"http://192.168.10.15/phpmyadmin\")",
+      "Bash(curl -s --max-time 3 -L \"http://192.168.10.15:8080\")",
+      "Bash(curl -s --max-time 5 -L \"https://192.168.10.15:8080\" -k)",
+      "Bash(curl -s --max-time 3 \"http://192.168.10.15:5000\")",
+      "Bash(curl -s --max-time 5 -k \"https://192.168.10.15:5001\")",
+      "Bash(curl -s --max-time 3 \"http://192.168.10.15/phpMyAdmin/\")",
+      "Bash(curl -s --max-time 3 \"http://192.168.10.15:3000/api/docs/products\" -H \"Content-Type: application/json\")",
+      "Bash(curl -s --max-time 3 \"http://192.168.10.15:3306\")",
+      "Bash(powershell -command \"Test-NetConnection -ComputerName 192.168.10.15 -Port 3306 -InformationLevel Quiet\")",
+      "Bash(where mysql *)",
+      "Bash(where mysqladmin *)",
+      "Bash(where docker *)",
+      "Bash(python -c \"import pymysql; print\\('pymysql OK'\\)\")",
+      "Bash(python -c \"import mysql.connector; print\\('mysql-connector OK'\\)\")",
+      "Bash(pip install *)"
     ]
   }
 }

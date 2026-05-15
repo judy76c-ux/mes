@@ -20,11 +20,12 @@ var InjectionIncomingModule = (function() {
                         <p>사출 자재 수입검사 결과를 기록합니다.</p>
                     </div>
                     <div class="page-actions">
+                        <button class="btn btn-outline" onclick="InjectionIncomingModule.openStdModal()"
+                            style="gap:6px;">
+                            <span class="material-symbols-outlined">photo_library</span> 수입검사 표준
+                        </button>
                         <button class="btn btn-primary" onclick="InjectionIncomingModule.openAddModal()">
                             <span class="material-symbols-outlined">add</span> 검사 등록
-                        </button>
-                        <button class="btn btn-secondary" onclick="InjectionIncomingModule.exportData()">
-                            <span class="material-symbols-outlined">download</span> 내보내기
                         </button>
                     </div>
                 </div>
@@ -433,6 +434,15 @@ var InjectionIncomingModule = (function() {
                     <input type="text" class="form-input" id="addInjSupplier" placeholder="자동 입력" readonly style="background:var(--bg-secondary);">
                 </div>
             </div>
+            <!-- 수입검사 기준 사진 미리보기 -->
+            <div id="injStdPhotoPreview" style="display:none;background:rgba(59,130,246,0.05);
+                border:1px solid rgba(59,130,246,0.3);border-radius:8px;padding:10px 14px;margin-bottom:12px;">
+                <div style="font-size:0.78rem;font-weight:600;color:var(--accent-blue);margin-bottom:8px;">
+                    <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:3px;">photo_library</span>
+                    수입검사 기준 사진
+                </div>
+                <div id="injStdPhotoGrid" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+            </div>
             <div style="margin-bottom:16px;">
                 <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
                     <label class="form-label" style="margin:0; font-weight:600;">
@@ -643,6 +653,8 @@ var InjectionIncomingModule = (function() {
 
         colorSelect.innerHTML = '<option value="">-- 컬러 선택 --</option>';
         document.getElementById('addInjSupplier').value = '';
+
+        _refreshStdPreview(carModel, partName);
 
         if (!partName) return;
 
@@ -1317,6 +1329,295 @@ var InjectionIncomingModule = (function() {
         }
     }
 
+    /* ══════════════════════════════════════════════════════════
+       수입검사 표준 (기준 사진 관리) — 로컬 전용 (IndexedDB)
+    ══════════════════════════════════════════════════════════ */
+    const STD_STORE = DB.STORES.INJ_INSP_STANDARDS;
+    const PHOTO_TYPE_LABELS = { product:'제품', box:'박스/용기', other:'기타' };
+
+    /* 검사 등록 모달 내 기준 사진 미리보기 갱신 */
+    function _refreshStdPreview(carModel, partName) {
+        const wrap = document.getElementById('injStdPhotoPreview');
+        const grid = document.getElementById('injStdPhotoGrid');
+        if (!wrap || !grid) return;
+
+        if (!carModel || !partName) { wrap.style.display = 'none'; return; }
+
+        const stds = (Storage.getAll(STD_STORE) || [])
+            .filter(s => s.carModel === carModel && s.partName === partName);
+
+        if (stds.length === 0) { wrap.style.display = 'none'; return; }
+
+        wrap.style.display = 'block';
+        grid.innerHTML = stds.map(s => `
+            <div style="text-align:center;cursor:pointer;" onclick="InjectionIncomingModule._enlargePhoto('${s.imageData}','${PHOTO_TYPE_LABELS[s.photoType]||s.photoType}')">
+                <img src="${s.imageData}" style="width:120px;height:90px;object-fit:cover;border-radius:6px;border:2px solid var(--border-color);">
+                <div style="font-size:0.72rem;color:var(--text-muted);margin-top:3px;">${PHOTO_TYPE_LABELS[s.photoType]||s.photoType}</div>
+            </div>`).join('');
+    }
+
+    /* 기준 사진 전체화면 확대 */
+    function _enlargePhoto(src, label) {
+        const ov = document.createElement('div');
+        ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;';
+        ov.onclick = () => ov.remove();
+        ov.innerHTML = `
+            <div style="font-size:0.85rem;color:#fff;margin-bottom:10px;opacity:.8;">${label} — 클릭하여 닫기</div>
+            <img src="${src}" style="max-width:90vw;max-height:85vh;object-fit:contain;border-radius:8px;">`;
+        document.body.appendChild(ov);
+    }
+
+    /* 수입검사 표준 관리 오버레이 열기 */
+    function openStdModal() {
+        const old = document.getElementById('injStdOverlay');
+        if (old) old.remove();
+
+        const overlay = document.createElement('div');
+        overlay.id = 'injStdOverlay';
+        overlay.style.cssText =
+            'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;' +
+            'display:flex;flex-direction:column;overflow:auto;padding:16px;';
+        overlay.innerHTML = `
+            <div style="max-width:1000px;margin:0 auto;width:100%;background:var(--bg-primary);
+                        border-radius:10px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.3);">
+                <div style="background:var(--bg-tertiary);padding:12px 16px;
+                            display:flex;align-items:center;justify-content:space-between;
+                            border-bottom:1px solid var(--border-color);">
+                    <span style="font-weight:700;font-size:1rem;">
+                        <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;margin-right:4px;">photo_library</span>
+                        수입검사 기준 사진 관리
+                    </span>
+                    <button class="btn btn-secondary btn-sm"
+                        onclick="document.getElementById('injStdOverlay').remove()">✕ 닫기</button>
+                </div>
+                <div style="padding:12px 16px;background:var(--bg-secondary);
+                            display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;
+                            border-bottom:1px solid var(--border-color);">
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-size:0.78rem;">차종</label>
+                        <select class="form-select" id="stdFilterCar" style="min-width:110px;"
+                            onchange="InjectionIncomingModule._stdFilterPartUpdate()">
+                            <option value="">전체</option>
+                            ${[...new Set((Storage.getAll(DB.STORES.INJECTION_MATERIALS)||[])
+                                .map(m=>m.carModel).filter(Boolean))].sort()
+                                .map(c=>`<option value="${c}">${c}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-size:0.78rem;">품명</label>
+                        <select class="form-select" id="stdFilterPart" style="min-width:130px;">
+                            <option value="">전체</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-outline btn-sm"
+                        onclick="InjectionIncomingModule._renderStdList()">
+                        <span class="material-symbols-outlined" style="font-size:14px;">search</span> 조회
+                    </button>
+                    <button class="btn btn-primary btn-sm" style="margin-left:auto;"
+                        onclick="InjectionIncomingModule._openStdAddForm()">
+                        <span class="material-symbols-outlined" style="font-size:14px;">add_photo_alternate</span>
+                        사진 등록
+                    </button>
+                </div>
+                <!-- 등록 폼 (숨김) -->
+                <div id="stdAddFormWrap" style="display:none;padding:14px 16px;
+                    background:#f8fafd;border-bottom:2px solid var(--accent-blue);">
+                    <div style="font-weight:600;margin-bottom:10px;color:var(--accent-blue);font-size:0.9rem;">새 기준 사진 등록</div>
+                    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:10px;">
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label" style="font-size:0.78rem;">차종 *</label>
+                            <select class="form-select" id="stdNewCar"
+                                onchange="InjectionIncomingModule._stdNewCarChange()">
+                                <option value="">-- 선택 --</option>
+                                ${[...new Set((Storage.getAll(DB.STORES.INJECTION_MATERIALS)||[])
+                                    .map(m=>m.carModel).filter(Boolean))].sort()
+                                    .map(c=>`<option value="${c}">${c}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label" style="font-size:0.78rem;">품명 *</label>
+                            <select class="form-select" id="stdNewPart">
+                                <option value="">-- 차종 먼저 선택 --</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label" style="font-size:0.78rem;">사진 유형 *</label>
+                            <select class="form-select" id="stdNewType">
+                                <option value="product">제품</option>
+                                <option value="box">박스/용기</option>
+                                <option value="other">기타</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label" style="font-size:0.78rem;">비고</label>
+                            <input class="form-input" id="stdNewNote" placeholder="(선택)" style="font-size:0.82rem;">
+                        </div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+                        <input type="file" id="stdNewFile" accept="image/*" style="flex:1;"
+                            onchange="InjectionIncomingModule._stdPreviewNew(this)">
+                        <div id="stdNewThumb" style="width:80px;height:60px;border:1px dashed var(--border-color);
+                            border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+                            <span class="material-symbols-outlined" style="color:var(--text-muted);">image</span>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:8px;">
+                        <button class="btn btn-primary btn-sm"
+                            onclick="InjectionIncomingModule._saveStd()">저장</button>
+                        <button class="btn btn-secondary btn-sm"
+                            onclick="document.getElementById('stdAddFormWrap').style.display='none'">취소</button>
+                    </div>
+                </div>
+                <!-- 목록 -->
+                <div id="stdListWrap" style="padding:14px 16px;min-height:150px;"></div>
+            </div>`;
+        document.body.appendChild(overlay);
+        _renderStdList();
+    }
+
+    function _stdFilterPartUpdate() {
+        const car  = document.getElementById('stdFilterCar')?.value || '';
+        const sel  = document.getElementById('stdFilterPart');
+        if (!sel) return;
+        const parts = [...new Set(
+            (Storage.getAll(DB.STORES.INJECTION_MATERIALS)||[])
+            .filter(m => !car || m.carModel === car)
+            .map(m => m.injPartName).filter(Boolean)
+        )].sort();
+        sel.innerHTML = '<option value="">전체</option>' +
+            parts.map(p=>`<option value="${p}">${p}</option>`).join('');
+    }
+
+    function _stdNewCarChange() {
+        const car = document.getElementById('stdNewCar')?.value || '';
+        const sel = document.getElementById('stdNewPart');
+        if (!sel) return;
+        const parts = [...new Set(
+            (Storage.getAll(DB.STORES.INJECTION_MATERIALS)||[])
+            .filter(m => m.carModel === car)
+            .map(m => m.injPartName).filter(Boolean)
+        )].sort();
+        sel.innerHTML = '<option value="">-- 품명 선택 --</option>' +
+            parts.map(p=>`<option value="${p}">${p}</option>`).join('');
+    }
+
+    function _stdPreviewNew(input) {
+        const thumb = document.getElementById('stdNewThumb');
+        if (!thumb || !input.files || !input.files[0]) return;
+        const reader = new FileReader();
+        reader.onload = e => {
+            thumb.innerHTML = `<img src="${e.target.result}"
+                style="width:100%;height:100%;object-fit:cover;border-radius:5px;">`;
+        };
+        reader.readAsDataURL(input.files[0]);
+    }
+
+    function _openStdAddForm() {
+        const wrap = document.getElementById('stdAddFormWrap');
+        if (wrap) wrap.style.display = 'block';
+    }
+
+    async function _saveStd() {
+        const car   = document.getElementById('stdNewCar')?.value?.trim();
+        const part  = document.getElementById('stdNewPart')?.value?.trim();
+        const type  = document.getElementById('stdNewType')?.value || 'product';
+        const note  = document.getElementById('stdNewNote')?.value?.trim() || '';
+        const file  = document.getElementById('stdNewFile')?.files?.[0];
+
+        if (!car)  { UIUtils.toast('차종을 선택하세요', 'warning'); return; }
+        if (!part) { UIUtils.toast('품명을 선택하세요', 'warning'); return; }
+        if (!file) { UIUtils.toast('사진 파일을 선택하세요', 'warning'); return; }
+
+        const imageData = await new Promise((res, rej) => {
+            const reader = new FileReader();
+            reader.onload  = e => res(e.target.result);
+            reader.onerror = rej;
+            reader.readAsDataURL(file);
+        });
+
+        try {
+            await Storage.add(STD_STORE, {
+                carModel:  car,
+                partName:  part,
+                photoType: type,
+                imageData,
+                note,
+                updatedAt: new Date().toISOString()
+            });
+            UIUtils.toast('기준 사진이 등록되었습니다', 'success');
+            ['stdNewCar','stdNewNote','stdNewFile'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.value = '';
+            });
+            const partSel = document.getElementById('stdNewPart');
+            if (partSel) partSel.innerHTML = '<option value="">-- 차종 먼저 선택 --</option>';
+            const thumb = document.getElementById('stdNewThumb');
+            if (thumb) thumb.innerHTML =
+                '<span class="material-symbols-outlined" style="color:var(--text-muted);">image</span>';
+            document.getElementById('stdAddFormWrap').style.display = 'none';
+            _renderStdList();
+        } catch(e) {
+            UIUtils.toast('저장 실패: ' + e.message, 'error');
+        }
+    }
+
+    function _renderStdList() {
+        const wrap = document.getElementById('stdListWrap');
+        if (!wrap) return;
+
+        const car  = document.getElementById('stdFilterCar')?.value  || '';
+        const part = document.getElementById('stdFilterPart')?.value || '';
+
+        const items = (Storage.getAll(STD_STORE) || [])
+            .filter(s => !car  || s.carModel === car)
+            .filter(s => !part || s.partName === part);
+
+        if (items.length === 0) {
+            wrap.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted);">등록된 기준 사진이 없습니다.</div>';
+            return;
+        }
+
+        // 차종+품명으로 그룹핑
+        const groups = {};
+        items.forEach(s => {
+            const key = `${s.carModel}||${s.partName}`;
+            if (!groups[key]) groups[key] = { carModel: s.carModel, partName: s.partName, photos: [] };
+            groups[key].photos.push(s);
+        });
+
+        wrap.innerHTML = Object.values(groups).map(g => `
+            <div style="margin-bottom:16px;border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
+                <div style="background:var(--bg-tertiary);padding:8px 14px;font-size:0.85rem;font-weight:600;">
+                    ${g.carModel} / ${g.partName}
+                    <span style="color:var(--text-muted);font-weight:400;font-size:0.78rem;margin-left:8px;">(${g.photos.length}장)</span>
+                </div>
+                <div style="padding:10px 14px;display:flex;flex-wrap:wrap;gap:10px;">
+                    ${g.photos.map(s => `
+                    <div style="position:relative;text-align:center;">
+                        <img src="${s.imageData}"
+                            style="width:140px;height:105px;object-fit:cover;border-radius:6px;
+                                   border:2px solid var(--border-color);cursor:pointer;"
+                            onclick="InjectionIncomingModule._enlargePhoto('${s.imageData}','${PHOTO_TYPE_LABELS[s.photoType]||s.photoType}')">
+                        <div style="font-size:0.72rem;color:var(--text-muted);margin-top:3px;">${PHOTO_TYPE_LABELS[s.photoType]||s.photoType}${s.note ? ' · '+s.note : ''}</div>
+                        <button class="btn btn-danger btn-sm"
+                            style="position:absolute;top:2px;right:2px;padding:1px 5px;font-size:0.7rem;opacity:.8;"
+                            onclick="InjectionIncomingModule._removeStd('${s.id}')">×</button>
+                    </div>`).join('')}
+                </div>
+            </div>`).join('');
+    }
+
+    async function _removeStd(id) {
+        if (!confirm('이 기준 사진을 삭제하시겠습니까?')) return;
+        try {
+            await Storage.remove(STD_STORE, id);
+            UIUtils.toast('삭제되었습니다', 'success');
+            _renderStdList();
+        } catch(e) {
+            UIUtils.toast('삭제 실패: ' + e.message, 'error');
+        }
+    }
+
     return {
         render,
         search,
@@ -1344,6 +1645,17 @@ var InjectionIncomingModule = (function() {
         onLotInput,
         checkFifoWarning,
         markCertReceived,
-        confirmCertReceived
+        confirmCertReceived,
+        /* 수입검사 표준 */
+        openStdModal,
+        _stdFilterPartUpdate,
+        _stdNewCarChange,
+        _stdPreviewNew,
+        _openStdAddForm,
+        _saveStd,
+        _renderStdList,
+        _removeStd,
+        _refreshStdPreview,
+        _enlargePhoto,
     };
 })();

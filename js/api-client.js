@@ -6,7 +6,21 @@
 
 const ApiClient = (function() {
   // NAS API 서버 주소 (같은 망이면 내부 IP, 외부는 도메인/포트포워딩)
-  const API_BASE = 'http://192.168.10.15:3000';
+  function resolveApiBase() {
+    try {
+      const saved = localStorage.getItem('MES_API_BASE');
+      if (saved) return saved.replace(/\/$/, '');
+    } catch (e) {}
+
+    if (typeof location !== 'undefined' && location.protocol && location.hostname) {
+      if (location.protocol === 'http:' || location.protocol === 'https:') {
+        return `${location.protocol}//${location.hostname}:3000`;
+      }
+    }
+    return 'http://192.168.10.15:3000';
+  }
+
+  const API_BASE = resolveApiBase();
 
   // 타임아웃이 있는 fetch (기본 10초)
   async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
@@ -82,5 +96,37 @@ const ApiClient = (function() {
     return request('PUT', `/api/config/${key}`, value);
   }
 
-  return { init, getAll, save, saveAll, remove, getConfig, setConfig };
+  async function getBackupConfig() {
+    return request('GET', '/api/backups/config');
+  }
+
+  async function saveBackupConfig(config) {
+    return request('PUT', '/api/backups/config', config);
+  }
+
+  async function listBackups() {
+    return request('GET', '/api/backups');
+  }
+
+  async function createBackup() {
+    return request('POST', '/api/backups');
+  }
+
+  async function cleanupBackups() {
+    return request('POST', '/api/backups/cleanup');
+  }
+
+  async function deleteBackup(fileName) {
+    return request('DELETE', `/api/backups/${encodeURIComponent(fileName)}`);
+  }
+
+  function backupDownloadUrl(fileName) {
+    return `${API_BASE}/api/backups/${encodeURIComponent(fileName)}`;
+  }
+
+  return {
+    init, getAll, save, saveAll, remove, getConfig, setConfig,
+    getBackupConfig, saveBackupConfig, listBackups, createBackup,
+    cleanupBackups, deleteBackup, backupDownloadUrl
+  };
 })();

@@ -12,11 +12,18 @@ const Storage = (function() {
   // DB.STORES 참조 (모든 스토어 이름 공유)
   const STORES = DB.STORES;
 
+  // ── 로컬 전용 스토어 (NAS API 연동 제외, IndexedDB에만 저장) ──────────
+  // base64 이미지 등 대용량 데이터는 NAS MariaDB 대신 IndexedDB에 직접 저장
+  const LOCAL_ONLY_STORES = new Set([
+    STORES.INJ_INSP_STANDARDS,   // 수입검사 기준 사진 (base64 이미지)
+  ]);
+
   // 초기화: API 서버에서 모든 데이터 로드
   // API 서버 실패 시 → IndexedDB 백업 캐시로 폴백 (오프라인 모드)
   async function init() {
     try {
       await ApiClient.init();
+      await DB.init().catch(() => {});
       await loadAllToCache();
       initialized = true;
       offlineMode = false;
@@ -119,7 +126,27 @@ const Storage = (function() {
     await Promise.allSettled(
       storeList.map(async (storeName) => {
         try {
-          cache[storeName] = await ApiClient.getAll(storeName);
+          // ── 로컬 전용 스토어: NAS API 호출 없이 IndexedDB에서만 로드 ──
+          if (LOCAL_ONLY_STORES.has(storeName)) {
+            cache[storeName] = await _loadIndexedBackupStore(storeName);
+            return;
+          }
+
+          const remoteItems = await ApiClient.getAll(storeName);
+          if (Array.isArray(remoteItems) && remoteItems.length > 0) {
+            cache[storeName] = remoteItems;
+            _backupToIndexedDB(storeName, remoteItems);
+            return;
+          }
+
+          const localItems = await _loadIndexedBackupStore(storeName);
+          if (localItems.length > 0) {
+            cache[storeName] = localItems;
+            _restoreEmptyRemoteStore(storeName, localItems);
+            return;
+          }
+
+          cache[storeName] = [];
           // IndexedDB 백업 (비동기, 실패 무시)
           _backupToIndexedDB(storeName, cache[storeName]);
         } catch (e) {
@@ -130,6 +157,28 @@ const Storage = (function() {
   }
 
   // IndexedDB에서 모든 스토어 로드 (오프라인 폴백)
+  async function _loadIndexedBackupStore(storeName) {
+    try {
+      if (typeof DB === 'undefined' || !DB.getAll) return [];
+      const rows = await DB.getAll(storeName);
+      return Array.isArray(rows) ? rows.filter(r => r && r.id) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function _restoreEmptyRemoteStore(storeName, items) {
+    if (!Array.isArray(items) || items.length === 0) return;
+    setTimeout(async () => {
+      try {
+        await ApiClient.saveAll(storeName, items);
+        console.warn(`[MES restore] Empty API store restored from IndexedDB backup: ${storeName} (${items.length})`);
+      } catch (e) {
+        console.warn(`[MES restore] Failed to restore API store from IndexedDB backup: ${storeName}`, e);
+      }
+    }, 0);
+  }
+
   async function loadAllFromIndexedDB() {
     const storeList = Object.values(STORES).filter(s => s !== 'config');
     await Promise.allSettled(
@@ -304,6 +353,15 @@ const Storage = (function() {
 
   // 추가
   async function add(storeName, data) {
+    // ── 로컬 전용 스토어: IndexedDB에만 저장 (NAS API 호출 없음) ──
+    if (LOCAL_ONLY_STORES.has(storeName)) {
+      const newItem = { id: generateId(), createdAt: new Date().toISOString(), ...data };
+      await DB.save(storeName, newItem);
+      if (!cache[storeName]) cache[storeName] = [];
+      cache[storeName].push(newItem);
+      return newItem;
+    }
+
     _assertWritable();
 
     const newItem = {
@@ -356,6 +414,15 @@ const Storage = (function() {
 
   // 삭제
   async function remove(storeName, id) {
+    // ── 로컬 전용 스토어: IndexedDB에서만 삭제 (NAS API 호출 없음) ──
+    if (LOCAL_ONLY_STORES.has(storeName)) {
+      await DB.remove(storeName, id);
+      if (cache[storeName]) {
+        cache[storeName] = cache[storeName].filter(item => item.id !== id);
+      }
+      return;
+    }
+
     _assertWritable();
 
     try {
