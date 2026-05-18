@@ -814,7 +814,7 @@ var SalesDeliveryPlanModule = (function() {
         const carOptions = _selectOptions(_deliveryCars(''), '', '전체 차종');
 
         container.innerHTML = `
-            <div class="fade-in-up">
+            <div class="fade-in-up sdp-page">
                 <div class="page-header">
                     <div class="page-header-left">
                         <h3>납품 계획</h3>

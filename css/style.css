@@ -11,7 +11,7 @@
     --sidebar-active: #1d4ed8;
     --sidebar-text: #94a3b8;
     --sidebar-text-active: #ffffff;
-    --sidebar-width: 260px;
+    --sidebar-width: 210px;
     --sidebar-collapsed-width: 68px;
     --sidebar-divider: #1e293b;
 
@@ -1113,6 +1113,54 @@ input[type="time"] {
     white-space: nowrap;
 }
 
+.sdp-page {
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.sdp-page .page-header,
+.sdp-page .filter-bar,
+.sdp-page .stat-cards,
+.sdp-page .card {
+    max-width: 100%;
+    min-width: 0;
+}
+
+.sdp-page .filter-bar {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fit, minmax(128px, max-content));
+    align-items: end;
+}
+
+.sdp-page .filter-bar .form-group {
+    min-width: 0;
+}
+
+.sdp-page .filter-bar .form-input,
+.sdp-page .filter-bar .form-select {
+    width: min(100%, 180px);
+    min-width: 0;
+}
+
+.sdp-page .stat-cards {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+}
+
+.sdp-page .stat-card {
+    padding: 14px 16px;
+    min-width: 0;
+}
+
+.sdp-page .stat-card-value {
+    font-size: clamp(1.15rem, 2vw, 1.8rem);
+}
+
+.sdp-page .card {
+    overflow: hidden;
+}
+
 .sdp-table-card-body {
     padding: 0 !important;
     max-width: 100%;
@@ -1124,7 +1172,8 @@ input[type="time"] {
     display: block;
     width: 100%;
     max-width: 100%;
-    max-height: 360px;
+    max-height: min(360px, calc(100vh - 420px));
+    min-height: 120px;
     overflow: auto !important;
     overscroll-behavior: contain;
 }
@@ -1142,6 +1191,53 @@ input[type="time"] {
 
 .sdp-status-table thead tr:nth-child(2) th {
     top: 25px;
+}
+
+@media (max-width: 1400px) {
+    .sdp-page {
+        --sdp-compact-font: 9px;
+    }
+
+    .sdp-page .page-header {
+        gap: 10px;
+    }
+
+    .sdp-page .page-header-left h3 {
+        font-size: 1.05rem;
+    }
+
+    .sdp-page .page-header-left p {
+        font-size: 0.78rem;
+    }
+
+    .sdp-page .filter-bar {
+        gap: 8px !important;
+    }
+
+    .sdp-page .filter-bar .form-input,
+    .sdp-page .filter-bar .form-select {
+        height: 34px;
+        font-size: 0.78rem;
+        width: min(100%, 150px);
+    }
+
+    .sdp-page .stat-cards {
+        grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    }
+
+    .sdp-page .stat-card {
+        padding: 10px 12px;
+    }
+
+    .sdp-status-table th,
+    .sdp-status-table td {
+        font-size: var(--sdp-compact-font) !important;
+        padding: 3px 4px !important;
+    }
+
+    .sdp-table-scroll {
+        max-height: min(320px, calc(100vh - 380px));
+    }
 }
 
 .sdp-status-table .sdp-red-col,
