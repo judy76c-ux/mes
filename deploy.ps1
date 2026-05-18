@@ -1,6 +1,7 @@
 param(
     [switch]$DryRun,
-    [switch]$SkipRestart
+    [switch]$SkipRestart,
+    [string]$Message = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,6 +17,19 @@ if (-not (Test-Path $ConfigPath)) {
 }
 
 . $ConfigPath
+
+# ── Git 커밋 (변경사항 있을 때만) ───────────────────────────────
+$gitStatus = git -C $ScriptRoot status --porcelain 2>&1
+if ($gitStatus) {
+    $commitMsg = if ($Message) { $Message } else { "배포 자동 커밋 $(Get-Date -Format 'yyyy-MM-dd HH:mm')" }
+    Write-Host "Git 변경사항 발견 → 커밋 중..." -ForegroundColor Cyan
+    git -C $ScriptRoot add -A
+    git -C $ScriptRoot commit -m $commitMsg
+    if ($LASTEXITCODE -ne 0) { throw "Git 커밋 실패" }
+    Write-Host "Git 커밋 완료: $commitMsg" -ForegroundColor Green
+} else {
+    Write-Host "Git 변경사항 없음 — 커밋 건너뜀." -ForegroundColor DarkGray
+}
 
 if (-not $DeployConfig) {
     throw "DeployConfig is missing in deploy.config.ps1"
