@@ -107,7 +107,10 @@ async function initDB() {
 }
 
 // 미들웨어
-app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PUT', 'DELETE'] }));
+app.use(cors({
+  origin: (origin, cb) => cb(null, true),  // null(file://) 포함 전체 허용
+  methods: ['GET', 'POST', 'PUT', 'DELETE']
+}));
 app.use(express.json({ limit: '50mb' }));
 
 // ── 헬스체크 ──
