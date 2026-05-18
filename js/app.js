@@ -174,6 +174,7 @@ const App = (function() {
         Router.registerModule('settings', SettingsModule);
         Router.registerModule('incoming-overview', IncomingOverviewModule);
         Router.registerModule('warehouse-overview', WarehouseOverviewModule);
+        Router.registerModule('work-standard', WorkStandardModule);
     }
 
     // 첫 방문 시 환영 메시지

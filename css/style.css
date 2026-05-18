@@ -1113,24 +1113,31 @@ input[type="time"] {
     white-space: nowrap;
 }
 
+.content-area:has(.sdp-page) {
+    overflow-x: auto;
+    overflow-y: auto;
+}
+
 .sdp-page {
-    max-width: 100%;
-    min-width: 0;
-    overflow: hidden;
+    width: max(1280px, 100%);
+    min-width: 1280px;
+    max-width: none;
+    overflow: visible;
 }
 
 .sdp-page .page-header,
 .sdp-page .filter-bar,
 .sdp-page .stat-cards,
 .sdp-page .card {
-    max-width: 100%;
-    min-width: 0;
+    max-width: none;
 }
 
 .sdp-page .filter-bar {
-    display: grid !important;
-    grid-template-columns: repeat(auto-fit, minmax(128px, max-content));
+    display: flex !important;
+    flex-wrap: nowrap !important;
     align-items: end;
+    width: max-content;
+    min-width: 980px;
 }
 
 .sdp-page .filter-bar .form-group {
@@ -1139,13 +1146,14 @@ input[type="time"] {
 
 .sdp-page .filter-bar .form-input,
 .sdp-page .filter-bar .form-select {
-    width: min(100%, 180px);
+    width: 180px;
     min-width: 0;
 }
 
 .sdp-page .stat-cards {
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    grid-template-columns: repeat(4, minmax(240px, 1fr));
     gap: 12px;
+    width: 100%;
 }
 
 .sdp-page .stat-card {
@@ -1158,7 +1166,8 @@ input[type="time"] {
 }
 
 .sdp-page .card {
-    overflow: hidden;
+    overflow: visible;
+    width: 100%;
 }
 
 .sdp-table-card-body {
@@ -1174,7 +1183,7 @@ input[type="time"] {
     max-width: 100%;
     max-height: min(360px, calc(100vh - 420px));
     min-height: 120px;
-    overflow: auto !important;
+    overflow: scroll !important;
     overscroll-behavior: contain;
 }
 
@@ -1196,6 +1205,8 @@ input[type="time"] {
 @media (max-width: 1400px) {
     .sdp-page {
         --sdp-compact-font: 9px;
+        width: max(1120px, 100%);
+        min-width: 1120px;
     }
 
     .sdp-page .page-header {
@@ -1212,17 +1223,18 @@ input[type="time"] {
 
     .sdp-page .filter-bar {
         gap: 8px !important;
+        min-width: 860px;
     }
 
     .sdp-page .filter-bar .form-input,
     .sdp-page .filter-bar .form-select {
         height: 34px;
         font-size: 0.78rem;
-        width: min(100%, 150px);
+        width: 145px;
     }
 
     .sdp-page .stat-cards {
-        grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+        grid-template-columns: repeat(4, minmax(190px, 1fr));
     }
 
     .sdp-page .stat-card {
