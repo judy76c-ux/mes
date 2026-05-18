@@ -38,7 +38,14 @@ const SettingsBackupExtension = (function() {
     }
 
     function isBackupTabVisible() {
-        return !!document.getElementById('restoreFileInput');
+        // 백업 탭이 활성화되어 있으면 settingsContent 가 존재함
+        const content = document.getElementById('settingsContent');
+        if (!content) return false;
+        // 현재 탭이 backup 인지 확인 (data-tab 속성 또는 active 클래스)
+        const activeBtn = document.querySelector('.tab-btn.active');
+        if (activeBtn && activeBtn.textContent.includes('백업')) return true;
+        // 폴백: serverBackupCard 가 이미 렌더됐거나 dataStatusInfo 가 있으면 백업탭
+        return !!document.getElementById('dataStatusInfo') || !!document.getElementById('serverBackupCard');
     }
 
     function scheduleText(config) {
@@ -98,6 +105,8 @@ const SettingsBackupExtension = (function() {
         if (!isBackupTabVisible()) return;
         const content = document.getElementById('settingsContent');
         if (!content) return;
+        // NAS 카드도 함께 갱신
+        setTimeout(renderNasPanel, 50);
 
         let panel = document.getElementById('serverBackupCard');
         if (!panel) {
@@ -203,10 +212,13 @@ const SettingsBackupExtension = (function() {
                                         <td>${formatBytes(b.size)}</td>
                                         <td>${esc(formatDateTime(b.modifiedAt || b.createdAt))}</td>
                                         <td style="white-space:nowrap;">
-                                            <a class="btn btn-xs btn-outline" href="${ApiClient.backupDownloadUrl(b.fileName)}" target="_blank">
+                                            <a class="btn btn-xs btn-outline" href="${ApiClient.backupDownloadUrl(b.fileName)}" target="_blank" style="width:auto;padding:3px 8px;display:inline-flex;align-items:center;gap:3px;">
                                                 <span class="material-symbols-outlined" style="font-size:14px;">download</span> 다운로드
                                             </a>
-                                            <button class="btn btn-xs btn-danger" onclick="SettingsBackupExtension.deleteBackup('${js(b.fileName)}')">삭제</button>
+                                            <button class="btn btn-xs btn-warning" onclick="SettingsBackupExtension.restoreFromServerBackup('${js(b.fileName)}')" style="width:auto;padding:3px 8px;">
+                                                복원
+                                            </button>
+                                            <button class="btn btn-xs btn-danger" onclick="SettingsBackupExtension.deleteBackup('${js(b.fileName)}')" style="width:auto;padding:3px 8px;">삭제</button>
                                         </td>
                                     </tr>`).join('') :
                                     `<tr><td colspan="4" style="text-align:center;padding:22px;color:var(--text-muted);">서버 백업 파일이 없습니다.</td></tr>`}
@@ -270,6 +282,188 @@ const SettingsBackupExtension = (function() {
         });
     }
 
+    function restoreFromServerBackup(fileName) {
+        UIUtils.confirm(
+            `[${esc(fileName)}] 파일로 DB를 복원하시겠습니까?\n\n현재 모든 데이터가 백업 시점으로 되돌아가며, 이 작업은 취소할 수 없습니다.`,
+            async () => {
+                UIUtils.toast('복원 중입니다. 잠시 기다려 주세요…', 'info');
+                try {
+                    const r = await ApiClient.restoreBackup(fileName);
+                    UIUtils.toast(
+                        `복원 완료 — ${r.restoredStores}개 스토어, ${r.restoredRecords}건 복원됨. 페이지를 새로고침합니다.`,
+                        'success'
+                    );
+                    setTimeout(() => location.reload(), 1800);
+                } catch (e) {
+                    UIUtils.toast('복원 실패: ' + (e.message || e), 'error');
+                }
+            }
+        );
+    }
+
+    // ── NAS 백업 카드 ──
+    async function renderNasPanel() {
+        if (!isBackupTabVisible()) return;
+        const content = document.getElementById('settingsContent');
+        if (!content) return;
+
+        let panel = document.getElementById('nasBackupCard');
+        if (!panel) {
+            panel = document.createElement('div');
+            panel.id = 'nasBackupCard';
+            panel.className = 'card';
+            panel.style.marginBottom = '20px';
+            // 서버 백업 카드 아래에 삽입
+            const serverCard = document.getElementById('serverBackupCard');
+            if (serverCard && serverCard.nextSibling) {
+                content.insertBefore(panel, serverCard.nextSibling);
+            } else {
+                content.appendChild(panel);
+            }
+        }
+
+        panel.innerHTML = `
+            <div class="card-header">
+                <h4><span class="material-symbols-outlined">hard_drive</span> NAS HDD 백업</h4>
+            </div>
+            <div class="card-body">
+                <div style="color:var(--text-muted);font-size:.9rem;">NAS 설정을 불러오는 중...</div>
+            </div>`;
+
+        try {
+            const [nasCfg, info] = await Promise.all([
+                ApiClient.getNasConfig().catch(() => ({ nasDir: '', keepCount: 365 })),
+                ApiClient.listNasBackups().catch(() => ({ available: false, backups: [] }))
+            ]);
+
+            const connected = info.available;
+            const backups = info.backups || [];
+
+            panel.innerHTML = `
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">hard_drive</span> NAS HDD 백업</h4>
+                    <span class="badge ${connected ? 'badge-success' : 'badge-secondary'}">${connected ? '연결됨' : '미연결'}</span>
+                </div>
+                <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
+
+                    <!-- NAS 경로 설정 -->
+                    <div style="padding:12px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);">
+                        <div style="font-size:.82rem;font-weight:600;margin-bottom:8px;color:var(--text-secondary);">NAS 마운트 경로 설정</div>
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                            <input type="text" id="nasBackupDirInput" class="form-input"
+                                style="flex:1;min-width:260px;font-family:monospace;font-size:.85rem;"
+                                placeholder="/mnt/nas-backup/mes-backups"
+                                value="${esc(nasCfg.nasDir || '')}">
+                            <div class="form-group" style="margin:0;display:flex;align-items:center;gap:6px;">
+                                <label style="font-size:.82rem;white-space:nowrap;color:var(--text-muted);">최대 보관 수</label>
+                                <input type="number" id="nasKeepCountInput" class="form-input" min="1"
+                                    style="width:80px;text-align:center;"
+                                    value="${nasCfg.keepCount || 365}">
+                            </div>
+                            <button class="btn btn-primary" onclick="SettingsBackupExtension.saveNasConfig()" style="white-space:nowrap;">
+                                <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">save</span> 저장
+                            </button>
+                        </div>
+                        ${!connected && nasCfg.nasDir ? `
+                        <div style="margin-top:8px;font-size:.8rem;color:var(--accent-red);">
+                            ⚠ 경로가 설정되어 있으나 마운트되지 않았습니다.
+                            Ubuntu 서버에서 NFS/SMB 마운트 후 다시 확인하세요.
+                            ${info.error ? `<br>${esc(info.error)}` : ''}
+                        </div>` : ''}
+                        ${!nasCfg.nasDir ? `
+                        <div style="margin-top:8px;font-size:.8rem;color:var(--text-muted);">
+                            Ubuntu 서버에 NAS를 마운트한 경로를 입력하세요. (예: /mnt/nas-backup/mes-backups)
+                        </div>` : ''}
+                    </div>
+
+                    ${connected ? `
+                    <!-- 백업 파일 목록 -->
+                    <div style="font-size:.82rem;color:var(--text-muted);">
+                        저장 위치: <b>${esc(info.nasDir || nasCfg.nasDir)}</b>
+                        &nbsp;·&nbsp; 총 <b>${backups.length}</b>개 파일
+                    </div>
+                    <div class="data-table-wrapper">
+                        <table class="data-table">
+                            <thead>
+                                <tr><th>파일명</th><th>크기</th><th>생성/수정일</th><th>작업</th></tr>
+                            </thead>
+                            <tbody>
+                                ${backups.length ? backups.map(b => `
+                                    <tr>
+                                        <td style="font-family:monospace;font-size:.78rem;">${esc(b.fileName)}</td>
+                                        <td>${formatBytes(b.size)}</td>
+                                        <td>${esc(formatDateTime(b.modifiedAt || b.createdAt))}</td>
+                                        <td style="white-space:nowrap;">
+                                            <a class="btn btn-xs btn-outline" href="${ApiClient.nasBackupDownloadUrl(b.fileName)}" target="_blank" style="width:auto;padding:3px 8px;display:inline-flex;align-items:center;gap:3px;">
+                                                <span class="material-symbols-outlined" style="font-size:14px;">download</span> 다운로드
+                                            </a>
+                                            <button class="btn btn-xs btn-outline" onclick="SettingsBackupExtension.copyNasToLocal('${js(b.fileName)}')" style="width:auto;padding:3px 8px;">서버로 복사</button>
+                                            <button class="btn btn-xs btn-warning" onclick="SettingsBackupExtension.restoreFromNasBackup('${js(b.fileName)}')" style="width:auto;padding:3px 8px;">복원</button>
+                                        </td>
+                                    </tr>`).join('') :
+                                    `<tr><td colspan="4" style="text-align:center;padding:22px;color:var(--text-muted);">NAS 백업 파일이 없습니다.</td></tr>`}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div style="font-size:.78rem;color:var(--text-muted);">
+                        <b>서버로 복사</b>: NAS 백업을 로컬 서버 목록으로 가져옵니다. &nbsp;
+                        <b>복원</b>: NAS 백업 파일로 DB를 즉시 복원합니다.
+                    </div>` : ''}
+                </div>`;
+        } catch (e) {
+            panel.innerHTML = `
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">hard_drive</span> NAS HDD 백업</h4>
+                </div>
+                <div class="card-body">
+                    <div style="padding:12px;border:1px solid var(--accent-red);border-radius:8px;color:var(--accent-red);">
+                        NAS 백업 정보를 불러오지 못했습니다. (${esc(e.message || e)})
+                    </div>
+                </div>`;
+        }
+    }
+
+    async function saveNasConfig() {
+        const nasDir = document.getElementById('nasBackupDirInput')?.value?.trim() || '';
+        const keepCount = Number(document.getElementById('nasKeepCountInput')?.value || 365);
+        try {
+            await ApiClient.saveNasConfig({ nasDir, keepCount });
+            UIUtils.toast('NAS 경로 설정이 저장되었습니다.', 'success');
+            renderNasPanel();
+        } catch (e) {
+            UIUtils.toast('저장 실패: ' + (e.message || e), 'error');
+        }
+    }
+
+    async function copyNasToLocal(fileName) {
+        try {
+            await ApiClient.copyNasToLocal(fileName);
+            UIUtils.toast(`NAS 백업을 서버로 복사했습니다.`, 'success');
+            renderPanel();
+        } catch (e) {
+            UIUtils.toast('복사 실패: ' + (e.message || e), 'error');
+        }
+    }
+
+    function restoreFromNasBackup(fileName) {
+        UIUtils.confirm(
+            `[NAS] [${esc(fileName)}] 파일로 DB를 복원하시겠습니까?\n\n현재 모든 데이터가 백업 시점으로 되돌아가며, 이 작업은 취소할 수 없습니다.`,
+            async () => {
+                UIUtils.toast('NAS 백업에서 복원 중입니다. 잠시 기다려 주세요…', 'info');
+                try {
+                    const r = await ApiClient.restoreNasBackup(fileName);
+                    UIUtils.toast(
+                        `복원 완료 — ${r.restoredStores}개 스토어, ${r.restoredRecords}건 복원됨. 페이지를 새로고침합니다.`,
+                        'success'
+                    );
+                    setTimeout(() => location.reload(), 1800);
+                } catch (e) {
+                    UIUtils.toast('복원 실패: ' + (e.message || e), 'error');
+                }
+            }
+        );
+    }
+
     function install() {
         if (installed || typeof SettingsModule === 'undefined') return;
         installed = true;
@@ -288,12 +482,17 @@ const SettingsBackupExtension = (function() {
     return {
         install,
         renderPanel,
+        renderNasPanel,
         saveConfig,
         startAutoBackup,
         stopAutoBackup,
         createBackup,
         cleanupBackups,
         deleteBackup,
+        restoreFromServerBackup,
+        saveNasConfig,
+        copyNasToLocal,
+        restoreFromNasBackup,
         toggleScheduleFields
     };
 })();

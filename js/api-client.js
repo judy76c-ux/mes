@@ -124,9 +124,39 @@ const ApiClient = (function() {
     return `${API_BASE}/api/backups/${encodeURIComponent(fileName)}`;
   }
 
+  async function restoreBackup(fileName) {
+    return request('POST', `/api/backups/${encodeURIComponent(fileName)}/restore`, {}, 60000);
+  }
+
+  async function getNasConfig() {
+    return request('GET', '/api/nas-config');
+  }
+
+  async function saveNasConfig(config) {
+    return request('PUT', '/api/nas-config', config);
+  }
+
+  async function listNasBackups() {
+    return request('GET', '/api/nas-backups');
+  }
+
+  function nasBackupDownloadUrl(fileName) {
+    return `${API_BASE}/api/nas-backups/${encodeURIComponent(fileName)}`;
+  }
+
+  async function copyNasToLocal(fileName) {
+    return request('POST', `/api/nas-backups/${encodeURIComponent(fileName)}/copy-to-local`, {});
+  }
+
+  async function restoreNasBackup(fileName) {
+    return request('POST', `/api/nas-backups/${encodeURIComponent(fileName)}/restore`, {}, 60000);
+  }
+
   return {
     init, getAll, save, saveAll, remove, getConfig, setConfig,
     getBackupConfig, saveBackupConfig, listBackups, createBackup,
-    cleanupBackups, deleteBackup, backupDownloadUrl
+    cleanupBackups, deleteBackup, backupDownloadUrl, restoreBackup,
+    getNasConfig, saveNasConfig,
+    listNasBackups, nasBackupDownloadUrl, copyNasToLocal, restoreNasBackup
   };
 })();

@@ -25,10 +25,10 @@
             </div>
             <nav class="sidebar-nav" id="sidebarNav">
                 <a class="nav-item active" data-page="dashboard" id="nav-dashboard"><span class="material-symbols-outlined">dashboard</span><span class="nav-label">대시보드</span></a>
-                <div class="nav-divider"><span>수입검사</span></div>
+                <div class="nav-divider nav-divider-link" data-page="incoming-overview" onclick="Router.navigate('incoming-overview')" title="수입검사 현황 보기"><span>수입검사</span><span class="material-symbols-outlined" style="font-size:16px;margin-left:auto;opacity:0.6;">open_in_new</span></div>
                 <a class="nav-item" data-page="injection-incoming" id="nav-injection-incoming"><span class="material-symbols-outlined">fact_check</span><span class="nav-label">사출 입고</span></a>
                 <a class="nav-item" data-page="paint-incoming-inspection" id="nav-paint-incoming-inspection"><span class="material-symbols-outlined">colorize</span><span class="nav-label">도료 입고</span></a>
-                <div class="nav-divider"><span>자재 창고</span></div>
+                <div class="nav-divider nav-divider-link" data-page="warehouse-overview" onclick="Router.navigate('warehouse-overview')" title="자재 창고 현황 보기"><span>자재 창고</span><span class="material-symbols-outlined" style="font-size:16px;margin-left:auto;opacity:0.6;">open_in_new</span></div>
                 <a class="nav-item" data-page="injection-warehouse" id="nav-injection-warehouse"><span class="material-symbols-outlined">warehouse</span><span class="nav-label">사출 자재</span></a>
                 <a class="nav-item" data-page="paint-inventory" id="nav-paint-inventory"><span class="material-symbols-outlined">palette</span><span class="nav-label">도료 자재</span></a>
                 <div class="nav-divider"><span>사출 공정</span></div>
@@ -52,7 +52,6 @@
                 <div class="nav-divider"><span>생산 관리</span></div>
                 <a class="nav-item" data-page="jig-management" id="nav-jig-management"><span class="material-symbols-outlined">build</span><span class="nav-label">JIG 수명 관리</span></a>
                 <a class="nav-item" data-page="prod-standards" id="nav-prod-standards"><span class="material-symbols-outlined">rule</span><span class="nav-label">제조 관리 표준</span></a>
-                <a class="nav-item" data-page="work-standard" id="nav-work-standard"><span class="material-symbols-outlined">assignment</span><span class="nav-label">작업 표준서</span></a>
                 <a class="nav-item" data-page="prod-conditions" id="nav-prod-conditions"><span class="material-symbols-outlined">tune</span><span class="nav-label">작업조건 관리</span></a>
                 <a class="nav-item" data-page="paint-mix" id="nav-paint-mix"><span class="material-symbols-outlined">science</span><span class="nav-label">도료 배합 관리</span></a>
                 <a class="nav-item" data-page="prod-sub-materials" id="nav-prod-sub-materials"><span class="material-symbols-outlined">inventory</span><span class="nav-label">부자재 관리</span></a>
@@ -75,7 +74,7 @@
                     <h2 id="pageTitle">대시보드</h2>
                 </div>
                 <div class="topbar-right"><span class="topbar-date" id="currentDate"></span>
-                    <div class="topbar-user"><span class="material-symbols-outlined">person</span></div>
+                    <div class="topbar-user" id="topbarUserBadge" style="display:flex;align-items:center;"><span class="material-symbols-outlined">person</span></div>
                 </div>
             </header>
             <div class="content-area" id="contentArea"></div>
@@ -91,37 +90,39 @@
         </div>
     </div>
     <div class="toast-container" id="toastContainer"></div>
-    <script src="js/db.js"></script>
-    <script src="js/api-client.js"></script>
-    <script src="js/storage.js"></script>
-    <script src="js/ui.js"></script>
-    <script src="js/data.js"></script>
-    <script src="js/chart.js"></script>
-    <script src="js/router.js?v=2"></script>
-    <script src="js/sampling-table.js"></script>
-    <script src="js/modules/dashboard.js"></script>
+    <script src="js/db.js?v=1"></script>
+    <script src="js/api-client.js?v=1"></script>
+    <script src="js/storage.js?v=1"></script>
+    <script src="js/ui.js?v=1"></script>
+    <script src="js/data.js?v=1"></script>
+    <script src="js/chart.js?v=1"></script>
+    <script src="js/router.js?v=4"></script>
+    <script src="js/auth.js?v=2"></script>
+    <script src="js/sampling-table.js?v=1"></script>
+    <script src="js/modules/dashboard.js?v=1"></script>
     <script src="js/modules/production-plan.js?v=26"></script>
     <script src="js/modules/injection_part1.js?v=6"></script>
     <script src="js/modules/injection_part2.js?v=5"></script>
-    <script src="js/modules/injection_work.js"></script>
-    <script src="js/modules/raw-material-inventory.js"></script>
+    <script src="js/modules/injection_work.js?v=1"></script>
+    <script src="js/modules/raw-material-inventory.js?v=1"></script>
     <script src="js/modules/injection_part3.js?v=7"></script>
     <script src="js/modules/paint-inventory.js?v=15"></script>
-    <script src="js/modules/paint-layout.js"></script>
-    <script src="js/modules/injection-layout.js"></script>
+    <script src="js/modules/paint-layout.js?v=1"></script>
+    <script src="js/modules/injection-layout.js?v=1"></script>
     <script src="js/modules/painting.js?v=9"></script>
-    <script src="js/modules/laser.js"></script>
-    <script src="js/modules/sales.js"></script>
-    <script src="js/modules/production_mgmt.js"></script>
-    <script src="js/modules/work-standard.js"></script>
-    <script src="js/modules/shipping.js"></script>
-    <script src="js/modules/jig.js"></script>
-    <script src="js/modules/jig-layout.js"></script>
-    <script src="js/modules/5s-management.js"></script>
-    <script src="js/modules/settings.js?v=25"></script>
+    <script src="js/modules/laser.js?v=1"></script>
+    <script src="js/modules/sales.js?v=1"></script>
+    <script src="js/modules/production_mgmt.js?v=8"></script>
+    <script src="js/modules/shipping.js?v=1"></script>
+    <script src="js/modules/jig.js?v=1"></script>
+    <script src="js/modules/jig-layout.js?v=1"></script>
+    <script src="js/modules/5s-management.js?v=1"></script>
+    <script src="js/modules/settings.js?v=26"></script>
     <script src="js/modules/settings-backup-extension.js?v=2"></script>
-    <script src="js/dev-seed.js"></script>
-    <script src="js/app.js"></script>
+    <script src="js/modules/incoming-overview.js?v=1"></script>
+    <script src="js/modules/warehouse-overview.js?v=1"></script>
+    <script src="js/dev-seed.js?v=1"></script>
+    <script src="js/app.js?v=2"></script>
 </body>
 
 </html>

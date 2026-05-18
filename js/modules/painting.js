@@ -202,9 +202,6 @@ const PaintingWorkModule = (function() {
                         <button class="btn btn-primary" onclick="PaintingWorkModule.openAddModal()">
                             <span class="material-symbols-outlined">add</span> 작업 등록
                         </button>
-                        <button class="btn btn-secondary" onclick="PaintingWorkModule.exportData()">
-                            <span class="material-symbols-outlined">download</span> 내보내기
-                        </button>
                     </div>
                 </div>
 
@@ -4323,21 +4320,21 @@ const PaintingInspectionModule = (function() {
             </div>
 
             <!-- 차트 영역 -->
-            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(400px, 1fr)); gap:16px; margin-bottom:20px;">
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(400px, 1fr)); gap:12px; margin-bottom:16px;">
                 <div class="card">
-                    <div class="card-header">
-                        <h4>불량 유형별 집계</h4>
+                    <div class="card-header" style="padding:8px 14px;">
+                        <h4 style="font-size:0.85rem;">불량 유형별 집계</h4>
                     </div>
-                    <div class="card-body">
-                        <canvas id="defectTypeChart" height="200"></canvas>
+                    <div class="card-body" style="padding:8px 14px;">
+                        <canvas id="defectTypeChart" height="100"></canvas>
                     </div>
                 </div>
                 <div class="card">
-                    <div class="card-header">
-                        <h4>차종별 불량률</h4>
+                    <div class="card-header" style="padding:8px 14px;">
+                        <h4 style="font-size:0.85rem;">차종별 불량률</h4>
                     </div>
-                    <div class="card-body">
-                        <canvas id="carModelChart" height="200"></canvas>
+                    <div class="card-body" style="padding:8px 14px;">
+                        <canvas id="carModelChart" height="100"></canvas>
                     </div>
                 </div>
             </div>

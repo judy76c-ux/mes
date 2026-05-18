@@ -401,23 +401,6 @@ var ProdStandardsModule = (function() {
                 { key:'note', label:'비고' },
             ]
         },
-        'mixing': {
-            label: '배합 기준서',
-            icon: 'science',
-            desc: '주제/경화제/희석제 비율, 점도 등 배합 조건 기준을 관리합니다.',
-            columns: [
-                { key:'process', label:'연결 공정', type:'select', options:['배합','하도 공급','상도 공급','도료공급'] },
-                { key:'paintName', label:'도료명' },
-                { key:'mainRatio', label:'주제' },
-                { key:'hardenerRatio', label:'경화제' },
-                { key:'thinnerRatio', label:'희석제' },
-                { key:'viscosity', label:'점도' },
-                { key:'potLife', label:'가사시간' },
-                { key:'method', label:'확인방법', defaultValue:'중량계, 포드컵' },
-                { key:'linkedItem', label:'관리계획서 항목', type:'cp-select' },
-                { key:'note', label:'비고' },
-            ]
-        },
         'filter-mesh': {
             label: '여과망 기준서',
             icon: 'filter_alt',
@@ -432,6 +415,12 @@ var ProdStandardsModule = (function() {
                 { key:'linkedItem', label:'관리계획서 항목', type:'cp-select' },
                 { key:'note', label:'비고' },
             ]
+        },
+        'mixing': {
+            label: '배합 기준서',
+            icon: 'science',
+            desc: '도료 배합 관리에서 이동된 배합기준표입니다.',
+            columns: []  /* 전용 렌더러 사용 — PaintMixModule.renderFormulaAsStandard() */
         },
     };
 
@@ -597,15 +586,25 @@ var ProdStandardsModule = (function() {
     function _renderSubTabs() { }
 
     function _renderDocTypeTabs() {
-        const tabs = [
-            { key: DOC_CONTROL_PLAN, label: '관리계획서', icon: 'description' },
-            ...Object.entries(STANDARD_DOC_TYPES).map(([key, cfg]) => ({
-                key, label: cfg.label, icon: cfg.icon
-            }))
-        ];
+        const stdTabs = Object.entries(STANDARD_DOC_TYPES).map(([key, cfg]) => ({
+            key, label: cfg.label, icon: cfg.icon
+        }));
         return `
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin:0 0 14px;">
-                ${tabs.map(t => `
+                <button class="btn ${_curDocType === DOC_CONTROL_PLAN ? 'btn-primary' : 'btn-outline'} btn-sm"
+                    onclick="ProdStandardsModule.selectDocType('${DOC_CONTROL_PLAN}')"
+                    style="display:flex; align-items:center; gap:5px;">
+                    <span class="material-symbols-outlined" style="font-size:16px;">description</span>
+                    관리계획서
+                </button>
+                <button class="btn btn-outline btn-sm"
+                    onclick="Router.navigate('work-standard')"
+                    style="display:flex; align-items:center; gap:5px; border-color:#7c3aed; color:#7c3aed;">
+                    <span class="material-symbols-outlined" style="font-size:16px;">assignment</span>
+                    작업표준서
+                    <span class="material-symbols-outlined" style="font-size:13px; opacity:0.7;">open_in_new</span>
+                </button>
+                ${stdTabs.map(t => `
                     <button class="btn ${_curDocType === t.key ? 'btn-primary' : 'btn-outline'} btn-sm"
                         onclick="ProdStandardsModule.selectDocType('${t.key}')"
                         style="display:flex; align-items:center; gap:5px;">
@@ -1084,6 +1083,9 @@ var ProdStandardsModule = (function() {
     function _renderLinkedStandardTable() {
         const el = document.getElementById('psParamContent');
         if (!el) return;
+
+        /* 배합 기준서 — PaintMixModule의 renderFormulaAsStandard 위임 */
+        if (_curDocType === 'mixing') { PaintMixModule.renderFormulaAsStandard(el); return; }
 
         const cfg = STANDARD_DOC_TYPES[_curDocType];
         if (!cfg) return;
@@ -6105,10 +6107,6 @@ var PaintMixModule = (function() {
                         onclick="PaintMixModule.switchTab('usage')">
                     <span class="material-symbols-outlined" style="font-size:15px;">straighten</span> 사용량 기준표
                 </button>
-                <button id="pmixTabBtn_formula" class="btn btn-outline btn-sm"
-                        onclick="PaintMixModule.switchTab('formula')">
-                    <span class="material-symbols-outlined" style="font-size:15px;">biotech</span> 배합기준표
-                </button>
                 <button id="pmixTabBtn_history" class="btn btn-outline btn-sm"
                         onclick="PaintMixModule.switchTab('history')">
                     <span class="material-symbols-outlined" style="font-size:15px;">receipt_long</span> 배합/사용 이력
@@ -6126,14 +6124,16 @@ var PaintMixModule = (function() {
 
     function switchTab(tab) {
         _curTab = tab;
-        ['usage','formula','history'].forEach(t => {
+        ['usage','history'].forEach(t => {
             const btn  = document.getElementById('pmixTabBtn_' + t);
             const pane = document.getElementById('pmixPane_' + t);
             if (btn)  btn.className  = 'btn btn-sm ' + (t === tab ? 'btn-primary' : 'btn-outline');
             if (pane) pane.style.display = t === tab ? '' : 'none';
         });
+        /* formula pane은 제조관리표준 > 배합기준서에서만 사용 */
+        const fp = document.getElementById('pmixPane_formula');
+        if (fp) fp.style.display = 'none';
         if (tab === 'usage')   renderUsageTab();
-        if (tab === 'formula') renderFormulaTab();
         if (tab === 'history') renderHistoryTab();
     }
 
@@ -6720,8 +6720,9 @@ var PaintMixModule = (function() {
     }
 
     /* 모달 내 동적 행 임시 상태 */
-    let _editPrimers = [];
-    let _editColors  = [];
+    let _editPrimers      = [];
+    let _editColors       = [];
+    let _editProductNames = [];   /* 이 기준이 적용되는 DB 제품 partName 목록 */
 
     /* ── 표시용 헬퍼 ── */
     function _fmtPaint(name, ratio, tol) {
@@ -6781,13 +6782,15 @@ var PaintMixModule = (function() {
             </div>
             <div class="form-group">
                 <label class="form-label">차종</label>
-                <select class="form-select" id="pfsCarFilter">
+                <select class="form-select" id="pfsCarFilter" onchange="PaintMixModule.onFormulaCarChange()">
                     <option value="">전체</option>${_carOptions('')}
                 </select>
             </div>
             <div class="form-group">
-                <label class="form-label">품명 검색</label>
-                <input type="text" class="form-input" id="pfsPartFilter" placeholder="품명 입력..." style="min-width:150px;">
+                <label class="form-label">제품 선택</label>
+                <select class="form-select" id="pfsPartFilter" style="min-width:180px;">
+                    <option value="">전체 제품</option>
+                </select>
             </div>
             <div class="form-group" style="align-self:flex-end;">
                 <button class="btn btn-outline" onclick="PaintMixModule.filterFormula()">
@@ -6913,12 +6916,18 @@ var PaintMixModule = (function() {
     function filterFormula() {
         const line = document.getElementById('pfsLineFilter')?.value || '';
         const car  = document.getElementById('pfsCarFilter')?.value  || '';
-        const part = (document.getElementById('pfsPartFilter')?.value || '').toLowerCase();
+        const selectedProduct = document.getElementById('pfsPartFilter')?.value || '';
         const CAR_ORDER = ['GOLF7','GOLF-7','A3','A3(PA)','Q2','A3 PA','A8','XFD','J34A','T1XX','DECO','EMBLEM','C223','FORD','P702','C300','리비안'];
         let rows = _mixStds()
             .filter(r => !line || r.line === line)
             .filter(r => !car  || r.carModel === car)
-            .filter(r => !part || (r.partName||'').toLowerCase().includes(part))
+            .filter(r => {
+                if (!selectedProduct) return true;
+                /* productNames 배열 우선 일치, 없으면 partName 텍스트 포함 (하위호환) */
+                const inLinked = (r.productNames || []).includes(selectedProduct);
+                const inText   = (r.partName || '').toLowerCase().includes(selectedProduct.toLowerCase());
+                return inLinked || inText;
+            })
             .sort((a, b) => {
                 const ai = CAR_ORDER.indexOf(a.carModel);
                 const bi = CAR_ORDER.indexOf(b.carModel);
@@ -6981,6 +6990,10 @@ var PaintMixModule = (function() {
             return `<strong style="color:#d97706;">${vs}</strong>`;
         };
 
+        /* 행 렌더링 전 검증 데이터 일괄 로드 (행마다 재조회 방지) */
+        const _vMats    = Storage.getAll(PAINT_MAT_STORE) || [];
+        const _vQuality = Storage.getAll(DB.STORES.PROD_QUALITY_CHECK) || [];
+
         let prevCar = null, carIdx = -1;
         tbody.innerHTML = rows.map(r => {
             if (r.carModel !== prevCar) { carIdx++; prevCar = r.carModel; }
@@ -6989,6 +7002,31 @@ var PaintMixModule = (function() {
             const primers = r.primers || [];
             const colors  = r.colors  || [];
             const N = Math.max(primers.length || 1, colors.length || 1);
+
+            /* ── 행별 검증 상태 (미니 표시용) ── */
+            const _paintNames = [
+                ...(r.primers||[]).flatMap(p => [p.paint, p.hardener !== '-' ? p.hardener : null, p.thinner].filter(Boolean)),
+                ...(r.colors ||[]).flatMap(c => [c.paint, c.hardener !== '-' ? c.hardener : null, c.thinner].filter(Boolean))
+            ];
+            const _matchedCnt = _paintNames.filter(nm =>
+                _vMats.some(m => m.name && (
+                    m.name.toLowerCase() === nm.toLowerCase() ||
+                    nm.toLowerCase().includes(m.name.toLowerCase()) ||
+                    m.name.toLowerCase().includes(nm.toLowerCase())
+                ))
+            ).length;
+            const _paintSt = _paintNames.length === 0 ? 'none'
+                           : _matchedCnt === _paintNames.length ? 'ok'
+                           : _matchedCnt > 0 ? 'partial' : 'fail';
+            const _tmplOk  = _vQuality.some(d => d._docKind === 'quality_template' && d.carModel === r.carModel);
+
+            const _paintDot = _paintSt === 'ok'      ? `<span title="도료 전체 매칭" style="color:#16a34a;font-size:14px;">●</span>`
+                            : _paintSt === 'partial'  ? `<span title="도료 일부 미매칭 (${_matchedCnt}/${_paintNames.length})" style="color:#f59e0b;font-size:14px;">●</span>`
+                            : _paintSt === 'fail'     ? `<span title="도료 미매칭" style="color:#dc2626;font-size:14px;">●</span>`
+                            : `<span title="도료 미입력" style="color:var(--border-color);font-size:14px;">●</span>`;
+            const _tmplDot  = _tmplOk
+                            ? `<span title="관리계획서 있음" style="color:#16a34a;font-size:12px;">■</span>`
+                            : `<span title="관리계획서 없음" style="color:#dc2626;font-size:12px;">■</span>`;
 
             const lineBadge = r.line === 'A'
                 ? `<span class="badge badge-blue"  style="font-size:0.78rem;">A</span>`
@@ -7035,8 +7073,12 @@ var PaintMixModule = (function() {
                 }
                 /* ── 우측 작업 버튼 (첫 행만) ── */
                 if (isF) {
-                    tr += `<td${RS} style="${TD}${S}text-align:center;vertical-align:middle;white-space:nowrap;">
-                        <button class="btn btn-sm btn-outline" onclick="PaintMixModule.openFormulaModal('${_js(r.id)}')">수정</button>
+                    tr += `<td${RS} style="${TD}${S}text-align:center;vertical-align:middle;white-space:nowrap;min-width:100px;">
+                        <div style="display:flex;align-items:center;justify-content:center;gap:4px;margin-bottom:4px;" title="도료매칭 | 관리계획서">
+                            ${_paintDot}${_tmplDot}
+                        </div>
+                        <button class="btn btn-sm btn-outline" style="font-size:0.74rem;padding:2px 7px;" onclick="PaintMixModule.showFormulaValidation('${_js(r.id)}')">검증</button><br>
+                        <button class="btn btn-sm btn-outline" style="margin-top:3px;" onclick="PaintMixModule.openFormulaModal('${_js(r.id)}')">수정</button>
                         <button class="btn btn-sm btn-danger"  onclick="PaintMixModule.removeFormula('${_js(r.id)}')">삭제</button>
                     </td>`;
                 }
@@ -7202,11 +7244,12 @@ var PaintMixModule = (function() {
     function openFormulaModal(id) {
         const r = id ? (_mixStds().find(x => x.id === id) || {}) : {};
         const isEdit = !!id;
-        _editPrimers = (r.primers || []).map(p => ({...p}));
-        _editColors  = (r.colors  || []).map(c => ({...c}));
+        _editPrimers      = (r.primers      || []).map(p => ({...p}));
+        _editColors       = (r.colors       || []).map(c => ({...c}));
+        _editProductNames = (r.productNames || []).slice();
 
         UIUtils.showModal(isEdit ? '배합기준 수정' : '배합기준 등록', `
-        <div style="display:grid;grid-template-columns:100px 1fr 1fr;gap:12px;margin-bottom:16px;">
+        <div style="display:grid;grid-template-columns:100px 1fr 1fr;gap:12px;margin-bottom:12px;">
             <div class="form-group">
                 <label class="form-label">라인 <span style="color:var(--danger)">*</span></label>
                 <select class="form-select" id="pfsM_line">
@@ -7217,13 +7260,24 @@ var PaintMixModule = (function() {
             </div>
             <div class="form-group">
                 <label class="form-label">차종 <span style="color:var(--danger)">*</span></label>
-                <select class="form-select" id="pfsM_car">
+                <select class="form-select" id="pfsM_car" onchange="PaintMixModule._onFormulaModalCarChange()">
                     <option value="">선택</option>${_carOptions(r.carModel||'')}
                 </select>
             </div>
             <div class="form-group">
-                <label class="form-label">제품명 / 품명 <span style="color:var(--danger)">*</span></label>
+                <label class="form-label">배합기준 이름 <span style="color:var(--danger)">*</span></label>
                 <input type="text" class="form-input" id="pfsM_part" value="${_esc(r.partName||'')}" placeholder="예) Knob 공용 / PAO Cover">
+            </div>
+        </div>
+
+        <div style="border:1px solid var(--border-color);border-radius:8px;padding:12px;margin-bottom:14px;background:var(--bg-secondary);">
+            <div style="font-size:0.83rem;font-weight:700;color:var(--text-secondary);margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                <span class="material-symbols-outlined" style="font-size:16px;">link</span>
+                적용 제품 연결
+                <span style="font-weight:400;color:var(--text-muted);font-size:0.78rem;">— 이 배합기준이 적용되는 제품을 선택하세요 (관리계획서 연동에 사용)</span>
+            </div>
+            <div id="pfsM_productList" style="display:flex;flex-wrap:wrap;gap:7px;min-height:28px;">
+                ${r.carModel ? '' : '<span style="color:var(--text-muted);font-size:0.83rem;">차종을 먼저 선택하세요</span>'}
             </div>
         </div>
 
@@ -7283,6 +7337,8 @@ var PaintMixModule = (function() {
 
         _renderPrimerRows();
         _renderColorRows();
+        /* 수정 시: 기존 차종으로 제품 체크박스 즉시 렌더 */
+        if (r.carModel) setTimeout(_onFormulaModalCarChange, 50);
     }
 
     function saveFormula(id) {
@@ -7290,11 +7346,12 @@ var PaintMixModule = (function() {
         const carModel = document.getElementById('pfsM_car')?.value  || '';
         const partName = document.getElementById('pfsM_part')?.value.trim() || '';
         if (!line || !carModel || !partName) {
-            UIUtils.toast('라인 · 차종 · 제품명은 필수입니다.', 'error'); return;
+            UIUtils.toast('라인 · 차종 · 배합기준 이름은 필수입니다.', 'error'); return;
         }
         _readPrimerRows();
         _readColorRows();
-        const rec = { line, carModel, partName, primers: _editPrimers, colors: _editColors, updatedAt: new Date().toISOString() };
+        const productNames = [...document.querySelectorAll('input[name="pfsM_product"]:checked')].map(cb => cb.value);
+        const rec = { line, carModel, partName, productNames, primers: _editPrimers, colors: _editColors, updatedAt: new Date().toISOString() };
         if (id) Storage.update(MIX_STD_STORE, { ...rec, id });
         else    Storage.add(MIX_STD_STORE, rec);
         UIUtils.closeModal();
@@ -7584,6 +7641,238 @@ var PaintMixModule = (function() {
         const cars = [...new Set([...products.map(p => p.carModel), ...works.map(w => w.carModel)].filter(Boolean))]
             .sort((a, b) => a.localeCompare(b, 'ko'));
         return cars.map(c => `<option value="${_esc(c)}" ${c === selected ? 'selected' : ''}>${_esc(c)}</option>`).join('');
+    }
+
+    /* ── 배합기준표 필터 차종 변경 → 제품 SELECT 동적 갱신 ── */
+    function onFormulaCarChange() {
+        const car = document.getElementById('pfsCarFilter')?.value || '';
+        const sel = document.getElementById('pfsPartFilter');
+        if (!sel) return;
+
+        /* PRODUCTS store의 partName + 기존 기준서의 partName + productNames 배열 항목 */
+        const fromProducts = (Storage.getAll(PRODUCT_STORE) || [])
+            .filter(p => !car || p.carModel === car)
+            .map(p => p.partName);
+        const fromFormulas = (_mixStds())
+            .filter(r => !car || r.carModel === car)
+            .flatMap(r => [(r.partName || ''), ...(r.productNames || [])]);
+        const allNames = [...new Set([...fromProducts, ...fromFormulas].filter(Boolean))]
+            .sort((a, b) => a.localeCompare(b, 'ko'));
+
+        sel.innerHTML = '<option value="">전체 제품</option>' +
+            allNames.map(n => `<option value="${_esc(n)}">${_esc(n)}</option>`).join('');
+    }
+
+    /* ── 배합기준 등록/수정 모달 내 차종 변경 → 제품 체크박스 갱신 ── */
+    function _onFormulaModalCarChange() {
+        const car       = document.getElementById('pfsM_car')?.value || '';
+        const container = document.getElementById('pfsM_productList');
+        if (!container) return;
+
+        const partNames = [...new Set(
+            (Storage.getAll(PRODUCT_STORE) || [])
+                .filter(p => p.carModel === car)
+                .map(p => p.partName)
+                .filter(Boolean)
+        )].sort((a, b) => a.localeCompare(b, 'ko'));
+
+        if (!car) {
+            container.innerHTML = '<span style="color:var(--text-muted);font-size:0.83rem;">차종을 먼저 선택하세요</span>';
+            return;
+        }
+        if (!partNames.length) {
+            container.innerHTML = '<span style="color:var(--text-muted);font-size:0.83rem;">이 차종으로 등록된 제품이 없습니다 — 설정 > 제품 등록 후 이용하세요</span>';
+            return;
+        }
+        container.innerHTML = partNames.map(pn => `
+            <label style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;
+                          background:var(--bg-primary);border:1px solid var(--border-color);
+                          border-radius:6px;cursor:pointer;font-size:0.83rem;user-select:none;">
+                <input type="checkbox" name="pfsM_product" value="${_esc(pn)}"
+                    ${_editProductNames.includes(pn) ? 'checked' : ''}>
+                ${_esc(pn)}
+            </label>`).join('');
+    }
+
+    /* ── 관리계획서 연동 이동 ── */
+    function viewControlPlan(carModel, partName) {
+        sessionStorage.setItem('mixStd_qualityFilter_car',  carModel || '');
+        sessionStorage.setItem('mixStd_qualityFilter_part', partName || '');
+        Router.navigate('prod-quality');
+        UIUtils.toast(`${carModel} — ${partName} 관리계획서로 이동합니다.`, 'info');
+    }
+
+    /* ── 도료명 텍스트 → PAINT_MATERIALS 매칭 (부분 포함 허용) ── */
+    function _matchPaintToMat(paintText, mats) {
+        if (!paintText) return null;
+        const txt = paintText.toLowerCase().trim();
+        return mats.find(m => {
+            if (!m.name) return false;
+            const mn = m.name.toLowerCase().trim();
+            return mn === txt || txt.includes(mn) || mn.includes(txt);
+        }) || null;
+    }
+
+    /* ── 기준서 상세 검증 데이터 생성 ── */
+    function _getFormulaValidation(r) {
+        const mats     = Storage.getAll(PAINT_MAT_STORE) || [];
+        const qualAll  = Storage.getAll(DB.STORES.PROD_QUALITY_CHECK) || [];
+        const products = Storage.getAll(PRODUCT_STORE) || [];
+
+        /* 도료 항목 추출 (하도 primers / 상도 colors 모두) */
+        const entries = [];
+        (r.primers || []).forEach(p => {
+            if (p.paint)                     entries.push({ coat: '하도', role: '주제',   name: p.paint,    company: p.company || '' });
+            if (p.hardener && p.hardener !== '-') entries.push({ coat: '하도', role: '경화제', name: p.hardener, company: p.company || '' });
+            if (p.thinner)                   entries.push({ coat: '하도', role: '희석제', name: p.thinner,  company: '' });
+        });
+        (r.colors || []).forEach(c => {
+            if (c.paint)                     entries.push({ coat: '상도', role: '주제',   name: c.paint,    company: c.company || '' });
+            if (c.hardener && c.hardener !== '-') entries.push({ coat: '상도', role: '경화제', name: c.hardener, company: c.company || '' });
+            if (c.thinner)                   entries.push({ coat: '상도', role: '희석제', name: c.thinner,  company: '' });
+        });
+
+        /* 각 항목 매칭 */
+        const validated = entries.map(e => ({ ...e, mat: _matchPaintToMat(e.name, mats) }));
+        const matchedCnt = validated.filter(v => v.mat).length;
+        const paintStatus = validated.length === 0 ? 'none'
+                          : matchedCnt === validated.length ? 'ok'
+                          : matchedCnt > 0 ? 'partial' : 'fail';
+
+        /* 연결 제품 상태 */
+        const linkedProducts = (r.productNames || []).map(pn => {
+            const prod = products.find(p => p.carModel === r.carModel && p.partName === pn);
+            const paintMatCount = (prod && prod.paintMaterials) ? prod.paintMaterials.length : 0;
+            return { partName: pn, found: !!prod, paintMatCount };
+        });
+
+        /* 관리계획서 템플릿 */
+        const tmplExists = qualAll.some(d => d._docKind === 'quality_template' && d.carModel === r.carModel);
+        /* 발행 이력 (이 차종 + 연결 제품명 기준) */
+        const issueCnt = qualAll.filter(d =>
+            d._docKind !== 'quality_template' &&
+            d.carModel === r.carModel &&
+            (r.productNames || []).some(pn => d.partName === pn || d.partName === r.partName)
+        ).length;
+
+        return { validated, paintStatus, matchedCnt, total: validated.length, linkedProducts, tmplExists, issueCnt };
+    }
+
+    /* ── 상세 검증 모달 ── */
+    function showFormulaValidation(id) {
+        const r = _mixStds().find(x => x.id === id);
+        if (!r) return;
+        const v = _getFormulaValidation(r);
+
+        /* 도료 검증 테이블 */
+        const coatColors = { '하도': '#92400e', '상도': '#166534' };
+        const coatBg     = { '하도': '#fef3c7', '상도': '#dcfce7' };
+        const paintRows = v.validated.length
+            ? v.validated.map(e => `
+            <tr>
+                <td style="padding:5px 8px;">
+                    <span style="background:${coatBg[e.coat]||'#f3f4f6'};color:${coatColors[e.coat]||'#374151'};
+                          padding:2px 7px;border-radius:4px;font-size:0.75rem;font-weight:700;">${_esc(e.coat)}</span>
+                    <span style="color:var(--text-muted);font-size:0.78rem;margin-left:4px;">${_esc(e.role)}</span>
+                </td>
+                <td style="padding:5px 8px;font-size:0.8rem;">${_esc(e.company)}</td>
+                <td style="padding:5px 8px;font-weight:600;font-size:0.82rem;">${_esc(e.name)}</td>
+                <td style="padding:5px 8px;font-size:0.82rem;">
+                    ${e.mat
+                        ? `<span style="color:#16a34a;">✅</span> <strong>${_esc(e.mat.name)}</strong>
+                           <span style="color:var(--text-muted);font-size:0.77rem;"> · ${_esc(e.mat.supplier||'')}</span>`
+                        : `<span style="color:#dc2626;">❌ 미매칭</span>
+                           <span style="color:var(--text-muted);font-size:0.77rem;"> — PAINT_MATERIALS에 없음</span>`}
+                </td>
+            </tr>`).join('')
+            : `<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--text-muted);">기준서에 도료 정보가 없습니다</td></tr>`;
+
+        const paintStatusLabel = v.paintStatus === 'ok'      ? `<span style="color:#16a34a;font-weight:700;">✅ 전체 일치 (${v.matchedCnt}/${v.total})</span>`
+                               : v.paintStatus === 'partial' ? `<span style="color:#d97706;font-weight:700;">⚠️ 일부 미매칭 (${v.matchedCnt}/${v.total} 매칭)</span>`
+                               : v.paintStatus === 'fail'    ? `<span style="color:#dc2626;font-weight:700;">❌ 미매칭 (0/${v.total})</span>`
+                               :                               `<span style="color:var(--text-muted);">– 도료 없음</span>`;
+
+        /* 연결 제품 테이블 */
+        const prodRows = v.linkedProducts.length
+            ? v.linkedProducts.map(lp => `
+            <tr>
+                <td style="padding:5px 8px;font-weight:600;">${_esc(lp.partName)}</td>
+                <td style="padding:5px 8px;">
+                    ${lp.found ? `<span style="color:#16a34a;">✅ 제품 등록됨</span>` : `<span style="color:#dc2626;">❌ 제품 미등록</span>`}
+                </td>
+                <td style="padding:5px 8px;font-size:0.82rem;">
+                    ${lp.found
+                        ? (lp.paintMatCount > 0
+                            ? `<span style="color:#16a34a;">✅ 도료 ${lp.paintMatCount}개 연결됨</span>`
+                            : `<span style="color:#f59e0b;">⚠️ 제품에 도료 미연결</span>`)
+                        : '–'}
+                </td>
+            </tr>`).join('')
+            : `<tr><td colspan="3" style="text-align:center;padding:16px;color:var(--text-muted);">
+                연결된 제품 없음 — <a href="javascript:void(0)" onclick="UIUtils.closeModal();PaintMixModule.openFormulaModal('${_js(id)}')">수정</a>에서 제품을 연결하세요
+               </td></tr>`;
+
+        /* 관리계획서 상태 */
+        const tmplHtml = v.tmplExists
+            ? `<span style="color:#16a34a;font-weight:700;">✅ 관리계획서 템플릿 있음</span>
+               <span style="color:var(--text-muted);font-size:0.82rem;"> · 발행 이력 ${v.issueCnt}건</span>
+               <button class="btn btn-sm btn-outline" style="margin-left:10px;" onclick="UIUtils.closeModal();PaintMixModule.viewControlPlan('${_js(r.carModel)}','${_js((r.productNames&&r.productNames[0])||r.partName)}')">
+                   <span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span> 열기
+               </button>`
+            : `<span style="color:#dc2626;font-weight:700;">❌ 관리계획서 템플릿 없음</span>
+               <button class="btn btn-sm btn-secondary" style="margin-left:10px;" onclick="UIUtils.closeModal();Router.navigate('prod-quality')">
+                   기준설정 바로가기
+               </button>`;
+
+        UIUtils.showModal(
+            `검증 — ${_esc(r.carModel)} · ${_esc(r.partName)}`,
+            `<div style="display:flex;flex-direction:column;gap:14px;">
+
+                <div style="background:var(--bg-secondary);border-radius:8px;padding:12px;">
+                    <div style="font-weight:700;font-size:0.87rem;margin-bottom:10px;">
+                        🧪 도료 일치성 검증 &nbsp; ${paintStatusLabel}
+                    </div>
+                    <div style="overflow-x:auto;">
+                        <table style="width:100%;border-collapse:collapse;font-size:0.82rem;border:1px solid var(--border-color);">
+                            <thead>
+                                <tr style="background:var(--bg-tertiary);">
+                                    <th style="padding:5px 8px;border:1px solid var(--border-color);">구분</th>
+                                    <th style="padding:5px 8px;border:1px solid var(--border-color);">메이커</th>
+                                    <th style="padding:5px 8px;border:1px solid var(--border-color);">기준서 도료명</th>
+                                    <th style="padding:5px 8px;border:1px solid var(--border-color);">PAINT_MATERIALS 매칭</th>
+                                </tr>
+                            </thead>
+                            <tbody>${paintRows}</tbody>
+                        </table>
+                    </div>
+                    <div style="margin-top:8px;font-size:0.77rem;color:var(--text-muted);">
+                        ※ 도료명 포함 텍스트 비교 — 정확한 매칭은 도료명을 동일하게 등록하세요
+                    </div>
+                </div>
+
+                <div style="background:var(--bg-secondary);border-radius:8px;padding:12px;">
+                    <div style="font-weight:700;font-size:0.87rem;margin-bottom:10px;">🔗 연결 제품 상태</div>
+                    <table style="width:100%;border-collapse:collapse;font-size:0.82rem;border:1px solid var(--border-color);">
+                        <thead>
+                            <tr style="background:var(--bg-tertiary);">
+                                <th style="padding:5px 8px;border:1px solid var(--border-color);">제품명</th>
+                                <th style="padding:5px 8px;border:1px solid var(--border-color);">등록 여부</th>
+                                <th style="padding:5px 8px;border:1px solid var(--border-color);">제품 도료 연결</th>
+                            </tr>
+                        </thead>
+                        <tbody>${prodRows}</tbody>
+                    </table>
+                </div>
+
+                <div style="background:var(--bg-secondary);border-radius:8px;padding:12px;">
+                    <div style="font-weight:700;font-size:0.87rem;margin-bottom:8px;">📋 관리계획서 연동 상태</div>
+                    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;">${tmplHtml}</div>
+                </div>
+
+            </div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`,
+            'xl'
+        );
     }
 
     function _findProduct(work) {
@@ -7934,15 +8223,26 @@ var PaintMixModule = (function() {
         Storage.exportToCSV(['일자','라인','차종','품명','생산LOT','도료사양','구분','도료명','도료LOT','사용량','작업자','비고'], rows, '도료배합관리');
     }
 
+    /* 제조관리표준 > 배합기준서 탭에서 호출 — formula 내용을 targetEl 안에 렌더 */
+    function renderFormulaAsStandard(targetEl) {
+        if (!targetEl) return;
+        targetEl.innerHTML = `
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px;" id="pmixPageActions"></div>
+            <div id="pmixPane_formula"></div>`;
+        renderFormulaTab();
+    }
+
     return {
         render, switchTab,
         filterUsage, openUsageModal, saveUsage, removeUsage, exportUsage,
-        renderFormulaTab, filterFormula, openFormulaModal, saveFormula, removeFormula, exportFormula,
+        renderFormulaTab, filterFormula, onFormulaCarChange, openFormulaModal, saveFormula, removeFormula, exportFormula,
         _addPrimerRow, _delPrimerRow, _addColorRow, _delColorRow,
+        _onFormulaModalCarChange, viewControlPlan, showFormulaValidation,
         renderHistoryTab, search,
         openFromWork, openManualModal,
         renderResidualStock, openResidualAdjust, saveResidualAdjust,
-        saveNew, edit, saveEdit, remove, exportData
+        saveNew, edit, saveEdit, remove, exportData,
+        renderFormulaAsStandard
     };
 })();
 
@@ -8321,6 +8621,14 @@ var ProdQualityModule = (function() {
                 </div>
             </div>
         `;
+        /* 배합기준표에서 관리계획서 버튼으로 진입한 경우 차종 자동 선택 */
+        const preFilterCar = sessionStorage.getItem('mixStd_qualityFilter_car');
+        if (preFilterCar) {
+            const carSel = document.getElementById('pqFilterCar');
+            if (carSel) carSel.value = preFilterCar;
+            sessionStorage.removeItem('mixStd_qualityFilter_car');
+            sessionStorage.removeItem('mixStd_qualityFilter_part');
+        }
         search();
     }
 

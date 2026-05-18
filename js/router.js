@@ -33,7 +33,9 @@ const Router = (function() {
         'paint-mix': '도료 배합 관리',
         'prod-quality': '초중종물 관리',
         'prod-equipment': '설비관리',
-        'settings': '관리 / 설정'
+        'settings': '관리 / 설정',
+        'incoming-overview': '수입검사 현황',
+        'warehouse-overview': '자재 창고 현황'
     };
 
     function init() {
@@ -66,21 +68,17 @@ const Router = (function() {
     // 페이지 전환
     function navigate(pageName) {
         if (!modules[pageName]) pageName = 'dashboard';
+
         currentPage = pageName;
         localStorage.setItem('last_page', pageName);
 
-        // 네비 active 상태 업데이트
         document.querySelectorAll('.nav-item').forEach(item => {
             item.classList.toggle('active', item.dataset.page === pageName);
         });
 
-        // 타이틀 업데이트
         document.getElementById('pageTitle').textContent = PAGE_TITLES[pageName] || pageName;
-
-        // 모바일 메뉴 닫기
         document.getElementById('sidebar').classList.remove('mobile-open');
 
-        // 관리/설정 페이지 접근 시 암호 확인 (현재 비활성화 - TODO: 나중에 설정 필요)
         renderModule(pageName);
     }
 
@@ -111,60 +109,6 @@ const Router = (function() {
                 </div>
             `;
         }
-    }
-
-    // 관리자 암호 확인 로직
-    function requestAdminPassword(onSuccess) {
-        // 실제 운영에서는 서버 검증이 안전하지만, 현재 형태(로컬 스토리지)에 맞춤
-        const ADMIN_PASSWORD = 'admin'; // 변경 가능
-
-        UIUtils.showModal('<span class="material-symbols-outlined" style="vertical-align: middle; color:var(--accent-red);">lock</span> 관리자 권한 필요', `
-            <div class="form-group">
-                <label class="form-label text-center" style="display:block; margin-bottom:12px;">관리/설정 페이지에 접근하려면 암호를 입력해야 합니다.</label>
-                <input type="password" class="form-input" id="adminPasswordInput" placeholder="암호를 입력하세요" style="text-align:center; font-size:1.1rem; letter-spacing: 2px;" autofocus>
-                <div id="adminPasswordError" style="color:var(--accent-red); text-align:center; margin-top:8px; display:none;">암호가 일치하지 않습니다.</div>
-            </div>
-        `, `
-            <button class="btn btn-secondary" onclick="Router.cancelAdminAuth()">취소</button>
-            <button class="btn btn-primary" id="btnAdminAuth" onclick="Router.checkAdminAuth()">확인</button>
-        `);
-
-        // 모달 전역 변수에 콜백 임시 저장
-        Router._onAdminAuthSuccess = onSuccess;
-
-        // 엔터키 지원
-        setTimeout(() => {
-            const input = document.getElementById('adminPasswordInput');
-            if (input) {
-                input.focus();
-                input.addEventListener('keypress', function(e) {
-                    if (e.key === 'Enter') checkAdminAuth();
-                });
-            }
-        }, 100);
-    }
-
-    function checkAdminAuth() {
-        const input = document.getElementById('adminPasswordInput');
-        const err = document.getElementById('adminPasswordError');
-
-        // 하드코딩된 암호: admin
-        if (input.value === 'admin') {
-            UIUtils.closeModal();
-            UIUtils.toast('관리자 권한이 확인되었습니다.', 'success');
-            if (typeof Router._onAdminAuthSuccess === 'function') {
-                Router._onAdminAuthSuccess();
-            }
-        } else {
-            err.style.display = 'block';
-            input.value = '';
-            input.focus();
-        }
-    }
-
-    function cancelAdminAuth() {
-        UIUtils.closeModal();
-        navigate('dashboard'); // 취소 시 대시보드로 돌아가기
     }
 
     // 모바일 메뉴
@@ -211,8 +155,6 @@ const Router = (function() {
         registerModule,
         navigate,
         getCurrentPage,
-        checkAdminAuth,
-        cancelAdminAuth
     };
 })();
 

@@ -13,15 +13,19 @@ const App = (function() {
             await Storage.init();
             console.log('✅ 스토리지 초기화 완료');
 
-            // 2. 모듈 등록
+            // 2. 인증 모듈 초기화 (기본 계정 보장 + 전역 인터셉터 등록)
+            AuthModule.ensureAdminUser();
+            AuthModule.init();
+
+            // 3. 모듈 등록
             registerModules();
             console.log('✅ 모듈 등록 완료');
 
-            // 3. 라우터 초기화
+            // 4. 라우터 초기화
             Router.init();
             console.log('✅ 라우터 초기화 완료');
 
-            // 4. 첫 방문 체크
+            // 5. 첫 방문 체크
             checkFirstVisit();
 
             // 5. 사출 LOT 번호 형식 오류 자동 감지 (백그라운드)
@@ -159,7 +163,6 @@ const App = (function() {
         Router.registerModule('jig-layout', JigLayoutModule);
         Router.registerModule('five-s', FiveSModule);
         Router.registerModule('prod-standards', ProdStandardsModule);
-        Router.registerModule('work-standard', WorkStandardModule);
         Router.registerModule('prod-conditions', ProdConditionsModule);
         Router.registerModule('paint-mix', PaintMixModule);
         Router.registerModule('prod-sub-materials', ProdSubMaterialsModule);
@@ -169,6 +172,8 @@ const App = (function() {
         Router.registerModule('prod-spc', ProdSpcModule);
         Router.registerModule('prod-equipment', ProdEquipmentModule);
         Router.registerModule('settings', SettingsModule);
+        Router.registerModule('incoming-overview', IncomingOverviewModule);
+        Router.registerModule('warehouse-overview', WarehouseOverviewModule);
     }
 
     // 첫 방문 시 환영 메시지

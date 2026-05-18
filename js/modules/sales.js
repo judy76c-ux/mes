@@ -473,6 +473,910 @@ var SalesDeliveryModule = (function() {
 })();
 
 /**
+ * 2) 납품 계획 (Delivery Plan)
+ */
+var SalesDeliveryPlanModule = (function() {
+    const STORE = DB.STORES.SALES_DELIVERY_PLAN;
+
+    let _lastRows = [];
+    let _lastDays = [];
+    let _gridRows = [];
+
+    function _esc(value) {
+        return String(value ?? '').replace(/[&<>"']/g, m => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[m]));
+    }
+
+    function _js(value) {
+        return String(value ?? '')
+            .replace(/\\/g, '\\\\')
+            .replace(/'/g, "\\'")
+            .replace(/\r?\n/g, ' ');
+    }
+
+    function _num(value) {
+        return Number(value) || 0;
+    }
+
+    function _fmt(value) {
+        return UIUtils.formatNumber(_num(value));
+    }
+
+    function _norm(value) {
+        return String(value || '').trim().toLowerCase();
+    }
+
+    function _addDays(dateText, days) {
+        const date = new Date(`${dateText}T00:00:00`);
+        date.setDate(date.getDate() + days);
+        return date.toISOString().slice(0, 10);
+    }
+
+    function _days(start, end) {
+        const result = [];
+        const cur = new Date(`${start}T00:00:00`);
+        const last = new Date(`${end}T00:00:00`);
+        while (cur <= last && result.length < 45) {
+            result.push(cur.toISOString().slice(0, 10));
+            cur.setDate(cur.getDate() + 1);
+        }
+        return result;
+    }
+
+    const DELIVERY_WEEKDAYS = ['\uC77C', '\uC6D4', '\uD654', '\uC218', '\uBAA9', '\uAE08', '\uD1A0'];
+    const DELIVERY_FIXED_HOLIDAYS = new Set([
+        '01-01',
+        '03-01',
+        '05-05',
+        '06-06',
+        '08-15',
+        '10-03',
+        '10-09',
+        '12-25'
+    ]);
+
+    function _extraHolidaySet() {
+        const holidays = [];
+        if (Array.isArray(window.MES_HOLIDAYS)) holidays.push(...window.MES_HOLIDAYS);
+        try {
+            const saved = JSON.parse(localStorage.getItem('mes_holidays') || '[]');
+            if (Array.isArray(saved)) holidays.push(...saved);
+        } catch (error) {
+            // Invalid local holiday settings should not block the delivery grid.
+        }
+        return new Set(holidays.map(date => String(date).slice(0, 10)));
+    }
+
+    function _dayColumnInfo(day) {
+        const date = new Date(`${day}T00:00:00`);
+        const week = date.getDay();
+        const isHoliday = DELIVERY_FIXED_HOLIDAYS.has(day.slice(5)) || _extraHolidaySet().has(day);
+        const className = (week === 0 || isHoliday) ? 'sdp-red-col' : (week === 6 ? 'sdp-sat-col' : '');
+        return {
+            dateLabel: day.slice(5).replace('-', '/'),
+            weekday: DELIVERY_WEEKDAYS[week] || '',
+            className
+        };
+    }
+
+    function _matches(row, item) {
+        if (_norm(row.partName) !== _norm(item.partName)) return false;
+        if (item.carModel && row.carModel && _norm(row.carModel) !== _norm(item.carModel)) return false;
+        if (item.color && row.color && _norm(row.color) !== _norm(item.color)) return false;
+        if (item.customer && row.customer && _norm(row.customer) !== _norm(item.customer)) return false;
+        return true;
+    }
+
+    function _products() {
+        return Storage.getAll(DB.STORES.PRODUCTS) || [];
+    }
+
+    function _findProduct(item) {
+        const products = _products();
+        return products.find(p =>
+            _norm(p.partName) === _norm(item.partName) &&
+            (!item.carModel || _norm(p.carModel) === _norm(item.carModel)) &&
+            (!item.color || !p.color || _norm(p.color) === _norm(item.color))
+        ) || products.find(p =>
+            _norm(p.partName) === _norm(item.partName) &&
+            (!item.carModel || _norm(p.carModel) === _norm(item.carModel))
+        ) || null;
+    }
+
+    function _packUnitFromProduct(product, fallback) {
+        return fallback || product?.packUnit || product?.packageUnit || product?.packQty || product?.packageQty || product?.deliveryPackQty || '';
+    }
+
+    function _endProcess(product) {
+        const text = [
+            product?.process1, product?.process2, product?.process3, product?.process4,
+            product?.process5, product?.process6, product?.processFlow, product?.route
+        ].filter(Boolean).join(' ');
+        if (/레이저|레이져|laser/i.test(text)) return '레이져 END';
+        if (/도장|paint/i.test(text)) return '도장 END';
+        return '공정 확인';
+    }
+
+    function _stockSummary(storeName, item) {
+        const rows = (Storage.getAll(storeName) || []).filter(r => _matches(r, item));
+        const balance = rows.reduce((sum, r) => {
+            const qty = _num(r.quantity ?? r.qty ?? r.lotSize ?? r.passQty);
+            const type = String(r.type || '입고');
+            return sum + (type.includes('출고') ? -qty : qty);
+        }, 0);
+        return { balance, hasData: rows.length > 0 };
+    }
+
+    function _shippingStandbyQty(item) {
+        return (Storage.getAll(DB.STORES.SHIPPING_STANDBY) || [])
+            .filter(r => _matches(r, item))
+            .filter(r => !['출하완료', '완료'].includes(r.status || ''))
+            .reduce((sum, r) => sum + _num(r.quantity ?? r.lotSize ?? r.passQty), 0);
+    }
+
+    function _laserStandbyQty(item) {
+        const inQty = (Storage.getAll(DB.STORES.PAINTING_WORK) || [])
+            .filter(r => _matches(r, item))
+            .reduce((sum, r) => sum + _num(r.productionQty ?? r.goodQty ?? r.quantity), 0);
+        const outQty = (Storage.getAll(DB.STORES.LASER_WORK_LOG) || [])
+            .filter(r => _matches(r, item))
+            .reduce((sum, r) => sum + _num(r.quantity), 0);
+        return Math.max(0, inQty - outQty);
+    }
+
+    function _optionList(values) {
+        return [...new Set(values.filter(Boolean).map(v => String(v).trim()).filter(Boolean))]
+            .sort((a, b) => a.localeCompare(b, 'ko'))
+            .map(v => `<option value="${_esc(v)}"></option>`)
+            .join('');
+    }
+
+    function _buildDatalists() {
+        const products = _products();
+        const customers = [
+            ...products.map(p => p.customer),
+            ...(Storage.getAll(DB.STORES.SALES_DELIVERY) || []).map(d => d.customer)
+        ];
+        return `
+            <datalist id="sdpCarList">${_optionList(products.map(p => p.carModel))}</datalist>
+            <datalist id="sdpPartList">${_optionList(products.map(p => p.partName))}</datalist>
+            <datalist id="sdpColorList">${_optionList(products.map(p => p.color))}</datalist>
+            <datalist id="sdpCustomerList">${_optionList(customers)}</datalist>
+        `;
+    }
+
+    function _unique(values) {
+        return [...new Set(values.map(v => String(v || '').trim()).filter(Boolean))]
+            .sort((a, b) => a.localeCompare(b, 'ko'));
+    }
+
+    function _selectOptions(values, selected, allText = '전체') {
+        return `<option value="">${allText}</option>` + _unique(values)
+            .map(v => `<option value="${_esc(v)}" ${v === selected ? 'selected' : ''}>${_esc(v)}</option>`)
+            .join('');
+    }
+
+    function _productsByCustomer(customer) {
+        const customerKey = _norm(customer);
+        return _products().filter(p => !customerKey || _norm(p.customer) === customerKey);
+    }
+
+    function _refreshGridCarOptions() {
+        const customer = document.getElementById('sdpGridCustomer')?.value || '';
+        const carEl = document.getElementById('sdpGridCar');
+        if (!carEl) return;
+
+        const cars = _productsByCustomer(customer).map(p => p.carModel);
+        const current = carEl.value || '';
+        const keepCurrent = !current || _unique(cars).some(c => _norm(c) === _norm(current));
+        carEl.innerHTML = _selectOptions(cars, keepCurrent ? current : '', '-- 차종 선택 --');
+        if (!keepCurrent) carEl.value = '';
+    }
+
+    function onGridCustomerChange() {
+        _refreshGridCarOptions();
+        renderGridEditorRows();
+    }
+
+    function _productBase(product, selectedCustomer = '') {
+        return {
+            customer: selectedCustomer || product.customer || '',
+            carModel: product.carModel || '',
+            partName: product.partName || product.name || '',
+            color: product.color || product.paintColor || '',
+            packUnit: _packUnitFromProduct(product, ''),
+            product,
+            processEnd: _endProcess(product)
+        };
+    }
+
+    function _recordsForCell(base, date) {
+        return (Storage.getAll(STORE) || []).filter(plan =>
+            plan.date === date &&
+            _matches(plan, base) &&
+            (!base.packUnit || !plan.packUnit || _norm(plan.packUnit) === _norm(base.packUnit))
+        );
+    }
+
+    function _planQtyForCell(base, date) {
+        return _recordsForCell(base, date).reduce((sum, plan) => sum + _num(plan.planQty), 0);
+    }
+
+    async function _upsertPlanCell(base, date, qty, note = '') {
+        const records = _recordsForCell(base, date);
+        const data = {
+            date,
+            customer: base.customer || '',
+            carModel: base.carModel || '',
+            partName: base.partName || '',
+            color: base.color || '',
+            packUnit: base.packUnit || '',
+            planQty: qty,
+            note
+        };
+
+        if (qty > 0) {
+            if (records[0]) {
+                await Storage.update(STORE, records[0].id, { ...records[0], ...data });
+                for (const extra of records.slice(1)) {
+                    await Storage.remove(STORE, extra.id);
+                }
+            } else {
+                await Storage.add(STORE, data);
+            }
+            return;
+        }
+
+        for (const record of records) {
+            await Storage.remove(STORE, record.id);
+        }
+    }
+
+    function render(container) {
+        const start = UIUtils.today();
+        const end = _addDays(start, 30);
+
+        container.innerHTML = `
+            <div class="fade-in-up">
+                <div class="page-header">
+                    <div class="page-header-left">
+                        <h3>납품 계획</h3>
+                        <p>납품 스케쥴, 계획·납품·미납과 공정별 부족 현황을 관리합니다.</p>
+                    </div>
+                    <div class="page-actions">
+                        <button class="btn btn-primary" onclick="SalesDeliveryPlanModule.openAddModal()">
+                            <span class="material-symbols-outlined">grid_on</span> 계획 등록
+                        </button>
+                        <button class="btn btn-secondary" onclick="SalesDeliveryPlanModule.openSingleModal()">
+                            <span class="material-symbols-outlined">add</span> 단건 등록
+                        </button>
+                    </div>
+                </div>
+
+                <div class="filter-bar" style="flex-wrap:wrap; gap:10px;">
+                    <div class="form-group">
+                        <label class="form-label">시작일</label>
+                        <input type="date" class="form-input" id="sdpStart" value="${start}">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">종료일</label>
+                        <input type="date" class="form-input" id="sdpEnd" value="${end}">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">납품처</label>
+                        <input type="text" class="form-input" id="sdpCustomerFilter" placeholder="납품처 검색">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">차종/품명</label>
+                        <input type="text" class="form-input" id="sdpKeyword" placeholder="차종 또는 품명">
+                    </div>
+                    <div class="form-group" style="align-self:flex-end;">
+                        <button class="btn btn-outline" onclick="SalesDeliveryPlanModule.search()">
+                            <span class="material-symbols-outlined">search</span> 조회
+                        </button>
+                    </div>
+                </div>
+
+                <div class="stat-cards" id="sdpStats"></div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h4><span class="material-symbols-outlined">event_note</span> 납품 계획/부족 현황</h4>
+                        <span style="font-size:0.78rem;color:var(--text-muted);">
+                            녹색: 계획 대비 납품 완료 · 노랑: 미납 · 빨강: 부족
+                        </span>
+                    </div>
+                    <div class="card-body" style="padding:0;">
+                        <div id="sdpTableWrap" class="data-table-wrapper" style="overflow:auto;"></div>
+                    </div>
+                </div>
+            </div>
+        `;
+        search();
+    }
+
+    function search() {
+        const start = document.getElementById('sdpStart')?.value || UIUtils.today();
+        const end = document.getElementById('sdpEnd')?.value || _addDays(start, 30);
+        const customer = _norm(document.getElementById('sdpCustomerFilter')?.value);
+        const keyword = _norm(document.getElementById('sdpKeyword')?.value);
+        const days = _days(start, end);
+
+        let plans = Storage.getByDateRange(STORE, start, end);
+        if (customer) plans = plans.filter(p => _norm(p.customer).includes(customer));
+        if (keyword) {
+            plans = plans.filter(p =>
+                _norm(p.carModel).includes(keyword) ||
+                _norm(p.partName).includes(keyword) ||
+                _norm(p.color).includes(keyword)
+            );
+        }
+
+        const rows = _buildRows(plans, days, start, end);
+        _lastRows = rows;
+        _lastDays = days;
+        _renderStats(rows);
+        _renderTable(rows, days);
+    }
+
+    function _buildRows(plans, days, start, end) {
+        const deliveries = Storage.getByDateRange(DB.STORES.SALES_DELIVERY, start, end);
+        const map = {};
+
+        plans.forEach(plan => {
+            const key = [
+                plan.customer || '',
+                plan.carModel || '',
+                plan.partName || '',
+                plan.color || '',
+                plan.packUnit || ''
+            ].join('||');
+            if (!map[key]) {
+                const product = _findProduct(plan);
+                map[key] = {
+                    key,
+                    ids: [],
+                    customer: plan.customer || product?.customer || '',
+                    carModel: plan.carModel || product?.carModel || '',
+                    partName: plan.partName || '',
+                    color: plan.color || product?.color || '',
+                    packUnit: _packUnitFromProduct(product, plan.packUnit),
+                    product,
+                    processEnd: _endProcess(product),
+                    planByDate: {},
+                    deliveryByDate: {},
+                    totalPlan: 0,
+                    delivered: 0
+                };
+            }
+            const row = map[key];
+            row.ids.push(plan.id);
+            row.totalPlan += _num(plan.planQty);
+            row.planByDate[plan.date] = (row.planByDate[plan.date] || 0) + _num(plan.planQty);
+        });
+
+        Object.values(map).forEach(row => {
+            deliveries.filter(d => _matches(d, row)).forEach(d => {
+                const qty = _num(d.qty ?? d.quantity);
+                row.delivered += qty;
+                row.deliveryByDate[d.date] = (row.deliveryByDate[d.date] || 0) + qty;
+            });
+
+            row.remaining = Math.max(0, row.totalPlan - row.delivered);
+            const injection = _stockSummary(DB.STORES.INJECTION_INVENTORY, row);
+            const finished = _stockSummary(DB.STORES.PRODUCT_INVENTORY, row);
+            row.injectionStock = injection.balance;
+            row.injectionHasData = injection.hasData;
+            row.finishedStock = finished.balance;
+            row.finishedHasData = finished.hasData;
+            row.shippingStandby = _shippingStandbyQty(row);
+            row.laserStandby = /레이저|레이져/.test(row.processEnd) ? _laserStandbyQty(row) : 0;
+
+            const finishedAvailable = row.finishedStock + row.shippingStandby;
+            row.injectionShortage = row.injectionHasData ? Math.max(0, row.remaining - row.injectionStock) : 0;
+            row.paintShortage = /도장/.test(row.processEnd) ? Math.max(0, row.remaining - finishedAvailable) : 0;
+            row.laserShortage = /레이저|레이져/.test(row.processEnd)
+                ? Math.max(0, row.remaining - finishedAvailable - row.laserStandby)
+                : 0;
+            row.hasShortage = (row.injectionShortage + row.paintShortage + row.laserShortage) > 0;
+        });
+
+        return Object.values(map).sort((a, b) =>
+            a.customer.localeCompare(b.customer, 'ko') ||
+            a.carModel.localeCompare(b.carModel, 'ko') ||
+            a.partName.localeCompare(b.partName, 'ko')
+        );
+    }
+
+    function _renderStats(rows) {
+        const totalPlan = rows.reduce((s, r) => s + r.totalPlan, 0);
+        const delivered = rows.reduce((s, r) => s + r.delivered, 0);
+        const remaining = rows.reduce((s, r) => s + r.remaining, 0);
+        const shortageCount = rows.filter(r => r.hasShortage).length;
+        document.getElementById('sdpStats').innerHTML = `
+            <div class="stat-card blue">
+                <div class="stat-card-value">${_fmt(totalPlan)}</div>
+                <div class="stat-card-label">계획 수량</div>
+            </div>
+            <div class="stat-card green">
+                <div class="stat-card-value">${_fmt(delivered)}</div>
+                <div class="stat-card-label">납품 수량</div>
+            </div>
+            <div class="stat-card orange">
+                <div class="stat-card-value">${_fmt(remaining)}</div>
+                <div class="stat-card-label">미납 수량</div>
+            </div>
+            <div class="stat-card red">
+                <div class="stat-card-value">${_fmt(shortageCount)}</div>
+                <div class="stat-card-label">부족 품목</div>
+            </div>
+        `;
+    }
+
+    function _shortageCell(value, showDash = false) {
+        if (showDash) return '<span style="color:var(--text-muted);">-</span>';
+        const color = value > 0 ? 'var(--accent-red)' : 'var(--accent-green)';
+        return `<span style="font-weight:800;color:${color};">${value > 0 ? '-' : ''}${_fmt(value)}</span>`;
+    }
+
+    function _dayCell(row, day) {
+        const plan = row.planByDate[day] || 0;
+        const delivered = row.deliveryByDate[day] || 0;
+        const past = day < UIUtils.today();
+        const bg = !plan && !delivered
+            ? 'transparent'
+            : delivered >= plan && plan > 0
+            ? 'rgba(16,185,129,0.16)'
+            : past && plan > delivered
+                ? 'rgba(239,68,68,0.12)'
+                : 'rgba(245,158,11,0.14)';
+        return `
+            <td onclick="SalesDeliveryPlanModule.openCellModal('${_js(row.key)}','${day}')"
+                title="클릭해서 납품 계획 수량 입력"
+                style="min-width:76px;background:${bg};text-align:right;font-size:0.78rem;cursor:pointer;">
+                ${plan ? `<div style="font-weight:800;">${_fmt(plan)}</div>` : ''}
+                ${delivered ? `<div style="color:var(--accent-green);font-weight:700;">납 ${_fmt(delivered)}</div>` : ''}
+            </td>
+        `;
+    }
+
+    function _renderTable(rows, days) {
+        const wrap = document.getElementById('sdpTableWrap');
+        if (!rows.length) {
+            wrap.innerHTML = `<div style="padding:46px;text-align:center;color:var(--text-muted);">등록된 납품 계획이 없습니다.</div>`;
+            return;
+        }
+
+        wrap.innerHTML = `
+            <table class="data-table" style="min-width:${1180 + days.length * 78}px;">
+                <thead>
+                    <tr>
+                        <th>No</th>
+                        <th>차종</th>
+                        <th>품명</th>
+                        <th>컬러</th>
+                        <th>납품처</th>
+                        <th>포장단위</th>
+                        <th>계획</th>
+                        <th>납품</th>
+                        <th>미납</th>
+                        <th>사출부족</th>
+                        <th>도장부족</th>
+                        <th>레이져부족</th>
+                        <th>완제품</th>
+                        <th>레이져대기</th>
+                        <th>END</th>
+                        ${days.map(d => `<th style="min-width:76px;text-align:center;">${d.slice(5).replace('-', '/')}</th>`).join('')}
+                        <th>작업</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows.map((row, index) => `
+                        <tr style="${row.hasShortage ? 'background:rgba(239,68,68,0.035);' : ''}">
+                            <td>${index + 1}</td>
+                            <td>${_esc(row.carModel || '-')}</td>
+                            <td style="font-weight:800;">${_esc(row.partName || '-')}</td>
+                            <td>${_esc(row.color || '-')}</td>
+                            <td>${_esc(row.customer || '-')}</td>
+                            <td style="text-align:right;">${_esc(row.packUnit || '-')}</td>
+                            <td style="text-align:right;font-weight:800;">${_fmt(row.totalPlan)}</td>
+                            <td style="text-align:right;color:var(--accent-green);font-weight:800;">${_fmt(row.delivered)}</td>
+                            <td style="text-align:right;color:${row.remaining > 0 ? 'var(--accent-orange)' : 'var(--accent-green)'};font-weight:800;">${_fmt(row.remaining)}</td>
+                            <td style="text-align:right;">${_shortageCell(row.injectionShortage, !row.injectionHasData)}</td>
+                            <td style="text-align:right;">${_shortageCell(row.paintShortage, !/도장/.test(row.processEnd))}</td>
+                            <td style="text-align:right;">${_shortageCell(row.laserShortage, !/레이저|레이져/.test(row.processEnd))}</td>
+                            <td style="text-align:right;font-weight:700;">${row.finishedHasData ? _fmt(row.finishedStock) : '-'}</td>
+                            <td style="text-align:right;font-weight:700;">${/레이저|레이져/.test(row.processEnd) ? _fmt(row.laserStandby) : '-'}</td>
+                            <td><span class="badge badge-info">${_esc(row.processEnd)}</span></td>
+                            ${days.map(d => _dayCell(row, d)).join('')}
+                            <td>
+                                <button class="btn btn-sm btn-outline" onclick="SalesDeliveryPlanModule.editGroup('${_js(row.key)}')">수정</button>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    }
+
+    function _formHtml(data = {}) {
+        return `
+            ${_buildDatalists()}
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">납품계획일 <span style="color:var(--accent-red)">*</span></label>
+                    <input type="date" class="form-input" id="sdpDate" value="${_esc(data.date || UIUtils.today())}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">납품처</label>
+                    <input class="form-input" id="sdpCustomer" list="sdpCustomerList" value="${_esc(data.customer || '')}" placeholder="납품처">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">차종</label>
+                    <input class="form-input" id="sdpCarModel" list="sdpCarList" value="${_esc(data.carModel || '')}" placeholder="차종" oninput="SalesDeliveryPlanModule.fillFromProduct()">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">품명 <span style="color:var(--accent-red)">*</span></label>
+                    <input class="form-input" id="sdpPartName" list="sdpPartList" value="${_esc(data.partName || '')}" placeholder="품명" oninput="SalesDeliveryPlanModule.fillFromProduct()">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">컬러</label>
+                    <input class="form-input" id="sdpColor" list="sdpColorList" value="${_esc(data.color || '')}" placeholder="컬러">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">포장단위</label>
+                    <input class="form-input" id="sdpPackUnit" value="${_esc(data.packUnit || '')}" placeholder="예: 1,000">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">계획수량 <span style="color:var(--accent-red)">*</span></label>
+                    <input type="number" class="form-input" id="sdpPlanQty" min="1" value="${_esc(data.planQty || '')}" placeholder="">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">비고</label>
+                    <input class="form-input" id="sdpNote" value="${_esc(data.note || '')}" placeholder="특이사항">
+                </div>
+            </div>
+        `;
+    }
+
+    function fillFromProduct() {
+        const item = {
+            carModel: document.getElementById('sdpCarModel')?.value || '',
+            partName: document.getElementById('sdpPartName')?.value || '',
+            color: document.getElementById('sdpColor')?.value || ''
+        };
+        const product = _findProduct(item);
+        if (!product) return;
+        const customerEl = document.getElementById('sdpCustomer');
+        const colorEl = document.getElementById('sdpColor');
+        const packEl = document.getElementById('sdpPackUnit');
+        if (customerEl && !customerEl.value) customerEl.value = product.customer || '';
+        if (colorEl && !colorEl.value) colorEl.value = product.color || '';
+        if (packEl && !packEl.value) packEl.value = _packUnitFromProduct(product, '');
+    }
+
+    function _readForm() {
+        return {
+            date: document.getElementById('sdpDate')?.value || '',
+            customer: document.getElementById('sdpCustomer')?.value.trim() || '',
+            carModel: document.getElementById('sdpCarModel')?.value.trim() || '',
+            partName: document.getElementById('sdpPartName')?.value.trim() || '',
+            color: document.getElementById('sdpColor')?.value.trim() || '',
+            packUnit: document.getElementById('sdpPackUnit')?.value.trim() || '',
+            planQty: _num(document.getElementById('sdpPlanQty')?.value),
+            note: document.getElementById('sdpNote')?.value.trim() || ''
+        };
+    }
+
+    function _validate(data) {
+        if (!data.date) return '납품계획일을 입력하세요.';
+        if (!data.partName) return '품명을 입력하세요.';
+        if (data.planQty <= 0) return '계획수량을 입력하세요.';
+        return '';
+    }
+
+    function _gridEditorHtml() {
+        const products = _products();
+        const customers = [
+            ...products.map(p => p.customer),
+            ...(Storage.getAll(DB.STORES.SALES_DELIVERY) || []).map(d => d.customer),
+            ...(Storage.getAll(STORE) || []).map(d => d.customer)
+        ];
+        const start = document.getElementById('sdpStart')?.value || UIUtils.today();
+        const end = document.getElementById('sdpEnd')?.value || _addDays(start, 30);
+
+        return `
+            <div style="padding:6px 8px;border:1px solid var(--border-color);background:#fff;margin-bottom:8px;color:var(--text-secondary);font-size:11px;">
+                납품처와 차종을 선택한 뒤, 날짜 칸을 클릭해서 수량을 입력하세요. 기존 계획이 있는 칸은 수량이 표시되며, 빈칸으로 저장하면 해당 계획은 삭제됩니다.
+            </div>
+            <div class="filter-bar" style="flex-wrap:wrap;gap:6px;margin-bottom:8px;padding:8px;font-size:11px;">
+                <div class="form-group">
+                    <label class="form-label">시작일</label>
+                    <input type="date" class="form-input" id="sdpGridStart" value="${_esc(start)}" onchange="SalesDeliveryPlanModule.renderGridEditorRows()">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">종료일</label>
+                    <input type="date" class="form-input" id="sdpGridEnd" value="${_esc(end)}" onchange="SalesDeliveryPlanModule.renderGridEditorRows()">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">납품처</label>
+                    <select class="form-select" id="sdpGridCustomer" onchange="SalesDeliveryPlanModule.onGridCustomerChange()">
+                        ${_selectOptions(customers, '', '-- 납품처 선택 --')}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">차종</label>
+                    <select class="form-select" id="sdpGridCar" onchange="SalesDeliveryPlanModule.renderGridEditorRows()">
+                        ${_selectOptions(products.map(p => p.carModel), '', '-- 차종 선택 --')}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">품명 검색</label>
+                    <input class="form-input" id="sdpGridKeyword" placeholder="품명/컬러 검색" oninput="SalesDeliveryPlanModule.renderGridEditorRows()">
+                </div>
+                <div class="form-group" style="align-self:flex-end;">
+                    <button class="btn btn-outline" onclick="SalesDeliveryPlanModule.renderGridEditorRows()">
+                        <span class="material-symbols-outlined">refresh</span> 목록 적용
+                    </button>
+                </div>
+            </div>
+            <div id="sdpGridEditorBody" class="data-table-wrapper" style="max-height:calc(100vh - 210px);overflow:auto;border:1px solid #94a3b8;border-radius:0;"></div>
+        `;
+    }
+
+    function _gridInputStyle(qty) {
+        return [
+            'width:100%',
+            'height:17px',
+            'border:0',
+            'border-radius:0',
+            'text-align:right',
+            'font-weight:800',
+            'font-size:9px',
+            'line-height:17px',
+            'padding:0 2px',
+            qty > 0 ? 'background:rgba(59,130,246,0.08);color:var(--accent-blue)' : 'background:transparent;color:var(--text-primary)'
+        ].join(';');
+    }
+
+    function renderGridEditorRows() {
+        const start = document.getElementById('sdpGridStart')?.value || UIUtils.today();
+        const end = document.getElementById('sdpGridEnd')?.value || _addDays(start, 30);
+        const customer = document.getElementById('sdpGridCustomer')?.value || '';
+        const car = document.getElementById('sdpGridCar')?.value || '';
+        const keyword = _norm(document.getElementById('sdpGridKeyword')?.value || '');
+        const days = _days(start, end);
+        const dayInfos = days.map(_dayColumnInfo);
+
+        const products = _productsByCustomer(customer)
+            .filter(p => p.partName || p.name)
+            .filter(p => !car || _norm(p.carModel) === _norm(car))
+            .filter(p => !keyword ||
+                _norm(p.partName || p.name).includes(keyword) ||
+                _norm(p.color || p.paintColor).includes(keyword)
+            )
+            .sort((a, b) =>
+                String(a.customer || '').localeCompare(String(b.customer || ''), 'ko') ||
+                String(a.carModel || '').localeCompare(String(b.carModel || ''), 'ko') ||
+                String(a.partName || a.name || '').localeCompare(String(b.partName || b.name || ''), 'ko')
+            );
+
+        _gridRows = products.map(p => _productBase(p, customer));
+        const wrap = document.getElementById('sdpGridEditorBody');
+        if (!wrap) return;
+
+        if (!_gridRows.length) {
+            wrap.innerHTML = `<div style="padding:36px;text-align:center;color:var(--text-muted);">선택 조건에 맞는 제품이 없습니다.</div>`;
+            return;
+        }
+
+        wrap.innerHTML = `
+            <table class="data-table sdp-grid-entry-table" style="min-width:${360 + dayInfos.length * 44}px;">
+                <thead>
+                    <tr>
+                        <th style="width:28px;">No</th>
+                        <th class="sdp-customer-col" style="width:44px;">납품처</th>
+                        <th style="width:48px;">차종</th>
+                        <th style="width:132px;">품명</th>
+                        <th style="width:48px;">컬러</th>
+                        <th style="width:42px;">포장</th>
+                        ${dayInfos.map(info => `
+                            <th class="${info.className}" style="width:44px;">
+                                <span class="sdp-date-label">${info.dateLabel}</span>
+                                <span class="sdp-weekday-label">${info.weekday}</span>
+                            </th>
+                        `).join('')}
+                    </tr>
+                </thead>
+                <tbody>
+                    ${_gridRows.map((row, index) => `
+                        <tr>
+                            <td class="sdp-fixed-col" style="text-align:center;">${index + 1}</td>
+                            <td class="sdp-fixed-col sdp-customer-col" title="${_esc(row.customer || '-')}">${_esc(row.customer || '-')}</td>
+                            <td class="sdp-fixed-col">${_esc(row.carModel || '-')}</td>
+                            <td class="sdp-fixed-col" style="font-weight:800;">${_esc(row.partName || '-')}</td>
+                            <td class="sdp-fixed-col">${_esc(row.color || '-')}</td>
+                            <td class="sdp-fixed-col" style="text-align:right;">${_esc(row.packUnit || '-')}</td>
+                            ${days.map((day, dayIndex) => {
+                                const qty = _planQtyForCell(row, day);
+                                const info = dayInfos[dayIndex];
+                                return `
+                                    <td class="${info.className}" style="text-align:center;">
+                                        <input type="number" min="0" class="sdp-grid-cell"
+                                            data-row="${index}" data-date="${day}" value="${qty || ''}"
+                                            placeholder="" onclick="this.select()" onfocus="this.select()"
+                                            style="${_gridInputStyle(qty)}">
+                                    </td>
+                                `;
+                            }).join('')}
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    }
+
+    function openGridModal() {
+        UIUtils.showModal('납품 계획 등록', _gridEditorHtml(), `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="SalesDeliveryPlanModule.saveGridPlans()">저장</button>
+        `, 'xxl');
+        setTimeout(renderGridEditorRows, 0);
+    }
+
+    function openAddModal() {
+        openGridModal();
+    }
+
+    function openSingleModal() {
+        UIUtils.showModal('납품 계획 등록', _formHtml(), `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="SalesDeliveryPlanModule.saveNew()">등록</button>
+        `, 'lg');
+    }
+
+    async function saveGridPlans() {
+        const cells = Array.from(document.querySelectorAll('#sdpGridEditorBody .sdp-grid-cell'));
+        let changed = 0;
+
+        for (const cell of cells) {
+            const row = _gridRows[Number(cell.dataset.row)];
+            const date = cell.dataset.date;
+            if (!row || !date) continue;
+
+            const qty = _num(cell.value);
+            const existing = _recordsForCell(row, date);
+            if (qty > 0 || existing.length > 0) {
+                await _upsertPlanCell(row, date, qty);
+                changed += 1;
+            }
+        }
+
+        UIUtils.closeModal();
+        UIUtils.toast(`${changed}개 납품 계획 셀이 저장되었습니다.`, 'success');
+        search();
+    }
+
+    function openCellModal(rowKey, date) {
+        const row = _lastRows.find(r => r.key === rowKey);
+        if (!row) return;
+        const qty = _planQtyForCell(row, date);
+        UIUtils.showModal('납품 계획 수량 입력', `
+            <div style="display:grid;grid-template-columns:110px 1fr;gap:8px 12px;font-size:0.9rem;margin-bottom:14px;">
+                <div style="color:var(--text-muted);">납품일</div><div style="font-weight:800;">${_esc(date)}</div>
+                <div style="color:var(--text-muted);">납품처</div><div>${_esc(row.customer || '-')}</div>
+                <div style="color:var(--text-muted);">차종</div><div>${_esc(row.carModel || '-')}</div>
+                <div style="color:var(--text-muted);">품명</div><div style="font-weight:800;">${_esc(row.partName || '-')}</div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">계획수량</label>
+                <input type="number" min="0" class="form-input" id="sdpCellQty" value="${qty || ''}" placeholder="" style="text-align:right;font-weight:800;">
+            </div>
+            <div style="font-size:0.8rem;color:var(--text-muted);margin-top:8px;">0 또는 빈칸으로 저장하면 해당 날짜의 계획이 삭제됩니다.</div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="SalesDeliveryPlanModule.saveCellPlan('${_js(rowKey)}','${date}')">저장</button>
+        `, 'sm');
+        setTimeout(() => document.getElementById('sdpCellQty')?.select(), 0);
+    }
+
+    async function saveCellPlan(rowKey, date) {
+        const row = _lastRows.find(r => r.key === rowKey);
+        if (!row) return;
+        const qty = _num(document.getElementById('sdpCellQty')?.value);
+        await _upsertPlanCell(row, date, qty);
+        UIUtils.closeModal();
+        UIUtils.toast('납품 계획 수량이 저장되었습니다.', 'success');
+        search();
+    }
+
+    async function saveNew() {
+        const data = _readForm();
+        const message = _validate(data);
+        if (message) { UIUtils.toast(message, 'warning'); return; }
+        await Storage.add(STORE, data);
+        UIUtils.closeModal();
+        UIUtils.toast('납품 계획이 등록되었습니다.', 'success');
+        search();
+    }
+
+    function editGroup(key) {
+        const row = _lastRows.find(r => r.key === key);
+        if (!row || !row.ids.length) return;
+        const first = Storage.getById(STORE, row.ids[0]);
+        if (!first) return;
+        edit(first.id);
+    }
+
+    function edit(id) {
+        const data = Storage.getById(STORE, id);
+        if (!data) return;
+        UIUtils.showModal('납품 계획 수정', _formHtml(data), `
+            <button class="btn btn-danger" onclick="SalesDeliveryPlanModule.remove('${_js(id)}')">삭제</button>
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="SalesDeliveryPlanModule.saveEdit('${_js(id)}')">저장</button>
+        `, 'lg');
+    }
+
+    async function saveEdit(id) {
+        const data = _readForm();
+        const message = _validate(data);
+        if (message) { UIUtils.toast(message, 'warning'); return; }
+        await Storage.update(STORE, id, data);
+        UIUtils.closeModal();
+        UIUtils.toast('납품 계획이 수정되었습니다.', 'success');
+        search();
+    }
+
+    function remove(id) {
+        UIUtils.confirm('납품 계획을 삭제하시겠습니까?', async () => {
+            await Storage.remove(STORE, id);
+            UIUtils.closeModal();
+            UIUtils.toast('납품 계획이 삭제되었습니다.', 'success');
+            search();
+        });
+    }
+
+    function exportData() {
+        const headers = ['차종', '품명', '컬러', '납품처', '포장단위', '계획', '납품', '미납', '사출부족', '도장부족', '레이져부족', ..._lastDays];
+        const rows = _lastRows.map(r => [
+            r.carModel, r.partName, r.color, r.customer, r.packUnit,
+            r.totalPlan, r.delivered, r.remaining,
+            r.injectionShortage, r.paintShortage, r.laserShortage,
+            ..._lastDays.map(d => r.planByDate[d] || '')
+        ]);
+        Storage.exportToCSV(headers, rows, '납품계획');
+    }
+
+    return {
+        render,
+        search,
+        openAddModal,
+        openGridModal,
+        openSingleModal,
+        onGridCustomerChange,
+        renderGridEditorRows,
+        saveGridPlans,
+        openCellModal,
+        saveCellPlan,
+        saveNew,
+        edit,
+        editGroup,
+        saveEdit,
+        remove,
+        fillFromProduct,
+        exportData
+    };
+})();
+
+/**
  * 2) 매입관리 (Purchase Management)
  */
 var SalesPurchaseModule = (function() {

@@ -151,7 +151,7 @@ var JigLayoutModule = (function () {
             <button id="jlSnapBtn" class="btn btn-sm" onclick="JigLayoutModule.toggleSnap()"
                     title="박스 간 자석 정렬 (ON/OFF)"
                     style="background:#6366f1;color:#fff;border:2px solid #6366f1;gap:4px;">
-              <span class="material-symbols-outlined" style="font-size:15px;">magnet</span> 자석 ON
+              자석 ON
             </button>
             <div style="flex:1;min-width:0;"></div>
             <span id="jlDirtyBadge" style="display:none;font-size:0.77rem;
@@ -648,12 +648,12 @@ var JigLayoutModule = (function () {
                 btn.style.background    = '#6366f1';
                 btn.style.color         = '#fff';
                 btn.style.borderColor   = '#6366f1';
-                btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:15px;">magnet</span> 자석 ON';
+                btn.innerHTML = '자석 ON';
             } else {
                 btn.style.background    = 'transparent';
                 btn.style.color         = 'var(--text-secondary)';
                 btn.style.borderColor   = 'var(--border)';
-                btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:15px;">magnet</span> 자석 OFF';
+                btn.innerHTML = '자석 OFF';
             }
         }
     }

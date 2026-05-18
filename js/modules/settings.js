@@ -60,9 +60,14 @@ const SettingsModule = (function() {
                         onclick="SettingsModule.switchTab('backup')">
                         <span class="material-symbols-outlined">backup</span> 백업/복원
                     </button>
-                    <button class="tab-btn ${currentTab === 'system' ? 'active' : ''}" 
+                    <button class="tab-btn ${currentTab === 'system' ? 'active' : ''}"
                         onclick="SettingsModule.switchTab('system')">
                         <span class="material-symbols-outlined">settings</span> 시스템
+                    </button>
+                    <button class="tab-btn ${currentTab === 'users' ? 'active' : ''}"
+                        onclick="SettingsModule.switchTab('users')"
+                        style="${currentTab === 'users' ? '' : 'border-color:#7c3aed;color:#7c3aed;'}">
+                        <span class="material-symbols-outlined">manage_accounts</span> 사용자 관리
                     </button>
                 </div>
 
@@ -122,6 +127,9 @@ const SettingsModule = (function() {
                 break;
             case 'system':
                 renderSystemTab(el);
+                break;
+            case 'users':
+                renderUsersTab(el);
                 break;
         }
     }
@@ -6823,8 +6831,231 @@ const SettingsModule = (function() {
         SettingsModule.switchTab('products');
     }
 
+    /* ════════════════════════════════════════════════════════════
+       사용자 관리 탭
+    ════════════════════════════════════════════════════════════ */
+    const _esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+    function renderUsersTab(el) {
+        const users = AuthModule.getUsers();
+        const perms = AuthModule.getPermissions();
+        const roles = AuthModule.ROLES;
+        const pages = AuthModule.ALL_PAGES;
+
+        /* 역할 뱃지 */
+        const roleBadge = r => {
+            const role = roles.find(x => x.key === r);
+            return role
+                ? `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;background:${role.bg};color:${role.color};">${role.label}</span>`
+                : `<span style="color:var(--text-muted);">${r}</span>`;
+        };
+
+        /* 페이지 그룹별 권한 매트릭스 */
+        const groups = [...new Set(pages.map(p => p.group))];
+        const nonAdminRoles = roles.filter(r => r.key !== 'admin');
+
+        const matrixRows = groups.map(g => {
+            const gPages = pages.filter(p => p.group === g);
+            return `
+            <tr>
+                <td colspan="${nonAdminRoles.length + 1}" style="background:var(--bg-secondary);font-weight:700;font-size:0.8rem;padding:6px 10px;color:var(--text-secondary);">${g}</td>
+            </tr>
+            ${gPages.map(p => `
+            <tr>
+                <td style="padding:5px 10px;font-size:0.82rem;">${_esc(p.label)}</td>
+                ${nonAdminRoles.map(r => {
+                    const allowed = perms[r.key];
+                    const checked = allowed === null || (Array.isArray(allowed) && allowed.includes(p.id));
+                    return `<td style="text-align:center;padding:4px;">
+                        <input type="checkbox" data-role="${r.key}" data-page="${p.id}"
+                            ${checked ? 'checked' : ''}
+                            onchange="SettingsModule.onPermChange(this)"
+                            style="width:16px;height:16px;cursor:pointer;">
+                    </td>`;
+                }).join('')}
+            </tr>`).join('')}`;
+        }).join('');
+
+        el.innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start;">
+
+            <!-- 사용자 목록 -->
+            <div class="card">
+                <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+                    <h4><span class="material-symbols-outlined">group</span> 사용자 목록</h4>
+                    <button class="btn btn-primary btn-sm" onclick="SettingsModule.openUserModal()">
+                        <span class="material-symbols-outlined">person_add</span> 사용자 추가
+                    </button>
+                </div>
+                <div class="card-body" style="padding:0;">
+                    <table class="data-table">
+                        <thead><tr>
+                            <th>사용자 ID</th><th>이름</th><th>역할</th><th>상태</th><th>작업</th>
+                        </tr></thead>
+                        <tbody>
+                        ${users.length === 0
+                            ? `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">등록된 사용자가 없습니다.</td></tr>`
+                            : users.map(u => `
+                            <tr>
+                                <td style="font-weight:600;">${_esc(u.username)}</td>
+                                <td>${_esc(u.displayName)}</td>
+                                <td>${roleBadge(u.role)}</td>
+                                <td>
+                                    <span style="color:${u.active !== false ? '#16a34a' : '#dc2626'};font-size:12px;font-weight:600;">
+                                        ${u.active !== false ? '● 활성' : '○ 비활성'}
+                                    </span>
+                                </td>
+                                <td style="white-space:nowrap;">
+                                    <button class="btn btn-outline btn-sm" onclick="SettingsModule.openUserModal('${_esc(u.id)}')">수정</button>
+                                    <button class="btn btn-sm" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;"
+                                        onclick="SettingsModule.deleteUser('${_esc(u.id)}')">삭제</button>
+                                </td>
+                            </tr>`).join('')
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 역할별 접근 권한 -->
+            <div class="card">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">security</span> 역할별 접근 권한</h4>
+                </div>
+                <div class="card-body" style="padding:0;">
+                    <div style="overflow-x:auto;max-height:520px;overflow-y:auto;">
+                        <table class="data-table" style="font-size:0.82rem;">
+                            <thead style="position:sticky;top:0;z-index:1;">
+                                <tr>
+                                    <th style="min-width:130px;">페이지</th>
+                                    ${nonAdminRoles.map(r =>
+                                        `<th style="text-align:center;min-width:70px;color:${r.color};">${r.label}</th>`
+                                    ).join('')}
+                                </tr>
+                                <tr style="background:var(--bg-tertiary);">
+                                    <td style="padding:4px 10px;font-size:0.75rem;color:var(--text-muted);">관리자는 전체 접근</td>
+                                    ${nonAdminRoles.map(r =>
+                                        `<td style="text-align:center;padding:4px;">
+                                            <button class="btn btn-sm" style="font-size:10px;padding:2px 6px;"
+                                                onclick="SettingsModule.toggleAllPerm('${r.key}',true)">전체</button>
+                                            <button class="btn btn-sm" style="font-size:10px;padding:2px 6px;"
+                                                onclick="SettingsModule.toggleAllPerm('${r.key}',false)">해제</button>
+                                        </td>`
+                                    ).join('')}
+                                </tr>
+                            </thead>
+                            <tbody>${matrixRows}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    /* 사용자 추가/수정 모달 */
+    function openUserModal(userId) {
+        const users = AuthModule.getUsers();
+        const u = userId ? users.find(x => x.id === userId) : null;
+        const roles = AuthModule.ROLES;
+        UIUtils.showModal(
+            `<span class="material-symbols-outlined" style="vertical-align:middle;margin-right:6px;">manage_accounts</span> ${u ? '사용자 수정' : '사용자 추가'}`,
+            `<div class="form-group"><label class="form-label">사용자 ID</label>
+                <input type="text" class="form-input" id="umUsername" value="${_esc(u ? u.username : '')}" ${u ? 'readonly style="background:var(--bg-secondary);"' : ''} placeholder="영문/숫자">
+            </div>
+            <div class="form-group"><label class="form-label">이름</label>
+                <input type="text" class="form-input" id="umDisplayName" value="${_esc(u ? u.displayName : '')}" placeholder="표시 이름">
+            </div>
+            <div class="form-group"><label class="form-label">비밀번호 ${u ? '(변경 시만 입력)' : ''}</label>
+                <input type="password" class="form-input" id="umPassword" placeholder="${u ? '변경할 비밀번호' : '비밀번호'}">
+            </div>
+            <div class="form-group"><label class="form-label">역할</label>
+                <select class="form-select" id="umRole">
+                    ${roles.map(r => `<option value="${r.key}" ${u && u.role === r.key ? 'selected' : ''}>${r.label}</option>`).join('')}
+                </select>
+            </div>
+            <div class="form-group"><label class="form-label">상태</label>
+                <select class="form-select" id="umActive">
+                    <option value="true" ${!u || u.active !== false ? 'selected' : ''}>활성</option>
+                    <option value="false" ${u && u.active === false ? 'selected' : ''}>비활성</option>
+                </select>
+            </div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+             <button class="btn btn-primary" onclick="SettingsModule.saveUser('${userId || ''}')">저장</button>`
+        );
+    }
+
+    function saveUser(userId) {
+        const username    = (document.getElementById('umUsername')    || {}).value || '';
+        const displayName = (document.getElementById('umDisplayName') || {}).value || '';
+        const password    = (document.getElementById('umPassword')    || {}).value || '';
+        const role        = (document.getElementById('umRole')        || {}).value || 'operator';
+        const active      = (document.getElementById('umActive')      || {}).value !== 'false';
+
+        if (!username.trim()) { UIUtils.toast('사용자 ID를 입력하세요.', 'warning'); return; }
+        if (!displayName.trim()) { UIUtils.toast('이름을 입력하세요.', 'warning'); return; }
+
+        const users = AuthModule.getUsers();
+        if (userId) {
+            /* 수정 */
+            const idx = users.findIndex(u => u.id === userId);
+            if (idx < 0) return;
+            users[idx] = { ...users[idx], displayName: displayName.trim(), role, active,
+                           ...(password ? { password } : {}) };
+        } else {
+            /* 추가 */
+            if (!password) { UIUtils.toast('비밀번호를 입력하세요.', 'warning'); return; }
+            if (users.find(u => u.username === username.trim())) {
+                UIUtils.toast('이미 존재하는 사용자 ID입니다.', 'warning'); return;
+            }
+            users.push({ id: 'user_' + Date.now(), username: username.trim(),
+                         displayName: displayName.trim(), password, role, active, createdAt: new Date().toISOString() });
+        }
+        AuthModule.saveUsers(users);
+        UIUtils.closeModal();
+        UIUtils.toast('저장되었습니다.', 'success');
+        SettingsModule.switchTab('users');
+    }
+
+    function deleteUser(userId) {
+        const users = AuthModule.getUsers();
+        const target = users.find(u => u.id === userId);
+        if (!target) return;
+        const admins = users.filter(u => u.role === 'admin' && u.active !== false);
+        if (target.role === 'admin' && admins.length <= 1) {
+            UIUtils.toast('마지막 관리자 계정은 삭제할 수 없습니다.', 'warning'); return;
+        }
+        if (!confirm(`'${target.displayName}' 사용자를 삭제하시겠습니까?`)) return;
+        AuthModule.saveUsers(users.filter(u => u.id !== userId));
+        UIUtils.toast('삭제되었습니다.', 'success');
+        SettingsModule.switchTab('users');
+    }
+
+    /* 권한 체크박스 변경 */
+    function onPermChange(checkbox) {
+        const role   = checkbox.dataset.role;
+        const pageId = checkbox.dataset.page;
+        const perms  = AuthModule.getPermissions();
+        let allowed  = perms[role];
+        if (allowed === null) allowed = AuthModule.ALL_PAGES.map(p => p.id);
+        if (checkbox.checked) {
+            if (!allowed.includes(pageId)) allowed = [...allowed, pageId];
+        } else {
+            allowed = allowed.filter(id => id !== pageId);
+        }
+        perms[role] = allowed;
+        AuthModule.savePermissions(perms);
+    }
+
+    function toggleAllPerm(role, grant) {
+        const perms = AuthModule.getPermissions();
+        perms[role] = grant ? AuthModule.ALL_PAGES.map(p => p.id) : [];
+        AuthModule.savePermissions(perms);
+        SettingsModule.switchTab('users');
+    }
+
     return {
         render,
+        openUserModal, saveUser, deleteUser, onPermChange, toggleAllPerm,
         switchTab,
         openAddProductModal,
         saveProduct,

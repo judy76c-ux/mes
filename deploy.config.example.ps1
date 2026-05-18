@@ -20,4 +20,8 @@ $DeployConfig = @{
 
     # Remote directory where rollback copies are kept.
     BackupRoot = "/home/mes/mes-deploy-backups"
+    KeyPath = "$env:USERPROFILE\.ssh\id_ed25519"
+
+    # Keep only the newest deploy backups. Set 0 to disable cleanup.
+    KeepDeployBackups = 10
 }

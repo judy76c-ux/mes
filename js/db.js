@@ -5,7 +5,7 @@
 
 const DB = (function() {
     const DB_NAME = 'ProductionMES_DB';
-    const DB_VERSION = 34;
+    const DB_VERSION = 35;
     let db = null;
 
     // 스토어 이름 - 전체 공정에 대응
@@ -53,6 +53,7 @@ const DB = (function() {
 
         // 영업 관리
         SALES_DELIVERY: 'sales_delivery', // 납품 관리
+        SALES_DELIVERY_PLAN: 'sales_delivery_plan', // 납품 계획
         SALES_PURCHASE: 'sales_purchase', // 매입 관리
         SALES_OUTSOURCING: 'sales_outsourcing', // 외주처 관리
         JIG_USAGE_HISTORY: 'zig_usage_history', // Jig 사용 이력
@@ -264,6 +265,12 @@ const DB = (function() {
                         pattern: /^\d{4}-\d{2}-\d{2}$/, patternDesc: 'YYYY-MM-DD' },
             partName: { required: true,  type: 'string', label: '부품명'   },
             qty:      { required: true,  type: 'number', label: '납품수량', min: 1 }
+        },
+        [STORES.SALES_DELIVERY_PLAN]: {
+            date:     { required: true,  type: 'string', label: '납품계획일',
+                        pattern: /^\d{4}-\d{2}-\d{2}$/, patternDesc: 'YYYY-MM-DD' },
+            partName: { required: true,  type: 'string', label: '품명' },
+            planQty:  { required: true,  type: 'number', label: '계획수량', min: 1 }
         },
         [STORES.SALES_PURCHASE]: {
             date:     { required: true,  type: 'string', label: '매입일',
@@ -511,6 +518,7 @@ const DB = (function() {
         [STORES.PROD_LIMIT_SAMPLES]:         { remove: 'operator', clear: 'manager'},
         // ── 영업 관리 (재무 데이터) ────────────────────────────────
         [STORES.SALES_DELIVERY]:             { remove: 'manager',  clear: 'admin'  },
+        [STORES.SALES_DELIVERY_PLAN]:        { remove: 'manager',  clear: 'admin'  },
         [STORES.SALES_PURCHASE]:             { remove: 'manager',  clear: 'admin'  },
         [STORES.SALES_OUTSOURCING]:          { remove: 'manager',  clear: 'admin'  },
         // ── 설비관리 (v21) ─────────────────────────────────────────
@@ -887,6 +895,22 @@ const DB = (function() {
                         unique: false
                     });
                     store.createIndex('customer', 'customer', {
+                        unique: false
+                    });
+                }
+
+                // 납품 계획
+                if (!database.objectStoreNames.contains(STORES.SALES_DELIVERY_PLAN)) {
+                    const store = database.createObjectStore(STORES.SALES_DELIVERY_PLAN, {
+                        keyPath: 'id'
+                    });
+                    store.createIndex('date', 'date', {
+                        unique: false
+                    });
+                    store.createIndex('customer', 'customer', {
+                        unique: false
+                    });
+                    store.createIndex('partName', 'partName', {
                         unique: false
                     });
                 }

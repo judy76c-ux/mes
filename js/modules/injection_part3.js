@@ -8,10 +8,6 @@ var PaintIncomingInspectionModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>도료 수입검사</h3>
-                        <p>도료 수입검사 결과를 기록합니다.</p>
-                    </div>
                     <div class="page-actions">
                         <button class="btn btn-primary" onclick="PaintIncomingInspectionModule.openAddModal()">
                             <span class="material-symbols-outlined">add</span> 검사 등록

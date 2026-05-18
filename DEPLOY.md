@@ -40,13 +40,53 @@ Common web roots:
 /opt/mes
 ```
 
+If Apache uses `/opt/mes`, use:
+
+```powershell
+Copy-Item deploy.config.optmes.example.ps1 deploy.config.ps1
+```
+
+Then edit only `User` and `BackupRoot` if needed.
+
+## API server with systemd
+
+If port `3000` is not running, install the API server as a systemd service on Ubuntu.
+
+Copy `ubuntu/mes-api.service.example` to the server:
+
+```bash
+sudo cp /opt/mes/ubuntu/mes-api.service.example /etc/systemd/system/mes-api.service
+sudo systemctl daemon-reload
+cd /opt/mes/api-server
+npm install
+sudo systemctl enable --now mes-api
+sudo systemctl status mes-api
+```
+
+Check:
+
+```bash
+curl http://127.0.0.1:3000/health
+curl http://127.0.0.1:3000/api/backups
+```
+
 ## 3. Test package creation only
 
 ```powershell
 .\deploy.ps1 -DryRun
 ```
 
-## 4. Deploy
+## 4. Set up passwordless SSH
+
+Password-based SSH asks once per SSH/SCP connection. To avoid repeated password prompts, install a key once:
+
+```powershell
+.\setup-ssh-key.ps1
+```
+
+This asks for the Ubuntu password once, then future deploys should not ask for it.
+
+## 5. Deploy
 
 ```powershell
 .\deploy.ps1
@@ -65,7 +105,7 @@ The script uploads:
 
 Before overwriting remote files, it saves rollback copies under `BackupRoot`.
 
-## 5. Deploy without API restart
+## 6. Deploy without API restart
 
 ```powershell
 .\deploy.ps1 -SkipRestart

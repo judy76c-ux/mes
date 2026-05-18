@@ -246,6 +246,13 @@ var InjectionLayoutModule = (function () {
     let _snapEnabled = true;
     let _guideEls   = [];
 
+    /* ── 화살표 상태 ── */
+    let _arrows     = [];      // { id, x1,y1,x2,y2, color, strokeWidth, dashed, label }
+    let _selArrow   = null;    // 선택된 화살표 id
+    let _arrowMode  = false;   // 화살표 그리기 모드
+    let _arrowDraft = null;    // 드래그 중인 임시 화살표 { x1,y1,x2,y2 }
+    let _svgLayer   = null;    // SVG 오버레이 element
+
     /* ══════════════════════════════════════
        진입점
     ══════════════════════════════════════ */
@@ -283,7 +290,12 @@ var InjectionLayoutModule = (function () {
             <button id="ilSnapBtn" class="btn btn-sm" onclick="InjectionLayoutModule.toggleSnap()"
                     title="박스 간 자석 정렬 (ON/OFF)"
                     style="background:#6366f1;color:#fff;border:2px solid #6366f1;gap:4px;">
-              <span class="material-symbols-outlined" style="font-size:15px;">magnet</span> 자석 ON
+              자석 ON
+            </button>
+            <button id="ilArrowBtn" class="btn btn-sm" onclick="InjectionLayoutModule.toggleArrowMode()"
+                    title="동선 화살표 그리기 모드 (ON/OFF)"
+                    style="background:transparent;color:var(--text-secondary);border:2px solid var(--border);gap:4px;">
+              <span class="material-symbols-outlined" style="font-size:15px;">east</span> 화살표
             </button>
             <div style="flex:1;min-width:0;"></div>
             <span id="ilDirtyBadge" style="display:none;font-size:0.77rem;
@@ -293,6 +305,11 @@ var InjectionLayoutModule = (function () {
             </span>
             <button class="btn btn-primary btn-sm" onclick="InjectionLayoutModule.saveLayout()">
               <span class="material-symbols-outlined">save</span> 저장
+            </button>
+            <button class="btn btn-outline btn-sm" onclick="InjectionLayoutModule.printLayout()"
+                    style="color:#0891b2;border-color:#0891b2;gap:4px;"
+                    title="현장 게시용 A3 인쇄">
+              <span class="material-symbols-outlined" style="font-size:15px;">print</span> 인쇄
             </button>
           </div>
 
@@ -341,17 +358,29 @@ var InjectionLayoutModule = (function () {
         _canvas    = document.getElementById('ilCanvas');
         _propPanel = document.getElementById('ilPropPanel');
 
+        /* SVG 화살표 오버레이 */
+        _svgLayer = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        _svgLayer.style.cssText = `position:absolute;top:0;left:0;
+            width:${CANVAS_W}px;height:${CANVAS_H}px;
+            pointer-events:none;overflow:visible;z-index:20;`;
+        _canvas.appendChild(_svgLayer);
+
         const saved = await Storage.getConfigValue(CONFIG_KEY);
         if (saved && Array.isArray(saved.boxes) && saved.boxes.length) {
             _boxes  = saved.boxes;
+            _arrows = Array.isArray(saved.arrows) ? saved.arrows : [];
             _nextId = Math.max(..._boxes.map(b => parseInt(b.id.replace(/\D/g, '')) || 0)) + 1;
         } else {
-            _boxes = JSON.parse(JSON.stringify(DEFAULT_BOXES));
+            _boxes  = JSON.parse(JSON.stringify(DEFAULT_BOXES));
+            _arrows = [];
         }
 
-        _sel     = null;
-        _isDirty = false;
+        _sel       = null;
+        _selArrow  = null;
+        _arrowMode = false;
+        _isDirty   = false;
         _renderBoxes();
+        _renderArrows();
         _bindCanvasEvents();
     }
 
@@ -428,9 +457,21 @@ var InjectionLayoutModule = (function () {
         document.addEventListener('mousemove', _onMouseMove);
         document.addEventListener('mouseup',   _onMouseUp);
         _canvas.addEventListener('mousedown', e => {
+            if (_arrowMode) {
+                /* 화살표 그리기 시작 */
+                const rect = _canvas.getBoundingClientRect();
+                _arrowDraft = {
+                    x1: Math.round(e.clientX - rect.left),
+                    y1: Math.round(e.clientY - rect.top),
+                };
+                e.preventDefault();
+                return;
+            }
             if (e.target === _canvas) {
-                _sel = null;
+                _sel      = null;
+                _selArrow = null;
                 _renderBoxes();
+                _renderArrows();
                 _renderPropPanel();
             }
         });
@@ -438,10 +479,22 @@ var InjectionLayoutModule = (function () {
 
     function _onBoxMouseDown(e) {
         if (e.button !== 0) return;
+        if (_arrowMode) {
+            /* 박스 위에서도 화살표 시작 */
+            const rect = _canvas.getBoundingClientRect();
+            _arrowDraft = {
+                x1: Math.round(e.clientX - rect.left),
+                y1: Math.round(e.clientY - rect.top),
+            };
+            e.preventDefault(); e.stopPropagation();
+            return;
+        }
         if (e.target.hasAttribute('data-resize')) return;
         const boxId = this.id.replace('ilbox_', '');
-        _sel = boxId;
+        _sel      = boxId;
+        _selArrow = null;
         _renderBoxes();
+        _renderArrows();
         _renderPropPanel();
         const b = _getBox(boxId);
         _drag   = { id: boxId, ox: e.clientX, oy: e.clientY, bx: b.x, by: b.y };
@@ -459,6 +512,14 @@ var InjectionLayoutModule = (function () {
     }
 
     function _onMouseMove(e) {
+        /* 화살표 드래프트 미리보기 */
+        if (_arrowDraft) {
+            const rect = _canvas.getBoundingClientRect();
+            _arrowDraft.x2 = Math.round(e.clientX - rect.left);
+            _arrowDraft.y2 = Math.round(e.clientY - rect.top);
+            _renderArrows();
+            return;
+        }
         if (_drag) {
             const b    = _getBox(_drag.id);
             const rawX = _drag.bx + e.clientX - _drag.ox;
@@ -489,7 +550,32 @@ var InjectionLayoutModule = (function () {
         }
     }
 
-    function _onMouseUp() {
+    function _onMouseUp(e) {
+        /* 화살표 확정 */
+        if (_arrowDraft && _arrowDraft.x2 !== undefined) {
+            const dx = _arrowDraft.x2 - _arrowDraft.x1;
+            const dy = _arrowDraft.y2 - _arrowDraft.y1;
+            if (Math.hypot(dx, dy) > 15) {
+                const id = 'arr_' + (_nextId++);
+                const newArr = {
+                    id,
+                    x1: _arrowDraft.x1, y1: _arrowDraft.y1,
+                    x2: _arrowDraft.x2, y2: _arrowDraft.y2,
+                    color: '#1e293b',
+                    strokeWidth: 2,
+                    dashed: false,
+                    label: '',
+                };
+                _arrows.push(newArr);
+                _selArrow = id;
+                _sel      = null;
+                _markDirty();
+                _renderPropPanel();
+            }
+            _arrowDraft = null;
+            _renderArrows();
+            return;
+        }
         if (_drag || _resize) {
             _drag = null; _resize = null;
             _clearGuides();
@@ -547,6 +633,73 @@ var InjectionLayoutModule = (function () {
         const delBtn = document.getElementById('ilBtnDel');
         if (dupBtn) dupBtn.disabled = !b;
         if (delBtn) delBtn.disabled = !b;
+
+        /* ── 화살표 속성 패널 ── */
+        const a = (!b && _selArrow) ? _arrows.find(x => x.id === _selArrow) : null;
+        if (a) {
+            const ARROW_COLORS = [
+                '#1e293b','#dc2626','#2563eb','#16a34a',
+                '#ca8a04','#7c3aed','#0891b2','#ea580c',
+            ];
+            _propPanel.innerHTML = `
+            <div style="font-weight:600;font-size:0.88rem;margin-bottom:12px;">↗ 화살표 속성</div>
+
+            <label style="font-size:0.75rem;color:var(--text-secondary);">레이블 (선택)</label>
+            <input type="text" value="${_esc(a.label || '')}" class="form-input"
+                   style="width:100%;margin:3px 0 10px;font-size:0.82rem;"
+                   oninput="InjectionLayoutModule._arrowPropChange('label', this.value)"
+                   placeholder="예: 입고 동선">
+
+            <label style="font-size:0.75rem;color:var(--text-secondary);">색상</label>
+            <div style="display:flex;align-items:center;gap:6px;margin:4px 0 10px;flex-wrap:wrap;">
+              <input type="color" value="${a.color || '#1e293b'}"
+                     style="width:28px;height:28px;padding:0;border-radius:3px;cursor:pointer;"
+                     onchange="InjectionLayoutModule._arrowPropChange('color', this.value)">
+              ${ARROW_COLORS.map(c => `
+                <div onclick="InjectionLayoutModule._arrowPropChange('color','${c}')"
+                     style="width:22px;height:22px;border-radius:4px;background:${c};
+                            cursor:pointer;border:2px solid ${a.color===c?'#6366f1':'transparent'};"></div>
+              `).join('')}
+            </div>
+
+            <label style="font-size:0.75rem;color:var(--text-secondary);">굵기</label>
+            <div style="display:flex;align-items:center;gap:6px;margin:3px 0 10px;">
+              <input type="range" min="1" max="10" value="${a.strokeWidth || 2}"
+                     style="flex:1;"
+                     oninput="InjectionLayoutModule._arrowPropChange('strokeWidth',+this.value);
+                              this.nextElementSibling.textContent=this.value+'px'">
+              <span style="font-size:0.75rem;color:var(--text-muted);width:28px;">${a.strokeWidth || 2}px</span>
+            </div>
+
+            <label style="font-size:0.75rem;color:var(--text-secondary);">선 스타일</label>
+            <div style="display:flex;gap:5px;margin:3px 0 12px;">
+              <button class="btn btn-sm ${!a.dashed ? 'btn-primary' : 'btn-outline'}"
+                      style="flex:1;font-size:0.8rem;"
+                      onclick="InjectionLayoutModule._arrowPropChange('dashed',false)">━ 실선</button>
+              <button class="btn btn-sm ${a.dashed ? 'btn-primary' : 'btn-outline'}"
+                      style="flex:1;font-size:0.8rem;"
+                      onclick="InjectionLayoutModule._arrowPropChange('dashed',true)">┄ 점선</button>
+            </div>
+
+            <label style="font-size:0.75rem;color:var(--text-secondary);">화살표 방향</label>
+            <div style="display:flex;gap:5px;margin:3px 0 14px;">
+              <button class="btn btn-sm ${a.twoWay ? 'btn-outline' : 'btn-primary'}"
+                      style="flex:1;font-size:0.8rem;"
+                      onclick="InjectionLayoutModule._arrowPropChange('twoWay',false)">→ 단방향</button>
+              <button class="btn btn-sm ${a.twoWay ? 'btn-primary' : 'btn-outline'}"
+                      style="flex:1;font-size:0.8rem;"
+                      onclick="InjectionLayoutModule._arrowPropChange('twoWay',true)">↔ 양방향</button>
+            </div>
+
+            <div style="border-top:1px solid var(--border);padding-top:10px;">
+              <button class="btn btn-outline btn-sm"
+                      style="width:100%;color:var(--danger);border-color:var(--danger);font-size:0.82rem;"
+                      onclick="InjectionLayoutModule._delArrow()">
+                <span class="material-symbols-outlined" style="font-size:14px;">delete</span> 이 화살표 삭제
+              </button>
+            </div>`;
+            return;
+        }
 
         if (!b) {
             _propPanel.innerHTML = `<p style="color:var(--text-muted);font-size:0.83rem;
@@ -694,7 +847,7 @@ var InjectionLayoutModule = (function () {
     ══════════════════════════════════════ */
     async function saveLayout() {
         try {
-            await Storage.setConfigValue(CONFIG_KEY, { boxes: _boxes });
+            await Storage.setConfigValue(CONFIG_KEY, { boxes: _boxes, arrows: _arrows });
             _isDirty = false;
             const badge = document.getElementById('ilDirtyBadge');
             if (badge) badge.style.display = 'none';
@@ -706,11 +859,14 @@ var InjectionLayoutModule = (function () {
 
     function resetLayout() {
         if (!confirm('기본 레이아웃으로 초기화할까요?\n현재 배치가 모두 사라집니다.')) return;
-        _boxes  = JSON.parse(JSON.stringify(DEFAULT_BOXES));
-        _sel    = null;
-        _nextId = 300;
+        _boxes    = JSON.parse(JSON.stringify(DEFAULT_BOXES));
+        _arrows   = [];
+        _sel      = null;
+        _selArrow = null;
+        _nextId   = 300;
         _markDirty();
         _renderBoxes();
+        _renderArrows();
         _renderPropPanel();
         UIUtils.toast('기본 레이아웃으로 초기화했습니다.', 'info');
     }
@@ -720,6 +876,393 @@ var InjectionLayoutModule = (function () {
         document.removeEventListener('mousemove', _onMouseMove);
         document.removeEventListener('mouseup',   _onMouseUp);
         Router.navigate('injection-warehouse');
+    }
+
+    /* ══════════════════════════════════════
+       화살표 모드 토글
+    ══════════════════════════════════════ */
+    function toggleArrowMode() {
+        _arrowMode = !_arrowMode;
+        _arrowDraft = null;
+        const btn = document.getElementById('ilArrowBtn');
+        if (btn) {
+            if (_arrowMode) {
+                btn.style.background  = '#0891b2';
+                btn.style.color       = '#fff';
+                btn.style.borderColor = '#0891b2';
+                btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:15px;">east</span> 화살표 ON';
+                if (_canvas) _canvas.style.cursor = 'crosshair';
+            } else {
+                btn.style.background  = 'transparent';
+                btn.style.color       = 'var(--text-secondary)';
+                btn.style.borderColor = 'var(--border)';
+                btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:15px;">east</span> 화살표';
+                if (_canvas) _canvas.style.cursor = 'default';
+            }
+        }
+    }
+
+    /* ══════════════════════════════════════
+       화살표 SVG 렌더링
+    ══════════════════════════════════════ */
+    function _renderArrows() {
+        if (!_svgLayer) return;
+        _svgLayer.innerHTML = '';
+
+        /* defs — 마커(화살촉) */
+        const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+        const allArrows = _arrowDraft && _arrowDraft.x2 !== undefined
+            ? [..._arrows, { id:'__draft__', color:'#6366f1', twoWay:false }]
+            : _arrows;
+
+        allArrows.forEach(a => {
+            const color = a.id === '__draft__' ? '#6366f1' : (a.color || '#1e293b');
+            /* 끝 화살촉 */
+            const m = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+            m.setAttribute('id', 'ah_e_' + a.id);
+            m.setAttribute('markerWidth', '10'); m.setAttribute('markerHeight', '7');
+            m.setAttribute('refX', '9');         m.setAttribute('refY', '3.5');
+            m.setAttribute('orient', 'auto');
+            const p = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+            p.setAttribute('points', '0 0,10 3.5,0 7');
+            p.setAttribute('fill', color);
+            m.appendChild(p); defs.appendChild(m);
+
+            if (a.twoWay) {
+                /* 시작 화살촉 */
+                const m2 = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+                m2.setAttribute('id', 'ah_s_' + a.id);
+                m2.setAttribute('markerWidth', '10'); m2.setAttribute('markerHeight', '7');
+                m2.setAttribute('refX', '1');         m2.setAttribute('refY', '3.5');
+                m2.setAttribute('orient', 'auto-start-reverse');
+                const p2 = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+                p2.setAttribute('points', '0 0,10 3.5,0 7');
+                p2.setAttribute('fill', color);
+                m2.appendChild(p2); defs.appendChild(m2);
+            }
+        });
+        _svgLayer.appendChild(defs);
+
+        /* 실제 화살표 */
+        _arrows.forEach(a => {
+            const isSel  = (a.id === _selArrow);
+            const color  = a.color || '#1e293b';
+            const sw     = a.strokeWidth || 2;
+            const dash   = a.dashed ? '10,5' : '';
+
+            /* 선택 하이라이트 */
+            if (isSel) {
+                const hl = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                hl.setAttribute('x1', a.x1); hl.setAttribute('y1', a.y1);
+                hl.setAttribute('x2', a.x2); hl.setAttribute('y2', a.y2);
+                hl.setAttribute('stroke', 'rgba(99,102,241,0.3)');
+                hl.setAttribute('stroke-width', sw + 8);
+                hl.setAttribute('stroke-linecap', 'round');
+                _svgLayer.appendChild(hl);
+            }
+
+            /* 본 화살표 */
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', a.x1); line.setAttribute('y1', a.y1);
+            line.setAttribute('x2', a.x2); line.setAttribute('y2', a.y2);
+            line.setAttribute('stroke', isSel ? '#6366f1' : color);
+            line.setAttribute('stroke-width', sw);
+            line.setAttribute('stroke-linecap', 'round');
+            if (dash) line.setAttribute('stroke-dasharray', dash);
+            line.setAttribute('marker-end', `url(#ah_e_${a.id})`);
+            if (a.twoWay) line.setAttribute('marker-start', `url(#ah_s_${a.id})`);
+            _svgLayer.appendChild(line);
+
+            /* 히트 영역 (클릭 감지용 넓은 투명 선) */
+            const hit = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            hit.setAttribute('x1', a.x1); hit.setAttribute('y1', a.y1);
+            hit.setAttribute('x2', a.x2); hit.setAttribute('y2', a.y2);
+            hit.setAttribute('stroke', 'transparent');
+            hit.setAttribute('stroke-width', '14');
+            hit.style.cursor = 'pointer';
+            hit.style.pointerEvents = 'all';
+            hit.addEventListener('mousedown', ev => {
+                ev.stopPropagation();
+                _selArrow = a.id;
+                _sel      = null;
+                _renderBoxes();
+                _renderArrows();
+                _renderPropPanel();
+            });
+            _svgLayer.appendChild(hit);
+
+            /* 레이블 */
+            if (a.label) {
+                const mx = (a.x1 + a.x2) / 2;
+                const my = (a.y1 + a.y2) / 2;
+                const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                const tw = a.label.length * 7 + 8;
+                bg.setAttribute('x', mx - tw/2); bg.setAttribute('y', my - 17);
+                bg.setAttribute('width', tw);     bg.setAttribute('height', 14);
+                bg.setAttribute('rx', '3');
+                bg.setAttribute('fill', 'rgba(255,255,255,0.85)');
+                _svgLayer.appendChild(bg);
+
+                const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                txt.setAttribute('x', mx); txt.setAttribute('y', my - 6);
+                txt.setAttribute('text-anchor', 'middle');
+                txt.setAttribute('fill', isSel ? '#6366f1' : color);
+                txt.setAttribute('font-size', '11');
+                txt.setAttribute('font-weight', '700');
+                txt.setAttribute('pointer-events', 'none');
+                txt.textContent = a.label;
+                _svgLayer.appendChild(txt);
+            }
+        });
+
+        /* 드래프트 (그리는 중) */
+        if (_arrowDraft && _arrowDraft.x2 !== undefined) {
+            const dl = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            dl.setAttribute('x1', _arrowDraft.x1); dl.setAttribute('y1', _arrowDraft.y1);
+            dl.setAttribute('x2', _arrowDraft.x2); dl.setAttribute('y2', _arrowDraft.y2);
+            dl.setAttribute('stroke', '#6366f1');
+            dl.setAttribute('stroke-width', '2');
+            dl.setAttribute('stroke-dasharray', '8,4');
+            dl.setAttribute('stroke-linecap', 'round');
+            dl.setAttribute('marker-end', 'url(#ah_e___draft__)');
+            _svgLayer.appendChild(dl);
+        }
+    }
+
+    /* 화살표 속성 변경 */
+    function _arrowPropChange(key, value) {
+        const a = _arrows.find(x => x.id === _selArrow);
+        if (!a) return;
+        a[key] = value;
+        _markDirty();
+        _renderArrows();
+        if (key !== 'label') _renderPropPanel();
+    }
+
+    /* 화살표 삭제 */
+    function _delArrow() {
+        if (!_selArrow) return;
+        _arrows   = _arrows.filter(a => a.id !== _selArrow);
+        _selArrow = null;
+        _markDirty();
+        _renderArrows();
+        _renderPropPanel();
+    }
+
+    /* ══════════════════════════════════════
+       현장 게시용 인쇄
+    ══════════════════════════════════════ */
+    function printLayout() {
+        const pw = window.open('', '_blank', 'width=1000,height=800');
+        if (!pw) {
+            alert('팝업이 차단되었습니다.\n브라우저 팝업 허용 후 다시 시도하세요.');
+            return;
+        }
+
+        /* 박스 HTML 생성 */
+        const boxesHtml = _boxes.map(b => {
+            const border = (b.borderColor === 'transparent')
+                ? 'none'
+                : `2px solid ${b.borderColor || '#94a3b8'}`;
+            /* 줄바꿈 처리 */
+            const labelHtml = String(b.label || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\n/g, '<br>');
+            return `<div style="
+                position:absolute;
+                left:${b.x}px; top:${b.y}px;
+                width:${b.w}px; height:${b.h}px;
+                background:${b.color || '#fff'};
+                border:${border};
+                border-radius:4px;
+                display:flex; align-items:center; justify-content:center;
+                box-sizing:border-box;
+                overflow:hidden;">
+              <span style="
+                color:${b.textColor || '#1e293b'};
+                font-size:${b.fontSize || 11}px;
+                font-weight:${b.bold ? '700' : '500'};
+                text-align:center;
+                padding:2px 4px;
+                white-space:pre-line;
+                line-height:1.3;
+                word-break:break-word;
+                pointer-events:none;">${labelHtml}</span>
+            </div>`;
+        }).join('');
+
+        /* 화살표 SVG 문자열 생성 */
+        let arrowsSvg = '';
+        if (_arrows.length) {
+            let defs = '<defs>';
+            _arrows.forEach(a => {
+                const c = a.color || '#1e293b';
+                defs += `<marker id="pah_e_${a.id}" markerWidth="10" markerHeight="7"
+                                 refX="9" refY="3.5" orient="auto">
+                           <polygon points="0 0,10 3.5,0 7" fill="${c}"/>
+                         </marker>`;
+                if (a.twoWay) {
+                    defs += `<marker id="pah_s_${a.id}" markerWidth="10" markerHeight="7"
+                                     refX="1" refY="3.5" orient="auto-start-reverse">
+                               <polygon points="0 0,10 3.5,0 7" fill="${c}"/>
+                             </marker>`;
+                }
+            });
+            defs += '</defs>';
+            let lines = '';
+            _arrows.forEach(a => {
+                const c = a.color || '#1e293b';
+                const sw = a.strokeWidth || 2;
+                const dash = a.dashed ? 'stroke-dasharray="10,5"' : '';
+                const twoWay = a.twoWay ? `marker-start="url(#pah_s_${a.id})"` : '';
+                lines += `<line x1="${a.x1}" y1="${a.y1}" x2="${a.x2}" y2="${a.y2}"
+                                stroke="${c}" stroke-width="${sw}" stroke-linecap="round"
+                                ${dash} ${twoWay} marker-end="url(#pah_e_${a.id})"/>`;
+                if (a.label) {
+                    const mx = (a.x1+a.x2)/2, my = (a.y1+a.y2)/2;
+                    const tw = a.label.length*7+8;
+                    lines += `<rect x="${mx-tw/2}" y="${my-17}" width="${tw}" height="14" rx="3"
+                                    fill="rgba(255,255,255,0.85)"/>
+                              <text x="${mx}" y="${my-6}" text-anchor="middle"
+                                    fill="${c}" font-size="11" font-weight="700">${a.label}</text>`;
+                }
+            });
+            arrowsSvg = `<svg style="position:absolute;top:0;left:0;
+                width:${CANVAS_W}px;height:${CANVAS_H}px;overflow:visible;pointer-events:none;">
+                ${defs}${lines}</svg>`;
+        }
+
+        /* 현재 날짜 */
+        const today = new Date().toLocaleDateString('ko-KR',
+            { year:'numeric', month:'2-digit', day:'2-digit' });
+
+        pw.document.write(`<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>창고 레이아웃 — 현장 게시용</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family:'맑은 고딕','Malgun Gothic','Apple SD Gothic Neo',sans-serif;
+    background:#f1f5f9;
+    display:flex; flex-direction:column; align-items:center;
+    padding:10px 12px 16px;
+    min-height:100vh;
+  }
+
+  /* ── 인쇄 전용 ── */
+  @page { size: A3 landscape; margin: 8mm; }
+  @media print {
+    body { background:#fff; padding:0; justify-content:flex-start; }
+    .no-print { display:none !important; }
+    /* 인쇄 시 래퍼·캔버스를 원본 크기(1200×820)로 원복 */
+    #scaleWrap { width:${CANVAS_W}px !important; height:${CANVAS_H}px !important; }
+    #canvasInner { transform:none !important; }
+    .footer-bar { margin-top:6px; }
+  }
+
+  /* 상단 안내바 */
+  .top-bar {
+    width:100%; max-width:${CANVAS_W}px;
+    display:flex; justify-content:space-between; align-items:center;
+    margin-bottom:8px;
+    font-size:12px; color:#64748b;
+    background:#fff; border:1px solid #e2e8f0; border-radius:6px;
+    padding:6px 12px;
+  }
+
+  /* 스케일 래퍼 — JS가 스케일 후 크기로 설정 */
+  #scaleWrap {
+    position:relative;
+    overflow:hidden;           /* 잘림 방지 */
+    flex-shrink:0;
+    border-radius:8px;
+    box-shadow:0 4px 20px rgba(0,0,0,0.15);
+  }
+
+  /* 캔버스 원본 크기 — transform-origin top left 으로 축소 */
+  #canvasInner {
+    position:absolute; top:0; left:0;
+    width:${CANVAS_W}px; height:${CANVAS_H}px;
+    transform-origin:top left;
+    background:#c8d3dc;
+    background-image:
+      linear-gradient(rgba(0,0,0,0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,0,0,0.04) 1px, transparent 1px);
+    background-size:50px 50px;
+  }
+
+  /* 하단 바 */
+  .footer-bar {
+    width:100%; max-width:${CANVAS_W}px;
+    display:flex; justify-content:space-between; align-items:center;
+    margin-top:10px;
+    font-size:11px; color:#94a3b8;
+  }
+  .btn-print {
+    padding:9px 32px;
+    background:#0891b2; color:#fff; border:none; border-radius:6px;
+    font-size:14px; font-weight:700; cursor:pointer;
+    box-shadow:0 2px 8px rgba(8,145,178,0.3);
+    letter-spacing:0.3px;
+  }
+  .btn-print:hover { background:#0e7490; }
+</style>
+</head>
+<body>
+
+  <div class="top-bar no-print">
+    <span>🖨&nbsp; 인쇄 버튼을 누르거나 <kbd>Ctrl+P</kbd> 를 사용하세요</span>
+    <span>${today} 출력</span>
+  </div>
+
+  <!-- 래퍼: JS가 스케일된 크기로 width/height 설정 -->
+  <div id="scaleWrap">
+    <div id="canvasInner">${boxesHtml}${arrowsSvg}</div>
+  </div>
+
+  <div class="footer-bar">
+    <span>1층 소재 / 완제품 보관창고 &nbsp;LAY-OUT</span>
+    <button class="btn-print no-print" onclick="window.print()">
+      🖨 &nbsp;인쇄 / PDF 저장
+    </button>
+    <span>출력일: ${today}</span>
+  </div>
+
+<script>
+(function() {
+  var CW = ${CANVAS_W}, CH = ${CANVAS_H};
+  var PAD = 24;   /* 좌우 패딩 합계 */
+  var TOP = 100;  /* 상단바 + 여백 */
+  var BOT = 60;   /* 하단바 + 여백 */
+
+  function applyScale() {
+    var availW = window.innerWidth  - PAD;
+    var availH = window.innerHeight - TOP - BOT;
+    /* 가로·세로 모두 맞아야 하므로 작은 쪽 기준 */
+    var scale  = Math.min(availW / CW, availH / CH, 1);
+
+    var wrap  = document.getElementById('scaleWrap');
+    var inner = document.getElementById('canvasInner');
+
+    /* 래퍼를 스케일된 크기로 확정 → overflow:hidden 으로 깔끔하게 */
+    wrap.style.width  = Math.round(CW * scale) + 'px';
+    wrap.style.height = Math.round(CH * scale) + 'px';
+
+    /* 내부 캔버스(원본 크기)를 해당 비율로 축소 */
+    inner.style.transform = 'scale(' + scale + ')';
+  }
+
+  applyScale();
+  window.addEventListener('resize', applyScale);
+})();
+<\/script>
+</body>
+</html>`);
+        pw.document.close();
     }
 
     /* ══════════════════════════════════════
@@ -767,12 +1310,12 @@ var InjectionLayoutModule = (function () {
                 btn.style.background  = '#6366f1';
                 btn.style.color       = '#fff';
                 btn.style.borderColor = '#6366f1';
-                btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:15px;">magnet</span> 자석 ON';
+                btn.innerHTML = '자석 ON';
             } else {
                 btn.style.background  = 'transparent';
                 btn.style.color       = 'var(--text-secondary)';
                 btn.style.borderColor = 'var(--border)';
-                btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:15px;">magnet</span> 자석 OFF';
+                btn.innerHTML = '자석 OFF';
             }
         }
     }
@@ -928,6 +1471,11 @@ var InjectionLayoutModule = (function () {
         if (badge) badge.style.display = '';
     }
 
-    return { init, render, addBox, dupBox, delBox, saveLayout, resetLayout, goBack, _propChange, toggleSnap };
+    return {
+        init, render, addBox, dupBox, delBox,
+        saveLayout, resetLayout, goBack, printLayout,
+        _propChange, toggleSnap,
+        toggleArrowMode, _arrowPropChange, _delArrow,
+    };
 
 })();

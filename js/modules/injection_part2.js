@@ -8,10 +8,6 @@ var InjectionWarehouseModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>사출창고 (입출고 재고현황)</h3>
-                        <p>사출 자재의 입출고 및 재고 현황을 관리합니다.</p>
-                    </div>
                     <div class="page-actions">
                         <button class="btn btn-outline" onclick="Router.navigate('injection-layout')"
                             title="1층 소재/완제품 보관창고 배치 레이아웃을 시각적으로 편집합니다.">

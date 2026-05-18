@@ -1,0 +1,20 @@
+[Unit]
+Description=MES API Server
+After=network.target mariadb.service mysql.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/mes/api-server
+ExecStart=/usr/bin/node /opt/mes/api-server/server.js
+Restart=always
+RestartSec=5
+Environment=PORT=3000
+Environment=BACKUP_DIR=/opt/mes/api-server/backups
+Environment=DB_HOST=localhost
+Environment=DB_PORT=3306
+Environment=DB_USER=mes_user
+Environment=DB_PASSWORD=Mes_Password123!
+Environment=DB_NAME=mes_db
+
+[Install]
+WantedBy=multi-user.target

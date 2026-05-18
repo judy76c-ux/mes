@@ -1535,6 +1535,9 @@ var LaserStandbyModule = (function() {
                         <button class="btn btn-outline" onclick="LaserStandbyModule.refresh()">
                             <span class="material-symbols-outlined">refresh</span> 새로고침
                         </button>
+                        <button class="btn btn-secondary" onclick="LaserStandbyModule.openLayout()">
+                            <span class="material-symbols-outlined">map</span> 레이아웃 보기/편집
+                        </button>
                     </div>
                 </div>
 
@@ -1946,10 +1949,15 @@ var LaserStandbyModule = (function() {
         UIUtils.toast('재고 현황을 새로고침했습니다.', 'info');
     }
 
+    function openLayout() {
+        Router.navigate('laser-layout');
+    }
+
     return {
         init   : render,
         render,
         refresh,
+        openLayout,
         _showItemDetail
     };
 })();
