@@ -14,10 +14,15 @@ const ApiClient = (function() {
 
     if (typeof location !== 'undefined' && location.protocol && location.hostname) {
       if (location.protocol === 'http:' || location.protocol === 'https:') {
-        return `${location.protocol}//${location.hostname}:3000`;
+        const h = location.hostname;
+        // localhost / 로컬 개발 서버 → NAS API 직접 연결
+        if (h === 'localhost' || h === '127.0.0.1') {
+          return 'http://192.168.10.15:3000';
+        }
+        return `${location.protocol}//${h}:3000`;
       }
     }
-    return 'http://192.168.10.15:3000';
+    return 'http://192.168.10.15:3000'; // file:// 포함 기타
   }
 
   const API_BASE = resolveApiBase();
