@@ -27,15 +27,22 @@ const Router = (function() {
         'product-warehouse': '제품 창고 (재고관리)',
         'product-outgoing': '제품 출고',
         'sales-delivery': '납품관리',
-        'sales-outsourcing': '외주처관리',
+        'sales-delivery-plan': '납품 계획',
         'prod-standards': '제조 관리 표준',
         'prod-conditions': '작업조건 관리',
         'paint-mix': '도료 배합 관리',
         'prod-quality': '초중종물 관리',
         'prod-equipment': '설비관리',
         'settings': '관리 / 설정',
-        'incoming-overview': '수입검사 현황',
-        'warehouse-overview': '자재 창고 현황'
+        'incoming-overview': '수입검사',
+        'warehouse-overview': '자재 창고'
+    };
+
+    const PAGE_TITLE_HTML = {
+        'injection-incoming': '<button class="topbar-back-link" onclick="Router.navigate(\'incoming-overview\')"><span class="material-symbols-outlined">arrow_back</span> 수입검사로 돌아가기</button>',
+        'paint-incoming-inspection': '<button class="topbar-back-link" onclick="Router.navigate(\'incoming-overview\')"><span class="material-symbols-outlined">arrow_back</span> 수입검사로 돌아가기</button>',
+        'injection-warehouse': '<button class="topbar-back-link" onclick="Router.navigate(\'warehouse-overview\')"><span class="material-symbols-outlined">arrow_back</span> 자재 창고로 돌아가기</button>',
+        'paint-inventory': '<button class="topbar-back-link" onclick="Router.navigate(\'warehouse-overview\')"><span class="material-symbols-outlined">arrow_back</span> 자재 창고로 돌아가기</button>'
     };
 
     function init() {
@@ -76,7 +83,7 @@ const Router = (function() {
             item.classList.toggle('active', item.dataset.page === pageName);
         });
 
-        document.getElementById('pageTitle').textContent = PAGE_TITLES[pageName] || pageName;
+        document.getElementById('pageTitle').innerHTML = PAGE_TITLE_HTML[pageName] || PAGE_TITLES[pageName] || pageName;
         document.getElementById('sidebar').classList.remove('mobile-open');
 
         renderModule(pageName);

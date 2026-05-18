@@ -158,7 +158,7 @@ const App = (function() {
         Router.registerModule('shipping-inspection', ShippingInspectionModule);
         Router.registerModule('product-warehouse', ProductWarehouseModule);
         Router.registerModule('sales-delivery', SalesDeliveryModule);
-        Router.registerModule('sales-outsourcing', SalesOutsourcingModule);
+        Router.registerModule('sales-delivery-plan', SalesDeliveryPlanModule);
         Router.registerModule('jig-management', JigModule);
         Router.registerModule('jig-layout', JigLayoutModule);
         Router.registerModule('five-s', FiveSModule);

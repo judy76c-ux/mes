@@ -285,17 +285,17 @@ const AuthModule = (function () {
         const role = ROLES.find(r => r.key === (user ? user.role : ''));
         if (user) {
             badge.innerHTML = `
-                <div style="display:flex;align-items:center;gap:6px;">
-                    <span class="material-symbols-outlined" style="font-size:20px;color:var(--text-secondary);">person</span>
-                    <div style="line-height:1.2;">
-                        <div style="font-size:12px;font-weight:700;">${user.displayName}</div>
-                        <div style="font-size:10px;color:${role ? role.color : 'var(--text-muted)'};">${role ? role.label : ''}</div>
-                    </div>
-                    <button onclick="AuthModule.logout()" title="로그아웃"
-                        style="background:none;border:none;cursor:pointer;padding:3px;color:var(--text-muted);display:flex;align-items:center;">
-                        <span class="material-symbols-outlined" style="font-size:18px;">logout</span>
-                    </button>
-                </div>`;
+                <div class="topbar-user-icon">
+                    <span class="material-symbols-outlined" style="font-size:20px;">person</span>
+                </div>
+                <div style="line-height:1.3;margin:0 6px;white-space:nowrap;">
+                    <div style="font-size:12px;font-weight:700;color:var(--text-primary);">${user.displayName}</div>
+                    <div style="font-size:10px;color:${role ? role.color : 'var(--text-muted)'};">${role ? role.label : ''}</div>
+                </div>
+                <button onclick="AuthModule.logout()" title="로그아웃"
+                    style="background:none;border:none;cursor:pointer;padding:3px;color:var(--text-muted);display:flex;align-items:center;flex-shrink:0;">
+                    <span class="material-symbols-outlined" style="font-size:18px;">logout</span>
+                </button>`;
         } else {
             badge.innerHTML = `
                 <button onclick="AuthModule.showLoginModal()" title="로그인"

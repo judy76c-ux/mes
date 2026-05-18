@@ -298,6 +298,29 @@ body {
     color: var(--text-primary);
 }
 
+.topbar-back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 0;
+    background: transparent;
+    color: var(--accent-blue);
+    font-size: 1.05rem;
+    font-weight: 800;
+    cursor: pointer;
+    padding: 0;
+}
+
+.topbar-back-link:hover {
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 5px;
+}
+
+.topbar-back-link .material-symbols-outlined {
+    font-size: 1.05rem;
+}
+
 .mobile-menu-btn {
     display: none;
     background: none;
@@ -321,6 +344,13 @@ body {
 }
 
 .topbar-user {
+    display: flex;
+    align-items: center;
+    color: white;
+    min-width: 0;
+}
+
+.topbar-user-icon {
     width: 36px;
     height: 36px;
     border-radius: 50%;
@@ -328,7 +358,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: white;
+    flex-shrink: 0;
 }
 
 .topbar-user .material-symbols-outlined {
