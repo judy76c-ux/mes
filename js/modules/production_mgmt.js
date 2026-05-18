@@ -419,8 +419,14 @@ var ProdStandardsModule = (function() {
         'mixing': {
             label: '배합 기준서',
             icon: 'science',
-            desc: '도료 배합 관리에서 이동된 배합기준표입니다.',
+            desc: '제품별 도료 배합 기준과 적용 조건을 관리합니다.',
             columns: []  /* 전용 렌더러 사용 — PaintMixModule.renderFormulaAsStandard() */
+        },
+        'paint-usage': {
+            label: '사용량 기준표',
+            icon: 'straighten',
+            desc: '제품별 도료 사용량 기준표입니다.',
+            columns: []  /* 전용 렌더러 사용 — PaintMixModule.renderUsageAsStandard() */
         },
     };
 
@@ -1084,8 +1090,9 @@ var ProdStandardsModule = (function() {
         const el = document.getElementById('psParamContent');
         if (!el) return;
 
-        /* 배합 기준서 — PaintMixModule의 renderFormulaAsStandard 위임 */
+        /* 배합/사용 기준표 — PaintMixModule 전용 렌더러 위임 */
         if (_curDocType === 'mixing') { PaintMixModule.renderFormulaAsStandard(el); return; }
+        if (_curDocType === 'paint-usage') { PaintMixModule.renderUsageAsStandard(el); return; }
 
         const cfg = STANDARD_DOC_TYPES[_curDocType];
         if (!cfg) return;
@@ -6073,7 +6080,7 @@ var ProdConditionsModule = (function() {
 })();
 
 /**
- * 2) 도료 배합 관리 (PaintMixModule)
+ * 2) 배합/사용 이력 (PaintMixModule)
  */
 var PaintMixModule = (function() {
     const STORE           = DB.STORES.PROD_CONDITIONS;
@@ -6088,7 +6095,7 @@ var PaintMixModule = (function() {
     const _esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const _js  = s => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ');
 
-    let _curTab = 'usage';
+    let _curTab = 'history';
 
     /* ─── 탭 전환 ─────────────────────────────────────────────── */
     function render(container) {
@@ -6096,30 +6103,18 @@ var PaintMixModule = (function() {
         <div class="fade-in-up">
             <div class="page-header">
                 <div class="page-header-left">
-                    <h3>도료 배합 관리</h3>
-                    <p>제품별 도료 사용량 기준, 배합 비율 기준, 배합/사용 이력을 통합 관리합니다.</p>
+                    <h3>배합/사용 이력</h3>
+                    <p>도장 작업별 도료 LOT 사용량과 배합 이력을 관리합니다.</p>
                 </div>
                 <div class="page-actions" id="pmixPageActions"></div>
             </div>
 
-            <div class="jig-line-tabs" style="margin-bottom:16px;">
-                <button id="pmixTabBtn_usage"   class="btn btn-primary btn-sm"
-                        onclick="PaintMixModule.switchTab('usage')">
-                    <span class="material-symbols-outlined" style="font-size:15px;">straighten</span> 사용량 기준표
-                </button>
-                <button id="pmixTabBtn_history" class="btn btn-outline btn-sm"
-                        onclick="PaintMixModule.switchTab('history')">
-                    <span class="material-symbols-outlined" style="font-size:15px;">receipt_long</span> 배합/사용 이력
-                </button>
-            </div>
-
-            <div id="pmixPane_usage"></div>
             <div id="pmixPane_formula" style="display:none;"></div>
-            <div id="pmixPane_history" style="display:none;"></div>
+            <div id="pmixPane_history"></div>
         </div>`;
 
-        _curTab = 'usage';
-        switchTab('usage');
+        _curTab = 'history';
+        renderHistoryTab();
     }
 
     function switchTab(tab) {
@@ -8232,6 +8227,15 @@ var PaintMixModule = (function() {
         renderFormulaTab();
     }
 
+    /* 제조관리표준 > 사용량 기준표 탭에서 호출 */
+    function renderUsageAsStandard(targetEl) {
+        if (!targetEl) return;
+        targetEl.innerHTML = `
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px;" id="pmixPageActions"></div>
+            <div id="pmixPane_usage"></div>`;
+        renderUsageTab();
+    }
+
     return {
         render, switchTab,
         filterUsage, openUsageModal, saveUsage, removeUsage, exportUsage,
@@ -8242,7 +8246,7 @@ var PaintMixModule = (function() {
         openFromWork, openManualModal,
         renderResidualStock, openResidualAdjust, saveResidualAdjust,
         saveNew, edit, saveEdit, remove, exportData,
-        renderFormulaAsStandard
+        renderFormulaAsStandard, renderUsageAsStandard
     };
 })();
 

@@ -1576,6 +1576,25 @@ var InjectionWarehouseModule = (function() {
                 </div>`).join('');
         }
 
+        // 미입력 실적 — 클릭 시 생산계획 페이지로 이동
+        function _clickableRows(plans, bgColor) {
+            if (!plans.length) return `<div style="font-size:0.75rem;color:var(--text-muted);padding:4px 0;">해당 없음</div>`;
+            return plans.map(p => `
+                <div data-plan-date="${p.date || ''}" data-plan-id="${p.id || ''}"
+                     style="display:flex;gap:6px;align-items:center;font-size:0.75rem;padding:4px 6px;
+                            border-bottom:1px solid var(--border-color);cursor:pointer;border-radius:4px;
+                            transition:background 0.15s;"
+                     onmouseover="this.style.background='rgba(234,88,12,0.1)'"
+                     onmouseout="this.style.background=''"
+                     onclick="InjectionWarehouseModule._goToPlan(this)">
+                    <span class="material-symbols-outlined" style="font-size:13px;color:#ea580c;flex-shrink:0;">open_in_new</span>
+                    <span style="color:var(--text-muted);min-width:78px;flex-shrink:0;">${p.date || '-'}</span>
+                    <span style="flex:1;color:var(--text-secondary);">${p.line || '-'}</span>
+                    <span style="font-weight:700;white-space:nowrap;">${UIUtils.formatNumber(p.planQty)} 개</span>
+                    <span style="font-size:0.68rem;background:${bgColor};border-radius:3px;padding:0 4px;white-space:nowrap;">${p.status}</span>
+                </div>`).join('');
+        }
+
         const popup = document.createElement('div');
         popup.id = 'injReserveDetailPopup';
         popup.dataset.key = `${partName}|${carModel}|${color}`;
@@ -1639,12 +1658,12 @@ var InjectionWarehouseModule = (function() {
                     미입력 실적 (${inProgressPlans.length}건)
                 </div>
                 <div style="max-height:90px;overflow-y:auto;">
-                    ${_rows(inProgressPlans, 'rgba(234,88,12,0.12)')}
+                    ${_clickableRows(inProgressPlans, 'rgba(234,88,12,0.12)')}
                 </div>
             </div>` : ''}
 
             <div style="margin-top:8px;text-align:center;font-size:0.68rem;color:var(--text-muted);">
-                클릭하면 닫힙니다
+                미입력 실적 클릭 시 해당 계획으로 이동
             </div>`;
 
         // 위치 지정 (화면 경계 보정)
@@ -1660,12 +1679,24 @@ var InjectionWarehouseModule = (function() {
         popup.style.left = left + 'px';
         popup.style.top  = top  + 'px';
 
-        // 외부 클릭 / 팝업 클릭 시 닫기
+        // 외부 클릭 시 닫기 (팝업 내부 클릭은 닫지 않음 — 미입력 실적 행 클릭 허용)
         const _close = (e) => {
             if (!popup.contains(e.target)) { popup.remove(); document.removeEventListener('click', _close); }
         };
         setTimeout(() => document.addEventListener('click', _close), 10);
-        popup.addEventListener('click', () => { popup.remove(); document.removeEventListener('click', _close); });
+    }
+
+    // 미입력 실적 행 클릭 → 생산계획 페이지로 이동
+    function _goToPlan(rowEl) {
+        const date = rowEl.dataset.planDate;
+        const popup = document.getElementById('injReserveDetailPopup');
+        if (popup) popup.remove();
+        if (typeof Router !== 'undefined') {
+            Router.navigate('production-plan');
+            if (date && typeof ProductionPlanModule !== 'undefined' && ProductionPlanModule.selectDate) {
+                setTimeout(() => ProductionPlanModule.selectDate(date), 300);
+            }
+        }
     }
 
     return {
@@ -1696,6 +1727,7 @@ var InjectionWarehouseModule = (function() {
         onLotInput,
         showStockModal,
         filterStock,
-        showReserveDetailPopup
+        showReserveDetailPopup,
+        _goToPlan
     };
 })();

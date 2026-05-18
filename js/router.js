@@ -30,7 +30,7 @@ const Router = (function() {
         'sales-delivery-plan': '납품 계획',
         'prod-standards': '제조 관리 표준',
         'prod-conditions': '작업조건 관리',
-        'paint-mix': '도료 배합 관리',
+        'paint-mix': '배합/사용 이력',
         'prod-quality': '초중종물 관리',
         'prod-equipment': '설비관리',
         'settings': '관리 / 설정',

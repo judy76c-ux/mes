@@ -2114,7 +2114,7 @@ const ProductionPlanModule = (function() {
             if (!_colorOk(p.color)) return;
 
             const qty  = Number(p.planQty) || 0;
-            const info = { date: p.date || '', partName: p.partName || '', color: p.color || '',
+            const info = { id: p.id, date: p.date || '', partName: p.partName || '', color: p.color || '',
                            planQty: qty, status: p.status || '', line: p.line || '' };
             if (p.status === '대기') {
                 pendingPlans.push(info);
