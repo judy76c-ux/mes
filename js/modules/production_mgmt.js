@@ -7912,7 +7912,21 @@ var PaintMixModule = (function() {
         const hasSelected = selected && !lots.some(l => l.prodLot === selected);
         return `<option value="">LOT 선택</option>` +
             (hasSelected ? `<option value="${_esc(selected)}" selected>${_esc(selected)} (기존)</option>` : '') +
-            lots.map((l, i) => `<option value="${_esc(l.prodLot)}" data-balance="${l.balance}" ${l.prodLot === selected ? 'selected' : ''}>${i === 0 ? '[선입] ' : ''}${_esc(l.prodLot)} · 잔량 ${UIUtils.formatNumber(l.balance)}</option>`).join('');
+            lots.map((l, i) => `<option value="${_esc(l.prodLot)}" data-balance="${l.balance}" ${l.prodLot === selected ? 'selected' : ''}>${i === 0 ? '[선입] ' : ''}${_esc(l.prodLot)} · 창고 ${UIUtils.formatNumber(l.balance)} KG</option>`).join('');
+
+    // 배합실 잔량: 해당 LOT에서 꺼낸 캔 합계g - 사용량 합계g
+    function _mixRoomBalanceG(materialId, prodLot, ignoreMixId = '') {
+        let takenG = 0, usedG = 0;
+        (_mixes()).forEach(m => {
+            if (ignoreMixId && m.id === ignoreMixId) return;
+            (m.usages || []).forEach(u => {
+                if (u.materialId !== materialId || u.prodLot !== prodLot) return;
+                takenG += (Number(u.warehouseCans) || 0) * (Number(u.packUnit) || 0) * 1000;
+                usedG  += (Number(u.usageG) || 0);
+            });
+        });
+        return Math.max(0, _roundQty(takenG - usedG));
+    }
     }
 
     function _baseFromWork(work) {

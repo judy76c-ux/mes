@@ -1113,6 +1113,37 @@ input[type="time"] {
     white-space: nowrap;
 }
 
+.sdp-table-card-body {
+    padding: 0 !important;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.sdp-table-scroll {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    max-height: 360px;
+    overflow: auto !important;
+    overscroll-behavior: contain;
+}
+
+.sdp-status-table {
+    width: max-content;
+    table-layout: auto;
+}
+
+.sdp-status-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+
+.sdp-status-table thead tr:nth-child(2) th {
+    top: 25px;
+}
+
 .sdp-status-table .sdp-red-col,
 .sdp-grid-entry-table .sdp-red-col {
     background: rgba(254, 226, 226, 0.65);

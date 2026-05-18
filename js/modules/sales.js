@@ -687,6 +687,36 @@ var SalesDeliveryPlanModule = (function() {
             .join('');
     }
 
+    function _deliveryCustomers() {
+        return [
+            ..._products().map(_customerOf),
+            ...(Storage.getAll(DB.STORES.SALES_DELIVERY) || []).map(_customerOf),
+            ...(Storage.getAll(STORE) || []).map(_customerOf)
+        ];
+    }
+
+    function _deliveryCars(customer = '') {
+        const customerKey = _norm(customer);
+        const planCars = (Storage.getAll(STORE) || [])
+            .filter(r => !customerKey || _norm(_customerOf(r)) === customerKey)
+            .map(r => r.carModel);
+        const deliveryCars = (Storage.getAll(DB.STORES.SALES_DELIVERY) || [])
+            .filter(r => !customerKey || _norm(_customerOf(r)) === customerKey)
+            .map(r => r.carModel);
+        return [..._productsByCustomer(customer).map(p => p.carModel), ...planCars, ...deliveryCars];
+    }
+
+    function onMainCustomerChange() {
+        const customer = document.getElementById('sdpCustomerFilter')?.value || '';
+        const carEl = document.getElementById('sdpCarFilter');
+        if (!carEl) return;
+        const current = carEl.value || '';
+        const cars = _deliveryCars(customer);
+        const keepCurrent = !current || _unique(cars).some(c => _norm(c) === _norm(current));
+        carEl.innerHTML = _selectOptions(cars, keepCurrent ? current : '', '전체 차종');
+        if (!keepCurrent) carEl.value = '';
+    }
+
     function _productsByCustomer(customer) {
         const customerKey = _norm(customer);
         const products = _products();
@@ -711,14 +741,7 @@ var SalesDeliveryPlanModule = (function() {
         const carEl = document.getElementById('sdpGridCar');
         if (!carEl) return;
 
-        const customerKey = _norm(customer);
-        const planCars = (Storage.getAll(STORE) || [])
-            .filter(r => !customerKey || _norm(_customerOf(r)) === customerKey)
-            .map(r => r.carModel);
-        const deliveryCars = (Storage.getAll(DB.STORES.SALES_DELIVERY) || [])
-            .filter(r => !customerKey || _norm(_customerOf(r)) === customerKey)
-            .map(r => r.carModel);
-        const cars = [..._productsByCustomer(customer).map(p => p.carModel), ...planCars, ...deliveryCars];
+        const cars = _deliveryCars(customer);
         const current = carEl.value || '';
         const keepCurrent = !current || _unique(cars).some(c => _norm(c) === _norm(current));
         carEl.innerHTML = _selectOptions(cars, keepCurrent ? current : '', '-- 차종 선택 --');
@@ -787,6 +810,8 @@ var SalesDeliveryPlanModule = (function() {
     function render(container) {
         const start = UIUtils.today();
         const end = _addDays(start, 30);
+        const customerOptions = _selectOptions(_deliveryCustomers(), '', '전체 납품처');
+        const carOptions = _selectOptions(_deliveryCars(''), '', '전체 차종');
 
         container.innerHTML = `
             <div class="fade-in-up">
@@ -816,11 +841,19 @@ var SalesDeliveryPlanModule = (function() {
                     </div>
                     <div class="form-group">
                         <label class="form-label">납품처</label>
-                        <input type="text" class="form-input" id="sdpCustomerFilter" placeholder="납품처 검색">
+                        <select class="form-select" id="sdpCustomerFilter" onchange="SalesDeliveryPlanModule.onMainCustomerChange()">
+                            ${customerOptions}
+                        </select>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">차종/품명</label>
-                        <input type="text" class="form-input" id="sdpKeyword" placeholder="차종 또는 품명">
+                        <label class="form-label">차종</label>
+                        <select class="form-select" id="sdpCarFilter">
+                            ${carOptions}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">품명</label>
+                        <input type="text" class="form-input" id="sdpKeyword" placeholder="품명 또는 컬러">
                     </div>
                     <div class="form-group" style="align-self:flex-end;">
                         <button class="btn btn-outline" onclick="SalesDeliveryPlanModule.search()">
@@ -838,8 +871,8 @@ var SalesDeliveryPlanModule = (function() {
                             녹색: 계획 대비 납품 완료 · 노랑: 미납 · 빨강: 부족
                         </span>
                     </div>
-                    <div class="card-body" style="padding:0;">
-                        <div id="sdpTableWrap" class="data-table-wrapper" style="overflow:auto;"></div>
+                    <div class="card-body sdp-table-card-body">
+                        <div id="sdpTableWrap" class="data-table-wrapper sdp-table-scroll"></div>
                     </div>
                 </div>
             </div>
@@ -851,14 +884,15 @@ var SalesDeliveryPlanModule = (function() {
         const start = document.getElementById('sdpStart')?.value || UIUtils.today();
         const end = document.getElementById('sdpEnd')?.value || _addDays(start, 30);
         const customer = _norm(document.getElementById('sdpCustomerFilter')?.value);
+        const car = _norm(document.getElementById('sdpCarFilter')?.value);
         const keyword = _norm(document.getElementById('sdpKeyword')?.value);
         const days = _days(start, end);
 
         let plans = Storage.getByDateRange(STORE, start, end);
-        if (customer) plans = plans.filter(p => _norm(p.customer).includes(customer));
+        if (customer) plans = plans.filter(p => _norm(_customerOf(p)) === customer);
+        if (car) plans = plans.filter(p => _norm(p.carModel) === car);
         if (keyword) {
             plans = plans.filter(p =>
-                _norm(p.carModel).includes(keyword) ||
                 _norm(p.partName).includes(keyword) ||
                 _norm(p.color).includes(keyword)
             );
@@ -1013,7 +1047,7 @@ var SalesDeliveryPlanModule = (function() {
         }
 
         wrap.innerHTML = `
-            <table class="data-table sdp-status-table" style="min-width:${880 + days.length * 44}px;font-size:10px;">
+            <table class="data-table sdp-status-table" style="min-width:${860 + days.length * 42}px;font-size:10px;">
                 <thead>
                     <tr>
                         <th colspan="11"></th>
@@ -1425,6 +1459,7 @@ var SalesDeliveryPlanModule = (function() {
         openGridModal,
         openSingleModal,
         onGridCustomerChange,
+        onMainCustomerChange,
         renderGridEditorRows,
         saveGridPlans,
         openCellModal,
