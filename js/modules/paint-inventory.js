@@ -15,10 +15,6 @@ const PaintInventoryModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>도료창고(입출고/재고현황)</h3>
-                        <p>도료의 입출고 내역과 현재 재고량을 관리합니다.</p>
-                    </div>
                     <div class="page-actions">
                         <button class="btn btn-outline" onclick="Router.navigate('paint-layout')"
                             title="도료 보관 창고 배치 레이아웃을 시각적으로 편집합니다.">
