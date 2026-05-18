@@ -51,10 +51,6 @@ var LaserWorkModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>레이져 작업일지</h3>
-                        <p>레이져 각인 작업 실적과 품질 항목을 기록합니다.</p>
-                    </div>
                     <div class="page-actions">
                         <button class="btn btn-primary" onclick="LaserWorkModule.openAddModal()">
                             <span class="material-symbols-outlined">add</span> 작업 등록
@@ -673,10 +669,6 @@ var LaserInspectionModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>레이져 검사일지</h3>
-                        <p>레이져 각인 후 검사 결과 및 불량을 집계합니다.</p>
-                    </div>
                     <div class="page-actions">
                         <button class="btn btn-primary" onclick="LaserInspectionModule.openAddModal()">
                             <span class="material-symbols-outlined">add</span> 검사 등록
@@ -1527,10 +1519,6 @@ var LaserStandbyModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>레이져 대기품</h3>
-                        <p>도장 완료 후 레이져 공정 대기 중인 제품의 차종별 재공 재고를 관리합니다.</p>
-                    </div>
                     <div class="page-actions">
                         <button class="btn btn-outline" onclick="LaserStandbyModule.refresh()">
                             <span class="material-symbols-outlined">refresh</span> 새로고침

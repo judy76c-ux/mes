@@ -18,10 +18,6 @@ const ShippingStandbyModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>출하검사</h3>
-                        <p>도장·레이져 검사 완료품의 출하 샘플링 검사를 관리합니다.</p>
-                    </div>
                     <div class="page-actions">
                         <button class="btn btn-secondary" onclick="ShippingStandbyModule.exportHistory()"
                             style="font-size:0.85rem;">
@@ -656,10 +652,6 @@ const ShippingInspectionModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>출하검사 일지</h3>
-                        <p>샘플링 검사 결과를 기록합니다.</p>
-                    </div>
                     <div class="page-actions">
                         <button class="btn btn-secondary" onclick="ShippingInspectionModule.exportData()">
                             <span class="material-symbols-outlined">download</span> 내보내기
@@ -809,10 +801,6 @@ const ProductWarehouseModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>제품 창고 (재고관리)</h3>
-                        <p>완제품 재고 현황을 관리합니다. 품목 카드를 클릭하면 이력을 확인할 수 있습니다.</p>
-                    </div>
                     <div class="page-actions">
                         <button class="btn btn-outline" onclick="Router.navigate('injection-layout')"
                             title="1층 소재/완제품 보관창고 배치 레이아웃을 시각적으로 편집합니다.">
@@ -1209,10 +1197,6 @@ const ProductOutgoingModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>제품 출고</h3>
-                        <p>완제품 출고(납품)를 기록합니다.</p>
-                    </div>
                     <div class="page-actions">
                         <button class="btn btn-primary" onclick="ProductOutgoingModule.openAddModal()">
                             <span class="material-symbols-outlined">add</span> 출고 등록

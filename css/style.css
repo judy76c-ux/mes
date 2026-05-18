@@ -1099,11 +1099,29 @@ input[type="time"] {
 
 /* 매칭 검토 등 초광폭 모달 (JS 드래그 핸들로 크기 조절) */
 .modal-container.modal-xxl {
-    max-width: 1373px !important;
-    width: min(1373px, 96vw) !important;
+    max-width: none !important;
+    width: 98vw !important;
     max-height: 90vh;
     min-width: 640px;
     box-sizing: border-box;
+}
+
+.sdp-status-table th,
+.sdp-status-table td {
+    font-size: 10px !important;
+    padding: 4px 5px !important;
+    white-space: nowrap;
+}
+
+.sdp-status-table .sdp-red-col,
+.sdp-grid-entry-table .sdp-red-col {
+    background: rgba(254, 226, 226, 0.65);
+}
+
+.sdp-status-table .sdp-sat-col,
+.sdp-grid-entry-table .sdp-sat-col {
+    background: rgba(219, 234, 254, 0.55);
+    color: #1d4ed8;
 }
 
 .modal-header {

@@ -7,10 +7,6 @@ const ProdUtils = {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>${title}</h3>
-                        <p>${desc}</p>
-                    </div>
                     <div class="page-actions">
                         <button class="btn btn-primary" onclick="${onAdd}">
                             <span class="material-symbols-outlined">add</span> 등록
@@ -490,10 +486,6 @@ var ProdStandardsModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>제조 관리 표준</h3>
-                        <p>관리계획서와 차종별 기준서류를 연결하여 통합 관리합니다.</p>
-                    </div>
                     <div class="page-actions">
                         <button class="btn btn-secondary" onclick="ProdStandardsModule.openStationManager()"
                             style="display:flex; align-items:center; gap:5px; font-size:13px;">
@@ -6102,10 +6094,6 @@ var PaintMixModule = (function() {
         container.innerHTML = `
         <div class="fade-in-up">
             <div class="page-header">
-                <div class="page-header-left">
-                    <h3>배합/사용 이력</h3>
-                    <p>도장 작업별 도료 LOT 사용량과 배합 이력을 관리합니다.</p>
-                </div>
                 <div class="page-actions" id="pmixPageActions"></div>
             </div>
 
@@ -8543,10 +8531,6 @@ var ProdQualityModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>초중종물 관리</h3>
-                        <p>도장 작업일지 등록일 기준으로 차종별 C/SHEET를 발행하고 검사 항목을 관리합니다.</p>
-                    </div>
                     <div class="page-actions">
                         <button class="btn btn-outline" onclick="ProdQualityModule.openItemListModal()">
                             <span class="material-symbols-outlined">list_alt</span> 관리항목
@@ -9667,13 +9651,6 @@ var ProdEquipmentModule = (function() {
         } catch (e) {}
         container.innerHTML = `
         <div class="fade-in-up">
-            <div class="page-header">
-                <div class="page-header-left">
-                    <h3>설비관리</h3>
-                    <p>공정별 설비 일반관리 및 SQ 평가 항목(일상점검·도장부스·건조오븐·Jig 등) 통합 관리</p>
-                </div>
-            </div>
-
             <!-- 메인 모드 탭 -->
             <div style="display:flex;gap:0;margin-bottom:16px;border:1px solid var(--border-color);
                         border-radius:8px;overflow:hidden;width:fit-content;">
@@ -13532,10 +13509,6 @@ var LimitSamplesModule = (function() {
         container.innerHTML = `
         <div class="fade-in-up">
             <div class="page-header">
-                <div class="page-header-left">
-                    <h3>한도 견본</h3>
-                    <p>차종별 마스터 샘플과 한도견본 등록, 보관 위치, 유효기간, 상태를 관리합니다.</p>
-                </div>
                 <div class="page-actions">
                     <button class="btn btn-primary" onclick="LimitSamplesModule.openModal()">
                         <span class="material-symbols-outlined">add</span>등록
@@ -13850,10 +13823,6 @@ var QualityPerformanceModule = (function() {
         container.innerHTML = `
         <div class="fade-in-up">
             <div class="page-header">
-                <div class="page-header-left">
-                    <h3>품질 실적</h3>
-                    <p>전년도 품질 실적 대비 목표를 설정하고 공정/고객/외주불량 PPM과 개선대책 이행상태를 월 1회 점검합니다.</p>
-                </div>
                 <div class="page-actions">
                     <button class="btn btn-secondary" onclick="QualityPerformanceModule.openTargetModal()"><span class="material-symbols-outlined">flag</span> 목표 설정</button>
                     <button class="btn btn-secondary" onclick="QualityPerformanceModule.exportData()"><span class="material-symbols-outlined">download</span> 내보내기</button>
@@ -14060,10 +14029,6 @@ var ProdSpcModule = (function() {
         container.innerHTML = `
         <div class="fade-in-up">
             <div class="page-header">
-                <div class="page-header-left">
-                    <h3>SPC 관리</h3>
-                    <p>초중종물 관리에서 입력된 실측값(도막두께·광택·색차)이 자동으로 반영됩니다. X̄-R 관리도로 공정 이상을 감지합니다.</p>
-                </div>
                 <div class="page-actions">
                     <button class="btn btn-outline" onclick="Router.navigate('prod-quality')">
                         <span class="material-symbols-outlined">edit_document</span> 초중종물 작성

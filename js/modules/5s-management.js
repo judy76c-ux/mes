@@ -55,10 +55,6 @@ var FiveSModule = (function () {
         container.innerHTML = `
         <div class="fade-in-up">
             <div class="page-header">
-                <div class="page-header-left">
-                    <h3>3정5S 관리</h3>
-                    <p>현장 3정5행 활동의 점검·지적사항 및 시정조치를 통합 관리합니다.</p>
-                </div>
                 <div class="page-actions" id="s5Actions"></div>
             </div>
 

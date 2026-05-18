@@ -16,10 +16,6 @@ const PaintingIncomingModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>도장 입고</h3>
-                        <p>사출 창고에서 도장 공정으로 자재를 입고합니다.</p>
-                    </div>
                     <div class="page-actions">
                         <button class="btn btn-primary" onclick="PaintingIncomingModule.openAddModal()">
                             <span class="material-symbols-outlined">add</span> 입고 등록
@@ -190,15 +186,12 @@ const PaintingWorkModule = (function() {
             <div class="fade-in-up">
                 <!-- 상단 헤더: 날짜/라인 선택 + 액션 버튼 -->
                 <div class="page-header" style="flex-wrap:wrap; gap:0.5rem;">
-                    <div class="page-header-left" style="display:flex; align-items:center; gap:1rem; flex-wrap:wrap;">
-                        <h3 style="margin:0;">도장 작업일지</h3>
+                    <div class="page-actions" style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
                         <div style="display:flex; align-items:center; gap:0.5rem;">
                             <label class="form-label" style="margin:0; white-space:nowrap;">작업일</label>
                             <input type="date" class="form-input" id="pwDate" value="${_currentDate}"
                                 onchange="PaintingWorkModule.onDateChange()" style="width:145px;">
                         </div>
-                    </div>
-                    <div class="page-actions">
                         <button class="btn btn-primary" onclick="PaintingWorkModule.openAddModal()">
                             <span class="material-symbols-outlined">add</span> 작업 등록
                         </button>
@@ -2154,10 +2147,6 @@ const PaintingInspectionModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>도장 검사 일지</h3>
-                        <p>도장 불량 검사 및 통계 관리</p>
-                    </div>
                     <div class="page-actions">
                         <button class="btn btn-secondary" onclick="PaintingInspectionModule.exportData()">
                             <span class="material-symbols-outlined">download</span> 내보내기
@@ -4741,10 +4730,6 @@ const PaintingOutgoingModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>도장품 출고</h3>
-                        <p>도장 완료된 제품의 출고를 기록합니다.</p>
-                    </div>
                     <div class="page-actions">
                         <button class="btn btn-primary" onclick="PaintingOutgoingModule.openAddModal()">
                             <span class="material-symbols-outlined">add</span> 출고 등록

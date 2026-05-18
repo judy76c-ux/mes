@@ -17,13 +17,6 @@ var InjectionWorkLogModule = (function() {
     function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
-                <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>사출 공정 관리</h3>
-                        <p>작업 실적, 금형·원재료 이력 및 월간 스케쥴을 관리합니다.</p>
-                    </div>
-                </div>
-
                 <div class="iw-tab-bar">
                     <button id="iw-tab-worklog"  class="iw-tab-btn" onclick="InjectionWorkLogModule.switchTab('worklog')">
                         <span class="material-symbols-outlined">assignment</span> 작업일지

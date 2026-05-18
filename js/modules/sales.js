@@ -517,7 +517,7 @@ var SalesDeliveryPlanModule = (function() {
         const result = [];
         const cur = new Date(`${start}T00:00:00`);
         const last = new Date(`${end}T00:00:00`);
-        while (cur <= last && result.length < 45) {
+        while (cur <= last && result.length < 75) {
             result.push(cur.toISOString().slice(0, 10));
             cur.setDate(cur.getDate() + 1);
         }
@@ -570,6 +570,18 @@ var SalesDeliveryPlanModule = (function() {
 
     function _products() {
         return Storage.getAll(DB.STORES.PRODUCTS) || [];
+    }
+
+    function _customerOf(item) {
+        return item?.customer || item?.deliveryCustomer || item?.client || item?.buyer || item?.shipTo || item?.destination || '';
+    }
+
+    function _productKey(item) {
+        return [
+            item?.carModel || '',
+            item?.partName || item?.name || '',
+            item?.color || item?.paintColor || ''
+        ].map(v => _norm(v)).join('||');
     }
 
     function _findProduct(item) {
@@ -625,6 +637,23 @@ var SalesDeliveryPlanModule = (function() {
         return Math.max(0, inQty - outQty);
     }
 
+    function _routeText(row) {
+        const product = row?.product || row || {};
+        return [
+            row?.processEnd,
+            product.process1, product.process2, product.process3, product.process4,
+            product.process5, product.process6, product.processFlow, product.route
+        ].filter(Boolean).join(' ');
+    }
+
+    function _isPaintEnd(row) {
+        return /도장|paint/i.test(_routeText(row));
+    }
+
+    function _isLaserEnd(row) {
+        return /레이저|레이져|laser/i.test(_routeText(row));
+    }
+
     function _optionList(values) {
         return [...new Set(values.filter(Boolean).map(v => String(v).trim()).filter(Boolean))]
             .sort((a, b) => a.localeCompare(b, 'ko'))
@@ -636,7 +665,8 @@ var SalesDeliveryPlanModule = (function() {
         const products = _products();
         const customers = [
             ...products.map(p => p.customer),
-            ...(Storage.getAll(DB.STORES.SALES_DELIVERY) || []).map(d => d.customer)
+            ...(Storage.getAll(DB.STORES.SALES_DELIVERY) || []).map(d => d.customer),
+            ...(Storage.getAll(STORE) || []).map(d => d.customer)
         ];
         return `
             <datalist id="sdpCarList">${_optionList(products.map(p => p.carModel))}</datalist>
@@ -659,7 +689,21 @@ var SalesDeliveryPlanModule = (function() {
 
     function _productsByCustomer(customer) {
         const customerKey = _norm(customer);
-        return _products().filter(p => !customerKey || _norm(p.customer) === customerKey);
+        const products = _products();
+        if (!customerKey) return products;
+
+        const linkedKeys = new Set([
+            ...(Storage.getAll(STORE) || []),
+            ...(Storage.getAll(DB.STORES.SALES_DELIVERY) || [])
+        ]
+            .filter(r => _norm(_customerOf(r)) === customerKey)
+            .map(_productKey));
+
+        const direct = products.filter(p => _norm(_customerOf(p)) === customerKey);
+        const linked = products.filter(p => linkedKeys.has(_productKey(p)));
+        return direct.length || linked.length
+            ? [...new Map([...direct, ...linked].map(p => [_productKey(p), p])).values()]
+            : products;
     }
 
     function _refreshGridCarOptions() {
@@ -667,7 +711,14 @@ var SalesDeliveryPlanModule = (function() {
         const carEl = document.getElementById('sdpGridCar');
         if (!carEl) return;
 
-        const cars = _productsByCustomer(customer).map(p => p.carModel);
+        const customerKey = _norm(customer);
+        const planCars = (Storage.getAll(STORE) || [])
+            .filter(r => !customerKey || _norm(_customerOf(r)) === customerKey)
+            .map(r => r.carModel);
+        const deliveryCars = (Storage.getAll(DB.STORES.SALES_DELIVERY) || [])
+            .filter(r => !customerKey || _norm(_customerOf(r)) === customerKey)
+            .map(r => r.carModel);
+        const cars = [..._productsByCustomer(customer).map(p => p.carModel), ...planCars, ...deliveryCars];
         const current = carEl.value || '';
         const keepCurrent = !current || _unique(cars).some(c => _norm(c) === _norm(current));
         carEl.innerHTML = _selectOptions(cars, keepCurrent ? current : '', '-- 차종 선택 --');
@@ -681,7 +732,7 @@ var SalesDeliveryPlanModule = (function() {
 
     function _productBase(product, selectedCustomer = '') {
         return {
-            customer: selectedCustomer || product.customer || '',
+            customer: selectedCustomer || _customerOf(product),
             carModel: product.carModel || '',
             partName: product.partName || product.name || '',
             color: product.color || product.paintColor || '',
@@ -871,12 +922,12 @@ var SalesDeliveryPlanModule = (function() {
             row.finishedStock = finished.balance;
             row.finishedHasData = finished.hasData;
             row.shippingStandby = _shippingStandbyQty(row);
-            row.laserStandby = /레이저|레이져/.test(row.processEnd) ? _laserStandbyQty(row) : 0;
+            row.laserStandby = _isLaserEnd(row) ? _laserStandbyQty(row) : 0;
 
             const finishedAvailable = row.finishedStock + row.shippingStandby;
             row.injectionShortage = row.injectionHasData ? Math.max(0, row.remaining - row.injectionStock) : 0;
-            row.paintShortage = /도장/.test(row.processEnd) ? Math.max(0, row.remaining - finishedAvailable) : 0;
-            row.laserShortage = /레이저|레이져/.test(row.processEnd)
+            row.paintShortage = _isPaintEnd(row) ? Math.max(0, row.remaining - finishedAvailable) : 0;
+            row.laserShortage = _isLaserEnd(row)
                 ? Math.max(0, row.remaining - finishedAvailable - row.laserStandby)
                 : 0;
             row.hasShortage = (row.injectionShortage + row.paintShortage + row.laserShortage) > 0;
@@ -924,8 +975,9 @@ var SalesDeliveryPlanModule = (function() {
         const plan = row.planByDate[day] || 0;
         const delivered = row.deliveryByDate[day] || 0;
         const past = day < UIUtils.today();
+        const info = _dayColumnInfo(day);
         const bg = !plan && !delivered
-            ? 'transparent'
+            ? (info.className === 'sdp-red-col' ? 'rgba(254,226,226,0.55)' : (info.className === 'sdp-sat-col' ? 'rgba(219,234,254,0.45)' : 'transparent'))
             : delivered >= plan && plan > 0
             ? 'rgba(16,185,129,0.16)'
             : past && plan > delivered
@@ -934,11 +986,23 @@ var SalesDeliveryPlanModule = (function() {
         return `
             <td onclick="SalesDeliveryPlanModule.openCellModal('${_js(row.key)}','${day}')"
                 title="클릭해서 납품 계획 수량 입력"
-                style="min-width:76px;background:${bg};text-align:right;font-size:0.78rem;cursor:pointer;">
+                class="${info.className}"
+                style="min-width:42px;background:${bg};text-align:right;font-size:10px;cursor:pointer;padding:3px 4px;">
                 ${plan ? `<div style="font-weight:800;">${_fmt(plan)}</div>` : ''}
                 ${delivered ? `<div style="color:var(--accent-green);font-weight:700;">납 ${_fmt(delivered)}</div>` : ''}
             </td>
         `;
+    }
+
+    function _monthHeaderCells(days) {
+        const groups = [];
+        days.forEach(day => {
+            const month = `${Number(day.slice(5, 7))}월`;
+            const last = groups[groups.length - 1];
+            if (last && last.month === month) last.count += 1;
+            else groups.push({ month, count: 1 });
+        });
+        return groups.map(g => `<th colspan="${g.count}" style="text-align:center;">${g.month}</th>`).join('');
     }
 
     function _renderTable(rows, days) {
@@ -949,46 +1013,45 @@ var SalesDeliveryPlanModule = (function() {
         }
 
         wrap.innerHTML = `
-            <table class="data-table" style="min-width:${1180 + days.length * 78}px;">
+            <table class="data-table sdp-status-table" style="min-width:${880 + days.length * 44}px;font-size:10px;">
                 <thead>
                     <tr>
-                        <th>No</th>
+                        <th colspan="11"></th>
+                        ${_monthHeaderCells(days)}
+                        <th rowspan="2">작업</th>
+                    </tr>
+                    <tr>
                         <th>차종</th>
                         <th>품명</th>
                         <th>컬러</th>
-                        <th>납품처</th>
-                        <th>포장단위</th>
+                        <th>포장</th>
                         <th>계획</th>
                         <th>납품</th>
                         <th>미납</th>
-                        <th>사출부족</th>
-                        <th>도장부족</th>
-                        <th>레이져부족</th>
-                        <th>완제품</th>
-                        <th>레이져대기</th>
-                        <th>END</th>
-                        ${days.map(d => `<th style="min-width:76px;text-align:center;">${d.slice(5).replace('-', '/')}</th>`).join('')}
-                        <th>작업</th>
+                        <th>사출<br>작업필요</th>
+                        <th>도장<br>작업필요</th>
+                        <th>레이져<br>작업필요</th>
+                        <th>완제품<br>수량</th>
+                        ${days.map(d => {
+                            const info = _dayColumnInfo(d);
+                            return `<th class="${info.className}" style="min-width:42px;text-align:center;"><div>${Number(d.slice(8))}</div><div style="font-size:9px;font-weight:600;">${info.weekday}</div></th>`;
+                        }).join('')}
                     </tr>
                 </thead>
                 <tbody>
-                    ${rows.map((row, index) => `
+                    ${rows.map(row => `
                         <tr style="${row.hasShortage ? 'background:rgba(239,68,68,0.035);' : ''}">
-                            <td>${index + 1}</td>
                             <td>${_esc(row.carModel || '-')}</td>
-                            <td style="font-weight:800;">${_esc(row.partName || '-')}</td>
+                            <td style="font-weight:800;min-width:132px;">${_esc(row.partName || '-')}</td>
                             <td>${_esc(row.color || '-')}</td>
-                            <td>${_esc(row.customer || '-')}</td>
                             <td style="text-align:right;">${_esc(row.packUnit || '-')}</td>
                             <td style="text-align:right;font-weight:800;">${_fmt(row.totalPlan)}</td>
                             <td style="text-align:right;color:var(--accent-green);font-weight:800;">${_fmt(row.delivered)}</td>
                             <td style="text-align:right;color:${row.remaining > 0 ? 'var(--accent-orange)' : 'var(--accent-green)'};font-weight:800;">${_fmt(row.remaining)}</td>
                             <td style="text-align:right;">${_shortageCell(row.injectionShortage, !row.injectionHasData)}</td>
-                            <td style="text-align:right;">${_shortageCell(row.paintShortage, !/도장/.test(row.processEnd))}</td>
-                            <td style="text-align:right;">${_shortageCell(row.laserShortage, !/레이저|레이져/.test(row.processEnd))}</td>
+                            <td style="text-align:right;">${_shortageCell(row.paintShortage, !_isPaintEnd(row))}</td>
+                            <td style="text-align:right;">${_shortageCell(row.laserShortage, !_isLaserEnd(row))}</td>
                             <td style="text-align:right;font-weight:700;">${row.finishedHasData ? _fmt(row.finishedStock) : '-'}</td>
-                            <td style="text-align:right;font-weight:700;">${/레이저|레이져/.test(row.processEnd) ? _fmt(row.laserStandby) : '-'}</td>
-                            <td><span class="badge badge-info">${_esc(row.processEnd)}</span></td>
                             ${days.map(d => _dayCell(row, d)).join('')}
                             <td>
                                 <button class="btn btn-sm btn-outline" onclick="SalesDeliveryPlanModule.editGroup('${_js(row.key)}')">수정</button>
@@ -1057,7 +1120,7 @@ var SalesDeliveryPlanModule = (function() {
         const customerEl = document.getElementById('sdpCustomer');
         const colorEl = document.getElementById('sdpColor');
         const packEl = document.getElementById('sdpPackUnit');
-        if (customerEl && !customerEl.value) customerEl.value = product.customer || '';
+        if (customerEl && !customerEl.value) customerEl.value = _customerOf(product);
         if (colorEl && !colorEl.value) colorEl.value = product.color || '';
         if (packEl && !packEl.value) packEl.value = _packUnitFromProduct(product, '');
     }
@@ -1345,11 +1408,11 @@ var SalesDeliveryPlanModule = (function() {
     }
 
     function exportData() {
-        const headers = ['차종', '품명', '컬러', '납품처', '포장단위', '계획', '납품', '미납', '사출부족', '도장부족', '레이져부족', ..._lastDays];
+        const headers = ['차종', '품명', '컬러', '포장단위', '계획', '납품', '미납', '사출 작업필요', '도장 작업필요', '레이져 작업필요', '완제품수량', ..._lastDays];
         const rows = _lastRows.map(r => [
-            r.carModel, r.partName, r.color, r.customer, r.packUnit,
+            r.carModel, r.partName, r.color, r.packUnit,
             r.totalPlan, r.delivered, r.remaining,
-            r.injectionShortage, r.paintShortage, r.laserShortage,
+            r.injectionShortage, r.paintShortage, r.laserShortage, r.finishedStock,
             ..._lastDays.map(d => r.planByDate[d] || '')
         ]);
         Storage.exportToCSV(headers, rows, '납품계획');

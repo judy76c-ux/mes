@@ -28,10 +28,6 @@ var JigModule = (function () {
         container.innerHTML = `
         <div class="fade-in-up jig-page">
             <div class="page-header">
-                <div class="page-header-left">
-                    <h3>JIG 수명 관리</h3>
-                    <p>도장 공정 JIG의 차종/제품별 수명과 교체 이력을 관리합니다.</p>
-                </div>
                 <div class="page-actions">
                     <button class="btn btn-outline" onclick="Router.navigate('jig-layout')"
                         title="공장 JIG 배치 레이아웃을 시각적으로 편집합니다.">

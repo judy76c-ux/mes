@@ -141,20 +141,17 @@ const ProductionPlanModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header" style="flex-wrap: wrap; gap: 0.5rem;">
-                    <div class="page-header-left" style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
-                        <h3 style="margin: 0;">생산 계획 지시서</h3>
-                        <div class="form-group" style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
-                            <label class="form-label" style="margin: 0; white-space: nowrap;">계획 일자</label>
-                            <input type="date" class="form-input" id="planDateFilter" value="${today}"
-                                onchange="ProductionPlanModule.selectDate(this.value)" style="width: 140px;">
-                            <span id="planDayOfWeek" style="font-size:1.1rem; font-weight:800;
-                                color:${_getDayColor(today)}; min-width:20px; text-align:center;">
-                                ${_getDayLabel(today)}
-                            </span>
-                            <button class="btn btn-outline btn-sm" onclick="ProductionPlanModule.search()">
-                                <span class="material-symbols-outlined" style="font-size: 16px;">refresh</span>
-                            </button>
-                        </div>
+                    <div class="page-actions" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <label class="form-label" style="margin: 0; white-space: nowrap;">계획 일자</label>
+                        <input type="date" class="form-input" id="planDateFilter" value="${today}"
+                            onchange="ProductionPlanModule.selectDate(this.value)" style="width: 140px;">
+                        <span id="planDayOfWeek" style="font-size:1.1rem; font-weight:800;
+                            color:${_getDayColor(today)}; min-width:20px; text-align:center;">
+                            ${_getDayLabel(today)}
+                        </span>
+                        <button class="btn btn-outline btn-sm" onclick="ProductionPlanModule.search()">
+                            <span class="material-symbols-outlined" style="font-size: 16px;">refresh</span>
+                        </button>
                     </div>
                 </div>
 

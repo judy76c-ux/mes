@@ -15,13 +15,6 @@ const SettingsModule = (function() {
     function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
-                <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>관리 / 설정</h3>
-                        <p>제품, 불량 유형, 시스템 설정을 관리합니다.</p>
-                    </div>
-                </div>
-
                 <!-- 탭 네비게이션 -->
                 <div class="settings-tabs">
                     <button class="tab-btn ${currentTab === 'products' ? 'active' : ''}" 

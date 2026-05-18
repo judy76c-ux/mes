@@ -150,10 +150,6 @@ const RawMaterialInventoryModule = (function () {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>원자재 창고 (입출고 / 재고 현황)</h3>
-                        <p>원자재의 입출고 내역을 KG 단위로 관리합니다.</p>
-                    </div>
                     <div class="page-actions">
                         <button class="btn btn-primary" onclick="RawMaterialInventoryModule.openIncomingModal()">
                             <span class="material-symbols-outlined">login</span> + 입고

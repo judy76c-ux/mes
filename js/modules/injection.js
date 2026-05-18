@@ -15,10 +15,6 @@ var InjectionIncomingModule = (function() {
                 container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>사출 입고 (수입검사일지)</h3>
-                        <p>사출 자재 입고 시 수입검사를 기록합니다.</p>
-                    </div>
                     <div class="page-actions">
                         <button class="btn btn-outline" onclick="InjectionIncomingModule.openStdModal()"
                             style="gap:6px;">

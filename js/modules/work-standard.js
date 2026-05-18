@@ -35,10 +35,6 @@ const WorkStandardModule = (function () {
         container.innerHTML = `
         <div class="fade-in-up">
             <div class="page-header">
-                <div class="page-header-left">
-                    <h3>작업 표준서</h3>
-                    <p>공정별 작업 표준서를 등록·관리합니다</p>
-                </div>
                 <div class="page-actions">
                     <button class="btn btn-primary" onclick="WorkStandardModule.openModal()">
                         <span class="material-symbols-outlined">add</span> 표준서 등록
