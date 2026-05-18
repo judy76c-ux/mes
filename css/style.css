@@ -1114,30 +1114,31 @@ input[type="time"] {
 }
 
 .content-area:has(.sdp-page) {
-    overflow-x: auto;
+    overflow-x: hidden;
     overflow-y: auto;
 }
 
 .sdp-page {
-    width: max(1280px, 100%);
-    min-width: 1280px;
-    max-width: none;
-    overflow: visible;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
 }
 
 .sdp-page .page-header,
 .sdp-page .filter-bar,
 .sdp-page .stat-cards,
 .sdp-page .card {
-    max-width: none;
+    max-width: 100%;
+    min-width: 0;
 }
 
 .sdp-page .filter-bar {
     display: flex !important;
-    flex-wrap: nowrap !important;
+    flex-wrap: wrap !important;
     align-items: end;
-    width: max-content;
-    min-width: 980px;
+    width: 100%;
+    min-width: 0;
 }
 
 .sdp-page .filter-bar .form-group {
@@ -1151,7 +1152,7 @@ input[type="time"] {
 }
 
 .sdp-page .stat-cards {
-    grid-template-columns: repeat(4, minmax(240px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
     gap: 12px;
     width: 100%;
 }
@@ -1166,7 +1167,7 @@ input[type="time"] {
 }
 
 .sdp-page .card {
-    overflow: visible;
+    overflow: hidden;
     width: 100%;
 }
 
@@ -1183,13 +1184,15 @@ input[type="time"] {
     max-width: 100%;
     max-height: min(360px, calc(100vh - 420px));
     min-height: 120px;
-    overflow: scroll !important;
+    overflow-x: auto !important;
+    overflow-y: auto !important;
     overscroll-behavior: contain;
 }
 
 .sdp-status-table {
     width: max-content;
-    table-layout: auto;
+    min-width: max-content;
+    table-layout: fixed;
 }
 
 .sdp-status-table thead th {
@@ -1202,11 +1205,71 @@ input[type="time"] {
     top: 25px;
 }
 
+.sdp-status-table thead tr:first-child th:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 5;
+    background: linear-gradient(180deg, #f1f5f9, #e8ecf1);
+    min-width: 642px;
+}
+
+.sdp-status-table thead tr:nth-child(2) th:nth-child(-n+11),
+.sdp-status-table tbody td:nth-child(-n+11) {
+    position: sticky;
+    background: #fff;
+    z-index: 3;
+}
+
+.sdp-status-table thead tr:nth-child(2) th:nth-child(-n+11) {
+    background: linear-gradient(180deg, #f1f5f9, #e8ecf1);
+    z-index: 6;
+}
+
+.sdp-status-table tbody tr[style*="rgba(239,68,68"] td:nth-child(-n+11) {
+    background: #fff7f7;
+}
+
+.sdp-status-table thead tr:nth-child(2) th:nth-child(1),
+.sdp-status-table tbody td:nth-child(1) { left: 0; min-width: 54px; max-width: 54px; }
+
+.sdp-status-table thead tr:nth-child(2) th:nth-child(2),
+.sdp-status-table tbody td:nth-child(2) { left: 54px; min-width: 170px; max-width: 170px; }
+
+.sdp-status-table thead tr:nth-child(2) th:nth-child(3),
+.sdp-status-table tbody td:nth-child(3) { left: 224px; min-width: 52px; max-width: 52px; }
+
+.sdp-status-table thead tr:nth-child(2) th:nth-child(4),
+.sdp-status-table tbody td:nth-child(4) { left: 276px; min-width: 44px; max-width: 44px; }
+
+.sdp-status-table thead tr:nth-child(2) th:nth-child(5),
+.sdp-status-table tbody td:nth-child(5) { left: 320px; min-width: 48px; max-width: 48px; }
+
+.sdp-status-table thead tr:nth-child(2) th:nth-child(6),
+.sdp-status-table tbody td:nth-child(6) { left: 368px; min-width: 48px; max-width: 48px; }
+
+.sdp-status-table thead tr:nth-child(2) th:nth-child(7),
+.sdp-status-table tbody td:nth-child(7) { left: 416px; min-width: 48px; max-width: 48px; }
+
+.sdp-status-table thead tr:nth-child(2) th:nth-child(8),
+.sdp-status-table tbody td:nth-child(8) { left: 464px; min-width: 62px; max-width: 62px; }
+
+.sdp-status-table thead tr:nth-child(2) th:nth-child(9),
+.sdp-status-table tbody td:nth-child(9) { left: 526px; min-width: 62px; max-width: 62px; }
+
+.sdp-status-table thead tr:nth-child(2) th:nth-child(10),
+.sdp-status-table tbody td:nth-child(10) { left: 588px; min-width: 62px; max-width: 62px; }
+
+.sdp-status-table thead tr:nth-child(2) th:nth-child(11),
+.sdp-status-table tbody td:nth-child(11) {
+    left: 650px;
+    min-width: 58px;
+    max-width: 58px;
+    box-shadow: 4px 0 8px rgba(15, 23, 42, 0.08);
+}
+
 @media (max-width: 1400px) {
     .sdp-page {
         --sdp-compact-font: 9px;
-        width: max(1120px, 100%);
-        min-width: 1120px;
     }
 
     .sdp-page .page-header {
@@ -1223,7 +1286,6 @@ input[type="time"] {
 
     .sdp-page .filter-bar {
         gap: 8px !important;
-        min-width: 860px;
     }
 
     .sdp-page .filter-bar .form-input,
@@ -1234,7 +1296,7 @@ input[type="time"] {
     }
 
     .sdp-page .stat-cards {
-        grid-template-columns: repeat(4, minmax(190px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     }
 
     .sdp-page .stat-card {
