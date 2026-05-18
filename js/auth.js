@@ -242,30 +242,19 @@ const AuthModule = (function () {
     }
 
     function _setupInterceptor() {
-        document.addEventListener('click', function (e) {
-            if (canWrite()) return; /* 쓰기 권한 있으면 통과 */
+        /* 쓰기 제한 비활성화 — 테스트 중 전체 허용 */
+        /* 관리/설정 페이지 진입은 router.js에서 checkSettingsAuth()로 별도 처리 */
+    }
 
-            const btn = e.target.closest('button, [role="button"]');
-            if (!btn) return;
-
-            /* 로그인 모달 내 버튼은 통과 */
-            if (btn.closest('#modal')) return;
-            /* 사용자 관리 탭 내 버튼도 통과 (설정 내 로그인 관련 UI) */
-            if (btn.getAttribute('onclick') && /AuthModule|logout|showLoginModal/.test(btn.getAttribute('onclick'))) return;
-
-            if (_isWriteButton(btn)) {
-                e.stopImmediatePropagation();
-                e.preventDefault();
-                const user = getCurrentUser();
-                if (!user) {
-                    /* 미로그인 → 로그인 모달 */
-                    showLoginModal(null);
-                } else {
-                    /* 로그인했지만 권한 없음 (viewer) */
-                    UIUtils.toast('입력 권한이 없습니다. (조회자 계정)', 'warning');
-                }
-            }
-        }, true /* capture phase — 모달 open 전에 가로채기 */);
+    /* ── 설정 페이지 관리자 인증 ─────────────────────────────── */
+    function checkSettingsAuth(onPass) {
+        const user = getCurrentUser();
+        if (user && user.role === 'admin') { onPass(); return; }
+        showLoginModal(function() {
+            const u = getCurrentUser();
+            if (u && u.role === 'admin') { onPass(); }
+            else { UIUtils.toast('관리자 계정으로 로그인해야 합니다.', 'warning'); }
+        });
     }
 
     /* ── body 쓰기 모드 CSS 클래스 ──────────────────────────── */
@@ -325,6 +314,7 @@ const AuthModule = (function () {
         doLogin,
         logout,
         showLoginModal,
+        checkSettingsAuth,
         _doLoginModal,
         _updateTopbar,
         _applyWriteMode,

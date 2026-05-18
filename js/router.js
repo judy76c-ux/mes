@@ -76,6 +76,16 @@ const Router = (function() {
     function navigate(pageName) {
         if (!modules[pageName]) pageName = 'dashboard';
 
+        /* 관리/설정 페이지는 관리자 인증 필요 */
+        if (pageName === 'settings') {
+            AuthModule.checkSettingsAuth(function() { _doNavigate('settings'); });
+            return;
+        }
+
+        _doNavigate(pageName);
+    }
+
+    function _doNavigate(pageName) {
         currentPage = pageName;
         localStorage.setItem('last_page', pageName);
 
