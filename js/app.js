@@ -175,6 +175,24 @@ const App = (function() {
         Router.registerModule('incoming-overview', IncomingOverviewModule);
         Router.registerModule('warehouse-overview', WarehouseOverviewModule);
         Router.registerModule('work-standard', WorkStandardModule);
+        Router.registerModule('inspectors-mgmt', {
+            init(container) {
+                container.innerHTML = '<div class="fade-in-up" id="settingsContent"></div>';
+                SettingsModule.renderInspectorsTab(document.getElementById('settingsContent'));
+            }
+        });
+        Router.registerModule('operators-mgmt', {
+            init(container) {
+                container.innerHTML = '<div class="fade-in-up" id="settingsContent"></div>';
+                SettingsModule.renderOperatorsTab(document.getElementById('settingsContent'));
+            }
+        });
+        Router.registerModule('certifications-mgmt', {
+            init(container) {
+                container.innerHTML = '<div class="fade-in-up" id="settingsContent"></div>';
+                SettingsModule.renderCertificationTab(document.getElementById('settingsContent'));
+            }
+        });
     }
 
     // 첫 방문 시 환영 메시지

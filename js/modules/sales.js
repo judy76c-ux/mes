@@ -703,7 +703,9 @@ var SalesDeliveryPlanModule = (function() {
         const deliveryCars = (Storage.getAll(DB.STORES.SALES_DELIVERY) || [])
             .filter(r => !customerKey || _norm(_customerOf(r)) === customerKey)
             .map(r => r.carModel);
-        return [..._productsByCustomer(customer).map(p => p.carModel), ...planCars, ...deliveryCars];
+        // 납품처 미선택 시에만 제품 마스터 포함, 선택 시엔 실제 계획/납품 기록만 사용
+        const productCars = customerKey ? [] : _products().map(p => p.carModel);
+        return [...productCars, ...planCars, ...deliveryCars];
     }
 
     function onMainCustomerChange() {
@@ -1021,7 +1023,7 @@ var SalesDeliveryPlanModule = (function() {
             <td onclick="SalesDeliveryPlanModule.openCellModal('${_js(row.key)}','${day}')"
                 title="클릭해서 납품 계획 수량 입력"
                 class="${info.className}"
-                style="min-width:42px;background:${bg};text-align:right;font-size:10px;cursor:pointer;padding:3px 4px;">
+                style="min-width:42px;background:${bg};text-align:center;font-size:10px;cursor:pointer;padding:3px 4px;">
                 ${plan ? `<div style="font-weight:800;">${_fmt(plan)}</div>` : ''}
                 ${delivered ? `<div style="color:var(--accent-green);font-weight:700;">납 ${_fmt(delivered)}</div>` : ''}
             </td>
@@ -1047,10 +1049,10 @@ var SalesDeliveryPlanModule = (function() {
         }
 
         wrap.innerHTML = `
-            <table class="data-table sdp-status-table" style="min-width:${860 + days.length * 42}px;font-size:10px;">
+            <table class="data-table sdp-status-table" style="min-width:${560 + days.length * 38}px;font-size:10px;">
                 <thead>
                     <tr>
-                        <th colspan="11"></th>
+                        <th colspan="9"></th>
                         ${_monthHeaderCells(days)}
                         <th rowspan="2">작업</th>
                     </tr>
@@ -1059,16 +1061,14 @@ var SalesDeliveryPlanModule = (function() {
                         <th>품명</th>
                         <th>컬러</th>
                         <th>포장</th>
-                        <th>계획</th>
-                        <th>납품</th>
-                        <th>미납</th>
+                        <th>계획<br><span style="font-size:9px;font-weight:600;">(납품/미납)</span></th>
                         <th>사출<br>작업필요</th>
                         <th>도장<br>작업필요</th>
                         <th>레이져<br>작업필요</th>
                         <th>완제품<br>수량</th>
                         ${days.map(d => {
                             const info = _dayColumnInfo(d);
-                            return `<th class="${info.className}" style="min-width:42px;text-align:center;"><div>${Number(d.slice(8))}</div><div style="font-size:9px;font-weight:600;">${info.weekday}</div></th>`;
+                            return `<th class="${info.className}" style="min-width:38px;text-align:center;"><div>${Number(d.slice(8))}</div><div style="font-size:9px;font-weight:600;">${info.weekday}</div></th>`;
                         }).join('')}
                     </tr>
                 </thead>
@@ -1076,16 +1076,21 @@ var SalesDeliveryPlanModule = (function() {
                     ${rows.map(row => `
                         <tr style="${row.hasShortage ? 'background:rgba(239,68,68,0.035);' : ''}">
                             <td>${_esc(row.carModel || '-')}</td>
-                            <td style="font-weight:800;min-width:132px;">${_esc(row.partName || '-')}</td>
+                            <td style="font-weight:800;">${_esc(row.partName || '-')}</td>
                             <td>${_esc(row.color || '-')}</td>
-                            <td style="text-align:right;">${_esc(row.packUnit || '-')}</td>
-                            <td style="text-align:right;font-weight:800;">${_fmt(row.totalPlan)}</td>
-                            <td style="text-align:right;color:var(--accent-green);font-weight:800;">${_fmt(row.delivered)}</td>
-                            <td style="text-align:right;color:${row.remaining > 0 ? 'var(--accent-orange)' : 'var(--accent-green)'};font-weight:800;">${_fmt(row.remaining)}</td>
-                            <td style="text-align:right;">${_shortageCell(row.injectionShortage, !row.injectionHasData)}</td>
-                            <td style="text-align:right;">${_shortageCell(row.paintShortage, !_isPaintEnd(row))}</td>
-                            <td style="text-align:right;">${_shortageCell(row.laserShortage, !_isLaserEnd(row))}</td>
-                            <td style="text-align:right;font-weight:700;">${row.finishedHasData ? _fmt(row.finishedStock) : '-'}</td>
+                            <td>${_esc(row.packUnit || '-')}</td>
+                            <td class="sdp-plan-summary">
+                                <div class="sdp-plan-main">${_fmt(row.totalPlan)}</div>
+                                <div class="sdp-plan-sub">
+                                    <span class="sdp-plan-delivered">${_fmt(row.delivered)}</span>
+                                    <span style="color:var(--text-muted);"> / </span>
+                                    <span class="sdp-plan-remaining" style="color:${row.remaining > 0 ? 'var(--accent-orange)' : 'var(--accent-green)'};">${_fmt(row.remaining)}</span>
+                                </div>
+                            </td>
+                            <td>${_shortageCell(row.injectionShortage, !row.injectionHasData)}</td>
+                            <td>${_shortageCell(row.paintShortage, !_isPaintEnd(row))}</td>
+                            <td>${_shortageCell(row.laserShortage, !_isLaserEnd(row))}</td>
+                            <td style="font-weight:700;">${row.finishedHasData ? _fmt(row.finishedStock) : '-'}</td>
                             ${days.map(d => _dayCell(row, d)).join('')}
                             <td>
                                 <button class="btn btn-sm btn-outline" onclick="SalesDeliveryPlanModule.editGroup('${_js(row.key)}')">수정</button>

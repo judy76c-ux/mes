@@ -37,18 +37,6 @@ const SettingsModule = (function() {
                         onclick="SettingsModule.switchTab('rawMaterials')">
                         <span class="material-symbols-outlined">science</span> 원재료
                     </button>
-                    <button class="tab-btn ${currentTab === 'inspectors' ? 'active' : ''}" 
-                        onclick="SettingsModule.switchTab('inspectors')">
-                        <span class="material-symbols-outlined">verified_user</span> 검사자
-                    </button>
-                    <button class="tab-btn ${currentTab === 'operators' ? 'active' : ''}" 
-                        onclick="SettingsModule.switchTab('operators')">
-                        <span class="material-symbols-outlined">engineering</span> 작업자
-                    </button>
-                    <button class="tab-btn ${currentTab === 'certifications' ? 'active' : ''}" 
-                        onclick="SettingsModule.switchTab('certifications')">
-                        <span class="material-symbols-outlined">workspace_premium</span> 자격인증
-                    </button>
                     <button class="tab-btn ${currentTab === 'backup' ? 'active' : ''}" 
                         onclick="SettingsModule.switchTab('backup')">
                         <span class="material-symbols-outlined">backup</span> 백업/복원
@@ -83,14 +71,15 @@ const SettingsModule = (function() {
 
         switch (currentTab) {
             case 'products': {
-                const savedFilter = (document.getElementById('carModelFilter') || {}).value || '';
+                const savedModel = (document.getElementById('carModelFilter') || {}).value || '';
+                const savedCustomer = (document.getElementById('customerFilter') || {}).value || '';
                 renderProductsTab(el);
-                if (savedFilter) {
-                    const filterEl = document.getElementById('carModelFilter');
-                    if (filterEl) {
-                        filterEl.value = savedFilter;
-                        filterProductList();
-                    }
+                if (savedModel || savedCustomer) {
+                    const modelEl = document.getElementById('carModelFilter');
+                    const customerEl = document.getElementById('customerFilter');
+                    if (modelEl && savedModel) modelEl.value = savedModel;
+                    if (customerEl && savedCustomer) customerEl.value = savedCustomer;
+                    filterProductList();
                 }
                 break;
             }
@@ -218,9 +207,8 @@ const SettingsModule = (function() {
     ];
 
     function filterProductList() {
-        const selectElement = document.getElementById('carModelFilter');
-        if (!selectElement) return;
-        const selectedModel = selectElement.value;
+        const selectedModel = (document.getElementById('carModelFilter') || {}).value || '';
+        const selectedCustomer = (document.getElementById('customerFilter') || {}).value || '';
 
         const tbody = document.querySelector('#settingsContent .data-table tbody');
         if (!tbody) return;
@@ -232,10 +220,16 @@ const SettingsModule = (function() {
 
         rows.forEach(row => {
             const modelCell = row.cells[1];
+            const customerCell = row.cells[6];
             if (!modelCell) return;
 
             const rowModel = modelCell.textContent.trim();
-            if (selectedModel === '' || rowModel === selectedModel) {
+            const rowCustomer = customerCell ? customerCell.textContent.trim() : '';
+
+            const modelMatch = selectedModel === '' || rowModel === selectedModel;
+            const customerMatch = selectedCustomer === '' || rowCustomer === selectedCustomer;
+
+            if (modelMatch && customerMatch) {
                 row.style.display = '';
                 visibleCount++;
             } else {
@@ -508,17 +502,22 @@ const SettingsModule = (function() {
         );
         const injMaterials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
         const uniqueCarModels = [...new Set(products.map(p => p.carModel).filter(Boolean))].sort();
+        const uniqueCustomers = [...new Set(products.map(p => p.customer).filter(Boolean))].sort();
         const colspan = 13;
 
         el.innerHTML = `
             ${buildProductValidationPanel()}
             <div class="card">
                 <div class="card-header" style="flex-wrap: wrap; gap: 10px;">
-                    <div style="display:flex; align-items:center; gap: 12px;">
+                    <div style="display:flex; align-items:center; gap: 12px; flex-wrap:wrap;">
                         <h4 style="margin:0;"><span class="material-symbols-outlined">category</span> 제품 목록 (<span id="productCount">${products.length}</span>건)</h4>
-                        <select id="carModelFilter" class="form-input" style="width: 150px; padding: 4px 8px;" onchange="SettingsModule.filterProductList()">
+                        <select id="carModelFilter" class="form-input" style="width: 140px; padding: 4px 8px;" onchange="SettingsModule.filterProductList()">
                             <option value="">전체 차종</option>
                             ${uniqueCarModels.map(model => `<option value="${model}">${model}</option>`).join('')}
+                        </select>
+                        <select id="customerFilter" class="form-input" style="width: 140px; padding: 4px 8px;" onchange="SettingsModule.filterProductList()">
+                            <option value="">전체 납품처</option>
+                            ${uniqueCustomers.map(c => `<option value="${c}">${c}</option>`).join('')}
                         </select>
                     </div>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
