@@ -175,21 +175,41 @@ const App = (function() {
         Router.registerModule('incoming-overview', IncomingOverviewModule);
         Router.registerModule('warehouse-overview', WarehouseOverviewModule);
         Router.registerModule('work-standard', WorkStandardModule);
+        function _qualityPersonnelTabNav(active) {
+            return `
+                <div class="settings-tabs" style="margin-bottom:16px;">
+                    <button class="tab-btn ${active === 'certifications' ? 'active' : ''}"
+                        onclick="Router.navigate('certifications-mgmt')">
+                        <span class="material-symbols-outlined">workspace_premium</span> 자격인증 현황
+                    </button>
+                    <button class="tab-btn ${active === 'inspectors' ? 'active' : ''}"
+                        onclick="Router.navigate('inspectors-mgmt')">
+                        <span class="material-symbols-outlined">verified_user</span> 검사자 관리
+                    </button>
+                    <button class="tab-btn ${active === 'operators' ? 'active' : ''}"
+                        onclick="Router.navigate('operators-mgmt')">
+                        <span class="material-symbols-outlined">engineering</span> 작업자 관리
+                    </button>
+                </div>
+                <div id="settingsContent"></div>
+            `;
+        }
+
         Router.registerModule('inspectors-mgmt', {
-            init(container) {
-                container.innerHTML = '<div class="fade-in-up" id="settingsContent"></div>';
+            render(container) {
+                container.innerHTML = '<div class="fade-in-up">' + _qualityPersonnelTabNav('inspectors') + '</div>';
                 SettingsModule.renderInspectorsTab(document.getElementById('settingsContent'));
             }
         });
         Router.registerModule('operators-mgmt', {
-            init(container) {
-                container.innerHTML = '<div class="fade-in-up" id="settingsContent"></div>';
+            render(container) {
+                container.innerHTML = '<div class="fade-in-up">' + _qualityPersonnelTabNav('operators') + '</div>';
                 SettingsModule.renderOperatorsTab(document.getElementById('settingsContent'));
             }
         });
         Router.registerModule('certifications-mgmt', {
-            init(container) {
-                container.innerHTML = '<div class="fade-in-up" id="settingsContent"></div>';
+            render(container) {
+                container.innerHTML = '<div class="fade-in-up">' + _qualityPersonnelTabNav('certifications') + '</div>';
                 SettingsModule.renderCertificationTab(document.getElementById('settingsContent'));
             }
         });

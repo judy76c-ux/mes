@@ -35,7 +35,10 @@ const Router = (function() {
         'prod-equipment': '설비관리',
         'settings': '관리 / 설정',
         'incoming-overview': '수입검사',
-        'warehouse-overview': '자재 창고'
+        'warehouse-overview': '자재 창고',
+        'inspectors-mgmt': '검사자 관리',
+        'operators-mgmt': '작업자 관리',
+        'certifications-mgmt': '자격인증 관리'
     };
 
     const PAGE_TITLE_HTML = {

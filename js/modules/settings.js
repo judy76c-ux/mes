@@ -3790,9 +3790,6 @@ const SettingsModule = (function() {
                 <div class="card-header">
                     <h4><span class="material-symbols-outlined">verified_user</span> 자격인증 검사자 (${inspectors.length}명)</h4>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                        <button class="btn btn-outline" onclick="SettingsModule.switchTab('certifications')">
-                            <span class="material-symbols-outlined">workspace_premium</span> 자격인증 관리
-                        </button>
                         <button class="btn btn-primary" onclick="SettingsModule.openAddInspectorModal()">
                             <span class="material-symbols-outlined">add</span> 검사자 추가
                         </button>
@@ -3975,9 +3972,6 @@ const SettingsModule = (function() {
                 <div class="card-header">
                     <h4><span class="material-symbols-outlined">engineering</span> 현장 작업자 등록 및 관리 (${operators.length}명)</h4>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                        <button class="btn btn-outline" onclick="SettingsModule.switchTab('certifications')">
-                            <span class="material-symbols-outlined">workspace_premium</span> 자격인증 관리
-                        </button>
                         <button class="btn btn-primary" onclick="SettingsModule.openAddOperatorModal()">
                             <span class="material-symbols-outlined">person_add</span> 작업자 추가
                         </button>
