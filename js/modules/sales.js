@@ -1340,7 +1340,7 @@ var SalesDeliveryPlanModule = (function() {
             'border-radius:0',
             'text-align:right',
             'font-weight:800',
-            'font-size:9px',
+            'font-size:10px',
             'line-height:17px',
             'padding:0 2px',
             qty > 0 ? 'background:rgba(59,130,246,0.08);color:var(--accent-blue)' : 'background:transparent;color:var(--text-primary)'
@@ -1379,10 +1379,9 @@ var SalesDeliveryPlanModule = (function() {
         }
 
         wrap.innerHTML = `
-            <table class="data-table sdp-grid-entry-table" style="min-width:${360 + dayInfos.length * 34}px;">
+            <table class="data-table sdp-grid-entry-table" style="min-width:${332 + dayInfos.length * 34}px;font-size:10px;">
                 <thead>
                     <tr>
-                        <th style="width:28px;">No</th>
                         <th class="sdp-customer-col" style="width:44px;">납품처</th>
                         <th style="width:48px;">차종</th>
                         <th style="width:132px;">품명</th>
@@ -1400,10 +1399,9 @@ var SalesDeliveryPlanModule = (function() {
                 <tbody>
                     ${_gridRows.map((row, index) => `
                         <tr>
-                            <td class="sdp-fixed-col" style="text-align:center;">${index + 1}</td>
                             <td class="sdp-fixed-col sdp-customer-col" title="${_esc(row.customer || '-')}">${_esc(row.customer || '-')}</td>
                             <td class="sdp-fixed-col">${_esc(row.carModel || '-')}</td>
-                            <td class="sdp-fixed-col" style="font-weight:800;">${_esc(row.partName || '-')}</td>
+                            <td class="sdp-fixed-col">${_esc(row.partName || '-')}</td>
                             <td class="sdp-fixed-col">${_esc(row.color || '-')}</td>
                             <td class="sdp-fixed-col" style="text-align:right;">${_esc(row.packUnit || '-')}</td>
                             ${days.map((day, dayIndex) => {
