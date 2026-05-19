@@ -1009,6 +1009,18 @@ var SalesDeliveryPlanModule = (function() {
         return `<span style="font-weight:800;color:${color};">${value > 0 ? '-' : ''}${_fmt(value)}</span>`;
     }
 
+    function _stockNeedCell(current, need, showDash = false) {
+        if (showDash) return '<span style="color:var(--text-muted);">-</span>';
+        const needColor = need > 0 ? 'var(--accent-red)' : 'var(--accent-green)';
+        return `
+            <div class="sdp-stock-need-cell">
+                <span class="sdp-stock-current">${_fmt(current)}</span>
+                <span class="sdp-stock-separator">/</span>
+                <span class="sdp-stock-need" style="color:${needColor};">${_fmt(need)}</span>
+            </div>
+        `;
+    }
+
     function _dayCell(row, day) {
         const plan = row.planByDate[day] || 0;
         const delivered = row.deliveryByDate[day] || 0;
@@ -1146,9 +1158,9 @@ var SalesDeliveryPlanModule = (function() {
                         <th>컬러</th>
                         <th>포장</th>
                         <th>계획<br><span style="font-size:9px;font-weight:600;">(납품/미납)</span></th>
-                        <th>사출<br>작업필요</th>
-                        <th>도장<br>작업필요</th>
-                        <th>레이져<br>작업필요</th>
+                        <th>사출<br>현재고/필요량</th>
+                        <th>도장<br>현재고/필요량</th>
+                        <th>레이져<br>현재고/필요량</th>
                         <th>완제품<br>수량</th>
                         ${days.map(d => {
                             const info = _dayColumnInfo(d);
@@ -1171,9 +1183,9 @@ var SalesDeliveryPlanModule = (function() {
                                     <span class="sdp-plan-remaining" style="color:${row.remaining > 0 ? 'var(--accent-orange)' : 'var(--accent-green)'};">${_fmt(row.remaining)}</span>
                                 </div>
                             </td>
-                            <td>${_shortageCell(row.injectionShortage, !row.injectionHasData)}</td>
-                            <td>${_shortageCell(row.paintShortage, !_isPaintEnd(row))}</td>
-                            <td>${_shortageCell(row.laserShortage, !_isLaserEnd(row))}</td>
+                            <td>${_stockNeedCell(row.injectionStock, row.injectionShortage, !row.injectionHasData)}</td>
+                            <td>${_stockNeedCell(row.finishedStock + row.shippingStandby, row.paintShortage, !_isPaintEnd(row))}</td>
+                            <td>${_stockNeedCell(row.finishedStock + row.shippingStandby + row.laserStandby, row.laserShortage, !_isLaserEnd(row))}</td>
                             <td style="font-weight:700;">${row.finishedHasData ? _fmt(row.finishedStock) : '-'}</td>
                             ${days.map(d => _dayCell(row, d)).join('')}
                             <td>
@@ -1531,11 +1543,14 @@ var SalesDeliveryPlanModule = (function() {
     }
 
     function exportData() {
-        const headers = ['차종', '품명', '컬러', '포장단위', '계획', '납품', '미납', '사출 작업필요', '도장 작업필요', '레이져 작업필요', '완제품수량', ..._lastDays];
+        const headers = ['차종', '품명', '컬러', '포장단위', '계획', '납품', '미납', '사출 현재고/필요량', '도장 현재고/필요량', '레이져 현재고/필요량', '완제품수량', ..._lastDays];
         const rows = _lastRows.map(r => [
             r.carModel, r.partName, r.color, r.packUnit,
             r.totalPlan, r.delivered, r.remaining,
-            r.injectionShortage, r.paintShortage, r.laserShortage, r.finishedStock,
+            `${r.injectionStock}/${r.injectionShortage}`,
+            _isPaintEnd(r) ? `${r.finishedStock + r.shippingStandby}/${r.paintShortage}` : '-',
+            _isLaserEnd(r) ? `${r.finishedStock + r.shippingStandby + r.laserStandby}/${r.laserShortage}` : '-',
+            r.finishedStock,
             ..._lastDays.map(d => r.planByDate[d] || '')
         ]);
         Storage.exportToCSV(headers, rows, '납품계획');

@@ -1148,6 +1148,29 @@ input[type="time"] {
     font-weight: 800;
 }
 
+.sdp-stock-need-cell {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    width: 100%;
+    font-weight: 800;
+    line-height: 1.1;
+}
+
+.sdp-stock-current {
+    color: var(--text-primary);
+}
+
+.sdp-stock-separator {
+    color: var(--text-muted);
+    font-weight: 700;
+}
+
+.sdp-stock-need {
+    font-weight: 800;
+}
+
 .sdp-plan-day-cell {
     user-select: none;
     transition: box-shadow 120ms ease, outline-color 120ms ease, transform 120ms ease;
