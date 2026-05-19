@@ -1148,6 +1148,32 @@ input[type="time"] {
     font-weight: 800;
 }
 
+.sdp-plan-day-cell {
+    user-select: none;
+    transition: box-shadow 120ms ease, outline-color 120ms ease, transform 120ms ease;
+}
+
+.sdp-plan-draggable {
+    cursor: grab !important;
+}
+
+.sdp-plan-draggable:active,
+.sdp-plan-dragging {
+    cursor: grabbing !important;
+}
+
+.sdp-plan-dragging {
+    opacity: 0.72;
+    outline: 2px solid var(--accent-blue);
+    outline-offset: -2px;
+}
+
+.sdp-plan-drop-target {
+    outline: 2px solid var(--accent-green);
+    outline-offset: -2px;
+    box-shadow: inset 0 0 0 999px rgba(16, 185, 129, 0.12);
+}
+
 .content-area:has(.sdp-page) {
     overflow-x: clip;
     overflow-y: auto;

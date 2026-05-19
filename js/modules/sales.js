@@ -481,6 +481,8 @@ var SalesDeliveryPlanModule = (function() {
     let _lastRows = [];
     let _lastDays = [];
     let _gridRows = [];
+    let _dragPlan = null;
+    let _dragSuppressClickUntil = 0;
 
     function _esc(value) {
         return String(value ?? '').replace(/[&<>"']/g, m => ({
@@ -1020,14 +1022,96 @@ var SalesDeliveryPlanModule = (function() {
                 ? 'rgba(239,68,68,0.12)'
                 : 'rgba(245,158,11,0.14)';
         return `
-            <td onclick="SalesDeliveryPlanModule.openCellModal('${_js(row.key)}','${day}')"
-                title="클릭해서 납품 계획 수량 입력"
-                class="${info.className}"
+            <td onclick="SalesDeliveryPlanModule.handleDayCellClick(event,'${_js(row.key)}','${day}')"
+                draggable="${plan > 0 ? 'true' : 'false'}"
+                ondragstart="SalesDeliveryPlanModule.startPlanDrag(event,'${_js(row.key)}','${day}')"
+                ondragover="SalesDeliveryPlanModule.overPlanDrop(event,'${_js(row.key)}','${day}')"
+                ondragleave="SalesDeliveryPlanModule.leavePlanDrop(event)"
+                ondrop="SalesDeliveryPlanModule.dropPlan(event,'${_js(row.key)}','${day}')"
+                ondragend="SalesDeliveryPlanModule.endPlanDrag(event)"
+                title="클릭해서 납품 계획 수량 입력 / 드래그해서 같은 품목 날짜로 이동"
+                class="${info.className} sdp-plan-day-cell ${plan > 0 ? 'sdp-plan-draggable' : ''}"
                 style="min-width:42px;background:${bg};text-align:center;font-size:10px;cursor:pointer;padding:3px 4px;">
                 ${plan ? `<div style="font-weight:800;">${_fmt(plan)}</div>` : ''}
                 ${delivered ? `<div style="color:var(--accent-green);font-weight:700;">납 ${_fmt(delivered)}</div>` : ''}
             </td>
         `;
+    }
+
+    function handleDayCellClick(event, rowKey, date) {
+        if (Date.now() < _dragSuppressClickUntil) {
+            event?.preventDefault();
+            event?.stopPropagation();
+            return;
+        }
+        openCellModal(rowKey, date);
+    }
+
+    function startPlanDrag(event, rowKey, date) {
+        const row = _lastRows.find(r => r.key === rowKey);
+        const qty = row ? _planQtyForCell(row, date) : 0;
+        if (!row || qty <= 0) {
+            event.preventDefault();
+            return;
+        }
+        _dragPlan = { rowKey, date, qty };
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', JSON.stringify(_dragPlan));
+        event.currentTarget.classList.add('sdp-plan-dragging');
+    }
+
+    function overPlanDrop(event, rowKey, date) {
+        if (!_dragPlan || _dragPlan.rowKey !== rowKey || _dragPlan.date === date) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        event.currentTarget.classList.add('sdp-plan-drop-target');
+    }
+
+    function leavePlanDrop(event) {
+        event.currentTarget.classList.remove('sdp-plan-drop-target');
+    }
+
+    async function dropPlan(event, rowKey, targetDate) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.currentTarget.classList.remove('sdp-plan-drop-target');
+        _dragSuppressClickUntil = Date.now() + 500;
+
+        const drag = _dragPlan || (() => {
+            try { return JSON.parse(event.dataTransfer.getData('text/plain') || '{}'); }
+            catch (error) { return null; }
+        })();
+
+        if (!drag || drag.rowKey !== rowKey || drag.date === targetDate) {
+            _dragPlan = null;
+            return;
+        }
+
+        const row = _lastRows.find(r => r.key === rowKey);
+        if (!row) {
+            _dragPlan = null;
+            return;
+        }
+
+        const sourceQty = _planQtyForCell(row, drag.date);
+        if (sourceQty <= 0) {
+            _dragPlan = null;
+            return;
+        }
+
+        const targetQty = _planQtyForCell(row, targetDate);
+        await _upsertPlanCell(row, targetDate, targetQty + sourceQty);
+        await _upsertPlanCell(row, drag.date, 0);
+        _dragPlan = null;
+        UIUtils.toast('납품 계획 수량을 이동했습니다.', 'success');
+        search();
+    }
+
+    function endPlanDrag(event) {
+        event?.currentTarget?.classList.remove('sdp-plan-dragging');
+        document.querySelectorAll('.sdp-plan-drop-target').forEach(el => el.classList.remove('sdp-plan-drop-target'));
+        _dragSuppressClickUntil = Date.now() + 300;
+        _dragPlan = null;
     }
 
     function _monthHeaderCells(days) {
@@ -1469,6 +1553,12 @@ var SalesDeliveryPlanModule = (function() {
         saveGridPlans,
         openCellModal,
         saveCellPlan,
+        handleDayCellClick,
+        startPlanDrag,
+        overPlanDrop,
+        leavePlanDrop,
+        dropPlan,
+        endPlanDrag,
         saveNew,
         edit,
         editGroup,
