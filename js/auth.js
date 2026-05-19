@@ -247,7 +247,10 @@ const AuthModule = (function () {
     }
 
     /* ── 설정 페이지 관리자 인증 ─────────────────────────────── */
+    /* TODO: 테스트 완료 후 아래 주석 해제하고 onPass() 한 줄 제거 */
     function checkSettingsAuth(onPass) {
+        onPass(); // 테스트 중 — 인증 없이 전체 허용
+        /* 운영 시 아래 코드로 복구
         const user = getCurrentUser();
         if (user && user.role === 'admin') { onPass(); return; }
         showLoginModal(function() {
@@ -255,6 +258,7 @@ const AuthModule = (function () {
             if (u && u.role === 'admin') { onPass(); }
             else { UIUtils.toast('관리자 계정으로 로그인해야 합니다.', 'warning'); }
         });
+        */
     }
 
     /* ── body 쓰기 모드 CSS 클래스 ──────────────────────────── */
