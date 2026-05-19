@@ -1012,11 +1012,12 @@ var SalesDeliveryPlanModule = (function() {
     function _stockNeedCell(current, need, showDash = false) {
         if (showDash) return '<span style="color:var(--text-muted);">-</span>';
         const needColor = need > 0 ? 'var(--accent-red)' : 'var(--accent-green)';
+        const needText = need > 0 ? `-${_fmt(need)}` : _fmt(need);
         return `
             <div class="sdp-stock-need-cell">
                 <span class="sdp-stock-current">${_fmt(current)}</span>
                 <span class="sdp-stock-separator">/</span>
-                <span class="sdp-stock-need" style="color:${needColor};">${_fmt(need)}</span>
+                <span class="sdp-stock-need" style="color:${needColor};">${needText}</span>
             </div>
         `;
     }
