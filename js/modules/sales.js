@@ -557,6 +557,8 @@ var SalesDeliveryPlanModule = (function() {
         const className = (week === 0 || isHoliday) ? 'sdp-red-col' : (week === 6 ? 'sdp-sat-col' : '');
         return {
             dateLabel: day.slice(5).replace('-', '/'),
+            monthLabel: `${Number(day.slice(5, 7))}월`,
+            dayLabel: `${Number(day.slice(8))}`,
             weekday: DELIVERY_WEEKDAYS[week] || '',
             className
         };
@@ -1377,7 +1379,7 @@ var SalesDeliveryPlanModule = (function() {
         }
 
         wrap.innerHTML = `
-            <table class="data-table sdp-grid-entry-table" style="min-width:${360 + dayInfos.length * 44}px;">
+            <table class="data-table sdp-grid-entry-table" style="min-width:${360 + dayInfos.length * 34}px;">
                 <thead>
                     <tr>
                         <th style="width:28px;">No</th>
@@ -1387,8 +1389,9 @@ var SalesDeliveryPlanModule = (function() {
                         <th style="width:48px;">컬러</th>
                         <th style="width:42px;">포장</th>
                         ${dayInfos.map(info => `
-                            <th class="${info.className}" style="width:44px;">
-                                <span class="sdp-date-label">${info.dateLabel}</span>
+                            <th class="${info.className} sdp-grid-date-head" style="width:34px;min-width:34px;max-width:34px;">
+                                <span class="sdp-date-month">${info.monthLabel}</span>
+                                <span class="sdp-date-day">${info.dayLabel}</span>
                                 <span class="sdp-weekday-label">${info.weekday}</span>
                             </th>
                         `).join('')}
@@ -1407,7 +1410,7 @@ var SalesDeliveryPlanModule = (function() {
                                 const qty = _planQtyForCell(row, day);
                                 const info = dayInfos[dayIndex];
                                 return `
-                                    <td class="${info.className}" style="text-align:center;">
+                                    <td class="${info.className}" style="text-align:center;width:34px;min-width:34px;max-width:34px;padding:0 1px;">
                                         <input type="number" min="0" class="sdp-grid-cell"
                                             data-row="${index}" data-date="${day}" value="${qty || ''}"
                                             placeholder="" onclick="this.select()" onfocus="this.select()"

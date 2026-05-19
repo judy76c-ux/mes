@@ -1404,6 +1404,42 @@ input[type="time"] {
     color: #1d4ed8;
 }
 
+.sdp-grid-entry-table .sdp-grid-date-head {
+    padding: 2px 1px !important;
+    text-align: center;
+    vertical-align: middle;
+    line-height: 1.05;
+}
+
+.sdp-grid-entry-table .sdp-date-month,
+.sdp-grid-entry-table .sdp-date-day,
+.sdp-grid-entry-table .sdp-weekday-label {
+    display: block;
+}
+
+.sdp-grid-entry-table .sdp-date-month {
+    font-size: 8px;
+    font-weight: 700;
+    color: var(--text-secondary);
+}
+
+.sdp-grid-entry-table .sdp-date-day {
+    margin-top: 1px;
+    font-size: 10px;
+    font-weight: 800;
+}
+
+.sdp-grid-entry-table .sdp-weekday-label {
+    margin-top: 1px;
+    font-size: 8px;
+    font-weight: 700;
+}
+
+.sdp-grid-entry-table .sdp-grid-cell {
+    font-size: 9px !important;
+    padding: 0 1px !important;
+}
+
 .modal-header {
     display: flex;
     justify-content: space-between;
