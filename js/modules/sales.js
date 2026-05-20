@@ -833,6 +833,9 @@ var SalesDeliveryPlanModule = (function() {
                         <button class="btn btn-secondary" onclick="SalesDeliveryPlanModule.openSingleModal()">
                             <span class="material-symbols-outlined">add</span> 단건 등록
                         </button>
+                        <button class="btn btn-outline" onclick="SalesDeliveryPlanModule.openExcelUploadModal()">
+                            <span class="material-symbols-outlined">upload_file</span> 엑셀 업로드
+                        </button>
                     </div>
                 </div>
 
@@ -1318,10 +1321,6 @@ var SalesDeliveryPlanModule = (function() {
                         ${_selectOptions(products.map(p => p.carModel), '', '-- 차종 선택 --')}
                     </select>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">품명 검색</label>
-                    <input class="form-input" id="sdpGridKeyword" placeholder="품명/컬러 검색" oninput="SalesDeliveryPlanModule.renderGridEditorRows()">
-                </div>
                 <div class="form-group" style="align-self:flex-end;">
                     <button class="btn btn-outline" onclick="SalesDeliveryPlanModule.renderGridEditorRows()">
                         <span class="material-symbols-outlined">refresh</span> 목록 적용
@@ -1352,17 +1351,12 @@ var SalesDeliveryPlanModule = (function() {
         const end = document.getElementById('sdpGridEnd')?.value || _addDays(start, 30);
         const customer = document.getElementById('sdpGridCustomer')?.value || '';
         const car = document.getElementById('sdpGridCar')?.value || '';
-        const keyword = _norm(document.getElementById('sdpGridKeyword')?.value || '');
         const days = _days(start, end);
         const dayInfos = days.map(_dayColumnInfo);
 
         const products = _productsByCustomer(customer)
             .filter(p => p.partName || p.name)
             .filter(p => !car || _norm(p.carModel) === _norm(car))
-            .filter(p => !keyword ||
-                _norm(p.partName || p.name).includes(keyword) ||
-                _norm(p.color || p.paintColor).includes(keyword)
-            )
             .sort((a, b) =>
                 String(a.customer || '').localeCompare(String(b.customer || ''), 'ko') ||
                 String(a.carModel || '').localeCompare(String(b.carModel || ''), 'ko') ||
