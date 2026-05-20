@@ -1601,36 +1601,194 @@ var SalesDeliveryPlanModule = (function() {
         });
     }
 
-    // ── Excel 업로드 파싱 ──────────────────────────────────────────────
+    // ── Excel 업로드 파싱 + 고객사별 프리셋 ──────────────────────────
+    const _XLSX_PRESET_KEY = 'mes_excel_delivery_presets';
     let _xlsxParsedData = null;
+    let _xlsxLastBuffer = null; // 재파싱용 원본 버퍼
+
+    // ── 프리셋 저장/로드 ──
+    function _getXlsxPresets() {
+        try { return JSON.parse(localStorage.getItem(_XLSX_PRESET_KEY) || '{}'); }
+        catch (e) { return {}; }
+    }
+    function _saveXlsxPreset(customer, cfg) {
+        if (!customer) return;
+        const presets = _getXlsxPresets();
+        presets[customer] = { ...cfg, customer, savedAt: new Date().toISOString() };
+        localStorage.setItem(_XLSX_PRESET_KEY, JSON.stringify(presets));
+    }
+    function _deleteXlsxPreset(customer) {
+        const presets = _getXlsxPresets();
+        delete presets[customer];
+        localStorage.setItem(_XLSX_PRESET_KEY, JSON.stringify(presets));
+    }
+
+    // ── 컬럼 문자↔인덱스 변환 ──
+    function _colLetterToIdx(letter) {
+        const s = String(letter || '').trim().toUpperCase().replace(/[^A-Z]/g, '');
+        if (!s) return -1;
+        let idx = 0;
+        for (let i = 0; i < s.length; i++) idx = idx * 26 + (s.charCodeAt(i) - 64);
+        return idx - 1;
+    }
+    function _idxToColLetter(idx) {
+        if (idx < 0) return '';
+        let letter = '', n = idx + 1;
+        while (n > 0) { const r = (n - 1) % 26; letter = String.fromCharCode(65 + r) + letter; n = Math.floor((n - 1) / 26); }
+        return letter;
+    }
+
+    // ── 기본 설정 ──
+    function _defaultXlsxConfig() {
+        return { sheetKeyword: '납품일정', headerRow: '4', companyCol: 'B', companyFilter: '', partNameCol: 'G', categoryCol: 'J', categoryKeyword: '입고 요청량', dateStartCol: 'K' };
+    }
+    function _readXlsxConfig() {
+        const g = id => document.getElementById(id)?.value?.trim() || '';
+        return {
+            sheetKeyword: g('xlsxSheetKeyword') || '납품일정',
+            headerRow: g('xlsxHeaderRow') || '4',
+            companyCol: g('xlsxCompanyCol').toUpperCase() || 'B',
+            companyFilter: g('xlsxCompanyFilter'),
+            partNameCol: g('xlsxPartNameCol').toUpperCase() || 'G',
+            categoryCol: g('xlsxCategoryCol').toUpperCase() || 'J',
+            categoryKeyword: g('xlsxCategoryKeyword') || '입고 요청량',
+            dateStartCol: g('xlsxDateStartCol').toUpperCase() || 'K'
+        };
+    }
+    function _applyXlsxConfig(cfg) {
+        const s = (id, v) => { const el = document.getElementById(id); if (el) el.value = v ?? ''; };
+        s('xlsxSheetKeyword', cfg.sheetKeyword);
+        s('xlsxHeaderRow', cfg.headerRow);
+        s('xlsxCompanyCol', cfg.companyCol);
+        s('xlsxCompanyFilter', cfg.companyFilter);
+        s('xlsxPartNameCol', cfg.partNameCol);
+        s('xlsxCategoryCol', cfg.categoryCol);
+        s('xlsxCategoryKeyword', cfg.categoryKeyword);
+        s('xlsxDateStartCol', cfg.dateStartCol);
+    }
+
+    // ── 납품처 변경 → 프리셋 로드 ──
+    function onXlsxCustomerChange() {
+        const customer = document.getElementById('xlsxCustomerSel')?.value || '';
+        const presets = _getXlsxPresets();
+        const preset = presets[customer];
+        const badge = document.getElementById('xlsxPresetBadge');
+        const delBtn = document.getElementById('xlsxPresetDelBtn');
+        if (preset) {
+            _applyXlsxConfig(preset);
+            if (badge) badge.style.display = '';
+            if (delBtn) delBtn.style.display = '';
+        } else {
+            const def = _defaultXlsxConfig();
+            def.companyFilter = customer;
+            _applyXlsxConfig(def);
+            if (badge) badge.style.display = 'none';
+            if (delBtn) delBtn.style.display = 'none';
+        }
+        // 파일이 이미 선택되어 있으면 설정 변경 후 재파싱
+        if (_xlsxLastBuffer) {
+            try { _parseDeliveryExcel(_xlsxLastBuffer); } catch (e) { /* ignore */ }
+        }
+    }
 
     function openExcelUploadModal() {
         _xlsxParsedData = null;
+        _xlsxLastBuffer = null;
+        const presets = _getXlsxPresets();
+        const presetKeys = Object.keys(presets);
+        const allCustomers = _unique([
+            ..._products().map(p => _customerOf(p)),
+            ...(Storage.getAll(STORE) || []).map(r => _customerOf(r)),
+            ...presetKeys
+        ]);
+        const def = _defaultXlsxConfig();
+
+        const customerOptions = allCustomers.map(c =>
+            `<option value="${_esc(c)}">${presets[c] ? '⭐ ' : ''}${_esc(c)}</option>`
+        ).join('');
+
         const html = `
-            <div style="background:rgba(59,130,246,0.07);border:1px solid rgba(59,130,246,0.2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.82rem;color:var(--text-secondary);line-height:1.6;">
-                고객사 납품 일정 엑셀을 업로드하면 <strong>입고 요청량</strong> 행을 자동으로 납품계획에 등록합니다.<br>
-                업체명 필터를 입력한 뒤 파일을 선택하면 파싱 결과를 먼저 확인할 수 있습니다.
-            </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">업체명 필터 <span style="font-size:0.75rem;color:var(--text-muted);">(엑셀 내 업체명 일부)</span></label>
-                    <input class="form-input" id="xlsxCompanyName" value="KC 케미칼" placeholder="예: KC 케미칼">
+            <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;flex-wrap:wrap;">
+                <div class="form-group" style="flex:1;min-width:180px;">
+                    <label class="form-label">납품처 <span style="font-size:0.73rem;color:var(--text-muted);">⭐ = 프리셋 저장됨</span></label>
+                    <select class="form-select" id="xlsxCustomerSel" onchange="SalesDeliveryPlanModule.onXlsxCustomerChange()">
+                        <option value="">-- 납품처 선택 --</option>
+                        ${customerOptions}
+                    </select>
                 </div>
+                <span id="xlsxPresetBadge" style="display:none;background:rgba(16,185,129,0.15);color:var(--accent-green);font-size:0.75rem;padding:4px 10px;border-radius:20px;white-space:nowrap;margin-bottom:4px;border:1px solid rgba(16,185,129,0.3);">⭐ 프리셋 적용됨</span>
+                <button id="xlsxPresetDelBtn" class="btn btn-sm" style="display:none;color:var(--accent-red);border:1px solid var(--accent-red);margin-bottom:4px;" onclick="SalesDeliveryPlanModule._deleteCurrentPreset()">
+                    <span class="material-symbols-outlined" style="font-size:0.85rem;">delete</span> 프리셋 삭제
+                </button>
             </div>
-            <div class="form-group" style="margin-top:4px;">
+
+            <div class="form-group" style="margin-bottom:12px;">
                 <label class="form-label">엑셀 파일 선택 <span style="color:var(--accent-red)">*</span></label>
                 <input type="file" class="form-input" id="xlsxFileInput" accept=".xlsx,.xls"
                     onchange="SalesDeliveryPlanModule._handleExcelFile(this)">
             </div>
-            <div id="xlsxStatus" style="font-size:0.82rem;margin-top:8px;min-height:18px;"></div>
+
+            <details id="xlsxConfigDetails" style="border:1px solid var(--border);border-radius:8px;margin-bottom:10px;">
+                <summary style="padding:9px 14px;font-size:0.83rem;font-weight:600;cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;list-style:none;">
+                    <span class="material-symbols-outlined" style="font-size:0.95rem;color:var(--text-muted);">tune</span>
+                    파싱 설정
+                    <span style="font-size:0.72rem;font-weight:400;color:var(--text-muted);margin-left:2px;">컬럼 위치가 다를 때 직접 지정</span>
+                </summary>
+                <div style="padding:12px 14px;border-top:1px solid var(--border);background:var(--bg-secondary);border-radius:0 0 8px 8px;">
+                    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:10px;">
+                        <div class="form-group">
+                            <label class="form-label" style="font-size:0.74rem;">시트명 검색어</label>
+                            <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="xlsxSheetKeyword" value="${def.sheetKeyword}" placeholder="납품일정">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" style="font-size:0.74rem;">날짜 헤더 행 번호</label>
+                            <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="xlsxHeaderRow" value="${def.headerRow}" placeholder="4" type="number" min="1" max="50">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" style="font-size:0.74rem;">업체명 컬럼</label>
+                            <input class="form-input" style="padding:5px 8px;font-size:0.82rem;text-transform:uppercase;" id="xlsxCompanyCol" value="${def.companyCol}" placeholder="B" maxlength="3">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" style="font-size:0.74rem;">업체명 필터 키워드</label>
+                            <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="xlsxCompanyFilter" value="${def.companyFilter}" placeholder="KC 케미칼">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" style="font-size:0.74rem;">부품명 컬럼</label>
+                            <input class="form-input" style="padding:5px 8px;font-size:0.82rem;text-transform:uppercase;" id="xlsxPartNameCol" value="${def.partNameCol}" placeholder="G" maxlength="3">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" style="font-size:0.74rem;">구분 컬럼</label>
+                            <input class="form-input" style="padding:5px 8px;font-size:0.82rem;text-transform:uppercase;" id="xlsxCategoryCol" value="${def.categoryCol}" placeholder="J" maxlength="3">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" style="font-size:0.74rem;">구분 필터 키워드</label>
+                            <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="xlsxCategoryKeyword" value="${def.categoryKeyword}" placeholder="입고 요청량">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" style="font-size:0.74rem;">날짜 시작 컬럼</label>
+                            <input class="form-input" style="padding:5px 8px;font-size:0.82rem;text-transform:uppercase;" id="xlsxDateStartCol" value="${def.dateStartCol}" placeholder="K" maxlength="3">
+                        </div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.8rem;cursor:pointer;">
+                            <input type="checkbox" id="xlsxSavePreset" checked> 이 설정을 납품처 프리셋으로 저장
+                        </label>
+                        <button class="btn btn-sm btn-outline" style="font-size:0.78rem;" onclick="SalesDeliveryPlanModule._reparse()">
+                            <span class="material-symbols-outlined" style="font-size:0.85rem;">refresh</span> 재파싱
+                        </button>
+                    </div>
+                </div>
+            </details>
+
+            <div id="xlsxStatus" style="font-size:0.82rem;margin-top:4px;min-height:18px;"></div>
             <div id="xlsxPreviewArea" style="display:none;">
-                <div style="border-top:1px solid var(--border);margin:14px 0 0;padding-top:12px;">
-                    <div style="font-size:0.85rem;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:6px;">
+                <div style="border-top:1px solid var(--border);margin:12px 0 0;padding-top:10px;">
+                    <div style="font-size:0.85rem;font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
                         <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-green);">check_circle</span>
                         파싱 결과 미리보기
                         <span id="xlsxPreviewNote" style="font-size:0.75rem;font-weight:400;color:var(--text-muted);"></span>
                     </div>
-                    <div id="xlsxPreviewTable" style="overflow-x:auto;max-height:360px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;"></div>
+                    <div id="xlsxPreviewTable" style="overflow-x:auto;max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;"></div>
                 </div>
             </div>
         `;
@@ -1639,6 +1797,28 @@ var SalesDeliveryPlanModule = (function() {
              <button class="btn btn-primary" id="xlsxConfirmBtn" style="display:none;" onclick="SalesDeliveryPlanModule._confirmExcelImport()">
                  <span class="material-symbols-outlined">playlist_add</span> 납품계획 등록
              </button>`, 'xl');
+    }
+
+    function _deleteCurrentPreset() {
+        const customer = document.getElementById('xlsxCustomerSel')?.value || '';
+        if (!customer) return;
+        UIUtils.confirm(`"${customer}" 프리셋을 삭제하시겠습니까?`, () => {
+            _deleteXlsxPreset(customer);
+            UIUtils.toast(`"${customer}" 프리셋이 삭제되었습니다.`, 'success');
+            const badge = document.getElementById('xlsxPresetBadge');
+            const delBtn = document.getElementById('xlsxPresetDelBtn');
+            if (badge) badge.style.display = 'none';
+            if (delBtn) delBtn.style.display = 'none';
+            // 납품처 옵션에서 ⭐ 제거
+            const opt = document.querySelector(`#xlsxCustomerSel option[value="${customer}"]`);
+            if (opt) opt.textContent = customer;
+        });
+    }
+
+    function _reparse() {
+        if (!_xlsxLastBuffer) { UIUtils.toast('먼저 파일을 선택하세요.', 'warning'); return; }
+        try { _parseDeliveryExcel(_xlsxLastBuffer); }
+        catch (e) { UIUtils.toast(`파싱 오류: ${e.message}`, 'error'); }
     }
 
     function _handleExcelFile(inputEl) {
@@ -1651,12 +1831,13 @@ var SalesDeliveryPlanModule = (function() {
         if (previewArea) previewArea.style.display = 'none';
         if (confirmBtn) confirmBtn.style.display = 'none';
         _xlsxParsedData = null;
+        _xlsxLastBuffer = null;
 
         const reader = new FileReader();
         reader.onload = function(e) {
-            try {
-                _parseDeliveryExcel(e.target.result);
-            } catch (err) {
+            _xlsxLastBuffer = e.target.result;
+            try { _parseDeliveryExcel(_xlsxLastBuffer); }
+            catch (err) {
                 if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent-red);">파싱 오류: ${err.message}</span>`;
             }
         };
@@ -1667,59 +1848,91 @@ var SalesDeliveryPlanModule = (function() {
         if (typeof serial !== 'number' || serial < 40000 || serial > 70000) return null;
         const ms = Math.round((serial - 25569) * 86400 * 1000);
         const d = new Date(ms);
-        const y = d.getUTCFullYear();
-        const mo = String(d.getUTCMonth() + 1).padStart(2, '0');
-        const dy = String(d.getUTCDate()).padStart(2, '0');
-        return `${y}-${mo}-${dy}`;
+        return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
     }
 
     function _parseDeliveryExcel(arrayBuffer) {
         const statusEl = document.getElementById('xlsxStatus');
         const previewArea = document.getElementById('xlsxPreviewArea');
         const confirmBtn = document.getElementById('xlsxConfirmBtn');
+        if (previewArea) previewArea.style.display = 'none';
+        if (confirmBtn) confirmBtn.style.display = 'none';
 
         if (!window.XLSX) {
             if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-red);">XLSX 라이브러리가 로드되지 않았습니다.</span>';
             return;
         }
 
-        const companyFilter = _norm(document.getElementById('xlsxCompanyName')?.value || '');
+        const cfg = _readXlsxConfig();
+        const headerRowTarget = Math.max(1, parseInt(cfg.headerRow) || 4) - 1; // 0-based
+        const companyColIdx = _colLetterToIdx(cfg.companyCol);
+        const partNameColIdx = _colLetterToIdx(cfg.partNameCol);
+        const categoryColIdx = _colLetterToIdx(cfg.categoryCol);
+        const dateStartColIdx = _colLetterToIdx(cfg.dateStartCol);
+        const companyFilter = _norm(cfg.companyFilter);
+        const categoryKeyword = _norm(cfg.categoryKeyword);
+
         const wb = XLSX.read(arrayBuffer, { type: 'array', cellDates: false });
 
-        // 납품일정 시트 찾기
-        const sheetName = wb.SheetNames.find(n => n.includes('납품일정')) ||
+        // 시트 찾기
+        const sheetName = wb.SheetNames.find(n => cfg.sheetKeyword && n.includes(cfg.sheetKeyword)) ||
+                          wb.SheetNames.find(n => n.includes('납품일정')) ||
                           wb.SheetNames.find(n => n.includes('실적')) ||
                           wb.SheetNames[wb.SheetNames.length - 1];
         const ws = wb.Sheets[sheetName];
         const rawData = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
 
-        // 헤더 행 탐색: 날짜 시리얼(40000~70000)이 5개 이상 있는 행
-        let headerRowIdx = -1;
+        // 날짜 컬럼 수집 (지정된 헤더 행 기준)
         const dateCols = [];
-
-        for (let ri = 0; ri < Math.min(rawData.length, 12); ri++) {
-            const row = rawData[ri];
-            let count = 0;
-            let firstCol = -1;
-            for (let ci = 8; ci < row.length; ci++) {
-                const v = row[ci];
+        if (headerRowTarget < rawData.length) {
+            const hrow = rawData[headerRowTarget];
+            for (let ci = dateStartColIdx >= 0 ? dateStartColIdx : 0; ci < hrow.length; ci++) {
+                // 엑셀 날짜 시리얼 또는 날짜 문자열(MM/DD, YYYY-MM-DD 등) 처리
+                const v = hrow[ci];
+                let dateStr = null;
                 if (typeof v === 'number' && v > 40000 && v < 70000) {
-                    if (firstCol === -1) firstCol = ci;
-                    count++;
+                    dateStr = _excelSerialToDate(v);
+                } else if (typeof v === 'string') {
+                    // 날짜 문자열 패턴 인식 (M/D, MM/DD, YYYY-MM-DD)
+                    const m = v.match(/^(\d{1,4})[\/\-.](\d{1,2})(?:[\/\-.](\d{1,4}))?$/);
+                    if (m) {
+                        const n1 = parseInt(m[1]), n2 = parseInt(m[2]), n3 = m[3] ? parseInt(m[3]) : null;
+                        if (n1 > 31 && n2 >= 1 && n2 <= 12 && n3) { // YYYY-MM-DD
+                            dateStr = `${n1}-${String(n2).padStart(2,'0')}-${String(n3).padStart(2,'0')}`;
+                        } else if (n1 >= 1 && n1 <= 12 && n2 >= 1 && n2 <= 31) { // MM/DD → 현재 연도
+                            const yr = new Date().getFullYear();
+                            dateStr = `${yr}-${String(n1).padStart(2,'0')}-${String(n2).padStart(2,'0')}`;
+                        }
+                    }
                 }
-            }
-            if (count >= 5) {
-                headerRowIdx = ri;
-                for (let ci = firstCol; ci < row.length; ci++) {
-                    const dateStr = _excelSerialToDate(row[ci]);
-                    if (dateStr) dateCols.push({ colIdx: ci, dateStr });
-                }
-                break;
+                if (dateStr) dateCols.push({ colIdx: ci, dateStr });
             }
         }
 
-        if (headerRowIdx === -1 || !dateCols.length) {
-            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-red);">날짜 헤더 행을 찾지 못했습니다. 파일 형식을 확인하세요.</span>';
+        // 날짜 컬럼이 없으면 자동 탐색 (헤더 행 힌트 무시하고 전체 스캔)
+        if (!dateCols.length) {
+            for (let ri = 0; ri < Math.min(rawData.length, 15); ri++) {
+                const row = rawData[ri];
+                let cnt = 0, firstC = -1;
+                for (let ci = 0; ci < row.length; ci++) {
+                    if (typeof row[ci] === 'number' && row[ci] > 40000 && row[ci] < 70000) {
+                        if (firstC === -1) firstC = ci;
+                        cnt++;
+                    }
+                }
+                if (cnt >= 5) {
+                    for (let ci = firstC; ci < row.length; ci++) {
+                        const ds = _excelSerialToDate(row[ci]);
+                        if (ds) dateCols.push({ colIdx: ci, dateStr: ds });
+                    }
+                    if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent-orange);">⚠ 날짜 헤더를 ${ri+1}행에서 자동 탐색했습니다. "날짜 헤더 행 번호"를 ${ri+1}로 수정하고 재파싱하세요.</span>`;
+                    break;
+                }
+            }
+        }
+
+        if (!dateCols.length) {
+            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-red);">날짜 컬럼을 찾지 못했습니다. 파싱 설정의 "날짜 헤더 행"과 "날짜 시작 컬럼"을 확인하세요.</span>';
             return;
         }
 
@@ -1727,25 +1940,25 @@ var SalesDeliveryPlanModule = (function() {
         const products = _products();
         const parsedRows = [];
 
-        for (let ri = headerRowIdx + 1; ri < rawData.length; ri++) {
+        for (let ri = headerRowTarget + 1; ri < rawData.length; ri++) {
             const row = rawData[ri];
-            const companyCell  = _norm(String(row[1] || ''));  // col B: 업체명
-            const partNameExcel = String(row[6] || '').trim(); // col G: 부품명
-            const categoryCell  = _norm(String(row[9] || '')); // col J: 구분
+            const companyCell   = companyColIdx >= 0 ? _norm(String(row[companyColIdx] || '')) : '';
+            const partNameExcel = partNameColIdx >= 0 ? String(row[partNameColIdx] || '').trim() : '';
+            const categoryCell  = categoryColIdx >= 0 ? _norm(String(row[categoryColIdx] || '')) : '';
 
             if (companyFilter && !companyCell.includes(companyFilter)) continue;
-            if (!categoryCell.includes('입고 요청량') && !categoryCell.includes('입고요청량')) continue;
+            if (categoryKeyword && !categoryCell.includes(categoryKeyword.replace(/\s/g, '')) &&
+                !categoryCell.replace(/\s/g,'').includes(categoryKeyword.replace(/\s/g,''))) continue;
             if (!partNameExcel) continue;
 
-            // 제품 매칭 (대괄호·공백 제거 후 포함 비교)
+            // 제품 매칭
             const normExcel = _norm(partNameExcel).replace(/[\[\]()（）\s]/g, '');
             const matchedProduct = products.find(p => {
                 const pn = _norm(p.partName || '').replace(/[\[\]()（）\s]/g, '');
-                if (!pn) return false;
-                return pn === normExcel || pn.includes(normExcel) || normExcel.includes(pn);
+                return pn && (pn === normExcel || pn.includes(normExcel) || normExcel.includes(pn));
             }) || null;
 
-            // 날짜별 수량 추출
+            // 날짜별 수량
             const dateQtys = [];
             for (const { colIdx, dateStr } of dateCols) {
                 const strVal = String(row[colIdx] ?? '').trim();
@@ -1768,7 +1981,9 @@ var SalesDeliveryPlanModule = (function() {
         }
 
         if (!parsedRows.length) {
-            if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent-orange);">조건에 맞는 행이 없습니다. 업체명: "<strong>${document.getElementById('xlsxCompanyName')?.value}</strong>", 구분: 입고 요청량</span>`;
+            if (statusEl) statusEl.innerHTML =
+                `<span style="color:var(--accent-orange);">조건에 맞는 행이 없습니다.</span>` +
+                `<span style="color:var(--text-muted);font-size:0.78rem;margin-left:6px;">업체명 필터: "${cfg.companyFilter}" / 구분 키워드: "${cfg.categoryKeyword}" / 시트: ${sheetName}</span>`;
             return;
         }
 
@@ -1778,7 +1993,7 @@ var SalesDeliveryPlanModule = (function() {
         const unmatch = parsedRows.filter(r => !r.matchedProduct).length;
         if (statusEl) statusEl.innerHTML =
             `<span style="color:var(--accent-green);">✓ ${parsedRows.length}개 품목 파싱 완료 (시트: ${sheetName})</span>` +
-            (unmatch ? `<span style="color:var(--accent-orange);margin-left:8px;">⚠ 미매칭 ${unmatch}건 — 부품명으로 등록됩니다.</span>` : '');
+            (unmatch ? `<span style="color:var(--accent-orange);margin-left:8px;">⚠ 미매칭 ${unmatch}건</span>` : '');
         if (previewArea) previewArea.style.display = '';
         if (confirmBtn) confirmBtn.style.display = '';
     }
@@ -1790,7 +2005,6 @@ var SalesDeliveryPlanModule = (function() {
         const activeDates = dateCols.filter(({ dateStr }) =>
             parsedRows.some(r => r.dateQtys.some(dq => dq.dateStr === dateStr))
         );
-
         const totalQtys = {};
         parsedRows.forEach(r => r.dateQtys.forEach(({ dateStr, qty }) => {
             totalQtys[dateStr] = (totalQtys[dateStr] || 0) + qty;
@@ -1799,13 +2013,12 @@ var SalesDeliveryPlanModule = (function() {
         const dateHeaders = activeDates.map(({ dateStr }) => {
             const d = new Date(`${dateStr}T00:00:00`);
             const w = ['일','월','화','수','목','금','토'][d.getDay()];
-            const label = `${d.getMonth()+1}/${d.getDate()}`;
             const isWeekend = d.getDay() === 0 || d.getDay() === 6;
-            return `<th style="text-align:center;padding:5px 4px;font-size:0.72rem;min-width:50px;${isWeekend ? 'color:var(--accent-red);' : ''}">${label}<br><span style="font-size:0.63rem;font-weight:400;">${w}</span></th>`;
+            return `<th style="text-align:center;padding:5px 4px;font-size:0.72rem;min-width:50px;${isWeekend ? 'color:var(--accent-red);' : ''}">${d.getMonth()+1}/${d.getDate()}<br><span style="font-size:0.63rem;font-weight:400;">${w}</span></th>`;
         }).join('');
 
         const dataRows = parsedRows.map(r => {
-            const matchBadge = r.matchedProduct
+            const badge = r.matchedProduct
                 ? `<span style="background:rgba(16,185,129,0.15);color:var(--accent-green);font-size:0.68rem;padding:1px 5px;border-radius:3px;">매칭</span>`
                 : `<span style="background:rgba(239,68,68,0.12);color:var(--accent-red);font-size:0.68rem;padding:1px 5px;border-radius:3px;">미매칭</span>`;
             const dateCells = activeDates.map(({ dateStr }) => {
@@ -1814,7 +2027,7 @@ var SalesDeliveryPlanModule = (function() {
                 return `<td style="text-align:center;font-size:0.78rem;padding:4px 5px;${qty > 0 ? 'font-weight:700;color:var(--accent-blue);' : 'color:var(--text-muted);'}">${qty > 0 ? qty.toLocaleString() : '-'}</td>`;
             }).join('');
             return `<tr>
-                <td style="white-space:nowrap;font-size:0.78rem;padding:5px 8px;">${_esc(r.partNameExcel)} ${matchBadge}</td>
+                <td style="white-space:nowrap;font-size:0.78rem;padding:5px 8px;">${_esc(r.partNameExcel)} ${badge}</td>
                 <td style="white-space:nowrap;font-size:0.78rem;padding:5px 8px;color:var(--text-secondary);">${_esc(r.matchedPartName)}</td>
                 <td style="font-size:0.78rem;padding:5px 8px;white-space:nowrap;">${_esc(r.matchedCarModel || '-')}</td>
                 ${dateCells}
@@ -1845,7 +2058,6 @@ var SalesDeliveryPlanModule = (function() {
                 </tbody>
             </table>
         `;
-
         const note = document.getElementById('xlsxPreviewNote');
         if (note) note.textContent = `(${parsedRows.length}개 품목, ${activeDates.length}일)`;
     }
@@ -1855,6 +2067,15 @@ var SalesDeliveryPlanModule = (function() {
             UIUtils.toast('파싱된 데이터가 없습니다.', 'warning');
             return;
         }
+
+        // 프리셋 저장 여부 확인
+        const savePreset = document.getElementById('xlsxSavePreset')?.checked;
+        const customer = document.getElementById('xlsxCustomerSel')?.value || '';
+        if (savePreset && customer) {
+            _saveXlsxPreset(customer, _readXlsxConfig());
+            UIUtils.toast(`"${customer}" 파싱 프리셋이 저장되었습니다.`, 'info');
+        }
+
         const confirmBtn = document.getElementById('xlsxConfirmBtn');
         if (confirmBtn) {
             confirmBtn.disabled = true;
@@ -1889,6 +2110,7 @@ var SalesDeliveryPlanModule = (function() {
         }
 
         _xlsxParsedData = null;
+        _xlsxLastBuffer = null;
         UIUtils.closeModal();
         UIUtils.toast(`납품계획 ${insertCount}건 등록 완료!`, 'success');
         search();
@@ -1934,8 +2156,11 @@ var SalesDeliveryPlanModule = (function() {
         fillFromProduct,
         exportData,
         openExcelUploadModal,
+        onXlsxCustomerChange,
         _handleExcelFile,
         _parseDeliveryExcel,
+        _reparse,
+        _deleteCurrentPreset,
         _confirmExcelImport
     };
 })();
