@@ -6155,14 +6155,32 @@ const SettingsModule = (function() {
         // 차종 목록 (필터용)
         const uniqueCars = [...new Set(mats.map(m => m.carModel).filter(Boolean))].sort();
 
+        // 제품 정보 (productIds ID → partName 역참조용)
+        const allProducts = Storage.getAll(DB.STORES.PRODUCTS) || [];
+
+        // productId가 있으면 제품의 partName으로 정확 매칭, 없으면 텍스트 유사도 fallback
+        function _resolveMatchName(mat, slot) {
+            const prodId = (mat.productIds && mat.productIds[slot]) || '';
+            if (prodId) {
+                const prod = allProducts.find(p => p.id === prodId);
+                if (prod && prod.partName) return prod.partName.trim();
+            }
+            // productId 없는 경우 기존 텍스트(mfgProductName) 사용
+            return slot === 0
+                ? (mat.mfgProductName  || '').trim()
+                : (mat.mfgProductName2 || '').trim();
+        }
+
         // 통계 집계
         let cntExact = 0, cntSuggested = 0, cntNomatch = 0, cntEmpty = 0;
 
         const rows = mats.map((m, idx) => {
-            const hasMfg1 = !!(m.mfgProductName  && m.mfgProductName.trim());
-            const hasMfg2 = !!(m.mfgProductName2 && m.mfgProductName2.trim());
-            const s1 = _suggestMfgMatch(m.mfgProductName,  planPartNameSet, planPartNames);
-            const s2 = _suggestMfgMatch(m.mfgProductName2, planPartNameSet, planPartNames);
+            const name1 = _resolveMatchName(m, 0);
+            const name2 = _resolveMatchName(m, 1);
+            const hasMfg1 = !!name1;
+            const hasMfg2 = !!name2;
+            const s1 = _suggestMfgMatch(name1, planPartNameSet, planPartNames);
+            const s2 = _suggestMfgMatch(name2, planPartNameSet, planPartNames);
 
             // 통계
             [s1, s2].forEach(s => {
@@ -6184,10 +6202,10 @@ const SettingsModule = (function() {
                 <td style="padding:4px 8px;font-size:0.78rem;font-weight:600;white-space:nowrap;">${m.injPartName||'-'}</td>
                 <td style="padding:4px 8px;font-size:0.75rem;color:var(--text-muted);white-space:nowrap;">${m.injColor||'-'}</td>
                 <td style="padding:4px 8px;font-size:0.75rem;color:var(--text-muted);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
-                    title="${(m.mfgProductName||'').replace(/"/g,'&quot;')}">${m.mfgProductName||'<em style="color:var(--text-muted)">없음</em>'}</td>
+                    title="${name1.replace(/"/g,'&quot;')}">${name1||'<em style="color:var(--text-muted)">없음</em>'}</td>
                 ${inputCell('mfgProductName',  s1, m.id, `mfgM1_${m.id}`)}
                 <td style="padding:4px 8px;font-size:0.75rem;color:var(--text-muted);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
-                    title="${(m.mfgProductName2||'').replace(/"/g,'&quot;')}">${m.mfgProductName2||'<em style="color:var(--text-muted)">없음</em>'}</td>
+                    title="${name2.replace(/"/g,'&quot;')}">${name2||'<em style="color:var(--text-muted)">없음</em>'}</td>
                 ${inputCell('mfgProductName2', s2, m.id, `mfgM2_${m.id}`)}
                 <td style="padding:4px 8px;text-align:center;white-space:nowrap;">${statusBadge(s1,s2,hasMfg1,hasMfg2)}</td>
             </tr>`;
