@@ -2108,9 +2108,17 @@ const SettingsModule = (function() {
                                 ${items.length === 0 ?
                 `<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-muted);">등록된 사출품이 없습니다.</td></tr>` :
                 items.map((m, i) => {
-                    const matched = _findMatchedRawMats(m.injPartName, m.injColor);
-                    const rawMatName  = matched.length > 0 ? matched.map(r => r.matName).filter(Boolean).join(', ') : (m.rawMatName || '-');
-                    const rawMatColor = matched.length > 0 ? matched.map(r => r.color).filter(Boolean).join(', ') : (m.rawMatColor || '-');
+                    // rawMatId가 직접 지정된 경우 그것을 우선 표시; 없으면 usedFor 자동매칭
+                    let rawMatName, rawMatColor;
+                    if (m.rawMatId) {
+                        const manualMat = rawMats.find(r => r.id === m.rawMatId);
+                        rawMatName  = manualMat ? (manualMat.matName || '-') : (m.rawMatName || '-');
+                        rawMatColor = manualMat ? (manualMat.color  || '-') : (m.rawMatColor || '-');
+                    } else {
+                        const matched = _findMatchedRawMats(m.injPartName, m.injColor);
+                        rawMatName  = matched.length > 0 ? matched.map(r => r.matName).filter(Boolean).join(', ') : (m.rawMatName || '-');
+                        rawMatColor = matched.length > 0 ? matched.map(r => r.color).filter(Boolean).join(', ') : (m.rawMatColor || '-');
+                    }
                     return `
                                         <tr data-supplier="${m.supplier || ''}" data-car-model="${m.carModel || ''}">
                                             <td>${i + 1}</td>

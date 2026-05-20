@@ -1825,8 +1825,7 @@ var SalesDeliveryPlanModule = (function() {
         const allCustomers = _unique([
             ..._products().map(p => _customerOf(p)),
             ...(Storage.getAll(STORE) || []).map(r => _customerOf(r)),
-            ...Object.values(presets).map(p => p.customer || '').filter(Boolean),
-            ...presetKeys
+            ...Object.values(presets).map(p => p.customer || '').filter(Boolean)
         ]);
         const def = _defaultXlsxConfig();
 
@@ -2180,10 +2179,25 @@ var SalesDeliveryPlanModule = (function() {
         const products = _products();
         const parsedRows = [];
 
+        // 병합 셀 대비: 앞 행 값 이어받기(forward-fill)
+        let ffCompany  = '';
+        let ffPartName = '';
+
         for (let ri = headerRowTarget + 1; ri < rawData.length; ri++) {
             const row = rawData[ri];
-            const companyCell   = companyColIdx >= 0 ? _norm(String(row[companyColIdx] || '')) : '';
-            const partNameExcel = partNameColIdx >= 0 ? String(row[partNameColIdx] || '').trim() : '';
+
+            // 완전히 빈 행 → 구분 구간으로 간주 → forward-fill 초기화
+            const isBlankRow = row.every(v => v === '' || v === null || v === undefined);
+            if (isBlankRow) { ffCompany = ''; ffPartName = ''; continue; }
+
+            const rawCompany = companyColIdx >= 0 ? _norm(String(row[companyColIdx] || '')) : '';
+            if (rawCompany) ffCompany = rawCompany;
+            const companyCell = ffCompany;
+
+            const rawPartName = partNameColIdx >= 0 ? String(row[partNameColIdx] || '').trim() : '';
+            if (rawPartName) ffPartName = rawPartName;
+            const partNameExcel = ffPartName;
+
             const categoryCell  = categoryColIdx >= 0 ? _norm(String(row[categoryColIdx] || '')) : '';
 
             if (companyFilter && !companyCell.includes(companyFilter)) continue;
@@ -2221,12 +2235,19 @@ var SalesDeliveryPlanModule = (function() {
         }
 
         if (!parsedRows.length) {
-            // 디버그: 각 필터별로 몇 행이 걸렸는지 카운트
+            // 디버그: 각 필터별로 몇 행이 걸렸는지 카운트 (forward-fill 동일 적용)
             let cntTotal = 0, cntCompany = 0, cntCategory = 0, cntPartName = 0, cntDate = 0;
+            let ffC2 = '', ffP2 = '';
             for (let ri = headerRowTarget + 1; ri < rawData.length; ri++) {
                 const row = rawData[ri];
-                const companyCell2  = companyColIdx >= 0 ? _norm(String(row[companyColIdx] || '')) : '';
-                const partName2     = partNameColIdx >= 0 ? String(row[partNameColIdx] || '').trim() : '';
+                const isBlank2 = row.every(v => v === '' || v === null || v === undefined);
+                if (isBlank2) { ffC2 = ''; ffP2 = ''; continue; }
+                const rC2 = companyColIdx >= 0 ? _norm(String(row[companyColIdx] || '')) : '';
+                if (rC2) ffC2 = rC2;
+                const companyCell2 = ffC2;
+                const rP2 = partNameColIdx >= 0 ? String(row[partNameColIdx] || '').trim() : '';
+                if (rP2) ffP2 = rP2;
+                const partName2     = ffP2;
                 const categoryCell2 = categoryColIdx >= 0 ? _norm(String(row[categoryColIdx] || '')) : '';
                 if (!companyCell2 && !partName2 && !categoryCell2) continue; // 완전 빈 행 무시
                 cntTotal++;
