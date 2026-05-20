@@ -199,17 +199,18 @@ var JigModule = (function () {
             groups[car].push(j);
         });
 
-        const thStyle = 'padding:6px 10px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;border-bottom:2px solid var(--border-color);white-space:nowrap;overflow:hidden;';
+        const thStyle = 'padding:6px 10px;text-align:center;font-size:0.72rem;color:var(--text-muted);font-weight:600;border-bottom:2px solid var(--border-color);white-space:nowrap;overflow:hidden;';
         const colgroup = `<colgroup>
-            <col style="width:2%">
+            <col style="width:2.4%">
             <col style="width:19%">
-            <col style="width:2.5%">
             <col style="width:3%">
             <col style="width:3%">
-            <col style="width:47.5%">
+            <col style="width:3%">
+            <col style="width:45.6%">
             <col style="width:10%">
             <col style="width:6%">
-            <col style="width:7%">
+            <col style="width:4%">
+            <col style="width:4%">
         </colgroup>`;
 
         const sorted = jigs.slice().sort((a, b) =>
@@ -252,13 +253,13 @@ var JigModule = (function () {
                 </td>
                 <td style="${tdn}color:var(--text-muted);">${j.lastResetDate || j.registDate || '-'}</td>
                 <td style="${tdn}"><span style="background:${status[1]};color:#fff;padding:1px 7px;border-radius:4px;font-size:0.68rem;">${status[0]}</span></td>
-                <td style="${td}">
-                    <div style="display:flex;gap:4px;">
-                        <button class="btn btn-sm btn-outline" onclick="JigModule.openEditModal('${_js(j.id)}')" style="padding:2px 8px;font-size:0.78rem;">수정</button>
-                        <button class="btn btn-sm btn-outline" onclick="JigModule.resetCount('${_js(j.id)}')" style="padding:2px 8px;font-size:0.78rem;" title="교체 초기화">
-                            조치
-                        </button>
-                    </div>
+                <td style="${td}text-align:center;">
+                    <button class="btn btn-sm btn-outline" onclick="JigModule.openEditModal('${_js(j.id)}')" style="padding:2px 8px;font-size:0.78rem;">조회/입력</button>
+                </td>
+                <td style="${td}text-align:center;">
+                    <button class="btn btn-sm btn-outline" onclick="JigModule.resetCount('${_js(j.id)}')" style="padding:2px 8px;font-size:0.78rem;" title="교체 초기화">
+                        조치
+                    </button>
                 </td>
             </tr>`;
         }).join('');
@@ -271,13 +272,14 @@ var JigModule = (function () {
                 <thead><tr style="background:var(--bg-secondary);">
                     <th style="${thStyle}">차종</th>
                     <th style="${thStyle}">제품명</th>
-                    <th style="${thStyle}text-align:center;">라인</th>
-                    <th style="${thStyle}text-align:right;">수명횟수</th>
-                    <th style="${thStyle}text-align:right;">누적횟수</th>
+                    <th style="${thStyle}">라인</th>
+                    <th style="${thStyle}">수명횟수</th>
+                    <th style="${thStyle}">누적횟수</th>
                     <th style="${thStyle}">수명진행률</th>
                     <th style="${thStyle}">이전교체일</th>
                     <th style="${thStyle}">상태</th>
-                    <th style="${thStyle}">작업</th>
+                    <th style="${thStyle}">정보</th>
+                    <th style="${thStyle}">수명조치</th>
                 </tr></thead>
                 <tbody>${rows}</tbody>
             </table>
