@@ -6118,32 +6118,37 @@ const SettingsModule = (function() {
                 return `<span style="color:#ef4444;font-size:0.75rem;font-weight:700;">✗ 미매칭</span>`;
             return `<span style="color:#f59e0b;font-size:0.75rem;font-weight:700;">◈ 제안</span>`;
         }
-        function inputCell(field, sug, matId, inputId) {
-            const orig    = (sug.type !== 'empty' ? sug.value : '');
+        // currentName: productId 기반으로 확정된 현재 이름 (입력란 초기값으로 사용)
+        function inputCell(field, sug, matId, inputId, currentName) {
+            // '제안' 상태일 때는 엉뚱한 유사도 매칭값 대신 현재 이름을 그대로 유지
+            // 사용자가 드롭다운에서 직접 올바른 생산계획 품명을 선택하도록 유도
+            const displayVal = sug.type === 'suggested'
+                ? (currentName || '')           // 현재 이름 유지
+                : (sug.type !== 'empty' ? sug.value : '');  // exact/nomatch/empty는 기존대로
             const bgStyle = cellBg(sug.type);
             const tooltip = sug.type === 'suggested'
-                ? `title="유사도 ${Math.round(sug.score * 100)}% - 확인 후 저장하세요"`
+                ? `title="생산계획에서 정확히 일치하는 품명을 찾지 못했습니다. 드롭다운에서 직접 선택하세요."`
                 : (sug.type === 'nomatch' ? `title="생산계획에서 매칭되는 품명을 찾지 못했습니다"` : '');
             const badge = sug.type === 'suggested'
                 ? `<span style="position:absolute;right:5px;top:50%;transform:translateY(-50%);
                                font-size:0.6rem;color:#b45309;font-weight:700;
-                               pointer-events:none;user-select:none;">제안</span>`
+                               pointer-events:none;user-select:none;">확인필요</span>`
                 : (sug.type === 'nomatch'
                    ? `<span style="position:absolute;right:5px;top:50%;transform:translateY(-50%);
                                   font-size:0.6rem;color:#ef4444;font-weight:700;
-                                  pointer-events:none;user-select:none;">?</span>` : '');
+                                  pointer-events:none;user-select:none;">미매칭</span>` : '');
             return `<td style="padding:3px 5px;min-width:175px;">
                 <div style="position:relative;">
                     <input type="text" list="planNamesDatalistMfg"
                            id="${inputId}"
                            data-mat-id="${matId}"
                            data-field="${field}"
-                           data-original="${(orig).replace(/"/g,'&quot;')}"
+                           data-original="${displayVal.replace(/"/g,'&quot;')}"
                            data-sug-type="${sug.type}"
-                           value="${(orig).replace(/"/g,'&quot;')}"
+                           value="${displayVal.replace(/"/g,'&quot;')}"
                            ${tooltip}
                            placeholder="${sug.type === 'empty' ? '(미입력)' : '품명 입력 또는 선택'}"
-                           style="width:100%;padding:4px 22px 4px 7px;font-size:0.78rem;
+                           style="width:100%;padding:4px 38px 4px 7px;font-size:0.78rem;
                                   border:1px solid var(--border-color);border-radius:4px;
                                   box-sizing:border-box;${bgStyle}"
                            oninput="SettingsModule._onMatchInput(this)">
@@ -6203,10 +6208,10 @@ const SettingsModule = (function() {
                 <td style="padding:4px 8px;font-size:0.75rem;color:var(--text-muted);white-space:nowrap;">${m.injColor||'-'}</td>
                 <td style="padding:4px 8px;font-size:0.75rem;color:var(--text-muted);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
                     title="${name1.replace(/"/g,'&quot;')}">${name1||'<em style="color:var(--text-muted)">없음</em>'}</td>
-                ${inputCell('mfgProductName',  s1, m.id, `mfgM1_${m.id}`)}
+                ${inputCell('mfgProductName',  s1, m.id, `mfgM1_${m.id}`, name1)}
                 <td style="padding:4px 8px;font-size:0.75rem;color:var(--text-muted);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
                     title="${name2.replace(/"/g,'&quot;')}">${name2||'<em style="color:var(--text-muted)">없음</em>'}</td>
-                ${inputCell('mfgProductName2', s2, m.id, `mfgM2_${m.id}`)}
+                ${inputCell('mfgProductName2', s2, m.id, `mfgM2_${m.id}`, name2)}
                 <td style="padding:4px 8px;text-align:center;white-space:nowrap;">${statusBadge(s1,s2,hasMfg1,hasMfg2)}</td>
             </tr>`;
         }).join('');
