@@ -1619,23 +1619,33 @@ var SalesDeliveryPlanModule = (function() {
     // ── Excel 업로드 파싱 + 고객사별 프리셋 ──────────────────────────
     const _XLSX_PRESET_KEY = 'mes_excel_delivery_presets';
     let _xlsxParsedData = null;
-    let _xlsxLastBuffer = null; // 재파싱용 원본 버퍼
+    let _xlsxLastBuffer = null;        // 재파싱용 원본 버퍼
+    let _xlsxCurrentPresetKey = '';    // 현재 로드된 프리셋 키
 
     // ── 프리셋 저장/로드 ──
     function _getXlsxPresets() {
         try { return JSON.parse(localStorage.getItem(_XLSX_PRESET_KEY) || '{}'); }
         catch (e) { return {}; }
     }
-    function _saveXlsxPreset(customer, cfg) {
-        if (!customer) return;
+    // key = 프리셋 이름(고유), cfg 안에 customer·presetName 포함
+    function _saveXlsxPreset(key, cfg) {
+        if (!key) return;
         const presets = _getXlsxPresets();
-        presets[customer] = { ...cfg, customer, savedAt: new Date().toISOString() };
+        presets[key] = { ...cfg, savedAt: new Date().toISOString() };
         localStorage.setItem(_XLSX_PRESET_KEY, JSON.stringify(presets));
     }
-    function _deleteXlsxPreset(customer) {
+    function _deleteXlsxPreset(key) {
         const presets = _getXlsxPresets();
-        delete presets[customer];
+        delete presets[key];
         localStorage.setItem(_XLSX_PRESET_KEY, JSON.stringify(presets));
+    }
+    // 특정 납품처에 속한 프리셋 [[key, preset], ...] (최신순)
+    function _presetsForCustomer(customer) {
+        if (!customer) return [];
+        const all = _getXlsxPresets();
+        return Object.entries(all)
+            .filter(([k, p]) => (p.customer || k) === customer)
+            .sort((a, b) => (b[1].savedAt || '') > (a[1].savedAt || '') ? 1 : -1);
     }
 
     // ── 컬럼 문자↔인덱스 변환 ──
@@ -1680,30 +1690,65 @@ var SalesDeliveryPlanModule = (function() {
         s('xlsxCategoryCol', cfg.categoryCol);
         s('xlsxCategoryKeyword', cfg.categoryKeyword);
         s('xlsxDateStartCol', cfg.dateStartCol);
+        s('xlsxPresetName', cfg.presetName || '');
     }
 
-    // ── 납품처 변경 → 프리셋 로드 ──
+    // ── 납품처 변경 → 프리셋 셀렉터 갱신 ──
     function onXlsxCustomerChange() {
         const customer = document.getElementById('xlsxCustomerSel')?.value || '';
-        const presets = _getXlsxPresets();
-        const preset = presets[customer];
+        const badge = document.getElementById('xlsxPresetBadge');
+        const delBtn = document.getElementById('xlsxPresetDelBtn');
+        const selEl = document.getElementById('xlsxPresetSel');
+        const cPresets = _presetsForCustomer(customer);
+        if (selEl) {
+            if (cPresets.length) {
+                selEl.innerHTML = `<option value="">-- 프리셋 선택 --</option>` +
+                    cPresets.map(([k, p]) =>
+                        `<option value="${_esc(k)}">${_esc(p.presetName || k)}</option>`
+                    ).join('');
+                selEl.style.color = '';
+                if (cPresets.length === 1) {
+                    selEl.value = cPresets[0][0];
+                    _loadPresetByKey(cPresets[0][0]);
+                    return;
+                }
+            } else {
+                selEl.innerHTML = `<option value="">저장된 프리셋 없음</option>`;
+                selEl.style.color = 'var(--text-muted)';
+            }
+        }
+        if (badge) badge.style.display = 'none';
+        if (delBtn) delBtn.style.display = 'none';
+        const def = _defaultXlsxConfig();
+        def.companyFilter = customer;
+        _applyXlsxConfig(def);
+        _xlsxCurrentPresetKey = '';
+        if (_xlsxLastBuffer) { try { _parseDeliveryExcel(_xlsxLastBuffer); } catch (e) {} }
+    }
+
+    // ── 프리셋 셀렉터 변경 → 설정 로드 ──
+    function onXlsxPresetChange() {
+        const key = document.getElementById('xlsxPresetSel')?.value || '';
+        if (!key) return;
+        _loadPresetByKey(key);
+    }
+
+    function _loadPresetByKey(key) {
+        if (!key) return;
+        const preset = _getXlsxPresets()[key];
         const badge = document.getElementById('xlsxPresetBadge');
         const delBtn = document.getElementById('xlsxPresetDelBtn');
         if (preset) {
             _applyXlsxConfig(preset);
-            if (badge) badge.style.display = '';
+            _xlsxCurrentPresetKey = key;
+            if (badge) { badge.style.display = ''; badge.textContent = `⭐ "${preset.presetName || key}" 적용됨`; }
             if (delBtn) delBtn.style.display = '';
         } else {
-            const def = _defaultXlsxConfig();
-            def.companyFilter = customer;
-            _applyXlsxConfig(def);
+            _xlsxCurrentPresetKey = '';
             if (badge) badge.style.display = 'none';
             if (delBtn) delBtn.style.display = 'none';
         }
-        // 파일이 이미 선택되어 있으면 설정 변경 후 재파싱
-        if (_xlsxLastBuffer) {
-            try { _parseDeliveryExcel(_xlsxLastBuffer); } catch (e) { /* ignore */ }
-        }
+        if (_xlsxLastBuffer) { try { _parseDeliveryExcel(_xlsxLastBuffer); } catch (e) {} }
     }
 
     function _presetListHtml() {
@@ -1713,42 +1758,49 @@ var SalesDeliveryPlanModule = (function() {
             return `<div style="text-align:center;padding:30px;color:var(--text-muted);font-size:0.85rem;">
                 <span class="material-symbols-outlined" style="font-size:2rem;display:block;margin-bottom:8px;">bookmark_border</span>
                 저장된 프리셋이 없습니다.<br>
-                <span style="font-size:0.78rem;">엑셀 업로드 탭에서 "납품계획 등록" 시 체크박스를 선택하면 자동 저장됩니다.</span>
+                <span style="font-size:0.78rem;">파싱 설정 아래 "프리셋 이름"을 입력하고 저장하세요.</span>
             </div>`;
         }
+        const grouped = {};
+        keys.forEach(k => { const c = presets[k].customer || k; if (!grouped[c]) grouped[c] = []; grouped[c].push(k); });
+        const sortedKeys = Object.keys(grouped).sort().flatMap(c => grouped[c]);
         return `<table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
             <thead>
                 <tr style="background:var(--bg-secondary);">
                     <th style="text-align:left;padding:7px 10px;font-size:0.78rem;">납품처</th>
+                    <th style="text-align:left;padding:7px 10px;font-size:0.78rem;color:var(--accent-blue);">프리셋 이름</th>
                     <th style="text-align:center;padding:7px 8px;font-size:0.78rem;">시트</th>
                     <th style="text-align:center;padding:7px 8px;font-size:0.78rem;">헤더행</th>
-                    <th style="text-align:center;padding:7px 8px;font-size:0.78rem;">업체명 컬럼</th>
-                    <th style="text-align:center;padding:7px 8px;font-size:0.78rem;">부품명 컬럼</th>
-                    <th style="text-align:center;padding:7px 8px;font-size:0.78rem;">구분 컬럼</th>
-                    <th style="text-align:center;padding:7px 8px;font-size:0.78rem;">날짜 시작</th>
+                    <th style="text-align:center;padding:7px 8px;font-size:0.78rem;">업체명컬럼</th>
+                    <th style="text-align:center;padding:7px 8px;font-size:0.78rem;">부품명컬럼</th>
+                    <th style="text-align:center;padding:7px 8px;font-size:0.78rem;">구분컬럼</th>
+                    <th style="text-align:center;padding:7px 8px;font-size:0.78rem;">날짜시작</th>
                     <th style="text-align:left;padding:7px 8px;font-size:0.78rem;">필터 키워드</th>
                     <th style="text-align:right;padding:7px 8px;font-size:0.78rem;">저장일시</th>
                     <th style="padding:7px 6px;"></th>
                 </tr>
             </thead>
             <tbody>
-                ${keys.map(k => {
+                ${sortedKeys.map((k, i) => {
                     const p = presets[k];
+                    const customer = p.customer || k;
+                    const pName = p.presetName || k;
+                    const prevC = i > 0 ? (presets[sortedKeys[i-1]].customer || sortedKeys[i-1]) : null;
+                    const isNew = customer !== prevC;
                     const savedAt = p.savedAt ? new Date(p.savedAt).toLocaleDateString('ko', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '-';
-                    return `<tr style="border-bottom:1px solid var(--border);">
-                        <td style="padding:7px 10px;font-weight:700;">${_esc(p.customer || k)}</td>
-                        <td style="text-align:center;padding:7px 8px;font-size:0.78rem;color:var(--text-secondary);">${_esc(p.sheetKeyword || '-')}</td>
-                        <td style="text-align:center;padding:7px 8px;">${_esc(p.headerRow || '-')}</td>
-                        <td style="text-align:center;padding:7px 8px;font-family:monospace;font-weight:700;color:var(--accent-blue);">${_esc(p.companyCol || '-')}</td>
-                        <td style="text-align:center;padding:7px 8px;font-family:monospace;font-weight:700;color:var(--accent-blue);">${_esc(p.partNameCol || '-')}</td>
-                        <td style="text-align:center;padding:7px 8px;font-family:monospace;font-weight:700;color:var(--accent-blue);">${_esc(p.categoryCol || '-')}</td>
-                        <td style="text-align:center;padding:7px 8px;font-family:monospace;font-weight:700;color:var(--accent-blue);">${_esc(p.dateStartCol || '-')}</td>
-                        <td style="padding:7px 8px;font-size:0.75rem;color:var(--text-secondary);">${_esc(p.companyFilter || '')}<br><span style="color:var(--text-muted);">${_esc(p.categoryKeyword || '')}</span></td>
+                    return `<tr style="border-bottom:1px solid var(--border);${isNew && i>0 ? 'border-top:2px solid var(--border);' : ''}">
+                        <td style="padding:7px 10px;font-size:0.78rem;">${isNew ? `<b style="color:var(--text-secondary);">${_esc(customer)}</b>` : ''}</td>
+                        <td style="padding:7px 10px;font-weight:700;color:var(--accent-blue);">${_esc(pName)}</td>
+                        <td style="text-align:center;padding:7px 8px;font-size:0.78rem;color:var(--text-secondary);">${_esc(p.sheetKeyword||'-')}</td>
+                        <td style="text-align:center;padding:7px 8px;">${_esc(p.headerRow||'-')}</td>
+                        <td style="text-align:center;padding:7px 8px;font-family:monospace;font-weight:700;color:var(--accent-blue);">${_esc(p.companyCol||'-')}</td>
+                        <td style="text-align:center;padding:7px 8px;font-family:monospace;font-weight:700;color:var(--accent-blue);">${_esc(p.partNameCol||'-')}</td>
+                        <td style="text-align:center;padding:7px 8px;font-family:monospace;font-weight:700;color:var(--accent-blue);">${_esc(p.categoryCol||'-')}</td>
+                        <td style="text-align:center;padding:7px 8px;font-family:monospace;font-weight:700;color:var(--accent-blue);">${_esc(p.dateStartCol||'-')}</td>
+                        <td style="padding:7px 8px;font-size:0.75rem;color:var(--text-secondary);">${_esc(p.companyFilter||'')}<br><span style="color:var(--text-muted);">${_esc(p.categoryKeyword||'')}</span></td>
                         <td style="text-align:right;padding:7px 8px;font-size:0.73rem;color:var(--text-muted);white-space:nowrap;">${savedAt}</td>
-                        <td style="padding:7px 6px;">
-                            <button class="btn btn-sm" style="color:var(--accent-red);border:1px solid currentColor;padding:2px 7px;font-size:0.73rem;"
-                                onclick="SalesDeliveryPlanModule._deletePresetByKey('${_js(k)}')">삭제</button>
-                        </td>
+                        <td style="padding:7px 6px;"><button class="btn btn-sm" style="color:var(--accent-red);border:1px solid currentColor;padding:2px 7px;font-size:0.73rem;"
+                            onclick="SalesDeliveryPlanModule._deletePresetByKey('${_js(k)}')">삭제</button></td>
                     </tr>`;
                 }).join('')}
             </tbody>
@@ -1767,17 +1819,23 @@ var SalesDeliveryPlanModule = (function() {
     function openExcelUploadModal(activeTab = 'upload') {
         _xlsxParsedData = null;
         _xlsxLastBuffer = null;
+        _xlsxCurrentPresetKey = '';
         const presets = _getXlsxPresets();
         const presetKeys = Object.keys(presets);
         const allCustomers = _unique([
             ..._products().map(p => _customerOf(p)),
             ...(Storage.getAll(STORE) || []).map(r => _customerOf(r)),
+            ...Object.values(presets).map(p => p.customer || '').filter(Boolean),
             ...presetKeys
         ]);
         const def = _defaultXlsxConfig();
 
+        const customerWithPreset = new Set([
+            ...Object.values(presets).map(p => p.customer).filter(Boolean),
+            ...presetKeys
+        ]);
         const customerOptions = allCustomers.map(c =>
-            `<option value="${_esc(c)}">${presets[c] ? '⭐ ' : ''}${_esc(c)}</option>`
+            `<option value="${_esc(c)}">${customerWithPreset.has(c) ? '⭐ ' : ''}${_esc(c)}</option>`
         ).join('');
 
         const tabStyle = (tab) => `padding:7px 16px;font-size:0.83rem;font-weight:600;cursor:pointer;border:none;border-bottom:2px solid ${activeTab===tab?'var(--accent-blue)':'transparent'};background:transparent;color:${activeTab===tab?'var(--accent-blue)':'var(--text-muted)'};`;
@@ -1796,16 +1854,25 @@ var SalesDeliveryPlanModule = (function() {
 
             <!-- 업로드 탭 -->
             <div id="xlsxTabUpload" style="display:${activeTab==='upload'?'':'none'};">
-                <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;flex-wrap:wrap;">
-                    <div class="form-group" style="flex:1;min-width:180px;">
-                        <label class="form-label">납품처 <span style="font-size:0.73rem;color:var(--text-muted);">⭐ = 프리셋 저장됨</span></label>
+                <!-- ① 납품처 + 프리셋 불러오기 -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px;">
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label class="form-label">납품처 <span style="font-size:0.72rem;color:var(--text-muted);">⭐ = 프리셋 있음</span></label>
                         <select class="form-select" id="xlsxCustomerSel" onchange="SalesDeliveryPlanModule.onXlsxCustomerChange()">
                             <option value="">-- 납품처 선택 --</option>
                             ${customerOptions}
                         </select>
                     </div>
-                    <span id="xlsxPresetBadge" style="display:none;background:rgba(16,185,129,0.15);color:var(--accent-green);font-size:0.75rem;padding:4px 10px;border-radius:20px;white-space:nowrap;margin-bottom:4px;border:1px solid rgba(16,185,129,0.3);">⭐ 프리셋 적용됨</span>
-                    <button id="xlsxPresetDelBtn" class="btn btn-sm" style="display:none;color:var(--accent-red);border:1px solid var(--accent-red);margin-bottom:4px;" onclick="SalesDeliveryPlanModule._deleteCurrentPreset()">
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label class="form-label">프리셋 불러오기</label>
+                        <select class="form-select" id="xlsxPresetSel" onchange="SalesDeliveryPlanModule.onXlsxPresetChange()" style="color:var(--text-muted);">
+                            <option value="">납품처를 먼저 선택하세요</option>
+                        </select>
+                    </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;min-height:26px;">
+                    <span id="xlsxPresetBadge" style="display:none;background:rgba(16,185,129,0.15);color:var(--accent-green);font-size:0.75rem;padding:3px 10px;border-radius:20px;white-space:nowrap;border:1px solid rgba(16,185,129,0.3);">⭐ 프리셋 적용됨</span>
+                    <button id="xlsxPresetDelBtn" class="btn btn-sm" style="display:none;color:var(--accent-red);border:1px solid var(--accent-red);" onclick="SalesDeliveryPlanModule._deleteCurrentPreset()">
                         <span class="material-symbols-outlined" style="font-size:0.85rem;">delete</span> 프리셋 삭제
                     </button>
                 </div>
@@ -1856,6 +1923,15 @@ var SalesDeliveryPlanModule = (function() {
                                 <label class="form-label" style="font-size:0.74rem;">날짜 시작 컬럼</label>
                                 <input class="form-input" style="padding:5px 8px;font-size:0.82rem;text-transform:uppercase;" id="xlsxDateStartCol" value="${def.dateStartCol}" placeholder="K" maxlength="3">
                             </div>
+                        </div>
+                        <!-- 프리셋 이름 -->
+                        <div class="form-group" style="margin-bottom:10px;">
+                            <label class="form-label" style="font-size:0.74rem;">
+                                프리셋 이름
+                                <span style="font-size:0.7rem;font-weight:400;color:var(--text-muted);margin-left:4px;">같은 납품처라도 차종·발주서별로 구분 저장 가능</span>
+                            </label>
+                            <input class="form-input" style="padding:5px 8px;font-size:0.83rem;" id="xlsxPresetName"
+                                placeholder="예: KC케미칼_아반떼  /  일홍_6월  (비워두면 납품처명으로 저장)">
                         </div>
                         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
                             <label style="display:flex;align-items:center;gap:6px;font-size:0.8rem;cursor:pointer;">
@@ -1928,17 +2004,22 @@ var SalesDeliveryPlanModule = (function() {
     }
 
     function _deleteCurrentPreset() {
-        const customer = document.getElementById('xlsxCustomerSel')?.value || '';
-        if (!customer) return;
-        UIUtils.confirm(`"${customer}" 프리셋을 삭제하시겠습니까?`, () => {
-            _deleteXlsxPreset(customer);
-            UIUtils.toast(`"${customer}" 프리셋이 삭제되었습니다.`, 'success');
+        const key = _xlsxCurrentPresetKey || document.getElementById('xlsxCustomerSel')?.value || '';
+        if (!key) return;
+        UIUtils.confirm(`"${key}" 프리셋을 삭제하시겠습니까?`, () => {
+            _deleteXlsxPreset(key);
+            _xlsxCurrentPresetKey = '';
+            UIUtils.toast(`"${key}" 프리셋이 삭제되었습니다.`, 'success');
             const badge = document.getElementById('xlsxPresetBadge');
             const delBtn = document.getElementById('xlsxPresetDelBtn');
             if (badge) badge.style.display = 'none';
             if (delBtn) delBtn.style.display = 'none';
-            const opt = document.querySelector(`#xlsxCustomerSel option[value="${customer}"]`);
-            if (opt) opt.textContent = customer;
+            const pSel = document.getElementById('xlsxPresetSel');
+            if (pSel) {
+                const opt = pSel.querySelector(`option[value="${_esc(key)}"]`);
+                if (opt) opt.remove();
+                pSel.value = '';
+            }
         });
     }
 
@@ -1950,24 +2031,33 @@ var SalesDeliveryPlanModule = (function() {
 
     function _savePresetNow() {
         const customer = document.getElementById('xlsxCustomerSel')?.value || '';
+        const presetNameInput = document.getElementById('xlsxPresetName')?.value?.trim() || '';
         const cfg = _readXlsxConfig();
-        const key = customer || cfg.companyFilter || '';
+        const key = presetNameInput || customer || cfg.companyFilter || '';
         if (!key) {
-            UIUtils.toast('납품처를 선택하거나 업체명 필터 키워드를 입력하세요.', 'warning');
-            document.getElementById('xlsxCompanyFilter')?.focus();
+            UIUtils.toast('프리셋 이름 또는 납품처를 입력하세요.', 'warning');
+            document.getElementById('xlsxPresetName')?.focus();
             return;
         }
-        _saveXlsxPreset(key, cfg);
+        _saveXlsxPreset(key, { ...cfg, customer, presetName: key });
+        _xlsxCurrentPresetKey = key;
         UIUtils.toast(`프리셋 저장 완료: "${key}"`, 'success');
-        // 납품처 셀렉터 옵션 업데이트 (⭐ 표시)
-        const sel = document.getElementById('xlsxCustomerSel');
-        if (sel) {
-            const opt = sel.querySelector(`option[value="${key}"]`);
-            if (opt && !opt.textContent.startsWith('⭐')) opt.textContent = '⭐ ' + opt.textContent;
+        if (customer) {
+            const cSel = document.getElementById('xlsxCustomerSel');
+            const cOpt = cSel?.querySelector(`option[value="${_esc(customer)}"]`);
+            if (cOpt && !cOpt.textContent.startsWith('⭐')) cOpt.textContent = '⭐ ' + cOpt.textContent;
+        }
+        const pSel = document.getElementById('xlsxPresetSel');
+        if (pSel) {
+            let opt = pSel.querySelector(`option[value="${_esc(key)}"]`);
+            if (!opt) { opt = document.createElement('option'); opt.value = key; pSel.appendChild(opt); }
+            opt.textContent = key;
+            pSel.value = key;
+            pSel.style.color = '';
         }
         const badge = document.getElementById('xlsxPresetBadge');
         const delBtn = document.getElementById('xlsxPresetDelBtn');
-        if (badge) badge.style.display = '';
+        if (badge) { badge.style.display = ''; badge.textContent = `⭐ "${key}" 적용됨`; }
         if (delBtn) delBtn.style.display = '';
     }
 
@@ -2250,13 +2340,14 @@ var SalesDeliveryPlanModule = (function() {
         // 프리셋 저장 여부 확인
         const savePreset = document.getElementById('xlsxSavePreset')?.checked;
         const customer = document.getElementById('xlsxCustomerSel')?.value || '';
+        const presetNameInput = document.getElementById('xlsxPresetName')?.value?.trim() || '';
         const cfgForPreset = _readXlsxConfig();
-        const presetKey = customer || cfgForPreset.companyFilter || '';
+        const presetKey = presetNameInput || customer || cfgForPreset.companyFilter || '';
         if (savePreset) {
             if (presetKey) {
-                _saveXlsxPreset(presetKey, cfgForPreset);
+                _saveXlsxPreset(presetKey, { ...cfgForPreset, customer, presetName: presetKey });
             } else {
-                UIUtils.toast('프리셋 저장 생략: 납품처를 선택하거나 업체명 필터 키워드를 입력하세요.', 'warning');
+                UIUtils.toast('프리셋 저장 생략: 프리셋 이름 또는 납품처를 입력하세요.', 'warning');
             }
         }
 
@@ -2351,6 +2442,7 @@ var SalesDeliveryPlanModule = (function() {
         exportData,
         openExcelUploadModal,
         onXlsxCustomerChange,
+        onXlsxPresetChange,
         _switchXlsxTab,
         _presetListHtml,
         _deletePresetByKey,
