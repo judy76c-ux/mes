@@ -55,7 +55,59 @@ var SalesDeliveryModule = (function() {
     const STORE = DB.STORES.SALES_DELIVERY;
     const INVENTORY_STORE = DB.STORES.PRODUCT_INVENTORY;
 
+    function _esc(value) {
+        return String(value ?? '').replace(/[&<>"']/g, ch => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;'
+        }[ch]));
+    }
+
+    function _uniqueSorted(values) {
+        return [...new Set(values.map(v => String(v || '').trim()).filter(Boolean))]
+            .sort((a, b) => a.localeCompare(b, 'ko'));
+    }
+
+    function _filterCustomers() {
+        const deliveries = Storage.getAll(STORE) || [];
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        return _uniqueSorted([
+            ...deliveries.map(d => d.customer),
+            ...products.map(p => p.customer || p.deliveryCustomer || p.client)
+        ]);
+    }
+
+    function _filterCars(customer = '') {
+        const deliveries = Storage.getAll(STORE) || [];
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        return _uniqueSorted([
+            ...deliveries
+                .filter(d => !customer || d.customer === customer)
+                .map(d => d.carModel),
+            ...products
+                .filter(p => !customer || (p.customer || p.deliveryCustomer || p.client) === customer)
+                .map(p => p.carModel)
+        ]);
+    }
+
+    function _filterOptions(values, selected, label) {
+        return `<option value="">${label}</option>` +
+            values.map(v => `<option value="${_esc(v)}" ${v === selected ? 'selected' : ''}>${_esc(v)}</option>`).join('');
+    }
+
+    function onFilterCustomerChange() {
+        const customer = document.getElementById('sdFilterCustomer')?.value || '';
+        const carEl = document.getElementById('sdFilterCarModel');
+        if (carEl) {
+            carEl.innerHTML = _filterOptions(_filterCars(customer), '', '전체 차종');
+        }
+    }
+
     function render(container) {
+        const customerOptions = _filterOptions(_filterCustomers(), '', '전체 납품처');
+        const carOptions = _filterOptions(_filterCars(''), '', '전체 차종');
         const filterHTML = `
             <div class="form-group">
                 <label class="form-label">시작일</label>
@@ -67,7 +119,15 @@ var SalesDeliveryModule = (function() {
             </div>
             <div class="form-group">
                 <label class="form-label">납품처</label>
-                <input type="text" class="form-input" id="sdFilterCustomer" placeholder="납품처 검색">
+                <select class="form-select" id="sdFilterCustomer" onchange="SalesDeliveryModule.onFilterCustomerChange()">
+                    ${customerOptions}
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">차종</label>
+                <select class="form-select" id="sdFilterCarModel">
+                    ${carOptions}
+                </select>
             </div>
             <div class="form-group" style="align-self:flex-end;">
                 <button class="btn btn-outline" onclick="SalesDeliveryModule.search()">
@@ -83,10 +143,12 @@ var SalesDeliveryModule = (function() {
     function search() {
         const start = document.getElementById('sdFilterStart').value;
         const end = document.getElementById('sdFilterEnd').value;
-        const customer = document.getElementById('sdFilterCustomer').value.trim();
+        const customer = document.getElementById('sdFilterCustomer')?.value || '';
+        const carModel = document.getElementById('sdFilterCarModel')?.value || '';
 
         let data = Storage.getByDateRange(STORE, start, end);
-        if (customer) data = data.filter(d => d.customer.includes(customer));
+        if (customer) data = data.filter(d => d.customer === customer);
+        if (carModel) data = data.filter(d => d.carModel === carModel);
         data.sort((a, b) => b.date.localeCompare(a.date));
 
         renderStats(data);
@@ -468,6 +530,7 @@ var SalesDeliveryModule = (function() {
         exportData,
         onSdCarModelChange,
         onSdPartNameChange,
+        onFilterCustomerChange,
         _renderPaintLotList
     };
 })();
@@ -1538,6 +1601,299 @@ var SalesDeliveryPlanModule = (function() {
         });
     }
 
+    // ── Excel 업로드 파싱 ──────────────────────────────────────────────
+    let _xlsxParsedData = null;
+
+    function openExcelUploadModal() {
+        _xlsxParsedData = null;
+        const html = `
+            <div style="background:rgba(59,130,246,0.07);border:1px solid rgba(59,130,246,0.2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.82rem;color:var(--text-secondary);line-height:1.6;">
+                고객사 납품 일정 엑셀을 업로드하면 <strong>입고 요청량</strong> 행을 자동으로 납품계획에 등록합니다.<br>
+                업체명 필터를 입력한 뒤 파일을 선택하면 파싱 결과를 먼저 확인할 수 있습니다.
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">업체명 필터 <span style="font-size:0.75rem;color:var(--text-muted);">(엑셀 내 업체명 일부)</span></label>
+                    <input class="form-input" id="xlsxCompanyName" value="KC 케미칼" placeholder="예: KC 케미칼">
+                </div>
+            </div>
+            <div class="form-group" style="margin-top:4px;">
+                <label class="form-label">엑셀 파일 선택 <span style="color:var(--accent-red)">*</span></label>
+                <input type="file" class="form-input" id="xlsxFileInput" accept=".xlsx,.xls"
+                    onchange="SalesDeliveryPlanModule._handleExcelFile(this)">
+            </div>
+            <div id="xlsxStatus" style="font-size:0.82rem;margin-top:8px;min-height:18px;"></div>
+            <div id="xlsxPreviewArea" style="display:none;">
+                <div style="border-top:1px solid var(--border);margin:14px 0 0;padding-top:12px;">
+                    <div style="font-size:0.85rem;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:6px;">
+                        <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-green);">check_circle</span>
+                        파싱 결과 미리보기
+                        <span id="xlsxPreviewNote" style="font-size:0.75rem;font-weight:400;color:var(--text-muted);"></span>
+                    </div>
+                    <div id="xlsxPreviewTable" style="overflow-x:auto;max-height:360px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;"></div>
+                </div>
+            </div>
+        `;
+        UIUtils.showModal('엑셀 업로드 — 납품계획 자동입력', html,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+             <button class="btn btn-primary" id="xlsxConfirmBtn" style="display:none;" onclick="SalesDeliveryPlanModule._confirmExcelImport()">
+                 <span class="material-symbols-outlined">playlist_add</span> 납품계획 등록
+             </button>`, 'xl');
+    }
+
+    function _handleExcelFile(inputEl) {
+        const file = inputEl.files[0];
+        if (!file) return;
+        const statusEl = document.getElementById('xlsxStatus');
+        const previewArea = document.getElementById('xlsxPreviewArea');
+        const confirmBtn = document.getElementById('xlsxConfirmBtn');
+        if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-blue);">파일 읽는 중...</span>';
+        if (previewArea) previewArea.style.display = 'none';
+        if (confirmBtn) confirmBtn.style.display = 'none';
+        _xlsxParsedData = null;
+
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                _parseDeliveryExcel(e.target.result);
+            } catch (err) {
+                if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent-red);">파싱 오류: ${err.message}</span>`;
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    }
+
+    function _excelSerialToDate(serial) {
+        if (typeof serial !== 'number' || serial < 40000 || serial > 70000) return null;
+        const ms = Math.round((serial - 25569) * 86400 * 1000);
+        const d = new Date(ms);
+        const y = d.getUTCFullYear();
+        const mo = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const dy = String(d.getUTCDate()).padStart(2, '0');
+        return `${y}-${mo}-${dy}`;
+    }
+
+    function _parseDeliveryExcel(arrayBuffer) {
+        const statusEl = document.getElementById('xlsxStatus');
+        const previewArea = document.getElementById('xlsxPreviewArea');
+        const confirmBtn = document.getElementById('xlsxConfirmBtn');
+
+        if (!window.XLSX) {
+            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-red);">XLSX 라이브러리가 로드되지 않았습니다.</span>';
+            return;
+        }
+
+        const companyFilter = _norm(document.getElementById('xlsxCompanyName')?.value || '');
+        const wb = XLSX.read(arrayBuffer, { type: 'array', cellDates: false });
+
+        // 납품일정 시트 찾기
+        const sheetName = wb.SheetNames.find(n => n.includes('납품일정')) ||
+                          wb.SheetNames.find(n => n.includes('실적')) ||
+                          wb.SheetNames[wb.SheetNames.length - 1];
+        const ws = wb.Sheets[sheetName];
+        const rawData = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
+
+        // 헤더 행 탐색: 날짜 시리얼(40000~70000)이 5개 이상 있는 행
+        let headerRowIdx = -1;
+        const dateCols = [];
+
+        for (let ri = 0; ri < Math.min(rawData.length, 12); ri++) {
+            const row = rawData[ri];
+            let count = 0;
+            let firstCol = -1;
+            for (let ci = 8; ci < row.length; ci++) {
+                const v = row[ci];
+                if (typeof v === 'number' && v > 40000 && v < 70000) {
+                    if (firstCol === -1) firstCol = ci;
+                    count++;
+                }
+            }
+            if (count >= 5) {
+                headerRowIdx = ri;
+                for (let ci = firstCol; ci < row.length; ci++) {
+                    const dateStr = _excelSerialToDate(row[ci]);
+                    if (dateStr) dateCols.push({ colIdx: ci, dateStr });
+                }
+                break;
+            }
+        }
+
+        if (headerRowIdx === -1 || !dateCols.length) {
+            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-red);">날짜 헤더 행을 찾지 못했습니다. 파일 형식을 확인하세요.</span>';
+            return;
+        }
+
+        // 데이터 행 파싱
+        const products = _products();
+        const parsedRows = [];
+
+        for (let ri = headerRowIdx + 1; ri < rawData.length; ri++) {
+            const row = rawData[ri];
+            const companyCell  = _norm(String(row[1] || ''));  // col B: 업체명
+            const partNameExcel = String(row[6] || '').trim(); // col G: 부품명
+            const categoryCell  = _norm(String(row[9] || '')); // col J: 구분
+
+            if (companyFilter && !companyCell.includes(companyFilter)) continue;
+            if (!categoryCell.includes('입고 요청량') && !categoryCell.includes('입고요청량')) continue;
+            if (!partNameExcel) continue;
+
+            // 제품 매칭 (대괄호·공백 제거 후 포함 비교)
+            const normExcel = _norm(partNameExcel).replace(/[\[\]()（）\s]/g, '');
+            const matchedProduct = products.find(p => {
+                const pn = _norm(p.partName || '').replace(/[\[\]()（）\s]/g, '');
+                if (!pn) return false;
+                return pn === normExcel || pn.includes(normExcel) || normExcel.includes(pn);
+            }) || null;
+
+            // 날짜별 수량 추출
+            const dateQtys = [];
+            for (const { colIdx, dateStr } of dateCols) {
+                const strVal = String(row[colIdx] ?? '').trim();
+                if (!strVal || strVal === '-') continue;
+                const qty = Number(strVal.replace(/,/g, ''));
+                if (!isNaN(qty) && qty > 0) dateQtys.push({ dateStr, qty });
+            }
+            if (!dateQtys.length) continue;
+
+            parsedRows.push({
+                partNameExcel,
+                matchedProduct,
+                matchedPartName: matchedProduct?.partName || partNameExcel,
+                matchedCarModel: matchedProduct?.carModel || '',
+                matchedCustomer: matchedProduct ? _customerOf(matchedProduct) : '',
+                matchedColor: matchedProduct?.color || '',
+                matchedPackUnit: matchedProduct ? _packUnitFromProduct(matchedProduct, '') : '',
+                dateQtys
+            });
+        }
+
+        if (!parsedRows.length) {
+            if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent-orange);">조건에 맞는 행이 없습니다. 업체명: "<strong>${document.getElementById('xlsxCompanyName')?.value}</strong>", 구분: 입고 요청량</span>`;
+            return;
+        }
+
+        _xlsxParsedData = parsedRows;
+        _renderExcelPreview(parsedRows, dateCols);
+
+        const unmatch = parsedRows.filter(r => !r.matchedProduct).length;
+        if (statusEl) statusEl.innerHTML =
+            `<span style="color:var(--accent-green);">✓ ${parsedRows.length}개 품목 파싱 완료 (시트: ${sheetName})</span>` +
+            (unmatch ? `<span style="color:var(--accent-orange);margin-left:8px;">⚠ 미매칭 ${unmatch}건 — 부품명으로 등록됩니다.</span>` : '');
+        if (previewArea) previewArea.style.display = '';
+        if (confirmBtn) confirmBtn.style.display = '';
+    }
+
+    function _renderExcelPreview(parsedRows, dateCols) {
+        const tableEl = document.getElementById('xlsxPreviewTable');
+        if (!tableEl) return;
+
+        const activeDates = dateCols.filter(({ dateStr }) =>
+            parsedRows.some(r => r.dateQtys.some(dq => dq.dateStr === dateStr))
+        );
+
+        const totalQtys = {};
+        parsedRows.forEach(r => r.dateQtys.forEach(({ dateStr, qty }) => {
+            totalQtys[dateStr] = (totalQtys[dateStr] || 0) + qty;
+        }));
+
+        const dateHeaders = activeDates.map(({ dateStr }) => {
+            const d = new Date(`${dateStr}T00:00:00`);
+            const w = ['일','월','화','수','목','금','토'][d.getDay()];
+            const label = `${d.getMonth()+1}/${d.getDate()}`;
+            const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+            return `<th style="text-align:center;padding:5px 4px;font-size:0.72rem;min-width:50px;${isWeekend ? 'color:var(--accent-red);' : ''}">${label}<br><span style="font-size:0.63rem;font-weight:400;">${w}</span></th>`;
+        }).join('');
+
+        const dataRows = parsedRows.map(r => {
+            const matchBadge = r.matchedProduct
+                ? `<span style="background:rgba(16,185,129,0.15);color:var(--accent-green);font-size:0.68rem;padding:1px 5px;border-radius:3px;">매칭</span>`
+                : `<span style="background:rgba(239,68,68,0.12);color:var(--accent-red);font-size:0.68rem;padding:1px 5px;border-radius:3px;">미매칭</span>`;
+            const dateCells = activeDates.map(({ dateStr }) => {
+                const found = r.dateQtys.find(dq => dq.dateStr === dateStr);
+                const qty = found ? found.qty : 0;
+                return `<td style="text-align:center;font-size:0.78rem;padding:4px 5px;${qty > 0 ? 'font-weight:700;color:var(--accent-blue);' : 'color:var(--text-muted);'}">${qty > 0 ? qty.toLocaleString() : '-'}</td>`;
+            }).join('');
+            return `<tr>
+                <td style="white-space:nowrap;font-size:0.78rem;padding:5px 8px;">${_esc(r.partNameExcel)} ${matchBadge}</td>
+                <td style="white-space:nowrap;font-size:0.78rem;padding:5px 8px;color:var(--text-secondary);">${_esc(r.matchedPartName)}</td>
+                <td style="font-size:0.78rem;padding:5px 8px;white-space:nowrap;">${_esc(r.matchedCarModel || '-')}</td>
+                ${dateCells}
+            </tr>`;
+        }).join('');
+
+        const totalCells = activeDates.map(({ dateStr }) => {
+            const t = totalQtys[dateStr] || 0;
+            return `<td style="text-align:center;font-size:0.78rem;padding:4px 5px;font-weight:800;color:var(--accent-blue);">${t > 0 ? t.toLocaleString() : '-'}</td>`;
+        }).join('');
+
+        tableEl.innerHTML = `
+            <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+                <thead>
+                    <tr style="background:var(--bg-secondary);position:sticky;top:0;z-index:1;">
+                        <th style="text-align:left;padding:6px 8px;font-size:0.78rem;white-space:nowrap;">엑셀 부품명</th>
+                        <th style="text-align:left;padding:6px 8px;font-size:0.78rem;white-space:nowrap;">매칭 품명</th>
+                        <th style="text-align:left;padding:6px 8px;font-size:0.78rem;white-space:nowrap;">차종</th>
+                        ${dateHeaders}
+                    </tr>
+                </thead>
+                <tbody>
+                    ${dataRows}
+                    <tr style="background:rgba(59,130,246,0.07);border-top:2px solid var(--border);">
+                        <td colspan="3" style="font-size:0.78rem;font-weight:700;padding:5px 8px;text-align:right;color:var(--text-secondary);">합계</td>
+                        ${totalCells}
+                    </tr>
+                </tbody>
+            </table>
+        `;
+
+        const note = document.getElementById('xlsxPreviewNote');
+        if (note) note.textContent = `(${parsedRows.length}개 품목, ${activeDates.length}일)`;
+    }
+
+    async function _confirmExcelImport() {
+        if (!_xlsxParsedData || !_xlsxParsedData.length) {
+            UIUtils.toast('파싱된 데이터가 없습니다.', 'warning');
+            return;
+        }
+        const confirmBtn = document.getElementById('xlsxConfirmBtn');
+        if (confirmBtn) {
+            confirmBtn.disabled = true;
+            confirmBtn.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span> 등록 중...';
+        }
+
+        let insertCount = 0;
+        try {
+            for (const row of _xlsxParsedData) {
+                const base = {
+                    customer: row.matchedCustomer || '',
+                    carModel: row.matchedCarModel || '',
+                    partName: row.matchedPartName,
+                    color: row.matchedColor || '',
+                    packUnit: row.matchedPackUnit || ''
+                };
+                for (const { dateStr, qty } of row.dateQtys) {
+                    if (qty <= 0) continue;
+                    const existing = _recordsForCell(base, dateStr);
+                    const existingQty = existing.reduce((s, r) => s + _num(r.planQty), 0);
+                    await _upsertPlanCell(base, dateStr, existingQty + qty);
+                    insertCount++;
+                }
+            }
+        } catch (err) {
+            UIUtils.toast(`등록 중 오류: ${err.message}`, 'error');
+            if (confirmBtn) {
+                confirmBtn.disabled = false;
+                confirmBtn.innerHTML = '<span class="material-symbols-outlined">playlist_add</span> 납품계획 등록';
+            }
+            return;
+        }
+
+        _xlsxParsedData = null;
+        UIUtils.closeModal();
+        UIUtils.toast(`납품계획 ${insertCount}건 등록 완료!`, 'success');
+        search();
+    }
+
     function exportData() {
         const headers = ['차종', '품명', '컬러', '포장단위', '계획', '납품', '미납', '사출 현재고/필요량', '도장 현재고/필요량', '레이져 현재고/필요량', '완제품수량', ..._lastDays];
         const rows = _lastRows.map(r => [
@@ -1576,7 +1932,11 @@ var SalesDeliveryPlanModule = (function() {
         saveEdit,
         remove,
         fillFromProduct,
-        exportData
+        exportData,
+        openExcelUploadModal,
+        _handleExcelFile,
+        _parseDeliveryExcel,
+        _confirmExcelImport
     };
 })();
 
