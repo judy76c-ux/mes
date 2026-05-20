@@ -256,7 +256,7 @@ var JigModule = (function () {
                     <div style="display:flex;gap:4px;">
                         <button class="btn btn-sm btn-outline" onclick="JigModule.openEditModal('${_js(j.id)}')" style="padding:2px 8px;font-size:0.78rem;">수정</button>
                         <button class="btn btn-sm btn-outline" onclick="JigModule.resetCount('${_js(j.id)}')" style="padding:2px 8px;font-size:0.78rem;" title="교체 초기화">
-                            <span class="material-symbols-outlined" style="font-size:0.85rem;vertical-align:middle;">restart_alt</span>
+                            조치
                         </button>
                     </div>
                 </td>
@@ -707,8 +707,9 @@ var JigModule = (function () {
                 <input type="number" class="form-input" id="jigMaxCount" value="${d.maxCount || ''}" placeholder="예: 10000" min="1">
             </div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;">
             <div class="form-group"><label class="form-label">제작처</label><input type="text" class="form-input" id="jigMaker" value="${_esc(d.maker || '')}"></div>
+            <div class="form-group"><label class="form-label">재질</label><input type="text" class="form-input" id="jigMaterial" value="${_esc(d.material || '')}" placeholder="예: SUS, AL"></div>
             <div class="form-group"><label class="form-label">단가</label><input type="number" class="form-input" id="jigUnitPrice" value="${d.unitPrice || ''}" min="0"></div>
             <div class="form-group"><label class="form-label">등록일</label><input type="date" class="form-input" id="jigRegistDate" value="${d.registDate || _today()}"></div>
         </div>
@@ -729,6 +730,7 @@ var JigModule = (function () {
             jigNo: document.getElementById('jigNo')?.value.trim() || '',
             maxCount,
             maker: document.getElementById('jigMaker')?.value.trim() || '',
+            material: document.getElementById('jigMaterial')?.value.trim() || '',
             unitPrice: parseInt(document.getElementById('jigUnitPrice')?.value || 0) || 0,
             registDate: document.getElementById('jigRegistDate')?.value || _today(),
             note: document.getElementById('jigNote')?.value.trim() || ''
