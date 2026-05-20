@@ -201,12 +201,12 @@ var JigModule = (function () {
 
         const thStyle = 'padding:6px 10px;text-align:center;font-size:0.72rem;color:var(--text-muted);font-weight:600;border-bottom:2px solid var(--border-color);white-space:nowrap;overflow:hidden;';
         const colgroup = `<colgroup>
-            <col style="width:2.4%">
+            <col style="width:5%">
             <col style="width:19%">
             <col style="width:3%">
             <col style="width:3%">
             <col style="width:3%">
-            <col style="width:45.6%">
+            <col style="width:43%">
             <col style="width:10%">
             <col style="width:6%">
             <col style="width:4%">
