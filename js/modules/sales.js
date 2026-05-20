@@ -1706,7 +1706,65 @@ var SalesDeliveryPlanModule = (function() {
         }
     }
 
-    function openExcelUploadModal() {
+    function _presetListHtml() {
+        const presets = _getXlsxPresets();
+        const keys = Object.keys(presets);
+        if (!keys.length) {
+            return `<div style="text-align:center;padding:30px;color:var(--text-muted);font-size:0.85rem;">
+                <span class="material-symbols-outlined" style="font-size:2rem;display:block;margin-bottom:8px;">bookmark_border</span>
+                저장된 프리셋이 없습니다.<br>
+                <span style="font-size:0.78rem;">엑셀 업로드 탭에서 "납품계획 등록" 시 체크박스를 선택하면 자동 저장됩니다.</span>
+            </div>`;
+        }
+        return `<table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+            <thead>
+                <tr style="background:var(--bg-secondary);">
+                    <th style="text-align:left;padding:7px 10px;font-size:0.78rem;">납품처</th>
+                    <th style="text-align:center;padding:7px 8px;font-size:0.78rem;">시트</th>
+                    <th style="text-align:center;padding:7px 8px;font-size:0.78rem;">헤더행</th>
+                    <th style="text-align:center;padding:7px 8px;font-size:0.78rem;">업체명 컬럼</th>
+                    <th style="text-align:center;padding:7px 8px;font-size:0.78rem;">부품명 컬럼</th>
+                    <th style="text-align:center;padding:7px 8px;font-size:0.78rem;">구분 컬럼</th>
+                    <th style="text-align:center;padding:7px 8px;font-size:0.78rem;">날짜 시작</th>
+                    <th style="text-align:left;padding:7px 8px;font-size:0.78rem;">필터 키워드</th>
+                    <th style="text-align:right;padding:7px 8px;font-size:0.78rem;">저장일시</th>
+                    <th style="padding:7px 6px;"></th>
+                </tr>
+            </thead>
+            <tbody>
+                ${keys.map(k => {
+                    const p = presets[k];
+                    const savedAt = p.savedAt ? new Date(p.savedAt).toLocaleDateString('ko', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : '-';
+                    return `<tr style="border-bottom:1px solid var(--border);">
+                        <td style="padding:7px 10px;font-weight:700;">${_esc(p.customer || k)}</td>
+                        <td style="text-align:center;padding:7px 8px;font-size:0.78rem;color:var(--text-secondary);">${_esc(p.sheetKeyword || '-')}</td>
+                        <td style="text-align:center;padding:7px 8px;">${_esc(p.headerRow || '-')}</td>
+                        <td style="text-align:center;padding:7px 8px;font-family:monospace;font-weight:700;color:var(--accent-blue);">${_esc(p.companyCol || '-')}</td>
+                        <td style="text-align:center;padding:7px 8px;font-family:monospace;font-weight:700;color:var(--accent-blue);">${_esc(p.partNameCol || '-')}</td>
+                        <td style="text-align:center;padding:7px 8px;font-family:monospace;font-weight:700;color:var(--accent-blue);">${_esc(p.categoryCol || '-')}</td>
+                        <td style="text-align:center;padding:7px 8px;font-family:monospace;font-weight:700;color:var(--accent-blue);">${_esc(p.dateStartCol || '-')}</td>
+                        <td style="padding:7px 8px;font-size:0.75rem;color:var(--text-secondary);">${_esc(p.companyFilter || '')}<br><span style="color:var(--text-muted);">${_esc(p.categoryKeyword || '')}</span></td>
+                        <td style="text-align:right;padding:7px 8px;font-size:0.73rem;color:var(--text-muted);white-space:nowrap;">${savedAt}</td>
+                        <td style="padding:7px 6px;">
+                            <button class="btn btn-sm" style="color:var(--accent-red);border:1px solid currentColor;padding:2px 7px;font-size:0.73rem;"
+                                onclick="SalesDeliveryPlanModule._deletePresetByKey('${_js(k)}')">삭제</button>
+                        </td>
+                    </tr>`;
+                }).join('')}
+            </tbody>
+        </table>`;
+    }
+
+    function _deletePresetByKey(key) {
+        UIUtils.confirm(`"${key}" 프리셋을 삭제하시겠습니까?`, () => {
+            _deleteXlsxPreset(key);
+            UIUtils.toast(`"${key}" 프리셋이 삭제되었습니다.`, 'success');
+            const listEl = document.getElementById('xlsxPresetListBody');
+            if (listEl) listEl.innerHTML = _presetListHtml();
+        });
+    }
+
+    function openExcelUploadModal(activeTab = 'upload') {
         _xlsxParsedData = null;
         _xlsxLastBuffer = null;
         const presets = _getXlsxPresets();
@@ -1722,88 +1780,117 @@ var SalesDeliveryPlanModule = (function() {
             `<option value="${_esc(c)}">${presets[c] ? '⭐ ' : ''}${_esc(c)}</option>`
         ).join('');
 
+        const tabStyle = (tab) => `padding:7px 16px;font-size:0.83rem;font-weight:600;cursor:pointer;border:none;border-bottom:2px solid ${activeTab===tab?'var(--accent-blue)':'transparent'};background:transparent;color:${activeTab===tab?'var(--accent-blue)':'var(--text-muted)'};`;
+
         const html = `
-            <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;flex-wrap:wrap;">
-                <div class="form-group" style="flex:1;min-width:180px;">
-                    <label class="form-label">납품처 <span style="font-size:0.73rem;color:var(--text-muted);">⭐ = 프리셋 저장됨</span></label>
-                    <select class="form-select" id="xlsxCustomerSel" onchange="SalesDeliveryPlanModule.onXlsxCustomerChange()">
-                        <option value="">-- 납품처 선택 --</option>
-                        ${customerOptions}
-                    </select>
-                </div>
-                <span id="xlsxPresetBadge" style="display:none;background:rgba(16,185,129,0.15);color:var(--accent-green);font-size:0.75rem;padding:4px 10px;border-radius:20px;white-space:nowrap;margin-bottom:4px;border:1px solid rgba(16,185,129,0.3);">⭐ 프리셋 적용됨</span>
-                <button id="xlsxPresetDelBtn" class="btn btn-sm" style="display:none;color:var(--accent-red);border:1px solid var(--accent-red);margin-bottom:4px;" onclick="SalesDeliveryPlanModule._deleteCurrentPreset()">
-                    <span class="material-symbols-outlined" style="font-size:0.85rem;">delete</span> 프리셋 삭제
+            <!-- 탭 헤더 -->
+            <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:14px;">
+                <button style="${tabStyle('upload')}" onclick="SalesDeliveryPlanModule._switchXlsxTab('upload',this)">
+                    <span class="material-symbols-outlined" style="font-size:0.9rem;vertical-align:middle;">upload_file</span> 엑셀 업로드
+                </button>
+                <button style="${tabStyle('presets')}" onclick="SalesDeliveryPlanModule._switchXlsxTab('presets',this)">
+                    <span class="material-symbols-outlined" style="font-size:0.9rem;vertical-align:middle;">bookmark</span>
+                    저장된 프리셋 <span style="background:var(--accent-blue);color:#fff;font-size:0.68rem;padding:1px 6px;border-radius:10px;margin-left:3px;">${presetKeys.length}</span>
                 </button>
             </div>
 
-            <div class="form-group" style="margin-bottom:12px;">
-                <label class="form-label">엑셀 파일 선택 <span style="color:var(--accent-red)">*</span></label>
-                <input type="file" class="form-input" id="xlsxFileInput" accept=".xlsx,.xls"
-                    onchange="SalesDeliveryPlanModule._handleExcelFile(this)">
-            </div>
+            <!-- 업로드 탭 -->
+            <div id="xlsxTabUpload" style="display:${activeTab==='upload'?'':'none'};">
+                <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;flex-wrap:wrap;">
+                    <div class="form-group" style="flex:1;min-width:180px;">
+                        <label class="form-label">납품처 <span style="font-size:0.73rem;color:var(--text-muted);">⭐ = 프리셋 저장됨</span></label>
+                        <select class="form-select" id="xlsxCustomerSel" onchange="SalesDeliveryPlanModule.onXlsxCustomerChange()">
+                            <option value="">-- 납품처 선택 --</option>
+                            ${customerOptions}
+                        </select>
+                    </div>
+                    <span id="xlsxPresetBadge" style="display:none;background:rgba(16,185,129,0.15);color:var(--accent-green);font-size:0.75rem;padding:4px 10px;border-radius:20px;white-space:nowrap;margin-bottom:4px;border:1px solid rgba(16,185,129,0.3);">⭐ 프리셋 적용됨</span>
+                    <button id="xlsxPresetDelBtn" class="btn btn-sm" style="display:none;color:var(--accent-red);border:1px solid var(--accent-red);margin-bottom:4px;" onclick="SalesDeliveryPlanModule._deleteCurrentPreset()">
+                        <span class="material-symbols-outlined" style="font-size:0.85rem;">delete</span> 프리셋 삭제
+                    </button>
+                </div>
 
-            <details id="xlsxConfigDetails" style="border:1px solid var(--border);border-radius:8px;margin-bottom:10px;">
-                <summary style="padding:9px 14px;font-size:0.83rem;font-weight:600;cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;list-style:none;">
-                    <span class="material-symbols-outlined" style="font-size:0.95rem;color:var(--text-muted);">tune</span>
-                    파싱 설정
-                    <span style="font-size:0.72rem;font-weight:400;color:var(--text-muted);margin-left:2px;">컬럼 위치가 다를 때 직접 지정</span>
-                </summary>
-                <div style="padding:12px 14px;border-top:1px solid var(--border);background:var(--bg-secondary);border-radius:0 0 8px 8px;">
-                    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:10px;">
-                        <div class="form-group">
-                            <label class="form-label" style="font-size:0.74rem;">시트명 검색어</label>
-                            <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="xlsxSheetKeyword" value="${def.sheetKeyword}" placeholder="납품일정">
+                <div class="form-group" style="margin-bottom:12px;">
+                    <label class="form-label">엑셀 파일 선택 <span style="color:var(--accent-red)">*</span></label>
+                    <input type="file" class="form-input" id="xlsxFileInput" accept=".xlsx,.xls"
+                        onchange="SalesDeliveryPlanModule._handleExcelFile(this)">
+                </div>
+
+                <details id="xlsxConfigDetails" style="border:1px solid var(--border);border-radius:8px;margin-bottom:10px;">
+                    <summary style="padding:9px 14px;font-size:0.83rem;font-weight:600;cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;list-style:none;">
+                        <span class="material-symbols-outlined" style="font-size:0.95rem;color:var(--text-muted);">tune</span>
+                        파싱 설정
+                        <span style="font-size:0.72rem;font-weight:400;color:var(--text-muted);margin-left:2px;">컬럼 위치가 다를 때 직접 지정</span>
+                    </summary>
+                    <div style="padding:12px 14px;border-top:1px solid var(--border);background:var(--bg-secondary);border-radius:0 0 8px 8px;">
+                        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:10px;">
+                            <div class="form-group">
+                                <label class="form-label" style="font-size:0.74rem;">시트명 검색어</label>
+                                <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="xlsxSheetKeyword" value="${def.sheetKeyword}" placeholder="납품일정">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" style="font-size:0.74rem;">날짜 헤더 행 번호</label>
+                                <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="xlsxHeaderRow" value="${def.headerRow}" placeholder="4" type="number" min="1" max="50">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" style="font-size:0.74rem;">업체명 컬럼</label>
+                                <input class="form-input" style="padding:5px 8px;font-size:0.82rem;text-transform:uppercase;" id="xlsxCompanyCol" value="${def.companyCol}" placeholder="B" maxlength="3">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" style="font-size:0.74rem;">업체명 필터 키워드</label>
+                                <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="xlsxCompanyFilter" value="${def.companyFilter}" placeholder="KC 케미칼">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" style="font-size:0.74rem;">부품명 컬럼</label>
+                                <input class="form-input" style="padding:5px 8px;font-size:0.82rem;text-transform:uppercase;" id="xlsxPartNameCol" value="${def.partNameCol}" placeholder="G" maxlength="3">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" style="font-size:0.74rem;">구분 컬럼</label>
+                                <input class="form-input" style="padding:5px 8px;font-size:0.82rem;text-transform:uppercase;" id="xlsxCategoryCol" value="${def.categoryCol}" placeholder="J" maxlength="3">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" style="font-size:0.74rem;">구분 필터 키워드</label>
+                                <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="xlsxCategoryKeyword" value="${def.categoryKeyword}" placeholder="입고 요청량">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" style="font-size:0.74rem;">날짜 시작 컬럼</label>
+                                <input class="form-input" style="padding:5px 8px;font-size:0.82rem;text-transform:uppercase;" id="xlsxDateStartCol" value="${def.dateStartCol}" placeholder="K" maxlength="3">
+                            </div>
                         </div>
-                        <div class="form-group">
-                            <label class="form-label" style="font-size:0.74rem;">날짜 헤더 행 번호</label>
-                            <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="xlsxHeaderRow" value="${def.headerRow}" placeholder="4" type="number" min="1" max="50">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" style="font-size:0.74rem;">업체명 컬럼</label>
-                            <input class="form-input" style="padding:5px 8px;font-size:0.82rem;text-transform:uppercase;" id="xlsxCompanyCol" value="${def.companyCol}" placeholder="B" maxlength="3">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" style="font-size:0.74rem;">업체명 필터 키워드</label>
-                            <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="xlsxCompanyFilter" value="${def.companyFilter}" placeholder="KC 케미칼">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" style="font-size:0.74rem;">부품명 컬럼</label>
-                            <input class="form-input" style="padding:5px 8px;font-size:0.82rem;text-transform:uppercase;" id="xlsxPartNameCol" value="${def.partNameCol}" placeholder="G" maxlength="3">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" style="font-size:0.74rem;">구분 컬럼</label>
-                            <input class="form-input" style="padding:5px 8px;font-size:0.82rem;text-transform:uppercase;" id="xlsxCategoryCol" value="${def.categoryCol}" placeholder="J" maxlength="3">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" style="font-size:0.74rem;">구분 필터 키워드</label>
-                            <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="xlsxCategoryKeyword" value="${def.categoryKeyword}" placeholder="입고 요청량">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" style="font-size:0.74rem;">날짜 시작 컬럼</label>
-                            <input class="form-input" style="padding:5px 8px;font-size:0.82rem;text-transform:uppercase;" id="xlsxDateStartCol" value="${def.dateStartCol}" placeholder="K" maxlength="3">
+                        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                            <label style="display:flex;align-items:center;gap:6px;font-size:0.8rem;cursor:pointer;">
+                                <input type="checkbox" id="xlsxSavePreset" checked> 등록 시 이 설정을 납품처 프리셋으로 저장
+                            </label>
+                            <button class="btn btn-sm btn-outline" style="font-size:0.78rem;" onclick="SalesDeliveryPlanModule._reparse()">
+                                <span class="material-symbols-outlined" style="font-size:0.85rem;">refresh</span> 재파싱
+                            </button>
                         </div>
                     </div>
-                    <div style="display:flex;align-items:center;gap:10px;">
-                        <label style="display:flex;align-items:center;gap:6px;font-size:0.8rem;cursor:pointer;">
-                            <input type="checkbox" id="xlsxSavePreset" checked> 이 설정을 납품처 프리셋으로 저장
-                        </label>
-                        <button class="btn btn-sm btn-outline" style="font-size:0.78rem;" onclick="SalesDeliveryPlanModule._reparse()">
-                            <span class="material-symbols-outlined" style="font-size:0.85rem;">refresh</span> 재파싱
-                        </button>
+                </details>
+
+                <div id="xlsxStatus" style="font-size:0.82rem;margin-top:4px;min-height:18px;"></div>
+                <div id="xlsxPreviewArea" style="display:none;">
+                    <div style="border-top:1px solid var(--border);margin:12px 0 0;padding-top:10px;">
+                        <div style="font-size:0.85rem;font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                            <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-green);">check_circle</span>
+                            파싱 결과 미리보기
+                            <span id="xlsxPreviewNote" style="font-size:0.75rem;font-weight:400;color:var(--text-muted);"></span>
+                        </div>
+                        <div id="xlsxPreviewTable" style="overflow-x:auto;max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;"></div>
                     </div>
                 </div>
-            </details>
+            </div>
 
-            <div id="xlsxStatus" style="font-size:0.82rem;margin-top:4px;min-height:18px;"></div>
-            <div id="xlsxPreviewArea" style="display:none;">
-                <div style="border-top:1px solid var(--border);margin:12px 0 0;padding-top:10px;">
-                    <div style="font-size:0.85rem;font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
-                        <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-green);">check_circle</span>
-                        파싱 결과 미리보기
-                        <span id="xlsxPreviewNote" style="font-size:0.75rem;font-weight:400;color:var(--text-muted);"></span>
-                    </div>
-                    <div id="xlsxPreviewTable" style="overflow-x:auto;max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;"></div>
+            <!-- 프리셋 목록 탭 -->
+            <div id="xlsxTabPresets" style="display:${activeTab==='presets'?'':'none'};">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                    <span style="font-size:0.83rem;color:var(--text-muted);">납품처별 파싱 설정이 자동 저장됩니다. 다음 업로드 시 납품처 선택만 하면 적용됩니다.</span>
+                    <button class="btn btn-sm btn-outline" onclick="document.getElementById('xlsxPresetListBody').innerHTML=SalesDeliveryPlanModule._presetListHtml()">
+                        <span class="material-symbols-outlined" style="font-size:0.85rem;">refresh</span>
+                    </button>
+                </div>
+                <div id="xlsxPresetListBody" style="overflow-x:auto;border:1px solid var(--border);border-radius:6px;">
+                    ${_presetListHtml()}
                 </div>
             </div>
         `;
@@ -1812,6 +1899,29 @@ var SalesDeliveryPlanModule = (function() {
              <button class="btn btn-primary" id="xlsxConfirmBtn" style="display:none;" onclick="SalesDeliveryPlanModule._confirmExcelImport()">
                  <span class="material-symbols-outlined">playlist_add</span> 납품계획 등록
              </button>`, 'xl');
+    }
+
+    function _switchXlsxTab(tab, btn) {
+        ['upload', 'presets'].forEach(t => {
+            const el = document.getElementById(`xlsxTab${t.charAt(0).toUpperCase()+t.slice(1)}`);
+            if (el) el.style.display = t === tab ? '' : 'none';
+        });
+        document.querySelectorAll('[onclick*="_switchXlsxTab"]').forEach(b => {
+            b.style.borderBottomColor = 'transparent';
+            b.style.color = 'var(--text-muted)';
+        });
+        if (btn) {
+            btn.style.borderBottomColor = 'var(--accent-blue)';
+            btn.style.color = 'var(--accent-blue)';
+        }
+        // 프리셋 탭 전환 시 확인 버튼 숨김
+        const confirmBtn = document.getElementById('xlsxConfirmBtn');
+        if (confirmBtn) confirmBtn.style.display = (tab === 'upload' && _xlsxParsedData?.length) ? '' : 'none';
+        // 프리셋 탭이면 목록 새로고침
+        if (tab === 'presets') {
+            const listEl = document.getElementById('xlsxPresetListBody');
+            if (listEl) listEl.innerHTML = _presetListHtml();
+        }
     }
 
     function _deleteCurrentPreset() {
@@ -1824,7 +1934,6 @@ var SalesDeliveryPlanModule = (function() {
             const delBtn = document.getElementById('xlsxPresetDelBtn');
             if (badge) badge.style.display = 'none';
             if (delBtn) delBtn.style.display = 'none';
-            // 납품처 옵션에서 ⭐ 제거
             const opt = document.querySelector(`#xlsxCustomerSel option[value="${customer}"]`);
             if (opt) opt.textContent = customer;
         });
@@ -2083,12 +2192,16 @@ var SalesDeliveryPlanModule = (function() {
             return;
         }
 
+        // 등록할 날짜 범위 미리 수집 (나중에 뷰 날짜 범위 확장에 사용)
+        const allDates = _xlsxParsedData.flatMap(r => r.dateQtys.map(dq => dq.dateStr)).sort();
+        const minDate = allDates[0] || '';
+        const maxDate = allDates[allDates.length - 1] || '';
+
         // 프리셋 저장 여부 확인
         const savePreset = document.getElementById('xlsxSavePreset')?.checked;
         const customer = document.getElementById('xlsxCustomerSel')?.value || '';
         if (savePreset && customer) {
             _saveXlsxPreset(customer, _readXlsxConfig());
-            UIUtils.toast(`"${customer}" 파싱 프리셋이 저장되었습니다.`, 'info');
         }
 
         const confirmBtn = document.getElementById('xlsxConfirmBtn');
@@ -2098,6 +2211,7 @@ var SalesDeliveryPlanModule = (function() {
         }
 
         let insertCount = 0;
+        let errMsg = '';
         try {
             for (const row of _xlsxParsedData) {
                 const base = {
@@ -2116,18 +2230,27 @@ var SalesDeliveryPlanModule = (function() {
                 }
             }
         } catch (err) {
-            UIUtils.toast(`등록 중 오류: ${err.message}`, 'error');
-            if (confirmBtn) {
-                confirmBtn.disabled = false;
-                confirmBtn.innerHTML = '<span class="material-symbols-outlined">playlist_add</span> 납품계획 등록';
-            }
-            return;
+            errMsg = err.message || String(err);
         }
 
         _xlsxParsedData = null;
         _xlsxLastBuffer = null;
         UIUtils.closeModal();
-        UIUtils.toast(`납품계획 ${insertCount}건 등록 완료!`, 'success');
+
+        if (errMsg) {
+            UIUtils.toast(`등록 중 오류: ${errMsg}`, 'error');
+            return;
+        }
+
+        // 등록된 날짜가 현재 뷰 범위를 벗어나면 날짜 범위 자동 확장
+        const startEl = document.getElementById('sdpStart');
+        const endEl   = document.getElementById('sdpEnd');
+        if (startEl && endEl && minDate && maxDate) {
+            if (minDate < startEl.value) startEl.value = minDate;
+            if (maxDate > endEl.value)   endEl.value   = maxDate;
+        }
+
+        UIUtils.toast(`납품계획 ${insertCount}건 등록 완료!` + (savePreset && customer ? ` (프리셋 저장: ${customer})` : ''), 'success');
         search();
     }
 
@@ -2172,6 +2295,9 @@ var SalesDeliveryPlanModule = (function() {
         exportData,
         openExcelUploadModal,
         onXlsxCustomerChange,
+        _switchXlsxTab,
+        _presetListHtml,
+        _deletePresetByKey,
         _handleExcelFile,
         _parseDeliveryExcel,
         _reparse,
