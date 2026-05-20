@@ -246,7 +246,10 @@ if (Test-Path $PackagePath) {
 
 Push-Location $WorkDir
 try {
-    tar -czf $PackagePath .
+    # Windows System32 tar을 명시적으로 사용 (Git bash tar는 Windows 경로를 처리 못함)
+    $tarExe = "$env:SystemRoot\System32\tar.exe"
+    if (-not (Test-Path $tarExe)) { $tarExe = "tar" }
+    & $tarExe -czf $PackagePath .
 } finally {
     Pop-Location
 }
