@@ -1928,22 +1928,17 @@ var SalesDeliveryPlanModule = (function() {
     }
 
     function _deleteCurrentPreset() {
-        const key = _xlsxCurrentPresetKey || document.getElementById('xlsxCustomerSel')?.value || '';
-        if (!key) return;
-        UIUtils.confirm(`"${key}" 프리셋을 삭제하시겠습니까?`, () => {
-            _deleteXlsxPreset(key);
-            _xlsxCurrentPresetKey = '';
-            UIUtils.toast(`"${key}" 프리셋이 삭제되었습니다.`, 'success');
+        const customer = document.getElementById('xlsxCustomerSel')?.value || '';
+        if (!customer) return;
+        UIUtils.confirm(`"${customer}" 프리셋을 삭제하시겠습니까?`, () => {
+            _deleteXlsxPreset(customer);
+            UIUtils.toast(`"${customer}" 프리셋이 삭제되었습니다.`, 'success');
             const badge = document.getElementById('xlsxPresetBadge');
             const delBtn = document.getElementById('xlsxPresetDelBtn');
             if (badge) badge.style.display = 'none';
             if (delBtn) delBtn.style.display = 'none';
-            const pSel = document.getElementById('xlsxPresetSel');
-            if (pSel) {
-                const opt = pSel.querySelector(`option[value="${_esc(key)}"]`);
-                if (opt) opt.remove();
-                pSel.value = '';
-            }
+            const opt = document.querySelector(`#xlsxCustomerSel option[value="${customer}"]`);
+            if (opt) opt.textContent = customer;
         });
     }
 
@@ -1955,33 +1950,24 @@ var SalesDeliveryPlanModule = (function() {
 
     function _savePresetNow() {
         const customer = document.getElementById('xlsxCustomerSel')?.value || '';
-        const presetNameInput = document.getElementById('xlsxPresetName')?.value?.trim() || '';
         const cfg = _readXlsxConfig();
-        const key = presetNameInput || customer || cfg.companyFilter || '';
+        const key = customer || cfg.companyFilter || '';
         if (!key) {
-            UIUtils.toast('프리셋 이름 또는 납품처를 입력하세요.', 'warning');
-            document.getElementById('xlsxPresetName')?.focus();
+            UIUtils.toast('납품처를 선택하거나 업체명 필터 키워드를 입력하세요.', 'warning');
+            document.getElementById('xlsxCompanyFilter')?.focus();
             return;
         }
-        _saveXlsxPreset(key, { ...cfg, customer, presetName: key });
-        _xlsxCurrentPresetKey = key;
+        _saveXlsxPreset(key, cfg);
         UIUtils.toast(`프리셋 저장 완료: "${key}"`, 'success');
-        if (customer) {
-            const cSel = document.getElementById('xlsxCustomerSel');
-            const cOpt = cSel?.querySelector(`option[value="${_esc(customer)}"]`);
-            if (cOpt && !cOpt.textContent.startsWith('⭐')) cOpt.textContent = '⭐ ' + cOpt.textContent;
-        }
-        const pSel = document.getElementById('xlsxPresetSel');
-        if (pSel) {
-            let opt = pSel.querySelector(`option[value="${_esc(key)}"]`);
-            if (!opt) { opt = document.createElement('option'); opt.value = key; pSel.appendChild(opt); }
-            opt.textContent = key;
-            pSel.value = key;
-            pSel.style.color = '';
+        // 납품처 셀렉터 옵션 업데이트 (⭐ 표시)
+        const sel = document.getElementById('xlsxCustomerSel');
+        if (sel) {
+            const opt = sel.querySelector(`option[value="${key}"]`);
+            if (opt && !opt.textContent.startsWith('⭐')) opt.textContent = '⭐ ' + opt.textContent;
         }
         const badge = document.getElementById('xlsxPresetBadge');
         const delBtn = document.getElementById('xlsxPresetDelBtn');
-        if (badge) { badge.style.display = ''; badge.textContent = `⭐ "${key}" 적용됨`; }
+        if (badge) badge.style.display = '';
         if (delBtn) delBtn.style.display = '';
     }
 
@@ -2264,14 +2250,13 @@ var SalesDeliveryPlanModule = (function() {
         // 프리셋 저장 여부 확인
         const savePreset = document.getElementById('xlsxSavePreset')?.checked;
         const customer = document.getElementById('xlsxCustomerSel')?.value || '';
-        const presetNameInput = document.getElementById('xlsxPresetName')?.value?.trim() || '';
         const cfgForPreset = _readXlsxConfig();
-        const presetKey = presetNameInput || customer || cfgForPreset.companyFilter || '';
+        const presetKey = customer || cfgForPreset.companyFilter || '';
         if (savePreset) {
             if (presetKey) {
-                _saveXlsxPreset(presetKey, { ...cfgForPreset, customer, presetName: presetKey });
+                _saveXlsxPreset(presetKey, cfgForPreset);
             } else {
-                UIUtils.toast('프리셋 저장 생략: 프리셋 이름 또는 납품처를 입력하세요.', 'warning');
+                UIUtils.toast('프리셋 저장 생략: 납품처를 선택하거나 업체명 필터 키워드를 입력하세요.', 'warning');
             }
         }
 
@@ -2366,7 +2351,6 @@ var SalesDeliveryPlanModule = (function() {
         exportData,
         openExcelUploadModal,
         onXlsxCustomerChange,
-        onXlsxPresetChange,
         _switchXlsxTab,
         _presetListHtml,
         _deletePresetByKey,
