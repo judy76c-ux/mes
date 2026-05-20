@@ -2074,11 +2074,11 @@ const SettingsModule = (function() {
                         <button class="btn btn-secondary" onclick="SettingsModule.openInjectMatUploadModal()">
                             <span class="material-symbols-outlined">upload_file</span> 일괄 업로드
                         </button>
-                        <button class="btn btn-outline" style="border-color:#f59e0b;color:#b45309;"
+                        <button class="btn btn-outline" style="border-color:#6366f1;color:#4f46e5;"
                                 onclick="SettingsModule.openMfgMatchingReview()"
-                                title="사출자재 제작품목과 생산계획 품명을 비교하여 불일치 항목을 한 번에 수정합니다">
-                            <span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px;">link</span>
-                            생산계획 매칭 검토
+                                title="사출자재 제작품목(productIds) ↔ 제품 정보 연결 상태를 검증합니다">
+                            <span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px;">verified</span>
+                            사출자재 검증
                         </button>
                         <button class="btn btn-primary" onclick="SettingsModule.openAddInjectMatModal()">
                             <span class="material-symbols-outlined">add</span> 자재 추가
@@ -6041,199 +6041,126 @@ const SettingsModule = (function() {
      * 문자열 유사도 계산 (0~1)
      * 정확 일치 → 1.0 / 포함 관계 → 0.85 / 공통 문자 비율 → 0~0.8
      */
-    function _mfgMatchSimilarity(a, b) {
-        if (!a || !b) return 0;
-        const sa = a.trim().toLowerCase().replace(/\s+/g, '');
-        const sb = b.trim().toLowerCase().replace(/\s+/g, '');
-        if (sa === sb) return 1.0;
-        if (sa.includes(sb) || sb.includes(sa)) {
-            return 0.85 - Math.abs(sa.length - sb.length) * 0.005;
-        }
-        const maxLen = Math.max(sa.length, sb.length);
-        if (maxLen === 0) return 1.0;
-        const bArr = [...sb], used = new Array(bArr.length).fill(false);
-        let common = 0;
-        for (const ch of [...sa]) {
-            for (let i = 0; i < bArr.length; i++) {
-                if (!used[i] && bArr[i] === ch) { common++; used[i] = true; break; }
-            }
-        }
-        return common / maxLen;
-    }
-
     /**
-     * 생산계획 품명 집합에서 현재 제작품목명에 가장 적합한 값을 제안
-     * @returns {{ value:string, type:'exact'|'suggested'|'nomatch'|'empty', score:number }}
-     */
-    function _suggestMfgMatch(currentName, planPartNameSet, planPartNames) {
-        if (!currentName || !currentName.trim()) return { value: '', type: 'empty', score: 0 };
-        const trimmed = currentName.trim();
-        if (planPartNameSet.has(trimmed)) return { value: trimmed, type: 'exact', score: 1 };
-        // 최적 매칭 탐색
-        let best = null, bestScore = 0;
-        for (const pn of planPartNames) {
-            const s = _mfgMatchSimilarity(trimmed, pn);
-            if (s > bestScore) { bestScore = s; best = pn; }
-        }
-        if (bestScore >= 0.45) return { value: best, type: 'suggested', score: bestScore };
-        return { value: trimmed, type: 'nomatch', score: 0 };
-    }
-
-    /**
-     * 매칭 검토 모달 열기
+     * 사출자재 검증 모달 열기
+     * — 사출자재의 productIds ↔ 제품 정보의 연결 상태를 양방향으로 검증
      */
     function openMfgMatchingReview() {
-        const mats  = Storage.getAll(INJECT_MAT_STORE) || [];
-        const plans = Storage.getAll(DB.STORES.PRODUCTION_PLANS) || [];
+        const mats     = Storage.getAll(INJECT_MAT_STORE) || [];
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
 
         if (mats.length === 0) { UIUtils.toast('등록된 사출자재가 없습니다.', 'warning'); return; }
 
-        const planPartNameSet = new Set(plans.map(p => (p.partName || '').trim()).filter(Boolean));
-        const planPartNames   = [...planPartNameSet].sort();
+        // 제품 ID → 제품 객체 맵
+        const prodMap = {};
+        products.forEach(p => { prodMap[p.id] = p; });
 
-        if (planPartNames.length === 0) {
-            UIUtils.toast('생산계획에 품명 데이터가 없습니다. 먼저 생산계획을 등록하세요.', 'warning');
-            return;
+        // 사출자재 productIds 에 포함된 제품 ID 전체 집합 (역방향 체크용)
+        const linkedProductIdSet = new Set();
+        mats.forEach(m => (m.productIds || []).forEach(id => { if (id) linkedProductIdSet.add(id); }));
+
+        // ── 슬롯 상태 판별 ──────────────────────────────────────────
+        // 'linked'  : productId 있고 제품도 존재
+        // 'missing' : productId 있지만 제품 삭제됨
+        // 'empty'   : productId 미설정
+        function slotStatus(productId) {
+            if (!productId) return { type: 'empty', prod: null };
+            const prod = prodMap[productId] || null;
+            return prod ? { type: 'linked', prod } : { type: 'missing', prod: null };
         }
 
-        // 생산계획 품명을 datalist로 제공
-        const datalistHtml = `<datalist id="planNamesDatalistMfg">
-            ${planPartNames.map(n => `<option value="${n.replace(/"/g,'&quot;')}"></option>`).join('')}
-        </datalist>`;
-
-        // 행별 스타일 헬퍼
-        function cellBg(type) {
-            if (type === 'exact')     return 'background:rgba(52,211,153,0.13);';
-            if (type === 'suggested') return 'background:rgba(251,191,36,0.22);box-shadow:inset 3px 0 0 #f59e0b;';
-            if (type === 'nomatch')   return 'background:rgba(239,68,68,0.12);box-shadow:inset 3px 0 0 #ef4444;';
-            return '';  // empty → no style
-        }
-        function statusBadge(s1, s2, hasMfg1, hasMfg2) {
-            const t1 = hasMfg1 ? s1.type : 'empty';
-            const t2 = hasMfg2 ? s2.type : 'empty';
-            const allExact = (t1 === 'exact' || t1 === 'empty') && (t2 === 'exact' || t2 === 'empty');
-            if (allExact)
-                return `<span style="color:#10b981;font-size:0.75rem;font-weight:700;">✓ 일치</span>`;
-            if (t1 === 'nomatch' || t2 === 'nomatch')
-                return `<span style="color:#ef4444;font-size:0.75rem;font-weight:700;">✗ 미매칭</span>`;
-            return `<span style="color:#f59e0b;font-size:0.75rem;font-weight:700;">◈ 제안</span>`;
-        }
-        // currentName: productId 기반으로 확정된 현재 이름 (입력란 초기값으로 사용)
-        function inputCell(field, sug, matId, inputId, currentName) {
-            // '제안' 상태일 때는 엉뚱한 유사도 매칭값 대신 현재 이름을 그대로 유지
-            // 사용자가 드롭다운에서 직접 올바른 생산계획 품명을 선택하도록 유도
-            const displayVal = sug.type === 'suggested'
-                ? (currentName || '')           // 현재 이름 유지
-                : (sug.type !== 'empty' ? sug.value : '');  // exact/nomatch/empty는 기존대로
-            const bgStyle = cellBg(sug.type);
-            const tooltip = sug.type === 'suggested'
-                ? `title="생산계획에서 정확히 일치하는 품명을 찾지 못했습니다. 드롭다운에서 직접 선택하세요."`
-                : (sug.type === 'nomatch' ? `title="생산계획에서 매칭되는 품명을 찾지 못했습니다"` : '');
-            const badge = sug.type === 'suggested'
-                ? `<span style="position:absolute;right:5px;top:50%;transform:translateY(-50%);
-                               font-size:0.6rem;color:#b45309;font-weight:700;
-                               pointer-events:none;user-select:none;">확인필요</span>`
-                : (sug.type === 'nomatch'
-                   ? `<span style="position:absolute;right:5px;top:50%;transform:translateY(-50%);
-                                  font-size:0.6rem;color:#ef4444;font-weight:700;
-                                  pointer-events:none;user-select:none;">미매칭</span>` : '');
-            return `<td style="padding:3px 5px;min-width:175px;">
-                <div style="position:relative;">
-                    <input type="text" list="planNamesDatalistMfg"
-                           id="${inputId}"
-                           data-mat-id="${matId}"
-                           data-field="${field}"
-                           data-original="${displayVal.replace(/"/g,'&quot;')}"
-                           data-sug-type="${sug.type}"
-                           value="${displayVal.replace(/"/g,'&quot;')}"
-                           ${tooltip}
-                           placeholder="${sug.type === 'empty' ? '(미입력)' : '품명 입력 또는 선택'}"
-                           style="width:100%;padding:4px 38px 4px 7px;font-size:0.78rem;
-                                  border:1px solid var(--border-color);border-radius:4px;
-                                  box-sizing:border-box;${bgStyle}"
-                           oninput="SettingsModule._onMatchInput(this)">
-                    ${badge}
-                </div>
-            </td>`;
+        function slotCell(st) {
+            if (st.type === 'linked') {
+                const name = st.prod.partName || '-';
+                const color = st.prod.color ? ` / ${st.prod.color}` : '';
+                return `<td style="padding:5px 8px;font-size:0.78rem;
+                                   background:rgba(52,211,153,0.1);border-left:3px solid #10b981;">
+                    <span style="font-weight:600;">${name}${color}</span>
+                    <span style="display:block;font-size:0.7rem;color:var(--text-muted);">${st.prod.carModel||''}</span>
+                </td>`;
+            }
+            if (st.type === 'missing') {
+                return `<td style="padding:5px 8px;font-size:0.78rem;
+                                   background:rgba(239,68,68,0.1);border-left:3px solid #ef4444;">
+                    <span style="color:#ef4444;font-weight:600;">⚠ 제품 없음</span>
+                    <span style="display:block;font-size:0.7rem;color:var(--text-muted);">(삭제된 제품 ID)</span>
+                </td>`;
+            }
+            return `<td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);">—</td>`;
         }
 
-        // 차종 목록 (필터용)
+        function rowStatus(st1, st2) {
+            if (st1.type === 'missing' || st2.type === 'missing')
+                return `<span style="color:#ef4444;font-size:0.75rem;font-weight:700;">✗ 오류</span>`;
+            if (st1.type === 'empty' && st2.type === 'empty')
+                return `<span style="color:#9ca3af;font-size:0.75rem;">— 미설정</span>`;
+            if (st1.type === 'empty' || st2.type === 'empty')
+                return `<span style="color:#10b981;font-size:0.75rem;font-weight:700;">✓ 연결됨</span>`;
+            return `<span style="color:#10b981;font-size:0.75rem;font-weight:700;">✓ 연결됨</span>`;
+        }
+
+        // 통계
+        let cntOk = 0, cntError = 0, cntEmpty = 0;
         const uniqueCars = [...new Set(mats.map(m => m.carModel).filter(Boolean))].sort();
 
-        // 제품 정보 (productIds ID → partName 역참조용)
-        const allProducts = Storage.getAll(DB.STORES.PRODUCTS) || [];
-
-        // productId가 있으면 제품의 partName으로 정확 매칭, 없으면 텍스트 유사도 fallback
-        function _resolveMatchName(mat, slot) {
-            const prodId = (mat.productIds && mat.productIds[slot]) || '';
-            if (prodId) {
-                const prod = allProducts.find(p => p.id === prodId);
-                if (prod && prod.partName) return prod.partName.trim();
-            }
-            // productId 없는 경우 기존 텍스트(mfgProductName) 사용
-            return slot === 0
-                ? (mat.mfgProductName  || '').trim()
-                : (mat.mfgProductName2 || '').trim();
-        }
-
-        // 통계 집계
-        let cntExact = 0, cntSuggested = 0, cntNomatch = 0, cntEmpty = 0;
-
         const rows = mats.map((m, idx) => {
-            const name1 = _resolveMatchName(m, 0);
-            const name2 = _resolveMatchName(m, 1);
-            const hasMfg1 = !!name1;
-            const hasMfg2 = !!name2;
-            const s1 = _suggestMfgMatch(name1, planPartNameSet, planPartNames);
-            const s2 = _suggestMfgMatch(name2, planPartNameSet, planPartNames);
-
-            // 통계
-            [s1, s2].forEach(s => {
-                if      (s.type === 'exact')     cntExact++;
-                else if (s.type === 'suggested') cntSuggested++;
-                else if (s.type === 'nomatch')   cntNomatch++;
-                else                             cntEmpty++;
-            });
-
-            // 행 전체 상태 (음영 필터용)
-            const rowHasHighlight = (hasMfg1 && s1.type !== 'exact') || (hasMfg2 && s2.type !== 'exact')
-                                  || (!hasMfg1) || (!hasMfg2);
+            const st1 = slotStatus((m.productIds || [])[0] || '');
+            const st2 = slotStatus((m.productIds || [])[1] || '');
+            const hasIssue = st1.type === 'missing' || st2.type === 'missing';
+            const hasLink  = st1.type === 'linked'  || st2.type === 'linked';
+            if (hasIssue) cntError++;
+            else if (hasLink) cntOk++;
+            else cntEmpty++;
 
             return `<tr data-car="${(m.carModel||'').replace(/"/g,'&quot;')}"
                         data-idx="${idx}"
-                        data-highlight="${rowHasHighlight}"
+                        data-issue="${hasIssue}"
                         style="border-bottom:1px solid var(--border-color);">
-                <td style="padding:4px 8px;font-size:0.78rem;white-space:nowrap;">${m.carModel||'-'}</td>
-                <td style="padding:4px 8px;font-size:0.78rem;font-weight:600;white-space:nowrap;">${m.injPartName||'-'}</td>
-                <td style="padding:4px 8px;font-size:0.75rem;color:var(--text-muted);white-space:nowrap;">${m.injColor||'-'}</td>
-                <td style="padding:4px 8px;font-size:0.75rem;color:var(--text-muted);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
-                    title="${name1.replace(/"/g,'&quot;')}">${name1||'<em style="color:var(--text-muted)">없음</em>'}</td>
-                ${inputCell('mfgProductName',  s1, m.id, `mfgM1_${m.id}`, name1)}
-                <td style="padding:4px 8px;font-size:0.75rem;color:var(--text-muted);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
-                    title="${name2.replace(/"/g,'&quot;')}">${name2||'<em style="color:var(--text-muted)">없음</em>'}</td>
-                ${inputCell('mfgProductName2', s2, m.id, `mfgM2_${m.id}`, name2)}
-                <td style="padding:4px 8px;text-align:center;white-space:nowrap;">${statusBadge(s1,s2,hasMfg1,hasMfg2)}</td>
+                <td style="padding:5px 8px;font-size:0.78rem;white-space:nowrap;">${m.carModel||'-'}</td>
+                <td style="padding:5px 8px;font-size:0.78rem;font-weight:600;white-space:nowrap;">${m.injPartName||'-'}</td>
+                <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);white-space:nowrap;">${m.injColor||'-'}</td>
+                ${slotCell(st1)}
+                ${slotCell(st2)}
+                <td style="padding:5px 8px;text-align:center;white-space:nowrap;">${rowStatus(st1,st2)}</td>
             </tr>`;
         }).join('');
 
+        // 역방향: 어떤 사출자재에도 연결되지 않은 제품
+        const unlinkedProds = products.filter(p => !linkedProductIdSet.has(p.id));
+        const unlinkedHtml = unlinkedProds.length === 0
+            ? `<p style="color:#10b981;font-size:0.82rem;margin:0;">✓ 모든 제품이 사출자재에 연결되어 있습니다.</p>`
+            : `<div style="max-height:160px;overflow-y:auto;">
+                <table style="width:100%;border-collapse:collapse;font-size:0.78rem;">
+                    <thead><tr style="background:var(--bg-secondary);">
+                        <th style="padding:5px 8px;text-align:left;">차종</th>
+                        <th style="padding:5px 8px;text-align:left;">품명</th>
+                        <th style="padding:5px 8px;text-align:left;">컬러</th>
+                    </tr></thead>
+                    <tbody>
+                    ${unlinkedProds.map(p => `<tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:4px 8px;">${p.carModel||'-'}</td>
+                        <td style="padding:4px 8px;font-weight:600;">${p.partName||'-'}</td>
+                        <td style="padding:4px 8px;">${p.color||'-'}</td>
+                    </tr>`).join('')}
+                    </tbody>
+                </table>
+              </div>`;
+
         const bodyHtml = `
-        ${datalistHtml}
-        <!-- 범례 & 통계 -->
-        <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;padding:8px 14px;
-                    background:var(--bg-secondary);border-radius:6px;margin-bottom:10px;font-size:0.78rem;">
-            <span style="font-weight:700;color:var(--text-secondary);">범례</span>
-            <span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;
-                               background:rgba(52,211,153,0.25);border:1px solid rgba(52,211,153,0.5);
-                               vertical-align:middle;margin-right:3px;"></span>정확 일치 <strong>${cntExact}</strong></span>
-            <span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;
-                               background:rgba(251,191,36,0.3);border-left:3px solid #f59e0b;
-                               vertical-align:middle;margin-right:3px;"></span>자동 제안 (음영) <strong>${cntSuggested}</strong></span>
-            <span><span style="display:inline-block;width:12px;height:12px;border-radius:2px;
-                               background:rgba(239,68,68,0.15);border-left:3px solid #ef4444;
-                               vertical-align:middle;margin-right:3px;"></span>매칭 실패 <strong>${cntNomatch}</strong></span>
-            <span style="color:var(--text-muted);">미입력 <strong>${cntEmpty}</strong></span>
+        <!-- 통계 -->
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:8px 14px;
+                    background:var(--bg-secondary);border-radius:6px;margin-bottom:10px;font-size:0.8rem;">
+            <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;
+                               background:#10b981;margin-right:4px;vertical-align:middle;"></span>
+                연결됨 <strong>${cntOk}</strong></span>
+            <span style="color:#9ca3af;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;
+                               background:#d1d5db;margin-right:4px;vertical-align:middle;"></span>
+                미설정 <strong>${cntEmpty}</strong></span>
+            <span style="color:#ef4444;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;
+                               background:#ef4444;margin-right:4px;vertical-align:middle;"></span>
+                오류(삭제된 제품) <strong>${cntError}</strong></span>
             <span style="margin-left:auto;color:var(--text-muted);">
-                생산계획 품명: <strong>${planPartNames.length}</strong>종 / 사출자재: <strong>${mats.length}</strong>건
+                사출자재 <strong>${mats.length}</strong>건 / 제품 <strong>${products.length}</strong>건
             </span>
         </div>
         <!-- 필터 -->
@@ -6244,54 +6171,42 @@ const SettingsModule = (function() {
                 ${uniqueCars.map(c => `<option value="${c}">${c}</option>`).join('')}
             </select>
             <label style="display:flex;align-items:center;gap:5px;font-size:0.82rem;cursor:pointer;user-select:none;">
-                <input type="checkbox" id="matchFiltDiff" onchange="SettingsModule._filterMatchTable()">
-                음영(제안/미매칭/미입력) 항목만 보기
+                <input type="checkbox" id="matchFiltIssue" onchange="SettingsModule._filterMatchTable()">
+                오류(삭제된 제품) 항목만 보기
             </label>
-            <span style="font-size:0.75rem;color:var(--text-muted);">
-                ※ 수정 입력란에 직접 입력하거나 드롭다운으로 품명을 선택하세요
-            </span>
         </div>
-        <!-- 테이블 -->
-        <div style="max-height:58vh;overflow-y:auto;overflow-x:auto;
-                    border:1px solid var(--border-color);border-radius:6px;">
+        <!-- 사출자재 → 제품 연결 테이블 -->
+        <div style="max-height:48vh;overflow-y:auto;overflow-x:auto;
+                    border:1px solid var(--border-color);border-radius:6px;margin-bottom:14px;">
             <table style="width:100%;border-collapse:collapse;" id="mfgMatchTable">
                 <thead style="position:sticky;top:0;z-index:3;background:var(--bg-secondary);">
                     <tr>
-                        <th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-color);
-                                   font-size:0.72rem;white-space:nowrap;">차종</th>
-                        <th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-color);
-                                   font-size:0.72rem;white-space:nowrap;">사출품명</th>
-                        <th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-color);
-                                   font-size:0.72rem;white-space:nowrap;">컬러</th>
-                        <th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-color);
-                                   font-size:0.72rem;white-space:nowrap;min-width:100px;">현재 제작품목1</th>
-                        <th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-color);
-                                   font-size:0.72rem;white-space:nowrap;min-width:175px;">수정 제작품목1 ✏</th>
-                        <th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-color);
-                                   font-size:0.72rem;white-space:nowrap;min-width:100px;">현재 제작품목2</th>
-                        <th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-color);
-                                   font-size:0.72rem;white-space:nowrap;min-width:175px;">수정 제작품목2 ✏</th>
-                        <th style="padding:7px 8px;text-align:center;border-bottom:2px solid var(--border-color);
-                                   font-size:0.72rem;white-space:nowrap;">상태</th>
+                        <th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-color);font-size:0.72rem;white-space:nowrap;">차종</th>
+                        <th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-color);font-size:0.72rem;white-space:nowrap;">사출품명</th>
+                        <th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-color);font-size:0.72rem;white-space:nowrap;">컬러</th>
+                        <th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-color);font-size:0.72rem;white-space:nowrap;min-width:200px;">제작품목1 (연결 제품)</th>
+                        <th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-color);font-size:0.72rem;white-space:nowrap;min-width:200px;">제작품목2 (연결 제품)</th>
+                        <th style="padding:7px 8px;text-align:center;border-bottom:2px solid var(--border-color);font-size:0.72rem;white-space:nowrap;">상태</th>
                     </tr>
                 </thead>
-                <tbody id="mfgMatchBody">
-                    ${rows}
-                </tbody>
+                <tbody id="mfgMatchBody">${rows}</tbody>
             </table>
+        </div>
+        <!-- 역방향: 사출자재 미연결 제품 -->
+        <div style="border:1px solid var(--border-color);border-radius:6px;padding:10px 14px;">
+            <div style="font-size:0.8rem;font-weight:700;margin-bottom:8px;color:var(--text-secondary);">
+                사출자재 미연결 제품
+                <span style="font-weight:400;color:var(--text-muted);margin-left:6px;">${unlinkedProds.length}건</span>
+            </div>
+            ${unlinkedHtml}
         </div>`;
 
         UIUtils.showModal(
-            '사출자재 제작품목 ↔ 생산계획 품명 매칭 검토',
+            '사출자재 검증 — 제작품목 ↔ 제품 연결 상태',
             bodyHtml,
-            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-             <button class="btn btn-primary" onclick="SettingsModule.applyMfgMatching()">
-                 <span class="material-symbols-outlined" style="font-size:15px;vertical-align:-2px;">save</span>
-                 변경 항목 저장
-             </button>`,
+            `<button class="btn btn-primary" onclick="UIUtils.closeModal()">닫기</button>`,
             'xxl'
         );
-        // 모달 DOM 렌더 후 드래그 핸들 초기화
         setTimeout(_initModalResize, 0);
     }
 
@@ -6374,91 +6289,22 @@ const SettingsModule = (function() {
     }
 
     /** 입력값 변경 시 호출 — 사용자 수정 시 주황 음영으로 교체 */
-    function _onMatchInput(el) {
-        const val  = (el.value  || '').trim();
-        const orig = (el.dataset.original || '').trim();
-        const sugType = el.dataset.sugType || '';
-
-        if (val === orig) {
-            // 원래대로 돌아온 경우 → 제안 타입 기준 색상 복원
-            if (sugType === 'exact') {
-                el.style.background = 'rgba(52,211,153,0.13)';
-                el.style.boxShadow  = '';
-            } else if (sugType === 'suggested') {
-                el.style.background = 'rgba(251,191,36,0.22)';
-                el.style.boxShadow  = 'inset 3px 0 0 #f59e0b';
-            } else if (sugType === 'nomatch') {
-                el.style.background = 'rgba(239,68,68,0.12)';
-                el.style.boxShadow  = 'inset 3px 0 0 #ef4444';
-            } else {
-                el.style.background = '';
-                el.style.boxShadow  = '';
-            }
-        } else {
-            // 사용자가 값을 바꿈 → 주황 음영 (직접 수정)
-            el.style.background = 'rgba(234,88,12,0.15)';
-            el.style.boxShadow  = 'inset 3px 0 0 #ea580c';
-        }
-
-        // 행의 data-highlight 갱신 (필터 반영)
-        const row = el.closest('tr');
-        if (row) {
-            const anyChanged = Array.from(row.querySelectorAll('input[data-mat-id]'))
-                .some(inp => (inp.value||'').trim() !== (inp.dataset.original||'').trim()
-                          || (inp.dataset.sugType !== 'exact' && (inp.value||'').trim() !== ''));
-            row.dataset.highlight = anyChanged ? 'true' : 'false';
-        }
-    }
-
-    /** 차종 및 음영 필터 적용 */
+    /** 사출자재 검증 테이블 필터 */
     function _filterMatchTable() {
-        const carFilter = ((document.getElementById('matchFiltCar') || {}).value || '');
-        const diffOnly  = !!(document.getElementById('matchFiltDiff') || {}).checked;
+        const carFilter  = ((document.getElementById('matchFiltCar')  || {}).value || '');
+        const issueOnly  = !!(document.getElementById('matchFiltIssue') || {}).checked;
         const tbody = document.getElementById('mfgMatchBody');
         if (!tbody) return;
         tbody.querySelectorAll('tr[data-idx]').forEach(row => {
-            const matchCar  = !carFilter || row.dataset.car === carFilter;
-            const matchDiff = !diffOnly  || row.dataset.highlight === 'true';
-            row.style.display = (matchCar && matchDiff) ? '' : 'none';
+            const matchCar   = !carFilter || row.dataset.car   === carFilter;
+            const matchIssue = !issueOnly || row.dataset.issue === 'true';
+            row.style.display = (matchCar && matchIssue) ? '' : 'none';
         });
     }
 
-    /** 변경된 제작품목 일괄 저장 */
-    async function applyMfgMatching() {
-        const inputs = document.querySelectorAll('#mfgMatchBody input[data-mat-id]');
-        if (!inputs.length) return;
-
-        // 변경 항목 수집 — data-original과 다른 값만
-        const changes = {};  // matId → { field: newValue }
-        inputs.forEach(inp => {
-            const matId    = inp.dataset.matId;
-            const field    = inp.dataset.field;
-            const original = (inp.dataset.original || '').trim();
-            const newVal   = (inp.value || '').trim();
-            if (newVal !== original) {
-                if (!changes[matId]) changes[matId] = {};
-                changes[matId][field] = newVal;
-            }
-        });
-
-        const changeCount = Object.keys(changes).length;
-        if (changeCount === 0) {
-            UIUtils.toast('변경된 항목이 없습니다.', 'info');
-            return;
-        }
-
-        let savedCount = 0;
-        for (const [matId, delta] of Object.entries(changes)) {
-            const mat = Storage.getById(INJECT_MAT_STORE, matId);
-            if (!mat) continue;
-            await Storage.update(INJECT_MAT_STORE, matId, { ...mat, ...delta });
-            savedCount++;
-        }
-
-        UIUtils.closeModal();
-        UIUtils.toast(`${savedCount}건 사출자재 제작품목 업데이트 완료`, 'success');
-        renderTabContent();
-    }
+    // 구버전 호환용 빈 함수 (외부에서 호출될 수 있으므로 유지)
+    function _onMatchInput() {}
+    async function applyMfgMatching() {}
 
     // ── 품명 실시간 중복 체크 ───────────────────────────────────────────
     // idPrefix: 'addProd' | 'editProd'
