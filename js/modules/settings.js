@@ -2109,13 +2109,14 @@ const SettingsModule = (function() {
                 `<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-muted);">등록된 사출품이 없습니다.</td></tr>` :
                 items.map((m, i) => {
                     // rawMatId가 직접 지정된 경우 그것을 우선 표시; 없으면 usedFor 자동매칭
-                    let rawMatName, rawMatColor;
+                    let rawMatName, rawMatColor, matchedCount = 0;
                     if (m.rawMatId) {
                         const manualMat = rawMats.find(r => r.id === m.rawMatId);
                         rawMatName  = manualMat ? (manualMat.matName || '-') : (m.rawMatName || '-');
                         rawMatColor = manualMat ? (manualMat.color  || '-') : (m.rawMatColor || '-');
                     } else {
                         const matched = _findMatchedRawMats(m.injPartName, m.injColor);
+                        matchedCount = matched.length;
                         rawMatName  = matched.length > 0 ? matched.map(r => r.matName).filter(Boolean).join(', ') : (m.rawMatName || '-');
                         rawMatColor = matched.length > 0 ? matched.map(r => r.color).filter(Boolean).join(', ') : (m.rawMatColor || '-');
                     }
@@ -2130,7 +2131,7 @@ const SettingsModule = (function() {
                                             <td>${m.mfgProductName || '-'}</td>
                                             <td>${m.mfgProductName2 || '-'}</td>
                                             <td style="text-align:right;">${m.weight ? Number(m.weight).toLocaleString() + ' g' : '-'}</td>
-                                            <td>${rawMatName}${matched.length > 1 ? `<span style="font-size:0.72rem;color:var(--text-muted);margin-left:4px;">(${matched.length}건)</span>` : ''}</td>
+                                            <td>${rawMatName}${matchedCount > 1 ? `<span style="font-size:0.72rem;color:var(--text-muted);margin-left:4px;">(${matchedCount}건)</span>` : ''}</td>
                                             <td>${rawMatColor}</td>
                                             <td>
                                                 <button class="btn btn-sm btn-outline" onclick="SettingsModule.editInjectMat('${m.id}')">수정</button>
