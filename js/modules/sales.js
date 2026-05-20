@@ -764,14 +764,26 @@ var SalesDeliveryPlanModule = (function() {
 
     function _deliveryCars(customer = '') {
         const customerKey = _norm(customer);
+        const products = _products();
+        const linkedProductKeys = new Set();
         const planCars = (Storage.getAll(STORE) || [])
             .filter(r => !customerKey || _norm(_customerOf(r)) === customerKey)
-            .map(r => r.carModel);
+            .flatMap(r => {
+                const product = _findProduct(r);
+                if (product) linkedProductKeys.add(_productKey(product));
+                return [r.carModel, product?.carModel];
+            });
         const deliveryCars = (Storage.getAll(DB.STORES.SALES_DELIVERY) || [])
             .filter(r => !customerKey || _norm(_customerOf(r)) === customerKey)
-            .map(r => r.carModel);
+            .flatMap(r => {
+                const product = _findProduct(r);
+                if (product) linkedProductKeys.add(_productKey(product));
+                return [r.carModel, product?.carModel];
+            });
         // 납품처 미선택 시에만 제품 마스터 포함, 선택 시엔 실제 계획/납품 기록만 사용
-        const productCars = customerKey ? [] : _products().map(p => p.carModel);
+        const productCars = products
+            .filter(p => !customerKey || _norm(_customerOf(p)) === customerKey || linkedProductKeys.has(_productKey(p)))
+            .map(p => p.carModel);
         return [...productCars, ...planCars, ...deliveryCars];
     }
 
@@ -962,7 +974,10 @@ var SalesDeliveryPlanModule = (function() {
 
         let plans = Storage.getByDateRange(STORE, start, end);
         if (customer) plans = plans.filter(p => _norm(_customerOf(p)) === customer);
-        if (car) plans = plans.filter(p => _norm(p.carModel) === car);
+        if (car) plans = plans.filter(p => {
+            const product = _findProduct(p);
+            return _norm(p.carModel) === car || _norm(product?.carModel) === car;
+        });
         if (keyword) {
             plans = plans.filter(p =>
                 _norm(p.partName).includes(keyword) ||
