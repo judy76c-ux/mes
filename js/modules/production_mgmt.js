@@ -436,6 +436,7 @@ var ProdStandardsModule = (function() {
     let _cpSelectedFlow = [...CANONICAL_PROCESS_ORDER];
     let _cpUploadLine   = 'A라인'; // _cpSelectedFlow에서 파생 (하위호환용)
     let _curDocType  = DOC_CONTROL_PLAN;
+    let _stdView     = 'summary';
     let _stdEditContext = null;
     let _extraRows   = [];   // 추가 파라미터 행 [{ key, label, unit }]
     let _pendingDrawing = null; // 업로드 대기 중인 도면 { name, data(base64) }
@@ -479,7 +480,122 @@ var ProdStandardsModule = (function() {
         return String(s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '');
     }
 
+    function _countUnique(rows, keyFn) {
+        const set = new Set();
+        (rows || []).forEach(row => {
+            const key = keyFn(row);
+            if (key) set.add(key);
+        });
+        return set.size;
+    }
+
+    function _standardRecordCount(type) {
+        return (Storage.getAll(STORE) || [])
+            .filter(r => r._docKind === STANDARD_DOC_KIND && r.standardType === type && Array.isArray(r.rows))
+            .reduce((sum, r) => sum + Math.max(1, r.rows.length), 0);
+    }
+
+    function _renderStandardsSummary(container) {
+        const allStandards = Storage.getAll(STORE) || [];
+        const cpRows = allStandards.filter(r => r._docKind !== STANDARD_DOC_KIND);
+        const cpProductCount = _countUnique(cpRows, r => `${r.carModel || ''}||${r.partName || ''}`);
+        const workStandardCount = (Storage.getAll(DB.STORES.WORK_STANDARDS) || []).length;
+        const standardCards = Object.entries(STANDARD_DOC_TYPES).map(([key, cfg]) => ({
+            key,
+            label: cfg.label,
+            icon: cfg.icon,
+            count: _standardRecordCount(key),
+            desc: cfg.desc || '기준서 항목을 관리합니다.'
+        }));
+
+        const cardBase = `
+            border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);
+            padding:18px;box-shadow:var(--shadow-sm);display:flex;flex-direction:column;gap:12px;min-height:150px;
+        `;
+        const actionBtn = `
+            margin-top:auto;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+            padding:8px 12px;border-radius:8px;border:1px solid var(--accent-blue);
+            background:rgba(59,130,246,.08);color:var(--accent-blue);font-weight:700;font-size:.82rem;cursor:pointer;
+        `;
+
+        container.innerHTML = `
+            <div class="fade-in-up">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px;flex-wrap:wrap;">
+                    <div>
+                        <div style="font-size:1.35rem;font-weight:800;color:var(--text-primary);margin-bottom:6px;">제조 관리 표준</div>
+                        <div style="color:var(--text-muted);font-size:.92rem;">
+                            관리계획서, 작업표준서, 기준서 등록 현황을 한 화면에서 확인합니다.
+                        </div>
+                    </div>
+                    <button class="btn btn-secondary" onclick="ProdStandardsModule.openStationManager()"
+                        style="display:flex;align-items:center;gap:6px;">
+                        <span class="material-symbols-outlined" style="font-size:18px;">tune</span>
+                        세부공정 관리
+                    </button>
+                </div>
+
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-bottom:18px;">
+                    <div style="${cardBase}border-top:4px solid var(--accent-blue);">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <span class="material-symbols-outlined" style="font-size:26px;color:var(--accent-blue);">description</span>
+                            <div style="font-weight:800;">관리계획서</div>
+                        </div>
+                        <div style="font-size:2rem;font-weight:900;color:var(--text-primary);">${cpProductCount.toLocaleString()}</div>
+                        <div style="font-size:.82rem;color:var(--text-muted);">등록 품목 수 · 관리항목 ${cpRows.length.toLocaleString()}건</div>
+                        <button style="${actionBtn}" onclick="ProdStandardsModule.selectDocType('${DOC_CONTROL_PLAN}')">
+                            관리계획서 열기
+                        </button>
+                    </div>
+
+                    <div style="${cardBase}border-top:4px solid #7c3aed;">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <span class="material-symbols-outlined" style="font-size:26px;color:#7c3aed;">assignment</span>
+                            <div style="font-weight:800;">작업 표준서</div>
+                        </div>
+                        <div style="font-size:2rem;font-weight:900;color:var(--text-primary);">${workStandardCount.toLocaleString()}</div>
+                        <div style="font-size:.82rem;color:var(--text-muted);">공정별 작업 표준서 등록 수</div>
+                        <button style="${actionBtn}border-color:#7c3aed;color:#7c3aed;background:rgba(124,58,237,.08);" onclick="Router.navigate('work-standard')">
+                            작업 표준서 열기
+                        </button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3 style="display:flex;align-items:center;gap:8px;margin:0;">
+                            <span class="material-symbols-outlined">folder_managed</span>
+                            기준서 현황
+                        </h3>
+                    </div>
+                    <div class="card-body">
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;">
+                            ${standardCards.map(card => `
+                                <button onclick="ProdStandardsModule.selectDocType('${card.key}')"
+                                    style="text-align:left;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);padding:15px;cursor:pointer;">
+                                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
+                                        <span style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--text-primary);">
+                                            <span class="material-symbols-outlined" style="font-size:22px;color:var(--accent-blue);">${card.icon}</span>
+                                            ${card.label}
+                                        </span>
+                                        <span style="font-size:1.25rem;font-weight:900;color:var(--accent-blue);">${card.count.toLocaleString()}</span>
+                                    </div>
+                                    <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">${card.desc}</div>
+                                </button>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
     function render(container) {
+        _stdView = 'summary';
+        _renderStandardsSummary(container);
+    }
+
+    function _renderStandardsDetail(container) {
+        _stdView = 'detail';
         const { cars } = _productOptions();
         const carOpts = cars.map(c => `<option value="${c}" ${c === _curCarModel ? 'selected' : ''}>${c}</option>`).join('');
 
@@ -487,6 +603,11 @@ var ProdStandardsModule = (function() {
             <div class="fade-in-up">
                 <div class="page-header">
                     <div class="page-actions">
+                        <button class="btn btn-outline" onclick="ProdStandardsModule.render(document.getElementById('contentArea'))"
+                            style="display:flex; align-items:center; gap:5px; font-size:13px;">
+                            <span class="material-symbols-outlined" style="font-size:16px;">arrow_back</span>
+                            표준 메인
+                        </button>
                         <button class="btn btn-secondary" onclick="ProdStandardsModule.openStationManager()"
                             style="display:flex; align-items:center; gap:5px; font-size:13px;">
                             <span class="material-symbols-outlined" style="font-size:16px;">tune</span>
@@ -2006,7 +2127,7 @@ window.addEventListener('load', function() {
         _curDocType = STANDARD_DOC_TYPES[type] ? type : DOC_CONTROL_PLAN;
         _pendingDrawing = null;
         _extraRows = [];
-        render(document.getElementById('contentArea'));
+        _renderStandardsDetail(document.getElementById('contentArea'));
     }
 
     function _updateBadge() {
@@ -3840,7 +3961,7 @@ window.addEventListener('load', function() {
             }
         }
         UIUtils.toast('이력 및 관련 파라미터가 삭제되었습니다.', 'success');
-        render(document.getElementById('contentArea'));
+        _renderStandardsDetail(document.getElementById('contentArea'));
     }
 
     function _renderCpHistorySection() {
@@ -5136,7 +5257,7 @@ window.addEventListener('load', function() {
                     }
                 }
                 UIUtils.toast(`[${partName}] 파라미터 ${cnt}건 초기화 완료.`, 'success');
-                render(document.getElementById('contentArea'));
+                _renderStandardsDetail(document.getElementById('contentArea'));
             }
         );
     }
@@ -5709,7 +5830,7 @@ window.addEventListener('load', function() {
         _curPartName = partName;
         _pendingDrawing = null;
         _extraRows = [];
-        render(document.getElementById('contentArea'));
+        _renderStandardsDetail(document.getElementById('contentArea'));
     }
 
     return {

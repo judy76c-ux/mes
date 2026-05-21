@@ -231,18 +231,18 @@ var JigModule = (function () {
             const isNewCar = car !== prevCar;
             prevCar = car;
             const carCell = isNewCar
-                ? `<td style="${tdn}font-weight:700;color:var(--accent-blue);border-top:${isNewCar && sorted.indexOf(j) > 0 ? '2px solid var(--border-color)' : 'none'};">${_esc(car)}</td>`
-                : `<td style="${td}color:var(--text-muted);font-size:0.75rem;"></td>`;
+                ? `<td style="${tdn}text-align:center;font-weight:700;color:var(--accent-blue);border-top:${isNewCar && sorted.indexOf(j) > 0 ? '2px solid var(--border-color)' : 'none'};">${_esc(car)}</td>`
+                : `<td style="${td}text-align:center;color:var(--text-muted);font-size:0.75rem;"></td>`;
             return `
             <tr${isNewCar && sorted.indexOf(j) > 0 ? ' style="border-top:2px solid var(--border-color);"' : ''}>
                 ${carCell}
-                <td style="${td}font-weight:600;word-break:break-word;">
+                <td style="${td}text-align:center;font-weight:600;word-break:break-word;">
                     ${_esc(j.partName || '-')}
                     ${aliases.length ? `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">병합: ${aliases.map(_esc).join(', ')}</div>` : ''}
                 </td>
                 <td style="${tdn}text-align:center;"><span style="background:var(--accent-blue);color:#fff;padding:1px 6px;border-radius:4px;font-size:0.68rem;">${_esc(j.line || '-')}</span></td>
-                <td style="${tdn}text-align:right;">${j.maxCount ? _fmt(j.maxCount) : '-'}</td>
-                <td style="${tdn}text-align:right;color:var(--accent-blue);font-weight:700;">${_fmt(j.usedCount || 0)}</td>
+                <td style="${tdn}text-align:center;">${j.maxCount ? _fmt(j.maxCount) : '-'}</td>
+                <td style="${tdn}text-align:center;color:var(--accent-blue);font-weight:700;">${_fmt(j.usedCount || 0)}</td>
                 <td style="${td}">
                     <div style="display:flex;align-items:center;gap:6px;">
                         <div style="flex:1;background:var(--bg-secondary);border-radius:4px;height:7px;overflow:hidden;min-width:0;">
@@ -251,8 +251,8 @@ var JigModule = (function () {
                         <span style="font-size:0.75rem;font-weight:700;color:${barColor};flex-shrink:0;">${pct.toFixed(0)}%</span>
                     </div>
                 </td>
-                <td style="${tdn}color:var(--text-muted);">${j.lastResetDate || j.registDate || '-'}</td>
-                <td style="${tdn}"><span style="background:${status[1]};color:#fff;padding:1px 7px;border-radius:4px;font-size:0.68rem;">${status[0]}</span></td>
+                <td style="${tdn}text-align:center;color:var(--text-muted);">${j.lastResetDate || j.registDate || '-'}</td>
+                <td style="${tdn}text-align:center;"><span style="background:${status[1]};color:#fff;padding:1px 7px;border-radius:4px;font-size:0.68rem;">${status[0]}</span></td>
                 <td style="${td}text-align:center;">
                     <button class="btn btn-sm btn-outline" onclick="JigModule.openEditModal('${_js(j.id)}')" style="padding:2px 8px;font-size:0.78rem;">조회/입력</button>
                 </td>

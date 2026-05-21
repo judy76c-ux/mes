@@ -309,10 +309,19 @@ const SettingsModule = (function() {
         });
         const dupNames = Object.entries(nameSeen).filter(([, arr]) => arr.length > 1);
 
+        // [9] 사출자재 텍스트만 연결 (productIds 미등록)
+        //     mfgProductName/2 는 있지만 productIds 가 비어있는 자재 → ID 연결 권장
+        const textOnlyMats = injMats.filter(m => {
+            const n1 = (m.mfgProductName  || '').trim();
+            const n2 = (m.mfgProductName2 || '').trim();
+            return (n1 || n2) && !(m.productIds && m.productIds.length > 0);
+        });
+
         // ── 요약 집계 ──────────────────────────────────────────────────
         const errors   = missingBasic.length + orphanMfg.length;
         const warnings = noProcess.length + noInjMat.length + noMfgMap.length +
-                         noColorMats.length + orphanInv.length + dupNames.length;
+                         noColorMats.length + orphanInv.length + dupNames.length +
+                         textOnlyMats.length;
         const allOk    = errors === 0 && warnings === 0;
 
         const headerColor = allOk ? 'var(--accent-green)'
@@ -461,6 +470,21 @@ const SettingsModule = (function() {
             </div>`;
         };
 
+        const rowTextOnly = m =>
+            `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid var(--border-color);flex-wrap:wrap;">
+                <span style="flex:1;min-width:0;">
+                    <strong>${m.carModel||'-'}</strong> / ${m.injPartName||'-'}
+                    → 제작품목: <em>${m.mfgProductName||'-'}${m.mfgProductName2 ? ' / '+m.mfgProductName2 : ''}</em>
+                    <span style="color:#b45309;font-size:0.75rem;margin-left:4px;">텍스트만 연결 — 제품 ID 미등록</span>
+                </span>
+                <button onclick="SettingsModule.autoLinkProductIds('${m.id}', true)"
+                    style="padding:2px 8px;font-size:0.72rem;background:#6366f1;color:#fff;border:none;border-radius:4px;cursor:pointer;white-space:nowrap;">
+                    자동 ID 연결</button>
+                <button onclick="UIUtils.closeModal();SettingsModule.editInjectMat('${m.id}')"
+                    style="padding:2px 8px;font-size:0.72rem;background:var(--accent-blue);color:#fff;border:none;border-radius:4px;cursor:pointer;white-space:nowrap;">
+                    수정</button>
+            </div>`;
+
         return `
         <div class="card" style="margin-bottom:16px;border:1px solid ${headerBdr};background:${headerBg};">
             <div class="card-header" style="padding:10px 16px;cursor:pointer;user-select:none;border-bottom:1px solid ${headerBdr};"
@@ -483,6 +507,7 @@ const SettingsModule = (function() {
                 ${issueRow('warning', '공정 미설정 (공정1~4 모두 없음)',               noProcess,      rowNoProcess)}
                 ${issueRow('warning', '사출자재 미연결 (이 품명 참조 자재 없음)',       noInjMat,       rowNoInjMat)}
                 ${issueRow('warning', '사출자재 제작품목 미설정',                      noMfgMap,       rowNoMfgMap)}
+                ${issueRow('warning', '사출자재 텍스트 연결만 있음 (ID 미등록)',        textOnlyMats,   rowTextOnly)}
                 ${issueRow('warning', '사출자재 컬러 미설정 (동명 자재 여러 개)',        noColorMats,    rowNoColor)}
                 ${issueRow('warning', '사출창고 재고 — 자재마스터 불일치',              orphanInv,      rowOrphanInv)}
                 ${issueRow('warning', '동일 차종·품명 (컬러 다름, 품명 분리 검토)',     dupNames,       rowDupName)}
@@ -561,13 +586,19 @@ const SettingsModule = (function() {
                                 ${products.length === 0 ?
                 `<tr><td colspan="${colspan}" style="text-align:center;padding:40px;color:var(--text-muted);">등록된 제품이 없습니다.</td></tr>` :
                 products.map((p, i) => {
-                    // 사용 사출 자재 매칭: 제작품목1/2 ↔ 제품 품명 (trim 비교)
+                    // 사용 사출 자재 매칭: productIds(우선) 또는 mfgProductName 텍스트(fallback)
                     const pName  = (p.partName || '').trim();
                     const pColor = (p.color    || '').trim().toLowerCase();
-                    const usedMats = pName ? injMaterials.filter(m =>
-                        (m.mfgProductName  || '').trim() === pName ||
-                        (m.mfgProductName2 || '').trim() === pName
-                    ) : [];
+                    const usedMats = injMaterials.filter(m => {
+                        // ID 기반 연결 (productIds 설정된 경우 우선)
+                        if (m.productIds && m.productIds.length > 0)
+                            return m.productIds.includes(p.id);
+                        // 텍스트 기반 fallback (productIds 미설정 시)
+                        return pName && (
+                            (m.mfgProductName  || '').trim() === pName ||
+                            (m.mfgProductName2 || '').trim() === pName
+                        );
+                    });
 
                     // 컬러 일치 여부: 제품 컬러 ↔ 사출 자재 injColor (포함 비교)
                     const matBadges = usedMats.length > 0
@@ -664,10 +695,16 @@ const SettingsModule = (function() {
 
         // 수정 모드: 이 제품에 연결된 사출 자재 조회
         const linkedInjMats = isEdit
-            ? (Storage.getAll(INJECT_MAT_STORE) || []).filter(m =>
-                (m.productIds && m.productIds.includes(p.id)) ||
-                (!m.productIds && m.mfgProductName && p.partName &&
-                 m.mfgProductName.trim() === p.partName.trim() && m.carModel === p.carModel))
+            ? (Storage.getAll(INJECT_MAT_STORE) || []).filter(m => {
+                // ID 기반 연결 우선
+                if (m.productIds && m.productIds.length > 0)
+                    return m.productIds.includes(p.id);
+                // 텍스트 기반 fallback (carModel + partName 일치)
+                return p.partName && m.carModel === p.carModel && (
+                    (m.mfgProductName  || '').trim() === p.partName.trim() ||
+                    (m.mfgProductName2 || '').trim() === p.partName.trim()
+                );
+              })
             : [];
 
         // 도료 다중 선택 초기 렌더링
@@ -891,7 +928,14 @@ const SettingsModule = (function() {
                 ${linkedInjMats.length > 0 ? linkedInjMats.map((m, i) => `
                 <input type="hidden" id="${idPrefix}EditInjId_${i}" value="${m.id}">
                 <div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:8px;padding:12px;${i > 0 ? 'margin-top:8px;' : ''}">
-                    ${linkedInjMats.length > 1 ? `<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:8px;font-weight:600;">자재 ${i+1}</div>` : ''}
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                        <div style="font-size:0.75rem;color:var(--text-muted);font-weight:600;">${linkedInjMats.length > 1 ? `자재 ${i+1}` : '사출자재'}</div>
+                        <button type="button"
+                            onclick="SettingsModule._unlinkInjMat('${m.id}', '${p.id}')"
+                            style="display:flex;align-items:center;gap:3px;padding:3px 10px;border:1px solid var(--accent-red);border-radius:5px;background:transparent;color:var(--accent-red);cursor:pointer;font-size:0.75rem;">
+                            <span class="material-symbols-outlined" style="font-size:14px;">link_off</span> 연결 해제
+                        </button>
+                    </div>
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label">사출 부품명(금형명)</label>
@@ -2534,6 +2578,59 @@ const SettingsModule = (function() {
             UIUtils.toast('삭제되었습니다.', 'success');
             renderTabContent();
         });
+    }
+
+    /**
+     * 제품 편집 폼에서 "연결 해제" 버튼 클릭 시
+     * — 사출자재의 productIds에서 해당 제품 ID를 제거
+     * — 다른 연결 제품이 없는 경우 모달로 "연결만 해제 / 삭제" 선택
+     */
+    function _unlinkInjMat(matId, productId) {
+        const mat = Storage.getById(INJECT_MAT_STORE, matId);
+        if (!mat) { UIUtils.toast('사출자재를 찾을 수 없습니다.', 'error'); return; }
+
+        const remainIds = (mat.productIds || []).filter(id => id !== productId);
+        const matLabel  = mat.injPartName ? `"${mat.injPartName}"` : '이 사출자재';
+
+        if (remainIds.length === 0) {
+            // 다른 연결 제품 없음 → 연결 해제 or 삭제 선택
+            UIUtils.showModal(
+                '사출자재 연결 해제',
+                `<p style="margin:8px 0;font-size:0.9rem;">${matLabel}에서 이 제품 연결을 해제하면 연결된 제품이 없어집니다.</p>
+                 <p style="font-size:0.82rem;color:var(--text-muted);">어떻게 처리할까요?</p>`,
+                `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+                 <button class="btn btn-outline" style="border-color:var(--accent-orange);color:var(--accent-orange);"
+                     onclick="SettingsModule._doUnlink('${matId}','${productId}',false)">
+                     연결만 해제 (자재 유지)
+                 </button>
+                 <button class="btn btn-danger"
+                     onclick="SettingsModule._doUnlink('${matId}','${productId}',true)">
+                     연결 해제 + 자재 삭제
+                 </button>`
+            );
+        } else {
+            UIUtils.confirm(`${matLabel}에서 이 제품 연결을 해제하시겠습니까?`, async () => {
+                await Storage.update(INJECT_MAT_STORE, matId, { ...mat, productIds: remainIds });
+                UIUtils.toast('연결이 해제되었습니다.', 'success');
+                UIUtils.closeModal();
+                renderTabContent();
+            });
+        }
+    }
+
+    async function _doUnlink(matId, productId, deletemat) {
+        const mat = Storage.getById(INJECT_MAT_STORE, matId);
+        if (!mat) return;
+        if (deletemat) {
+            await Storage.remove(INJECT_MAT_STORE, matId);
+            UIUtils.toast('사출자재가 삭제되었습니다.', 'success');
+        } else {
+            const remainIds = (mat.productIds || []).filter(id => id !== productId);
+            await Storage.update(INJECT_MAT_STORE, matId, { ...mat, productIds: remainIds });
+            UIUtils.toast('연결이 해제되었습니다.', 'success');
+        }
+        UIUtils.closeModal();
+        renderTabContent();
     }
 
     // ---- 사출자재 CSV 다운로드 / 일괄 업로드 ----
@@ -6055,28 +6152,78 @@ const SettingsModule = (function() {
         const prodMap = {};
         products.forEach(p => { prodMap[p.id] = p; });
 
-        // 사출자재 productIds 에 포함된 제품 ID 전체 집합 (역방향 체크용)
+        // 사출자재 productIds에 포함된 제품 ID 집합 (역방향 체크용 — ID 연결만)
         const linkedProductIdSet = new Set();
         mats.forEach(m => (m.productIds || []).forEach(id => { if (id) linkedProductIdSet.add(id); }));
 
-        // ── 슬롯 상태 판별 ──────────────────────────────────────────
-        // 'linked'  : productId 있고 제품도 존재
-        // 'missing' : productId 있지만 제품 삭제됨
-        // 'empty'   : productId 미설정
-        function slotStatus(productId) {
-            if (!productId) return { type: 'empty', prod: null };
-            const prod = prodMap[productId] || null;
-            return prod ? { type: 'linked', prod } : { type: 'missing', prod: null };
+        // 텍스트 기반으로 연결된 제품 키 집합 (carModel||partName)
+        const textLinkedKeySet = new Set();
+        mats.forEach(m => {
+            if (m.productIds && m.productIds.length > 0) return; // ID 연결 있으면 스킵
+            const mc = m.carModel || '';
+            if (m.mfgProductName)  textLinkedKeySet.add(`${mc}||${m.mfgProductName.trim()}`);
+            if (m.mfgProductName2) textLinkedKeySet.add(`${mc}||${m.mfgProductName2.trim()}`);
+        });
+
+        // ── 슬롯 상태 판별 (ID 우선, 텍스트 fallback) ──────────────────
+        // 'linked'     : productId 있고 제품도 존재 (ID 연결)
+        // 'text'       : productId 없지만 텍스트 일치 제품 있음
+        // 'textOrphan' : 텍스트는 있지만 일치하는 제품 없음
+        // 'missing'    : productId 있지만 제품 삭제됨
+        // 'empty'      : productId·텍스트 모두 없음
+        function slotStatus(mat, slotIdx) {
+            const pid      = (mat.productIds || [])[slotIdx] || '';
+            const textName = slotIdx === 0
+                ? (mat.mfgProductName  || '').trim()
+                : (mat.mfgProductName2 || '').trim();
+
+            if (pid) {
+                const prod = prodMap[pid] || null;
+                return prod ? { type: 'linked', prod, textName }
+                            : { type: 'missing', prod: null, textName };
+            }
+            if (textName) {
+                const mc = (mat.carModel || '').trim();
+                const prod = products.find(p =>
+                    (p.partName || '').trim() === textName &&
+                    (!mc || p.carModel === mc)
+                ) || products.find(p => (p.partName || '').trim() === textName) || null;
+                return prod ? { type: 'text', prod, textName }
+                            : { type: 'textOrphan', prod: null, textName };
+            }
+            return { type: 'empty', prod: null, textName: '' };
         }
 
         function slotCell(st) {
             if (st.type === 'linked') {
-                const name = st.prod.partName || '-';
+                const name  = st.prod.partName || '-';
                 const color = st.prod.color ? ` / ${st.prod.color}` : '';
                 return `<td style="padding:5px 8px;font-size:0.78rem;
                                    background:rgba(52,211,153,0.1);border-left:3px solid #10b981;">
                     <span style="font-weight:600;">${name}${color}</span>
-                    <span style="display:block;font-size:0.7rem;color:var(--text-muted);">${st.prod.carModel||''}</span>
+                    <span style="display:block;font-size:0.7rem;color:var(--text-muted);">
+                        ${st.prod.carModel||''}
+                        <span style="background:#10b981;color:#fff;border-radius:3px;padding:0 4px;font-size:0.65rem;margin-left:3px;">ID</span>
+                    </span>
+                </td>`;
+            }
+            if (st.type === 'text') {
+                const name  = st.prod.partName || st.textName;
+                const color = st.prod.color ? ` / ${st.prod.color}` : '';
+                return `<td style="padding:5px 8px;font-size:0.78rem;
+                                   background:rgba(251,191,36,0.1);border-left:3px solid #f59e0b;">
+                    <span style="font-weight:600;color:#92400e;">${name}${color}</span>
+                    <span style="display:block;font-size:0.7rem;color:#b45309;">
+                        ${st.prod.carModel||''}
+                        <span style="background:#f59e0b;color:#fff;border-radius:3px;padding:0 4px;font-size:0.65rem;margin-left:3px;">텍스트</span>
+                    </span>
+                </td>`;
+            }
+            if (st.type === 'textOrphan') {
+                return `<td style="padding:5px 8px;font-size:0.78rem;
+                                   background:rgba(239,68,68,0.1);border-left:3px solid #ef4444;">
+                    <span style="color:#ef4444;font-weight:600;">${st.textName}</span>
+                    <span style="display:block;font-size:0.7rem;color:#ef4444;">제품마스터 없음</span>
                 </td>`;
             }
             if (st.type === 'missing') {
@@ -6090,46 +6237,56 @@ const SettingsModule = (function() {
         }
 
         function rowStatus(st1, st2) {
-            if (st1.type === 'missing' || st2.type === 'missing')
+            if (st1.type === 'missing'    || st2.type === 'missing' ||
+                st1.type === 'textOrphan' || st2.type === 'textOrphan')
                 return `<span style="color:#ef4444;font-size:0.75rem;font-weight:700;">✗ 오류</span>`;
-            if (st1.type === 'empty' && st2.type === 'empty')
-                return `<span style="color:#9ca3af;font-size:0.75rem;">— 미설정</span>`;
-            if (st1.type === 'empty' || st2.type === 'empty')
-                return `<span style="color:#10b981;font-size:0.75rem;font-weight:700;">✓ 연결됨</span>`;
-            return `<span style="color:#10b981;font-size:0.75rem;font-weight:700;">✓ 연결됨</span>`;
+            const hasId   = st1.type === 'linked' || st2.type === 'linked';
+            const hasText = st1.type === 'text'   || st2.type === 'text';
+            if (hasId)   return `<span style="color:#10b981;font-size:0.75rem;font-weight:700;">✓ ID 연결</span>`;
+            if (hasText) return `<span style="color:#f59e0b;font-size:0.75rem;font-weight:700;">⚠ 텍스트만</span>`;
+            return `<span style="color:#9ca3af;font-size:0.75rem;">— 미설정</span>`;
         }
 
         // 통계
-        let cntOk = 0, cntError = 0, cntEmpty = 0;
+        let cntOk = 0, cntText = 0, cntError = 0, cntEmpty = 0;
         const uniqueCars = [...new Set(mats.map(m => m.carModel).filter(Boolean))].sort();
 
         const rows = mats.map((m, idx) => {
-            const st1 = slotStatus((m.productIds || [])[0] || '');
-            const st2 = slotStatus((m.productIds || [])[1] || '');
-            const hasIssue = st1.type === 'missing' || st2.type === 'missing';
-            const hasLink  = st1.type === 'linked'  || st2.type === 'linked';
-            if (hasIssue) cntError++;
-            else if (hasLink) cntOk++;
-            else cntEmpty++;
+            const st1 = slotStatus(m, 0);
+            const st2 = slotStatus(m, 1);
+            const hasError = st1.type === 'missing'    || st2.type === 'missing' ||
+                             st1.type === 'textOrphan' || st2.type === 'textOrphan';
+            const hasId    = st1.type === 'linked' || st2.type === 'linked';
+            const hasText  = !hasError && !hasId && (st1.type === 'text' || st2.type === 'text');
+            if (hasError)      cntError++;
+            else if (hasId)    cntOk++;
+            else if (hasText)  cntText++;
+            else               cntEmpty++;
 
             return `<tr data-car="${(m.carModel||'').replace(/"/g,'&quot;')}"
                         data-idx="${idx}"
-                        data-issue="${hasIssue}"
+                        data-issue="${hasError}"
+                        data-textonly="${hasText}"
                         style="border-bottom:1px solid var(--border-color);">
-                <td style="padding:5px 8px;font-size:0.78rem;white-space:nowrap;">${m.carModel||'-'}</td>
+                <td style="padding:5px 6px;font-size:0.75rem;white-space:nowrap;width:72px;max-width:72px;overflow:hidden;text-overflow:ellipsis;">${m.carModel||'-'}</td>
                 <td style="padding:5px 8px;font-size:0.78rem;font-weight:600;white-space:nowrap;">${m.injPartName||'-'}</td>
-                <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);white-space:nowrap;">${m.injColor||'-'}</td>
+                <td style="padding:5px 6px;font-size:0.72rem;color:var(--text-muted);white-space:nowrap;width:56px;max-width:56px;overflow:hidden;text-overflow:ellipsis;">${m.injColor||'-'}</td>
                 ${slotCell(st1)}
                 ${slotCell(st2)}
                 <td style="padding:5px 8px;text-align:center;white-space:nowrap;">${rowStatus(st1,st2)}</td>
             </tr>`;
         }).join('');
 
-        // 역방향: 어떤 사출자재에도 연결되지 않은 제품
-        const unlinkedProds = products.filter(p => !linkedProductIdSet.has(p.id));
+        // 역방향: 사출자재에 연결되지 않은 제품 (ID·텍스트 모두 고려)
+        const unlinkedProds = products.filter(p => {
+            if (linkedProductIdSet.has(p.id)) return false;
+            const key1 = `${p.carModel||''}||${(p.partName||'').trim()}`;
+            const key2 = `||${(p.partName||'').trim()}`;
+            return !textLinkedKeySet.has(key1) && !textLinkedKeySet.has(key2);
+        });
         const unlinkedHtml = unlinkedProds.length === 0
             ? `<p style="color:#10b981;font-size:0.82rem;margin:0;">✓ 모든 제품이 사출자재에 연결되어 있습니다.</p>`
-            : `<div style="max-height:160px;overflow-y:auto;">
+            : `<div style="max-height:120px;overflow-y:auto;">
                 <table style="width:100%;border-collapse:collapse;font-size:0.78rem;">
                     <thead><tr style="background:var(--bg-secondary);">
                         <th style="padding:5px 8px;text-align:left;">차종</th>
@@ -6147,18 +6304,30 @@ const SettingsModule = (function() {
               </div>`;
 
         const bodyHtml = `
+        <!-- 범례 -->
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;font-size:0.75rem;">
+            <span style="background:rgba(52,211,153,0.15);border:1px solid #10b981;border-radius:4px;padding:2px 8px;color:#065f46;">
+                <strong>ID 연결</strong> — productIds로 직접 연결됨 (정상)</span>
+            <span style="background:rgba(251,191,36,0.15);border:1px solid #f59e0b;border-radius:4px;padding:2px 8px;color:#92400e;">
+                <strong>텍스트만</strong> — 이름 텍스트로만 연결, ID 미등록 (자동 연결 권장)</span>
+            <span style="background:rgba(239,68,68,0.15);border:1px solid #ef4444;border-radius:4px;padding:2px 8px;color:#991b1b;">
+                <strong>오류</strong> — 삭제된 제품 ID 또는 존재하지 않는 제품명</span>
+        </div>
         <!-- 통계 -->
         <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:8px 14px;
                     background:var(--bg-secondary);border-radius:6px;margin-bottom:10px;font-size:0.8rem;">
             <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;
                                background:#10b981;margin-right:4px;vertical-align:middle;"></span>
-                연결됨 <strong>${cntOk}</strong></span>
+                ID 연결 <strong>${cntOk}</strong></span>
+            <span style="color:#92400e;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;
+                               background:#f59e0b;margin-right:4px;vertical-align:middle;"></span>
+                텍스트만 <strong>${cntText}</strong></span>
             <span style="color:#9ca3af;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;
                                background:#d1d5db;margin-right:4px;vertical-align:middle;"></span>
                 미설정 <strong>${cntEmpty}</strong></span>
             <span style="color:#ef4444;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;
                                background:#ef4444;margin-right:4px;vertical-align:middle;"></span>
-                오류(삭제된 제품) <strong>${cntError}</strong></span>
+                오류 <strong>${cntError}</strong></span>
             <span style="margin-left:auto;color:var(--text-muted);">
                 사출자재 <strong>${mats.length}</strong>건 / 제품 <strong>${products.length}</strong>건
             </span>
@@ -6172,21 +6341,31 @@ const SettingsModule = (function() {
             </select>
             <label style="display:flex;align-items:center;gap:5px;font-size:0.82rem;cursor:pointer;user-select:none;">
                 <input type="checkbox" id="matchFiltIssue" onchange="SettingsModule._filterMatchTable()">
-                오류(삭제된 제품) 항목만 보기
+                오류 항목만 보기
             </label>
+            <label style="display:flex;align-items:center;gap:5px;font-size:0.82rem;cursor:pointer;user-select:none;">
+                <input type="checkbox" id="matchFiltText" onchange="SettingsModule._filterMatchTable()">
+                텍스트만 연결 보기
+            </label>
+            ${cntText > 0 ? `
+            <button onclick="SettingsModule.autoLinkAllProductIds()"
+                style="margin-left:auto;padding:5px 14px;font-size:0.8rem;background:#6366f1;color:#fff;
+                       border:none;border-radius:6px;cursor:pointer;font-weight:600;">
+                <span style="vertical-align:middle;">⚡</span> 텍스트→ID 일괄 자동 연결 (${cntText}건)
+            </button>` : ''}
         </div>
         <!-- 사출자재 → 제품 연결 테이블 -->
-        <div style="max-height:48vh;overflow-y:auto;overflow-x:auto;
+        <div style="max-height:36vh;overflow-y:auto;overflow-x:auto;
                     border:1px solid var(--border-color);border-radius:6px;margin-bottom:14px;">
             <table style="width:100%;border-collapse:collapse;" id="mfgMatchTable">
                 <thead style="position:sticky;top:0;z-index:3;background:var(--bg-secondary);">
                     <tr>
-                        <th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-color);font-size:0.72rem;white-space:nowrap;">차종</th>
+                        <th style="padding:7px 6px;text-align:left;border-bottom:2px solid var(--border-color);font-size:0.72rem;white-space:nowrap;width:72px;max-width:72px;">차종</th>
                         <th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-color);font-size:0.72rem;white-space:nowrap;">사출품명</th>
-                        <th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-color);font-size:0.72rem;white-space:nowrap;">컬러</th>
-                        <th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-color);font-size:0.72rem;white-space:nowrap;min-width:200px;">제작품목1 (연결 제품)</th>
-                        <th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-color);font-size:0.72rem;white-space:nowrap;min-width:200px;">제작품목2 (연결 제품)</th>
-                        <th style="padding:7px 8px;text-align:center;border-bottom:2px solid var(--border-color);font-size:0.72rem;white-space:nowrap;">상태</th>
+                        <th style="padding:7px 6px;text-align:left;border-bottom:2px solid var(--border-color);font-size:0.72rem;white-space:nowrap;width:56px;max-width:56px;">컬러</th>
+                        <th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-color);font-size:0.72rem;white-space:nowrap;min-width:200px;">제작품목1</th>
+                        <th style="padding:7px 8px;text-align:left;border-bottom:2px solid var(--border-color);font-size:0.72rem;white-space:nowrap;min-width:200px;">제작품목2</th>
+                        <th style="padding:7px 8px;text-align:center;border-bottom:2px solid var(--border-color);font-size:0.72rem;white-space:nowrap;">연결 상태</th>
                     </tr>
                 </thead>
                 <tbody id="mfgMatchBody">${rows}</tbody>
@@ -6195,7 +6374,7 @@ const SettingsModule = (function() {
         <!-- 역방향: 사출자재 미연결 제품 -->
         <div style="border:1px solid var(--border-color);border-radius:6px;padding:10px 14px;">
             <div style="font-size:0.8rem;font-weight:700;margin-bottom:8px;color:var(--text-secondary);">
-                사출자재 미연결 제품
+                사출자재 미연결 제품 (ID·텍스트 모두 없음)
                 <span style="font-weight:400;color:var(--text-muted);margin-left:6px;">${unlinkedProds.length}건</span>
             </div>
             ${unlinkedHtml}
@@ -6207,7 +6386,14 @@ const SettingsModule = (function() {
             `<button class="btn btn-primary" onclick="UIUtils.closeModal()">닫기</button>`,
             'xxl'
         );
-        setTimeout(_initModalResize, 0);
+        setTimeout(() => {
+            const c = document.querySelector('#modal .modal-container');
+            if (c) {
+                c.style.setProperty('width',      '78vw', 'important');
+                c.style.setProperty('max-height', '72vh', 'important');
+            }
+            _initModalResize();
+        }, 0);
     }
 
     /**
@@ -6291,20 +6477,118 @@ const SettingsModule = (function() {
     /** 입력값 변경 시 호출 — 사용자 수정 시 주황 음영으로 교체 */
     /** 사출자재 검증 테이블 필터 */
     function _filterMatchTable() {
-        const carFilter  = ((document.getElementById('matchFiltCar')  || {}).value || '');
+        const carFilter  = ((document.getElementById('matchFiltCar')   || {}).value || '');
         const issueOnly  = !!(document.getElementById('matchFiltIssue') || {}).checked;
+        const textOnly   = !!(document.getElementById('matchFiltText')  || {}).checked;
         const tbody = document.getElementById('mfgMatchBody');
         if (!tbody) return;
         tbody.querySelectorAll('tr[data-idx]').forEach(row => {
-            const matchCar   = !carFilter || row.dataset.car   === carFilter;
-            const matchIssue = !issueOnly || row.dataset.issue === 'true';
-            row.style.display = (matchCar && matchIssue) ? '' : 'none';
+            const matchCar   = !carFilter || row.dataset.car      === carFilter;
+            const matchIssue = !issueOnly || row.dataset.issue    === 'true';
+            const matchText  = !textOnly  || row.dataset.textonly === 'true';
+            row.style.display = (matchCar && matchIssue && matchText) ? '' : 'none';
         });
     }
 
     // 구버전 호환용 빈 함수 (외부에서 호출될 수 있으므로 유지)
     function _onMatchInput() {}
     async function applyMfgMatching() {}
+
+    /**
+     * 텍스트만 연결된 사출자재 1건에 대해 mfgProductName → productIds 자동 변환
+     * @param {string} matId  - 사출자재 ID
+     * @param {boolean} refresh - true 이면 완료 후 탭 재렌더링
+     */
+    async function autoLinkProductIds(matId, refresh) {
+        const m = Storage.getById(INJECT_MAT_STORE, matId);
+        if (!m) { UIUtils.toast('사출자재를 찾을 수 없습니다.', 'warning'); return; }
+
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        function findProd(name) {
+            if (!name) return null;
+            const nm = name.trim();
+            const mc = (m.carModel || '').trim();
+            return products.find(p =>
+                (p.partName || '').trim() === nm && (p.carModel === mc || !mc)
+            ) || products.find(p => (p.partName || '').trim() === nm) || null;
+        }
+
+        const n1 = (m.mfgProductName  || '').trim();
+        const n2 = (m.mfgProductName2 || '').trim();
+        const p1 = findProd(n1);
+        const p2 = findProd(n2);
+
+        if (!p1 && !p2) {
+            UIUtils.toast(`"${n1||n2}" — 일치하는 제품을 찾을 수 없습니다.`, 'warning');
+            return;
+        }
+
+        const newProductIds = [];
+        if (n1) newProductIds.push(p1 ? p1.id : ''); // 슬롯1: 못 찾으면 빈 문자열
+        if (n2) newProductIds.push(p2 ? p2.id : ''); // 슬롯2
+
+        await Storage.update(INJECT_MAT_STORE, matId, { ...m, productIds: newProductIds });
+        await Storage.refresh(INJECT_MAT_STORE);
+
+        const linked = [p1 && n1, p2 && n2].filter(Boolean).join(', ');
+        UIUtils.toast(`ID 연결 완료: ${linked}`, 'success');
+
+        if (refresh) renderTabContent();
+    }
+
+    /**
+     * 텍스트만 연결된 사출자재 전체를 productIds로 일괄 변환
+     */
+    async function autoLinkAllProductIds() {
+        const mats     = Storage.getAll(INJECT_MAT_STORE) || [];
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+
+        function findProd(name, carModel) {
+            if (!name) return null;
+            const nm = name.trim();
+            const mc = (carModel || '').trim();
+            return products.find(p =>
+                (p.partName || '').trim() === nm && (p.carModel === mc || !mc)
+            ) || products.find(p => (p.partName || '').trim() === nm) || null;
+        }
+
+        const targets = mats.filter(m => {
+            const n1 = (m.mfgProductName  || '').trim();
+            const n2 = (m.mfgProductName2 || '').trim();
+            return (n1 || n2) && !(m.productIds && m.productIds.length > 0);
+        });
+
+        if (targets.length === 0) {
+            UIUtils.toast('텍스트만 연결된 사출자재가 없습니다.', 'info');
+            return;
+        }
+
+        let updated = 0, skipped = 0;
+        for (const m of targets) {
+            const n1 = (m.mfgProductName  || '').trim();
+            const n2 = (m.mfgProductName2 || '').trim();
+            const p1 = findProd(n1, m.carModel);
+            const p2 = findProd(n2, m.carModel);
+
+            if (!p1 && !p2) { skipped++; continue; }
+
+            const newProductIds = [];
+            if (n1) newProductIds.push(p1 ? p1.id : '');
+            if (n2) newProductIds.push(p2 ? p2.id : '');
+
+            await Storage.update(INJECT_MAT_STORE, m.id, { ...m, productIds: newProductIds });
+            updated++;
+        }
+
+        await Storage.refresh(INJECT_MAT_STORE);
+
+        const msg = skipped > 0
+            ? `${updated}건 ID 연결 완료, ${skipped}건 매칭 실패 (제품마스터 확인 필요)`
+            : `${updated}건 사출자재 ID 연결 완료`;
+        UIUtils.toast(msg, updated > 0 ? 'success' : 'warning');
+        UIUtils.closeModal();
+        renderTabContent();
+    }
 
     // ── 품명 실시간 중복 체크 ───────────────────────────────────────────
     // idPrefix: 'addProd' | 'editProd'
@@ -7023,6 +7307,8 @@ const SettingsModule = (function() {
         repairInjLotNumbers,
         // 생산계획 매칭 검토
         openMfgMatchingReview,
+        autoLinkProductIds,
+        autoLinkAllProductIds,
         _onMatchInput,
         _filterMatchTable,
         applyMfgMatching,
