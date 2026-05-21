@@ -207,7 +207,8 @@ var InjectColorStdModule = (function () {
         const container = document.getElementById('icsWrap');
         if (!container || !data || !_editMode) return;
 
-        container.querySelectorAll('[contenteditable="true"]').forEach(el => {
+        // span.ics-ce 에만 data-field 등이 설정됨 (td 자체는 편집 불가)
+        container.querySelectorAll('.ics-ce[contenteditable="true"]').forEach(el => {
             const f   = el.dataset.field;
             const sid = el.dataset.sid;
             const gid = el.dataset.gid;
@@ -255,9 +256,14 @@ var InjectColorStdModule = (function () {
         return `<span class="ics-txt"${ea} ${attrs||''}>${_e(val)}</span>`;
     }
 
+    // 편집 span 공용 helper (헤더/목적/조치사항용)
+    function _CE(val, field) {
+        if (!_editMode) return _e(val);
+        return `<span class="ics-ce" contenteditable="true" data-field="${field}">${_e(val)}</span>`;
+    }
+
     // ── 문서 헤더 ──────────────────────────────────────────────────
     function _renderHeader(data) {
-        const ea = _editMode ? ' contenteditable="true"' : '';
         return `
         <table class="ics-tbl ics-tbl-hd">
           <tbody>
@@ -266,7 +272,7 @@ var InjectColorStdModule = (function () {
                 <div class="ics-logo">KC<br>PAINT</div>
               </td>
               <td class="ics-lbl-cell">제조라인</td>
-              <td class="ics-val-cell ics-line-val"${ea} data-field="line">${_e(data.line)}</td>
+              <td class="ics-val-cell ics-line-val">${_CE(data.line,'line')}</td>
               <td rowspan="2" class="ics-title-cell">사출품 COLOR 기준서</td>
               <td class="ics-sign-lbl">작성</td>
               <td class="ics-sign-lbl">검토</td>
@@ -274,14 +280,14 @@ var InjectColorStdModule = (function () {
             </tr>
             <tr>
               <td class="ics-lbl-cell">공&nbsp;&nbsp;정</td>
-              <td class="ics-val-cell"${ea} data-field="process">${_e(data.process)}</td>
+              <td class="ics-val-cell">${_CE(data.process,'process')}</td>
               <td class="ics-sign-box"></td>
               <td class="ics-sign-box"></td>
               <td class="ics-sign-box"></td>
             </tr>
             <tr>
               <td class="ics-lbl-cell" colspan="2" style="font-size:0.7rem;color:#6b7280;">문서번호</td>
-              <td${ea} data-field="revision" style="font-size:0.72rem;color:#6b7280;padding:3px 6px;">${_e(data.revision)}</td>
+              <td style="font-size:0.72rem;color:#6b7280;padding:3px 6px;">${_CE(data.revision,'revision')}</td>
               <td colspan="4"></td>
             </tr>
           </tbody>
@@ -290,17 +296,16 @@ var InjectColorStdModule = (function () {
 
     // ── 목적 ──────────────────────────────────────────────────────
     function _renderPurpose(data) {
-        const ea = _editMode ? ' contenteditable="true"' : '';
         const p = data.purpose || {};
         return `
         <table class="ics-tbl ics-tbl-purpose">
           <tbody>
             <tr>
               <td class="ics-lbl-cell" rowspan="3" style="width:70px;font-size:0.78rem;">목&nbsp;&nbsp;적<br><span style="font-size:0.65rem;font-weight:400;color:#9ca3af;">Цель<br>Purpose</span></td>
-              <td${ea} data-field="purpose.ko" class="ics-purpose-ko">${_e(p.ko||'')}</td>
+              <td class="ics-purpose-ko">${_CE(p.ko||'','purpose.ko')}</td>
             </tr>
-            <tr><td${ea} data-field="purpose.ru" class="ics-purpose-sub">${_e(p.ru||'')}</td></tr>
-            <tr><td${ea} data-field="purpose.en" class="ics-purpose-sub" style="color:#1d4ed8;">${_e(p.en||'')}</td></tr>
+            <tr><td class="ics-purpose-sub">${_CE(p.ru||'','purpose.ru')}</td></tr>
+            <tr><td class="ics-purpose-sub" style="color:#1d4ed8;">${_CE(p.en||'','purpose.en')}</td></tr>
           </tbody>
         </table>`;
     }
@@ -312,7 +317,14 @@ var InjectColorStdModule = (function () {
 
     function _renderSection(sec, si, data) {
         const groups = sec.groups || [];
-        const ea = _editMode ? ' contenteditable="true"' : '';
+        const totalCols = groups.reduce((s, g) => s + (g.colors||[]).length, 0);
+
+        // 편집 가능한 span 생성 (td 자체를 contenteditable 하지 않음 → 셀 크기 유지)
+        function CE(val, field, sid, gid, cid) {
+            if (!_editMode) return _e(val);
+            const a = `data-field="${field}" data-sid="${sid||''}" data-gid="${gid||''}" data-cid="${cid||''}"`;
+            return `<span class="ics-ce" contenteditable="true" ${a}>${_e(val)}</span>`;
+        }
 
         // 차종 merge: 연속된 동일 차종은 colspan 합산
         const carMerges = [];
@@ -323,117 +335,118 @@ var InjectColorStdModule = (function () {
             else carMerges.push({ car: g.car, span: cnt, gid: g.id, gids: [g.id] });
         });
 
-        // 행 생성 helper
-        const ROW_LABEL = (txt, rowspan) =>
-            `<td class="ics-rl" ${rowspan > 1 ? `rowspan="${rowspan}"` : ''}>${txt}</td>`;
+        const RL = txt => `<td class="ics-rl">${txt}</td>`;
 
-        // ── 차종 행
-        const carRow = `<tr class="ics-row-car">
-            ${ROW_LABEL('차종')}
-            ${carMerges.map(m =>
-                `<td colspan="${m.span}" class="ics-car"${ea} data-field="car" data-sid="${sec.id}" data-gid="${m.gid}">${_e(m.car)}</td>`
-            ).join('')}
-            ${_editMode ? `<td class="ics-edit-action-col" rowspan="5">
-                <button class="ics-btn-add-grp" onclick="InjectColorStdModule.addGroup('${sec.id}')">+ 그룹</button>
-            </td>` : ''}
+        // ── 섹션 레이블 (+ 그룹 추가 버튼은 여기에만)
+        const addGrpBtn = _editMode
+            ? `<button class="ics-btn-add-grp" onclick="InjectColorStdModule.addGroup('${sec.id}')">＋ 그룹 추가</button>`
+            : '';
+        const secLabelInner = _editMode
+            ? `<span class="ics-ce" contenteditable="true" data-field="secLabel" data-sid="${sec.id}">${_e(sec.label)}</span>${addGrpBtn}`
+            : _e(sec.label);
+        const secLabelRow = `<tr class="ics-sec-label">
+            <td colspan="${totalCols + 1}" style="position:relative;">${secLabelInner}</td>
         </tr>`;
 
-        // ── 품명 행
+        // ── 차종 행 (여분 컬럼 없음)
+        const carRow = `<tr class="ics-row-car">
+            ${RL('차종')}
+            ${carMerges.map(m =>
+                `<td colspan="${m.span}" class="ics-car">
+                    ${CE(m.car, 'car', sec.id, m.gid)}
+                </td>`
+            ).join('')}
+        </tr>`;
+
+        // ── 품명 행 (삭제 버튼은 absolute로 셀 크기에 영향 없음)
         const partRow = `<tr class="ics-row-part">
-            ${ROW_LABEL('품명')}
+            ${RL('품명')}
             ${groups.map(g => {
                 const cnt = (g.colors||[]).length;
                 const delBtn = _editMode
                     ? `<button class="ics-btn-del-grp" title="그룹 삭제"
-                         onclick="InjectColorStdModule.delGroup('${sec.id}','${g.id}')">✕</button>`
+                           onclick="InjectColorStdModule.delGroup('${sec.id}','${g.id}')">✕</button>`
                     : '';
-                return `<td colspan="${cnt}" class="ics-part" ${ea} data-field="part" data-sid="${sec.id}" data-gid="${g.id}">${_e(g.part)}${delBtn}</td>`;
+                return `<td colspan="${cnt}" class="ics-part" style="position:relative;">
+                    ${CE(g.part, 'part', sec.id, g.id)}${delBtn}
+                </td>`;
             }).join('')}
         </tr>`;
 
-        // ── 사진 행
+        // ── 사진 행 (업로드 버튼은 absolute)
         const photoRow = `<tr class="ics-row-photo">
-            ${ROW_LABEL('사진')}
+            ${RL('사진')}
             ${groups.flatMap(g =>
                 (g.colors||[]).map(c => {
                     const src = c.photo;
                     const imgHtml = src
-                        ? `<img src="${_e(src)}" class="ics-img"
-                               alt="${_e(c.paint)}"
+                        ? `<img src="${_e(src)}" class="ics-img" alt="${_e(c.paint)}"
                                onclick="InjectColorStdModule._zoomImg(this)"
                                onerror="this.parentNode.innerHTML='<div class=ics-no-img>이미지<br>없음</div>'">`
                         : `<div class="ics-no-img">사진<br>없음</div>`;
                     const upBtn = _editMode
                         ? `<button class="ics-btn-photo"
                                onclick="InjectColorStdModule.uploadPhoto('${sec.id}','${g.id}','${c.id}')">
-                               <span class="material-symbols-outlined" style="font-size:13px;">upload</span>
+                               <span class="material-symbols-outlined" style="font-size:12px;">upload</span>
                            </button>` : '';
-                    return `<td class="ics-photo-td">${imgHtml}${upBtn}</td>`;
+                    return `<td class="ics-photo-td" style="position:relative;">${imgHtml}${upBtn}</td>`;
                 })
             ).join('')}
         </tr>`;
 
-        // ── 도장COLOR 행
+        // ── 도장COLOR 행 (추가/삭제 버튼 absolute)
         const paintRow = `<tr class="ics-row-paint">
-            ${ROW_LABEL('도장<br>COLOR')}
+            ${RL('도장<br>COLOR')}
             ${groups.flatMap(g =>
                 (g.colors||[]).map((c, ci) => {
-                    const addBtn = _editMode && ci === (g.colors||[]).length - 1
-                        ? `<button class="ics-btn-add-clr"
-                               onclick="InjectColorStdModule.addColor('${sec.id}','${g.id}')">+</button>` : '';
-                    const delBtn = _editMode && (g.colors||[]).length > 1
-                        ? `<button class="ics-btn-del-clr"
+                    const isLast   = ci === (g.colors||[]).length - 1;
+                    const hasMulti = (g.colors||[]).length > 1;
+                    const addBtn = _editMode && isLast
+                        ? `<button class="ics-btn-add-clr" title="컬러 추가"
+                               onclick="InjectColorStdModule.addColor('${sec.id}','${g.id}')">＋</button>` : '';
+                    const delBtn = _editMode && hasMulti
+                        ? `<button class="ics-btn-del-clr" title="컬러 삭제"
                                onclick="InjectColorStdModule.delColor('${sec.id}','${g.id}','${c.id}')">✕</button>` : '';
-                    return `<td class="ics-paint" ${ea}
-                                data-field="paint" data-sid="${sec.id}" data-gid="${g.id}" data-cid="${c.id}"
-                            >${_e(c.paint)}${delBtn}${addBtn}</td>`;
+                    return `<td class="ics-paint" style="position:relative;">
+                        ${CE(c.paint, 'paint', sec.id, g.id, c.id)}${delBtn}${addBtn}
+                    </td>`;
                 })
             ).join('')}
         </tr>`;
 
         // ── 사출컬러 행
         const injectRow = `<tr class="ics-row-inject">
-            ${ROW_LABEL('사출<br>컬러')}
+            ${RL('사출<br>컬러')}
             ${groups.flatMap(g =>
                 (g.colors||[]).map(c =>
-                    `<td class="ics-inject" ${ea}
-                         data-field="inject" data-sid="${sec.id}" data-gid="${g.id}" data-cid="${c.id}"
-                     >${_e(c.inject)}</td>`
+                    `<td class="ics-inject">
+                        ${CE(c.inject, 'inject', sec.id, g.id, c.id)}
+                    </td>`
                 )
             ).join('')}
-        </tr>`;
-
-        // 섹션 레이블 행 (구분선)
-        const totalCols = groups.reduce((s, g) => s + (g.colors||[]).length, 0);
-        const labelEa = _editMode ? ` contenteditable="true"` : '';
-        const secLabel = `<tr class="ics-sec-label">
-            <td colspan="${totalCols + 1 + (_editMode ? 1 : 0)}"${labelEa}
-                data-field="secLabel" data-sid="${sec.id}">${_e(sec.label)}</td>
         </tr>`;
 
         return `<table class="ics-tbl ics-tbl-sec">
             <colgroup>
                 <col style="width:60px">
-                ${groups.flatMap(g => (g.colors||[]).map(() => '<col>')).join('')}
-                ${_editMode ? '<col style="width:60px">' : ''}
+                ${groups.flatMap(g => (g.colors||[]).map(() => '<col style="min-width:80px;">')).join('')}
             </colgroup>
-            <tbody>${secLabel}${carRow}${partRow}${photoRow}${paintRow}${injectRow}</tbody>
+            <tbody>${secLabelRow}${carRow}${partRow}${photoRow}${paintRow}${injectRow}</tbody>
         </table>`;
     }
 
     // ── 부적합시 조치사항 ──────────────────────────────────────────
     function _renderAction(data) {
-        const ea = _editMode ? ' contenteditable="true"' : '';
         const a = data.action || {};
         return `
         <table class="ics-tbl ics-tbl-action">
           <tbody>
             <tr>
               <td class="ics-rl ics-action-lbl" rowspan="3">부적합시<br>조치사항<br><span style="font-size:0.62rem;font-weight:400;color:#9ca3af;">Меры<br>Actions</span></td>
-              <td${ea} data-field="action.ko" class="ics-action-ko">${_e(a.ko||'')}</td>
+              <td class="ics-action-ko">${_CE(a.ko||'','action.ko')}</td>
             </tr>
-            <tr><td${ea} data-field="action.ru" class="ics-action-sub">${_e(a.ru||'')}</td></tr>
-            <tr><td${ea} data-field="action.en" class="ics-action-sub" style="color:#1d4ed8;">${_e(a.en||'')}</td></tr>
+            <tr><td class="ics-action-sub">${_CE(a.ru||'','action.ru')}</td></tr>
+            <tr><td class="ics-action-sub" style="color:#1d4ed8;">${_CE(a.en||'','action.en')}</td></tr>
           </tbody>
         </table>`;
     }
@@ -631,23 +644,37 @@ var InjectColorStdModule = (function () {
 .ics-action-ko{font-size:0.8rem;padding:5px 10px!important;}
 .ics-action-sub{font-size:0.73rem;color:#6b7280;padding:4px 10px!important;}
 
-/* ── 편집 모드 강조 ───────────────────── */
-.ics-edit-mode [contenteditable="true"]{
-    outline:none;min-width:20px;display:inline-block;
-    border-bottom:1.5px dashed #3b82f6;cursor:text;
-}
-.ics-edit-mode [contenteditable="true"]:empty::before{content:attr(data-placeholder,'입력');color:#d1d5db;font-style:italic;}
-.ics-edit-mode [contenteditable="true"]:focus{background:rgba(59,130,246,0.07);border-radius:2px;}
+/* ── 편집 span (.ics-ce) ──────────────── */
+.ics-ce{display:inline;outline:none;cursor:text;white-space:pre-wrap;word-break:break-word;}
+.ics-edit-mode .ics-ce{border-bottom:1.5px dashed rgba(59,130,246,0.7);}
+.ics-edit-mode .ics-ce:focus{background:rgba(59,130,246,0.08);border-radius:2px;outline:none;}
+.ics-edit-mode .ics-ce:empty::before{content:'입력';color:#d1d5db;font-style:italic;}
+
+/* 차종 셀 안 편집span은 전체폭 */
+.ics-car .ics-ce,.ics-part .ics-ce{display:block;width:100%;text-align:center;}
+
+/* 도장/사출 셀 안 편집span */
+.ics-paint .ics-ce,.ics-inject .ics-ce{display:block;width:100%;text-align:center;}
+
+/* 헤더·목적 편집span */
+.ics-val-cell .ics-ce,.ics-line-val .ics-ce{display:inline-block;min-width:60px;}
+.ics-purpose-ko .ics-ce,.ics-purpose-sub .ics-ce,.ics-action-ko .ics-ce,.ics-action-sub .ics-ce{display:block;width:100%;}
 
 /* ── 편집 버튼들 ──────────────────────── */
-.ics-btn-add-grp{display:block;width:100%;margin:2px 0;padding:3px 6px;font-size:0.7rem;background:#3b82f6;color:#fff;border:none;border-radius:4px;cursor:pointer;white-space:nowrap;}
-.ics-btn-add-grp:hover{background:#2563eb;}
-.ics-btn-del-grp{position:absolute;top:2px;right:2px;padding:1px 4px;font-size:0.65rem;line-height:1;background:#ef4444;color:#fff;border:none;border-radius:3px;cursor:pointer;z-index:5;}
-.ics-btn-add-clr{padding:1px 5px;font-size:0.68rem;background:#22c55e;color:#fff;border:none;border-radius:3px;cursor:pointer;margin-left:2px;vertical-align:middle;}
-.ics-btn-del-clr{position:absolute;top:1px;right:1px;padding:1px 4px;font-size:0.62rem;line-height:1;background:#ef4444;color:#fff;border:none;border-radius:3px;cursor:pointer;z-index:5;}
-.ics-btn-photo{position:absolute;bottom:3px;right:3px;padding:2px 5px;font-size:0.68rem;background:rgba(30,64,175,0.82);color:#fff;border:none;border-radius:4px;cursor:pointer;display:flex;align-items:center;gap:2px;z-index:5;}
+/* 섹션 레이블 안 그룹 추가 버튼 (우측 정렬) */
+.ics-btn-add-grp{float:right;padding:2px 8px;font-size:0.71rem;background:rgba(255,255,255,0.18);color:#fff;border:1px solid rgba(255,255,255,0.4);border-radius:4px;cursor:pointer;font-weight:600;vertical-align:middle;}
+.ics-btn-add-grp:hover{background:rgba(255,255,255,0.32);}
+
+/* 그룹 삭제 버튼 — 품명 셀 우상단 */
+.ics-btn-del-grp{position:absolute;top:2px;right:2px;width:16px;height:16px;padding:0;font-size:0.6rem;line-height:16px;text-align:center;background:#ef4444;color:#fff;border:none;border-radius:3px;cursor:pointer;z-index:5;}
+
+/* 컬러 추가/삭제 버튼 — 도장COLOR 셀 모서리 */
+.ics-btn-add-clr{position:absolute;bottom:2px;right:2px;width:16px;height:16px;padding:0;font-size:0.72rem;line-height:16px;text-align:center;background:#22c55e;color:#fff;border:none;border-radius:3px;cursor:pointer;z-index:5;}
+.ics-btn-del-clr{position:absolute;top:2px;right:2px;width:14px;height:14px;padding:0;font-size:0.58rem;line-height:14px;text-align:center;background:#ef4444;color:#fff;border:none;border-radius:3px;cursor:pointer;z-index:5;}
+
+/* 사진 업로드 버튼 — 사진 셀 우하단 */
+.ics-btn-photo{position:absolute;bottom:4px;right:4px;padding:3px 6px;font-size:0.65rem;background:rgba(30,64,175,0.8);color:#fff;border:none;border-radius:4px;cursor:pointer;display:flex;align-items:center;gap:2px;z-index:5;}
 .ics-btn-photo:hover{background:#1e3a8a;}
-.ics-edit-action-col{background:#f8fafc;border-left:1px dashed #3b82f6!important;padding:4px!important;vertical-align:top;}
 
 /* ── 이미지 확대 오버레이 ─────────────── */
 .ics-zoom-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.82);display:flex;align-items:center;justify-content:center;z-index:9999;cursor:zoom-out;}

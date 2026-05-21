@@ -9988,8 +9988,8 @@ var ProdQualityModule = (function() {
                 <table class="data-table" style="font-size:0.82rem;">
                     <thead>
                         <tr>
-                            <th style="width:54px;">사용</th><th>관리항목</th><th>기본 기준</th><th>측정방법</th>
-                            <th style="width:90px;">단위</th><th style="width:110px;">입력유형</th><th style="width:60px;">삭제</th>
+                            <th style="width:54px;">선택</th><th>관리항목</th><th>기본 기준</th><th>측정방법</th>
+                            <th style="width:90px;">단위</th><th style="width:110px;">입력유형</th>
                         </tr>
                     </thead>
                     <tbody id="pqMasterItemsBody">${items.map(item => _masterItemRowHtml(item)).join('')}</tbody>
@@ -10000,7 +10000,7 @@ var ProdQualityModule = (function() {
     function _masterItemRowHtml(item = {}) {
         return `
             <tr class="pq-master-item-row">
-                <td style="text-align:center;"><input type="checkbox" class="pq-master-selected" ${item.selected === false ? '' : 'checked'}></td>
+                <td style="text-align:center;"><input type="checkbox" class="pq-master-delete"></td>
                 <td>
                     <input type="hidden" class="pq-master-key" value="${_esc(item.key || Storage.generateId())}">
                     <input type="text" class="form-input pq-master-label" value="${_esc(item.label || '')}" placeholder="관리항목명">
@@ -10013,7 +10013,6 @@ var ProdQualityModule = (function() {
                         ${['number','text','select'].map(v => `<option value="${v}" ${(item.inputType || 'text') === v ? 'selected' : ''}>${v === 'number' ? '숫자' : v === 'select' ? '합/불' : '텍스트'}</option>`).join('')}
                     </select>
                 </td>
-                <td style="text-align:center;"><input type="checkbox" class="pq-master-delete"></td>
             </tr>`;
     }
 
@@ -10047,7 +10046,7 @@ var ProdQualityModule = (function() {
             method: row.querySelector('.pq-master-method')?.value.trim() || '',
             unit: row.querySelector('.pq-master-unit')?.value.trim() || '',
             inputType: row.querySelector('.pq-master-input-type')?.value || 'text',
-            selected: !!row.querySelector('.pq-master-selected')?.checked
+            selected: true
         })).filter(item => item.label);
         if (!items.length) {
             UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning');
