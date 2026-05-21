@@ -22,6 +22,7 @@ const Storage = (function() {
     STORES.WASH_CONSUMABLE_DATA,      // 세척 소모품 기준서 편집 데이터 (base64 사진 포함)
     STORES.AGIT_STD_DATA,             // 교반시간 기준서 편집 데이터 (base64 사진 포함)
     STORES.REMAIN_PAINT_DATA,         // 잔여도료 기준서 편집 데이터 (base64 사진 포함)
+    STORES.VISCOSITY_STD_DATA,        // 점도 측정 기준서 편집 데이터 (base64 사진 포함)
   ]);
 
   // 초기화: API 서버에서 모든 데이터 로드

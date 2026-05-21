@@ -1287,6 +1287,25 @@ var LaserInspectionModule = (function() {
         if (!workRef) setTimeout(() => onCarModelChange(d.partName), 50);
     }
 
+    function _validateFailQty(data) {
+        const inspQty = Number(data.inspQty) || 0;
+        const failQty = Number(data.failQty) || 0;
+        const defectTotal = Object.values(data.defectDetails || {})
+            .reduce((sum, value) => sum + (Number(value) || 0), 0);
+
+        if (failQty > inspQty) {
+            UIUtils.toast(`불량수는 검사수량보다 클 수 없습니다. 검사 ${UIUtils.formatNumber(inspQty)} EA / 불량 ${UIUtils.formatNumber(failQty)} EA`, 'warning');
+            const failEl = document.getElementById('liDefectQty');
+            if (failEl) failEl.focus();
+            return false;
+        }
+        if (defectTotal > inspQty) {
+            UIUtils.toast(`불량 유형 합계는 검사수량보다 클 수 없습니다. 검사 ${UIUtils.formatNumber(inspQty)} EA / 불량 유형 합계 ${UIUtils.formatNumber(defectTotal)} EA`, 'warning');
+            return false;
+        }
+        return true;
+    }
+
     // ─ 저장 ──────────────────────────────────────────────────────────
     async function _saveInspection(existingId) {
         const data = collectData();
@@ -1294,6 +1313,7 @@ var LaserInspectionModule = (function() {
             UIUtils.toast('필수 항목(품명, 검사수량)을 입력하세요.', 'warning');
             return;
         }
+        if (!_validateFailQty(data)) return;
         if (existingId) {
             await Storage.update(STORE, existingId, data);
             UIUtils.toast('수정되었습니다.', 'success');

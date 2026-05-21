@@ -631,6 +631,32 @@ var ProdStandardsModule = (function() {
                                 </div>
                                 <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">배합공정 교반시간 기준서 — 도료 종류별 교반 시간·RPM 기준 및 교반 순서·방법 관리</div>
                             </button>
+
+                            <!-- 잔여도료 작업기준서 카드 -->
+                            <button onclick="Router.navigate('remain-paint')"
+                                style="text-align:left;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);padding:15px;cursor:pointer;border-left:4px solid #7c3aed;">
+                                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
+                                    <span style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--text-primary);">
+                                        <span class="material-symbols-outlined" style="font-size:22px;color:#7c3aed;">format_color_fill</span>
+                                        잔여도료 작업기준서
+                                    </span>
+                                    <span style="font-size:0.68rem;background:#7c3aed;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;white-space:nowrap;">편집가능</span>
+                                </div>
+                                <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">잔여 도료 포장 방법 기준서 — 라벨 표기·사용기한 작성·포장 방법(랩핑/커버) 관리</div>
+                            </button>
+
+                            <!-- 점도 측정 작업기준서 카드 -->
+                            <button onclick="Router.navigate('viscosity-std')"
+                                style="text-align:left;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);padding:15px;cursor:pointer;border-left:4px solid #0891b2;">
+                                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
+                                    <span style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--text-primary);">
+                                        <span class="material-symbols-outlined" style="font-size:22px;color:#0891b2;">speed</span>
+                                        점도 측정 작업기준서
+                                    </span>
+                                    <span style="font-size:0.68rem;background:#0891b2;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;white-space:nowrap;">편집가능</span>
+                                </div>
+                                <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">배합공정 도료 점도 측정 기준서 — 점도계 사용법·측정 절차·조정 방법 관리</div>
+                            </button>
                         </div>
                     </div>
                 </div>

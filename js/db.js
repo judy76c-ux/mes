@@ -5,7 +5,7 @@
 
 const DB = (function() {
     const DB_NAME = 'ProductionMES_DB';
-    const DB_VERSION = 41;
+    const DB_VERSION = 42;
     let db = null;
 
     // 스토어 이름 - 전체 공정에 대응
@@ -130,6 +130,9 @@ const DB = (function() {
 
         // 잔여도료 포장방법 작업기준서 데이터 (v41)
         REMAIN_PAINT_DATA: 'remain_paint_data',
+
+        // 점도 측정 작업기준서 데이터 (v42)
+        VISCOSITY_STD_DATA: 'viscosity_std_data',
 
         // 설정
         CONFIG: 'config'
@@ -1247,6 +1250,11 @@ const DB = (function() {
                 // ── 잔여도료 포장방법 작업기준서 (v41) ──────────────────
                 if (!database.objectStoreNames.contains(STORES.REMAIN_PAINT_DATA)) {
                     database.createObjectStore(STORES.REMAIN_PAINT_DATA, { keyPath: 'id' });
+                }
+
+                // ── 점도 측정 작업기준서 (v42) ───────────────────────────
+                if (!database.objectStoreNames.contains(STORES.VISCOSITY_STD_DATA)) {
+                    database.createObjectStore(STORES.VISCOSITY_STD_DATA, { keyPath: 'id' });
                 }
             };
         });

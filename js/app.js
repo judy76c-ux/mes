@@ -168,6 +168,8 @@ const App = (function() {
         Router.registerModule('paji-std', PajiStdModule);
         Router.registerModule('wash-consumable', WashConsumableModule);
         Router.registerModule('agit-std', AgitStdModule);
+        Router.registerModule('remain-paint', RemainPaintModule);
+        Router.registerModule('viscosity-std', ViscosityStdModule);
         Router.registerModule('paint-mix', PaintMixModule);
         Router.registerModule('prod-sub-materials', ProdSubMaterialsModule);
         Router.registerModule('prod-quality', ProdQualityModule);
