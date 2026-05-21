@@ -5,7 +5,7 @@
 
 const DB = (function() {
     const DB_NAME = 'ProductionMES_DB';
-    const DB_VERSION = 37;
+    const DB_VERSION = 39;
     let db = null;
 
     // 스토어 이름 - 전체 공정에 대응
@@ -118,6 +118,12 @@ const DB = (function() {
 
         // 사출컬러 기준서 편집 데이터 (v37)
         INJECT_COLOR_STD_DATA: 'inject_color_std_data', // 기준서 편집 내용
+
+        // 파지 기준서 편집 데이터 (v38)
+        PAJI_STD_DATA: 'paji_std_data', // 제품 파지 기준서 편집 내용
+
+        // 세척 소모품 교체관리 기준서 데이터 (v39)
+        WASH_CONSUMABLE_DATA: 'wash_consumable_data',
 
         // 설정
         CONFIG: 'config'
@@ -1215,6 +1221,16 @@ const DB = (function() {
                 // ── 사출컬러 기준서 편집 데이터 (v37) ─────────────────
                 if (!database.objectStoreNames.contains(STORES.INJECT_COLOR_STD_DATA)) {
                     database.createObjectStore(STORES.INJECT_COLOR_STD_DATA, { keyPath: 'id' });
+                }
+
+                // ── 파지 기준서 편집 데이터 (v38) ──────────────────────
+                if (!database.objectStoreNames.contains(STORES.PAJI_STD_DATA)) {
+                    database.createObjectStore(STORES.PAJI_STD_DATA, { keyPath: 'id' });
+                }
+
+                // ── 세척 소모품 교체관리 기준서 (v39) ──────────────────
+                if (!database.objectStoreNames.contains(STORES.WASH_CONSUMABLE_DATA)) {
+                    database.createObjectStore(STORES.WASH_CONSUMABLE_DATA, { keyPath: 'id' });
                 }
             };
         });

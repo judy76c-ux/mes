@@ -437,6 +437,7 @@ var ProdStandardsModule = (function() {
     let _cpUploadLine   = 'A라인'; // _cpSelectedFlow에서 파생 (하위호환용)
     let _curDocType  = DOC_CONTROL_PLAN;
     let _stdView     = 'summary';
+    let _standardMergeView = true;
     let _stdEditContext = null;
     let _extraRows   = [];   // 추가 파라미터 행 [{ key, label, unit }]
     let _pendingDrawing = null; // 업로드 대기 중인 도면 { name, data(base64) }
@@ -564,7 +565,7 @@ var ProdStandardsModule = (function() {
                         </h3>
                     </div>
                     <div class="card-body">
-                        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;">
+                        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
                             ${standardCards.map(card => `
                                 <button onclick="ProdStandardsModule.selectDocType('${card.key}')"
                                     style="text-align:left;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);padding:15px;cursor:pointer;">
@@ -590,6 +591,19 @@ var ProdStandardsModule = (function() {
                                     <span style="font-size:0.68rem;background:#0ea5e9;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;white-space:nowrap;">편집가능</span>
                                 </div>
                                 <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">사출품 COLOR 기준서 — A/B라인별 도장컬러·사출컬러 기준 및 실사 사진 관리</div>
+                            </button>
+
+                            <!-- 제품 파지 기준서 카드 -->
+                            <button onclick="Router.navigate('paji-std')"
+                                style="text-align:left;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);padding:15px;cursor:pointer;border-left:4px solid #16a34a;">
+                                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
+                                    <span style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--text-primary);">
+                                        <span class="material-symbols-outlined" style="font-size:22px;color:#16a34a;">back_hand</span>
+                                        제품 파지 기준서
+                                    </span>
+                                    <span style="font-size:0.68rem;background:#16a34a;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;white-space:nowrap;">편집가능</span>
+                                </div>
+                                <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">로딩 공정 파지 위치 기준서 — A/B라인별 제품 파지 구역 기준 및 실사 사진 관리</div>
                             </button>
                         </div>
                     </div>
@@ -1213,6 +1227,7 @@ var ProdStandardsModule = (function() {
 
         const cfg = STANDARD_DOC_TYPES[_curDocType];
         if (!cfg) return;
+        const mergeable = _isMergeableStandard(_curDocType);
         const products = _allProductRows();
         const allRows = [];
         products.forEach(p => {
@@ -1225,6 +1240,8 @@ var ProdStandardsModule = (function() {
                 allRows.push({ product:p, row:null, idx:-1, cpCount:cpOptions.length });
             }
         });
+        const mergedRows = mergeable ? _mergeStandardRows(allRows, cfg) : [];
+        const registeredCount = allRows.filter(entry => entry.row).length;
 
         el.innerHTML = `
             <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
@@ -1238,6 +1255,12 @@ var ProdStandardsModule = (function() {
                     </div>
                 </div>
                 <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                    ${mergeable ? `
+                        <button class="btn btn-outline btn-sm" onclick="ProdStandardsModule.toggleStandardMergeView()">
+                            <span class="material-symbols-outlined" style="font-size:15px;">${_standardMergeView ? 'view_list' : 'compress'}</span>
+                            ${_standardMergeView ? '개별 보기' : '병합 보기'}
+                        </button>
+                    ` : ''}
                     <button class="btn btn-primary btn-sm" onclick="ProdStandardsModule.openStandardPrintPage()">
                         <span class="material-symbols-outlined" style="font-size:15px;">print</span> 인쇄
                     </button>
@@ -1249,40 +1272,26 @@ var ProdStandardsModule = (function() {
             <div style="margin-bottom:14px; padding:12px 14px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-secondary); color:var(--text-muted); font-size:13px;">
                 ${cfg.desc}
             </div>
+            ${mergeable && _standardMergeView ? `
+                <div style="margin-bottom:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; font-size:12px; color:var(--text-muted);">
+                    <span style="display:inline-flex;align-items:center;gap:5px;padding:5px 9px;border:1px solid var(--border-color);border-radius:999px;background:#fff;">
+                        <span class="material-symbols-outlined" style="font-size:15px;color:var(--accent-blue);">compress</span>
+                        동일 기준 병합 표시
+                    </span>
+                    <span>등록 기준 ${registeredCount}건 → 병합 ${mergedRows.length}건</span>
+                    <span>수정/삭제는 개별 보기에서 진행합니다.</span>
+                </div>
+            ` : ''}
             ${products.length ? `
                 <div class="data-table-wrapper" style="overflow-x:auto;">
                     <table class="data-table" style="width:100%; font-size:12px; min-width:1180px;">
                         <thead>
-                            <tr>
-                                <th style="width:44px; text-align:center;">No</th>
-                                <th style="min-width:100px;">차종</th>
-                                <th style="min-width:130px;">품명</th>
-                                <th style="width:90px; text-align:center;">CP 항목</th>
-                                ${cfg.columns.map(c => `<th>${c.label}</th>`).join('')}
-                                <th style="width:100px; text-align:center;">작업</th>
-                            </tr>
+                            ${mergeable && _standardMergeView ? _mergedStandardHeaderHtml(cfg) : _standardHeaderHtml(cfg)}
                         </thead>
                         <tbody>
-                            ${allRows.map((entry, rowNo) => `
-                                <tr>
-                                    <td style="text-align:center; font-weight:700;">${rowNo + 1}</td>
-                                    <td style="font-weight:700;">${_esc(entry.product.carModel)}</td>
-                                    <td>${_esc(entry.product.partName)}</td>
-                                    <td style="text-align:center;">
-                                        <span style="font-weight:700; color:${entry.cpCount ? 'var(--accent-green)' : 'var(--text-muted)'};">${entry.cpCount}</span>
-                                    </td>
-                                    ${entry.row
-                                        ? cfg.columns.map(c => `<td>${_esc(entry.row[c.key] || '')}</td>`).join('')
-                                        : `<td colspan="${cfg.columns.length}" style="color:var(--text-muted); text-align:center;">아직 등록된 기준이 없습니다.</td>`}
-                                    <td style="text-align:center; white-space:nowrap;">
-                                        <button class="btn btn-sm ${entry.row ? 'btn-outline' : 'btn-primary'}"
-                                            onclick="ProdStandardsModule.openStandardRowModal('${_jsArg(entry.product.carModel)}','${_jsArg(entry.product.partName)}',${entry.idx})">
-                                            ${entry.row ? '수정' : '입력'}
-                                        </button>
-                                        ${entry.row ? `<button class="btn btn-sm" style="border:1px solid var(--accent-red); color:var(--accent-red); background:transparent;" onclick="ProdStandardsModule.deleteStandardRow('${_jsArg(entry.product.carModel)}','${_jsArg(entry.product.partName)}',${entry.idx})">삭제</button>` : ''}
-                                    </td>
-                                </tr>
-                            `).join('')}
+                            ${mergeable && _standardMergeView
+                                ? _mergedStandardRowsHtml(mergedRows, cfg)
+                                : _standardRowsHtml(allRows, cfg)}
                         </tbody>
                     </table>
                 </div>
@@ -1294,6 +1303,123 @@ var ProdStandardsModule = (function() {
                 </div>
             `}
         `;
+    }
+
+    function _isMergeableStandard(type = _curDocType) {
+        return type === 'film-thickness' || type === 'color-gloss';
+    }
+
+    function _standardHeaderHtml(cfg) {
+        return `
+            <tr>
+                <th style="width:44px; text-align:center;">No</th>
+                <th style="min-width:100px;">차종</th>
+                <th style="min-width:130px;">품명</th>
+                <th style="width:90px; text-align:center;">CP 항목</th>
+                ${cfg.columns.map(c => `<th>${c.label}</th>`).join('')}
+                <th style="width:100px; text-align:center;">작업</th>
+            </tr>`;
+    }
+
+    function _standardRowsHtml(allRows, cfg) {
+        return allRows.map((entry, rowNo) => `
+            <tr>
+                <td style="text-align:center; font-weight:700;">${rowNo + 1}</td>
+                <td style="font-weight:700;">${_esc(entry.product.carModel)}</td>
+                <td>${_esc(entry.product.partName)}</td>
+                <td style="text-align:center;">
+                    <span style="font-weight:700; color:${entry.cpCount ? 'var(--accent-green)' : 'var(--text-muted)'};">${entry.cpCount}</span>
+                </td>
+                ${entry.row
+                    ? cfg.columns.map(c => `<td>${_esc(entry.row[c.key] || '')}</td>`).join('')
+                    : `<td colspan="${cfg.columns.length}" style="color:var(--text-muted); text-align:center;">아직 등록된 기준이 없습니다.</td>`}
+                <td style="text-align:center; white-space:nowrap;">
+                    <button class="btn btn-sm ${entry.row ? 'btn-outline' : 'btn-primary'}"
+                        onclick="ProdStandardsModule.openStandardRowModal('${_jsArg(entry.product.carModel)}','${_jsArg(entry.product.partName)}',${entry.idx})">
+                        ${entry.row ? '수정' : '입력'}
+                    </button>
+                    ${entry.row ? `<button class="btn btn-sm" style="border:1px solid var(--accent-red); color:var(--accent-red); background:transparent;" onclick="ProdStandardsModule.deleteStandardRow('${_jsArg(entry.product.carModel)}','${_jsArg(entry.product.partName)}',${entry.idx})">삭제</button>` : ''}
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    function _standardMergeKey(entry, cfg) {
+        if (!entry.row) return '';
+        return cfg.columns.map(c => String(entry.row[c.key] || '').trim()).join('||');
+    }
+
+    function _mergeStandardRows(allRows, cfg) {
+        const map = new Map();
+        allRows.filter(entry => entry.row).forEach(entry => {
+            const key = _standardMergeKey(entry, cfg);
+            const cur = map.get(key) || {
+                key,
+                row: entry.row,
+                cpCount: 0,
+                entries: [],
+                products: new Map()
+            };
+            cur.cpCount += Number(entry.cpCount) || 0;
+            cur.entries.push(entry);
+            const productKey = `${entry.product.carModel}||${entry.product.partName}`;
+            cur.products.set(productKey, entry.product);
+            map.set(key, cur);
+        });
+        return [...map.values()].sort((a, b) =>
+            String(a.row.process || '').localeCompare(String(b.row.process || ''), 'ko') ||
+            String(a.row.layer || a.row.standardColor || '').localeCompare(String(b.row.layer || b.row.standardColor || ''), 'ko') ||
+            b.entries.length - a.entries.length
+        );
+    }
+
+    function _mergedStandardHeaderHtml(cfg) {
+        return `
+            <tr>
+                <th style="width:44px; text-align:center;">No</th>
+                <th style="min-width:260px;">적용 차종/품명</th>
+                <th style="width:76px; text-align:center;">적용수</th>
+                ${cfg.columns.map(c => `<th>${c.label}</th>`).join('')}
+                <th style="width:90px; text-align:center;">작업</th>
+            </tr>`;
+    }
+
+    function _mergedProductListHtml(group) {
+        const products = [...group.products.values()];
+        const visible = products.slice(0, 8);
+        const hidden = Math.max(0, products.length - visible.length);
+        return `
+            <div style="display:flex;flex-wrap:wrap;gap:4px;">
+                ${visible.map(p => `
+                    <span title="${_esc(p.carModel)} / ${_esc(p.partName)}"
+                        style="display:inline-flex;max-width:190px;padding:3px 7px;border-radius:999px;background:#eef4ff;color:#2563eb;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                        ${_esc(p.carModel)} / ${_esc(p.partName)}
+                    </span>
+                `).join('')}
+                ${hidden ? `<span style="padding:3px 7px;border-radius:999px;background:var(--bg-secondary);color:var(--text-muted);font-weight:700;">외 ${hidden}건</span>` : ''}
+            </div>`;
+    }
+
+    function _mergedStandardRowsHtml(mergedRows, cfg) {
+        if (!mergedRows.length) {
+            return `<tr><td colspan="${cfg.columns.length + 4}" style="text-align:center;color:var(--text-muted);padding:30px;">등록된 기준이 없습니다. 개별 보기에서 기준을 먼저 입력하세요.</td></tr>`;
+        }
+        return mergedRows.map((group, idx) => `
+            <tr>
+                <td style="text-align:center;font-weight:800;">${idx + 1}</td>
+                <td>${_mergedProductListHtml(group)}</td>
+                <td style="text-align:center;font-weight:800;color:var(--accent-blue);">${group.entries.length}</td>
+                ${cfg.columns.map(c => `<td>${_esc(group.row[c.key] || '')}</td>`).join('')}
+                <td style="text-align:center;">
+                    <button class="btn btn-sm btn-outline" onclick="ProdStandardsModule.toggleStandardMergeView()">개별 수정</button>
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    function toggleStandardMergeView() {
+        _standardMergeView = !_standardMergeView;
+        _renderLinkedStandardTable();
     }
 
     function _standardInputHtml(col, value, carModel = _curCarModel, partName = _curPartName) {
@@ -5911,6 +6037,7 @@ window.addEventListener('load', function() {
         deleteStandardRow,
         exportStandardDoc,
         openStandardPrintPage,
+        toggleStandardMergeView,
     };
 })();
 
