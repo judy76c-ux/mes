@@ -15,8 +15,9 @@ const Storage = (function() {
   // ── 로컬 전용 스토어 (NAS API 연동 제외, IndexedDB에만 저장) ──────────
   // base64 이미지 등 대용량 데이터는 NAS MariaDB 대신 IndexedDB에 직접 저장
   const LOCAL_ONLY_STORES = new Set([
-    STORES.INJ_INSP_STANDARDS,   // 수입검사 기준 사진 (base64 이미지)
-    STORES.INJECT_COLOR_STD,     // 사출컬러 기준서 파일 (Blob — NAS 전송 불가)
+    STORES.INJ_INSP_STANDARDS,        // 수입검사 기준 사진 (base64 이미지)
+    STORES.INJECT_COLOR_STD,          // 사출컬러 기준서 파일 (Blob — NAS 전송 불가)
+    STORES.INJECT_COLOR_STD_DATA,     // 사출컬러 기준서 편집 데이터 (base64 사진 포함)
   ]);
 
   // 초기화: API 서버에서 모든 데이터 로드

@@ -578,6 +578,19 @@ var ProdStandardsModule = (function() {
                                     <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">${card.desc}</div>
                                 </button>
                             `).join('')}
+
+                            <!-- 사출컬러 기준서 카드 -->
+                            <button onclick="Router.navigate('inject-color-std')"
+                                style="text-align:left;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);padding:15px;cursor:pointer;border-left:4px solid #0ea5e9;">
+                                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
+                                    <span style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--text-primary);">
+                                        <span class="material-symbols-outlined" style="font-size:22px;color:#0ea5e9;">palette</span>
+                                        사출컬러 기준서
+                                    </span>
+                                    <span style="font-size:0.68rem;background:#0ea5e9;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;white-space:nowrap;">편집가능</span>
+                                </div>
+                                <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">사출품 COLOR 기준서 — A/B라인별 도장컬러·사출컬러 기준 및 실사 사진 관리</div>
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -6218,7 +6231,12 @@ var ProdConditionsModule = (function() {
                     <span style="font-weight:700;font-size:0.95rem;">사출컬러 기준서</span>
                     <span style="font-size:0.75rem;color:var(--text-muted);">사출품 COLOR 기준서 파일 이력 관리</span>
                 </div>
-                <div>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <button class="btn btn-success"
+                            onclick="ProdConditionsModule.openColorStdViewer()"
+                            style="display:flex;align-items:center;gap:5px;">
+                        <span class="material-symbols-outlined" style="font-size:16px;">visibility</span> 기준서 보기
+                    </button>
                     <input type="file" id="colorStdFileInput"
                            accept=".xlsx,.xls"
                            style="display:none"
@@ -6297,6 +6315,359 @@ var ProdConditionsModule = (function() {
         });
     }
 
+    // ──────────────────────────────────────────────────────────────────────
+    // 사출컬러 기준서 뷰어
+    // ──────────────────────────────────────────────────────────────────────
+    const _IMG = p => `assets/inject-color-std/${p}`;
+
+    // 이미지-제품 매핑 (Excel xl/media/ → 제품 그룹)
+    // A라인 섹션1: 차종별 사출품 COLOR 기준
+    const _A1 = [
+        {
+            car:'GOLF7', part:'KNOB류',
+            colors:[
+                { paint:'WHI',      inject:'DYS QAW', img:_IMG('image4.png') },
+                { paint:'WHITE',    inject:'GRAY',    img:_IMG('image6.png') }
+            ]
+        },
+        {
+            car:'XFD', part:'1,3 SPOT',
+            colors:[
+                { paint:'BLACK',    inject:'GRAY',    img:_IMG('image7.png') },
+                { paint:'WHITE',    inject:'GRAY',    img:_IMG('image8.png') }
+            ]
+        },
+        {
+            car:'A3 / A3 PA', part:'Knob류',
+            colors:[
+                { paint:'6PS',      inject:'AZ3',     img:_IMG('image3.png') },
+                { paint:'WHITE',    inject:'WHITE',   img:null }
+            ]
+        },
+        {
+            car:'Q2', part:'KNOB류',
+            colors:[
+                { paint:'BC5',      inject:'ET1',     img:_IMG('image5.png') },
+                { paint:'S/M GRAY', inject:'S/M GRAY',img:null }
+            ]
+        },
+        {
+            car:'A3 / A3 PA', part:'PAO COVER',
+            colors:[
+                { paint:'6PS',      inject:'AZ3',     img:_IMG('image10.png') },
+                { paint:'WHITE',    inject:'WHITE',   img:null }
+            ]
+        },
+        {
+            car:'Q2', part:'PAO COVER',
+            colors:[
+                { paint:'BC5',      inject:'ET1',     img:_IMG('image11.png') },
+                { paint:'S/M GRAY', inject:'S/M GRAY',img:null }
+            ]
+        }
+    ];
+
+    // A라인 섹션2
+    const _A2 = [
+        {
+            car:'T1XX', part:'Lens',
+            colors:[
+                { paint:'BLACK',    inject:'-', img:_IMG('image13.png') },
+                { paint:'CLEAR/BK', inject:'-', img:null }
+            ]
+        },
+        {
+            car:'T1XX', part:'P-BUTTON',
+            colors:[
+                { paint:'BLACK',    inject:'-', img:_IMG('image12.png') },
+                { paint:'WHITE',    inject:'-', img:null }
+            ]
+        },
+        {
+            car:'P702', part:'M-BUTTON',
+            colors:[
+                { paint:'BLACK',    inject:'-', img:_IMG('image15.png') },
+                { paint:'white',    inject:'-', img:null }
+            ]
+        },
+        {
+            car:'P702', part:'LENS',
+            colors:[
+                { paint:'BLACK',    inject:'-', img:_IMG('image14.png') },
+                { paint:'WHITE',    inject:'-', img:null }
+            ]
+        },
+        {
+            car:'J34A', part:'LH, RH',
+            colors:[
+                { paint:'02 WHITE', inject:'-', img:_IMG('image18.png') },
+                { paint:'750 GRAY', inject:'-', img:_IMG('image9.png')  },
+                { paint:'WHITE',    inject:'-', img:null },
+                { paint:'S/M GRAY', inject:'-', img:null }
+            ]
+        }
+    ];
+
+    // B라인 섹션1: A8 / A3 / Q2
+    const _B1 = [
+        {
+            car:'A8', part:'HOUSING',
+            colors:[
+                { paint:'1PH', inject:'GRAY',  img:_IMG('image24.png') },
+                { paint:'6PS', inject:'BLACK', img:_IMG('image25.png') },
+                { paint:'1KF', inject:'BEIGE', img:_IMG('image28.png') }
+            ]
+        },
+        {
+            car:'A8', part:'UPPER CASE',
+            colors:[
+                { paint:'1PH', inject:'GRAY',  img:_IMG('image22.png') },
+                { paint:'6PS', inject:'BLACK', img:_IMG('image27.png') },
+                { paint:'1KF', inject:'BEIGE', img:_IMG('image29.png') }
+            ]
+        },
+        {
+            car:'A8', part:'LOWER CASE',
+            colors:[
+                { paint:'1PH', inject:'GRAY',  img:_IMG('image23.png') },
+                { paint:'6PS', inject:'BLACK', img:_IMG('image26.png') },
+                { paint:'1KF', inject:'BEIGE', img:_IMG('image30.png') }
+            ]
+        },
+        {
+            car:'A3', part:'E-CALL COVER',
+            colors:[
+                { paint:'6PS',  inject:'RED', img:_IMG('image32.png') },
+                { paint:'AZ3',  inject:'RED', img:null },
+                { paint:'BC5',  inject:'RED', img:null },
+                { paint:'ET1',  inject:'RED', img:null }
+            ]
+        },
+        {
+            car:'A3', part:'PA E-CALL COVER',
+            colors:[
+                { paint:'BC5',  inject:'RED', img:_IMG('image21.png') },
+                { paint:'ET1',  inject:'RED', img:null }
+            ]
+        },
+        {
+            car:'Q2', part:'E-CALL COVER',
+            colors:[
+                { paint:'BC5',  inject:'RED', img:null },
+                { paint:'ET1',  inject:'RED', img:null }
+            ]
+        }
+    ];
+
+    // B라인 섹션2
+    const _B2 = [
+        {
+            car:'A3, Q2', part:'LENS',
+            colors:[{ paint:'투명(CLEAR)', inject:'-', img:_IMG('image20.png') }]
+        },
+        {
+            car:'T1XX', part:'IL-BUTTON',
+            colors:[{ paint:'BLACK', inject:'-', img:_IMG('image19.png') }]
+        },
+        {
+            car:'CHEVY / GMC', part:'EMBLEM',
+            colors:[{ paint:'BLACK', inject:'-', img:_IMG('image31.png') }]
+        }
+    ];
+
+    const _ACTION = {
+        ko: '계획과 상이한 사출 컬러시 라인 정지 후 관리자 통보 후 조치 기준에 맞는 컬러로 사출물을 투입한다.',
+        ru: 'При несоответствии цвета литья плану линия останавливается, уведомляется руководитель, затем вводится материал нужного цвета.',
+        en: 'If the injection color differs from the plan, the line stops, the manager is notified, and the correct color is used.'
+    };
+
+    function _colorTag(paint, inject) {
+        const pStyle = 'display:inline-block;padding:2px 8px;border-radius:3px;font-size:0.75rem;font-weight:600;margin:2px;';
+        const pColor = _paintTagColor(paint);
+        const iColor = _injectTagColor(inject);
+        let html = `<span style="${pStyle}background:${pColor.bg};color:${pColor.fg};">도장 ${paint}</span>`;
+        if (inject && inject !== '-') {
+            html += `<br><span style="${pStyle}background:${iColor.bg};color:${iColor.fg};margin-top:3px;">사출 ${inject}</span>`;
+        }
+        return html;
+    }
+
+    function _paintTagColor(c) {
+        const s = (c || '').toUpperCase();
+        if (s.includes('WHITE') || s.includes('WHI') || s.includes('02 WHITE'))
+            return { bg:'#e8f0fe', fg:'#1a56db' };
+        if (s.includes('BLACK') || s.includes('BK') || s.includes('CLEAR/BK'))
+            return { bg:'#1f2937', fg:'#f9fafb' };
+        if (s.includes('GRAY') || s.includes('GREY') || s.includes('S/M'))
+            return { bg:'#e5e7eb', fg:'#374151' };
+        if (s.includes('RED'))  return { bg:'#fee2e2', fg:'#dc2626' };
+        if (s.includes('6PS') || s.includes('BC5') || s.includes('1PH') || s.includes('1KF'))
+            return { bg:'#dbeafe', fg:'#1e40af' };
+        if (s.includes('투명') || s.includes('CLEAR'))
+            return { bg:'#f0fdf4', fg:'#166534' };
+        return { bg:'#f3f4f6', fg:'#374151' };
+    }
+
+    function _injectTagColor(c) {
+        const s = (c || '').toUpperCase();
+        if (s.includes('GRAY') || s.includes('DYS') || s.includes('AZ3'))
+            return { bg:'#f3f4f6', fg:'#6b7280' };
+        if (s.includes('BLACK') || s.includes('ET1'))
+            return { bg:'#111827', fg:'#e5e7eb' };
+        if (s.includes('WHITE'))    return { bg:'#eff6ff', fg:'#2563eb' };
+        if (s.includes('BEIGE'))    return { bg:'#fef3c7', fg:'#92400e' };
+        if (s.includes('RED'))      return { bg:'#fee2e2', fg:'#dc2626' };
+        return { bg:'#f9fafb', fg:'#374151' };
+    }
+
+    function _productCard(group) {
+        const colors = group.colors;
+        const colsHtml = colors.map(c => {
+            const imgHtml = c.img
+                ? `<div style="text-align:center;margin-bottom:8px;">
+                     <img src="${c.img}" alt="${c.paint}"
+                          style="max-width:100%;max-height:130px;object-fit:contain;border-radius:6px;border:1px solid #e5e7eb;background:#fff;cursor:pointer;"
+                          onclick="this.requestFullscreen&&this.requestFullscreen()"
+                          onerror="this.style.display='none';this.nextSibling.style.display='block'">
+                     <div style="display:none;height:80px;line-height:80px;background:#f9fafb;border-radius:6px;border:1px dashed #d1d5db;color:#9ca3af;font-size:0.75rem;">이미지 없음</div>
+                   </div>`
+                : `<div style="height:80px;line-height:80px;text-align:center;background:#f9fafb;border-radius:6px;border:1px dashed #d1d5db;color:#9ca3af;font-size:0.75rem;margin-bottom:8px;">사진</div>`;
+            return `<div style="flex:1;min-width:90px;text-align:center;">
+                ${imgHtml}
+                <div style="margin-top:4px;">${_colorTag(c.paint, c.inject)}</div>
+            </div>`;
+        }).join('');
+
+        return `
+        <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;margin-bottom:10px;">
+            <div style="background:linear-gradient(135deg,#1e40af,#2563eb);color:#fff;padding:8px 12px;display:flex;align-items:center;gap:8px;">
+                <span class="material-symbols-outlined" style="font-size:15px;">directions_car</span>
+                <strong style="font-size:0.85rem;">${group.car}</strong>
+                <span style="opacity:0.7;font-size:0.75rem;">│</span>
+                <span style="font-size:0.8rem;opacity:0.9;">${group.part}</span>
+            </div>
+            <div style="padding:10px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;">
+                ${colsHtml}
+            </div>
+        </div>`;
+    }
+
+    function _actionSection() {
+        return `
+        <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:14px 16px;margin-top:4px;">
+            <div style="font-weight:700;color:#92400e;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                <span class="material-symbols-outlined" style="font-size:18px;">warning</span>
+                부적합시 조치사항
+            </div>
+            <div style="display:grid;gap:6px;">
+                <div style="display:flex;gap:8px;align-items:baseline;">
+                    <span style="font-size:0.68rem;background:#92400e;color:#fff;border-radius:3px;padding:1px 5px;white-space:nowrap;flex-shrink:0;">KOR</span>
+                    <span style="font-size:0.82rem;color:#78350f;">${_ACTION.ko}</span>
+                </div>
+                <div style="display:flex;gap:8px;align-items:baseline;">
+                    <span style="font-size:0.68rem;background:#6b7280;color:#fff;border-radius:3px;padding:1px 5px;white-space:nowrap;flex-shrink:0;">RUS</span>
+                    <span style="font-size:0.82rem;color:#4b5563;">${_ACTION.ru}</span>
+                </div>
+                <div style="display:flex;gap:8px;align-items:baseline;">
+                    <span style="font-size:0.68rem;background:#1e40af;color:#fff;border-radius:3px;padding:1px 5px;white-space:nowrap;flex-shrink:0;">ENG</span>
+                    <span style="font-size:0.82rem;color:#1e3a8a;">${_ACTION.en}</span>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    function openColorStdViewer() {
+        const aLineHtml = `
+            <div>
+                <div style="font-size:0.7rem;color:#6b7280;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e5e7eb;">
+                    📌 섹션 1 — GOLF7 / XFD / A3 PA / Q2 계열
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;">
+                    ${_A1.map(_productCard).join('')}
+                </div>
+                <div style="font-size:0.7rem;color:#6b7280;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;margin:14px 0 10px;padding-bottom:6px;border-bottom:1px solid #e5e7eb;">
+                    📌 섹션 2 — T1XX / P702 / J34A 계열
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;">
+                    ${_A2.map(_productCard).join('')}
+                </div>
+                ${_actionSection()}
+            </div>`;
+
+        const bLineHtml = `
+            <div>
+                <div style="font-size:0.7rem;color:#6b7280;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e5e7eb;">
+                    📌 섹션 1 — A8 / A3 / Q2 계열
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;">
+                    ${_B1.map(_productCard).join('')}
+                </div>
+                <div style="font-size:0.7rem;color:#6b7280;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;margin:14px 0 10px;padding-bottom:6px;border-bottom:1px solid #e5e7eb;">
+                    📌 섹션 2 — A3,Q2 / T1XX / CHEVY,GMC 계열
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;">
+                    ${_B2.map(_productCard).join('')}
+                </div>
+                ${_actionSection()}
+            </div>`;
+
+        const bodyHtml = `
+        <style>
+            #csViewer { font-family:'Inter',sans-serif; }
+            #csViewer .cs-tab-btn { cursor:pointer;padding:7px 18px;border:none;border-radius:20px;font-size:0.82rem;font-weight:600;transition:all 0.2s; }
+            #csViewer .cs-tab-btn.active { background:var(--accent-blue,#2563eb);color:#fff; }
+            #csViewer .cs-tab-btn:not(.active) { background:#f3f4f6;color:#374151; }
+        </style>
+        <div id="csViewer">
+            <div style="background:linear-gradient(135deg,#1e3a8a,#2563eb);padding:16px 20px;border-radius:8px;margin-bottom:14px;color:#fff;">
+                <div style="font-size:0.7rem;opacity:0.7;margin-bottom:4px;">공정 : 로딩 | 제조라인 선택</div>
+                <div style="font-size:1.1rem;font-weight:700;margin-bottom:2px;">사출품 COLOR 기준서</div>
+                <div style="font-size:0.75rem;opacity:0.8;">도장 컬러별 도장 적합성인 은폐력 및 색차 기준을 맞추기 위함</div>
+            </div>
+            <div style="display:flex;gap:8px;margin-bottom:14px;">
+                <button class="cs-tab-btn active" id="csTabA" onclick="ProdConditionsModule._csSwitch('A')">🅰 A라인</button>
+                <button class="cs-tab-btn" id="csTabB" onclick="ProdConditionsModule._csSwitch('B')">🅱 B라인</button>
+            </div>
+            <div id="csContentA">${aLineHtml}</div>
+            <div id="csContentB" style="display:none;">${bLineHtml}</div>
+        </div>`;
+
+        UIUtils.openModal({
+            title: '<span class="material-symbols-outlined" style="vertical-align:middle;margin-right:6px;color:#2563eb;">palette</span>사출컬러 기준서',
+            body: bodyHtml,
+            size: 'xxl',
+            footer: `<button class="btn btn-outline" onclick="UIUtils.closeModal()">닫기</button>`
+        });
+
+        setTimeout(() => {
+            const c = document.querySelector('#modal .modal-container');
+            if (c) {
+                c.style.setProperty('width',      '90vw', 'important');
+                c.style.setProperty('max-height', '88vh', 'important');
+            }
+            const body = document.querySelector('#modal .modal-body');
+            if (body) {
+                body.style.setProperty('overflow-y', 'auto', 'important');
+                body.style.setProperty('max-height', '76vh', 'important');
+            }
+        }, 0);
+    }
+
+    function _csSwitch(line) {
+        const a = document.getElementById('csContentA');
+        const b = document.getElementById('csContentB');
+        const tabA = document.getElementById('csTabA');
+        const tabB = document.getElementById('csTabB');
+        if (!a || !b) return;
+        if (line === 'A') {
+            a.style.display = ''; b.style.display = 'none';
+            tabA.classList.add('active'); tabB.classList.remove('active');
+        } else {
+            b.style.display = ''; a.style.display = 'none';
+            tabB.classList.add('active'); tabA.classList.remove('active');
+        }
+    }
+
     return {
         render(container) {
             const filterHTML = `
@@ -6337,7 +6708,9 @@ var ProdConditionsModule = (function() {
         toggleLine,
         uploadColorStd,
         downloadColorStd,
-        removeColorStd
+        removeColorStd,
+        openColorStdViewer,
+        _csSwitch
     };
 })();
 
@@ -8915,6 +9288,7 @@ var ProdQualityModule = (function() {
     const PAINT_WORK_STORE = DB.STORES.PAINTING_WORK;
     const TEMPLATE_KIND = 'quality_template';
     const ISSUE_KIND = 'quality_issue';
+    const ITEM_MASTER_KIND = 'quality_item_master';
     const DEFAULT_ITEMS = [
         { key: 'film_under', label: '도막두께(하도)', unit: 'μm', spec: '', method: '도막 두께계', inputType: 'number' },
         { key: 'film_top', label: '도막두께(상도)', unit: 'μm', spec: '', method: '도막 두께계', inputType: 'number' },
@@ -8942,7 +9316,10 @@ var ProdQualityModule = (function() {
                             <span class="material-symbols-outlined">list_alt</span> 관리항목
                         </button>
                         <button class="btn btn-secondary" onclick="ProdQualityModule.openTemplateModal()">
-                            <span class="material-symbols-outlined">tune</span> 차종별 기준설정
+                            <span class="material-symbols-outlined">tune</span> 차종/컬러 기준설정
+                        </button>
+                        <button class="btn btn-secondary" onclick="ProdQualityModule.openBulkTemplateModal()">
+                            <span class="material-symbols-outlined">library_add</span> 차종/컬러 일괄등록
                         </button>
                         <button class="btn btn-primary" onclick="ProdQualityModule.openAddModal()">
                             <span class="material-symbols-outlined">edit_document</span> 수기 작성
@@ -9049,14 +9426,14 @@ var ProdQualityModule = (function() {
 
     function renderStats(works, issues) {
         const issuedWorkIds = new Set(issues.map(i => i.workId).filter(Boolean));
-        const configuredCars = new Set(_templates().map(t => t.carModel));
+        const configuredCars = new Set(_templates().map(t => `${t.carModel || ''}||${t.color || ''}`));
         const el = document.getElementById('pqStats');
         if (!el) return;
         el.innerHTML = `
             <div class="stat-card blue"><div class="stat-card-value">${works.length}</div><div class="stat-card-label">도장 작업 건수</div></div>
             <div class="stat-card green"><div class="stat-card-value">${issues.length}</div><div class="stat-card-label">C/S 발행</div></div>
             <div class="stat-card orange"><div class="stat-card-value">${works.filter(w => !issuedWorkIds.has(w.id)).length}</div><div class="stat-card-label">미발행</div></div>
-            <div class="stat-card purple"><div class="stat-card-value">${configuredCars.size}</div><div class="stat-card-label">기준설정 차종</div></div>
+            <div class="stat-card purple"><div class="stat-card-value">${configuredCars.size}</div><div class="stat-card-label">기준설정 차종/컬러</div></div>
         `;
     }
 
@@ -9069,7 +9446,7 @@ var ProdQualityModule = (function() {
         }
         const issueMap = new Map(_issues().filter(i => i.workId).map(i => [i.workId, i]));
         tbody.innerHTML = works.map(w => {
-            const tmpl = _templateFor(w.carModel);
+            const tmpl = _templateFor(w.carModel, w.color);
             const hasTemplate = !!tmpl;
             const issue = issueMap.get(w.id);
             return `
@@ -9121,15 +9498,44 @@ var ProdQualityModule = (function() {
         return (Storage.getAll(STORE) || []).filter(d => d._docKind === TEMPLATE_KIND);
     }
 
-    function _templateFor(carModel) {
-        return _templates().find(t => t.carModel === carModel) || null;
+    function _normText(v) {
+        return String(v || '').trim();
     }
 
-    function _itemsForCar(carModel) {
-        const tmpl = _templateFor(carModel);
+    function _templateFor(carModel, color = '') {
+        const car = _normText(carModel);
+        const clr = _normText(color);
+        const rows = _templates().filter(t => _normText(t.carModel) === car);
+        if (clr) {
+            const exact = rows.find(t => _normText(t.color) === clr);
+            if (exact) return exact;
+        }
+        return rows.find(t => !_normText(t.color)) || rows[0] || null;
+    }
+
+    function _exactTemplateFor(carModel, color = '') {
+        return _templates().find(t =>
+            _normText(t.carModel) === _normText(carModel) &&
+            _normText(t.color) === _normText(color)
+        ) || null;
+    }
+
+    function _masterItemRecord() {
+        return (Storage.getAll(STORE) || []).find(d => d._docKind === ITEM_MASTER_KIND) || null;
+    }
+
+    function _masterItems() {
+        const rec = _masterItemRecord();
+        return rec && Array.isArray(rec.items) && rec.items.length
+            ? _normalizeQualityItems(rec.items)
+            : DEFAULT_ITEMS.map(item => ({ ...item }));
+    }
+
+    function _itemsForCar(carModel, color = '') {
+        const tmpl = _templateFor(carModel, color);
         const items = tmpl && Array.isArray(tmpl.items) && tmpl.items.length
             ? tmpl.items
-            : DEFAULT_ITEMS.map(item => ({ ...item, selected: true }));
+            : _masterItems().map(item => ({ ...item, selected: true }));
         return _normalizeQualityItems(items);
     }
 
@@ -9167,6 +9573,40 @@ var ProdQualityModule = (function() {
         return cars.map(c => `<option value="${_esc(c)}" ${c === selected ? 'selected' : ''}>${_esc(c)}</option>`).join('');
     }
 
+    function _colorOptions(carModel, selected = '') {
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const workColors = (Storage.getAll(PAINT_WORK_STORE) || [])
+            .filter(w => !carModel || w.carModel === carModel)
+            .map(w => w.color);
+        const productColors = products
+            .filter(p => !carModel || p.carModel === carModel)
+            .map(p => p.color || p.paintColor || p.paint || p.drawingColor);
+        const colors = [...new Set([...productColors, ...workColors].map(v => _normText(v)).filter(Boolean))]
+            .sort((a, b) => a.localeCompare(b, 'ko'));
+        return colors.map(c => `<option value="${_esc(c)}" ${c === selected ? 'selected' : ''}>${_esc(c)}</option>`).join('');
+    }
+
+    function _carColorCombos() {
+        const map = new Map();
+        const add = (car, color, partName = '') => {
+            car = _normText(car);
+            color = _normText(color);
+            if (!car) return;
+            const key = `${car}||${color}`;
+            const cur = map.get(key) || { carModel: car, color, parts: new Set() };
+            if (partName) cur.parts.add(partName);
+            map.set(key, cur);
+        };
+        (Storage.getAll(DB.STORES.PRODUCTS) || []).forEach(p => {
+            add(p.carModel, p.color || p.paintColor || p.paint || p.drawingColor, p.partName);
+        });
+        (Storage.getAll(PAINT_WORK_STORE) || []).forEach(w => add(w.carModel, w.color, w.partName));
+        _templates().forEach(t => add(t.carModel, t.color, '기준설정'));
+        return [...map.values()]
+            .sort((a, b) => a.carModel.localeCompare(b.carModel, 'ko') || a.color.localeCompare(b.color, 'ko'))
+            .map(v => ({ ...v, parts: [...v.parts] }));
+    }
+
     function _partOptions(carModel, selected) {
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
         const workParts = (Storage.getAll(PAINT_WORK_STORE) || [])
@@ -9186,7 +9626,7 @@ var ProdQualityModule = (function() {
     }
 
     function fillForm(d = {}) {
-        const items = d.items || _itemsForCar(d.carModel || '');
+        const items = d.items || _itemsForCar(d.carModel || '', d.color || '');
         const compactGridTop = 'display:grid;grid-template-columns:0.9fr 1fr 1.6fr;gap:8px 12px;margin-bottom:8px;';
         const compactGrid = 'display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 12px;margin-bottom:8px;';
         const compactGrid4 = 'display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px 12px;margin-bottom:8px;';
@@ -9232,7 +9672,7 @@ var ProdQualityModule = (function() {
                 </div>
                 <div style="${compactField}">
                     <label style="${compactLabel}">컬러</label>
-                    <input type="text" class="form-input" id="pqColor" value="${_esc(d.color || '')}" style="${compactInput}">
+                    <input type="text" class="form-input" id="pqColor" value="${_esc(d.color || '')}" onchange="ProdQualityModule.onIssueCarChange()" style="${compactInput}">
                 </div>
                 <div style="${compactField}">
                     <label style="${compactLabel}">생산수량</label>
@@ -9457,14 +9897,14 @@ var ProdQualityModule = (function() {
             lotNo: work.lotNo || ((work.lots || []).map(l => l.lotNo).filter(Boolean).join(', ')),
             productionQty: Number(work.productionQty) || 0,
             time: '',
-            items: _itemsForCar(work.carModel).filter(item => item.selected !== false).map(item => ({ ...item })),
+            items: _itemsForCar(work.carModel, work.color).filter(item => item.selected !== false).map(item => ({ ...item })),
             status: '작성',
             inspector: '',
             note: ''
         };
         if (!base.items.length) {
             UIUtils.toast('해당 차종의 관리항목을 먼저 선택하세요.', 'warning');
-            openTemplateModal(work.carModel || '');
+            openTemplateModal(work.carModel || '', work.color || '');
             return;
         }
         UIUtils.showModal('초중종물 C/S 작성', fillForm(base), `
@@ -9494,10 +9934,10 @@ var ProdQualityModule = (function() {
     async function issueFromWork(workId) {
         const work = Storage.getById(PAINT_WORK_STORE, workId);
         if (!work) return;
-        const items = _itemsForCar(work.carModel).filter(item => item.selected !== false);
+        const items = _itemsForCar(work.carModel, work.color).filter(item => item.selected !== false);
         if (!items.length) {
             UIUtils.toast('해당 차종의 관리항목을 먼저 선택하세요.', 'warning');
-            openTemplateModal(work.carModel || '');
+            openTemplateModal(work.carModel || '', work.color || '');
             return;
         }
         const data = {
@@ -9525,48 +9965,132 @@ var ProdQualityModule = (function() {
     }
 
     function openItemListModal() {
-        const customItems = [];
-        _templates().forEach(t => (t.items || []).forEach(item => {
-            if (!DEFAULT_ITEMS.some(base => base.key === item.key) && !customItems.some(x => x.label === item.label)) {
-                customItems.push(item);
-            }
-        }));
-        const allItems = [...DEFAULT_ITEMS, ...customItems];
-        const rows = allItems.map((item, i) => `
-            <tr>
-                <td>${i + 1}</td><td><strong>${_esc(item.label)}</strong></td><td>${_esc(item.unit || '-')}</td>
-                <td>${_esc(item.spec || '-')}</td><td>${_esc(item.method || '-')}</td>
-            </tr>`).join('');
-        UIUtils.showModal('관리항목 전체 리스트', `
-            <div class="data-table-wrapper">
-                <table class="data-table">
-                    <thead><tr><th>No</th><th>관리항목</th><th>단위</th><th>기본 기준</th><th>측정방법</th></tr></thead>
-                    <tbody>${rows}</tbody>
-                </table>
-            </div>
-        `, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'lg');
+        UIUtils.showModal('관리항목 편집', _itemMasterFormHtml(_masterItems()), `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="ProdQualityModule.saveItemMaster()">저장</button>
+        `, 'xl');
     }
 
-    function openTemplateModal(carModel = '') {
+    function _itemMasterFormHtml(items) {
+        return `
+            <div style="font-size:0.82rem;color:var(--text-muted);margin-bottom:10px;">
+                초중종물 C/S에 사용할 기본 관리항목입니다. 차종/컬러별 기준설정 화면의 기본 항목으로 사용됩니다.
+            </div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:8px;">
+                <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.deleteCheckedMasterItems()">
+                    <span class="material-symbols-outlined">delete</span> 선택 삭제
+                </button>
+                <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.addMasterItemRow()">
+                    <span class="material-symbols-outlined">add</span> 관리항목 추가
+                </button>
+            </div>
+            <div class="data-table-wrapper" style="max-height:60vh;overflow:auto;">
+                <table class="data-table" style="font-size:0.82rem;">
+                    <thead>
+                        <tr>
+                            <th style="width:54px;">사용</th><th>관리항목</th><th>기본 기준</th><th>측정방법</th>
+                            <th style="width:90px;">단위</th><th style="width:110px;">입력유형</th><th style="width:60px;">삭제</th>
+                        </tr>
+                    </thead>
+                    <tbody id="pqMasterItemsBody">${items.map(item => _masterItemRowHtml(item)).join('')}</tbody>
+                </table>
+            </div>`;
+    }
+
+    function _masterItemRowHtml(item = {}) {
+        return `
+            <tr class="pq-master-item-row">
+                <td style="text-align:center;"><input type="checkbox" class="pq-master-selected" ${item.selected === false ? '' : 'checked'}></td>
+                <td>
+                    <input type="hidden" class="pq-master-key" value="${_esc(item.key || Storage.generateId())}">
+                    <input type="text" class="form-input pq-master-label" value="${_esc(item.label || '')}" placeholder="관리항목명">
+                </td>
+                <td><input type="text" class="form-input pq-master-spec" value="${_esc(item.spec || '')}" placeholder="기본 기준"></td>
+                <td><input type="text" class="form-input pq-master-method" value="${_esc(item.method || '')}" placeholder="측정방법"></td>
+                <td><input type="text" class="form-input pq-master-unit" value="${_esc(item.unit || '')}" placeholder="단위"></td>
+                <td>
+                    <select class="form-select pq-master-input-type">
+                        ${['number','text','select'].map(v => `<option value="${v}" ${(item.inputType || 'text') === v ? 'selected' : ''}>${v === 'number' ? '숫자' : v === 'select' ? '합/불' : '텍스트'}</option>`).join('')}
+                    </select>
+                </td>
+                <td style="text-align:center;"><input type="checkbox" class="pq-master-delete"></td>
+            </tr>`;
+    }
+
+    function addMasterItemRow() {
+        const body = document.getElementById('pqMasterItemsBody');
+        if (!body) return;
+        body.insertAdjacentHTML('beforeend', _masterItemRowHtml({ selected: true, inputType: 'text' }));
+        body.querySelector('tr:last-child .pq-master-label')?.focus();
+    }
+
+    function deleteCheckedMasterItems() {
+        const rows = [...document.querySelectorAll('.pq-master-item-row')];
+        const targets = rows.filter(row => row.querySelector('.pq-master-delete')?.checked);
+        if (!targets.length) {
+            UIUtils.toast('삭제할 관리항목을 체크하세요.', 'warning');
+            return;
+        }
+        if (targets.length >= rows.length) {
+            UIUtils.toast('관리항목은 최소 1개 이상 남겨야 합니다.', 'warning');
+            return;
+        }
+        targets.forEach(row => row.remove());
+        UIUtils.toast(`${targets.length}개 관리항목을 삭제했습니다. 저장을 눌러 반영하세요.`, 'success');
+    }
+
+    async function saveItemMaster() {
+        const items = [...document.querySelectorAll('.pq-master-item-row')].map(row => ({
+            key: row.querySelector('.pq-master-key')?.value || Storage.generateId(),
+            label: row.querySelector('.pq-master-label')?.value.trim() || '',
+            spec: row.querySelector('.pq-master-spec')?.value.trim() || '',
+            method: row.querySelector('.pq-master-method')?.value.trim() || '',
+            unit: row.querySelector('.pq-master-unit')?.value.trim() || '',
+            inputType: row.querySelector('.pq-master-input-type')?.value || 'text',
+            selected: !!row.querySelector('.pq-master-selected')?.checked
+        })).filter(item => item.label);
+        if (!items.length) {
+            UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning');
+            return;
+        }
+        const existing = _masterItemRecord();
+        const payload = { _docKind: ITEM_MASTER_KIND, items, updatedAt: UIUtils.now() };
+        if (existing) await Storage.update(STORE, existing.id, payload);
+        else await Storage.add(STORE, payload);
+        UIUtils.closeModal();
+        UIUtils.toast('관리항목이 저장되었습니다.', 'success');
+        search();
+    }
+
+    function openTemplateModal(carModel = '', color = '') {
         const selectedCar = carModel || (document.getElementById('pqFilterCar')?.value || '');
-        const tmpl = _templateFor(selectedCar);
-        const items = tmpl && Array.isArray(tmpl.items) ? _normalizeQualityItems(tmpl.items) : DEFAULT_ITEMS.map(item => ({ ...item, selected: true }));
-        UIUtils.showModal('차종별 초중종물 기준설정', _templateFormHtml(selectedCar, items), `
+        const selectedColor = color || '';
+        const tmpl = _templateFor(selectedCar, selectedColor);
+        const items = tmpl && Array.isArray(tmpl.items) ? _normalizeQualityItems(tmpl.items) : _masterItems().map(item => ({ ...item, selected: true }));
+        UIUtils.showModal('차종/컬러별 초중종물 기준설정', _templateFormHtml(selectedCar, selectedColor, items), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="ProdQualityModule.saveTemplate()">저장</button>
         `, 'xl');
     }
 
-    function _templateFormHtml(carModel, items) {
+    function _templateFormHtml(carModel, color, items) {
         return `
-            <div class="form-group">
-                <label class="form-label">차종 <span style="color:var(--accent-red)">*</span></label>
-                <select class="form-select" id="pqTplCarModel" onchange="ProdQualityModule.reloadTemplateForCar()">
-                    <option value="">차종 선택</option>${_carOptions(carModel)}
-                </select>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">차종 <span style="color:var(--accent-red)">*</span></label>
+                    <select class="form-select" id="pqTplCarModel" onchange="ProdQualityModule.reloadTemplateForCar()">
+                        <option value="">차종 선택</option>${_carOptions(carModel)}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">컬러</label>
+                    <select class="form-select" id="pqTplColor" onchange="ProdQualityModule.reloadTemplateForCar()">
+                        <option value="">전체 컬러/공통 기준</option>${_colorOptions(carModel, color)}
+                    </select>
+                </div>
             </div>
             <div style="font-size:0.82rem;color:var(--text-muted);margin-bottom:8px;">
-                차종별로 C/S에 인쇄할 관리항목을 선택하고 기준을 입력합니다. 도막두께 하도/상도 기준은 차종마다 다르게 저장됩니다.
+                차종과 컬러별로 C/S에 인쇄할 관리항목을 선택하고 기준을 입력합니다. 컬러가 비어 있으면 해당 차종의 공통 기준으로 사용됩니다.
             </div>
             <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:8px;">
                 <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.deleteCheckedTemplateItems()">
@@ -9628,12 +10152,14 @@ var ProdQualityModule = (function() {
 
     function reloadTemplateForCar() {
         const car = document.getElementById('pqTplCarModel')?.value || '';
-        openTemplateModal(car);
+        const color = document.getElementById('pqTplColor')?.value || '';
+        openTemplateModal(car, color);
     }
 
     async function saveTemplate() {
         const carModel = document.getElementById('pqTplCarModel')?.value || '';
         if (!carModel) { UIUtils.toast('차종을 선택하세요.', 'warning'); return; }
+        const color = document.getElementById('pqTplColor')?.value || '';
         const items = [...document.querySelectorAll('.pq-template-item-row')].map(row => ({
             key: row.querySelector('.pq-tpl-key')?.value || Storage.generateId(),
             label: row.querySelector('.pq-tpl-label')?.value.trim() || '',
@@ -9642,21 +10168,150 @@ var ProdQualityModule = (function() {
             unit: row.querySelector('.pq-tpl-unit')?.value.trim() || '',
             selected: !!row.querySelector('.pq-tpl-selected')?.checked
         })).filter(item => item.label);
-        const existing = _templateFor(carModel);
-        const payload = { _docKind: TEMPLATE_KIND, carModel, items };
+        const existing = _exactTemplateFor(carModel, color);
+        const payload = { _docKind: TEMPLATE_KIND, carModel, color, items, updatedAt: UIUtils.now() };
         if (existing) await Storage.update(STORE, existing.id, payload);
         else await Storage.add(STORE, payload);
         UIUtils.closeModal();
-        UIUtils.toast('차종별 기준설정이 저장되었습니다.', 'success');
+        UIUtils.toast('차종/컬러별 기준설정이 저장되었습니다.', 'success');
+        search();
+    }
+
+    function openBulkTemplateModal() {
+        const combos = _carColorCombos();
+        if (!combos.length) {
+            UIUtils.toast('등록할 차종/컬러 정보가 없습니다. 제품 정보 또는 도장 작업일지를 먼저 확인하세요.', 'warning');
+            return;
+        }
+        UIUtils.showModal('차종/컬러별 기준 일괄 등록', _bulkTemplateFormHtml(combos), `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="ProdQualityModule.saveBulkTemplate()">일괄 저장</button>
+        `, 'xl');
+    }
+
+    function _bulkTemplateFormHtml(combos) {
+        const cars = [...new Set(combos.map(c => c.carModel).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+        const items = _masterItems().map(item => ({ ...item, selected: item.selected !== false }));
+        return `
+            <div style="display:grid;grid-template-columns:260px 1fr;gap:14px;min-height:56vh;">
+                <div>
+                    <div class="form-group" style="margin-bottom:10px;">
+                        <label class="form-label">차종 필터</label>
+                        <select class="form-select" id="pqBulkCarFilter" onchange="ProdQualityModule.refreshBulkTargetList()">
+                            <option value="">전체 차종</option>
+                            ${cars.map(car => `<option value="${_esc(car)}">${_esc(car)}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                        <strong style="font-size:0.9rem;">등록 대상</strong>
+                        <button type="button" class="btn btn-outline btn-sm" onclick="ProdQualityModule.toggleBulkTargets()">전체 선택/해제</button>
+                    </div>
+                    <div id="pqBulkTargetList" class="data-table-wrapper" style="max-height:48vh;overflow:auto;border:1px solid var(--border-color);border-radius:8px;">
+                        ${_bulkTargetRowsHtml(combos)}
+                    </div>
+                </div>
+                <div>
+                    <div style="font-size:0.82rem;color:var(--text-muted);margin-bottom:8px;">
+                        왼쪽에서 차종/컬러를 선택하고, 아래 관리항목 기준을 입력하면 선택된 대상에 동일 기준이 일괄 저장됩니다.
+                    </div>
+                    <div class="data-table-wrapper" style="max-height:52vh;overflow:auto;">
+                        <table class="data-table" style="font-size:0.8rem;">
+                            <thead><tr><th style="width:56px;">사용</th><th>관리항목</th><th>기준</th><th>측정방법</th><th style="width:90px;">단위</th></tr></thead>
+                            <tbody id="pqBulkItemsBody">${items.map(item => _bulkItemRowHtml(item)).join('')}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    function _bulkTargetRowsHtml(combos) {
+        return combos.map(combo => {
+            const label = combo.color ? `${combo.carModel} / ${combo.color}` : `${combo.carModel} / 공통`;
+            const count = combo.parts && combo.parts.length ? combo.parts.length : 0;
+            return `
+                <label class="pq-bulk-target-row" data-car="${_esc(combo.carModel)}" style="display:flex;gap:8px;align-items:flex-start;padding:8px 10px;border-bottom:1px solid var(--border-color);font-size:0.82rem;cursor:pointer;">
+                    <input type="checkbox" class="pq-bulk-target" data-car="${_esc(combo.carModel)}" data-color="${_esc(combo.color || '')}" checked>
+                    <span style="min-width:0;">
+                        <strong style="display:block;color:var(--text-primary);">${_esc(label)}</strong>
+                        <span style="display:block;color:var(--text-muted);font-size:0.74rem;">품목 ${count}개</span>
+                    </span>
+                </label>`;
+        }).join('');
+    }
+
+    function _bulkItemRowHtml(item = {}) {
+        return `
+            <tr class="pq-bulk-item-row">
+                <td style="text-align:center;"><input type="checkbox" class="pq-bulk-selected" ${item.selected === false ? '' : 'checked'}></td>
+                <td>
+                    <input type="hidden" class="pq-bulk-key" value="${_esc(item.key || Storage.generateId())}">
+                    <input type="text" class="form-input pq-bulk-label" value="${_esc(item.label || '')}" placeholder="관리항목명">
+                </td>
+                <td><input type="text" class="form-input pq-bulk-spec" value="${_esc(item.spec || '')}" placeholder="예: 15~20"></td>
+                <td><input type="text" class="form-input pq-bulk-method" value="${_esc(item.method || '')}" placeholder="측정방법"></td>
+                <td><input type="text" class="form-input pq-bulk-unit" value="${_esc(item.unit || '')}" placeholder="단위"></td>
+            </tr>`;
+    }
+
+    function refreshBulkTargetList() {
+        const filterCar = document.getElementById('pqBulkCarFilter')?.value || '';
+        const list = document.getElementById('pqBulkTargetList');
+        if (!list) return;
+        const combos = _carColorCombos().filter(combo => !filterCar || combo.carModel === filterCar);
+        list.innerHTML = _bulkTargetRowsHtml(combos);
+    }
+
+    function toggleBulkTargets() {
+        const checks = [...document.querySelectorAll('.pq-bulk-target')];
+        const shouldCheck = checks.some(chk => !chk.checked);
+        checks.forEach(chk => { chk.checked = shouldCheck; });
+    }
+
+    async function saveBulkTemplate() {
+        const targets = [...document.querySelectorAll('.pq-bulk-target:checked')].map(chk => ({
+            carModel: chk.dataset.car || '',
+            color: chk.dataset.color || ''
+        })).filter(t => t.carModel);
+        if (!targets.length) {
+            UIUtils.toast('일괄 등록할 차종/컬러를 선택하세요.', 'warning');
+            return;
+        }
+        const items = [...document.querySelectorAll('.pq-bulk-item-row')].map(row => ({
+            key: row.querySelector('.pq-bulk-key')?.value || Storage.generateId(),
+            label: row.querySelector('.pq-bulk-label')?.value.trim() || '',
+            spec: row.querySelector('.pq-bulk-spec')?.value.trim() || '',
+            method: row.querySelector('.pq-bulk-method')?.value.trim() || '',
+            unit: row.querySelector('.pq-bulk-unit')?.value.trim() || '',
+            selected: !!row.querySelector('.pq-bulk-selected')?.checked
+        })).filter(item => item.label);
+        if (!items.length) {
+            UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning');
+            return;
+        }
+        for (const target of targets) {
+            const existing = _exactTemplateFor(target.carModel, target.color);
+            const payload = {
+                _docKind: TEMPLATE_KIND,
+                carModel: target.carModel,
+                color: target.color,
+                items: items.map(item => ({ ...item })),
+                updatedAt: UIUtils.now()
+            };
+            if (existing) await Storage.update(STORE, existing.id, payload);
+            else await Storage.add(STORE, payload);
+        }
+        UIUtils.closeModal();
+        UIUtils.toast(`${targets.length}개 차종/컬러 기준을 일괄 저장했습니다.`, 'success');
         search();
     }
 
     function onIssueCarChange() {
         const car = document.getElementById('pqCarModel')?.value || '';
+        const color = document.getElementById('pqColor')?.value || '';
         const partSel = document.getElementById('pqPartName');
         if (partSel) partSel.innerHTML = _partOptions(car, '');
         const itemsEl = document.getElementById('pqIssueItems');
-        if (itemsEl) itemsEl.innerHTML = _issueItemRows(_itemsForCar(car).filter(i => i.selected !== false));
+        if (itemsEl) itemsEl.innerHTML = _issueItemRows(_itemsForCar(car, color).filter(i => i.selected !== false));
     }
 
     function printIssue(id) {
@@ -9806,8 +10461,15 @@ table{border-collapse:collapse;width:100%}
         ,saveWriteAndPrint
         ,issueFromWork
         ,openItemListModal
+        ,saveItemMaster
+        ,addMasterItemRow
+        ,deleteCheckedMasterItems
         ,openTemplateModal
+        ,openBulkTemplateModal
         ,saveTemplate
+        ,saveBulkTemplate
+        ,refreshBulkTargetList
+        ,toggleBulkTargets
         ,addTemplateItemRow
         ,deleteCheckedTemplateItems
         ,addIssueItemRow

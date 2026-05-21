@@ -164,6 +164,7 @@ const App = (function() {
         Router.registerModule('five-s', FiveSModule);
         Router.registerModule('prod-standards', ProdStandardsModule);
         Router.registerModule('prod-conditions', ProdConditionsModule);
+        Router.registerModule('inject-color-std', InjectColorStdModule);
         Router.registerModule('paint-mix', PaintMixModule);
         Router.registerModule('prod-sub-materials', ProdSubMaterialsModule);
         Router.registerModule('prod-quality', ProdQualityModule);

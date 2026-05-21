@@ -5,7 +5,7 @@
 
 const DB = (function() {
     const DB_NAME = 'ProductionMES_DB';
-    const DB_VERSION = 36;
+    const DB_VERSION = 37;
     let db = null;
 
     // 스토어 이름 - 전체 공정에 대응
@@ -115,6 +115,9 @@ const DB = (function() {
 
         // 사출컬러 기준서 파일 (v36)
         INJECT_COLOR_STD: 'inject_color_standards', // 사출품 COLOR 기준서 파일 이력
+
+        // 사출컬러 기준서 편집 데이터 (v37)
+        INJECT_COLOR_STD_DATA: 'inject_color_std_data', // 기준서 편집 내용
 
         // 설정
         CONFIG: 'config'
@@ -1207,6 +1210,11 @@ const DB = (function() {
                 if (!database.objectStoreNames.contains(STORES.INJECT_COLOR_STD)) {
                     const store = database.createObjectStore(STORES.INJECT_COLOR_STD, { keyPath: 'id' });
                     store.createIndex('uploadDate', 'uploadDate', { unique: false });
+                }
+
+                // ── 사출컬러 기준서 편집 데이터 (v37) ─────────────────
+                if (!database.objectStoreNames.contains(STORES.INJECT_COLOR_STD_DATA)) {
+                    database.createObjectStore(STORES.INJECT_COLOR_STD_DATA, { keyPath: 'id' });
                 }
             };
         });
