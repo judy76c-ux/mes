@@ -10101,7 +10101,7 @@ var ProdQualityModule = (function() {
             </div>
             <div class="data-table-wrapper" style="max-height:56vh;overflow:auto;">
                 <table class="data-table" style="font-size:0.82rem;">
-                    <thead><tr><th style="width:60px;">사용</th><th>관리항목</th><th>기준</th><th>측정방법</th><th>단위</th><th style="width:60px;">삭제</th></tr></thead>
+                    <thead><tr><th style="width:60px;">사용</th><th style="width:74px;">순서</th><th>관리항목</th><th>기준</th><th>측정방법</th><th>단위</th><th style="width:60px;">삭제</th></tr></thead>
                     <tbody id="pqTemplateItemsBody">
                         ${items.map(item => `
                             ${_templateItemRowHtml(item)}
@@ -10115,6 +10115,10 @@ var ProdQualityModule = (function() {
         return `
             <tr class="pq-template-item-row">
                 <td style="text-align:center;"><input type="checkbox" class="pq-tpl-selected" ${item.selected === false ? '' : 'checked'}></td>
+                <td style="text-align:center;white-space:nowrap;">
+                    <button type="button" class="btn btn-sm btn-outline" onclick="ProdQualityModule.moveTemplateItemRow(this, -1)" title="위로 이동" style="padding:3px 6px;min-width:28px;">↑</button>
+                    <button type="button" class="btn btn-sm btn-outline" onclick="ProdQualityModule.moveTemplateItemRow(this, 1)" title="아래로 이동" style="padding:3px 6px;min-width:28px;">↓</button>
+                </td>
                 <td>
                     <input type="hidden" class="pq-tpl-key" value="${_esc(item.key || Storage.generateId())}">
                     <input type="text" class="form-input pq-tpl-label" value="${_esc(item.label || '')}" placeholder="관리항목명">
@@ -10147,6 +10151,19 @@ var ProdQualityModule = (function() {
         }
         targets.forEach(row => row.remove());
         UIUtils.toast(`${targets.length}개 관리항목을 삭제했습니다. 저장을 눌러 반영하세요.`, 'success');
+    }
+
+    function moveTemplateItemRow(button, direction) {
+        const row = button?.closest?.('.pq-template-item-row');
+        const body = document.getElementById('pqTemplateItemsBody');
+        if (!row || !body) return;
+        if (direction < 0) {
+            const prev = row.previousElementSibling;
+            if (prev) body.insertBefore(row, prev);
+        } else {
+            const next = row.nextElementSibling;
+            if (next) body.insertBefore(next, row);
+        }
     }
 
     function reloadTemplateForCar() {
@@ -10469,6 +10486,7 @@ table{border-collapse:collapse;width:100%}
         ,saveBulkTemplate
         ,refreshBulkTargetList
         ,toggleBulkTargets
+        ,moveTemplateItemRow
         ,addTemplateItemRow
         ,deleteCheckedTemplateItems
         ,addIssueItemRow

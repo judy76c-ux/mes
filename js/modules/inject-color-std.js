@@ -14,6 +14,12 @@ var InjectColorStdModule = (function () {
     let _dataA = null;
     let _dataB = null;
 
+    // ── Undo 히스토리 ─────────────────────────────────────────────
+    let _historyA  = [];
+    let _historyB  = [];
+    const _MAX_HIST = 30;
+    let _kbListener = null;   // Ctrl+Z 이벤트 핸들러 참조
+
     // ════════════════════════════════════════════════════════════════
     // 기본 데이터 (엑셀에서 추출)
     // ════════════════════════════════════════════════════════════════
@@ -469,6 +475,7 @@ var InjectColorStdModule = (function () {
         _collectEdits();
         const sec = (_currentData().sections||[]).find(s => s.id === secId);
         if (!sec) return;
+        _pushHistory();
         sec.groups.push({ id: _uid(), car: '차종', part: '품명',
             colors: [{ id: _uid(), paint: '도장COLOR', inject: '사출컬러', photo: null }] });
         _rerender();
@@ -478,6 +485,7 @@ var InjectColorStdModule = (function () {
         _collectEdits();
         const sec = (_currentData().sections||[]).find(s => s.id === secId);
         if (!sec || (sec.groups||[]).length <= 1) { UIUtils.toast('최소 1개 그룹이 필요합니다.', 'warning'); return; }
+        _pushHistory();
         sec.groups = sec.groups.filter(g => g.id !== gid);
         _rerender();
     }
@@ -487,6 +495,7 @@ var InjectColorStdModule = (function () {
         const sec = (_currentData().sections||[]).find(s => s.id === secId);
         const grp = sec && (sec.groups||[]).find(g => g.id === gid);
         if (!grp) return;
+        _pushHistory();
         grp.colors.push({ id: _uid(), paint: '도장COLOR', inject: '사출컬러', photo: null });
         _rerender();
     }
@@ -496,6 +505,7 @@ var InjectColorStdModule = (function () {
         const sec = (_currentData().sections||[]).find(s => s.id === secId);
         const grp = sec && (sec.groups||[]).find(g => g.id === gid);
         if (!grp || (grp.colors||[]).length <= 1) { UIUtils.toast('최소 1개 컬러가 필요합니다.', 'warning'); return; }
+        _pushHistory();
         grp.colors = grp.colors.filter(c => c.id !== cid);
         _rerender();
     }
@@ -512,7 +522,7 @@ var InjectColorStdModule = (function () {
                 const sec = (_currentData().sections||[]).find(s => s.id === secId);
                 const grp = sec && (sec.groups||[]).find(g => g.id === gid);
                 const clr = grp && (grp.colors||[]).find(c => c.id === cid);
-                if (clr) { clr.photo = ev.target.result; _rerender(); }
+                if (clr) { _pushHistory(); clr.photo = ev.target.result; _rerender(); }
             };
             reader.readAsDataURL(file);
         };
@@ -525,13 +535,38 @@ var InjectColorStdModule = (function () {
     function _toggleEdit() {
         _collectEdits();
         _editMode = !_editMode;
+
+        if (_editMode) {
+            // 편집 시작 ── 히스토리 초기화 후 기초 상태 저장
+            if (_currentLine === 'A') _historyA = []; else _historyB = [];
+            _pushHistory();
+
+            // Ctrl+Z 전역 리스너 등록
+            _kbListener = function (e) {
+                if (!_editMode) return;
+                if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+                    // contenteditable span 안에서는 브라우저 기본 동작 유지
+                    if (document.activeElement && document.activeElement.classList.contains('ics-ce')) return;
+                    e.preventDefault();
+                    _undo();
+                }
+            };
+            document.addEventListener('keydown', _kbListener);
+        } else {
+            // 편집 종료 ── 히스토리·리스너 정리
+            if (_currentLine === 'A') _historyA = []; else _historyB = [];
+            if (_kbListener) { document.removeEventListener('keydown', _kbListener); _kbListener = null; }
+        }
+
         document.getElementById('icsEditBtn').className = _editMode ? 'btn btn-warning' : 'btn btn-outline';
         document.getElementById('icsEditBtn').innerHTML = _editMode
             ? '<span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">edit_off</span> 편집 종료'
             : '<span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">edit</span> 편집';
-        document.getElementById('icsSaveBtn').style.display = _editMode ? '' : 'none';
+        document.getElementById('icsSaveBtn').style.display  = _editMode ? '' : 'none';
         document.getElementById('icsResetBtn').style.display = _editMode ? '' : 'none';
+        document.getElementById('icsUndoBtn').style.display  = _editMode ? '' : 'none';
         _rerender();
+        if (_editMode) _updateUndoBtn();
     }
 
     function _switchLine(line) {
@@ -541,11 +576,46 @@ var InjectColorStdModule = (function () {
         document.getElementById('icsBtnA').classList.toggle('active', line === 'A');
         document.getElementById('icsBtnB').classList.toggle('active', line === 'B');
         _rerender();
+        if (_editMode) _updateUndoBtn();
     }
 
     function _rerender() {
         const wrap = document.getElementById('icsWrap');
         if (wrap) wrap.innerHTML = _renderDoc(_currentData());
+    }
+
+    // ── Undo 히스토리 헬퍼 ────────────────────────────────────────
+    function _currentHistory() { return _currentLine === 'A' ? _historyA : _historyB; }
+
+    /** 현재 데이터를 히스토리 스택에 스냅샷 저장 */
+    function _pushHistory() {
+        const hist = _currentHistory();
+        hist.push(JSON.parse(JSON.stringify(_currentData())));
+        if (hist.length > _MAX_HIST) hist.shift();
+        _updateUndoBtn();
+    }
+
+    /** 뒤로 가기: 스택에서 스냅샷 꺼내 복원 */
+    function _undo() {
+        if (!_editMode) return;
+        _collectEdits();              // 현재 텍스트 먼저 반영
+        const hist = _currentHistory();
+        if (!hist.length) { UIUtils.toast('더 이상 되돌릴 내용이 없습니다.', 'info'); return; }
+        const snap = hist.pop();
+        if (_currentLine === 'A') _dataA = snap; else _dataB = snap;
+        _updateUndoBtn();
+        _rerender();
+        UIUtils.toast('되돌렸습니다.', 'info');
+    }
+
+    /** 뒤로가기 버튼 상태 갱신 */
+    function _updateUndoBtn() {
+        const btn = document.getElementById('icsUndoBtn');
+        if (!btn) return;
+        const cnt = _currentHistory().length;
+        btn.disabled = cnt === 0;
+        const badge = btn.querySelector('.ics-undo-cnt');
+        if (badge) badge.textContent = cnt > 0 ? `(${cnt})` : '';
     }
 
     function _zoomImg(el) {
@@ -678,6 +748,12 @@ var InjectColorStdModule = (function () {
 
 /* ── 이미지 확대 오버레이 ─────────────── */
 .ics-zoom-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.82);display:flex;align-items:center;justify-content:center;z-index:9999;cursor:zoom-out;}
+
+/* ── 뒤로가기(Undo) 버튼 ──────────────── */
+.ics-undo-btn:disabled{opacity:0.38;cursor:not-allowed;}
+.ics-undo-btn:not(:disabled){border-color:#f59e0b;color:#b45309;}
+.ics-undo-btn:not(:disabled):hover{background:#fef3c7;}
+.ics-undo-cnt{font-size:0.7rem;color:#9ca3af;font-weight:400;min-width:1em;display:inline-block;}
         `;
         document.head.appendChild(s);
     }
@@ -706,6 +782,9 @@ var InjectColorStdModule = (function () {
                     <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">save</span> 저장
                 </button>
                 <button class="btn btn-danger" id="icsResetBtn" style="display:none;font-size:0.78rem;" onclick="InjectColorStdModule._reset()">초기화</button>
+                <button class="btn btn-outline ics-undo-btn" id="icsUndoBtn" style="display:none;" disabled onclick="InjectColorStdModule._undo()" title="되돌리기 (Ctrl+Z)">
+                    <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">undo</span> 되돌리기 <span class="ics-undo-cnt"></span>
+                </button>
                 <button class="btn btn-outline" onclick="InjectColorStdModule._print()" title="인쇄/PDF">
                     <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">print</span>
                 </button>
@@ -724,6 +803,7 @@ var InjectColorStdModule = (function () {
         _switchLine,
         _save,
         _reset,
+        _undo,
         _print,
         _zoomImg,
         addGroup, delGroup,
