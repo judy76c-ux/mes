@@ -5,7 +5,7 @@
 
 const DB = (function() {
     const DB_NAME = 'ProductionMES_DB';
-    const DB_VERSION = 39;
+    const DB_VERSION = 40;
     let db = null;
 
     // 스토어 이름 - 전체 공정에 대응
@@ -124,6 +124,9 @@ const DB = (function() {
 
         // 세척 소모품 교체관리 기준서 데이터 (v39)
         WASH_CONSUMABLE_DATA: 'wash_consumable_data',
+
+        // 교반시간 작업기준서 데이터 (v40)
+        AGIT_STD_DATA: 'agit_std_data',
 
         // 설정
         CONFIG: 'config'
@@ -1231,6 +1234,11 @@ const DB = (function() {
                 // ── 세척 소모품 교체관리 기준서 (v39) ──────────────────
                 if (!database.objectStoreNames.contains(STORES.WASH_CONSUMABLE_DATA)) {
                     database.createObjectStore(STORES.WASH_CONSUMABLE_DATA, { keyPath: 'id' });
+                }
+
+                // ── 교반시간 작업기준서 (v40) ───────────────────────────
+                if (!database.objectStoreNames.contains(STORES.AGIT_STD_DATA)) {
+                    database.createObjectStore(STORES.AGIT_STD_DATA, { keyPath: 'id' });
                 }
             };
         });

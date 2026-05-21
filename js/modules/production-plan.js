@@ -797,7 +797,7 @@ const ProductionPlanModule = (function() {
     // - 대기/진행: 예약으로 계산
     // - 완료: 도장 작업실적이 없으면 아직 재고가 차감되지 않은 것이므로 예약으로 포함
     // 반환: { pending(대기+미실적완료), inProgress(진행) }
-    function _calcInjPlanReserved(injPartName, excludePlanId, carModel, injColor) {
+    function _calcInjPlanReserved(injPartName, excludePlanId, carModel, injColor, includeCurrentForm = true) {
         const injMats = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
         // injPartName → 이 자재가 쓰이는 제품명(partName) 및 허용 컬러 역방향 조회
         const planPartNames = new Set();
@@ -955,7 +955,7 @@ const ProductionPlanModule = (function() {
         // ★ 모달이 닫혀있어도 DOM에 폼 요소가 남아 있어 오탐(팬텀 예약)이 발생할 수 있으므로
         //    반드시 모달 active 상태를 확인 후 폼 값을 읽는다
         const _modalActive = document.getElementById('modal')?.classList.contains('active');
-        if (_modalActive) {
+        if (_modalActive && includeCurrentForm) {
             const formPart  = (document.getElementById('sPart')  || {}).value || '';
             const formColor = (document.getElementById('sColor') || {}).value || '';
             const formQty   = Number((document.getElementById('sQty') || {}).value) || 0;
@@ -973,6 +973,31 @@ const ProductionPlanModule = (function() {
 
     // 모달 내 사출 재고 패널 갱신 — 자재명 | 현재고 | 계획예약 | 사용가능
     // overridePartName / overrideCarModel : 편집 모달 초기화 시 DOM 값 대신 직접 전달
+    function _getInjectionAvailableForPlan(partName, carModel, color, productId, excludePlanId) {
+        if (!partName) return { available: 0, total: 0, matched: [], lots: [] };
+        let matched = getInjPartNamesForPlan(partName, carModel, productId, color);
+        if (matched.length === 0 && carModel) matched = getInjPartNamesForPlan(partName, '', productId, color);
+        if (matched.length === 0) matched = getInjPartNamesForPlan(partName, carModel, productId);
+        if (matched.length === 0 && carModel) matched = getInjPartNamesForPlan(partName, '', productId);
+
+        const lots = getInjStockLots(matched, color);
+        const grouped = {};
+        lots.forEach(l => {
+            const key = `${l.partName}||${l.color || ''}`;
+            if (!grouped[key]) grouped[key] = { partName: l.partName, color: l.color, balance: 0 };
+            grouped[key].balance += Number(l.balance) || 0;
+        });
+
+        let total = 0;
+        let available = 0;
+        Object.values(grouped).forEach(g => {
+            const reserved = _calcInjPlanReserved(g.partName, excludePlanId, carModel, g.color, false);
+            total += g.balance;
+            available += g.balance - reserved.pending - reserved.inProgress;
+        });
+        return { available: Math.max(0, available), total, matched, lots };
+    }
+
     function updateInjStockPanel(overridePartName, overrideCarModel) {
         const panel   = document.getElementById('injStockPanel');
         const totalEl = document.getElementById('injStockTotal');
@@ -1642,6 +1667,21 @@ const ProductionPlanModule = (function() {
         }
 
         // ① 이후 계획 Cascade shift (Overlap 체크 전에 먼저 실행)
+        if (partName && planQty > 0) {
+            const currentPlanId = document.getElementById('injStockPanel')?.getAttribute('data-current-plan-id') || existingId || '';
+            const stockCheck = _getInjectionAvailableForPlan(partName, carModel, color, productId, currentPlanId);
+            if (stockCheck.available < planQty) {
+                UIUtils.toast(`사출 창고 가용 재고보다 많은 계획은 등록할 수 없습니다. 가용 ${UIUtils.formatNumber(stockCheck.available)} EA / 계획 ${UIUtils.formatNumber(planQty)} EA`, 'warning');
+                const qtyEl = document.getElementById('sQty');
+                if (qtyEl) {
+                    qtyEl.focus();
+                    qtyEl.select();
+                }
+                updateInjStockPanel(partName, carModel);
+                return;
+            }
+        }
+
         let shiftedCount = 0;
         const curPlanInfo = { partName, color };
         if (endTime) {

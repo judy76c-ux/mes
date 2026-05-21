@@ -166,6 +166,7 @@ const App = (function() {
         Router.registerModule('prod-conditions', ProdConditionsModule);
         Router.registerModule('inject-color-std', InjectColorStdModule);
         Router.registerModule('paji-std', PajiStdModule);
+        Router.registerModule('wash-consumable', WashConsumableModule);
         Router.registerModule('paint-mix', PaintMixModule);
         Router.registerModule('prod-sub-materials', ProdSubMaterialsModule);
         Router.registerModule('prod-quality', ProdQualityModule);

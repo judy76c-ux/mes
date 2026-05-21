@@ -605,6 +605,19 @@ var ProdStandardsModule = (function() {
                                 </div>
                                 <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">로딩 공정 파지 위치 기준서 — A/B라인별 제품 파지 구역 기준 및 실사 사진 관리</div>
                             </button>
+
+                            <!-- 세척 소모품 관리 기준서 카드 -->
+                            <button onclick="Router.navigate('wash-consumable')"
+                                style="text-align:left;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);padding:15px;cursor:pointer;border-left:4px solid #0e7490;">
+                                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
+                                    <span style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--text-primary);">
+                                        <span class="material-symbols-outlined" style="font-size:22px;color:#0e7490;">cleaning_services</span>
+                                        세척 소모품 관리 기준서
+                                    </span>
+                                    <span style="font-size:0.68rem;background:#0e7490;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;white-space:nowrap;">편집가능</span>
+                                </div>
+                                <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">세척 소모품 교체관리 기준서 — A/B라인별 소모품 교체 주기·사용 방법·폐기 방법 관리</div>
+                            </button>
                         </div>
                     </div>
                 </div>

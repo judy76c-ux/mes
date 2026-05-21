@@ -19,6 +19,8 @@ const Storage = (function() {
     STORES.INJECT_COLOR_STD,          // 사출컬러 기준서 파일 (Blob — NAS 전송 불가)
     STORES.INJECT_COLOR_STD_DATA,     // 사출컬러 기준서 편집 데이터 (base64 사진 포함)
     STORES.PAJI_STD_DATA,             // 파지 기준서 편집 데이터 (base64 사진 포함)
+    STORES.WASH_CONSUMABLE_DATA,      // 세척 소모품 기준서 편집 데이터 (base64 사진 포함)
+    STORES.AGIT_STD_DATA,             // 교반시간 기준서 편집 데이터 (base64 사진 포함)
   ]);
 
   // 초기화: API 서버에서 모든 데이터 로드
