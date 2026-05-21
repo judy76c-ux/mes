@@ -618,6 +618,19 @@ var ProdStandardsModule = (function() {
                                 </div>
                                 <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">세척 소모품 교체관리 기준서 — A/B라인별 소모품 교체 주기·사용 방법·폐기 방법 관리</div>
                             </button>
+
+                            <!-- 교반시간 작업기준서 카드 -->
+                            <button onclick="Router.navigate('agit-std')"
+                                style="text-align:left;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);padding:15px;cursor:pointer;border-left:4px solid #d97706;">
+                                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
+                                    <span style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--text-primary);">
+                                        <span class="material-symbols-outlined" style="font-size:22px;color:#d97706;">blender</span>
+                                        교반시간 작업기준서
+                                    </span>
+                                    <span style="font-size:0.68rem;background:#d97706;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;white-space:nowrap;">편집가능</span>
+                                </div>
+                                <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">배합공정 교반시간 기준서 — 도료 종류별 교반 시간·RPM 기준 및 교반 순서·방법 관리</div>
+                            </button>
                         </div>
                     </div>
                 </div>

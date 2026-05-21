@@ -3204,6 +3204,21 @@ const PaintingInspectionModule = (function() {
         if (totalEl) totalEl.value = goodQty + defectSum;
     }
 
+    function _getPaintingWorkQty(work) {
+        if (!work) return 0;
+        return Number(work.productionQty || work.inputQty || work.quantity || work.goodQty || 0) || 0;
+    }
+
+    function _validateDefectQtyWithinWorkQty(defectQty, workQty) {
+        const defect = Number(defectQty) || 0;
+        const work = Number(workQty) || 0;
+        if (work > 0 && defect > work) {
+            UIUtils.toast(`불량수는 작업 수량보다 클 수 없습니다. 작업 ${UIUtils.formatNumber(work)} EA / 불량 ${UIUtils.formatNumber(defect)} EA`, 'warning');
+            return false;
+        }
+        return true;
+    }
+
     // 검사 데이터 저장 함수
     async function _saveInspection(workId) {
         const work = Storage.getById(PAINTING_WORK_STORE, workId);
@@ -3220,6 +3235,11 @@ const PaintingInspectionModule = (function() {
         const effectiveInspQty = inspectionQty > 0 ? inspectionQty : goodQty;
         if (effectiveInspQty === 0) {
             UIUtils.toast('검사수량이 0입니다. 양품수를 입력해주세요.', 'warning');
+            return;
+        }
+        if (!_validateDefectQtyWithinWorkQty(defectQty, _getPaintingWorkQty(work) || effectiveInspQty)) {
+            const defectQtyEl = document.getElementById('inpDefectQty');
+            if (defectQtyEl) defectQtyEl.focus();
             return;
         }
         if (goodQty + defectQty !== effectiveInspQty) {
@@ -3293,6 +3313,14 @@ const PaintingInspectionModule = (function() {
                     defectCount: count
                 });
             }
+        }
+        const detailDefectTotal = defectDetails.reduce((sum, d) => sum + (Number(d.defectCount) || 0), 0);
+        if (detailDefectTotal !== defectQty) {
+            UIUtils.toast(`불량 유형 합계(${UIUtils.formatNumber(detailDefectTotal)})와 불량수(${UIUtils.formatNumber(defectQty)})가 일치하지 않습니다.`, 'warning');
+            return;
+        }
+        if (!_validateDefectQtyWithinWorkQty(detailDefectTotal, _getPaintingWorkQty(work) || effectiveInspQty)) {
+            return;
         }
 
         // 검사 결과 1건만 저장
@@ -4607,9 +4635,24 @@ const PaintingInspectionModule = (function() {
         const goodQty = parseInt(data.goodQty || 0);
         const defectQty = parseInt(data.defectQty || 0);
         const inspectionQty = parseInt(data.inspectionQty || inspection.inspectionQty || 0);
+        const workId = inspection.workId || inspection.productId;
+        const work = workId ? Storage.getById(PAINTING_WORK_STORE, workId) : null;
+        const workQty = _getPaintingWorkQty(work) || inspectionQty;
 
+        if (!_validateDefectQtyWithinWorkQty(defectQty, workQty)) {
+            return false;
+        }
         if (goodQty + defectQty !== inspectionQty) {
             UIUtils.toast(`양품수(${goodQty}) + 불량수(${defectQty}) = 검사수량(${inspectionQty})이어야 합니다.`, 'warning');
+            return false;
+        }
+        const detailDefectTotal = (data.defects || inspection.defects || [])
+            .reduce((sum, d) => sum + (Number(d.defectCount) || 0), 0);
+        if (detailDefectTotal !== defectQty) {
+            UIUtils.toast(`불량 유형 합계(${UIUtils.formatNumber(detailDefectTotal)})와 불량수(${UIUtils.formatNumber(defectQty)})가 일치하지 않습니다.`, 'warning');
+            return false;
+        }
+        if (!_validateDefectQtyWithinWorkQty(detailDefectTotal, workQty)) {
             return false;
         }
 

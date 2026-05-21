@@ -5,7 +5,7 @@
 
 const DB = (function() {
     const DB_NAME = 'ProductionMES_DB';
-    const DB_VERSION = 40;
+    const DB_VERSION = 41;
     let db = null;
 
     // 스토어 이름 - 전체 공정에 대응
@@ -127,6 +127,9 @@ const DB = (function() {
 
         // 교반시간 작업기준서 데이터 (v40)
         AGIT_STD_DATA: 'agit_std_data',
+
+        // 잔여도료 포장방법 작업기준서 데이터 (v41)
+        REMAIN_PAINT_DATA: 'remain_paint_data',
 
         // 설정
         CONFIG: 'config'
@@ -1239,6 +1242,11 @@ const DB = (function() {
                 // ── 교반시간 작업기준서 (v40) ───────────────────────────
                 if (!database.objectStoreNames.contains(STORES.AGIT_STD_DATA)) {
                     database.createObjectStore(STORES.AGIT_STD_DATA, { keyPath: 'id' });
+                }
+
+                // ── 잔여도료 포장방법 작업기준서 (v41) ──────────────────
+                if (!database.objectStoreNames.contains(STORES.REMAIN_PAINT_DATA)) {
+                    database.createObjectStore(STORES.REMAIN_PAINT_DATA, { keyPath: 'id' });
                 }
             };
         });
