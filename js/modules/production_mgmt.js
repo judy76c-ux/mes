@@ -528,11 +528,6 @@ var ProdStandardsModule = (function() {
                     <div style="color:var(--text-muted);font-size:.92rem;">
                         관리계획서, 작업표준서, 기준서 등록 현황을 한 화면에서 확인합니다.
                     </div>
-                    <button class="btn btn-secondary" onclick="ProdStandardsModule.openStationManager()"
-                        style="display:flex;align-items:center;gap:6px;">
-                        <span class="material-symbols-outlined" style="font-size:18px;">tune</span>
-                        세부공정 관리
-                    </button>
                 </div>
 
                 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-bottom:18px;">
@@ -605,16 +600,6 @@ var ProdStandardsModule = (function() {
 
         container.innerHTML = `
             <div class="fade-in-up">
-                <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-secondary" onclick="ProdStandardsModule.openStationManager()"
-                            style="display:flex; align-items:center; gap:5px; font-size:13px;">
-                            <span class="material-symbols-outlined" style="font-size:16px;">tune</span>
-                            세부공정 관리
-                        </button>
-                    </div>
-                </div>
-
                 ${_renderDocTypeTabs()}
 
                 ${_curDocType === DOC_CONTROL_PLAN ? `
@@ -643,10 +628,17 @@ var ProdStandardsModule = (function() {
 
                             <!-- CP 공정 흐름 선택 -->
                             <div class="form-group" style="margin:0; flex:1; min-width:280px;">
-                                <label class="form-label" style="font-weight:700; white-space:nowrap;">
-                                    <span class="material-symbols-outlined" style="font-size:13px; vertical-align:middle;">route</span>
-                                    CP 공정 흐름 선택
-                                </label>
+                                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;">
+                                    <label class="form-label" style="font-weight:700; white-space:nowrap; margin:0;">
+                                        <span class="material-symbols-outlined" style="font-size:13px; vertical-align:middle;">route</span>
+                                        CP 공정 흐름 선택
+                                    </label>
+                                    <button class="btn btn-secondary btn-sm" onclick="ProdStandardsModule.openStationManager()"
+                                        style="display:flex; align-items:center; gap:5px; font-size:12px; white-space:nowrap;">
+                                        <span class="material-symbols-outlined" style="font-size:15px;">tune</span>
+                                        세부공정 관리
+                                    </button>
+                                </div>
                                 <div id="cpFlowSelectorContainer">${_cpFlowSelectorHtml()}</div>
                             </div>
 
