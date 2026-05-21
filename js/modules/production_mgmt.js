@@ -598,7 +598,7 @@ var ProdStandardsModule = (function() {
     function _renderStandardsDetail(container) {
         _stdView = 'detail';
         if (window.Router && typeof Router.setPageTitle === 'function') {
-            Router.setPageTitle(`<button class="topbar-back-link" onclick="ProdStandardsModule.render(document.getElementById('contentArea'))"><span class="material-symbols-outlined">arrow_back</span> 제조 관리 표준으로 돌아가기</button>`);
+            Router.setPageTitle(`<button class="topbar-back-link" onclick="ProdStandardsModule.render(document.getElementById('contentArea'))"><span class="material-symbols-outlined">arrow_back</span> 제조 관리 표준 돌아가기</button>`);
         }
         const { cars } = _productOptions();
         const carOpts = cars.map(c => `<option value="${c}" ${c === _curCarModel ? 'selected' : ''}>${c}</option>`).join('');
