@@ -16,6 +16,7 @@ const Storage = (function() {
   // base64 이미지 등 대용량 데이터는 NAS MariaDB 대신 IndexedDB에 직접 저장
   const LOCAL_ONLY_STORES = new Set([
     STORES.INJ_INSP_STANDARDS,   // 수입검사 기준 사진 (base64 이미지)
+    STORES.INJECT_COLOR_STD,     // 사출컬러 기준서 파일 (Blob — NAS 전송 불가)
   ]);
 
   // 초기화: API 서버에서 모든 데이터 로드

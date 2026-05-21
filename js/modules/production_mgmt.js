@@ -496,6 +496,10 @@ var ProdStandardsModule = (function() {
     }
 
     function _renderStandardsSummary(container) {
+        if (window.Router && typeof Router.setPageTitle === 'function') {
+            Router.setPageTitle('제조 관리 표준');
+        }
+
         const allStandards = Storage.getAll(STORE) || [];
         const cpRows = allStandards.filter(r => r._docKind !== STANDARD_DOC_KIND);
         const cpProductCount = _countUnique(cpRows, r => `${r.carModel || ''}||${r.partName || ''}`);
@@ -520,12 +524,9 @@ var ProdStandardsModule = (function() {
 
         container.innerHTML = `
             <div class="fade-in-up">
-                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px;flex-wrap:wrap;">
-                    <div>
-                        <div style="font-size:1.35rem;font-weight:800;color:var(--text-primary);margin-bottom:6px;">제조 관리 표준</div>
-                        <div style="color:var(--text-muted);font-size:.92rem;">
-                            관리계획서, 작업표준서, 기준서 등록 현황을 한 화면에서 확인합니다.
-                        </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px;flex-wrap:wrap;">
+                    <div style="color:var(--text-muted);font-size:.92rem;">
+                        관리계획서, 작업표준서, 기준서 등록 현황을 한 화면에서 확인합니다.
                     </div>
                     <button class="btn btn-secondary" onclick="ProdStandardsModule.openStationManager()"
                         style="display:flex;align-items:center;gap:6px;">
@@ -596,6 +597,9 @@ var ProdStandardsModule = (function() {
 
     function _renderStandardsDetail(container) {
         _stdView = 'detail';
+        if (window.Router && typeof Router.setPageTitle === 'function') {
+            Router.setPageTitle(`<button class="topbar-back-link" onclick="ProdStandardsModule.render(document.getElementById('contentArea'))"><span class="material-symbols-outlined">arrow_back</span> 제조 관리 표준으로 돌아가기</button>`);
+        }
         const { cars } = _productOptions();
         const carOpts = cars.map(c => `<option value="${c}" ${c === _curCarModel ? 'selected' : ''}>${c}</option>`).join('');
 
@@ -603,11 +607,6 @@ var ProdStandardsModule = (function() {
             <div class="fade-in-up">
                 <div class="page-header">
                     <div class="page-actions">
-                        <button class="btn btn-outline" onclick="ProdStandardsModule.render(document.getElementById('contentArea'))"
-                            style="display:flex; align-items:center; gap:5px; font-size:13px;">
-                            <span class="material-symbols-outlined" style="font-size:16px;">arrow_back</span>
-                            표준 메인
-                        </button>
                         <button class="btn btn-secondary" onclick="ProdStandardsModule.openStationManager()"
                             style="display:flex; align-items:center; gap:5px; font-size:13px;">
                             <span class="material-symbols-outlined" style="font-size:16px;">tune</span>
@@ -5916,35 +5915,6 @@ window.addEventListener('load', function() {
 var ProdConditionsModule = (function() {
     const STORE = DB.STORES.PROD_CONDITIONS;
 
-    function render(container) {
-        const filterHTML = `
-            <div class="form-group">
-                <label class="form-label">시작일</label>
-                <input type="date" class="form-input" id="pcFilterStart" value="${UIUtils.monthAgo()}">
-            </div>
-            <div class="form-group">
-                <label class="form-label">종료일</label>
-                <input type="date" class="form-input" id="pcFilterEnd" value="${UIUtils.today()}">
-            </div>
-            <div class="form-group">
-                <label class="form-label">라인</label>
-                <select class="form-select" id="pcFilterLine">
-                    <option value="">전체 라인</option>
-                    <option value="A-LINE">도장-A</option>
-                    <option value="B-LINE">도장-B</option>
-                </select>
-            </div>
-            <div class="form-group" style="align-self:flex-end;">
-                <button class="btn btn-outline" onclick="ProdConditionsModule.search()">
-                    <span class="material-symbols-outlined">search</span> 조회
-                </button>
-            </div>
-        `;
-        const headers = ['No', '일자', '라인', '차종/품명', '컨베이어', '작업항목 확인', '작업자'];
-        ProdUtils.renderMain(container, '작업조건 관리', '공정조건 C/SHEET 기반의 매일 정밀 작업 조건을 기록합니다.', 'ProdConditionsModule.openAddModal()', 'ProdConditionsModule.exportData()', filterHTML, 'pcTable', headers);
-        search();
-    }
-
     function search() {
         const start = document.getElementById('pcFilterStart').value;
         const end = document.getElementById('pcFilterEnd').value;
@@ -6179,8 +6149,192 @@ var ProdConditionsModule = (function() {
         Storage.exportToCSV(headers, rows, '공정조건기록');
     }
 
+    // ══════════════════════════════════════════════════════════════════
+    // 사출컬러 기준서 관리
+    // ══════════════════════════════════════════════════════════════════
+    const CS_STORE = DB.STORES.INJECT_COLOR_STD;
+
+    function _fmtSize(bytes) {
+        if (!bytes) return '-';
+        if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+        return Math.round(bytes / 1024) + ' KB';
+    }
+
+    function _appendColorStdSection(container) {
+        const wrap = container.querySelector('.fade-in-up');
+        if (!wrap) return;
+        const el = document.createElement('div');
+        el.id = 'colorStdSection';
+        el.style.marginTop = '20px';
+        _refreshColorStdHTML(el);
+        wrap.appendChild(el);
+    }
+
+    function _refreshColorStdSection() {
+        const el = document.getElementById('colorStdSection');
+        if (el) _refreshColorStdHTML(el);
+    }
+
+    function _refreshColorStdHTML(el) {
+        const files = (Storage.getAll(CS_STORE) || [])
+            .sort((a, b) => (b.uploadDate || '').localeCompare(a.uploadDate || ''));
+
+        const rows = files.length === 0
+            ? `<div style="text-align:center;padding:28px;color:var(--text-muted);font-size:0.85rem;">
+                   <span class="material-symbols-outlined" style="font-size:2rem;display:block;margin-bottom:8px;opacity:0.4;">folder_open</span>
+                   업로드된 기준서가 없습니다.
+               </div>`
+            : `<table style="width:100%;border-collapse:collapse;font-size:0.84rem;">
+                <thead>
+                    <tr style="background:var(--bg-secondary);">
+                        <th style="padding:7px 12px;text-align:left;font-weight:600;color:var(--text-secondary);">파일명</th>
+                        <th style="padding:7px 12px;text-align:left;font-weight:600;color:var(--text-secondary);">업로드일</th>
+                        <th style="padding:7px 12px;text-align:left;font-weight:600;color:var(--text-secondary);">업로드자</th>
+                        <th style="padding:7px 12px;text-align:right;font-weight:600;color:var(--text-secondary);">크기</th>
+                        <th style="padding:7px 12px;text-align:center;font-weight:600;color:var(--text-secondary);">작업</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${files.map((f, i) => `
+                    <tr style="border-top:1px solid var(--border-color);${i === 0 ? 'background:rgba(52,211,153,0.05);' : ''}">
+                        <td style="padding:8px 12px;">
+                            <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;color:var(--accent-green);margin-right:5px;">description</span>
+                            <span style="font-weight:${i === 0 ? '700' : '400'};">${f.filename || '-'}</span>
+                            ${i === 0 ? `<span style="margin-left:7px;background:var(--accent-green);color:#fff;border-radius:4px;padding:1px 7px;font-size:0.68rem;font-weight:700;">현행</span>` : ''}
+                        </td>
+                        <td style="padding:8px 12px;">${f.uploadDate || '-'}</td>
+                        <td style="padding:8px 12px;">${f.uploadedBy || '-'}</td>
+                        <td style="padding:8px 12px;text-align:right;color:var(--text-muted);">${_fmtSize(f.fileSize)}</td>
+                        <td style="padding:8px 12px;text-align:center;white-space:nowrap;">
+                            <button class="btn btn-sm btn-outline"
+                                onclick="ProdConditionsModule.downloadColorStd('${f.id}')"
+                                style="margin-right:4px;">
+                                <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">download</span> 다운로드
+                            </button>
+                            <button class="btn btn-sm btn-danger"
+                                onclick="ProdConditionsModule.removeColorStd('${f.id}')">삭제</button>
+                        </td>
+                    </tr>`).join('')}
+                </tbody>
+               </table>`;
+
+        el.innerHTML = `
+        <div class="card">
+            <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border-color);">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span class="material-symbols-outlined" style="color:var(--accent-blue);font-size:20px;">palette</span>
+                    <span style="font-weight:700;font-size:0.95rem;">사출컬러 기준서</span>
+                    <span style="font-size:0.75rem;color:var(--text-muted);">사출품 COLOR 기준서 파일 이력 관리</span>
+                </div>
+                <div>
+                    <input type="file" id="colorStdFileInput"
+                           accept=".xlsx,.xls"
+                           style="display:none"
+                           onchange="ProdConditionsModule.uploadColorStd(this)">
+                    <button class="btn btn-primary"
+                            onclick="document.getElementById('colorStdFileInput').click()">
+                        <span class="material-symbols-outlined">upload_file</span> 기준서 업로드
+                    </button>
+                </div>
+            </div>
+            <div class="card-body" style="padding:0;">${rows}</div>
+        </div>`;
+    }
+
+    async function uploadColorStd(input) {
+        const file = input.files[0];
+        if (!file) return;
+        const maxMB = 20;
+        if (file.size > maxMB * 1024 * 1024) {
+            UIUtils.toast(`파일 크기가 ${maxMB}MB를 초과합니다.`, 'warning');
+            input.value = '';
+            return;
+        }
+
+        UIUtils.toast('업로드 중...', 'info');
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            try {
+                const record = {
+                    filename:   file.name,
+                    uploadDate: UIUtils.today(),
+                    uploadedBy: (typeof AuthModule !== 'undefined' && AuthModule.currentUser
+                                    ? (AuthModule.currentUser() || {}).name : '') || '-',
+                    fileSize:   file.size,
+                    mimeType:   file.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    fileBlob:   new Blob([e.target.result], { type: file.type })
+                };
+                await Storage.add(CS_STORE, record);
+                UIUtils.toast(`"${file.name}" 업로드 완료`, 'success');
+                input.value = '';
+                _refreshColorStdSection();
+            } catch (err) {
+                console.error(err);
+                UIUtils.toast('업로드 실패: ' + err.message, 'error');
+            }
+        };
+        reader.onerror = () => UIUtils.toast('파일 읽기 실패', 'error');
+        reader.readAsArrayBuffer(file);
+    }
+
+    function downloadColorStd(id) {
+        const rec = Storage.getById(CS_STORE, id);
+        if (!rec) { UIUtils.toast('파일을 찾을 수 없습니다.', 'error'); return; }
+
+        const blob = rec.fileBlob instanceof Blob
+            ? rec.fileBlob
+            : new Blob([rec.fileBlob], { type: rec.mimeType || 'application/octet-stream' });
+
+        const url = URL.createObjectURL(blob);
+        const a   = document.createElement('a');
+        a.href     = url;
+        a.download = rec.filename || 'color_standard.xlsx';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 3000);
+    }
+
+    function removeColorStd(id) {
+        const rec = Storage.getById(CS_STORE, id);
+        const name = rec ? rec.filename : '파일';
+        UIUtils.confirm(`"${name}" 을(를) 삭제하시겠습니까?`, async () => {
+            await Storage.remove(CS_STORE, id);
+            UIUtils.toast('삭제되었습니다.', 'success');
+            _refreshColorStdSection();
+        });
+    }
+
     return {
-        render,
+        render(container) {
+            const filterHTML = `
+                <div class="form-group">
+                    <label class="form-label">시작일</label>
+                    <input type="date" class="form-input" id="pcFilterStart" value="${UIUtils.monthAgo()}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">종료일</label>
+                    <input type="date" class="form-input" id="pcFilterEnd" value="${UIUtils.today()}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">라인</label>
+                    <select class="form-select" id="pcFilterLine">
+                        <option value="">전체 라인</option>
+                        <option value="A-LINE">도장-A</option>
+                        <option value="B-LINE">도장-B</option>
+                    </select>
+                </div>
+                <div class="form-group" style="align-self:flex-end;">
+                    <button class="btn btn-outline" onclick="ProdConditionsModule.search()">
+                        <span class="material-symbols-outlined">search</span> 조회
+                    </button>
+                </div>
+            `;
+            const headers = ['No', '일자', '라인', '차종/품명', '컨베이어', '작업항목 확인', '작업자'];
+            ProdUtils.renderMain(container, '작업조건 관리', '공정조건 C/SHEET 기반의 매일 정밀 작업 조건을 기록합니다.', 'ProdConditionsModule.openAddModal()', 'ProdConditionsModule.exportData()', filterHTML, 'pcTable', headers);
+            search();
+            _appendColorStdSection(container);
+        },
         search,
         openAddModal,
         saveNew,
@@ -6188,7 +6342,10 @@ var ProdConditionsModule = (function() {
         saveEdit,
         remove,
         exportData,
-        toggleLine
+        toggleLine,
+        uploadColorStd,
+        downloadColorStd,
+        removeColorStd
     };
 })();
 

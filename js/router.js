@@ -170,11 +170,17 @@ const Router = (function() {
         return currentPage;
     }
 
+    function setPageTitle(html) {
+        const el = document.getElementById('pageTitle');
+        if (el) el.innerHTML = html;
+    }
+
     return {
         init,
         registerModule,
         navigate,
         getCurrentPage,
+        setPageTitle,
     };
 })();
 

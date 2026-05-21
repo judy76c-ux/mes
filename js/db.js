@@ -5,7 +5,7 @@
 
 const DB = (function() {
     const DB_NAME = 'ProductionMES_DB';
-    const DB_VERSION = 35;
+    const DB_VERSION = 36;
     let db = null;
 
     // 스토어 이름 - 전체 공정에 대응
@@ -112,6 +112,9 @@ const DB = (function() {
 
         // 사출 수입검사 기준 사진 (v34)
         INJ_INSP_STANDARDS: 'inj_insp_standards', // 차종/품명별 검사기준 사진
+
+        // 사출컬러 기준서 파일 (v36)
+        INJECT_COLOR_STD: 'inject_color_standards', // 사출품 COLOR 기준서 파일 이력
 
         // 설정
         CONFIG: 'config'
@@ -545,6 +548,8 @@ const DB = (function() {
         [STORES.WORK_STANDARDS]:             { remove: 'manager',  clear: 'admin'  },
         // ── 수입검사 기준 사진 (v34) ───────────────────────────────
         [STORES.INJ_INSP_STANDARDS]:         { remove: 'manager',  clear: 'admin'  },
+        // ── 사출컬러 기준서 (v36) ──────────────────────────────────
+        [STORES.INJECT_COLOR_STD]:           { remove: 'manager',  clear: 'admin'  },
         // ── 시스템 설정 ────────────────────────────────────────────
         [STORES.CONFIG]:                     { remove: 'admin',    clear: 'admin'  }
     };
@@ -1196,6 +1201,12 @@ const DB = (function() {
                     store.createIndex('carModel',  'carModel',  { unique: false });
                     store.createIndex('partName',  'partName',  { unique: false });
                     store.createIndex('photoType', 'photoType', { unique: false });
+                }
+
+                // ── 사출컬러 기준서 파일 이력 (v36) ───────────────────
+                if (!database.objectStoreNames.contains(STORES.INJECT_COLOR_STD)) {
+                    const store = database.createObjectStore(STORES.INJECT_COLOR_STD, { keyPath: 'id' });
+                    store.createIndex('uploadDate', 'uploadDate', { unique: false });
                 }
             };
         });
