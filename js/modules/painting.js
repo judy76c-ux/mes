@@ -3141,15 +3141,23 @@ const PaintingInspectionModule = (function() {
         const goodQty = parseInt(document.getElementById('inpGoodQty').value || 0);
         const defectQty = inspectionQty - goodQty;
         document.getElementById('inpDefectQty').value = Math.max(0, defectQty);
-        _updateDefectTotal();
+        const totalEl = document.getElementById('inpTotalQty');
+        if (totalEl) totalEl.value = inspectionQty;
     }
 
     function _updateGoodQty() {
         const inspectionQty = parseInt(document.getElementById('inpInspectionQty').value.replace(/,/g, '') || 0);
-        const defectQty = parseInt(document.getElementById('inpDefectQty').value || 0);
+        const defectQtyEl = document.getElementById('inpDefectQty');
+        let defectQty = parseInt(defectQtyEl.value || 0);
+        if (defectQty > inspectionQty) {
+            defectQty = inspectionQty;
+            defectQtyEl.value = inspectionQty;
+            UIUtils.toast(`불량수는 작업 수량보다 클 수 없습니다. 최대 ${UIUtils.formatNumber(inspectionQty)} EA`, 'warning');
+        }
         const goodQty = inspectionQty - defectQty;
         document.getElementById('inpGoodQty').value = Math.max(0, goodQty);
-        _updateDefectTotal();
+        const totalEl = document.getElementById('inpTotalQty');
+        if (totalEl) totalEl.value = Math.max(0, goodQty) + defectQty;
     }
 
     function _calculateInspectionTime() {
@@ -3182,16 +3190,30 @@ const PaintingInspectionModule = (function() {
     function _updateDefectTotal() {
         // 모든 불량 유형 입력값 합산 (inj-*, paint-*)
         let defectSum = 0;
-        document.querySelectorAll('[id^="inj-"], [id^="paint-"]').forEach(el => {
+        const defectInputs = document.querySelectorAll('[id^="inj-"], [id^="paint-"]');
+        defectInputs.forEach(el => {
             defectSum += parseInt(el.value || 0);
         });
+        const inspectionQtyEl = document.getElementById('inpInspectionQty');
+        const maxDefectQty = parseInt(inspectionQtyEl ? inspectionQtyEl.value.replace(/,/g, '') || 0 : 0);
+        if (maxDefectQty > 0 && defectSum > maxDefectQty) {
+            const activeEl = document.activeElement;
+            if (activeEl && Array.from(defectInputs).includes(activeEl)) {
+                const overflow = defectSum - maxDefectQty;
+                const current = parseInt(activeEl.value || 0);
+                activeEl.value = Math.max(0, current - overflow);
+                defectSum = maxDefectQty;
+            } else {
+                defectSum = maxDefectQty;
+            }
+            UIUtils.toast(`불량수는 작업 수량보다 클 수 없습니다. 최대 ${UIUtils.formatNumber(maxDefectQty)} EA`, 'warning');
+        }
 
         // 불량수 자동 입력
         const defectQtyEl = document.getElementById('inpDefectQty');
         if (defectQtyEl) defectQtyEl.value = defectSum;
 
         // 양품수 = 검사수량 - 불량수
-        const inspectionQtyEl = document.getElementById('inpInspectionQty');
         const goodQtyEl = document.getElementById('inpGoodQty');
         if (inspectionQtyEl && goodQtyEl) {
             const inspQty = parseInt(inspectionQtyEl.value.replace(/,/g, '') || 0);

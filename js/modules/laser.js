@@ -1398,10 +1398,24 @@ var LaserInspectionModule = (function() {
     // ─ 계산 헬퍼 ─────────────────────────────────────────────────────
     function _updateDefectTotal() {
         let sum = 0;
-        document.querySelectorAll('[id^="linj-"],[id^="lpaint-"],[id^="llaser-"]').forEach(el => { sum += parseInt(el.value||0); });
+        const defectInputs = document.querySelectorAll('[id^="linj-"],[id^="lpaint-"],[id^="llaser-"]');
+        defectInputs.forEach(el => { sum += parseInt(el.value||0); });
+        const iEl = document.getElementById('liInspQty');
+        const maxDefectQty = parseInt(iEl?.value?.toString().replace(/,/g,'')||0);
+        if (maxDefectQty > 0 && sum > maxDefectQty) {
+            const activeEl = document.activeElement;
+            if (activeEl && Array.from(defectInputs).includes(activeEl)) {
+                const overflow = sum - maxDefectQty;
+                const current = parseInt(activeEl.value || 0);
+                activeEl.value = Math.max(0, current - overflow);
+                sum = maxDefectQty;
+            } else {
+                sum = maxDefectQty;
+            }
+            UIUtils.toast(`불량수는 검사수량보다 클 수 없습니다. 최대 ${UIUtils.formatNumber(maxDefectQty)} EA`, 'warning');
+        }
         const dEl = document.getElementById('liDefectQty');
         if (dEl) dEl.value = sum;
-        const iEl = document.getElementById('liInspQty');
         const gEl = document.getElementById('liGoodQty');
         const tEl = document.getElementById('liTotalQty');
         if (iEl && gEl) gEl.value = Math.max(0, parseInt(iEl.value?.toString().replace(/,/g,'')||0) - sum);
@@ -1413,15 +1427,23 @@ var LaserInspectionModule = (function() {
         const g = parseInt(document.getElementById('liGoodQty')?.value||0);
         const dEl = document.getElementById('liDefectQty');
         if (dEl) dEl.value = Math.max(0, i - g);
-        _updateDefectTotal();
+        const tEl = document.getElementById('liTotalQty');
+        if (tEl) tEl.value = i;
     }
 
     function _updateGoodQty() {
         const i = parseInt((document.getElementById('liInspQty')?.value||'').replace(/,/g,'')||0);
-        const f = parseInt(document.getElementById('liDefectQty')?.value||0);
+        const dEl = document.getElementById('liDefectQty');
+        let f = parseInt(dEl?.value||0);
+        if (f > i) {
+            f = i;
+            if (dEl) dEl.value = i;
+            UIUtils.toast(`불량수는 검사수량보다 클 수 없습니다. 최대 ${UIUtils.formatNumber(i)} EA`, 'warning');
+        }
         const gEl = document.getElementById('liGoodQty');
         if (gEl) gEl.value = Math.max(0, i - f);
-        _updateDefectTotal();
+        const tEl = document.getElementById('liTotalQty');
+        if (tEl) tEl.value = Math.max(0, i - f) + f;
     }
 
     function _calculateInspectionTime() {

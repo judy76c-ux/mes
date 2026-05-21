@@ -17,12 +17,13 @@
 
     // ── 기본 데이터 ──────────────────────────────────────────────────────────
     function _defaultData() {
+        const B64 = (window.STD_ASSETS_B64 || {})['remain-paint'] || {};
         return {
             id: KEY,
             title: '잔여 도료 포장 방법 작업기준서',
             titleEn: 'Remaining Paint Packaging Method Work Standard',
             revision: 'Rev.01',
-            companyLogo: 'assets/remain-paint/image2.png',
+            companyLogo: B64['image2.png'] || 'assets/remain-paint/image2.png',
             history: [
                 { no: '1', date: '',        content: '최초작성' },
                 { no: '2', date: '25.01.23', content: '도료 잔량표 양식 개정' }
@@ -30,7 +31,7 @@
             purpose: '개봉후 잔여량이 남은 도료캔 포장으로 이물의 유입이나 용재 휘발을 방지하여 도료 물성 상태를 유지 하기 위함.',
             purposeEn: "The purpose is to maintain the paint's properties by preventing foreign material ingress or solvent evaporation through the packaging of paint cans with remaining quantities after opening.",
             // ■ 잔량 도료 표기 — 라벨 작성 단계
-            labelExamplePhoto: 'assets/remain-paint/image3.png',
+            labelExamplePhoto: B64['image3.png'] || 'assets/remain-paint/image3.png',
             labelSteps: [
                 { id: 'ls1', text: '도료사 선택 표시 (✔)',    textEn: 'Selecting the paint type (✔)' },
                 { id: 'ls2', text: '도료 COLOR 입력',          textEn: 'Inputting Paint COLOR' },
@@ -65,19 +66,19 @@
                     id: 'ps1', no: '①',
                     title: '공기 차단 랩핑',
                     titleEn: 'Air-tight wrapping',
-                    photo: 'assets/remain-paint/image10.png'
+                    photo: B64['image10.png'] || 'assets/remain-paint/image10.png'
                 },
                 {
                     id: 'ps2', no: '②',
                     title: '노란 커버로 막음',
                     titleEn: 'Sealed with a yellow cover',
-                    photo: 'assets/remain-paint/image8.png'
+                    photo: B64['image8.png'] || 'assets/remain-paint/image8.png'
                 },
                 {
                     id: 'ps3', no: '③',
                     title: '포장 완료',
                     titleEn: 'Packaging complete',
-                    photo: 'assets/remain-paint/image9.png'
+                    photo: B64['image9.png'] || 'assets/remain-paint/image9.png'
                 }
             ],
             // 특기 사항
@@ -95,10 +96,24 @@
         };
     }
 
+    // ── 저장된 파일경로 → base64 마이그레이션 ────────────────────────────────
+    function _migrateAssets(d) {
+        const B64 = (window.STD_ASSETS_B64 || {})['remain-paint'] || {};
+        const _b = (val, key) => (val && val.startsWith('assets/') && B64[key]) ? B64[key] : val;
+        let dirty = false;
+        const _check = (obj, field, key) => { const n = _b(obj[field], key); if (n !== obj[field]) { obj[field] = n; dirty = true; } };
+        _check(d, 'companyLogo', 'image2.png');
+        _check(d, 'labelExamplePhoto', 'image3.png');
+        const stepMap = { ps1:'image10.png', ps2:'image8.png', ps3:'image9.png' };
+        (d.packagingSteps || []).forEach(s => { if (stepMap[s.id]) _check(s, 'photo', stepMap[s.id]); });
+        return dirty;
+    }
+
     // ── 로드/저장 ─────────────────────────────────────────────────────────────
     async function _load() {
         const all = Storage.getAll(STORE) || [];
         _data = all.find(r => r.id === KEY) || _defaultData();
+        if (_migrateAssets(_data)) await Storage.put(STORE, _data);
     }
     async function _save() { await Storage.put(STORE, _data); }
 

@@ -16,13 +16,14 @@
 
     // ── 기본 데이터 ─────────────────────────────────────────────────────────
     function _defaultData() {
+        const B64 = (window.STD_ASSETS_B64 || {})['agit-std'] || {};
         return {
             id: KEY,
             title: '배합공정 교반시간 작업기준서',
             titleEn: 'Mixing Process Agitation Time Work Standard Document',
             revision: 'Rev.01',
-            companyLogo: 'assets/agit-std/image2.png',
-            machinePhoto: 'assets/agit-std/image11.png',
+            companyLogo: B64['image2.png'] || 'assets/agit-std/image2.png',
+            machinePhoto: B64['image11.png'] || 'assets/agit-std/image11.png',
             history: [
                 { no: '1', date: '24.08.30', content: 'SQ인증에 따른 표준류 재정' },
                 { no: '2', date: '24.08.30', content: '이물 혼입방지 커버 추가' }
@@ -55,7 +56,7 @@
                     titleEn: 'Mixing after Opening the Base',
                     desc: '도료 안료 희석을 위해 5분 이상 교반 진행',
                     descEn: 'Mix for more than 5 minutes to remove settling in the paint.',
-                    photo: 'assets/agit-std/image3.png'
+                    photo: B64['image3.png'] || 'assets/agit-std/image3.png'
                 },
                 {
                     id: 'step2',
@@ -64,7 +65,7 @@
                     titleEn: "Mixing of 'Main + Thinner' or 'Main + Hardener + Thinner'",
                     desc: '『주제 + 희석제』혹은 『주제 + 경화제 + 희석제』배합 후 교반\n교반이 진행시 커버를 씌워 덮어 이물 혼입을 방지한다.',
                     descEn: "Mixing of 'Main + Thinner' or 'Main + Hardener + Thinner'.\nDuring mixing, cover the container with a lid to prevent foreign substances from entering.",
-                    photo: 'assets/agit-std/image4.png'
+                    photo: B64['image4.png'] || 'assets/agit-std/image4.png'
                 },
                 {
                     id: 'step3',
@@ -73,7 +74,7 @@
                     titleEn: 'RPM & Time Setting',
                     desc: 'RPM 조정 : ENT 누른 후 △,▽로 조절 (500~600 RPM 설정)\n시간 조정 : TIME 누른 후 △,▽로 조정 후 TIME 한번 더 눌러 셋팅 (15min 이상 설정)',
                     descEn: 'RPM Setting : Press ENT, then adjust with △,▽ (set 500~600 RPM).\nTime Setting : Press TIME, adjust with △,▽, then press TIME again to set (set 15min+).',
-                    photo: 'assets/agit-std/image10.png'
+                    photo: B64['image10.png'] || 'assets/agit-std/image10.png'
                 },
                 {
                     id: 'step4',
@@ -82,17 +83,31 @@
                     titleEn: 'Start Mixing',
                     desc: 'start를 누르면 타이머가 시작되며, 셋팅된 시간(15min)이 도달하면 교반완료 램프와 벨소리 작동.',
                     descEn: 'When you press start, the timer will start operating and when the set time (15 minutes) is reached, the stirring completion lamp will sound and a bell will sound.',
-                    photo: 'assets/agit-std/image12.png'
+                    photo: B64['image12.png'] || 'assets/agit-std/image12.png'
                 }
             ],
             notes: '점도 재조정에 필요한 주제, 신너 추가 투입시 추가 교반을 실시 한다.\nWhen adding thinner, additional stirring is required for viscosity readjustment.'
         };
     }
 
+    // ── 저장된 파일경로 → base64 마이그레이션 ────────────────────────────────
+    function _migrateAssets(d) {
+        const B64 = (window.STD_ASSETS_B64 || {})['agit-std'] || {};
+        const _b = (val, key) => (val && val.startsWith('assets/') && B64[key]) ? B64[key] : val;
+        let dirty = false;
+        const _check = (obj, field, key) => { const n = _b(obj[field], key); if (n !== obj[field]) { obj[field] = n; dirty = true; } };
+        _check(d, 'companyLogo', 'image2.png');
+        _check(d, 'machinePhoto', 'image11.png');
+        const stepMap = { step1:'image3.png', step2:'image4.png', step3:'image10.png', step4:'image12.png' };
+        (d.mixingSteps || []).forEach(s => { if (stepMap[s.id]) _check(s, 'photo', stepMap[s.id]); });
+        return dirty;
+    }
+
     // ── 데이터 로드/저장 ─────────────────────────────────────────────────────
     async function _load() {
         const all = Storage.getAll(STORE) || [];
         _data = all.find(r => r.id === KEY) || _defaultData();
+        if (_migrateAssets(_data)) await Storage.put(STORE, _data);
     }
 
     async function _save() {

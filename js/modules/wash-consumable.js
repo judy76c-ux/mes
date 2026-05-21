@@ -20,6 +20,7 @@
 
     // ── 기본 데이터 ─────────────────────────────────────────────────────────
     function _defaultA() {
+        const B64 = (window.STD_ASSETS_B64 || {})['wash-consumable'] || {};
         return {
             id: KEY_A,
             line: 'A',
@@ -60,14 +61,15 @@
                     cycle: '조업 전 1회 교체',
                     usageMethod: '제품 세척',
                     disposal: '1. 조업전 교체\n사용 오염 전/후 보관함 구분\n▶ 사용후 롤러는 세척 재사용 가능\n▶ 신규 롤러는 실먼지 제거를 위해 세척 사용\n★ 세척은 세탁기에 세제 사용',
-                    photoBefore: 'assets/wash-consumable/image14.png',
-                    photoAfter: 'assets/wash-consumable/image15.png'
+                    photoBefore: B64['image14.png'] || 'assets/wash-consumable/image14.png',
+                    photoAfter: B64['image15.png'] || 'assets/wash-consumable/image15.png'
                 }
             ]
         };
     }
 
     function _defaultB() {
+        const B64 = (window.STD_ASSETS_B64 || {})['wash-consumable'] || {};
         return {
             id: KEY_B,
             line: 'B',
@@ -87,8 +89,8 @@
                     cycle: '2EA/day, 4HR 사용 후 교체',
                     usageMethod: '1장씩 사용\nIPA 도포 후 사용\n30회 사용 후 면 변경\n6면 사용 후 폐기\n1장에 6면',
                     disposal: '제품의 세척 면에 오염 없을 것\n4번 접어 32면 뒤집어 사용\n▼\n세척 소모품 폐기함에 폐기',
-                    photoBefore: 'assets/wash-consumable/image21.png',
-                    photoAfter: 'assets/wash-consumable/image22.png'
+                    photoBefore: B64['image21.png'] || 'assets/wash-consumable/image21.png',
+                    photoAfter: B64['image22.png'] || 'assets/wash-consumable/image22.png'
                 },
                 {
                     id: 'b2', name: '라텍스 장갑', process: '2st WASH',
@@ -102,24 +104,24 @@
                     cycle: '4EA/day, 2HR 사용 후 교체',
                     usageMethod: '10회 사용 후 면 변경\n32면 사용 가능',
                     disposal: '제품의 세척 면에 오염 없을 것\n1번 접어 6면 뒤집어 사용\n▼\n세척 소모품 폐기함에 폐기',
-                    photoBefore: 'assets/wash-consumable/image23.png',
-                    photoAfter: 'assets/wash-consumable/image13.png'
+                    photoBefore: B64['image23.png'] || 'assets/wash-consumable/image23.png',
+                    photoAfter: B64['image13.png'] || 'assets/wash-consumable/image13.png'
                 },
                 {
                     id: 'b4', name: '비닐 장갑', process: 'Loading / Unloading / Inspection / Packaging',
                     cycle: '4 Pair/day, 2HR 사용후 교체',
                     usageMethod: '양손 착용',
                     disposal: '1. 쉬는, 점심 시간에 교체\n2. 손상 및 오염시 즉시 교체\n▼\n세척 소모품 폐기함에 폐기',
-                    photoBefore: 'assets/wash-consumable/image17.png',
-                    photoAfter: 'assets/wash-consumable/image18.png'
+                    photoBefore: B64['image17.png'] || 'assets/wash-consumable/image17.png',
+                    photoAfter: B64['image18.png'] || 'assets/wash-consumable/image18.png'
                 },
                 {
                     id: 'b5', name: '라텍스 장갑', process: 'Loading / Unloading / Inspection / Packaging',
                     cycle: '4 Pair/day, 2HR 사용후 교체',
                     usageMethod: '양손 착용',
                     disposal: '1. 쉬는, 점심 시간에 교체\n2. 손상 및 오염시 즉시 교체\n▼\n세척 소모품 폐기함에 폐기',
-                    photoBefore: 'assets/wash-consumable/image7.png',
-                    photoAfter: 'assets/wash-consumable/image8.png'
+                    photoBefore: B64['image7.png'] || 'assets/wash-consumable/image7.png',
+                    photoAfter: B64['image8.png'] || 'assets/wash-consumable/image8.png'
                 },
                 {
                     id: 'b6', name: '탑 코팅 장갑', process: 'Loading / Unloading / Inspection / Packaging',
@@ -132,11 +134,33 @@
         };
     }
 
+    // ── 저장된 파일경로 → base64 마이그레이션 ────────────────────────────────
+    function _migrateAssets(d) {
+        const B64 = (window.STD_ASSETS_B64 || {})['wash-consumable'] || {};
+        const _b = (val, key) => (val && val.startsWith('assets/') && B64[key]) ? B64[key] : val;
+        let dirty = false;
+        const _chk = (obj, f, k) => { const n = _b(obj[f], k); if (n !== obj[f]) { obj[f] = n; dirty = true; } };
+        const photoMap = {
+            a4: { before: 'image14.png', after: 'image15.png' },
+            b1: { before: 'image21.png', after: 'image22.png' },
+            b3: { before: 'image23.png', after: 'image13.png' },
+            b4: { before: 'image17.png', after: 'image18.png' },
+            b5: { before: 'image7.png',  after: 'image8.png'  }
+        };
+        (d.items || []).forEach(item => {
+            const m = photoMap[item.id];
+            if (m) { _chk(item, 'photoBefore', m.before); _chk(item, 'photoAfter', m.after); }
+        });
+        return dirty;
+    }
+
     // ── 데이터 로드 ──────────────────────────────────────────────────────────
     async function _loadData() {
         const all = Storage.getAll(STORE) || [];
         _dataA = all.find(r => r.id === KEY_A) || _defaultA();
         _dataB = all.find(r => r.id === KEY_B) || _defaultB();
+        if (_migrateAssets(_dataA)) await Storage.put(STORE, _dataA);
+        if (_migrateAssets(_dataB)) await Storage.put(STORE, _dataB);
     }
 
     async function _save() {

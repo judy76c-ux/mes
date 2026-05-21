@@ -17,12 +17,13 @@
 
     // ── 기본 데이터 ──────────────────────────────────────────────────────────
     function _defaultData() {
+        const B64 = (window.STD_ASSETS_B64 || {})['viscosity-std'] || {};
         return {
             id: KEY,
             title: '배합공정 도료 점도 측정 작업기준서',
             titleEn: 'Batch Process Paint Viscosity Measurement Work Standard Document',
             revision: 'Rev.01',
-            companyLogo: 'assets/viscosity-std/image3.png',
+            companyLogo: B64['image3.png'] || 'assets/viscosity-std/image3.png',
             history: [
                 { no: '1', date: '',        content: '최초작성' },
                 { no: '2', date: '24.02.22', content: 'SQ인증에 따른 표준류 개정' }
@@ -36,25 +37,25 @@
                     id: 'ms1', no: '①',
                     text: '세척된 점도계 준비\n스톱워치를 00.00.00 로 셋팅',
                     textEn: 'Prepare a cleaned viscometer.\nSet the stopwatch to 00:00:00.',
-                    photo: 'assets/viscosity-std/image10.jpeg'
+                    photo: B64['image10.jpeg'] || 'assets/viscosity-std/image10.jpeg'
                 },
                 {
                     id: 'ms2', no: '②',
                     text: '도료 안에 점도계 침수 후 교반기는 작동을 멈추어 둔다.',
                     textEn: 'Immerse the viscometer into the paint, and stop the operation of the mixer.',
-                    photo: 'assets/viscosity-std/image13.png'
+                    photo: B64['image13.png'] || 'assets/viscosity-std/image13.png'
                 },
                 {
                     id: 'ms3', no: '③',
                     text: '침수된 점도계를 들어올리는 순간에 스톱워치 시작 누름.',
                     textEn: 'At the moment when the immersed viscometer is raised, press the start button on the stopwatch.',
-                    photo: 'assets/viscosity-std/image11.jpeg'
+                    photo: B64['image11.jpeg'] || 'assets/viscosity-std/image11.jpeg'
                 },
                 {
                     id: 'ms4', no: '④',
                     text: '도료가 모두 나오는 시점에 스톱워치 종료',
                     textEn: 'Stop the stopwatch when all the paint has come out.',
-                    photo: 'assets/viscosity-std/image12.png'
+                    photo: B64['image12.png'] || 'assets/viscosity-std/image12.png'
                 },
                 {
                     id: 'ms5', no: '⑤',
@@ -69,7 +70,7 @@
                     photo: null
                 }
             ],
-            adjustmentDiagram: 'assets/viscosity-std/image4.png',
+            adjustmentDiagram: B64['image4.png'] || 'assets/viscosity-std/image4.png',
             adjustmentCases: [
                 {
                     id: 'ac1',
@@ -100,10 +101,27 @@
         };
     }
 
+    // ── 저장된 파일경로 → base64 마이그레이션 ────────────────────────────────
+    function _migrateAssets(d) {
+        const B64 = (window.STD_ASSETS_B64 || {})['viscosity-std'] || {};
+        const _b = (val, key) => (val && val.startsWith('assets/') && B64[key]) ? B64[key] : val;
+        let dirty = false;
+        const _check = (obj, field, key) => {
+            const n = _b(obj[field], key);
+            if (n !== obj[field]) { obj[field] = n; dirty = true; }
+        };
+        _check(d, 'companyLogo', 'image3.png');
+        _check(d, 'adjustmentDiagram', 'image4.png');
+        const stepMap = { ms1:'image10.jpeg', ms2:'image13.png', ms3:'image11.jpeg', ms4:'image12.png' };
+        (d.measurementSteps || []).forEach(s => { if (stepMap[s.id]) _check(s, 'photo', stepMap[s.id]); });
+        return dirty;
+    }
+
     // ── 로드/저장 ─────────────────────────────────────────────────────────────
     async function _load() {
         const all = Storage.getAll(STORE) || [];
         _data = all.find(r => r.id === KEY) || _defaultData();
+        if (_migrateAssets(_data)) await Storage.put(STORE, _data);
     }
     async function _save() { await Storage.put(STORE, _data); }
 
