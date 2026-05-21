@@ -11,6 +11,7 @@ const SettingsModule = (function() {
     const OPERATORS_STORE = DB.STORES.OPERATORS;
 
     let currentTab = 'products';
+    let _pendingPhoto = null; // 모달 사진 임시 보관
 
     function render(container) {
         container.innerHTML = `
@@ -3882,6 +3883,83 @@ const SettingsModule = (function() {
     // 검사자 관리 탭
     // =====================================================
 
+    // ── 인물 사진 공용 헬퍼 ──────────────────────────────────────────────────
+    function _compressPersonPhoto(file, cb) {
+        const reader = new FileReader();
+        reader.onload = e => {
+            const img = new Image();
+            img.onload = () => {
+                const maxPx = 400;
+                let w = img.width, h = img.height;
+                if (Math.max(w, h) > maxPx) {
+                    const s = maxPx / Math.max(w, h);
+                    w = Math.round(w * s); h = Math.round(h * s);
+                }
+                const cvs = document.createElement('canvas');
+                cvs.width = w; cvs.height = h;
+                cvs.getContext('2d').drawImage(img, 0, 0, w, h);
+                cb(cvs.toDataURL('image/jpeg', 0.85));
+            };
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function previewPersonPhoto(input) {
+        const file = input.files[0];
+        if (!file) return;
+        _compressPersonPhoto(file, b64 => {
+            _pendingPhoto = b64;
+            const preview = document.getElementById('personPhotoPreview');
+            if (preview) {
+                preview.innerHTML = `<img src="${b64}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
+                preview.style.border = 'none';
+            }
+        });
+    }
+
+    function _photoUploadHtml(existingPhoto) {
+        const inner = existingPhoto
+            ? `<img src="${existingPhoto}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`
+            : `<span class="material-symbols-outlined" style="color:var(--text-muted);font-size:32px;">person</span>`;
+        return `
+            <div class="form-group">
+                <label class="form-label">사진</label>
+                <div style="display:flex;align-items:center;gap:16px;margin-top:8px;">
+                    <div id="personPhotoPreview"
+                        style="width:80px;height:80px;border-radius:50%;background:var(--bg-secondary);border:2px dashed var(--border-color);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;cursor:pointer;"
+                        onclick="document.getElementById('personPhotoInput').click()">
+                        ${inner}
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('personPhotoInput').click()">
+                            <span class="material-symbols-outlined">upload</span> 사진 선택
+                        </button>
+                        <input type="file" id="personPhotoInput" accept="image/*" style="display:none"
+                            onchange="SettingsModule.previewPersonPhoto(this)">
+                        <p style="font-size:0.75rem;color:var(--text-muted);margin-top:6px;">클릭하여 업로드 · 자동 압축 (400px)</p>
+                        ${existingPhoto ? `<button type="button" class="btn btn-sm" style="margin-top:4px;color:var(--accent-red);font-size:0.75rem;padding:2px 8px;border:1px solid var(--accent-red);border-radius:4px;background:none;cursor:pointer;" onclick="SettingsModule.clearPersonPhoto()">사진 삭제</button>` : ''}
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    function clearPersonPhoto() {
+        _pendingPhoto = '';  // empty string = delete
+        const preview = document.getElementById('personPhotoPreview');
+        if (preview) {
+            preview.innerHTML = `<span class="material-symbols-outlined" style="color:var(--text-muted);font-size:32px;">person</span>`;
+            preview.style.border = '2px dashed var(--border-color)';
+        }
+    }
+
+    function _avatarHtml(person, size = 48) {
+        if (person.photo) {
+            return `<img src="${person.photo}" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;flex-shrink:0;">`;
+        }
+        return `<div style="width:${size}px;height:${size}px;border-radius:50%;background:var(--accent-blue);color:white;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:${Math.round(size*0.4)}px;flex-shrink:0;">${(person.name || '?').charAt(0)}</div>`;
+    }
+
     function renderInspectorsTab(el) {
         const inspectors = Storage.getAll(INSPECTORS_STORE);
 
@@ -3908,9 +3986,7 @@ const SettingsModule = (function() {
                         ${inspectors.map((insp, i) => `
                             <div class="inspector-item" style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:var(--bg-primary);border-radius:8px;margin-bottom:8px;border:1px solid var(--border-color);">
                                 <div style="display:flex;align-items:center;gap:12px;">
-                                    <div style="width:40px;height:40px;border-radius:50%;background:var(--accent-blue);color:white;display:flex;align-items:center;justify-content:center;font-weight:600;">
-                                        ${(insp.name || '').charAt(0)}
-                                    </div>
+                                    ${_avatarHtml(insp, 48)}
                                     <div>
                                         <div style="font-weight:600;">${insp.name || '-'}</div>
                                         <div style="font-size:0.8rem;color:var(--text-muted);">${insp.qualification || '-'}</div>
@@ -3936,7 +4012,9 @@ const SettingsModule = (function() {
     }
 
     function openAddInspectorModal() {
+        _pendingPhoto = null;
         UIUtils.showModal('검사자 추가', `
+            ${_photoUploadHtml(null)}
             <div class="form-group">
                 <label class="form-label">이름 <span style="color:var(--accent-red)">*</span></label>
                 <input type="text" class="form-input" id="inspName" placeholder="예: 김검사">
@@ -3988,8 +4066,10 @@ const SettingsModule = (function() {
         await Storage.add(INSPECTORS_STORE, {
             name: name.trim(),
             qualification: qualification.trim(),
-            processes
+            processes,
+            photo: _pendingPhoto || null
         });
+        _pendingPhoto = null;
         UIUtils.closeModal();
         UIUtils.toast('검사자가 추가되었습니다.', 'success');
         renderTabContent();
@@ -3998,8 +4078,10 @@ const SettingsModule = (function() {
     function editInspector(id) {
         const insp = Storage.getById(INSPECTORS_STORE, id);
         if (!insp) return;
+        _pendingPhoto = undefined; // undefined = no change
 
         UIUtils.showModal('검사자 수정', `
+            ${_photoUploadHtml(insp.photo || null)}
             <div class="form-group">
                 <label class="form-label">이름 <span style="color:var(--accent-red)">*</span></label>
                 <input type="text" class="form-input" id="editInspName" value="${insp.name || ''}">
@@ -4048,10 +4130,14 @@ const SettingsModule = (function() {
             return;
         }
 
+        const existing = Storage.getById(INSPECTORS_STORE, id);
+        const photo = _pendingPhoto !== undefined ? (_pendingPhoto || null) : (existing && existing.photo) || null;
+        _pendingPhoto = null;
         await Storage.update(INSPECTORS_STORE, id, {
             name: name.trim(),
             qualification: qualification.trim(),
-            processes
+            processes,
+            photo
         });
         UIUtils.closeModal();
         UIUtils.toast('수정되었습니다.', 'success');
@@ -4091,6 +4177,7 @@ const SettingsModule = (function() {
                                 <thead>
                                     <tr>
                                         <th>No</th>
+                                        <th>사진</th>
                                         <th>성함</th>
                                         <th>소속/직함</th>
                                         <th>주요 공정</th>
@@ -4102,6 +4189,7 @@ const SettingsModule = (function() {
                                     ${operators.map((op, i) => `
                                         <tr>
                                             <td>${i + 1}</td>
+                                            <td style="padding:6px 10px;">${_avatarHtml(op, 40)}</td>
                                             <td><strong style="font-size:1.1rem;color:var(--accent-blue);">${op.name}</strong></td>
                                             <td>${op.position || '-'}</td>
                                             <td>${op.dept || '-'}</td>
@@ -4122,7 +4210,9 @@ const SettingsModule = (function() {
     }
 
     function openAddOperatorModal() {
+        _pendingPhoto = null;
         UIUtils.showModal('현장 작업자 등록', `
+            ${_photoUploadHtml(null)}
             <div class="form-group">
                 <label class="form-label">성함 <span style="color:var(--accent-red)">*</span></label>
                 <input type="text" class="form-input" id="opName" placeholder="성함을 입력하세요">
@@ -4162,8 +4252,10 @@ const SettingsModule = (function() {
             name,
             position,
             dept,
-            phone
+            phone,
+            photo: _pendingPhoto || null
         });
+        _pendingPhoto = null;
         UIUtils.closeModal();
         UIUtils.toast(`작업자 ${name}님이 등록되었습니다.`, 'success');
         renderTabContent();
@@ -4172,8 +4264,10 @@ const SettingsModule = (function() {
     function editOperator(id) {
         const op = Storage.getById(OPERATORS_STORE, id);
         if (!op) return;
+        _pendingPhoto = undefined; // undefined = no change
 
         UIUtils.showModal('작업자 정보 수정', `
+            ${_photoUploadHtml(op.photo || null)}
             <div class="form-group">
                 <label class="form-label">성함 <span style="color:var(--accent-red)">*</span></label>
                 <input type="text" class="form-input" id="editOpName" value="${op.name}">
@@ -4209,11 +4303,15 @@ const SettingsModule = (function() {
             return;
         }
 
+        const existingOp = Storage.getById(OPERATORS_STORE, id);
+        const photo = _pendingPhoto !== undefined ? (_pendingPhoto || null) : (existingOp && existingOp.photo) || null;
+        _pendingPhoto = null;
         await Storage.update(OPERATORS_STORE, id, {
             name,
             position,
             dept,
-            phone
+            phone,
+            photo
         });
         UIUtils.closeModal();
         UIUtils.toast('정보가 수정되었습니다.', 'success');
@@ -7265,6 +7363,8 @@ const SettingsModule = (function() {
         filterProductList,
         filterPaintList,
         filterInjectMatList,
+        previewPersonPhoto,
+        clearPersonPhoto,
         renderInspectorsTab,
         openAddInspectorModal,
         saveInspector,

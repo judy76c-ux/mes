@@ -23,7 +23,11 @@ var PajiStdModule = (function () {
     // ════════════════════════════════════════════════════════════════
     // 기본 데이터 (엑셀 파지 기준서에서 추출)
     // ════════════════════════════════════════════════════════════════
-    const _P = p => p ? 'assets/paji-std/' + p : null;
+    const _P = p => {
+        if (!p) return null;
+        const b64 = ((window.STD_ASSETS_B64 || {})['paji-std'] || {})[p];
+        return b64 || ('assets/paji-std/' + p);
+    };
     const _uid = () => '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
     function _defaultA() {
@@ -129,11 +133,29 @@ var PajiStdModule = (function () {
     // ════════════════════════════════════════════════════════════════
     // 데이터 로드/저장
     // ════════════════════════════════════════════════════════════════
+    function _migrateAssets(d) {
+        const B64 = (window.STD_ASSETS_B64 || {})['paji-std'] || {};
+        let dirty = false;
+        const _fix = v => {
+            if (v && typeof v === 'string' && v.startsWith('assets/paji-std/')) {
+                const key = v.replace('assets/paji-std/', '');
+                if (B64[key]) { dirty = true; return B64[key]; }
+            }
+            return v;
+        };
+        (d.sections || []).forEach(sec => {
+            (sec.products || []).forEach(prod => { prod.photo = _fix(prod.photo); });
+        });
+        return dirty;
+    }
+
     async function _loadData() {
         let a = Storage.getById(DATA_STORE, KEY_A);
         let b = Storage.getById(DATA_STORE, KEY_B);
         if (!a) { a = _defaultA(); await Storage.add(DATA_STORE, a).catch(() => {}); }
         if (!b) { b = _defaultB(); await Storage.add(DATA_STORE, b).catch(() => {}); }
+        if (_migrateAssets(a)) await Storage.update(DATA_STORE, a).catch(() => {});
+        if (_migrateAssets(b)) await Storage.update(DATA_STORE, b).catch(() => {});
         _dataA = a;
         _dataB = b;
     }

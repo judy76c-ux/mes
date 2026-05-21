@@ -174,6 +174,7 @@ const App = (function() {
         Router.registerModule('prod-sub-materials', ProdSubMaterialsModule);
         Router.registerModule('prod-quality', ProdQualityModule);
         Router.registerModule('quality-performance', QualityPerformanceModule);
+        Router.registerModule('improvement-activity', ImprovementActivityModule);
         Router.registerModule('limit-samples', LimitSamplesModule);
         Router.registerModule('prod-spc', ProdSpcModule);
         Router.registerModule('prod-equipment', ProdEquipmentModule);

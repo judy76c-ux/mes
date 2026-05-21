@@ -51,6 +51,7 @@ const AuthModule = (function () {
         { id:'five-s',                    label:'3정5S 관리',         group:'생산관리' },
         { id:'prod-quality',              label:'초중종물 관리',      group:'공정품질' },
         { id:'quality-performance',       label:'품질 실적',          group:'공정품질' },
+        { id:'improvement-activity',      label:'개선활동',           group:'공정품질' },
         { id:'limit-samples',             label:'한도 견본',          group:'공정품질' },
         { id:'prod-spc',                  label:'SPC 관리',           group:'공정품질' },
         { id:'settings',                  label:'관리 / 설정',        group:'시스템' },
@@ -96,7 +97,7 @@ const AuthModule = (function () {
                 'painting-inspection','laser-inspection',
                 'shipping-standby','product-warehouse',
                 'prod-standards','prod-conditions','prod-quality',
-                'quality-performance','limit-samples','prod-spc',
+                'quality-performance','improvement-activity','limit-samples','prod-spc',
             ],
 
             /* 영업관리자 — 영업·납품·제품창고 + 생산계획 조회 */

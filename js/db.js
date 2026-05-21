@@ -5,7 +5,7 @@
 
 const DB = (function() {
     const DB_NAME = 'ProductionMES_DB';
-    const DB_VERSION = 42;
+    const DB_VERSION = 43;
     let db = null;
 
     // 스토어 이름 - 전체 공정에 대응
@@ -70,6 +70,7 @@ const DB = (function() {
         PROD_SUB_MATERIALS: 'prod_sub_materials', // 부자재 입고/소진 관리
         PROD_QUALITY_PERFORMANCE: 'prod_quality_performance', // 품질 실적/목표/개선대책 관리
         PROD_LIMIT_SAMPLES: 'prod_limit_samples', // 마스터/한도 견본 대장
+        PROD_IMPROVEMENT_ACTIVITIES: 'prod_improvement_activities', // 개선활동/제안/PDCA 관리
 
         // 검사자/작업자 관리
         INSPECTORS: 'inspectors', // 자격인증 검사자
@@ -537,6 +538,7 @@ const DB = (function() {
         [STORES.PROD_SUB_MATERIALS]:         { remove: 'operator', clear: 'manager'},
         [STORES.PROD_QUALITY_PERFORMANCE]:   { remove: 'operator', clear: 'manager'},
         [STORES.PROD_LIMIT_SAMPLES]:         { remove: 'operator', clear: 'manager'},
+        [STORES.PROD_IMPROVEMENT_ACTIVITIES]: { remove: 'manager',  clear: 'admin'  },
         // ── 영업 관리 (재무 데이터) ────────────────────────────────
         [STORES.SALES_DELIVERY]:             { remove: 'manager',  clear: 'admin'  },
         [STORES.SALES_DELIVERY_PLAN]:        { remove: 'manager',  clear: 'admin'  },
@@ -1181,6 +1183,17 @@ const DB = (function() {
                 }
 
                 // ── 3정5S 관리 (v25) ───────────────────────────────
+                if (!database.objectStoreNames.contains(STORES.PROD_IMPROVEMENT_ACTIVITIES)) {
+                    const store = database.createObjectStore(STORES.PROD_IMPROVEMENT_ACTIVITIES, { keyPath: 'id' });
+                    store.createIndex('date',      'date',      { unique: false });
+                    store.createIndex('proposer',  'proposer',  { unique: false });
+                    store.createIndex('process',   'process',   { unique: false });
+                    store.createIndex('category',  'category',  { unique: false });
+                    store.createIndex('status',    'status',    { unique: false });
+                    store.createIndex('pdcaStage', 'pdcaStage', { unique: false });
+                    store.createIndex('approval',  'approval',  { unique: false });
+                }
+
                 if (!database.objectStoreNames.contains(STORES.S5_INSPECTIONS)) {
                     const store = database.createObjectStore(STORES.S5_INSPECTIONS, { keyPath: 'id' });
                     store.createIndex('date', 'date', { unique: false });

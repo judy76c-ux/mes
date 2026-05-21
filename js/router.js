@@ -32,6 +32,7 @@ const Router = (function() {
         'prod-conditions': '작업조건 관리',
         'paint-mix': '배합/사용 이력',
         'prod-quality': '초중종물 관리',
+        'improvement-activity': '개선활동',
         'prod-equipment': '설비관리',
         'settings': '관리 / 설정',
         'incoming-overview': '수입검사',
