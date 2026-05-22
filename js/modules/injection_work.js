@@ -15,6 +15,13 @@ var InjectionWorkLogModule = (function() {
     // 진입점 (Router 호출)
     // =====================================================================
     function render(container) {
+        try {
+            const requestedTab = sessionStorage.getItem('injectionWorkTab');
+            if (['worklog', 'mold', 'rawmat', 'schedule'].includes(requestedTab)) {
+                _activeTab = requestedTab;
+                sessionStorage.removeItem('injectionWorkTab');
+            }
+        } catch {}
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="iw-tab-bar">

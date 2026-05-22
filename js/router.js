@@ -13,8 +13,9 @@ const Router = (function() {
         'production-plan': '생산 계획 지시서',
         'injection-incoming': '사출 입고',
         'paint-incoming-inspection': '도료 입고 (수입검사)',
+        'injection-process': '사출 공정',
         'injection-work': '사출 작업일지',
-        'raw-material-inventory': '원재료 자재관리 (입출고/재고현황)',
+        'raw-material-inventory': '원재료입출고',
         'paint-inventory': '도료창고(입출고/재고현황)',
         'injection-warehouse': '사출창고 (입출고/재고현황)',
         'painting-work': '도장 작업일지',
@@ -46,6 +47,8 @@ const Router = (function() {
     const PAGE_TITLE_HTML = {
         'injection-incoming': '<button class="topbar-back-link" onclick="Router.navigate(\'incoming-overview\')"><span class="material-symbols-outlined">arrow_back</span> 수입검사로 돌아가기</button>',
         'paint-incoming-inspection': '<button class="topbar-back-link" onclick="Router.navigate(\'incoming-overview\')"><span class="material-symbols-outlined">arrow_back</span> 수입검사로 돌아가기</button>',
+        'injection-work': '<button class="topbar-back-link" onclick="Router.navigate(\'injection-process\')"><span class="material-symbols-outlined">arrow_back</span> 사출 공정으로 돌아가기</button>',
+        'raw-material-inventory': '<button class="topbar-back-link" onclick="Router.navigate(\'injection-process\')"><span class="material-symbols-outlined">arrow_back</span> 사출 공정으로 돌아가기</button>',
         'injection-warehouse': '<button class="topbar-back-link" onclick="Router.navigate(\'warehouse-overview\')"><span class="material-symbols-outlined">arrow_back</span> 자재 창고로 돌아가기</button>',
         'paint-inventory': '<button class="topbar-back-link" onclick="Router.navigate(\'warehouse-overview\')"><span class="material-symbols-outlined">arrow_back</span> 자재 창고로 돌아가기</button>'
     };

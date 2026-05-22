@@ -23,10 +23,10 @@ var WarehouseOverviewModule = (function () {
                 <!-- ── 섹션 카드 ── -->
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:28px;">
                     ${_sectionCard('사출 자재', '사출 부품 입출고 및 재고 현황',
-                        'warehouse', 'var(--accent-blue)', 'rgba(59,130,246,0.12)',
+                        'warehouse', 'var(--accent-blue)', '#ffffff',
                         'injection-warehouse', injBadges)}
                     ${_sectionCard('도료 자재', '도료 입출고 및 재고 · 유효기간 관리',
-                        'palette', '#8b5cf6', 'rgba(139,92,246,0.12)',
+                        'palette', '#8b5cf6', '#ffffff',
                         'paint-inventory', paintBadges)}
                 </div>
 
@@ -89,11 +89,12 @@ var WarehouseOverviewModule = (function () {
 
         return `
             <div onclick="Router.navigate('${page}')"
-                 onmouseenter="this.style.boxShadow='0 4px 20px rgba(0,0,0,0.10)';this.style.transform='translateY(-2px)'"
-                 onmouseleave="this.style.boxShadow='';this.style.transform=''"
-                 style="background:var(--bg-card);border:1px solid var(--border-color);
+                 onmouseenter="this.style.boxShadow='0 6px 24px rgba(0,0,0,0.13)';this.style.transform='translateY(-2px)'"
+                 onmouseleave="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.07)';this.style.transform=''"
+                 style="background:#ffffff;border:1px solid var(--border-color);
                         border-left:4px solid ${accentColor};border-radius:12px;
-                        padding:20px 24px;cursor:pointer;transition:box-shadow 0.2s,transform 0.2s;">
+                        padding:20px 24px;cursor:pointer;transition:box-shadow 0.2s,transform 0.2s;
+                        box-shadow:0 2px 8px rgba(0,0,0,0.07);">
                 <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
                     <div style="width:44px;height:44px;border-radius:10px;background:${iconBg};
                                 display:flex;align-items:center;justify-content:center;flex-shrink:0;">

@@ -144,6 +144,7 @@ const App = (function() {
         Router.registerModule('injection-incoming', InjectionIncomingModule);
         Router.registerModule('injection-warehouse', InjectionWarehouseModule);
         Router.registerModule('paint-incoming-inspection', PaintIncomingInspectionModule);
+        Router.registerModule('injection-process', InjectionProcessModule);
         Router.registerModule('injection-work', InjectionWorkLogModule);
         Router.registerModule('raw-material-inventory', RawMaterialInventoryModule);
         Router.registerModule('paint-inventory', PaintInventoryModule);
