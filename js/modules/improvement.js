@@ -153,7 +153,7 @@ var ImprovementActivityModule = (function() {
         const votes = r.votes || { agree: 0, disagree: 0 };
         return `<tr>
             <td>${_fmtDate(r.date)}</td>
-            <td><strong>${_esc(r.proposer || '-')}</strong><div style="font-size:0.75rem;color:var(--text-muted);">${_esc(r.department || '')}</div></td>
+            <td><strong>${_esc(r.proposer || '-')}</strong></td>
             <td>${r.category === 'proposal' ? _badge('개선제안','rgba(16,185,129,.12)','#047857') : _badge('문제점','rgba(239,68,68,.12)','#b91c1c')}</td>
             <td><strong>${_esc(r.title || '-')}</strong><div style="font-size:0.78rem;color:var(--text-muted);">${_esc(r.process || '-')}</div></td>
             <td>${_pdcaMini(r.pdcaStage)}</td>
@@ -203,10 +203,7 @@ var ImprovementActivityModule = (function() {
     }
 
     function selectPerson(key) {
-        const person = _peopleList().find(p => p.personKey === key);
-        if (!person) return;
-        const deptEl = document.getElementById('iaDept');
-        if (deptEl && !deptEl.value.trim()) deptEl.value = person.deptText || person.roleLabel || '';
+        // Selection is kept as the registered proposer only.
     }
 
     function _form(r = {}) {
@@ -215,7 +212,6 @@ var ImprovementActivityModule = (function() {
                 <div class="form-group"><label class="form-label">등록일</label><input type="date" class="form-input" id="iaDate" value="${r.date || UIUtils.today()}"></div>
                 <div class="form-group"><label class="form-label">구분</label><select class="form-select" id="iaCategory"><option value="problem" ${r.category==='problem'?'selected':''}>문제점</option><option value="proposal" ${r.category==='proposal'?'selected':''}>개선제안</option></select></div>
                 <div class="form-group"><label class="form-label">제안자 <span style="color:var(--accent-red)">*</span></label><select class="form-select" id="iaProposer" onchange="ImprovementActivityModule.selectPerson(this.value)">${_personOptions(r.proposer || '', r.proposerRole || '')}</select></div>
-                <div class="form-group"><label class="form-label">부서/라인</label><input class="form-input" id="iaDept" value="${_esc(r.department||'')}" placeholder="예: 도장 A라인"></div>
                 <div class="form-group"><label class="form-label">공정/위치</label><input class="form-input" id="iaProcess" value="${_esc(r.process||'')}" placeholder="문제 발생 공정 또는 위치"></div>
                 <div class="form-group"><label class="form-label">제목</label><input class="form-input" id="iaTitle" value="${_esc(r.title||'')}" placeholder="개선활동 제목"></div>
             </div>
@@ -252,7 +248,7 @@ var ImprovementActivityModule = (function() {
             proposer: person?.name || legacyName,
             proposerRole: person?.roleLabel || (legacyName ? old.proposerRole || '' : ''),
             proposerRef: personKey,
-            department: document.getElementById('iaDept').value.trim(),
+            department: '',
             process: document.getElementById('iaProcess').value.trim(),
             title: document.getElementById('iaTitle').value.trim(),
             problem: document.getElementById('iaProblem').value.trim(),
@@ -363,8 +359,8 @@ var ImprovementActivityModule = (function() {
         });
     }
     function exportData() {
-        const rows = _filtered().map(r => [r.date, r.proposer, r.department, r.category === 'proposal' ? '개선제안' : '문제점', r.process, r.title, _stageLabel(r.pdcaStage), _statusLabel(r.status), r.approval, r.owner || '', r.dueDate || '', r.goal || '', r.effect || '', r.cost || '']);
-        Storage.exportToCSV(['등록일','제안자','부서/라인','구분','공정','제목','PDCA','상태','승인','담당자','예정일','목표','효과','비용'], rows, '개선활동');
+        const rows = _filtered().map(r => [r.date, r.proposer, r.category === 'proposal' ? '개선제안' : '문제점', r.process, r.title, _stageLabel(r.pdcaStage), _statusLabel(r.status), r.approval, r.owner || '', r.dueDate || '', r.goal || '', r.effect || '', r.cost || '']);
+        Storage.exportToCSV(['등록일','제안자','구분','공정','제목','PDCA','상태','승인','담당자','예정일','목표','효과','비용'], rows, '개선활동');
     }
 
     return { render, setFilter, setMonth, selectPerson, openProposalModal, saveProposal, openDetail, vote, setApproval, savePdca, remove, exportData };
