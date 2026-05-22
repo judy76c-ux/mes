@@ -19,6 +19,7 @@ const Router = (function() {
         'injection-warehouse': '사출창고 (입출고/재고현황)',
         'painting-work': '도장 작업일지',
         'painting-inspection': '도장 검사 일지',
+        'laser-process': '레이져 공정',
         'laser-standby': '레이져 대기품',
         'laser-work': '레이져 작업일지',
         'laser-inspection': '레이져 검사일지',

@@ -151,6 +151,8 @@ const App = (function() {
         Router.registerModule('injection-layout', InjectionLayoutModule);
         Router.registerModule('painting-work', PaintingWorkModule);
         Router.registerModule('painting-inspection', PaintingInspectionModule);
+        Router.registerModule('laser-process', LaserHubModule);
+        // 개별 페이지 라우트도 유지 (내부 링크 호환)
         Router.registerModule('laser-standby', LaserStandbyModule);
         Router.registerModule('laser-work', LaserWorkModule);
         Router.registerModule('laser-inspection', LaserInspectionModule);
