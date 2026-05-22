@@ -12,9 +12,6 @@ var PaintIncomingInspectionModule = (function() {
                         <button class="btn btn-primary" onclick="PaintIncomingInspectionModule.openAddModal()">
                             <span class="material-symbols-outlined">add</span> 검사 등록
                         </button>
-                        <button class="btn btn-secondary" onclick="PaintIncomingInspectionModule.exportData()">
-                            <span class="material-symbols-outlined">download</span> 내보내기
-                        </button>
                     </div>
                 </div>
 

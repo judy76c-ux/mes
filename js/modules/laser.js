@@ -50,13 +50,11 @@ var LaserWorkModule = (function() {
     function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
+                ${LaserProcessUI.renderSection('laser-work', '레이져 작업일지', '레이져 작업 실적, 설비별 가동 이력, 작업자와 초중종물 확인 기록을 관리합니다.')}
                 <div class="page-header">
                     <div class="page-actions">
                         <button class="btn btn-primary" onclick="LaserWorkModule.openAddModal()">
                             <span class="material-symbols-outlined">add</span> 작업 등록
-                        </button>
-                        <button class="btn btn-secondary" onclick="LaserWorkModule.exportData()">
-                            <span class="material-symbols-outlined">download</span> 내보내기
                         </button>
                     </div>
                 </div>
@@ -668,13 +666,7 @@ var LaserInspectionModule = (function() {
     function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
-                <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-primary" onclick="LaserInspectionModule.openAddModal()">
-                            <span class="material-symbols-outlined">add</span> 검사 등록
-                        </button>
-                    </div>
-                </div>
+                ${LaserProcessUI.renderSection('laser-inspection', '외관 검사 일지', '레이져 작업 완료품의 외관 검사 결과와 불량 유형, 검사 대기 현황을 관리합니다.')}
 
                 <!-- 검사 대기 섹션 -->
                 <div class="card" style="margin-bottom:20px; border-left:3px solid var(--accent-orange, #f59e0b);">
@@ -703,6 +695,11 @@ var LaserInspectionModule = (function() {
                     <div class="form-group" style="align-self:flex-end;">
                         <button class="btn btn-outline" onclick="LaserInspectionModule.search()">
                             <span class="material-symbols-outlined">search</span> 조회
+                        </button>
+                    </div>
+                    <div class="form-group" style="align-self:flex-end;">
+                        <button class="btn btn-primary" onclick="LaserInspectionModule.openAddModal()">
+                            <span class="material-symbols-outlined">add</span> 수동 검사 등록
                         </button>
                     </div>
                 </div>
@@ -1560,13 +1557,11 @@ var LaserStandbyModule = (function() {
     function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
+                ${LaserProcessUI.renderSection('laser-standby', '레이져대기품현황', '도장 완료 후 레이져 공정 대기 중인 재공품 현황과 재고 흐름을 확인합니다.')}
                 <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-outline" onclick="LaserStandbyModule.refresh()">
-                            <span class="material-symbols-outlined">refresh</span> 새로고침
-                        </button>
+                    <div class="page-actions" style="width:100%;display:flex;justify-content:flex-end;">
                         <button class="btn btn-secondary" onclick="LaserStandbyModule.openLayout()">
-                            <span class="material-symbols-outlined">map</span> 레이아웃 보기/편집
+                            <span class="material-symbols-outlined">map</span> 레이아웃 보기
                         </button>
                     </div>
                 </div>

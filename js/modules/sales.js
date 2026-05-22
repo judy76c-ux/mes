@@ -16,9 +16,6 @@ const SalesUtils = {
                         <button class="btn btn-primary" onclick="${onAdd}">
                             <span class="material-symbols-outlined">add</span> ${addLabel}
                         </button>
-                        <button class="btn btn-secondary" onclick="${onExport}">
-                            <span class="material-symbols-outlined">download</span> 내보내기
-                        </button>
                     </div>
                 </div>
 

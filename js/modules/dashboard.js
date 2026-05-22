@@ -45,10 +45,10 @@ const DashboardModule = (function() {
 
     /* ══════════════════════════════════════════════════════════
        타일 HTML 빌더
-       size: 'lg' = 생산현황(크게), 'md' = 점검/관리(중간)
+       size: 'sm' = 생산현황(소), 'xs' = 점검/관리(초소형)
        valueColor 컬러에 따라 배경/테두리 자동 결정
     ══════════════════════════════════════════════════════════ */
-    function _tile({ icon, title, value, valueColor, sub, onClick, badge = '', size = 'md' }) {
+    function _tile({ icon, title, value, valueColor, sub, onClick, badge = '', size = 'xs' }) {
         const C = valueColor || '#64748b';
         const palettes = {
             '#ef4444': { bg:'#fff5f5', border:'#fca5a5' },
@@ -64,17 +64,17 @@ const DashboardModule = (function() {
         const pal = palettes[C] || { bg:'#f8fafc', border:'#e2e8f0' };
 
         // 사이즈별 수치 정의
-        const lg = size === 'lg';
-        const pad     = lg ? '20px 22px 16px' : '14px 16px 12px';
-        const minH    = lg ? '148px'           : '116px';
-        const iconSz  = lg ? '26px'            : '20px';
-        const valSz   = lg ? '2.4rem'          : '1.75rem';
-        const subSz   = lg ? '.8rem'           : '.71rem';
-        const titleSz = lg ? '.72rem'          : '.65rem';
-        const badgeSz = lg ? '.62rem'          : '.58rem';
-        const badgePad= lg ? '2px 7px'         : '1px 5px';
-        const radius  = lg ? '12px'            : '10px';
-        const leftBdr = lg ? '5px'             : '4px';
+        const sm = size === 'sm';
+        const pad     = sm ? '10px 14px 8px'  : '8px 10px 6px';
+        const minH    = sm ? '82px'            : '66px';
+        const iconSz  = sm ? '20px'            : '16px';
+        const valSz   = sm ? '1.55rem'         : '1.2rem';
+        const subSz   = sm ? '.72rem'          : '.63rem';
+        const titleSz = sm ? '.65rem'          : '.6rem';
+        const badgeSz = sm ? '.58rem'          : '.55rem';
+        const badgePad= sm ? '2px 6px'         : '1px 5px';
+        const radius  = '9px';
+        const leftBdr = '4px';
 
         return `
         <div onclick="${onClick}"
@@ -83,9 +83,9 @@ const DashboardModule = (function() {
                     background:${pal.bg};cursor:pointer;
                     min-height:${minH};display:flex;flex-direction:column;justify-content:space-between;
                     transition:box-shadow .18s,transform .12s;"
-             onmouseover="this.style.boxShadow='0 6px 20px rgba(0,0,0,0.10)';this.style.transform='translateY(-2px)'"
+             onmouseover="this.style.boxShadow='0 4px 14px rgba(0,0,0,0.09)';this.style.transform='translateY(-2px)'"
              onmouseout="this.style.boxShadow='none';this.style.transform='none'">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;">
                 <span class="material-symbols-outlined" style="font-size:${iconSz};color:${C};opacity:.85;">${icon}</span>
                 ${badge
                     ? `<span style="font-size:${badgeSz};padding:${badgePad};background:${C};color:#fff;
@@ -93,10 +93,10 @@ const DashboardModule = (function() {
                     : ''}
             </div>
             <div>
-                <div style="font-size:${valSz};font-weight:900;color:${C};line-height:1;margin-bottom:4px;">
+                <div style="font-size:${valSz};font-weight:900;color:${C};line-height:1;margin-bottom:2px;">
                     ${value}
                 </div>
-                <div style="font-size:${subSz};font-weight:700;color:${C};margin-bottom:3px;opacity:.9;">${sub}</div>
+                <div style="font-size:${subSz};font-weight:700;color:${C};margin-bottom:2px;opacity:.9;">${sub}</div>
                 <div style="font-size:${titleSz};color:var(--text-muted);font-weight:500;">${title}</div>
             </div>
         </div>`;
@@ -107,33 +107,52 @@ const DashboardModule = (function() {
     ══════════════════════════════════════════════════════════ */
     function render(container) {
         container.innerHTML = `
-        <div class="fade-in-up">
-            <!-- 생산 현황 타일 -->
-            <div id="dashProdTiles" style="margin-bottom:16px;"></div>
+        <div class="fade-in-up" style="display:flex;flex-direction:column;gap:10px;">
+            <!-- 생산 현황 타일 (6-col 1행) -->
+            <div id="dashProdTiles"></div>
 
             <!-- 점검/관리 타일 -->
-            <div id="dashMonitorTiles" style="margin-bottom:24px;"></div>
+            <div id="dashMonitorTiles"></div>
 
-            <!-- 개선활동 현황 -->
-            <div id="dashImprovementTiles" style="margin-bottom:24px;"></div>
-
-            <!-- 차트 -->
-            <div class="dashboard-grid" id="dashboardCharts">
-                <div class="chart-card">
-                    <h4><span class="material-symbols-outlined">bar_chart</span> 공정별 처리 현황</h4>
-                    <canvas id="processChart"></canvas>
-                </div>
-                <div class="chart-card">
-                    <h4><span class="material-symbols-outlined">trending_up</span> 일별 생산 추이</h4>
-                    <canvas id="trendChart"></canvas>
-                </div>
-                <div class="chart-card">
-                    <h4><span class="material-symbols-outlined">pie_chart</span> 불량 유형별 분포</h4>
-                    <canvas id="defectPieChart"></canvas>
-                </div>
-                <div class="chart-card">
-                    <h4><span class="material-symbols-outlined">analytics</span> 불량률 추이</h4>
-                    <canvas id="defectRateChart"></canvas>
+            <!-- 하단: 개선활동(좌) + 차트 2×2(우) -->
+            <div style="display:grid;grid-template-columns:minmax(220px,1fr) minmax(0,2.4fr);gap:10px;min-height:0;">
+                <div id="dashImprovementTiles"></div>
+                <div class="card" style="margin-bottom:0;padding:10px 14px;">
+                    <div style="font-size:.65rem;font-weight:700;color:var(--text-muted);letter-spacing:.07em;
+                                text-transform:uppercase;display:flex;align-items:center;gap:5px;margin-bottom:8px;">
+                        <span class="material-symbols-outlined" style="font-size:13px;">analytics</span>
+                        차트 (최근 30일)
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;">
+                            <div style="font-size:.63rem;font-weight:700;color:var(--text-secondary);
+                                        display:flex;align-items:center;gap:4px;margin-bottom:6px;">
+                                <span class="material-symbols-outlined" style="font-size:12px;">bar_chart</span>공정별 처리 현황
+                            </div>
+                            <canvas id="processChart" style="max-height:140px;"></canvas>
+                        </div>
+                        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;">
+                            <div style="font-size:.63rem;font-weight:700;color:var(--text-secondary);
+                                        display:flex;align-items:center;gap:4px;margin-bottom:6px;">
+                                <span class="material-symbols-outlined" style="font-size:12px;">trending_up</span>일별 생산 추이
+                            </div>
+                            <canvas id="trendChart" style="max-height:140px;"></canvas>
+                        </div>
+                        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;">
+                            <div style="font-size:.63rem;font-weight:700;color:var(--text-secondary);
+                                        display:flex;align-items:center;gap:4px;margin-bottom:6px;">
+                                <span class="material-symbols-outlined" style="font-size:12px;">pie_chart</span>불량 유형별 분포
+                            </div>
+                            <canvas id="defectPieChart" style="max-height:140px;"></canvas>
+                        </div>
+                        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;">
+                            <div style="font-size:.63rem;font-weight:700;color:var(--text-secondary);
+                                        display:flex;align-items:center;gap:4px;margin-bottom:6px;">
+                                <span class="material-symbols-outlined" style="font-size:12px;">analytics</span>불량률 추이
+                            </div>
+                            <canvas id="defectRateChart" style="max-height:140px;"></canvas>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>`;
@@ -168,34 +187,33 @@ const DashboardModule = (function() {
         const sbCount     = standby.filter(s => s.status === '대기').length;
 
         el.innerHTML = `
-        <div class="card" style="margin-bottom:0;">
-            <div style="padding:14px 18px 0;font-size:.72rem;font-weight:700;color:var(--text-muted);
-                        letter-spacing:.07em;text-transform:uppercase;display:flex;align-items:center;gap:6px;">
-                <span class="material-symbols-outlined" style="font-size:15px;">factory</span>
+        <div class="card" style="margin-bottom:0;padding:8px 12px 10px;">
+            <div style="font-size:.65rem;font-weight:700;color:var(--text-muted);
+                        letter-spacing:.07em;text-transform:uppercase;display:flex;align-items:center;gap:5px;margin-bottom:7px;">
+                <span class="material-symbols-outlined" style="font-size:13px;">factory</span>
                 생산 현황
             </div>
-            <div style="padding:12px 18px 18px;
-                        display:grid;grid-template-columns:repeat(3,1fr);gap:14px;">
+            <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;">
                 ${_tile({ icon:'assignment',     title:'생산 계획 지시서', value: todayPlans,
-                          valueColor:'#3b82f6',  sub:'오늘 계획 건수',    size:'lg',
+                          valueColor:'#3b82f6',  sub:'오늘 계획 건수',    size:'sm',
                           onClick:"Router.navigate('production-plan')" })}
                 ${_tile({ icon:'warehouse',      title:'사출 창고 재고',   value: UIUtils.formatNumber(injTotal),
-                          valueColor:'#8b5cf6',  sub:'전체 재고 (EA)',    size:'lg',
+                          valueColor:'#8b5cf6',  sub:'전체 재고 (EA)',    size:'sm',
                           onClick:"Router.navigate('warehouse-overview')" })}
                 ${_tile({ icon:'format_paint',   title:'도장 작업일지',    value: paintToday,
-                          valueColor:'#0891b2',  sub:'오늘 도장 작업',    size:'lg',
+                          valueColor:'#0891b2',  sub:'오늘 도장 작업',    size:'sm',
                           onClick:"Router.navigate('painting-work')" })}
                 ${_tile({ icon:'report_problem', title:'도장 불량 현황',   value: defectToday,
                           valueColor: defectToday > 0 ? '#ef4444' : '#22c55e',
-                          sub:'오늘 불량 수',    size:'lg',
+                          sub:'오늘 불량 수',    size:'sm',
                           onClick:"Router.navigate('painting-inspection')",
                           badge: defectToday > 0 ? '발생' : '' })}
                 ${_tile({ icon:'inventory_2',    title:'제품 창고 재고',   value: UIUtils.formatNumber(prodTotal),
-                          valueColor:'#10b981',  sub:'전체 재고 (EA)',    size:'lg',
+                          valueColor:'#10b981',  sub:'전체 재고 (EA)',    size:'sm',
                           onClick:"Router.navigate('product-warehouse')" })}
                 ${_tile({ icon:'local_shipping', title:'출하검사 대기',    value: sbCount,
                           valueColor: sbCount > 0 ? '#f59e0b' : '#22c55e',
-                          sub:'출하 대기 건',    size:'lg',
+                          sub:'출하 대기 건',    size:'sm',
                           onClick:"Router.navigate('shipping-standby')",
                           badge: sbCount > 0 ? '대기' : '' })}
             </div>
@@ -271,7 +289,7 @@ const DashboardModule = (function() {
         // F/PROOF
         const fpC = fpMissing > 0 ? '#ef4444' : '#22c55e';
         tiles.push(_tile({
-            icon:'task_alt', title:'F/PROOF 일일점검', size:'md',
+            icon:'task_alt', title:'F/PROOF 일일점검', size:'xs',
             value: fpMissing > 0 ? fpMissing + '건' : '완료',
             valueColor: fpC,
             sub: fpMissing > 0 ? '오늘 미점검' : `${fpDone}/${FPROOF_ITEMS.length} 완료`,
@@ -283,7 +301,7 @@ const DashboardModule = (function() {
         const illumC = (illumMissing + illumFailed) === 0 ? '#22c55e'
                      : illumFailed > 0 ? '#ef4444' : '#f59e0b';
         tiles.push(_tile({
-            icon:'lightbulb', title:'조도관리 (월간)', size:'md',
+            icon:'lightbulb', title:'조도관리 (월간)', size:'xs',
             value: illumMissing > 0 ? illumMissing + '곳' : illumFailed > 0 ? illumFailed + '건' : '완료',
             valueColor: illumC,
             sub: illumMissing > 0 ? '미등록 위치'
@@ -297,7 +315,7 @@ const DashboardModule = (function() {
         const s5C = s5Missed > 0 || s5Overdue > 0 ? '#ef4444'
                   : s5Open > 0 ? '#f59e0b' : '#22c55e';
         tiles.push(_tile({
-            icon:'cleaning_services', title:'3정5S 관리', size:'md',
+            icon:'cleaning_services', title:'3정5S 관리', size:'xs',
             value: s5Missed > 0   ? s5Missed + '건'
                  : s5Open   > 0   ? s5Open   + '건'
                  : s5Monthly + '회',
@@ -319,7 +337,7 @@ const DashboardModule = (function() {
             const sub    = noplan ? '이번달 계획없음'
                          : mc > 0 ? `${planned.length - mc}/${planned.length} 완료`
                          : '모두 완료';
-            return _tile({ icon, title, value: val, valueColor: C, sub, size:'md',
+            return _tile({ icon, title, value: val, valueColor: C, sub, size:'xs',
                 onClick: `DashboardModule.openEquipMode('${mode}')`,
                 badge: mc > 0 ? '미완료' : '' });
         }
@@ -334,7 +352,7 @@ const DashboardModule = (function() {
             tiles.push(_equipTile('local_fire_department', '건조로 청소',
                 'dryerclean',   es.dryerClean.planned,   es.dryerClean.missing));
             tiles.push(_tile({
-                icon:'handyman', title:'정비/청소', size:'md',
+                icon:'handyman', title:'정비/청소', size:'xs',
                 value: es.maintenance.items.length + '건',
                 valueColor:'#3b82f6',
                 sub:'이번달 예정',
@@ -343,14 +361,13 @@ const DashboardModule = (function() {
         }
 
         el.innerHTML = `
-        <div class="card" style="margin-bottom:0;">
-            <div style="padding:14px 18px 0;font-size:.72rem;font-weight:700;color:var(--text-muted);
-                        letter-spacing:.07em;text-transform:uppercase;display:flex;align-items:center;gap:6px;">
-                <span class="material-symbols-outlined" style="font-size:15px;">monitor_heart</span>
+        <div class="card" style="margin-bottom:0;padding:8px 12px 10px;">
+            <div style="font-size:.65rem;font-weight:700;color:var(--text-muted);
+                        letter-spacing:.07em;text-transform:uppercase;display:flex;align-items:center;gap:5px;margin-bottom:7px;">
+                <span class="material-symbols-outlined" style="font-size:13px;">monitor_heart</span>
                 점검 / 관리 현황 (${year}년 ${month}월)
             </div>
-            <div style="padding:12px 18px 18px;
-                        display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px;">
                 ${tiles.join('')}
             </div>
         </div>`;
@@ -390,63 +407,59 @@ const DashboardModule = (function() {
             .slice(0, 3);
 
         el.innerHTML = `
-        <div class="card" style="margin-bottom:0;">
-            <div style="padding:14px 18px 0;font-size:.72rem;font-weight:700;color:var(--text-muted);
-                        letter-spacing:.07em;text-transform:uppercase;display:flex;align-items:center;gap:6px;">
-                <span class="material-symbols-outlined" style="font-size:15px;">emoji_events</span>
+        <div class="card" style="margin-bottom:0;padding:8px 12px 10px;display:flex;flex-direction:column;gap:8px;">
+            <div style="font-size:.65rem;font-weight:700;color:var(--text-muted);
+                        letter-spacing:.07em;text-transform:uppercase;display:flex;align-items:center;gap:5px;">
+                <span class="material-symbols-outlined" style="font-size:13px;">emoji_events</span>
                 개선활동 / 우수 사원
             </div>
-            <div style="padding:12px 18px 18px;display:grid;grid-template-columns:minmax(260px,1fr) minmax(360px,2fr);gap:12px;">
-                <div onclick="Router.navigate('improvement-activity')"
-                     style="border:1px solid #bfdbfe;border-left:5px solid #3b82f6;border-radius:12px;background:#eff6ff;
-                            padding:18px;cursor:pointer;min-height:132px;display:flex;flex-direction:column;justify-content:space-between;">
-                    <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
-                        <div>
-                            <div style="font-size:.78rem;color:#1d4ed8;font-weight:800;">이달의 우수 사원 후보</div>
-                            <div style="font-size:1.55rem;font-weight:900;color:#0f172a;margin-top:8px;">${_esc(top?.name || '-')}</div>
-                        </div>
-                        <span class="material-symbols-outlined" style="font-size:34px;color:#f59e0b;">workspace_premium</span>
-                    </div>
-                    <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:.8rem;color:#475569;font-weight:700;">
+
+            <!-- 우수 사원 -->
+            <div onclick="Router.navigate('improvement-activity')"
+                 style="border:1px solid #bfdbfe;border-left:4px solid #3b82f6;border-radius:9px;background:#eff6ff;
+                        padding:8px 10px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                <div>
+                    <div style="font-size:.6rem;color:#1d4ed8;font-weight:800;">이달의 우수 사원 후보</div>
+                    <div style="font-size:1.15rem;font-weight:900;color:#0f172a;line-height:1.1;margin-top:2px;">${_esc(top?.name || '-')}</div>
+                    <div style="display:flex;gap:8px;font-size:.62rem;color:#475569;font-weight:700;margin-top:3px;">
                         <span>점수 ${top ? top.score : 0}</span>
                         <span>제안 ${top ? top.proposed : 0}</span>
                         <span>승인 ${top ? top.approved : 0}</span>
                         <span>완료 ${top ? top.closed : 0}</span>
                     </div>
                 </div>
+                <span class="material-symbols-outlined" style="font-size:26px;color:#f59e0b;flex-shrink:0;">workspace_premium</span>
+            </div>
 
-                <div onclick="Router.navigate('improvement-activity')"
-                     style="border:1px solid #bbf7d0;border-left:5px solid #10b981;border-radius:12px;background:#f0fdf4;
-                            padding:18px;cursor:pointer;min-height:132px;">
-                    <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px;">
-                        <div>
-                            <div style="font-size:.78rem;color:#047857;font-weight:800;">개선 제안 사항</div>
-                            <div style="font-size:.84rem;color:#64748b;margin-top:4px;">검토, 승인, 진행, 완료 현황을 간략 표시합니다.</div>
-                        </div>
-                        <span class="material-symbols-outlined" style="font-size:30px;color:#10b981;">tips_and_updates</span>
-                    </div>
-                    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px;">
-                        ${_improveMini('검토대기', pending, '#f59e0b')}
-                        ${_improveMini('승인', approved, '#10b981')}
-                        ${_improveMini('진행', running, '#3b82f6')}
-                        ${_improveMini('완료', closed, '#6366f1')}
-                    </div>
-                    <div style="display:grid;gap:5px;font-size:.78rem;color:#334155;">
-                        ${recent.length ? recent.map(r => `
-                            <div style="display:flex;justify-content:space-between;gap:10px;border-top:1px dashed #bbf7d0;padding-top:5px;">
-                                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;">${_esc(r.title || r.problem || '제목 없음')}</span>
-                                <span style="white-space:nowrap;color:#64748b;">${_esc(r.proposer || '-')}</span>
-                            </div>`).join('') : '<div style="color:#64748b;">등록된 개선 제안이 없습니다.</div>'}
-                    </div>
+            <!-- 개선 제안 현황 -->
+            <div onclick="Router.navigate('improvement-activity')"
+                 style="border:1px solid #bbf7d0;border-left:4px solid #10b981;border-radius:9px;background:#f0fdf4;
+                        padding:8px 10px;cursor:pointer;flex:1;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;">
+                    <div style="font-size:.63rem;color:#047857;font-weight:800;">개선 제안 현황</div>
+                    <span class="material-symbols-outlined" style="font-size:16px;color:#10b981;">tips_and_updates</span>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:7px;">
+                    ${_improveMini('검토대기', pending, '#f59e0b')}
+                    ${_improveMini('승인', approved, '#10b981')}
+                    ${_improveMini('진행', running, '#3b82f6')}
+                    ${_improveMini('완료', closed, '#6366f1')}
+                </div>
+                <div style="display:grid;gap:3px;font-size:.63rem;color:#334155;">
+                    ${recent.length ? recent.map(r => `
+                        <div style="display:flex;justify-content:space-between;gap:8px;border-top:1px dashed #bbf7d0;padding-top:3px;">
+                            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;">${_esc(r.title || r.problem || '제목 없음')}</span>
+                            <span style="white-space:nowrap;color:#64748b;">${_esc(r.proposer || '-')}</span>
+                        </div>`).join('') : '<div style="color:#64748b;font-size:.63rem;">등록된 개선 제안이 없습니다.</div>'}
                 </div>
             </div>
         </div>`;
     }
 
     function _improveMini(label, value, color) {
-        return `<div style="border:1px solid ${color}33;background:#fff;border-radius:8px;padding:8px;text-align:center;">
-            <div style="font-size:1.15rem;font-weight:900;color:${color};line-height:1;">${UIUtils.formatNumber(value)}</div>
-            <div style="font-size:.68rem;color:#64748b;font-weight:800;margin-top:4px;">${label}</div>
+        return `<div style="border:1px solid ${color}33;background:#fff;border-radius:6px;padding:5px 4px;text-align:center;">
+            <div style="font-size:.95rem;font-weight:900;color:${color};line-height:1;">${UIUtils.formatNumber(value)}</div>
+            <div style="font-size:.58rem;color:#64748b;font-weight:800;margin-top:2px;">${label}</div>
         </div>`;
     }
 

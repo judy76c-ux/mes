@@ -4390,9 +4390,6 @@ const SettingsModule = (function() {
             <div class="card" style="margin-bottom:16px;">
                 <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
                     <h4><span class="material-symbols-outlined">workspace_premium</span> 자격인증 관리기준</h4>
-                    <button class="btn btn-outline" onclick="SettingsModule.exportCertificationData()">
-                        <span class="material-symbols-outlined">download</span> 내보내기
-                    </button>
                 </div>
                 <div class="card-body">
                     <div class="stat-cards" style="margin-bottom:14px;">

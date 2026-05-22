@@ -114,6 +114,11 @@ var JigLayoutModule = (function () {
     let _snapEnabled = true;   // 자석 기능 ON/OFF
     let _guideEls    = [];     // 스냅 가이드라인 DOM 요소들
 
+    /* ── 다중 선택 ── */
+    let _selSet  = new Set();
+    let _lasso   = null;
+    let _lassoEl = null;
+
     /* ══════════════════════════════════════
        진입점
     ══════════════════════════════════════ */
@@ -232,7 +237,8 @@ var JigLayoutModule = (function () {
     }
 
     function _makeBoxEl(b) {
-        const isSel = (b.id === _sel);
+        const isPrim = (b.id === _sel);
+        const isSel  = isPrim || _selSet.has(b.id);
         const div   = document.createElement('div');
         div.id = 'jlbox_' + b.id;
         div.style.cssText = [
@@ -240,14 +246,18 @@ var JigLayoutModule = (function () {
             `left:${b.x}px`, `top:${b.y}px`,
             `width:${b.w}px`, `height:${b.h}px`,
             `background:${b.color || '#fff'}`,
-            `border:2px solid ${b.borderColor || '#94a3b8'}`,
+            `border:${isPrim ? '2.5px solid #6366f1' : isSel ? '2.5px solid #3b82f6' : `2px solid ${b.borderColor || '#94a3b8'}`}`,
             `border-radius:5px`,
             `display:flex`, `align-items:center`, `justify-content:center`,
             `cursor:move`, `box-sizing:border-box`,
-            `box-shadow:${isSel
-                ? '0 0 0 2.5px #6366f1,0 4px 16px rgba(99,102,241,0.3)'
+            `box-shadow:${isPrim
+                ? '0 0 0 3px rgba(99,102,241,0.45),0 4px 16px rgba(99,102,241,0.3)'
+                : isSel ? '0 0 0 3px rgba(59,130,246,0.45)'
                 : '0 1px 3px rgba(0,0,0,0.12)'}`,
+            `outline:${isSel && !isPrim ? '2px dashed #3b82f6' : 'none'}`,
+            `outline-offset:2px`,
             `overflow:hidden`, `transition:box-shadow 0.12s`,
+            `z-index:${isPrim ? 10 : isSel ? 8 : 1}`,
         ].join(';');
 
         /* 텍스트 */
@@ -267,7 +277,7 @@ var JigLayoutModule = (function () {
         div.appendChild(span);
 
         /* 선택 시 리사이즈 핸들 3종 + 삭제 버튼 */
-        if (isSel) {
+        if (isPrim) {
             div.appendChild(_makeHandle(b.id, 'right'));   // ▶ 오른쪽 (너비)
             div.appendChild(_makeHandle(b.id, 'bottom'));  // ▼ 아래쪽 (높이)
             div.appendChild(_makeHandle(b.id, 'corner'));  // ◢ 모서리 (너비+높이)
@@ -299,9 +309,44 @@ var JigLayoutModule = (function () {
         document.addEventListener('mouseup',   _onMouseUp);
         _canvas.addEventListener('mousedown', e => {
             if (e.target === _canvas) {
-                _sel = null;
-                _renderBoxes();
-                _renderPropPanel();
+                const rect = _canvas.getBoundingClientRect();
+                const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+                if (!e.ctrlKey && !e.metaKey) {
+                    _sel = null; _selSet.clear();
+                    _renderBoxes(); _renderPropPanel();
+                }
+                _lasso = { sx, sy, ex: sx, ey: sy };
+                if (!_lassoEl) {
+                    _lassoEl = document.createElement('div');
+                    _lassoEl.style.cssText = 'position:absolute;border:2px dashed #3b82f6;' +
+                        'background:rgba(59,130,246,0.08);pointer-events:none;z-index:9999;display:none;';
+                    _canvas.appendChild(_lassoEl);
+                }
+                _lassoEl.style.display = 'none';
+                e.preventDefault();
+            }
+        });
+        document.addEventListener('keydown', function _jlKeyDown(e) {
+            if (!document.getElementById('jlCanvas')) {
+                document.removeEventListener('keydown', _jlKeyDown); return;
+            }
+            const tag = document.activeElement && document.activeElement.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+            if (e.key === 'Delete' && (_selSet.size > 0 || _sel)) { delBox(); return; }
+            const ARROW_KEYS = ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'];
+            if (ARROW_KEYS.includes(e.key) && (_selSet.size > 0 || _sel)) {
+                const step = e.ctrlKey ? 5 : e.altKey ? 1 : 0;
+                if (step === 0) return;
+                e.preventDefault();
+                const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+                const dy = e.key === 'ArrowUp'   ? -step : e.key === 'ArrowDown'  ? step : 0;
+                const ids = _selSet.size > 0 ? [..._selSet] : (_sel ? [_sel] : []);
+                ids.forEach(id => {
+                    const b = _getBox(id); if (!b) return;
+                    b.x = Math.max(0, Math.min(CANVAS_W - b.w, b.x + dx));
+                    b.y = Math.max(0, Math.min(CANVAS_H - b.h, b.y + dy));
+                });
+                _markDirty(); _renderBoxes();
             }
         });
     }
@@ -310,11 +355,25 @@ var JigLayoutModule = (function () {
         if (e.button !== 0) return;
         if (e.target.hasAttribute('data-resize')) return;
         const boxId = this.id.replace('jlbox_', '');
+
+        if (e.ctrlKey || e.metaKey) {
+            if (_selSet.has(boxId)) {
+                _selSet.delete(boxId);
+                if (_sel === boxId) _sel = _selSet.size > 0 ? [..._selSet][_selSet.size-1] : null;
+            } else {
+                _selSet.add(boxId); _sel = boxId;
+            }
+            _renderBoxes(); _renderPropPanel();
+            e.preventDefault(); e.stopPropagation(); return;
+        }
+
+        if (!_selSet.has(boxId)) { _selSet.clear(); _selSet.add(boxId); }
         _sel = boxId;
-        _renderBoxes();
-        _renderPropPanel();
+        _renderBoxes(); _renderPropPanel();
         const b = _getBox(boxId);
-        _drag  = { id:boxId, ox:e.clientX, oy:e.clientY, bx:b.x, by:b.y };
+        const others = [..._selSet].filter(id => id !== boxId)
+            .map(id => { const ob = _getBox(id); return ob ? { id, bx: ob.x, by: ob.y } : null; }).filter(Boolean);
+        _drag  = { id:boxId, ox:e.clientX, oy:e.clientY, bx:b.x, by:b.y, others };
         _resize = null;
         e.preventDefault(); e.stopPropagation();
     }
@@ -324,11 +383,25 @@ var JigLayoutModule = (function () {
         const boxId = this.getAttribute('data-resize');
         const dir   = this.getAttribute('data-rdir') || 'corner';
         const b     = _getBox(boxId);
-        _resize = { id:boxId, ox:e.clientX, oy:e.clientY, bw:b.w, bh:b.h, dir };
+        const others = [..._selSet].filter(id => id !== boxId)
+            .map(id => { const ob = _getBox(id); return ob ? { id, bw: ob.w, bh: ob.h } : null; }).filter(Boolean);
+        _resize = { id:boxId, ox:e.clientX, oy:e.clientY, bw:b.w, bh:b.h, dir, others };
         _drag   = null;
     }
 
     function _onMouseMove(e) {
+        if (_lasso && !_drag && !_resize) {
+            const rect = _canvas.getBoundingClientRect();
+            _lasso.ex = e.clientX - rect.left; _lasso.ey = e.clientY - rect.top;
+            const lx = Math.min(_lasso.sx,_lasso.ex), ly = Math.min(_lasso.sy,_lasso.ey);
+            const lw = Math.abs(_lasso.ex-_lasso.sx), lh = Math.abs(_lasso.ey-_lasso.sy);
+            if (lw > 4 || lh > 4) {
+                _lassoEl.style.display = 'block';
+                _lassoEl.style.left = lx+'px'; _lassoEl.style.top = ly+'px';
+                _lassoEl.style.width = lw+'px'; _lassoEl.style.height = lh+'px';
+            }
+            return;
+        }
         if (_drag) {
             const b    = _getBox(_drag.id);
             const rawX = _drag.bx + e.clientX - _drag.ox;
@@ -336,16 +409,23 @@ var JigLayoutModule = (function () {
             const snapped = _calcSnap(b, rawX, rawY);
             const nx = Math.max(0, Math.min(CANVAS_W - b.w, snapped.x));
             const ny = Math.max(0, Math.min(CANVAS_H - b.h, snapped.y));
+            const dx = nx - _drag.bx, dy = ny - _drag.by;
             b.x = nx; b.y = ny;
             _renderGuides(snapped.guides);
             const el = document.getElementById('jlbox_' + b.id);
             if (el) { el.style.left = nx + 'px'; el.style.top = ny + 'px'; }
+            (_drag.others || []).forEach(ob => {
+                const other = _getBox(ob.id); if (!other) return;
+                other.x = Math.max(0, Math.min(CANVAS_W-other.w, ob.bx+dx));
+                other.y = Math.max(0, Math.min(CANVAS_H-other.h, ob.by+dy));
+                const oel = document.getElementById('jlbox_'+other.id);
+                if (oel) { oel.style.left = other.x+'px'; oel.style.top = other.y+'px'; }
+            });
             _markDirty();
         }
         if (_resize) {
             const b   = _getBox(_resize.id);
             const dir = _resize.dir;
-            /* 방향별 raw 치수 계산 */
             const rawW = dir !== 'bottom'
                 ? _resize.bw + e.clientX - _resize.ox
                 : b.w;
@@ -353,16 +433,39 @@ var JigLayoutModule = (function () {
                 ? _resize.bh + e.clientY - _resize.oy
                 : b.h;
             const snapped = _calcResizeSnap(b, rawW, rawH, dir);
-            b.w = Math.max(60, Math.min(CANVAS_W - b.x, snapped.w));
-            b.h = Math.max(40, Math.min(CANVAS_H - b.y, snapped.h));
+            const newW = Math.max(60, Math.min(CANVAS_W - b.x, snapped.w));
+            const newH = Math.max(40, Math.min(CANVAS_H - b.y, snapped.h));
+            const dw = newW - _resize.bw, dh = newH - _resize.bh;
+            b.w = newW; b.h = newH;
             _renderGuides(snapped.guides);
             const el = document.getElementById('jlbox_' + b.id);
             if (el) { el.style.width = b.w + 'px'; el.style.height = b.h + 'px'; }
+            (_resize.others || []).forEach(ob => {
+                const other = _getBox(ob.id); if (!other) return;
+                other.w = Math.max(60, Math.min(CANVAS_W-other.x, ob.bw + dw));
+                other.h = Math.max(40, Math.min(CANVAS_H-other.y, ob.bh + dh));
+                const oel = document.getElementById('jlbox_'+other.id);
+                if (oel) { oel.style.width = other.w+'px'; oel.style.height = other.h+'px'; }
+            });
             _markDirty();
         }
     }
 
-    function _onMouseUp() {
+    function _onMouseUp(e) {
+        if (_lasso) {
+            const lx1 = Math.min(_lasso.sx,_lasso.ex), ly1 = Math.min(_lasso.sy,_lasso.ey);
+            const lx2 = Math.max(_lasso.sx,_lasso.ex), ly2 = Math.max(_lasso.sy,_lasso.ey);
+            if (lx2-lx1 > 6 || ly2-ly1 > 6) {
+                if (!e || (!e.ctrlKey && !e.metaKey)) _selSet.clear();
+                _boxes.forEach(b => {
+                    if (b.x < lx2 && b.x+b.w > lx1 && b.y < ly2 && b.y+b.h > ly1) _selSet.add(b.id);
+                });
+                _sel = _selSet.size > 0 ? [..._selSet][_selSet.size-1] : null;
+                _renderBoxes(); _renderPropPanel();
+            }
+            _lasso = null;
+            if (_lassoEl) _lassoEl.style.display = 'none';
+        }
         if (_drag || _resize) {
             _drag = null; _resize = null;
             _clearGuides();
@@ -513,10 +616,14 @@ var JigLayoutModule = (function () {
     function _propChange(key, value) {
         const b = _sel ? _getBox(_sel) : null;
         if (!b) return;
-        b[key] = value;
+        const multiKeys = ['color','borderColor','textColor','fontSize','bold'];
+        if (multiKeys.includes(key) && _selSet.size > 1) {
+            _selSet.forEach(id => { const ob = _getBox(id); if (ob) ob[key] = value; });
+        } else {
+            b[key] = value;
+        }
         _markDirty();
         _renderBoxes();
-        // label 변경 시에는 패널 전체 재렌더 불필요 (입력 포커스 유지를 위해)
         if (key !== 'label') _renderPropPanel();
     }
 

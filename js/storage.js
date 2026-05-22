@@ -23,6 +23,8 @@ const Storage = (function() {
     STORES.AGIT_STD_DATA,             // 교반시간 기준서 편집 데이터 (base64 사진 포함)
     STORES.REMAIN_PAINT_DATA,         // 잔여도료 기준서 편집 데이터 (base64 사진 포함)
     STORES.VISCOSITY_STD_DATA,        // 점도 측정 기준서 편집 데이터 (base64 사진 포함)
+    STORES.ROBOT_PG_STD_DATA,         // 로봇 프로그램 기준서 (v45)
+    STORES.DRYING_STD_DATA,           // 건조 및 셋팅룸 온도 기준서 (v46)
   ]);
 
   // 초기화: API 서버에서 모든 데이터 로드
@@ -419,6 +421,27 @@ const Storage = (function() {
     return updated;
   }
 
+  // 업서트 — 동일 id 레코드가 있으면 덮어쓰기, 없으면 추가 (주로 LOCAL_ONLY_STORES 용)
+  async function put(storeName, data) {
+    if (!data || !data.id) throw new Error('[Storage.put] id 필드가 필요합니다.');
+    if (LOCAL_ONLY_STORES.has(storeName)) {
+      await DB.save(storeName, data);
+      if (!cache[storeName]) cache[storeName] = [];
+      const idx = cache[storeName].findIndex(r => r.id === data.id);
+      if (idx >= 0) cache[storeName][idx] = data;
+      else cache[storeName].push(data);
+      return data;
+    }
+    // 일반 스토어: 기존 레코드 있으면 update, 없으면 add
+    const exists = (cache[storeName] || []).some(r => r.id === data.id);
+    if (exists) {
+      return update(storeName, data.id, data);
+    } else {
+      const { id, ...rest } = data;
+      return add(storeName, { id, ...rest });
+    }
+  }
+
   // 삭제
   async function remove(storeName, id) {
     // ── 로컬 전용 스토어: IndexedDB에서만 삭제 (NAS API 호출 없음) ──
@@ -742,6 +765,7 @@ const Storage = (function() {
     getById,
     add,
     update,
+    put,
     remove,
     saveAll,
     getByDateRange,

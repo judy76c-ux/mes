@@ -184,20 +184,6 @@ const PaintingWorkModule = (function() {
 
         container.innerHTML = `
             <div class="fade-in-up">
-                <!-- 상단 헤더: 날짜/라인 선택 + 액션 버튼 -->
-                <div class="page-header" style="flex-wrap:wrap; gap:0.5rem;">
-                    <div class="page-actions" style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
-                        <div style="display:flex; align-items:center; gap:0.5rem;">
-                            <label class="form-label" style="margin:0; white-space:nowrap;">작업일</label>
-                            <input type="date" class="form-input" id="pwDate" value="${_currentDate}"
-                                onchange="PaintingWorkModule.onDateChange()" style="width:145px;">
-                        </div>
-                        <button class="btn btn-primary" onclick="PaintingWorkModule.openAddModal()">
-                            <span class="material-symbols-outlined">add</span> 작업 등록
-                        </button>
-                    </div>
-                </div>
-
                 <!-- 섹션 1: 생산계획 현황 (A/B 라인 동시 표시) -->
                 <div class="card" style="margin-bottom:1rem;">
                     <div class="card-header" style="padding:8px 16px; background:var(--bg-secondary);
@@ -209,9 +195,9 @@ const PaintingWorkModule = (function() {
                         </h4>
                         <span style="font-size:0.78rem;color:var(--text-muted);">계획 행의 [실적입력]을 클릭하면 해당 계획이 자동 반영됩니다.</span>
                     </div>
-                    <div class="card-body" style="padding:12px; display:flex; gap:16px; flex-wrap:wrap;">
+                    <div class="card-body" style="padding:12px; display:flex; flex-direction:column; gap:16px;">
                         <!-- 도장-A 계획 -->
-                        <div style="flex:1; min-width:480px;">
+                        <div style="width:100%;">
                             <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
                                 <span style="width:12px; height:12px; background:var(--accent-blue); border-radius:3px;"></span>
                                 <h5 style="margin:0; color:var(--accent-blue);">도장-A</h5>
@@ -234,7 +220,7 @@ const PaintingWorkModule = (function() {
                         </div>
 
                         <!-- 도장-B 계획 -->
-                        <div style="flex:1; min-width:480px;">
+                        <div style="width:100%;">
                             <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
                                 <span style="width:12px; height:12px; background:var(--accent-orange); border-radius:3px;"></span>
                                 <h5 style="margin:0; color:var(--accent-orange);">도장-B</h5>
@@ -2302,7 +2288,7 @@ const PaintingInspectionModule = (function() {
         selectedPlan: null,
         selectedWork: null, // 도장 작업 완료에서 선택한 작업
         counts: {},
-        currentTab: 'inspection' // 'inspection' | 'completion' | 'statistics'
+        currentTab: 'inspection' // 'inspection' | 'completion'
     };
 
     function render(container) {
@@ -2310,9 +2296,6 @@ const PaintingInspectionModule = (function() {
             <div class="fade-in-up">
                 <div class="page-header">
                     <div class="page-actions">
-                        <button class="btn btn-secondary" onclick="PaintingInspectionModule.exportData()">
-                            <span class="material-symbols-outlined">download</span> 내보내기
-                        </button>
                     </div>
                 </div>
 
@@ -2321,17 +2304,12 @@ const PaintingInspectionModule = (function() {
                     <button class="tab-button ${state.currentTab === 'inspection' ? 'active' : ''}"
                         onclick="PaintingInspectionModule._switchTab('inspection')"
                         style="padding:12px 16px; border:none; background:none; cursor:pointer; font-size:1rem; font-weight:500; color:${state.currentTab === 'inspection' ? 'var(--accent-blue)' : 'var(--text-muted)'}; border-bottom:3px solid ${state.currentTab === 'inspection' ? 'var(--accent-blue)' : 'transparent'};">
-                        <span class="material-symbols-outlined" style="vertical-align:middle; font-size:20px;">done_all</span> 검사 진행
+                        <span class="material-symbols-outlined" style="vertical-align:middle; font-size:20px;">done_all</span> 외관 검사
                     </button>
                     <button class="tab-button ${state.currentTab === 'completion' ? 'active' : ''}"
                         onclick="PaintingInspectionModule._switchTab('completion')"
                         style="padding:12px 16px; border:none; background:none; cursor:pointer; font-size:1rem; font-weight:500; color:${state.currentTab === 'completion' ? 'var(--accent-blue)' : 'var(--text-muted)'}; border-bottom:3px solid ${state.currentTab === 'completion' ? 'var(--accent-blue)' : 'transparent'};">
                         <span class="material-symbols-outlined" style="vertical-align:middle; font-size:20px;">task_alt</span> 검사 완료 실적
-                    </button>
-                    <button class="tab-button ${state.currentTab === 'statistics' ? 'active' : ''}"
-                        onclick="PaintingInspectionModule._switchTab('statistics')"
-                        style="padding:12px 16px; border:none; background:none; cursor:pointer; font-size:1rem; font-weight:500; color:${state.currentTab === 'statistics' ? 'var(--accent-blue)' : 'var(--text-muted)'}; border-bottom:3px solid ${state.currentTab === 'statistics' ? 'var(--accent-blue)' : 'transparent'};">
-                        <span class="material-symbols-outlined" style="vertical-align:middle; font-size:20px;">analytics</span> 통계 대시보드
                     </button>
                 </div>
 
@@ -2366,8 +2344,8 @@ const PaintingInspectionModule = (function() {
                 <!-- 검사대기품 (도장 작업 완료 목록) -->
                 <div class="card" style="margin-bottom:20px;">
                     <div class="card-header">
-                        <h4><span class="material-symbols-outlined">done_all</span> 검사대기품</h4>
-                        <span style="font-size:0.75rem;color:var(--text-muted);">도장 작업 완료된 제품의 검사를 진행합니다</span>
+                        <h4><span class="material-symbols-outlined">done_all</span> 외관 검사 대기품</h4>
+                        <span style="font-size:0.75rem;color:var(--text-muted);">도장 작업 완료된 제품을 외관 검사합니다.</span>
                     </div>
                     <div class="card-body" id="inspectionWaitingList"></div>
                 </div>
@@ -2400,9 +2378,6 @@ const PaintingInspectionModule = (function() {
         } else if (state.currentTab === 'completion') {
             // 검사 완료 실적 탭
             showCompletionResults();
-        } else if (state.currentTab === 'statistics') {
-            // 통계 대시보드 탭
-            showStatisticsDashboard();
         }
     }
 
@@ -2461,7 +2436,7 @@ const PaintingInspectionModule = (function() {
                             <th style="text-align:center;">품목구분</th>
                             <th>사출 LOT</th>
                             <th style="text-align:right;">도장 완료(검사대기) 수량</th>
-                            <th style="width:100px;">검사 진행</th>
+                            <th style="width:120px;">외관 검사</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -2481,7 +2456,7 @@ const PaintingInspectionModule = (function() {
                                     <td style="text-align:right;font-weight:600;">${UIUtils.formatNumber(w.productionQty || 0)}</td>
                                     <td style="text-align:center;">
                                         <button class="btn btn-sm btn-primary" onclick="PaintingInspectionModule.openInspectionModal('${w.id}')">
-                                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:2px;">edit</span>검사
+                                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:2px;">edit</span>외관 검사
                                         </button>
                                     </td>
                                 </tr>
@@ -4943,6 +4918,24 @@ const PaintingInspectionModule = (function() {
         _numpadInput,
         _numpadDelete,
         _numpadConfirm
+    };
+})();
+
+const PaintingQualityPerformanceModule = (function() {
+    function render(container) {
+        container.innerHTML = `
+            <div class="fade-in-up">
+                <div class="page-header"></div>
+                <div id="tabContent"></div>
+            </div>
+        `;
+        setTimeout(() => {
+            PaintingInspectionModule.showStatisticsDashboard();
+        }, 20);
+    }
+
+    return {
+        render
     };
 })();
 

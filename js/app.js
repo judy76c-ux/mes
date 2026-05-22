@@ -150,13 +150,20 @@ const App = (function() {
         Router.registerModule('paint-inventory', PaintInventoryModule);
         Router.registerModule('paint-layout', PaintLayoutModule);
         Router.registerModule('injection-layout', InjectionLayoutModule);
+        Router.registerModule('injection-wip', InjectionWipModule);
+        Router.registerModule('injection-room-layout', InjectionRoomLayoutModule);
         Router.registerModule('painting-work', PaintingWorkModule);
         Router.registerModule('painting-inspection', PaintingInspectionModule);
+        Router.registerModule('painting-quality-performance', PaintingQualityPerformanceModule);
         Router.registerModule('laser-process', LaserHubModule);
         // 개별 페이지 라우트도 유지 (내부 링크 호환)
         Router.registerModule('laser-standby', LaserStandbyModule);
         Router.registerModule('laser-work', LaserWorkModule);
         Router.registerModule('laser-inspection', LaserInspectionModule);
+        Router.registerModule('laser-layout', LaserLayoutModule);
+        Router.registerModule('laser-jig-master', LaserJigMasterModule);
+        Router.registerModule('laser-jig-cleaning', LaserJigCleaningModule);
+        Router.registerModule('laser-equipment-history', LaserEquipmentHistoryModule);
         Router.registerModule('shipping-standby', ShippingStandbyModule);
         Router.registerModule('shipping-inspection', ShippingInspectionModule);
         Router.registerModule('product-warehouse', ProductWarehouseModule);
@@ -173,6 +180,8 @@ const App = (function() {
         Router.registerModule('agit-std', AgitStdModule);
         Router.registerModule('remain-paint', RemainPaintModule);
         Router.registerModule('viscosity-std', ViscosityStdModule);
+        Router.registerModule('robot-pg-std', RobotPgStdModule);
+        Router.registerModule('drying-std', DryingStdModule);
         Router.registerModule('paint-mix', PaintMixModule);
         Router.registerModule('prod-sub-materials', ProdSubMaterialsModule);
         Router.registerModule('prod-quality', ProdQualityModule);

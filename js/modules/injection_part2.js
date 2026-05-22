@@ -19,9 +19,6 @@ var InjectionWarehouseModule = (function() {
                         <button class="btn btn-danger" onclick="InjectionWarehouseModule.openAddModal('출고')">
                             <span class="material-symbols-outlined">do_not_disturb_on</span> 사출 출고
                         </button>
-                        <button class="btn btn-secondary" onclick="InjectionWarehouseModule.exportData()">
-                            <span class="material-symbols-outlined">download</span> 내보내기
-                        </button>
                     </div>
                 </div>
 

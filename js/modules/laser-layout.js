@@ -253,6 +253,8 @@ var LaserLayoutModule = (function () {
     let _arrowMode  = false;
     let _arrowDraft = null;
     let _svgLayer   = null;
+    let _lasso      = null;  // { sx, sy, ex, ey } 드래그 선택 영역
+    let _lassoEl    = null;  // lasso rect DOM 요소
 
     /* ── 되돌리기 히스토리 ── */
     let _history    = [];
@@ -266,6 +268,9 @@ var LaserLayoutModule = (function () {
     async function render(container) {
         container.innerHTML = `
         <div class="fade-in-up" style="display:flex;flex-direction:column;height:100%;min-height:0;">
+          ${typeof LaserProcessUI !== 'undefined'
+              ? LaserProcessUI.renderSection('laser-standby', '레이져대기품현황 레이아웃', '레이져 대기품 적치 위치와 박스 배치를 레이아웃으로 관리합니다.')
+              : ''}
 
           <!-- ── 툴바 ── -->
           <div style="display:flex;align-items:center;gap:8px;padding:10px 16px;
@@ -321,6 +326,11 @@ var LaserLayoutModule = (function () {
             <button class="btn btn-outline btn-sm" onclick="LaserLayoutModule.printLayout()"
                     style="color:#0891b2;border-color:#0891b2;gap:4px;">
               <span class="material-symbols-outlined" style="font-size:15px;">print</span> 인쇄
+            </button>
+            <button class="btn btn-sm" onclick="LaserLayoutModule.showFifoGuide()"
+                    style="background:#16a34a;color:#fff;border:2px solid #16a34a;gap:4px;font-weight:700;"
+                    title="팔레트 선입선출 적재 방법 기준서">
+              <span class="material-symbols-outlined" style="font-size:15px;">layers</span> 적재 기준서
             </button>
           </div>
 
@@ -417,16 +427,23 @@ var LaserLayoutModule = (function () {
             `left:${b.x}px`, `top:${b.y}px`,
             `width:${b.w}px`, `height:${b.h}px`,
             `background:${b.color || '#fff'}`,
-            `border:${b.borderColor==='transparent' ? 'none' : `2px solid ${b.borderColor||'#94a3b8'}`}`,
+            `border:${isPrim
+                ? '2.5px solid #6366f1'
+                : isSel
+                    ? '2.5px solid #3b82f6'
+                    : b.borderColor==='transparent' ? 'none' : `2px solid ${b.borderColor||'#94a3b8'}`}`,
             `border-radius:5px`,
             `display:flex`, `align-items:center`, `justify-content:center`,
             `cursor:move`, `box-sizing:border-box`,
             `box-shadow:${isPrim
-                ? '0 0 0 2.5px #6366f1,0 4px 16px rgba(99,102,241,0.3)'
+                ? '0 0 0 3px rgba(99,102,241,0.45),0 4px 16px rgba(99,102,241,0.3)'
                 : isSel
-                    ? '0 0 0 2px #a5b4fc,0 2px 8px rgba(99,102,241,0.2)'
+                    ? '0 0 0 3px rgba(59,130,246,0.45)'
                     : '0 1px 3px rgba(0,0,0,0.10)'}`,
+            `outline:${isSel && !isPrim ? '2px dashed #3b82f6' : 'none'}`,
+            `outline-offset:2px`,
             `overflow:hidden`, `transition:box-shadow 0.12s`,
+            `z-index:${isPrim ? 10 : isSel ? 8 : 1}`,
         ].join(';');
 
         const span = document.createElement('span');
@@ -488,6 +505,23 @@ var LaserLayoutModule = (function () {
             if (e.key === 'Delete' && _selSet.size > 0 && !_selArrow) {
                 delBox();
             }
+            // 화살표 키 이동: Ctrl=5px, Alt=1px
+            const ARROW_KEYS = ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'];
+            if (ARROW_KEYS.includes(e.key) && _selSet.size > 0) {
+                const step = e.ctrlKey ? 5 : e.altKey ? 1 : 0;
+                if (step === 0) return;
+                e.preventDefault();
+                _pushHistory();
+                const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+                const dy = e.key === 'ArrowUp'   ? -step : e.key === 'ArrowDown'  ? step : 0;
+                _selSet.forEach(id => {
+                    const b = _getBox(id);
+                    if (!b) return;
+                    b.x = Math.max(0, Math.min(CANVAS_W - b.w, b.x + dx));
+                    b.y = Math.max(0, Math.min(CANVAS_H - b.h, b.y + dy));
+                });
+                _markDirty(); _renderBoxes(); _renderArrows();
+            }
         });
         _canvas.addEventListener('mousedown', e => {
             if (_arrowMode) {
@@ -495,10 +529,25 @@ var LaserLayoutModule = (function () {
                 _arrowDraft = { x1: Math.round(e.clientX-rect.left), y1: Math.round(e.clientY-rect.top) };
                 e.preventDefault(); return;
             }
-            if (e.target === _canvas) {
-                _sel = _selArrow = null;
-                _selSet.clear();
-                _renderBoxes(); _renderArrows(); _renderPropPanel();
+            if (e.target === _canvas || e.target === _svgLayer) {
+                const rect = _canvas.getBoundingClientRect();
+                const sx = e.clientX - rect.left;
+                const sy = e.clientY - rect.top;
+                if (!e.ctrlKey && !e.metaKey) {
+                    _sel = _selArrow = null;
+                    _selSet.clear();
+                    _renderBoxes(); _renderArrows(); _renderPropPanel();
+                }
+                // lasso 시작
+                _lasso = { sx, sy, ex: sx, ey: sy };
+                if (!_lassoEl) {
+                    _lassoEl = document.createElement('div');
+                    _lassoEl.style.cssText = 'position:absolute;border:2px dashed #3b82f6;' +
+                        'background:rgba(59,130,246,0.08);pointer-events:none;z-index:9999;display:none;';
+                    _canvas.appendChild(_lassoEl);
+                }
+                _lassoEl.style.display = 'none';
+                e.preventDefault();
             }
         });
     }
@@ -554,8 +603,10 @@ var LaserLayoutModule = (function () {
         const boxId = this.getAttribute('data-resize');
         const dir   = this.getAttribute('data-rdir') || 'corner';
         const b     = _getBox(boxId);
-        _pushHistory();   // 리사이즈 시작 전 상태 저장
-        _resize = { id:boxId, ox:e.clientX, oy:e.clientY, bw:b.w, bh:b.h, dir };
+        _pushHistory();
+        const others = [..._selSet].filter(id => id !== boxId)
+            .map(id => { const ob = _getBox(id); return ob ? { id, bw: ob.w, bh: ob.h } : null; }).filter(Boolean);
+        _resize = { id:boxId, ox:e.clientX, oy:e.clientY, bw:b.w, bh:b.h, dir, others };
         _drag   = null;
     }
 
@@ -565,6 +616,23 @@ var LaserLayoutModule = (function () {
             _arrowDraft.x2 = Math.round(e.clientX-rect.left);
             _arrowDraft.y2 = Math.round(e.clientY-rect.top);
             _renderArrows(); return;
+        }
+        if (_lasso && !_drag && !_resize) {
+            const rect = _canvas.getBoundingClientRect();
+            _lasso.ex = e.clientX - rect.left;
+            _lasso.ey = e.clientY - rect.top;
+            const lx = Math.min(_lasso.sx, _lasso.ex);
+            const ly = Math.min(_lasso.sy, _lasso.ey);
+            const lw = Math.abs(_lasso.ex - _lasso.sx);
+            const lh = Math.abs(_lasso.ey - _lasso.sy);
+            if (lw > 4 || lh > 4) {
+                _lassoEl.style.display = 'block';
+                _lassoEl.style.left   = lx + 'px';
+                _lassoEl.style.top    = ly + 'px';
+                _lassoEl.style.width  = lw + 'px';
+                _lassoEl.style.height = lh + 'px';
+            }
+            return;
         }
         if (_drag) {
             const b    = _getBox(_drag.id);
@@ -595,16 +663,25 @@ var LaserLayoutModule = (function () {
             const rawW = dir!=='bottom' ? _resize.bw + e.clientX-_resize.ox : b.w;
             const rawH = dir!=='right'  ? _resize.bh + e.clientY-_resize.oy : b.h;
             const s = _calcResizeSnap(b, rawW, rawH, dir);
-            b.w = Math.max(50, Math.min(CANVAS_W-b.x, s.w));
-            b.h = Math.max(30, Math.min(CANVAS_H-b.y, s.h));
+            const newW = Math.max(50, Math.min(CANVAS_W-b.x, s.w));
+            const newH = Math.max(30, Math.min(CANVAS_H-b.y, s.h));
+            const dw = newW - _resize.bw, dh = newH - _resize.bh;
+            b.w = newW; b.h = newH;
             _renderGuides(s.guides);
             const el = document.getElementById('llbox_'+b.id);
             if (el) { el.style.width = b.w+'px'; el.style.height = b.h+'px'; }
+            (_resize.others || []).forEach(ob => {
+                const other = _getBox(ob.id); if (!other) return;
+                other.w = Math.max(50, Math.min(CANVAS_W-other.x, ob.bw + dw));
+                other.h = Math.max(30, Math.min(CANVAS_H-other.y, ob.bh + dh));
+                const oel = document.getElementById('llbox_'+other.id);
+                if (oel) { oel.style.width = other.w+'px'; oel.style.height = other.h+'px'; }
+            });
             _markDirty();
         }
     }
 
-    function _onMouseUp() {
+    function _onMouseUp(e) {
         if (_arrowDraft && _arrowDraft.x2 !== undefined) {
             const dx = _arrowDraft.x2-_arrowDraft.x1, dy = _arrowDraft.y2-_arrowDraft.y1;
             if (Math.hypot(dx,dy) > 15) {
@@ -618,6 +695,27 @@ var LaserLayoutModule = (function () {
                 _markDirty(); _renderPropPanel();
             }
             _arrowDraft = null; _renderArrows(); return;
+        }
+        if (_lasso) {
+            const lx1 = Math.min(_lasso.sx, _lasso.ex);
+            const ly1 = Math.min(_lasso.sy, _lasso.ey);
+            const lx2 = Math.max(_lasso.sx, _lasso.ex);
+            const ly2 = Math.max(_lasso.sy, _lasso.ey);
+            if (lx2 - lx1 > 6 || ly2 - ly1 > 6) {
+                const additive = e && (e.ctrlKey || e.metaKey);
+                if (!additive) _selSet.clear();
+                _boxes.forEach(b => {
+                    // 박스가 lasso 영역과 겹치면 선택
+                    if (b.x < lx2 && b.x + b.w > lx1 && b.y < ly2 && b.y + b.h > ly1) {
+                        _selSet.add(b.id);
+                    }
+                });
+                _sel = _selSet.size > 0 ? [..._selSet][_selSet.size-1] : null;
+                _selArrow = null;
+                _renderBoxes(); _renderArrows(); _renderPropPanel();
+            }
+            _lasso = null;
+            if (_lassoEl) _lassoEl.style.display = 'none';
         }
         if (_drag || _resize) {
             _drag = null; _resize = null;
@@ -812,8 +910,14 @@ var LaserLayoutModule = (function () {
     function _propChange(key, value) {
         const b = _sel ? _getBox(_sel) : null;
         if (!b) return;
-        if (key !== 'label') _pushHistory();   // 레이블은 타이핑 중 히스토리 폭발 방지
-        b[key] = value;
+        if (key !== 'label') _pushHistory();
+        // 색상·스타일 속성은 다중 선택된 박스 전체에 적용
+        const multiKeys = ['color','borderColor','textColor','fontSize','bold'];
+        if (multiKeys.includes(key) && _selSet.size > 1) {
+            _selSet.forEach(id => { const ob = _getBox(id); if (ob) ob[key] = value; });
+        } else {
+            b[key] = value;
+        }
         _markDirty();
         _renderBoxes();
         if (key !== 'label') _renderPropPanel();
@@ -1270,6 +1374,338 @@ var LaserLayoutModule = (function () {
     }
 
     /* ══════════════════════════════════════
+       선입선출 적재 기준서 팝업
+    ══════════════════════════════════════ */
+    function showFifoGuide() {
+        /* 기존 팝업 제거 */
+        const old = document.getElementById('fifoGuideOverlay');
+        if (old) old.remove();
+
+        const overlay = document.createElement('div');
+        overlay.id = 'fifoGuideOverlay';
+        overlay.style.cssText = `
+            position:fixed;inset:0;z-index:9999;
+            background:rgba(0,0,0,0.55);
+            display:flex;align-items:center;justify-content:center;
+            padding:16px;`;
+        overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+        overlay.innerHTML = `
+        <div style="background:#fff;border-radius:14px;width:min(1100px,96vw);max-height:90vh;
+                    overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.35);font-family:inherit;">
+
+          <!-- 헤더 -->
+          <div style="padding:18px 24px;border-bottom:2px solid #e2e8f0;
+                      display:flex;align-items:center;justify-content:space-between;
+                      background:linear-gradient(135deg,#1e3a8a,#2563eb);
+                      border-radius:14px 14px 0 0;">
+            <div>
+              <div style="font-size:1.15rem;font-weight:800;color:#fff;margin-bottom:3px;">
+                📦 팔레트 선입선출(FIFO) 적재 방법 기준서
+              </div>
+              <div style="font-size:.82rem;color:#bfdbfe;">
+                2층 도장라인 레이져 대기 구역 적재 규정
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button onclick="LaserLayoutModule.printFifoGuide()"
+                      style="padding:7px 16px;background:#fff;color:#1e3a8a;border:none;
+                             border-radius:7px;font-weight:700;cursor:pointer;font-size:.83rem;">
+                🖨 인쇄
+              </button>
+              <button onclick="document.getElementById('fifoGuideOverlay').remove()"
+                      style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,0.2);
+                             border:none;color:#fff;font-size:18px;cursor:pointer;
+                             display:flex;align-items:center;justify-content:center;font-weight:700;">
+                ✕
+              </button>
+            </div>
+          </div>
+
+          <!-- 기본 규정 배너 -->
+          <div style="margin:18px 24px 0;padding:12px 20px;
+                      background:#fef9c3;border:2px solid #ca8a04;border-radius:10px;
+                      display:flex;gap:32px;align-items:center;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:1.5rem;">⚠️</span>
+              <div>
+                <div style="font-weight:800;color:#92400e;font-size:.95rem;">MAX 5 Layers</div>
+                <div style="font-size:.8rem;color:#a16207;">최대 5단 적재</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:1.5rem;">🚫</span>
+              <div>
+                <div style="font-weight:800;color:#92400e;font-size:.95rem;">NO OVERSTACKING</div>
+                <div style="font-size:.8rem;color:#a16207;">초과 적재 금지</div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:1.5rem;">📋</span>
+              <div>
+                <div style="font-weight:800;color:#92400e;font-size:.95rem;">칸 = Layers (단)</div>
+                <div style="font-size:.8rem;color:#a16207;">열 = Column &nbsp;·&nbsp; 행 = Row</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3가지 적재 구조 -->
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;padding:18px 24px 24px;">
+
+            <!-- ① 2열 1행 배열 -->
+            <div style="border:2px solid #e2e8f0;border-radius:10px;overflow:hidden;">
+              <div style="background:#1e3a8a;color:#fff;padding:10px 14px;font-weight:700;font-size:.88rem;">
+                ① 2열 1행 배열 — 선입선출 적재
+              </div>
+              <div style="padding:16px;background:#f8fafc;">
+                <div style="font-size:.78rem;color:#64748b;margin-bottom:12px;line-height:1.6;">
+                  900ea/BOX · 2열×2행 ×5단<br>
+                  <strong style="color:#1e3a8a;">투입 방향:</strong> 아래(IN) → 위(OUT/OLD LOT)
+                </div>
+                ${_fifoStack1()}
+                <div style="margin-top:12px;font-size:.78rem;color:#475569;
+                            background:#eff6ff;border-radius:6px;padding:8px 10px;line-height:1.7;">
+                  ✅ <strong>선입선출 규칙:</strong><br>
+                  • New LOT → 아래에 적재<br>
+                  • Old LOT → 위쪽에서 출고<br>
+                  • 열 순서: 2열 → 1열 순으로 출고
+                </div>
+              </div>
+            </div>
+
+            <!-- ② 2열 3행 배열 -->
+            <div style="border:2px solid #e2e8f0;border-radius:10px;overflow:hidden;">
+              <div style="background:#ca8a04;color:#fff;padding:10px 14px;font-weight:700;font-size:.88rem;">
+                ② 2열 3행 배열 — 선입선출 구조
+              </div>
+              <div style="padding:16px;background:#f8fafc;">
+                <div style="font-size:.78rem;color:#64748b;margin-bottom:12px;line-height:1.6;">
+                  1,200ea/box · 2열×3행 5단/20box<br>
+                  <strong style="color:#92400e;">투입 방향:</strong> 아래/오른쪽(IN) → 위쪽(OUT)
+                </div>
+                ${_fifoStack2()}
+                <div style="margin-top:12px;font-size:.78rem;color:#475569;
+                            background:#fef9c3;border-radius:6px;padding:8px 10px;line-height:1.7;">
+                  ✅ <strong>적재 번호 순서:</strong><br>
+                  • ① 가장 안쪽 하단부터<br>
+                  • ⑥ 가장 바깥쪽 상단에서 출고<br>
+                  • Old LOT 왼쪽/위 위치
+                </div>
+              </div>
+            </div>
+
+            <!-- ③ 3열 7행 배열 -->
+            <div style="border:2px solid #e2e8f0;border-radius:10px;overflow:hidden;">
+              <div style="background:#7c3aed;color:#fff;padding:10px 14px;font-weight:700;font-size:.88rem;">
+                ③ 3열 7행 배열 — LOT별 재배치
+              </div>
+              <div style="padding:16px;background:#f8fafc;">
+                <div style="font-size:.78rem;color:#64748b;margin-bottom:12px;line-height:1.6;">
+                  5,000ea/box · 열×3행 5단/40box<br>
+                  <strong style="color:#4c1d95;">투입(IN):</strong> 아래 → <strong style="color:#dc2626;">출고(OUT):</strong> 위쪽
+                </div>
+                ${_fifoStack3()}
+                <div style="margin-top:12px;font-size:.78rem;color:#475569;
+                            background:#ede9fe;border-radius:6px;padding:8px 10px;line-height:1.7;">
+                  ✅ <strong>LOT별 재배치 규칙:</strong><br>
+                  • Old LOT → 위쪽 재배치 후 출고<br>
+                  • New LOT → 아래쪽에 적재<br>
+                  • 3열 구조로 좌우 분리 관리
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- 박스 크기별 BOX NO 기준표 -->
+          <div style="margin:0 24px 24px;border:2px solid #e2e8f0;border-radius:10px;overflow:hidden;">
+            <div style="background:#475569;color:#fff;padding:10px 16px;font-weight:700;font-size:.88rem;">
+              📊 박스 크기별 BOX NO 기준표
+            </div>
+            <div style="overflow-x:auto;">
+              <table style="width:100%;border-collapse:collapse;font-size:.82rem;">
+                <thead>
+                  <tr style="background:#f1f5f9;">
+                    <th style="padding:8px 12px;border:1px solid #e2e8f0;text-align:left;color:#475569;">박스 적재 규격</th>
+                    <th style="padding:8px 12px;border:1px solid #e2e8f0;color:#475569;">배열</th>
+                    <th style="padding:8px 12px;border:1px solid #e2e8f0;color:#475569;">BOX NO (단수)</th>
+                    <th style="padding:8px 12px;border:1px solid #e2e8f0;color:#475569;">적용 품목 예시</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${[
+                    ['900ea/BOX','2열×2행 ×5단','3 / 4','ECALL, LENS류'],
+                    ['1,200ea/box','2열×1행 ×5단','1 / 2','BCALL, DOOR, ROOM, PAO'],
+                    ['1,200ea/box','2열×3행 5단/20box','1.2 / 3.4','P702 버튼, SEESAW, J34A류'],
+                    ['5,000ea/box','열×3행 5단/40box','5 / 6','XFD BK KNOB'],
+                    ['360ea/box','3열×4행 5단','-','T1xx LENS'],
+                    ['1,200ea/BOX','3열 2행 5간','-','PARK, p-button'],
+                  ].map(([spec,arr,no,item]) => `
+                    <tr>
+                      <td style="padding:7px 12px;border:1px solid #e2e8f0;font-weight:600;">${spec}</td>
+                      <td style="padding:7px 12px;border:1px solid #e2e8f0;text-align:center;">${arr}</td>
+                      <td style="padding:7px 12px;border:1px solid #e2e8f0;text-align:center;
+                                 font-family:monospace;color:#2563eb;font-weight:700;">${no}</td>
+                      <td style="padding:7px 12px;border:1px solid #e2e8f0;color:#475569;">${item}</td>
+                    </tr>`).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>`;
+
+        document.body.appendChild(overlay);
+    }
+
+    /* ── 다이어그램 헬퍼 ── */
+    function _pallet(label, bg, border, fs) {
+        bg = bg || '#dbeafe'; border = border || '#3b82f6'; fs = fs || 11;
+        return `<div style="
+            background:${bg};border:1.5px solid ${border};border-radius:4px;
+            display:flex;align-items:center;justify-content:center;
+            font-size:${fs}px;font-weight:700;color:#1e3a8a;
+            white-space:pre-wrap;text-align:center;line-height:1.3;
+            box-sizing:border-box;">${label}</div>`;
+    }
+
+    /* ① 2열 1행 선입선출 */
+    function _fifoStack1() {
+        const layers = [
+            { label: 'Old LOT\n출고 ⬆', bg:'#fee2e2', border:'#dc2626', color:'#7f1d1d' },
+            { label: '4단', bg:'#dbeafe', border:'#3b82f6', color:'#1e3a8a' },
+            { label: '3단', bg:'#dbeafe', border:'#3b82f6', color:'#1e3a8a' },
+            { label: '2단', bg:'#dbeafe', border:'#3b82f6', color:'#1e3a8a' },
+            { label: 'New LOT\n입고 ⬇', bg:'#dcfce7', border:'#16a34a', color:'#14532d' },
+        ];
+        const row = (item, colLabel) => `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:4px;">
+          ${_palletItem(item.label, item.bg, item.border, colLabel)}
+          ${_palletItem(item.label, item.bg, item.border, '')}
+        </div>`;
+
+        return `
+        <div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;background:#fff;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:2px;">
+            <div style="text-align:center;font-size:10px;color:#64748b;font-weight:600;">2열</div>
+            <div style="text-align:center;font-size:10px;color:#64748b;font-weight:600;">1열</div>
+          </div>
+          ${layers.map((l,i) => `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:3px;">
+            <div style="height:34px;background:${l.bg};border:1.5px solid ${l.border};
+                        border-radius:4px;display:flex;align-items:center;justify-content:center;
+                        font-size:9px;font-weight:700;color:${l.color};white-space:pre-wrap;text-align:center;line-height:1.2;">
+              ${l.label}
+            </div>
+            <div style="height:34px;background:${l.bg};border:1.5px solid ${l.border};
+                        border-radius:4px;display:flex;align-items:center;justify-content:center;
+                        font-size:9px;font-weight:700;color:${l.color};white-space:pre-wrap;text-align:center;line-height:1.2;">
+              ${i === 0 ? 'Old LOT\n출고 ⬆' : i === 4 ? 'New LOT\n입고 ⬇' : `${4-i}단`}
+            </div>
+          </div>`).join('')}
+          <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:10px;font-weight:700;">
+            <span style="color:#16a34a;">⬇ IN (신 LOT)</span>
+            <span style="color:#dc2626;">⬆ OUT (구 LOT)</span>
+          </div>
+        </div>`;
+    }
+
+    function _palletItem(label, bg, border, colLabel) {
+        return `<div style="height:34px;background:${bg};border:1.5px solid ${border};
+            border-radius:4px;display:flex;align-items:center;justify-content:center;
+            font-size:9px;font-weight:700;color:#1e293b;text-align:center;line-height:1.2;
+            white-space:pre-wrap;">${label}</div>`;
+    }
+
+    /* ② 2열 3행 선입선출 구조 */
+    function _fifoStack2() {
+        /* 번호 배치: 안쪽(1)에서 바깥쪽(6)으로 */
+        const cells = [
+            [{n:2,old:true},{n:1,old:true}],
+            [{n:4,old:false},{n:3,old:false}],
+            [{n:6,old:false},{n:5,old:false}],
+        ];
+        const colors = [
+            { bg:'#fee2e2', border:'#dc2626', color:'#7f1d1d' }, // Old LOT
+            { bg:'#dbeafe', border:'#3b82f6', color:'#1e3a8a' }, // 일반
+        ];
+        return `
+        <div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;background:#fff;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:2px;">
+            <div style="text-align:center;font-size:10px;color:#64748b;font-weight:600;">2열</div>
+            <div style="text-align:center;font-size:10px;color:#64748b;font-weight:600;">1열</div>
+          </div>
+          ${cells.map((row,ri) => `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:3px;">
+            ${row.map(c => {
+                const co = c.old ? colors[0] : colors[1];
+                const CIRC = ['①','②','③','④','⑤','⑥'];
+                const numLabel = CIRC[c.n - 1] || String(c.n);
+                return '<div style="height:38px;background:' + co.bg + ';border:1.5px solid ' + co.border + ';' +
+                    'border-radius:4px;display:flex;align-items:center;justify-content:center;' +
+                    'font-size:12px;font-weight:800;color:' + co.color + ';">' +
+                    numLabel +
+                    (c.old ? '<br><span style="font-size:8px;">Old LOT</span>' : '') +
+                    '</div>';
+            }).join('')}
+          </div>`).join('')}
+          <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:10px;font-weight:700;">
+            <span style="color:#16a34a;">⬅ IN</span>
+            <span style="color:#dc2626;">OUT ⬆ (Old LOT)</span>
+          </div>
+        </div>`;
+    }
+
+    /* ③ 3열 7행 LOT별 재배치 */
+    function _fifoStack3() {
+        const ROWS = 5, COLS = 3;
+        const grid = [];
+        for (let r = 0; r < ROWS; r++) {
+            const row = [];
+            for (let c = 0; c < COLS; c++) {
+                if (r === 0) row.push({ label:'OLD\nLOT', bg:'#fee2e2', border:'#dc2626', color:'#7f1d1d' });
+                else if (r === ROWS - 1) row.push({ label:'NEW\nLOT', bg:'#dcfce7', border:'#16a34a', color:'#14532d' });
+                else row.push({ label:'재공품', bg:'#dbeafe', border:'#3b82f6', color:'#1e3a8a' });
+            }
+            grid.push(row);
+        }
+        return `
+        <div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;background:#fff;">
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:2px;">
+            <div style="text-align:center;font-size:10px;color:#64748b;font-weight:600;">1열</div>
+            <div style="text-align:center;font-size:10px;color:#64748b;font-weight:600;">2열</div>
+            <div style="text-align:center;font-size:10px;color:#64748b;font-weight:600;">3열</div>
+          </div>
+          ${grid.map(row => `
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:3px;">
+            ${row.map(c => `<div style="height:32px;background:${c.bg};border:1.5px solid ${c.border};
+                border-radius:4px;display:flex;align-items:center;justify-content:center;
+                font-size:8px;font-weight:700;color:${c.color};white-space:pre-wrap;text-align:center;line-height:1.2;">
+                ${c.label}</div>`).join('')}
+          </div>`).join('')}
+          <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:10px;font-weight:700;">
+            <span style="color:#16a34a;">⬇ IN (New LOT)</span>
+            <span style="color:#dc2626;">⬆ OUT (Old LOT)</span>
+          </div>
+        </div>`;
+    }
+
+    function printFifoGuide() {
+        const overlay = document.getElementById('fifoGuideOverlay');
+        if (!overlay) return;
+        const content = overlay.querySelector('div').outerHTML;
+        const win = window.open('', '_blank');
+        win.document.write(`<!DOCTYPE html><html lang="ko"><head>
+          <meta charset="UTF-8"><title>선입선출 적재 기준서</title>
+          <style>
+            body{font-family:'맑은 고딕','Malgun Gothic',sans-serif;margin:0;padding:16px;background:#fff;}
+            @media print{@page{size:A3 landscape;margin:10mm;}}
+          </style></head><body>${content}
+          <script>window.onload=()=>window.print();<\/script></body></html>`);
+        win.document.close();
+    }
+
+    /* ══════════════════════════════════════
        유틸
     ══════════════════════════════════════ */
     function _getBox(id) { return _boxes.find(b=>b.id===id); }
@@ -1286,5 +1722,6 @@ var LaserLayoutModule = (function () {
         saveLayout, resetLayout, goBack, printLayout,
         undo, _propChange, toggleSnap,
         toggleArrowMode, _arrowPropChange, _delArrow,
+        showFifoGuide, printFifoGuide,
     };
 })();

@@ -11,9 +11,6 @@ const ProdUtils = {
                         <button class="btn btn-primary" onclick="${onAdd}">
                             <span class="material-symbols-outlined">add</span> 등록
                         </button>
-                        <button class="btn btn-secondary" onclick="${onExport}">
-                            <span class="material-symbols-outlined">download</span> 내보내기
-                        </button>
                     </div>
                 </div>
 
@@ -617,6 +614,32 @@ var ProdStandardsModule = (function() {
                                     <span style="font-size:0.68rem;background:#0e7490;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;white-space:nowrap;">편집가능</span>
                                 </div>
                                 <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">세척 소모품 교체관리 기준서 — A/B라인별 소모품 교체 주기·사용 방법·폐기 방법 관리</div>
+                            </button>
+
+                            <!-- 건조 및 셋팅룸 온도 기준서 카드 -->
+                            <button onclick="Router.navigate('drying-std')"
+                                style="text-align:left;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);padding:15px;cursor:pointer;border-left:4px solid #b45309;">
+                                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
+                                    <span style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--text-primary);">
+                                        <span class="material-symbols-outlined" style="font-size:22px;color:#b45309;">local_fire_department</span>
+                                        건조 및 셋팅룸 온도 기준서
+                                    </span>
+                                    <span style="font-size:0.68rem;background:#b45309;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;white-space:nowrap;">편집가능</span>
+                                </div>
+                                <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">A/B라인 차종·품명별 컨베이어 속도 및 Flash Off OVEN(#1-1·#2·#3) / MAIN OVEN(#4~#8) 온도 설정 기준 — ±5℃ 허용</div>
+                            </button>
+
+                            <!-- 로봇 프로그램 기준서 카드 -->
+                            <button onclick="Router.navigate('robot-pg-std')"
+                                style="text-align:left;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);padding:15px;cursor:pointer;border-left:4px solid #7c3aed;">
+                                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
+                                    <span style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--text-primary);">
+                                        <span class="material-symbols-outlined" style="font-size:22px;color:#7c3aed;">precision_manufacturing</span>
+                                        로봇 프로그램 기준서
+                                    </span>
+                                    <span style="font-size:0.68rem;background:#7c3aed;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;white-space:nowrap;">편집가능</span>
+                                </div>
+                                <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">A라인(Robot 1~6) / B라인(Robot 1~4) 레이저 프로그램명·컨트롤러번호·스핀들 속도 기준표 — 행 추가/삭제/수정 가능</div>
                             </button>
 
                             <!-- 교반시간 작업기준서 카드 -->
@@ -1315,9 +1338,6 @@ var ProdStandardsModule = (function() {
                     ` : ''}
                     <button class="btn btn-primary btn-sm" onclick="ProdStandardsModule.openStandardPrintPage()">
                         <span class="material-symbols-outlined" style="font-size:15px;">print</span> 인쇄
-                    </button>
-                    <button class="btn btn-secondary btn-sm" onclick="ProdStandardsModule.exportStandardDoc()">
-                        <span class="material-symbols-outlined" style="font-size:15px;">download</span> 내보내기
                     </button>
                 </div>
             </div>
@@ -7004,9 +7024,7 @@ var PaintMixModule = (function() {
             <button class="btn btn-primary" onclick="PaintMixModule.openUsageModal()">
                 <span class="material-symbols-outlined">add</span> 기준 등록
             </button>
-            <button class="btn btn-secondary" onclick="PaintMixModule.exportUsage()">
-                <span class="material-symbols-outlined">download</span> 내보내기
-            </button>`;
+`;
 
         pane.innerHTML = `
         <div class="filter-bar" style="flex-wrap:wrap;gap:10px;margin-bottom:12px;">
@@ -7573,9 +7591,7 @@ var PaintMixModule = (function() {
             <button class="btn btn-primary" onclick="PaintMixModule.openFormulaModal()">
                 <span class="material-symbols-outlined">add</span> 기준 등록
             </button>
-            <button class="btn btn-secondary" onclick="PaintMixModule.exportFormula()">
-                <span class="material-symbols-outlined">download</span> 내보내기
-            </button>`;
+`;
 
         pane.innerHTML = `
         <div class="filter-bar" style="flex-wrap:wrap;gap:10px;margin-bottom:12px;">
@@ -8205,13 +8221,8 @@ var PaintMixModule = (function() {
             <button class="btn btn-primary" onclick="PaintMixModule.openManualModal()">
                 <span class="material-symbols-outlined">science</span> 수기 등록
             </button>
-            <button class="btn btn-secondary" onclick="PaintMixModule.exportData()">
-                <span class="material-symbols-outlined">download</span> 내보내기
-            </button>` : ''}
-            ${active === 'residual' ? `
-            <button class="btn btn-secondary" onclick="PaintMixModule.exportResidualData()">
-                <span class="material-symbols-outlined">download</span> 내보내기
-            </button>` : ''}`;
+` : ''}
+            ${active === 'residual' ? `` : ''}`;
     }
 
     function renderHistoryTab() {
@@ -9502,9 +9513,6 @@ var ProdQualityModule = (function() {
                         </button>
                         <button class="btn btn-primary" onclick="ProdQualityModule.openAddModal()">
                             <span class="material-symbols-outlined">edit_document</span> 수기 작성
-                        </button>
-                        <button class="btn btn-secondary" onclick="ProdQualityModule.exportData()">
-                            <span class="material-symbols-outlined">download</span> 내보내기
                         </button>
                     </div>
                 </div>
@@ -12257,9 +12265,6 @@ var ProdEquipmentModule = (function() {
                     <select class="form-select" id="illumYear" onchange="ProdEquipmentModule.renderIllumination()" style="width:110px;">
                         ${Array.from({length:5}, (_,i) => new Date().getFullYear() - 2 + i).map(y => `<option value="${y}" ${y===year?'selected':''}>${y}년</option>`).join('')}
                     </select>
-                    <button class="btn btn-secondary" onclick="ProdEquipmentModule.exportIllumination()">
-                        <span class="material-symbols-outlined">download</span> 내보내기
-                    </button>
                     <button class="btn btn-primary" onclick="ProdEquipmentModule.openIlluminationModal()">
                         <span class="material-symbols-outlined">add</span> 기록 등록
                     </button>
@@ -14777,9 +14782,6 @@ var LimitSamplesModule = (function() {
                     <button class="btn btn-primary" onclick="LimitSamplesModule.openModal()">
                         <span class="material-symbols-outlined">add</span>등록
                     </button>
-                    <button class="btn btn-secondary" onclick="LimitSamplesModule.exportData()">
-                        <span class="material-symbols-outlined">download</span>내보내기
-                    </button>
                 </div>
             </div>
 
@@ -15088,8 +15090,8 @@ var QualityPerformanceModule = (function() {
         <div class="fade-in-up">
             <div class="page-header">
                 <div class="page-actions">
+                    <button class="btn btn-outline" onclick="Router.navigate('painting-quality-performance')"><span class="material-symbols-outlined">lab_profile</span> 도장검사실적</button>
                     <button class="btn btn-secondary" onclick="QualityPerformanceModule.openTargetModal()"><span class="material-symbols-outlined">flag</span> 목표 설정</button>
-                    <button class="btn btn-secondary" onclick="QualityPerformanceModule.exportData()"><span class="material-symbols-outlined">download</span> 내보내기</button>
                     <button class="btn btn-primary" onclick="QualityPerformanceModule.openRecordModal()"><span class="material-symbols-outlined">add</span> 실적 등록</button>
                 </div>
             </div>
@@ -15296,9 +15298,6 @@ var ProdSpcModule = (function() {
                 <div class="page-actions">
                     <button class="btn btn-outline" onclick="Router.navigate('prod-quality')">
                         <span class="material-symbols-outlined">edit_document</span> 초중종물 작성
-                    </button>
-                    <button class="btn btn-secondary" onclick="ProdSpcModule.exportData()">
-                        <span class="material-symbols-outlined">download</span> 내보내기
                     </button>
                 </div>
             </div>

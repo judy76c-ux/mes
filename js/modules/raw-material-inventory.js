@@ -160,9 +160,6 @@ const RawMaterialInventoryModule = (function () {
                         <button id="rawMatStockToggleBtn" class="btn btn-outline" onclick="RawMaterialInventoryModule.showCurrentStock()">
                             ⊙ 재고 보기
                         </button>
-                        <button class="btn btn-outline" onclick="RawMaterialInventoryModule.exportData()">
-                            <span class="material-symbols-outlined">download</span> 내보내기
-                        </button>
                     </div>
                 </div>
 

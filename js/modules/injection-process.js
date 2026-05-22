@@ -1,6 +1,6 @@
 /**
  * 사출 공정 메인
- * - 사출 작업일지 / 금형 교체 이력 / 원재료 변경이력 / 월간 스케쥴 / 원재료입출고
+ * - 사출 작업일지 / 금형 교체 이력 / 원재료 변경이력 / 월간 스케쥴 / 원재료입출고 / 사출 재공품 현황 / 사출 레이아웃
  */
 var InjectionProcessModule = (function () {
     const WORK_LOG_STORE = DB.STORES.INJECTION_WORK_LOG;
@@ -51,15 +51,17 @@ var InjectionProcessModule = (function () {
                     <div style="padding:22px 24px;border-bottom:1px solid var(--border);">
                         <h3 style="margin:0 0 6px;font-size:1.15rem;">사출 공정</h3>
                         <p style="margin:0;color:var(--text-muted);font-size:.9rem;">
-                            작업일지, 금형 교체, 원재료 변경, 월간 스케쥴과 원재료 입출고를 한 화면에서 선택합니다.
+                            작업일지, 금형 교체, 원재료 변경, 월간 스케쥴, 원재료 입출고, 재공품 현황, 레이아웃을 한 화면에서 선택합니다.
                         </p>
                     </div>
-                    <div style="padding:24px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;">
+                    <div style="padding:24px;display:grid;grid-template-columns:repeat(4,1fr);gap:16px;">
                         ${_card('사출 작업일지', '사출 생산 실적과 작업 조건을 기록합니다.', 'settings_suggest', `${workCount}건`, "InjectionProcessModule.goWorkTab('worklog')", 'blue')}
                         ${_card('금형 교체 이력', '금형 교체 실적과 예정 이력을 관리합니다.', 'construction', `${moldCount}건`, "InjectionProcessModule.goWorkTab('mold')", 'orange')}
                         ${_card('원재료 변경이력', '원재료 변경 전후 정보와 변경 사유를 기록합니다.', 'inventory_2', `${rawChangeCount}건`, "InjectionProcessModule.goWorkTab('rawmat')", 'green')}
                         ${_card('월간 스케쥴', '금형 교체와 원재료 변경 계획을 월간으로 확인합니다.', 'calendar_month', '월간', "InjectionProcessModule.goWorkTab('schedule')", 'purple')}
                         ${_card('원재료입출고', '원재료 입고, 출고, 재고 현황을 관리합니다.', 'warehouse', `${rawInvCount}건`, "Router.navigate('raw-material-inventory')", 'teal')}
+                        ${_card('사출 재공품 현황', '사출 완료 후 도장 투입 전까지의 재공품 수량을 관리합니다.', 'layers', '', "Router.navigate('injection-wip')", 'blue')}
+                        ${_card('사출실 레이아웃', '사출실 설비 배치도를 편집하고 인쇄합니다.', 'space_dashboard', '', "Router.navigate('injection-room-layout')", 'blue')}
                     </div>
                 </div>
             </div>

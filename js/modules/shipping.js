@@ -12,19 +12,13 @@
 const ShippingStandbyModule = (function() {
     const SB_STORE = DB.STORES.SHIPPING_STANDBY;
     const SI_STORE = DB.STORES.SHIPPING_INSPECTIONS;
+    let _historyRows = [];
 
     // ── 페이지 렌더 ───────────────────────────────────────────────────
     function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
-                <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-secondary" onclick="ShippingStandbyModule.exportHistory()"
-                            style="font-size:0.85rem;">
-                            <span class="material-symbols-outlined">download</span> 이력 내보내기
-                        </button>
-                    </div>
-                </div>
+                <div class="page-header"></div>
 
                 <!-- 통계 -->
                 <div class="stat-cards" id="ssStats"></div>
@@ -68,12 +62,19 @@ const ShippingStandbyModule = (function() {
                             검사 이력
                         </h4>
                         <!-- 기간 필터 -->
-                        <div style="display:flex;align-items:center;gap:8px;">
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
                             <input type="date" class="form-input" id="ssHistStart"
                                 value="${UIUtils.monthAgo()}" style="width:130px;font-size:0.82rem;">
                             <span style="color:var(--text-muted);">~</span>
                             <input type="date" class="form-input" id="ssHistEnd"
                                 value="${UIUtils.today()}" style="width:130px;font-size:0.82rem;">
+                            <select class="form-select" id="ssHistCar" onchange="ShippingStandbyModule.onHistoryCarChange()"
+                                style="width:140px;font-size:0.82rem;">
+                                <option value="">전체 차종</option>
+                            </select>
+                            <select class="form-select" id="ssHistPart" style="width:220px;font-size:0.82rem;">
+                                <option value="">전체 품명</option>
+                            </select>
                             <button class="btn btn-primary btn-sm"
                                 onclick="ShippingStandbyModule.loadHistory()"
                                 style="padding:6px 12px;font-size:0.82rem;">
@@ -109,6 +110,7 @@ const ShippingStandbyModule = (function() {
         `;
 
         loadData();
+        _renderHistoryFilterOptions();
         loadHistory();
     }
 
@@ -186,14 +188,52 @@ const ShippingStandbyModule = (function() {
     }
 
     // ── 이력 목록 ────────────────────────────────────────────────────
+    function _getHistoryBaseData() {
+        return (Storage.getAll(SI_STORE) || [])
+            .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    }
+
+    function _renderHistoryFilterOptions() {
+        const carSel = document.getElementById('ssHistCar');
+        const partSel = document.getElementById('ssHistPart');
+        if (!carSel || !partSel) return;
+
+        const currentCar = carSel.value || '';
+        const currentPart = partSel.value || '';
+        const data = _getHistoryBaseData();
+        const cars = [...new Set(data.map(d => d.carModel).filter(Boolean))].sort();
+        const partsBase = currentCar ? data.filter(d => (d.carModel || '') === currentCar) : data;
+        const parts = [...new Set(partsBase.map(d => d.partName).filter(Boolean))].sort();
+
+        carSel.innerHTML = `<option value="">전체 차종</option>` +
+            cars.map(car => `<option value="${car}" ${car === currentCar ? 'selected' : ''}>${car}</option>`).join('');
+
+        partSel.innerHTML = `<option value="">전체 품명</option>` +
+            parts.map(part => `<option value="${part}" ${part === currentPart ? 'selected' : ''}>${part}</option>`).join('');
+
+        if (currentPart && !parts.includes(currentPart)) partSel.value = '';
+    }
+
+    function onHistoryCarChange() {
+        _renderHistoryFilterOptions();
+    }
+
     function loadHistory() {
         const start = document.getElementById('ssHistStart')?.value || '';
         const end   = document.getElementById('ssHistEnd')?.value   || '';
+        const car   = document.getElementById('ssHistCar')?.value || '';
+        const part  = document.getElementById('ssHistPart')?.value || '';
+        _renderHistoryFilterOptions();
         const data  = Storage.getByDateRange(SI_STORE, start, end)
+            .filter(d => !car || (d.carModel || '') === car)
+            .filter(d => !part || (d.partName || '') === part)
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        _historyRows = data;
 
         const tbody = document.getElementById('ssHistoryBody');
+        const exportBtn = document.getElementById('ssExportBtn');
         if (!tbody) return;
+        if (exportBtn) exportBtn.style.display = data.length ? 'inline-flex' : 'none';
 
         if (!data.length) {
             tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:32px;color:var(--text-muted);">해당 기간의 검사 이력이 없습니다.</td></tr>`;
@@ -385,7 +425,7 @@ const ShippingStandbyModule = (function() {
 
     // ── 내보내기 ─────────────────────────────────────────────────────
     function exportHistory() {
-        const data = Storage.getAll(SI_STORE);
+        const data = _historyRows && _historyRows.length ? _historyRows : [];
         if (!data.length) { UIUtils.toast('데이터가 없습니다.', 'warning'); return; }
         const headers = ['검사일', '납품처', '차종', '제품명', '컬러', '도장LOT', '사출LOT',
             'LOT수량', '샘플수', '불량수', '판정', '검사자', '비고'];
@@ -401,6 +441,7 @@ const ShippingStandbyModule = (function() {
 
     return {
         render, loadData, loadHistory,
+        onHistoryCarChange,
         _showDetail,
         removeStandby, removeHistory, exportHistory,
         // 하위호환 (구 코드 참조용)
@@ -653,9 +694,6 @@ const ShippingInspectionModule = (function() {
             <div class="fade-in-up">
                 <div class="page-header">
                     <div class="page-actions">
-                        <button class="btn btn-secondary" onclick="ShippingInspectionModule.exportData()">
-                            <span class="material-symbols-outlined">download</span> 내보내기
-                        </button>
                     </div>
                 </div>
 
@@ -808,9 +846,6 @@ const ProductWarehouseModule = (function() {
                         </button>
                         <button class="btn btn-primary" onclick="ProductWarehouseModule.openAddModal()">
                             <span class="material-symbols-outlined">add</span> 재고 등록
-                        </button>
-                        <button class="btn btn-secondary" onclick="ProductWarehouseModule.exportData()">
-                            <span class="material-symbols-outlined">download</span> 내보내기
                         </button>
                     </div>
                 </div>
@@ -1200,9 +1235,6 @@ const ProductOutgoingModule = (function() {
                     <div class="page-actions">
                         <button class="btn btn-primary" onclick="ProductOutgoingModule.openAddModal()">
                             <span class="material-symbols-outlined">add</span> 출고 등록
-                        </button>
-                        <button class="btn btn-secondary" onclick="ProductOutgoingModule.exportData()">
-                            <span class="material-symbols-outlined">download</span> 내보내기
                         </button>
                     </div>
                 </div>

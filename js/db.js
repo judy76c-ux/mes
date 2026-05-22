@@ -5,7 +5,7 @@
 
 const DB = (function() {
     const DB_NAME = 'ProductionMES_DB';
-    const DB_VERSION = 43;
+    const DB_VERSION = 46;
     let db = null;
 
     // 스토어 이름 - 전체 공정에 대응
@@ -134,6 +134,15 @@ const DB = (function() {
 
         // 점도 측정 작업기준서 데이터 (v42)
         VISCOSITY_STD_DATA: 'viscosity_std_data',
+
+        // 사출 재공품 (v44)
+        INJECTION_WIP: 'injection_wip',
+
+        // 로봇 프로그램 기준서 (v45)
+        ROBOT_PG_STD_DATA: 'robot_pg_std_data',
+
+        // 건조 및 셋팅룸 온도 기준서 (v46)
+        DRYING_STD_DATA: 'drying_std_data',
 
         // 설정
         CONFIG: 'config'
@@ -1268,6 +1277,20 @@ const DB = (function() {
                 // ── 점도 측정 작업기준서 (v42) ───────────────────────────
                 if (!database.objectStoreNames.contains(STORES.VISCOSITY_STD_DATA)) {
                     database.createObjectStore(STORES.VISCOSITY_STD_DATA, { keyPath: 'id' });
+                }
+
+                // ── 사출 재공품 (v44) ──────────────────────────────────────
+                if (!database.objectStoreNames.contains(STORES.INJECTION_WIP)) {
+                    const store = database.createObjectStore(STORES.INJECTION_WIP, { keyPath: 'id' });
+                    store.createIndex('date',     'date',     { unique: false });
+                    store.createIndex('partName', 'partName', { unique: false });
+                    store.createIndex('type',     'type',     { unique: false });
+                }
+                if (oldVersion < 45) {
+                    database.createObjectStore(STORES.ROBOT_PG_STD_DATA, { keyPath: 'id' });
+                }
+                if (oldVersion < 46) {
+                    database.createObjectStore(STORES.DRYING_STD_DATA, { keyPath: 'id' });
                 }
             };
         });

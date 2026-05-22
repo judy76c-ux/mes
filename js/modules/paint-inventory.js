@@ -29,9 +29,6 @@ const PaintInventoryModule = (function() {
                         <button class="btn btn-outline" onclick="PaintInventoryModule.showStockModal()">
                             <span class="material-symbols-outlined">inventory_2</span> 현재 재고 보기
                         </button>
-                        <button class="btn btn-secondary" onclick="PaintInventoryModule.exportData()">
-                            <span class="material-symbols-outlined">download</span> 내보내기
-                        </button>
                         <button class="btn btn-danger" onclick="PaintInventoryModule.clearAllInventory()"
                             style="opacity:0.75;" title="도료 입출고 이력 전체 삭제">
                             <span class="material-symbols-outlined">delete_sweep</span> 재고 초기화

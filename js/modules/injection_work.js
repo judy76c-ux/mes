@@ -72,9 +72,6 @@ var InjectionWorkLogModule = (function() {
                     <button class="btn btn-primary" onclick="InjectionWorkLogModule.openAddModal()">
                         <span class="material-symbols-outlined">add</span> 작업 등록
                     </button>
-                    <button class="btn btn-secondary" onclick="InjectionWorkLogModule.exportData()">
-                        <span class="material-symbols-outlined">download</span> 내보내기
-                    </button>
                 </div>
 
                 <div class="filter-bar" style="flex-wrap:wrap;gap:10px;">
