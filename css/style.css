@@ -11,7 +11,7 @@
     --sidebar-active: #1d4ed8;
     --sidebar-text: #94a3b8;
     --sidebar-text-active: #ffffff;
-    --sidebar-width: 210px;
+    --sidebar-width: 190px;
     --sidebar-collapsed-width: 68px;
     --sidebar-divider: #1e293b;
 
@@ -217,18 +217,32 @@ body {
 }
 
 .nav-divider {
-    padding: 16px 14px 6px;
-    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 18px 10px 8px;
+    font-size: 0.78rem;
     font-weight: 700;
-    color: #94a3b8;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    color: #bfdbfe;
+    letter-spacing: 0;
+    white-space: nowrap;
+}
+
+.nav-divider::after {
+    content: "";
+    height: 1px;
+    flex: 1;
+    background: linear-gradient(90deg, rgba(96, 165, 250, 0.55), rgba(96, 165, 250, 0.08));
 }
 
 .sidebar.collapsed .nav-divider {
     padding: 12px 0;
     border-bottom: 1px solid var(--sidebar-divider);
     margin: 0 8px;
+}
+
+.sidebar.collapsed .nav-divider::after {
+    display: none;
 }
 
 .nav-divider-link {

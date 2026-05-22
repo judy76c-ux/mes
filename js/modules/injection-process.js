@@ -20,13 +20,15 @@ var InjectionProcessModule = (function () {
     function _card(title, desc, icon, count, action, tone) {
         return `
             <button type="button" onclick="${action}" class="submodule-card submodule-card-${tone || 'blue'}"
-                style="text-align:left;border:1px solid var(--border);background:var(--bg-card);border-radius:12px;
-                       padding:22px;box-shadow:var(--shadow-sm);cursor:pointer;min-height:132px;
+                onmouseenter="this.style.boxShadow='0 6px 24px rgba(0,0,0,0.13)';this.style.transform='translateY(-2px)'"
+                onmouseleave="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.07)';this.style.transform=''"
+                style="text-align:left;border:1px solid var(--border);background:#ffffff;border-radius:12px;
+                       padding:22px;box-shadow:0 2px 8px rgba(0,0,0,0.07);cursor:pointer;min-height:132px;
                        display:flex;flex-direction:column;gap:12px;transition:all .15s;">
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
                     <span class="material-symbols-outlined"
                         style="width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;
-                               background:rgba(59,130,246,.12);color:var(--accent-blue);font-size:24px;">${icon}</span>
+                               background:#ffffff;border:1px solid var(--border);color:var(--text-secondary);font-size:24px;">${icon}</span>
                     <span style="font-size:.82rem;color:var(--text-muted);font-weight:700;">${count}</span>
                 </div>
                 <div>
