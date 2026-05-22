@@ -1262,7 +1262,44 @@ const PaintingWorkModule = (function() {
         section.style.display = (inputQty > 0 && inputQty < threshold) ? 'block' : 'none';
     }
 
-    // 투입/산출 수량이 계획수량 초과 시 경고 섹션 표시
+    // 초과 수량 비례로 작업 완료시간 재계산 (계획 CT 기준)
+    function _recalcEndTimeForOverQty(actualQty, planQty) {
+        var timeSection = document.getElementById('pwTimeReasonSection');
+        if (!timeSection) return;
+        var planStart = timeSection.getAttribute('data-plan-start') || '';
+        var planEnd   = timeSection.getAttribute('data-plan-end')   || '';
+        if (!planStart || !planEnd) return;
+
+        var planStartMin = _timeToMin(planStart);
+        var planEndMin   = _timeToMin(planEnd);
+        var planDuration = planEndMin - planStartMin;  // 계획 총 작업시간(분)
+        if (planDuration <= 0 || planQty <= 0) return;
+
+        // 계획 CT(초) = 총시간(초) / 계획수량
+        var planCT = (planDuration * 60) / planQty;
+        // 예상 소요시간(분) = CT × 실제수량 / 60
+        var newDuration = Math.round(planCT * actualQty / 60);
+
+        // 실제 시작 시간 (사용자가 변경했을 수 있으므로 폼에서 읽음)
+        var startEl  = document.getElementById('addPwStartTime');
+        var startMin = startEl && startEl.value ? _timeToMin(startEl.value) : planStartMin;
+        if (isNaN(startMin)) return;
+
+        var newEndMin    = startMin + newDuration;
+        var newEndHour   = Math.floor(newEndMin / 60) % 24;
+        var newEndMinute = newEndMin % 60;
+        var newEndTime   = String(newEndHour).padStart(2, '0') + ':' + String(newEndMinute).padStart(2, '0');
+
+        var endEl = document.getElementById('addPwEndTime');
+        if (endEl && endEl.value !== newEndTime) {
+            endEl.value = newEndTime;
+            // CT 재계산 + 시간변동 섹션 갱신
+            calcCT();
+            onTimeChange();
+        }
+    }
+
+    // 투입/산출 수량이 계획수량 초과 시 경고 섹션 표시 + 완료시간 자동 재계산
     function checkOverPlanQty() {
         var section = document.getElementById('pwOverPlanSection');
         if (!section) return;
@@ -1279,9 +1316,42 @@ const PaintingWorkModule = (function() {
             if (msgEl) {
                 var which = (inputQty > planQty && outQty > planQty) ? '투입·산출 수량' :
                             (inputQty > planQty ? '투입수량' : '산출수량');
+
+                // 재계산된 완료시간 표시용
+                var endEl = document.getElementById('addPwEndTime');
+                var recalcNote = '';
+                if (endEl) {
+                    var timeSection = document.getElementById('pwTimeReasonSection');
+                    var planEnd = timeSection ? timeSection.getAttribute('data-plan-end') : '';
+                    if (planEnd && endEl.value && endEl.value !== planEnd) {
+                        recalcNote = '<br><span style="color:#6b7280;font-size:0.78rem;">▶ 작업 완료시간이 ' +
+                            '<strong>' + endEl.value + '</strong>으로 자동 재계산되었습니다.' +
+                            ' (계획 CT 기준, 계획 완료: ' + planEnd + ')</span>';
+                    }
+                }
                 msgEl.innerHTML =
                     which + '이 계획수량 <strong>' + UIUtils.formatNumber(planQty) + ' EA</strong> 대비 ' +
-                    '<strong style="color:#b45309;">' + UIUtils.formatNumber(overAmt) + ' EA</strong> 초과입니다.';
+                    '<strong style="color:#b45309;">' + UIUtils.formatNumber(overAmt) + ' EA</strong> 초과입니다.' +
+                    recalcNote;
+            }
+            // 완료시간 자동 재계산
+            _recalcEndTimeForOverQty(maxQty, planQty);
+            // 재계산 후 msg 업데이트 (endEl.value가 바뀐 뒤)
+            if (msgEl) {
+                var endEl2 = document.getElementById('addPwEndTime');
+                var ts2 = document.getElementById('pwTimeReasonSection');
+                var planEnd2 = ts2 ? ts2.getAttribute('data-plan-end') : '';
+                var which2 = (inputQty > planQty && outQty > planQty) ? '투입·산출 수량' :
+                             (inputQty > planQty ? '투입수량' : '산출수량');
+                var recalcNote2 = (endEl2 && planEnd2 && endEl2.value !== planEnd2)
+                    ? '<br><span style="color:#6b7280;font-size:0.78rem;">▶ 작업 완료시간이 ' +
+                      '<strong>' + endEl2.value + '</strong>으로 자동 재계산되었습니다.' +
+                      ' (계획 CT 기준, 계획 완료: ' + planEnd2 + ')</span>'
+                    : '';
+                msgEl.innerHTML =
+                    which2 + '이 계획수량 <strong>' + UIUtils.formatNumber(planQty) + ' EA</strong> 대비 ' +
+                    '<strong style="color:#b45309;">' + UIUtils.formatNumber(overAmt) + ' EA</strong> 초과입니다.' +
+                    recalcNote2;
             }
             // 체크 초기화
             var ck = document.getElementById('addPwOverPlanConfirm');

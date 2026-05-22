@@ -118,11 +118,9 @@ const AuthModule = (function () {
     }
 
     /* ── 쓰기 권한 ───────────────────────────────────────────── */
+    /* 테스트 모드: 로그인 없이 전체 쓰기 허용 (관리/설정 제외) */
     function canWrite() {
-        const user = getCurrentUser();
-        if (!user) return false;
-        const role = ROLES.find(r => r.key === user.role);
-        return role ? role.canWrite : false;
+        return true;
     }
 
     /* ── 기본 관리자 계정 보장 ───────────────────────────────── */
@@ -248,10 +246,8 @@ const AuthModule = (function () {
     }
 
     /* ── 설정 페이지 관리자 인증 ─────────────────────────────── */
-    /* TODO: 테스트 완료 후 아래 주석 해제하고 onPass() 한 줄 제거 */
+    /* 관리/설정 페이지만 관리자 로그인 필요 (나머지 전체 허용) */
     function checkSettingsAuth(onPass) {
-        onPass(); // 테스트 중 — 인증 없이 전체 허용
-        /* 운영 시 아래 코드로 복구
         const user = getCurrentUser();
         if (user && user.role === 'admin') { onPass(); return; }
         showLoginModal(function() {
@@ -259,7 +255,6 @@ const AuthModule = (function () {
             if (u && u.role === 'admin') { onPass(); }
             else { UIUtils.toast('관리자 계정으로 로그인해야 합니다.', 'warning'); }
         });
-        */
     }
 
     /* ── body 쓰기 모드 CSS 클래스 ──────────────────────────── */

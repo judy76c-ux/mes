@@ -251,7 +251,7 @@ var FiveSModule = (function () {
                 <td style="padding:4px 6px;">
                     <select class="form-select s5-score" data-idx="${idx}"
                             style="width:112px;font-size:0.8rem;"
-                            onchange="FiveSModule._calcPreview()">
+                            onchange="FiveSModule._calcPreview();FiveSModule._togglePhotoRows()">
                         ${opts}
                     </select>
                 </td>
@@ -259,6 +259,12 @@ var FiveSModule = (function () {
                     <input type="text" class="form-input s5-note" data-idx="${idx}"
                            value="${_esc(item.note || '')}" placeholder="특이사항"
                            style="font-size:0.8rem;">
+                </td>
+                <td style="padding:4px 6px;min-width:150px;">
+                    <div class="s5-photo-wrap" data-idx="${idx}" style="display:none;">
+                        <input type="file" class="form-input s5-photo" data-idx="${idx}" accept="image/*" multiple style="font-size:0.75rem;padding:6px;">
+                        <div style="font-size:0.72rem;color:var(--text-muted);margin-top:3px;">기존 사진 ${(item.photos || []).length}개</div>
+                    </div>
                 </td>
             </tr>`;
         }).join('');
@@ -302,6 +308,8 @@ var FiveSModule = (function () {
                                    border-bottom:1px solid var(--border-color);width:120px;">평가</th>
                         <th style="padding:7px 8px;font-size:0.72rem;color:var(--text-muted);
                                    border-bottom:1px solid var(--border-color);">특이사항</th>
+                        <th style="padding:7px 8px;font-size:0.72rem;color:var(--text-muted);
+                                   border-bottom:1px solid var(--border-color);width:160px;">사진</th>
                     </tr>
                 </thead>
                 <tbody>${tbody}</tbody>
@@ -326,7 +334,7 @@ var FiveSModule = (function () {
              </button>`,
             'xl'
         );
-        setTimeout(() => FiveSModule._calcPreview(), 50);
+        setTimeout(() => { FiveSModule._calcPreview(); FiveSModule._togglePhotoRows(); }, 50);
     }
 
     function _calcPreview() {
@@ -341,6 +349,31 @@ var FiveSModule = (function () {
         }
     }
 
+    function _togglePhotoRows() {
+        document.querySelectorAll('.s5-score').forEach(sel => {
+            const idx = sel.dataset.idx;
+            const wrap = document.querySelector(`.s5-photo-wrap[data-idx="${idx}"]`);
+            if (wrap) wrap.style.display = Number(sel.value) > 0 && Number(sel.value) <= 2 ? 'block' : 'none';
+        });
+    }
+
+    function _readPhotos(input) {
+        const files = Array.from(input?.files || []);
+        return Promise.all(files.map(file => new Promise(resolve => {
+            const reader = new FileReader();
+            reader.onload = () => resolve({ name: file.name, type: file.type, dataUrl: reader.result });
+            reader.onerror = () => resolve(null);
+            reader.readAsDataURL(file);
+        }))).then(list => list.filter(Boolean));
+    }
+
+    function _photosHtml(photos = []) {
+        if (!photos.length) return '<span style="color:var(--text-muted);">-</span>';
+        return `<div style="display:flex;gap:6px;flex-wrap:wrap;">${photos.map(p => `
+            <img src="${p.dataUrl}" alt="${_esc(p.name || 'photo')}" style="width:58px;height:44px;object-fit:cover;border:1px solid var(--border-color);border-radius:6px;">
+        `).join('')}</div>`;
+    }
+
     async function saveInsp(id) {
         const date      = document.getElementById('s5IDate')?.value;
         const area      = document.getElementById('s5IAreaSel')?.value;
@@ -352,10 +385,17 @@ var FiveSModule = (function () {
 
         const scoreEls = [...document.querySelectorAll('.s5-score')];
         const noteEls  = [...document.querySelectorAll('.s5-note')];
-        const checkItems = CHECK_ITEMS.map((def, idx) => ({
-            ...def,
-            score: Number(scoreEls[idx]?.value || 0),
-            note:  noteEls[idx]?.value.trim() || ''
+        const oldItems = id ? ((Storage.getById(STORE, id) || {}).checkItems || []) : [];
+        const checkItems = await Promise.all(CHECK_ITEMS.map(async (def, idx) => {
+            const score = Number(scoreEls[idx]?.value || 0);
+            const old = oldItems[idx] || {};
+            const addedPhotos = await _readPhotos(document.querySelector(`.s5-photo[data-idx="${idx}"]`));
+            return {
+                ...def,
+                score,
+                note: noteEls[idx]?.value.trim() || '',
+                photos: score > 0 && score <= 2 ? [...(old.photos || []), ...addedPhotos] : []
+            };
         }));
 
         const totalScore = _calcScore(checkItems);
@@ -401,6 +441,7 @@ var FiveSModule = (function () {
                 <td style="font-size:0.78rem;color:var(--text-muted);">${_esc(item.desc)}</td>
                 <td style="text-align:center;font-weight:700;color:${sColor};">${sLabel}</td>
                 <td style="color:var(--text-muted);font-size:0.8rem;">${_esc(item.note || '-')}</td>
+                <td>${_photosHtml(item.photos)}</td>
             </tr>`;
         }).join('');
 
@@ -431,7 +472,7 @@ var FiveSModule = (function () {
             <div class="data-table-wrapper">
             <table class="data-table" style="font-size:0.82rem;">
                 <thead><tr>
-                    <th>구분</th><th>항목</th><th>평가 기준</th><th>평가</th><th>특이사항</th>
+                    <th>구분</th><th>항목</th><th>평가 기준</th><th>평가</th><th>특이사항</th><th>사진</th>
                 </tr></thead>
                 <tbody>${tbody}</tbody>
             </table>
@@ -914,6 +955,7 @@ var FiveSModule = (function () {
         searchIssues,
         openInspModal,
         _calcPreview,
+        _togglePhotoRows,
         saveInsp,
         viewInsp,
         removeInsp,
