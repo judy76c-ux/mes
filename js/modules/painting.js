@@ -701,6 +701,16 @@ const PaintingWorkModule = (function() {
                 '<span style="display:inline-block; background:var(--accent-green); color:white; padding:2px 8px; border-radius:4px; font-size:0.75rem; font-weight:600; margin-right:4px;">✓ 검사완료</span>' :
                 '';
 
+            // 계획수량 초과 배지
+            const overPlanBadge = d.overPlanQty
+                ? '<span style="display:inline-block;background:#f59e0b;color:#fff;padding:2px 7px;border-radius:4px;font-size:0.7rem;font-weight:700;margin-right:3px;" title="계획수량 초과 등록됨">⚠ 초과</span>'
+                : '';
+
+            // 시간 변동 / 관리자 통보 배지
+            const timeChangeBadge = d.timeReason
+                ? '<span style="display:inline-block;background:#ef4444;color:#fff;padding:2px 7px;border-radius:4px;font-size:0.7rem;font-weight:700;margin-right:3px;" title="시간변동: ' + (d.timeReason || '') + (d.timeReasonDetail ? ' / ' + d.timeReasonDetail : '') + '">⏱ 시간변동</span>'
+                : '';
+
             // 검사 완료된 항목은 수정 버튼 비활성화 (삭제 버튼 없음)
             const actionButtons = isInspectionCompleted ?
                 '<span style="color:var(--text-muted); font-size:0.85rem;">검사 완료됨</span>' :
@@ -723,7 +733,7 @@ const PaintingWorkModule = (function() {
                 '<td style="text-align:right;">' + ctStr + '</td>' +
                 '<td style="text-align:center;">' + cvtStr + '</td>' +
                 '<td style="text-align:right;">' + spindleStr + '</td>' +
-                '<td style="white-space:nowrap;">' + statusBadge + actionButtons + '</td></tr>';
+                '<td style="white-space:nowrap;">' + overPlanBadge + timeChangeBadge + statusBadge + actionButtons + '</td></tr>';
         }).join('');
     }
 
@@ -1252,6 +1262,33 @@ const PaintingWorkModule = (function() {
         section.style.display = (inputQty > 0 && inputQty < threshold) ? 'block' : 'none';
     }
 
+    // 투입/산출 수량이 계획수량 초과 시 경고 섹션 표시
+    function checkOverPlanQty() {
+        var section = document.getElementById('pwOverPlanSection');
+        if (!section) return;
+        var planQty = Number(section.getAttribute('data-plan-qty')) || 0;
+        if (planQty <= 0) return;
+        var inputQty = Number((document.getElementById('addPwInputQty') || {}).value) || 0;
+        var outQty   = Number((document.getElementById('addPwProdQty')  || {}).value) || 0;
+        var maxQty   = Math.max(inputQty, outQty);
+        var overAmt  = maxQty - planQty;
+        var show     = maxQty > planQty;
+        section.style.display = show ? 'block' : 'none';
+        if (show) {
+            var msgEl = document.getElementById('pwOverPlanMsg');
+            if (msgEl) {
+                var which = (inputQty > planQty && outQty > planQty) ? '투입·산출 수량' :
+                            (inputQty > planQty ? '투입수량' : '산출수량');
+                msgEl.innerHTML =
+                    which + '이 계획수량 <strong>' + UIUtils.formatNumber(planQty) + ' EA</strong> 대비 ' +
+                    '<strong style="color:#b45309;">' + UIUtils.formatNumber(overAmt) + ' EA</strong> 초과입니다.';
+            }
+            // 체크 초기화
+            var ck = document.getElementById('addPwOverPlanConfirm');
+            if (ck) ck.checked = false;
+        }
+    }
+
     // ──────────────────────────────────────────────
     // 작업 등록 모달 (lg 크기, 계획 연동)
     // ──────────────────────────────────────────────
@@ -1346,12 +1383,12 @@ const PaintingWorkModule = (function() {
             '<label class="form-label" style="font-size:0.84rem;">투입수량 (IN PUT) <span style="color:var(--accent-red)">*</span>' +
             '<span style="color:var(--text-muted);font-size:0.75rem;"> 계획: ' + planQtyFmt + '</span></label>' +
             '<input type="number" class="form-input" id="addPwInputQty" min="0" placeholder="0"' +
-            ' oninput="PaintingWorkModule.checkQtyDiff(); PaintingWorkModule.checkPlanQtyDiff();"' +
+            ' oninput="PaintingWorkModule.checkQtyDiff(); PaintingWorkModule.checkPlanQtyDiff(); PaintingWorkModule.checkOverPlanQty();"' +
             ' style="font-size:1.05rem;font-weight:600;text-align:right;"></div>' +
             '<div class="form-group" style="margin:0;">' +
             '<label class="form-label" style="font-size:0.84rem;">산출 수량 (OUT PUT) <span style="color:var(--accent-red)">*</span></label>' +
             '<input type="number" class="form-input" id="addPwProdQty" min="0" placeholder="0"' +
-            ' oninput="PaintingWorkModule.calcCT(); PaintingWorkModule.checkQtyDiff();"' +
+            ' oninput="PaintingWorkModule.calcCT(); PaintingWorkModule.checkQtyDiff(); PaintingWorkModule.checkOverPlanQty();"' +
             ' style="font-size:1.05rem;font-weight:600;text-align:right;color:var(--accent-green);"></div>' +
             '<div class="form-group" style="margin:0;">' +
             '<label class="form-label" style="font-size:0.84rem;">투입인원 (명) <span style="color:var(--accent-red)">*</span></label>' +
@@ -1425,7 +1462,18 @@ const PaintingWorkModule = (function() {
             '<input type="text" class="form-input" id="addPwTimeReasonDetail"' +
             ' placeholder="구체적인 내용 (예: 컬러교체 청소, 아이템 교체, 자재 부족)"' +
             ' style="font-size:0.85rem;"></div>' +
-            '</div></div>';
+            '</div>' +
+            '<div style="margin-top:10px;background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.3);border-radius:6px;padding:9px 14px;display:flex;align-items:center;gap:10px;">' +
+            '<span class="material-symbols-outlined" style="color:#dc2626;font-size:20px;flex-shrink:0;">campaign</span>' +
+            '<div style="flex:1;font-size:0.82rem;color:var(--text-primary);line-height:1.45;">' +
+            '<strong style="color:#dc2626;">관리자 통보 필요</strong> — 생산 시간 변동 내용을 작업 관리자에게 즉시 보고해 주세요.' +
+            '</div>' +
+            '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap;flex-shrink:0;">' +
+            '<input type="checkbox" id="addPwManagerNotified" style="width:16px;height:16px;accent-color:#dc2626;">' +
+            '<span style="font-size:0.82rem;font-weight:600;color:#dc2626;">통보 완료</span>' +
+            '</label>' +
+            '</div>' +
+            '</div>';
 
         // ⑤ LOT 섹션
         var lotSectionHtml =
@@ -1457,6 +1505,26 @@ const PaintingWorkModule = (function() {
             (initialLotCount <= 1 ? ' disabled title="사출 창고 LOT가 1개 이하여서 추가할 수 없습니다"' : '') + '>' +
             '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">add</span> LOT 추가</button>' +
             '</div></div>';
+
+        // ⑥-A 계획수량 초과 경고 섹션 (투입/산출 > 계획수량 시 표시)
+        var overPlanHtml = planQty > 0
+            ? '<div id="pwOverPlanSection" data-plan-qty="' + planQty + '"' +
+              ' style="display:none;margin-bottom:14px;' +
+              'background:rgba(245,158,11,0.08);border:2px solid rgba(245,158,11,0.55);' +
+              'border-radius:8px;padding:12px;">' +
+              '<div style="font-size:0.84rem;color:#b45309;font-weight:700;margin-bottom:8px;">' +
+              '<span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px;">warning</span>' +
+              '⚠ 계획수량 초과 경고' +
+              '</div>' +
+              '<div id="pwOverPlanMsg" style="font-size:0.83rem;color:#92400e;margin-bottom:12px;line-height:1.55;"></div>' +
+              '<div style="background:rgba(245,158,11,0.13);border-radius:6px;padding:9px 14px;display:flex;align-items:center;gap:10px;">' +
+              '<input type="checkbox" id="addPwOverPlanConfirm" style="width:18px;height:18px;accent-color:#d97706;flex-shrink:0;">' +
+              '<label for="addPwOverPlanConfirm" style="font-size:0.83rem;color:#92400e;cursor:pointer;font-weight:600;line-height:1.4;">' +
+              '계획수량 초과 내용을 확인하였으며, 담당 관리자에게 보고하였습니다' +
+              '</label>' +
+              '</div>' +
+              '</div>'
+            : '';
 
         // ⑥ 계획 미달 사유 섹션 (산출수량 < 계획수량일 때 표시)
         var planQtyReasonHtml = planQty > 0
@@ -1506,7 +1574,7 @@ const PaintingWorkModule = (function() {
             '<input type="hidden" id="addPwPlanId"         value="' + planId + '">';
 
         UIUtils.showModal('도장 작업 실적 등록',
-            bannerHtml + hiddenHtml + qtyRowHtml + timeRowHtml + reasonHtml + lotSectionHtml + planQtyReasonHtml + noteHtml,
+            bannerHtml + hiddenHtml + qtyRowHtml + timeRowHtml + reasonHtml + lotSectionHtml + overPlanHtml + planQtyReasonHtml + noteHtml,
             '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>' +
             '<button class="btn btn-primary" onclick="PaintingWorkModule.saveNew()">' +
             '<span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">save</span> 등록</button>',
@@ -1641,6 +1709,27 @@ const PaintingWorkModule = (function() {
             UIUtils.toast('계획 시간 변경 사유를 선택해 주세요.', 'warning');
             return;
         }
+        // 시간 변동 → 관리자 통보 완료 체크 필수
+        if (reasonVisible) {
+            var managerNotifiedChk = document.getElementById('addPwManagerNotified');
+            if (!managerNotifiedChk || !managerNotifiedChk.checked) {
+                UIUtils.toast('시간 변동 내용을 관리자에게 통보 후 "통보 완료"를 체크해 주세요.', 'warning');
+                if (managerNotifiedChk) managerNotifiedChk.closest('div').scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
+        }
+
+        // 계획수량 초과 → 확인 체크 필수
+        var overPlanSection = document.getElementById('pwOverPlanSection');
+        var overPlanVisible = overPlanSection && overPlanSection.style.display !== 'none';
+        if (overPlanVisible) {
+            var overPlanConfirm = document.getElementById('addPwOverPlanConfirm');
+            if (!overPlanConfirm || !overPlanConfirm.checked) {
+                UIUtils.toast('계획수량 초과 내용을 확인하고 관리자 보고 체크박스를 선택해 주세요.', 'warning');
+                if (overPlanConfirm) overPlanConfirm.closest('div').scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
+        }
 
         // IN/OUT 1% 초과 차이 → 비고 필수
         var inputQtyVal  = Number((document.getElementById('addPwInputQty') || {}).value) || 0;
@@ -1689,6 +1778,8 @@ const PaintingWorkModule = (function() {
             avgCT: avgCT,
             timeReason: timeReason,
             timeReasonDetail: timeReasonDetail,
+            managerNotified: reasonVisible ? true : false,
+            overPlanQty: overPlanVisible ? true : false,
             planReason: planReasonVisible ? planReason : '',
             planReasonDetail: planReasonVisible ? planReasonDetail : '',
             note: ((document.getElementById('addPwNote') || {}).value || '').trim()
@@ -2110,6 +2201,7 @@ const PaintingWorkModule = (function() {
         onTimeChange,
         checkQtyDiff,
         checkPlanQtyDiff,
+        checkOverPlanQty,
         saveNew,
         edit,
         saveEdit,

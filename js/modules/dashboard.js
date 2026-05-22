@@ -114,6 +114,9 @@ const DashboardModule = (function() {
             <!-- 점검/관리 타일 -->
             <div id="dashMonitorTiles" style="margin-bottom:24px;"></div>
 
+            <!-- 개선활동 현황 -->
+            <div id="dashImprovementTiles" style="margin-bottom:24px;"></div>
+
             <!-- 차트 -->
             <div class="dashboard-grid" id="dashboardCharts">
                 <div class="chart-card">
@@ -137,6 +140,7 @@ const DashboardModule = (function() {
 
         renderProductionTiles();
         renderMonitorTiles();   // async
+        renderImprovementTiles();
         renderCharts();
     }
 
@@ -355,6 +359,97 @@ const DashboardModule = (function() {
     /* ══════════════════════════════════════════════════════════
        3정5S 예정일 계산 (대시보드용 간소화)
     ══════════════════════════════════════════════════════════ */
+    function renderImprovementTiles() {
+        const el = document.getElementById('dashImprovementTiles');
+        if (!el) return;
+
+        const storeName = DB.STORES.PROD_IMPROVEMENT_ACTIVITIES;
+        const rows = storeName ? (Storage.getAll(storeName) || []) : [];
+        const month = UIUtils.today().slice(0, 7);
+        const monthRows = rows.filter(r => String(r.date || r.createdAt || '').slice(0, 7) === month);
+
+        const rankMap = {};
+        monthRows.forEach(r => {
+            const name = r.proposer || '미지정';
+            if (!rankMap[name]) rankMap[name] = { proposed: 0, approved: 0, closed: 0, score: 0 };
+            rankMap[name].proposed += 1;
+            if (r.approval === 'approved') rankMap[name].approved += 1;
+            if (r.status === 'closed') rankMap[name].closed += 1;
+            rankMap[name].score += 1 + (r.approval === 'approved' ? 2 : 0) + (r.status === 'closed' ? 3 : 0);
+        });
+        const top = Object.entries(rankMap)
+            .map(([name, v]) => ({ name, ...v }))
+            .sort((a, b) => b.score - a.score || b.proposed - a.proposed)[0];
+
+        const pending = rows.filter(r => !r.approval || r.approval === 'pending' || r.status === 'reviewing' || r.status === 'draft').length;
+        const approved = rows.filter(r => r.approval === 'approved').length;
+        const running = rows.filter(r => ['planning', 'running', 'checking', 'maintaining'].includes(r.status)).length;
+        const closed = rows.filter(r => r.status === 'closed').length;
+        const recent = rows.slice()
+            .sort((a, b) => String(b.createdAt || b.date || '').localeCompare(String(a.createdAt || a.date || '')))
+            .slice(0, 3);
+
+        el.innerHTML = `
+        <div class="card" style="margin-bottom:0;">
+            <div style="padding:14px 18px 0;font-size:.72rem;font-weight:700;color:var(--text-muted);
+                        letter-spacing:.07em;text-transform:uppercase;display:flex;align-items:center;gap:6px;">
+                <span class="material-symbols-outlined" style="font-size:15px;">emoji_events</span>
+                개선활동 / 우수 사원
+            </div>
+            <div style="padding:12px 18px 18px;display:grid;grid-template-columns:minmax(260px,1fr) minmax(360px,2fr);gap:12px;">
+                <div onclick="Router.navigate('improvement-activity')"
+                     style="border:1px solid #bfdbfe;border-left:5px solid #3b82f6;border-radius:12px;background:#eff6ff;
+                            padding:18px;cursor:pointer;min-height:132px;display:flex;flex-direction:column;justify-content:space-between;">
+                    <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+                        <div>
+                            <div style="font-size:.78rem;color:#1d4ed8;font-weight:800;">이달의 우수 사원 후보</div>
+                            <div style="font-size:1.55rem;font-weight:900;color:#0f172a;margin-top:8px;">${_esc(top?.name || '-')}</div>
+                        </div>
+                        <span class="material-symbols-outlined" style="font-size:34px;color:#f59e0b;">workspace_premium</span>
+                    </div>
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;font-size:.8rem;color:#475569;font-weight:700;">
+                        <span>점수 ${top ? top.score : 0}</span>
+                        <span>제안 ${top ? top.proposed : 0}</span>
+                        <span>승인 ${top ? top.approved : 0}</span>
+                        <span>완료 ${top ? top.closed : 0}</span>
+                    </div>
+                </div>
+
+                <div onclick="Router.navigate('improvement-activity')"
+                     style="border:1px solid #bbf7d0;border-left:5px solid #10b981;border-radius:12px;background:#f0fdf4;
+                            padding:18px;cursor:pointer;min-height:132px;">
+                    <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px;">
+                        <div>
+                            <div style="font-size:.78rem;color:#047857;font-weight:800;">개선 제안 사항</div>
+                            <div style="font-size:.84rem;color:#64748b;margin-top:4px;">검토, 승인, 진행, 완료 현황을 간략 표시합니다.</div>
+                        </div>
+                        <span class="material-symbols-outlined" style="font-size:30px;color:#10b981;">tips_and_updates</span>
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px;">
+                        ${_improveMini('검토대기', pending, '#f59e0b')}
+                        ${_improveMini('승인', approved, '#10b981')}
+                        ${_improveMini('진행', running, '#3b82f6')}
+                        ${_improveMini('완료', closed, '#6366f1')}
+                    </div>
+                    <div style="display:grid;gap:5px;font-size:.78rem;color:#334155;">
+                        ${recent.length ? recent.map(r => `
+                            <div style="display:flex;justify-content:space-between;gap:10px;border-top:1px dashed #bbf7d0;padding-top:5px;">
+                                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;">${_esc(r.title || r.problem || '제목 없음')}</span>
+                                <span style="white-space:nowrap;color:#64748b;">${_esc(r.proposer || '-')}</span>
+                            </div>`).join('') : '<div style="color:#64748b;">등록된 개선 제안이 없습니다.</div>'}
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    function _improveMini(label, value, color) {
+        return `<div style="border:1px solid ${color}33;background:#fff;border-radius:8px;padding:8px;text-align:center;">
+            <div style="font-size:1.15rem;font-weight:900;color:${color};line-height:1;">${UIUtils.formatNumber(value)}</div>
+            <div style="font-size:.68rem;color:#64748b;font-weight:800;margin-top:4px;">${label}</div>
+        </div>`;
+    }
+
     function _calcUpcomingForDash(assignments, today) {
         const results = [];
         const ms1day  = 24 * 3600 * 1000;
