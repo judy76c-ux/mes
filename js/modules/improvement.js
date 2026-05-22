@@ -65,7 +65,7 @@ var ImprovementActivityModule = (function() {
         const sum = _summary(_all());
         container.innerHTML = `
             <div class="fade-in-up">
-                <div class="page-toolbar" style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px;">
+                <div class="page-toolbar" style="display:flex;justify-content:flex-start;gap:8px;margin-bottom:12px;">
                     <button class="btn btn-primary" onclick="ImprovementActivityModule.openProposalModal()">
                         <span class="material-symbols-outlined">add</span> 제안 등록
                     </button>
@@ -180,12 +180,41 @@ var ImprovementActivityModule = (function() {
     function setFilter(key, value) { state[key] = value; render(document.getElementById('pageContent')); }
     function setMonth(value) { state.month = value || state.month; render(document.getElementById('pageContent')); }
 
+    function _peopleList() {
+        const operators = (Storage.getAll(DB.STORES.OPERATORS) || [])
+            .map(p => ({ ...p, personKey: `operator:${p.id}`, roleLabel: '작업자', deptText: p.dept || p.position || '' }));
+        const inspectors = (Storage.getAll(DB.STORES.INSPECTORS) || [])
+            .map(p => ({ ...p, personKey: `inspector:${p.id}`, roleLabel: '검사자', deptText: p.qualification || (p.processes || []).join(', ') || '' }));
+        return [...operators, ...inspectors]
+            .filter(p => p.name)
+            .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'));
+    }
+
+    function _personOptions(selectedName = '', selectedRole = '') {
+        const people = _peopleList();
+        const selectedKey = people.find(p => p.name === selectedName && (!selectedRole || p.roleLabel === selectedRole))?.personKey || '';
+        const legacy = selectedName && !selectedKey
+            ? `<option value="legacy:${_esc(selectedName)}" selected>${_esc(selectedName)} (기존 등록명)</option>`
+            : '';
+        return `<option value="">작업자/검사자 선택</option>` + legacy + people.map(p => `
+            <option value="${_esc(p.personKey)}" ${selectedKey === p.personKey ? 'selected' : ''}>
+                ${_esc(p.name)} (${_esc(p.roleLabel)}${p.deptText ? ' · ' + _esc(p.deptText) : ''})
+            </option>`).join('');
+    }
+
+    function selectPerson(key) {
+        const person = _peopleList().find(p => p.personKey === key);
+        if (!person) return;
+        const deptEl = document.getElementById('iaDept');
+        if (deptEl && !deptEl.value.trim()) deptEl.value = person.deptText || person.roleLabel || '';
+    }
+
     function _form(r = {}) {
         return `<div style="display:grid;gap:12px;">
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
                 <div class="form-group"><label class="form-label">등록일</label><input type="date" class="form-input" id="iaDate" value="${r.date || UIUtils.today()}"></div>
                 <div class="form-group"><label class="form-label">구분</label><select class="form-select" id="iaCategory"><option value="problem" ${r.category==='problem'?'selected':''}>문제점</option><option value="proposal" ${r.category==='proposal'?'selected':''}>개선제안</option></select></div>
-                <div class="form-group"><label class="form-label">제안자/작업자</label><input class="form-input" id="iaProposer" value="${_esc(r.proposer||'')}" placeholder="작업자명"></div>
+                <div class="form-group"><label class="form-label">제안자 <span style="color:var(--accent-red)">*</span></label><select class="form-select" id="iaProposer" onchange="ImprovementActivityModule.selectPerson(this.value)">${_personOptions(r.proposer || '', r.proposerRole || '')}</select></div>
                 <div class="form-group"><label class="form-label">부서/라인</label><input class="form-input" id="iaDept" value="${_esc(r.department||'')}" placeholder="예: 도장 A라인"></div>
                 <div class="form-group"><label class="form-label">공정/위치</label><input class="form-input" id="iaProcess" value="${_esc(r.process||'')}" placeholder="문제 발생 공정 또는 위치"></div>
                 <div class="form-group"><label class="form-label">제목</label><input class="form-input" id="iaTitle" value="${_esc(r.title||'')}" placeholder="개선활동 제목"></div>
@@ -214,10 +243,15 @@ var ImprovementActivityModule = (function() {
     async function saveProposal(id = '') {
         const old = id ? Storage.getById(STORE, id) : {};
         const photos = await _readPhotos(document.getElementById('iaPhotos'));
+        const personKey = document.getElementById('iaProposer').value;
+        const person = _peopleList().find(p => p.personKey === personKey);
+        const legacyName = personKey.startsWith('legacy:') ? personKey.replace(/^legacy:/, '') : '';
         const data = {
             date: document.getElementById('iaDate').value || UIUtils.today(),
             category: document.getElementById('iaCategory').value,
-            proposer: document.getElementById('iaProposer').value.trim(),
+            proposer: person?.name || legacyName,
+            proposerRole: person?.roleLabel || (legacyName ? old.proposerRole || '' : ''),
+            proposerRef: personKey,
             department: document.getElementById('iaDept').value.trim(),
             process: document.getElementById('iaProcess').value.trim(),
             title: document.getElementById('iaTitle').value.trim(),
@@ -333,5 +367,5 @@ var ImprovementActivityModule = (function() {
         Storage.exportToCSV(['등록일','제안자','부서/라인','구분','공정','제목','PDCA','상태','승인','담당자','예정일','목표','효과','비용'], rows, '개선활동');
     }
 
-    return { render, setFilter, setMonth, openProposalModal, saveProposal, openDetail, vote, setApproval, savePdca, remove, exportData };
+    return { render, setFilter, setMonth, selectPerson, openProposalModal, saveProposal, openDetail, vote, setApproval, savePdca, remove, exportData };
 })();
