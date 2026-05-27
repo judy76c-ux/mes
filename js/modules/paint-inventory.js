@@ -1,13 +1,13 @@
-﻿/**
- * ?꾨즺李쎄퀬(?낆텧怨??ш퀬?꾪솴) 紐⑤뱢
- * ?꾨즺???낆텧怨??댁뿭??愿由ы븯怨? ?좎엯?좎텧(FIFO)???꾪븳 ?ш퀬 吏묎퀎 諛?寃쎄퀬 湲곕뒫???ы븿?⑸땲??
+/**
+ * 도료창고(입출고/재고현황) 모듈
+ * 도료의 입출고 내역을 관리하고, 선입선출(FIFO)을 위한 재고 집계 및 경고 기능을 포함합니다.
  */
 
 const PaintInventoryModule = (function() {
     const STORE          = DB.STORES.PAINT_INVENTORY;
     const MATERIALS_STORE = DB.STORES.PAINT_MATERIALS;
 
-    // ?? ?섏씠吏?ㅼ씠???곹깭 ??????????????????????????????????????????
+    // 페이지네이션 상태
     let _page     = 1;
     let _pageSize = 50;
 
@@ -17,30 +17,29 @@ const PaintInventoryModule = (function() {
                 <div class="page-header">
                     <div class="page-actions">
                         <button class="btn btn-outline" onclick="Router.navigate('paint-layout')"
-                            title="?꾨즺 蹂닿? 李쎄퀬 諛곗튂 ?덉씠?꾩썐???쒓컖?곸쑝濡??몄쭛?⑸땲??">
-                            <span class="material-symbols-outlined">map</span> ?덉씠?꾩썐
+                            title="도료 보관 창고 배치 레이아웃을 시각적으로 편집합니다.">
+                            <span class="material-symbols-outlined">map</span> 레이아웃
                         </button>
                         <button class="btn btn-primary" onclick="PaintInventoryModule.openIncomingModal()">
-                            <span class="material-symbols-outlined">login</span> ?꾨즺 ?낃퀬
+                            <span class="material-symbols-outlined">login</span> 도료 입고
                         </button>
                         <button class="btn btn-danger" onclick="PaintInventoryModule.openOutgoingModal()">
-                            <span class="material-symbols-outlined">logout</span> ?꾨즺 異쒓퀬
+                            <span class="material-symbols-outlined">logout</span> 도료 출고
                         </button>
                         <button class="btn btn-outline" style="margin-left:auto;"
                             onclick="PaintInventoryModule.openBulkModal()"
-                            title="愿由ъ옄留??꾨즺 李쎄퀬 ?ш퀬瑜??쇨큵 ?깅줉 諛??꾩껜 援먯껜?????덉뒿?덈떎.">
-                            <span class="material-symbols-outlined">admin_panel_settings</span> ?쇨큵 ?깅줉 諛??섏젙
+                            title="관리자만 도료 창고 재고를 일괄 등록 및 전체 교체할 수 있습니다.">
+                            <span class="material-symbols-outlined">admin_panel_settings</span> 일괄 등록 및 수정
                         </button>
                     </div>
                 </div>
 
-                <!-- ?꾨즺 李쎄퀬 ?낃퀬 ?湲고뭹 ?뱀뀡 -->
                 <div class="card" style="margin-bottom:20px; border-left:3px solid var(--accent-purple,#8b5cf6);">
                     <div class="card-header" style="display:flex; align-items:center; justify-content:space-between;">
                         <h4 style="display:flex; align-items:center; gap:8px;">
                             <span class="material-symbols-outlined" style="color:var(--accent-purple,#8b5cf6);">move_to_inbox</span>
-                            ?꾨즺 李쎄퀬 ?낃퀬 ?湲고뭹
-                            <span style="font-size:0.75rem; color:var(--text-muted); font-weight:400;">(?꾨즺 ?섏엯 寃???꾨즺??</span>
+                            도료 창고 입고 대기품
+                            <span style="font-size:0.75rem; color:var(--text-muted); font-weight:400;">(도료 수입 검사 완료품)</span>
                             <span id="paintInspStandbyBadge" style="font-size:0.78rem; background:var(--accent-orange,#f59e0b); color:#fff; padding:2px 8px; border-radius:12px; font-weight:600; display:none;"></span>
                         </h4>
                         <button class="btn btn-sm btn-outline" onclick="PaintInventoryModule.renderPaintInspStandby()">
@@ -52,10 +51,9 @@ const PaintInventoryModule = (function() {
 
                 <div class="stat-cards" id="paintInvStats"></div>
 
-                <!-- 怨듦툒?щ퀎 ?ш퀬 ?꾪솴 ???-->
                 <div class="card" style="margin-bottom:20px;">
                     <div class="card-header">
-                        <h4><span class="material-symbols-outlined">palette</span> 怨듦툒?щ퀎 ?ш퀬 ?꾪솴</h4>
+                        <h4><span class="material-symbols-outlined">palette</span> 공급사별 재고 현황</h4>
                         <button class="btn btn-sm btn-outline" onclick="PaintInventoryModule.renderSupplierTiles()">
                             <span class="material-symbols-outlined" style="font-size:1rem;">refresh</span>
                         </button>
@@ -71,24 +69,23 @@ const PaintInventoryModule = (function() {
                             <table class="data-table">
                                 <thead>
                                     <tr>
-                                        <th>?좎쭨</th>
-                                        <th>援щℓ泥?/th>
-                                        <th>?꾨즺紐?/th>
-                                        <th>?ъ옣 ?⑸웾</th>
-                                        <th>?쒖“??LOT</th>
-                                        <th>?쒖“ LOT</th>
-                                        <th>?섎웾</th>
-                                        <th>?쒖“?쇱옄</th>
-                                        <th>?좏슚湲곌컙</th>
-                                        <th>?⑥? ?좏슚湲곌컙</th>
-                                        <th>?좏삎</th>
-                                        <th>?묒뾽</th>
+                                        <th>날짜</th>
+                                        <th>구매처</th>
+                                        <th>도료명</th>
+                                        <th>포장 단위</th>
+                                        <th>제조사 LOT</th>
+                                        <th>제조 LOT</th>
+                                        <th>수량</th>
+                                        <th>제조일자</th>
+                                        <th>유효기간</th>
+                                        <th>잔여 유효기간</th>
+                                        <th>유형</th>
+                                        <th>작업</th>
                                     </tr>
                                 </thead>
                                 <tbody id="paintInvTableBody"></tbody>
                             </table>
                         </div>
-                        <!-- ?섏씠吏?ㅼ씠???곸뿭 -->
                         <div id="paintInvPagination"></div>
                     </div>
                 </div>
@@ -98,11 +95,10 @@ const PaintInventoryModule = (function() {
     }
 
     function loadData() {
-        // ?? ?꾩껜 ?곗씠??(?듦퀎쨌?ш퀬 移대뱶 怨꾩궛?? ?????????????????????????
         const allData  = Storage.getAll(STORE);
         const materials = Storage.getAll(MATERIALS_STORE);
 
-        // ?덈ぉ蹂??ш퀬 ?⑹궛 (?꾩껜 湲곗?)
+        const isOutgoing = d => d.type === '출고' || d.type === '???';
         const byMaterial = {};
         allData.forEach(d => {
             const mat = materials.find(m => m.id === d.materialId);
@@ -111,11 +107,7 @@ const PaintInventoryModule = (function() {
                 qty: 0,
                 packUnit: mat ? (mat.packUnit || '-') : '-'
             };
-            if (d.type === '異쒓퀬') {
-                byMaterial[key].qty -= Number(d.quantity) || 0;
-            } else {
-                byMaterial[key].qty += Number(d.quantity) || 0;
-            }
+            byMaterial[key].qty += isOutgoing(d) ? -(Number(d.quantity) || 0) : (Number(d.quantity) || 0);
         });
 
         let totalStockValue = 0;
@@ -123,24 +115,17 @@ const PaintInventoryModule = (function() {
             const mat = materials.find(m => m.id === d.materialId);
             const price = Number(mat ? mat.purchasePrice : 0) || 0;
             const qty = Number(d.quantity) || 0;
-            const value = qty * price;
-
-            if (d.type === '異쒓퀬') {
-                totalStockValue -= value;
-            } else {
-                totalStockValue += value;
-            }
+            totalStockValue += isOutgoing(d) ? -(qty * price) : (qty * price);
         });
 
         const totalStock    = Object.values(byMaterial).reduce((s, v) => s + v.qty, 0);
         const materialCount = materials.length;
         const stockQtyByMaterialId = {};
         allData.forEach(d => {
-            const isCurrentStockEdit = false;
             if (!d.materialId) return;
             if (!stockQtyByMaterialId[d.materialId]) stockQtyByMaterialId[d.materialId] = 0;
             const qty = Number(d.quantity) || 0;
-            stockQtyByMaterialId[d.materialId] += (d.type === '출고' || d.type === '異쒓퀬') ? -qty : qty;
+            stockQtyByMaterialId[d.materialId] += isOutgoing(d) ? -qty : qty;
         });
         const zeroStockCount = materials.filter(m => (stockQtyByMaterialId[m.id] || 0) <= 0).length;
 
@@ -162,51 +147,47 @@ const PaintInventoryModule = (function() {
                 <div class="stat-card-label">재고 없는 품목</div>
             </div>
         `;
-        // ???낃퀬 ?湲??뱀뀡 + 怨듦툒????쇱? ??긽 ?뚮뜑留?
         setTimeout(() => {
             renderPaintInspStandby();
             renderSupplierTiles();
         }, 150);
 
-        // ?? ?섏씠吏뺣맂 ?뚯씠釉??뚮뜑留????????????????????????????????????????
         const { data, total, page, pageSize } = Storage.getAllPaged(STORE, {
             page:     _page,
             pageSize: _pageSize,
             sort:     { field: 'date', order: 'desc' }
         });
-        _page = page; // 踰붿쐞 珥덇낵 ??clamp 寃곌낵 諛섏쁺
+        _page = page;
 
         const tbody = document.getElementById('paintInvTableBody');
 
         if (total === 0) {
-            if (tbody) tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-muted);">?ш퀬 ?곗씠?곌? ?놁뒿?덈떎.</td></tr>`;
+            if (tbody) tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-muted);">재고 데이터가 없습니다.</td></tr>`;
             const pEl = document.getElementById('paintInvPagination');
             if (pEl) pEl.innerHTML = '';
             return;
         }
 
         if (tbody) tbody.innerHTML = data.map(d => {
-            const typeBadge = d.type === '異쒓퀬' ? 'danger' : 'success';
+            const typeBadge = isOutgoing(d) ? 'danger' : 'success';
             const mat = materials.find(m => m.id === d.materialId);
             const mName = mat ? mat.name : '-';
             const mPackUnit = mat ? (mat.packUnit ? mat.packUnit + ' KG' : '-') : '-';
-
             const mSupplier = mat ? (mat.supplier || '-') : '-';
 
-            // ?⑥? ?좏슚湲곌컙 怨꾩궛
             let remainHtml = '-';
             if (d.expDate) {
                 const today = new Date(); today.setHours(0,0,0,0);
                 const exp   = new Date(d.expDate); exp.setHours(0,0,0,0);
                 const diffDays = Math.round((exp - today) / 86400000);
                 if (diffDays < 0) {
-                    remainHtml = `<span style="color:var(--accent-red);font-weight:700;">留뚮즺 (${Math.abs(diffDays)}??寃쎄낵)</span>`;
+                    remainHtml = `<span style="color:var(--accent-red);font-weight:700;">만료 (${Math.abs(diffDays)}일 경과)</span>`;
                 } else if (diffDays === 0) {
-                    remainHtml = `<span style="color:var(--accent-red);font-weight:700;">?ㅻ뒛 留뚮즺</span>`;
+                    remainHtml = `<span style="color:var(--accent-red);font-weight:700;">오늘 만료</span>`;
                 } else if (diffDays <= 30) {
-                    remainHtml = `<span style="color:var(--accent-orange,#f59e0b);font-weight:700;">${diffDays}???⑥쓬</span>`;
+                    remainHtml = `<span style="color:var(--accent-orange,#f59e0b);font-weight:700;">${diffDays}일 남음</span>`;
                 } else {
-                    remainHtml = `<span style="color:var(--accent-green);">${diffDays}???⑥쓬</span>`;
+                    remainHtml = `<span style="color:var(--accent-green);">${diffDays}일 남음</span>`;
                 }
             }
 
@@ -222,11 +203,11 @@ const PaintInventoryModule = (function() {
                     <td style="font-size:0.82rem;">${d.mfgDate || '-'}</td>
                     <td style="font-size:0.82rem;">${d.expDate || '-'}</td>
                     <td style="font-size:0.82rem; white-space:nowrap;">${remainHtml}</td>
-                    <td>${UIUtils.badge(d.type || '?낃퀬', typeBadge)}</td>
+                    <td>${UIUtils.badge(isOutgoing(d) ? '출고' : '입고', typeBadge)}</td>
                     <td style="white-space:nowrap;">
-                        <button class="btn btn-sm btn-outline" onclick="PaintInventoryModule.edit('${d.id}')">?섏젙</button>
+                        <button class="btn btn-sm btn-outline" onclick="PaintInventoryModule.edit('${d.id}')">수정</button>
                         <button onclick="PaintInventoryModule.remove('${d.id}')"
-                            title="??젣"
+                            title="삭제"
                             style="margin-left:6px;padding:2px 6px;font-size:0.72rem;border:1px solid var(--border-color);border-radius:4px;background:transparent;color:var(--text-muted);opacity:0.35;cursor:pointer;transition:opacity 0.2s;"
                             onmouseenter="this.style.opacity='1';this.style.color='var(--accent-red)';this.style.borderColor='var(--accent-red)';"
                             onmouseleave="this.style.opacity='0.35';this.style.color='var(--text-muted)';this.style.borderColor='var(--border-color)';">
@@ -237,7 +218,6 @@ const PaintInventoryModule = (function() {
             `;
         }).join('');
 
-        // ?? ?섏씠吏?ㅼ씠??UI ?뚮뜑留????????????????????????????????????????
         const paginationEl = document.getElementById('paintInvPagination');
         if (paginationEl) {
             UIUtils.renderPagination(paginationEl, {
@@ -255,7 +235,6 @@ const PaintInventoryModule = (function() {
         }
     }
 
-    // ?? 怨듦툒?щ퀎 ?ш퀬 移대뱶 HTML ????????????????????????????????????????
     function _buildSupplierCard(supplier, matItems) {
         const today = new Date(); today.setHours(0, 0, 0, 0);
 
@@ -718,30 +697,20 @@ const PaintInventoryModule = (function() {
         const inventory   = Storage.getAll(DB.STORES.PAINT_INVENTORY)           || [];
         const materials   = Storage.getAll(DB.STORES.PAINT_MATERIALS)           || [];
 
-        // ?⑷꺽 寃??紐⑸줉
         const passed = inspections
             .filter(i => {
                 const verdictText = String(i.verdict || '');
-                const isPassed = verdictText === '합격' || verdictText.includes('합') || verdictText.includes('⑷');
+                const isPassed = verdictText === '??' || verdictText.includes('?') || verdictText.includes('?');
                 return isPassed && (Number(i.incomingQty) || 0) > 0;
             })
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
         if (passed.length === 0) {
             if (badge) badge.style.display = 'none';
-            body.innerHTML = '<p style="text-align:center; padding:18px; color:var(--text-muted); font-size:0.88rem;">도료 수입 검사 완료 데이터가 없습니다.</p>';
+            body.innerHTML = '<p style="text-align:center; padding:18px; color:var(--text-muted); font-size:0.88rem;">?? ?? ?? ?? ???? ????.</p>';
             return;
         }
 
-        // 李쎄퀬 ?낃퀬 湲곕줉: sourceInspectionId 湲곗? Set (?놁쑝硫?materialId+lotNo ?대갚)
-        const processedInspIds = new Set(
-            inventory.filter(i => i.type === '?낃퀬' && i.sourceInspectionId).map(i => i.sourceInspectionId)
-        );
-        const legacyStockSet = new Set(
-            inventory.filter(i => i.type === '?낃퀬' && !i.sourceInspectionId).map(i => `${i.materialId}||${i.lotNo}`)
-        );
-
-        // paintName ??materialId 留ㅽ븨 ?ы띁
         function getMaterialId(paintName) {
             const mat = materials.find(m => m.name === paintName);
             return mat ? mat.id : null;
@@ -754,12 +723,13 @@ const PaintInventoryModule = (function() {
         );
         const actualLegacyStockSet = new Set(
             inventory
-                .filter(row => row.type !== '출고' && row.type !== '異쒓퀬' && !row.sourceInspectionId && !_isCurrentStockEditRecord(row))
+                .filter(row => row.type !== '??' && row.type !== '???' && !row.sourceInspectionId && !_isCurrentStockEditRecord(row))
                 .map(row => `${row.materialId}||${row.lotNo}`)
         );
 
         const pending = passed.filter(i => {
-            if (i.warehouseStatus === '?낃퀬痍⑥냼') return false;
+            if (i.warehouseStatus === '입고취소') return false;
+            if (i.warehouseStatus === '??????') return false;
             if (actualProcessedInspIds.has(i.id)) return false;
             const mid = getMaterialId(i.paintName);
             if (mid && actualLegacyStockSet.has(`${mid}||${i.lotNo}`)) return false;
@@ -775,35 +745,34 @@ const PaintInventoryModule = (function() {
             }
         }
 
-        // ?湲??덈ぉ???놁쑝硫??꾨즺 硫붿떆吏 ?쒖떆
         if (pending.length === 0) {
             body.innerHTML = `
                 <div style="display:flex;align-items:center;gap:10px;padding:18px;color:var(--accent-green);font-size:0.9rem;">
                     <span class="material-symbols-outlined">check_circle</span>
-                    <span>?낃퀬 ?湲??덈ぉ???놁뒿?덈떎. 紐⑤뱺 寃???꾨즺?덉씠 ?낃퀬 泥섎━?섏뿀?듬땲??</span>
+                    <span>입고 대기 항목이 없습니다. 모든 검사 완료품이 입고 처리되었습니다.</span>
                 </div>`;
             return;
         }
 
-        // ?낃퀬 ?湲???ぉ留??뚮뜑留?(?낃퀬 ?꾨즺????ぉ ?쒖쇅)
         body.innerHTML = `
             <div style="display:flex;justify-content:flex-end;padding:10px 16px;border-bottom:1px solid var(--border-color);background:var(--bg-secondary);">
                 <button class="btn btn-sm btn-outline" onclick="PaintInventoryModule.cancelAllPaintInspectionStandby()"
-                    title="?꾩옱 ?낃퀬 ?湲?紐⑸줉??紐⑤몢 痍⑥냼?⑸땲?? 寃??湲곕줉? ??젣?섏? ?딆뒿?덈떎.">
-                    <span class="material-symbols-outlined" style="font-size:0.9rem;">cancel</span> ?꾩껜 痍⑥냼
+                    title="현재 입고 대기 목록을 모두 취소합니다. 검사 기록은 삭제하지 않습니다.">
+                    <span class="material-symbols-outlined" style="font-size:0.9rem;">cancel</span> 전체 취소
                 </button>
+            </div>
             <div class="data-table-wrapper">
                 <table class="data-table">
                     <thead>
                         <tr>
-                            <th>寃?ъ씪</th>
-                            <th>怨듦툒泥?/th>
-                            <th>?꾨즺紐?/th>
-                            <th>?쒖“??LOT</th>
-                            <th style="text-align:right;">?낃퀬?섎웾</th>
-                            <th>?쒖“?쇱옄</th>
-                            <th>?좏슚湲곌컙</th>
-                            <th style="text-align:center;">?곹깭</th>
+                            <th>검사일</th>
+                            <th>공급처</th>
+                            <th>도료명</th>
+                            <th>제조사 LOT</th>
+                            <th style="text-align:right;">입고수량</th>
+                            <th>제조일자</th>
+                            <th>유효기간</th>
+                            <th style="text-align:center;">상태</th>
                             <th></th>
                         </tr>
                     </thead>
@@ -818,14 +787,14 @@ const PaintInventoryModule = (function() {
                                 <td style="font-size:0.82rem;">${i.mfgDate || '-'}</td>
                                 <td style="font-size:0.82rem;">${i.expDate || '-'}</td>
                                 <td style="text-align:center;">
-                                    <span class="badge badge-warning" style="background:var(--accent-orange,#f59e0b);color:#fff;">?낃퀬?湲?/span>
+                                    <span class="badge badge-warning" style="background:var(--accent-orange,#f59e0b);color:#fff;">입고대기</span>
                                 </td>
                                 <td>
                                     <button class="btn btn-sm btn-primary" onclick="PaintInventoryModule.openIncomingFromInspection('${i.id}')">
-                                        <span class="material-symbols-outlined" style="font-size:0.9rem;">add_circle</span> ?낃퀬 泥섎━
+                                        <span class="material-symbols-outlined" style="font-size:0.9rem;">add_circle</span> 입고 처리
                                     </button>
                                     <button class="btn btn-sm btn-outline" style="margin-left:6px;" onclick="PaintInventoryModule.cancelPaintInspectionStandby('${i.id}')">
-                                        <span class="material-symbols-outlined" style="font-size:0.9rem;">cancel</span> 痍⑥냼
+                                        <span class="material-symbols-outlined" style="font-size:0.9rem;">cancel</span> 취소
                                     </button>
                                 </td>
                             </tr>`).join('')}
@@ -834,7 +803,6 @@ const PaintInventoryModule = (function() {
             </div>`;
     }
 
-    // ?쒖“ LOT ?ㅼ떆媛??좏슚???쒖떆
     function cancelPaintInspectionStandby(id) {
         const insp = Storage.getById(DB.STORES.PAINT_INCOMING_INSPECTIONS, id);
         if (!insp) {
