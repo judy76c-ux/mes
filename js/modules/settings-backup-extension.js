@@ -37,6 +37,16 @@ const SettingsBackupExtension = (function() {
         return d.toLocaleString('ko-KR');
     }
 
+    // 파일명에서 날짜 파싱: MES_backup_2026-05-27T02-00-25-774Z.json → 2026-05-27 11:00
+    function shortLabel(fileName) {
+        const m = fileName.match(/(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})/);
+        if (!m) return fileName;
+        // UTC→KST(+9)
+        const utcH = parseInt(m[2], 10);
+        const kstH = (utcH + 9) % 24;
+        return `${m[1]} ${String(kstH).padStart(2,'0')}:${m[3]}`;
+    }
+
     function isBackupTabVisible() {
         // 백업 탭이 활성화되어 있으면 settingsContent 가 존재함
         const content = document.getElementById('settingsContent');
@@ -229,28 +239,32 @@ const SettingsBackupExtension = (function() {
                         <span style="margin-left:12px;">저장 위치: ${esc(info.backupDir || '-')}</span>
                     </div>
 
-                    <div class="data-table-wrapper">
-                        <table class="data-table">
+                    <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
+                        <table style="width:100%;border-collapse:collapse;font-size:.78rem;">
                             <thead>
-                                <tr><th>파일명</th><th>크기</th><th>생성/수정일</th><th>작업</th></tr>
+                                <tr style="background:var(--bg-secondary);">
+                                    <th style="padding:5px 10px;text-align:left;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border-color);">백업 일시</th>
+                                    <th style="padding:5px 10px;text-align:right;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border-color);width:60px;">크기</th>
+                                    <th style="padding:5px 10px;text-align:right;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border-color);width:190px;">작업</th>
+                                </tr>
                             </thead>
                             <tbody>
-                                ${backups.length ? backups.map(b => `
-                                    <tr>
-                                        <td style="font-family:monospace;font-size:.78rem;">${esc(b.fileName)}</td>
-                                        <td>${formatBytes(b.size)}</td>
-                                        <td>${esc(formatDateTime(b.modifiedAt || b.createdAt))}</td>
-                                        <td style="white-space:nowrap;">
-                                            <a class="btn btn-xs btn-outline" href="${ApiClient.backupDownloadUrl(b.fileName)}" target="_blank" style="width:auto;padding:3px 8px;display:inline-flex;align-items:center;gap:3px;">
-                                                <span class="material-symbols-outlined" style="font-size:14px;">download</span> 다운로드
+                                ${backups.length ? backups.map((b, i) => `
+                                    <tr style="border-bottom:1px solid var(--border-color);background:${i%2===0?'#fff':'#f8fafc'};">
+                                        <td style="padding:4px 10px;color:var(--text-primary);">${esc(shortLabel(b.fileName))}</td>
+                                        <td style="padding:4px 10px;text-align:right;color:var(--text-muted);">${formatBytes(b.size)}</td>
+                                        <td style="padding:4px 10px;text-align:right;white-space:nowrap;">
+                                            <a href="${ApiClient.backupDownloadUrl(b.fileName)}" target="_blank"
+                                                style="display:inline-flex;align-items:center;gap:2px;padding:2px 7px;border:1px solid var(--border-color);border-radius:4px;font-size:.72rem;color:var(--text-secondary);text-decoration:none;background:#fff;">
+                                                <span class="material-symbols-outlined" style="font-size:13px;">download</span>
                                             </a>
-                                            <button class="btn btn-xs btn-warning" onclick="SettingsBackupExtension.restoreFromServerBackup('${js(b.fileName)}')" style="width:auto;padding:3px 8px;">
-                                                복원
-                                            </button>
-                                            <button class="btn btn-xs btn-danger" onclick="SettingsBackupExtension.deleteBackup('${js(b.fileName)}')" style="width:auto;padding:3px 8px;">삭제</button>
+                                            <button onclick="SettingsBackupExtension.restoreFromServerBackup('${js(b.fileName)}')"
+                                                style="padding:2px 8px;border:1px solid #f59e0b;border-radius:4px;font-size:.72rem;background:#fffbeb;color:#92400e;cursor:pointer;">복원</button>
+                                            <button onclick="SettingsBackupExtension.deleteBackup('${js(b.fileName)}')"
+                                                style="padding:2px 8px;border:1px solid #fca5a5;border-radius:4px;font-size:.72rem;background:#fef2f2;color:#991b1b;cursor:pointer;">삭제</button>
                                         </td>
                                     </tr>`).join('') :
-                                    `<tr><td colspan="4" style="text-align:center;padding:22px;color:var(--text-muted);">서버 백업 파일이 없습니다.</td></tr>`}
+                                    `<tr><td colspan="3" style="text-align:center;padding:18px;color:var(--text-muted);">서버 백업 파일이 없습니다.</td></tr>`}
                             </tbody>
                         </table>
                     </div>
@@ -466,36 +480,38 @@ const SettingsBackupExtension = (function() {
 
                     ${connected ? `
                     <!-- 백업 파일 목록 -->
-                    <div style="font-size:.82rem;color:var(--text-muted);">
-                        저장 위치: <b>${esc(info.nasDir || nasCfg.nasDir)}</b>
-                        &nbsp;·&nbsp; 총 <b>${backups.length}</b>개 파일
+                    <div style="font-size:.78rem;color:var(--text-muted);margin-bottom:4px;">
+                        저장 위치: <b>${esc(info.nasDir || nasCfg.nasDir)}</b> &nbsp;·&nbsp; 총 <b>${backups.length}</b>개
+                        &nbsp;·&nbsp; <span style="color:#64748b;">서버복사: NAS→서버 가져오기 &nbsp; 복원: DB 즉시 복원</span>
                     </div>
-                    <div class="data-table-wrapper">
-                        <table class="data-table">
+                    <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
+                        <table style="width:100%;border-collapse:collapse;font-size:.78rem;">
                             <thead>
-                                <tr><th>파일명</th><th>크기</th><th>생성/수정일</th><th>작업</th></tr>
+                                <tr style="background:var(--bg-secondary);">
+                                    <th style="padding:5px 10px;text-align:left;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border-color);">백업 일시</th>
+                                    <th style="padding:5px 10px;text-align:right;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border-color);width:60px;">크기</th>
+                                    <th style="padding:5px 10px;text-align:right;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border-color);width:220px;">작업</th>
+                                </tr>
                             </thead>
                             <tbody>
-                                ${backups.length ? backups.map(b => `
-                                    <tr>
-                                        <td style="font-family:monospace;font-size:.78rem;">${esc(b.fileName)}</td>
-                                        <td>${formatBytes(b.size)}</td>
-                                        <td>${esc(formatDateTime(b.modifiedAt || b.createdAt))}</td>
-                                        <td style="white-space:nowrap;">
-                                            <a class="btn btn-xs btn-outline" href="${ApiClient.nasBackupDownloadUrl(b.fileName)}" target="_blank" style="width:auto;padding:3px 8px;display:inline-flex;align-items:center;gap:3px;">
-                                                <span class="material-symbols-outlined" style="font-size:14px;">download</span> 다운로드
+                                ${backups.length ? backups.map((b, i) => `
+                                    <tr style="border-bottom:1px solid var(--border-color);background:${i%2===0?'#fff':'#f8fafc'};">
+                                        <td style="padding:4px 10px;color:var(--text-primary);">${esc(shortLabel(b.fileName))}</td>
+                                        <td style="padding:4px 10px;text-align:right;color:var(--text-muted);">${formatBytes(b.size)}</td>
+                                        <td style="padding:4px 10px;text-align:right;white-space:nowrap;">
+                                            <a href="${ApiClient.nasBackupDownloadUrl(b.fileName)}" target="_blank"
+                                                style="display:inline-flex;align-items:center;padding:2px 7px;border:1px solid var(--border-color);border-radius:4px;font-size:.72rem;color:var(--text-secondary);text-decoration:none;background:#fff;">
+                                                <span class="material-symbols-outlined" style="font-size:13px;">download</span>
                                             </a>
-                                            <button class="btn btn-xs btn-outline" onclick="SettingsBackupExtension.copyNasToLocal('${js(b.fileName)}')" style="width:auto;padding:3px 8px;">서버로 복사</button>
-                                            <button class="btn btn-xs btn-warning" onclick="SettingsBackupExtension.restoreFromNasBackup('${js(b.fileName)}')" style="width:auto;padding:3px 8px;">복원</button>
+                                            <button onclick="SettingsBackupExtension.copyNasToLocal('${js(b.fileName)}')"
+                                                style="padding:2px 8px;border:1px solid var(--border-color);border-radius:4px;font-size:.72rem;background:#fff;color:var(--text-secondary);cursor:pointer;">서버복사</button>
+                                            <button onclick="SettingsBackupExtension.restoreFromNasBackup('${js(b.fileName)}')"
+                                                style="padding:2px 8px;border:1px solid #f59e0b;border-radius:4px;font-size:.72rem;background:#fffbeb;color:#92400e;cursor:pointer;">복원</button>
                                         </td>
                                     </tr>`).join('') :
-                                    `<tr><td colspan="4" style="text-align:center;padding:22px;color:var(--text-muted);">NAS 백업 파일이 없습니다.</td></tr>`}
+                                    `<tr><td colspan="3" style="text-align:center;padding:18px;color:var(--text-muted);">NAS 백업 파일이 없습니다.</td></tr>`}
                             </tbody>
                         </table>
-                    </div>
-                    <div style="font-size:.78rem;color:var(--text-muted);">
-                        <b>서버로 복사</b>: NAS 백업을 로컬 서버 목록으로 가져옵니다. &nbsp;
-                        <b>복원</b>: NAS 백업 파일로 DB를 즉시 복원합니다.
                     </div>` : ''}
                 </div>`;
         } catch (e) {
