@@ -131,12 +131,41 @@ const SettingsBackupExtension = (function() {
             const backups = info.backups || [];
             panel.innerHTML = `
                 <div class="card-header">
-                    <h4><span class="material-symbols-outlined">cloud_sync</span> 서버 자동 백업</h4>
+                    <h4><span class="material-symbols-outlined">cloud_sync</span> 서버 자동 백업 <span style="font-size:.72rem;font-weight:400;color:var(--text-muted);margin-left:6px;">NAS MariaDB → NAS 서버 내 JSON 파일</span></h4>
                     <span class="badge ${cfg.enabled !== false ? 'badge-success' : 'badge-secondary'}">
                         ${cfg.enabled !== false ? '자동 실행 중' : '자동 실행 중지'}
                     </span>
                 </div>
                 <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
+
+                    <!-- 설명 박스 -->
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;">
+                        <div style="padding:10px 12px;border-radius:8px;background:#f0fdf4;border:1px solid #86efac;">
+                            <div style="font-size:.75rem;font-weight:700;color:#166534;margin-bottom:5px;">✅ 백업 대상 데이터</div>
+                            <div style="font-size:.78rem;color:#166534;line-height:1.6;">
+                                NAS 서버 MariaDB의 <b>전체 생산 데이터</b><br>
+                                사출·도장·레이져·출하·품질 등<br>모든 공정 기록 포함
+                            </div>
+                        </div>
+                        <div style="padding:10px 12px;border-radius:8px;background:#eff6ff;border:1px solid #93c5fd;">
+                            <div style="font-size:.75rem;font-weight:700;color:#1e3a8a;margin-bottom:5px;">📁 저장 위치</div>
+                            <div style="font-size:.78rem;color:#1e3a8a;line-height:1.6;">
+                                <b>NAS 서버 내부</b> 백업 폴더<br>
+                                <code style="background:#dbeafe;padding:1px 4px;border-radius:3px;font-size:.72rem;">${esc(info.backupDir || '/mes-server/backups')}</code><br>
+                                서버가 켜져 있는 동안 자동 실행
+                            </div>
+                        </div>
+                        <div style="padding:10px 12px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;">
+                            <div style="font-size:.75rem;font-weight:700;color:#9a3412;margin-bottom:5px;">💡 어떤 도움이 되나요?</div>
+                            <div style="font-size:.78rem;color:#9a3412;line-height:1.6;">
+                                NAS 서버 DB 손상·장애 시 복구 가능<br>
+                                설정 주기마다 <b>자동</b> 실행<br>
+                                [복원] 버튼으로 전체 데이터 즉시 복구<br>
+                                <span style="color:#dc2626;">※ 서버 상시 실행(PM2/systemd) 필요</span>
+                            </div>
+                        </div>
+                    </div>
+
                     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;align-items:end;">
                         <div class="form-group">
                             <label class="form-label">자동 백업 상태</label>
@@ -371,10 +400,39 @@ const SettingsBackupExtension = (function() {
 
             panel.innerHTML = `
                 <div class="card-header">
-                    <h4><span class="material-symbols-outlined">hard_drive</span> NAS HDD 백업</h4>
+                    <h4><span class="material-symbols-outlined">hard_drive</span> NAS HDD 백업 <span style="font-size:.72rem;font-weight:400;color:var(--text-muted);margin-left:6px;">NAS 서버 JSON 파일 → NAS HDD 외부 저장장치</span></h4>
                     <span class="badge ${connected ? 'badge-success' : 'badge-secondary'}">${connected ? '연결됨' : '미연결'}</span>
                 </div>
                 <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
+
+                    <!-- 설명 박스 -->
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;margin-bottom:4px;">
+                        <div style="padding:10px 12px;border-radius:8px;background:#f0fdf4;border:1px solid #86efac;">
+                            <div style="font-size:.75rem;font-weight:700;color:#166534;margin-bottom:5px;">✅ 백업 대상 데이터</div>
+                            <div style="font-size:.78rem;color:#166534;line-height:1.6;">
+                                [서버 자동 백업]으로 생성된<br>
+                                <b>NAS 서버의 JSON 백업 파일</b>을<br>
+                                HDD(외장드라이브)에 2차 복사
+                            </div>
+                        </div>
+                        <div style="padding:10px 12px;border-radius:8px;background:#eff6ff;border:1px solid #93c5fd;">
+                            <div style="font-size:.75rem;font-weight:700;color:#1e3a8a;margin-bottom:5px;">📁 저장 위치</div>
+                            <div style="font-size:.78rem;color:#1e3a8a;line-height:1.6;">
+                                Ubuntu 서버에 마운트된<br>
+                                <b>NFS/SMB 외부 저장 경로</b><br>
+                                아래 경로란에 직접 입력
+                            </div>
+                        </div>
+                        <div style="padding:10px 12px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;">
+                            <div style="font-size:.75rem;font-weight:700;color:#9a3412;margin-bottom:5px;">💡 어떤 도움이 되나요?</div>
+                            <div style="font-size:.78rem;color:#9a3412;line-height:1.6;">
+                                NAS 서버 자체 고장·화재 등<br>
+                                <b>최악의 상황</b>에서도 복구 가능<br>
+                                서버 백업의 <b>물리적 2중 보호</b><br>
+                                [서버로 복사] 후 복원 가능
+                            </div>
+                        </div>
+                    </div>
 
                     <!-- NAS 경로 설정 -->
                     <div style="padding:12px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);">

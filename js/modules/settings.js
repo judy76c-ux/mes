@@ -5487,37 +5487,158 @@ const SettingsModule = (function() {
     // =====================================================
     function renderBackupTab(el) {
         el.innerHTML = `
-            <div class="card" style="margin-bottom:20px;">
-                <div class="card-header">
-                    <h4><span class="material-symbols-outlined">cloud_download</span> 데이터 백업</h4>
+
+            <!-- ── 저장 영역 안내 배너 ─────────────────────────────── -->
+            <div style="margin-bottom:20px;padding:16px 20px;border-radius:12px;
+                        background:linear-gradient(135deg,#1e3a5f 0%,#1e40af 100%);color:#fff;">
+                <div style="font-size:1rem;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px;">
+                    <span class="material-symbols-outlined" style="font-size:22px;">storage</span>
+                    MES 데이터 저장 구조
                 </div>
-                <div class="card-body">
-                    <p style="margin-bottom:16px;">현재 모든 데이터를 JSON 파일로 백업합니다. 정기적으로 백업하는 것을 권장합니다.</p>
-                    <button class="btn btn-primary" onclick="SettingsModule.backupAll()">
-                        <span class="material-symbols-outlined">download</span> 전체 백업
-                    </button>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;font-size:.82rem;">
+                    <div style="background:rgba(255,255,255,0.12);border-radius:8px;padding:12px;">
+                        <div style="font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:6px;">
+                            <span class="material-symbols-outlined" style="font-size:16px;">computer</span>
+                            브라우저 (IndexedDB)
+                        </div>
+                        <div style="color:rgba(255,255,255,0.8);line-height:1.55;">
+                            모든 생산 데이터의 <b>1차 저장소</b><br>
+                            이 PC·브라우저에만 존재<br>
+                            브라우저 초기화 시 <b style="color:#fca5a5;">소실 위험</b>
+                        </div>
+                    </div>
+                    <div style="background:rgba(255,255,255,0.12);border-radius:8px;padding:12px;">
+                        <div style="font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:6px;">
+                            <span class="material-symbols-outlined" style="font-size:16px;">dns</span>
+                            NAS 서버 (MariaDB)
+                        </div>
+                        <div style="color:rgba(255,255,255,0.8);line-height:1.55;">
+                            사내 NAS의 <b>데이터베이스</b> 서버<br>
+                            실시간 동기화 (온라인 시)<br>
+                            PC 고장 시에도 <b style="color:#86efac;">데이터 보존</b>
+                        </div>
+                    </div>
+                    <div style="background:rgba(255,255,255,0.12);border-radius:8px;padding:12px;">
+                        <div style="font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:6px;">
+                            <span class="material-symbols-outlined" style="font-size:16px;">hard_drive</span>
+                            NAS HDD (파일 백업)
+                        </div>
+                        <div style="color:rgba(255,255,255,0.8);line-height:1.55;">
+                            NAS 서버 DB를 <b>JSON 파일</b>로 저장<br>
+                            NAS 장애 발생 시 복구 가능<br>
+                            자동 주기 실행 설정 가능
+                        </div>
+                    </div>
+                    <div style="background:rgba(255,255,255,0.12);border-radius:8px;padding:12px;">
+                        <div style="font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:6px;">
+                            <span class="material-symbols-outlined" style="font-size:16px;">folder_zip</span>
+                            로컬 PC (JSON 파일)
+                        </div>
+                        <div style="color:rgba(255,255,255,0.8);line-height:1.55;">
+                            브라우저 IndexedDB를 <b>직접 내보내기</b><br>
+                            USB·이메일로 보관 가능<br>
+                            오프라인 환경에서도 백업 가능
+                        </div>
+                    </div>
                 </div>
             </div>
 
+            <!-- ── 데이터 백업 (로컬 JSON 내보내기) ──────────────────── -->
             <div class="card" style="margin-bottom:20px;">
                 <div class="card-header">
-                    <h4><span class="material-symbols-outlined">cloud_upload</span> 데이터 복원</h4>
+                    <h4><span class="material-symbols-outlined">cloud_download</span> 데이터 백업 <span style="font-size:.72rem;font-weight:400;color:var(--text-muted);margin-left:6px;">브라우저 → 로컬 PC JSON 파일</span></h4>
                 </div>
-                <div class="card-body">
-                    <p style="margin-bottom:16px;color:var(--accent-red);font-weight:500;">
-                        ⚠️ 복원하면 현재 모든 데이터가 삭제되고 백업 파일의 데이터로 대체됩니다.
-                    </p>
-                    <input type="file" id="restoreFileInput" accept=".json" style="display:none;"
-                        onchange="SettingsModule.restoreFromFile(this)">
-                    <button class="btn btn-secondary" onclick="document.getElementById('restoreFileInput').click()">
-                        <span class="material-symbols-outlined">upload</span> 백업 파일 선택
-                    </button>
+                <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
+
+                    <!-- 백업 대상 설명 -->
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;">
+                        <div style="padding:10px 12px;border-radius:8px;background:#f0fdf4;border:1px solid #86efac;">
+                            <div style="font-size:.75rem;font-weight:700;color:#166534;margin-bottom:6px;">✅ 백업되는 데이터</div>
+                            <div style="font-size:.78rem;color:#166534;line-height:1.65;">
+                                생산 계획 지시서<br>
+                                사출·도장·레이져 공정 일지<br>
+                                수입검사 / 출하검사 기록<br>
+                                창고 재고 현황<br>
+                                납품 관리 / 품질 실적<br>
+                                설비·JIG·부자재·5S 관리<br>
+                                제품·도료 마스터 정보<br>
+                                각종 기준서 편집 데이터
+                            </div>
+                        </div>
+                        <div style="padding:10px 12px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;">
+                            <div style="font-size:.75rem;font-weight:700;color:#9a3412;margin-bottom:6px;">💡 언제 사용하나요?</div>
+                            <div style="font-size:.78rem;color:#9a3412;line-height:1.65;">
+                                • PC 교체·초기화 전 반드시 실행<br>
+                                • 중요 데이터 입력 후 즉시 저장<br>
+                                • NAS 서버 없는 오프라인 환경<br>
+                                • 다른 PC로 데이터 이전 시<br>
+                                • 월 1회 이상 정기 백업 권장
+                            </div>
+                        </div>
+                        <div style="padding:10px 12px;border-radius:8px;background:#eff6ff;border:1px solid #93c5fd;">
+                            <div style="font-size:.75rem;font-weight:700;color:#1e3a8a;margin-bottom:6px;">📁 저장 위치</div>
+                            <div style="font-size:.78rem;color:#1e3a8a;line-height:1.65;">
+                                브라우저 다운로드 폴더<br>
+                                <code style="background:#dbeafe;padding:1px 4px;border-radius:3px;">mes-backup-YYYYMMDD.json</code><br><br>
+                                USB·외장하드·이메일 등에<br>
+                                추가 보관 강력 권장
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <button class="btn btn-primary" onclick="SettingsModule.backupAll()">
+                            <span class="material-symbols-outlined">download</span> 전체 백업 (JSON 다운로드)
+                        </button>
+                        <span style="font-size:.78rem;color:var(--text-muted);">브라우저 IndexedDB의 모든 데이터를 하나의 파일로 내보냅니다.</span>
+                    </div>
                 </div>
             </div>
 
+            <!-- ── 데이터 복원 (로컬 JSON 가져오기) ──────────────────── -->
+            <div class="card" style="margin-bottom:20px;">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">cloud_upload</span> 데이터 복원 <span style="font-size:.72rem;font-weight:400;color:var(--text-muted);margin-left:6px;">로컬 JSON 파일 → 브라우저</span></h4>
+                </div>
+                <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
+
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;">
+                        <div style="padding:10px 12px;border-radius:8px;background:#fef2f2;border:1px solid #fca5a5;">
+                            <div style="font-size:.75rem;font-weight:700;color:#991b1b;margin-bottom:6px;">⚠️ 주의사항</div>
+                            <div style="font-size:.78rem;color:#991b1b;line-height:1.65;">
+                                복원 시 <b>현재 브라우저의 모든 데이터가 삭제</b>되고<br>
+                                백업 파일의 데이터로 완전 교체됩니다.<br>
+                                이 작업은 <b>취소할 수 없습니다.</b>
+                            </div>
+                        </div>
+                        <div style="padding:10px 12px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;">
+                            <div style="font-size:.75rem;font-weight:700;color:#9a3412;margin-bottom:6px;">💡 언제 사용하나요?</div>
+                            <div style="font-size:.78rem;color:#9a3412;line-height:1.65;">
+                                • 브라우저 초기화 후 데이터 복구<br>
+                                • 새 PC로 데이터 이전<br>
+                                • 실수로 데이터 삭제 시 복구<br>
+                                • 위 [데이터 백업]으로 받은 .json 파일만 사용
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <input type="file" id="restoreFileInput" accept=".json" style="display:none;"
+                            onchange="SettingsModule.restoreFromFile(this)">
+                        <button class="btn btn-secondary" onclick="document.getElementById('restoreFileInput').click()">
+                            <span class="material-symbols-outlined">upload</span> 백업 파일 선택하여 복원
+                        </button>
+                        <span style="font-size:.78rem;color:var(--text-muted);">
+                            <code style="background:var(--bg-secondary);padding:1px 5px;border-radius:3px;">mes-backup-*.json</code> 파일만 인식됩니다.
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── 데이터 현황 ─────────────────────────────────────────── -->
             <div class="card">
                 <div class="card-header">
-                    <h4><span class="material-symbols-outlined">info</span> 데이터 현황</h4>
+                    <h4><span class="material-symbols-outlined">analytics</span> 현재 저장 데이터 현황 <span style="font-size:.72rem;font-weight:400;color:var(--text-muted);margin-left:6px;">브라우저 IndexedDB 기준</span></h4>
                 </div>
                 <div class="card-body" id="dataStatusInfo"></div>
             </div>
