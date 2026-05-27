@@ -1102,18 +1102,21 @@ var SalesDeliveryPlanModule = (function() {
         `;
     }
 
-    function _dayCell(row, day) {
+    function _dayCell(row, day, isMonthStart = false) {
         const plan = row.planByDate[day] || 0;
         const delivered = row.deliveryByDate[day] || 0;
         const past = day < UIUtils.today();
         const info = _dayColumnInfo(day);
+        const isWeekend = info.className === 'sdp-sat-col' || info.className === 'sdp-red-col';
         const bg = !plan && !delivered
-            ? (info.className === 'sdp-red-col' ? 'rgba(254,226,226,0.55)' : (info.className === 'sdp-sat-col' ? 'rgba(219,234,254,0.45)' : 'transparent'))
+            ? (info.className === 'sdp-red-col' ? 'rgba(254,226,226,0.55)' : (info.className === 'sdp-sat-col' ? 'rgba(219,234,254,0.45)' : '#fff'))
             : delivered >= plan && plan > 0
             ? 'rgba(16,185,129,0.16)'
             : past && plan > delivered
                 ? 'rgba(239,68,68,0.12)'
                 : 'rgba(245,158,11,0.14)';
+        const colW = isWeekend ? '22px' : '42px';
+        const borderStyle = isMonthStart ? 'border-left:2px solid #64748b;' : '';
         return `
             <td onclick="SalesDeliveryPlanModule.handleDayCellClick(event,'${_js(row.key)}','${day}')"
                 draggable="${plan > 0 ? 'true' : 'false'}"
@@ -1124,9 +1127,9 @@ var SalesDeliveryPlanModule = (function() {
                 ondragend="SalesDeliveryPlanModule.endPlanDrag(event)"
                 title="클릭해서 납품 계획 수량 입력 / 드래그해서 같은 품목 날짜로 이동"
                 class="${info.className} sdp-plan-day-cell ${plan > 0 ? 'sdp-plan-draggable' : ''}"
-                style="min-width:42px;background:${bg};text-align:center;font-size:10px;cursor:pointer;padding:3px 4px;">
-                ${plan ? `<div style="font-weight:800;">${_fmt(plan)}</div>` : ''}
-                ${delivered ? `<div style="color:var(--accent-green);font-weight:700;">납 ${_fmt(delivered)}</div>` : ''}
+                style="min-width:${colW};max-width:${colW};background:${bg};text-align:center;font-size:10px;cursor:pointer;padding:3px 1px;${borderStyle}">
+                ${plan ? `<div style="font-weight:400;">${_fmt(plan)}</div>` : ''}
+                ${delivered ? `<div style="color:var(--accent-green);font-weight:400;">납 ${_fmt(delivered)}</div>` : ''}
             </td>
         `;
     }
@@ -1231,7 +1234,6 @@ var SalesDeliveryPlanModule = (function() {
                     <tr>
                         <th colspan="9"></th>
                         ${_monthHeaderCells(days)}
-                        <th rowspan="2">작업</th>
                     </tr>
                     <tr>
                         <th>차종</th>
@@ -1242,10 +1244,14 @@ var SalesDeliveryPlanModule = (function() {
                         <th>사출<br>현재고/필요량</th>
                         <th>도장<br>현재고/필요량</th>
                         <th>레이져<br>현재고/필요량</th>
-                        <th>완제품<br>수량</th>
-                        ${days.map(d => {
+                        <th>완제품<br>재고</th>
+                        ${days.map((d, i) => {
                             const info = _dayColumnInfo(d);
-                            return `<th class="${info.className}" style="min-width:38px;text-align:center;"><div>${Number(d.slice(8))}</div><div style="font-size:9px;font-weight:600;">${info.weekday}</div></th>`;
+                            const isWeekend = info.className === 'sdp-sat-col' || info.className === 'sdp-red-col';
+                            const colW = isWeekend ? '22px' : '38px';
+                            const isMonthStart = i > 0 && d.slice(0, 7) !== days[i - 1].slice(0, 7);
+                            const borderStyle = isMonthStart ? 'border-left:2px solid #64748b;' : '';
+                            return `<th class="${info.className}" style="min-width:${colW};max-width:${colW};text-align:center;padding:4px 1px;${borderStyle}"><div>${Number(d.slice(8))}</div><div style="font-size:9px;font-weight:600;">${info.weekday}</div></th>`;
                         }).join('')}
                     </tr>
                 </thead>
@@ -1268,10 +1274,7 @@ var SalesDeliveryPlanModule = (function() {
                             <td>${_stockNeedCell(row.finishedStock + row.shippingStandby, row.paintShortage, !_isPaintEnd(row))}</td>
                             <td>${_stockNeedCell(row.finishedStock + row.shippingStandby + row.laserStandby, row.laserShortage, !_isLaserEnd(row))}</td>
                             <td style="font-weight:700;">${row.finishedHasData ? _fmt(row.finishedStock) : '-'}</td>
-                            ${days.map(d => _dayCell(row, d)).join('')}
-                            <td>
-                                <button class="btn btn-sm btn-outline" onclick="SalesDeliveryPlanModule.editGroup('${_js(row.key)}')">수정</button>
-                            </td>
+                            ${days.map((d, i) => _dayCell(row, d, i > 0 && d.slice(0, 7) !== days[i - 1].slice(0, 7))).join('')}
                         </tr>
                     `).join('')}
                 </tbody>
@@ -1496,7 +1499,7 @@ var SalesDeliveryPlanModule = (function() {
         UIUtils.showModal('납품 계획 등록', _gridEditorHtml(), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="SalesDeliveryPlanModule.saveGridPlans()">저장</button>
-        `, 'xxl');
+        `, '1800px');
         setTimeout(renderGridEditorRows, 0);
     }
 
@@ -1536,33 +1539,128 @@ var SalesDeliveryPlanModule = (function() {
     function openCellModal(rowKey, date) {
         const row = _lastRows.find(r => r.key === rowKey);
         if (!row) return;
-        const qty = _planQtyForCell(row, date);
-        UIUtils.showModal('납품 계획 수량 입력', `
-            <div style="display:grid;grid-template-columns:110px 1fr;gap:8px 12px;font-size:0.9rem;margin-bottom:14px;">
-                <div style="color:var(--text-muted);">납품일</div><div style="font-weight:800;">${_esc(date)}</div>
-                <div style="color:var(--text-muted);">납품처</div><div>${_esc(row.customer || '-')}</div>
-                <div style="color:var(--text-muted);">차종</div><div>${_esc(row.carModel || '-')}</div>
-                <div style="color:var(--text-muted);">품명</div><div style="font-weight:800;">${_esc(row.partName || '-')}</div>
-            </div>
-            <div class="form-group">
-                <label class="form-label">계획수량</label>
-                <input type="number" min="0" class="form-input" id="sdpCellQty" value="${qty || ''}" placeholder="" style="text-align:right;font-weight:800;">
-            </div>
-            <div style="font-size:0.8rem;color:var(--text-muted);margin-top:8px;">0 또는 빈칸으로 저장하면 해당 날짜의 계획이 삭제됩니다.</div>
-        `, `
-            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" onclick="SalesDeliveryPlanModule.saveCellPlan('${_js(rowKey)}','${date}')">저장</button>
-        `, 'sm');
-        setTimeout(() => document.getElementById('sdpCellQty')?.select(), 0);
+        const planQty = _planQtyForCell(row, date);
+        const deliveredQty = row.deliveryByDate[date] || 0;
+        // 납품 실적 기존 레코드 찾기
+        const existingDelivery = (Storage.getAll(DB.STORES.SALES_DELIVERY) || []).find(d =>
+            d.date === date && _matches(row, d)
+        );
+        // 납품수량 기본값: 기존 실적 > 계획수량
+        const defaultDelivQty = existingDelivery ? _num(existingDelivery.qty ?? existingDelivery.quantity) : planQty;
+
+        UIUtils.showModal({
+            title: '납품 계획 / 실적 입력',
+            size: 'sm',
+            noBackdropClose: true,
+            body: `
+                <div style="display:grid;grid-template-columns:80px 1fr;gap:6px 12px;font-size:0.88rem;margin-bottom:16px;background:var(--bg-secondary);padding:10px 12px;border-radius:8px;">
+                    <div style="color:var(--text-muted);">납품일</div><div style="font-weight:700;">${_esc(date)}</div>
+                    <div style="color:var(--text-muted);">납품처</div><div>${_esc(row.customer || '-')}</div>
+                    <div style="color:var(--text-muted);">차종</div><div>${_esc(row.carModel || '-')}</div>
+                    <div style="color:var(--text-muted);">품명</div><div style="font-weight:700;">${_esc(row.partName || '-')}${row.color ? ' / ' + _esc(row.color) : ''}</div>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:12px;">
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+                            <span class="material-symbols-outlined" style="font-size:16px;color:var(--accent-blue);">event_note</span>
+                            납품 계획 수량
+                        </label>
+                        <input type="number" min="0" class="form-input" id="sdpCellPlanQty"
+                            value="${planQty || ''}" placeholder="0"
+                            style="text-align:right;font-weight:700;font-size:1rem;">
+                        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">0 또는 빈칸으로 저장하면 해당 날짜 계획이 삭제됩니다.</div>
+                    </div>
+                    <hr style="border:none;border-top:1px dashed var(--border-color);margin:0;">
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+                            <span class="material-symbols-outlined" style="font-size:16px;color:var(--accent-green);">local_shipping</span>
+                            납품 실적 수량
+                        </label>
+                        <input type="number" min="0" class="form-input" id="sdpCellDelivQty"
+                            value="${defaultDelivQty || ''}" placeholder="0"
+                            style="text-align:right;font-weight:700;font-size:1rem;${defaultDelivQty !== planQty ? 'border-color:var(--accent-orange);' : ''}">
+                        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">기본값은 계획 수량이며, 실제 납품 수량으로 조정 가능합니다. 0이면 실적 삭제.</div>
+                    </div>
+                </div>
+            `,
+            footer: `
+                <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+                <button class="btn btn-primary" onclick="SalesDeliveryPlanModule.saveCellPlan('${_js(rowKey)}','${date}')">저장</button>
+            `
+        });
+        setTimeout(() => document.getElementById('sdpCellPlanQty')?.select(), 0);
     }
 
     async function saveCellPlan(rowKey, date) {
         const row = _lastRows.find(r => r.key === rowKey);
         if (!row) return;
-        const qty = _num(document.getElementById('sdpCellQty')?.value);
-        await _upsertPlanCell(row, date, qty);
+
+        const planQty  = _num(document.getElementById('sdpCellPlanQty')?.value);
+        const delivQty = _num(document.getElementById('sdpCellDelivQty')?.value);
+
+        // 1) 납품 실적 입력 시 제품 창고 재고 확인
+        if (delivQty > 0) {
+            const allDeliveries = Storage.getAll(DB.STORES.SALES_DELIVERY) || [];
+            const existingDelivery = allDeliveries.find(d => d.date === date && _matches(row, d));
+            const prevDelivQty = existingDelivery ? _num(existingDelivery.qty ?? existingDelivery.quantity) : 0;
+            const netNewQty = delivQty - prevDelivQty; // 기존 실적 대비 추가 출고량
+
+            if (netNewQty > 0) {
+                // 제품 창고 현재고 계산 (입고 - 출고)
+                const invRows = (Storage.getAll(DB.STORES.PRODUCT_INVENTORY) || []).filter(r => _matches(row, r));
+                const currentStock = invRows.reduce((sum, r) => {
+                    const qty = _num(r.quantity ?? r.qty ?? r.lotSize ?? r.passQty);
+                    return sum + (String(r.type || '').includes('출고') ? -qty : qty);
+                }, 0);
+
+                if (currentStock <= 0) {
+                    UIUtils.toast(`제품 창고 재고가 없습니다. (현재고: 0)  납품 실적을 등록할 수 없습니다.`, 'error');
+                    return;
+                }
+                if (netNewQty > currentStock) {
+                    UIUtils.toast(`재고 부족! 현재고 ${UIUtils.formatNumber(currentStock)}개, 출고 요청 ${UIUtils.formatNumber(delivQty)}개 — 재고를 초과할 수 없습니다.`, 'error');
+                    return;
+                }
+            }
+        }
+
+        // 2) 계획 저장
+        await _upsertPlanCell(row, date, planQty);
+
+        // 3) 납품 실적 저장 → SALES_DELIVERY 스토어 upsert
+        const allDeliveries = Storage.getAll(DB.STORES.SALES_DELIVERY) || [];
+        const existingDelivery = allDeliveries.find(d => d.date === date && _matches(row, d));
+
+        // 제품 마스터에서 단가 조회 → 금액 자동 계산
+        const product = (Storage.getAll(DB.STORES.PRODUCTS) || []).find(p => _matches(row, p));
+        const unitPrice = _num(product?.salePrice || product?.unitPrice || existingDelivery?.unitPrice || 0);
+        const amount    = unitPrice * delivQty;
+
+        const delivData = {
+            date,
+            customer: row.customer || '',
+            carModel: row.carModel || '',
+            partName: row.partName || '',
+            color:    row.color    || '',
+            packUnit: row.packUnit || '',
+            qty:      delivQty,
+            unitPrice,
+            amount,
+            note:     '납품계획 자동 등록'
+        };
+
+        if (delivQty > 0) {
+            if (existingDelivery) {
+                await Storage.update(DB.STORES.SALES_DELIVERY, existingDelivery.id, { ...existingDelivery, ...delivData });
+            } else {
+                await Storage.add(DB.STORES.SALES_DELIVERY, delivData);
+            }
+        } else if (existingDelivery) {
+            await Storage.remove(DB.STORES.SALES_DELIVERY, existingDelivery.id);
+        }
+
         UIUtils.closeModal();
-        UIUtils.toast('납품 계획 수량이 저장되었습니다.', 'success');
+        UIUtils.toast(delivQty > 0 ? `납품 실적 ${UIUtils.formatNumber(delivQty)}개 저장되었습니다.` : '계획이 저장되었습니다.', 'success');
         search();
     }
 

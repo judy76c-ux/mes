@@ -504,6 +504,7 @@ const ProductionPlanModule = (function() {
         // DOM 커밋 후 실행 (선택값 반영 보장)
         setTimeout(function() {
             ProductionPlanModule.updateInjStockPanel();
+            ProductionPlanModule.updateLaserWipPanel();
             ProductionPlanModule.updatePaintStockPanel();
             ProductionPlanModule.calcEndTime();
             ProductionPlanModule._autoFillItemType();
@@ -554,14 +555,19 @@ const ProductionPlanModule = (function() {
         return m ? m.name : matId;
     }
 
-    function _getPaintRowsForProduct(carModel, partName, color) {
+    function _getPaintRowsForProduct(carModel, partName, color, line) {
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
         const prod = products.find(p =>
             p.carModel === carModel && p.partName === partName && p.color === color
         ) || products.find(p =>
             p.carModel === carModel && p.partName === partName
         );
-        return (prod && prod.paintMaterials) ? prod.paintMaterials : [];
+        const rows = (prod && prod.paintMaterials) ? prod.paintMaterials : [];
+        // line이 지정된 경우 processTag가 해당 라인이거나 '공용'(or 미설정)인 것만 반환
+        if (line) {
+            return rows.filter(r => !r.processTag || r.processTag === '공용' || r.processTag === line);
+        }
+        return rows;
     }
 
     // overrideCarModel / overridePartName / overrideColor : 편집 모달 초기화 시 직접 전달
@@ -573,8 +579,10 @@ const ProductionPlanModule = (function() {
         const carModel = overrideCarModel || (document.getElementById('sModel') || {}).value || '';
         const partName = overridePartName || (document.getElementById('sPart')  || {}).value || '';
         const color    = overrideColor    || (document.getElementById('sColor') || {}).value || '';
+        // 현재 모달의 라인 (도장-A / 도장-B)
+        const currentLine = (document.getElementById('sLine') || {}).value || '';
 
-        const rows = _getPaintRowsForProduct(carModel, partName, color);
+        const rows = _getPaintRowsForProduct(carModel, partName, color, currentLine);
         const validRows = rows.filter(r => r.mainId || r.hardId || r.thinnerId);
         if (!validRows.length) {
             panel.style.display = 'none';
@@ -1114,6 +1122,46 @@ const ProductionPlanModule = (function() {
             </div>`;
         }).join('');
     }
+
+    // 레이져 후 재공품 재고 패널 갱신 (도장-B 라인 전용)
+    function updateLaserWipPanel(overridePartName, overrideCarModel) {
+        const panel = document.getElementById('laserWipPanel');
+        if (!panel) return; // 다른 라인에서는 패널 자체가 없음
+
+        const partName  = overridePartName  || (document.getElementById('sPart')  || {}).value || '';
+        const carModel  = overrideCarModel  || (document.getElementById('sModel') || {}).value || '';
+        const colorVal  = (document.getElementById('sColor') || {}).value || '';
+        const totalEl   = document.getElementById('laserWipTotal');
+        const lotsEl    = document.getElementById('laserWipLots');
+
+        if (!partName) {
+            panel.style.display = 'none';
+            return;
+        }
+
+        panel.style.display = 'block';
+
+        if (typeof LaserWipModule === 'undefined') return;
+
+        const wip = LaserWipModule.getWipStock(carModel, partName, colorVal);
+        const wipColor = wip > 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+
+        if (totalEl) totalEl.innerHTML = `<span style="color:${wipColor};font-weight:700;">${UIUtils.formatNumber(wip)} EA</span>`;
+
+        if (lotsEl) {
+            lotsEl.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 6px;border-radius:4px;">
+                <span style="font-size:0.82rem;color:var(--text-secondary);">
+                    <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">bolt</span>
+                    레이져 완료 → 도장-B 대기
+                </span>
+                <span style="font-weight:700;color:${wipColor};font-size:0.95rem;">${UIUtils.formatNumber(wip)} EA</span>
+            </div>
+            ${wip <= 0 ? `<div style="text-align:center;padding:4px 0;font-size:0.78rem;color:var(--accent-red);">
+                <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">warning</span>
+                재공품 재고 없음 — 레이져 공정 완료 후 진행 가능
+            </div>` : ''}`;
+        }
+    }
     // ─────────────────────────────────────────────────────────────────
 
     function calcEndTime() {
@@ -1386,11 +1434,37 @@ const ProductionPlanModule = (function() {
             } catch(e) { console.error('[editSlot] injStock pre-compute error:', e); }
         }
 
+        // 레이져 후 재공 재고 사전 계산 (도장-B 라인 전용)
+        let _laserWipDisplay = 'none', _laserWipTotal = '-', _laserWipHtml = '';
+        if (line === '도장-B' && partValue) {
+            try {
+                const _lwip = (typeof LaserWipModule !== 'undefined')
+                    ? LaserWipModule.getWipStock(modelValue || '', partValue, colorValue || '')
+                    : 0;
+                _laserWipDisplay = 'block';
+                const _lwipColor = _lwip > 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+                _laserWipTotal = `<span style="color:${_lwipColor};font-weight:700;">${UIUtils.formatNumber(_lwip)} EA</span>`;
+                _laserWipHtml = `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 6px;border-radius:4px;">
+                    <span style="font-size:0.82rem;color:var(--text-secondary);">
+                        <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">bolt</span>
+                        레이져 완료 → 도장-B 대기
+                    </span>
+                    <span style="font-weight:700;color:${_lwipColor};font-size:0.95rem;">${UIUtils.formatNumber(_lwip)} EA</span>
+                </div>
+                ${_lwip <= 0 ? `<div style="text-align:center;padding:4px 0;font-size:0.78rem;color:var(--accent-red);">
+                    <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">warning</span>
+                    재공품 재고 없음 — 레이져 공정 완료 후 진행 가능
+                </div>` : ''}`;
+                // 도장-B 라인에서는 사출 재고 패널을 숨김
+                _injDisplay = 'none';
+            } catch(e) { console.error('[editSlot] laserWip pre-compute error:', e); }
+        }
+
         // 도료 재고 사전 계산
         let _paintDisplay = 'none', _paintLotsHtml = '';
         if (modelValue && partValue) {
             try {
-                const _prows = _getPaintRowsForProduct(modelValue, partValue, colorValue);
+                const _prows = _getPaintRowsForProduct(modelValue, partValue, colorValue, line);
                 const _vrows = _prows.filter(r => r.mainId || r.hardId || r.thinnerId);
                 if (_vrows.length > 0) {
                     _paintDisplay = 'block';
@@ -1445,14 +1519,14 @@ const ProductionPlanModule = (function() {
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">도장 컬러</label>
-                    <select class="form-select" id="sColor" onchange="ProductionPlanModule.calcEndTime(); ProductionPlanModule._autoFillItemType(); ProductionPlanModule.updatePaintStockPanel();">
+                    <select class="form-select" id="sColor" onchange="ProductionPlanModule.calcEndTime(); ProductionPlanModule._autoFillItemType(); ProductionPlanModule.updatePaintStockPanel(); ProductionPlanModule.updateLaserWipPanel();">
                         <option value="">선택</option>
                         ${colors.map(c => `<option value="${c}" ${c === colorValue ? 'selected' : ''}>${c}</option>`).join('')}
                     </select>
                 </div>
                 <div class="form-group">
                     <label class="form-label">계획 수량 (EA)</label>
-                    <input type="number" class="form-input" id="sQty" value="${qtyValue}" oninput="ProductionPlanModule.calcEndTime(); ProductionPlanModule.updateInjStockPanel();">
+                    <input type="number" class="form-input" id="sQty" value="${qtyValue}" oninput="ProductionPlanModule.calcEndTime(); ProductionPlanModule.updateInjStockPanel(); ProductionPlanModule.updateLaserWipPanel();">
                 </div>
                 <div class="form-group">
                     <label class="form-label">품목구분 <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(자동)</span></label>
@@ -1476,6 +1550,17 @@ const ProductionPlanModule = (function() {
                     <span id="injStockTotal" style="font-size:0.9rem; font-weight:700; color:var(--accent-blue);">${_injTotalHtml}</span>
                 </div>
                 <div id="injStockLots" style="font-size:0.78rem; color:var(--text-secondary); max-height:120px; overflow-y:auto;">${_injLotsHtml}</div>
+            </div>
+            <div id="laserWipPanel" data-current-plan-id="${_planId}"
+                 style="display:${_laserWipDisplay}; margin-bottom:8px; padding:10px 14px; background:rgba(99,102,241,0.06); border-radius:8px; border:1px solid rgba(99,102,241,0.25);">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
+                    <span style="font-size:0.82rem; color:var(--accent-purple); font-weight:600; display:flex; align-items:center; gap:4px;">
+                        <span class="material-symbols-outlined" style="font-size:15px;">inventory</span>
+                        레이져 후 재공품 현재고
+                    </span>
+                    <span id="laserWipTotal" style="font-size:0.9rem; font-weight:700;">${_laserWipTotal}</span>
+                </div>
+                <div id="laserWipLots" style="font-size:0.78rem; color:var(--text-secondary);">${_laserWipHtml}</div>
             </div>
             <div id="paintStockPanel" style="display:${_paintDisplay}; margin-bottom:12px; padding:10px 14px; background:var(--bg-secondary); border-radius:8px; border:1px solid var(--border-color);">
                 <div style="margin-bottom:6px;">
@@ -1519,6 +1604,7 @@ const ProductionPlanModule = (function() {
         setTimeout(() => {
             ProductionPlanModule.calcEndTime();
             ProductionPlanModule.updateInjStockPanel(partValue, modelValue);
+            ProductionPlanModule.updateLaserWipPanel(partValue, modelValue);
             ProductionPlanModule.updatePaintStockPanel(modelValue, partValue, colorValue);
             ProductionPlanModule._autoFillItemType();
         }, 50);
@@ -2185,6 +2271,7 @@ const ProductionPlanModule = (function() {
         updateDropdowns,
         calcEndTime,
         updateInjStockPanel,
+        updateLaserWipPanel,
         updatePaintStockPanel,
         _autoFillItemType,
         autoUpdateStatus,

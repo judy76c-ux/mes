@@ -17,6 +17,9 @@ const App = (function() {
             AuthModule.ensureAdminUser();
             AuthModule.init();
 
+            // 2-1. 기존 차종(carModel) 데이터 대문자 변환 (최초 1회)
+            await _migrateCarModelUppercase();
+
             // 3. 모듈 등록
             registerModules();
             console.log('✅ 모듈 등록 완료');
@@ -140,6 +143,7 @@ const App = (function() {
     // 모든 모듈을 라우터에 등록
     function registerModules() {
         Router.registerModule('dashboard', DashboardModule);
+        Router.registerModule('board', BoardModule);
         Router.registerModule('production-plan', ProductionPlanModule);
         Router.registerModule('injection-incoming', InjectionIncomingModule);
         Router.registerModule('injection-warehouse', InjectionWarehouseModule);
@@ -156,6 +160,7 @@ const App = (function() {
         Router.registerModule('painting-inspection', PaintingInspectionModule);
         Router.registerModule('painting-quality-performance', PaintingQualityPerformanceModule);
         Router.registerModule('laser-process', LaserHubModule);
+        Router.registerModule('laser-wip', LaserWipModule);
         // 개별 페이지 라우트도 유지 (내부 링크 호환)
         Router.registerModule('laser-standby', LaserStandbyModule);
         Router.registerModule('laser-work', LaserWorkModule);
@@ -172,8 +177,34 @@ const App = (function() {
         Router.registerModule('jig-management', JigModule);
         Router.registerModule('jig-layout', JigLayoutModule);
         Router.registerModule('five-s', FiveSModule);
-        Router.registerModule('prod-standards', ProdStandardsModule);
-        Router.registerModule('prod-conditions', ProdConditionsModule);
+        const safeProdStandardsModule = (typeof ProdStandardsModule !== 'undefined' && ProdStandardsModule)
+            ? ProdStandardsModule
+            : {
+                render(container) {
+                    container.innerHTML = `
+                        <div class="empty-state" style="margin-top:40px;">
+                            <span class="material-symbols-outlined" style="font-size:42px;color:var(--accent-red);">error</span>
+                            <h4 style="margin-top:10px;">제조 관리 표준 모듈 로드 실패</h4>
+                            <p style="color:var(--text-secondary);">브라우저를 새로고침한 뒤 다시 시도해 주세요.</p>
+                        </div>
+                    `;
+                }
+            };
+        Router.registerModule('prod-standards', safeProdStandardsModule);
+        const safeProdConditionsModule = (typeof ProdConditionsModule !== 'undefined' && ProdConditionsModule)
+            ? ProdConditionsModule
+            : {
+                render(container) {
+                    container.innerHTML = `
+                        <div class="empty-state" style="margin-top:40px;">
+                            <span class="material-symbols-outlined" style="font-size:42px;color:var(--accent-red);">error</span>
+                            <h4 style="margin-top:10px;">작업조건 관리 모듈 로드 실패</h4>
+                            <p style="color:var(--text-secondary);">브라우저를 새로고침한 뒤 다시 시도해 주세요.</p>
+                        </div>
+                    `;
+                }
+            };
+        Router.registerModule('prod-conditions', safeProdConditionsModule);
         Router.registerModule('inject-color-std', InjectColorStdModule);
         Router.registerModule('paji-std', PajiStdModule);
         Router.registerModule('wash-consumable', WashConsumableModule);
@@ -706,19 +737,82 @@ const App = (function() {
                 } else if (node.querySelectorAll) {
                     applyTimeInputConversion(node);
                 }
+                // 차종 입력 대문자 적용
+                if (node.matches && _isCarModelInput(node)) {
+                    _applyCarModelUppercase(node);
+                } else if (node.querySelectorAll) {
+                    applyCarModelUppercaseAll(node);
+                }
             });
         });
     });
+
+    // ── 차종 입력 자동 대문자 ─────────────────────────────────────
+    function _isCarModelInput(el) {
+        if (el.tagName !== 'INPUT') return false;
+        const id = (el.id || '').toLowerCase();
+        const name = (el.name || '').toLowerCase();
+        const placeholder = (el.placeholder || '').toLowerCase();
+        return id.includes('carmodel') || name.includes('carmodel') ||
+               id.includes('car_model') || name.includes('car_model') ||
+               placeholder === '차종' || placeholder.includes('차종 입력') ||
+               (el.list && (el.list.id || '').toLowerCase().includes('car'));
+    }
+
+    function _applyCarModelUppercase(el) {
+        if (el._carUpperApplied) return;
+        el._carUpperApplied = true;
+        el.style.textTransform = 'uppercase';
+        el.addEventListener('input', function () {
+            const pos = this.selectionStart;
+            const upper = this.value.toUpperCase();
+            if (this.value !== upper) {
+                this.value = upper;
+                try { this.setSelectionRange(pos, pos); } catch (_) {}
+            }
+        });
+        el.addEventListener('change', function () {
+            this.value = this.value.toUpperCase();
+        });
+        // 기존 값도 대문자 변환
+        if (el.value) el.value = el.value.toUpperCase();
+    }
+
+    function applyCarModelUppercaseAll(root) {
+        root.querySelectorAll('input').forEach(el => {
+            if (_isCarModelInput(el)) _applyCarModelUppercase(el);
+        });
+    }
+
+    // ── 기존 DB 데이터 carModel 대문자 일괄 변환 ────────────────────
+    async function _migrateCarModelUppercase() {
+        const stores = Object.values(DB.STORES);
+        let updated = 0;
+        for (const storeName of stores) {
+            try {
+                const records = Storage.getAll(storeName) || [];
+                for (const rec of records) {
+                    if (rec.carModel && rec.carModel !== rec.carModel.toUpperCase()) {
+                        await Storage.update(storeName, rec.id, { ...rec, carModel: rec.carModel.toUpperCase() });
+                        updated++;
+                    }
+                }
+            } catch (_) { /* 해당 스토어 미지원 시 무시 */ }
+        }
+        if (updated > 0) console.log(`[CarModel 대문자 변환] ${updated}건 업데이트 완료`);
+    }
 
     // DOMContentLoaded
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
             applyTimeInputConversion(document);
+            applyCarModelUppercaseAll(document);
             _timeInputObserver.observe(document.body, { childList: true, subtree: true });
             init();
         });
     } else {
         applyTimeInputConversion(document);
+        applyCarModelUppercaseAll(document);
         _timeInputObserver.observe(document.body, { childList: true, subtree: true });
         init();
     }
@@ -786,6 +880,7 @@ const App = (function() {
     return {
         init,
         loadSampleData,
-        resetDB
+        resetDB,
+        applyCarModelUppercaseAll
     };
 })();

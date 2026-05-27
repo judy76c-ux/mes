@@ -6118,6 +6118,102 @@ window.addEventListener('load', function() {
  */
 var ProdConditionsModule = (function() {
     const STORE = DB.STORES.PROD_CONDITIONS;
+    const CSHEET_SHARED_A = [
+        ['기본 조건', 'MAIN CONVEYOR', '컨베이어 속도', '수치 입력', 'text'],
+        ['기본 조건', 'MAIN CONVEYOR', '봉커버 및 체인 오염', 'OK / NG', 'check'],
+        ['로딩', 'LOADING', 'Grip 장착 상태', 'OK / NG', 'check'],
+        ['로딩', 'LOADING', '작업자 장갑 오염', 'OK / NG', 'check'],
+        ['언로딩', 'UNLOADING', 'Grip 장착 상태', 'OK / NG', 'check'],
+        ['언로딩', 'UNLOADING', '작업자 장갑 오염', 'OK / NG', 'check'],
+        ['세척', '세척기', '1차 세척 장갑 오염', 'OK / NG', 'check'],
+        ['세척', '세척기', 'IPA 통 청결 및 수량', 'OK / NG', 'check'],
+        ['세척', '세척기', 'IPA 공급 상태', 'OK / NG', 'check'],
+        ['세척', '세척기', 'IPA 적심 주기', '분/회 입력', 'text'],
+        ['Booth 공조', '공조', '급기 / 배기', '수치 입력', 'text'],
+        ['Booth 항온', '항온항습', '온도 / 습도', '수치 입력', 'text'],
+        ['ION Room', '제전실', '온도 / 습도', '수치 입력', 'text'],
+        ['IR 건조', 'IR', '품명 / SV / PV', '수치 입력', 'text'],
+        ['건조 경화', 'Oven', 'Flash / Setting / Cure 조건', '수치 입력', 'text'],
+        ['ION', '#1 ION', '제전건 위치 및 에어압력', 'OK / NG 또는 수치', 'text'],
+        ['도료 공급', 'Paint Supply', '필터 / 잔량 / Pot life', 'OK / NG 또는 수치', 'text'],
+        ['배합실', 'Mix Room', '교반 시간 / 점도 / 보관 온도', '수치 입력', 'text']
+    ];
+    const CSHEET_ROBOT_A = [1, 2, 3, 4, 5, 6].flatMap(n => ([
+        [`Robot #${n}`, `Robot #${n}`, '로봇 P.G / 도조건 P.G', '프로그램 확인', 'text'],
+        [`Robot #${n}`, `Robot #${n}`, '무하압력 / 패턴압력 / AOPR', '수치 입력', 'text'],
+        [`Robot #${n}`, `Robot #${n}`, 'Gear Pump / 회전드라이빙', '수치 입력', 'text']
+    ]));
+    const CSHEET_BOOTH_A = [1, 2, 3, 4, 5].flatMap(n => ([
+        [`Booth #${n}`, `Booth #${n}`, '수위 및 물 순환 상태', 'OK / NG', 'check'],
+        [`Booth #${n}`, `Booth #${n}`, 'Air Balance / 배기 상태', 'OK / NG 또는 수치', 'text']
+    ]));
+    const CSHEET_B = [
+        ['기본 조건', 'MAIN CONVEYOR', '컨베이어 속도', '수치 입력', 'text'],
+        ['기본 조건', 'MAIN CONVEYOR', '지그 / 체인 오염', 'OK / NG', 'check'],
+        ['로딩', 'LOADING', 'Grip 장착 및 작업자 장갑', 'OK / NG', 'check'],
+        ['언로딩', 'UNLOADING', 'Grip 장착 및 작업자 장갑', 'OK / NG', 'check'],
+        ['세척', '세척기', 'IPA / Air blow / Tekrek 상태', 'OK / NG', 'check'],
+        ['Booth 공조', '1 Booth', '급기 / 배기', '수치 입력', 'text'],
+        ['Booth 공조', '2 Booth', '급기 / 배기', '수치 입력', 'text'],
+        ['Booth 공조', '3 Booth', '급기 / 배기', '수치 입력', 'text'],
+        ['Booth 공조', '4 Booth', '급기 / 배기', '수치 입력', 'text'],
+        ['Booth 공조', 'UV Booth', '급기 / 배기', '수치 입력', 'text'],
+        ['Booth 항온', '항온항습', '온도 / 습도', '수치 입력', 'text'],
+        ['ION', '#1 ION', '제전건 위치 및 에어압력', 'OK / NG 또는 수치', 'text'],
+        ['Robot #1', 'Robot #1', 'AGB / BINKS 도장 조건', '프로그램 및 압력 입력', 'text'],
+        ['Robot #2', 'Robot #2', 'AGB / BINKS 도장 조건', '프로그램 및 압력 입력', 'text'],
+        ['Robot #3', 'Robot #3', 'AGB / BINKS 도장 조건', '프로그램 및 압력 입력', 'text'],
+        ['Robot #4', 'Robot #4', 'AGB / BINKS 도장 조건', '프로그램 및 압력 입력', 'text'],
+        ['UV', 'UV LAMP', 'Lamp 전류', '13±2A 확인', 'text'],
+        ['도료 공급', 'Paint Supply', '필터 / 잔량 / Pot life', 'OK / NG 또는 수치', 'text'],
+        ['배합실', 'Mix Room', '교반 시간 / 점도 / 보관 온도', '수치 입력', 'text']
+    ];
+    const CSHEET_TEMPLATES = {
+        'A-KNOB': { label: 'A라인 KNOB', line: 'A-LINE', items: [...CSHEET_SHARED_A, ['세척', '세척기', 'Knob Tekrek / Roller 상태', 'OK / NG', 'check'], ...CSHEET_ROBOT_A, ...CSHEET_BOOTH_A] },
+        'A-COVER': { label: 'A라인 COVER', line: 'A-LINE', items: [...CSHEET_SHARED_A, ['세척', '세척기', 'Cover Tekrek / Air blow 상태', 'OK / NG', 'check'], ...CSHEET_ROBOT_A, ...CSHEET_BOOTH_A] },
+        'B-LINE': { label: 'B라인', line: 'B-LINE', items: CSHEET_B }
+    };
+
+    function _esc(v) {
+        return String(v ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+    }
+
+    function _templateKey(d = {}) {
+        if (d.csType && CSHEET_TEMPLATES[d.csType]) return d.csType;
+        if (d.line === 'B-LINE') return 'B-LINE';
+        return 'A-KNOB';
+    }
+
+    function _templateItems(key, saved = []) {
+        const byId = new Map((saved || []).map(item => [item.id, item]));
+        return (CSHEET_TEMPLATES[key] || CSHEET_TEMPLATES['A-KNOB']).items.map((row, idx) => {
+            const id = `${key}-${idx + 1}`;
+            const prev = byId.get(id) || {};
+            return {
+                id,
+                section: row[0],
+                process: row[1],
+                item: row[2],
+                spec: row[3],
+                type: row[4],
+                value: prev.value || '',
+                result: prev.result || '',
+                note: prev.note || ''
+            };
+        });
+    }
+
+    function _summary(items = []) {
+        const total = items.length;
+        const done = items.filter(item => (item.type === 'check' ? item.result : item.value || item.result)).length;
+        const ng = items.filter(item => item.result === 'NG').length;
+        return { total, done, ng };
+    }
+
+    function _lineLabel(d = {}) {
+        const key = _templateKey(d);
+        return (CSHEET_TEMPLATES[key] || {}).label || (d.line === 'B-LINE' ? 'B라인' : 'A라인');
+    }
 
     function search() {
         const start = document.getElementById('pcFilterStart').value;
@@ -6126,7 +6222,7 @@ var ProdConditionsModule = (function() {
 
         let data = Storage.getByDateRange(STORE, start, end)
             .filter(d => !d._docKind);
-        if (line) data = data.filter(d => d.line === line);
+        if (line) data = data.filter(d => d.line === line || d.csType === line);
         data.sort((a, b) => b.date.localeCompare(a.date));
 
         renderTable(data);
@@ -6135,185 +6231,201 @@ var ProdConditionsModule = (function() {
     function renderTable(data) {
         const tbody = document.getElementById('pcTableBody');
         tbody.innerHTML = data.length === 0 ? `<tr><td colspan="7" style="text-align:center;padding:30px;">기록이 없습니다.</td></tr>` :
-            data.map((d, i) => `
+            data.map((d, i) => {
+                const sum = _summary(d.checkItems || []);
+                return `
                 <tr>
                     <td>${data.length - i}</td>
-                    <td>${d.date}</td>
-                    <td><span class="badge ${d.line === 'A-LINE' ? 'badge-info' : 'badge-warning'}">${d.line === 'A-LINE' ? '도장-A' : '도장-B'}</span></td>
-                    <td style="font-weight:600;">${d.carModel} / ${d.partName}</td>
-                    <td>${d.convSpeed || '-'} Hz</td>
-                    <td style="font-size:12px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-                        부스: ${d.boothData ? Object.keys(d.boothData).length : 0}개 항목 체크됨
+                    <td>${_esc(d.date)}</td>
+                    <td><span class="badge ${d.line === 'A-LINE' ? 'badge-info' : 'badge-warning'}">${_esc(_lineLabel(d))}</span></td>
+                    <td style="font-weight:600;">${_esc(d.carModel || '-')} / ${_esc(d.partName || '-')}</td>
+                    <td>${_esc(d.convSpeed || '-')}</td>
+                    <td style="font-size:12px;max-width:300px;">
+                        <span style="font-weight:700;color:var(--accent-blue);">${sum.done}</span> / ${sum.total || 0} 완료
+                        ${sum.ng ? `<span style="margin-left:8px;color:var(--accent-red);font-weight:700;">NG ${sum.ng}</span>` : ''}
                     </td>
-                    <td>${d.operator}</td>
+                    <td>${_esc(d.operator || '-')}</td>
                     <td>
                         <button class="btn btn-sm btn-outline" onclick="ProdConditionsModule.edit('${d.id}')">상세/수정</button>
                         <button class="btn btn-sm btn-danger" onclick="ProdConditionsModule.remove('${d.id}')">삭제</button>
                     </td>
                 </tr>
-            `).join('');
+            `}).join('');
     }
 
     function fillForm(d = {}) {
-        const selectedLine = d.line || 'A-LINE';
+        const selectedType = _templateKey(d);
+        const items = _templateItems(selectedType, d.checkItems || []);
+        const sum = _summary(items);
 
         return `
-            <div style="max-height: 70vh; overflow-y: auto; padding-right: 10px;">
+            <div style="max-height: 74vh; overflow-y: auto; padding-right: 10px;">
+                <div style="position:sticky;top:0;z-index:2;background:#fff;border:1px solid var(--border-color);border-radius:8px;padding:12px;margin-bottom:12px;box-shadow:0 4px 10px rgba(15,23,42,0.06);">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;">
+                        <div style="font-weight:800;color:var(--text-primary);">공정 조건 C/S 일별 기록</div>
+                        <div id="pcProgressText" style="font-size:0.85rem;font-weight:700;color:var(--accent-blue);">${sum.done} / ${sum.total} 완료</div>
+                    </div>
+                    <div style="height:8px;background:var(--bg-secondary);border-radius:999px;overflow:hidden;">
+                        <div id="pcProgressBar" style="height:100%;width:${sum.total ? Math.round(sum.done / sum.total * 100) : 0}%;background:var(--accent-blue);"></div>
+                    </div>
+                </div>
+
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label">기록일자 <span style="color:var(--accent-red)">*</span></label>
-                        <input type="date" class="form-input" id="pcDate" value="${d.date || UIUtils.today()}">
+                        <input type="date" class="form-input" id="pcDate" value="${_esc(d.date || UIUtils.today())}">
                     </div>
                     <div class="form-group">
-                        <label class="form-label">작업 라인 <span style="color:var(--accent-red)">*</span></label>
-                        <select class="form-select" id="pcLine" onchange="ProdConditionsModule.toggleLine(this.value, '${d.id || ''}')">
-                            <option value="A-LINE" ${selectedLine === 'A-LINE' ? 'selected' : ''}>도장-A</option>
-                            <option value="B-LINE" ${selectedLine === 'B-LINE' ? 'selected' : ''}>도장-B</option>
+                        <label class="form-label">C/S 양식 <span style="color:var(--accent-red)">*</span></label>
+                        <select class="form-select" id="pcCsType" onchange="ProdConditionsModule.toggleLine(this.value)">
+                            ${Object.entries(CSHEET_TEMPLATES).map(([key, tpl]) => `<option value="${key}" ${selectedType === key ? 'selected' : ''}>${tpl.label}</option>`).join('')}
                         </select>
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label">차종</label>
-                        <input type="text" class="form-input" id="pcCarModel" value="${d.carModel || ''}">
+                        <input type="text" class="form-input" id="pcCarModel" value="${_esc(d.carModel || '')}">
                     </div>
                     <div class="form-group">
                         <label class="form-label">품명</label>
-                        <input type="text" class="form-input" id="pcPartName" value="${d.partName || ''}">
+                        <input type="text" class="form-input" id="pcPartName" value="${_esc(d.partName || '')}">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">작업자</label>
+                        <input type="text" class="form-input" id="pcOperator" value="${_esc(d.operator || '')}" placeholder="기록인">
                     </div>
                 </div>
 
-                <div style="margin:20px 0 10px; font-weight:700; color:var(--accent-blue); display:flex; align-items:center; gap:8px;">
-                     <span class="material-symbols-outlined">settings_input_component</span> 주요 공정 조건 설정
+                <div style="margin:16px 0 10px; font-weight:700; color:var(--accent-blue); display:flex; align-items:center; gap:8px;">
+                     <span class="material-symbols-outlined">fact_check</span> 왼쪽 위부터 아래 순서로 입력
                 </div>
 
                 <div id="pcLineSpecificContent">
-                    ${renderLineSpecificFields(selectedLine, d)}
-                </div>
-
-                <div class="form-group" style="margin-top:20px;">
-                    <label class="form-label">작업자</label>
-                    <input type="text" class="form-input" id="pcOperator" value="${d.operator || ''}" placeholder="기록인">
+                    ${renderLineSpecificFields(selectedType, { ...d, checkItems: items })}
                 </div>
             </div>
         `;
     }
 
-    function renderLineSpecificFields(line, d = {}) {
-        const b = d.boothData || {};
-
-        if (line === 'A-LINE') {
+    function renderLineSpecificFields(type, d = {}) {
+        const items = d.checkItems || _templateItems(type, []);
+        let current = '';
+        return items.map((item, idx) => {
+            const section = item.section !== current
+                ? (current = item.section, `<div style="margin:14px 0 8px;padding:8px 10px;background:var(--bg-secondary);border-left:4px solid var(--accent-blue);border-radius:6px;font-weight:800;">${_esc(item.section)}</div>`)
+                : '';
+            const input = item.type === 'check'
+                ? `<div class="pc-check-group" data-id="${item.id}" data-result="${_esc(item.result)}" style="display:flex;gap:6px;">
+                       <button type="button" class="btn btn-sm ${item.result === 'OK' ? 'btn-success' : 'btn-outline'}" onclick="ProdConditionsModule.setCheck('${item.id}','OK')">OK</button>
+                       <button type="button" class="btn btn-sm ${item.result === 'NG' ? 'btn-danger' : 'btn-outline'}" onclick="ProdConditionsModule.setCheck('${item.id}','NG')">NG</button>
+                   </div>`
+                : `<input type="text" class="form-input pc-value-input" data-id="${item.id}" value="${_esc(item.value)}" placeholder="${_esc(item.spec)}" oninput="ProdConditionsModule.updateProgress()">`;
             return `
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">컨베이어 속도 (Hz)</label>
-                        <input type="text" class="form-input" id="pcConvSpeed" value="${d.convSpeed || ''}">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">#1 ION 에어 압력</label>
-                        <input type="text" class="form-input" id="pcIonAir" value="${d.ionAir || ''}">
-                    </div>
-                </div>
-                <!-- 부스별 상세 (C/SHEET 기준) -->
-                <div style="background:var(--bg-secondary); padding:12px; border-radius:8px; margin-top:10px;">
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
-                        <div>
-                            <p style="font-size:12px; font-weight:600; margin-bottom:5px;">#1 Booth (1번 로봇/PG/스핀들)</p>
-                            <input type="text" class="form-input btn-sm" id="booth1_rob" value="${b.booth1_rob || ''}" placeholder="압력/RPM">
-                        </div>
-                        <div>
-                            <p style="font-size:12px; font-weight:600; margin-bottom:5px;">#1 Booth (스프레이 압력)</p>
-                            <input type="text" class="form-input btn-sm" id="booth1_spr" value="${b.booth1_spr || ''}" placeholder="Air 압력">
-                        </div>
-                        <div>
-                            <p style="font-size:12px; font-weight:600; margin-bottom:5px;">#2 Booth (Robot PG/스핀들)</p>
-                            <input type="text" class="form-input btn-sm" id="booth2_rob" value="${b.booth2_rob || ''}" placeholder="압력/RPM">
-                        </div>
-                        <div>
-                            <p style="font-size:12px; font-weight:600; margin-bottom:5px;">#3 Booth (Robot PG/스핀들)</p>
-                            <input type="text" class="form-input btn-sm" id="booth3_rob" value="${b.booth3_rob || ''}" placeholder="압력/RPM">
-                        </div>
-                    </div>
-                    <div style="margin-top:10px; border-top:1px solid #ddd; padding-top:10px;">
-                        <p style="font-size:12px; font-weight:600; margin-bottom:5px;">IR 건조 조건 (1~8구간 실측)</p>
-                        <input type="text" class="form-input btn-sm" id="ir_temps" value="${d.irTemps || ''}" placeholder="예: 41: 30±5, 42: 35±5...">
-                    </div>
+                ${section}
+                <div class="pc-csheet-row" data-id="${item.id}" data-type="${item.type}" data-section="${_esc(item.section)}" data-process="${_esc(item.process)}" data-item="${_esc(item.item)}" data-spec="${_esc(item.spec)}"
+                     style="display:grid;grid-template-columns:42px 1fr 1.1fr 1.2fr 1fr;gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--border-color);border-radius:8px;margin-bottom:6px;background:#fff;">
+                    <div style="font-weight:800;color:var(--text-muted);">${idx + 1}</div>
+                    <div style="font-weight:700;">${_esc(item.process)}</div>
+                    <div>${_esc(item.item)}</div>
+                    <div style="font-size:0.82rem;color:var(--text-muted);">${_esc(item.spec)}</div>
+                    <div>${input}</div>
+                    <textarea class="form-textarea pc-note-input" data-id="${item.id}" rows="1" placeholder="비고" style="grid-column:2 / 6;min-height:34px;">${_esc(item.note)}</textarea>
                 </div>
             `;
-        } else {
-            // 도장-B
-            return `
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">컨베이어 속도 (Hz)</label>
-                        <input type="text" class="form-input" id="pcConvSpeed" value="${d.convSpeed || ''}">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">#1 ION 제전건 위치/에어압력</label>
-                        <input type="text" class="form-input" id="pcIonAir" value="${d.ionAir || ''}">
-                    </div>
-                </div>
-                <div style="background:var(--bg-secondary); padding:12px; border-radius:8px; margin-top:10px;">
-                    <p style="font-size:12px; font-weight:600; margin-bottom:8px;">Booth 공조 (1~4 Booth, UV)</p>
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
-                         <input type="text" class="form-input btn-sm" id="booth1_hvac" value="${b.booth1_hvac || ''}" placeholder="1B: 급기/배기">
-                         <input type="text" class="form-input btn-sm" id="booth2_hvac" value="${b.booth2_hvac || ''}" placeholder="2B: 급기/배기">
-                         <input type="text" class="form-input btn-sm" id="booth3_hvac" value="${b.booth3_hvac || ''}" placeholder="3B: 급기/배기">
-                         <input type="text" class="form-input btn-sm" id="booth4_hvac" value="${b.booth4_hvac || ''}" placeholder="4B: 급기/배기">
-                         <input type="text" class="form-input btn-sm" id="uv_hvac" value="${b.uv_hvac || ''}" placeholder="UV: 급기/배기">
-                    </div>
-                    <div style="margin-top:10px; border-top:1px solid #ddd; padding-top:10px;">
-                        <p style="font-size:12px; font-weight:600; margin-bottom:5px;">IR 건조 조건 & UV Lamp 체크</p>
-                        <input type="text" class="form-input btn-sm" id="oven_check" value="${d.ovenCheck || ''}" placeholder="IR 온도, UV Lamp 13±2A 등">
-                    </div>
-                </div>
-            `;
-        }
+        }).join('');
     }
 
-    function toggleLine(line, id) {
-        const d = id ? Storage.getById(STORE, id) : {};
-        document.getElementById('pcLineSpecificContent').innerHTML = renderLineSpecificFields(line, d);
+    function toggleLine(type) {
+        const content = document.getElementById('pcLineSpecificContent');
+        if (!content) return;
+        content.innerHTML = renderLineSpecificFields(type, { checkItems: _templateItems(type, []) });
+        updateProgress();
+    }
+
+    function setCheck(id, result) {
+        const group = document.querySelector(`.pc-check-group[data-id="${id}"]`);
+        if (!group) return;
+        group.dataset.result = result;
+        group.querySelectorAll('button').forEach(btn => {
+            btn.className = `btn btn-sm ${btn.textContent.trim() === result ? (result === 'OK' ? 'btn-success' : 'btn-danger') : 'btn-outline'}`;
+        });
+        updateProgress();
+    }
+
+    function updateProgress() {
+        const items = _collectCsheetItems();
+        const sum = _summary(items);
+        const text = document.getElementById('pcProgressText');
+        const bar = document.getElementById('pcProgressBar');
+        if (text) text.textContent = `${sum.done} / ${sum.total} 완료${sum.ng ? ` · NG ${sum.ng}` : ''}`;
+        if (bar) bar.style.width = `${sum.total ? Math.round(sum.done / sum.total * 100) : 0}%`;
+    }
+
+    function _collectCsheetItems() {
+        return [...document.querySelectorAll('.pc-csheet-row')].map(row => {
+            const id = row.dataset.id;
+            const type = row.dataset.type;
+            const group = row.querySelector('.pc-check-group');
+            return {
+                id,
+                section: row.dataset.section || '',
+                process: row.dataset.process || '',
+                item: row.dataset.item || '',
+                spec: row.dataset.spec || '',
+                type,
+                value: row.querySelector(`.pc-value-input[data-id="${id}"]`)?.value.trim() || '',
+                result: group?.dataset.result || '',
+                note: row.querySelector(`.pc-note-input[data-id="${id}"]`)?.value.trim() || ''
+            };
+        });
     }
 
     function collectData() {
-        const line = document.getElementById('pcLine').value;
+        const csType = document.getElementById('pcCsType').value;
+        const tpl = CSHEET_TEMPLATES[csType] || CSHEET_TEMPLATES['A-KNOB'];
+        const checkItems = _collectCsheetItems();
+        const convItem = checkItems.find(item => item.item.includes('컨베이어 속도'));
         const data = {
             date: document.getElementById('pcDate').value,
-            line: line,
+            line: tpl.line,
+            csType,
             carModel: document.getElementById('pcCarModel').value.trim(),
             partName: document.getElementById('pcPartName').value.trim(),
-            convSpeed: document.getElementById('pcConvSpeed') ? document.getElementById('pcConvSpeed').value.trim() : '',
-            ionAir: document.getElementById('pcIonAir') ? document.getElementById('pcIonAir').value.trim() : '',
+            convSpeed: convItem ? convItem.value : '',
             operator: document.getElementById('pcOperator').value.trim(),
-            boothData: {}
+            checkItems,
+            updatedAt: new Date().toISOString()
         };
-
-        // 라인별 상세 필드 수집
-        if (line === 'A-LINE') {
-            data.boothData = {
-                booth1_rob: document.getElementById('booth1_rob').value.trim(),
-                booth1_spr: document.getElementById('booth1_spr').value.trim(),
-                booth2_rob: document.getElementById('booth2_rob').value.trim(),
-                booth3_rob: document.getElementById('booth3_rob').value.trim()
-            };
-            data.irTemps = document.getElementById('ir_temps').value.trim();
-        } else {
-            data.boothData = {
-                booth1_hvac: document.getElementById('booth1_hvac').value.trim(),
-                booth2_hvac: document.getElementById('booth2_hvac').value.trim(),
-                booth3_hvac: document.getElementById('booth3_hvac').value.trim(),
-                booth4_hvac: document.getElementById('booth4_hvac').value.trim(),
-                uv_hvac: document.getElementById('uv_hvac').value.trim()
-            };
-            data.ovenCheck = document.getElementById('oven_check').value.trim();
-        }
 
         return data;
     }
 
     function openAddModal() {
-        UIUtils.showModal('작업조건 상세 기록', fillForm(), `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="ProdConditionsModule.saveNew()">등록</button>`, 'lg');
+        const host = document.getElementById('pcInlineFormHost');
+        if (!host) return;
+        host.style.display = '';
+        host.innerHTML = `
+            <div class="card" style="margin-bottom:14px;border:1px solid var(--accent-blue);">
+                <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
+                    <div style="font-weight:700;">공정 조건 C/S 등록</div>
+                    <button class="btn btn-sm btn-outline" onclick="ProdConditionsModule.closeInlineForm()">닫기</button>
+                </div>
+                <div class="card-body">${fillForm()}</div>
+                <div class="card-footer" style="display:flex;justify-content:flex-end;gap:8px;">
+                    <button class="btn btn-secondary" onclick="ProdConditionsModule.closeInlineForm()">취소</button>
+                    <button class="btn btn-primary" onclick="ProdConditionsModule.saveNew()">등록</button>
+                </div>
+            </div>
+        `;
+        host.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function closeInlineForm() {
+        const host = document.getElementById('pcInlineFormHost');
+        if (!host) return;
+        host.innerHTML = '';
+        host.style.display = 'none';
     }
 
     async function saveNew() {
@@ -6323,13 +6435,19 @@ var ProdConditionsModule = (function() {
             return;
         }
         await Storage.add(STORE, data);
-        UIUtils.closeModal();
+        closeInlineForm();
         search();
     }
 
     function edit(id) {
         const d = Storage.getById(STORE, id);
-        UIUtils.showModal('작업조건 상세 수정', fillForm(d), `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="ProdConditionsModule.saveEdit('${id}')">저장</button>`, 'lg');
+        UIUtils.showModal({
+            title: '공정 조건 C/S 수정',
+            body: fillForm(d),
+            footer: `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="ProdConditionsModule.saveEdit('${id}')">저장</button>`,
+            size: '1352px',
+            noBackdropClose: true
+        });
     }
 
     async function saveEdit(id) {
@@ -6348,8 +6466,11 @@ var ProdConditionsModule = (function() {
 
     function exportData() {
         const data = Storage.getAll(STORE).filter(d => !d._docKind);
-        const headers = ['일자', '라인', '차종', '품명', '컨베이어속도', '작업자'];
-        const rows = data.map(d => [d.date, d.line, d.carModel, d.partName, d.convSpeed, d.operator]);
+        const headers = ['일자', '양식', '차종', '품명', '컨베이어속도', '완료', '전체', 'NG', '작업자'];
+        const rows = data.map(d => {
+            const sum = _summary(d.checkItems || []);
+            return [d.date, _lineLabel(d), d.carModel, d.partName, d.convSpeed, sum.done, sum.total, sum.ng, d.operator];
+        });
         Storage.exportToCSV(headers, rows, '공정조건기록');
     }
 
@@ -6867,7 +6988,7 @@ var ProdConditionsModule = (function() {
         }
     }
 
-    return {
+        return {
         render(container) {
             const filterHTML = `
                 <div class="form-group">
@@ -6882,8 +7003,9 @@ var ProdConditionsModule = (function() {
                     <label class="form-label">라인</label>
                     <select class="form-select" id="pcFilterLine">
                         <option value="">전체 라인</option>
-                        <option value="A-LINE">도장-A</option>
-                        <option value="B-LINE">도장-B</option>
+                        <option value="A-KNOB">A라인 KNOB</option>
+                        <option value="A-COVER">A라인 COVER</option>
+                        <option value="B-LINE">B라인</option>
                     </select>
                 </div>
                 <div class="form-group" style="align-self:flex-end;">
@@ -6894,17 +7016,27 @@ var ProdConditionsModule = (function() {
             `;
             const headers = ['No', '일자', '라인', '차종/품명', '컨베이어', '작업항목 확인', '작업자'];
             ProdUtils.renderMain(container, '작업조건 관리', '공정조건 C/SHEET 기반의 매일 정밀 작업 조건을 기록합니다.', 'ProdConditionsModule.openAddModal()', 'ProdConditionsModule.exportData()', filterHTML, 'pcTable', headers);
+            const tableEl = document.getElementById('pcTable');
+            const tableWrap = tableEl ? (tableEl.closest('.card') || tableEl.parentElement) : null;
+            if (tableWrap && !document.getElementById('pcInlineFormHost')) {
+                const host = document.createElement('div');
+                host.id = 'pcInlineFormHost';
+                host.style.display = 'none';
+                tableWrap.parentElement.insertBefore(host, tableWrap);
+            }
             search();
-            _appendColorStdSection(container);
         },
         search,
         openAddModal,
+        closeInlineForm,
         saveNew,
         edit,
         saveEdit,
         remove,
         exportData,
         toggleLine,
+        setCheck,
+        updateProgress,
         uploadColorStd,
         downloadColorStd,
         removeColorStd,
@@ -9476,9 +9608,12 @@ var ProdSubMaterialsModule = (function() {
 var ProdQualityModule = (function() {
     const STORE = DB.STORES.PROD_QUALITY_CHECK;
     const PAINT_WORK_STORE = DB.STORES.PAINTING_WORK;
-    const TEMPLATE_KIND = 'quality_template';
-    const ISSUE_KIND = 'quality_issue';
+    const TEMPLATE_KIND   = 'quality_template';
+    const ISSUE_KIND      = 'quality_issue';
     const ITEM_MASTER_KIND = 'quality_item_master';
+    const PRESET_KIND     = 'quality_preset'; // 사용자 저장 프레셋
+
+
     const DEFAULT_ITEMS = [
         { key: 'film_under', label: '도막두께(하도)', unit: 'μm', spec: '', method: '도막 두께계', inputType: 'number' },
         { key: 'film_top', label: '도막두께(상도)', unit: 'μm', spec: '', method: '도막 두께계', inputType: 'number' },
@@ -9502,14 +9637,14 @@ var ProdQualityModule = (function() {
             <div class="fade-in-up">
                 <div class="page-header">
                     <div class="page-actions">
+                        <button class="btn btn-outline" onclick="ProdQualityModule.openPresetMgmtModal()">
+                            <span class="material-symbols-outlined">bookmarks</span> 프레셋 관리
+                        </button>
                         <button class="btn btn-outline" onclick="ProdQualityModule.openItemListModal()">
                             <span class="material-symbols-outlined">list_alt</span> 관리항목
                         </button>
-                        <button class="btn btn-secondary" onclick="ProdQualityModule.openTemplateModal()">
-                            <span class="material-symbols-outlined">tune</span> 차종/컬러 기준설정
-                        </button>
                         <button class="btn btn-secondary" onclick="ProdQualityModule.openBulkTemplateModal()">
-                            <span class="material-symbols-outlined">library_add</span> 차종/컬러 일괄등록
+                            <span class="material-symbols-outlined">library_add</span> 일괄 기준설정
                         </button>
                         <button class="btn btn-primary" onclick="ProdQualityModule.openAddModal()">
                             <span class="material-symbols-outlined">edit_document</span> 수기 작성
@@ -9517,6 +9652,23 @@ var ProdQualityModule = (function() {
                     </div>
                 </div>
 
+                <!-- ── 차종별 기준 현황 ── -->
+                <div class="card" style="margin-bottom:16px;">
+                    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                        <h4><span class="material-symbols-outlined">tune</span> 차종별 기준 현황</h4>
+                        <div style="display:flex;gap:8px;align-items:center;">
+                            <select class="form-select" id="pqStdFilterCar" style="height:36px;min-width:130px;" onchange="ProdQualityModule.renderStandardsCard()">
+                                <option value="">전체 차종</option>
+                                ${_carOptions('')}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="card-body" style="padding:0;">
+                        <div id="pqStandardsBody"></div>
+                    </div>
+                </div>
+
+                <!-- ── C/S 발행 섹션 ── -->
                 <div class="filter-bar" style="flex-wrap:wrap; gap:10px;">
                     <div class="form-group">
                         <label class="form-label">시작일</label>
@@ -9587,7 +9739,81 @@ var ProdQualityModule = (function() {
             sessionStorage.removeItem('mixStd_qualityFilter_car');
             sessionStorage.removeItem('mixStd_qualityFilter_part');
         }
+        renderStandardsCard();
         search();
+    }
+
+    // ── 차종별 기준 현황 카드 렌더링 ─────────────────────────────────────────
+    function renderStandardsCard() {
+        const el = document.getElementById('pqStandardsBody');
+        if (!el) return;
+        const carFilter = document.getElementById('pqStdFilterCar')?.value || '';
+        const combos = _carColorCombos().filter(c => !carFilter || c.carModel === carFilter);
+
+        if (!combos.length) {
+            el.innerHTML = `<div style="padding:28px;text-align:center;color:var(--text-muted);">
+                <span class="material-symbols-outlined" style="font-size:32px;display:block;margin-bottom:8px;opacity:.4;">tune</span>
+                등록된 제품 또는 도장 작업일지가 없습니다.
+            </div>`;
+            return;
+        }
+
+        const configured = combos.filter(c => {
+            const t = _exactTemplateFor(c.carModel, c.color);
+            return t && Array.isArray(t.items) && t.items.length > 0;
+        }).length;
+        const total = combos.length;
+
+        el.innerHTML = `
+            <div style="display:flex;gap:8px;padding:10px 16px;background:var(--bg-secondary);border-bottom:1px solid var(--border-color);font-size:0.82rem;flex-wrap:wrap;">
+                <span style="color:var(--text-muted);">전체 <strong style="color:var(--text-primary);">${total}</strong>개 차종/컬러</span>
+                <span style="color:var(--accent-green);font-weight:600;">✓ 설정완료 ${configured}</span>
+                <span style="color:var(--accent-orange);font-weight:600;">⚠ 미설정 ${total - configured}</span>
+            </div>
+            <div class="data-table-wrapper">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>차종</th>
+                            <th>컬러</th>
+                            <th>대상 품목</th>
+                            <th style="text-align:center;">관리항목 수</th>
+                            <th style="text-align:center;">상태</th>
+                            <th style="text-align:center;">기준 설정</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${combos.map(combo => {
+                            const tmpl = _exactTemplateFor(combo.carModel, combo.color);
+                            const itemCount = tmpl && Array.isArray(tmpl.items) ? tmpl.items.length : 0;
+                            const hasTmpl = itemCount > 0;
+                            const parts = combo.parts.filter(p => p !== '기준설정').join(', ') || '-';
+                            return `
+                                <tr style="${!hasTmpl ? 'background:rgba(251,146,60,0.04);' : ''}">
+                                    <td><strong>${_esc(combo.carModel)}</strong></td>
+                                    <td>${_esc(combo.color) || '<span style="color:var(--text-muted);font-size:0.8rem;">공통</span>'}</td>
+                                    <td style="font-size:0.8rem;color:var(--text-muted);max-width:200px;">${_esc(parts)}</td>
+                                    <td style="text-align:center;">
+                                        ${hasTmpl
+                                            ? `<strong style="color:var(--accent-blue);">${itemCount}</strong>`
+                                            : `<span style="color:var(--text-muted);">-</span>`}
+                                    </td>
+                                    <td style="text-align:center;">
+                                        ${hasTmpl
+                                            ? `<span class="badge badge-success">✓ 설정완료</span>`
+                                            : `<span class="badge badge-warning">미설정</span>`}
+                                    </td>
+                                    <td style="text-align:center;">
+                                        <button class="btn btn-sm ${hasTmpl ? 'btn-outline' : 'btn-primary'}"
+                                            onclick="ProdQualityModule.openTemplateModal('${_js(combo.carModel)}','${_js(combo.color)}')">
+                                            ${hasTmpl ? '수정' : '기준 설정'}
+                                        </button>
+                                    </td>
+                                </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>`;
     }
 
     function search() {
@@ -10249,17 +10475,48 @@ var ProdQualityModule = (function() {
     }
 
     function openTemplateModal(carModel = '', color = '') {
-        const selectedCar = carModel || (document.getElementById('pqFilterCar')?.value || '');
+        const selectedCar   = carModel || (document.getElementById('pqFilterCar')?.value || '');
         const selectedColor = color || '';
-        const tmpl = _templateFor(selectedCar, selectedColor);
-        const items = tmpl && Array.isArray(tmpl.items) ? _normalizeQualityItems(tmpl.items) : _masterItems().map(item => ({ ...item, selected: true }));
-        UIUtils.showModal('차종/컬러별 초중종물 기준설정', _templateFormHtml(selectedCar, selectedColor, items), `
+        const tmpl      = _templateFor(selectedCar, selectedColor);
+        const hasTemplate = !!(tmpl && Array.isArray(tmpl.items) && tmpl.items.length > 0);
+        const items = hasTemplate
+            ? _normalizeQualityItems(tmpl.items)
+            : _masterItems().map(item => ({ ...item, selected: true }));
+        UIUtils.showModal('차종/컬러별 초중종물 기준설정',
+            _templateFormHtml(selectedCar, selectedColor, items, hasTemplate), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="ProdQualityModule.saveTemplate()">저장</button>
         `, 'xl');
     }
 
-    function _templateFormHtml(carModel, color, items) {
+    // hasTemplate: 현재 차종에 저장된 기준이 있는지 여부
+    function _templateFormHtml(carModel, color, items, hasTemplate) {
+        const userPresets = (Storage.getAll(STORE) || []).filter(d => d._docKind === PRESET_KIND);
+
+        // ── 프레셋 선택 드롭다운 ──
+        const presetRow = userPresets.length ? `
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;
+                        background:var(--bg-secondary);border-radius:8px;padding:10px 12px;border:1px solid var(--border-color);">
+                <span class="material-symbols-outlined" style="font-size:1.1rem;color:var(--accent-blue);flex-shrink:0;">bookmarks</span>
+                <select class="form-select" id="pqPresetSelector" style="flex:1;">
+                    <option value="">프레셋 선택 — 선택 시 아래 관리항목이 자동으로 채워집니다</option>
+                    ${userPresets.map(p => `<option value="${_esc(p.id)}">${_esc(p.name)} (${(p.items||[]).length}항목)</option>`).join('')}
+                </select>
+                <button type="button" class="btn btn-primary btn-sm" onclick="ProdQualityModule.applyPresetFromSelect()" style="white-space:nowrap;flex-shrink:0;">
+                    적용
+                </button>
+            </div>` : `
+            <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;margin-bottom:12px;
+                        background:rgba(251,146,60,0.07);border-radius:8px;border:1px solid rgba(251,146,60,0.3);font-size:0.82rem;color:#92400e;">
+                <span class="material-symbols-outlined" style="font-size:1rem;">info</span>
+                저장된 프레셋이 없습니다. 먼저
+                <button type="button" class="btn btn-outline btn-sm"
+                    onclick="UIUtils.closeModal();ProdQualityModule.openPresetMgmtModal()"
+                    style="font-size:0.78rem;border-color:#c2660a;color:#92400e;">
+                    프레셋 관리
+                </button>에서 프레셋을 만드세요.
+            </div>`;
+
         return `
             <div class="form-row">
                 <div class="form-group">
@@ -10275,28 +10532,38 @@ var ProdQualityModule = (function() {
                     </select>
                 </div>
             </div>
-            <div style="font-size:0.82rem;color:var(--text-muted);margin-bottom:8px;">
-                차종과 컬러별로 C/S에 인쇄할 관리항목을 선택하고 기준을 입력합니다. 컬러가 비어 있으면 해당 차종의 공통 기준으로 사용됩니다.
+
+            ${presetRow}
+
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+                <span style="font-size:0.8rem;color:var(--text-muted);">
+                    ${hasTemplate
+                        ? `<span style="color:var(--accent-green);font-weight:600;">✓ 저장된 기준이 있습니다.</span> 항목을 수정하고 저장하세요.`
+                        : `기준이 없습니다. 프레셋을 적용하거나 직접 입력하세요.`}
+                    <span style="margin-left:4px;color:var(--text-muted);font-size:0.75rem;">컬러가 비어 있으면 해당 차종 공통 기준으로 사용됩니다.</span>
+                </span>
+                <div style="display:flex;gap:6px;">
+                    <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.deleteCheckedTemplateItems()">
+                        <span class="material-symbols-outlined">delete</span> 선택 삭제
+                    </button>
+                    <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.addTemplateItemRow()">
+                        <span class="material-symbols-outlined">add</span> 항목 추가
+                    </button>
+                </div>
             </div>
-            <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:8px;">
-                <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.deleteCheckedTemplateItems()">
-                    <span class="material-symbols-outlined">delete</span> 선택 삭제
-                </button>
-                <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.addTemplateItemRow()">
-                    <span class="material-symbols-outlined">add</span> 관리항목 추가
-                </button>
-            </div>
-            <div class="data-table-wrapper" style="max-height:56vh;overflow:auto;">
+            <div class="data-table-wrapper" style="max-height:40vh;overflow:auto;">
                 <table class="data-table" style="font-size:0.82rem;">
-                    <thead><tr><th style="width:60px;">사용</th><th style="width:74px;">순서</th><th>관리항목</th><th>기준</th><th>측정방법</th><th>단위</th><th style="width:60px;">삭제</th></tr></thead>
+                    <thead><tr>
+                        <th style="width:60px;">사용</th><th style="width:74px;">순서</th>
+                        <th>관리항목</th><th>기준</th><th>측정방법</th><th>단위</th>
+                        <th style="width:60px;">삭제</th>
+                    </tr></thead>
                     <tbody id="pqTemplateItemsBody">
-                        ${items.map(item => `
-                            ${_templateItemRowHtml(item)}
-                        `).join('')}
+                        ${items.map(item => _templateItemRowHtml(item)).join('')}
                     </tbody>
                 </table>
             </div>`;
-    }
+    }   // ── end _templateFormHtml ──
 
     function _templateItemRowHtml(item = {}) {
         return `
@@ -10357,6 +10624,260 @@ var ProdQualityModule = (function() {
         const car = document.getElementById('pqTplCarModel')?.value || '';
         const color = document.getElementById('pqTplColor')?.value || '';
         openTemplateModal(car, color);
+    }
+
+    // ── 드롭다운에서 프레셋 선택 후 적용 ──────────────────────────────────
+    function applyPresetFromSelect() {
+        const sel = document.getElementById('pqPresetSelector');
+        const presetId = sel?.value;
+        if (!presetId) { UIUtils.toast('적용할 프레셋을 선택하세요.', 'warning'); return; }
+        applyPreset(presetId);
+    }
+
+    // ── 프레셋 관리 모달 ────────────────────────────────────────────────────
+    function openPresetMgmtModal() {
+        UIUtils.showModal('프레셋 관리', _presetMgmtHtml(), `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+        `, 'lg');
+    }
+
+    function _presetMgmtHtml() {
+        const presets = (Storage.getAll(STORE) || []).filter(d => d._docKind === PRESET_KIND);
+        const listHtml = presets.length ? `
+            <div class="data-table-wrapper">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>프레셋명</th>
+                            <th style="text-align:center;">관리항목 수</th>
+                            <th style="width:120px;">작업</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${presets.map(p => `
+                            <tr>
+                                <td>
+                                    <strong>${_esc(p.name)}</strong>
+                                    ${p.items && p.items.length ? `<span style="margin-left:6px;font-size:0.75rem;color:var(--text-muted);">${p.items.map(i=>_esc(i.label)).filter(Boolean).slice(0,4).join(', ')}${p.items.length > 4 ? ' …' : ''}</span>` : ''}
+                                </td>
+                                <td style="text-align:center;"><strong style="color:var(--accent-blue);">${(p.items||[]).length}</strong>개</td>
+                                <td style="white-space:nowrap;">
+                                    <button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openPresetEditModal('${_js(p.id)}')">수정</button>
+                                    <button class="btn btn-sm btn-danger"  onclick="ProdQualityModule.deleteUserPreset('${_js(p.id)}')">삭제</button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>` : `
+            <div style="text-align:center;padding:36px 20px;color:var(--text-muted);">
+                <span class="material-symbols-outlined" style="font-size:40px;display:block;margin-bottom:10px;opacity:.35;">bookmarks</span>
+                저장된 프레셋이 없습니다.<br>
+                <span style="font-size:0.82rem;">프레셋을 만들면 차종별 기준 설정 시 빠르게 적용할 수 있습니다.</span>
+            </div>`;
+
+        return `
+            <div style="display:flex;justify-content:flex-end;margin-bottom:12px;">
+                <button class="btn btn-primary" onclick="ProdQualityModule.openPresetEditModal(null)">
+                    <span class="material-symbols-outlined">add</span> 프레셋 추가
+                </button>
+            </div>
+            ${listHtml}`;
+    }
+
+    // ── 프레셋 추가/수정 모달 ────────────────────────────────────────────────
+    function openPresetEditModal(presetId) {
+        const preset = presetId
+            ? (Storage.getAll(STORE)||[]).find(d => d._docKind === PRESET_KIND && d.id === presetId)
+            : null;
+        const items = preset && preset.items && preset.items.length
+            ? preset.items
+            : _masterItems().map(i => ({ ...i, selected: true }));
+
+        UIUtils.showModal(preset ? `프레셋 수정 — ${preset.name}` : '새 프레셋 추가', `
+            <div class="form-group" style="margin-bottom:12px;">
+                <label class="form-label">프레셋 이름 <span style="color:var(--accent-red)">*</span></label>
+                <input type="text" class="form-input" id="pqPresetEditName"
+                    value="${_esc(preset ? preset.name : '')}"
+                    placeholder="예: 도장A라인 기준, 외관검사 기준" style="font-size:1rem;" autofocus>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+                <span style="font-size:0.85rem;font-weight:700;color:var(--text-primary);">
+                    관리항목 <span id="pqPresetEditCount" style="color:var(--accent-blue);"></span>
+                </span>
+                <div style="display:flex;gap:6px;">
+                    <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.deleteCheckedPresetItems()">
+                        <span class="material-symbols-outlined">delete</span> 선택 삭제
+                    </button>
+                    <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.addPresetItemRow()">
+                        <span class="material-symbols-outlined">add</span> 항목 추가
+                    </button>
+                </div>
+            </div>
+            <div class="data-table-wrapper" style="max-height:48vh;overflow:auto;">
+                <table class="data-table" style="font-size:0.82rem;">
+                    <thead><tr>
+                        <th style="width:36px;text-align:center;">삭제</th>
+                        <th>관리항목명 <span style="font-weight:400;color:var(--text-muted);font-size:0.75rem;">(C/S에 표시)</span></th>
+                        <th>기준(Spec)</th>
+                        <th>측정방법</th>
+                        <th style="width:76px;">단위</th>
+                    </tr></thead>
+                    <tbody id="pqPresetEditBody">
+                        ${items.map(item => _presetItemRowHtml(item)).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="ProdQualityModule.savePresetEdit(${presetId ? `'${_js(presetId)}'` : 'null'})">
+                <span class="material-symbols-outlined">save</span> 저장
+            </button>
+        `, 'lg');
+    }
+
+    function _presetItemRowHtml(item = {}) {
+        return `
+            <tr class="pq-preset-item-row">
+                <td style="text-align:center;">
+                    <input type="checkbox" class="pq-preset-delete">
+                </td>
+                <td>
+                    <input type="hidden" class="pq-preset-key" value="${_esc(item.key || Storage.generateId())}">
+                    <input type="text" class="form-input pq-preset-label" value="${_esc(item.label || '')}"
+                        placeholder="관리항목명">
+                </td>
+                <td><input type="text" class="form-input pq-preset-spec" value="${_esc(item.spec || '')}"
+                    placeholder="예: 15~20 / 없을 것"></td>
+                <td><input type="text" class="form-input pq-preset-method" value="${_esc(item.method || '')}"
+                    placeholder="육안 / 도막두께계 …"></td>
+                <td><input type="text" class="form-input pq-preset-unit" value="${_esc(item.unit || '')}"
+                    placeholder="μm / - …" style="width:74px;"></td>
+            </tr>`;
+    }
+
+    function addPresetItemRow() {
+        const body = document.getElementById('pqPresetEditBody');
+        if (!body) return;
+        body.insertAdjacentHTML('beforeend', _presetItemRowHtml({}));
+        body.querySelector('tr:last-child .pq-preset-label')?.focus();
+    }
+
+    function deleteCheckedPresetItems() {
+        const rows = [...document.querySelectorAll('.pq-preset-item-row')];
+        const targets = rows.filter(r => r.querySelector('.pq-preset-delete')?.checked);
+        if (!targets.length) { UIUtils.toast('삭제할 항목을 체크하세요.', 'warning'); return; }
+        targets.forEach(r => r.remove());
+    }
+
+    async function savePresetEdit(presetId) {
+        const name = document.getElementById('pqPresetEditName')?.value.trim();
+        if (!name) { UIUtils.toast('프레셋 이름을 입력하세요.', 'warning'); return; }
+
+        const items = [...document.querySelectorAll('.pq-preset-item-row')].map(row => ({
+            key:    row.querySelector('.pq-preset-key')?.value  || Storage.generateId(),
+            label:  row.querySelector('.pq-preset-label')?.value.trim()  || '',
+            spec:   row.querySelector('.pq-preset-spec')?.value.trim()   || '',
+            method: row.querySelector('.pq-preset-method')?.value.trim() || '',
+            unit:   row.querySelector('.pq-preset-unit')?.value.trim()   || '',
+            selected: true
+        })).filter(i => i.label);
+
+        if (!items.length) { UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning'); return; }
+
+        if (presetId) {
+            await Storage.update(STORE, presetId, { _docKind: PRESET_KIND, name, items, updatedAt: UIUtils.now() });
+            UIUtils.toast(`"${name}" 프레셋이 수정됐습니다.`, 'success');
+        } else {
+            await Storage.add(STORE, { _docKind: PRESET_KIND, name, items, createdAt: UIUtils.now() });
+            UIUtils.toast(`"${name}" 프레셋이 저장됐습니다.`, 'success');
+        }
+        openPresetMgmtModal(); // 목록으로 돌아가기
+    }
+
+    // ── 프레셋 적용 ────────────────────────────────────────────────────────
+    function applyPreset(presetId) {
+        // 사용자 저장 프레셋 적용
+        const userPreset = (Storage.getAll(STORE) || []).find(d => d._docKind === PRESET_KIND && d.id === presetId);
+        if (!userPreset) { UIUtils.toast('프레셋을 찾을 수 없습니다.', 'error'); return; }
+        const items = (userPreset.items || []).map(i => ({ ...i, selected: true }));
+
+        // 관리항목 테이블에 반영
+        const body = document.getElementById('pqTemplateItemsBody');
+        if (!body) return;
+        body.innerHTML = items.map(item => _templateItemRowHtml(item)).join('');
+
+        UIUtils.toast(`"${_esc(userPreset.name)}" 프레셋이 적용됐습니다. 기준값을 확인 후 저장하세요.`, 'success');
+
+        // 현재 적용 프레셋 이름 표시
+        const labelEl = document.getElementById('pqCurrentPresetLabel');
+        if (labelEl) {
+            labelEl.innerHTML = `<span class="material-symbols-outlined" style="font-size:0.85rem;vertical-align:middle;color:var(--accent-green);">check_circle</span>
+                &nbsp;현재 적용된 프레셋: <strong style="color:var(--text-primary);">${_esc(userPreset.name)}</strong>`;
+        }
+    }
+
+    // ── 현재 관리항목 설정을 프레셋으로 저장 ─────────────────────────────
+    let _pendingPresetItems = []; // 프레셋 저장 대기 항목 (모달 간 전달용 임시 변수)
+
+    async function saveCurrentAsPreset() {
+        const rows = [...document.querySelectorAll('.pq-template-item-row')];
+        _pendingPresetItems = rows.map(row => ({
+            key:      row.querySelector('.pq-tpl-key')?.value           || Storage.generateId(),
+            label:    row.querySelector('.pq-tpl-label')?.value.trim()  || '',
+            spec:     row.querySelector('.pq-tpl-spec')?.value.trim()   || '',
+            method:   row.querySelector('.pq-tpl-method')?.value.trim() || '',
+            unit:     row.querySelector('.pq-tpl-unit')?.value.trim()   || '',
+            selected: !!row.querySelector('.pq-tpl-selected')?.checked
+        })).filter(i => i.label);
+
+        if (!_pendingPresetItems.length) {
+            UIUtils.toast('저장할 관리항목이 없습니다.', 'warning');
+            return;
+        }
+
+        UIUtils.showModal('프레셋 저장', `
+            <div class="form-group">
+                <label class="form-label">프레셋 이름 <span style="color:var(--accent-red)">*</span></label>
+                <input type="text" class="form-input" id="pqPresetNameInput"
+                    placeholder="예: A차종 기준, 일반 외관 기준" style="font-size:1rem;" autofocus>
+                <div style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;">
+                    현재 관리항목 ${_pendingPresetItems.length}개가 저장됩니다.
+                </div>
+            </div>`, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="ProdQualityModule._confirmSavePreset()">저장</button>
+        `);
+    }
+
+    async function _confirmSavePreset() {
+        const name  = document.getElementById('pqPresetNameInput')?.value.trim();
+        const items = _pendingPresetItems;
+        if (!name)  { UIUtils.toast('프레셋 이름을 입력하세요.', 'warning'); return; }
+        if (!items.length) { UIUtils.toast('저장할 항목이 없습니다.', 'warning'); return; }
+
+        const existing = (Storage.getAll(STORE) || []).find(d => d._docKind === PRESET_KIND && d.name === name);
+        if (existing) {
+            await Storage.update(STORE, existing.id, { _docKind: PRESET_KIND, name, items, updatedAt: UIUtils.now() });
+        } else {
+            await Storage.add(STORE, { _docKind: PRESET_KIND, name, items, createdAt: UIUtils.now() });
+        }
+        _pendingPresetItems = [];
+        UIUtils.closeModal();
+        UIUtils.toast(`"${name}" 프레셋이 저장됐습니다.`, 'success');
+        // 기준설정 모달 프레셋 바 새로고침
+        const car   = document.getElementById('pqTplCarModel')?.value || '';
+        const color = document.getElementById('pqTplColor')?.value    || '';
+        openTemplateModal(car, color);
+    }
+
+    async function deleteUserPreset(presetId) {
+        const preset = (Storage.getAll(STORE) || []).find(d => d._docKind === PRESET_KIND && d.id === presetId);
+        if (!preset) return;
+        if (!confirm(`"${preset.name}" 프레셋을 삭제하시겠습니까?`)) return;
+        await Storage.delete(STORE, presetId);
+        UIUtils.toast('프레셋이 삭제됐습니다.', 'success');
+        openPresetMgmtModal(); // 프레셋 관리 모달 갱신
     }
 
     async function saveTemplate() {
@@ -10681,6 +11202,17 @@ table{border-collapse:collapse;width:100%}
         ,reloadTemplateForCar
         ,onIssueCarChange
         ,printIssue
+        ,applyPreset
+        ,applyPresetFromSelect
+        ,saveCurrentAsPreset
+        ,_confirmSavePreset
+        ,deleteUserPreset
+        ,renderStandardsCard
+        ,openPresetMgmtModal
+        ,openPresetEditModal
+        ,addPresetItemRow
+        ,deleteCheckedPresetItems
+        ,savePresetEdit
     };
 })();
 
@@ -10989,6 +11521,13 @@ var ProdEquipmentModule = (function() {
                            color:${_mode==='dryerclean'?'#fff':'var(--text-secondary)'};font-weight:${_mode==='dryerclean'?'600':'400'};">
                     <span class="material-symbols-outlined" style="font-size:16px;">local_fire_department</span> 건조로 청소
                 </button>
+                <button id="modeTabWastewater" onclick="ProdEquipmentModule.switchMode('wastewater')"
+                    style="padding:9px 20px;border:none;border-left:1px solid var(--border-color);cursor:pointer;font-size:0.875rem;
+                           display:flex;align-items:center;gap:6px;transition:all .15s;
+                           background:${_mode==='wastewater'?'var(--accent-blue)':'var(--bg-secondary)'};
+                           color:${_mode==='wastewater'?'#fff':'var(--text-secondary)'};font-weight:${_mode==='wastewater'?'600':'400'};">
+                    <span class="material-symbols-outlined" style="font-size:16px;">water_drop</span> 폐수처리
+                </button>
             </div>
 
             <div id="equipLineTabs" style="display:flex;gap:8px;margin-bottom:16px;"></div>
@@ -11017,7 +11556,8 @@ var ProdEquipmentModule = (function() {
             ['modeTabFProof', 'fproof'],
             ['modeTabAirFilter', 'airfilter'],
             ['modeTabSupplyFilter', 'supplyfilter'],
-            ['modeTabDryerClean', 'dryerclean']
+            ['modeTabDryerClean', 'dryerclean'],
+            ['modeTabWastewater', 'wastewater']
         ].forEach(([id, key]) => {
             const btn = document.getElementById(id);
             if (!btn) return;
@@ -11078,6 +11618,8 @@ var ProdEquipmentModule = (function() {
             _renderSupplyFilter();
         } else if (_mode === 'dryerclean') {
             _renderDryerClean();
+        } else if (_mode === 'wastewater') {
+            WastewaterModule._renderInTab(el);
         } else {
             _renderConveyor();
         }
@@ -11290,7 +11832,7 @@ var ProdEquipmentModule = (function() {
     function _renderLineTabs() {
         const el = document.getElementById('equipLineTabs');
         if (!el) return;
-        if (_mode === 'temperature' || _mode === 'illumination' || _mode === 'conveyor' || _mode === 'maintenance' || _mode === 'fproof' || _mode === 'airfilter' || _mode === 'supplyfilter' || _mode === 'dryerclean') {
+        if (_mode === 'temperature' || _mode === 'illumination' || _mode === 'conveyor' || _mode === 'maintenance' || _mode === 'fproof' || _mode === 'airfilter' || _mode === 'supplyfilter' || _mode === 'dryerclean' || _mode === 'wastewater') {
             el.style.display = 'none';
             el.innerHTML = '';
             return;
@@ -15654,6 +16196,328 @@ var ProdSpcModule = (function() {
         search,
         _onCarChange,
         exportData
+    };
+})();
+
+/**
+ * 폐수처리 계획 및 실적 (WastewaterModule)
+ * 연 2~3회 계획 단위, 월별 계획일/폐수량 + 실적일/폐수량 관리
+ */
+var WastewaterModule = (function () {
+    const ST_PLAN = DB.STORES.WASTEWATER_PLAN;
+    const ST_LOG  = DB.STORES.WASTEWATER_LOG;
+
+    const MONTHS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
+
+    let _year  = new Date().getFullYear();
+    let _planId = null;
+
+    // ── 진입점 ─────────────────────────────────────────────────────
+    function render(container) {
+        _year = new Date().getFullYear();
+        _planId = null;
+        _renderMain(container);
+    }
+
+    // 설비관리 탭 내부에서 호출될 때 사용
+    function _renderInTab(el) {
+        _year = _year || new Date().getFullYear();
+        _renderMain(el);
+    }
+
+    function _renderMain(container) {
+        const plans = _plansForYear(_year);
+        const yearOpts = _yearRange().map(y =>
+            `<option value="${y}" ${y===_year?'selected':''}>${y}년</option>`).join('');
+
+        container.innerHTML = `
+        <div class="fade-in-up">
+            <div class="page-header" style="margin-bottom:12px;">
+                <div class="page-header-left">
+                    <h3 style="margin:0;font-size:1.1rem;">폐수처리 계획 및 실적</h3>
+                    <p style="margin:4px 0 0;font-size:0.82rem;color:var(--text-secondary);">연 2~3회 계획 단위로 월별 폐수처리 날짜 및 폐수량을 관리합니다.</p>
+                </div>
+                <div class="page-actions" style="display:flex;gap:8px;align-items:center;">
+                    <select class="form-select" id="wwYear" style="width:100px;"
+                        onchange="WastewaterModule._onYearChange(this.value)">${yearOpts}</select>
+                    <button class="btn btn-primary" onclick="WastewaterModule.openPlanModal()">
+                        <span class="material-symbols-outlined">add</span> 계획 등록
+                    </button>
+                </div>
+            </div>
+
+            <div id="wwPlanList"></div>
+        </div>`;
+
+        _renderPlanList(document.getElementById('wwPlanList'), plans);
+    }
+
+    function _renderPlanList(el, plans) {
+        if (!plans.length) {
+            el.innerHTML = `<div class="empty-state" style="padding:60px 0;">
+                <span class="material-symbols-outlined" style="font-size:48px;color:var(--text-muted);">water_drop</span>
+                <p style="color:var(--text-secondary);margin-top:12px;">${_year}년 폐수처리 계획이 없습니다.<br>상단 [계획 등록] 버튼으로 추가하세요.</p>
+            </div>`;
+            return;
+        }
+
+        el.innerHTML = plans.map(p => _renderPlanCard(p)).join('');
+    }
+
+    function _renderPlanCard(plan) {
+        const logs  = _logsForPlan(plan.id);
+        const round = plan.round;
+        const colors = ['var(--accent-blue)','var(--accent-green)','var(--accent-orange,#f59e0b)'];
+        const color = colors[(round - 1) % colors.length];
+
+        const totalPlan   = logs.reduce((s,l) => s + (Number(l.planAmount)||0), 0);
+        const totalActual = logs.reduce((s,l) => s + (Number(l.actualAmount)||0), 0);
+        const doneCnt     = logs.filter(l => l.actualDate).length;
+
+        const rowsHtml = MONTHS.map((mLabel, mi) => {
+            const m   = mi + 1;
+            const log = logs.find(l => l.month === m);
+            const lid = log ? log.id : '';
+            return `
+            <tr>
+                <td style="font-weight:500;width:52px;">${mLabel}</td>
+                <td>
+                    <input type="date" class="form-input" style="width:130px;font-size:0.82rem;"
+                        value="${log?.planDate||''}"
+                        onchange="WastewaterModule.saveLog('${plan.id}',${m},'planDate',this.value,'${lid}')">
+                </td>
+                <td>
+                    <div style="display:flex;align-items:center;gap:4px;">
+                        <input type="number" class="form-input" style="width:90px;font-size:0.82rem;text-align:right;"
+                            placeholder="0" min="0" value="${log?.planAmount||''}"
+                            onchange="WastewaterModule.saveLog('${plan.id}',${m},'planAmount',this.value,'${lid}')">
+                        <span style="font-size:0.78rem;color:var(--text-muted);">L</span>
+                    </div>
+                </td>
+                <td>
+                    <input type="date" class="form-input" style="width:130px;font-size:0.82rem;"
+                        value="${log?.actualDate||''}"
+                        onchange="WastewaterModule.saveLog('${plan.id}',${m},'actualDate',this.value,'${lid}')">
+                </td>
+                <td>
+                    <div style="display:flex;align-items:center;gap:4px;">
+                        <input type="number" class="form-input" style="width:90px;font-size:0.82rem;text-align:right;"
+                            placeholder="0" min="0" value="${log?.actualAmount||''}"
+                            onchange="WastewaterModule.saveLog('${plan.id}',${m},'actualAmount',this.value,'${lid}')">
+                        <span style="font-size:0.78rem;color:var(--text-muted);">L</span>
+                    </div>
+                </td>
+                <td>
+                    <input type="text" class="form-input" style="width:160px;font-size:0.82rem;"
+                        placeholder="비고" value="${log?.note||''}"
+                        onchange="WastewaterModule.saveLog('${plan.id}',${m},'note',this.value,'${lid}')">
+                </td>
+            </tr>`;
+        }).join('');
+
+        return `
+        <div class="card" style="margin-bottom:16px;">
+            <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;
+                         border-left:4px solid ${color};padding-left:16px;">
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <span class="material-symbols-outlined" style="color:${color};font-size:20px;">water_drop</span>
+                    <div>
+                        <h4 style="margin:0;font-size:0.95rem;font-weight:600;">${plan.year}년 ${plan.round}차 폐수처리</h4>
+                        ${plan.manager ? `<div style="font-size:0.78rem;color:var(--text-secondary);margin-top:2px;">담당: ${plan.manager}</div>` : ''}
+                    </div>
+                    <div style="display:flex;gap:8px;margin-left:16px;">
+                        <span class="badge badge-info" style="font-size:0.75rem;">계획 ${totalPlan.toLocaleString()} L</span>
+                        <span class="badge ${totalActual>0?'badge-success':'badge-secondary'}" style="font-size:0.75rem;">실적 ${totalActual.toLocaleString()} L</span>
+                        <span class="badge badge-warning" style="font-size:0.75rem;">완료 ${doneCnt}/12</span>
+                    </div>
+                </div>
+                <div style="display:flex;gap:6px;">
+                    <button class="btn btn-xs btn-outline" onclick="WastewaterModule.openPlanModal('${plan.id}')">수정</button>
+                    <button class="btn btn-xs btn-danger"  onclick="WastewaterModule.deletePlan('${plan.id}')">삭제</button>
+                </div>
+            </div>
+            <div class="card-body" style="padding:0;overflow-x:auto;">
+                <table class="data-table" style="min-width:700px;">
+                    <thead>
+                        <tr>
+                            <th style="width:52px;">월</th>
+                            <th>계획일</th>
+                            <th>계획 폐수량</th>
+                            <th>실적일</th>
+                            <th>실적 폐수량</th>
+                            <th>비고</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rowsHtml}</tbody>
+                    <tfoot>
+                        <tr style="background:var(--bg-secondary);font-weight:600;">
+                            <td>합계</td>
+                            <td>-</td>
+                            <td style="text-align:right;padding-right:12px;">${totalPlan.toLocaleString()} L</td>
+                            <td>-</td>
+                            <td style="text-align:right;padding-right:12px;">${totalActual.toLocaleString()} L</td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            ${plan.note ? `<div style="padding:8px 16px;font-size:0.8rem;color:var(--text-muted);border-top:1px solid var(--border-color);">메모: ${plan.note}</div>` : ''}
+        </div>`;
+    }
+
+    // ── 계획 모달 ──────────────────────────────────────────────────
+    function openPlanModal(id) {
+        const p = id ? Storage.getById(ST_PLAN, id) : null;
+        const cy = new Date().getFullYear();
+        const yearOpts = _yearRange().map(y =>
+            `<option value="${y}" ${(p?.year||_year)===y?'selected':''}>${y}년</option>`).join('');
+        const roundOpts = [1,2,3].map(r =>
+            `<option value="${r}" ${(p?.round||1)===r?'selected':''}>${r}차</option>`).join('');
+
+        const body = `
+        <div style="display:flex;flex-direction:column;gap:14px;">
+            <div class="form-group">
+                <label class="form-label">연도</label>
+                <select class="form-select" id="wwPYear">${yearOpts}</select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">회차</label>
+                <select class="form-select" id="wwPRound">${roundOpts}</select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">담당자</label>
+                <input type="text" class="form-input" id="wwPManager" value="${p?.manager||''}" placeholder="담당자명">
+            </div>
+            <div class="form-group">
+                <label class="form-label">메모</label>
+                <textarea class="form-input" id="wwPNote" rows="2" style="resize:vertical;"
+                    placeholder="특이사항, 허가 번호 등">${p?.note||''}</textarea>
+            </div>
+        </div>`;
+
+        UIUtils.showModal(id ? '계획 수정' : '폐수처리 계획 등록', body, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="WastewaterModule.savePlan('${id||''}')">저장</button>`, 'sm');
+    }
+
+    async function savePlan(id) {
+        const year    = parseInt(document.getElementById('wwPYear')?.value)  || _year;
+        const round   = parseInt(document.getElementById('wwPRound')?.value) || 1;
+        const manager = (document.getElementById('wwPManager')?.value || '').trim();
+        const note    = (document.getElementById('wwPNote')?.value    || '').trim();
+
+        // 중복 체크
+        const exists = (Storage.getAll(ST_PLAN)||[]).find(p =>
+            p.year === year && p.round === round && p.id !== id);
+        if (exists) {
+            UIUtils.toast(`${year}년 ${round}차 계획이 이미 존재합니다.`, 'error'); return;
+        }
+
+        const data = { year, round, manager, note };
+        if (id) {
+            await Storage.update(ST_PLAN, { id, ...data });
+            UIUtils.toast('계획이 수정되었습니다.', 'success');
+        } else {
+            await Storage.add(ST_PLAN, data);
+            UIUtils.toast('계획이 등록되었습니다.', 'success');
+        }
+        UIUtils.closeModal();
+        _year = year;
+        const root = document.getElementById('equipMainContent') || document.getElementById('contentArea');
+        _renderMain(root);
+    }
+
+    async function deletePlan(id) {
+        if (!confirm('이 계획과 모든 월별 실적을 삭제하시겠습니까?')) return;
+        await Storage.delete(ST_PLAN, id);
+        const logs = (Storage.getAll(ST_LOG)||[]).filter(l => l.planId === id);
+        for (const l of logs) await Storage.delete(ST_LOG, l.id);
+        UIUtils.toast('삭제되었습니다.', 'success');
+        const root = document.getElementById('equipMainContent') || document.getElementById('contentArea');
+        _renderMain(root);
+    }
+
+    // ── 월별 로그 인라인 저장 ─────────────────────────────────────
+    async function saveLog(planId, month, field, value, existingId) {
+        month = parseInt(month);
+        const allLogs = Storage.getAll(ST_LOG) || [];
+        let log = allLogs.find(l => l.planId === planId && l.month === month);
+
+        if (field === 'planAmount' || field === 'actualAmount') {
+            value = value === '' ? null : Number(value);
+        }
+
+        if (log) {
+            log[field] = value;
+            await Storage.update(ST_LOG, log);
+        } else {
+            const newLog = { planId, month };
+            newLog[field] = value;
+            await Storage.add(ST_LOG, newLog);
+        }
+        _refreshSummary(planId);
+    }
+
+    function _refreshSummary(planId) {
+        const plan  = Storage.getById(ST_PLAN, planId);
+        if (!plan) return;
+        const logs  = _logsForPlan(planId);
+        const totalPlan   = logs.reduce((s,l) => s + (Number(l.planAmount)||0), 0);
+        const totalActual = logs.reduce((s,l) => s + (Number(l.actualAmount)||0), 0);
+        const doneCnt     = logs.filter(l => l.actualDate).length;
+
+        // 배지 업데이트
+        const cards = document.querySelectorAll('.card');
+        cards.forEach(card => {
+            const btn = card.querySelector(`button[onclick*="${planId}"]`);
+            if (!btn) return;
+            const badges = card.querySelectorAll('.badge');
+            if (badges.length >= 3) {
+                badges[0].textContent = `계획 ${totalPlan.toLocaleString()} L`;
+                badges[1].textContent = `실적 ${totalActual.toLocaleString()} L`;
+                badges[1].className   = `badge ${totalActual>0?'badge-success':'badge-secondary'}`;
+                badges[2].textContent = `완료 ${doneCnt}/12`;
+            }
+            // tfoot 합계 업데이트
+            const tfoot = card.querySelector('tfoot tr');
+            if (tfoot) {
+                const cells = tfoot.querySelectorAll('td');
+                if (cells[2]) cells[2].textContent = totalPlan.toLocaleString() + ' L';
+                if (cells[4]) cells[4].textContent = totalActual.toLocaleString() + ' L';
+            }
+        });
+    }
+
+    // ── 헬퍼 ───────────────────────────────────────────────────────
+    function _plansForYear(year) {
+        return (Storage.getAll(ST_PLAN)||[])
+            .filter(p => p.year === year)
+            .sort((a,b) => a.round - b.round);
+    }
+
+    function _logsForPlan(planId) {
+        return (Storage.getAll(ST_LOG)||[]).filter(l => l.planId === planId);
+    }
+
+    function _yearRange() {
+        const cy = new Date().getFullYear();
+        return [cy-1, cy, cy+1];
+    }
+
+    function _onYearChange(val) {
+        _year = parseInt(val);
+        const plans = _plansForYear(_year);
+        _renderPlanList(document.getElementById('wwPlanList'), plans);
+    }
+
+    return {
+        render,
+        _renderInTab,
+        openPlanModal,
+        savePlan,
+        deletePlan,
+        saveLog,
+        _onYearChange
     };
 })();
 

@@ -29,8 +29,8 @@ loadEnvFile();
 const app = express();
 const PORT = process.env.PORT || 3000;
 const BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, 'backups');
-const NAS_BACKUP_DIR = process.env.NAS_BACKUP_DIR || '';   // NAS 마운트 경로 (비어있으면 NAS 백업 안 함)
-const NAS_KEEP_COUNT = parseInt(process.env.NAS_KEEP_COUNT || '365');  // NAS에 보관할 최대 파일 수
+let NAS_BACKUP_DIR = process.env.NAS_BACKUP_DIR || '';   // NAS 마운트 경로 (비어있으면 NAS 백업 안 함)
+let NAS_KEEP_COUNT = parseInt(process.env.NAS_KEEP_COUNT || '365');  // NAS에 보관할 최대 파일 수
 const BACKUP_CONFIG_KEY = 'server_backup_config';
 const DEFAULT_BACKUP_CONFIG = {
   enabled: true,
@@ -41,6 +41,13 @@ const DEFAULT_BACKUP_CONFIG = {
   retentionDays: 30,
   retentionCount: 60
 };
+
+function withTimeout(promise, ms, message) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms))
+  ]);
+}
 
 const DB_CONFIG = {
   host: process.env.DB_HOST || 'localhost',
@@ -92,7 +99,9 @@ async function initDB() {
       if (cfgRows.length) {
         const cfg = typeof cfgRows[0].value === 'string' ? JSON.parse(cfgRows[0].value) : cfgRows[0].value;
         if (cfg?.nasDir) {
+          NAS_BACKUP_DIR = cfg.nasDir;
           process.env.NAS_BACKUP_DIR = cfg.nasDir;
+          if (cfg.keepCount) NAS_KEEP_COUNT = Math.max(1, Number(cfg.keepCount));
           console.log('✅ NAS 백업 경로 (DB):', cfg.nasDir);
         }
       }
@@ -230,7 +239,14 @@ app.put('/api/config/:key', async (req, res) => {
 
 async function getBackupConfig() {
   try {
-    const [rows] = await pool.query('SELECT `value` FROM mes_config WHERE `key` = ?', [BACKUP_CONFIG_KEY]);
+    const [rows] = await withTimeout(
+      pool.query(
+        { sql: 'SELECT `value` FROM mes_config WHERE `key` = ?', timeout: 3000 },
+        [BACKUP_CONFIG_KEY]
+      ),
+      3000,
+      'backup config query timeout'
+    );
     if (rows.length === 0) return { ...DEFAULT_BACKUP_CONFIG };
     const value = typeof rows[0].value === 'string' ? JSON.parse(rows[0].value) : rows[0].value;
     return { ...DEFAULT_BACKUP_CONFIG, ...(value || {}) };
@@ -263,12 +279,29 @@ async function ensureBackupDir() {
   await fs.mkdir(BACKUP_DIR, { recursive: true });
 }
 
+async function isNasBackupMounted() {
+  if (!NAS_BACKUP_DIR) return false;
+  try {
+    const mounts = await fs.readFile('/proc/mounts', 'utf8');
+    return mounts.split('\n').some(line => {
+      const cols = line.split(' ');
+      return cols[1] === NAS_BACKUP_DIR && (cols[2] === 'cifs' || cols[2].startsWith('nfs'));
+    });
+  } catch (_) {
+    return false;
+  }
+}
+
 function backupFileName(date = new Date()) {
   return `MES_backup_${date.toISOString().replace(/[:.]/g, '-')}.json`;
 }
 
 async function copyToNas(fileName, content) {
   if (!NAS_BACKUP_DIR) return;
+  if (!(await isNasBackupMounted())) {
+    console.warn(`[backup] NAS copy skipped: ${NAS_BACKUP_DIR} is not mounted`);
+    return;
+  }
   try {
     await fs.mkdir(NAS_BACKUP_DIR, { recursive: true });
     await fs.writeFile(path.join(NAS_BACKUP_DIR, fileName), content, 'utf8');
@@ -405,7 +438,12 @@ app.put('/api/backups/config', async (req, res) => {
 
 app.get('/api/backups', async (req, res) => {
   try {
-    res.json({ backupDir: BACKUP_DIR, backups: await listBackups(), config: await getBackupConfig() });
+    const backups = await withTimeout(listBackups(), 3000, 'backup list timeout').catch(err => {
+      console.warn('[backup] list failed:', err.message);
+      return [];
+    });
+    const config = await getBackupConfig();
+    res.json({ backupDir: BACKUP_DIR, backups, config });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -445,7 +483,13 @@ app.delete('/api/backups/:fileName', async (req, res) => {
 // ── NAS 설정 조회 ──
 app.get('/api/nas-config', async (req, res) => {
   try {
-    const [rows] = await pool.query("SELECT `value` FROM mes_config WHERE `key` = 'nas_backup_config'");
+    const [rows] = await withTimeout(
+      pool.query(
+        { sql: "SELECT `value` FROM mes_config WHERE `key` = 'nas_backup_config'", timeout: 3000 }
+      ),
+      3000,
+      'nas config query timeout'
+    );
     const saved = rows.length ? (typeof rows[0].value === 'string' ? JSON.parse(rows[0].value) : rows[0].value) : null;
     res.json({
       nasDir: saved?.nasDir ?? NAS_BACKUP_DIR,
@@ -453,7 +497,12 @@ app.get('/api/nas-config', async (req, res) => {
       fromEnv: !saved
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.json({
+      nasDir: NAS_BACKUP_DIR,
+      keepCount: NAS_KEEP_COUNT,
+      fromEnv: true,
+      warning: err.message
+    });
   }
 });
 
@@ -468,9 +517,9 @@ app.put('/api/nas-config', async (req, res) => {
       [JSON.stringify(value)]
     );
     // 런타임 즉시 반영
-    if (value.nasDir) {
-      process.env.NAS_BACKUP_DIR = value.nasDir;
-    }
+    NAS_BACKUP_DIR = value.nasDir;
+    NAS_KEEP_COUNT = value.keepCount;
+    process.env.NAS_BACKUP_DIR = value.nasDir;
     res.json({ success: true, ...value });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -480,6 +529,9 @@ app.put('/api/nas-config', async (req, res) => {
 // ── NAS 백업 목록 ──
 app.get('/api/nas-backups', async (req, res) => {
   if (!NAS_BACKUP_DIR) return res.json({ available: false, backups: [] });
+  if (!(await isNasBackupMounted())) {
+    return res.json({ available: false, nasDir: NAS_BACKUP_DIR, error: 'NAS path is not mounted', backups: [] });
+  }
   try {
     await fs.mkdir(NAS_BACKUP_DIR, { recursive: true });
     const files = (await fs.readdir(NAS_BACKUP_DIR)).filter(f => f.endsWith('.json'));

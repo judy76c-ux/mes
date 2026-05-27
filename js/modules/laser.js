@@ -1556,12 +1556,23 @@ var LaserStandbyModule = (function() {
 
     function render(container) {
         container.innerHTML = `
-            <div class="fade-in-up">
-                ${LaserProcessUI.renderSection('laser-standby', '레이져대기품현황', '도장 완료 후 레이져 공정 대기 중인 재공품 현황과 재고 흐름을 확인합니다.')}
-                <div class="page-header">
-                    <div class="page-actions" style="width:100%;display:flex;justify-content:flex-end;">
+            <div class="fade-in-up" style="padding:20px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:8px;">
+                    <div>
+                        <h3 style="margin:0;font-size:1.1rem;font-weight:700;color:var(--text-primary);display:flex;align-items:center;gap:6px;">
+                            <span class="material-symbols-outlined" style="font-size:1.2rem;color:var(--accent-orange);">hourglass_top</span>
+                            레이져 대기품 현황
+                        </h3>
+                        <p style="margin:4px 0 0;font-size:0.82rem;color:var(--text-secondary);">
+                            도장 완료 후 레이져 공정 대기 중인 재공품 현황과 재고 흐름을 확인합니다.
+                        </p>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;">
                         <button class="btn btn-secondary" onclick="LaserStandbyModule.openLayout()">
                             <span class="material-symbols-outlined">map</span> 레이아웃 보기
+                        </button>
+                        <button class="btn btn-secondary" onclick="LaserStandbyModule.refresh()">
+                            <span class="material-symbols-outlined">refresh</span> 새로고침
                         </button>
                     </div>
                 </div>
@@ -1969,6 +1980,27 @@ var LaserStandbyModule = (function() {
         }, 0);
     }
 
+    // 페이지 헤더 없이 내용만 렌더링 (통합 재공품 현황 탭에서 호출)
+    function renderContentOnly(container) {
+        container.innerHTML = `
+            <div class="stat-cards" id="lsbStats" style="margin-bottom:16px;"></div>
+            <div class="card" style="margin-bottom:20px;">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">inventory_2</span> 재공 재고 현황</h4>
+                    <span style="font-size:0.75rem;color:var(--text-muted);">입고(도장완료) − 출고(레이져처리) = 재공재고</span>
+                </div>
+                <div class="card-body" id="lsbInventory" style="padding:16px; display:flex; flex-direction:column; gap:14px;"></div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">table_rows</span> 분출 현황</h4>
+                    <span style="font-size:0.75rem;color:var(--text-muted);">입고(도장작업) · 출고(레이져처리) 내역</span>
+                </div>
+                <div class="card-body" id="lsbDetail" style="padding:0;"></div>
+            </div>`;
+        renderAll();
+    }
+
     function refresh() {
         renderAll();
         UIUtils.toast('재고 현황을 새로고침했습니다.', 'info');
@@ -1981,6 +2013,7 @@ var LaserStandbyModule = (function() {
     return {
         init   : render,
         render,
+        renderContentOnly,
         refresh,
         openLayout,
         _showItemDetail

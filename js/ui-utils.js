@@ -90,8 +90,9 @@ const UIUtils = (function () {
 
         const container = overlay.querySelector('.modal-container');
         if (container) {
-            const sizeMap = { sm:'360px', md:'520px', lg:'700px', xl:'920px', xxl:'1100px' };
-            container.style.maxWidth = sizeMap[options.size || 'md'] || '520px';
+            const sizeMap = { sm:'360px', md:'520px', lg:'700px', xl:'920px', xxl:'1100px', xxxl:'1200px' };
+            const resolvedWidth = sizeMap[options.size || 'md'] || options.size || '520px';
+            container.style.setProperty('max-width', resolvedWidth, 'important');
         }
 
         if (titleEl) titleEl.innerHTML = options.title || '';
@@ -122,9 +123,9 @@ const UIUtils = (function () {
         if (closeBtn) {
             closeBtn.onclick = () => closeModal();
         }
-        // 오버레이 클릭 닫기 (컨테이너 외부)
+        // 오버레이 클릭 닫기 (noBackdropClose 옵션이면 비활성)
         overlay.onclick = (e) => {
-            if (e.target === overlay) closeModal();
+            if (e.target === overlay && !options.noBackdropClose) closeModal();
         };
     }
 
@@ -133,8 +134,14 @@ const UIUtils = (function () {
         if (overlay) overlay.classList.remove('active');
     }
 
-    // showModal = openModal 별칭
-    function showModal(options) { openModal(options); }
+    // showModal: 객체 형식({ title, body, footer, size }) 또는 위치 인자(title, body, footer, size) 모두 지원
+    function showModal(titleOrOptions, body, footer, size) {
+        if (titleOrOptions !== null && typeof titleOrOptions === 'object') {
+            openModal(titleOrOptions);
+        } else {
+            openModal({ title: titleOrOptions, body, footer, size });
+        }
+    }
 
     // ── 확인 다이얼로그 ───────────────────────────────────────────────────
     function confirm(message, onConfirm, onCancel) {

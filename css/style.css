@@ -1127,7 +1127,8 @@ input[type="time"] {
 
 .sdp-status-table th,
 .sdp-status-table td {
-    font-size: 10px !important;
+    font-size: 12px !important;
+    font-weight: 400 !important;
     padding: 4px 5px !important;
     white-space: nowrap;
     text-align: center;
@@ -1135,7 +1136,7 @@ input[type="time"] {
 }
 
 .sdp-plan-summary {
-    font-weight: 800;
+    font-weight: 400;
     text-align: center !important;
 }
 
@@ -1155,35 +1156,40 @@ input[type="time"] {
 
 .sdp-plan-delivered {
     color: var(--accent-green);
-    font-weight: 800;
+    font-weight: 400;
 }
 
 .sdp-plan-remaining {
-    font-weight: 800;
+    font-weight: 400;
 }
 
 .sdp-stock-need-cell {
-    display: inline-flex;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    justify-content: center;
-    gap: 2px;
     width: 100%;
-    font-weight: 800;
-    font-size: 9px;
-    line-height: 1.1;
+    font-weight: 400;
+    font-size: 12px;
+    line-height: 1.2;
 }
 
 .sdp-stock-current {
     color: var(--text-primary);
+    text-align: right;
+    padding-right: 1px;
 }
 
 .sdp-stock-separator {
     color: var(--text-muted);
-    font-weight: 700;
+    font-weight: 400;
+    text-align: center;
+    padding: 0 2px;
 }
 
 .sdp-stock-need {
-    font-weight: 800;
+    font-weight: 400;
+    text-align: left;
+    padding-left: 1px;
 }
 
 .sdp-plan-day-cell {
@@ -1298,6 +1304,7 @@ input[type="time"] {
     position: sticky;
     top: 0;
     z-index: 2;
+    background: linear-gradient(180deg, #f1f5f9, #e8ecf1);
 }
 
 .sdp-status-table thead tr:nth-child(2) th {
@@ -1332,29 +1339,29 @@ input[type="time"] {
 .sdp-status-table tbody td:nth-child(1) { left: 0; min-width: 48px; max-width: 48px; }
 
 .sdp-status-table thead tr:nth-child(2) th:nth-child(2),
-.sdp-status-table tbody td:nth-child(2) { left: 48px; min-width: 130px; max-width: 130px; }
+.sdp-status-table tbody td:nth-child(2) { left: 48px; min-width: 180px; max-width: 180px; }
 
 .sdp-status-table thead tr:nth-child(2) th:nth-child(3),
-.sdp-status-table tbody td:nth-child(3) { left: 178px; min-width: 44px; max-width: 44px; }
+.sdp-status-table tbody td:nth-child(3) { left: 228px; min-width: 44px; max-width: 44px; }
 
 .sdp-status-table thead tr:nth-child(2) th:nth-child(4),
-.sdp-status-table tbody td:nth-child(4) { left: 222px; min-width: 36px; max-width: 36px; }
+.sdp-status-table tbody td:nth-child(4) { left: 272px; min-width: 36px; max-width: 36px; }
 
 .sdp-status-table thead tr:nth-child(2) th:nth-child(5),
-.sdp-status-table tbody td:nth-child(5) { left: 258px; min-width: 88px; max-width: 88px; }
+.sdp-status-table tbody td:nth-child(5) { left: 308px; min-width: 88px; max-width: 88px; }
 
 .sdp-status-table thead tr:nth-child(2) th:nth-child(6),
-.sdp-status-table tbody td:nth-child(6) { left: 346px; min-width: 62px; max-width: 62px; }
+.sdp-status-table tbody td:nth-child(6) { left: 396px; min-width: 90px; max-width: 90px; }
 
 .sdp-status-table thead tr:nth-child(2) th:nth-child(7),
-.sdp-status-table tbody td:nth-child(7) { left: 408px; min-width: 62px; max-width: 62px; }
+.sdp-status-table tbody td:nth-child(7) { left: 486px; min-width: 90px; max-width: 90px; }
 
 .sdp-status-table thead tr:nth-child(2) th:nth-child(8),
-.sdp-status-table tbody td:nth-child(8) { left: 470px; min-width: 62px; max-width: 62px; }
+.sdp-status-table tbody td:nth-child(8) { left: 576px; min-width: 90px; max-width: 90px; }
 
 .sdp-status-table thead tr:nth-child(2) th:nth-child(9),
 .sdp-status-table tbody td:nth-child(9) {
-    left: 532px;
+    left: 666px;
     min-width: 54px;
     max-width: 54px;
     box-shadow: 4px 0 8px rgba(15, 23, 42, 0.08);
@@ -1433,20 +1440,20 @@ input[type="time"] {
 
 .sdp-grid-entry-table .sdp-date-month {
     font-size: 8px;
-    font-weight: 700;
+    font-weight: 400;
     color: var(--text-secondary);
 }
 
 .sdp-grid-entry-table .sdp-date-day {
     margin-top: 1px;
     font-size: 10px;
-    font-weight: 800;
+    font-weight: 500;
 }
 
 .sdp-grid-entry-table .sdp-weekday-label {
     margin-top: 1px;
     font-size: 8px;
-    font-weight: 700;
+    font-weight: 400;
 }
 
 .sdp-grid-entry-table .sdp-grid-cell {

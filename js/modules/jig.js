@@ -88,6 +88,19 @@ var JigModule = (function () {
         loadAll();
     }
 
+    // 제품의 공정별 사양(process1~4)에 '레이져' 공정이 있는지 검사
+    function _hasLaserProcess(product) {
+        return ['process1', 'process2', 'process3', 'process4'].some(key => {
+            const v = String(product[key] || '').replace(/\s+/g, '');
+            return v.includes('레이져') || v.toUpperCase().includes('LASER');
+        });
+    }
+
+    // 레이져 공정 제품만 추출
+    function _laserProducts() {
+        return (Storage.getAll(DB.STORES.PRODUCTS) || []).filter(_hasLaserProcess);
+    }
+
     function _lineFromProcessValue(value) {
         const s = String(value || '').replace(/\s+/g, '').toUpperCase();
         if (!s) return null;
@@ -374,10 +387,11 @@ var JigModule = (function () {
     }
 
     function openBatchRegisterModal() {
-        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        // 레이져 공정이 있는 제품만 대상
+        const products = _laserProducts();
         const jigs = Storage.getAll(STORE) || [];
         if (!products.length) {
-            UIUtils.toast('등록된 제품이 없습니다. 관리/설정 > 제품 정보에서 먼저 등록하세요.', 'warning');
+            UIUtils.toast('레이져 공정이 설정된 제품이 없습니다. 관리/설정 > 제품 정보에서 공정별 사양에 레이져를 등록하세요.', 'warning');
             return;
         }
 
@@ -664,13 +678,22 @@ var JigModule = (function () {
     }
 
     function _carModelOptions(selected = '') {
-        const cars = [...new Set((Storage.getAll(DB.STORES.PRODUCTS) || []).map(p => p.carModel).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
-        return `<option value="">선택</option>` + cars.map(c => `<option value="${_esc(c)}" ${c === selected ? 'selected' : ''}>${_esc(c)}</option>`).join('');
+        // 레이져 공정이 있는 제품의 차종만 표시
+        const laserProds = _laserProducts();
+        const cars = [...new Set(laserProds.map(p => p.carModel).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+        const note = cars.length === 0
+            ? '<option value="" disabled>레이져 공정 제품 없음</option>'
+            : '';
+        return `<option value="">선택</option>${note}` + cars.map(c => `<option value="${_esc(c)}" ${c === selected ? 'selected' : ''}>${_esc(c)}</option>`).join('');
     }
 
     function _partNameOptions(carModel, selected = '') {
-        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-        const parts = [...new Set(products.filter(p => !carModel || p.carModel === carModel).map(p => p.partName).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+        // 레이져 공정이 있는 제품의 품명만 표시
+        const laserProds = _laserProducts();
+        const parts = [...new Set(
+            laserProds.filter(p => !carModel || p.carModel === carModel)
+                      .map(p => p.partName).filter(Boolean)
+        )].sort((a, b) => a.localeCompare(b, 'ko'));
         return `<option value="">선택</option>` + parts.map(p => `<option value="${_esc(p)}" ${p === selected ? 'selected' : ''}>${_esc(p)}</option>`).join('');
     }
 
@@ -682,6 +705,12 @@ var JigModule = (function () {
 
     function _formHtml(d = {}) {
         return `
+        <div style="margin-bottom:12px;padding:8px 12px;background:rgba(99,102,241,0.07);
+                    border:1px solid rgba(99,102,241,0.3);border-radius:6px;
+                    font-size:0.8rem;color:var(--text-secondary);display:flex;align-items:center;gap:6px;">
+            <span class="material-symbols-outlined" style="font-size:16px;color:#6366f1;">info</span>
+            제품 정보의 <b style="color:#6366f1;">레이져 공정</b>이 설정된 제품만 선택 가능합니다.
+        </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
             <div class="form-group">
                 <label class="form-label">차종 <span style="color:var(--accent-red)">*</span></label>

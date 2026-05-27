@@ -76,7 +76,8 @@
       "Bash(where docker *)",
       "Bash(python -c \"import pymysql; print\\('pymysql OK'\\)\")",
       "Bash(python -c \"import mysql.connector; print\\('mysql-connector OK'\\)\")",
-      "Bash(pip install *)"
+      "Bash(pip install *)",
+      "Bash(node --input-type=module)"
     ]
   }
 }

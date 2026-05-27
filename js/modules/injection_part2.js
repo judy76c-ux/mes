@@ -19,6 +19,11 @@ var InjectionWarehouseModule = (function() {
                         <button class="btn btn-danger" onclick="InjectionWarehouseModule.openAddModal('출고')">
                             <span class="material-symbols-outlined">do_not_disturb_on</span> 사출 출고
                         </button>
+                        <button class="btn btn-outline" style="margin-left:auto;"
+                            onclick="InjectionWarehouseModule.openBulkPasteModal()"
+                            title="관리자 계정으로 로그인한 경우에만 일괄 반영할 수 있습니다.">
+                            <span class="material-symbols-outlined">admin_panel_settings</span> 재고 일괄 등록/수정
+                        </button>
                     </div>
                 </div>
 
@@ -1172,6 +1177,426 @@ var InjectionWarehouseModule = (function() {
         if (hiddenEl) hiddenEl.value = total;
     }
 
+    function _escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, function(ch) {
+            return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+        });
+    }
+
+    function _normalizeText(value) {
+        return String(value ?? '').replace(/\u00a0/g, ' ').trim();
+    }
+
+    function _parseQty(value) {
+        const text = _normalizeText(value);
+        if (!text || text === '-' || text === '－') return 0;
+        const cleaned = text.replace(/,/g, '').replace(/[^\d.-]/g, '');
+        if (!cleaned || cleaned === '-' || cleaned === '.') return 0;
+        const num = Number(cleaned);
+        return Number.isFinite(num) ? num : 0;
+    }
+
+    function _isQtyCell(value) {
+        const text = _normalizeText(value);
+        if (!text || text === '-' || text === '－') return true;
+        return /^-?[\d,]+(\.\d+)?$/.test(text);
+    }
+
+    function _splitClipboardRows(text) {
+        return String(text || '')
+            .replace(/\r\n/g, '\n')
+            .replace(/\r/g, '\n')
+            .split('\n')
+            .map(line => line.split('\t').map(_normalizeText))
+            .filter(row => row.some(Boolean));
+    }
+
+    function _parseBulkSimpleTable(rows) {
+        if (!rows.length) return [];
+        const header = rows[0].map(h => h.replace(/\s/g, '').toLowerCase());
+        const aliases = {
+            carModel: ['차종', '모델', 'carmodel'],
+            partName: ['품명', '사출품명', '부품명', '자재명', 'partname'],
+            color: ['컬러', '색상', 'color'],
+            quantity: ['수량', '현재고', '재고', 'qty', 'quantity']
+        };
+        const findIdx = names => header.findIndex(h => names.some(n => h.includes(n.toLowerCase())));
+        const idx = {
+            carModel: findIdx(aliases.carModel),
+            partName: findIdx(aliases.partName),
+            color: findIdx(aliases.color),
+            quantity: findIdx(aliases.quantity)
+        };
+        if (idx.partName < 0 || idx.quantity < 0) {
+            return rows
+                .filter(row => row.length >= 4)
+                .map(row => ({
+                    carModel: row[0] || '',
+                    partName: row[1] || '',
+                    color: row[2] || '',
+                    quantity: _parseQty(row[3])
+                }))
+                .filter(r => r.carModel && r.partName && r.color);
+        }
+
+        return rows.slice(1).map(row => ({
+            carModel: idx.carModel >= 0 ? row[idx.carModel] : '',
+            partName: row[idx.partName] || '',
+            color: idx.color >= 0 ? row[idx.color] : '',
+            quantity: _parseQty(row[idx.quantity])
+        })).filter(r => r.partName);
+    }
+
+    function _looksLikeWideHeader(rows, r, c) {
+        const cell = _normalizeText(rows[r]?.[c]);
+        if (!cell || _isQtyCell(cell)) return false;
+        const right = _normalizeText(rows[r]?.[c + 1]);
+        if (right && _isQtyCell(right)) return false;
+        const headerRow = rows[r] || [];
+        const colorHeaderCount = headerRow
+            .slice(c + 1)
+            .filter(v => {
+                const text = _normalizeText(v);
+                return text && !_isQtyCell(text);
+            }).length;
+        if (colorHeaderCount === 0) return false;
+        const maxCol = Math.min((rows[r] || []).length - 1, c + 4);
+        for (let rr = r + 1; rr < Math.min(rows.length, r + 12); rr++) {
+            const part = _normalizeText(rows[rr]?.[c]);
+            if (!part || _isQtyCell(part)) continue;
+            for (let cc = c + 1; cc <= maxCol; cc++) {
+                const qty = _normalizeText(rows[rr]?.[cc]);
+                if (qty && _isQtyCell(qty)) return true;
+            }
+        }
+        return false;
+    }
+
+    function _parseBulkWideLayout(rows) {
+        const result = [];
+        for (let r = 0; r < rows.length; r++) {
+            const row = rows[r] || [];
+            for (let c = 0; c < row.length; c++) {
+                if (!_looksLikeWideHeader(rows, r, c)) continue;
+
+                const carModel = _normalizeText(row[c]);
+                let nextHeaderCol = row.length;
+                for (let nc = c + 1; nc < row.length; nc++) {
+                    if (_looksLikeWideHeader(rows, r, nc)) {
+                        nextHeaderCol = nc;
+                        break;
+                    }
+                }
+
+                let nextHeaderRow = rows.length;
+                for (let nr = r + 1; nr < rows.length; nr++) {
+                    if (_looksLikeWideHeader(rows, nr, c)) {
+                        nextHeaderRow = nr;
+                        break;
+                    }
+                }
+
+                const colorCols = [];
+                for (let cc = c + 1; cc < nextHeaderCol; cc++) {
+                    const color = _normalizeText(row[cc]);
+                    let hasQty = false;
+                    for (let rr = r + 1; rr < nextHeaderRow; rr++) {
+                        const qtyText = _normalizeText(rows[rr]?.[cc]);
+                        if (qtyText && _isQtyCell(qtyText)) {
+                            hasQty = true;
+                            break;
+                        }
+                    }
+                    if (hasQty) colorCols.push({ col: cc, color });
+                }
+                if (!colorCols.length) continue;
+
+                for (let rr = r + 1; rr < nextHeaderRow; rr++) {
+                    if (_looksLikeWideHeader(rows, rr, c)) break;
+                    const partName = _normalizeText(rows[rr]?.[c]);
+                    if (!partName || _isQtyCell(partName)) continue;
+                    colorCols.forEach(info => {
+                        const rawQty = _normalizeText(rows[rr]?.[info.col]);
+                        if (!rawQty) return;
+                        result.push({
+                            carModel,
+                            partName,
+                            color: info.color,
+                            quantity: _parseQty(rawQty)
+                        });
+                    });
+                }
+            }
+        }
+
+        const merged = new Map();
+        result.forEach(row => {
+            if (!row.carModel || !row.partName) return;
+            const key = `${row.carModel}||${row.partName}||${row.color || ''}`;
+            merged.set(key, row);
+        });
+        return Array.from(merged.values());
+    }
+
+    function _parseBulkPasteText(text) {
+        const rows = _splitClipboardRows(text);
+        const simpleRows = _parseBulkSimpleTable(rows);
+        const parsed = simpleRows.length ? simpleRows : _parseBulkWideLayout(rows);
+        return parsed
+            .map(r => ({
+                carModel: _normalizeText(r.carModel),
+                partName: _normalizeText(r.partName),
+                color: _normalizeText(r.color),
+                quantity: Math.max(0, Math.round(Number(r.quantity) || 0))
+            }))
+            .filter(r => r.carModel && r.partName);
+    }
+
+    function _getCurrentStockMap() {
+        const data = Storage.getAll(STORE) || [];
+        const map = {};
+        data.forEach(d => {
+            const key = `${d.carModel || ''}||${d.partName || ''}||${d.color || ''}`;
+            if (!map[key]) map[key] = 0;
+            const qty = Number(d.quantity) || 0;
+            map[key] += d.type === '출고' ? -qty : qty;
+        });
+        return map;
+    }
+
+    function _findInjectionMaterial(carModel, partName, color) {
+        const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+        return materials.find(m =>
+            (m.carModel || '') === carModel &&
+            (m.injPartName || '') === partName &&
+            (!color || !m.injColor || (m.injColor || '').split(/[,/·|]/).map(v => v.trim()).includes(color))
+        ) || materials.find(m =>
+            (m.carModel || '') === carModel &&
+            (m.injPartName || '') === partName
+        ) || null;
+    }
+
+    function _isAdminUser() {
+        if (typeof AuthModule === 'undefined' || !AuthModule.getCurrentUser) return false;
+        const user = AuthModule.getCurrentUser();
+        return !!(user && user.role === 'admin');
+    }
+
+    function _requireBulkAdmin(onPass) {
+        if (_isAdminUser()) {
+            onPass();
+            return;
+        }
+        if (typeof AuthModule !== 'undefined' && AuthModule.checkSettingsAuth) {
+            AuthModule.checkSettingsAuth(function() {
+                if (_isAdminUser()) onPass();
+                else UIUtils.toast('재고 일괄 등록/수정은 관리자만 가능합니다.', 'warning');
+            });
+            return;
+        }
+        UIUtils.toast('재고 일괄 등록/수정은 관리자만 가능합니다.', 'warning');
+    }
+
+    function openBulkPasteModal() {
+        _requireBulkAdmin(_showBulkPasteModal);
+    }
+
+    function _showBulkPasteModal() {
+        window._injBulkRows = [];
+        UIUtils.showModal('사출 창고 재고 일괄 등록/수정', `
+            <div style="background:var(--bg-secondary);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:0.84rem;line-height:1.7;">
+                <div style="font-weight:700;margin-bottom:4px;">엑셀 표를 그대로 복사해 붙여넣으세요.</div>
+                <div style="color:var(--text-secondary);">
+                    권장 양식은 <strong>첫 줄: 차종 + 컬러</strong>, <strong>아래 줄: 품명 + 컬러별 현재고</strong>입니다.
+                    빈 칸은 무시하고, <strong>-</strong>는 0 재고로 인식합니다.
+                    단순 표는 <strong>차종, 품명, 컬러, 수량</strong> 헤더로 붙여넣으면 됩니다.
+                </div>
+                <div style="margin-top:8px;padding:8px 10px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;font-family:Consolas,monospace;font-size:0.78rem;line-height:1.45;color:var(--text-secondary);">
+                    GOLF-7&nbsp;&nbsp;&nbsp;&nbsp;WHITE&nbsp;&nbsp;&nbsp;&nbsp;GRAY<br>
+                    DOOR KNOB&nbsp;&nbsp;6,600&nbsp;&nbsp;&nbsp;&nbsp;5,400<br>
+                    REAR KNOB&nbsp;&nbsp;5,700&nbsp;&nbsp;&nbsp;&nbsp;6,000
+                </div>
+            </div>
+            <textarea id="injBulkPasteText" class="form-textarea" rows="9"
+                placeholder="엑셀 범위 선택 → Ctrl+C → 여기에 Ctrl+V"
+                style="font-family:Consolas,monospace;font-size:0.82rem;resize:vertical;"
+                oninput="InjectionWarehouseModule.handleBulkPasteInput()"></textarea>
+            <div style="display:flex;gap:14px;align-items:center;margin:10px 0 12px;">
+                <label style="display:flex;align-items:center;gap:7px;font-size:0.86rem;cursor:pointer;">
+                    <input type="checkbox" id="injBulkCreateMaterial" checked>
+                    사출자재 마스터에 없는 품목 자동 생성
+                </label>
+                <span style="color:var(--text-muted);font-size:0.78rem;">저장은 현재고가 목표 수량이 되도록 차이만 보정합니다.</span>
+            </div>
+            <div id="injBulkPreview"></div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" id="injBulkConfirmBtn" style="display:none;"
+                onclick="InjectionWarehouseModule.confirmBulkPaste()">
+                <span class="material-symbols-outlined">save</span> 일괄 반영
+            </button>
+        `, 'xl');
+    }
+
+    function handleBulkPasteInput() {
+        const text = (document.getElementById('injBulkPasteText') || {}).value || '';
+        const rows = _parseBulkPasteText(text);
+        window._injBulkRows = rows;
+        _renderBulkPreview();
+    }
+
+    function _renderBulkPreview() {
+        const box = document.getElementById('injBulkPreview');
+        const btn = document.getElementById('injBulkConfirmBtn');
+        if (!box || !btn) return;
+
+        const rows = window._injBulkRows || [];
+        if (!rows.length) {
+            box.innerHTML = '<div style="padding:14px;color:var(--text-muted);border:1px dashed var(--border);border-radius:8px;text-align:center;">인식된 재고 데이터가 없습니다.</div>';
+            btn.style.display = 'none';
+            return;
+        }
+
+        const currentMap = _getCurrentStockMap();
+        let changed = 0;
+        const tableRows = rows.map((r, idx) => {
+            const key = `${r.carModel}||${r.partName}||${r.color || ''}`;
+            const current = currentMap[key] || 0;
+            const diff = r.quantity - current;
+            if (diff !== 0) changed++;
+            const diffColor = diff > 0 ? 'var(--accent-green)' : diff < 0 ? 'var(--accent-red)' : 'var(--text-muted)';
+            const diffLabel = diff > 0 ? `+${UIUtils.formatNumber(diff)}` : UIUtils.formatNumber(diff);
+            return `
+                <tr>
+                    <td><input class="form-input inj-bulk-cell" value="${_escapeHtml(r.carModel)}" data-idx="${idx}" data-field="carModel"></td>
+                    <td><input class="form-input inj-bulk-cell" value="${_escapeHtml(r.partName)}" data-idx="${idx}" data-field="partName"></td>
+                    <td><input class="form-input inj-bulk-cell" value="${_escapeHtml(r.color)}" data-idx="${idx}" data-field="color"></td>
+                    <td style="text-align:right;color:var(--text-muted);">${UIUtils.formatNumber(current)}</td>
+                    <td><input type="number" min="0" class="form-input inj-bulk-cell" value="${r.quantity}" data-idx="${idx}" data-field="quantity" style="text-align:right;"></td>
+                    <td style="text-align:right;font-weight:700;color:${diffColor};">${diffLabel}</td>
+                    <td style="text-align:center;">
+                        <button class="btn btn-sm btn-outline" onclick="InjectionWarehouseModule.removeBulkPreviewRow(${idx})">제외</button>
+                    </td>
+                </tr>`;
+        }).join('');
+
+        box.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:0.85rem;">
+                <span>인식 <strong>${rows.length}건</strong> / 보정 필요 <strong>${changed}건</strong></span>
+                <span style="color:var(--text-muted);font-size:0.78rem;">미리보기 값은 바로 수정할 수 있습니다.</span>
+            </div>
+            <div class="data-table-wrapper" style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:8px;">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th style="min-width:110px;">차종</th>
+                            <th style="min-width:180px;">품명</th>
+                            <th style="min-width:100px;">컬러</th>
+                            <th style="text-align:right;">현재고</th>
+                            <th style="min-width:110px;text-align:right;">목표수량</th>
+                            <th style="text-align:right;">보정</th>
+                            <th style="text-align:center;">작업</th>
+                        </tr>
+                    </thead>
+                    <tbody>${tableRows}</tbody>
+                </table>
+            </div>`;
+        box.querySelectorAll('.inj-bulk-cell').forEach(input => {
+            input.addEventListener('input', function() {
+                const idx = Number(this.dataset.idx);
+                const field = this.dataset.field;
+                if (!window._injBulkRows || !window._injBulkRows[idx]) return;
+                window._injBulkRows[idx][field] = field === 'quantity'
+                    ? Math.max(0, Math.round(Number(this.value) || 0))
+                    : _normalizeText(this.value);
+            });
+            input.addEventListener('change', _renderBulkPreview);
+        });
+        btn.style.display = '';
+    }
+
+    function removeBulkPreviewRow(idx) {
+        if (!window._injBulkRows) return;
+        window._injBulkRows.splice(idx, 1);
+        _renderBulkPreview();
+    }
+
+    async function confirmBulkPaste() {
+        if (!_isAdminUser()) {
+            UIUtils.toast('재고 일괄 등록/수정은 관리자만 가능합니다.', 'warning');
+            return;
+        }
+
+        const rows = (window._injBulkRows || [])
+            .map(r => ({
+                carModel: _normalizeText(r.carModel),
+                partName: _normalizeText(r.partName),
+                color: _normalizeText(r.color),
+                quantity: Math.max(0, Math.round(Number(r.quantity) || 0))
+            }))
+            .filter(r => r.carModel && r.partName);
+
+        if (!rows.length) {
+            UIUtils.toast('반영할 데이터가 없습니다.', 'warning');
+            return;
+        }
+
+        const createMissing = !!document.getElementById('injBulkCreateMaterial')?.checked;
+        const currentMap = _getCurrentStockMap();
+        const today = UIUtils.today ? UIUtils.today() : new Date().toISOString().slice(0, 10);
+        const nowTime = new Date().toTimeString().slice(0, 5);
+        const lotNo = today.slice(2).replace(/-/g, '');
+        let materialAdded = 0;
+        let adjusted = 0;
+
+        try {
+            for (const row of rows) {
+                let material = _findInjectionMaterial(row.carModel, row.partName, row.color);
+                if (!material && createMissing) {
+                    material = await Storage.add(DB.STORES.INJECTION_MATERIALS, {
+                        carModel: row.carModel,
+                        supplier: '',
+                        injPartName: row.partName,
+                        injColor: row.color,
+                        unitPrice: 0,
+                        unit: 'EA',
+                        itemType: '사출품',
+                        source: '사출 창고 재고 일괄 등록'
+                    });
+                    materialAdded++;
+                }
+
+                const key = `${row.carModel}||${row.partName}||${row.color || ''}`;
+                const current = currentMap[key] || 0;
+                const diff = row.quantity - current;
+                if (diff === 0) continue;
+
+                await Storage.add(STORE, {
+                    date: `${today} ${nowTime}`,
+                    type: diff > 0 ? '입고' : '출고',
+                    carModel: row.carModel,
+                    partName: row.partName,
+                    color: row.color,
+                    supplier: material ? (material.supplier || '') : '',
+                    lots: [{ lotNo, qty: Math.abs(diff) }],
+                    lotNo,
+                    quantity: Math.abs(diff),
+                    unit: 'EA',
+                    source: `일괄 현재고 보정 (목표 ${row.quantity.toLocaleString()} EA)`,
+                    injMaterialId: material ? material.id : undefined
+                });
+                adjusted++;
+            }
+
+            UIUtils.closeModal();
+            UIUtils.toast(`재고 보정 ${adjusted}건 완료${materialAdded ? ` / 사출자재 ${materialAdded}건 생성` : ''}`, 'success');
+            loadData();
+        } catch (e) {
+            console.error('사출 창고 재고 일괄 반영 실패:', e);
+            UIUtils.toast('일괄 반영 실패: ' + e.message, 'error');
+        }
+    }
+
     async function saveNew() {
         const dateVal = document.getElementById('addInvDate').value;
         const timeVal = document.getElementById('addInvTime').value;
@@ -1716,6 +2141,10 @@ var InjectionWarehouseModule = (function() {
         addInvLotRow,
         removeInvLotRow,
         calcInvLotTotal,
+        openBulkPasteModal,
+        handleBulkPasteInput,
+        removeBulkPreviewRow,
+        confirmBulkPaste,
         saveNew,
         remove,
         openEditModal,

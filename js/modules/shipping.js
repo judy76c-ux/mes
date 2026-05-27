@@ -847,6 +847,11 @@ const ProductWarehouseModule = (function() {
                         <button class="btn btn-primary" onclick="ProductWarehouseModule.openAddModal()">
                             <span class="material-symbols-outlined">add</span> 재고 등록
                         </button>
+                        <button class="btn btn-outline" style="margin-left:auto;"
+                            onclick="ProductWarehouseModule.openBulkModal()"
+                            title="관리자 계정으로 로그인한 경우에만 일괄 반영할 수 있습니다.">
+                            <span class="material-symbols-outlined">admin_panel_settings</span> 일괄 등록 및 수정
+                        </button>
                     </div>
                 </div>
 
@@ -922,11 +927,28 @@ const ProductWarehouseModule = (function() {
             byCarModel[car].push(i);
         });
 
-        const carModels = Object.keys(byCarModel).sort();
+        const isAsItem = i => {
+            const text = `${i.car || ''} ${i.part || ''} ${i.color || ''}`;
+            return /(^|[^A-Z0-9])A\/?S([^A-Z0-9]|$)/i.test(text) || /애프터|서비스/.test(text);
+        };
+
+        const carModels = Object.keys(byCarModel).sort((a, b) => {
+            const aItems = byCarModel[a] || [];
+            const bItems = byCarModel[b] || [];
+            const aAsOnly = aItems.length > 0 && aItems.every(isAsItem);
+            const bAsOnly = bItems.length > 0 && bItems.every(isAsItem);
+            if (aAsOnly !== bAsOnly) return aAsOnly ? 1 : -1;
+            return bItems.length - aItems.length || a.localeCompare(b, 'ko');
+        });
 
         const cards = carModels.map(car => {
-            const group = byCarModel[car].sort((a, b) =>
-                (a.part || '').localeCompare(b.part, 'ko') || (a.color || '').localeCompare(b.color, 'ko'));
+            const group = byCarModel[car].sort((a, b) => {
+                const aAs = isAsItem(a) ? 1 : 0;
+                const bAs = isAsItem(b) ? 1 : 0;
+                return aAs - bAs ||
+                    (a.part || '').localeCompare(b.part, 'ko') ||
+                    (a.color || '').localeCompare(b.color, 'ko');
+            });
 
             const groupTotal = group.reduce((s, i) => s + (i.inQty - i.outQty), 0);
 
@@ -986,7 +1008,7 @@ const ProductWarehouseModule = (function() {
             </div>`;
         });
 
-        blocksEl.innerHTML = `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">${cards.join('')}</div>`;
+        blocksEl.innerHTML = `<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;align-items:start;">${cards.join('')}</div>`;
     }
 
     // ── 이력 팝업 ─────────────────────────────────────────────────────
@@ -1133,6 +1155,396 @@ const ProductWarehouseModule = (function() {
         }, 50);
     }
 
+    function _escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, function(ch) {
+            return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+        });
+    }
+
+    function _normalizeText(value) {
+        return String(value ?? '').replace(/\u00a0/g, ' ').trim();
+    }
+
+    function _parseQty(value) {
+        const text = _normalizeText(value);
+        if (!text || text === '-' || text === '－') return 0;
+        const cleaned = text.replace(/,/g, '').replace(/[^\d.-]/g, '');
+        if (!cleaned || cleaned === '-' || cleaned === '.') return 0;
+        const num = Number(cleaned);
+        return Number.isFinite(num) ? num : 0;
+    }
+
+    function _isQtyLike(value) {
+        const text = _normalizeText(value);
+        if (text === '-' || text === '－') return true;
+        return /^-?[\d,]+(\.\d+)?$/.test(text);
+    }
+
+    function _isAdminUser() {
+        if (typeof AuthModule === 'undefined' || !AuthModule.getCurrentUser) return false;
+        const user = AuthModule.getCurrentUser();
+        return !!(user && user.role === 'admin');
+    }
+
+    function _requireBulkAdmin(onPass) {
+        if (_isAdminUser()) {
+            onPass();
+            return;
+        }
+        if (typeof AuthModule !== 'undefined' && AuthModule.checkSettingsAuth) {
+            AuthModule.checkSettingsAuth(function() {
+                if (_isAdminUser()) onPass();
+                else UIUtils.toast('제품 창고 일괄 등록 및 수정은 관리자만 가능합니다.', 'warning');
+            });
+            return;
+        }
+        UIUtils.toast('제품 창고 일괄 등록 및 수정은 관리자만 가능합니다.', 'warning');
+    }
+
+    function _getCurrentStockMap() {
+        const map = {};
+        (Storage.getAll(STORE) || []).forEach(d => {
+            const key = `${d.carModel || ''}||${d.partName || '미분류'}||${d.color || ''}`;
+            if (!map[key]) map[key] = 0;
+            const qty = Number(d.quantity) || 0;
+            map[key] += d.type === '출고' ? -qty : qty;
+        });
+        return map;
+    }
+
+    function _parseBulkRows(text) {
+        const rows = String(text || '')
+            .replace(/\r\n/g, '\n')
+            .replace(/\r/g, '\n')
+            .split('\n')
+            .map(line => line.split('\t').map(_normalizeText))
+            .filter(row => row.some(Boolean));
+
+        return rows
+            .filter(row => row.length >= 3)
+            .filter(row => _isQtyLike(row.length >= 4 ? row[3] : row[2]))
+            .map(row => ({
+                carModel: row[0] || '',
+                partName: row[1] || '',
+                color: row.length >= 4 ? row[2] || '' : '',
+                quantity: row.length >= 4 ? _parseQty(row[3]) : _parseQty(row[2])
+            }))
+            .filter(r => r.carModel && r.partName);
+    }
+
+    function _bulkKey(row) {
+        return [
+            _normalizeText(row.carModel).toUpperCase(),
+            _normalizeText(row.partName).toUpperCase(),
+            _normalizeText(row.color).toUpperCase()
+        ].join('||');
+    }
+
+    function _bulkDuplicateCounts(records) {
+        const counts = {};
+        (records || []).forEach(row => {
+            const key = _bulkKey(row);
+            if (!key.replace(/\|/g, '')) return;
+            counts[key] = (counts[key] || 0) + 1;
+        });
+        return counts;
+    }
+
+    function _bulkDuplicateLabels(records, counts) {
+        const seen = new Set();
+        const labels = [];
+        (records || []).forEach(row => {
+            const key = _bulkKey(row);
+            if ((counts[key] || 0) <= 1 || seen.has(key)) return;
+            seen.add(key);
+            labels.push(`${row.carModel} / ${row.partName}${row.color ? ' / ' + row.color : ''}`);
+        });
+        return labels;
+    }
+
+    // ── 일괄 등록 (엑셀 복사·붙여넣기) ──────────────────────────────
+    function openBulkModal() {
+        _requireBulkAdmin(_showBulkModal);
+    }
+
+    function _showBulkModal() {
+        ProductWarehouseModule._bulkRecords = [];
+        UIUtils.showModal('제품 재고 일괄 등록 및 수정', `
+            <div style="margin-bottom:10px;padding:10px 14px;background:rgba(59,130,246,0.07);
+                        border:1px solid rgba(59,130,246,0.25);border-radius:8px;font-size:0.82rem;
+                        color:var(--text-secondary);line-height:1.7;">
+                <b style="color:var(--accent-blue);">붙여넣기 방법</b><br>
+                엑셀에서 <b>차종 / 품명 / 컬러 / 재고</b> 4열을 복사(Ctrl+C) →
+                아래 입력창에 붙여넣기(Ctrl+V) → <b>미리보기</b> 클릭<br>
+                <span style="font-size:0.78rem;color:var(--text-muted);">
+                • 헤더가 있어도 됩니다: <b>차종 / 품명 / 컬러 / 재고</b><br>
+                • 컬러가 없는 예전 3열 양식(<b>차종 / 품명 / 재고</b>)도 계속 인식합니다<br>
+                • <b>-</b>는 목표 재고 0으로 인식합니다<br>
+                • 같은 <b>차종+품명+컬러</b>가 중복되면 저장할 수 없습니다<br>
+                • 저장 시 기존 제품창고 재고를 모두 삭제하고, 붙여넣은 목록으로 새로 등록합니다
+                </span>
+            </div>
+            <div style="margin-bottom:10px;padding:8px 10px;background:var(--bg-secondary);border-radius:6px;
+                        font-family:Consolas,monospace;font-size:0.78rem;line-height:1.45;color:var(--text-secondary);">
+                차종&nbsp;&nbsp;&nbsp;&nbsp;품명&nbsp;&nbsp;&nbsp;&nbsp;컬러&nbsp;&nbsp;&nbsp;&nbsp;재고<br>
+                GOLF-7&nbsp;&nbsp;&nbsp;&nbsp;KNOB- DOOR [DYS (LASER)]&nbsp;&nbsp;&nbsp;&nbsp;DYS&nbsp;&nbsp;&nbsp;&nbsp;1,500<br>
+                A3&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;KNOB [DOOR LOW] 6PS 레이저인쇄&nbsp;&nbsp;&nbsp;&nbsp;6PS&nbsp;&nbsp;&nbsp;&nbsp;1,000<br>
+                T1XX&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;PARK&nbsp;&nbsp;&nbsp;&nbsp;BK&nbsp;&nbsp;&nbsp;&nbsp;-
+            </div>
+            <div class="form-row" style="margin-bottom:12px;">
+                <div class="form-group">
+                    <label class="form-label">기준일자</label>
+                    <input type="date" class="form-input" id="bulkInvDate" value="${UIUtils.today()}">
+                </div>
+                <div class="form-group" style="align-self:flex-end;">
+                    <button class="btn btn-outline" onclick="ProductWarehouseModule._bulkParse()">
+                        <span class="material-symbols-outlined">preview</span> 미리보기
+                    </button>
+                </div>
+            </div>
+            <textarea id="bulkPasteArea" class="form-textarea"
+                placeholder="엑셀에서 복사한 내용을 여기에 붙여넣으세요 (Ctrl+V)"
+                style="height:180px;font-family:monospace;font-size:0.78rem;resize:vertical;"
+                oninput="document.getElementById('bulkPreviewWrap').innerHTML='';
+                         var s=document.getElementById('bulkSaveBtn');if(s)s.style.display='none';"></textarea>
+            <div id="bulkPreviewWrap" style="margin-top:12px;"></div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" id="bulkSaveBtn" style="display:none;"
+                onclick="ProductWarehouseModule._bulkSave()">
+                <span class="material-symbols-outlined">save</span> 전체 교체 저장
+            </button>
+        `, 'lg');
+    }
+
+    // 엑셀 텍스트 파싱
+    function _bulkParse() {
+        const raw = (document.getElementById('bulkPasteArea') || {}).value || '';
+        const wrap = document.getElementById('bulkPreviewWrap');
+        const saveBtn = document.getElementById('bulkSaveBtn');
+        if (!wrap) return;
+
+        const records = _parseBulkRows(raw);
+        if (!records.length) {
+            wrap.innerHTML = '<p style="color:var(--accent-red);font-size:0.83rem;">붙여넣은 내용이 없습니다.</p>';
+            if (saveBtn) saveBtn.style.display = 'none';
+            return;
+        }
+
+        // 미리보기 테이블
+        const currentMap = _getCurrentStockMap();
+        const duplicateCounts = _bulkDuplicateCounts(records);
+        const duplicateLabels = _bulkDuplicateLabels(records, duplicateCounts);
+        const hasDuplicates = duplicateLabels.length > 0;
+        let changed = 0;
+        const rowsHtml = records.map((r, idx) => {
+            const key = `${r.carModel}||${r.partName}||${r.color || ''}`;
+            const current = currentMap[key] || 0;
+            const diff = r.quantity - current;
+            if (diff !== 0) changed++;
+            const isDup = (duplicateCounts[_bulkKey(r)] || 0) > 1;
+            const diffColor = diff > 0 ? 'var(--accent-green)' : diff < 0 ? 'var(--accent-red)' : 'var(--text-muted)';
+            const diffLabel = diff > 0 ? `+${UIUtils.formatNumber(diff)}` : UIUtils.formatNumber(diff);
+            return `
+            <tr style="${isDup ? 'background:rgba(239,68,68,0.06);' : ''}">
+                <td><input class="form-input pw-bulk-cell" value="${_escapeHtml(r.carModel)}" data-idx="${idx}" data-field="carModel"></td>
+                <td><input class="form-input pw-bulk-cell" value="${_escapeHtml(r.partName)}" data-idx="${idx}" data-field="partName"></td>
+                <td><input class="form-input pw-bulk-cell" value="${_escapeHtml(r.color)}" data-idx="${idx}" data-field="color"></td>
+                <td style="padding:4px 8px;text-align:right;color:var(--text-muted);">${UIUtils.formatNumber(current)}</td>
+                <td><input type="number" min="0" class="form-input pw-bulk-cell" value="${r.quantity}" data-idx="${idx}" data-field="quantity" style="text-align:right;"></td>
+                <td style="padding:4px 8px;text-align:right;font-weight:700;color:${diffColor};">${diffLabel}</td>
+                <td style="padding:4px 8px;text-align:center;">
+                    ${isDup ? '<span style="display:inline-block;margin-right:4px;padding:1px 5px;border-radius:4px;background:rgba(239,68,68,0.12);color:var(--accent-red);font-size:0.7rem;font-weight:700;">중복</span>' : ''}
+                    <button class="btn btn-sm btn-outline" onclick="ProductWarehouseModule._bulkRemoveRow(${idx})">제외</button>
+                </td>
+            </tr>`;
+        }).join('');
+
+        wrap.innerHTML = `
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                <span class="material-symbols-outlined" style="color:var(--accent-green);font-size:18px;">check_circle</span>
+                <span style="font-size:0.85rem;font-weight:600;color:var(--accent-green);">
+                    ${records.length}건 인식됨 / 기존 재고와 차이 ${changed}건
+                </span>
+            </div>
+            ${hasDuplicates ? `
+            <div style="margin-bottom:8px;padding:8px 10px;border:1px solid rgba(239,68,68,0.35);border-radius:6px;background:rgba(239,68,68,0.06);color:var(--accent-red);font-size:0.8rem;line-height:1.55;">
+                <strong>중복 품목 ${duplicateLabels.length}개가 있습니다.</strong>
+                같은 차종+품명+컬러는 1개만 남기거나 값을 수정해야 저장할 수 있습니다.
+                <div style="margin-top:3px;color:var(--text-secondary);">${duplicateLabels.slice(0, 5).map(_escapeHtml).join('<br>')}${duplicateLabels.length > 5 ? '<br>...' : ''}</div>
+            </div>` : ''}
+            <div style="max-height:240px;overflow-y:auto;border:1px solid var(--border-color);border-radius:6px;">
+                <table style="width:100%;border-collapse:collapse;">
+                    <thead style="position:sticky;top:0;background:var(--bg-secondary);z-index:1;">
+                        <tr>
+                            <th style="padding:5px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">차종</th>
+                            <th style="padding:5px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">품명</th>
+                            <th style="padding:5px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">컬러</th>
+                            <th style="padding:5px 8px;text-align:right;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">현재고</th>
+                            <th style="padding:5px 8px;text-align:right;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">목표수량</th>
+                            <th style="padding:5px 8px;text-align:right;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">차이</th>
+                            <th style="padding:5px 8px;text-align:center;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">작업</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            </div>`;
+
+        ProductWarehouseModule._bulkRecords = records;
+        wrap.querySelectorAll('.pw-bulk-cell').forEach(input => {
+            input.addEventListener('input', function() {
+                const idx = Number(this.dataset.idx);
+                const field = this.dataset.field;
+                if (!ProductWarehouseModule._bulkRecords || !ProductWarehouseModule._bulkRecords[idx]) return;
+                ProductWarehouseModule._bulkRecords[idx][field] = field === 'quantity'
+                    ? Math.max(0, Math.round(Number(this.value) || 0))
+                    : _normalizeText(this.value);
+            });
+            input.addEventListener('change', _bulkRenderPreview);
+        });
+        if (saveBtn) saveBtn.style.display = hasDuplicates ? 'none' : '';
+    }
+
+    function _bulkRenderPreview() {
+        const textArea = document.getElementById('bulkPasteArea');
+        if (textArea) textArea.value = '';
+        const records = ProductWarehouseModule._bulkRecords || [];
+        const wrap = document.getElementById('bulkPreviewWrap');
+        const saveBtn = document.getElementById('bulkSaveBtn');
+        if (!wrap) return;
+        if (!records.length) {
+            wrap.innerHTML = '<p style="color:var(--text-muted);font-size:0.83rem;">미리보기 데이터가 없습니다.</p>';
+            if (saveBtn) saveBtn.style.display = 'none';
+            return;
+        }
+        const currentMap = _getCurrentStockMap();
+        const duplicateCounts = _bulkDuplicateCounts(records);
+        const duplicateLabels = _bulkDuplicateLabels(records, duplicateCounts);
+        const hasDuplicates = duplicateLabels.length > 0;
+        let changed = 0;
+        const rowsHtml = records.map((r, idx) => {
+            const key = `${r.carModel}||${r.partName}||${r.color || ''}`;
+            const current = currentMap[key] || 0;
+            const diff = (Number(r.quantity) || 0) - current;
+            if (diff !== 0) changed++;
+            const isDup = (duplicateCounts[_bulkKey(r)] || 0) > 1;
+            const diffColor = diff > 0 ? 'var(--accent-green)' : diff < 0 ? 'var(--accent-red)' : 'var(--text-muted)';
+            const diffLabel = diff > 0 ? `+${UIUtils.formatNumber(diff)}` : UIUtils.formatNumber(diff);
+            return `
+            <tr style="${isDup ? 'background:rgba(239,68,68,0.06);' : ''}">
+                <td><input class="form-input pw-bulk-cell" value="${_escapeHtml(r.carModel)}" data-idx="${idx}" data-field="carModel"></td>
+                <td><input class="form-input pw-bulk-cell" value="${_escapeHtml(r.partName)}" data-idx="${idx}" data-field="partName"></td>
+                <td><input class="form-input pw-bulk-cell" value="${_escapeHtml(r.color)}" data-idx="${idx}" data-field="color"></td>
+                <td style="padding:4px 8px;text-align:right;color:var(--text-muted);">${UIUtils.formatNumber(current)}</td>
+                <td><input type="number" min="0" class="form-input pw-bulk-cell" value="${r.quantity}" data-idx="${idx}" data-field="quantity" style="text-align:right;"></td>
+                <td style="padding:4px 8px;text-align:right;font-weight:700;color:${diffColor};">${diffLabel}</td>
+                <td style="padding:4px 8px;text-align:center;">
+                    ${isDup ? '<span style="display:inline-block;margin-right:4px;padding:1px 5px;border-radius:4px;background:rgba(239,68,68,0.12);color:var(--accent-red);font-size:0.7rem;font-weight:700;">중복</span>' : ''}
+                    <button class="btn btn-sm btn-outline" onclick="ProductWarehouseModule._bulkRemoveRow(${idx})">제외</button>
+                </td>
+            </tr>`;
+        }).join('');
+        wrap.innerHTML = `
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                <span class="material-symbols-outlined" style="color:var(--accent-green);font-size:18px;">check_circle</span>
+                <span style="font-size:0.85rem;font-weight:600;color:var(--accent-green);">
+                    ${records.length}건 인식됨 / 기존 재고와 차이 ${changed}건
+                </span>
+            </div>
+            ${hasDuplicates ? `
+            <div style="margin-bottom:8px;padding:8px 10px;border:1px solid rgba(239,68,68,0.35);border-radius:6px;background:rgba(239,68,68,0.06);color:var(--accent-red);font-size:0.8rem;line-height:1.55;">
+                <strong>중복 품목 ${duplicateLabels.length}개가 있습니다.</strong>
+                같은 차종+품명+컬러는 1개만 남기거나 값을 수정해야 저장할 수 있습니다.
+                <div style="margin-top:3px;color:var(--text-secondary);">${duplicateLabels.slice(0, 5).map(_escapeHtml).join('<br>')}${duplicateLabels.length > 5 ? '<br>...' : ''}</div>
+            </div>` : ''}
+            <div style="max-height:240px;overflow-y:auto;border:1px solid var(--border-color);border-radius:6px;">
+                <table style="width:100%;border-collapse:collapse;">
+                    <thead style="position:sticky;top:0;background:var(--bg-secondary);z-index:1;">
+                        <tr>
+                            <th style="padding:5px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">차종</th>
+                            <th style="padding:5px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">품명</th>
+                            <th style="padding:5px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">컬러</th>
+                            <th style="padding:5px 8px;text-align:right;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">현재고</th>
+                            <th style="padding:5px 8px;text-align:right;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">목표수량</th>
+                            <th style="padding:5px 8px;text-align:right;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">차이</th>
+                            <th style="padding:5px 8px;text-align:center;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">작업</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            </div>`;
+        wrap.querySelectorAll('.pw-bulk-cell').forEach(input => {
+            input.addEventListener('input', function() {
+                const idx = Number(this.dataset.idx);
+                const field = this.dataset.field;
+                if (!ProductWarehouseModule._bulkRecords || !ProductWarehouseModule._bulkRecords[idx]) return;
+                ProductWarehouseModule._bulkRecords[idx][field] = field === 'quantity'
+                    ? Math.max(0, Math.round(Number(this.value) || 0))
+                    : _normalizeText(this.value);
+            });
+            input.addEventListener('change', _bulkRenderPreview);
+        });
+        if (saveBtn) saveBtn.style.display = hasDuplicates ? 'none' : '';
+    }
+
+    function _bulkRemoveRow(idx) {
+        if (!ProductWarehouseModule._bulkRecords) return;
+        ProductWarehouseModule._bulkRecords.splice(idx, 1);
+        _bulkRenderPreview();
+    }
+
+    async function _bulkSave() {
+        if (!_isAdminUser()) {
+            UIUtils.toast('제품 창고 일괄 등록 및 수정은 관리자만 가능합니다.', 'warning');
+            return;
+        }
+        const records = ProductWarehouseModule._bulkRecords;
+        if (!records || !records.length) {
+            UIUtils.toast('저장할 데이터가 없습니다.', 'warning');
+            return;
+        }
+        const duplicateLabels = _bulkDuplicateLabels(records, _bulkDuplicateCounts(records));
+        if (duplicateLabels.length) {
+            UIUtils.toast('중복 품목이 있어 저장할 수 없습니다. 중복 행을 제외하거나 수정하세요.', 'warning');
+            _bulkRenderPreview();
+            return;
+        }
+        const date = (document.getElementById('bulkInvDate') || {}).value || UIUtils.today();
+        const nowIso = new Date().toISOString();
+        const newItems = [];
+
+        for (const r of records) {
+            const carModel = _normalizeText(r.carModel);
+            const partName = _normalizeText(r.partName);
+            const color = _normalizeText(r.color);
+            const targetQty = Math.max(0, Math.round(Number(r.quantity) || 0));
+            if (!carModel || !partName) continue;
+
+            newItems.push({
+                id: Storage.generateId ? Storage.generateId() : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`,
+                createdAt: nowIso,
+                date,
+                type: '입고',
+                carModel,
+                partName,
+                color,
+                quantity: targetQty,
+                source: '일괄 등록 및 수정'
+            });
+        }
+
+        if (!newItems.length) {
+            UIUtils.toast('등록할 유효한 데이터가 없습니다.', 'warning');
+            return;
+        }
+
+        await Storage.saveAll(STORE, newItems);
+        ProductWarehouseModule._bulkRecords = [];
+        UIUtils.closeModal();
+        UIUtils.toast(`기존 제품창고 재고 삭제 후 ${newItems.length}건 등록 완료`, 'success');
+        loadData();
+    }
+
     function openAddModal() {
         UIUtils.showModal('재고 등록', `
             <div class="form-row">
@@ -1214,6 +1626,11 @@ const ProductWarehouseModule = (function() {
         render,
         loadData,
         _showHistory,
+        openBulkModal,
+        _bulkParse,
+        _bulkRemoveRow,
+        _bulkSave,
+        _bulkRecords: [],
         openAddModal,
         saveNew,
         remove,

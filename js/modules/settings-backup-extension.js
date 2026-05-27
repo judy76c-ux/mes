@@ -307,6 +307,36 @@ const SettingsBackupExtension = (function() {
         const content = document.getElementById('settingsContent');
         if (!content) return;
 
+        // 로컬(file://) 실행 시 NAS HDD 백업 섹션을 비활성화
+        if (location.protocol === 'file:') {
+            let panel = document.getElementById('nasBackupCard');
+            if (!panel) {
+                panel = document.createElement('div');
+                panel.id = 'nasBackupCard';
+                panel.className = 'card';
+                panel.style.marginBottom = '20px';
+                const serverCard = document.getElementById('serverBackupCard');
+                if (serverCard && serverCard.nextSibling) {
+                    content.insertBefore(panel, serverCard.nextSibling);
+                } else {
+                    content.appendChild(panel);
+                }
+            }
+            panel.innerHTML = `
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">hard_drive</span> NAS HDD 백업</h4>
+                    <span class="badge badge-secondary">로컬 모드</span>
+                </div>
+                <div class="card-body">
+                    <div style="padding:14px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);color:var(--text-muted);font-size:.88rem;line-height:1.6;">
+                        <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;margin-right:4px;">info</span>
+                        로컬 파일 모드에서는 NAS HDD 백업을 사용할 수 없습니다.<br>
+                        Ubuntu 서버를 통해 접속하면 NAS 백업 기능을 이용할 수 있습니다.
+                    </div>
+                </div>`;
+            return;
+        }
+
         let panel = document.getElementById('nasBackupCard');
         if (!panel) {
             panel = document.createElement('div');

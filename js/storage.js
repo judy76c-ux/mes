@@ -7,7 +7,8 @@
 const Storage = (function() {
   let cache = {};
   let initialized = false;
-  let offlineMode = false;   // API 서버 연결 실패 시 true (읽기 전용 캐시 모드)
+  let offlineMode = false;   // NAS API 서버 연결 실패 시 true (읽기 전용 캐시 모드)
+  let localMode   = false;   // file:// 로컬 실행 시 true (IndexedDB 단독 읽기+쓰기)
 
   // DB.STORES 참조 (모든 스토어 이름 공유)
   const STORES = DB.STORES;
@@ -27,9 +28,53 @@ const Storage = (function() {
     STORES.DRYING_STD_DATA,           // 건조 및 셋팅룸 온도 기준서 (v46)
   ]);
 
+  // ── 로컬(파일) 실행 여부 판단 ─────────────────────────────────────────
+  // file:// 프로토콜이거나, 로컬 IP(192.168.x.x / 10.x.x.x)에서 직접 열기
+  function _isLocalFileMode() {
+    try {
+      const proto = location.protocol;
+      const host  = location.hostname;
+      // file:// → 완전 로컬
+      if (proto === 'file:') return true;
+      // 사내망 PC에서 직접 HTML을 http-server 등으로 열 때
+      if (host === 'localhost' || host === '127.0.0.1') return false; // localhost는 개발 서버 가능
+    } catch (e) {}
+    return false;
+  }
+
   // 초기화: API 서버에서 모든 데이터 로드
-  // API 서버 실패 시 → IndexedDB 백업 캐시로 폴백 (오프라인 모드)
+  // file:// 로컬 실행 시에도 NAS API를 먼저 읽고, 실패 시 IndexedDB 로컬 모드
+  // API 서버 실패 시 → IndexedDB 백업 캐시로 폴백 (오프라인 모드 + 배너)
   async function init() {
+
+    // ── 로컬 파일 실행: NAS API 우선, 실패 시 IndexedDB 단독 모드 ─────────
+    if (_isLocalFileMode()) {
+      // file://로 열어도 NAS API를 먼저 사용한다. 실패하면 기존 IndexedDB 로컬 모드로 폴백한다.
+      try {
+        await ApiClient.init();
+        await DB.init().catch(() => {});
+        await loadAllToCache();
+        initialized = true;
+        offlineMode = false;
+        localMode   = false;
+        await _runSchemaMigration();
+        console.log('[Storage] file:// mode connected to API server');
+        return;
+      } catch (apiError) {
+        console.warn('[Storage] file:// API connection failed. Falling back to IndexedDB:', apiError.message);
+        await DB.init();
+        await loadAllFromIndexedDB();
+        initialized = true;
+        offlineMode = true;
+        localMode   = true;
+        await _runSchemaMigration();
+        setTimeout(() => _showNasDisconnectedBanner(apiError.message), 800);
+        console.log('[Storage] file:// mode started with IndexedDB fallback');
+        return;
+      }
+    }
+
+    // ── NAS 연결 시도 (http/https 접근 시) ──────────────────────────────
     try {
       await ApiClient.init();
       await DB.init().catch(() => {});
@@ -236,7 +281,8 @@ const Storage = (function() {
   }
 
   function _assertWritable() {
-    if (!offlineMode) return;
+    if (!offlineMode) return;       // NAS 연결 정상 또는 로컬 모드
+    if (localMode) return;          // 로컬 모드: IndexedDB에 직접 쓰기 허용
     const err = _offlineWriteError();
     if (typeof UIUtils !== 'undefined' && UIUtils.toast) {
       UIUtils.toast(err.message, 'warning');
@@ -379,6 +425,14 @@ const Storage = (function() {
       ...data
     };
 
+    // ── 로컬 모드: IndexedDB 직접 저장 ──
+    if (localMode) {
+      await DB.save(storeName, newItem);
+      if (!cache[storeName]) cache[storeName] = [];
+      cache[storeName].push(newItem);
+      return newItem;
+    }
+
     try {
       await ApiClient.save(storeName, newItem);
     } catch (err) {
@@ -407,6 +461,13 @@ const Storage = (function() {
       ...data,
       updatedAt: new Date().toISOString()
     };
+
+    // ── 로컬 모드: IndexedDB 직접 수정 ──
+    if (localMode) {
+      await DB.save(storeName, updated);
+      items[index] = updated;
+      return updated;
+    }
 
     try {
       await ApiClient.save(storeName, updated);
@@ -455,6 +516,15 @@ const Storage = (function() {
 
     _assertWritable();
 
+    // ── 로컬 모드: IndexedDB 직접 삭제 ──
+    if (localMode) {
+      await DB.remove(storeName, id);
+      if (cache[storeName]) {
+        cache[storeName] = cache[storeName].filter(item => item.id !== id);
+      }
+      return;
+    }
+
     try {
       await ApiClient.remove(storeName, id);
     } catch (err) {
@@ -472,6 +542,13 @@ const Storage = (function() {
   // 배치 저장 (await 가능 — 호출측에서 await 사용 권장)
   async function saveAll(storeName, dataArray) {
     _assertWritable();
+
+    // ── 로컬 모드: IndexedDB 직접 배치 저장 ──
+    if (localMode) {
+      for (const item of dataArray) await DB.save(storeName, item);
+      cache[storeName] = dataArray;
+      return;
+    }
 
     try {
       await ApiClient.saveAll(storeName, dataArray);

@@ -67,35 +67,56 @@ const SettingsModule = (function() {
         render(container);
     }
 
+    // 필터 값 저장: 탭 재렌더링 전에 현재 필터 값을 읽어 둠
+    function _saveFilters(ids) {
+        const saved = {};
+        ids.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) saved[id] = el.value || '';
+        });
+        return saved;
+    }
+    // 필터 값 복원 후 필터 함수 호출
+    function _restoreFilters(saved, filterFn) {
+        let any = false;
+        Object.entries(saved).forEach(([id, val]) => {
+            const el = document.getElementById(id);
+            if (el && val) { el.value = val; any = true; }
+        });
+        if (any) filterFn();
+    }
+
     function renderTabContent() {
         const el = document.getElementById('settingsContent');
 
         switch (currentTab) {
             case 'products': {
-                const savedModel = (document.getElementById('carModelFilter') || {}).value || '';
-                const savedCustomer = (document.getElementById('customerFilter') || {}).value || '';
+                const saved = _saveFilters(['carModelFilter', 'customerFilter']);
                 renderProductsTab(el);
-                if (savedModel || savedCustomer) {
-                    const modelEl = document.getElementById('carModelFilter');
-                    const customerEl = document.getElementById('customerFilter');
-                    if (modelEl && savedModel) modelEl.value = savedModel;
-                    if (customerEl && savedCustomer) customerEl.value = savedCustomer;
-                    filterProductList();
-                }
+                _restoreFilters(saved, filterProductList);
                 break;
             }
             case 'defects':
                 renderDefectsTab(el);
                 break;
-            case 'paint':
+            case 'paint': {
+                const saved = _saveFilters(['paintSupplierFilter']);
                 renderPaintTab(el);
+                _restoreFilters(saved, filterPaintList);
                 break;
-            case 'injectMat':
+            }
+            case 'injectMat': {
+                const saved = _saveFilters(['injectMatCarModelFilter', 'injectMatSupplierFilter']);
                 renderInjectMatTab(el);
+                _restoreFilters(saved, filterInjectMatList);
                 break;
-            case 'rawMaterials':
+            }
+            case 'rawMaterials': {
+                const saved = _saveFilters(['rawMatSupplierFilter', 'rmCarModelFilter']);
                 renderRawMatTab(el);
+                _restoreFilters(saved, filterRawMatList);
                 break;
+            }
             case 'inspectors':
                 renderInspectorsTab(el);
                 break;
@@ -712,10 +733,11 @@ const SettingsModule = (function() {
         const allPaints = Storage.getAll(PAINT_STORE) || [];
         const initialPaintRows = (p.paintMaterials && p.paintMaterials.length > 0)
             ? p.paintMaterials.map(row => ({
-                paintSpec: row.paintSpec || row.typeFilter || '',
-                mainId:    row.mainId    || row.paintMaterialId || '',
-                hardId:    row.hardId    || '',
-                thinnerId: row.thinnerId || ''
+                processTag: row.processTag || '공용',
+                paintSpec:  row.paintSpec || row.typeFilter || '',
+                mainId:     row.mainId    || row.paintMaterialId || '',
+                hardId:     row.hardId    || '',
+                thinnerId:  row.thinnerId || ''
             }))
             : [{}];
         const initialPaintTableHtml = _paintTableHtml(idPrefix, initialPaintRows, allPaints);
@@ -1067,10 +1089,10 @@ const SettingsModule = (function() {
     // prefill: { carModel, partName, color } — 선택적으로 초기값 주입
     function openAddProductModal(prefill) {
         const init = prefill || {};
-        UIUtils.showModal('제품 추가', _productFormHTML({}, 'addProd'), `
+        UIUtils.showModal({ title: '제품 추가', body: _productFormHTML({}, 'addProd'), footer: `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="SettingsModule.saveProduct()">추가</button>
-        `, 'xl');
+        `, size: 'xxxl', noBackdropClose: true });
 
         setTimeout(() => {
             // ── 기본 정보: injPartName/injColor 경유 시 공란 유지 ──
@@ -1114,10 +1136,11 @@ const SettingsModule = (function() {
     // 도료 행 1개 HTML 생성
     // 도료 행 1개 → <tr> 반환
     function _paintRowHtml(idPrefix, rowIdx, rowData, allPaints) {
-        const paintSpec = rowData.paintSpec || '';
-        const mainId    = rowData.mainId    || '';
-        const hardId    = rowData.hardId    || '';
-        const thinnerId = rowData.thinnerId || '';
+        const paintSpec  = rowData.paintSpec  || '';
+        const processTag = rowData.processTag || '공용';
+        const mainId     = rowData.mainId     || '';
+        const hardId     = rowData.hardId     || '';
+        const thinnerId  = rowData.thinnerId  || '';
 
         // 선택된 주제 도료의 공급처 파악 (경화제/신너 필터링용)
         const mainPm = mainId ? allPaints.find(p => p.id === mainId) : null;
@@ -1147,6 +1170,13 @@ const SettingsModule = (function() {
 
         return `
         <tr data-paint-row="${rowIdx}" style="border-bottom:1px solid var(--border-color);">
+            <td style="${tdStyle}width:80px;">
+                <select id="${idPrefix}ProcessTag_${rowIdx}" style="${selStyle}" title="공정 라인">
+                    <option value="공용"   ${processTag === '공용'   ? 'selected' : ''}>공용</option>
+                    <option value="도장-A" ${processTag === '도장-A' ? 'selected' : ''}>도장-A</option>
+                    <option value="도장-B" ${processTag === '도장-B' ? 'selected' : ''}>도장-B</option>
+                </select>
+            </td>
             <td style="${tdStyle}width:110px;">
                 <select id="${idPrefix}PaintSpec_${rowIdx}"
                     style="${selStyle}"
@@ -1197,10 +1227,11 @@ const SettingsModule = (function() {
             const ri = row.dataset.paintRow;
             const g = id => (document.getElementById(id) || {}).value || '';
             return {
-                paintSpec: g(`${idPrefix}PaintSpec_${ri}`),
-                mainId:    g(`${idPrefix}PaintMain_${ri}`),
-                hardId:    g(`${idPrefix}PaintHard_${ri}`),
-                thinnerId: g(`${idPrefix}PaintThinner_${ri}`)
+                processTag: g(`${idPrefix}ProcessTag_${ri}`) || '공용',
+                paintSpec:  g(`${idPrefix}PaintSpec_${ri}`),
+                mainId:     g(`${idPrefix}PaintMain_${ri}`),
+                hardId:     g(`${idPrefix}PaintHard_${ri}`),
+                thinnerId:  g(`${idPrefix}PaintThinner_${ri}`)
             };
         });
     }
@@ -1213,6 +1244,7 @@ const SettingsModule = (function() {
         <table style="width:100%;border-collapse:collapse;border:1px solid var(--border-color);border-radius:8px;overflow:hidden;margin-bottom:4px;">
             <thead>
                 <tr>
+                    <th style="${thStyle}width:80px;">공정</th>
                     <th style="${thStyle}width:110px;">도료 사양</th>
                     <th style="${thStyle}">주제</th>
                     <th style="${thStyle}">경화제</th>
@@ -1551,10 +1583,10 @@ const SettingsModule = (function() {
     function editProduct(id) {
         const p = Storage.getById(PRODUCTS_STORE, id);
         if (!p) return;
-        UIUtils.showModal('제품 수정', _productFormHTML(p, 'editProd'), `
+        UIUtils.showModal({ title: '제품 수정', body: _productFormHTML(p, 'editProd'), footer: `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="SettingsModule.updateProduct('${id}')">저장</button>
-        `, 'xl');
+        `, size: 'xxxl', noBackdropClose: true });
         setTimeout(() => {
             // 품명/컬러 변경 시 코드 자동 갱신
             const upd = () => {
@@ -2115,9 +2147,6 @@ const SettingsModule = (function() {
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
                         <button class="btn btn-outline" onclick="SettingsModule.downloadInjectMatCSV()">
                             <span class="material-symbols-outlined">download</span> CSV 다운로드
-                        </button>
-                        <button class="btn btn-secondary" onclick="SettingsModule.openInjectMatUploadModal()">
-                            <span class="material-symbols-outlined">upload_file</span> 일괄 업로드
                         </button>
                         <button class="btn btn-outline" style="border-color:#6366f1;color:#4f46e5;"
                                 onclick="SettingsModule.openMfgMatchingReview()"
@@ -6002,33 +6031,83 @@ const SettingsModule = (function() {
 
             <div class="card">
                 <div class="card-header">
-                    <h4><span class="material-symbols-outlined">update</span> 데이터 마이그레이션</h4>
+                    <h4><span class="material-symbols-outlined">find_replace</span> 데이터 일괄 수정</h4>
                 </div>
                 <div class="card-body">
-                    <p style="margin-bottom:16px;">
-                        기존 제품 정보의 공정명을 일괄 변경합니다.<br>
-                        • 도장A → 도장-A, 도장B → 도장-B<br>
-                        • 검사 / 외관검사 → 외관 검사
+                    <p style="margin-bottom:16px;font-size:0.875rem;color:var(--text-secondary);">
+                        전체 DB에서 텍스트를 검색하고, 원하는 항목만 선택해 변경합니다.<br>
+                        <strong>① 찾기</strong> → 결과 확인 → <strong>② 바꿀 값 입력</strong> → <strong>③ 선택 항목 변경</strong>
                     </p>
-                    <button class="btn btn-primary" onclick="SettingsModule.migrateProcessNames()">
-                        <span class="material-symbols-outlined">upgrade</span> 공정명 일괄 수정
-                    </button>
-                    <hr style="margin:18px 0; border:none; border-top:1px solid var(--border);">
-                    <p style="margin-bottom:10px; font-size:0.875rem;">
-                        도료 공급사 오타 수정 — <strong>화인칼라테크 → 화인컬러테크</strong><br>
-                        <span style="color:var(--text-muted); font-size:0.8rem;">도료 마스터 · 도료 수입검사 기록의 공급사명을 일괄 통합합니다.</span>
-                    </p>
-                    <button class="btn btn-primary" onclick="SettingsModule.migrateSupplierName()">
-                        <span class="material-symbols-outlined">find_replace</span> 공급사명 오타 수정
-                    </button>
-                    <hr style="margin:18px 0; border:none; border-top:1px solid var(--border);">
-                    <p style="margin-bottom:10px; font-size:0.875rem;">
-                        도료 수입검사 유효기간 재계산 — <strong>제조일자 + 유통기한</strong><br>
-                        <span style="color:var(--text-muted); font-size:0.8rem;">기존 잘못 계산된 유효기간(expDate)을 올바르게 재계산하고 창고 재고에도 반영합니다.</span>
-                    </p>
-                    <button class="btn btn-primary" onclick="SettingsModule.migrateExpDates()">
-                        <span class="material-symbols-outlined">event_repeat</span> 도료 유효기간 재계산
-                    </button>
+
+                    <!-- ① 찾기 영역 -->
+                    <div style="background:var(--bg-secondary);border-radius:8px;padding:14px 16px;margin-bottom:12px;">
+                        <div style="font-size:0.8rem;font-weight:700;color:var(--text-muted);margin-bottom:10px;display:flex;align-items:center;gap:5px;">
+                            <span class="material-symbols-outlined" style="font-size:16px;">search</span> STEP 1 — 찾기
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;align-items:flex-end;">
+                            <div>
+                                <label class="form-label" style="font-size:0.8rem;">검색어</label>
+                                <input class="form-input" id="bulkReplaceFrom" placeholder="찾을 텍스트 입력"
+                                    style="font-size:0.9rem;"
+                                    onkeydown="if(event.key==='Enter') SettingsModule.previewBulkReplace()">
+                            </div>
+                            <div>
+                                <label class="form-label" style="font-size:0.8rem;">대상 필드</label>
+                                <select class="form-select" id="bulkReplaceField" style="font-size:0.9rem;">
+                                    <option value="*">전체 필드</option>
+                                    <option value="carModel">차종</option>
+                                    <option value="partName">품명</option>
+                                    <option value="color">컬러</option>
+                                    <option value="customer">납품처</option>
+                                    <option value="supplier">공급사</option>
+                                    <option value="supplierName">공급사명</option>
+                                    <option value="process1">공정1</option>
+                                    <option value="process2">공정2</option>
+                                    <option value="process3">공정3</option>
+                                    <option value="process4">공정4</option>
+                                    <option value="lotNo">LOT번호</option>
+                                    <option value="note">비고</option>
+                                    <option value="name">이름/품명</option>
+                                    <option value="material">재질</option>
+                                    <option value="standard">규격</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="form-label" style="font-size:0.8rem;">일치 방식</label>
+                                <div style="display:flex;gap:6px;">
+                                    <select class="form-select" id="bulkReplaceMode" style="font-size:0.9rem;">
+                                        <option value="contains" selected>포함 (부분 일치)</option>
+                                        <option value="exact">완전 일치</option>
+                                    </select>
+                                    <button class="btn btn-primary" onclick="SettingsModule.previewBulkReplace()" style="white-space:nowrap;">
+                                        <span class="material-symbols-outlined">search</span> 찾기
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ② 변경 영역 (찾기 결과 후 표시) -->
+                    <div id="bulkReplaceBar" style="display:none;background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.2);border-radius:8px;padding:12px 16px;margin-bottom:12px;">
+                        <div style="font-size:0.8rem;font-weight:700;color:var(--accent-blue);margin-bottom:10px;display:flex;align-items:center;gap:5px;">
+                            <span class="material-symbols-outlined" style="font-size:16px;">edit</span> STEP 2 — 바꾸기
+                        </div>
+                        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+                            <div style="flex:1;min-width:180px;">
+                                <label class="form-label" style="font-size:0.8rem;">바꿀 값 (전체 일괄 적용)</label>
+                                <input class="form-input" id="bulkReplaceTo" placeholder="변경 후 값 입력"
+                                    style="font-size:0.9rem;"
+                                    oninput="SettingsModule.applyGlobalNewVal(this.value)">
+                            </div>
+                            <button class="btn btn-secondary" onclick="SettingsModule.bulkCheckAll(true)">전체 선택</button>
+                            <button class="btn btn-secondary" onclick="SettingsModule.bulkCheckAll(false)">전체 해제</button>
+                            <button class="btn btn-primary" onclick="SettingsModule.executeBulkReplace()">
+                                <span class="material-symbols-outlined">find_replace</span> 선택 항목 변경
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="bulkReplaceResult" style="margin-top:4px;"></div>
                 </div>
             </div>
 
@@ -6057,35 +6136,254 @@ const SettingsModule = (function() {
                 </div>
             </div>
 
-            <div class="card" style="border-left:3px solid var(--accent-purple,#8b5cf6); margin-bottom:20px;">
-                <div class="card-header">
-                    <h4><span class="material-symbols-outlined" style="color:var(--accent-purple,#8b5cf6);">science</span> 개발/테스트 데이터</h4>
-                </div>
-                <div class="card-body">
-                    <p style="margin-bottom:16px;font-size:0.875rem;color:var(--text-secondary);">
-                        등록된 모든 <strong>사출 자재</strong>와 <strong>도료</strong>에 대해 각 1건씩 수입검사 기록을 임의 생성합니다.<br>
-                        (사출: 입고수량 500개 / 도료: 입고수량 10개, 판정 합격)
-                    </p>
-                    <button class="btn btn-primary" onclick="SettingsModule.seedTestData()">
-                        <span class="material-symbols-outlined">add_circle</span> 수입검사 테스트 데이터 삽입
-                    </button>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="card-header">
-                    <h4 style="color:var(--accent-red)"><span class="material-symbols-outlined">warning</span> 위험 영역</h4>
-                </div>
-                <div class="card-body">
-                    <p style="margin-bottom:16px;color:var(--accent-red);">
-                        아래 작업은 되돌릴 수 없습니다. 반드시 백업을 먼저 하세요.
-                    </p>
-                    <button class="btn btn-danger" onclick="SettingsModule.clearAllData()">
-                        <span class="material-symbols-outlined">delete_forever</span> 전체 데이터 초기화
-                    </button>
-                </div>
-            </div>
         `;
+    }
+
+    // ── 범용 일괄 수정 ────────────────────────────────────────────────
+    const _BULK_TEXT_FIELDS = [
+        'carModel','partName','color','customer','supplier','supplierName',
+        'process1','process2','process3','process4','process5','process6',
+        'lotNo','note','remark','name','type','status','unit','packUnit',
+        'material','standard','spec','location','manager','inspector'
+    ];
+
+    const _STORE_LABEL = {
+        products:'제품 마스터', defect_types:'불량유형', paint_materials:'도료 마스터',
+        injection_materials:'사출자재', raw_materials:'원재료',
+        production_plans:'생산계획', injection_inspections:'사출 수입검사',
+        injection_inventory:'사출 창고', paint_incoming_inspections:'도료 수입검사',
+        paint_inventory:'도료 창고', painting_incoming:'도장 입고',
+        painting_work:'도장 작업', painting_inspections:'도장 검사',
+        painting_outgoing:'도장 출고', shipping_standby:'출하대기',
+        shipping_inspections:'출하검사', product_inventory:'제품 창고',
+        product_outgoing:'제품 출고', sales_delivery:'납품관리',
+        sales_delivery_plan:'납품계획', jig_master:'JIG 마스터',
+        prod_conditions:'작업조건', prod_standards:'제조표준'
+    };
+
+    const _FIELD_LABEL = {
+        carModel:'차종', partName:'품명', color:'컬러', customer:'납품처',
+        supplier:'공급사', supplierName:'공급사명', process1:'공정1',
+        process2:'공정2', process3:'공정3', process4:'공정4',
+        process5:'공정5', process6:'공정6', lotNo:'LOT번호',
+        note:'비고', remark:'비고2', name:'이름/품명', type:'유형',
+        status:'상태', unit:'단위', packUnit:'포장단위',
+        material:'재질', standard:'규격', spec:'사양',
+        location:'위치', manager:'담당자', inspector:'검사자'
+    };
+
+    let _bulkHits = []; // 조회 결과 캐시
+
+    function _getBulkInputs() {
+        const from  = (document.getElementById('bulkReplaceFrom')?.value || '').trim();
+        const to    = (document.getElementById('bulkReplaceTo')?.value  ?? '').trim();
+        const field = document.getElementById('bulkReplaceField')?.value || '*';
+        const mode  = document.getElementById('bulkReplaceMode')?.value  || 'exact';
+        return { from, to, field, mode };
+    }
+
+    function _bulkScan({ from, field, mode }) {
+        if (!from) return [];
+        const allStores = Object.values(DB.STORES);
+        const hits = [];
+        for (const storeName of allStores) {
+            try {
+                const records = Storage.getAll(storeName) || [];
+                for (const rec of records) {
+                    const fields = field === '*' ? _BULK_TEXT_FIELDS : [field];
+                    for (const f of fields) {
+                        const val = rec[f];
+                        if (val == null || typeof val !== 'string' || !val.trim()) continue;
+                        const matched = mode === 'exact' ? val === from : val.includes(from);
+                        if (matched) {
+                            // 레코드 식별용 컨텍스트 수집
+                            const ctx = [
+                                rec.date || rec.inspDate || '',
+                                rec.carModel && f !== 'carModel' ? rec.carModel : '',
+                                rec.partName && f !== 'partName' ? rec.partName : '',
+                                rec.color   && f !== 'color'    ? rec.color    : ''
+                            ].filter(Boolean).join(' / ');
+                            hits.push({ storeName, id: rec.id, field: f, oldVal: val, ctx });
+                        }
+                    }
+                }
+            } catch (_) {}
+        }
+        return hits;
+    }
+
+    function _calcNewVal(oldVal, from, to, mode) {
+        return mode === 'exact' ? to : oldVal.replaceAll(from, to);
+    }
+
+    function previewBulkReplace() {
+        const inputs = _getBulkInputs();
+        const resultEl = document.getElementById('bulkReplaceResult');
+        const barEl    = document.getElementById('bulkReplaceBar');
+        if (!inputs.from) { UIUtils.toast('검색어를 입력하세요.', 'warning'); return; }
+
+        _bulkHits = _bulkScan(inputs);
+
+        if (!_bulkHits.length) {
+            if (barEl) barEl.style.display = 'none';
+            resultEl.innerHTML = `
+                <div style="padding:12px 16px;background:var(--bg-secondary);border-radius:8px;
+                            font-size:0.87rem;color:var(--text-muted);display:flex;align-items:center;gap:8px;">
+                    <span class="material-symbols-outlined" style="font-size:18px;">search_off</span>
+                    "<strong>${_esc(inputs.from)}</strong>" — 일치하는 데이터가 없습니다.
+                </div>`;
+            return;
+        }
+
+        // 변경 바 표시 (바꿀 값 초기화)
+        if (barEl) { barEl.style.display = 'block'; }
+        const toEl = document.getElementById('bulkReplaceTo');
+        if (toEl) toEl.value = '';
+
+        const rows = _bulkHits.map((h, i) => {
+            const storeLabel = _STORE_LABEL[h.storeName] || h.storeName;
+            const fieldLabel = _FIELD_LABEL[h.field]    || h.field;
+            // 검색어 하이라이트
+            const highlighted = _esc(h.oldVal).replace(
+                new RegExp(_escRegex(_esc(inputs.from)), 'gi'),
+                m => `<mark style="background:rgba(251,191,36,0.45);border-radius:2px;padding:0 1px;">${m}</mark>`
+            );
+            return `
+                <tr id="bulkRow_${i}" style="border-bottom:1px solid var(--border-color);">
+                    <td style="padding:7px 8px;text-align:center;">
+                        <input type="checkbox" class="bulk-row-chk" data-idx="${i}" checked
+                            style="width:15px;height:15px;cursor:pointer;accent-color:var(--accent-blue);">
+                    </td>
+                    <td style="padding:7px 8px;font-size:0.8rem;color:var(--text-muted);white-space:nowrap;">${_esc(storeLabel)}</td>
+                    <td style="padding:7px 8px;font-size:0.8rem;white-space:nowrap;">
+                        <span style="background:var(--bg-secondary);padding:2px 7px;border-radius:4px;font-size:0.75rem;">${_esc(fieldLabel)}</span>
+                    </td>
+                    <td style="padding:7px 8px;font-size:0.8rem;color:var(--text-muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${_esc(h.ctx)}">${_esc(h.ctx) || '-'}</td>
+                    <td style="padding:7px 8px;">${highlighted}</td>
+                    <td style="padding:7px 4px;text-align:center;color:var(--text-muted);font-size:0.9rem;">→</td>
+                    <td style="padding:5px 6px;">
+                        <input type="text" class="form-input bulk-new-val" data-idx="${i}" data-old="${_esc(h.oldVal)}"
+                            value=""
+                            placeholder="바꿀 값"
+                            style="font-size:0.85rem;padding:3px 8px;height:28px;min-width:110px;
+                                   color:var(--accent-green);font-weight:600;border-color:rgba(16,185,129,0.35);">
+                    </td>
+                </tr>`;
+        }).join('');
+
+        resultEl.innerHTML = `
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+                <span class="material-symbols-outlined" style="font-size:17px;color:var(--accent-blue);">list_alt</span>
+                <span style="font-size:0.88rem;font-weight:600;">
+                    "<strong style="color:var(--accent-blue);">${_esc(inputs.from)}</strong>"
+                    — 총 <strong style="color:var(--accent-blue);">${_bulkHits.length}건</strong> 발견
+                </span>
+                <span style="font-size:0.78rem;color:var(--text-muted);">(바꿀 값을 입력 후 변경하세요)</span>
+            </div>
+            <div style="border-radius:8px;border:1px solid var(--border-color);overflow:hidden;">
+                <div style="max-height:420px;overflow-y:auto;">
+                    <table style="width:100%;border-collapse:collapse;">
+                        <thead style="background:linear-gradient(180deg,#f1f5f9,#e8ecf1);position:sticky;top:0;z-index:2;">
+                            <tr>
+                                <th style="padding:7px 8px;text-align:center;border-bottom:1px solid var(--border-color);width:34px;">
+                                    <input type="checkbox" id="bulkChkAll" checked
+                                        onchange="SettingsModule.bulkCheckAll(this.checked)"
+                                        style="width:15px;height:15px;cursor:pointer;accent-color:var(--accent-blue);">
+                                </th>
+                                <th style="padding:7px 8px;font-size:0.78rem;text-align:left;border-bottom:1px solid var(--border-color);">스토어</th>
+                                <th style="padding:7px 8px;font-size:0.78rem;text-align:left;border-bottom:1px solid var(--border-color);">필드</th>
+                                <th style="padding:7px 8px;font-size:0.78rem;text-align:left;border-bottom:1px solid var(--border-color);">레코드 정보</th>
+                                <th style="padding:7px 8px;font-size:0.78rem;text-align:left;border-bottom:1px solid var(--border-color);">현재 값 (검색어 강조)</th>
+                                <th style="padding:7px 2px;border-bottom:1px solid var(--border-color);width:18px;"></th>
+                                <th style="padding:7px 8px;font-size:0.78rem;text-align:left;border-bottom:1px solid var(--border-color);">바꿀 값 <span style="font-weight:400;color:var(--text-muted);">(행별 개별 수정 가능)</span></th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="bulkApplyResult" style="margin-top:10px;"></div>`;
+    }
+
+    function _escRegex(s) {
+        return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    // 상단 "바꿀 값" 입력 시 모든 행에 자동 반영
+    function applyGlobalNewVal(val) {
+        const from  = (document.getElementById('bulkReplaceFrom')?.value || '').trim();
+        const mode  = document.getElementById('bulkReplaceMode')?.value || 'contains';
+        document.querySelectorAll('.bulk-new-val').forEach(el => {
+            const oldVal = el.dataset.old || '';
+            el.value = mode === 'exact' ? val : oldVal.replaceAll(from, val);
+        });
+    }
+
+    function bulkCheckAll(checked) {
+        document.querySelectorAll('.bulk-row-chk').forEach(el => el.checked = checked);
+        const all = document.getElementById('bulkChkAll');
+        if (all) all.checked = checked;
+    }
+
+    async function executeBulkReplace() {
+        const resultEl = document.getElementById('bulkApplyResult') || document.getElementById('bulkReplaceResult');
+
+        // 체크된 행의 idx와 새 값 수집
+        const selected = [];
+        document.querySelectorAll('.bulk-row-chk:checked').forEach(chk => {
+            const idx = parseInt(chk.dataset.idx, 10);
+            const newValEl = document.querySelector(`.bulk-new-val[data-idx="${idx}"]`);
+            const newVal = newValEl ? newValEl.value : '';
+            // 바꿀 값이 비어있으면 변경 대상에서 제외
+            if (_bulkHits[idx] && newVal.trim() !== '') selected.push({ hit: _bulkHits[idx], newVal });
+            else if (_bulkHits[idx] && newVal.trim() === '') { /* 빈 값 경고를 위해 포함하지 않음 */ }
+        });
+
+        const emptyCount = document.querySelectorAll('.bulk-row-chk:checked').length - selected.length;
+        if (emptyCount > 0 && selected.length === 0) {
+            UIUtils.toast(`바꿀 값을 입력하세요. (${emptyCount}건 모두 비어 있음)`, 'warning'); return;
+        }
+        if (!selected.length) { UIUtils.toast('수정할 항목을 선택하거나 바꿀 값을 입력하세요.', 'warning'); return; }
+
+        UIUtils.confirm(
+            `선택한 ${selected.length}건을 수정합니다.\n계속하시겠습니까?`,
+            async () => {
+                let done = 0, fail = 0;
+                // 같은 레코드에 여러 필드가 선택된 경우 묶기
+                const recMap = {};
+                for (const { hit, newVal } of selected) {
+                    const key = `${hit.storeName}||${hit.id}`;
+                    if (!recMap[key]) recMap[key] = { storeName: hit.storeName, id: hit.id, changes: {} };
+                    recMap[key].changes[hit.field] = newVal;
+                }
+                for (const { storeName, id, changes } of Object.values(recMap)) {
+                    try {
+                        const rec = Storage.getById(storeName, id);
+                        if (rec) {
+                            await Storage.update(storeName, id, { ...rec, ...changes });
+                            done++;
+                        }
+                    } catch (_) { fail++; }
+                }
+                const msg = `${done}건 수정 완료${fail ? ` / ${fail}건 실패` : ''}.`;
+                const color = fail ? 'var(--accent-red)' : 'var(--accent-green)';
+                const bg    = fail ? 'rgba(239,68,68,0.08)' : 'rgba(16,185,129,0.08)';
+                const icon  = fail ? 'warning' : 'check_circle';
+                if (resultEl) resultEl.innerHTML = `
+                    <div style="padding:10px 14px;background:${bg};border-radius:8px;
+                                font-size:0.88rem;font-weight:600;color:${color};
+                                display:flex;align-items:center;gap:8px;">
+                        <span class="material-symbols-outlined" style="font-size:18px;">${icon}</span>${msg}
+                    </div>`;
+                UIUtils.toast(msg, fail ? 'warning' : 'success');
+                // 수정된 행 시각적 처리
+                document.querySelectorAll('.bulk-row-chk:checked').forEach(chk => {
+                    const row = document.getElementById(`bulkRow_${chk.dataset.idx}`);
+                    if (row) row.style.background = 'rgba(16,185,129,0.07)';
+                });
+                _bulkHits = []; // 캐시 초기화
+            }
+        );
     }
 
     function migrateProcessNames() {
@@ -7353,6 +7651,10 @@ const SettingsModule = (function() {
         onPaintUploadModeChange,
         backupAll,
         restoreFromFile,
+        previewBulkReplace,
+        applyGlobalNewVal,
+        bulkCheckAll,
+        executeBulkReplace,
         migrateProcessNames,
         migrateSupplierName,
         migrateExpDates,

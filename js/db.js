@@ -5,7 +5,7 @@
 
 const DB = (function() {
     const DB_NAME = 'ProductionMES_DB';
-    const DB_VERSION = 46;
+    const DB_VERSION = 48;
     let db = null;
 
     // 스토어 이름 - 전체 공정에 대응
@@ -143,6 +143,14 @@ const DB = (function() {
 
         // 건조 및 셋팅룸 온도 기준서 (v46)
         DRYING_STD_DATA: 'drying_std_data',
+
+        // 폐수처리 계획/실적 (v47)
+        WASTEWATER_PLAN: 'wastewater_plan',   // 계획 헤더 (연도, 회차)
+        WASTEWATER_LOG:  'wastewater_log',    // 월별 계획/실적 상세
+
+        // MES 운영 게시판 (v48)
+        BOARD_POSTS:    'board_posts',    // 게시글 (본문 + 이미지)
+        BOARD_REPLIES:  'board_replies',  // 답글
 
         // 설정
         CONFIG: 'config'
@@ -676,6 +684,7 @@ const DB = (function() {
             request.onupgradeneeded = (event) => {
                 const database = event.target.result;
                 const upgradeTx = event.target.transaction;
+                const oldVersion = event.oldVersion || 0;
 
                 // 업그레이드 트랜잭션이 중단될 경우 즉시 에러 반환
                 upgradeTx.onabort = () => {
@@ -1286,11 +1295,27 @@ const DB = (function() {
                     store.createIndex('partName', 'partName', { unique: false });
                     store.createIndex('type',     'type',     { unique: false });
                 }
-                if (oldVersion < 45) {
+                if (oldVersion < 45 && !database.objectStoreNames.contains(STORES.ROBOT_PG_STD_DATA)) {
                     database.createObjectStore(STORES.ROBOT_PG_STD_DATA, { keyPath: 'id' });
                 }
-                if (oldVersion < 46) {
+                if (oldVersion < 46 && !database.objectStoreNames.contains(STORES.DRYING_STD_DATA)) {
                     database.createObjectStore(STORES.DRYING_STD_DATA, { keyPath: 'id' });
+                }
+                if (oldVersion < 47) {
+                    if (!database.objectStoreNames.contains(STORES.WASTEWATER_PLAN)) {
+                        database.createObjectStore(STORES.WASTEWATER_PLAN, { keyPath: 'id' });
+                    }
+                    if (!database.objectStoreNames.contains(STORES.WASTEWATER_LOG)) {
+                        database.createObjectStore(STORES.WASTEWATER_LOG, { keyPath: 'id' });
+                    }
+                }
+                if (oldVersion < 48) {
+                    if (!database.objectStoreNames.contains(STORES.BOARD_POSTS)) {
+                        database.createObjectStore(STORES.BOARD_POSTS, { keyPath: 'id' });
+                    }
+                    if (!database.objectStoreNames.contains(STORES.BOARD_REPLIES)) {
+                        database.createObjectStore(STORES.BOARD_REPLIES, { keyPath: 'id' });
+                    }
                 }
             };
         });
