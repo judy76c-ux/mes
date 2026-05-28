@@ -5627,104 +5627,101 @@ const SettingsModule = (function() {
                         background:linear-gradient(135deg,#1e3a5f 0%,#1e40af 100%);color:#fff;">
                 <div style="font-size:1rem;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px;">
                     <span class="material-symbols-outlined" style="font-size:22px;">storage</span>
-                    MES 데이터 저장 구조
+                    MES 데이터 보호 구조
                 </div>
                 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;font-size:.82rem;">
                     <div style="background:rgba(255,255,255,0.12);border-radius:8px;padding:12px;">
                         <div style="font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:6px;">
                             <span class="material-symbols-outlined" style="font-size:16px;">computer</span>
-                            브라우저 (IndexedDB)
+                            MES 서버 DB
                         </div>
                         <div style="color:rgba(255,255,255,0.8);line-height:1.55;">
-                            모든 생산 데이터의 <b>1차 저장소</b><br>
-                            이 PC·브라우저에만 존재<br>
-                            브라우저 초기화 시 <b style="color:#fca5a5;">소실 위험</b>
+                            운영 데이터의 <b>1차 저장소</b><br>
+                            웹서버 로컬 MariaDB에 저장<br>
+                            여러 PC가 같은 데이터를 사용
                         </div>
                     </div>
                     <div style="background:rgba(255,255,255,0.12);border-radius:8px;padding:12px;">
                         <div style="font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:6px;">
-                            <span class="material-symbols-outlined" style="font-size:16px;">dns</span>
-                            NAS 서버 (MariaDB)
+                            <span class="material-symbols-outlined" style="font-size:16px;">computer</span>
+                            브라우저 캐시
                         </div>
                         <div style="color:rgba(255,255,255,0.8);line-height:1.55;">
-                            사내 NAS의 <b>데이터베이스</b> 서버<br>
-                            실시간 동기화 (온라인 시)<br>
-                            PC 고장 시에도 <b style="color:#86efac;">데이터 보존</b>
+                            IndexedDB는 <b>오프라인 조회용 캐시</b><br>
+                            서버 장애 시 최근 데이터 확인<br>
+                            저장·수정은 서버 연결 필요
                         </div>
                     </div>
                     <div style="background:rgba(255,255,255,0.12);border-radius:8px;padding:12px;">
                         <div style="font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:6px;">
                             <span class="material-symbols-outlined" style="font-size:16px;">hard_drive</span>
-                            NAS HDD (파일 백업)
+                            서버 자동 백업
                         </div>
                         <div style="color:rgba(255,255,255,0.8);line-height:1.55;">
-                            NAS 서버 DB를 <b>JSON 파일</b>로 저장<br>
-                            NAS 장애 발생 시 복구 가능<br>
-                            자동 주기 실행 설정 가능
+                            서버 DB를 <b>JSON 파일</b>로 저장<br>
+                            로컬 백업 폴더에 주기 보관<br>
+                            DB 손상·실수 삭제 시 복구
                         </div>
                     </div>
                     <div style="background:rgba(255,255,255,0.12);border-radius:8px;padding:12px;">
                         <div style="font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:6px;">
                             <span class="material-symbols-outlined" style="font-size:16px;">folder_zip</span>
-                            로컬 PC (JSON 파일)
+                            NAS / 수동 백업
                         </div>
                         <div style="color:rgba(255,255,255,0.8);line-height:1.55;">
-                            브라우저 IndexedDB를 <b>직접 내보내기</b><br>
-                            USB·이메일로 보관 가능<br>
-                            오프라인 환경에서도 백업 가능
+                            NAS는 <b>서버 장애 대비 복사본</b><br>
+                            로컬 PC JSON은 임시 반출용<br>
+                            새 서버 구축·자료 이관에 사용
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- ── 데이터 백업 (로컬 JSON 내보내기) ──────────────────── -->
+            <!-- ── 데이터 백업 (수동 JSON 내보내기) ──────────────────── -->
             <div class="card" style="margin-bottom:20px;">
                 <div class="card-header">
-                    <h4><span class="material-symbols-outlined">cloud_download</span> 데이터 백업 <span style="font-size:.72rem;font-weight:400;color:var(--text-muted);margin-left:6px;">브라우저 → 로컬 PC JSON 파일</span></h4>
+                    <h4><span class="material-symbols-outlined">cloud_download</span> 수동 파일 백업 <span style="font-size:.72rem;font-weight:400;color:var(--text-muted);margin-left:6px;">현재 화면 데이터 → PC 다운로드 JSON</span></h4>
                 </div>
                 <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
 
                     <!-- 백업 대상 설명 -->
                     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;">
                         <div style="padding:10px 12px;border-radius:8px;background:#f0fdf4;border:1px solid #86efac;">
-                            <div style="font-size:.75rem;font-weight:700;color:#166534;margin-bottom:6px;">✅ 백업되는 데이터</div>
+                            <div style="font-size:.75rem;font-weight:700;color:#166534;margin-bottom:6px;">✅ 백업 대상</div>
                             <div style="font-size:.78rem;color:#166534;line-height:1.65;">
-                                생산 계획 지시서<br>
-                                사출·도장·레이져 공정 일지<br>
-                                수입검사 / 출하검사 기록<br>
-                                창고 재고 현황<br>
-                                납품 관리 / 품질 실적<br>
-                                설비·JIG·부자재·5S 관리<br>
-                                제품·도료 마스터 정보<br>
-                                각종 기준서 편집 데이터
+                                현재 브라우저에 동기화된 MES 데이터<br>
+                                제품·자재·도료 마스터<br>
+                                생산계획, 공정일지, 검사기록<br>
+                                재고, 출하, 품질, 설비, JIG 기록<br>
+                                서버와 동기화된 최신 상태에서 실행 권장
                             </div>
                         </div>
                         <div style="padding:10px 12px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;">
                             <div style="font-size:.75rem;font-weight:700;color:#9a3412;margin-bottom:6px;">💡 언제 사용하나요?</div>
                             <div style="font-size:.78rem;color:#9a3412;line-height:1.65;">
-                                • PC 교체·초기화 전 반드시 실행<br>
-                                • 중요 데이터 입력 후 즉시 저장<br>
-                                • NAS 서버 없는 오프라인 환경<br>
-                                • 다른 PC로 데이터 이전 시<br>
-                                • 월 1회 이상 정기 백업 권장
+                                • 서버 자동 백업 외에 파일을 따로 보관할 때<br>
+                                • 작업 전후 수동 스냅샷이 필요할 때<br>
+                                • 다른 PC나 테스트 환경으로 자료를 옮길 때<br>
+                                • 서버 연결이 불안정해 임시 보관이 필요할 때<br>
+                                • 정식 장애 대비는 서버/NAS 백업 사용
                             </div>
                         </div>
                         <div style="padding:10px 12px;border-radius:8px;background:#eff6ff;border:1px solid #93c5fd;">
                             <div style="font-size:.75rem;font-weight:700;color:#1e3a8a;margin-bottom:6px;">📁 저장 위치</div>
                             <div style="font-size:.78rem;color:#1e3a8a;line-height:1.65;">
-                                브라우저 다운로드 폴더<br>
+                                사용자 PC 다운로드 폴더<br>
                                 <code style="background:#dbeafe;padding:1px 4px;border-radius:3px;">mes-backup-YYYYMMDD.json</code><br><br>
-                                USB·외장하드·이메일 등에<br>
-                                추가 보관 강력 권장
+                                USB·외장하드·보안 공유 폴더 등에<br>
+                                임시 보관 가능
                             </div>
                         </div>
                     </div>
 
                     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                         <button class="btn btn-primary" onclick="SettingsModule.backupAll()">
-                            <span class="material-symbols-outlined">download</span> 전체 백업 (JSON 다운로드)
+                            <span class="material-symbols-outlined">download</span> 수동 백업 파일 다운로드
                         </button>
-                        <span style="font-size:.78rem;color:var(--text-muted);">브라우저 IndexedDB의 모든 데이터를 하나의 파일로 내보냅니다.</span>
+                        <span style="font-size:.78rem;color:var(--text-muted);">현재 브라우저가 가진 데이터를 하나의 JSON 파일로 내려받습니다.</span>
                     </div>
                 </div>
             </div>
@@ -5732,7 +5729,7 @@ const SettingsModule = (function() {
             <!-- ── 데이터 복원 (로컬 JSON 가져오기) ──────────────────── -->
             <div class="card" style="margin-bottom:20px;">
                 <div class="card-header">
-                    <h4><span class="material-symbols-outlined">cloud_upload</span> 데이터 복원 <span style="font-size:.72rem;font-weight:400;color:var(--text-muted);margin-left:6px;">로컬 JSON 파일 → 브라우저</span></h4>
+                    <h4><span class="material-symbols-outlined">cloud_upload</span> 수동 파일 복원 <span style="font-size:.72rem;font-weight:400;color:var(--text-muted);margin-left:6px;">PC JSON 파일 → 브라우저 캐시</span></h4>
                 </div>
                 <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
 
@@ -5740,18 +5737,18 @@ const SettingsModule = (function() {
                         <div style="padding:10px 12px;border-radius:8px;background:#fef2f2;border:1px solid #fca5a5;">
                             <div style="font-size:.75rem;font-weight:700;color:#991b1b;margin-bottom:6px;">⚠️ 주의사항</div>
                             <div style="font-size:.78rem;color:#991b1b;line-height:1.65;">
-                                복원 시 <b>현재 브라우저의 모든 데이터가 삭제</b>되고<br>
-                                백업 파일의 데이터로 완전 교체됩니다.<br>
-                                이 작업은 <b>취소할 수 없습니다.</b>
+                                이 복원은 <b>브라우저 캐시</b>를 파일 내용으로 교체합니다.<br>
+                                서버 운영 DB 복구는 위 <b>서버 자동 백업</b>의 복원을 사용하세요.<br>
+                                실행 전 현재 서버 상태와 백업 시점을 확인하세요.
                             </div>
                         </div>
                         <div style="padding:10px 12px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;">
                             <div style="font-size:.75rem;font-weight:700;color:#9a3412;margin-bottom:6px;">💡 언제 사용하나요?</div>
                             <div style="font-size:.78rem;color:#9a3412;line-height:1.65;">
-                                • 브라우저 초기화 후 데이터 복구<br>
-                                • 새 PC로 데이터 이전<br>
-                                • 실수로 데이터 삭제 시 복구<br>
-                                • 위 [데이터 백업]으로 받은 .json 파일만 사용
+                                • 파일로 내려받은 자료를 임시 확인할 때<br>
+                                • 오프라인 캐시를 특정 시점으로 되돌릴 때<br>
+                                • 다른 PC 브라우저에 자료를 옮길 때<br>
+                                • 운영 DB 복구 목적이면 서버/NAS 복원 사용
                             </div>
                         </div>
                     </div>
@@ -5760,7 +5757,7 @@ const SettingsModule = (function() {
                         <input type="file" id="restoreFileInput" accept=".json" style="display:none;"
                             onchange="SettingsModule.restoreFromFile(this)">
                         <button class="btn btn-secondary" onclick="document.getElementById('restoreFileInput').click()">
-                            <span class="material-symbols-outlined">upload</span> 백업 파일 선택하여 복원
+                            <span class="material-symbols-outlined">upload</span> 수동 백업 파일 선택
                         </button>
                         <span style="font-size:.78rem;color:var(--text-muted);">
                             <code style="background:var(--bg-secondary);padding:1px 5px;border-radius:3px;">mes-backup-*.json</code> 파일만 인식됩니다.
@@ -5772,7 +5769,7 @@ const SettingsModule = (function() {
             <!-- ── 데이터 현황 ─────────────────────────────────────────── -->
             <div class="card">
                 <div class="card-header">
-                    <h4><span class="material-symbols-outlined">analytics</span> 현재 저장 데이터 현황 <span style="font-size:.72rem;font-weight:400;color:var(--text-muted);margin-left:6px;">브라우저 IndexedDB 기준</span></h4>
+                    <h4><span class="material-symbols-outlined">analytics</span> 현재 화면 데이터 현황 <span style="font-size:.72rem;font-weight:400;color:var(--text-muted);margin-left:6px;">브라우저 캐시 기준</span></h4>
                 </div>
                 <div class="card-body" id="dataStatusInfo"></div>
             </div>
@@ -6277,10 +6274,41 @@ const SettingsModule = (function() {
                             <span>mes_db (MariaDB)</span>
                         </div>
                         <div class="info-item">
-                            <label>저장소</label>
-                            <span>NAS 서버 (192.168.10.15)</span>
+                            <label>API 서버</label>
+                            <span id="sysApiBaseDisplay" style="font-family:monospace;font-size:0.85rem;"></span>
                         </div>
                     </div>
+                </div>
+            </div>
+
+            <!-- ── API 서버 URL 설정 ───────────────────────────── -->
+            <div class="card" style="margin-bottom:20px;">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">dns</span> API 서버 URL 설정</h4>
+                </div>
+                <div class="card-body">
+                    <p style="margin-bottom:14px;font-size:0.875rem;color:var(--text-secondary);line-height:1.6;">
+                        MES 데이터 서버(Node.js API)의 주소를 입력합니다.
+                        변경 후에는 <strong>저장 + 새로고침</strong>이 필요합니다.<br>
+                        <span style="font-size:0.8rem;color:var(--text-muted);">※ 비워두면 현재 접속한 호스트의 <code>:3000</code> 포트를 자동 사용합니다.</span>
+                    </p>
+                    <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+                        <div style="flex:1;min-width:260px;">
+                            <label class="form-label">API 서버 URL</label>
+                            <input type="text" class="form-input" id="sysApiBaseInput"
+                                placeholder="예: http://192.168.10.50:3000"
+                                style="font-family:monospace;font-size:0.9rem;">
+                        </div>
+                        <button class="btn btn-primary" onclick="SettingsModule.saveApiBase()"
+                            style="white-space:nowrap;height:40px;">
+                            <span class="material-symbols-outlined">save</span> 저장 후 새로고침
+                        </button>
+                        <button class="btn btn-secondary" onclick="SettingsModule.clearApiBase()"
+                            style="white-space:nowrap;height:40px;">
+                            <span class="material-symbols-outlined">backspace</span> 초기화 (자동)
+                        </button>
+                    </div>
+                    <div id="sysApiBaseStatus" style="margin-top:8px;font-size:0.8rem;color:var(--text-muted);"></div>
                 </div>
             </div>
 
@@ -6392,6 +6420,55 @@ const SettingsModule = (function() {
             </div>
 
         `;
+
+        // ── API 서버 URL 표시 / 입력 초기화 ──────────────────────────
+        setTimeout(() => {
+            const apiBase = (typeof ApiClient !== 'undefined' && ApiClient.getBase)
+                ? ApiClient.getBase() : '';
+            const saved = (() => { try { return localStorage.getItem('MES_API_BASE') || ''; } catch(e) { return ''; } })();
+
+            const displayEl = document.getElementById('sysApiBaseDisplay');
+            if (displayEl) {
+                displayEl.textContent = apiBase || '(자동 — 현재 호스트:3000)';
+                displayEl.style.color = apiBase ? 'var(--accent-blue)' : 'var(--text-muted)';
+            }
+
+            const inputEl = document.getElementById('sysApiBaseInput');
+            if (inputEl) inputEl.value = saved;
+
+            const statusEl = document.getElementById('sysApiBaseStatus');
+            if (statusEl && apiBase) {
+                statusEl.innerHTML = `현재 연결 중: <code style="background:var(--bg-secondary);padding:1px 5px;border-radius:3px;">${apiBase}</code>`;
+            }
+        }, 50);
+    }
+
+    function saveApiBase() {
+        const inputEl = document.getElementById('sysApiBaseInput');
+        const val = (inputEl ? inputEl.value : '').trim().replace(/\/$/, '');
+        try {
+            if (val) {
+                localStorage.setItem('MES_API_BASE', val);
+                UIUtils.toast(`API 서버 URL이 저장되었습니다. 새로고침합니다…`, 'success');
+            } else {
+                localStorage.removeItem('MES_API_BASE');
+                UIUtils.toast('API 서버 URL이 초기화되었습니다(자동). 새로고침합니다…', 'success');
+            }
+            setTimeout(() => location.reload(), 1200);
+        } catch(e) {
+            UIUtils.toast('저장 실패: ' + e.message, 'error');
+        }
+    }
+
+    function clearApiBase() {
+        try {
+            localStorage.removeItem('MES_API_BASE');
+        } catch(e) {}
+        const inputEl = document.getElementById('sysApiBaseInput');
+        if (inputEl) inputEl.value = '';
+        const statusEl = document.getElementById('sysApiBaseStatus');
+        if (statusEl) statusEl.textContent = 'API 서버 URL 초기화됨 — 저장 후 새로고침하세요.';
+        UIUtils.toast('초기화되었습니다. "저장 후 새로고침"을 눌러 적용하세요.', 'info');
     }
 
     // ── 범용 일괄 수정 ────────────────────────────────────────────────
@@ -7971,6 +8048,8 @@ const SettingsModule = (function() {
         buildProductValidationPanel,
         _filterInjPickList,
         _applyInjPickMat,
+        saveApiBase,
+        clearApiBase,
         _askCascadeRename,
         _doCascadeRename,
         deleteRecordsByPartNames,

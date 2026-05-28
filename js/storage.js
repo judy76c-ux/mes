@@ -132,9 +132,9 @@ const Storage = (function() {
       <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">
         <span class="material-symbols-outlined" style="font-size:22px;">cloud_off</span>
         <div style="display:flex;flex-direction:column;line-height:1.3;min-width:0;">
-          <strong style="font-size:0.95rem;">NAS 서버 연결 불가 — 오프라인 모드</strong>
+          <strong style="font-size:0.95rem;">API 서버 연결 불가 — 오프라인 모드</strong>
           <span style="font-size:0.78rem;opacity:0.92;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-            마지막으로 저장된 로컬 데이터로 조회만 가능 · 변경사항은 NAS에 동기화되지 않습니다
+            마지막으로 저장된 로컬 데이터로 조회만 가능 · 변경사항은 서버에 동기화되지 않습니다
           </span>
         </div>
       </div>
@@ -277,7 +277,7 @@ const Storage = (function() {
   }
 
   function _offlineWriteError() {
-    return new Error('NAS 서버가 연결되지 않아 저장할 수 없습니다. 오프라인 모드는 조회 전용입니다. 서버 연결 후 새로고침하고 다시 저장하세요.');
+    return new Error('API 서버가 연결되지 않아 저장할 수 없습니다. 오프라인 모드는 조회 전용입니다. 서버 연결 후 새로고침하고 다시 저장하세요.');
   }
 
   function _assertWritable() {

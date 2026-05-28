@@ -49,7 +49,10 @@ const App = (function() {
             const isDbErr    = !isNasError && /IndexedDB|DB 연결|버전|version/i.test(msg);
 
             if (isNasError) {
-                // ── NAS 서버 연결 불가 전용 화면 (주황색 테마) ─────────
+                const apiBase = (typeof ApiClient !== 'undefined' && ApiClient.getBase)
+                    ? ApiClient.getBase() : '';
+                const healthUrl = apiBase ? apiBase + '/health' : '';
+                // ── API 서버 연결 불가 전용 화면 (주황색 테마) ─────────
                 contentArea.innerHTML = `
                     <div style="margin-top:60px;display:flex;flex-direction:column;align-items:center;padding:0 20px;">
                         <div style="
@@ -60,9 +63,9 @@ const App = (function() {
                         ">
                             <span class="material-symbols-outlined" style="font-size:54px;color:#fff;">cloud_off</span>
                         </div>
-                        <h2 style="margin:0 0 8px;color:#ff6b35;">NAS 서버 연결 불가</h2>
+                        <h2 style="margin:0 0 8px;color:#ff6b35;">API 서버 연결 불가</h2>
                         <p style="color:var(--text-secondary);max-width:520px;text-align:center;margin:0 0 20px;">
-                            MES NAS API 서버(<code style="background:var(--bg-secondary);padding:2px 6px;border-radius:4px;">192.168.10.15:3000</code>)에<br>
+                            MES API 서버${apiBase ? `(<code style="background:var(--bg-secondary);padding:2px 6px;border-radius:4px;">${apiBase}</code>)` : ''}에<br>
                             연결할 수 없고, 로컬 백업 캐시(IndexedDB)도 사용할 수 없습니다.
                         </p>
 
@@ -73,14 +76,14 @@ const App = (function() {
                         ">
                             <div style="font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:6px;">
                                 <span class="material-symbols-outlined" style="font-size:20px;">checklist</span>
-                                NAS 연결 점검 순서
+                                서버 연결 점검 순서
                             </div>
                             <ol style="margin:0;padding-left:22px;">
-                                <li><strong>NAS 서버 전원</strong> 켜져 있는지 확인</li>
+                                <li><strong>MES 서버 전원</strong> 켜져 있는지 확인</li>
                                 <li><strong>같은 사내 네트워크</strong>(공유기/Wi-Fi)에 접속되어 있는지 확인</li>
                                 <li>외부에서 접속 중이면 <strong>VPN 연결</strong> 확인</li>
-                                <li>NAS의 <strong>MES API Docker 컨테이너</strong>가 실행 중인지 확인</li>
-                                <li>브라우저에서 <a href="http://192.168.10.15:3000/health" target="_blank" style="color:#0369a1;text-decoration:underline;">http://192.168.10.15:3000/health</a> 직접 열어서 응답 확인</li>
+                                <li>서버의 <strong>MES API 서비스(Node.js)</strong>가 실행 중인지 확인</li>
+                                ${healthUrl ? `<li>브라우저에서 <a href="${healthUrl}" target="_blank" style="color:#0369a1;text-decoration:underline;">${healthUrl}</a> 직접 열어서 응답 확인</li>` : '<li>관리/설정 > 시스템 탭에서 <strong>API 서버 URL</strong>이 올바르게 설정되어 있는지 확인</li>'}
                             </ol>
                         </div>
 
@@ -97,9 +100,9 @@ const App = (function() {
                             <button class="btn btn-primary" style="background:#ff6b35;border-color:#ff6b35;" onclick="location.reload()">
                                 <span class="material-symbols-outlined">refresh</span> 재연결 시도
                             </button>
-                            <button class="btn btn-secondary" onclick="window.open('http://192.168.10.15:3000/health','_blank')">
-                                <span class="material-symbols-outlined">open_in_new</span> NAS 직접 확인
-                            </button>
+                            ${healthUrl ? `<button class="btn btn-secondary" onclick="window.open('${healthUrl}','_blank')">
+                                <span class="material-symbols-outlined">open_in_new</span> 서버 직접 확인
+                            </button>` : ''}
                         </div>
                     </div>
                 `;

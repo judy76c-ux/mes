@@ -141,7 +141,7 @@ const SettingsBackupExtension = (function() {
             const backups = info.backups || [];
             panel.innerHTML = `
                 <div class="card-header">
-                    <h4><span class="material-symbols-outlined">cloud_sync</span> 서버 자동 백업 <span style="font-size:.72rem;font-weight:400;color:var(--text-muted);margin-left:6px;">NAS MariaDB → NAS 서버 내 JSON 파일</span></h4>
+                    <h4><span class="material-symbols-outlined">cloud_sync</span> 서버 자동 백업 <span style="font-size:.72rem;font-weight:400;color:var(--text-muted);margin-left:6px;">MES 서버 DB → 로컬 JSON 백업 + NAS 복사본</span></h4>
                     <span class="badge ${cfg.enabled !== false ? 'badge-success' : 'badge-secondary'}">
                         ${cfg.enabled !== false ? '자동 실행 중' : '자동 실행 중지'}
                     </span>
@@ -153,25 +153,26 @@ const SettingsBackupExtension = (function() {
                         <div style="padding:10px 12px;border-radius:8px;background:#f0fdf4;border:1px solid #86efac;">
                             <div style="font-size:.75rem;font-weight:700;color:#166534;margin-bottom:5px;">✅ 백업 대상 데이터</div>
                             <div style="font-size:.78rem;color:#166534;line-height:1.6;">
-                                NAS 서버 MariaDB의 <b>전체 생산 데이터</b><br>
+                                MES 웹서버 MariaDB의 <b>전체 생산 데이터</b><br>
                                 사출·도장·레이져·출하·품질 등<br>모든 공정 기록 포함
                             </div>
                         </div>
                         <div style="padding:10px 12px;border-radius:8px;background:#eff6ff;border:1px solid #93c5fd;">
                             <div style="font-size:.75rem;font-weight:700;color:#1e3a8a;margin-bottom:5px;">📁 저장 위치</div>
                             <div style="font-size:.78rem;color:#1e3a8a;line-height:1.6;">
-                                <b>NAS 서버 내부</b> 백업 폴더<br>
+                                <b>MES API 서버 로컬</b> 백업 폴더<br>
                                 <code style="background:#dbeafe;padding:1px 4px;border-radius:3px;font-size:.72rem;">${esc(info.backupDir || '/mes-server/backups')}</code><br>
-                                서버가 켜져 있는 동안 자동 실행
+                                NAS 연결 시 동일 파일을 NAS에도 복사
                             </div>
                         </div>
                         <div style="padding:10px 12px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;">
                             <div style="font-size:.75rem;font-weight:700;color:#9a3412;margin-bottom:5px;">💡 어떤 도움이 되나요?</div>
                             <div style="font-size:.78rem;color:#9a3412;line-height:1.6;">
-                                NAS 서버 DB 손상·장애 시 복구 가능<br>
+                                MES 서버 DB 손상 시 즉시 복구 가능<br>
+                                MES 서버 하드웨어 장애 시 NAS 백업으로 재구축 가능<br>
                                 설정 주기마다 <b>자동</b> 실행<br>
                                 [복원] 버튼으로 전체 데이터 즉시 복구<br>
-                                <span style="color:#dc2626;">※ 서버 상시 실행(PM2/systemd) 필요</span>
+                                <span style="color:#dc2626;">※ API 서버와 NAS 마운트 상태 확인 필요</span>
                             </div>
                         </div>
                     </div>
@@ -270,7 +271,7 @@ const SettingsBackupExtension = (function() {
                     </div>
 
                     <div style="font-size:.78rem;color:var(--text-muted);line-height:1.6;">
-                        API 서버가 실행 중이어야 예약 백업이 동작합니다. Ubuntu에서는 PM2 또는 systemd로 API 서버를 상시 실행하세요.
+                        API 서버가 실행 중이어야 예약 백업이 동작합니다. MES 서버에서는 PM2 또는 systemd로 API 서버를 상시 실행하세요.
                     </div>
                 </div>`;
             toggleScheduleFields();
@@ -367,14 +368,14 @@ const SettingsBackupExtension = (function() {
             }
             panel.innerHTML = `
                 <div class="card-header">
-                    <h4><span class="material-symbols-outlined">hard_drive</span> NAS HDD 백업</h4>
+                    <h4><span class="material-symbols-outlined">hard_drive</span> NAS 백업 보관</h4>
                     <span class="badge badge-secondary">로컬 모드</span>
                 </div>
                 <div class="card-body">
                     <div style="padding:14px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);color:var(--text-muted);font-size:.88rem;line-height:1.6;">
                         <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;margin-right:4px;">info</span>
-                        로컬 파일 모드에서는 NAS HDD 백업을 사용할 수 없습니다.<br>
-                        Ubuntu 서버를 통해 접속하면 NAS 백업 기능을 이용할 수 있습니다.
+                        로컬 파일 모드에서는 NAS 백업 보관 기능을 사용할 수 없습니다.<br>
+                        MES 서버를 통해 접속하면 NAS 백업 기능을 이용할 수 있습니다.
                     </div>
                 </div>`;
             return;
@@ -397,7 +398,7 @@ const SettingsBackupExtension = (function() {
 
         panel.innerHTML = `
             <div class="card-header">
-                <h4><span class="material-symbols-outlined">hard_drive</span> NAS HDD 백업</h4>
+                <h4><span class="material-symbols-outlined">hard_drive</span> NAS 백업 보관</h4>
             </div>
             <div class="card-body">
                 <div style="color:var(--text-muted);font-size:.9rem;">NAS 설정을 불러오는 중...</div>
@@ -414,7 +415,7 @@ const SettingsBackupExtension = (function() {
 
             panel.innerHTML = `
                 <div class="card-header">
-                    <h4><span class="material-symbols-outlined">hard_drive</span> NAS HDD 백업 <span style="font-size:.72rem;font-weight:400;color:var(--text-muted);margin-left:6px;">NAS 서버 JSON 파일 → NAS HDD 외부 저장장치</span></h4>
+                    <h4><span class="material-symbols-outlined">hard_drive</span> NAS 백업 보관 <span style="font-size:.72rem;font-weight:400;color:var(--text-muted);margin-left:6px;">MES 서버 로컬 백업 → NAS 공유 폴더 복사본</span></h4>
                     <span class="badge ${connected ? 'badge-success' : 'badge-secondary'}">${connected ? '연결됨' : '미연결'}</span>
                 </div>
                 <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
@@ -425,25 +426,25 @@ const SettingsBackupExtension = (function() {
                             <div style="font-size:.75rem;font-weight:700;color:#166534;margin-bottom:5px;">✅ 백업 대상 데이터</div>
                             <div style="font-size:.78rem;color:#166534;line-height:1.6;">
                                 [서버 자동 백업]으로 생성된<br>
-                                <b>NAS 서버의 JSON 백업 파일</b>을<br>
-                                HDD(외장드라이브)에 2차 복사
+                                <b>MES 서버 JSON 백업 파일</b>을<br>
+                                NAS 공유 폴더에 2차 보관
                             </div>
                         </div>
                         <div style="padding:10px 12px;border-radius:8px;background:#eff6ff;border:1px solid #93c5fd;">
                             <div style="font-size:.75rem;font-weight:700;color:#1e3a8a;margin-bottom:5px;">📁 저장 위치</div>
                             <div style="font-size:.78rem;color:#1e3a8a;line-height:1.6;">
-                                Ubuntu 서버에 마운트된<br>
-                                <b>NFS/SMB 외부 저장 경로</b><br>
+                                MES 서버에 마운트된<br>
+                                <b>NAS NFS/SMB 공유 경로</b><br>
                                 아래 경로란에 직접 입력
                             </div>
                         </div>
                         <div style="padding:10px 12px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;">
                             <div style="font-size:.75rem;font-weight:700;color:#9a3412;margin-bottom:5px;">💡 어떤 도움이 되나요?</div>
                             <div style="font-size:.78rem;color:#9a3412;line-height:1.6;">
-                                NAS 서버 자체 고장·화재 등<br>
-                                <b>최악의 상황</b>에서도 복구 가능<br>
-                                서버 백업의 <b>물리적 2중 보호</b><br>
-                                [서버로 복사] 후 복원 가능
+                                MES 서버 하드웨어 장애 시<br>
+                                NAS 백업으로 <b>새 서버 재구축</b> 가능<br>
+                                로컬 백업의 <b>물리적 2중 보호</b><br>
+                                [서버복사] 후 복원 가능
                             </div>
                         </div>
                     </div>
@@ -454,7 +455,7 @@ const SettingsBackupExtension = (function() {
                         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                             <input type="text" id="nasBackupDirInput" class="form-input"
                                 style="flex:1;min-width:260px;font-family:monospace;font-size:.85rem;"
-                                placeholder="/mnt/nas-backup/mes-backups"
+                                placeholder="/mnt/nas-backup"
                                 value="${esc(nasCfg.nasDir || '')}">
                             <div class="form-group" style="margin:0;display:flex;align-items:center;gap:6px;">
                                 <label style="font-size:.82rem;white-space:nowrap;color:var(--text-muted);">최대 보관 수</label>
@@ -469,12 +470,12 @@ const SettingsBackupExtension = (function() {
                         ${!connected && nasCfg.nasDir ? `
                         <div style="margin-top:8px;font-size:.8rem;color:var(--accent-red);">
                             ⚠ 경로가 설정되어 있으나 마운트되지 않았습니다.
-                            Ubuntu 서버에서 NFS/SMB 마운트 후 다시 확인하세요.
+                            MES 서버에서 NFS/SMB 마운트 후 다시 확인하세요.
                             ${info.error ? `<br>${esc(info.error)}` : ''}
                         </div>` : ''}
                         ${!nasCfg.nasDir ? `
                         <div style="margin-top:8px;font-size:.8rem;color:var(--text-muted);">
-                            Ubuntu 서버에 NAS를 마운트한 경로를 입력하세요. (예: /mnt/nas-backup/mes-backups)
+                            MES 서버에 NAS를 마운트한 경로를 입력하세요. (예: /mnt/nas-backup)
                         </div>` : ''}
                     </div>
 

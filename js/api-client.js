@@ -5,24 +5,25 @@
  */
 
 const ApiClient = (function() {
-  // NAS API 서버 주소 (같은 망이면 내부 IP, 외부는 도메인/포트포워딩)
+  // API 서버 주소 결정 우선순위:
+  //   1) localStorage 'MES_API_BASE' (관리/설정 > 시스템 탭에서 변경 가능)
+  //   2) HTTP/HTTPS 접속 시 → 같은 호스트의 :3000 포트
+  //   3) file:// 직접 열기 → localStorage 설정 필수 (없으면 경고만)
   function resolveApiBase() {
     try {
       const saved = localStorage.getItem('MES_API_BASE');
-      if (saved) return saved.replace(/\/$/, '');
+      if (saved && saved.trim()) return saved.trim().replace(/\/$/, '');
     } catch (e) {}
 
     if (typeof location !== 'undefined' && location.protocol && location.hostname) {
       if (location.protocol === 'http:' || location.protocol === 'https:') {
         const h = location.hostname;
-        // localhost / 로컬 개발 서버 → NAS API 직접 연결
-        if (h === 'localhost' || h === '127.0.0.1') {
-          return 'http://192.168.10.2:3000';
-        }
+        // 포트가 명시된 경우(예: :8080 서빙) — 동일 호스트 :3000 사용
         return `${location.protocol}//${h}:3000`;
       }
     }
-    return 'http://192.168.10.2:3000'; // file:// 포함 기타
+    // file:// 등 — localStorage 미설정 시 빈 문자열(헬스체크 실패 → 오프라인 모드)
+    return '';
   }
 
   const API_BASE = resolveApiBase();
@@ -39,6 +40,9 @@ const ApiClient = (function() {
   }
 
   async function request(method, path, body, timeoutMs) {
+    if (!API_BASE) {
+      throw new Error('API 서버 주소가 설정되지 않았습니다. 관리/설정 > 시스템 탭에서 API 서버 URL을 입력하세요.');
+    }
     const options = {
       method,
       headers: { 'Content-Type': 'application/json' }
@@ -53,7 +57,7 @@ const ApiClient = (function() {
       if (e.name === 'AbortError') {
         throw new Error(`API 서버 응답 시간 초과 (${API_BASE})`);
       }
-      throw new Error(`API 서버 연결 실패 (${API_BASE}) — NAS 서버가 켜져 있고 같은 네트워크에 있는지 확인하세요.`);
+      throw new Error(`API 서버 연결 실패 (${API_BASE}) — 서버가 실행 중이고 같은 네트워크에 있는지 확인하세요.`);
     }
 
     if (!res.ok) {
@@ -157,11 +161,15 @@ const ApiClient = (function() {
     return request('POST', `/api/nas-backups/${encodeURIComponent(fileName)}/restore`, {}, 60000);
   }
 
+  // API 서버 주소 반환 (에러 메시지·UI 표시용)
+  function getBase() { return API_BASE; }
+
   return {
     init, getAll, save, saveAll, remove, getConfig, setConfig,
     getBackupConfig, saveBackupConfig, listBackups, createBackup,
     cleanupBackups, deleteBackup, backupDownloadUrl, restoreBackup,
     getNasConfig, saveNasConfig,
-    listNasBackups, nasBackupDownloadUrl, copyNasToLocal, restoreNasBackup
+    listNasBackups, nasBackupDownloadUrl, copyNasToLocal, restoreNasBackup,
+    getBase
   };
 })();
