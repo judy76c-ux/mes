@@ -306,7 +306,7 @@ var JigModule = (function () {
         if (!carSel || !partSel) return;
         const curCar = carSel.value || '';
         const curPart = partSel.value || '';
-        const cars = [...new Set(jigs.map(j => j.carModel).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+        const cars = UIUtils.sortCarModels(jigs.map(j => j.carModel));
         carSel.innerHTML = `<option value="">전체 차종</option>` + cars.map(c => `<option value="${_esc(c)}" ${c === curCar ? 'selected' : ''}>${_esc(c)}</option>`).join('');
         const parts = [...new Set(jigs.filter(j => !curCar || j.carModel === curCar).flatMap(_jigPartNames))].sort((a, b) => a.localeCompare(b, 'ko'));
         partSel.innerHTML = `<option value="">전체 품목</option>` + parts.map(p => `<option value="${_esc(p)}" ${p === curPart ? 'selected' : ''}>${_esc(p)}</option>`).join('');
@@ -680,7 +680,7 @@ var JigModule = (function () {
     function _carModelOptions(selected = '') {
         // 레이져 공정이 있는 제품의 차종만 표시
         const laserProds = _laserProducts();
-        const cars = [...new Set(laserProds.map(p => p.carModel).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+        const cars = UIUtils.sortCarModels(laserProds.map(p => p.carModel), laserProds);
         const note = cars.length === 0
             ? '<option value="" disabled>레이져 공정 제품 없음</option>'
             : '';

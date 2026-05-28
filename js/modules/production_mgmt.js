@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 생산 관리 모듈 (작업조건 관리, 초중종물 관리, 설비관리)
  */
 
@@ -463,7 +463,7 @@ var ProdStandardsModule = (function() {
 
     function _productOptions(selectedCar, selectedPart) {
         const products = Storage.getAll(DB.STORES.PRODUCTS);
-        const cars = [...new Set(products.map(p => p.carModel).filter(Boolean))];
+        const cars = UIUtils.sortCarModels(products.map(p => p.carModel), products);
         const parts = products.filter(p => !selectedCar || p.carModel === selectedCar).map(p => p.partName).filter(Boolean);
         return { cars, parts };
     }
@@ -5117,7 +5117,7 @@ window.addEventListener('load', function() {
         const carModelVal = _curCarModel || meta.model || '';
         const partNameVal = _curPartName || meta.partName || '';
         const products = Storage.getAll(DB.STORES.PRODUCTS);
-        const cars  = [...new Set(products.map(p => p.carModel).filter(Boolean))];
+        const cars  = UIUtils.sortCarModels(products.map(p => p.carModel), products);
         const parts = products.filter(p => !carModelVal || p.carModel === carModelVal).map(p => p.partName).filter(Boolean);
 
         const formHtml = `
@@ -8646,8 +8646,7 @@ var PaintMixModule = (function() {
     function _carOptions(selected) {
         const products = Storage.getAll(PRODUCT_STORE) || [];
         const works = Storage.getAll(PAINT_WORK_STORE) || [];
-        const cars = [...new Set([...products.map(p => p.carModel), ...works.map(w => w.carModel)].filter(Boolean))]
-            .sort((a, b) => a.localeCompare(b, 'ko'));
+        const cars = UIUtils.sortCarModels([...products.map(p => p.carModel), ...works.map(w => w.carModel)], products);
         return cars.map(c => `<option value="${_esc(c)}" ${c === selected ? 'selected' : ''}>${_esc(c)}</option>`).join('');
     }
 
@@ -9981,8 +9980,7 @@ var ProdQualityModule = (function() {
     function _carOptions(selected) {
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
         const workCars = (Storage.getAll(PAINT_WORK_STORE) || []).map(w => w.carModel);
-        const cars = [...new Set([...products.map(p => p.carModel), ...workCars].filter(Boolean))]
-            .sort((a, b) => a.localeCompare(b, 'ko'));
+        const cars = UIUtils.sortCarModels([...products.map(p => p.carModel), ...workCars], products);
         return cars.map(c => `<option value="${_esc(c)}" ${c === selected ? 'selected' : ''}>${_esc(c)}</option>`).join('');
     }
 
@@ -10914,7 +10912,7 @@ var ProdQualityModule = (function() {
     }
 
     function _bulkTemplateFormHtml(combos) {
-        const cars = [...new Set(combos.map(c => c.carModel).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+        const cars = UIUtils.sortCarModels(combos.map(c => c.carModel));
         const items = _masterItems().map(item => ({ ...item, selected: item.selected !== false }));
         return `
             <div style="display:grid;grid-template-columns:260px 1fr;gap:14px;min-height:56vh;">
@@ -15814,7 +15812,8 @@ var ProdSpcModule = (function() {
 
     // ── 헬퍼 ────────────────────────────────────────────────────
     function _carOptions(sel) {
-        const cars = [...new Set((Storage.getAll(DB.STORES.PRODUCTS)||[]).map(p=>p.carModel).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ko'));
+        const productsForCars = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const cars = UIUtils.sortCarModels(productsForCars.map(p=>p.carModel), productsForCars);
         return cars.map(c=>`<option value="${_esc(c)}" ${c===sel?'selected':''}>${_esc(c)}</option>`).join('');
     }
     function _partOptions(car, sel) {
@@ -16520,15 +16519,3 @@ var WastewaterModule = (function () {
         _onYearChange
     };
 })();
-
-
-
-
-
-
-
-
-
-
-
-

@@ -127,7 +127,7 @@ var InjectionWarehouseModule = (function() {
 
 
         // ── 차종 드롭다운 채우기 ───────────────────────────────────
-        const carModels = [...new Set(data.map(d => d.carModel).filter(Boolean))].sort();
+        const carModels = UIUtils.sortCarModels(data.map(d => d.carModel));
         ['injTileCarFilter','injTxCar'].forEach(id => {
             const sel = document.getElementById(id);
             if (!sel) return;
@@ -658,11 +658,12 @@ var InjectionWarehouseModule = (function() {
                     .filter(v => v.stock > 0)
                     .map(v => v.carModel)
             );
-            uniqueCarModels = [...new Set(materials.map(m => m.carModel).filter(Boolean))]
-                .filter(c => carsWithStock.has(c))
-                .sort();
+            uniqueCarModels = UIUtils.sortCarModels(
+                materials.map(m => m.carModel).filter(c => carsWithStock.has(c)),
+                materials
+            );
         } else {
-            uniqueCarModels = [...new Set(materials.map(m => m.carModel).filter(Boolean))].sort();
+            uniqueCarModels = UIUtils.sortCarModels(materials.map(m => m.carModel), materials);
         }
 
         const colorClass = type === '출고' ? 'var(--accent-red)' : 'var(--accent-blue)';
@@ -1893,7 +1894,7 @@ var InjectionWarehouseModule = (function() {
             lots: Array.from(r.lots).sort()
         })).sort((a, b) => a.carModel.localeCompare(b.carModel) || a.partName.localeCompare(b.partName) || a.color.localeCompare(b.color));
 
-        const carModels = [...new Set(rows.map(r => r.carModel).filter(c => c !== '-'))].sort();
+        const carModels = UIUtils.sortCarModels(rows.map(r => r.carModel).filter(c => c !== '-'));
 
         const tableRows = rows.length === 0 ?
             `<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text-muted);">재고 데이터가 없습니다.</td></tr>` :

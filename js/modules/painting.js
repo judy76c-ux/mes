@@ -567,7 +567,7 @@ const PaintingWorkModule = (function() {
             });
 
         // 차종·품명 드롭다운 초기화 (unique 값 수집)
-        const uniqueCarModels = [...new Set(data.map(d => d.carModel).filter(Boolean))].sort();
+        const uniqueCarModels = UIUtils.sortCarModels(data.map(d => d.carModel));
         const uniquePartNames = [...new Set(data.map(d => d.partName).filter(Boolean))].sort();
 
         const carModelSel = document.getElementById('pwFilterCarModel');
@@ -3531,7 +3531,7 @@ const PaintingInspectionModule = (function() {
         allData.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
         // 고유 차종/품명 추출
-        const uniqueCarModels = [...new Set(allData.map(d => d.carModel).filter(Boolean))].sort();
+        const uniqueCarModels = UIUtils.sortCarModels(allData.map(d => d.carModel));
         const uniquePartNames = [...new Set(allData.map(d => d.partName).filter(Boolean))].sort();
 
         // 초기값
@@ -4726,7 +4726,7 @@ const PaintingInspectionModule = (function() {
 
     // 고유 차종 추출
     function _getUniqueCarModels(data) {
-        return [...new Set(data.map(d => d.carModel).filter(Boolean))].sort();
+        return UIUtils.sortCarModels(data.map(d => d.carModel));
     }
 
     // 고유 품명 추출

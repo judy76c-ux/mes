@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 사출 공정 모듈
  * - 사출 입고 (수입검사일지)
  * - 사출 창고 (자재 재고관리)
@@ -96,7 +96,7 @@ var InjectionIncomingModule = (function() {
                 const carModelEl = document.getElementById('injInspCarModel');
                 if (carModelEl) {
                     const prevCar = carModelEl.value;
-                    const carModels = [...new Set(allData.map(d => d.carModel).filter(Boolean))].sort();
+                    const carModels = UIUtils.sortCarModels(allData.map(d => d.carModel));
                     carModelEl.innerHTML = '<option value="">전체</option>' +
                         carModels.map(m => `<option value="${m}" ${m === prevCar ? 'selected' : ''}>${m}</option>`).join('');
                 }
@@ -248,7 +248,7 @@ var InjectionIncomingModule = (function() {
 
             function openAddModal() {
                 const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS);
-                const carModels = [...new Set(materials.map(m => m.carModel).filter(Boolean))].sort();
+                const carModels = UIUtils.sortCarModels(materials.map(m => m.carModel), materials);
                 const carModelOptions = carModels.map(c => `<option value="${c}">${c}</option>`).join('');
 
                 const inspectors = Storage.getAll(DB.STORES.INSPECTORS);
@@ -1182,4 +1182,3 @@ var InjectionIncomingModule = (function() {
 // 사출 창고 (자재 재고관리)
 // ===================================================================
 // InjectionWarehouseModule 관련 코드는 injection_part2.js로 이관되었습니다.
-

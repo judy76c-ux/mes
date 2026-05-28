@@ -98,7 +98,7 @@ var InjectionIncomingModule = (function() {
         const el = document.getElementById('injInspCarModel');
         if (!el) return;
         const prev = el.value;
-        const carModels = [...new Set(allData.map(d => d.carModel).filter(Boolean))].sort();
+        const carModels = UIUtils.sortCarModels(allData.map(d => d.carModel));
         el.innerHTML = '<option value="">전체</option>' +
             carModels.map(m => `<option value="${m}" ${m === prev ? 'selected' : ''}>${m}</option>`).join('');
     }
@@ -375,12 +375,11 @@ var InjectionIncomingModule = (function() {
     function openAddModal() {
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS);
         // 외부공급처 제품이 있는 차종만 필터링 (사내만 있는 차종 제외)
-        const carModelsWithExternal = [...new Set(
-            materials
-                .filter(m => m.supplier !== '사내')
-                .map(m => m.carModel)
-                .filter(Boolean)
-        )].sort();
+        const externalMaterialsForCars = materials.filter(m => m.supplier !== '사내');
+        const carModelsWithExternal = UIUtils.sortCarModels(
+            externalMaterialsForCars.map(m => m.carModel),
+            externalMaterialsForCars
+        );
         const carModelOptions = carModelsWithExternal.map(c => `<option value="${c}">${c}</option>`).join('');
 
         const inspectors = Storage.getAll(DB.STORES.INSPECTORS);
@@ -909,7 +908,7 @@ var InjectionIncomingModule = (function() {
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
         // 외부공급처만 필터링
         const externalMaterials = materials.filter(m => m.supplier !== '사내');
-        const carModels = [...new Set(externalMaterials.map(m => m.carModel).filter(Boolean))].sort();
+        const carModels = UIUtils.sortCarModels(externalMaterials.map(m => m.carModel), externalMaterials);
         const carModelOptions = carModels.map(c => `<option value="${c}" ${d.carModel === c ? 'selected' : ''}>${c}</option>`).join('');
 
         UIUtils.showModal('수입검사 수정', `

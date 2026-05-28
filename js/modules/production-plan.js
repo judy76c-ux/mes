@@ -1363,7 +1363,7 @@ const ProductionPlanModule = (function() {
             return hasLineProcess;
         });
         if (lineProducts.length === 0) lineProducts = products;
-        const models = [...new Set(lineProducts.map(p => p.carModel).filter(Boolean))];
+        const models = UIUtils.sortCarModels(lineProducts.map(p => p.carModel), lineProducts);
 
         let parts = [];
         let colors = [];

@@ -548,7 +548,7 @@ const SettingsModule = (function() {
             (a.carModel || '').localeCompare(b.carModel || '', 'ko') || (a.partName || '').localeCompare(b.partName || '', 'ko')
         );
         const injMaterials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
-        const uniqueCarModels = [...new Set(products.map(p => p.carModel).filter(Boolean))].sort();
+        const uniqueCarModels = UIUtils.sortCarModels(products.map(p => p.carModel), products);
         const uniqueCustomers = [...new Set(products.map(p => p.customer).filter(Boolean))].sort();
         const colspan = 13;
 
@@ -716,7 +716,7 @@ const SettingsModule = (function() {
                 ((a.carModel||'')+(a.injPartName||'')).localeCompare((b.carModel||'')+(b.injPartName||''))
             );
         if (!mats.length) return '';
-        const carModels = [...new Set(mats.map(m => (m.carModel||'').trim()).filter(Boolean))].sort();
+        const carModels = UIUtils.sortCarModels(mats.map(m => (m.carModel||'').trim()), mats);
         const carOpts = carModels.map(cm =>
             `<option value="${cm.replace(/"/g,'&quot;')}">${cm}</option>`).join('');
         const matOpts = mats.map(m => {
@@ -2244,7 +2244,7 @@ const SettingsModule = (function() {
             (a.carModel || '').localeCompare(b.carModel || '', 'ko') || (a.injPartName || '').localeCompare(b.injPartName || '', 'ko')
         );
         const uniqueSuppliers  = [...new Set(items.map(m => m.supplier).filter(Boolean))].sort();
-        const uniqueCarModels  = [...new Set(items.map(m => m.carModel).filter(Boolean))].sort();
+        const uniqueCarModels  = UIUtils.sortCarModels(items.map(m => m.carModel), items);
 
         // 원재료 실시간 매칭 헬퍼 (injPartName → usedFor + injColor → color 동시 매칭)
         const rawMats = Storage.getAll(DB.STORES.RAW_MATERIALS) || [];
@@ -2360,7 +2360,7 @@ const SettingsModule = (function() {
         const v = k => m[k] !== undefined ? m[k] : '';
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
         const rawMats = Storage.getAll(DB.STORES.RAW_MATERIALS) || [];
-        const uniqueCarModels = [...new Set(products.map(p => p.carModel).filter(Boolean))].sort();
+        const uniqueCarModels = UIUtils.sortCarModels(products.map(p => p.carModel), products);
         const carModelOptions = uniqueCarModels.map(c =>
             `<option value="${c}" ${v('carModel') === c ? 'selected' : ''}>${c}</option>`
         ).join('');
@@ -3725,7 +3725,7 @@ const SettingsModule = (function() {
                     <span style="font-size:0.78rem;color:var(--text-muted);font-weight:400;margin-left:6px;">사출자재에서 검색 후 선택 (복수 가능)</span>
                 </label>
                 ${usedForOptions.length > 0 ? (() => {
-                    const carModels = [...new Set(usedForOptions.map(o => o.carModel).filter(Boolean))].sort();
+                    const carModels = UIUtils.sortCarModels(usedForOptions.map(o => o.carModel));
                     return `
                 <div style="display:flex;gap:8px;margin-bottom:6px;align-items:center;">
                     <select id="rmCarModelFilter" class="form-select" style="width:130px;padding:5px 8px;font-size:0.82rem;flex-shrink:0;"
@@ -6974,7 +6974,7 @@ const SettingsModule = (function() {
 
         // 통계
         let cntOk = 0, cntText = 0, cntError = 0, cntEmpty = 0;
-        const uniqueCars = [...new Set(mats.map(m => m.carModel).filter(Boolean))].sort();
+        const uniqueCars = UIUtils.sortCarModels(mats.map(m => m.carModel), mats);
 
         const rows = mats.map((m, idx) => {
             const st1 = slotStatus(m, 0);

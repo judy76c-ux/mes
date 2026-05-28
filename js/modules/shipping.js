@@ -201,7 +201,7 @@ const ShippingStandbyModule = (function() {
         const currentCar = carSel.value || '';
         const currentPart = partSel.value || '';
         const data = _getHistoryBaseData();
-        const cars = [...new Set(data.map(d => d.carModel).filter(Boolean))].sort();
+        const cars = UIUtils.sortCarModels(data.map(d => d.carModel));
         const partsBase = currentCar ? data.filter(d => (d.carModel || '') === currentCar) : data;
         const parts = [...new Set(partsBase.map(d => d.partName).filter(Boolean))].sort();
 

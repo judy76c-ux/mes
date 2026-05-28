@@ -79,14 +79,14 @@ var SalesDeliveryModule = (function() {
     function _filterCars(customer = '') {
         const deliveries = Storage.getAll(STORE) || [];
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-        return _uniqueSorted([
+        return UIUtils.sortCarModels([
             ...deliveries
                 .filter(d => !customer || d.customer === customer)
                 .map(d => d.carModel),
             ...products
                 .filter(p => !customer || (p.customer || p.deliveryCustomer || p.client) === customer)
                 .map(p => p.carModel)
-        ]);
+        ], products);
     }
 
     function _filterOptions(values, selected, label) {
@@ -191,7 +191,7 @@ var SalesDeliveryModule = (function() {
 
     function _sdCarModelOptions(selected) {
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-        const cars = [...new Set(products.map(p => p.carModel).filter(Boolean))].sort();
+        const cars = UIUtils.sortCarModels(products.map(p => p.carModel), products);
         return `<option value="">-- 차종 선택 --</option>` +
             cars.map(c => `<option value="${c}" ${c === selected ? 'selected' : ''}>${c}</option>`).join('');
     }
@@ -733,7 +733,7 @@ var SalesDeliveryPlanModule = (function() {
             ...(Storage.getAll(STORE) || []).map(d => d.customer)
         ];
         return `
-            <datalist id="sdpCarList">${_optionList(products.map(p => p.carModel))}</datalist>
+            <datalist id="sdpCarList">${UIUtils.sortCarModels(products.map(p => p.carModel), products).map(v => `<option value="${_esc(v)}"></option>`).join('')}</datalist>
             <datalist id="sdpPartList">${_optionList(products.map(p => p.partName))}</datalist>
             <datalist id="sdpColorList">${_optionList(products.map(p => p.color))}</datalist>
             <datalist id="sdpCustomerList">${_optionList(customers)}</datalist>
@@ -781,7 +781,7 @@ var SalesDeliveryPlanModule = (function() {
         const productCars = products
             .filter(p => !customerKey || _norm(_customerOf(p)) === customerKey || linkedProductKeys.has(_productKey(p)))
             .map(p => p.carModel);
-        return [...productCars, ...planCars, ...deliveryCars];
+        return UIUtils.sortCarModels([...productCars, ...planCars, ...deliveryCars], products);
     }
 
     function onMainCustomerChange() {
@@ -1396,7 +1396,7 @@ var SalesDeliveryPlanModule = (function() {
                 <div class="form-group">
                     <label class="form-label">차종</label>
                     <select class="form-select" id="sdpGridCar" onchange="SalesDeliveryPlanModule.renderGridEditorRows()">
-                        ${_selectOptions(products.map(p => p.carModel), '', '-- 차종 선택 --')}
+                        ${_selectOptions(UIUtils.sortCarModels(products.map(p => p.carModel), products), '', '-- 차종 선택 --')}
                     </select>
                 </div>
                 <div class="form-group" style="align-self:flex-end;">

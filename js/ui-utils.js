@@ -212,6 +212,27 @@ const UIUtils = (function () {
         </span>`;
     }
 
+    function sortCarModels(values, sourceRows) {
+        const models = [...new Set((values || []).map(v => String(v || '').trim()).filter(Boolean))];
+        const rows = Array.isArray(sourceRows) && sourceRows.length
+            ? sourceRows
+            : (typeof Storage !== 'undefined' && Storage.getAll && typeof DB !== 'undefined'
+                ? (Storage.getAll(DB.STORES.PRODUCTS) || [])
+                : []);
+        const massModels = new Set();
+        rows.forEach(r => {
+            const car = String((r && r.carModel) || '').trim();
+            const itemType = String((r && r.itemType) || '').trim();
+            if (car && itemType.includes('양산')) massModels.add(car);
+        });
+        return models.sort((a, b) => {
+            const am = massModels.has(a) ? 0 : 1;
+            const bm = massModels.has(b) ? 0 : 1;
+            if (am !== bm) return am - bm;
+            return a.localeCompare(b, 'en', { numeric: true, sensitivity: 'base' });
+        });
+    }
+
     // ── 페이지네이션 ──────────────────────────────────────────────────────
     // renderPagination(currentPage, totalPages, onPageClick)
     function renderPagination(currentPage, totalPages, onPageClick) {
@@ -287,6 +308,7 @@ const UIUtils = (function () {
         confirm,
         badge,
         itemTypeBadge,
+        sortCarModels,
         renderPagination
     };
 })();

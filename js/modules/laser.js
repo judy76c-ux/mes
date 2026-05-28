@@ -196,7 +196,7 @@ var LaserWorkModule = (function() {
         // 레이저 대기품 목록 갱신
         _standbyItems = getLaserStandbyItems();
         // 대기품 목록에 있는 차종만 필터 옵션으로 사용
-        const sbCarModels = [...new Set(_standbyItems.map(w => w.carModel).filter(Boolean))].sort();
+        const sbCarModels = UIUtils.sortCarModels(_standbyItems.map(w => w.carModel));
 
         // 수정 모드: 기존 차종/품명/컬러/LOT 읽기 전용 표시
         const isEditMode = !!(d.carModel || d.partName || d.date);
@@ -1135,7 +1135,7 @@ var LaserInspectionModule = (function() {
 
     function _buildSelectCard(d = {}) {
         const products  = Storage.getAll(DB.STORES.PRODUCTS) || [];
-        const carModels = [...new Set(products.map(p => p.carModel).filter(Boolean))].sort();
+        const carModels = UIUtils.sortCarModels(products.map(p => p.carModel), products);
         return `
         <div class="card"><div class="card-body">
             <h4 style="margin:0 0 12px 0;color:var(--text-primary);">검사 대상</h4>

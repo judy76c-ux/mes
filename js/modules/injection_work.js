@@ -126,7 +126,7 @@ var InjectionWorkLogModule = (function() {
         `;
 
         const allData = Storage.getAll(STORE) || [];
-        const carModels = [...new Set(allData.map(d => d.carModel).filter(Boolean))].sort();
+        const carModels = UIUtils.sortCarModels(allData.map(d => d.carModel));
         const carSelect = document.getElementById('iwFilterCarModel');
         if (carSelect) {
             carSelect.innerHTML = '<option value="">전체</option>' +
@@ -224,7 +224,7 @@ var InjectionWorkLogModule = (function() {
     function buildFormHTML(d = {}) {
         const materials         = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
         const internalMaterials = materials.filter(m => m.supplier === '사내');
-        const carModels         = [...new Set(internalMaterials.map(m => m.carModel).filter(Boolean))].sort();
+        const carModels         = UIUtils.sortCarModels(internalMaterials.map(m => m.carModel), internalMaterials);
 
         let carOptions = `<option value="">-- 차종 선택 --</option>`;
         carModels.forEach(c => {
@@ -739,7 +739,7 @@ var InjectionWorkLogModule = (function() {
 
     function _moldFormHTML(d = {}) {
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
-        const carModels = [...new Set(materials.map(m => m.carModel).filter(Boolean))].sort();
+        const carModels = UIUtils.sortCarModels(materials.map(m => m.carModel), materials);
         const parts     = d.carModel ? [...new Set(materials.filter(m => m.carModel === d.carModel).map(m => m.injPartName).filter(Boolean))].sort() : [];
         const REASONS   = ['정기교체', '손상/마모', '신규도입', '품질불량', '설계변경', '기타'];
         return `
@@ -1048,7 +1048,7 @@ var InjectionWorkLogModule = (function() {
 
     function _rawMatFormHTML(d = {}) {
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
-        const carModels = [...new Set(materials.map(m => m.carModel).filter(Boolean))].sort();
+        const carModels = UIUtils.sortCarModels(materials.map(m => m.carModel), materials);
         const parts     = d.carModel ? [...new Set(materials.filter(m => m.carModel === d.carModel).map(m => m.injPartName).filter(Boolean))].sort() : [];
         const REASONS   = ['공급사 변경', '품질 개선', '원가 절감', '재고 소진', '설계 변경', '긴급 대체', '기타'];
         return `
