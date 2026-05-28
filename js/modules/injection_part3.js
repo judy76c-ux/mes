@@ -812,7 +812,7 @@ var PaintIncomingInspectionModule = (function() {
         UIUtils.showModal('도료 수입검사 등록', buildFormHTML(), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="PaintIncomingInspectionModule.saveNew()">등록</button>
-        `);
+        `, '1050px');
         setupPaintSelectSync(null);
     }
 
@@ -842,7 +842,7 @@ var PaintIncomingInspectionModule = (function() {
         UIUtils.showModal('도료 수입검사 수정', buildFormHTML(d), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="PaintIncomingInspectionModule.saveEdit('${id}')">저장</button>
-        `);
+        `, '1050px');
         setupPaintSelectSync(id);
     }
 

@@ -274,7 +274,7 @@ var InjectionIncomingModule = (function() {
             <button class="btn btn-primary" onclick="InjectionIncomingModule.confirmCertReceived('${id}')">
                 <span class="material-symbols-outlined">check_circle</span> 접수 완료
             </button>
-        `);
+        `, '1050px');
     }
 
     async function confirmCertReceived(id) {
@@ -527,7 +527,7 @@ var InjectionIncomingModule = (function() {
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="InjectionIncomingModule.saveNew()">등록</button>
-        `);
+        `, '1050px');
 
         setTimeout(() => {
             addInjLotRow(); // 첫 LOT 행 초기화

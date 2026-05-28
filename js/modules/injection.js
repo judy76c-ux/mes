@@ -394,7 +394,7 @@ var InjectionIncomingModule = (function() {
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="InjectionIncomingModule.saveNew()">등록</button>
-        `);
+        `, '1050px');
 
                 setTimeout(() => {
                     addInjLotRow(); // 첫 LOT 행 초기화
@@ -745,7 +745,7 @@ var InjectionIncomingModule = (function() {
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="InjectionIncomingModule.saveEdit('${id}')">저장</button>
-        `);
+        `, '1050px');
 
                 setTimeout(() => {
                     const defects = Storage.getAll(DB.STORES.DEFECT_TYPES).filter(df => df.type === 'injection' || !df.type);
