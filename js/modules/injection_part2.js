@@ -797,7 +797,7 @@ var InjectionWarehouseModule = (function() {
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn ${type === '출고' ? 'btn-danger' : 'btn-primary'}" onclick="InjectionWarehouseModule.saveNew()">확인</button>
-        `);
+        `, 'min(1180px, calc(100vw - 32px))');
         // 첫 LOT 행 초기화
         setTimeout(() => {
             addInvLotRow();
@@ -1767,7 +1767,8 @@ var InjectionWarehouseModule = (function() {
                 <input type="text" class="form-input" id="editInvNote" value="${d.note || ''}" placeholder="특이사항">
             </div>`,
             `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-             <button class="btn btn-primary" onclick="InjectionWarehouseModule.saveEdit('${id}')">저장</button>`
+             <button class="btn btn-primary" onclick="InjectionWarehouseModule.saveEdit('${id}')">저장</button>`,
+            'min(1180px, calc(100vw - 32px))'
         );
     }
 
