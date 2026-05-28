@@ -24,6 +24,11 @@ var InjectionWarehouseModule = (function() {
                             title="관리자 계정으로 로그인한 경우에만 일괄 반영할 수 있습니다.">
                             <span class="material-symbols-outlined">admin_panel_settings</span> 재고 일괄 등록/수정
                         </button>
+                        <button class="btn btn-outline" style="color:var(--accent-orange,#f59e0b);border-color:var(--accent-orange,#f59e0b);"
+                            onclick="InjectionWarehouseModule.openColorCleanupModal()"
+                            title="컬러 미설정·숫자 컬러 등 잘못된 입출고 레코드를 확인하고 삭제합니다.">
+                            <span class="material-symbols-outlined">auto_fix_high</span> 데이터 정리
+                        </button>
                     </div>
                 </div>
 
@@ -267,13 +272,30 @@ var InjectionWarehouseModule = (function() {
             return m;
         })();
 
+        // ── 마스터에 등록됐지만 입출고 이력 없는 품목도 재고 0으로 포함 ──
+        const mergedMap = Object.assign({}, stockMap);
+        materials.forEach(mat => {
+            const key = `${mat.carModel||''}||${mat.injPartName||''}||${mat.injColor||''}`;
+            if (!mergedMap[key] && mat.carModel && mat.injPartName) {
+                mergedMap[key] = {
+                    carModel: mat.carModel   || '',
+                    partName: mat.injPartName || '',
+                    color:    mat.injColor    || '',
+                    stock:    0,
+                    price:    Number(mat.unitPrice) || 0
+                };
+            }
+        });
+
         const filterCar = (document.getElementById('injTileCarFilter') || {}).value || '';
 
-        // 차종별 그룹핑 (재고 > 0)
+        // 차종별 그룹핑 (재고 없는 품목 포함)
         const byCarModel = {};
-        Object.values(stockMap).forEach(item => {
+        Object.values(mergedMap).forEach(item => {
             if (filterCar && item.carModel !== filterCar) return;
-            if (item.stock <= 0) return;
+            if (!item.carModel) return;
+            if (item.stock < 0) return;              // 마이너스 재고는 데이터 오류 — 표시 제외
+            if (_isInvalidColor(item.color)) return; // 컬러 미설정·숫자형 컬러 제외
             if (!byCarModel[item.carModel]) byCarModel[item.carModel] = [];
             byCarModel[item.carModel].push(item);
         });
@@ -1858,6 +1880,163 @@ var InjectionWarehouseModule = (function() {
         input.style.borderColor = 'var(--accent-green)';
     }
 
+    /* ================================================================
+       컬러 유효성 헬퍼 + 데이터 정리 모달
+    ================================================================ */
+
+    /**
+     * 잘못된 컬러값 판별
+     * - 빈값 / "-" → 미설정
+     * - 숫자만으로 구성된 문자열 (예: "46645") → LOT번호 오입력
+     */
+    function _isInvalidColor(color) {
+        const c = (color || '').trim();
+        if (!c || c === '-') return true;           // 빈값·대시
+        if (/^\d[\d,.\s]*$/.test(c)) return true;  // 숫자(쉼표·점 포함) — LOT번호 오입력
+        return false;
+    }
+
+    /** 잘못된 컬러 레코드 목록 확인 및 일괄 삭제 모달 */
+    function openColorCleanupModal() {
+        const data      = Storage.getAll(STORE) || [];
+        const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+
+        // 유효 (partName, color) 쌍 — 마스터 기준
+        const validPairs = new Set(
+            materials
+                .filter(m => m.injPartName && !_isInvalidColor(m.injColor))
+                .map(m => `${(m.carModel||'').trim()}||${(m.injPartName||'').trim()}||${(m.injColor||'').trim()}`)
+        );
+
+        // 잘못된 레코드: 컬러 자체가 비정상 이거나, 마스터에 존재하지 않는 (품명+컬러) 조합
+        const badRecords = data.filter(d => {
+            if (_isInvalidColor(d.color)) return true;
+            const key = `${(d.carModel||'').trim()}||${(d.partName||'').trim()}||${(d.color||'').trim()}`;
+            return !validPairs.has(key);
+        });
+
+        if (badRecords.length === 0) {
+            UIUtils.showToast('정리할 잘못된 레코드가 없습니다.', 'success');
+            return;
+        }
+
+        // 마스터 기준 유효 리스트 HTML (사출품명 + 컬러)
+        const masterRows = materials
+            .filter(m => m.injPartName && !_isInvalidColor(m.injColor))
+            .sort((a, b) => (a.carModel||'').localeCompare(b.carModel||'') || (a.injPartName||'').localeCompare(b.injPartName||''))
+            .map(m => `
+                <tr>
+                    <td style="padding:4px 8px;font-size:0.82rem;">${m.carModel || '-'}</td>
+                    <td style="padding:4px 8px;font-size:0.82rem;font-weight:600;">${m.injPartName}</td>
+                    <td style="padding:4px 8px;font-size:0.82rem;">
+                        <span style="display:inline-block;padding:1px 8px;border-radius:10px;
+                                     background:var(--bg-secondary);border:1px solid var(--border);font-size:0.8rem;">
+                            ${m.injColor || '-'}
+                        </span>
+                    </td>
+                </tr>`).join('');
+
+        // 삭제 대상 레코드 요약 (품명+컬러별 집계)
+        const badSummary = {};
+        badRecords.forEach(d => {
+            const key = `${d.carModel||'-'}||${d.partName||'-'}||${d.color||'(빈값)'}`;
+            if (!badSummary[key]) badSummary[key] = { carModel: d.carModel||'-', partName: d.partName||'-', color: d.color||'(빈값)', count: 0 };
+            badSummary[key].count++;
+        });
+        const badRows = Object.values(badSummary)
+            .sort((a, b) => a.carModel.localeCompare(b.carModel) || a.partName.localeCompare(b.partName))
+            .map(s => `
+                <tr>
+                    <td style="padding:4px 8px;font-size:0.82rem;">${s.carModel}</td>
+                    <td style="padding:4px 8px;font-size:0.82rem;font-weight:600;">${s.partName}</td>
+                    <td style="padding:4px 8px;font-size:0.82rem;color:var(--accent-red);">
+                        <code style="background:#fee2e2;padding:1px 6px;border-radius:3px;">${s.color}</code>
+                    </td>
+                    <td style="padding:4px 8px;font-size:0.82rem;text-align:right;color:var(--text-muted);">${s.count}건</td>
+                </tr>`).join('');
+
+        UIUtils.showModal('사출 자재 데이터 정리', `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+
+                <!-- 마스터 유효 목록 -->
+                <div>
+                    <div style="font-size:0.8rem;font-weight:700;color:var(--accent-blue);
+                                margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                        <span class="material-symbols-outlined" style="font-size:1rem;">fact_check</span>
+                        마스터 기준 유효 품목 (${materials.filter(m=>m.injPartName&&!_isInvalidColor(m.injColor)).length}개)
+                    </div>
+                    <div style="max-height:400px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;">
+                        <table class="data-table" style="font-size:0.82rem;">
+                            <thead><tr><th>차종</th><th>사출품명</th><th>컬러</th></tr></thead>
+                            <tbody>${masterRows || '<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--text-muted);">없음</td></tr>'}</tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 삭제 대상 목록 -->
+                <div>
+                    <div style="font-size:0.8rem;font-weight:700;color:var(--accent-red);
+                                margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                        <span class="material-symbols-outlined" style="font-size:1rem;">delete_sweep</span>
+                        삭제 대상 레코드 (${badRecords.length}건)
+                        <span style="font-size:0.75rem;font-weight:400;color:var(--text-muted);">— 컬러 미설정·숫자·마스터 불일치</span>
+                    </div>
+                    <div style="max-height:400px;overflow-y:auto;border:1px solid #fca5a5;border-radius:6px;background:#fff5f5;">
+                        <table class="data-table" style="font-size:0.82rem;">
+                            <thead><tr><th>차종</th><th>사출품명</th><th>컬러(문제)</th><th style="text-align:right;">건수</th></tr></thead>
+                            <tbody>${badRows}</tbody>
+                        </table>
+                    </div>
+                    <div style="margin-top:8px;padding:8px 10px;background:#fff7ed;border:1px solid #fed7aa;
+                                border-radius:6px;font-size:0.78rem;color:#92400e;">
+                        ⚠ 삭제하면 해당 입출고 이력이 영구 제거됩니다. 재고·금액 집계가 변경될 수 있습니다.
+                    </div>
+                </div>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-danger" onclick="InjectionWarehouseModule.deleteInvalidColorRecords()">
+                <span class="material-symbols-outlined" style="font-size:1rem;">delete_sweep</span>
+                잘못된 레코드 ${badRecords.length}건 삭제
+            </button>
+        `, 'min(1100px, calc(100vw - 32px))');
+    }
+
+    /** 잘못된 컬러 레코드 일괄 삭제 */
+    async function deleteInvalidColorRecords() {
+        const data      = Storage.getAll(STORE) || [];
+        const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+
+        const validPairs = new Set(
+            materials
+                .filter(m => m.injPartName && !_isInvalidColor(m.injColor))
+                .map(m => `${(m.carModel||'').trim()}||${(m.injPartName||'').trim()}||${(m.injColor||'').trim()}`)
+        );
+
+        const badRecords = data.filter(d => {
+            if (_isInvalidColor(d.color)) return true;
+            const key = `${(d.carModel||'').trim()}||${(d.partName||'').trim()}||${(d.color||'').trim()}`;
+            return !validPairs.has(key);
+        });
+
+        if (badRecords.length === 0) {
+            UIUtils.showToast('삭제할 레코드가 없습니다.', 'info');
+            UIUtils.closeModal();
+            return;
+        }
+
+        try {
+            for (const rec of badRecords) {
+                await Storage.remove(STORE, rec.id);
+            }
+            UIUtils.closeModal();
+            UIUtils.showToast(`${badRecords.length}건의 잘못된 레코드를 삭제했습니다.`, 'success');
+            loadData();
+        } catch (e) {
+            UIUtils.showToast('삭제 중 오류가 발생했습니다: ' + e.message, 'error');
+        }
+    }
+
     function showStockModal() {
         const data = Storage.getAll(STORE) || [];
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS);
@@ -1889,6 +2068,25 @@ var InjectionWarehouseModule = (function() {
             }
         });
 
+        // 마스터에 등록됐지만 입출고 이력 없는 품목도 재고 0으로 포함
+        materials.forEach(mat => {
+            if (!mat.carModel || !mat.injPartName) return;
+            const color = mat.injColor || '-';
+            const key = `${mat.carModel}_${mat.injPartName}_${color}`;
+            if (!stockMap[key]) {
+                stockMap[key] = {
+                    carModel: mat.carModel,
+                    partName: mat.injPartName,
+                    color:    color,
+                    supplier: '-',
+                    unit:     'EA',
+                    price:    Number(mat.unitPrice) || 0,
+                    qty:      0,
+                    lots:     new Set()
+                };
+            }
+        });
+
         const rows = Object.values(stockMap).map(r => ({
             ...r,
             lots: Array.from(r.lots).sort()
@@ -1898,8 +2096,8 @@ var InjectionWarehouseModule = (function() {
 
         const tableRows = rows.length === 0 ?
             `<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text-muted);">재고 데이터가 없습니다.</td></tr>` :
-            rows.map(r => {
-                const qtyColor = r.qty <= 0 ? 'var(--accent-red)' : 'var(--accent-blue)';
+            rows.filter(r => r.qty >= 0 && !_isInvalidColor(r.color)).map(r => {
+                const qtyColor = r.qty === 0 ? 'var(--accent-red)' : 'var(--accent-blue)';
                 const lotBadges = r.lots.length > 0 ?
                     r.lots.map(l => `<span class="lot-badge-sm">${l}</span>`).join('') :
                     '<span style="color:var(--text-muted)">-</span>';
@@ -2154,6 +2352,8 @@ var InjectionWarehouseModule = (function() {
         exportData,
         onLotInput,
         showStockModal,
+        openColorCleanupModal,
+        deleteInvalidColorRecords,
         filterStock,
         showReserveDetailPopup,
         _goToPlan

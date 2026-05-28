@@ -161,21 +161,29 @@ var WarehouseOverviewModule = (function () {
         const today = new Date(); today.setHours(0, 0, 0, 0);
 
         // 품목(carModel||partName||color) × LOT 별 재고 계산
-        const itemMap = {}; // key → { [lot]: { qty, firstDate } }
+        // ※ 레코드에 lots[] 배열이 있으면 LOT별로 분리 처리 (단일 레코드 다중 LOT 지원)
+        const itemMap = {}; // key → { [lot]: { qty, firstDate, hadIncoming } }
         all.forEach(r => {
             const key = (r.carModel || '') + '||' + (r.partName || '') + '||' + (r.color || '');
-            const lot = r.lotNo || '__nolot__';
             if (!itemMap[key]) itemMap[key] = {};
-            if (!itemMap[key][lot]) itemMap[key][lot] = { qty: 0, firstDate: r.date || '' };
-            const qty = Number(r.quantity) || 0;
-            if (r.type === '입고') {
-                itemMap[key][lot].qty += qty;
-                // 가장 오래된 입고일 추적
-                if (!itemMap[key][lot].firstDate || r.date < itemMap[key][lot].firstDate)
-                    itemMap[key][lot].firstDate = r.date || '';
-            } else {
-                itemMap[key][lot].qty -= qty;
-            }
+
+            // lots 배열이 있으면 LOT별로 분리, 없으면 단일 lotNo + quantity 폴백
+            const entries = (r.lots && r.lots.length > 0)
+                ? r.lots.map(l => ({ lot: l.lotNo || '__nolot__', qty: Number(l.qty) || 0 }))
+                : [{ lot: r.lotNo || '__nolot__', qty: Number(r.quantity) || 0 }];
+
+            entries.forEach(({ lot, qty }) => {
+                if (!itemMap[key][lot]) itemMap[key][lot] = { qty: 0, firstDate: '', hadIncoming: false };
+                if (r.type === '입고') {
+                    itemMap[key][lot].qty += qty;
+                    itemMap[key][lot].hadIncoming = true;
+                    // 입고 기록에서만 firstDate 추적 (가장 오래된 입고일)
+                    if (!itemMap[key][lot].firstDate || r.date < itemMap[key][lot].firstDate)
+                        itemMap[key][lot].firstDate = r.date || '';
+                } else {
+                    itemMap[key][lot].qty -= qty;
+                }
+            });
         });
 
         let itemCount = 0, totalStock = 0, zeroStock = 0, longStock = 0, fifoCount = 0, multiLot = 0;
@@ -218,11 +226,15 @@ var WarehouseOverviewModule = (function () {
                 }
             }
 
-            // FIFO 위반: 소비된 LOT 중 현재 활성 LOT보다 더 최근 입고된 LOT가 있으면 위반
-            const consumedLots = Object.entries(lots).filter(([, v]) => v.qty <= 0);
+            // FIFO 위반: 소비된 LOT 중 현재 활성 LOT보다 더 최근에 입고된 LOT가 있으면 위반
+            // - 입고 기록이 실제로 있는 LOT만 대상 (hadIncoming=true, firstDate 유효)
+            // - 출고만 있는 LOT(데이터 오류)는 제외
+            const consumedLots = Object.entries(lots)
+                .filter(([, v]) => v.qty <= 0 && v.hadIncoming && v.firstDate);
             if (activeLots.length > 0 && consumedLots.length > 0) {
                 const oldestActiveLotDate = activeLots[0][1].firstDate;
-                const hasNewerConsumed = consumedLots.some(([, v]) => (v.firstDate || '') > (oldestActiveLotDate || ''));
+                // 소비된 LOT 중 현재 가장 오래된 활성 LOT보다 나중에 입고된 것이 있으면 위반
+                const hasNewerConsumed = consumedLots.some(([, v]) => v.firstDate > oldestActiveLotDate);
                 if (hasNewerConsumed) {
                     fifoCount++;
                     fifoItems.push({ carModel, partName, color, qty: netQty, oldestDate: oldestActiveLotDate });

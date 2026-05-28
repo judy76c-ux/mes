@@ -7,7 +7,7 @@ const PaintInventoryModule = (function() {
     const STORE          = DB.STORES.PAINT_INVENTORY;
     const MATERIALS_STORE = DB.STORES.PAINT_MATERIALS;
 
-    // 페이지네이션 상태
+    // ── 페이지네이션 상태 ──────────────────────────────────────────
     let _page     = 1;
     let _pageSize = 50;
 
@@ -34,6 +34,7 @@ const PaintInventoryModule = (function() {
                     </div>
                 </div>
 
+                <!-- 도료 창고 입고 대기품 섹션 -->
                 <div class="card" style="margin-bottom:20px; border-left:3px solid var(--accent-purple,#8b5cf6);">
                     <div class="card-header" style="display:flex; align-items:center; justify-content:space-between;">
                         <h4 style="display:flex; align-items:center; gap:8px;">
@@ -51,6 +52,7 @@ const PaintInventoryModule = (function() {
 
                 <div class="stat-cards" id="paintInvStats"></div>
 
+                <!-- 공급사별 재고 현황 타일 -->
                 <div class="card" style="margin-bottom:20px;">
                     <div class="card-header">
                         <h4><span class="material-symbols-outlined">palette</span> 공급사별 재고 현황</h4>
@@ -86,6 +88,7 @@ const PaintInventoryModule = (function() {
                                 <tbody id="paintInvTableBody"></tbody>
                             </table>
                         </div>
+                        <!-- 페이지네이션 영역 -->
                         <div id="paintInvPagination"></div>
                     </div>
                 </div>
@@ -95,10 +98,11 @@ const PaintInventoryModule = (function() {
     }
 
     function loadData() {
+        // ── 전체 데이터 (통계·재고 카드 계산용) ─────────────────────────
         const allData  = Storage.getAll(STORE);
         const materials = Storage.getAll(MATERIALS_STORE);
 
-        const isOutgoing = d => d.type === '출고' || d.type === '???';
+        // 품목별 재고 합산 (전체 기준)
         const byMaterial = {};
         allData.forEach(d => {
             const mat = materials.find(m => m.id === d.materialId);
@@ -107,7 +111,11 @@ const PaintInventoryModule = (function() {
                 qty: 0,
                 packUnit: mat ? (mat.packUnit || '-') : '-'
             };
-            byMaterial[key].qty += isOutgoing(d) ? -(Number(d.quantity) || 0) : (Number(d.quantity) || 0);
+            if (d.type === '출고') {
+                byMaterial[key].qty -= Number(d.quantity) || 0;
+            } else {
+                byMaterial[key].qty += Number(d.quantity) || 0;
+            }
         });
 
         let totalStockValue = 0;
@@ -115,19 +123,17 @@ const PaintInventoryModule = (function() {
             const mat = materials.find(m => m.id === d.materialId);
             const price = Number(mat ? mat.purchasePrice : 0) || 0;
             const qty = Number(d.quantity) || 0;
-            totalStockValue += isOutgoing(d) ? -(qty * price) : (qty * price);
+            const value = qty * price;
+
+            if (d.type === '출고') {
+                totalStockValue -= value;
+            } else {
+                totalStockValue += value;
+            }
         });
 
         const totalStock    = Object.values(byMaterial).reduce((s, v) => s + v.qty, 0);
-        const materialCount = materials.length;
-        const stockQtyByMaterialId = {};
-        allData.forEach(d => {
-            if (!d.materialId) return;
-            if (!stockQtyByMaterialId[d.materialId]) stockQtyByMaterialId[d.materialId] = 0;
-            const qty = Number(d.quantity) || 0;
-            stockQtyByMaterialId[d.materialId] += isOutgoing(d) ? -qty : qty;
-        });
-        const zeroStockCount = materials.filter(m => (stockQtyByMaterialId[m.id] || 0) <= 0).length;
+        const materialCount = Object.keys(byMaterial).length;
 
         document.getElementById('paintInvStats').innerHTML = `
             <div class="stat-card blue">
@@ -136,28 +142,27 @@ const PaintInventoryModule = (function() {
             </div>
             <div class="stat-card green" style="border-bottom: 4px solid var(--accent-green);">
                 <div class="stat-card-value" style="color:var(--accent-green);">${UIUtils.formatNumber(totalStockValue)}</div>
-                <div class="stat-card-label">총 재고 금액 (원)</div>
+                <div class="stat-card-label">총 재공 금액 (₩)</div>
             </div>
             <div class="stat-card purple">
                 <div class="stat-card-value">${materialCount}</div>
                 <div class="stat-card-label">분류 수</div>
             </div>
-            <div class="stat-card red">
-                <div class="stat-card-value" style="color:var(--accent-red);">${UIUtils.formatNumber(zeroStockCount)}</div>
-                <div class="stat-card-label">재고 없는 품목</div>
-            </div>
         `;
+
+        // ★ 입고 대기 섹션 + 공급사 타일은 항상 렌더링
         setTimeout(() => {
             renderPaintInspStandby();
             renderSupplierTiles();
         }, 150);
 
+        // ── 페이징된 테이블 렌더링 ───────────────────────────────────────
         const { data, total, page, pageSize } = Storage.getAllPaged(STORE, {
             page:     _page,
             pageSize: _pageSize,
             sort:     { field: 'date', order: 'desc' }
         });
-        _page = page;
+        _page = page; // 범위 초과 시 clamp 결과 반영
 
         const tbody = document.getElementById('paintInvTableBody');
 
@@ -169,12 +174,14 @@ const PaintInventoryModule = (function() {
         }
 
         if (tbody) tbody.innerHTML = data.map(d => {
-            const typeBadge = isOutgoing(d) ? 'danger' : 'success';
+            const typeBadge = d.type === '출고' ? 'danger' : 'success';
             const mat = materials.find(m => m.id === d.materialId);
             const mName = mat ? mat.name : '-';
             const mPackUnit = mat ? (mat.packUnit ? mat.packUnit + ' KG' : '-') : '-';
+
             const mSupplier = mat ? (mat.supplier || '-') : '-';
 
+            // 남은 유효기간 계산
             let remainHtml = '-';
             if (d.expDate) {
                 const today = new Date(); today.setHours(0,0,0,0);
@@ -203,7 +210,7 @@ const PaintInventoryModule = (function() {
                     <td style="font-size:0.82rem;">${d.mfgDate || '-'}</td>
                     <td style="font-size:0.82rem;">${d.expDate || '-'}</td>
                     <td style="font-size:0.82rem; white-space:nowrap;">${remainHtml}</td>
-                    <td>${UIUtils.badge(isOutgoing(d) ? '출고' : '입고', typeBadge)}</td>
+                    <td>${UIUtils.badge(d.type || '입고', typeBadge)}</td>
                     <td style="white-space:nowrap;">
                         <button class="btn btn-sm btn-outline" onclick="PaintInventoryModule.edit('${d.id}')">수정</button>
                         <button onclick="PaintInventoryModule.remove('${d.id}')"
@@ -218,6 +225,7 @@ const PaintInventoryModule = (function() {
             `;
         }).join('');
 
+        // ── 페이지네이션 UI 렌더링 ───────────────────────────────────────
         const paginationEl = document.getElementById('paintInvPagination');
         if (paginationEl) {
             UIUtils.renderPagination(paginationEl, {
@@ -235,31 +243,32 @@ const PaintInventoryModule = (function() {
         }
     }
 
+    // ── 공급사별 재고 카드 HTML ────────────────────────────────────────
     function _buildSupplierCard(supplier, matItems) {
         const today = new Date(); today.setHours(0, 0, 0, 0);
 
         const rows = matItems
             .sort((a, b) => (a.paintType || '').localeCompare(b.paintType || '') || a.name.localeCompare(b.name))
             .map(item => {
-                // ?좏슚湲곌컙 寃쎄퀬 ?쒖떆
+                // 유효기간 경고 표시
                 let expHtml = '';
                 if (item.minExpDate) {
                     const exp = new Date(item.minExpDate); exp.setHours(0, 0, 0, 0);
                     const diff = Math.round((exp - today) / 86400000);
                     if (diff < 0) {
-                        expHtml = `<span title="?좏슚湲곌컙 留뚮즺" style="color:var(--accent-red);font-size:0.75rem;font-weight:700;margin-left:4px;">?좊쭔猷?/span>`;
+                        expHtml = `<span title="유효기간 만료" style="color:var(--accent-red);font-size:0.75rem;font-weight:700;margin-left:4px;">⚠만료</span>`;
                     } else if (diff <= 30) {
-                        expHtml = `<span title="${diff}???⑥쓬" style="color:var(--accent-orange,#f59e0b);font-size:0.75rem;font-weight:700;margin-left:4px;">??{diff}??/span>`;
+                        expHtml = `<span title="${diff}일 남음" style="color:var(--accent-orange,#f59e0b);font-size:0.75rem;font-weight:700;margin-left:4px;">⚠${diff}일</span>`;
                     }
                 }
-                // ?좏삎 諭껋? (Primer/Color/?ъ꽍????
-                const typeColors = { 'Primer': '#6366f1', 'Color': '#ec4899' };
+                // 유형 뱃지 (Primer/Color/희석제 등)
+                const typeColors = { 'Primer': '#6366f1', 'Color': '#ec4899', '희석제': '#0ea5e9', '경화제': '#f59e0b' };
                 const typeBg = typeColors[item.paintType] || '#6b7280';
                 const typeBadge = item.paintType
                     ? `<span style="font-size:0.68rem;background:${typeBg};color:#fff;border-radius:3px;padding:1px 5px;margin-right:4px;">${item.paintType}</span>`
                     : '';
 
-                // ?쒖꽦 LOT ?몃씪??諭껋? (?꾨즺紐낃낵 媛숈? ??
+                // 활성 LOT 인라인 뱃지 (도료명과 같은 행)
                 const lotBadges = item.activeLots.map(lot => {
                     const label = lot.prodLot || lot.lotNo || '-';
                     let lotColor = 'var(--text-muted)';
@@ -307,18 +316,18 @@ const PaintInventoryModule = (function() {
                 <div style="background:linear-gradient(135deg,#a78bfa,#7c3aed); padding:7px 10px;
                             display:flex; justify-content:space-between; align-items:center;">
                     <span style="font-weight:700; font-size:0.9rem; color:#fff;">
-                        ${hasExpWarn ? '??' : ''}${supplier}
+                        ${hasExpWarn ? '⚠ ' : ''}${supplier}
                     </span>
                     <span style="font-size:0.75rem; color:rgba(255,255,255,0.85); font-weight:600;">
-                        ${matItems.length}醫?
+                        ${matItems.length}종
                     </span>
                 </div>
                 <table style="width:100%; border-collapse:collapse;">
                     <thead>
                         <tr style="background:var(--bg-secondary);">
-                            <th style="padding:4px 8px; font-size:0.72rem; color:var(--text-muted); font-weight:500; text-align:left;">?꾨즺紐?/ ?쒖“LOT</th>
-                            <th style="padding:4px 8px; font-size:0.72rem; color:var(--text-muted); font-weight:500; text-align:center;">?ъ옣</th>
-                            <th style="padding:4px 8px; font-size:0.72rem; color:var(--text-muted); font-weight:500; text-align:right;">?ш퀬</th>
+                            <th style="padding:4px 8px; font-size:0.72rem; color:var(--text-muted); font-weight:500; text-align:left;">도료명 / 제조LOT</th>
+                            <th style="padding:4px 8px; font-size:0.72rem; color:var(--text-muted); font-weight:500; text-align:center;">포장</th>
+                            <th style="padding:4px 8px; font-size:0.72rem; color:var(--text-muted); font-weight:500; text-align:right;">재고</th>
                         </tr>
                     </thead>
                     <tbody>${rows}</tbody>
@@ -326,16 +335,16 @@ const PaintInventoryModule = (function() {
                 <div style="padding:5px 8px; background:var(--bg-secondary);
                             border-top:2px solid var(--border-color);
                             display:flex; justify-content:space-between; align-items:center;">
-                    <span style="font-size:0.78rem; color:var(--text-muted);">?⑷퀎</span>
+                    <span style="font-size:0.78rem; color:var(--text-muted);">합계</span>
                     <span style="font-size:0.88rem; font-weight:800; color:var(--accent-blue);">
-                        ${UIUtils.formatNumber(totalStock)} 媛?
+                        ${UIUtils.formatNumber(totalStock)} 개
                     </span>
                 </div>
             </div>
         `;
     }
 
-    // ?? 怨듦툒?щ퀎 ?ш퀬 ???(Greedy bin-packing) ???????????????????????
+    // ── 공급사별 재고 타일 (Greedy bin-packing) ───────────────────────
     function renderSupplierTiles() {
         const tilesEl = document.getElementById('paintSupplierTiles');
         if (!tilesEl) return;
@@ -343,13 +352,13 @@ const PaintInventoryModule = (function() {
         const data      = Storage.getAll(STORE);
         const materials = Storage.getAll(MATERIALS_STORE);
 
-        // ?? ?щ즺蹂????ш퀬 + LOT蹂?吏묎퀎 ????????????????????????????
+        // ── 재료별 순 재고 + LOT별 집계 ────────────────────────────
         const matStock = {};  // matId -> { stock, lots: {key->{prodLot,lotNo,qty,expDate}} }
         data.forEach(d => {
             if (!d.materialId) return;
             if (!matStock[d.materialId]) matStock[d.materialId] = { stock: 0, lots: {} };
             const qty = Number(d.quantity) || 0;
-            // ?쒖“ LOT(prodLot) ?곗꽑, ?놁쑝硫??쒖“??LOT(lotNo) ?ㅻ줈 援щ텇
+            // 제조 LOT(prodLot) 우선, 없으면 제조사 LOT(lotNo) 키로 구분
             const lotKey = (d.prodLot || d.lotNo || '__');
             if (!matStock[d.materialId].lots[lotKey]) {
                 matStock[d.materialId].lots[lotKey] = {
@@ -359,7 +368,7 @@ const PaintInventoryModule = (function() {
                     expDate: d.expDate || ''
                 };
             }
-            if (d.type === '異쒓퀬') {
+            if (d.type === '출고') {
                 matStock[d.materialId].stock -= qty;
                 matStock[d.materialId].lots[lotKey].qty -= qty;
             } else {
@@ -372,7 +381,7 @@ const PaintInventoryModule = (function() {
             }
         });
 
-        // ?쒖꽦 LOT ?뺣젹 + 理쒖냼 ?좏슚湲곌컙
+        // 활성 LOT 정렬 + 최소 유효기간
         Object.keys(matStock).forEach(mid => {
             const activeLots = Object.values(matStock[mid].lots)
                 .filter(l => l.qty > 0)
@@ -382,10 +391,11 @@ const PaintInventoryModule = (function() {
             matStock[mid].minExpDate = withExp.length > 0 ? withExp.map(l => l.expDate).sort()[0] : null;
         });
 
-        // ?? 怨듦툒?щ퀎 洹몃９??(?ш퀬 > 0) ?????????????????????????????
+        // ── 공급사별 그룹핑 (재고 > 0) ─────────────────────────────
         const bySupplier = {};
         materials.forEach(mat => {
-            const ms = matStock[mat.id] || { stock: 0, activeLots: [], minExpDate: null };
+            const ms = matStock[mat.id];
+            if (!ms || ms.stock <= 0) return;
             const sup = mat.supplier || '미분류';
             if (!bySupplier[sup]) bySupplier[sup] = [];
             bySupplier[sup].push({
@@ -401,14 +411,14 @@ const PaintInventoryModule = (function() {
 
         const entries = Object.entries(bySupplier);
         if (entries.length === 0) {
-            tilesEl.innerHTML = `<p style="color:var(--text-muted); padding:20px;">?ш퀬 ?곗씠?곌? ?놁뒿?덈떎.</p>`;
+            tilesEl.innerHTML = `<p style="color:var(--text-muted); padding:20px;">재고 데이터가 없습니다.</p>`;
             return;
         }
 
-        // ?덈ぉ ???대┝李⑥닚 ?뺣젹
+        // 품목 수 내림차순 정렬
         entries.sort(([, a], [, b]) => b.length - a.length || a[0].name.localeCompare(b[0].name));
 
-        // 而щ읆 ??寃곗젙
+        // 컬럼 수 결정
         const total = entries.length;
         const COLS = total <= 2 ? total : total <= 6 ? 3 : 4;
 
@@ -428,18 +438,18 @@ const PaintInventoryModule = (function() {
         `).join('');
     }
 
-    // ?? ?꾨즺 ?덈ぉ ?곸꽭 ?앹뾽 ???????????????????????????????????????????
+    // ── 도료 품목 상세 팝업 ───────────────────────────────────────────
     function showPaintDetail(matId) {
         const materials = Storage.getAll(MATERIALS_STORE);
         const mat = materials.find(m => m.id === matId);
-        if (!mat) { UIUtils.toast('?꾨즺 ?뺣낫瑜?李얠쓣 ???놁뒿?덈떎.', 'error'); return; }
+        if (!mat) { UIUtils.toast('도료 정보를 찾을 수 없습니다.', 'error'); return; }
 
         const data = Storage.getAll(STORE);
         const records = data
             .filter(d => d.materialId === matId)
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
-        // ?꾩옱 ?ш퀬 諛?LOT蹂?吏묎퀎
+        // 현재 재고 및 LOT별 집계
         let totalStock = 0;
         const lotMap = {};
         records.forEach(d => {
@@ -452,7 +462,7 @@ const PaintInventoryModule = (function() {
                 expDate: d.expDate || '',
                 qty: 0
             };
-            if (d.type === '異쒓퀬') { lotMap[key].qty -= qty; totalStock -= qty; }
+            if (d.type === '출고') { lotMap[key].qty -= qty; totalStock -= qty; }
             else                   { lotMap[key].qty += qty; totalStock += qty;
                 if (d.mfgDate && (!lotMap[key].mfgDate || d.mfgDate < lotMap[key].mfgDate))
                     lotMap[key].mfgDate = d.mfgDate;
@@ -465,7 +475,7 @@ const PaintInventoryModule = (function() {
         const price = Number(mat.purchasePrice || 0);
         const stockValue = totalStock * price;
 
-        // ?쒖꽦 LOT ??
+        // 활성 LOT 행
         const activeLots = Object.values(lotMap)
             .filter(l => l.qty > 0)
             .sort((a, b) => (a.prodLot || a.lotNo).localeCompare(b.prodLot || b.lotNo));
@@ -477,12 +487,12 @@ const PaintInventoryModule = (function() {
                     const exp = new Date(l.expDate); exp.setHours(0, 0, 0, 0);
                     const diff = Math.round((exp - today) / 86400000);
                     const color = diff < 0 ? 'var(--accent-red)' : diff <= 30 ? 'var(--accent-orange,#f59e0b)' : 'var(--accent-green)';
-                    expHtml = `<span style="color:${color};font-weight:600;">${l.expDate} (${diff < 0 ? '留뚮즺' : diff + '???⑥쓬'})</span>`;
+                    expHtml = `<span style="color:${color};font-weight:600;">${l.expDate} (${diff < 0 ? '만료' : diff + '일 남음'})</span>`;
                 }
                 const prodLotEsc = (l.prodLot || '').replace(/'/g, "\\'");
                 const lotNoEsc   = (l.lotNo   || '').replace(/'/g, "\\'");
                 return `
-                    <tr style="cursor:pointer;" title="?대┃?섏뿬 異쒓퀬 ?깅줉"
+                    <tr style="cursor:pointer;" title="클릭하여 출고 등록"
                         onclick="PaintInventoryModule._openDetailOutgoing('${matId}','${prodLotEsc}','${lotNoEsc}',${l.qty})"
                         onmouseover="this.style.background='rgba(239,68,68,0.07)'"
                         onmouseout="this.style.background=''">
@@ -492,145 +502,145 @@ const PaintInventoryModule = (function() {
                         <td>${expHtml}</td>
                         <td style="text-align:right;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(l.qty)}</td>
                         <td style="text-align:center;padding:4px 8px;">
-                            <span style="font-size:0.7rem;background:#fee2e2;color:#dc2626;border-radius:4px;padding:2px 6px;white-space:nowrap;">異쒓퀬</span>
+                            <span style="font-size:0.7rem;background:#fee2e2;color:#dc2626;border-radius:4px;padding:2px 6px;white-space:nowrap;">출고</span>
                         </td>
                     </tr>`;
             }).join('')
-            : `<tr><td colspan="6" style="text-align:center;padding:14px;color:var(--text-muted);">?ш퀬 ?놁쓬</td></tr>`;
+            : `<tr><td colspan="6" style="text-align:center;padding:14px;color:var(--text-muted);">재고 없음</td></tr>`;
 
-        // ?낆텧怨??대젰 (理쒓렐 15嫄?
+        // 입출고 이력 (최근 15건)
         const histRows = records.slice(0, 15).map(d => {
             const qty = Number(d.quantity) || 0;
-            const badge = d.type === '異쒓퀬'
-                ? `<span style="background:#fee2e2;color:#dc2626;padding:1px 7px;border-radius:4px;font-size:0.75rem;font-weight:600;">異쒓퀬</span>`
-                : `<span style="background:#dcfce7;color:#16a34a;padding:1px 7px;border-radius:4px;font-size:0.75rem;font-weight:600;">?낃퀬</span>`;
+            const badge = d.type === '출고'
+                ? `<span style="background:#fee2e2;color:#dc2626;padding:1px 7px;border-radius:4px;font-size:0.75rem;font-weight:600;">출고</span>`
+                : `<span style="background:#dcfce7;color:#16a34a;padding:1px 7px;border-radius:4px;font-size:0.75rem;font-weight:600;">입고</span>`;
             return `
                 <tr>
                     <td style="white-space:nowrap;">${(d.date || '-').slice(0, 10)}</td>
                     <td style="font-family:monospace;">${d.prodLot || '-'}</td>
                     <td style="font-family:monospace;color:var(--text-muted);">${d.lotNo || '-'}</td>
-                    <td style="text-align:right;font-weight:600;color:${d.type === '異쒓퀬' ? 'var(--accent-red)' : 'var(--accent-green)'};">
-                        ${d.type === '異쒓퀬' ? '-' : '+'}${UIUtils.formatNumber(qty)}
+                    <td style="text-align:right;font-weight:600;color:${d.type === '출고' ? 'var(--accent-red)' : 'var(--accent-green)'};">
+                        ${d.type === '출고' ? '-' : '+'}${UIUtils.formatNumber(qty)}
                     </td>
                     <td>${badge}</td>
                 </tr>`;
-        }).join('') || `<tr><td colspan="5" style="text-align:center;padding:14px;color:var(--text-muted);">?대젰 ?놁쓬</td></tr>`;
+        }).join('') || `<tr><td colspan="5" style="text-align:center;padding:14px;color:var(--text-muted);">이력 없음</td></tr>`;
 
-        const typeColors = { 'Primer': '#6366f1', 'Color': '#ec4899' };
+        const typeColors = { 'Primer': '#6366f1', 'Color': '#ec4899', '희석제': '#0ea5e9', '경화제': '#f59e0b' };
         const typeBg  = typeColors[mat.paintType || mat.type || ''] || '#6b7280';
         const typeBadge = (mat.paintType || mat.type)
             ? `<span style="font-size:0.75rem;background:${typeBg};color:#fff;border-radius:4px;padding:2px 8px;margin-right:6px;">${mat.paintType || mat.type}</span>`
             : '';
 
         UIUtils.showModal(
-            `?렓 ${mat.name}`,
+            `🎨 ${mat.name}`,
             `
-            <!-- 湲곕낯 ?뺣낫 -->
+            <!-- 기본 정보 -->
             <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;padding:12px 14px;
                         background:var(--bg-secondary);border-radius:8px;font-size:0.85rem;">
                 <span>${typeBadge}<strong>${mat.name}</strong></span>
                 <span style="color:var(--text-muted);">|</span>
-                <span>怨듦툒?? <strong>${mat.supplier || '-'}</strong></span>
+                <span>공급사: <strong>${mat.supplier || '-'}</strong></span>
                 <span style="color:var(--text-muted);">|</span>
-                <span>?ъ옣: <strong>${mat.packUnit ? mat.packUnit + ' KG' : '-'}</strong></span>
-                ${price > 0 ? `<span style="color:var(--text-muted);">|</span><span>?④?: <strong>${UIUtils.formatNumber(price)}??/strong></span>` : ''}
+                <span>포장: <strong>${mat.packUnit ? mat.packUnit + ' KG' : '-'}</strong></span>
+                ${price > 0 ? `<span style="color:var(--text-muted);">|</span><span>단가: <strong>${UIUtils.formatNumber(price)}원</strong></span>` : ''}
             </div>
-            <!-- ?붿빟 移대뱶 -->
+            <!-- 요약 카드 -->
             <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px;">
                 <div style="flex:1;min-width:110px;background:var(--bg-secondary);border-radius:8px;padding:12px 16px;text-align:center;">
                     <div style="font-size:1.5rem;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(totalStock)}</div>
-                    <div style="font-size:0.78rem;color:var(--text-muted);">?꾩옱 ?ш퀬 (媛?</div>
+                    <div style="font-size:0.78rem;color:var(--text-muted);">현재 재고 (개)</div>
                 </div>
                 <div style="flex:1;min-width:110px;background:var(--bg-secondary);border-radius:8px;padding:12px 16px;text-align:center;">
                     <div style="font-size:1.5rem;font-weight:700;color:var(--accent-purple,#7c3aed);">${activeLots.length}</div>
-                    <div style="font-size:0.78rem;color:var(--text-muted);">?쒖꽦 LOT ??/div>
+                    <div style="font-size:0.78rem;color:var(--text-muted);">활성 LOT 수</div>
                 </div>
                 ${price > 0 ? `
                 <div style="flex:1;min-width:110px;background:var(--bg-secondary);border-radius:8px;padding:12px 16px;text-align:center;">
                     <div style="font-size:1.5rem;font-weight:700;color:var(--accent-green);">${UIUtils.formatNumber(stockValue)}</div>
-                    <div style="font-size:0.78rem;color:var(--text-muted);">?ш퀬 湲덉븸 (??</div>
+                    <div style="font-size:0.78rem;color:var(--text-muted);">재고 금액 (₩)</div>
                 </div>` : ''}
             </div>
-            <!-- ?쒖꽦 LOT ?뚯씠釉?-->
+            <!-- 활성 LOT 테이블 -->
             <div style="font-weight:600;font-size:0.85rem;margin-bottom:6px;color:var(--text-primary);">
-                ?벀 ?꾩옱 蹂댁쑀 LOT
+                📦 현재 보유 LOT
             </div>
             <div style="overflow-x:auto;margin-bottom:18px;">
                 <table class="data-table">
                     <thead>
                         <tr>
-                            <th>?쒖“ LOT</th>
-                            <th>?쒖“??LOT</th>
-                            <th style="text-align:center;">?쒖“?쇱옄</th>
-                            <th>?좏슚湲곌컙</th>
-                            <th style="text-align:right;">?ш퀬 ?섎웾</th>
-                            <th style="text-align:center;">異쒓퀬</th>
+                            <th>제조 LOT</th>
+                            <th>제조사 LOT</th>
+                            <th style="text-align:center;">제조일자</th>
+                            <th>유효기간</th>
+                            <th style="text-align:right;">재고 수량</th>
+                            <th style="text-align:center;">출고</th>
                         </tr>
                     </thead>
                     <tbody>${lotRows}</tbody>
                 </table>
             </div>
-            <!-- ?낆텧怨??대젰 -->
+            <!-- 입출고 이력 -->
             <div style="font-weight:600;font-size:0.85rem;margin-bottom:6px;color:var(--text-primary);">
-                ?뱥 ?낆텧怨??대젰 <span style="font-size:0.75rem;font-weight:400;color:var(--text-muted);">(理쒓렐 15嫄?</span>
+                📋 입출고 이력 <span style="font-size:0.75rem;font-weight:400;color:var(--text-muted);">(최근 15건)</span>
             </div>
             <div style="overflow-x:auto;">
                 <table class="data-table">
                     <thead>
                         <tr>
-                            <th>?좎쭨</th>
-                            <th>?쒖“ LOT</th>
-                            <th>?쒖“??LOT</th>
-                            <th style="text-align:right;">?섎웾</th>
-                            <th style="text-align:center;">?좏삎</th>
+                            <th>날짜</th>
+                            <th>제조 LOT</th>
+                            <th>제조사 LOT</th>
+                            <th style="text-align:right;">수량</th>
+                            <th style="text-align:center;">유형</th>
                         </tr>
                     </thead>
                     <tbody>${histRows}</tbody>
                 </table>
             </div>
             `,
-            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">?リ린</button>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`,
             'lg'
         );
     }
 
-    // ?? ?꾨즺 ?곸꽭 ?앹뾽?먯꽌 LOT ?대┃ ??利됱떆 異쒓퀬 ?깅줉 ????????????????
+    // ── 도료 상세 팝업에서 LOT 클릭 → 즉시 출고 등록 ────────────────
     async function _openDetailOutgoing(matId, prodLot, lotNo, currentQty) {
         const materials = Storage.getAll(MATERIALS_STORE);
         const mat = materials.find(m => m.id === matId);
-        if (!mat) { UIUtils.toast('?꾨즺 ?뺣낫瑜?李얠쓣 ???놁뒿?덈떎.', 'error'); return; }
+        if (!mat) { UIUtils.toast('도료 정보를 찾을 수 없습니다.', 'error'); return; }
 
         const todayStr = UIUtils.today();
         const qtyMax   = Number(currentQty) || 0;
         const lotLabel = prodLot || lotNo || '-';
 
         UIUtils.showModal(
-            `<span class="material-symbols-outlined" style="vertical-align:middle;color:var(--accent-red);">output</span> ?꾨즺 異쒓퀬 ?깅줉`,
+            `<span class="material-symbols-outlined" style="vertical-align:middle;color:var(--accent-red);">output</span> 도료 출고 등록`,
             `<div style="margin-bottom:12px;padding:10px 14px;background:var(--bg-secondary);border-radius:8px;font-size:0.85rem;">
                 <span style="font-weight:700;">${mat.name}</span>
                 <span style="color:var(--text-muted);margin:0 8px;">|</span>
-                <span>?쒖“ LOT: <strong style="font-family:monospace;">${lotLabel}</strong></span>
+                <span>제조 LOT: <strong style="font-family:monospace;">${lotLabel}</strong></span>
                 <span style="color:var(--text-muted);margin:0 8px;">|</span>
-                <span>?꾩옱 ?ш퀬: <strong style="color:var(--accent-blue);">${UIUtils.formatNumber(qtyMax)} 媛?/strong></span>
+                <span>현재 재고: <strong style="color:var(--accent-blue);">${UIUtils.formatNumber(qtyMax)} 개</strong></span>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">異쒓퀬 ?쇱옄 <span style="color:var(--accent-red)">*</span></label>
+                    <label class="form-label">출고 일자 <span style="color:var(--accent-red)">*</span></label>
                     <input type="date" class="form-input" id="detailOutDate" value="${todayStr}">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">異쒓퀬 ?섎웾 <span style="color:var(--accent-red)">*</span></label>
+                    <label class="form-label">출고 수량 <span style="color:var(--accent-red)">*</span></label>
                     <input type="number" class="form-input" id="detailOutQty" min="1" max="${qtyMax}"
-                           placeholder="理쒕? ${UIUtils.formatNumber(qtyMax)}"
+                           placeholder="최대 ${UIUtils.formatNumber(qtyMax)}"
                            oninput="this.value=Math.min(Math.max(this.value,1),${qtyMax})">
                 </div>
             </div>
             <div class="form-group">
-                <label class="form-label">鍮꾧퀬 (?좏깮)</label>
-                <input type="text" class="form-input" id="detailOutMemo" placeholder="異쒓퀬 ?⑸룄 ?먮뒗 硫붾え">
+                <label class="form-label">비고 (선택)</label>
+                <input type="text" class="form-input" id="detailOutMemo" placeholder="출고 용도 또는 메모">
             </div>`,
-            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">痍⑥냼</button>
-             <button class="btn btn-primary" onclick="PaintInventoryModule._saveDetailOutgoing('${matId}','${prodLot}','${lotNo}')">異쒓퀬 ?깅줉</button>`
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+             <button class="btn btn-primary" onclick="PaintInventoryModule._saveDetailOutgoing('${matId}','${prodLot}','${lotNo}')">출고 등록</button>`
         );
 
         setTimeout(() => {
@@ -644,27 +654,27 @@ const PaintInventoryModule = (function() {
         const qty   = Number((document.getElementById('detailOutQty') || {}).value) || 0;
         const memo  = (document.getElementById('detailOutMemo') || {}).value?.trim() || '';
 
-        if (!date) { UIUtils.toast('異쒓퀬 ?쇱옄瑜??좏깮?섏꽭??', 'warning'); return; }
-        if (qty <= 0) { UIUtils.toast('異쒓퀬 ?섎웾???낅젰?섏꽭??', 'warning'); return; }
+        if (!date) { UIUtils.toast('출고 일자를 선택하세요.', 'warning'); return; }
+        if (qty <= 0) { UIUtils.toast('출고 수량을 입력하세요.', 'warning'); return; }
 
-        // ?꾩옱 ?ш퀬 ?ш?利?
+        // 현재 재고 재검증
         const allLogs = Storage.getAll(STORE);
         const lotLogs = allLogs.filter(l =>
             l.materialId === matId &&
             (l.prodLot || l.lotNo) === (prodLot || lotNo)
         );
-        const stockIn  = lotLogs.filter(l => l.type === '?낃퀬').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
-        const stockOut = lotLogs.filter(l => l.type === '異쒓퀬').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
+        const stockIn  = lotLogs.filter(l => l.type === '입고').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
+        const stockOut = lotLogs.filter(l => l.type === '출고').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
         const available = stockIn - stockOut;
 
         if (qty > available) {
-            UIUtils.toast(`재고 부족: 출고 가능 수량 ${UIUtils.formatNumber(available)}개`, 'error');
+            UIUtils.toast(`재고 부족 — 출고 가능 수량: ${UIUtils.formatNumber(available)} 개`, 'error');
             return;
         }
 
         const data = {
             date:       date,
-            type:       '異쒓퀬',
+            type:       '출고',
             materialId: matId,
             prodLot:    prodLot || '',
             lotNo:      lotNo   || prodLot || '',
@@ -675,19 +685,19 @@ const PaintInventoryModule = (function() {
             sourceInspectionId: ''
         };
 
-        // executeTransaction: ?⑥씪 ?ㅽ넗?댁?留??ν썑 ?곌? ?ㅽ넗??異붽?瑜??鍮꾪빐 ?듭씪
+        // executeTransaction: 단일 스토어지만 향후 연관 스토어 추가를 대비해 통일
         await Storage.executeTransaction([
             { store: STORE, op: 'add', data }
         ]);
-        UIUtils.toast('異쒓퀬 ?깅줉?섏뿀?듬땲??', 'success');
-        // 異쒓퀬 紐⑤떖 ?リ린 ???곸쐞 ?곸꽭 ?앹뾽???リ퀬 理쒖떊 ?곹깭濡??ㅼ떆 ?닿린
-        UIUtils.closeModal(); // 異쒓퀬 ?깅줉 紐⑤떖
-        UIUtils.closeModal(); // ?곸꽭 ?앹뾽
+        UIUtils.toast('출고 등록되었습니다.', 'success');
+        // 출고 모달 닫기 → 상위 상세 팝업도 닫고 최신 상태로 다시 열기
+        UIUtils.closeModal(); // 출고 등록 모달
+        UIUtils.closeModal(); // 상세 팝업
         loadData();
         setTimeout(() => showPaintDetail(matId), 150);
     }
 
-    // ?? ?꾨즺 ?섏엯 寃???꾨즺???낃퀬 ?湲??뱀뀡 ??????????????????????????
+    // ── 도료 수입 검사 완료품 입고 대기 섹션 ──────────────────────────
     function renderPaintInspStandby() {
         const body  = document.getElementById('paintInspStandbyBody');
         const badge = document.getElementById('paintInspStandbyBadge');
@@ -697,42 +707,45 @@ const PaintInventoryModule = (function() {
         const inventory   = Storage.getAll(DB.STORES.PAINT_INVENTORY)           || [];
         const materials   = Storage.getAll(DB.STORES.PAINT_MATERIALS)           || [];
 
+        // 합격 검사 목록
         const passed = inspections
-            .filter(i => {
-                const verdictText = String(i.verdict || '');
-                const isPassed = verdictText === '??' || verdictText.includes('?') || verdictText.includes('?');
-                return isPassed && (Number(i.incomingQty) || 0) > 0;
-            })
+            .filter(i => i.verdict === '합격' && (Number(i.incomingQty) || 0) > 0)
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
         if (passed.length === 0) {
             if (badge) badge.style.display = 'none';
-            body.innerHTML = '<p style="text-align:center; padding:18px; color:var(--text-muted); font-size:0.88rem;">?? ?? ?? ?? ???? ????.</p>';
+            body.innerHTML = `<p style="text-align:center; padding:18px; color:var(--text-muted); font-size:0.88rem;">도료 수입 검사 완료 데이터가 없습니다.</p>`;
             return;
         }
 
+        // 창고 입고 기록: sourceInspectionId 기준 Set (없으면 materialId+lotNo 폴백)
+        // 일괄 등록(bulk)으로 입력된 현재고 설정 레코드는 실제 검사 처리로 간주하지 않음
+        const processedInspIds = new Set(
+            inventory.filter(i => i.sourceInspectionId && !_isCurrentStockEditRecord(i)).map(i => i.sourceInspectionId)
+        );
+        const legacyStockSet = new Set(
+            inventory
+                .filter(i => i.type !== '출고' && !i.sourceInspectionId && !_isCurrentStockEditRecord(i))
+                .map(i => `${i.materialId}||${i.lotNo}`)
+        );
+
+        // paintName → materialId 매핑 헬퍼
         function getMaterialId(paintName) {
             const mat = materials.find(m => m.name === paintName);
             return mat ? mat.id : null;
         }
 
-        const actualProcessedInspIds = new Set(
-            inventory
-                .filter(row => row.sourceInspectionId && !_isCurrentStockEditRecord(row))
-                .map(row => row.sourceInspectionId)
-        );
-        const actualLegacyStockSet = new Set(
-            inventory
-                .filter(row => row.type !== '??' && row.type !== '???' && !row.sourceInspectionId && !_isCurrentStockEditRecord(row))
-                .map(row => `${row.materialId}||${row.lotNo}`)
+        // 일괄 등록(bulk)으로 재고가 설정된 자재 ID 집합 — 해당 자재의 검사 건은 대기품으로 표시 안 함
+        const bulkHandledMaterialIds = new Set(
+            inventory.filter(i => _isCurrentStockEditRecord(i)).map(i => i.materialId)
         );
 
         const pending = passed.filter(i => {
-            if (i.warehouseStatus === '입고취소') return false;
-            if (i.warehouseStatus === '??????') return false;
-            if (actualProcessedInspIds.has(i.id)) return false;
+            if (processedInspIds.has(i.id)) return false;
             const mid = getMaterialId(i.paintName);
-            if (mid && actualLegacyStockSet.has(`${mid}||${i.lotNo}`)) return false;
+            if (mid && legacyStockSet.has(`${mid}||${i.lotNo}`)) return false;
+            // 일괄 업로드로 해당 자재 재고가 설정된 경우 → 대기품 제외
+            if (mid && bulkHandledMaterialIds.has(mid)) return false;
             return true;
         });
 
@@ -745,15 +758,17 @@ const PaintInventoryModule = (function() {
             }
         }
 
+        // 대기 품목이 없으면 완료 메시지 표시
         if (pending.length === 0) {
             body.innerHTML = `
                 <div style="display:flex;align-items:center;gap:10px;padding:18px;color:var(--accent-green);font-size:0.9rem;">
                     <span class="material-symbols-outlined">check_circle</span>
-                    <span>입고 대기 항목이 없습니다. 모든 검사 완료품이 입고 처리되었습니다.</span>
+                    <span>입고 대기 품목이 없습니다. 모든 검사 완료품이 입고 처리되었습니다.</span>
                 </div>`;
             return;
         }
 
+        // 입고 대기 항목만 렌더링 (입고 완료된 항목 제외)
         body.innerHTML = `
             <div style="display:flex;justify-content:flex-end;padding:10px 16px;border-bottom:1px solid var(--border-color);background:var(--bg-secondary);">
                 <button class="btn btn-sm btn-outline" onclick="PaintInventoryModule.cancelAllPaintInspectionStandby()"
@@ -803,66 +818,7 @@ const PaintInventoryModule = (function() {
             </div>`;
     }
 
-    function cancelPaintInspectionStandby(id) {
-        const insp = Storage.getById(DB.STORES.PAINT_INCOMING_INSPECTIONS, id);
-        if (!insp) {
-            UIUtils.toast('?낃퀬 ?湲??뺣낫瑜?李얠쓣 ???놁뒿?덈떎.', 'error');
-            return;
-        }
-        UIUtils.confirm('?좏깮???낃퀬 ?湲??덈ぉ??痍⑥냼?섏떆寃좎뒿?덇퉴? 寃??湲곕줉? ??젣?섏? ?딆뒿?덈떎.', async () => {
-            await Storage.update(DB.STORES.PAINT_INCOMING_INSPECTIONS, id, {
-                ...insp,
-                warehouseStatus: '?낃퀬痍⑥냼',
-                warehouseDate: UIUtils.today()
-            });
-            UIUtils.toast('?낃퀬 ?湲??덈ぉ??痍⑥냼?덉뒿?덈떎.', 'success');
-            renderPaintInspStandby();
-        });
-    }
-
-    function cancelAllPaintInspectionStandby() {
-        const inspections = Storage.getAll(DB.STORES.PAINT_INCOMING_INSPECTIONS) || [];
-        const inventory = Storage.getAll(DB.STORES.PAINT_INVENTORY) || [];
-        const materials = Storage.getAll(DB.STORES.PAINT_MATERIALS) || [];
-        const processedInspIds = new Set(
-            inventory.filter(i => i.sourceInspectionId && !_isCurrentStockEditRecord(i)).map(i => i.sourceInspectionId)
-        );
-        const legacyStockSet = new Set(
-            inventory
-                .filter(i => i.type !== '출고' && i.type !== '異쒓퀬' && !i.sourceInspectionId && !_isCurrentStockEditRecord(i))
-                .map(i => `${i.materialId}||${i.lotNo}`)
-        );
-        const pending = inspections.filter(i => {
-            const verdictText = String(i.verdict || '');
-            const isPassed = verdictText === '합격' || verdictText.includes('합') || verdictText.includes('⑷');
-            if (!isPassed || i.warehouseStatus === '?낃퀬痍⑥냼' || (Number(i.incomingQty) || 0) <= 0) return false;
-            if (processedInspIds.has(i.id)) return false;
-            const mat = materials.find(m => m.name === i.paintName);
-            if (mat && legacyStockSet.has(`${mat.id}||${i.lotNo}`)) return false;
-            return true;
-        });
-
-        if (!pending.length) {
-            UIUtils.toast('痍⑥냼???낃퀬 ?湲??덈ぉ???놁뒿?덈떎.', 'warning');
-            return;
-        }
-
-        UIUtils.confirm(`?낃퀬 ?湲?${pending.length}嫄댁쓣 紐⑤몢 痍⑥냼?섏떆寃좎뒿?덇퉴? 寃??湲곕줉? ??젣?섏? ?딆뒿?덈떎.`, async () => {
-            await Storage.executeTransaction(pending.map(i => ({
-                store: DB.STORES.PAINT_INCOMING_INSPECTIONS,
-                op: 'update',
-                id: i.id,
-                data: {
-                    ...i,
-                    warehouseStatus: '?낃퀬痍⑥냼',
-                    warehouseDate: UIUtils.today()
-                }
-            })));
-            UIUtils.toast(`?낃퀬 ?湲?${pending.length}嫄댁쓣 痍⑥냼?덉뒿?덈떎.`, 'success');
-            renderPaintInspStandby();
-        });
-    }
-
+    // 제조 LOT 실시간 유효성 표시
     function validateProdLot(input) {
         const msg = document.getElementById('addPaintInvProdLotMsg');
         if (!msg) return;
@@ -876,52 +832,52 @@ const PaintInventoryModule = (function() {
         const dd = parseInt(val.slice(4, 6), 10);
         const yy = val.slice(0, 2);
         if (mm < 1 || mm > 12 || dd < 1 || dd > 31) {
-            msg.innerHTML = `<span style="color:var(--accent-red);">???좏슚?섏? ?딆? ?좎쭨?낅땲??(?? ${mm}, ?? ${dd})</span>`;
+            msg.innerHTML = `<span style="color:var(--accent-red);">⚠ 유효하지 않은 날짜입니다 (월: ${mm}, 일: ${dd})</span>`;
             input.style.borderColor = 'var(--accent-red)';
         } else {
-            msg.innerHTML = `<span style="color:var(--accent-green);">??20${yy}??${String(mm).padStart(2,'0')}??${String(dd).padStart(2,'0')}??/span>`;
+            msg.innerHTML = `<span style="color:var(--accent-green);">✓ 20${yy}년 ${String(mm).padStart(2,'0')}월 ${String(dd).padStart(2,'0')}일</span>`;
             input.style.borderColor = 'var(--accent-green)';
         }
     }
 
-    // ?쒖“?쇱옄(YYYY-MM-DD) ???쒖“ LOT(YYMMDD) ?먮룞 蹂??
+    // 제조일자(YYYY-MM-DD) → 제조 LOT(YYMMDD) 자동 변환
     function autoFillProdLot(dateVal) {
         const prodLotEl = document.getElementById('addPaintInvProdLot');
         if (!prodLotEl) return;
-        if (!dateVal) { prodLotEl.placeholder = '?쒖“ LOT'; return; }
-        // YYYY-MM-DD ??YYMMDD
+        if (!dateVal) { prodLotEl.placeholder = '제조 LOT'; return; }
+        // YYYY-MM-DD → YYMMDD
         const m = dateVal.match(/^(\d{2})(\d{2})-(\d{2})-(\d{2})$/);
         if (m) {
             prodLotEl.value = m[2] + m[3] + m[4]; // YY + MM + DD
         }
     }
 
-    // ?꾨즺 寃??湲곕줉?쇰줈遺???낃퀬 紐⑤떖 ?먮룞 梨꾩?
+    // 도료 검사 기록으로부터 입고 모달 자동 채움
     function openIncomingFromInspection(inspId) {
         const insp = Storage.getById(DB.STORES.PAINT_INCOMING_INSPECTIONS, inspId);
-        if (!insp) { UIUtils.toast('寃???뺣낫瑜?李얠쓣 ???놁뒿?덈떎.', 'error'); return; }
+        if (!insp) { UIUtils.toast('검사 정보를 찾을 수 없습니다.', 'error'); return; }
 
-        // 寃??湲곕줉??supplier媛 留덉뒪?곗? ?ㅻ? ???덉쑝誘濡??ㅽ? ?? paintName ?곗꽑 留ㅼ묶
+        // 검사 기록의 supplier가 마스터와 다를 수 있으므로(오타 등) paintName 우선 매칭
         const materials = Storage.getAll(MATERIALS_STORE);
         const mat = materials.find(m => m.name === insp.paintName && m.supplier === insp.supplier)
                  || materials.find(m => m.name === insp.paintName);
 
-        // ?ㅼ젣 ?ъ슜??supplier??留덉뒪??湲곗??쇰줈 寃곗젙
+        // 실제 사용할 supplier는 마스터 기준으로 결정
         const resolvedSupplier = mat ? (mat.supplier || insp.supplier || '') : (insp.supplier || '');
 
         window._sourceInspectionId = inspId;
-        showRegistrationModal('?낃퀬');
+        showRegistrationModal('입고');
         setTimeout(() => {
             const supplierSel = document.getElementById('addPaintInvSupplier');
             if (supplierSel) {
                 supplierSel.value = resolvedSupplier;
-                PaintInventoryModule.onSupplierChange('?낃퀬');
+                PaintInventoryModule.onSupplierChange('입고');
             }
             setTimeout(() => {
                 const matSel = document.getElementById('addPaintInvMaterial');
                 if (matSel && mat) {
                     matSel.value = mat.id;
-                    PaintInventoryModule.onMaterialChange('?낃퀬');
+                    PaintInventoryModule.onMaterialChange('입고');
                 }
                 setTimeout(() => {
                     const lotInput = document.getElementById('addPaintInvLot');
@@ -939,85 +895,85 @@ const PaintInventoryModule = (function() {
     }
 
     function openIncomingModal() {
-        showRegistrationModal('?낃퀬');
+        showRegistrationModal('입고');
     }
 
     function openOutgoingModal() {
-        showRegistrationModal('異쒓퀬');
+        showRegistrationModal('출고');
     }
 
     function showRegistrationModal(type) {
         const materials = Storage.getAll(MATERIALS_STORE);
 
         if (materials.length === 0) {
-            UIUtils.toast('?깅줉???꾨즺 ?뺣낫媛 ?놁뒿?덈떎. 愿由??ㅼ젙?먯꽌 ?꾨즺瑜?癒쇱? ?깅줉?댁＜?몄슂.', 'warning');
+            UIUtils.toast('등록된 도료 정보가 없습니다. 관리/설정에서 도료를 먼저 등록해주세요.', 'warning');
             return;
         }
 
         const suppliers = [...new Set(materials.map(m => m.supplier).filter(Boolean))].sort();
         const supplierOptions = suppliers.map(s => `<option value="${s}">${s}</option>`).join('');
 
-        UIUtils.showModal(`?꾨즺 ${type} ?깅줉`, `
+        UIUtils.showModal(`도료 ${type} 등록`, `
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">?좎쭨</label>
+                    <label class="form-label">날짜</label>
                     <input type="date" class="form-input" id="addPaintInvDate" value="${UIUtils.today()}">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">援щℓ泥?<span style="color:var(--accent-red)">*</span></label>
+                    <label class="form-label">구매처 <span style="color:var(--accent-red)">*</span></label>
                     <select class="form-select" id="addPaintInvSupplier"
                             onchange="PaintInventoryModule.onSupplierChange('${type}')">
-                        <option value="">-- 援щℓ泥??좏깮 --</option>
+                        <option value="">-- 구매처 선택 --</option>
                         ${supplierOptions}
                     </select>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">?꾨즺紐?<span style="color:var(--accent-red)">*</span></label>
+                    <label class="form-label">도료명 <span style="color:var(--accent-red)">*</span></label>
                     <select class="form-select" id="addPaintInvMaterial" 
                             onchange="PaintInventoryModule.onMaterialChange('${type}')">
-                        <option value="">-- 援щℓ泥?癒쇱? ?좏깮 --</option>
+                        <option value="">-- 구매처 먼저 선택 --</option>
                     </select>
                 </div>
             </div>
             <div id="stockInfoArea" style="margin-bottom:15px; display:none;">
                 <div style="background:var(--bg-primary); padding:12px; border-radius:8px; border:1px solid var(--border-color);">
                     <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                        <span style="font-weight:600; font-size:0.9rem;">?꾩옱怨??뺣낫</span>
+                        <span style="font-weight:600; font-size:0.9rem;">현재고 정보</span>
                         <span id="totalStockDisplay" style="color:var(--accent-blue); font-weight:700;">-</span>
                     </div>
                     <div id="lotStockList" style="font-size:0.8rem; color:var(--text-secondary); max-height:100px; overflow-y:auto;">
-                        <!-- LOT蹂??ш퀬 紐⑸줉 -->
+                        <!-- LOT별 재고 목록 -->
                     </div>
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">?ъ옣 ?⑸웾 (?먮룞)</label>
-                    <input type="text" class="form-input" id="addPaintInvPackUnit" readonly style="background:var(--bg-secondary);" placeholder="?꾨즺瑜??좏깮?섏꽭??>
+                    <label class="form-label">포장 용량 (자동)</label>
+                    <input type="text" class="form-input" id="addPaintInvPackUnit" readonly style="background:var(--bg-secondary);" placeholder="도료를 선택하세요">
                 </div>
                 <div class="form-group">
                     <label class="form-label">
-                        ${type === '異쒓퀬'
-                            ? '?쒖“ LOT <span style="color:var(--accent-red)">*</span>'
-                            : '?쒖“??LOT <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;margin-left:4px;">(?좏깮)</span>'}
+                        ${type === '출고'
+                            ? '제조 LOT <span style="color:var(--accent-red)">*</span>'
+                            : '제조사 LOT <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;margin-left:4px;">(선택)</span>'}
                     </label>
-                    ${type === '異쒓퀬'
-                ? `<select class="form-select" id="addPaintInvLot" onchange="PaintInventoryModule.onLotSelectChange(); PaintInventoryModule.checkStockLive('add');"><option value="">-- ?꾨즺 癒쇱? ?좏깮 --</option></select>`
-                : `<input type="text" class="form-input" id="addPaintInvLot" placeholder="怨듦툒??LOT 肄붾뱶 (?좏깮)">`
+                    ${type === '출고'
+                ? `<select class="form-select" id="addPaintInvLot" onchange="PaintInventoryModule.onLotSelectChange(); PaintInventoryModule.checkStockLive('add');"><option value="">-- 도료 먼저 선택 --</option></select>`
+                : `<input type="text" class="form-input" id="addPaintInvLot" placeholder="공급사 LOT 코드 (선택)">`
             }
                     <div id="addPaintInvLotMsg" style="font-size:0.75rem;margin-top:5px;min-height:16px;"></div>
                 </div>
             </div>
-            ${type === '?낃퀬' ? `
+            ${type === '입고' ? `
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">
-                        ?쒖“ LOT <span style="color:var(--accent-red)">*</span>
-                        <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;margin-left:4px;">YYMMDD 쨌 ?먯궗 ?대? 愿由?LOT</span>
+                        제조 LOT <span style="color:var(--accent-red)">*</span>
+                        <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;margin-left:4px;">YYMMDD · 자사 내부 관리 LOT</span>
                     </label>
-                    <input type="text" class="form-input" id="addPaintInvProdLot" placeholder="?? 260227" maxlength="6" inputmode="numeric"
+                    <input type="text" class="form-input" id="addPaintInvProdLot" placeholder="예: 260227" maxlength="6" inputmode="numeric"
                         oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,6); PaintInventoryModule.validateProdLot(this);">
                     <div id="addPaintInvProdLotMsg" style="font-size:0.75rem;margin-top:5px;min-height:16px;"></div>
                 </div>
@@ -1025,40 +981,40 @@ const PaintInventoryModule = (function() {
             </div>` : ''}
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">?섎웾 <span style="color:var(--accent-red)">*</span></label>
+                    <label class="form-label">수량 <span style="color:var(--accent-red)">*</span></label>
                     <input type="number" class="form-input" id="addPaintInvQty" min="0" placeholder="0" oninput="PaintInventoryModule.checkStockLive('add')">
                 </div>
                 <div class="form-group" style="visibility:hidden;"></div>
             </div>
-            ${type === '?낃퀬' ? `
+            ${type === '입고' ? `
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">?쒖“?쇱옄</label>
+                    <label class="form-label">제조일자</label>
                     <input type="date" class="form-input" id="addPaintInvMfgDate"
                         onchange="PaintInventoryModule.autoFillProdLot(this.value)">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">?좏슚湲곌컙</label>
+                    <label class="form-label">유효기간</label>
                     <input type="date" class="form-input" id="addPaintInvExpDate">
                 </div>
             </div>` : ''}
             <div id="addPaintInvStockWarning" style="display:none; margin-top:10px; padding:12px; background:rgba(244, 67, 54, 0.1); border:1px solid var(--accent-red); border-radius:6px; color:var(--accent-red); font-size:0.875rem;">
                 <div style="display:flex; align-items:center; gap:8px;">
                     <span class="material-symbols-outlined" style="font-size:20px;">error</span>
-                    <strong>?ш퀬 遺議?二쇱쓽</strong>
+                    <strong>재고 부족 주의</strong>
                 </div>
                 <p id="addPaintInvStockMsg" style="margin:5px 0 0 28px;"></p>
             </div>
             <div id="fifoWarning" style="display:none; margin-top:10px; padding:10px; background:rgba(255, 152, 0, 0.1); border:1px solid var(--accent-orange); border-radius:6px; color:var(--accent-orange); font-size:0.85rem;">
                 <div style="display:flex; align-items:center; gap:8px;">
                     <span class="material-symbols-outlined" style="font-size:18px;">warning</span>
-                    <strong>?좎엯?좎텧(FIFO) 寃쎄퀬</strong>
+                    <strong>선입선출(FIFO) 경고</strong>
                 </div>
                 <p id="fifoWarningMsg" style="margin:5px 0 0 26px;"></p>
             </div>
         `, `
-            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">痍⑥냼</button>
-            <button class="btn btn-primary" onclick="PaintInventoryModule.saveNew('${type}')">?깅줉</button>
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="PaintInventoryModule.saveNew('${type}')">등록</button>
         `);
     }
 
@@ -1067,11 +1023,11 @@ const PaintInventoryModule = (function() {
         const nameSelect = document.getElementById('addPaintInvMaterial');
         const materials = Storage.getAll(MATERIALS_STORE);
 
-        nameSelect.innerHTML = '<option value="">-- ?꾨즺紐??좏깮 --</option>';
+        nameSelect.innerHTML = '<option value="">-- 도료명 선택 --</option>';
         if (!supplier) return;
 
         const filtered = materials.filter(m => m.supplier === supplier);
-        nameSelect.innerHTML = '<option value="">-- ?꾨즺紐??좏깮 --</option>' +
+        nameSelect.innerHTML = '<option value="">-- 도료명 선택 --</option>' +
             filtered.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
 
         if (filtered.length === 1) {
@@ -1088,12 +1044,12 @@ const PaintInventoryModule = (function() {
 
         if (!matId) {
             if (stockArea) stockArea.style.display = 'none';
-            if (type === '異쒓퀬' && lotSelect) lotSelect.innerHTML = '<option value="">-- ?꾨즺 癒쇱? ?좏깮 --</option>';
+            if (type === '출고' && lotSelect) lotSelect.innerHTML = '<option value="">-- 도료 먼저 선택 --</option>';
             if (packUnitInput) packUnitInput.value = '';
             return;
         }
 
-        // ?ъ옣?⑥쐞 ?먮룞 ?쒖떆
+        // 포장단위 자동 표시
         const materials = Storage.getAll(MATERIALS_STORE);
         const mat = materials.find(m => m.id === matId);
         if (packUnitInput && mat) {
@@ -1102,12 +1058,12 @@ const PaintInventoryModule = (function() {
 
         const data = Storage.getAll(STORE);
 
-        // ?쒖“LOT(prodLot) 湲곗? ?ш퀬 怨꾩궛 (?놁쑝硫?lotNo ?대갚)
-        const prodLotMap = {};  // key = prodLot||lotNo ??{ qty, lotNo }
+        // 제조LOT(prodLot) 기준 재고 계산 (없으면 lotNo 폴백)
+        const prodLotMap = {};  // key = prodLot||lotNo → { qty, lotNo }
         data.filter(d => d.materialId === matId).forEach(d => {
             const key = d.prodLot || d.lotNo || '__';
             if (!prodLotMap[key]) prodLotMap[key] = { qty: 0, lotNo: d.lotNo || '' };
-            if (d.type === '異쒓퀬') prodLotMap[key].qty -= Number(d.quantity) || 0;
+            if (d.type === '출고') prodLotMap[key].qty -= Number(d.quantity) || 0;
             else prodLotMap[key].qty += Number(d.quantity) || 0;
         });
 
@@ -1121,17 +1077,17 @@ const PaintInventoryModule = (function() {
             lotList.innerHTML = Object.entries(prodLotMap)
                 .filter(([_, v]) => v.qty !== 0)
                 .sort(([a], [b]) => a.localeCompare(b))
-                .map(([lot, v]) => `<div style="display:flex; justify-content:space-between; padding:2px 0;"><span>?쒖“LOT: ${lot}</span><span>${UIUtils.formatNumber(v.qty)}</span></div>`)
-                .join('') || '<div style="text-align:center; padding:5px;">?ш퀬 ?놁쓬</div>';
+                .map(([lot, v]) => `<div style="display:flex; justify-content:space-between; padding:2px 0;"><span>제조LOT: ${lot}</span><span>${UIUtils.formatNumber(v.qty)}</span></div>`)
+                .join('') || '<div style="text-align:center; padding:5px;">재고 없음</div>';
         }
 
-        if (type === '異쒓퀬' && lotSelect) {
+        if (type === '출고' && lotSelect) {
             const activeProdLots = Object.entries(prodLotMap)
                 .filter(([_, v]) => v.qty > 0)
                 .map(([key, _]) => key)
                 .sort();
 
-            lotSelect.innerHTML = '<option value="">-- ?쒖“ LOT ?좏깮 --</option>' +
+            lotSelect.innerHTML = '<option value="">-- 제조 LOT 선택 --</option>' +
                 activeProdLots.map(l => `<option value="${l}">${l}</option>`).join('');
         }
     }
@@ -1147,7 +1103,7 @@ const PaintInventoryModule = (function() {
             return;
         }
 
-        // ?좎엯?좎텧 泥댄겕
+        // 선입선출 체크
         const options = Array.from(lotSelect.options)
             .map(opt => opt.value)
             .filter(val => val !== "");
@@ -1156,14 +1112,75 @@ const PaintInventoryModule = (function() {
 
         if (selectedLot !== oldestLot) {
             warningArea.style.display = 'block';
-            warningMsg.innerHTML = `?꾩옱 ?좏깮?섏떊 LOT(${selectedLot})蹂대떎 癒쇱? ?낃퀬??<strong>LOT(${oldestLot})</strong> 媛 ?덉뒿?덈떎.<br>?좎엯?좎텧???꾪빐 ?댁젏 ?좎쓽?섏떆湲?諛붾엻?덈떎.`;
+            warningMsg.innerHTML = `현재 선택하신 LOT(${selectedLot})보다 먼저 입고된 <strong>LOT(${oldestLot})</strong> 가 있습니다.<br>선입선출을 위해 이점 유의하시기 바랍니다.`;
         } else {
             warningArea.style.display = 'none';
         }
     }
 
-    function onLotInput() {} // ?쒖“??LOT ?뺤떇 ?쒗븳 ?놁쓬 ??怨듦툒???먯껜 肄붾뱶
+    function onLotInput() {} // 제조사 LOT 형식 제한 없음 — 공급사 자체 코드
 
+    // ── 입고 대기 취소 (단건) ──────────────────────────────────────────
+    function cancelPaintInspectionStandby(id) {
+        const insp = Storage.getById(DB.STORES.PAINT_INCOMING_INSPECTIONS, id);
+        if (!insp) {
+            UIUtils.toast('입고 대기 정보를 찾을 수 없습니다.', 'error');
+            return;
+        }
+        UIUtils.confirm('선택한 입고 대기 항목을 취소하시겠습니까? 검사 기록은 삭제하지 않습니다.', async () => {
+            await Storage.update(DB.STORES.PAINT_INCOMING_INSPECTIONS, id, {
+                ...insp,
+                warehouseStatus: '입고취소',
+                warehouseDate: UIUtils.today()
+            });
+            UIUtils.toast('입고 대기 항목이 취소되었습니다.', 'success');
+            renderPaintInspStandby();
+        });
+    }
+
+    // ── 입고 대기 취소 (전체) ──────────────────────────────────────────
+    function cancelAllPaintInspectionStandby() {
+        const inspections = Storage.getAll(DB.STORES.PAINT_INCOMING_INSPECTIONS) || [];
+        const inventory = Storage.getAll(DB.STORES.PAINT_INVENTORY) || [];
+        const materials = Storage.getAll(DB.STORES.PAINT_MATERIALS) || [];
+        const processedInspIds = new Set(
+            inventory.filter(i => i.sourceInspectionId && !_isCurrentStockEditRecord(i)).map(i => i.sourceInspectionId)
+        );
+        const legacyStockSet = new Set(
+            inventory
+                .filter(i => i.type !== '출고' && !i.sourceInspectionId && !_isCurrentStockEditRecord(i))
+                .map(i => `${i.materialId}||${i.lotNo}`)
+        );
+        const pending = inspections.filter(i => {
+            if (i.verdict !== '합격' || i.warehouseStatus === '입고취소' || (Number(i.incomingQty) || 0) <= 0) return false;
+            if (processedInspIds.has(i.id)) return false;
+            const mat = materials.find(m => m.name === i.paintName);
+            if (mat && legacyStockSet.has(`${mat.id}||${i.lotNo}`)) return false;
+            return true;
+        });
+
+        if (!pending.length) {
+            UIUtils.toast('취소할 입고 대기 항목이 없습니다.', 'warning');
+            return;
+        }
+
+        UIUtils.confirm(`입고 대기 ${pending.length}건을 모두 취소하시겠습니까? 검사 기록은 삭제하지 않습니다.`, async () => {
+            await Storage.executeTransaction(pending.map(i => ({
+                store: DB.STORES.PAINT_INCOMING_INSPECTIONS,
+                op: 'update',
+                id: i.id,
+                data: {
+                    ...i,
+                    warehouseStatus: '입고취소',
+                    warehouseDate: UIUtils.today()
+                }
+            })));
+            UIUtils.toast(`입고 대기 ${pending.length}건을 취소했습니다.`, 'success');
+            renderPaintInspStandby();
+        });
+    }
+
+    // ── 일괄 등록 유틸리티 함수들 ─────────────────────────────────────
     function _escapeHtml(value) {
         return String(value ?? '')
             .replace(/&/g, '&amp;')
@@ -1174,7 +1191,7 @@ const PaintInventoryModule = (function() {
     }
 
     function _normalizeText(value) {
-        return String(value ?? '').replace(/\u00a0/g, ' ').trim();
+        return String(value ?? '').replace(/ /g, ' ').trim();
     }
 
     function _parseQty(value) {
@@ -1199,8 +1216,8 @@ const PaintInventoryModule = (function() {
     function _isCurrentStockEditRecord(record) {
         return record && (
             record.inventoryMode === 'current_stock_edit' ||
-            record.source === '?꾨즺 李쎄퀬 ?꾩옱 ?ш퀬 ?섏젙' ||
-            record.source === '?꾨즺 李쎄퀬 ?쇨큵 ?깅줉 諛??섏젙'
+            record.source === '도료 창고 현재 재고 설정' ||
+            record.source === '도료 창고 일괄 등록 및 설정'
         );
     }
 
@@ -1218,11 +1235,11 @@ const PaintInventoryModule = (function() {
         if (typeof AuthModule !== 'undefined' && AuthModule.checkSettingsAuth) {
             AuthModule.checkSettingsAuth(function() {
                 if (_isAdminUser()) onPass();
-                else UIUtils.toast('?꾨즺 李쎄퀬 ?쇨큵 ?깅줉 諛??섏젙? 愿由ъ옄留?媛?ν빀?덈떎.', 'warning');
+                else UIUtils.toast('도료 창고 일괄 등록 및 설정은 관리자만 가능합니다.', 'warning');
             });
             return;
         }
-        UIUtils.toast('?꾨즺 李쎄퀬 ?쇨큵 ?깅줉 諛??섏젙? 愿由ъ옄留?媛?ν빀?덈떎.', 'warning');
+        UIUtils.toast('도료 창고 일괄 등록 및 설정은 관리자만 가능합니다.', 'warning');
     }
 
     function _parseBulkRows(text) {
@@ -1314,7 +1331,7 @@ const PaintInventoryModule = (function() {
             const key = _bulkMaterialKey(mat.supplier || '', mat.name || '');
             if (!map[key]) map[key] = 0;
             const qty = Number(d.quantity) || 0;
-            map[key] += d.type === '異쒓퀬' ? -qty : qty;
+            map[key] += d.type === '출고' ? -qty : qty;
         });
         return map;
     }
@@ -1325,10 +1342,9 @@ const PaintInventoryModule = (function() {
             if (!d.materialId) return;
             if (!map[d.materialId]) map[d.materialId] = { total: 0, lots: {}, carModel: '' };
             const qty = Number(d.quantity) || 0;
-            const sign = (d.type === '출고' || d.type === '異쒓퀬') ? -1 : 1;
+            const sign = d.type === '출고' ? -1 : 1;
             map[d.materialId].total += sign * qty;
             if (d.carModel && !map[d.materialId].carModel) map[d.materialId].carModel = d.carModel;
-
             const lot = _normalizeText(d.prodLot || d.lotNo || '');
             if (!lot) return;
             if (!map[d.materialId].lots[lot]) map[d.materialId].lots[lot] = 0;
@@ -1373,13 +1389,13 @@ const PaintInventoryModule = (function() {
         if (!textarea) return;
         const template = _bulkBuildMasterTemplate();
         if (!template.split('\n').slice(1).some(Boolean)) {
-            UIUtils.toast('愿由??ㅼ젙???꾨즺 愿由ъ뿉 ?깅줉???꾨즺媛 ?놁뒿?덈떎.', 'warning');
+            UIUtils.toast('관리/설정의 도료 관리에 등록된 도료가 없습니다.', 'warning');
             return;
         }
         textarea.value = template;
         PaintInventoryModule._bulkRecords = _parseBulkRows(template);
         _bulkRenderPreview();
-        UIUtils.toast('?꾨즺 愿由??꾩껜 紐⑸줉???꾩옱 ?ш퀬 ?낅젰?濡?遺덈윭?붿뒿?덈떎.', 'success');
+        UIUtils.toast('도료 마스터 전체 목록을 현재 재고 입력으로 불러왔습니다.', 'success');
     }
 
     function _bulkClearPaste() {
@@ -1403,55 +1419,56 @@ const PaintInventoryModule = (function() {
         const masterTemplate = _bulkBuildMasterTemplate();
         PaintInventoryModule._bulkRecords = _parseBulkRows(masterTemplate);
         UIUtils.showModal({
-            title: '?꾨즺 李쎄퀬 ?쇨큵 ?깅줉 諛??섏젙',
+            title: '도료 창고 일괄 등록 및 설정',
             size: '1352px',
             noBackdropClose: true,
             body: `
             <div style="margin-bottom:10px;padding:10px 14px;background:rgba(59,130,246,0.07);
                         border:1px solid rgba(59,130,246,0.25);border-radius:8px;font-size:0.82rem;
                         color:var(--text-secondary);line-height:1.7;">
-                <b style="color:var(--accent-blue);">遺숈뿬?ｊ린 ?뺤떇</b><br>
-                ?묒??먯꽌 <b>?⑺뭹泥?/ ?쒗뭹紐?/ ?꾩옱?ш퀬 / LOT1 / ?섎웾 / LOT2 / ?섎웾 / LOT3 / ?섎웾 / LOT4 / ?섎웾</b> 踰붿쐞瑜?蹂듭궗??遺숈뿬?ｌ쑝?몄슂.<br>
-                ?????湲곗〈 ?꾨즺 李쎄퀬 ?ш퀬??紐⑤몢 ??젣?섍퀬 遺숈뿬?ｌ? ?꾩옱 愿由??쒗듃 媛믪쑝濡??꾩껜 援먯껜?⑸땲??
+                <b style="color:var(--accent-blue);">붙여넣기 형식</b><br>
+                엑셀에서 <b>납품처 / 제품명 / 현재재고 / LOT1 / 수량 / LOT2 / 수량 / LOT3 / 수량 / LOT4 / 수량</b> 열을 복사하여 붙여넣으세요.<br>
+                저장 시 현재 도료 창고 재고를 모두 삭제하고 붙여넣기 현재 시트 내용으로 전체 교체합니다.
             </div>
             <div style="margin-bottom:10px;padding:8px 10px;background:var(--bg-secondary);border-radius:6px;
                         font-family:Consolas,monospace;font-size:0.78rem;line-height:1.45;color:var(--text-secondary);overflow-x:auto;">
-                ?⑺뭹泥?nbsp;&nbsp;&nbsp;&nbsp;?쒗뭹紐?nbsp;&nbsp;&nbsp;&nbsp;?꾩옱?ш퀬&nbsp;&nbsp;&nbsp;&nbsp;LOT1&nbsp;&nbsp;&nbsp;&nbsp;?섎웾&nbsp;&nbsp;&nbsp;&nbsp;LOT2&nbsp;&nbsp;&nbsp;&nbsp;?섎웾<br>
-                ?쒓뎅移쇰씪?붿옄?멸린??二?&nbsp;&nbsp;&nbsp;&nbsp;BLACK(J71E02)&nbsp;&nbsp;&nbsp;&nbsp;5&nbsp;&nbsp;&nbsp;&nbsp;250829&nbsp;&nbsp;&nbsp;&nbsp;1&nbsp;&nbsp;&nbsp;&nbsp;260325&nbsp;&nbsp;&nbsp;&nbsp;4
+                납품처&nbsp;&nbsp;&nbsp;&nbsp;제품명&nbsp;&nbsp;&nbsp;&nbsp;현재재고&nbsp;&nbsp;&nbsp;&nbsp;LOT1&nbsp;&nbsp;&nbsp;&nbsp;수량&nbsp;&nbsp;&nbsp;&nbsp;LOT2&nbsp;&nbsp;&nbsp;&nbsp;수량<br>
+                납품처명&nbsp;&nbsp;&nbsp;&nbsp;BLACK(J71E02)&nbsp;&nbsp;&nbsp;&nbsp;5&nbsp;&nbsp;&nbsp;&nbsp;250829&nbsp;&nbsp;&nbsp;&nbsp;1&nbsp;&nbsp;&nbsp;&nbsp;260325&nbsp;&nbsp;&nbsp;&nbsp;4
             </div>
             <div class="form-row" style="margin-bottom:12px;">
                 <div class="form-group">
-                    <label class="form-label">湲곗? ?쇱옄</label>
+                    <label class="form-label">기준 일자</label>
                     <input type="date" class="form-input" id="paintBulkInvDate" value="${UIUtils.today()}">
                 </div>
                 <div class="form-group" style="align-self:flex-end;">
                     <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;color:var(--text-secondary);margin-bottom:8px;">
                         <input type="checkbox" id="paintBulkCreateMissing" onchange="PaintInventoryModule._bulkRenderPreview()">
-                        紐낆묶 ?뺤씤 ???꾨즺 留덉뒪???좉퇋 ?앹꽦 ?덉슜
+                        마스터 없는 도료 마스터를 자동 생성 적용
                     </label>
                     <button class="btn btn-outline" onclick="PaintInventoryModule._bulkLoadMasterTemplate()">
-                        <span class="material-symbols-outlined">table_view</span> ?꾨즺 愿由?紐⑸줉 遺덈윭?ㅺ린
+                        <span class="material-symbols-outlined">table_view</span> 도료 마스터 목록 불러오기
                     </button>
                     <button class="btn btn-outline" onclick="PaintInventoryModule._bulkClearPaste()">
-                        <span class="material-symbols-outlined">backspace</span> ?꾩껜 吏?곌린
+                        <span class="material-symbols-outlined">backspace</span> 전체 지우기
                     </button>
                     <button class="btn btn-outline" onclick="PaintInventoryModule._bulkParse()">
-                        <span class="material-symbols-outlined">preview</span> 誘몃━蹂닿린
+                        <span class="material-symbols-outlined">preview</span> 미리보기
                     </button>
                 </div>
             </div>
             <textarea id="paintBulkPasteArea" class="form-textarea"
-                placeholder="?묒??먯꽌 蹂듭궗???꾨즺 ?ш퀬 愿由??쒗듃 ?댁슜???ш린??遺숈뿬?ｌ쑝?몄슂."
+                placeholder="엑셀에서 복사한 도료 재고 마스터 시트 내용을 여기에 붙여넣으세요."
                 style="height:190px;font-family:Consolas,monospace;font-size:0.78rem;resize:vertical;"
                 oninput="document.getElementById('paintBulkPreviewWrap').innerHTML='';
                          var s=document.getElementById('paintBulkSaveBtn');if(s)s.style.display='none';">${_escapeHtml(masterTemplate)}</textarea>
             <div id="paintBulkPreviewWrap" style="margin-top:12px;"></div>
         `,
             footer: `
-            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">痍⑥냼</button>
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" id="paintBulkSaveBtn" style="display:none;"
                 onclick="PaintInventoryModule._bulkSave()">
-                <span class="material-symbols-outlined">save</span> ?꾩껜 援먯껜 ???            </button>
+                <span class="material-symbols-outlined">save</span> 전체 교체 저장
+            </button>
         `
         });
         setTimeout(_bulkRenderPreview, 0);
@@ -1469,7 +1486,7 @@ const PaintInventoryModule = (function() {
         const saveBtn = document.getElementById('paintBulkSaveBtn');
         if (!wrap) return;
         if (!records.length) {
-            wrap.innerHTML = '<p style="color:var(--accent-red);font-size:0.83rem;">遺숈뿬?ｌ? ?댁슜?먯꽌 ?깅줉???꾨즺 ?ш퀬瑜?李얠? 紐삵뻽?듬땲??</p>';
+            wrap.innerHTML = '<p style="color:var(--accent-red);font-size:0.83rem;">붙여넣기 입력에서 등록할 도료 재고를 찾을 수 없습니다.</p>';
             if (saveBtn) saveBtn.style.display = 'none';
             return;
         }
@@ -1493,12 +1510,12 @@ const PaintInventoryModule = (function() {
             const isMissing = !_bulkFindMaterial(materials, r.supplier, r.paintName);
             const lotsHtml = r.lots.length
                 ? r.lots.map(l => `<span style="display:inline-block;margin:2px 3px;padding:2px 6px;border-radius:4px;background:var(--bg-secondary);border:1px solid var(--border-color);font-size:0.72rem;">${_escapeHtml(l.lot || '-')} / ${UIUtils.formatNumber(l.qty)}</span>`).join('')
-                : '<span style="color:var(--text-muted);font-size:0.78rem;">LOT ?놁쓬</span>';
+                : '<span style="color:var(--text-muted);font-size:0.78rem;">LOT 없음</span>';
             const status = [
-                isDuplicate ? '<span style="color:var(--accent-red);font-weight:700;">以묐났</span>' : '',
-                isMismatch ? '<span style="color:var(--accent-red);font-weight:700;">LOT?⑷퀎 遺덉씪移?/span>' : '',
-                isMissing ? `<span style="color:${autoCreate ? 'var(--accent-orange,#f59e0b)' : 'var(--accent-red)'};font-weight:700;">留덉뒪???놁쓬</span>` : ''
-            ].filter(Boolean).join('<br>') || '<span style="color:var(--accent-green);font-weight:700;">?뺤긽</span>';
+                isDuplicate ? '<span style="color:var(--accent-red);font-weight:700;">중복</span>' : '',
+                isMismatch ? '<span style="color:var(--accent-red);font-weight:700;">LOT합계 불일치</span>' : '',
+                isMissing ? `<span style="color:${autoCreate ? 'var(--accent-orange,#f59e0b)' : 'var(--accent-red)'};font-weight:700;">마스터 없음</span>` : ''
+            ].filter(Boolean).join('<br>') || '<span style="color:var(--accent-green);font-weight:700;">정상</span>';
 
             return `
                 <tr style="${isDuplicate || isMismatch || (isMissing && !autoCreate) ? 'background:rgba(239,68,68,0.06);' : ''}">
@@ -1509,7 +1526,7 @@ const PaintInventoryModule = (function() {
                     <td>${lotsHtml}</td>
                     <td style="text-align:right;">${UIUtils.formatNumber(lotTotal)}</td>
                     <td>${status}</td>
-                    <td style="text-align:center;"><button class="btn btn-sm btn-outline" onclick="PaintInventoryModule._bulkRemoveRow(${idx})">?쒖쇅</button></td>
+                    <td style="text-align:center;"><button class="btn btn-sm btn-outline" onclick="PaintInventoryModule._bulkRemoveRow(${idx})">제거</button></td>
                 </tr>
             `;
         }).join('');
@@ -1518,35 +1535,35 @@ const PaintInventoryModule = (function() {
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
                 <span class="material-symbols-outlined" style="color:${hasBlockers ? 'var(--accent-orange,#f59e0b)' : 'var(--accent-green)'};font-size:18px;">${hasBlockers ? 'warning' : 'check_circle'}</span>
                 <span style="font-size:0.85rem;font-weight:600;color:${hasBlockers ? 'var(--accent-orange,#f59e0b)' : 'var(--accent-green)'};">
-                    ${records.length}媛??덈ぉ / ${lotRecordCount}媛?LOT / 珥??꾩옱怨?${UIUtils.formatNumber(currentTotal)}
+                    ${records.length}개 항목 / ${lotRecordCount}개 LOT / 합계 현재재고 ${UIUtils.formatNumber(currentTotal)}
                 </span>
             </div>
             ${duplicateLabels.length ? `<div style="margin-bottom:8px;padding:8px 10px;border:1px solid rgba(239,68,68,0.35);border-radius:6px;background:rgba(239,68,68,0.06);color:var(--accent-red);font-size:0.8rem;line-height:1.55;">
-                <strong>以묐났 ?덈ぉ ${duplicateLabels.length}媛쒓? ?덉뒿?덈떎.</strong> 媛숈? ?⑺뭹泥??쒗뭹紐낆? 1媛??됰쭔 ?④꺼????ν븷 ???덉뒿?덈떎.
+                <strong>중복 항목 ${duplicateLabels.length}개가 있습니다.</strong> 같은 납품처/제품명은 1개만 있어야 저장할 수 있습니다.
                 <div style="margin-top:3px;color:var(--text-secondary);">${duplicateLabels.slice(0, 6).map(_escapeHtml).join('<br>')}${duplicateLabels.length > 6 ? '<br>...' : ''}</div>
             </div>` : ''}
             ${mismatchLabels.length ? `<div style="margin-bottom:8px;padding:8px 10px;border:1px solid rgba(239,68,68,0.35);border-radius:6px;background:rgba(239,68,68,0.06);color:var(--accent-red);font-size:0.8rem;line-height:1.55;">
-                <strong>?꾩옱怨좎? LOT ?섎웾 ?⑷퀎媛 ?ㅻⅨ ?덈ぉ ${mismatchLabels.length}媛쒓? ?덉뒿?덈떎.</strong> 愿由??쒗듃???꾩옱怨좎? LOT ?섎웾??留욎텣 ????ν븯?몄슂.
+                <strong>현재재고와 LOT 수량 합계가 다른 항목 ${mismatchLabels.length}개가 있습니다.</strong> 마스터 시트의 현재재고와 LOT 수량을 일치시켜 주세요.
                 <div style="margin-top:3px;color:var(--text-secondary);">${mismatchLabels.slice(0, 6).map(_escapeHtml).join('<br>')}${mismatchLabels.length > 6 ? '<br>...' : ''}</div>
             </div>` : ''}
             ${missingLabels.length ? `<div style="margin-bottom:8px;padding:8px 10px;border:1px solid rgba(245,158,11,0.35);border-radius:6px;background:rgba(245,158,11,0.06);color:var(--text-secondary);font-size:0.8rem;line-height:1.55;">
-                <strong style="color:var(--accent-orange,#f59e0b);">?꾨즺 ?뺣낫???녿뒗 ?덈ぉ ${missingLabels.length}媛?/strong>媛 ?덉뒿?덈떎.
-                癒쇱? 愿由??ㅼ젙 > ?꾨즺 愿由ъ쓽 紐낆묶怨?遺숈뿬?ｌ? 紐낆묶??媛숈?吏 ?뺤씤?섏꽭??
-                ${autoCreate ? '?뺤씤 ???좉퇋 ?앹꽦 ?덉슜 ?곹깭?대?濡???????꾨즺 留덉뒪?곗뿉 異붽??⑸땲??' : '紐낆묶 ?섏젙 ?먮뒗 ?좉퇋 ?앹꽦 ?덉슜 泥댄겕 ?꾩뿉????ν븷 ???놁뒿?덈떎.'}
+                <strong style="color:var(--accent-orange,#f59e0b);">도료 정보가 없는 항목 ${missingLabels.length}개</strong>가 있습니다.
+                먼저 관리/설정 > 도료 관리의 마스터와 붙여넣기 마스터를 동일하게 확인하세요.
+                ${autoCreate ? '자동 생성 적용 상태이므로 저장 시 도료 마스터에 자동 추가합니다.' : '마스터 없음 항목은 자동 생성 적용 체크 전에는 저장할 수 없습니다.'}
                 <div style="margin-top:3px;color:var(--text-secondary);">${missingLabels.slice(0, 8).map(_escapeHtml).join('<br>')}${missingLabels.length > 8 ? '<br>...' : ''}</div>
             </div>` : ''}
             <div style="max-height:310px;overflow:auto;border:1px solid var(--border-color);border-radius:6px;">
                 <table class="data-table" style="min-width:920px;">
                     <thead style="position:sticky;top:0;background:var(--bg-secondary);z-index:1;">
                         <tr>
-                            <th>?⑺뭹泥?/th>
-                            <th>?쒗뭹紐?/th>
-                            <th style="text-align:right;">湲곗〈 ?ш퀬</th>
-                            <th style="text-align:right;">援먯껜 ?ш퀬</th>
-                            <th>LOT / ?섎웾</th>
-                            <th style="text-align:right;">LOT ?⑷퀎</th>
-                            <th>?곹깭</th>
-                            <th style="text-align:center;">?묒뾽</th>
+                            <th>납품처</th>
+                            <th>제품명</th>
+                            <th style="text-align:right;">현재 재고</th>
+                            <th style="text-align:right;">교체 재고</th>
+                            <th>LOT / 수량</th>
+                            <th style="text-align:right;">LOT 합계</th>
+                            <th>상태</th>
+                            <th style="text-align:center;">작업</th>
                         </tr>
                     </thead>
                     <tbody>${rowsHtml}</tbody>
@@ -1565,12 +1582,12 @@ const PaintInventoryModule = (function() {
 
     async function _bulkSave() {
         if (!_isAdminUser()) {
-            UIUtils.toast('?꾨즺 李쎄퀬 ?쇨큵 ?깅줉 諛??섏젙? 愿由ъ옄留?媛?ν빀?덈떎.', 'warning');
+            UIUtils.toast('도료 창고 일괄 등록 및 설정은 관리자만 가능합니다.', 'warning');
             return;
         }
         const records = PaintInventoryModule._bulkRecords || [];
         if (!records.length) {
-            UIUtils.toast('??ν븷 ?꾨즺 ?ш퀬 ?곗씠?곌? ?놁뒿?덈떎.', 'warning');
+            UIUtils.toast('저장할 도료 재고 데이터가 없습니다.', 'warning');
             return;
         }
 
@@ -1581,7 +1598,7 @@ const PaintInventoryModule = (function() {
         const missingLabels = _bulkGetMissingLabels(records, materials);
 
         if (duplicateLabels.length || mismatchLabels.length || (!autoCreate && missingLabels.length)) {
-            UIUtils.toast('??????뺤씤???꾩슂???됱씠 ?덉뒿?덈떎. 誘몃━蹂닿린?먯꽌 以묐났/遺덉씪移???ぉ???뺤씤?섏꽭??', 'warning');
+            UIUtils.toast('저장 전 확인이 필요한 항목이 있습니다. 미리보기에서 중복/불일치 항목을 확인하세요.', 'warning');
             _bulkRenderPreview();
             return;
         }
@@ -1619,14 +1636,14 @@ const PaintInventoryModule = (function() {
                     id: Storage.generateId ? Storage.generateId() : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`,
                     createdAt: nowIso,
                     date,
-                    type: '?낃퀬',
+                    type: '입고',
                     materialId: mat.id,
                     carModel: r.carModel || '',
                     inventoryMode: 'current_stock_edit',
                     lotNo: lot.lot || '',
                     prodLot: lot.lot || '',
                     quantity: Math.max(0, Number(lot.qty) || 0),
-                    source: '?꾨즺 李쎄퀬 ?꾩옱 ?ш퀬 ?섏젙'
+                    source: '도료 창고 현재 재고 설정'
                 });
             });
         });
@@ -1634,7 +1651,7 @@ const PaintInventoryModule = (function() {
         await Storage.saveAll(STORE, newItems);
         PaintInventoryModule._bulkRecords = [];
         UIUtils.closeModal();
-        UIUtils.toast(`湲곗〈 ?꾨즺 李쎄퀬 ?ш퀬 ??젣 ??${newItems.length}嫄??깅줉 ?꾨즺${createdMaterials ? `, ?꾨즺 留덉뒪??${createdMaterials}嫄??앹꽦` : ''}`, 'success');
+        UIUtils.toast(`기존 도료 창고 재고 삭제 후 ${newItems.length}건 등록 완료${createdMaterials ? `, 도료 마스터 ${createdMaterials}건 생성` : ''}`, 'success');
         loadData();
     }
 
@@ -1648,24 +1665,24 @@ const PaintInventoryModule = (function() {
             quantity: Number(document.getElementById('addPaintInvQty').value) || 0,
             mfgDate: (document.getElementById('addPaintInvMfgDate') || {}).value || '',
             expDate: (document.getElementById('addPaintInvExpDate') || {}).value || '',
-            sourceInspectionId: (type === '?낃퀬' && window._sourceInspectionId) ? window._sourceInspectionId : ''
+            sourceInspectionId: (type === '입고' && window._sourceInspectionId) ? window._sourceInspectionId : ''
         };
-        if (type === '?낃퀬') window._sourceInspectionId = null;
+        if (type === '입고') window._sourceInspectionId = null;
 
         if (!data.materialId) {
-            UIUtils.toast('?꾨즺瑜??좏깮?섏꽭??', 'warning');
+            UIUtils.toast('도료를 선택하세요.', 'warning');
             return;
         }
-        // ?쒖“ LOT ???낃퀬 ???꾩닔 (YYMMDD 6?먮━)
-        if (type === '?낃퀬') {
+        // 제조 LOT — 입고 시 필수 (YYMMDD 6자리)
+        if (type === '입고') {
             if (!data.prodLot) {
-                UIUtils.toast('?쒖“ LOT瑜??낅젰?섏꽭?? (YYMMDD 6?먮━)', 'warning');
+                UIUtils.toast('제조 LOT를 입력하세요. (YYMMDD 6자리)', 'warning');
                 const prodLotInput = document.getElementById('addPaintInvProdLot');
                 if (prodLotInput) prodLotInput.focus();
                 return;
             }
             if (!/^\d{6}$/.test(data.prodLot)) {
-                UIUtils.toast('?쒖“ LOT???レ옄 6?먮━(YYMMDD) ?뺤떇?댁뼱???⑸땲??', 'warning');
+                UIUtils.toast('제조 LOT는 숫자 6자리(YYMMDD) 형식이어야 합니다.', 'warning');
                 const prodLotInput = document.getElementById('addPaintInvProdLot');
                 if (prodLotInput) prodLotInput.focus();
                 return;
@@ -1673,28 +1690,28 @@ const PaintInventoryModule = (function() {
             const pm = parseInt(data.prodLot.slice(2, 4), 10);
             const pd = parseInt(data.prodLot.slice(4, 6), 10);
             if (pm < 1 || pm > 12 || pd < 1 || pd > 31) {
-                UIUtils.toast('?쒖“ LOT??????媛믪씠 ?좏슚?섏? ?딆뒿?덈떎.', 'warning');
+                UIUtils.toast('제조 LOT의 월/일 값이 유효하지 않습니다.', 'warning');
                 const prodLotInput = document.getElementById('addPaintInvProdLot');
                 if (prodLotInput) prodLotInput.focus();
                 return;
             }
         }
         if (data.quantity <= 0) {
-            UIUtils.toast('?섎웾???낅젰?섏꽭??', 'warning');
+            UIUtils.toast('수량을 입력하세요.', 'warning');
             return;
         }
 
-        // 異쒓퀬 ??prodLot 湲곗? ?ш퀬 寃利?+ lotNo ??“??
-        if (data.type === '異쒓퀬') {
+        // 출고 시 prodLot 기준 재고 검증 + lotNo 역조회
+        if (data.type === '출고') {
             const allLogs = Storage.getAll(STORE);
-            // select 媛믪씠 prodLot?대?濡?prodLot 湲곗? 留ㅼ묶
-            const selectedProdLot = data.lotNo; // select value ??prodLot
+            // select 값이 prodLot이므로 prodLot 기준 매칭
+            const selectedProdLot = data.lotNo; // select value → prodLot
             const lotLogs = allLogs.filter(l =>
                 l.materialId === data.materialId &&
                 (l.prodLot || l.lotNo) === selectedProdLot
             );
-            const stockIn  = lotLogs.filter(l => l.type === '?낃퀬').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
-            const stockOut = lotLogs.filter(l => l.type === '異쒓퀬').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
+            const stockIn  = lotLogs.filter(l => l.type === '입고').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
+            const stockOut = lotLogs.filter(l => l.type === '출고').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
             const available = stockIn - stockOut;
 
             if (data.quantity > available) {
@@ -1704,30 +1721,30 @@ const PaintInventoryModule = (function() {
                 return;
             }
 
-            // prodLot / lotNo 遺꾨━ ???
+            // prodLot / lotNo 분리 저장
             data.prodLot = selectedProdLot;
-            const srcRec = lotLogs.find(l => l.type === '?낃퀬' && l.lotNo);
+            const srcRec = lotLogs.find(l => l.type === '입고' && l.lotNo);
             data.lotNo = srcRec ? srcRec.lotNo : selectedProdLot;
         }
 
-        // ?? executeTransaction: ?묒뾽 紐⑸줉 援ъ꽦 ??????????????????????????
+        // ── executeTransaction: 작업 목록 구성 ──────────────────────────
         const txOps = [{ store: STORE, op: 'add', data }];
 
-        // ?섏엯寃???곕룞 ?낃퀬 ?? 寃???덉퐫?쒖뿉 李쎄퀬?낃퀬 ?꾨즺 ?곹깭 ?먯옄??湲곕줉
-        // (?쒖そ留??깃났?섎뒗 遺덉씪移??곹깭 諛⑹?)
+        // 수입검사 연동 입고 시: 검사 레코드에 창고입고 완료 상태 원자적 기록
+        // (한쪽만 성공하는 불일치 상태 방지)
         const sourceInspId = data.sourceInspectionId;
-        if (type === '?낃퀬' && sourceInspId) {
+        if (type === '입고' && sourceInspId) {
             txOps.push({
                 store: DB.STORES.PAINT_INCOMING_INSPECTIONS,
                 op:    'update',
                 id:    sourceInspId,
-                data:  { warehouseStatus: '?낃퀬?꾨즺', warehouseDate: data.date }
+                data:  { warehouseStatus: '입고완료', warehouseDate: data.date }
             });
         }
 
         await Storage.executeTransaction(txOps);
         UIUtils.closeModal();
-        UIUtils.toast('?깅줉?섏뿀?듬땲??', 'success');
+        UIUtils.toast('등록되었습니다.', 'success');
         loadData();
     }
 
@@ -1740,34 +1757,34 @@ const PaintInventoryModule = (function() {
         const suppliers = [...new Set(materials.map(m => m.supplier).filter(Boolean))].sort();
         const supplierOptions = suppliers.map(s => `<option value="${s}" ${mat && mat.supplier === s ? 'selected' : ''}>${s}</option>`).join('');
 
-        UIUtils.showModal(`?꾨즺 ${d.type} ?댁뿭 ?섏젙`, `
+        UIUtils.showModal(`도료 ${d.type} 내역 수정`, `
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">?좎쭨</label>
+                    <label class="form-label">날짜</label>
                     <input type="date" class="form-input" id="editPaintInvDate" value="${d.date}">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">援щℓ泥?<span style="color:var(--accent-red)">*</span></label>
+                    <label class="form-label">구매처 <span style="color:var(--accent-red)">*</span></label>
                     <select class="form-select" id="editPaintInvSupplier"
                             onchange="PaintInventoryModule.onSupplierChange_Edit('${d.type}')">
-                        <option value="">-- 援щℓ泥??좏깮 --</option>
+                        <option value="">-- 구매처 선택 --</option>
                         ${supplierOptions}
                     </select>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">?꾨즺紐?<span style="color:var(--accent-red)">*</span></label>
+                    <label class="form-label">도료명 <span style="color:var(--accent-red)">*</span></label>
                     <select class="form-select" id="editPaintInvMaterial" 
                             onchange="PaintInventoryModule.onMaterialChange_Edit('${d.type}')">
-                        <option value="">-- 援щℓ泥?癒쇱? ?좏깮 --</option>
+                        <option value="">-- 구매처 먼저 선택 --</option>
                     </select>
                 </div>
             </div>
             <div id="editStockInfoArea" style="margin-bottom:15px; display:none;">
                 <div style="background:var(--bg-primary); padding:12px; border-radius:8px; border:1px solid var(--border-color);">
                     <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
-                        <span style="font-weight:600; font-size:0.9rem;">?꾩옱怨??뺣낫</span>
+                        <span style="font-weight:600; font-size:0.9rem;">현재고 정보</span>
                         <span id="editTotalStockDisplay" style="color:var(--accent-blue); font-weight:700;">-</span>
                     </div>
                     <div id="editLotStockList" style="font-size:0.8rem; color:var(--text-secondary); max-height:100px; overflow-y:auto;">
@@ -1776,23 +1793,23 @@ const PaintInventoryModule = (function() {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">?ъ옣 ?⑸웾 (?먮룞)</label>
+                    <label class="form-label">포장 용량 (자동)</label>
                     <input type="text" class="form-input" id="editPaintInvPackUnit" readonly style="background:var(--bg-secondary);" value="${mat && mat.packUnit ? mat.packUnit + ' KG' : '-'}">
                 </div>
                 <div class="form-group">
                     <label class="form-label">
-                        ${d.type === '異쒓퀬' ? '?쒖“ LOT' : '?쒖“??LOT'} <span style="color:var(--accent-red)">*</span>
+                        ${d.type === '출고' ? '제조 LOT' : '제조사 LOT'} <span style="color:var(--accent-red)">*</span>
                     </label>
-                    ${d.type === '異쒓퀬'
-                ? `<select class="form-select" id="editPaintInvLot" onchange="PaintInventoryModule.onLotSelectChange_Edit(); PaintInventoryModule.checkStockLive('edit');"><option value="">-- ?꾨즺 癒쇱? ?좏깮 --</option></select>`
-                : `<input type="text" class="form-input" id="editPaintInvLot" placeholder="怨듦툒??LOT 肄붾뱶 (?좏깮)" value="${d.lotNo}">`
+                    ${d.type === '출고'
+                ? `<select class="form-select" id="editPaintInvLot" onchange="PaintInventoryModule.onLotSelectChange_Edit(); PaintInventoryModule.checkStockLive('edit');"><option value="">-- 도료 먼저 선택 --</option></select>`
+                : `<input type="text" class="form-input" id="editPaintInvLot" placeholder="공급사 LOT 코드 (선택)" value="${d.lotNo}">`
             }
                     <div id="editPaintInvLotMsg" style="font-size:0.75rem;margin-top:5px;min-height:16px;"></div>
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">?섎웾 <span style="color:var(--accent-red)">*</span></label>
+                    <label class="form-label">수량 <span style="color:var(--accent-red)">*</span></label>
                     <input type="number" class="form-input" id="editPaintInvQty" min="0" value="${d.quantity}" oninput="PaintInventoryModule.checkStockLive('edit')">
                 </div>
                 <div class="form-group" style="visibility:hidden;"></div>
@@ -1800,24 +1817,24 @@ const PaintInventoryModule = (function() {
             <div id="editPaintInvStockWarning" style="display:none; margin-top:10px; padding:12px; background:rgba(244, 67, 54, 0.1); border:1px solid var(--accent-red); border-radius:6px; color:var(--accent-red); font-size:0.875rem;">
                 <div style="display:flex; align-items:center; gap:8px;">
                     <span class="material-symbols-outlined" style="font-size:20px;">error</span>
-                    <strong>?ш퀬 遺議?二쇱쓽</strong>
+                    <strong>재고 부족 주의</strong>
                 </div>
                 <p id="editPaintInvStockMsg" style="margin:5px 0 0 28px;"></p>
             </div>
             <div id="editFifoWarning" style="display:none; margin-top:10px; padding:10px; background:rgba(255, 152, 0, 0.1); border:1px solid var(--accent-orange); border-radius:6px; color:var(--accent-orange); font-size:0.85rem;">
                 <div style="display:flex; align-items:center; gap:8px;">
                     <span class="material-symbols-outlined" style="font-size:18px;">warning</span>
-                    <strong>?좎엯?좎텧(FIFO) 寃쎄퀬</strong>
+                    <strong>선입선출(FIFO) 경고</strong>
                 </div>
                 <p id="editFifoWarningMsg" style="margin:5px 0 0 26px;"></p>
             </div>
         `, `
-            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">痍⑥냼</button>
-            <button class="btn btn-primary" onclick="PaintInventoryModule.saveEdit('${id}', '${d.type}')">???/button>
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="PaintInventoryModule.saveEdit('${id}', '${d.type}')">저장</button>
         `);
 
-        // 珥덇린媛??명똿 諛??꾩냽 泥섎━ (異쒓퀬 紐⑤뱶?먯꽌 targetLot = prodLot ?곗꽑)
-        onSupplierChange_Edit(d.type, mat ? mat.id : null, d.type === '異쒓퀬' ? (d.prodLot || d.lotNo) : d.lotNo);
+        // 초기값 세팅 및 후속 처리 (출고 모드에서 targetLot = prodLot 우선)
+        onSupplierChange_Edit(d.type, mat ? mat.id : null, d.type === '출고' ? (d.prodLot || d.lotNo) : d.lotNo);
     }
 
     function onSupplierChange_Edit(type, targetMatId, targetLot) {
@@ -1825,11 +1842,11 @@ const PaintInventoryModule = (function() {
         const nameSelect = document.getElementById('editPaintInvMaterial');
         const materials = Storage.getAll(MATERIALS_STORE);
 
-        nameSelect.innerHTML = '<option value="">-- ?꾨즺紐??좏깮 --</option>';
+        nameSelect.innerHTML = '<option value="">-- 도료명 선택 --</option>';
         if (!supplier) return;
 
         const filtered = materials.filter(m => m.supplier === supplier);
-        nameSelect.innerHTML = '<option value="">-- ?꾨즺紐??좏깮 --</option>' +
+        nameSelect.innerHTML = '<option value="">-- 도료명 선택 --</option>' +
             filtered.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
 
         if (targetMatId) {
@@ -1849,12 +1866,12 @@ const PaintInventoryModule = (function() {
 
         if (!matId) {
             if (stockArea) stockArea.style.display = 'none';
-            if (type === '異쒓퀬' && lotSelect) lotSelect.innerHTML = '<option value="">-- ?꾨즺 癒쇱? ?좏깮 --</option>';
+            if (type === '출고' && lotSelect) lotSelect.innerHTML = '<option value="">-- 도료 먼저 선택 --</option>';
             if (packUnitInput) packUnitInput.value = '';
             return;
         }
 
-        // ?ъ옣 ?⑸웾 ?먮룞 ?쒖떆
+        // 포장 용량 자동 표시
         const materials = Storage.getAll(MATERIALS_STORE);
         const mat = materials.find(m => m.id === matId);
         if (packUnitInput && mat) {
@@ -1863,12 +1880,12 @@ const PaintInventoryModule = (function() {
 
         const data = Storage.getAll(STORE);
 
-        // ?쒖“LOT 湲곗? 洹몃９??
+        // 제조LOT 기준 그룹핑
         const prodLotMap = {};
         data.filter(d => d.materialId === matId).forEach(d => {
             const key = d.prodLot || d.lotNo || '__';
             if (!prodLotMap[key]) prodLotMap[key] = { qty: 0, lotNo: d.lotNo || '' };
-            if (d.type === '異쒓퀬') prodLotMap[key].qty -= Number(d.quantity) || 0;
+            if (d.type === '출고') prodLotMap[key].qty -= Number(d.quantity) || 0;
             else prodLotMap[key].qty += Number(d.quantity) || 0;
         });
 
@@ -1881,17 +1898,17 @@ const PaintInventoryModule = (function() {
             lotList.innerHTML = Object.entries(prodLotMap)
                 .filter(([_, v]) => v.qty !== 0)
                 .sort(([a], [b]) => a.localeCompare(b))
-                .map(([lot, v]) => `<div style="display:flex; justify-content:space-between; padding:2px 0;"><span>?쒖“LOT: ${lot}</span><span>${UIUtils.formatNumber(v.qty)}</span></div>`)
-                .join('') || '<div style="text-align:center; padding:5px;">?ш퀬 ?놁쓬</div>';
+                .map(([lot, v]) => `<div style="display:flex; justify-content:space-between; padding:2px 0;"><span>제조LOT: ${lot}</span><span>${UIUtils.formatNumber(v.qty)}</span></div>`)
+                .join('') || '<div style="text-align:center; padding:5px;">재고 없음</div>';
         }
 
-        if (type === '異쒓퀬' && lotSelect) {
+        if (type === '출고' && lotSelect) {
             const activeProdLots = Object.entries(prodLotMap)
                 .filter(([key, v]) => v.qty > 0 || key === targetLot)
                 .map(([key, _]) => key)
                 .sort();
 
-            lotSelect.innerHTML = '<option value="">-- ?쒖“ LOT ?좏깮 --</option>' +
+            lotSelect.innerHTML = '<option value="">-- 제조 LOT 선택 --</option>' +
                 activeProdLots.map(l => `<option value="${l}" ${l === targetLot ? 'selected' : ''}>${l}</option>`).join('');
 
             if (targetLot) onLotSelectChange_Edit();
@@ -1914,7 +1931,7 @@ const PaintInventoryModule = (function() {
 
         if (selectedLot !== oldestLot) {
             warningArea.style.display = 'block';
-            warningMsg.innerHTML = `?꾩옱 ?좏깮?섏떊 LOT(${selectedLot})蹂대떎 癒쇱? ?낃퀬??<strong>LOT(${oldestLot})</strong> 媛 ?덉뒿?덈떎.<br>?좎엯?좎텧???꾪빐 ?댁젏 ?좎쓽?섏떆湲?諛붾엻?덈떎.`;
+            warningMsg.innerHTML = `현재 선택하신 LOT(${selectedLot})보다 먼저 입고된 <strong>LOT(${oldestLot})</strong> 가 있습니다.<br>선입선출을 위해 이점 유의하시기 바랍니다.`;
         } else {
             warningArea.style.display = 'none';
         }
@@ -1930,16 +1947,16 @@ const PaintInventoryModule = (function() {
         };
 
         if (!data.materialId) {
-            UIUtils.toast('?꾨즺瑜??좏깮?섏꽭??', 'warning');
+            UIUtils.toast('도료를 선택하세요.', 'warning');
             return;
         }
         if (data.quantity <= 0) {
-            UIUtils.toast('?섎웾???낅젰?섏꽭??', 'warning');
+            UIUtils.toast('수량을 입력하세요.', 'warning');
             return;
         }
 
-        // ?섏젙 ??LOT蹂??ш퀬 寃利?(異쒓퀬 紐⑤뱶??prodLot 湲곗?)
-        if (data.type === '異쒓퀬') {
+        // 수정 시 LOT별 재고 검증 (출고 모드는 prodLot 기준)
+        if (data.type === '출고') {
             const allLogs = Storage.getAll(STORE);
             const selectedProdLot = data.lotNo; // select value = prodLot
             const otherLogs = allLogs.filter(l =>
@@ -1947,8 +1964,8 @@ const PaintInventoryModule = (function() {
                 l.materialId === data.materialId &&
                 (l.prodLot || l.lotNo) === selectedProdLot
             );
-            const stockIn  = otherLogs.filter(l => l.type === '?낃퀬').reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
-            const stockOut = otherLogs.filter(l => l.type === '異쒓퀬').reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
+            const stockIn  = otherLogs.filter(l => l.type === '입고').reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
+            const stockOut = otherLogs.filter(l => l.type === '출고').reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
             const available = stockIn - stockOut;
 
             if (data.quantity > available) {
@@ -1958,9 +1975,9 @@ const PaintInventoryModule = (function() {
                 return;
             }
 
-            // prodLot / lotNo 遺꾨━ ???
+            // prodLot / lotNo 분리 저장
             data.prodLot = selectedProdLot;
-            const srcRec = allLogs.find(l => l.type === '?낃퀬' && l.materialId === data.materialId && l.lotNo);
+            const srcRec = allLogs.find(l => l.type === '입고' && l.materialId === data.materialId && l.lotNo);
             data.lotNo = srcRec ? srcRec.lotNo : selectedProdLot;
         }
 
@@ -1968,7 +1985,7 @@ const PaintInventoryModule = (function() {
             { store: STORE, op: 'update', id, data }
         ]);
         UIUtils.closeModal();
-        UIUtils.toast('?섏젙?섏뿀?듬땲??', 'success');
+        UIUtils.toast('수정되었습니다.', 'success');
         loadData();
     }
 
@@ -1978,7 +1995,7 @@ const PaintInventoryModule = (function() {
         const warningArea = document.getElementById(`${prefix}PaintInvStockWarning`);
         const warningMsg = document.getElementById(`${prefix}PaintInvStockMsg`);
 
-        // ?낃퀬 紐⑤뱶(LOT ?꾨뱶媛 text input)?먯꽌???ш퀬 遺議?泥댄겕 遺덊븘??
+        // 입고 모드(LOT 필드가 text input)에서는 재고 부족 체크 불필요
         if (!lotEl || lotEl.tagName === 'INPUT') {
             if (warningArea) warningArea.style.display = 'none';
             return;
@@ -1994,22 +2011,22 @@ const PaintInventoryModule = (function() {
         }
 
         const allLogs = Storage.getAll(STORE);
-        // ?섏젙 紐⑤뱶??寃쎌슦 ?꾩옱 ??ぉ(currentId)???쒖쇅?섍퀬 怨꾩궛
-        // 異쒓퀬 紐⑤뱶?먯꽌 lotNo???ㅼ젣 prodLot 媛믪쓣 ?닿퀬 ?덉쓬 ??prodLot ?곗꽑 留ㅼ묶
+        // 수정 모드일 경우 현재 항목(currentId)을 제외하고 계산
+        // 출고 모드에서 lotNo는 실제 prodLot 값을 담고 있음 — prodLot 우선 매칭
         const filtered = allLogs.filter(l =>
             (currentId ? l.id !== currentId : true) &&
             l.materialId === matId &&
             (l.prodLot || l.lotNo) === lotNo
         );
 
-        const stockIn = filtered.filter(l => l.type === '?낃퀬').reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
-        const stockOut = filtered.filter(l => l.type === '異쒓퀬').reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
+        const stockIn = filtered.filter(l => l.type === '입고').reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
+        const stockOut = filtered.filter(l => l.type === '출고').reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
         const available = stockIn - stockOut;
 
         if (qty > available) {
             if (warningArea) {
                 warningArea.style.display = 'block';
-                warningMsg.innerHTML = `?좏깮?섏떊 LOT???꾩옱 ?ш퀬??<strong>${UIUtils.formatNumber(available)}</strong> ?낅땲??<br>?낅젰?섏떊 ?섎웾(${UIUtils.formatNumber(qty)})???ш퀬瑜?珥덇낵?⑸땲??`;
+                warningMsg.innerHTML = `선택하신 LOT의 현재 재고는 <strong>${UIUtils.formatNumber(available)}</strong> 입니다.<br>입력하신 수량(${UIUtils.formatNumber(qty)})이 재고를 초과합니다.`;
             }
         } else {
             if (warningArea) warningArea.style.display = 'none';
@@ -2020,7 +2037,7 @@ const PaintInventoryModule = (function() {
         const data = Storage.getAll(STORE);
         const materials = Storage.getAll(MATERIALS_STORE);
 
-        // materialId 湲곗??쇰줈 ?꾩옱怨?+ LOT 吏묎퀎
+        // materialId 기준으로 현재고 + LOT 집계
         const stockMap = {};
         data.forEach(d => {
             if (!d.materialId) return;
@@ -2030,7 +2047,7 @@ const PaintInventoryModule = (function() {
                     lots: []
                 };
             }
-            if (d.type === '異쒓퀬') {
+            if (d.type === '출고') {
                 stockMap[d.materialId].qty -= Number(d.quantity) || 0;
             } else {
                 stockMap[d.materialId].qty += Number(d.quantity) || 0;
@@ -2040,13 +2057,13 @@ const PaintInventoryModule = (function() {
             }
         });
 
-        // ???곗씠??援ъ꽦 (援щℓ泥????쒗뭹紐????뺣젹)
-        const rows = materials.map(mat => {
-            const stock = stockMap[mat.id] || { qty: 0, lots: [] };
+        // 행 데이터 구성 (구매처 → 제품명 순 정렬)
+        const rows = Object.entries(stockMap).map(([matId, stock]) => {
+            const mat = materials.find(m => m.id === matId);
             const price = Number(mat ? mat.purchasePrice : 0) || 0;
             return {
                 supplier: mat ? (mat.supplier || '-') : '-',
-                name: mat ? mat.name : '(??젣???꾨즺)',
+                name: mat ? mat.name : '(삭제된 도료)',
                 unit: mat ? (mat.packUnit || '') : '',
                 price: price,
                 qty: stock.qty,
@@ -2061,7 +2078,7 @@ const PaintInventoryModule = (function() {
         const supplierOptions = suppliers.map(s => `<option value="${s}">${s}</option>`).join('');
 
         const tableRows = rows.length === 0 ?
-            `<tr><td colspan="4" style="text-align:center;padding:30px;color:var(--text-muted);">?ш퀬 ?곗씠?곌? ?놁뒿?덈떎.</td></tr>` :
+            `<tr><td colspan="4" style="text-align:center;padding:30px;color:var(--text-muted);">재고 데이터가 없습니다.</td></tr>` :
             rows.map(r => {
                 const qtyColor = r.qty <= 0 ? 'var(--accent-red)' : 'var(--accent-green)';
                 const lotBadges = r.lots.length > 0 ?
@@ -2082,7 +2099,7 @@ const PaintInventoryModule = (function() {
                     </tr>`;
             }).join('') + `
                     <tr style="background:var(--bg-secondary); font-weight:700;">
-                        <td colspan="4" style="text-align:center;">?⑷퀎</td>
+                        <td colspan="4" style="text-align:center;">합계</td>
                         <td style="text-align:right; color:var(--accent-green); font-size:1.1rem;">
                             ${UIUtils.formatNumber(totalValue)}
                         </td>
@@ -2090,25 +2107,25 @@ const PaintInventoryModule = (function() {
                     </tr>
             `;
 
-        UIUtils.showModal('?꾨즺 ?꾩옱 ?ш퀬 ?꾪솴', `
+        UIUtils.showModal('도료 현재 재고 현황', `
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
                 <span class="material-symbols-outlined" style="color:var(--accent-blue);">filter_alt</span>
                 <select class="form-select" id="stockSupplierFilter" style="max-width:200px;"
                         onchange="PaintInventoryModule.filterStock()">
-                    <option value="">?꾩껜 援щℓ泥?/option>
+                    <option value="">전체 구매처</option>
                     ${supplierOptions}
                 </select>
-                <span style="font-size:0.82rem;color:var(--text-muted);">珥?${rows.length}媛??덈ぉ</span>
+                <span style="font-size:0.82rem;color:var(--text-muted);">총 ${rows.length}개 품목</span>
             </div>
             <div class="data-table-wrapper">
                 <table class="data-table">
                     <thead>
                         <tr>
-                            <th>援щℓ泥?/th>
-                            <th>?쒗뭹紐?/th>
-                            <th style="text-align:right;">?④?</th>
-                            <th style="text-align:right;">?꾩옱怨?/th>
-                            <th style="text-align:right;">?ш났 湲덉븸</th>
+                            <th>구매처</th>
+                            <th>제품명</th>
+                            <th style="text-align:right;">단가</th>
+                            <th style="text-align:right;">현재고</th>
+                            <th style="text-align:right;">재공 금액</th>
                             <th>LOT</th>
                         </tr>
                     </thead>
@@ -2116,7 +2133,7 @@ const PaintInventoryModule = (function() {
                 </table>
             </div>
         `, `
-            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">?リ린</button>
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
         `, 'lg');
     }
 
@@ -2129,9 +2146,9 @@ const PaintInventoryModule = (function() {
     }
 
     function remove(id) {
-        UIUtils.confirm('??젣?섏떆寃좎뒿?덇퉴?', async () => {
+        UIUtils.confirm('삭제하시겠습니까?', async () => {
             await Storage.remove(STORE, id);
-            UIUtils.toast('??젣?섏뿀?듬땲??', 'success');
+            UIUtils.toast('삭제되었습니다.', 'success');
             loadData();
         });
     }
@@ -2139,18 +2156,18 @@ const PaintInventoryModule = (function() {
     function clearAllInventory() {
         const data = Storage.getAll(STORE);
         if (!data.length) {
-            UIUtils.toast('??젣???ш퀬 ?곗씠?곌? ?놁뒿?덈떎.', 'warning');
+            UIUtils.toast('삭제할 재고 데이터가 없습니다.', 'warning');
             return;
         }
         UIUtils.confirm(
-            `?꾨즺 李쎄퀬 ?낆텧怨??대젰 ?꾩껜(${data.length}嫄?瑜???젣?⑸땲??\n???묒뾽? ?섎룎由????놁뒿?덈떎. 怨꾩냽?섏떆寃좎뒿?덇퉴?`,
+            `도료 창고 입출고 이력 전체(${data.length}건)를 삭제합니다.\n이 작업은 되돌릴 수 없습니다. 계속하시겠습니까?`,
             async () => {
                 const count = data.length;
-                // N踰?猷⑦봽 ???saveAll([]) ?⑥씪 ?몃옖??뀡?쇰줈 ?꾩껜 ??젣
+                // N번 루프 대신 saveAll([]) 단일 트랜잭션으로 전체 삭제
                 await Storage.executeTransaction([
                     { store: STORE, op: 'saveAll', items: [] }
                 ]);
-                UIUtils.toast(`?꾨즺 ?ш퀬 ${count}嫄댁씠 ??젣?섏뿀?듬땲??`, 'success');
+                UIUtils.toast(`도료 재고 ${count}건이 삭제되었습니다.`, 'success');
                 loadData();
             }
         );
@@ -2159,12 +2176,12 @@ const PaintInventoryModule = (function() {
     function exportData() {
         const data = Storage.getAll(STORE);
         if (!data.length) {
-            UIUtils.toast('?곗씠?곌? ?놁뒿?덈떎.', 'warning');
+            UIUtils.toast('데이터가 없습니다.', 'warning');
             return;
         }
         const materials = Storage.getAll(MATERIALS_STORE);
 
-        const headers = ['날짜', '구매처', '도료명', '포장 단위', 'LOT', '수량', '유형'];
+        const headers = ['날짜', '구매처', '도료명', '포장 용량', 'LOT', '수량', '유형'];
         const rows = data.map(d => {
             const mat = materials.find(m => m.id === d.materialId);
             return [
@@ -2177,8 +2194,8 @@ const PaintInventoryModule = (function() {
                 d.type
             ];
         });
-        Storage.exportToCSV(headers, rows, '?꾨즺李쎄퀬_?ш퀬');
-        UIUtils.toast('?대낫?닿린 ?꾨즺', 'success');
+        Storage.exportToCSV(headers, rows, '도료창고_재고');
+        UIUtils.toast('내보내기 완료', 'success');
     }
 
     return {
