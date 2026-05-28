@@ -90,8 +90,15 @@ const UIUtils = (function () {
 
         const container = overlay.querySelector('.modal-container');
         if (container) {
-            const sizeMap = { sm:'360px', md:'520px', lg:'700px', xl:'920px', xxl:'1100px', xxxl:'1200px' };
-            const resolvedWidth = sizeMap[options.size || 'md'] || options.size || '520px';
+            const sizeMap = {
+                sm: 'min(420px, calc(100vw - 32px))',
+                md: 'min(920px, calc(100vw - 32px))',
+                lg: 'min(1100px, calc(100vw - 32px))',
+                xl: 'min(1240px, calc(100vw - 32px))',
+                xxl: 'min(1360px, calc(100vw - 24px))',
+                xxxl: 'min(1500px, calc(100vw - 16px))'
+            };
+            const resolvedWidth = sizeMap[options.size || 'md'] || options.size || sizeMap.md;
             container.style.setProperty('max-width', resolvedWidth, 'important');
         }
 
