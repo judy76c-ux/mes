@@ -124,8 +124,10 @@ const UIUtils = (function () {
             closeBtn.onclick = () => closeModal();
         }
         // 오버레이 클릭 닫기 (noBackdropClose 옵션이면 비활성)
+        // Backdrop clicks are ignored by default so form modals do not close accidentally.
+        // Pass allowBackdropClose:true only for simple preview dialogs that should dismiss this way.
         overlay.onclick = (e) => {
-            if (e.target === overlay && !options.noBackdropClose) closeModal();
+            if (e.target === overlay && options.allowBackdropClose === true) closeModal();
         };
     }
 

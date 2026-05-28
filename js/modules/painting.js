@@ -2731,11 +2731,6 @@ const PaintingInspectionModule = (function() {
         `;
 
         document.body.appendChild(modalEl);
-        modalEl.addEventListener('click', (e) => {
-            if (e.target === modalEl.querySelector('div:first-child')) {
-                PaintingInspectionModule._closeInspectionModal();
-            }
-        });
 
         // 모달에 데이터 저장 (나중에 접근하기 위해)
         modalEl.inspectionWorkId = workId;
@@ -3618,11 +3613,6 @@ const PaintingInspectionModule = (function() {
         `;
 
         document.body.appendChild(modalEl);
-        modalEl.addEventListener('click', (e) => {
-            if (e.target === modalEl.querySelector('div:first-child')) {
-                modalEl.remove();
-            }
-        });
 
         // 초기 테이블 렌더링
         _filterHistoryTable(startDate, endDate, '', '');
