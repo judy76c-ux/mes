@@ -182,12 +182,6 @@ var LaserHubModule = (function () {
             <div class="fade-in-up">
                 ${LaserProcessUI.renderSection('laser-process', '레이져 공정', '레이져 작업, 외관 검사, 지그 관리, 대기품 현황, 장비 점검/수리 내역을 한 화면에서 선택합니다.')}
                 <div class="section-card" style="padding:0;overflow:hidden;">
-                    <div style="padding:22px 24px;border-bottom:1px solid var(--border);">
-                        <h3 style="margin:0 0 6px;font-size:1.15rem;">레이져 공정</h3>
-                        <p style="margin:0;color:var(--text-muted);font-size:.9rem;">
-                            작업일지, 외관 검사, 지그 관리, 대기품 현황, 장비 점검/수리 이력을 한 화면에서 선택합니다.
-                        </p>
-                    </div>
                     <div style="padding:24px;">
                         <div id="laserHubStats" class="stat-cards" style="margin-bottom:18px;"></div>
                         <div id="laserHubCards" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;"></div>
@@ -257,22 +251,239 @@ var LaserJigMasterModule = (function () {
     }
 
     async function _load() {
-        const rows = await Storage.getConfigValue(CONFIG_KEY);
-        return Array.isArray(rows) ? rows : [];
+        try {
+            const rows = await Storage.getConfigValue(CONFIG_KEY);
+            return Array.isArray(rows) ? rows : [];
+        } catch (e) {
+            console.warn('[LaserJigMaster] config load failed:', e);
+            return [];
+        }
     }
 
     async function _save(rows) {
         await Storage.setConfigValue(CONFIG_KEY, rows);
     }
 
+    function _hasLaserProcess(product) {
+        const text = [
+            product.process1, product.process2, product.process3,
+            product.process4, product.process5, product.process6,
+            product.processFlow, product.route
+        ].join(' ');
+        return /레이저|레이져|laser/i.test(text);
+    }
+
+    function _jigKey(row) {
+        return [
+            String(row.carModel || '').trim(),
+            String(row.injectionPartName || row.partName || '').trim()
+        ].join('||');
+    }
+
+    function _productPartKey(row) {
+        return [
+            String(row.carModel || '').trim(),
+            String(row.partName || '').trim()
+        ].join('||');
+    }
+
+    function _jigName(carModel, partName) {
+        return [carModel, partName].map(function (value) {
+            return String(value || '').trim();
+        }).filter(Boolean).join(' ');
+    }
+
+    function _baseInjectionPartName(partName) {
+        return String(partName || '')
+            .replace(/\s+(?:[A-Z]{1,3}\d{1,3}|\d{1,3}[A-Z]{1,3})\s+(?=레이저|레이져|LASER)/i, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    function _laserProducts() {
+        const products = (Storage.getAll(DB.STORES.PRODUCTS) || []).filter(_hasLaserProcess);
+        const seen = new Set();
+        return products.filter(function (product) {
+            const key = _productPartKey({
+                carModel: product.carModel,
+                partName: product.partName
+            });
+            if (!String(product.carModel || '').trim() && !String(product.partName || '').trim()) return false;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+    }
+
+    function _injectionMaterialsForProduct(product, materials) {
+        const productId = String(product.id || '').trim();
+        const carModel = String(product.carModel || '').trim();
+        const partName = String(product.partName || '').trim();
+        return (materials || []).filter(function (mat) {
+            if (!mat || !mat.injPartName) return false;
+
+            const ids = Array.isArray(mat.productIds) ? mat.productIds.map(function (id) {
+                return String(id || '').trim();
+            }) : [];
+            if (productId && ids.includes(productId)) return true;
+
+            const matCar = String(mat.carModel || '').trim();
+            if (matCar && carModel && matCar !== carModel) return false;
+
+            return !!partName && (
+                String(mat.mfgProductName || '').trim() === partName ||
+                String(mat.mfgProductName2 || '').trim() === partName
+            );
+        });
+    }
+
+    function _laserJigTargets() {
+        const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+        const targetMap = {};
+
+        _laserProducts().forEach(function (product) {
+            const productId = String(product.id || '').trim();
+            const productCar = String(product.carModel || '').trim();
+            const productPart = String(product.partName || '').trim();
+            const mats = _injectionMaterialsForProduct(product, materials);
+            const sources = mats.length ? mats : [{
+                carModel: productCar,
+                injPartName: _baseInjectionPartName(productPart)
+            }];
+
+            sources.forEach(function (mat) {
+                const carModel = String(mat.carModel || productCar).trim();
+                const injectionPartName = String(mat.injPartName || productPart).trim();
+                if (!carModel && !injectionPartName) return;
+
+                const key = [carModel, injectionPartName].join('||');
+                if (!targetMap[key]) {
+                    targetMap[key] = {
+                        carModel: carModel,
+                        partName: injectionPartName,
+                        injectionPartName: injectionPartName,
+                        productIds: [],
+                        productPartNames: []
+                    };
+                }
+                if (productId && !targetMap[key].productIds.includes(productId)) {
+                    targetMap[key].productIds.push(productId);
+                }
+                if (productPart && !targetMap[key].productPartNames.includes(productPart)) {
+                    targetMap[key].productPartNames.push(productPart);
+                }
+            });
+        });
+
+        return Object.values(targetMap);
+    }
+
+    function _mergeArrayValues() {
+        const merged = [];
+        Array.prototype.slice.call(arguments).forEach(function (values) {
+            (Array.isArray(values) ? values : [values]).forEach(function (value) {
+                const text = String(value || '').trim();
+                if (text && !merged.includes(text)) merged.push(text);
+            });
+        });
+        return merged;
+    }
+
+    async function _syncAutoJigs() {
+        const rows = await _load();
+        const rowMap = {};
+        rows.forEach(function (row) {
+            rowMap[_jigKey(row)] = row;
+            rowMap[_productPartKey(row)] = row;
+            if (row.productId) rowMap[String(row.productId).trim()] = row;
+            (row.productIds || []).forEach(function (productId) {
+                if (productId) rowMap[String(productId).trim()] = row;
+            });
+        });
+
+        let changed = false;
+        _laserJigTargets().forEach(function (target) {
+            const carModel = String(target.carModel || '').trim();
+            const partName = String(target.partName || '').trim();
+            const jigName = _jigName(carModel, partName);
+            const sameKeyRows = rows.filter(function (row) {
+                return _jigKey(row) === _jigKey(target);
+            });
+            const existing = sameKeyRows[0] || (target.productIds || []).map(function (productId) {
+                return rowMap[String(productId || '').trim()];
+            }).find(Boolean) || (target.productPartNames || []).map(function (productPartName) {
+                return rowMap[_productPartKey({ carModel, partName: productPartName })];
+            }).find(Boolean);
+
+            if (existing) {
+                const next = {
+                    productId: (target.productIds || [])[0] || existing.productId || '',
+                    productIds: _mergeArrayValues(target.productIds, existing.productIds),
+                    carModel: carModel || existing.carModel || '',
+                    partName: partName || existing.partName || '',
+                    injectionPartName: target.injectionPartName || partName || existing.injectionPartName || '',
+                    productPartNames: _mergeArrayValues(target.productPartNames, existing.productPartNames),
+                    jigName: jigName || existing.jigName || ''
+                };
+                Object.keys(next).forEach(function (key) {
+                    const oldValue = Array.isArray(existing[key]) ? existing[key].join('|') : (existing[key] || '');
+                    const newValue = Array.isArray(next[key]) ? next[key].join('|') : (next[key] || '');
+                    if (oldValue !== newValue) {
+                        existing[key] = next[key];
+                        changed = true;
+                    }
+                });
+                sameKeyRows.slice(1).forEach(function (duplicate) {
+                    existing.productIds = _mergeArrayValues(existing.productIds, duplicate.productIds, duplicate.productId);
+                    existing.productPartNames = _mergeArrayValues(existing.productPartNames, duplicate.productPartNames, duplicate.partName);
+                    if (!existing.qty && duplicate.qty) existing.qty = duplicate.qty;
+                    if (!existing.status && duplicate.status) existing.status = duplicate.status;
+                    if (!existing.material && duplicate.material) existing.material = duplicate.material;
+                    if (!existing.madeDate && (duplicate.madeDate || duplicate.registDate)) existing.madeDate = duplicate.madeDate || duplicate.registDate;
+                    duplicate._removeAfterMerge = true;
+                    changed = true;
+                });
+                return;
+            }
+
+            rows.push({
+                id: Storage.generateId(),
+                productId: (target.productIds || [])[0] || '',
+                productIds: target.productIds || [],
+                carModel: carModel,
+                partName: partName,
+                injectionPartName: target.injectionPartName || partName,
+                productPartNames: target.productPartNames || [],
+                jigName: jigName,
+                qty: 0,
+                status: '사용중',
+                material: '',
+                madeDate: '',
+                source: 'auto-product',
+                createdAt: new Date().toISOString()
+            });
+            changed = true;
+        });
+
+        const nextRows = rows.filter(function (row) { return !row._removeAfterMerge; });
+        if (changed || nextRows.length !== rows.length) await _save(nextRows);
+        return nextRows;
+    }
+
     async function render(container) {
+        try {
+            await _syncAutoJigs();
+        } catch (e) {
+            console.warn('[LaserJigMaster] auto sync skipped:', e);
+        }
+
         container.innerHTML = `
             <div class="fade-in-up">
-                ${LaserProcessUI.renderSection('laser-jig-master', '지그 대장', '레이져 공정용 지그의 등록 정보, 재질, 수량, 보관 위치와 상태를 관리합니다.')}
+                ${LaserProcessUI.renderSection('laser-jig-master', '지그 대장', '제조공정에 레이져가 포함된 품목을 사출품명 기준으로 자동 등록하고, 도료/사출 컬러와 무관하게 지그 수량, 상태, 재질, 제작일을 관리합니다.')}
                 <div class="page-header">
                     <div class="page-actions">
-                        <button class="btn btn-primary" onclick="LaserJigMasterModule.openModal()">
-                            <span class="material-symbols-outlined">add</span> 지그 등록
+                        <button class="btn btn-outline" onclick="LaserJigMasterModule.sync()">
+                            <span class="material-symbols-outlined">sync</span> 자동 등록 갱신
                         </button>
                     </div>
                 </div>
@@ -282,15 +493,11 @@ var LaserJigMasterModule = (function () {
                             <table class="data-table">
                                 <thead>
                                     <tr>
-                                        <th>등록일</th>
                                         <th>지그명</th>
-                                        <th>차종</th>
-                                        <th>품명</th>
-                                        <th>재질</th>
                                         <th>수량</th>
-                                        <th>보관위치</th>
                                         <th>상태</th>
-                                        <th>비고</th>
+                                        <th>재질</th>
+                                        <th>제작일</th>
                                         <th>작업</th>
                                     </tr>
                                 </thead>
@@ -309,29 +516,24 @@ var LaserJigMasterModule = (function () {
         const tbody = document.getElementById('laserJigMasterBody');
         if (!tbody) return;
         const rows = (await _load()).sort(function (a, b) {
-            return String(b.registDate || '').localeCompare(String(a.registDate || ''));
+            return String(a.jigName || '').localeCompare(String(b.jigName || ''), 'ko');
         });
 
         if (!rows.length) {
-            tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:36px;color:var(--text-muted);">등록된 지그 대장이 없습니다.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:36px;color:var(--text-muted);">제조공정에 레이져가 포함된 품목이 없습니다.</td></tr>`;
             return;
         }
 
         tbody.innerHTML = rows.map(function (row) {
             return `
                 <tr>
-                    <td>${_esc(row.registDate || '-')}</td>
                     <td><strong>${_esc(row.jigName || '-')}</strong></td>
-                    <td>${_esc(row.carModel || '-')}</td>
-                    <td>${_esc(row.partName || '-')}</td>
-                    <td>${_esc(row.material || '-')}</td>
                     <td style="text-align:right;">${_fmt(row.qty || 0)}</td>
-                    <td>${_esc(row.location || '-')}</td>
                     <td>${UIUtils.badge(row.status || '사용중', (row.status || '') === '보관' ? 'secondary' : 'success')}</td>
-                    <td>${_esc(row.note || '-')}</td>
+                    <td>${_esc(row.material || '-')}</td>
+                    <td>${_esc(row.madeDate || row.registDate || '-')}</td>
                     <td>
                         <button class="btn btn-sm btn-outline" onclick="LaserJigMasterModule.openModal('${row.id}')">수정</button>
-                        <button class="btn btn-sm btn-danger" onclick="LaserJigMasterModule.remove('${row.id}')">삭제</button>
                     </td>
                 </tr>
             `;
@@ -341,33 +543,31 @@ var LaserJigMasterModule = (function () {
     async function openModal(id) {
         const rows = await _load();
         const row = id ? rows.find(function (item) { return item.id === id; }) : null;
+        if (!row) {
+            UIUtils.toast('자동 등록된 지그를 선택하세요.', 'warning');
+            return;
+        }
 
         UIUtils.showModal(
-            row ? '지그 대장 수정' : '지그 대장 등록',
+            '지그 대장 수정',
             `
                 <div class="form-row">
-                    <div class="form-group"><label class="form-label">등록일</label><input class="form-input" id="ljmDate" type="date" value="${_esc((row && row.registDate) || UIUtils.today())}"></div>
-                    <div class="form-group"><label class="form-label">지그명</label><input class="form-input" id="ljmName" value="${_esc((row && row.jigName) || '')}"></div>
+                    <div class="form-group"><label class="form-label">지그명</label><input class="form-input" id="ljmName" value="${_esc(row.jigName || '')}" readonly></div>
+                    <div class="form-group"><label class="form-label">제작일</label><input class="form-input" id="ljmMadeDate" type="date" value="${_esc(row.madeDate || row.registDate || '')}"></div>
                 </div>
                 <div class="form-row">
-                    <div class="form-group"><label class="form-label">차종</label><input class="form-input" id="ljmCar" value="${_esc((row && row.carModel) || '')}"></div>
-                    <div class="form-group"><label class="form-label">품명</label><input class="form-input" id="ljmPart" value="${_esc((row && row.partName) || '')}"></div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group"><label class="form-label">재질</label><input class="form-input" id="ljmMaterial" value="${_esc((row && row.material) || '')}"></div>
-                    <div class="form-group"><label class="form-label">수량</label><input class="form-input" id="ljmQty" type="number" min="0" value="${_esc((row && row.qty) || 0)}"></div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group"><label class="form-label">보관위치</label><input class="form-input" id="ljmLocation" value="${_esc((row && row.location) || '')}"></div>
+                    <div class="form-group"><label class="form-label">수량</label><input class="form-input" id="ljmQty" type="number" min="0" value="${_esc(row.qty || 0)}"></div>
                     <div class="form-group"><label class="form-label">상태</label>
                         <select class="form-select" id="ljmStatus">
                             ${['사용중','보관','수리중','폐기'].map(function (status) {
-                                return `<option value="${status}" ${((row && row.status) || '사용중') === status ? 'selected' : ''}>${status}</option>`;
+                                return `<option value="${status}" ${(row.status || '사용중') === status ? 'selected' : ''}>${status}</option>`;
                             }).join('')}
                         </select>
                     </div>
                 </div>
-                <div class="form-group"><label class="form-label">비고</label><textarea class="form-textarea" id="ljmNote" rows="3">${_esc((row && row.note) || '')}</textarea></div>
+                <div class="form-row">
+                    <div class="form-group"><label class="form-label">재질</label><input class="form-input" id="ljmMaterial" value="${_esc(row.material || '')}" placeholder="예: AL, SUS"></div>
+                </div>
             `,
             `
                 <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
@@ -379,15 +579,11 @@ var LaserJigMasterModule = (function () {
     async function save(id) {
         const rows = await _load();
         const payload = {
-            registDate: document.getElementById('ljmDate').value,
             jigName: document.getElementById('ljmName').value.trim(),
-            carModel: document.getElementById('ljmCar').value.trim(),
-            partName: document.getElementById('ljmPart').value.trim(),
-            material: document.getElementById('ljmMaterial').value.trim(),
             qty: Number(document.getElementById('ljmQty').value) || 0,
-            location: document.getElementById('ljmLocation').value.trim(),
             status: document.getElementById('ljmStatus').value,
-            note: document.getElementById('ljmNote').value.trim()
+            material: document.getElementById('ljmMaterial').value.trim(),
+            madeDate: document.getElementById('ljmMadeDate').value
         };
 
         if (!payload.jigName) {
@@ -395,15 +591,8 @@ var LaserJigMasterModule = (function () {
             return;
         }
 
-        if (id) {
-            const index = rows.findIndex(function (item) { return item.id === id; });
-            if (index > -1) rows[index] = Object.assign({}, rows[index], payload, { updatedAt: new Date().toISOString() });
-        } else {
-            rows.unshift(Object.assign({
-                id: Storage.generateId(),
-                createdAt: new Date().toISOString()
-            }, payload));
-        }
+        const index = rows.findIndex(function (item) { return item.id === id; });
+        if (index > -1) rows[index] = Object.assign({}, rows[index], payload, { updatedAt: new Date().toISOString() });
 
         await _save(rows);
         UIUtils.closeModal();
@@ -421,12 +610,24 @@ var LaserJigMasterModule = (function () {
         });
     }
 
+    async function sync() {
+        try {
+            await _syncAutoJigs();
+            UIUtils.toast('사출품명 기준으로 지그 대장을 갱신했습니다. 도료/사출 컬러는 구분하지 않습니다.', 'success');
+            await renderTable();
+        } catch (e) {
+            console.error('[LaserJigMaster] sync failed:', e);
+            UIUtils.toast('서버 연결 후 다시 갱신하세요.', 'error');
+        }
+    }
+
     return {
         render: render,
         init: render,
         openModal: openModal,
         save: save,
-        remove: remove
+        remove: remove,
+        sync: sync
     };
 })();
 
@@ -443,8 +644,13 @@ var LaserJigCleaningModule = (function () {
     }
 
     async function _load() {
-        const rows = await Storage.getConfigValue(CONFIG_KEY);
-        return Array.isArray(rows) ? rows : [];
+        try {
+            const rows = await Storage.getConfigValue(CONFIG_KEY);
+            return Array.isArray(rows) ? rows : [];
+        } catch (e) {
+            console.warn('[LaserJigCleaning] config load failed:', e);
+            return [];
+        }
     }
 
     async function _save(rows) {
@@ -452,8 +658,13 @@ var LaserJigCleaningModule = (function () {
     }
 
     async function _jigs() {
-        const rows = await Storage.getConfigValue(JIG_KEY);
-        return Array.isArray(rows) ? rows : [];
+        try {
+            const rows = await Storage.getConfigValue(JIG_KEY);
+            return Array.isArray(rows) ? rows : [];
+        } catch (e) {
+            console.warn('[LaserJigCleaning] jig config load failed:', e);
+            return [];
+        }
     }
 
     async function render(container) {
@@ -636,8 +847,13 @@ var LaserEquipmentHistoryModule = (function () {
     }
 
     async function _load() {
-        const rows = await Storage.getConfigValue(CONFIG_KEY);
-        return Array.isArray(rows) ? rows : [];
+        try {
+            const rows = await Storage.getConfigValue(CONFIG_KEY);
+            return Array.isArray(rows) ? rows : [];
+        } catch (e) {
+            console.warn('[LaserEquipmentHistory] config load failed:', e);
+            return [];
+        }
     }
 
     async function _save(rows) {

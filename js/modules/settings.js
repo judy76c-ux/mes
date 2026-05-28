@@ -709,6 +709,105 @@ const SettingsModule = (function() {
         return code;
     }
 
+    // 사출자재 피커 HTML — 차종 필터 + 자재 드롭다운
+    function _injMatPickerHTML(idPrefix) {
+        const mats = (Storage.getAll(INJECT_MAT_STORE) || [])
+            .slice().sort((a, b) =>
+                ((a.carModel||'')+(a.injPartName||'')).localeCompare((b.carModel||'')+(b.injPartName||''))
+            );
+        if (!mats.length) return '';
+        const carModels = [...new Set(mats.map(m => (m.carModel||'').trim()).filter(Boolean))].sort();
+        const carOpts = carModels.map(cm =>
+            `<option value="${cm.replace(/"/g,'&quot;')}">${cm}</option>`).join('');
+        const matOpts = mats.map(m => {
+            const label = [m.carModel, m.injPartName, m.injColor ? `(${m.injColor})` : ''].filter(Boolean).join(' / ');
+            return `<option value="${(m.id||'').replace(/"/g,'&quot;')}" data-car="${(m.carModel||'').replace(/"/g,'&quot;')}">${label.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</option>`;
+        }).join('');
+        return `<div style="background:rgba(59,130,246,0.05);border:1px solid rgba(59,130,246,0.25);border-radius:6px;padding:10px 12px;margin-bottom:12px;">
+            <div style="font-size:0.78rem;color:var(--accent-blue);font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:5px;">
+                <span class="material-symbols-outlined" style="font-size:15px;">manage_search</span>
+                기존 사출자재에서 선택
+                <span style="font-weight:400;color:var(--text-muted);font-size:0.72rem;">&nbsp;— 선택 시 아래 항목 자동 채움, 빈 채로 두면 직접 입력</span>
+            </div>
+            <div class="form-row" style="margin-bottom:0;">
+                <div class="form-group">
+                    <label class="form-label">차종 필터</label>
+                    <select class="form-input" id="${idPrefix}InjPickCarModel"
+                        onchange="SettingsModule._filterInjPickList('${idPrefix}')">
+                        <option value="">전체</option>
+                        ${carOpts}
+                    </select>
+                </div>
+                <div class="form-group" style="flex:2;">
+                    <label class="form-label">사출자재 선택</label>
+                    <select class="form-input" id="${idPrefix}InjPickSelect"
+                        onchange="SettingsModule._applyInjPickMat('${idPrefix}')">
+                        <option value="">-- 선택 안 함 (직접 입력) --</option>
+                        ${matOpts}
+                    </select>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    function _filterInjPickList(idPrefix) {
+        const carSel = document.getElementById(idPrefix + 'InjPickCarModel');
+        const matSel = document.getElementById(idPrefix + 'InjPickSelect');
+        if (!carSel || !matSel) return;
+        const carVal = carSel.value;
+        Array.from(matSel.options).forEach(opt => {
+            if (!opt.value) { opt.hidden = false; return; }
+            opt.hidden = Boolean(carVal && opt.dataset.car !== carVal);
+        });
+        matSel.value = '';
+        _applyInjPickMat(idPrefix);
+    }
+
+    function _applyInjPickMat(idPrefix) {
+        const matSel = document.getElementById(idPrefix + 'InjPickSelect');
+        if (!matSel) return;
+        const matId = matSel.value;
+        const mat = matId ? (Storage.getAll(INJECT_MAT_STORE) || []).find(m => m.id === matId) : null;
+
+        const g = id => document.getElementById(id);
+        const setField = (id, val, locked) => {
+            const el = g(id);
+            if (!el) return;
+            if (locked) {
+                el.value = val || '';
+                el.readOnly = true;
+                el.style.background = 'var(--bg-secondary)';
+                el.style.color = 'var(--text-secondary)';
+            } else {
+                el.readOnly = false;
+                el.style.background = '';
+                el.style.color = '';
+            }
+        };
+
+        const isNew = Boolean(g(idPrefix + 'AutoInjPartName'));
+        const f = isNew
+            ? { part: idPrefix+'AutoInjPartName', color: idPrefix+'AutoInjColor', sup: idPrefix+'AutoInjSupplier',
+                price: idPrefix+'AutoInjPrice', cavity: idPrefix+'AutoInjCavity', weight: idPrefix+'AutoInjWeight',
+                linkId: idPrefix+'AutoInjLinkId' }
+            : { part: idPrefix+'EditInjPartName_0', color: idPrefix+'EditInjColor_0', sup: idPrefix+'EditInjSupplier_0',
+                price: idPrefix+'EditInjPrice_0', cavity: idPrefix+'EditInjCavity_0', weight: idPrefix+'EditInjWeight_0',
+                linkId: idPrefix+'EditInjLinkId_0' };
+
+        if (mat) {
+            setField(f.part,   mat.injPartName,  true);
+            setField(f.color,  mat.injColor,     true);
+            setField(f.sup,    mat.supplier,     true);
+            setField(f.price,  mat.unitPrice,    true);
+            setField(f.cavity, mat.cavityCount,  true);
+            setField(f.weight, mat.weight,       true);
+            const linkEl = g(f.linkId); if (linkEl) linkEl.value = matId;
+        } else {
+            [f.part, f.color, f.sup, f.price, f.cavity, f.weight].forEach(id => setField(id, '', false));
+            const linkEl = g(f.linkId); if (linkEl) linkEl.value = '';
+        }
+    }
+
     function _productFormHTML(p = {}, idPrefix = 'addProd') {
         const v = k => p[k] !== undefined ? p[k] : '';
         const isEdit = idPrefix === 'editProd';
@@ -988,12 +1087,14 @@ const SettingsModule = (function() {
                         </div>
                     </div>
                 </div>`).join('') : `
-                <!-- 사출자재 없음 → 신규 등록 폼 바로 표시 -->
+                <!-- 사출자재 없음 → 기존 선택 or 신규 등록 -->
                 <input type="hidden" id="${idPrefix}EditInjId_0" value="">
+                <input type="hidden" id="${idPrefix}EditInjLinkId_0" value="">
                 <div style="background:rgba(217,119,6,0.05);border:1px dashed rgba(217,119,6,0.5);border-radius:8px;padding:12px;">
                     <div style="font-size:0.78rem;color:#b45309;margin-bottom:10px;font-weight:600;">
-                        ⚠ 연결된 사출자재가 없습니다 — 아래 입력 시 새 사출자재로 등록됩니다
+                        ⚠ 연결된 사출자재가 없습니다 — 기존 자재를 선택하거나 아래에 직접 입력하세요
                     </div>
+                    ${_injMatPickerHTML(idPrefix)}
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label">사출 부품명(금형명)</label>
@@ -1050,6 +1151,8 @@ const SettingsModule = (function() {
                     <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;color:#34d399;">info</span>
                     <strong>제작품목명</strong>은 위 <strong>"품명"</strong>으로 자동 설정됩니다 — 이름 일치가 보장되어 창고 예약 집계가 정확해집니다.
                 </div>
+                <input type="hidden" id="${idPrefix}AutoInjLinkId" value="">
+                ${_injMatPickerHTML(idPrefix)}
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label">사출 부품명(금형명) <span style="color:var(--accent-red)">*</span></label>
@@ -1546,31 +1649,48 @@ const SettingsModule = (function() {
         data.displayName = `${data.carModel} ${data.partName} ${data.color}`.trim();
         const savedProduct = await Storage.add(PRODUCTS_STORE, data);
 
-        // ── 사출 자재 자동 등록 (체크박스 + 금형명 입력 시) ──────────
+        // ── 사출 자재 연결/등록 (체크박스 활성화 시) ──────────────────
         const autoInjEnabled = document.getElementById('addProdAutoInjEnabled');
         if (autoInjEnabled && autoInjEnabled.checked) {
             const g = id => (document.getElementById(id) || {}).value || '';
-            const injPartName = g('addProdAutoInjPartName').trim();
-            if (injPartName) {
-                const injMat = {
-                    carModel:        data.carModel,
-                    supplier:        g('addProdAutoInjSupplier').trim(),
-                    injPartName:     injPartName,
-                    injColor:        g('addProdAutoInjColor').trim(),
-                    unitPrice:       g('addProdAutoInjPrice').trim(),
-                    itemType:        data.itemType || '',
-                    mfgProductName:  data.partName,   // ← 제품 품명과 동일하게 고정
-                    mfgProductName2: '',
-                    cavityCount:     g('addProdAutoInjCavity').trim(),
-                    weight:          g('addProdAutoInjWeight').trim(),
-                    productIds:      savedProduct ? [savedProduct.id] : []
-                };
-                await Storage.add(INJECT_MAT_STORE, injMat);
+            const linkId = g('addProdAutoInjLinkId').trim();
+            if (linkId) {
+                // 기존 사출자재에 연결
+                const existingMat = Storage.getById(INJECT_MAT_STORE, linkId);
+                if (existingMat && savedProduct) {
+                    const existingIds = existingMat.productIds || [];
+                    if (!existingIds.includes(savedProduct.id)) {
+                        await Storage.update(INJECT_MAT_STORE, linkId, {
+                            productIds: [...existingIds, savedProduct.id],
+                            mfgProductName: data.partName
+                        });
+                    }
+                }
                 UIUtils.closeModal();
-                UIUtils.toast('제품 및 사출 자재가 함께 등록되었습니다.', 'success');
+                UIUtils.toast('제품이 등록되었습니다. 기존 사출자재에 연결되었습니다.', 'success');
             } else {
-                UIUtils.closeModal();
-                UIUtils.toast('제품이 추가되었습니다. (사출 부품명 미입력 → 사출 자재 등록 생략)', 'warning');
+                const injPartName = g('addProdAutoInjPartName').trim();
+                if (injPartName) {
+                    const injMat = {
+                        carModel:        data.carModel,
+                        supplier:        g('addProdAutoInjSupplier').trim(),
+                        injPartName:     injPartName,
+                        injColor:        g('addProdAutoInjColor').trim(),
+                        unitPrice:       g('addProdAutoInjPrice').trim(),
+                        itemType:        data.itemType || '',
+                        mfgProductName:  data.partName,
+                        mfgProductName2: '',
+                        cavityCount:     g('addProdAutoInjCavity').trim(),
+                        weight:          g('addProdAutoInjWeight').trim(),
+                        productIds:      savedProduct ? [savedProduct.id] : []
+                    };
+                    await Storage.add(INJECT_MAT_STORE, injMat);
+                    UIUtils.closeModal();
+                    UIUtils.toast('제품 및 사출 자재가 함께 등록되었습니다.', 'success');
+                } else {
+                    UIUtils.closeModal();
+                    UIUtils.toast('제품이 추가되었습니다. (사출 부품명 미입력 → 사출 자재 등록 생략)', 'warning');
+                }
             }
         } else {
             UIUtils.closeModal();
@@ -1628,6 +1748,7 @@ const SettingsModule = (function() {
             const g = elId => (document.getElementById(elId) || {}).value || '';
             for (let i = 0; i < count; i++) {
                 const matId       = g(`editProdEditInjId_${i}`);
+                const linkId      = g(`editProdEditInjLinkId_${i}`).trim();
                 const injPartName = g(`editProdEditInjPartName_${i}`).trim();
                 const injColor    = g(`editProdEditInjColor_${i}`).trim();
                 const supplier    = g(`editProdEditInjSupplier_${i}`).trim();
@@ -1636,12 +1757,25 @@ const SettingsModule = (function() {
                 const weight      = g(`editProdEditInjWeight_${i}`).trim();
 
                 if (matId) {
-                    // 기존 자재 수정
+                    // 기존 연결 자재 수정
                     await Storage.update(INJECT_MAT_STORE, matId, {
                         injPartName, injColor, supplier, unitPrice, cavityCount, weight,
                         mfgProductName: data.partName
                     });
                     injMatChanged = true;
+                } else if (linkId) {
+                    // 피커에서 기존 자재 선택 → 연결만 추가
+                    const existingMat = Storage.getById(INJECT_MAT_STORE, linkId);
+                    if (existingMat) {
+                        const existingIds = existingMat.productIds || [];
+                        if (!existingIds.includes(id)) {
+                            await Storage.update(INJECT_MAT_STORE, linkId, {
+                                productIds: [...existingIds, id],
+                                mfgProductName: data.partName
+                            });
+                            injMatChanged = true;
+                        }
+                    }
                 } else if (injPartName) {
                     // 신규 자재 등록 (부품명이 입력된 경우에만)
                     const newMat = {
@@ -7835,6 +7969,8 @@ const SettingsModule = (function() {
         checkPartNameDuplicate,
         showDuplicatePartNameReport,
         buildProductValidationPanel,
+        _filterInjPickList,
+        _applyInjPickMat,
         _askCascadeRename,
         _doCascadeRename,
         deleteRecordsByPartNames,
