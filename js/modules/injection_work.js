@@ -5,7 +5,9 @@ var InjectionWorkLogModule = (function() {
     const STORE      = DB.STORES.INJECTION_WORK_LOG;
     const MOLD_STORE = DB.STORES.MOLD_CHANGE_LOG;
     const RAW_STORE  = DB.STORES.RAW_MAT_CHANGE_LOG;
+    const PLAN_STORE = DB.STORES.PRODUCTION_PLANS;
     const MACHINES   = ['110-1호기', '110-2호기', '200-3호기'];
+    const PLAN_LINES = ['도장-A', '도장-B'];
 
     let _activeTab  = 'worklog';
     let _schedYear  = new Date().getFullYear();
@@ -616,7 +618,6 @@ var InjectionWorkLogModule = (function() {
                         </button>
                     </div>
                 </div>
-                <div id="moldAlerts"></div>
                 <div class="stat-cards" id="moldStats"></div>
                 <div class="card">
                     <div class="card-body" style="padding:0;">
@@ -626,8 +627,7 @@ var InjectionWorkLogModule = (function() {
                                     <tr>
                                         <th>교체일자</th><th>사출기</th><th>차종</th><th>제품명</th>
                                         <th>구 금형번호</th><th>신 금형번호</th><th>교체사유</th>
-                                        <th>누적쇼트</th><th>차기교체예정일</th><th>예정쇼트</th>
-                                        <th>작업자</th><th>비고</th><th>작업</th>
+                                        <th>누적쇼트</th><th>작업자</th><th>비고</th><th>작업</th>
                                     </tr>
                                 </thead>
                                 <tbody id="moldTableBody"></tbody>
@@ -650,55 +650,17 @@ var InjectionWorkLogModule = (function() {
         if (machine)      data = data.filter(d => d.machine === machine);
         data.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
-        _renderMoldAlerts();
         _renderMoldStats(data);
         _renderMoldTable(data);
-    }
-
-    function _renderMoldAlerts() {
-        const el = document.getElementById('moldAlerts');
-        if (!el) return;
-        const today    = UIUtils.today();
-        const upcoming = (Storage.getAll(MOLD_STORE) || [])
-            .filter(d => d.plannedDate && d.plannedDate >= today)
-            .sort((a, b) => a.plannedDate.localeCompare(b.plannedDate))
-            .slice(0, 5);
-        if (!upcoming.length) { el.innerHTML = ''; return; }
-
-        el.innerHTML = `
-            <div style="background:rgba(59,130,246,0.06);border:1px solid var(--accent-blue);border-radius:8px;padding:12px 16px;margin-bottom:16px;">
-                <div style="font-weight:600;color:var(--accent-blue);margin-bottom:8px;display:flex;align-items:center;gap:6px;">
-                    <span class="material-symbols-outlined" style="font-size:18px;">schedule</span> 금형 교체 예정 알림
-                </div>
-                ${upcoming.map(d => {
-                    const dl = Math.ceil((new Date(d.plannedDate) - new Date(today)) / 86400000);
-                    return `<div style="font-size:0.85rem;margin-bottom:4px;display:flex;gap:10px;align-items:center;">
-                        <span style="color:var(--text-muted);">${d.plannedDate}</span>
-                        <span style="color:var(--text-muted);">|</span>
-                        <span>${d.machine || '-'}</span>
-                        <span style="color:var(--text-muted);">|</span>
-                        <strong>${d.partName || '-'}</strong>
-                        <span style="color:var(--text-muted);">|</span>
-                        <span style="${dl <= 7 ? 'color:var(--accent-red);font-weight:700;' : 'color:var(--accent-blue);'}">D-${dl}</span>
-                    </div>`;
-                }).join('')}
-            </div>
-        `;
     }
 
     function _renderMoldStats(data) {
         const el = document.getElementById('moldStats');
         if (!el) return;
-        const today = UIUtils.today();
-        const plan30 = (Storage.getAll(MOLD_STORE) || []).filter(d => d.plannedDate && d.plannedDate >= today && d.plannedDate <= _addDays(today, 30)).length;
         el.innerHTML = `
             <div class="stat-card blue">
                 <div class="stat-card-value">${data.length}</div>
                 <div class="stat-card-label">교체 건수</div>
-            </div>
-            <div class="stat-card" style="background:rgba(249,115,22,0.08);border-left:4px solid var(--accent-orange);">
-                <div class="stat-card-value" style="color:var(--accent-orange);">${plan30}</div>
-                <div class="stat-card-label">30일 내 교체 예정</div>
             </div>
         `;
     }
@@ -707,13 +669,10 @@ var InjectionWorkLogModule = (function() {
         const tbody = document.getElementById('moldTableBody');
         if (!tbody) return;
         if (!data.length) {
-            tbody.innerHTML = `<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-muted);">금형 교체 이력이 없습니다.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:40px;color:var(--text-muted);">금형 교체 이력이 없습니다.</td></tr>`;
             return;
         }
-        const today = UIUtils.today();
         tbody.innerHTML = data.map(d => {
-            const dl  = d.plannedDate ? Math.ceil((new Date(d.plannedDate) - new Date(today)) / 86400000) : null;
-            const dls = dl !== null ? (dl <= 7 ? 'color:var(--accent-red);font-weight:700;' : 'color:var(--text-secondary);') : '';
             return `
                 <tr>
                     <td>${d.date}</td>
@@ -724,8 +683,6 @@ var InjectionWorkLogModule = (function() {
                     <td style="font-family:monospace;color:var(--accent-blue);font-weight:600;">${d.newMoldNo || '-'}</td>
                     <td><span class="badge badge-warning">${d.reason || '-'}</span></td>
                     <td style="text-align:right;">${d.shotCount ? UIUtils.formatNumber(d.shotCount) : '-'}</td>
-                    <td style="${dls}">${d.plannedDate || '-'}${dl !== null ? ` <small>(D-${dl})</small>` : ''}</td>
-                    <td style="text-align:right;">${d.plannedShot ? UIUtils.formatNumber(d.plannedShot) : '-'}</td>
                     <td>${d.worker || '-'}</td>
                     <td style="font-size:0.82rem;color:var(--text-muted);">${d.note || '-'}</td>
                     <td>
@@ -739,9 +696,10 @@ var InjectionWorkLogModule = (function() {
 
     function _moldFormHTML(d = {}) {
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
-        const carModels = UIUtils.sortCarModels(materials.map(m => m.carModel), materials);
-        const parts     = d.carModel ? [...new Set(materials.filter(m => m.carModel === d.carModel).map(m => m.injPartName).filter(Boolean))].sort() : [];
-        const REASONS   = ['정기교체', '손상/마모', '신규도입', '품질불량', '설계변경', '기타'];
+        const internalMaterials = materials.filter(m => (m.supplier || '').trim() === '사내');
+        const carModels = UIUtils.sortCarModels(internalMaterials.map(m => m.carModel), internalMaterials);
+        const parts     = d.carModel ? [...new Set(internalMaterials.filter(m => m.carModel === d.carModel).map(m => m.injPartName).filter(Boolean))].sort() : [];
+        const REASONS   = ['계획 변경', '금형 세척', '금형 수리'];
         return `
             <div class="form-row">
                 <div class="form-group">
@@ -797,16 +755,6 @@ var InjectionWorkLogModule = (function() {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">차기 교체 예정일</label>
-                    <input type="date" class="form-input" id="moldPlannedDate" value="${d.plannedDate || ''}">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">차기 예정쇼트</label>
-                    <input type="number" class="form-input" id="moldPlannedShot" min="0" placeholder="0" value="${d.plannedShot || ''}" style="text-align:right;">
-                </div>
-            </div>
-            <div class="form-row">
-                <div class="form-group">
                     <label class="form-label">작업자</label>
                     <input type="text" class="form-input" id="moldWorker" placeholder="작업자명" value="${d.worker || ''}">
                 </div>
@@ -830,7 +778,8 @@ var InjectionWorkLogModule = (function() {
         const pSel =  document.getElementById('moldPartName');
         if (!pSel) return;
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
-        const parts = [...new Set(materials.filter(m => m.carModel === car).map(m => m.injPartName).filter(Boolean))].sort();
+        const internalMaterials = materials.filter(m => (m.supplier || '').trim() === '사내');
+        const parts = [...new Set(internalMaterials.filter(m => m.carModel === car).map(m => m.injPartName).filter(Boolean))].sort();
         pSel.innerHTML = '<option value="">-- 선택 --</option>' + parts.map(p => `<option value="${p}">${p}</option>`).join('');
     }
 
@@ -844,8 +793,6 @@ var InjectionWorkLogModule = (function() {
             newMoldNo:   ((document.getElementById('moldNewNo')       || {}).value || '').trim(),
             reason:       (document.getElementById('moldReason')      || {}).value || '',
             shotCount:   Number((document.getElementById('moldShotCount')    || {}).value) || 0,
-            plannedDate:  (document.getElementById('moldPlannedDate') || {}).value || '',
-            plannedShot: Number((document.getElementById('moldPlannedShot')  || {}).value) || 0,
             worker:      ((document.getElementById('moldWorker')      || {}).value || '').trim(),
             note:        ((document.getElementById('moldNote')        || {}).value || '').trim()
         };
@@ -1228,9 +1175,6 @@ var InjectionWorkLogModule = (function() {
                             <span style="width:12px;height:12px;border-radius:2px;background:var(--accent-blue);display:inline-block;"></span> 금형교체 완료
                         </span>
                         <span style="display:flex;align-items:center;gap:4px;">
-                            <span style="width:12px;height:12px;border-radius:2px;border:2px dashed var(--accent-blue);display:inline-block;"></span> 금형교체 예정
-                        </span>
-                        <span style="display:flex;align-items:center;gap:4px;">
                             <span style="width:12px;height:12px;border-radius:2px;background:var(--accent-orange);display:inline-block;"></span> 원재료변경 완료
                         </span>
                         <span style="display:flex;align-items:center;gap:4px;">
@@ -1238,6 +1182,9 @@ var InjectionWorkLogModule = (function() {
                         </span>
                         <span style="display:flex;align-items:center;gap:4px;">
                             <span style="width:12px;height:12px;border-radius:2px;background:var(--accent-green);display:inline-block;"></span> 생산실적
+                        </span>
+                        <span style="display:flex;align-items:center;gap:4px;">
+                            <span style="width:12px;height:12px;border-radius:2px;background:#6366f1;display:inline-block;"></span> 생산계획
                         </span>
                     </div>
                 </div>
@@ -1268,6 +1215,7 @@ var InjectionWorkLogModule = (function() {
         const moldAll = Storage.getAll(MOLD_STORE) || [];
         const rawAll  = Storage.getAll(RAW_STORE)  || [];
         const workAll = Storage.getAll(STORE)       || [];
+        const planAll = Storage.getAll(PLAN_STORE)  || [];
 
         function byDate(arr, key) {
             const map = {};
@@ -1281,10 +1229,10 @@ var InjectionWorkLogModule = (function() {
         }
 
         const moldDone = byDate(moldAll.filter(d => d.date >= mStart && d.date <= mEnd),         'date');
-        const moldPlan = byDate(moldAll.filter(d => d.plannedDate >= mStart && d.plannedDate <= mEnd), 'plannedDate');
         const rawDone  = byDate(rawAll.filter(d => d.date >= mStart && d.date <= mEnd),           'date');
         const rawPlan  = byDate(rawAll.filter(d => d.plannedDate >= mStart && d.plannedDate <= mEnd),  'plannedDate');
         const workMap  = byDate(workAll.filter(d => d.date >= mStart && d.date <= mEnd),          'date');
+        const planMap  = byDate(planAll.filter(d => d.date >= mStart && d.date <= mEnd),          'date');
 
         const firstDow = new Date(year, month - 1, 1).getDay(); // 0=일
         const DAY_KO   = ['일', '월', '화', '수', '목', '금', '토'];
@@ -1322,10 +1270,6 @@ var InjectionWorkLogModule = (function() {
                         events.push(`<div class="sched-event sched-mold-done" title="금형교체: ${e.partName||''} → ${e.newMoldNo||''}">
                             🔧 ${e.partName || '금형교체'}</div>`);
                     });
-                    (moldPlan[ds] || []).forEach(e => {
-                        events.push(`<div class="sched-event sched-mold-plan" title="금형교체 예정: ${e.partName||''}">
-                            🔧 예정: ${e.partName || ''}</div>`);
-                    });
                     (rawDone[ds] || []).forEach(e => {
                         events.push(`<div class="sched-event sched-raw-done" title="원재료변경: ${e.partName||''} → ${e.newMaterial||''}">
                             📦 ${e.newMaterial || '원재료변경'}</div>`);
@@ -1340,6 +1284,11 @@ var InjectionWorkLogModule = (function() {
                             events.push(`<div class="sched-event sched-work" title="생산실적: ${UIUtils.formatNumber(totalProd)}개">
                                 ▶ ${UIUtils.formatNumber(totalProd)}개</div>`);
                         }
+                    }
+                    if (planMap[ds] && planMap[ds].length) {
+                        const totalPlan = planMap[ds].reduce((s, p) => s + (Number(p.planQty) || 0), 0);
+                        events.push(`<div class="sched-event" title="생산계획: ${UIUtils.formatNumber(totalPlan)}개" style="background:rgba(99,102,241,0.1);color:#4f46e5;border-left:3px solid #6366f1;">
+                            계획 ${UIUtils.formatNumber(totalPlan)}개</div>`);
                     }
 
                     const dayNumHtml = isToday
@@ -1375,26 +1324,33 @@ var InjectionWorkLogModule = (function() {
         const moldAll = Storage.getAll(MOLD_STORE) || [];
         const rawAll  = Storage.getAll(RAW_STORE)  || [];
         const workAll = Storage.getAll(STORE)       || [];
+        const planAll = Storage.getAll(PLAN_STORE)  || [];
 
         const moldDone = moldAll.filter(d => (d.date || '').split(' ')[0] === ds);
-        const moldPlan = moldAll.filter(d => d.plannedDate === ds);
         const rawDone  = rawAll.filter(d  => (d.date || '').split(' ')[0] === ds);
         const rawPlan  = rawAll.filter(d  => d.plannedDate === ds);
         const workDone = workAll.filter(d => (d.date || '').split(' ')[0] === ds);
-
-        if (!moldDone.length && !moldPlan.length && !rawDone.length && !rawPlan.length && !workDone.length) {
-            detailEl.innerHTML = '';
-            return;
-        }
+        const planDone = planAll
+            .filter(d => d.date === ds)
+            .sort((a, b) => (a.startTime || a.slot || '').localeCompare(b.startTime || b.slot || ''));
 
         let html = `
             <div class="card">
-                <div class="card-header" style="padding:12px 16px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;gap:8px;">
-                    <span class="material-symbols-outlined" style="color:var(--accent-blue);">event</span>
-                    <strong>${ds} 일정 상세</strong>
+                <div class="card-header" style="padding:12px 16px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span class="material-symbols-outlined" style="color:var(--accent-blue);">event</span>
+                        <strong>${ds} 일정 상세</strong>
+                    </div>
+                    <button class="btn btn-primary btn-sm" onclick="InjectionWorkLogModule.openPlanAddModal('${ds}')">
+                        <span class="material-symbols-outlined" style="font-size:16px;">add</span> 생산 계획 입력
+                    </button>
                 </div>
                 <div class="card-body" style="padding:14px 16px;">
         `;
+
+        if (!moldDone.length && !rawDone.length && !rawPlan.length && !workDone.length && !planDone.length) {
+            html += `<div style="font-size:0.85rem;color:var(--text-muted);padding:6px 0;">등록된 일정이 없습니다.</div>`;
+        }
 
         if (moldDone.length) {
             html += `<div style="margin-bottom:14px;">
@@ -1405,16 +1361,6 @@ var InjectionWorkLogModule = (function() {
                     <span style="color:var(--text-muted);">${d.oldMoldNo||'-'}</span> →
                     <strong style="color:var(--accent-blue);">${d.newMoldNo||'-'}</strong> |
                     ${d.reason||'-'}${d.shotCount?` | 쇼트:${UIUtils.formatNumber(d.shotCount)}`:''}
-                </div>`;
-            });
-            html += `</div>`;
-        }
-        if (moldPlan.length) {
-            html += `<div style="margin-bottom:14px;">
-                <div style="font-size:0.8rem;font-weight:700;color:var(--accent-blue);margin-bottom:6px;">🔧 금형 교체 예정 (${moldPlan.length}건)</div>`;
-            moldPlan.forEach(d => {
-                html += `<div style="font-size:0.83rem;padding:6px 10px;border:1.5px dashed var(--accent-blue);border-radius:6px;margin-bottom:4px;">
-                    <strong>${d.machine||'-'}</strong> | ${d.partName||'-'} | 예정쇼트: ${d.plannedShot?UIUtils.formatNumber(d.plannedShot):'-'}
                 </div>`;
             });
             html += `</div>`;
@@ -1458,10 +1404,151 @@ var InjectionWorkLogModule = (function() {
             });
             html += `</div>`;
         }
+        if (planDone.length) {
+            const tPlan = planDone.reduce((s, p) => s + (Number(p.planQty)||0), 0);
+            html += `<div style="margin-bottom:14px;">
+                <div style="font-size:0.8rem;font-weight:700;color:#4f46e5;margin-bottom:6px;">생산 계획 (${planDone.length}건 · 총 ${UIUtils.formatNumber(tPlan)}개)</div>`;
+            planDone.forEach(d => {
+                html += `<div style="font-size:0.83rem;padding:6px 10px;background:rgba(99,102,241,0.06);border-radius:6px;margin-bottom:4px;">
+                    <strong>${d.line || '-'}</strong> | ${(d.startTime || d.slot || '-')} ${d.endTime ? '~ ' + d.endTime : ''} |
+                    ${d.carModel || '-'} / ${d.partName || '-'} ${d.color ? `(${d.color})` : ''} |
+                    계획: <strong>${UIUtils.formatNumber(d.planQty || 0)}</strong>
+                </div>`;
+            });
+            html += `</div>`;
+        }
 
         html += `</div></div>`;
         detailEl.innerHTML = html;
         detailEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function _esc(v) {
+        return String(v ?? '').replace(/[&<>"']/g, ch => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[ch]));
+    }
+
+    function _planProducts() {
+        return Storage.getAll(DB.STORES.PRODUCTS) || [];
+    }
+
+    function openPlanAddModal(date) {
+        const products = _planProducts();
+        const carModels = UIUtils.sortCarModels(products.map(p => p.carModel), products);
+        UIUtils.showModal('생산 계획 입력', `
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">계획일자 <span style="color:var(--accent-red)">*</span></label>
+                    <input type="date" class="form-input" id="schedPlanDate" value="${_esc(date || UIUtils.today())}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">라인 <span style="color:var(--accent-red)">*</span></label>
+                    <select class="form-select" id="schedPlanLine">
+                        ${PLAN_LINES.map(line => `<option value="${_esc(line)}">${_esc(line)}</option>`).join('')}
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">차종 <span style="color:var(--accent-red)">*</span></label>
+                    <select class="form-select" id="schedPlanCar" onchange="InjectionWorkLogModule.onSchedulePlanCarChange()">
+                        <option value="">-- 선택 --</option>
+                        ${carModels.map(c => `<option value="${_esc(c)}">${_esc(c)}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">제품명 <span style="color:var(--accent-red)">*</span></label>
+                    <select class="form-select" id="schedPlanPart" onchange="InjectionWorkLogModule.onSchedulePlanPartChange()">
+                        <option value="">-- 차종 먼저 선택 --</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">컬러</label>
+                    <select class="form-select" id="schedPlanColor">
+                        <option value="">-- 선택 --</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">계획 수량(EA) <span style="color:var(--accent-red)">*</span></label>
+                    <input type="number" class="form-input" id="schedPlanQty" min="1" placeholder="0" style="text-align:right;">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">시작 시간</label>
+                    <input type="time" class="form-input" id="schedPlanStart" value="08:30">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">종료 시간</label>
+                    <input type="time" class="form-input" id="schedPlanEnd">
+                </div>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="InjectionWorkLogModule.saveSchedulePlan()">저장</button>
+        `);
+    }
+
+    function onSchedulePlanCarChange() {
+        const car = (document.getElementById('schedPlanCar') || {}).value || '';
+        const partEl = document.getElementById('schedPlanPart');
+        const colorEl = document.getElementById('schedPlanColor');
+        if (!partEl || !colorEl) return;
+        const parts = [...new Set(_planProducts().filter(p => p.carModel === car).map(p => p.partName).filter(Boolean))].sort();
+        partEl.innerHTML = '<option value="">-- 선택 --</option>' + parts.map(p => `<option value="${_esc(p)}">${_esc(p)}</option>`).join('');
+        colorEl.innerHTML = '<option value="">-- 선택 --</option>';
+    }
+
+    function onSchedulePlanPartChange() {
+        const car = (document.getElementById('schedPlanCar') || {}).value || '';
+        const part = (document.getElementById('schedPlanPart') || {}).value || '';
+        const colorEl = document.getElementById('schedPlanColor');
+        if (!colorEl) return;
+        const colors = [...new Set(_planProducts().filter(p => p.carModel === car && p.partName === part).map(p => p.color).filter(Boolean))].sort();
+        colorEl.innerHTML = '<option value="">-- 선택 --</option>' + colors.map(c => `<option value="${_esc(c)}">${_esc(c)}</option>`).join('');
+    }
+
+    async function saveSchedulePlan() {
+        const date = (document.getElementById('schedPlanDate') || {}).value || '';
+        const line = (document.getElementById('schedPlanLine') || {}).value || '';
+        const carModel = (document.getElementById('schedPlanCar') || {}).value || '';
+        const partName = (document.getElementById('schedPlanPart') || {}).value || '';
+        const color = (document.getElementById('schedPlanColor') || {}).value || '';
+        const planQty = Number((document.getElementById('schedPlanQty') || {}).value) || 0;
+        const startTime = (document.getElementById('schedPlanStart') || {}).value || '';
+        const endTime = (document.getElementById('schedPlanEnd') || {}).value || '';
+
+        if (!date || !line || !carModel || !partName || planQty <= 0) {
+            UIUtils.toast('계획일자, 라인, 차종, 제품명, 계획 수량을 입력하세요.', 'warning');
+            return;
+        }
+
+        const products = _planProducts();
+        const product = products.find(p => p.carModel === carModel && p.partName === partName && p.color === color)
+            || products.find(p => p.carModel === carModel && p.partName === partName);
+
+        await Storage.add(PLAN_STORE, {
+            date,
+            line,
+            slot: startTime || '08:30',
+            carModel,
+            partName,
+            color,
+            itemType: product ? (product.itemType || '') : '',
+            planQty,
+            startTime,
+            endTime,
+            status: '대기',
+            productId: product ? product.id : undefined
+        });
+
+        UIUtils.closeModal();
+        UIUtils.toast('생산 계획이 등록되었습니다.', 'success');
+        _drawCalendar();
+        selectDay(date);
     }
 
     function prevMonth() {
@@ -1536,6 +1623,10 @@ var InjectionWorkLogModule = (function() {
         prevMonth,
         nextMonth,
         goToday,
-        selectDay
+        selectDay,
+        openPlanAddModal,
+        onSchedulePlanCarChange,
+        onSchedulePlanPartChange,
+        saveSchedulePlan
     };
 })();

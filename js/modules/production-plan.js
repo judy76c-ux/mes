@@ -12,6 +12,10 @@ const ProductionPlanModule = (function() {
     const LINE_OPTIONS = ['도장-A', '도장-B'];
 
     let _autoTimer = null; // 자동 상태 갱신 타이머
+    let _calYear = new Date().getFullYear();
+    let _calMonth = new Date().getMonth() + 1;
+    let _activePlanDateModal = '';
+    let _activePlanLineModal = '도장-A';
 
     const TIME_SLOTS = [
         '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
@@ -137,122 +141,53 @@ const ProductionPlanModule = (function() {
     }
 
     function render(container) {
-        const today = UIUtils.today();
         container.innerHTML = `
             <div class="fade-in-up">
-                <div class="page-header" style="flex-wrap: wrap; gap: 0.5rem;">
-                    <div class="page-actions" style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
-                        <label class="form-label" style="margin: 0; white-space: nowrap;">계획 일자</label>
-                        <input type="date" class="form-input" id="planDateFilter" value="${today}"
-                            onchange="ProductionPlanModule.selectDate(this.value)" style="width: 140px;">
-                        <span id="planDayOfWeek" style="font-size:1.1rem; font-weight:800;
-                            color:${_getDayColor(today)}; min-width:20px; text-align:center;">
-                            ${_getDayLabel(today)}
-                        </span>
+                <input type="hidden" id="planDateFilter" value="${UIUtils.today()}">
+                <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <button class="btn btn-outline" onclick="ProductionPlanModule.prevMonth()">
+                            <span class="material-symbols-outlined">chevron_left</span>
+                        </button>
+                        <h3 id="planCalendarTitle" style="margin:0;min-width:150px;text-align:center;font-size:1.25rem;"></h3>
+                        <button class="btn btn-outline" onclick="ProductionPlanModule.nextMonth()">
+                            <span class="material-symbols-outlined">chevron_right</span>
+                        </button>
+                        <button class="btn btn-secondary btn-sm" onclick="ProductionPlanModule.goToday()">오늘</button>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:14px;font-size:0.78rem;color:var(--text-secondary);flex-wrap:wrap;">
+                        <span style="display:flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:2px;background:var(--accent-blue);display:inline-block;"></span>도장-A</span>
+                        <span style="display:flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:2px;background:var(--accent-orange);display:inline-block;"></span>도장-B</span>
                         <button class="btn btn-outline btn-sm" onclick="ProductionPlanModule.search()">
-                            <span class="material-symbols-outlined" style="font-size: 16px;">refresh</span>
+                            <span class="material-symbols-outlined" style="font-size:16px;">refresh</span>
                         </button>
                     </div>
                 </div>
-
-                <!-- 날짜 네비게이션 바 -->
-                <div style="background:var(--bg-secondary); border:1px solid var(--border-color);
-                            border-radius:10px; padding:10px 14px; margin-bottom:12px;
-                            overflow-x:auto; white-space:nowrap;">
-                    <div id="planDateNavBar" style="display:inline-flex; align-items:center; gap:0;"></div>
-                </div>
-
-                <!-- 그리드 보드 (반으로 나눈) -->
-                <div class="plan-grid-wrap">
-                    <!-- 도장-A Grid -->
-                    <div class="card grid-card" style="margin-bottom: 0;">
-                        <div class="card-header" style="padding: 8px 16px; background: var(--bg-secondary); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
-                            <h4 style="margin: 0; color: var(--accent-blue);"><span class="material-symbols-outlined" style="vertical-align: middle; margin-right: 4px;">factory</span>도장-A</h4>
-                            <button class="btn btn-primary btn-sm" onclick="ProductionPlanModule.printWorkOrder('도장-A')">
-                                <span class="material-symbols-outlined" style="font-size: 18px;">print</span> 인쇄
-                            </button>
-                        </div>
-                        <div class="card-body p-0">
-                            <div class="mes-grid-container pivoted-grid">
-                                <table class="mes-grid" id="planGridA">
-                                    <thead>
-                                        <tr>
-                                            <th class="sticky-col time-col-header" style="width: 140px;">시간 (시작~종료)</th>
-                                            <th>차종</th>
-                                            <th>제품명</th>
-                                            <th>도장 컬러</th>
-                                            <th style="text-align:center;">품목구분</th>
-                                            <th>수량</th>
-                                            <th>상태</th>
-                                            <th style="width: 60px;">작업</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="planGridBodyA">
-                                    </tbody>
-                                    <tfoot id="planGridFootA">
-                                    </tfoot>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- 도장-B Grid -->
-                    <div class="card grid-card" style="margin-bottom: 0;">
-                        <div class="card-header" style="padding: 8px 16px; background: var(--bg-secondary); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
-                            <h4 style="margin: 0; color: var(--accent-orange);"><span class="material-symbols-outlined" style="vertical-align: middle; margin-right: 4px;">factory</span>도장-B</h4>
-                            <button class="btn btn-success btn-sm" onclick="ProductionPlanModule.printWorkOrder('도장-B')" style="background: var(--gradient-orange);">
-                                <span class="material-symbols-outlined" style="font-size: 18px;">print</span> 인쇄
-                            </button>
-                        </div>
-                        <div class="card-body p-0">
-                            <div class="mes-grid-container pivoted-grid">
-                                <table class="mes-grid" id="planGridB">
-                                    <thead>
-                                        <tr>
-                                            <th class="sticky-col time-col-header" style="width: 140px;">시간 (시작~종료)</th>
-                                            <th>차종</th>
-                                            <th>제품명</th>
-                                            <th>도장 컬러</th>
-                                            <th style="text-align:center;">품목구분</th>
-                                            <th>수량</th>
-                                            <th>상태</th>
-                                            <th style="width: 60px;">작업</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="planGridBodyB">
-                                    </tbody>
-                                    <tfoot id="planGridFootB">
-                                    </tfoot>
-                                </table>
-                            </div>
-                        </div>
+                <div class="card">
+                    <div class="card-body" style="padding:0;">
+                        <div id="planCalendar" style="overflow-x:auto;"></div>
                     </div>
                 </div>
-
             </div>
         `;
 
         search();
 
-        // 이전 타이머 해제 후 1분마다 자동 상태 갱신
         if (_autoTimer) clearInterval(_autoTimer);
         _autoTimer = setInterval(() => autoUpdateStatus(), 60000);
     }
 
     async function search() {
-        const date = document.getElementById('planDateFilter').value;
-
-        // 요일 표시 업데이트
-        const dayEl = document.getElementById('planDayOfWeek');
-        if (dayEl) {
-            dayEl.textContent = _getDayLabel(date);
-            dayEl.style.color = _getDayColor(date);
+        renderCalendar();
+        const date = (document.getElementById('planDateFilter') || {}).value || UIUtils.today();
+        if (document.getElementById('planGridBodyA') && document.getElementById('planGridBodyB')) {
+            renderDayGrids(date);
         }
-        // 날짜 네비게이션 바 업데이트
-        renderDateNav(date);
+        if (date === UIUtils.today()) autoUpdateStatus();
+    }
 
+    function _getDaySlotData(date) {
         const allData = Storage.getAll(STORE);
-
         const slotDataA = {};
         const slotDataB = {};
 
@@ -286,12 +221,238 @@ const ProductionPlanModule = (function() {
                 }
             }
         });
+        return { slotDataA, slotDataB };
+    }
 
+    function renderDayGrids(date) {
+        const input = document.getElementById('planDateFilter');
+        if (input) input.value = date;
+        const { slotDataA, slotDataB } = _getDaySlotData(date);
         renderGrid('planGridBodyA', 'planGridFootA', slotDataA, '도장-A');
         renderGrid('planGridBodyB', 'planGridFootB', slotDataB, '도장-B');
+    }
 
-        // 오늘 날짜 조회 시 즉시 상태 자동 갱신
-        if (date === UIUtils.today()) autoUpdateStatus();
+    function renderCalendar() {
+        const titleEl = document.getElementById('planCalendarTitle');
+        const calEl = document.getElementById('planCalendar');
+        if (!calEl) return;
+        if (titleEl) titleEl.textContent = `${_calYear}년 ${_calMonth}월`;
+
+        const pad = n => String(n).padStart(2, '0');
+        const firstDow = new Date(_calYear, _calMonth - 1, 1).getDay();
+        const lastDay = new Date(_calYear, _calMonth, 0).getDate();
+        const today = UIUtils.today();
+        const plans = Storage.getAll(STORE) || [];
+        const paintWorks = Storage.getAll(DB.STORES.PAINTING_WORK) || [];
+        const paintInspections = Storage.getAll(DB.STORES.PAINTING_INSPECTIONS) || [];
+        const workByPlanId = {};
+        paintWorks.forEach(w => {
+            if (!w.planId) return;
+            if (!workByPlanId[w.planId]) workByPlanId[w.planId] = [];
+            workByPlanId[w.planId].push(w);
+        });
+        const inspectedWorkIds = new Set();
+        paintInspections.forEach(i => {
+            const wid = i.workId || i.productId;
+            if (wid) inspectedWorkIds.add(wid);
+        });
+        const byDate = {};
+        plans.forEach(p => {
+            if (!p.date) return;
+            if (!byDate[p.date]) byDate[p.date] = [];
+            byDate[p.date].push(p);
+        });
+
+        const DAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
+        let html = `
+            <table style="width:100%;border-collapse:collapse;min-width:780px;table-layout:fixed;">
+                <colgroup>
+                    <col style="width:48px;">
+                    <col><col><col><col><col>
+                    <col style="width:120px;">
+                </colgroup>
+                <thead><tr>
+                    ${DAY_KO.map((d, i) => `
+                        <th style="padding:10px 6px;text-align:center;font-size:0.85rem;font-weight:700;color:${i===0?'var(--accent-red)':i===6?'var(--accent-blue)':'var(--text-secondary)'};border-bottom:2px solid var(--border-color);">${d}</th>
+                    `).join('')}
+                </tr></thead>
+                <tbody>
+        `;
+
+        let day = 1;
+        const rows = Math.ceil((firstDow + lastDay) / 7);
+        for (let row = 0; row < rows; row++) {
+            html += '<tr style="vertical-align:top;">';
+            for (let col = 0; col < 7; col++) {
+                const blank = (row === 0 && col < firstDow) || day > lastDay;
+                if (blank) {
+                    html += `<td style="height:168px;border:1px solid var(--border-color);background:var(--bg-secondary);"></td>`;
+                    continue;
+                }
+
+                const ds = `${_calYear}-${pad(_calMonth)}-${pad(day)}`;
+                const dayPlans = (byDate[ds] || []).sort((a, b) =>
+                    (a.line || '').localeCompare(b.line || '', 'ko') ||
+                    (a.startTime || a.slot || '').localeCompare(b.startTime || b.slot || '')
+                );
+                const isToday = ds === today;
+                const isSun = col === 0;
+                const isSat = col === 6;
+                const plansA = dayPlans.filter(p => p.line === '도장-A');
+                const plansB = dayPlans.filter(p => p.line === '도장-B');
+                const planActualStatus = p => {
+                    const linkedWorks = workByPlanId[p.id] || [];
+                    if (linkedWorks.some(w => w.inspectionStatus === 'completed' || inspectedWorkIds.has(w.id))) return '검사완료';
+                    if (linkedWorks.length > 0) return '도장완료';
+                    const fallbackWorks = paintWorks.filter(w =>
+                        w.date === p.date &&
+                        w.line === p.line &&
+                        w.carModel === p.carModel &&
+                        w.partName === p.partName &&
+                        (!p.color || w.color === p.color)
+                    );
+                    if (fallbackWorks.some(w => w.inspectionStatus === 'completed' || inspectedWorkIds.has(w.id))) return '검사완료';
+                    if (fallbackWorks.length > 0) return '도장완료';
+                    if (paintInspections.some(i =>
+                        i.planId === p.id ||
+                        (i.date === p.date && i.carModel === p.carModel && i.partName === p.partName && (!p.color || i.color === p.color))
+                    )) return '검사완료';
+                    return '계획';
+                };
+                const lineSummary = (plans, line, label, color) => {
+                    const items = plans.filter(p => p.carModel || Number(p.planQty));
+                    const itemLabel = p => {
+                        const statusLabel = planActualStatus(p);
+                        return `${p.carModel || '-'} : ${UIUtils.formatNumber(Number(p.planQty) || 0)} (${statusLabel})`;
+                    };
+                    const text = items.map(itemLabel).join(', ');
+                    const rows = items.slice(0, 4).map(p => {
+                        const actualStatus = planActualStatus(p);
+                        const inspected = actualStatus === '검사완료';
+                        const worked = actualStatus === '도장완료';
+                        const rowColor = inspected ? 'var(--accent-green)' : (worked ? '#0f766e' : color);
+                        const badgeBg = inspected ? 'rgba(16,185,129,0.12)' : (worked ? 'rgba(20,184,166,0.12)' : 'rgba(148,163,184,0.14)');
+                        const badgeColor = inspected ? 'var(--accent-green)' : (worked ? '#0f766e' : 'var(--text-muted)');
+                        return `<span style="font-size:0.68rem;font-weight:700;color:${rowColor};line-height:1.18;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                            ${p.carModel || '-'} : ${UIUtils.formatNumber(Number(p.planQty) || 0)}
+                            <small style="font-size:0.6rem;font-weight:800;color:${badgeColor};background:${badgeBg};border-radius:4px;padding:0 3px;margin-left:2px;">${actualStatus}</small>
+                        </span>`;
+                    }).join('');
+                    const more = items.length > 4
+                        ? `<span style="font-size:0.65rem;color:var(--text-muted);line-height:1.1;">+${items.length - 4}</span>`
+                        : '';
+                    return `<div onclick="event.stopPropagation(); ProductionPlanModule.openDayPlan('${ds}', '${line}')"
+                        title="${line} ${text}"
+                        style="width:50%;padding:4px 3px;display:flex;flex-direction:column;gap:2px;cursor:pointer;min-width:0;${!isSun && label === 'B' ? 'border-left:1px dashed var(--border-color);' : ''}">
+                        ${text ? `<span style="font-size:0.68rem;font-weight:900;color:${color};line-height:1.1;">${label}</span>
+                        ${rows}${more}` : ''}
+                    </div>`;
+                };
+
+                html += `
+                    <td onclick="ProductionPlanModule.openDayPlan('${ds}', '도장-A')"
+                        style="height:168px;padding:7px 8px;border:1px solid var(--border-color);background:${isToday?'rgba(59,130,246,0.05)':'#fff'};cursor:pointer;vertical-align:top;${isToday?'box-shadow:inset 0 0 0 2px var(--accent-blue);':''}"
+                        onmouseover="this.style.background='rgba(241,245,249,0.9)'"
+                        onmouseout="this.style.background='${isToday?'rgba(59,130,246,0.05)':'#fff'}'">
+                        <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;">
+                            <span style="font-size:0.9rem;font-weight:800;color:${isSun?'var(--accent-red)':isSat?'var(--accent-blue)':'var(--text-primary)'};">${day}</span>
+                            ${dayPlans.length ? `<span style="font-size:0.68rem;color:var(--text-muted);">${dayPlans.length}건</span>` : ''}
+                        </div>
+                        <div style="margin-top:5px;height:111px;display:flex;">
+                            ${lineSummary(plansA, '도장-A', 'A', 'var(--accent-blue)')}
+                            ${lineSummary(plansB, '도장-B', 'B', 'var(--accent-orange)')}
+                        </div>
+                    </td>
+                `;
+                day++;
+            }
+            html += '</tr>';
+        }
+        html += '</tbody></table>';
+        calEl.innerHTML = html;
+    }
+
+    function openDayPlan(date, line = '도장-A') {
+        _activePlanDateModal = date;
+        _activePlanLineModal = line;
+        const input = document.getElementById('planDateFilter');
+        if (input) input.value = date;
+        const suffix = line === '도장-B' ? 'B' : 'A';
+        const color = line === '도장-B' ? 'var(--accent-orange)' : 'var(--accent-blue)';
+        UIUtils.showModal(`${date} ${line} 생산 계획`, `
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                <button class="btn btn-sm ${line === '도장-A' ? 'btn-primary' : 'btn-outline'}" onclick="ProductionPlanModule.openDayPlan('${date}', '도장-A')">도장-A</button>
+                <button class="btn btn-sm ${line === '도장-B' ? 'btn-primary' : 'btn-outline'}" onclick="ProductionPlanModule.openDayPlan('${date}', '도장-B')">도장-B</button>
+            </div>
+            ${_lineGridHTML(suffix, line, color)}
+        `, `
+            <button class="btn btn-secondary" onclick="ProductionPlanModule.closeDayPlan()">닫기</button>
+        `, 'xl');
+        setTimeout(() => renderDayGrid(date, line), 0);
+    }
+
+    function closeDayPlan() {
+        _activePlanDateModal = '';
+        _activePlanLineModal = '도장-A';
+        UIUtils.closeModal();
+    }
+
+    function _lineGridHTML(suffix, line, color) {
+        return `
+            <div class="card grid-card" style="margin-bottom:12px;">
+                <div class="card-header" style="padding:8px 16px;background:var(--bg-secondary);border-bottom:1px solid var(--border-color);display:flex;justify-content:space-between;align-items:center;">
+                    <h4 style="margin:0;color:${color};"><span class="material-symbols-outlined" style="vertical-align:middle;margin-right:4px;">factory</span>${line}</h4>
+                    <button class="btn btn-outline btn-sm" onclick="ProductionPlanModule.printWorkOrder('${line}')">
+                        <span class="material-symbols-outlined" style="font-size:16px;">print</span> 인쇄
+                    </button>
+                </div>
+                <div class="card-body p-0">
+                    <div class="mes-grid-container pivoted-grid">
+                        <table class="mes-grid" id="planGrid${suffix}">
+                            <thead>
+                                <tr>
+                                    <th class="sticky-col time-col-header" style="width:140px;">시간 (시작~종료)</th>
+                                    <th>차종</th><th>제품명</th><th>도장 컬러</th>
+                                    <th style="text-align:center;">품목구분</th><th>수량</th><th>상태</th><th style="width:60px;">작업</th>
+                                </tr>
+                            </thead>
+                            <tbody id="planGridBody${suffix}"></tbody>
+                            <tfoot id="planGridFoot${suffix}"></tfoot>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    function renderDayGrid(date, line) {
+        const input = document.getElementById('planDateFilter');
+        if (input) input.value = date;
+        const { slotDataA, slotDataB } = _getDaySlotData(date);
+        if (line === '도장-B') {
+            renderGrid('planGridBodyB', 'planGridFootB', slotDataB, '도장-B');
+        } else {
+            renderGrid('planGridBodyA', 'planGridFootA', slotDataA, '도장-A');
+        }
+    }
+
+    function prevMonth() {
+        _calMonth--;
+        if (_calMonth < 1) { _calMonth = 12; _calYear--; }
+        search();
+    }
+
+    function nextMonth() {
+        _calMonth++;
+        if (_calMonth > 12) { _calMonth = 1; _calYear++; }
+        search();
+    }
+
+    function goToday() {
+        const now = new Date();
+        _calYear = now.getFullYear();
+        _calMonth = now.getMonth() + 1;
+        search();
     }
 
     function renderGrid(tbodyId, footId, slotData, lineName) {
@@ -1842,6 +2003,9 @@ const ProductionPlanModule = (function() {
 
         UIUtils.closeModal();
         search();
+        if (_activePlanDateModal) {
+            setTimeout(() => openDayPlan(date, _activePlanLineModal), 0);
+        }
         if (shiftedCount > 0) {
             const delta = _timeToMinPlan(endTime) - _timeToMinPlan(oldEndTime);
             UIUtils.toast(`저장 완료 — 이후 ${shiftedCount}개 계획 시간이 ${delta > 0 ? '+' : ''}${delta}분 조정되었습니다.`, 'success');
@@ -1867,6 +2031,9 @@ const ProductionPlanModule = (function() {
                 }
             }
             search();
+            if (_activePlanDateModal) {
+                setTimeout(() => openDayPlan(date, _activePlanLineModal), 0);
+            }
             UIUtils.toast('삭제되었습니다.', 'success');
         });
     }
@@ -2264,6 +2431,12 @@ const ProductionPlanModule = (function() {
         search,
         selectDate,
         renderDateNav,
+        renderCalendar,
+        openDayPlan,
+        closeDayPlan,
+        prevMonth,
+        nextMonth,
+        goToday,
         editSlot,
         saveSlot,
         removeSlot,

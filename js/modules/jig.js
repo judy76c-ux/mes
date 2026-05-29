@@ -1,5 +1,5 @@
 /**
- * JIG 수명 관리 모듈
+ * 도장 JIG 수명 관리 모듈
  * - 도장 공정 제품만 JIG 등록 대상으로 표시
  * - 제품 정보의 도장-A / 도장-B 공정으로 라인 자동 구분
  * - 색상/품명 변형이 같은 JIG를 쓰는 경우 partAliases로 병합 관리
@@ -39,9 +39,6 @@ var JigModule = (function () {
                     </button>
                     <button class="btn btn-secondary" onclick="JigModule.openAddModal()">
                         <span class="material-symbols-outlined">add</span> 단건 등록
-                    </button>
-                    <button class="btn btn-primary" onclick="JigModule.openBatchRegisterModal()">
-                        <span class="material-symbols-outlined">table_rows</span> 전품목 일괄 등록
                     </button>
                 </div>
             </div>
@@ -88,17 +85,17 @@ var JigModule = (function () {
         loadAll();
     }
 
-    // 제품의 공정별 사양(process1~4)에 '레이져' 공정이 있는지 검사
-    function _hasLaserProcess(product) {
+    // 제품의 공정별 사양(process1~4)에 도장 공정이 있는지 검사
+    function _hasPaintingProcess(product) {
         return ['process1', 'process2', 'process3', 'process4'].some(key => {
             const v = String(product[key] || '').replace(/\s+/g, '');
-            return v.includes('레이져') || v.toUpperCase().includes('LASER');
+            return v.includes('도장') || v.toUpperCase().includes('PAINT');
         });
     }
 
-    // 레이져 공정 제품만 추출
-    function _laserProducts() {
-        return (Storage.getAll(DB.STORES.PRODUCTS) || []).filter(_hasLaserProcess);
+    // 도장 공정 제품만 추출
+    function _paintingProducts() {
+        return (Storage.getAll(DB.STORES.PRODUCTS) || []).filter(_hasPaintingProcess);
     }
 
     function _lineFromProcessValue(value) {
@@ -200,7 +197,7 @@ var JigModule = (function () {
         if (!jigs.length) {
             el.innerHTML = `<div style="text-align:center;padding:60px;color:var(--text-muted);">
                 <span class="material-symbols-outlined" style="font-size:3rem;display:block;opacity:0.3;margin-bottom:8px;">build</span>
-                등록된 JIG가 없습니다. 전품목 일괄 등록으로 도장 JIG를 등록하세요.
+                등록된 JIG가 없습니다. 단건 등록으로 도장 JIG를 등록하세요.
             </div>`;
             return;
         }
@@ -306,7 +303,7 @@ var JigModule = (function () {
         if (!carSel || !partSel) return;
         const curCar = carSel.value || '';
         const curPart = partSel.value || '';
-        const cars = UIUtils.sortCarModels(jigs.map(j => j.carModel));
+        const cars = [...new Set(jigs.map(j => j.carModel).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
         carSel.innerHTML = `<option value="">전체 차종</option>` + cars.map(c => `<option value="${_esc(c)}" ${c === curCar ? 'selected' : ''}>${_esc(c)}</option>`).join('');
         const parts = [...new Set(jigs.filter(j => !curCar || j.carModel === curCar).flatMap(_jigPartNames))].sort((a, b) => a.localeCompare(b, 'ko'));
         partSel.innerHTML = `<option value="">전체 품목</option>` + parts.map(p => `<option value="${_esc(p)}" ${p === curPart ? 'selected' : ''}>${_esc(p)}</option>`).join('');
@@ -387,11 +384,11 @@ var JigModule = (function () {
     }
 
     function openBatchRegisterModal() {
-        // 레이져 공정이 있는 제품만 대상
-        const products = _laserProducts();
+        // 도장 공정이 있는 제품만 대상
+        const products = _paintingProducts();
         const jigs = Storage.getAll(STORE) || [];
         if (!products.length) {
-            UIUtils.toast('레이져 공정이 설정된 제품이 없습니다. 관리/설정 > 제품 정보에서 공정별 사양에 레이져를 등록하세요.', 'warning');
+            UIUtils.toast('도장 공정이 설정된 제품이 없습니다. 관리/설정 > 제품 정보에서 공정별 사양에 도장-A 또는 도장-B를 등록하세요.', 'warning');
             return;
         }
 
@@ -678,20 +675,20 @@ var JigModule = (function () {
     }
 
     function _carModelOptions(selected = '') {
-        // 레이져 공정이 있는 제품의 차종만 표시
-        const laserProds = _laserProducts();
-        const cars = UIUtils.sortCarModels(laserProds.map(p => p.carModel), laserProds);
+        // 도장 공정이 있는 제품의 차종만 표시
+        const paintingProds = _paintingProducts();
+        const cars = [...new Set(paintingProds.map(p => p.carModel).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
         const note = cars.length === 0
-            ? '<option value="" disabled>레이져 공정 제품 없음</option>'
+            ? '<option value="" disabled>도장 공정 제품 없음</option>'
             : '';
         return `<option value="">선택</option>${note}` + cars.map(c => `<option value="${_esc(c)}" ${c === selected ? 'selected' : ''}>${_esc(c)}</option>`).join('');
     }
 
     function _partNameOptions(carModel, selected = '') {
-        // 레이져 공정이 있는 제품의 품명만 표시
-        const laserProds = _laserProducts();
+        // 도장 공정이 있는 제품의 품명만 표시
+        const paintingProds = _paintingProducts();
         const parts = [...new Set(
-            laserProds.filter(p => !carModel || p.carModel === carModel)
+            paintingProds.filter(p => !carModel || p.carModel === carModel)
                       .map(p => p.partName).filter(Boolean)
         )].sort((a, b) => a.localeCompare(b, 'ko'));
         return `<option value="">선택</option>` + parts.map(p => `<option value="${_esc(p)}" ${p === selected ? 'selected' : ''}>${_esc(p)}</option>`).join('');
@@ -709,7 +706,7 @@ var JigModule = (function () {
                     border:1px solid rgba(99,102,241,0.3);border-radius:6px;
                     font-size:0.8rem;color:var(--text-secondary);display:flex;align-items:center;gap:6px;">
             <span class="material-symbols-outlined" style="font-size:16px;color:#6366f1;">info</span>
-            제품 정보의 <b style="color:#6366f1;">레이져 공정</b>이 설정된 제품만 선택 가능합니다.
+            제품 정보의 <b style="color:#6366f1;">도장 공정</b>이 설정된 제품만 선택 가능합니다.
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
             <div class="form-group">

@@ -464,7 +464,7 @@ var InjectionWarehouseModule = (function() {
                         <tr>
                             <th>입고일</th>
                             <th>LOT번호</th>
-                            <th>공급처</th>
+                            <th>생산처</th>
                             <th style="text-align:right;">수량</th>
                         </tr>
                     </thead>
@@ -582,7 +582,7 @@ var InjectionWarehouseModule = (function() {
                             <th>차종</th>
                             <th>사출명</th>
                             <th>컬러</th>
-                            <th>공급처</th>
+                            <th>생산처</th>
                             <th>LOT번호</th>
                             <th style="text-align:center;">성적서</th>
                             <th style="text-align:right;">수량</th>

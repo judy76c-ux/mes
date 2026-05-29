@@ -632,7 +632,7 @@ const SettingsModule = (function() {
                             const badgeBdr   = colorMatch ? 'var(--accent-green)'   : '#d97706';
                             const badgeClr   = colorMatch ? 'var(--accent-green)'   : '#92400e';
                             const colorLabel = m.injColor || '—';
-                            const tip = `공급처: ${m.supplier || '-'} / 자재컬러: ${m.injColor || '-'}`;
+                            const tip = `생산처: ${m.supplier || '-'} / 자재컬러: ${m.injColor || '-'}`;
                             return `<span title="${tip}"
                                 style="display:inline-flex;align-items:center;gap:3px;white-space:nowrap;
                                        background:${badgeBg};border:1px solid ${badgeBdr};border-radius:5px;
@@ -1024,7 +1024,7 @@ const SettingsModule = (function() {
                     <thead><tr style="background:var(--bg-secondary);">
                         <th style="padding:7px 12px;text-align:left;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border-color);">사출 부품명</th>
                         <th style="padding:7px 12px;text-align:left;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border-color);">사출 컬러</th>
-                        <th style="padding:7px 12px;text-align:left;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border-color);">공급처</th>
+                        <th style="padding:7px 12px;text-align:left;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border-color);">생산처</th>
                         <th style="padding:7px 12px;text-align:right;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border-color);">단가</th>
                         <th style="padding:7px 12px;text-align:right;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border-color);">캐비티</th>
                         <th style="padding:7px 12px;text-align:right;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border-color);">중량(g)</th>
@@ -1068,7 +1068,7 @@ const SettingsModule = (function() {
                             <input type="text" class="form-input" id="${idPrefix}EditInjColor_${i}" value="${(m.injColor||'').replace(/"/g,'&quot;')}">
                         </div>
                         <div class="form-group">
-                            <label class="form-label">공급처</label>
+                            <label class="form-label">생산처</label>
                             <input type="text" class="form-input" id="${idPrefix}EditInjSupplier_${i}" value="${(m.supplier||'').replace(/"/g,'&quot;')}">
                         </div>
                     </div>
@@ -1105,7 +1105,7 @@ const SettingsModule = (function() {
                             <input type="text" class="form-input" id="${idPrefix}EditInjColor_0" placeholder="예: GRAY">
                         </div>
                         <div class="form-group">
-                            <label class="form-label">공급처</label>
+                            <label class="form-label">생산처</label>
                             <input type="text" class="form-input" id="${idPrefix}EditInjSupplier_0" placeholder="예: (주)협력사">
                         </div>
                     </div>
@@ -1163,7 +1163,7 @@ const SettingsModule = (function() {
                         <input type="text" class="form-input" id="${idPrefix}AutoInjColor" placeholder="예: Black, White">
                     </div>
                     <div class="form-group">
-                        <label class="form-label">공급처</label>
+                        <label class="form-label">생산처</label>
                         <input type="text" class="form-input" id="${idPrefix}AutoInjSupplier" placeholder="예: (주)우성">
                     </div>
                 </div>
@@ -1447,7 +1447,7 @@ const SettingsModule = (function() {
             <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
             <table style="width:100%;border-collapse:collapse;">
                 <thead><tr>
-                    ${th('공급처')}${th('사출품명')}${th('자재 컬러')}${th('단가','right')}${th('매칭','center')}${th('컬러 일치','center')}
+                    ${th('생산처')}${th('사출품명')}${th('자재 컬러')}${th('단가','right')}${th('매칭','center')}${th('컬러 일치','center')}
                 </tr></thead>
                 <tbody>
                     ${filtered.map(m => {
@@ -1835,7 +1835,7 @@ const SettingsModule = (function() {
         for (let i = 1; i <= paintRowCount; i++) {
             headers.push(`도료${i}_사양`, `도료${i}_주제`, `도료${i}_경화제`, `도료${i}_희석제`);
         }
-        headers.push('사출자재_공급처', '사출자재_품명', '사출자재_컬러', '사출자재_단가');
+        headers.push('사출자재_생산처', '사출자재_품명', '사출자재_컬러', '사출자재_단가');
 
         const rows = products.length > 0 ? products.map(p => {
             const row = [...PRODUCT_COLUMNS.map(c => p[c.key] || ''), p.code || ''];
@@ -2015,7 +2015,7 @@ const SettingsModule = (function() {
 
         // 사출자재 컬럼 안내 (AM~AP, 참조 전용)
         const INJ_START = PAINT_START + 4 * 4; // 38
-        const injLabels = ['공급처', '품명', '컬러', '단가'];
+        const injLabels = ['생산처', '품명', '컬러', '단가'];
         const injGuide = injLabels.map((lbl, j) =>
             `<span style="background:var(--bg-primary);border-radius:4px;padding:2px 6px;opacity:0.7;">${colLetter(INJ_START+j)}: 사출자재_${lbl}</span>`
         ).join(' ');
@@ -2155,7 +2155,7 @@ const SettingsModule = (function() {
 
     const INJECT_MAT_COLUMNS = [
         { key: 'carModel',        label: '차종'       },
-        { key: 'supplier',        label: '공급처'     },
+        { key: 'supplier',        label: '생산처'     },
         { key: 'injPartName',     label: '사출품명'   },
         { key: 'injColor',        label: '컬러'       },
         { key: 'unitPrice',       label: '단가'       },
@@ -2274,7 +2274,7 @@ const SettingsModule = (function() {
                             ${uniqueCarModels.map(c => `<option value="${c}">${c}</option>`).join('')}
                         </select>
                         <select id="injectMatSupplierFilter" class="form-input" style="width: 140px; padding: 4px 8px;" onchange="SettingsModule.filterInjectMatList()">
-                            <option value="">전체 공급처</option>
+                            <option value="">전체 생산처</option>
                             ${uniqueSuppliers.map(s => `<option value="${s}">${s}</option>`).join('')}
                         </select>
                     </div>
@@ -2300,7 +2300,7 @@ const SettingsModule = (function() {
                                 <tr>
                                     <th>No</th>
                                     <th>차종</th>
-                                    <th>공급처</th>
+                                    <th>생산처</th>
                                     <th>사출품명</th>
                                     <th>컬러</th>
                                     <th>단가</th>
@@ -2421,7 +2421,7 @@ const SettingsModule = (function() {
                     </select>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">공급처</label>
+                    <label class="form-label">생산처</label>
                     <input type="text" class="form-input" id="imSupplier" placeholder="예: 현대모비스" value="${v('supplier')}">
                 </div>
             </div>
@@ -2832,7 +2832,7 @@ const SettingsModule = (function() {
         if (!lines.length) return [];
         const sep = lines[0].includes('\t') ? '\t' : ',';
         const parsed = lines.map(l => _parseInjectMatCSVLine(l, sep));
-        const hdrKw = ['차종', '공급처', '사출품명', '컬러', '단가', '제작품목1', '제작품목2'];
+        const hdrKw = ['차종', '생산처', '공급처', '사출품명', '컬러', '단가', '제작품목1', '제작품목2'];
         const first = parsed[0].map(c => c.toLowerCase());
         const isHeader = hdrKw.some(kw => first.includes(kw.toLowerCase()));
         const dataRows = isHeader ? parsed.slice(1) : parsed;
