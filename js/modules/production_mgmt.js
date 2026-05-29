@@ -6118,6 +6118,21 @@ window.addEventListener('load', function() {
  */
 var ProdConditionsModule = (function() {
     const STORE = DB.STORES.PROD_CONDITIONS;
+
+    // ── C/S 프리셋 & 탭 상태 ──────────────────────────────────────────
+    let _csPresets = [];
+    let _pcTab = 'records'; // 'records' | 'presets'
+    const CS_TPL_LABELS = { 'A-KNOB': 'A라인 KNOB', 'A-COVER': 'A라인 COVER', 'B-LINE': 'B라인' };
+
+    async function _loadPresets() {
+        try {
+            const saved = await Storage.getConfigValue('csPresets');
+            if (Array.isArray(saved)) _csPresets = saved;
+        } catch(e) {}
+    }
+    async function _savePresets() {
+        await Storage.setConfigValue('csPresets', _csPresets);
+    }
     const CSHEET_SHARED_A = [
         ['기본 조건', 'MAIN CONVEYOR', '컨베이어 속도', '수치 입력', 'text'],
         ['기본 조건', 'MAIN CONVEYOR', '봉커버 및 체인 오염', 'OK / NG', 'check'],
@@ -6270,6 +6285,7 @@ var ProdConditionsModule = (function() {
                     </div>
                 </div>
 
+                ${_presetSelectorHtml(selectedType)}
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label">기록일자 <span style="color:var(--accent-red)">*</span></label>
@@ -6336,10 +6352,98 @@ var ProdConditionsModule = (function() {
         }).join('');
     }
 
+    function _presetSelectorHtml(csType) {
+        const matching = _csPresets.filter(p => p.csType === csType);
+        if (matching.length === 0 && _csPresets.length === 0) return '';
+        return `
+            <div style="margin-bottom:10px;padding:10px 14px;
+                        background:rgba(37,99,235,0.05);border:1px solid rgba(37,99,235,0.2);
+                        border-radius:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <span class="material-symbols-outlined" style="color:var(--accent-blue);font-size:18px;flex-shrink:0;">bookmark</span>
+                <span style="font-size:0.82rem;font-weight:600;color:var(--accent-blue);flex-shrink:0;">프리셋 불러오기</span>
+                <select id="pcPresetSel" class="form-select"
+                        style="flex:1;min-width:180px;max-width:280px;"
+                        onchange="ProdConditionsModule.applyPreset()">
+                    <option value="">-- 프리셋 선택 --</option>
+                    ${matching.map(p => `<option value="${_esc(p.id)}">${_esc(p.name)}</option>`).join('')}
+                </select>
+                <div id="pcPresetProducts" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"></div>
+            </div>
+        `;
+    }
+
+    function applyPreset() {
+        const sel = document.getElementById('pcPresetSel');
+        if (!sel || !sel.value) return;
+        const preset = _csPresets.find(p => p.id === sel.value);
+        if (!preset) return;
+
+        // C/S 양식 변경
+        const csTypeSel = document.getElementById('pcCsType');
+        if (csTypeSel) {
+            csTypeSel.value = preset.csType;
+            toggleLine(preset.csType);
+        }
+
+        const prods = preset.products || [];
+        const container = document.getElementById('pcPresetProducts');
+        if (!container) return;
+
+        if (prods.length === 0) {
+            container.innerHTML = '';
+        } else if (prods.length === 1) {
+            // 단일 제품 → 바로 자동 입력
+            _fillProduct(prods[0]);
+            container.innerHTML = `
+                <span style="font-size:0.78rem;color:#15803d;font-weight:600;">
+                    ✓ ${_esc(prods[0].carModel || '')} ${_esc(prods[0].partName)} 적용됨
+                </span>`;
+        } else {
+            // 복수 제품 → 서브 드롭다운
+            container.innerHTML = `
+                <select id="pcPresetProdSel" class="form-select"
+                        style="min-width:200px;"
+                        onchange="ProdConditionsModule.applyPresetProduct()">
+                    <option value="">-- 제품 선택 --</option>
+                    ${prods.map((p, i) =>
+                        `<option value="${i}">${_esc(p.carModel || '')} / ${_esc(p.partName)}</option>`
+                    ).join('')}
+                </select>`;
+        }
+    }
+
+    function applyPresetProduct() {
+        const sel = document.getElementById('pcPresetSel');
+        const prodSel = document.getElementById('pcPresetProdSel');
+        if (!sel || !prodSel) return;
+        const preset = _csPresets.find(p => p.id === sel.value);
+        if (!preset) return;
+        const idx = parseInt(prodSel.value, 10);
+        if (isNaN(idx)) return;
+        const prod = (preset.products || [])[idx];
+        if (prod) _fillProduct(prod);
+    }
+
+    function _fillProduct(prod) {
+        const carEl  = document.getElementById('pcCarModel');
+        const partEl = document.getElementById('pcPartName');
+        if (carEl)  carEl.value  = prod.carModel  || '';
+        if (partEl) partEl.value = prod.partName || '';
+    }
+
     function toggleLine(type) {
         const content = document.getElementById('pcLineSpecificContent');
         if (!content) return;
         content.innerHTML = renderLineSpecificFields(type, { checkItems: _templateItems(type, []) });
+        // 프리셋 드롭다운도 현재 C/S 양식에 맞게 갱신
+        const presetSel = document.getElementById('pcPresetSel');
+        if (presetSel) {
+            const matching = _csPresets.filter(p => p.csType === type);
+            presetSel.innerHTML = '<option value="">-- 프리셋 선택 --</option>' +
+                matching.map(p => `<option value="${_esc(p.id)}">${_esc(p.name)}</option>`).join('');
+            const prodContainer = document.getElementById('pcPresetProducts');
+            if (prodContainer) prodContainer.innerHTML = '';
+        }
         updateProgress();
     }
 
@@ -6998,43 +7102,330 @@ var ProdConditionsModule = (function() {
         }
     }
 
-        return {
-        render(container) {
-            const filterHTML = `
-                <div class="form-group">
-                    <label class="form-label">시작일</label>
-                    <input type="date" class="form-input" id="pcFilterStart" value="${UIUtils.monthAgo()}">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">종료일</label>
-                    <input type="date" class="form-input" id="pcFilterEnd" value="${UIUtils.today()}">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">라인</label>
-                    <select class="form-select" id="pcFilterLine">
-                        <option value="">전체 라인</option>
-                        <option value="A-KNOB">A라인 KNOB</option>
-                        <option value="A-COVER">A라인 COVER</option>
-                        <option value="B-LINE">B라인</option>
-                    </select>
-                </div>
-                <div class="form-group" style="align-self:flex-end;">
-                    <button class="btn btn-outline" onclick="ProdConditionsModule.search()">
-                        <span class="material-symbols-outlined">search</span> 조회
+    // ── 탭 공통 렌더 ──────────────────────────────────────────────────
+    let _pcContainer = null; // render()에 넘어온 container 저장
+
+    function _renderTabShell(container) {
+        _pcContainer = container;
+        container.innerHTML = `
+            <div class="fade-in-up">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:18px;
+                            padding-bottom:12px;border-bottom:2px solid var(--border-color);">
+                    <button id="pcTabRecords"
+                            class="btn btn-sm ${_pcTab === 'records' ? 'btn-primary' : 'btn-outline'}"
+                            onclick="ProdConditionsModule.switchPcTab('records')">
+                        <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">format_list_bulleted</span>
+                        기록 관리
+                    </button>
+                    <button id="pcTabPresets"
+                            class="btn btn-sm ${_pcTab === 'presets' ? 'btn-primary' : 'btn-outline'}"
+                            onclick="ProdConditionsModule.switchPcTab('presets')">
+                        <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">bookmark</span>
+                        C/S 프리셋
                     </button>
                 </div>
-            `;
-            const headers = ['No', '일자', '라인', '차종/품명', '컨베이어', '작업항목 확인', '작업자'];
-            ProdUtils.renderMain(container, '작업조건 관리', '공정조건 C/SHEET 기반의 매일 정밀 작업 조건을 기록합니다.', 'ProdConditionsModule.openAddModal()', 'ProdConditionsModule.exportData()', filterHTML, 'pcTable', headers);
-            const tableEl = document.getElementById('pcTable');
-            const tableWrap = tableEl ? (tableEl.closest('.card') || tableEl.parentElement) : null;
-            if (tableWrap && !document.getElementById('pcInlineFormHost')) {
-                const host = document.createElement('div');
-                host.id = 'pcInlineFormHost';
-                host.style.display = 'none';
-                tableWrap.parentElement.insertBefore(host, tableWrap);
-            }
-            search();
+                <div id="pcTabContent"></div>
+            </div>
+        `;
+    }
+
+    function switchPcTab(tab) {
+        _pcTab = tab;
+        if (!_pcContainer) return;
+        // 탭 버튼 스타일만 교체
+        const recBtn = document.getElementById('pcTabRecords');
+        const preBtn = document.getElementById('pcTabPresets');
+        if (recBtn) recBtn.className = `btn btn-sm ${tab === 'records' ? 'btn-primary' : 'btn-outline'}`;
+        if (preBtn) preBtn.className = `btn btn-sm ${tab === 'presets' ? 'btn-primary' : 'btn-outline'}`;
+        const content = document.getElementById('pcTabContent');
+        if (!content) return;
+        if (tab === 'records') _renderRecordsView(content);
+        else _renderPresetsView(content);
+    }
+
+    function _renderRecordsView(content) {
+        const filterHTML = `
+            <div class="form-group">
+                <label class="form-label">시작일</label>
+                <input type="date" class="form-input" id="pcFilterStart" value="${UIUtils.monthAgo()}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">종료일</label>
+                <input type="date" class="form-input" id="pcFilterEnd" value="${UIUtils.today()}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">라인</label>
+                <select class="form-select" id="pcFilterLine">
+                    <option value="">전체 라인</option>
+                    <option value="A-KNOB">A라인 KNOB</option>
+                    <option value="A-COVER">A라인 COVER</option>
+                    <option value="B-LINE">B라인</option>
+                </select>
+            </div>
+            <div class="form-group" style="align-self:flex-end;">
+                <button class="btn btn-outline" onclick="ProdConditionsModule.search()">
+                    <span class="material-symbols-outlined">search</span> 조회
+                </button>
+            </div>
+        `;
+        content.innerHTML = `
+            <div>
+                <div class="page-header">
+                    <div class="page-actions">
+                        <button class="btn btn-primary" onclick="ProdConditionsModule.openAddModal()">
+                            <span class="material-symbols-outlined">add</span> 등록
+                        </button>
+                        <button class="btn btn-outline" onclick="ProdConditionsModule.exportData()">
+                            <span class="material-symbols-outlined">download</span> 내보내기
+                        </button>
+                    </div>
+                </div>
+                <div class="filter-bar" style="flex-wrap:wrap;gap:10px;">${filterHTML}</div>
+                <div id="pcInlineFormHost" style="display:none;"></div>
+                <div class="card">
+                    <div class="card-body" style="padding:0;">
+                        <div class="data-table-wrapper">
+                            <table class="data-table" id="pcTable">
+                                <thead>
+                                    <tr>
+                                        <th>No</th><th>일자</th><th>라인</th>
+                                        <th>차종/품명</th><th>컨베이어</th>
+                                        <th>작업항목 확인</th><th>작업자</th><th>작업</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pcTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        search();
+    }
+
+    // ── C/S 프리셋 관리 뷰 ──────────────────────────────────────────
+
+    function _renderPresetsView(content) {
+        const groups = Object.entries(CS_TPL_LABELS).map(([key, label]) => ({
+            key, label,
+            presets: _csPresets.filter(p => p.csType === key)
+        }));
+        content.innerHTML = `
+            <div class="card">
+                <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+                    <h4>
+                        <span class="material-symbols-outlined">bookmark</span>
+                        C/S 프리셋 관리
+                    </h4>
+                    <button class="btn btn-primary btn-sm" onclick="ProdConditionsModule.openAddPresetModal()">
+                        <span class="material-symbols-outlined">add</span> 프리셋 추가
+                    </button>
+                </div>
+                <div class="card-body">
+                    <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:20px;">
+                        C/S 양식별 차종·품명 조합을 프리셋으로 등록합니다.
+                        작업조건 기록 시 프리셋을 선택하면 차종·품명이 자동으로 입력됩니다.
+                    </p>
+                    ${groups.map(g => `
+                        <div style="margin-bottom:24px;">
+                            <div style="display:flex;align-items:center;gap:10px;
+                                        margin-bottom:10px;padding-bottom:8px;
+                                        border-bottom:2px solid var(--accent-blue);">
+                                <span style="font-weight:800;font-size:0.95rem;color:var(--accent-blue);">${g.label}</span>
+                                <span style="font-size:0.78rem;color:var(--text-muted);">${g.presets.length}개</span>
+                            </div>
+                            ${g.presets.length === 0
+                                ? `<p style="color:var(--text-muted);font-size:0.82rem;padding:8px 0;">
+                                       등록된 프리셋이 없습니다.
+                                   </p>`
+                                : `<div style="display:flex;flex-direction:column;gap:6px;">
+                                       ${g.presets.map(_presetRowHtml).join('')}
+                                   </div>`
+                            }
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    function _presetRowHtml(p) {
+        const prodHtml = (p.products || []).length === 0
+            ? `<span style="color:var(--text-muted);font-size:0.78rem;">연결된 제품 없음</span>`
+            : (p.products || []).map(prod =>
+                `<span style="display:inline-flex;align-items:center;gap:4px;
+                              background:rgba(37,99,235,0.08);border:1px solid rgba(37,99,235,0.25);
+                              border-radius:12px;padding:2px 10px;font-size:0.75rem;color:#1d4ed8;">
+                    ${prod.carModel ? `<strong>${_esc(prod.carModel)}</strong> / ` : ''}${_esc(prod.partName)}
+                 </span>`
+              ).join(' ');
+        const js = s => String(s ?? '').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+        return `
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;
+                        background:var(--bg-secondary);border-radius:8px;
+                        border:1px solid var(--border-color);">
+                <div style="flex:1;">
+                    <div style="font-weight:700;font-size:0.92rem;margin-bottom:6px;">${_esc(p.name)}</div>
+                    <div style="display:flex;flex-wrap:wrap;gap:5px;">${prodHtml}</div>
+                </div>
+                <button class="btn btn-sm btn-outline"
+                        onclick="ProdConditionsModule.editPreset('${js(p.id)}')">수정</button>
+                <button class="btn btn-sm"
+                        style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;"
+                        onclick="ProdConditionsModule.removePreset('${js(p.id)}')">삭제</button>
+            </div>
+        `;
+    }
+
+    function _presetModalBody(preset = {}) {
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const carModels = [...new Set(products.map(p => p.carModel).filter(Boolean))].sort();
+        const linked = preset.products || [];
+        const rows = linked.length > 0
+            ? linked.map(pr => _presetProductRow(pr, products, carModels)).join('')
+            : _presetProductRow({}, products, carModels);
+        return `
+            <div style="display:flex;flex-direction:column;gap:14px;">
+                <div class="form-group">
+                    <label class="form-label">프리셋명 <span style="color:red;">*</span></label>
+                    <input id="cpName" class="form-control" type="text"
+                           value="${_esc(preset.name || '')}"
+                           placeholder="예: T1XX GUIDE LAMP A-KNOB">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">C/S 양식 <span style="color:red;">*</span></label>
+                    <select id="cpCsType" class="form-select">
+                        ${Object.entries(CS_TPL_LABELS).map(([k,v]) =>
+                            `<option value="${k}" ${preset.csType===k?'selected':''}>${v}</option>`
+                        ).join('')}
+                    </select>
+                </div>
+                <div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                        <label class="form-label" style="margin:0;">연결 차종·품명</label>
+                        <button class="btn btn-sm btn-outline"
+                                onclick="ProdConditionsModule._addPresetProductRow()">
+                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">add</span> 추가
+                        </button>
+                    </div>
+                    <div id="cpProductRows" style="display:flex;flex-direction:column;gap:6px;">${rows}</div>
+                </div>
+            </div>
+        `;
+    }
+
+    function _presetProductRow(pr = {}, products, carModels) {
+        if (!products) products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        if (!carModels) carModels = [...new Set(products.map(p => p.carModel).filter(Boolean))].sort();
+        const selCar  = pr.carModel || '';
+        const selPart = pr.partName || '';
+        const partOpts = selCar
+            ? [...new Set(products.filter(p => p.carModel===selCar).map(p=>p.partName).filter(Boolean))].sort()
+                .map(n=>`<option value="${_esc(n)}" ${n===selPart?'selected':''}>${_esc(n)}</option>`).join('')
+            : (selPart ? `<option value="${_esc(selPart)}" selected>${_esc(selPart)}</option>` : '');
+        return `
+            <div class="cp-prod-row" style="display:flex;align-items:center;gap:6px;
+                        padding:8px;background:var(--bg-secondary);border-radius:6px;
+                        border:1px solid var(--border-color);">
+                <select class="form-select cp-car-sel" style="flex:1;"
+                        onchange="ProdConditionsModule._onPresetCarChange(this)">
+                    <option value="">차종 선택</option>
+                    ${carModels.map(c=>`<option value="${_esc(c)}" ${c===selCar?'selected':''}>${_esc(c)}</option>`).join('')}
+                </select>
+                <select class="form-select cp-part-sel" style="flex:2;">
+                    <option value="">품명 선택</option>${partOpts}
+                </select>
+                <button onclick="this.closest('.cp-prod-row').remove()"
+                        style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:20px;line-height:1;">×</button>
+            </div>
+        `;
+    }
+
+    function _addPresetProductRow() {
+        const container = document.getElementById('cpProductRows');
+        if (!container) return;
+        const div = document.createElement('div');
+        div.innerHTML = _presetProductRow();
+        container.appendChild(div.firstElementChild);
+    }
+
+    function _onPresetCarChange(sel) {
+        const row = sel.closest('.cp-prod-row');
+        if (!row) return;
+        const partSel = row.querySelector('.cp-part-sel');
+        if (!partSel) return;
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const parts = [...new Set(products.filter(p=>p.carModel===sel.value).map(p=>p.partName).filter(Boolean))].sort();
+        partSel.innerHTML = '<option value="">품명 선택</option>' +
+            parts.map(n=>`<option value="${_esc(n)}">${_esc(n)}</option>`).join('');
+    }
+
+    function _collectCpProducts() {
+        const result = [];
+        document.querySelectorAll('#cpProductRows .cp-prod-row').forEach(row => {
+            const car  = (row.querySelector('.cp-car-sel')?.value  || '').trim();
+            const part = (row.querySelector('.cp-part-sel')?.value || '').trim();
+            if (part) result.push({ carModel: car, partName: part });
+        });
+        return result;
+    }
+
+    function openAddPresetModal() {
+        UIUtils.showModal('C/S 프리셋 추가', _presetModalBody(), `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="ProdConditionsModule.savePreset()">저장</button>
+        `, 'md');
+        setTimeout(() => document.getElementById('cpName')?.focus(), 80);
+    }
+
+    function editPreset(id) {
+        const preset = _csPresets.find(p => p.id === id);
+        if (!preset) return;
+        UIUtils.showModal('C/S 프리셋 수정', _presetModalBody(preset), `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="ProdConditionsModule.savePreset('${id}')">저장</button>
+        `, 'md');
+        setTimeout(() => document.getElementById('cpName')?.focus(), 80);
+    }
+
+    async function savePreset(id) {
+        const name   = (document.getElementById('cpName')?.value || '').trim();
+        const csType = document.getElementById('cpCsType')?.value || 'A-KNOB';
+        if (!name) { UIUtils.toast('프리셋명을 입력하세요.', 'warning'); return; }
+        const products = _collectCpProducts();
+        if (id) {
+            const idx = _csPresets.findIndex(p => p.id === id);
+            if (idx >= 0) _csPresets[idx] = { ..._csPresets[idx], name, csType, products };
+        } else {
+            _csPresets.push({ id: 'csp_' + Date.now(), name, csType, products });
+        }
+        await _savePresets();
+        UIUtils.closeModal();
+        UIUtils.toast(id ? '수정되었습니다.' : '프리셋이 추가되었습니다.', 'success');
+        const content = document.getElementById('pcTabContent');
+        if (content) _renderPresetsView(content);
+    }
+
+    async function removePreset(id) {
+        const preset = _csPresets.find(p => p.id === id);
+        if (!preset) return;
+        UIUtils.confirm(`"${_esc(preset.name)}" 프리셋을 삭제하시겠습니까?`, async () => {
+            _csPresets = _csPresets.filter(p => p.id !== id);
+            await _savePresets();
+            UIUtils.toast('삭제되었습니다.', 'success');
+            const content = document.getElementById('pcTabContent');
+            if (content) _renderPresetsView(content);
+        });
+    }
+
+        return {
+        async render(container) {
+            await _loadPresets();
+            _renderTabShell(container);
+            const content = document.getElementById('pcTabContent');
+            if (!content) return;
+            if (_pcTab === 'records') _renderRecordsView(content);
+            else _renderPresetsView(content);
         },
         search,
         openAddModal,
@@ -7044,6 +7435,7 @@ var ProdConditionsModule = (function() {
         saveEdit,
         remove,
         exportData,
+        switchPcTab,
         toggleLine,
         setCheck,
         updateProgress,
@@ -7051,7 +7443,16 @@ var ProdConditionsModule = (function() {
         downloadColorStd,
         removeColorStd,
         openColorStdViewer,
-        _csSwitch
+        _csSwitch,
+        applyPreset,
+        applyPresetProduct,
+        // 프리셋 CRUD
+        openAddPresetModal,
+        editPreset,
+        savePreset,
+        removePreset,
+        _addPresetProductRow,
+        _onPresetCarChange
     };
 })();
 

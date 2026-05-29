@@ -13,7 +13,14 @@ const SettingsModule = (function() {
     let currentTab = 'products';
     let _pendingPhoto = null; // 모달 사진 임시 보관
 
-    function render(container) {
+    // ── 제조 공정 타입 관리 ──────────────────────────────────────────
+    const DEFAULT_PROCESS_TYPES = ['사출', '도장-A', '도장-B', '레이저', '인쇄', '외관 검사', '외관+각인 검사'];
+    let _processTypes = [...DEFAULT_PROCESS_TYPES];
+    const PROCESS_CONFIG_KEY = 'processTypes';
+
+
+    async function render(container) {
+        await _loadProcessTypes();
         container.innerHTML = `
             <div class="fade-in-up">
                 <!-- 탭 네비게이션 -->
@@ -38,7 +45,11 @@ const SettingsModule = (function() {
                         onclick="SettingsModule.switchTab('rawMaterials')">
                         <span class="material-symbols-outlined">science</span> 원재료
                     </button>
-                    <button class="tab-btn ${currentTab === 'backup' ? 'active' : ''}" 
+                    <button class="tab-btn ${currentTab === 'process' ? 'active' : ''}"
+                        onclick="SettingsModule.switchTab('process')">
+                        <span class="material-symbols-outlined">settings_applications</span> 공정 관리
+                    </button>
+                    <button class="tab-btn ${currentTab === 'backup' ? 'active' : ''}"
                         onclick="SettingsModule.switchTab('backup')">
                         <span class="material-symbols-outlined">backup</span> 백업/복원
                     </button>
@@ -125,6 +136,9 @@ const SettingsModule = (function() {
                 break;
             case 'certifications':
                 renderCertificationTab(el);
+                break;
+            case 'process':
+                renderProcessTab(el);
                 break;
             case 'backup':
                 renderBackupTab(el);
@@ -811,7 +825,7 @@ const SettingsModule = (function() {
     function _productFormHTML(p = {}, idPrefix = 'addProd') {
         const v = k => p[k] !== undefined ? p[k] : '';
         const isEdit = idPrefix === 'editProd';
-        const processes = ['', '사출', '도장-A', '도장-B', '레이저', '인쇄', '외관 검사', '외관+각인 검사'];
+        const processes = ['', ..._processTypes];
         const processOptions = val => processes.map(proc => `<option value="${proc}" ${val === proc ? 'selected' : ''}>${proc || '선택 안함'}</option>`).join('');
 
         // 수정 모드: 이 제품에 연결된 사출 자재 조회
@@ -6843,6 +6857,169 @@ const SettingsModule = (function() {
         });
     }
 
+    // ══════════════════════════════════════════════════════════════════
+    // 제조 공정 관리 탭
+    // ══════════════════════════════════════════════════════════════════
+
+    async function _loadProcessTypes() {
+        try {
+            const saved = await Storage.getConfigValue(PROCESS_CONFIG_KEY);
+            if (Array.isArray(saved) && saved.length > 0) _processTypes = saved;
+        } catch(e) {}
+    }
+
+    async function _saveProcessTypes() {
+        await Storage.setConfigValue(PROCESS_CONFIG_KEY, _processTypes);
+    }
+
+    function renderProcessTab(el) {
+        el.innerHTML = `
+            <div class="card">
+                <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+                    <h4>
+                        <span class="material-symbols-outlined">settings_applications</span>
+                        제조 공정 관리
+                    </h4>
+                    <button class="btn btn-primary btn-sm" onclick="SettingsModule.openAddProcessModal()">
+                        <span class="material-symbols-outlined">add</span> 공정 추가
+                    </button>
+                </div>
+                <div class="card-body">
+                    <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:16px;">
+                        제품 정보의 <strong>제조 공정</strong> 선택 항목을 관리합니다.<br>
+                        순서를 변경하거나 항목을 추가/삭제할 수 있습니다.
+                    </p>
+                    <div id="processTypeList">
+                        ${_renderProcessList()}
+                    </div>
+                    <div style="margin-top:16px;padding:10px 14px;
+                                background:rgba(59,130,246,0.06);border-radius:8px;
+                                font-size:0.8rem;color:var(--text-muted);">
+                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">info</span>
+                        공정 항목 변경 시 기존 제품 정보에 이미 저장된 공정 값은 자동으로 변경되지 않습니다.
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    function _renderProcessList() {
+        if (_processTypes.length === 0) {
+            return `<p style="color:var(--text-muted);text-align:center;padding:30px;">
+                        등록된 공정이 없습니다. 공정 추가 버튼으로 추가하세요.
+                    </p>`;
+        }
+        return `
+            <div style="display:flex;flex-direction:column;gap:6px;max-width:600px;">
+                ${_processTypes.map((proc, idx) => `
+                    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;
+                                background:var(--bg-secondary);border-radius:8px;
+                                border:1px solid var(--border-color);">
+                        <span style="display:flex;flex-direction:column;gap:1px;">
+                            <button onclick="SettingsModule.moveProcess(${idx}, -1)"
+                                    title="위로"
+                                    style="background:none;border:none;cursor:pointer;
+                                           color:${idx === 0 ? 'var(--border-color)' : 'var(--text-muted)'};
+                                           padding:0;line-height:1;font-size:13px;"
+                                    ${idx === 0 ? 'disabled' : ''}>▲</button>
+                            <button onclick="SettingsModule.moveProcess(${idx}, 1)"
+                                    title="아래로"
+                                    style="background:none;border:none;cursor:pointer;
+                                           color:${idx === _processTypes.length - 1 ? 'var(--border-color)' : 'var(--text-muted)'};
+                                           padding:0;line-height:1;font-size:13px;"
+                                    ${idx === _processTypes.length - 1 ? 'disabled' : ''}>▼</button>
+                        </span>
+                        <span style="font-size:0.8rem;color:var(--text-muted);width:22px;
+                                     text-align:right;flex-shrink:0;">${idx + 1}</span>
+                        <span style="flex:1;font-weight:600;font-size:0.92rem;
+                                     color:var(--text-primary);">${proc}</span>
+                        <button class="btn btn-sm btn-outline"
+                                onclick="SettingsModule.editProcess(${idx})">수정</button>
+                        <button class="btn btn-sm"
+                                style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;"
+                                onclick="SettingsModule.removeProcess(${idx})">삭제</button>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+
+    function _refreshProcessList() {
+        const el = document.getElementById('processTypeList');
+        if (el) el.innerHTML = _renderProcessList();
+    }
+
+    function openAddProcessModal() {
+        UIUtils.showModal('공정 추가', `
+            <div class="form-group">
+                <label class="form-label">공정명 <span style="color:red;">*</span></label>
+                <input id="newProcessName" class="form-control" type="text"
+                       placeholder="예: 도장-C, 조립" style="font-size:1rem;">
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="SettingsModule.addProcess()">추가</button>
+        `, 'sm');
+        setTimeout(() => { const el = document.getElementById('newProcessName'); if(el) el.focus(); }, 80);
+    }
+
+    async function addProcess() {
+        const name = (document.getElementById('newProcessName')?.value || '').trim();
+        if (!name) { UIUtils.toast('공정명을 입력하세요.', 'warning'); return; }
+        if (_processTypes.includes(name)) { UIUtils.toast('이미 존재하는 공정명입니다.', 'warning'); return; }
+        _processTypes.push(name);
+        await _saveProcessTypes();
+        UIUtils.closeModal();
+        UIUtils.toast(`"${name}" 공정이 추가되었습니다.`, 'success');
+        _refreshProcessList();
+    }
+
+    function editProcess(idx) {
+        const current = _processTypes[idx] || '';
+        UIUtils.showModal('공정 수정', `
+            <div class="form-group">
+                <label class="form-label">공정명</label>
+                <input id="editProcessName" class="form-control" type="text"
+                       value="${current}" style="font-size:1rem;">
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="SettingsModule.updateProcess(${idx})">저장</button>
+        `, 'sm');
+        setTimeout(() => { const el = document.getElementById('editProcessName'); if(el) el.focus(); }, 80);
+    }
+
+    async function updateProcess(idx) {
+        const name = (document.getElementById('editProcessName')?.value || '').trim();
+        if (!name) { UIUtils.toast('공정명을 입력하세요.', 'warning'); return; }
+        if (_processTypes.includes(name) && _processTypes[idx] !== name) {
+            UIUtils.toast('이미 존재하는 공정명입니다.', 'warning'); return;
+        }
+        _processTypes[idx] = name;
+        await _saveProcessTypes();
+        UIUtils.closeModal();
+        UIUtils.toast('수정되었습니다.', 'success');
+        _refreshProcessList();
+    }
+
+    async function removeProcess(idx) {
+        const name = _processTypes[idx];
+        UIUtils.confirm(`"${name}" 공정을 삭제하시겠습니까?\n기존 제품 정보에 저장된 값은 변경되지 않습니다.`, async () => {
+            _processTypes.splice(idx, 1);
+            await _saveProcessTypes();
+            UIUtils.toast(`"${name}" 공정이 삭제되었습니다.`, 'success');
+            _refreshProcessList();
+        });
+    }
+
+    async function moveProcess(idx, dir) {
+        const newIdx = idx + dir;
+        if (newIdx < 0 || newIdx >= _processTypes.length) return;
+        [_processTypes[idx], _processTypes[newIdx]] = [_processTypes[newIdx], _processTypes[idx]];
+        await _saveProcessTypes();
+        _refreshProcessList();
+    }
+
     function clearAllData() {
         UIUtils.confirm('⚠️ 정말로 모든 데이터를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.', async () => {
             const stores = Object.values(DB.STORES).filter(s => s !== 'config');
@@ -8054,7 +8231,15 @@ const SettingsModule = (function() {
         _doCascadeRename,
         deleteRecordsByPartNames,
         openInvPartNameEditModal,
-        applyInvPartNameEdit
+        applyInvPartNameEdit,
+        // 제조 공정 관리
+        renderProcessTab,
+        openAddProcessModal,
+        addProcess,
+        editProcess,
+        updateProcess,
+        removeProcess,
+        moveProcess,
     };
 
     // ── 제작품목 연결 (제품 마스터에서 선택) ─────────────────────────────

@@ -204,14 +204,11 @@ var PaintIncomingInspectionModule = (function() {
             return;
         }
 
-        const paints = Storage.getAll(DB.STORES.PAINT_MATERIALS) || [];
-
         tbody.innerHTML = data.map(d => {
             const verdictType = d.verdict === '합격' ? 'success' : 'danger';
             const containerType = d.containerStatus === '합격' ? 'success' : (d.containerStatus === '불합격' ? 'danger' : '');
             const expType = d.expDateCheck === '합격' ? 'success' : (d.expDateCheck === '불합격' ? 'danger' : '');
             const certType = d.certCheck === '합격' ? 'success' : (d.certCheck === '불합격' ? 'danger' : '');
-            const lotType = ''; // lotCheckBadge()로 직접 렌더링
             return `
                 <tr>
                     <td>${d.date}</td>
