@@ -157,6 +157,8 @@ var InjectionWarehouseModule = (function() {
         const totalCarStock = items.reduce((s, i) => s + i.stock, 0);
         // 사출자재 마스터에서 제작품목 설정 여부 확인용
         const _allMats = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+        const _products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const _itemTypeLabel = _getCarItemTypeLabel(carModel, items, _allMats, _products);
         const rows = items
             .sort((a, b) => a.partName.localeCompare(b.partName))
             .map(item => {
@@ -233,7 +235,7 @@ var InjectionWarehouseModule = (function() {
                         overflow:hidden; background:var(--bg-primary); margin-bottom:12px;">
                 <div style="background:#7ec8e3; padding:6px 10px;
                             display:flex; justify-content:space-between; align-items:center;">
-                    <span style="font-weight:700; font-size:0.92rem; color:#1a3a4a;">${carModel}</span>
+                    <span style="font-weight:700; font-size:0.92rem; color:#1a3a4a;">${carModel}${_itemTypeLabel}</span>
                     <span style="font-size:0.78rem; color:#1a3a4a; font-weight:600;">${items.length}개품목</span>
                 </div>
                 <table style="width:100%; border-collapse:collapse;">
@@ -249,6 +251,46 @@ var InjectionWarehouseModule = (function() {
                 </div>
             </div>
         `;
+    }
+
+    function _shortItemType(type) {
+        const t = String(type || '').trim();
+        if (!t) return '';
+        if (t === 'A/S품') return 'A/S';
+        if (t === '양산품') return '양산';
+        if (t === '개발품') return '개발';
+        return t.replace(/품$/, '');
+    }
+
+    function _getCarItemTypeLabel(carModel, items, materials, products) {
+        const types = new Set();
+        const itemParts = new Set((items || []).map(i => (i.partName || '').trim()).filter(Boolean));
+        const addType = type => {
+            const short = _shortItemType(type);
+            if (short) types.add(short);
+        };
+
+        (products || [])
+            .filter(p => p.carModel === carModel)
+            .forEach(p => {
+                const productName = (p.partName || '').trim();
+                const linkedByMaterial = (materials || []).some(m => {
+                    if (m.carModel !== carModel) return false;
+                    const matPart = (m.injPartName || '').trim();
+                    if (!itemParts.has(matPart)) return false;
+                    return (m.productIds || []).includes(p.id)
+                        || (m.mfgProductName || '').trim() === productName
+                        || (m.mfgProductName2 || '').trim() === productName;
+                });
+                if (itemParts.has(productName) || linkedByMaterial) addType(p.itemType);
+            });
+
+        (materials || [])
+            .filter(m => m.carModel === carModel && itemParts.has((m.injPartName || '').trim()))
+            .forEach(m => addType(m.itemType));
+
+        const labels = [...types];
+        return labels.length ? ` (${labels.join('/')})` : '';
     }
 
     // 차종별 타일 렌더링 (Greedy bin-packing 컬럼 배치)

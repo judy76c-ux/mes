@@ -21,7 +21,7 @@ const ProdUtils = {
                 <div class="card">
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
-                            <table class="data-table">
+                            <table class="data-table" id="${tableID}">
                                 <thead>
                                     <tr>
                                         ${headers.map(h => `<th>${h}</th>`).join('')}
@@ -6434,9 +6434,19 @@ var ProdConditionsModule = (function() {
             UIUtils.toast('필수 항목을 입력하세요.', 'warning');
             return;
         }
-        await Storage.add(STORE, data);
-        closeInlineForm();
-        search();
+        try {
+            await Storage.add(STORE, data);
+            const startEl = document.getElementById('pcFilterStart');
+            const endEl = document.getElementById('pcFilterEnd');
+            if (startEl && data.date < startEl.value) startEl.value = data.date;
+            if (endEl && data.date > endEl.value) endEl.value = data.date;
+            closeInlineForm();
+            UIUtils.toast('작업조건이 등록되었습니다.', 'success');
+            search();
+        } catch (err) {
+            console.error('[ProdConditions] saveNew failed:', err);
+            UIUtils.toast(`등록 실패: ${err.message || err}`, 'error');
+        }
     }
 
     function edit(id) {

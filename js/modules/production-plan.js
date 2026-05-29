@@ -380,15 +380,31 @@ const ProductionPlanModule = (function() {
         const suffix = line === '도장-B' ? 'B' : 'A';
         const color = line === '도장-B' ? 'var(--accent-orange)' : 'var(--accent-blue)';
         UIUtils.showModal(`${date} ${line} 생산 계획`, `
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-                <button class="btn btn-sm ${line === '도장-A' ? 'btn-primary' : 'btn-outline'}" onclick="ProductionPlanModule.openDayPlan('${date}', '도장-A')">도장-A</button>
-                <button class="btn btn-sm ${line === '도장-B' ? 'btn-primary' : 'btn-outline'}" onclick="ProductionPlanModule.openDayPlan('${date}', '도장-B')">도장-B</button>
-            </div>
+            <div class="plan-day-modal">
             ${_lineGridHTML(suffix, line, color)}
+            </div>
         `, `
             <button class="btn btn-secondary" onclick="ProductionPlanModule.closeDayPlan()">닫기</button>
         `, 'xl');
-        setTimeout(() => renderDayGrid(date, line), 0);
+        setTimeout(() => {
+            _decoratePlanDayModalHeader(date, line);
+            renderDayGrid(date, line);
+        }, 0);
+    }
+
+    function _decoratePlanDayModalHeader(date, line) {
+        const modal = document.getElementById('modal');
+        const header = modal ? modal.querySelector('.modal-header') : null;
+        if (!header) return;
+        header.classList.add('plan-day-modal-header');
+        header.querySelector('.plan-day-line-switch')?.remove();
+        const switchEl = document.createElement('div');
+        switchEl.className = 'plan-day-line-switch';
+        switchEl.innerHTML = `
+            <button class="btn btn-sm ${line === '도장-A' ? 'btn-primary' : 'btn-outline'}" onclick="ProductionPlanModule.openDayPlan('${date}', '도장-A')">도장-A</button>
+            <button class="btn btn-sm ${line === '도장-B' ? 'btn-primary' : 'btn-outline'}" onclick="ProductionPlanModule.openDayPlan('${date}', '도장-B')">도장-B</button>
+        `;
+        header.appendChild(switchEl);
     }
 
     function closeDayPlan() {
@@ -399,8 +415,8 @@ const ProductionPlanModule = (function() {
 
     function _lineGridHTML(suffix, line, color) {
         return `
-            <div class="card grid-card" style="margin-bottom:12px;">
-                <div class="card-header" style="padding:8px 16px;background:var(--bg-secondary);border-bottom:1px solid var(--border-color);display:flex;justify-content:space-between;align-items:center;">
+            <div class="card grid-card" style="margin-bottom:8px;">
+                <div class="card-header" style="padding:6px 14px;background:var(--bg-secondary);border-bottom:1px solid var(--border-color);display:flex;justify-content:space-between;align-items:center;">
                     <h4 style="margin:0;color:${color};"><span class="material-symbols-outlined" style="vertical-align:middle;margin-right:4px;">factory</span>${line}</h4>
                     <button class="btn btn-outline btn-sm" onclick="ProductionPlanModule.printWorkOrder('${line}')">
                         <span class="material-symbols-outlined" style="font-size:16px;">print</span> 인쇄
@@ -458,6 +474,8 @@ const ProductionPlanModule = (function() {
     function renderGrid(tbodyId, footId, slotData, lineName) {
         const tbody = document.getElementById(tbodyId);
         const foot = document.getElementById(footId);
+        const selectedDate = (document.getElementById('planDateFilter') || {}).value || UIUtils.today();
+        const isPastDate = selectedDate < UIUtils.today();
 
         let totalQty = 0;
         let totalMinutes = 0;
@@ -545,13 +563,15 @@ const ProductionPlanModule = (function() {
                 bgColorStyle = `background-color: ${highlightColor};`;
             }
 
-            let clickable = !isLunch;
+            let clickable = !isLunch && !isPastDate;
             if (isHighlight && !hasData) {
                 clickable = false;
             }
 
-            const trCursor = clickable ? 'pointer' : (isLunch ? 'not-allowed' : 'not-allowed');
-            const trClick = clickable ? `onclick="ProductionPlanModule.editSlot('${slot}', '${lineName}')"` : (isLunch ? '' : `onclick="event.stopPropagation(); UIUtils.toast('해당 시간은 이미 다른 작업이 진행 중입니다.', 'warning');"`);
+            const trCursor = clickable ? 'pointer' : 'not-allowed';
+            const trClick = clickable
+                ? `onclick="ProductionPlanModule.editSlot('${slot}', '${lineName}')"`
+                : (isLunch ? '' : `onclick="event.stopPropagation(); UIUtils.toast('${isPastDate ? '지난 날짜의 계획은 수정할 수 없습니다.' : '해당 시간은 이미 다른 작업이 진행 중입니다.'}', 'warning');"`);
             const isOvertimeStart = (slot === '18:00');
 
             if (isMealTime) {
@@ -596,14 +616,14 @@ const ProductionPlanModule = (function() {
             return exchangeRow + `
                 <tr class="${rowClass} hover-row ${isOvertimeStart ? 'overtime-start' : ''}" style="cursor: ${trCursor}; ${bgColorStyle}">
                     <td class="sticky-col time-cell" ${trClick}>${item.startTime || slot}${item.endTime ? ' ~ ' + item.endTime : ''}</td>
-                    <td class="editable-cell" ${trClick}>${item.carModel || (clickable ? '<span style="color:#ccc;">(클릭하여 입력)</span>' : `<span style="color:#aaa;">(${activeItem?.status === '완료' ? '작업 완료' : (activeItem?.status === '대기' ? '작업 대기' : '진행 중')})</span>`)}</td>
+                    <td class="editable-cell" ${trClick}>${item.carModel || (clickable ? '<span style="color:#ccc;">(클릭하여 입력)</span>' : (isPastDate ? '' : `<span style="color:#aaa;">(${activeItem?.status === '완료' ? '작업 완료' : (activeItem?.status === '대기' ? '작업 대기' : '진행 중')})</span>`))}</td>
                     <td class="editable-cell" ${trClick}>${item.partName || ''}</td>
                     <td class="editable-cell" ${trClick}>${item.color || ''}</td>
                     <td class="editable-cell text-center" ${trClick}>${item.carModel ? UIUtils.itemTypeBadge(item.carModel, item.partName, item.color) : ''}</td>
                     <td class="editable-cell text-right" ${trClick}>${q > 0 ? UIUtils.formatNumber(q) : ''}</td>
                     <td class="editable-cell text-center" ${trClick}>${item.status ? UIUtils.badge(item.status, item.status === '완료' ? 'success' : (item.status === '진행' ? 'info' : 'warning')) : ''}</td>
                     <td class="text-center">
-                        ${hasData ? `<button class="btn btn-xs btn-icon btn-danger" onclick="ProductionPlanModule.removeSlot('${slot}', '${lineName}')" title="삭제" style="position:relative; z-index:10;"><span class="material-symbols-outlined" style="font-size:14px;">delete</span></button>` : ''}
+                        ${hasData && !isPastDate ? `<button class="btn btn-xs btn-icon btn-danger" onclick="ProductionPlanModule.removeSlot('${slot}', '${lineName}')" title="삭제" style="position:relative; z-index:10;"><span class="material-symbols-outlined" style="font-size:14px;">delete</span></button>` : ''}
                     </td>
                 </tr>
             `;
@@ -700,6 +720,29 @@ const ProductionPlanModule = (function() {
             badgeEl.innerHTML = '—';
             badgeEl.style.cssText = 'padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg-secondary);min-height:38px;display:flex;align-items:center;font-size:0.9rem;color:var(--text-muted);';
         }
+    }
+
+    function _normalizeProcessName(value) {
+        return String(value || '').replace(/\s+/g, '').replace(/[‐‑–—]/g, '-');
+    }
+
+    function _isPaintProcess(value) {
+        const process = _normalizeProcessName(value);
+        return process === '도장' || process.startsWith('도장-') || process.startsWith('도장');
+    }
+
+    function _findProductForPlan(carModel, partName, color) {
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        return products.find(p =>
+            p.partName === partName && p.carModel === carModel && (p.color === color || !color || !p.color)
+        ) || products.find(p => p.partName === partName && p.carModel === carModel);
+    }
+
+    function _usesLaserWipForLine(product, line) {
+        if (!product || !_isPaintProcess(product.process3)) return false;
+        const process3 = _normalizeProcessName(product.process3);
+        const lineName = _normalizeProcessName(line);
+        return process3 === '도장' || process3 === lineName;
     }
 
     // ── 도료 재고 조회 헬퍼 ──────────────────────────────────────────
@@ -1175,6 +1218,7 @@ const ProductionPlanModule = (function() {
 
         const partName       = overridePartName  || (document.getElementById('sPart')  || {}).value || '';
         const carModel       = overrideCarModel  || (document.getElementById('sModel') || {}).value || '';
+        const lineName       = (document.getElementById('sLine') || {}).value || '';
         const currentPlanId  = panel.getAttribute('data-current-plan-id') || '';
 
         // v19: 현재 선택된 품명+차종+컬러 → productId 조회
@@ -1184,6 +1228,13 @@ const ProductionPlanModule = (function() {
             p.partName === partName && p.carModel === carModel && (p.color === colorVal || !colorVal || !p.color)
         ) || _products.find(p => p.partName === partName && p.carModel === carModel);
         const productId = _matchProd ? _matchProd.id : '';
+
+        if (_usesLaserWipForLine(_matchProd, lineName)) {
+            panel.style.display = 'none';
+            if (totalEl) totalEl.textContent = '-';
+            if (lotsEl)  lotsEl.innerHTML = '';
+            return;
+        }
 
         if (!partName) {
             panel.style.display = 'none';
@@ -1284,7 +1335,7 @@ const ProductionPlanModule = (function() {
         }).join('');
     }
 
-    // 레이져 후 재공품 재고 패널 갱신 (도장-B 라인 전용)
+    // 레이져 후 재공품 재고 패널 갱신 (제조공정-3이 도장인 품목만)
     function updateLaserWipPanel(overridePartName, overrideCarModel) {
         const panel = document.getElementById('laserWipPanel');
         if (!panel) return; // 다른 라인에서는 패널 자체가 없음
@@ -1292,10 +1343,17 @@ const ProductionPlanModule = (function() {
         const partName  = overridePartName  || (document.getElementById('sPart')  || {}).value || '';
         const carModel  = overrideCarModel  || (document.getElementById('sModel') || {}).value || '';
         const colorVal  = (document.getElementById('sColor') || {}).value || '';
+        const lineName  = (document.getElementById('sLine') || {}).value || '';
         const totalEl   = document.getElementById('laserWipTotal');
         const lotsEl    = document.getElementById('laserWipLots');
 
         if (!partName) {
+            panel.style.display = 'none';
+            return;
+        }
+
+        const product = _findProductForPlan(carModel, partName, colorVal);
+        if (!_usesLaserWipForLine(product, lineName)) {
             panel.style.display = 'none';
             return;
         }
@@ -1313,7 +1371,7 @@ const ProductionPlanModule = (function() {
             lotsEl.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 6px;border-radius:4px;">
                 <span style="font-size:0.82rem;color:var(--text-secondary);">
                     <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">bolt</span>
-                    레이져 완료 → 도장-B 대기
+                    레이져 완료 → ${lineName || '도장'} 대기
                 </span>
                 <span style="font-weight:700;color:${wipColor};font-size:0.95rem;">${UIUtils.formatNumber(wip)} EA</span>
             </div>
@@ -1479,6 +1537,10 @@ const ProductionPlanModule = (function() {
 
     function editSlot(slot, line) {
         const date = document.getElementById('planDateFilter').value;
+        if (date < UIUtils.today()) {
+            UIUtils.toast('지난 날짜의 계획은 수정할 수 없습니다.', 'warning');
+            return;
+        }
 
         const allData = Storage.getAll(STORE);
         let currentItem = null;
@@ -1547,10 +1609,7 @@ const ProductionPlanModule = (function() {
 
         // 사출 재고 사전 계산
         // v19: productId 우선 조회
-        const _products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-        const _matchedProd = _products.find(p =>
-            p.partName === partValue && p.carModel === modelValue && (p.color === colorValue || !colorValue || !p.color)
-        ) || _products.find(p => p.partName === partValue && p.carModel === modelValue);
+        const _matchedProd = _findProductForPlan(modelValue, partValue, colorValue);
         const _productId = _matchedProd ? _matchedProd.id : '';
 
         let _injDisplay = 'none', _injTotalHtml = '-', _injLotsHtml = '';
@@ -1595,9 +1654,9 @@ const ProductionPlanModule = (function() {
             } catch(e) { console.error('[editSlot] injStock pre-compute error:', e); }
         }
 
-        // 레이져 후 재공 재고 사전 계산 (도장-B 라인 전용)
+        // 레이져 후 재공 재고 사전 계산 (제조공정-3이 도장인 품목만)
         let _laserWipDisplay = 'none', _laserWipTotal = '-', _laserWipHtml = '';
-        if (line === '도장-B' && partValue) {
+        if (partValue && _usesLaserWipForLine(_matchedProd, line)) {
             try {
                 const _lwip = (typeof LaserWipModule !== 'undefined')
                     ? LaserWipModule.getWipStock(modelValue || '', partValue, colorValue || '')
@@ -1608,7 +1667,7 @@ const ProductionPlanModule = (function() {
                 _laserWipHtml = `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 6px;border-radius:4px;">
                     <span style="font-size:0.82rem;color:var(--text-secondary);">
                         <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">bolt</span>
-                        레이져 완료 → 도장-B 대기
+                        레이져 완료 → ${line || '도장'} 대기
                     </span>
                     <span style="font-weight:700;color:${_lwipColor};font-size:0.95rem;">${UIUtils.formatNumber(_lwip)} EA</span>
                 </div>
@@ -1616,7 +1675,7 @@ const ProductionPlanModule = (function() {
                     <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">warning</span>
                     재공품 재고 없음 — 레이져 공정 완료 후 진행 가능
                 </div>` : ''}`;
-                // 도장-B 라인에서는 사출 재고 패널을 숨김
+                // 레이져 후 도장 공정 품목은 사출 재고 대신 재공품 재고를 기준으로 확인
                 _injDisplay = 'none';
             } catch(e) { console.error('[editSlot] laserWip pre-compute error:', e); }
         }
@@ -1659,8 +1718,11 @@ const ProductionPlanModule = (function() {
             } catch(e) { console.error('[editSlot] paintStock pre-compute error:', e); }
         }
 
+        const lineClass = line === '도장-B' ? 'line-b' : 'line-a';
+
         UIUtils.showModal(`[${line}] 생산 계획 등록`, `
             <input type="hidden" id="sLine" value="${line}">
+            <div class="paint-plan-entry ${lineClass}">
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">차종</label>
@@ -1755,6 +1817,7 @@ const ProductionPlanModule = (function() {
                     <option value="진행" ${statusValue === '진행' ? 'selected' : ''}>진행</option>
                     <option value="완료" ${statusValue === '완료' ? 'selected' : ''}>완료</option>
                 </select>
+            </div>
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
@@ -1868,6 +1931,10 @@ const ProductionPlanModule = (function() {
 
     async function saveSlot(originalSlot, line) {
         const date = document.getElementById('planDateFilter').value;
+        if (date < UIUtils.today()) {
+            UIUtils.toast('지난 날짜의 계획은 저장할 수 없습니다.', 'warning');
+            return;
+        }
 
         const startTime = document.getElementById('sStartTime').value;
         const endTime = document.getElementById('sEndTime').value;
@@ -2017,6 +2084,10 @@ const ProductionPlanModule = (function() {
     function removeSlot(slot, line) {
         UIUtils.confirm(`${slot} 시간대 계획을 삭제하시겠습니까?`, async () => {
             const date = document.getElementById('planDateFilter').value;
+            if (date < UIUtils.today()) {
+                UIUtils.toast('지난 날짜의 계획은 삭제할 수 없습니다.', 'warning');
+                return;
+            }
 
             const allData = Storage.getAll(STORE);
             for (const item of allData) {

@@ -320,9 +320,70 @@ var LaserJigMasterModule = (function () {
         return Array.isArray(row && row.products) ? row.products : [];
     }
 
+    // 숫자만 추출해 "YYYY년 MM월 DD일" 형식으로 반환
+    function _formatKoreanDate(val) {
+        const d = String(val || '').replace(/[^0-9]/g, '').slice(0, 8);
+        let result = '';
+        if (d.length >= 1) result += d.slice(0, 4);
+        if (d.length >= 4) result += '년 ';
+        if (d.length >= 5) result += d.slice(4, 6);
+        if (d.length >= 6) result += '월 ';
+        if (d.length >= 7) result += d.slice(6, 8);
+        if (d.length >= 8) result += '일';
+        return result;
+    }
+
+    function _onMadeDateInput(el) {
+        const pos = el.selectionStart;
+        const prev = el.value;
+        const formatted = _formatKoreanDate(prev);
+        el.value = formatted;
+        // 커서 위치 보정: 숫자 입력 위치에 맞게 이동
+        const numsBefore = prev.slice(0, pos).replace(/[^0-9]/g, '').length;
+        let cursor = 0, count = 0;
+        for (let i = 0; i < formatted.length; i++) {
+            if (/[0-9]/.test(formatted[i])) { count++; if (count === numsBefore) { cursor = i + 1; } }
+        }
+        if (numsBefore === 0) cursor = 0;
+        el.setSelectionRange(cursor, cursor);
+    }
+
     function _productLabel(product) {
         const color = product.color || '';
         return `[${product.carModel || '-'}] ${product.partName || '-'}${color ? ' / ' + color : ''}`;
+    }
+
+    // "YYYY년 MM월 DD일" 문자열 → Date 파싱
+    function _parseKoreanDate(str) {
+        const m = String(str || '').match(/(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/);
+        if (!m) return null;
+        return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    }
+
+    // 제작일 → 오늘까지 "X년 X개월" 계산
+    function _ageDisplay(madeDateStr) {
+        const d = _parseKoreanDate(madeDateStr);
+        if (!d || isNaN(d.getTime())) return '<span style="color:var(--text-muted);">-</span>';
+        const now = new Date();
+        let years  = now.getFullYear() - d.getFullYear();
+        let months = now.getMonth()    - d.getMonth();
+        if (now.getDate() < d.getDate()) months--;
+        if (months < 0) { years--; months += 12; }
+        if (years < 0)  { years = 0; months = 0; }
+        return `<span style="font-weight:600;color:var(--text-primary);">${years}년 ${months}개월</span>`;
+    }
+
+    // 품목구분 배지
+    function _itemTypeBadge(type) {
+        const map = {
+            '양산품': { bg: '#dcfce7', color: '#15803d', border: '#86efac' },
+            'A/S':   { bg: '#dbeafe', color: '#1d4ed8', border: '#93c5fd' },
+            '개발품': { bg: '#fff7ed', color: '#c2410c', border: '#fdba74' }
+        };
+        const s = map[type] || { bg: 'var(--bg-secondary)', color: 'var(--text-muted)', border: 'var(--border-color)' };
+        return type
+            ? `<span style="display:inline-block;padding:2px 9px;border-radius:999px;font-size:0.76rem;font-weight:700;background:${s.bg};color:${s.color};border:1px solid ${s.border};">${_esc(type)}</span>`
+            : '<span style="color:var(--text-muted);">-</span>';
     }
 
     async function render(container) {
@@ -343,14 +404,15 @@ var LaserJigMasterModule = (function () {
                             <table class="data-table">
                                 <thead>
                                     <tr>
-                                        <th style="width:18%;">지그명</th>
+                                        <th style="width:15%;">지그명</th>
                                         <th>공용 사용 제품</th>
-                                        <th style="width:8%;text-align:right;">제품수</th>
-                                        <th style="width:8%;text-align:right;">수량</th>
-                                        <th style="width:9%;">상태</th>
-                                        <th style="width:9%;">재질</th>
-                                        <th style="width:10%;">제작일</th>
-                                        <th style="width:120px;">작업</th>
+                                        <th style="width:7%;text-align:right;">제품수</th>
+                                        <th style="width:6%;text-align:right;">수량</th>
+                                        <th style="width:8%;">품목구분</th>
+                                        <th style="width:7%;">재질</th>
+                                        <th style="width:9%;">제작일</th>
+                                        <th style="width:10%;">수명</th>
+                                        <th style="width:110px;">작업</th>
                                     </tr>
                                 </thead>
                                 <tbody id="laserJigMasterBody"></tbody>
@@ -372,7 +434,7 @@ var LaserJigMasterModule = (function () {
         });
 
         if (!rows.length) {
-            tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:36px;color:var(--text-muted);">등록된 레이져 지그가 없습니다. 레이져 지그 등록에서 제품을 체크 선택하세요.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:36px;color:var(--text-muted);">등록된 레이져 지그가 없습니다. 레이져 지그 등록에서 제품을 체크 선택하세요.</td></tr>`;
             return;
         }
 
@@ -390,9 +452,10 @@ var LaserJigMasterModule = (function () {
                     </td>
                     <td style="text-align:right;font-weight:700;">${_fmt(products.length)}</td>
                     <td style="text-align:right;">${_fmt(row.qty || 0)}</td>
-                    <td>${UIUtils.badge(row.status || '사용중', (row.status || '') === '보관' ? 'secondary' : 'success')}</td>
+                    <td>${_itemTypeBadge(row.itemType || '')}</td>
                     <td>${_esc(row.material || '-')}</td>
-                    <td>${_esc(row.madeDate || '-')}</td>
+                    <td style="font-size:0.82rem;">${_esc(row.madeDate || '-')}</td>
+                    <td>${_ageDisplay(row.madeDate || '')}</td>
                     <td>
                         <button class="btn btn-sm btn-outline" onclick="LaserJigMasterModule.openModal('${_js(row.id)}')">수정</button>
                         <button class="btn btn-sm btn-danger" onclick="LaserJigMasterModule.remove('${_js(row.id)}')">삭제</button>
@@ -402,13 +465,30 @@ var LaserJigMasterModule = (function () {
         }).join('');
     }
 
-    function _productChecklistHtml(row) {
+    function _productChecklistHtml(row, allRows) {
         const selectedIds = new Set(_selectedProducts(row).map(function (product) {
             return String(product.productId || product.id || '').trim();
         }));
-        const products = _laserProducts();
+
+        // 다른 지그에 이미 등록된 제품 ID 수집
+        const currentId = row ? String(row.id || '') : '';
+        const usedElsewhere = new Set();
+        (allRows || []).forEach(function (jig) {
+            if (String(jig.id || '') === currentId) return; // 현재 편집 중인 지그는 제외
+            (jig.productIds || []).forEach(function (pid) {
+                usedElsewhere.add(String(pid).trim());
+            });
+        });
+
+        const allProducts = _laserProducts();
+        // 다른 지그에 등록된 제품은 표시하지 않음 (현재 지그에 선택된 것은 유지)
+        const products = allProducts.filter(function (product) {
+            const pid = String(product.id || _productKey(product)).trim();
+            return !usedElsewhere.has(pid) || selectedIds.has(pid);
+        });
+
         if (!products.length) {
-            return `<div style="padding:28px;text-align:center;color:var(--text-muted);border:1px dashed var(--border-color);border-radius:8px;">제품 정보에 레이져 공정이 포함된 제품이 없습니다.</div>`;
+            return `<div style="padding:28px;text-align:center;color:var(--text-muted);border:1px dashed var(--border-color);border-radius:8px;">등록 가능한 제품이 없습니다. (레이져 공정이 포함된 제품이 없거나 모두 다른 지그에 등록됨)</div>`;
         }
 
         const groups = {};
@@ -455,22 +535,23 @@ var LaserJigMasterModule = (function () {
             row ? '레이져 지그 수정' : '레이져 지그 등록',
             `
                 <div class="form-row">
-                    <div class="form-group"><label class="form-label">지그명 <span style="color:var(--accent-red)">*</span></label><input class="form-input" id="ljmName" value="${_esc(row && row.jigName || '')}" placeholder="예: T1XX LENS 공용 지그"></div>
-                    <div class="form-group"><label class="form-label">제작일</label><input class="form-input" id="ljmMadeDate" type="date" value="${_esc(row && row.madeDate || '')}"></div>
+                    <div class="form-group"><label class="form-label">지그명 <span style="color:var(--accent-red)">*</span></label><input class="form-input" id="ljmName" value="${_esc(row && row.jigName || '')}" placeholder="예: T1XX LENS JIG" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9\s\-_.\/]/g,'')"></div>
+                    <div class="form-group"><label class="form-label">제작일</label><input class="form-input" id="ljmMadeDate" type="text" value="${_esc(_formatKoreanDate(row && row.madeDate || ''))}" placeholder="예: 2024년 01월 15일" oninput="LaserJigMasterModule._onMadeDateInput(this)" maxlength="13"></div>
                 </div>
                 <div class="form-row">
                     <div class="form-group"><label class="form-label">수량</label><input class="form-input" id="ljmQty" type="number" min="0" value="${_esc(row && row.qty || 0)}"></div>
-                    <div class="form-group"><label class="form-label">상태</label>
-                        <select class="form-select" id="ljmStatus">
-                            ${['사용중','보관','수리중','폐기'].map(function (status) {
-                                return `<option value="${status}" ${((row && row.status) || '사용중') === status ? 'selected' : ''}>${status}</option>`;
+                    <div class="form-group"><label class="form-label">품목구분</label>
+                        <select class="form-select" id="ljmItemType">
+                            ${['', '양산품', 'A/S', '개발품'].map(function (t) {
+                                const sel = ((row && row.itemType) || '') === t ? 'selected' : '';
+                                return `<option value="${t}" ${sel}>${t || '— 선택 —'}</option>`;
                             }).join('')}
                         </select>
                     </div>
                 </div>
                 <div class="form-group"><label class="form-label">재질</label><input class="form-input" id="ljmMaterial" value="${_esc(row && row.material || '')}" placeholder="예: AL, SUS"></div>
                 <div style="margin:12px 0 8px;font-weight:800;color:var(--text-primary);">공용 사용 제품 선택</div>
-                <div style="max-height:52vh;overflow:auto;padding-right:4px;">${_productChecklistHtml(row)}</div>
+                <div style="max-height:52vh;overflow:auto;padding-right:4px;">${_productChecklistHtml(row, rows)}</div>
             `,
             `
                 ${row ? `<button class="btn btn-danger" onclick="LaserJigMasterModule.remove('${_js(row.id)}')">삭제</button>` : ''}
@@ -498,7 +579,7 @@ var LaserJigMasterModule = (function () {
         const payload = {
             jigName: document.getElementById('ljmName').value.trim(),
             qty: Number(document.getElementById('ljmQty').value) || 0,
-            status: document.getElementById('ljmStatus').value,
+            itemType: document.getElementById('ljmItemType').value,
             material: document.getElementById('ljmMaterial').value.trim(),
             madeDate: document.getElementById('ljmMadeDate').value,
             products: products,
@@ -759,7 +840,8 @@ var LaserJigCleaningModule = (function () {
         init: render,
         openModal: openModal,
         save: save,
-        remove: remove
+        remove: remove,
+        _onMadeDateInput: _onMadeDateInput
     };
 })();
 

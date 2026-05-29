@@ -5,9 +5,7 @@ var InjectionWorkLogModule = (function() {
     const STORE      = DB.STORES.INJECTION_WORK_LOG;
     const MOLD_STORE = DB.STORES.MOLD_CHANGE_LOG;
     const RAW_STORE  = DB.STORES.RAW_MAT_CHANGE_LOG;
-    const PLAN_STORE = DB.STORES.PRODUCTION_PLANS;
     const MACHINES   = ['110-1호기', '110-2호기', '200-3호기'];
-    const PLAN_LINES = ['도장-A', '도장-B'];
 
     let _activeTab  = 'worklog';
     let _schedYear  = new Date().getFullYear();
@@ -1183,9 +1181,6 @@ var InjectionWorkLogModule = (function() {
                         <span style="display:flex;align-items:center;gap:4px;">
                             <span style="width:12px;height:12px;border-radius:2px;background:var(--accent-green);display:inline-block;"></span> 생산실적
                         </span>
-                        <span style="display:flex;align-items:center;gap:4px;">
-                            <span style="width:12px;height:12px;border-radius:2px;background:#6366f1;display:inline-block;"></span> 생산계획
-                        </span>
                     </div>
                 </div>
                 <div class="card">
@@ -1215,7 +1210,6 @@ var InjectionWorkLogModule = (function() {
         const moldAll = Storage.getAll(MOLD_STORE) || [];
         const rawAll  = Storage.getAll(RAW_STORE)  || [];
         const workAll = Storage.getAll(STORE)       || [];
-        const planAll = Storage.getAll(PLAN_STORE)  || [];
 
         function byDate(arr, key) {
             const map = {};
@@ -1232,7 +1226,6 @@ var InjectionWorkLogModule = (function() {
         const rawDone  = byDate(rawAll.filter(d => d.date >= mStart && d.date <= mEnd),           'date');
         const rawPlan  = byDate(rawAll.filter(d => d.plannedDate >= mStart && d.plannedDate <= mEnd),  'plannedDate');
         const workMap  = byDate(workAll.filter(d => d.date >= mStart && d.date <= mEnd),          'date');
-        const planMap  = byDate(planAll.filter(d => d.date >= mStart && d.date <= mEnd),          'date');
 
         const firstDow = new Date(year, month - 1, 1).getDay(); // 0=일
         const DAY_KO   = ['일', '월', '화', '수', '목', '금', '토'];
@@ -1280,15 +1273,13 @@ var InjectionWorkLogModule = (function() {
                     });
                     if (workMap[ds] && workMap[ds].length) {
                         const totalProd = workMap[ds].reduce((s, w) => s + (Number(w.productionQty) || 0), 0);
-                        if (totalProd > 0) {
-                            events.push(`<div class="sched-event sched-work" title="생산실적: ${UIUtils.formatNumber(totalProd)}개">
-                                ▶ ${UIUtils.formatNumber(totalProd)}개</div>`);
+                        const firstWork = workMap[ds][0] || {};
+                        events.push(`<div class="sched-event sched-work" title="사출작업: ${workMap[ds].length}건 · ${UIUtils.formatNumber(totalProd)}개">
+                            ▶ ${firstWork.machine || '사출'} ${firstWork.partName ? `· ${firstWork.partName}` : ''}</div>`);
+                        if (workMap[ds].length > 1) {
+                            events.push(`<div class="sched-event sched-work" title="추가 사출작업 ${workMap[ds].length - 1}건" style="opacity:0.85;">
+                                +${workMap[ds].length - 1}건 · ${UIUtils.formatNumber(totalProd)}개</div>`);
                         }
-                    }
-                    if (planMap[ds] && planMap[ds].length) {
-                        const totalPlan = planMap[ds].reduce((s, p) => s + (Number(p.planQty) || 0), 0);
-                        events.push(`<div class="sched-event" title="생산계획: ${UIUtils.formatNumber(totalPlan)}개" style="background:rgba(99,102,241,0.1);color:#4f46e5;border-left:3px solid #6366f1;">
-                            계획 ${UIUtils.formatNumber(totalPlan)}개</div>`);
                     }
 
                     const dayNumHtml = isToday
@@ -1324,15 +1315,10 @@ var InjectionWorkLogModule = (function() {
         const moldAll = Storage.getAll(MOLD_STORE) || [];
         const rawAll  = Storage.getAll(RAW_STORE)  || [];
         const workAll = Storage.getAll(STORE)       || [];
-        const planAll = Storage.getAll(PLAN_STORE)  || [];
-
         const moldDone = moldAll.filter(d => (d.date || '').split(' ')[0] === ds);
         const rawDone  = rawAll.filter(d  => (d.date || '').split(' ')[0] === ds);
         const rawPlan  = rawAll.filter(d  => d.plannedDate === ds);
         const workDone = workAll.filter(d => (d.date || '').split(' ')[0] === ds);
-        const planDone = planAll
-            .filter(d => d.date === ds)
-            .sort((a, b) => (a.startTime || a.slot || '').localeCompare(b.startTime || b.slot || ''));
 
         let html = `
             <div class="card">
@@ -1341,14 +1327,11 @@ var InjectionWorkLogModule = (function() {
                         <span class="material-symbols-outlined" style="color:var(--accent-blue);">event</span>
                         <strong>${ds} 일정 상세</strong>
                     </div>
-                    <button class="btn btn-primary btn-sm" onclick="InjectionWorkLogModule.openPlanAddModal('${ds}')">
-                        <span class="material-symbols-outlined" style="font-size:16px;">add</span> 생산 계획 입력
-                    </button>
                 </div>
                 <div class="card-body" style="padding:14px 16px;">
         `;
 
-        if (!moldDone.length && !rawDone.length && !rawPlan.length && !workDone.length && !planDone.length) {
+        if (!moldDone.length && !rawDone.length && !rawPlan.length && !workDone.length) {
             html += `<div style="font-size:0.85rem;color:var(--text-muted);padding:6px 0;">등록된 일정이 없습니다.</div>`;
         }
 
@@ -1404,151 +1387,9 @@ var InjectionWorkLogModule = (function() {
             });
             html += `</div>`;
         }
-        if (planDone.length) {
-            const tPlan = planDone.reduce((s, p) => s + (Number(p.planQty)||0), 0);
-            html += `<div style="margin-bottom:14px;">
-                <div style="font-size:0.8rem;font-weight:700;color:#4f46e5;margin-bottom:6px;">생산 계획 (${planDone.length}건 · 총 ${UIUtils.formatNumber(tPlan)}개)</div>`;
-            planDone.forEach(d => {
-                html += `<div style="font-size:0.83rem;padding:6px 10px;background:rgba(99,102,241,0.06);border-radius:6px;margin-bottom:4px;">
-                    <strong>${d.line || '-'}</strong> | ${(d.startTime || d.slot || '-')} ${d.endTime ? '~ ' + d.endTime : ''} |
-                    ${d.carModel || '-'} / ${d.partName || '-'} ${d.color ? `(${d.color})` : ''} |
-                    계획: <strong>${UIUtils.formatNumber(d.planQty || 0)}</strong>
-                </div>`;
-            });
-            html += `</div>`;
-        }
-
         html += `</div></div>`;
         detailEl.innerHTML = html;
         detailEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
-
-    function _esc(v) {
-        return String(v ?? '').replace(/[&<>"']/g, ch => ({
-            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-        }[ch]));
-    }
-
-    function _planProducts() {
-        return Storage.getAll(DB.STORES.PRODUCTS) || [];
-    }
-
-    function openPlanAddModal(date) {
-        const products = _planProducts();
-        const carModels = UIUtils.sortCarModels(products.map(p => p.carModel), products);
-        UIUtils.showModal('생산 계획 입력', `
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">계획일자 <span style="color:var(--accent-red)">*</span></label>
-                    <input type="date" class="form-input" id="schedPlanDate" value="${_esc(date || UIUtils.today())}">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">라인 <span style="color:var(--accent-red)">*</span></label>
-                    <select class="form-select" id="schedPlanLine">
-                        ${PLAN_LINES.map(line => `<option value="${_esc(line)}">${_esc(line)}</option>`).join('')}
-                    </select>
-                </div>
-            </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">차종 <span style="color:var(--accent-red)">*</span></label>
-                    <select class="form-select" id="schedPlanCar" onchange="InjectionWorkLogModule.onSchedulePlanCarChange()">
-                        <option value="">-- 선택 --</option>
-                        ${carModels.map(c => `<option value="${_esc(c)}">${_esc(c)}</option>`).join('')}
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">제품명 <span style="color:var(--accent-red)">*</span></label>
-                    <select class="form-select" id="schedPlanPart" onchange="InjectionWorkLogModule.onSchedulePlanPartChange()">
-                        <option value="">-- 차종 먼저 선택 --</option>
-                    </select>
-                </div>
-            </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">컬러</label>
-                    <select class="form-select" id="schedPlanColor">
-                        <option value="">-- 선택 --</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">계획 수량(EA) <span style="color:var(--accent-red)">*</span></label>
-                    <input type="number" class="form-input" id="schedPlanQty" min="1" placeholder="0" style="text-align:right;">
-                </div>
-            </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">시작 시간</label>
-                    <input type="time" class="form-input" id="schedPlanStart" value="08:30">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">종료 시간</label>
-                    <input type="time" class="form-input" id="schedPlanEnd">
-                </div>
-            </div>
-        `, `
-            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" onclick="InjectionWorkLogModule.saveSchedulePlan()">저장</button>
-        `);
-    }
-
-    function onSchedulePlanCarChange() {
-        const car = (document.getElementById('schedPlanCar') || {}).value || '';
-        const partEl = document.getElementById('schedPlanPart');
-        const colorEl = document.getElementById('schedPlanColor');
-        if (!partEl || !colorEl) return;
-        const parts = [...new Set(_planProducts().filter(p => p.carModel === car).map(p => p.partName).filter(Boolean))].sort();
-        partEl.innerHTML = '<option value="">-- 선택 --</option>' + parts.map(p => `<option value="${_esc(p)}">${_esc(p)}</option>`).join('');
-        colorEl.innerHTML = '<option value="">-- 선택 --</option>';
-    }
-
-    function onSchedulePlanPartChange() {
-        const car = (document.getElementById('schedPlanCar') || {}).value || '';
-        const part = (document.getElementById('schedPlanPart') || {}).value || '';
-        const colorEl = document.getElementById('schedPlanColor');
-        if (!colorEl) return;
-        const colors = [...new Set(_planProducts().filter(p => p.carModel === car && p.partName === part).map(p => p.color).filter(Boolean))].sort();
-        colorEl.innerHTML = '<option value="">-- 선택 --</option>' + colors.map(c => `<option value="${_esc(c)}">${_esc(c)}</option>`).join('');
-    }
-
-    async function saveSchedulePlan() {
-        const date = (document.getElementById('schedPlanDate') || {}).value || '';
-        const line = (document.getElementById('schedPlanLine') || {}).value || '';
-        const carModel = (document.getElementById('schedPlanCar') || {}).value || '';
-        const partName = (document.getElementById('schedPlanPart') || {}).value || '';
-        const color = (document.getElementById('schedPlanColor') || {}).value || '';
-        const planQty = Number((document.getElementById('schedPlanQty') || {}).value) || 0;
-        const startTime = (document.getElementById('schedPlanStart') || {}).value || '';
-        const endTime = (document.getElementById('schedPlanEnd') || {}).value || '';
-
-        if (!date || !line || !carModel || !partName || planQty <= 0) {
-            UIUtils.toast('계획일자, 라인, 차종, 제품명, 계획 수량을 입력하세요.', 'warning');
-            return;
-        }
-
-        const products = _planProducts();
-        const product = products.find(p => p.carModel === carModel && p.partName === partName && p.color === color)
-            || products.find(p => p.carModel === carModel && p.partName === partName);
-
-        await Storage.add(PLAN_STORE, {
-            date,
-            line,
-            slot: startTime || '08:30',
-            carModel,
-            partName,
-            color,
-            itemType: product ? (product.itemType || '') : '',
-            planQty,
-            startTime,
-            endTime,
-            status: '대기',
-            productId: product ? product.id : undefined
-        });
-
-        UIUtils.closeModal();
-        UIUtils.toast('생산 계획이 등록되었습니다.', 'success');
-        _drawCalendar();
-        selectDay(date);
     }
 
     function prevMonth() {
@@ -1623,10 +1464,6 @@ var InjectionWorkLogModule = (function() {
         prevMonth,
         nextMonth,
         goToday,
-        selectDay,
-        openPlanAddModal,
-        onSchedulePlanCarChange,
-        onSchedulePlanPartChange,
-        saveSchedulePlan
+        selectDay
     };
 })();

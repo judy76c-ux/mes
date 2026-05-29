@@ -57,14 +57,11 @@ var PaintIncomingInspectionModule = (function() {
                                 <thead>
                                     <tr>
                                         <th>검사일자</th>
-                                        <th>검사자</th>
-                                        <th>구매처</th>
-                                        <th>제조사</th>
-                                        <th>원료명</th>
+                                        <th>도료품명</th>
+                                        <th>입고수량</th>
                                         <th>제조일자</th>
                                         <th>제조사 LOT</th>
                                         <th>LOT구분</th>
-                                        <th>입고수량</th>
                                         <th>용기상태</th>
                                         <th>유효기간</th>
                                         <th>성적서</th>
@@ -203,7 +200,7 @@ var PaintIncomingInspectionModule = (function() {
     function renderTable(data) {
         const tbody = document.getElementById('piTableBody');
         if (data.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="14" style="text-align:center;padding:40px;color:var(--text-muted);">데이터가 없습니다.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:40px;color:var(--text-muted);">데이터가 없습니다.</td></tr>`;
             return;
         }
 
@@ -215,21 +212,14 @@ var PaintIncomingInspectionModule = (function() {
             const expType = d.expDateCheck === '합격' ? 'success' : (d.expDateCheck === '불합격' ? 'danger' : '');
             const certType = d.certCheck === '합격' ? 'success' : (d.certCheck === '불합격' ? 'danger' : '');
             const lotType = ''; // lotCheckBadge()로 직접 렌더링
-            // 도료 마스터에서 제조사 조회
-            const paintMat = paints.find(p => p.supplier === d.supplier && p.name === d.paintName)
-                          || paints.find(p => p.name === d.paintName);
-            const manufacturer = paintMat ? (paintMat.manufacturer || '-') : '-';
             return `
                 <tr>
                     <td>${d.date}</td>
-                    <td>${d.inspector || '-'}</td>
-                    <td>${d.supplier || '-'}</td>
-                    <td style="font-size:0.82rem;color:var(--text-secondary);">${manufacturer}</td>
                     <td><strong>${d.paintName || '-'}</strong></td>
+                    <td style="text-align:right">${UIUtils.formatNumber(d.incomingQty)}</td>
                     <td>${d.mfgDate || '-'}</td>
                     <td>${d.lotNo || '-'}</td>
                     <td>${lotCheckBadge(d.lotCheck)}</td>
-                    <td style="text-align:right">${UIUtils.formatNumber(d.incomingQty)}</td>
                     <td>${d.containerStatus && containerType ? UIUtils.badge(d.containerStatus, containerType) : (d.containerStatus || '-')}</td>
                     <td>${d.expDateCheck && expType ? UIUtils.badge(d.expDateCheck, expType) : (d.expDateCheck || '-')}</td>
                     <td>${d.certCheck && certType ? UIUtils.badge(d.certCheck, certType) : (d.certCheck || '-')}</td>

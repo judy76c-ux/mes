@@ -68,17 +68,17 @@ var InjectionIncomingModule = (function() {
                                 <thead>
                                     <tr>
                                         <th>검사일자</th>
-                                        <th>사출 LOT</th>
-                                        <th>성적서 접수</th>
                                         <th>차종</th>
                                         <th>품명</th>
                                         <th>입고수량</th>
+                                        <th>사출 LOT</th>
+                                        <th>성적서 접수 LOT</th>
+                                        <th>사출처</th>
                                         <th>시료코드</th>
                                         <th>검사수량</th>
-                                        <th>Ac/Re</th>
+                                        <th>AC/RE</th>
                                         <th>합격</th>
                                         <th>불합격</th>
-                                        <th>사출처</th>
                                         <th>판정</th>
                                         <th>비고</th>
                                         <th>작업</th>
@@ -342,25 +342,21 @@ var InjectionIncomingModule = (function() {
             return `
                 <tr${rowStyle}>
                     <td>${d.date}</td>
-                    <td>${injLotDisplay}</td>
-                    <td>${certDisplay}</td>
                     <td>${d.carModel || '-'}</td>
                     <td>${d.partName || '-'}</td>
                     <td style="text-align:right">${UIUtils.formatNumber(d.incomingQty)}</td>
+                    <td>${injLotDisplay}</td>
+                    <td>${certDisplay}</td>
+                    <td>${d.supplierName || '-'}</td>
                     <td style="text-align:center;font-weight:600;color:var(--accent-blue)">${d.sampleCode || '-'}</td>
                     <td style="text-align:right">${UIUtils.formatNumber(d.inspectionQty)}</td>
                     <td style="text-align:center;font-size:0.82rem;color:var(--text-secondary)">${d.acCriteria != null ? d.acCriteria + '/' + d.reCriteria : '-'}</td>
                     <td style="text-align:right;color:var(--accent-green)">${UIUtils.formatNumber(d.passQty)}</td>
                     <td style="text-align:right;color:var(--accent-red)">${UIUtils.formatNumber(d.failQty)}</td>
-                    <td>${d.supplierName || '-'}</td>
                     <td>${UIUtils.badge(verdictText, verdict)}</td>
                     <td>
                         <div style="font-size:0.8rem;color:var(--accent-red);margin-bottom:2px;">
-                            ${Object.entries(d.defectDetails || {}).map(([k, v]) => `
-            ${k
-            }(${v
-            })
-            `).join(', ')}
+                            ${Object.entries(d.defectDetails || {}).map(([k, v]) => `${k}(${v})`).join(', ')}
                         </div>
                         ${d.note || '-'}
                     </td>

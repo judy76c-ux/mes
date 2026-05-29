@@ -2193,6 +2193,19 @@ input[type="time"] {
     font-style: italic;
 }
 
+.plan-day-modal .mes-grid tr.lunch-time td,
+.plan-day-modal .mes-grid tr.dinner-time td {
+    height: 24px;
+    padding: 3px 8px;
+    font-size: 11px;
+    line-height: 1.15;
+}
+
+.plan-day-modal .mes-grid tr.lunch-time .time-cell,
+.plan-day-modal .mes-grid tr.dinner-time .time-cell {
+    font-size: 11px;
+}
+
 /* 휴게 시간 */
 .mes-grid tr.break-time td {
     background-color: #f8fafc;
@@ -2245,6 +2258,82 @@ input[type="time"] {
 
 .pivoted-grid .status-row td {
     background: #f8fafc;
+}
+
+/* 도장 생산계획 날짜별 입력 모달: 한 화면에 더 많이 보이도록 압축 */
+.modal-body:has(.plan-day-modal) {
+    padding: 16px 24px;
+}
+
+.plan-day-modal-header {
+    position: relative;
+    min-height: 52px;
+}
+
+.plan-day-modal-header h3 {
+    font-size: 0.95rem;
+    padding-right: 190px;
+}
+
+.plan-day-line-switch {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    display: flex;
+    gap: 8px;
+    transform: translate(-50%, -50%);
+}
+
+.plan-day-line-switch .btn {
+    min-width: 68px;
+    height: 32px;
+    padding: 0 12px;
+}
+
+.plan-day-modal .pivoted-grid {
+    max-height: calc(100vh - 180px);
+}
+
+.plan-day-modal .mes-grid {
+    font-size: 13px;
+}
+
+.plan-day-modal .mes-grid th,
+.plan-day-modal .mes-grid td {
+    padding: 7px 8px;
+}
+
+.plan-day-modal .time-cell,
+.plan-day-modal .time-col-header {
+    width: 128px !important;
+}
+
+.plan-day-modal .btn-xs {
+    width: 22px;
+    height: 22px;
+}
+
+.paint-plan-entry {
+    margin: -4px -4px 0;
+    padding: 14px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+}
+
+.paint-plan-entry.line-a {
+    background: rgba(59, 130, 246, 0.07);
+    border-color: rgba(59, 130, 246, 0.22);
+}
+
+.paint-plan-entry.line-b {
+    background: rgba(132, 204, 22, 0.12);
+    border-color: rgba(101, 163, 13, 0.28);
+}
+
+.paint-plan-entry .form-input,
+.paint-plan-entry .form-select,
+.paint-plan-entry #sItemTypeBadge {
+    background-color: #fff;
 }
 
 .btn-xs {
