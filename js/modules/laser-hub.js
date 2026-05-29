@@ -14,6 +14,7 @@ var LaserProcessUI = (function () {
         { id: 'laser-work', label: '레이져 작업일지', icon: 'history' },
         { id: 'laser-inspection', label: '외관 검사 일지', icon: 'fact_check' },
         { id: 'laser-jig-master', label: '레이져 지그대장', icon: 'view_list' },
+        { id: 'laser-jig-disposal', label: '폐기 대장', icon: 'delete_sweep' },
         { id: 'laser-jig-cleaning', label: '지그 세척일지', icon: 'cleaning_services' },
         { id: 'laser-equipment-history', label: '장비 점검/수리 내역', icon: 'build_circle' }
     ];
@@ -50,6 +51,7 @@ var LaserProcessUI = (function () {
 
 var LaserHubModule = (function () {
     const JIG_KEY = 'laser_jig_master_v2';
+    const DISPOSAL_KEY = 'laser_jig_disposal_v1';
     const CLEAN_KEY = 'laser_jig_cleaning_v1';
     const EQUIP_KEY = 'laser_equipment_history_v1';
 
@@ -193,6 +195,7 @@ var LaserHubModule = (function () {
         const metrics = _collectLaserDailyMetrics();
         const standbyItems = (Storage.getAll(DB.STORES.LASER_WORK_LOG) || []).length;
         const jigRows = await _loadList(JIG_KEY);
+        const disposalRows = await _loadList(DISPOSAL_KEY);
         const cleanRows = await _loadList(CLEAN_KEY);
         const equipRows = await _loadList(EQUIP_KEY);
 
@@ -220,6 +223,7 @@ var LaserHubModule = (function () {
                 _homeCard('레이져 작업일지', '금일 작업 실적과 가동 이력을 기록합니다.', 'history', `${metrics.workCount}건`, "Router.navigate('laser-work')", 'blue'),
                 _homeCard('외관 검사 일지', '검사 대기, 검사 결과, 불량 유형을 관리합니다.', 'fact_check', `${metrics.inspectionCount}건`, "Router.navigate('laser-inspection')", 'green'),
                 _homeCard('레이져 지그대장', '레이져 지그명과 공용 사용 제품을 체크 선택하여 관리합니다.', 'view_list', `${jigRows.length}건`, "Router.navigate('laser-jig-master')", 'purple'),
+                _homeCard('폐기 대장', '폐기 처리된 레이져 지그 이력을 확인합니다.', 'delete_sweep', `${disposalRows.length}건`, "Router.navigate('laser-jig-disposal')", 'red'),
                 _homeCard('지그 세척일지', '지그 세척 실적과 다음 세척 예정일을 기록합니다.', 'cleaning_services', `${cleanThisMonth}건`, "Router.navigate('laser-jig-cleaning')", 'cyan'),
                 _homeCard('레이져대기품현황', '도장 완료 후 레이져 대기 중인 재공 현황을 확인합니다.', 'hourglass_top', `${standbyItems}건`, "Router.navigate('laser-standby')", 'orange'),
                 _homeCard('레이져 장비 점검/수리 내역', '설비 점검, 이상, 수리 이력을 관리합니다.', 'build_circle', `${repairOpenCount}건 진행`, "Router.navigate('laser-equipment-history')", 'red')
@@ -235,6 +239,7 @@ var LaserHubModule = (function () {
 
 var LaserJigMasterModule = (function () {
     const CONFIG_KEY = 'laser_jig_master_v2';
+    const DISPOSAL_KEY = 'laser_jig_disposal_v1';
     const LEGACY_CONFIG_KEY = 'laser_jig_master_v1';
     let _legacyCleared = false;
 
@@ -444,9 +449,9 @@ var LaserJigMasterModule = (function () {
                 <tr>
                     <td><strong>${_esc(row.jigName || '-')}</strong></td>
                     <td>
-                        <div style="display:flex;flex-wrap:wrap;gap:4px;">
+                        <div style="display:flex;flex-wrap:wrap;gap:3px;">
                             ${products.length ? products.map(function (product) {
-                                return `<span style="display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;background:var(--bg-secondary);border:1px solid var(--border-color);font-size:0.74rem;">${_esc(_productLabel(product))}</span>`;
+                                return `<span style="display:inline-flex;align-items:center;padding:1px 5px;border-radius:999px;background:var(--bg-secondary);border:1px solid var(--border-color);font-size:0.64rem;line-height:1.35;">${_esc(_productLabel(product))}</span>`;
                             }).join('') : '<span style="color:var(--text-muted);">선택 제품 없음</span>'}
                         </div>
                     </td>
@@ -458,7 +463,7 @@ var LaserJigMasterModule = (function () {
                     <td>${_ageDisplay(row.madeDate || '')}</td>
                     <td>
                         <button class="btn btn-sm btn-outline" onclick="LaserJigMasterModule.openModal('${_js(row.id)}')">수정</button>
-                        <button class="btn btn-sm btn-danger" onclick="LaserJigMasterModule.remove('${_js(row.id)}')">삭제</button>
+                        <button class="btn btn-sm btn-danger" onclick="LaserJigMasterModule.openDisposeModal('${_js(row.id)}')">폐기</button>
                     </td>
                 </tr>
             `;
@@ -528,6 +533,7 @@ var LaserJigMasterModule = (function () {
     }
 
     async function openModal(id) {
+        if (id && !_requireAdmin()) return;
         const rows = await _load();
         const row = id ? rows.find(function (item) { return item.id === id; }) : null;
 
@@ -554,7 +560,7 @@ var LaserJigMasterModule = (function () {
                 <div style="max-height:52vh;overflow:auto;padding-right:4px;">${_productChecklistHtml(row, rows)}</div>
             `,
             `
-                ${row ? `<button class="btn btn-danger" onclick="LaserJigMasterModule.remove('${_js(row.id)}')">삭제</button>` : ''}
+                ${row ? `<button class="btn btn-danger" onclick="LaserJigMasterModule.openDisposeModal('${_js(row.id)}')">폐기</button>` : ''}
                 <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
                 <button class="btn btn-primary" onclick="LaserJigMasterModule.save('${id || ''}')">저장</button>
             `,
@@ -574,6 +580,7 @@ var LaserJigMasterModule = (function () {
     }
 
     async function save(id) {
+        if (id && !_requireAdmin()) return;
         const rows = await _load();
         const products = _collectSelectedProducts();
         const payload = {
@@ -612,17 +619,79 @@ var LaserJigMasterModule = (function () {
         if (area) render(area);
     }
 
-    async function remove(id) {
-        UIUtils.confirm('이 레이져 지그를 삭제하시겠습니까?', async function () {
-            const rows = await _load();
-            await _save(rows.filter(function (item) { return item.id !== id; }));
-            UIUtils.closeModal();
-            UIUtils.toast('삭제되었습니다.', 'success');
-            await renderTable();
+    async function openDisposeModal(id) {
+        if (!_requireAdmin()) return;
+        const rows = await _load();
+        const row = rows.find(function (item) { return item.id === id; });
+        if (!row) {
+            UIUtils.toast('폐기할 지그를 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        UIUtils.showModal(
+            '레이져 지그 폐기',
+            `
+                <div style="padding:4px 0 10px;color:var(--text-secondary);font-size:0.9rem;">
+                    폐기 처리하면 지그대장에서 제외되고 폐기 대장에 이력이 남습니다.
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label class="form-label">지그명</label><input class="form-input" value="${_esc(row.jigName || '-')}" disabled></div>
+                    <div class="form-group"><label class="form-label">폐기일</label><input class="form-input" id="ljmDisposeDate" type="date" value="${UIUtils.today()}"></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label class="form-label">폐기 수량</label><input class="form-input" id="ljmDisposeQty" type="number" min="0" value="${_esc(row.qty || 0)}"></div>
+                    <div class="form-group"><label class="form-label">폐기자</label><input class="form-input" id="ljmDisposeWorker" placeholder="작업자명"></div>
+                </div>
+                <div class="form-group"><label class="form-label">폐기 사유</label><textarea class="form-textarea" id="ljmDisposeReason" rows="3" placeholder="예: 수명 초과, 파손, 제품 단종 등"></textarea></div>
+            `,
+            `
+                <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+                <button class="btn btn-danger" onclick="LaserJigMasterModule.dispose('${_js(id)}')">폐기</button>
+            `,
+            'lg'
+        );
+    }
+
+    async function dispose(id) {
+        if (!_requireAdmin()) return;
+        const rows = await _load();
+        const index = rows.findIndex(function (item) { return item.id === id; });
+        if (index < 0) {
+            UIUtils.toast('폐기할 지그를 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const row = rows[index];
+        const disposalRows = await _loadDisposals();
+        const user = AuthModule.getCurrentUser ? AuthModule.getCurrentUser() : null;
+        disposalRows.unshift({
+            id: Storage.generateId(),
+            jigId: row.id,
+            jigName: row.jigName || '',
+            qty: Number(document.getElementById('ljmDisposeQty')?.value) || Number(row.qty) || 0,
+            itemType: row.itemType || '',
+            material: row.material || '',
+            madeDate: row.madeDate || '',
+            products: row.products || [],
+            productIds: row.productIds || [],
+            disposedDate: document.getElementById('ljmDisposeDate')?.value || UIUtils.today(),
+            disposedBy: (document.getElementById('ljmDisposeWorker')?.value || '').trim(),
+            reason: (document.getElementById('ljmDisposeReason')?.value || '').trim(),
+            adminUser: user ? (user.displayName || user.username || '') : '',
+            createdAt: new Date().toISOString()
         });
+        rows.splice(index, 1);
+        await _save(rows);
+        await _saveDisposals(disposalRows);
+        UIUtils.closeModal();
+        UIUtils.toast('폐기 대장에 이력이 등록되었습니다.', 'success');
+        await renderTable();
+    }
+
+    async function remove(id) {
+        return openDisposeModal(id);
     }
 
     async function resetAll() {
+        if (!_requireAdmin()) return;
         UIUtils.confirm('레이져 지그대장에 등록된 지그를 모두 삭제하시겠습니까?', async function () {
             await _save([]);
             UIUtils.toast('레이져 지그대장을 초기화했습니다.', 'success');
@@ -635,8 +704,113 @@ var LaserJigMasterModule = (function () {
         init: render,
         openModal: openModal,
         save: save,
+        openDisposeModal: openDisposeModal,
+        dispose: dispose,
         remove: remove,
         resetAll: resetAll
+    };
+})();
+
+var LaserJigDisposalModule = (function () {
+    const CONFIG_KEY = 'laser_jig_disposal_v1';
+
+    function _esc(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function _fmt(value) {
+        return (typeof UIUtils !== 'undefined' && UIUtils.formatNumber)
+            ? UIUtils.formatNumber(value || 0)
+            : Number(value || 0).toLocaleString('ko-KR');
+    }
+
+    function _productLabel(product) {
+        return [product.carModel, product.partName, product.color || product.paintColor]
+            .filter(Boolean).join(' ');
+    }
+
+    async function _load() {
+        try {
+            const rows = await Storage.getConfigValue(CONFIG_KEY);
+            return Array.isArray(rows) ? rows : [];
+        } catch (e) {
+            console.warn('[LaserJigDisposal] config load failed:', e);
+            return [];
+        }
+    }
+
+    async function render(container) {
+        container.innerHTML = `
+            <div class="fade-in-up">
+                ${LaserProcessUI.renderSection('laser-jig-disposal', '폐기 대장', '폐기 처리된 레이져 지그 이력을 확인합니다.')}
+                <div class="card">
+                    <div class="card-body" style="padding:0;">
+                        <div class="data-table-wrapper">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width:9%;">폐기일</th>
+                                        <th style="width:14%;">지그명</th>
+                                        <th>공용 사용 제품</th>
+                                        <th style="width:7%;text-align:right;">폐기수량</th>
+                                        <th style="width:8%;">품목구분</th>
+                                        <th style="width:7%;">재질</th>
+                                        <th style="width:9%;">제작일</th>
+                                        <th style="width:8%;">폐기자</th>
+                                        <th style="width:14%;">폐기 사유</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="laserJigDisposalBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        await renderTable();
+    }
+
+    async function renderTable() {
+        const tbody = document.getElementById('laserJigDisposalBody');
+        if (!tbody) return;
+        const rows = (await _load()).sort(function (a, b) {
+            return String(b.disposedDate || '').localeCompare(String(a.disposedDate || ''));
+        });
+        if (!rows.length) {
+            tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:36px;color:var(--text-muted);">폐기 이력이 없습니다.</td></tr>`;
+            return;
+        }
+        tbody.innerHTML = rows.map(function (row) {
+            const products = row.products || [];
+            return `
+                <tr>
+                    <td>${_esc(row.disposedDate || '-')}</td>
+                    <td><strong>${_esc(row.jigName || '-')}</strong></td>
+                    <td>
+                        <div style="display:flex;flex-wrap:wrap;gap:3px;">
+                            ${products.length ? products.map(function (product) {
+                                return `<span style="display:inline-flex;align-items:center;padding:1px 5px;border-radius:999px;background:var(--bg-secondary);border:1px solid var(--border-color);font-size:0.64rem;line-height:1.35;">${_esc(_productLabel(product))}</span>`;
+                            }).join('') : '<span style="color:var(--text-muted);">-</span>'}
+                        </div>
+                    </td>
+                    <td style="text-align:right;font-weight:700;">${_fmt(row.qty || 0)}</td>
+                    <td>${_esc(row.itemType || '-')}</td>
+                    <td>${_esc(row.material || '-')}</td>
+                    <td>${_esc(row.madeDate || '-')}</td>
+                    <td>${_esc(row.disposedBy || row.adminUser || '-')}</td>
+                    <td>${_esc(row.reason || '-')}</td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    return {
+        render: render,
+        init: render
     };
 })();
 
@@ -664,6 +838,33 @@ var LaserJigCleaningModule = (function () {
 
     async function _save(rows) {
         await Storage.setConfigValue(CONFIG_KEY, rows);
+    }
+
+    async function _loadDisposals() {
+        try {
+            const rows = await Storage.getConfigValue(DISPOSAL_KEY);
+            return Array.isArray(rows) ? rows : [];
+        } catch (e) {
+            console.warn('[LaserJigMaster] disposal config load failed:', e);
+            return [];
+        }
+    }
+
+    async function _saveDisposals(rows) {
+        await Storage.setConfigValue(DISPOSAL_KEY, Array.isArray(rows) ? rows : []);
+    }
+
+    function _isAdmin() {
+        const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
+            ? AuthModule.getCurrentUser()
+            : null;
+        return !!(user && user.role === 'admin');
+    }
+
+    function _requireAdmin() {
+        if (_isAdmin()) return true;
+        UIUtils.toast('관리자만 접근할 수 있습니다.', 'warning');
+        return false;
     }
 
     async function _jigs() {

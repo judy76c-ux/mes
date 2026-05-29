@@ -170,6 +170,7 @@ const App = (function() {
         Router.registerModule('laser-inspection', LaserInspectionModule);
         Router.registerModule('laser-layout', LaserLayoutModule);
         Router.registerModule('laser-jig-master', LaserJigMasterModule);
+        Router.registerModule('laser-jig-disposal', LaserJigDisposalModule);
         Router.registerModule('laser-jig-cleaning', LaserJigCleaningModule);
         Router.registerModule('laser-equipment-history', LaserEquipmentHistoryModule);
         Router.registerModule('shipping-standby', ShippingStandbyModule);
@@ -177,7 +178,37 @@ const App = (function() {
         Router.registerModule('product-warehouse', ProductWarehouseModule);
         Router.registerModule('sales-delivery', SalesDeliveryModule);
         Router.registerModule('sales-delivery-plan', SalesDeliveryPlanModule);
+        Router.registerModule('painting-jig', {
+            render: function(container) {
+                JigModule.renderHub(container);
+            }
+        });
         Router.registerModule('jig-management', JigModule);
+        Router.registerModule('jig-master', {
+            render: function(container) {
+                JigModule.renderMasterPage(container);
+            }
+        });
+        Router.registerModule('jig-disposal', {
+            render: function(container) {
+                JigModule.renderHistoryPage(container, 'disposal');
+            }
+        });
+        Router.registerModule('jig-cleaning', {
+            render: function(container) {
+                JigModule.renderHistoryPage(container, 'cleaning');
+            }
+        });
+        Router.registerModule('jig-change-history', {
+            render: function(container) {
+                JigModule.renderHistoryPage(container, 'change');
+            }
+        });
+        Router.registerModule('jig-repair-history', {
+            render: function(container) {
+                JigModule.renderHistoryPage(container, 'repair');
+            }
+        });
         Router.registerModule('jig-layout', JigLayoutModule);
         Router.registerModule('five-s', FiveSModule);
         const safeProdStandardsModule = (typeof ProdStandardsModule !== 'undefined' && ProdStandardsModule)

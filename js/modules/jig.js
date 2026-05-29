@@ -7,11 +7,16 @@
 var JigModule = (function () {
     const STORE = DB.STORES.JIG_MASTER;
     const LOG_STORE = DB.STORES.JIG_LOG;
+    const DISPOSAL_KEY = 'painting_jig_disposal_v1';
+    const CLEANING_KEY = 'painting_jig_cleaning_v1';
+    const REPAIR_KEY = 'painting_jig_repair_v1';
     const A_LINE_CYCLE = 1092;
     const B_LINE_CYCLE = 175;
 
     let _currentLine = '';
+    let _currentStatus = '';
     let _batchMergeRows = [];
+    let _activeView = 'life';
 
     const _today = () => (UIUtils.today ? UIUtils.today() : new Date().toISOString().split('T')[0]);
     const _monthAgo = () => {
@@ -24,32 +29,95 @@ var JigModule = (function () {
     const _esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const _js = s => String(s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ');
 
+    const JIG_MENUS = [
+        { id: 'painting-jig', label: '메인', icon: 'dashboard' },
+        { id: 'jig-management', label: '수명관리', icon: 'monitor_heart' },
+        { id: 'jig-master', label: '도장 지그대장', icon: 'fact_check' },
+        { id: 'jig-layout', label: '지그창고 레이아웃', icon: 'map' },
+        { id: 'jig-disposal', label: '지그 폐기 대장', icon: 'delete_sweep' },
+        { id: 'jig-cleaning', label: '세척 이력', icon: 'cleaning_services' },
+        { id: 'jig-change-history', label: '교체 이력', icon: 'sync_alt' },
+        { id: 'jig-repair-history', label: '지그수리/개선 이력', icon: 'build_circle' }
+    ];
+
+    function renderMenu(activePage, title, desc) {
+        return `
+            <div style="margin-bottom:18px;">
+                <div style="margin-bottom:14px;">
+                    <h3 style="margin:0 0 6px;font-size:1.15rem;">${title}</h3>
+                    <p style="margin:0;color:var(--text-muted);font-size:.9rem;">${desc || ''}</p>
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                    ${JIG_MENUS.map(menu => `
+                        <button type="button" onclick="Router.navigate('${menu.id}')"
+                            class="btn ${menu.id === activePage ? 'btn-primary' : 'btn-outline'}"
+                            style="display:flex;align-items:center;gap:6px;${menu.id === activePage ? '' : 'background:#fff;'}">
+                            <span class="material-symbols-outlined" style="font-size:18px;">${menu.icon}</span>
+                            ${menu.label}
+                        </button>
+                    `).join('')}
+                </div>
+            </div>`;
+    }
+
+    async function _loadConfigList(key) {
+        try {
+            const rows = await Storage.getConfigValue(key);
+            return Array.isArray(rows) ? rows : [];
+        } catch (e) {
+            console.warn('[JigModule] config load failed:', key, e);
+            return [];
+        }
+    }
+
+    async function _saveConfigList(key, rows) {
+        await Storage.setConfigValue(key, Array.isArray(rows) ? rows : []);
+    }
+
+    function _homeCard(title, desc, icon, countText, route, tone) {
+        const color = {
+            blue: '#3b82f6',
+            green: '#10b981',
+            purple: '#8b5cf6',
+            orange: '#f97316',
+            red: '#ef4444',
+            cyan: '#06b6d4'
+        }[tone || 'blue'] || '#3b82f6';
+        return `
+            <button type="button" onclick="Router.navigate('${route}')"
+                style="text-align:left;border:1px solid var(--border-color);border-top:3px solid ${color};background:#fff;border-radius:12px;
+                       padding:18px;box-shadow:0 2px 8px rgba(15,23,42,.06);cursor:pointer;display:flex;flex-direction:column;gap:12px;min-height:142px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                    <span class="material-symbols-outlined" style="width:40px;height:40px;border-radius:11px;display:flex;align-items:center;justify-content:center;background:#eff6ff;color:${color};font-size:22px;">${icon}</span>
+                    <span style="font-size:.78rem;color:var(--text-muted);font-weight:700;">${countText || ''}</span>
+                </div>
+                <div>
+                    <div style="font-size:1rem;font-weight:800;color:var(--text-primary);margin-bottom:6px;">${title}</div>
+                    <div style="font-size:.84rem;line-height:1.45;color:var(--text-muted);">${desc}</div>
+                </div>
+            </button>`;
+    }
+
     function render(container) {
         container.innerHTML = `
         <div class="fade-in-up jig-page">
+            ${renderMenu('jig-management', '수명관리', '도장 지그의 사용 횟수와 수명 임박/초과 상태를 확인합니다.')}
             <div class="page-header">
                 <div class="page-actions">
-                    <button class="btn btn-outline" onclick="Router.navigate('jig-layout')"
-                        title="공장 JIG 배치 레이아웃을 시각적으로 편집합니다.">
-                        <span class="material-symbols-outlined">map</span> 레이아웃
-                    </button>
-                    <button class="btn btn-outline" onclick="JigModule.syncFromPaintingWork()"
+                    <button id="jigFilterAll" class="btn btn-primary btn-sm" onclick="JigModule.filterLine('')">전체</button>
+                    <button id="jigFilterA" class="btn btn-outline btn-sm" onclick="JigModule.filterLine('A라인')">A라인</button>
+                    <button id="jigFilterB" class="btn btn-outline btn-sm" onclick="JigModule.filterLine('B라인')">B라인</button>
+                    <button id="jigFilterWarning" class="btn btn-outline btn-sm" onclick="JigModule.filterStatus('warning')">수명 임박</button>
+                    <button id="jigFilterExceeded" class="btn btn-outline btn-sm" onclick="JigModule.filterStatus('exceeded')">수명 초과</button>
+                    <button class="btn btn-outline btn-sm" onclick="JigModule.syncFromPaintingWork()"
                         title="도장 작업 실적의 SPINDLE 수로 JIG 사용 횟수를 자동 계산합니다.">
                         <span class="material-symbols-outlined">sync</span> 도장 실적 동기화
                     </button>
-                    <button class="btn btn-secondary" onclick="JigModule.openAddModal()">
-                        <span class="material-symbols-outlined">add</span> 단건 등록
-                    </button>
                 </div>
+                <div class="jig-mini-stats" id="jigStats"></div>
             </div>
 
-            <div class="stat-cards" id="jigStats"></div>
-
-            <div class="jig-line-tabs">
-                <button id="jigTabAll" class="btn btn-primary btn-sm" onclick="JigModule.filterLine('')">전체</button>
-                <button id="jigTabA" class="btn btn-outline btn-sm" onclick="JigModule.filterLine('A라인')">A라인</button>
-                <button id="jigTabB" class="btn btn-outline btn-sm" onclick="JigModule.filterLine('B라인')">B라인</button>
-            </div>
+            <div id="jigLifeView">
 
             <div id="jigBlocks"></div>
 
@@ -79,10 +147,29 @@ var JigModule = (function () {
                     <div id="jigLogTable"></div>
                 </div>
             </div>
+            </div>
+
+            <div id="jigMasterView" style="display:none;"></div>
         </div>`;
 
         _currentLine = '';
+        _currentStatus = '';
+        _activeView = 'life';
         loadAll();
+        switchView(_activeView);
+    }
+
+    function switchView(view) {
+        _activeView = view || 'life';
+        const life = document.getElementById('jigLifeView');
+        const master = document.getElementById('jigMasterView');
+        const lifeBtn = document.getElementById('jigViewLife');
+        const masterBtn = document.getElementById('jigViewMaster');
+        if (life) life.style.display = _activeView === 'life' ? '' : 'none';
+        if (master) master.style.display = _activeView === 'master' ? '' : 'none';
+        if (lifeBtn) lifeBtn.className = `btn btn-sm ${_activeView === 'life' ? 'btn-primary' : 'btn-outline'}`;
+        if (masterBtn) masterBtn.className = `btn btn-sm ${_activeView === 'master' ? 'btn-primary' : 'btn-outline'}`;
+        if (_activeView === 'master') renderJigMaster();
     }
 
     // 제품의 공정별 사양(process1~4)에 도장 공정이 있는지 검사
@@ -161,20 +248,46 @@ var JigModule = (function () {
     function loadAll() {
         const enriched = _enrichedJigs();
         renderStats(enriched);
-        renderBlocks(_currentLine ? enriched.filter(j => j.line === _currentLine) : enriched);
+        renderBlocks(_applyJigFilters(enriched));
         _populateLogFilter(Storage.getAll(STORE) || []);
         renderLog();
     }
 
+    function _applyJigFilters(jigs) {
+        return (jigs || []).filter(j => {
+            if (_currentLine && j.line !== _currentLine) return false;
+            if (_currentStatus === 'warning') return _lifePct(j) >= 80 && _lifePct(j) < 100;
+            if (_currentStatus === 'exceeded') return _lifePct(j) >= 100;
+            return true;
+        });
+    }
+
+    function _updateFilterButtons() {
+        const lineMap = { All: '', A: 'A라인', B: 'B라인' };
+        Object.keys(lineMap).forEach(key => {
+            const btn = document.getElementById('jigFilter' + key);
+            if (btn) btn.className = 'btn btn-sm ' + (_currentLine === lineMap[key] && !_currentStatus ? 'btn-primary' : 'btn-outline');
+        });
+        const warningBtn = document.getElementById('jigFilterWarning');
+        const exceededBtn = document.getElementById('jigFilterExceeded');
+        if (warningBtn) warningBtn.className = 'btn btn-sm ' + (_currentStatus === 'warning' ? 'btn-primary' : 'btn-outline');
+        if (exceededBtn) exceededBtn.className = 'btn btn-sm ' + (_currentStatus === 'exceeded' ? 'btn-primary' : 'btn-outline');
+    }
+
     function filterLine(line) {
         _currentLine = line;
-        ['All', 'A', 'B'].forEach(t => {
-            const target = t === 'All' ? '' : `${t}라인`;
-            const btn = document.getElementById('jigTab' + t);
-            if (btn) btn.className = 'btn btn-sm ' + (line === target ? 'btn-primary' : 'btn-outline');
-        });
+        _currentStatus = '';
         const enriched = _enrichedJigs();
-        renderBlocks(line ? enriched.filter(j => j.line === line) : enriched);
+        _updateFilterButtons();
+        renderBlocks(_applyJigFilters(enriched));
+    }
+
+    function filterStatus(status) {
+        _currentStatus = _currentStatus === status ? '' : status;
+        _currentLine = '';
+        const enriched = _enrichedJigs();
+        _updateFilterButtons();
+        renderBlocks(_applyJigFilters(enriched));
     }
 
     function renderStats(jigs) {
@@ -185,10 +298,10 @@ var JigModule = (function () {
         const exceeded = jigs.filter(j => _lifePct(j) >= 100).length;
         const normal = total - warning - exceeded;
         el.innerHTML = `
-            <div class="stat-card blue"><div class="stat-card-value">${total}</div><div class="stat-card-label">전체 JIG</div></div>
-            <div class="stat-card green"><div class="stat-card-value">${normal}</div><div class="stat-card-label">정상</div></div>
-            <div class="stat-card orange"><div class="stat-card-value">${warning}</div><div class="stat-card-label">수명 임박 (80%)</div></div>
-            <div class="stat-card red"><div class="stat-card-value">${exceeded}</div><div class="stat-card-label">수명 초과</div></div>`;
+            <div class="jig-mini-stat blue"><strong>${total}</strong><span>전체 지그 수</span></div>
+            <div class="jig-mini-stat green"><strong>${normal}</strong><span>정상</span></div>
+            <div class="jig-mini-stat orange"><strong>${warning}</strong><span>수명 임박</span></div>
+            <div class="jig-mini-stat red"><strong>${exceeded}</strong><span>수명 초과</span></div>`;
     }
 
     function renderBlocks(jigs) {
@@ -765,6 +878,389 @@ var JigModule = (function () {
         };
     }
 
+    function _lineForMaster(carModel, partName) {
+        const prod = _paintingProducts().find(p => p.carModel === carModel && p.partName === partName);
+        const lines = _getProductPaintingLines(prod);
+        return lines[0] || 'A라인';
+    }
+
+    function _photoThumbs(jig, key) {
+        const photos = Array.isArray(jig[key]) ? jig[key].filter(Boolean).slice(0, 2) : [];
+        if (!photos.length) return '<span style="color:var(--text-muted);">-</span>';
+        return `<div style="display:flex;gap:6px;justify-content:center;">${photos.map((src, idx) => `
+            <button type="button" class="btn btn-outline btn-sm" style="padding:2px;border-radius:6px;"
+                onclick="JigModule.viewJigPhoto('${_js(jig.id)}','${_js(key)}',${idx})">
+                <img src="${src}" alt="" style="width:42px;height:32px;object-fit:cover;border-radius:4px;display:block;">
+            </button>
+        `).join('')}</div>`;
+    }
+
+    function renderJigMaster() {
+        const el = document.getElementById('jigMasterView');
+        if (!el) return;
+        const jigs = (Storage.getAll(STORE) || []).slice().sort((a, b) =>
+            (a.carModel || '').localeCompare(b.carModel || '', 'ko') ||
+            (a.partName || '').localeCompare(b.partName || '', 'ko')
+        );
+        el.innerHTML = `
+            <div class="card">
+                <div class="card-body">
+                    <h4 style="margin:0 0 12px;">도장 지그 대장</h4>
+                    <div style="overflow:auto;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>차종</th>
+                                    <th>품명</th>
+                                    <th>수명 횟수</th>
+                                    <th>재질</th>
+                                    <th>규격</th>
+                                    <th>제작일</th>
+                                    <th>지그 사진</th>
+                                    <th>제품결합 사진</th>
+                                    <th>작업</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${jigs.length ? jigs.map(j => `
+                                    <tr>
+                                        <td><strong>${_esc(j.carModel || '-')}</strong></td>
+                                        <td>${_esc(j.partName || '-')}</td>
+                                        <td style="text-align:right;">${_fmt(j.maxCount || 0)}</td>
+                                        <td>${_esc(j.material || '-')}</td>
+                                        <td>${_esc(j.spec || '-')}</td>
+                                        <td>${_esc(j.madeDate || j.registDate || '-')}</td>
+                                        <td>${_photoThumbs(j, 'jigPhotos')}</td>
+                                        <td>${_photoThumbs(j, 'productFitPhotos')}</td>
+                                        <td>
+                                            <button class="btn btn-outline btn-sm" onclick="JigModule.openJigMasterModal('${_js(j.id)}')">수정</button>
+                                        </td>
+                                    </tr>
+                                `).join('') : `
+                                    <tr><td colspan="9" style="text-align:center;padding:36px;color:var(--text-muted);">등록된 도장 지그가 없습니다.</td></tr>
+                                `}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    function renderMasterPage(container) {
+        container.innerHTML = `
+        <div class="fade-in-up jig-page">
+            ${renderMenu('jig-master', '도장 지그대장', '도장 지그의 기본 정보와 사진 자료를 관리합니다.')}
+            <div class="page-header">
+                <div class="page-actions">
+                    <button class="btn btn-primary btn-sm" onclick="JigModule.openJigMasterModal()">
+                        <span class="material-symbols-outlined">add</span> 지그 등록
+                    </button>
+                    <button class="btn btn-outline btn-sm" onclick="Router.navigate('jig-layout')"
+                        title="공장 JIG 배치 레이아웃을 시각적으로 편집합니다.">
+                        <span class="material-symbols-outlined">map</span> 레이아웃
+                    </button>
+                </div>
+            </div>
+            <div id="jigMasterView"></div>
+        </div>`;
+        renderJigMaster();
+    }
+
+    async function renderHub(container) {
+        const jigs = _enrichedJigs();
+        const total = jigs.length;
+        const warning = jigs.filter(j => _lifePct(j) >= 80 && _lifePct(j) < 100).length;
+        const exceeded = jigs.filter(j => _lifePct(j) >= 100).length;
+        const normal = total - warning - exceeded;
+        const aCount = jigs.filter(j => j.line === 'A라인').length;
+        const bCount = jigs.filter(j => j.line === 'B라인').length;
+        const disposal = await _loadConfigList(DISPOSAL_KEY);
+        const cleaning = await _loadConfigList(CLEANING_KEY);
+        const repair = await _loadConfigList(REPAIR_KEY);
+        const changeLogs = (Storage.getAll(LOG_STORE) || []).filter(l => l.workType === '교체');
+
+        container.innerHTML = `
+            <div class="fade-in-up jig-page">
+                ${renderMenu('painting-jig', '도장지그', '도장 지그의 수명, 대장, 보관 레이아웃, 이력을 한 화면에서 관리합니다.')}
+                <div class="section-card" style="padding:0;overflow:hidden;">
+                    <div style="padding:22px;">
+                        <div class="jig-hub-stats">
+                            <div class="stat-card blue"><div class="stat-card-value">${_fmt(total)}</div><div class="stat-card-label">전체 지그</div></div>
+                            <div class="stat-card green"><div class="stat-card-value">${_fmt(normal)}</div><div class="stat-card-label">정상</div></div>
+                            <div class="stat-card orange"><div class="stat-card-value">${_fmt(warning)}</div><div class="stat-card-label">수명 임박</div></div>
+                            <div class="stat-card red"><div class="stat-card-value">${_fmt(exceeded)}</div><div class="stat-card-label">수명 초과</div></div>
+                            <div class="stat-card cyan"><div class="stat-card-value">${_fmt(aCount)}</div><div class="stat-card-label">A라인</div></div>
+                            <div class="stat-card purple"><div class="stat-card-value">${_fmt(bCount)}</div><div class="stat-card-label">B라인</div></div>
+                        </div>
+                        <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-top:18px;">
+                            ${_homeCard('수명관리', '사용 횟수 기준으로 정상, 임박, 초과 지그를 확인합니다.', 'monitor_heart', `${warning + exceeded}건 주의`, 'jig-management', 'blue')}
+                            ${_homeCard('도장 지그대장', '차종, 품명, 수명 횟수, 사진 등 지그 기본 정보를 등록합니다.', 'fact_check', `${total}건`, 'jig-master', 'green')}
+                            ${_homeCard('지그창고 레이아웃', '지그 보관 위치를 시각적으로 배치하고 확인합니다.', 'map', '배치도', 'jig-layout', 'purple')}
+                            ${_homeCard('지그 폐기 대장', '폐기된 지그의 일자, 사유, 담당자 이력을 남깁니다.', 'delete_sweep', `${disposal.length}건`, 'jig-disposal', 'red')}
+                            ${_homeCard('세척 이력', '세척 일자, 방법, 담당자, 비고를 기록합니다.', 'cleaning_services', `${cleaning.length}건`, 'jig-cleaning', 'cyan')}
+                            ${_homeCard('교체 이력', '수명 초기화 및 교체 기록을 확인합니다.', 'sync_alt', `${changeLogs.length}건`, 'jig-change-history', 'orange')}
+                            ${_homeCard('지그수리/개선 이력', '수리, 개선, 보완 작업 내역과 진행 상태를 관리합니다.', 'build_circle', `${repair.length}건`, 'jig-repair-history', 'red')}
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    function _photoInputHtml(label, key, idx, value) {
+        const id = `${key}${idx}`;
+        return `
+            <div class="form-group">
+                <label class="form-label">${label} ${idx + 1}</label>
+                <input type="hidden" id="${id}Data" value="${_esc(value || '')}">
+                <input type="file" class="form-input" accept="image/*" onchange="JigModule.readJigMasterPhoto(this,'${id}')">
+                <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+                    <img id="${id}Preview" src="${_esc(value || '')}" alt="" style="width:84px;height:60px;object-fit:cover;border:1px solid var(--border-color);border-radius:6px;${value ? '' : 'display:none;'}">
+                    <button type="button" class="btn btn-outline btn-sm" onclick="JigModule.clearJigMasterPhoto('${id}')">삭제</button>
+                </div>
+            </div>`;
+    }
+
+    function _masterFormHtml(d = {}) {
+        const jigPhotos = Array.isArray(d.jigPhotos) ? d.jigPhotos : [];
+        const productFitPhotos = Array.isArray(d.productFitPhotos) ? d.productFitPhotos : [];
+        return `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">차종 <span style="color:var(--accent-red)">*</span></label>
+                    <select class="form-select" id="jigMasterCarModel" onchange="JigModule.onMasterCarModelChange()">${_carModelOptions(d.carModel || '')}</select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">품명 <span style="color:var(--accent-red)">*</span></label>
+                    <select class="form-select" id="jigMasterPartName">${_partNameOptions(d.carModel || '', d.partName || '')}</select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">수명 횟수 <span style="color:var(--accent-red)">*</span></label>
+                    <input type="number" class="form-input" id="jigMasterMaxCount" value="${d.maxCount || ''}" min="1">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">재질</label>
+                    <input type="text" class="form-input" id="jigMasterMaterial" value="${_esc(d.material || '')}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">규격</label>
+                    <input type="text" class="form-input" id="jigMasterSpec" value="${_esc(d.spec || '')}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">제작일</label>
+                    <input type="date" class="form-input" id="jigMasterMadeDate" value="${d.madeDate || d.registDate || _today()}">
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px;">
+                ${_photoInputHtml('지그 사진', 'jigPhoto', 0, jigPhotos[0])}
+                ${_photoInputHtml('지그 사진', 'jigPhoto', 1, jigPhotos[1])}
+                ${_photoInputHtml('제품결합 사진', 'productFitPhoto', 0, productFitPhotos[0])}
+                ${_photoInputHtml('제품결합 사진', 'productFitPhoto', 1, productFitPhotos[1])}
+            </div>`;
+    }
+
+    function onMasterCarModelChange() {
+        const car = document.getElementById('jigMasterCarModel')?.value || '';
+        const sel = document.getElementById('jigMasterPartName');
+        if (sel) sel.innerHTML = _partNameOptions(car);
+    }
+
+    function _collectMasterForm(id) {
+        const carModel = document.getElementById('jigMasterCarModel')?.value.trim();
+        const partName = document.getElementById('jigMasterPartName')?.value.trim();
+        const maxCount = parseInt(document.getElementById('jigMasterMaxCount')?.value || 0);
+        if (!carModel) { UIUtils.toast('차종을 선택하세요.', 'warning'); return null; }
+        if (!partName) { UIUtils.toast('품명을 선택하세요.', 'warning'); return null; }
+        if (!maxCount) { UIUtils.toast('수명 횟수를 입력하세요.', 'warning'); return null; }
+        const prev = id ? (Storage.getById(STORE, id) || {}) : {};
+        const madeDate = document.getElementById('jigMasterMadeDate')?.value || _today();
+        return {
+            ...prev,
+            carModel,
+            partName,
+            line: prev.line || _lineForMaster(carModel, partName),
+            maxCount,
+            material: document.getElementById('jigMasterMaterial')?.value.trim() || '',
+            spec: document.getElementById('jigMasterSpec')?.value.trim() || '',
+            madeDate,
+            registDate: prev.registDate || madeDate,
+            jigPhotos: [0, 1].map(i => document.getElementById(`jigPhoto${i}Data`)?.value || '').filter(Boolean),
+            productFitPhotos: [0, 1].map(i => document.getElementById(`productFitPhoto${i}Data`)?.value || '').filter(Boolean)
+        };
+    }
+
+    function openJigMasterModal(id = '') {
+        const jig = id ? Storage.getById(STORE, id) : {};
+        UIUtils.showModal(
+            id ? '도장 지그 대장 수정' : '도장 지그 대장 등록',
+            _masterFormHtml(jig || {}),
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="JigModule.saveJigMaster('${_js(id)}')">저장</button>`,
+            'xl'
+        );
+    }
+
+    async function saveJigMaster(id = '') {
+        const data = _collectMasterForm(id);
+        if (!data) return;
+        if (id) await Storage.update(STORE, id, data);
+        else await Storage.add(STORE, data);
+        UIUtils.closeModal();
+        UIUtils.toast('도장 지그 대장이 저장되었습니다.', 'success');
+        loadAll();
+        renderJigMaster();
+    }
+
+    function readJigMasterPhoto(input, targetId) {
+        const file = input?.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            const hidden = document.getElementById(`${targetId}Data`);
+            const preview = document.getElementById(`${targetId}Preview`);
+            if (hidden) hidden.value = reader.result || '';
+            if (preview) {
+                preview.src = reader.result || '';
+                preview.style.display = reader.result ? 'block' : 'none';
+            }
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function clearJigMasterPhoto(targetId) {
+        const hidden = document.getElementById(`${targetId}Data`);
+        const preview = document.getElementById(`${targetId}Preview`);
+        if (hidden) hidden.value = '';
+        if (preview) {
+            preview.removeAttribute('src');
+            preview.style.display = 'none';
+        }
+    }
+
+    function viewJigPhoto(id, key, idx) {
+        const jig = Storage.getById(STORE, id);
+        const src = jig && Array.isArray(jig[key]) ? jig[key][idx] : '';
+        if (!src) return;
+        UIUtils.showModal('사진 보기', `<div style="text-align:center;"><img src="${src}" alt="" style="max-width:100%;max-height:72vh;object-fit:contain;border-radius:8px;"></div>`, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'lg');
+    }
+
+    function _historyMeta(type) {
+        return {
+            disposal: { key: DISPOSAL_KEY, route: 'jig-disposal', title: '지그 폐기 대장', action: '폐기', icon: 'delete_sweep' },
+            cleaning: { key: CLEANING_KEY, route: 'jig-cleaning', title: '세척 이력', action: '세척', icon: 'cleaning_services' },
+            repair: { key: REPAIR_KEY, route: 'jig-repair-history', title: '지그수리/개선 이력', action: '수리/개선', icon: 'build_circle' }
+        }[type];
+    }
+
+    async function renderHistoryPage(container, type) {
+        if (type === 'change') {
+            renderChangeHistoryPage(container);
+            return;
+        }
+        const meta = _historyMeta(type);
+        const rows = await _loadConfigList(meta.key);
+        container.innerHTML = `
+            <div class="fade-in-up jig-page">
+                ${renderMenu(meta.route, meta.title, `${meta.action} 작업 이력을 등록하고 조회합니다.`)}
+                <div class="page-header">
+                    <div class="page-actions">
+                        <button class="btn btn-primary btn-sm" onclick="JigModule.openHistoryModal('${type}')">
+                            <span class="material-symbols-outlined">add</span> 이력 등록
+                        </button>
+                    </div>
+                </div>
+                <div class="card"><div class="card-body">
+                    <table class="data-table">
+                        <thead><tr><th>일자</th><th>차종</th><th>품명</th><th>구분</th><th>내용/사유</th><th>담당자</th><th>상태</th><th>작업</th></tr></thead>
+                        <tbody>
+                            ${rows.length ? rows.map(row => `
+                                <tr>
+                                    <td>${_esc(row.date || '-')}</td>
+                                    <td>${_esc(row.carModel || '-')}</td>
+                                    <td>${_esc(row.partName || '-')}</td>
+                                    <td>${_esc(row.category || meta.action)}</td>
+                                    <td>${_esc(row.note || '-')}</td>
+                                    <td>${_esc(row.worker || '-')}</td>
+                                    <td>${_esc(row.status || '완료')}</td>
+                                    <td><button class="btn btn-danger btn-sm" onclick="JigModule.removeHistory('${type}','${_js(row.id)}')">삭제</button></td>
+                                </tr>
+                            `).join('') : `<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--text-muted);">등록된 이력이 없습니다.</td></tr>`}
+                        </tbody>
+                    </table>
+                </div></div>
+            </div>`;
+    }
+
+    function renderChangeHistoryPage(container) {
+        const jigs = Storage.getAll(STORE) || [];
+        const jigMap = {};
+        jigs.forEach(j => { jigMap[j.id] = j; });
+        const rows = (Storage.getAll(LOG_STORE) || []).filter(l => l.workType === '교체').sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+        container.innerHTML = `
+            <div class="fade-in-up jig-page">
+                ${renderMenu('jig-change-history', '교체 이력', '수명 초기화와 교체 기록을 조회합니다.')}
+                <div class="card"><div class="card-body">
+                    <table class="data-table">
+                        <thead><tr><th>일자</th><th>차종</th><th>품명</th><th>라인</th><th>내용</th></tr></thead>
+                        <tbody>
+                            ${rows.length ? rows.map(row => {
+                                const jig = jigMap[row.jigId] || {};
+                                return `<tr><td>${_esc(row.date || '-')}</td><td>${_esc(jig.carModel || '-')}</td><td>${_esc(jig.partName || '-')}</td><td>${_esc(jig.line || '-')}</td><td>${_esc(row.note || '교체')}</td></tr>`;
+                            }).join('') : `<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--text-muted);">교체 이력이 없습니다.</td></tr>`}
+                        </tbody>
+                    </table>
+                </div></div>
+            </div>`;
+    }
+
+    function openHistoryModal(type) {
+        const meta = _historyMeta(type);
+        const jigs = (Storage.getAll(STORE) || []).sort((a, b) => (a.carModel || '').localeCompare(b.carModel || '', 'ko') || (a.partName || '').localeCompare(b.partName || '', 'ko'));
+        UIUtils.showModal(`${meta.title} 등록`, `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-group"><label class="form-label">일자</label><input type="date" class="form-input" id="jigHistoryDate" value="${_today()}"></div>
+                <div class="form-group"><label class="form-label">대상 지그</label><select class="form-select" id="jigHistoryJigId"><option value="">선택</option>${jigs.map(j => `<option value="${_esc(j.id)}">[${_esc(j.carModel || '-')}] ${_esc(j.partName || '-')}${j.line ? ' (' + _esc(j.line) + ')' : ''}</option>`).join('')}</select></div>
+                <div class="form-group"><label class="form-label">구분</label><input type="text" class="form-input" id="jigHistoryCategory" value="${_esc(meta.action)}"></div>
+                <div class="form-group"><label class="form-label">담당자</label><input type="text" class="form-input" id="jigHistoryWorker"></div>
+                <div class="form-group"><label class="form-label">상태</label><select class="form-select" id="jigHistoryStatus"><option>완료</option><option>진행중</option><option>보류</option></select></div>
+            </div>
+            <div class="form-group"><label class="form-label">내용/사유</label><textarea class="form-textarea" id="jigHistoryNote" rows="3"></textarea></div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="JigModule.saveHistory('${type}')">저장</button>`,
+            'lg'
+        );
+    }
+
+    async function saveHistory(type) {
+        const meta = _historyMeta(type);
+        const jigId = document.getElementById('jigHistoryJigId')?.value || '';
+        const jig = jigId ? Storage.getById(STORE, jigId) : {};
+        const rows = await _loadConfigList(meta.key);
+        rows.unshift({
+            id: Storage.generateId ? Storage.generateId() : 'hist_' + Date.now(),
+            date: document.getElementById('jigHistoryDate')?.value || _today(),
+            jigId,
+            carModel: jig?.carModel || '',
+            partName: jig?.partName || '',
+            category: document.getElementById('jigHistoryCategory')?.value.trim() || meta.action,
+            worker: document.getElementById('jigHistoryWorker')?.value.trim() || '',
+            status: document.getElementById('jigHistoryStatus')?.value || '완료',
+            note: document.getElementById('jigHistoryNote')?.value.trim() || '',
+            createdAt: new Date().toISOString()
+        });
+        await _saveConfigList(meta.key, rows);
+        UIUtils.closeModal();
+        UIUtils.toast('이력이 저장되었습니다.', 'success');
+        Router.navigate(meta.route);
+    }
+
+    async function removeHistory(type, id) {
+        const meta = _historyMeta(type);
+        UIUtils.confirm('이력을 삭제하시겠습니까?', async () => {
+            const rows = (await _loadConfigList(meta.key)).filter(row => row.id !== id);
+            await _saveConfigList(meta.key, rows);
+            UIUtils.toast('삭제되었습니다.', 'success');
+            Router.navigate(meta.route);
+        });
+    }
+
     function openAddModal() {
         UIUtils.showModal('JIG 단건 등록', _formHtml(), `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="JigModule.saveNew()">등록</button>`, 'lg');
     }
@@ -943,13 +1439,21 @@ var JigModule = (function () {
 
     return {
         init: render,
+        renderHub,
         render,
+        renderMasterPage,
+        renderHistoryPage,
+        switchView,
         loadAll,
         filterLine,
+        filterStatus,
+        renderJigMaster,
         renderLog,
         onCarModelChange,
+        onMasterCarModelChange,
         onLogCarChange,
         resetLogFilter,
+        openJigMasterModal,
         openAddModal,
         openEditModal,
         openBatchRegisterModal,
@@ -959,9 +1463,16 @@ var JigModule = (function () {
         saveBatchMerge,
         saveBatch,
         openAddLogModal,
+        saveJigMaster,
         saveNew,
         saveEdit,
         saveLog,
+        readJigMasterPhoto,
+        clearJigMasterPhoto,
+        viewJigPhoto,
+        openHistoryModal,
+        saveHistory,
+        removeHistory,
         remove,
         removeLog,
         resetCount,
