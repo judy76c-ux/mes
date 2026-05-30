@@ -83,44 +83,53 @@ var FiveSModule = (function () {
     function render(container) {
         container.innerHTML = `
         <div class="fade-in-up">
-            <div class="page-header">
-                <div class="page-actions" id="s5Actions"></div>
-            </div>
-
-            <div class="stat-cards" id="s5Stats"></div>
-
-            <div class="tab-bar" style="margin-bottom:16px;">
-                <button class="tab-btn active" id="s5TabInspection"
-                        onclick="FiveSModule.switchTab('inspection')">
-                    <span class="material-symbols-outlined">assignment</span> 점검 일지
-                </button>
-                <button class="tab-btn" id="s5TabIssue"
-                        onclick="FiveSModule.switchTab('issue')">
-                    <span class="material-symbols-outlined">report_problem</span> 지적사항·시정조치
-                </button>
-                <button class="tab-btn" id="s5TabPlan"
-                        onclick="FiveSModule.switchTab('plan')">
-                    <span class="material-symbols-outlined">calendar_month</span> 점검 계획·업무분담
-                </button>
-            </div>
-
-            <div id="s5Content"></div>
+            <div id="s5Shell"></div>
         </div>`;
 
-        _tab = 'inspection';
-        _refreshStats();
-        _renderInspectionTab();
+        _tab = 'main';
+        _renderCurrent();
     }
 
     function switchTab(tab) {
-        _tab = tab;
-        ['inspection', 'issue', 'plan'].forEach(t => {
-            const btn = document.getElementById('s5Tab' + t.charAt(0).toUpperCase() + t.slice(1));
-            if (btn) btn.className = 'tab-btn' + (t === tab ? ' active' : '');
-        });
-        if (tab === 'inspection') _renderInspectionTab();
-        else if (tab === 'issue') _renderIssueTab();
-        else _renderPlanTab();
+        _tab = tab || 'main';
+        _renderCurrent();
+    }
+
+    function _renderCurrent() {
+        const shell = document.getElementById('s5Shell');
+        if (!shell) return;
+
+        const page = {
+            main:       { title: '3정5S 관리', desc: '점검일지, 지적사항, 점검계획과 기준서를 한 화면에서 관리합니다.' },
+            inspection: { title: '점검일지', desc: '현장 3정5S 점검 결과와 사진을 기록합니다.' },
+            issue:      { title: '지적사항', desc: '점검 중 발견된 미흡 사항과 시정조치 상태를 추적합니다.' },
+            plan:       { title: '점검계획', desc: '구역별 점검 예정 일정을 확인합니다.' },
+            assignment: { title: '업무 분담', desc: '구역별 담당자와 점검 주기를 설정합니다.' },
+            standard:   { title: '3정 5행 관리 기준서', desc: '3정5S 용어, 판정 기준, 업무 절차와 기록 관리를 확인합니다.' }
+        }[_tab] || {};
+
+        shell.innerHTML = `
+            ${_menu(_tab, page.title || '3정5S 관리', page.desc || '')}
+            <div class="page-header">
+                <div class="page-actions" id="s5Actions"></div>
+            </div>
+            ${_tab === 'main' ? '<div class="stat-cards" id="s5Stats"></div>' : ''}
+            <div id="s5Content"></div>`;
+
+        if (_tab === 'main') {
+            _refreshStats();
+            _renderMainPage();
+        } else if (_tab === 'inspection') {
+            _renderInspectionTab();
+        } else if (_tab === 'issue') {
+            _renderIssueTab();
+        } else if (_tab === 'plan') {
+            _renderPlanTab('plan');
+        } else if (_tab === 'assignment') {
+            _renderPlanTab('assignment');
+        } else {
+            _renderStandardPage();
+        }
     }
 
     /* ══════════════════════════════════════════════════════════
@@ -801,12 +810,125 @@ var FiveSModule = (function () {
     /* ══════════════════════════════════════════════════════════
        TAB 3 : 점검 계획·업무분담
     ══════════════════════════════════════════════════════════ */
-    async function _renderPlanTab() {
+    function _renderMainPage() {
         const actions = document.getElementById('s5Actions');
-        if (actions) actions.innerHTML = `
+        if (actions) actions.innerHTML = '';
+
+        const thisMonth   = _today().slice(0, 7);
+        const inspections = Storage.getAll(STORE) || [];
+        const issues      = Storage.getAll(ISSUE_STORE) || [];
+        const monthInsp   = inspections.filter(i => (i.date || '').startsWith(thisMonth)).length;
+        const openIssues  = issues.filter(i => i.status !== '완료').length;
+
+        const cards = [
+            { tab: 'inspection', icon: 'assignment', title: '점검일지', desc: '현장별 3정5S 점검 결과를 등록하고 조회합니다.', meta: `이번 달 ${monthInsp}건` },
+            { tab: 'issue', icon: 'report_problem', title: '지적사항', desc: '미흡 사항, 담당자, 기한과 시정조치 완료 여부를 관리합니다.', meta: `미완료 ${openIssues}건` },
+            { tab: 'plan', icon: 'calendar_month', title: '점검계획', desc: '구역별 예정 점검 일정과 누락 상태를 확인합니다.', meta: '예정 일정' },
+            { tab: 'assignment', icon: 'groups', title: '업무 분담', desc: '구역별 담당자와 점검 주기를 설정합니다.', meta: '담당 설정' },
+            { tab: 'standard', icon: 'rule', title: '3정 5행 관리 기준서', desc: '용어 정의, 판정 기준, 업무 절차와 기록 기준을 확인합니다.', meta: '기준서' }
+        ];
+
+        document.getElementById('s5Content').innerHTML = `
+        <div class="card">
+            <div class="card-body">
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;">
+                    ${cards.map(c => `
+                    <button type="button" onclick="FiveSModule.switchTab('${c.tab}')"
+                        style="text-align:left;padding:18px;border:1px solid var(--border-color);border-radius:8px;background:#fff;cursor:pointer;min-height:150px;">
+                        <span class="material-symbols-outlined" style="font-size:28px;color:var(--accent-blue);">${c.icon}</span>
+                        <div style="font-weight:800;font-size:1rem;margin:10px 0 6px;color:var(--text-primary);">${c.title}</div>
+                        <div style="font-size:.84rem;line-height:1.45;color:var(--text-muted);">${c.desc}</div>
+                        <div style="margin-top:14px;font-size:.78rem;font-weight:700;color:var(--accent-blue);">${c.meta}</div>
+                    </button>`).join('')}
+                </div>
+            </div>
+        </div>`;
+    }
+
+    function _renderStandardPage() {
+        const actions = document.getElementById('s5Actions');
+        if (actions) actions.innerHTML = '';
+
+        document.getElementById('s5Content').innerHTML = `
+        <div class="card">
+            <div class="card-body" style="padding:0;overflow:auto;">
+                <div style="min-width:980px;border:1px solid #111;background:#fff;color:#111;font-size:13px;">
+                    <div style="display:grid;grid-template-columns:120px 1fr 360px;border-bottom:1px solid #111;">
+                        <div style="display:flex;align-items:center;justify-content:center;border-right:1px solid #111;font-weight:800;color:#1d4ed8;">KC<br>케미칼</div>
+                        <div style="background:#6fa8dc;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:900;letter-spacing:0;">3정 5S 관리 기준서</div>
+                        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                            <tr><th rowspan="4" style="border-left:1px solid #111;border-right:1px solid #111;">개<br>정<br>이<br>력</th><td style="border-bottom:1px solid #111;text-align:center;">2</td><td style="border-bottom:1px solid #111;"></td><td style="border-bottom:1px solid #111;"></td><td style="border-bottom:1px solid #111;"></td></tr>
+                            <tr><td style="border-bottom:1px solid #111;text-align:center;">1</td><td style="border-bottom:1px solid #111;"></td><td style="border-bottom:1px solid #111;"></td><td style="border-bottom:1px solid #111;"></td></tr>
+                            <tr><td style="border-bottom:1px solid #111;text-align:center;">0</td><td style="border-bottom:1px solid #111;text-align:center;">24.04.26</td><td style="border-bottom:1px solid #111;text-align:center;">최초 작성</td><td style="border-bottom:1px solid #111;text-align:center;">작성/확인</td></tr>
+                            <tr><td style="text-align:center;">NO</td><td style="text-align:center;">개정일자</td><td style="text-align:center;">개정내용</td><td style="text-align:center;">승인</td></tr>
+                        </table>
+                    </div>
+
+                    <div style="display:grid;grid-template-columns:58% 42%;border-bottom:1px solid #111;">
+                        <div style="border-right:1px solid #111;">
+                            <div style="background:#bdd7ee;text-align:center;font-weight:800;padding:10px;border-bottom:1px solid #111;">업무 내용</div>
+                            <div style="padding:12px 16px;line-height:1.55;">
+                                <div style="font-weight:800;margin-bottom:6px;">1. 용어의 정의</div>
+                                <div style="font-weight:700;">1) 3정(三定)</div>
+                                <div style="padding-left:16px;">정품(正品): 일정한 양품을 둔다.</div>
+                                <div style="padding-left:16px;">정량(定量): 일정한 용기에 정해진 양을 담는다.</div>
+                                <div style="padding-left:16px;">정위치(定位置): 정해진 위치에 둔다.</div>
+                                <div style="font-weight:700;margin-top:10px;">2) 5S 활동</div>
+                                <div style="padding-left:16px;">정리(整理): 필요한 것과 불필요한 것을 구분하여 불필요한 것을 정리한다.</div>
+                                <div style="padding-left:16px;">정돈(整頓): 필요한 것을 필요할 때 즉시 사용할 수 있도록 지정 장소에 둔다.</div>
+                                <div style="padding-left:16px;">청소(淸掃): 쓸고 닦고 청소하여 문제를 눈으로 찾을 수 있도록 한다.</div>
+                                <div style="padding-left:16px;">청결(淸潔): 설비와 작업환경을 더럽히지 않고 항상 깨끗한 상태로 유지한다.</div>
+                                <div style="padding-left:16px;">습관화(習慣化): 정장의 규칙을 준수하고 정확한 예방활동을 습관화한다.</div>
+
+                                <div style="font-weight:800;margin:18px 0 6px;">2. 3정 5행 평가 주기 및 후속 조치 기준</div>
+                                <table style="width:100%;border-collapse:collapse;text-align:center;">
+                                    <tr style="background:#f3f4f6;"><th style="border:1px solid #111;padding:6px;">항목/점수</th><th style="border:1px solid #111;">90점 이상</th><th style="border:1px solid #111;">89~80점</th><th style="border:1px solid #111;">79점 이하</th></tr>
+                                    <tr><th style="border:1px solid #111;padding:6px;">조치 방법</th><td style="border:1px solid #111;">지속적 유지</td><td style="border:1px solid #111;">중기 개선 계획</td><td style="border:1px solid #111;">즉시 개선</td></tr>
+                                    <tr><th style="border:1px solid #111;padding:6px;">판정기준</th><td style="border:1px solid #111;">모든 상태가 관리됨</td><td style="border:1px solid #111;">일부 미준수</td><td style="border:1px solid #111;">전반적 미준수 및 관리 미흡</td></tr>
+                                    <tr><th style="border:1px solid #111;padding:6px;">점검주기</th><td colspan="3" style="border:1px solid #111;">월 1회(셋째 주) 실시함</td></tr>
+                                </table>
+                            </div>
+                        </div>
+                        <div>
+                            <div style="background:#bdd7ee;text-align:center;font-weight:800;padding:10px;border-bottom:1px solid #111;">업무 FLOW</div>
+                            <div style="padding:34px 28px;display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:center;">
+                                ${['1. 점검계획 수립','2. 3정5S 점검','5. 결과보고','6. 차기계획 수립'].map((t, i) => `
+                                    <div style="grid-column:1;border:2px solid #0f4c75;border-radius:8px;padding:14px;text-align:center;font-weight:800;${i === 1 ? 'background:#ef4444;color:#111;' : ''}">${t}</div>
+                                `).join('')}
+                                <div style="grid-column:2;grid-row:2;border:2px solid #0f4c75;border-radius:8px;padding:14px;text-align:center;font-weight:800;">3. 시정조치 발행</div>
+                                <div style="grid-column:2;grid-row:3;border:2px solid #0f4c75;border-radius:8px;padding:14px;text-align:center;font-weight:800;">4. 시정조치 실시</div>
+                                <div style="grid-column:1 / span 2;color:#ef4444;font-weight:800;text-align:center;">80점 미만 시 시정조치 발행, 기준 만족 시 결과보고</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div style="background:#bdd7ee;font-weight:800;padding:6px;border-bottom:1px solid #111;">3. 업무 절차</div>
+                        <table style="width:100%;border-collapse:collapse;text-align:center;font-size:12px;">
+                            <thead><tr style="background:#f8fafc;"><th style="border:1px solid #111;padding:5px;">NO</th><th style="border:1px solid #111;">관리 내용</th><th style="border:1px solid #111;">점검주기</th><th style="border:1px solid #111;">담당자</th><th style="border:1px solid #111;">관련 표준 및 기준</th><th style="border:1px solid #111;">이상 발생 시 조치</th><th style="border:1px solid #111;">기록 관리</th></tr></thead>
+                            <tbody>
+                                ${[
+                                    ['1','3정5S 점검 주기 수립','년간 사업계획 수립 시','품질경영부장','3정5S 관리기준서','재 수립','사업계획서'],
+                                    ['2','3정5S 점검','1회/월','품질경영부장','3정5S 체크시트 기준','재 점검','3정5S 체크시트'],
+                                    ['3','시정조치 발행','부적합 발생 시','품질경영부장','부적합 보고서','조치 계획 수립','시정조치 요구서'],
+                                    ['4','시정조치 실시','조치 계획 수립 후','해당부서장','시정조치 요구서','시정조치 재 실시','시정조치 요구서'],
+                                    ['5','결과 보고','시정조치 완료 후','품질경영부장','3정5행 개선 현황 보고서','시정조치 재 실시','개선현황 보고서']
+                                ].map(r => `<tr>${r.map(c => `<td style="border:1px solid #111;padding:5px;">${c}</td>`).join('')}</tr>`).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    async function _renderPlanTab(mode = 'plan') {
+        const isAssignment = mode === 'assignment';
+        const actions = document.getElementById('s5Actions');
+        if (actions) actions.innerHTML = isAssignment ? `
             <button class="btn btn-primary" onclick="FiveSModule.savePlan()">
                 <span class="material-symbols-outlined">save</span> 계획 저장
-            </button>`;
+            </button>` : '';
 
         const el = document.getElementById('s5Content');
         el.innerHTML = `<div style="padding:32px;text-align:center;color:var(--text-muted);">로딩 중...</div>`;
@@ -920,6 +1042,14 @@ var FiveSModule = (function () {
                 </div>
             </div>
         </div>`;
+
+        const grid = el.firstElementChild;
+        if (grid) {
+            grid.style.gridTemplateColumns = '1fr';
+            const cards = Array.from(grid.children);
+            if (isAssignment && cards[1]) cards[1].remove();
+            if (!isAssignment && cards[0]) cards[0].remove();
+        }
     }
 
     /* ── 향후 점검 예정일 계산 ─────────────────────────────────── */
@@ -970,7 +1100,7 @@ var FiveSModule = (function () {
         });
         await Storage.setConfigValue('s5_plan', { assignments });
         UIUtils.toast('점검 계획이 저장되었습니다.', 'success');
-        _renderPlanTab();
+        _renderPlanTab('assignment');
     }
 
     /* ══════════════════════════════════════════════════════════
