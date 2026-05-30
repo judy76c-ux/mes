@@ -161,6 +161,11 @@ const ApiClient = (function() {
     return request('POST', `/api/nas-backups/${encodeURIComponent(fileName)}/restore`, {}, 60000);
   }
 
+  // 시스템 상태 정보 조회
+  async function getSystemInfo() {
+    return request('GET', '/api/system', undefined, 8000);
+  }
+
   // API 서버 주소 반환 (에러 메시지·UI 표시용)
   function getBase() { return API_BASE; }
 
@@ -170,6 +175,7 @@ const ApiClient = (function() {
     cleanupBackups, deleteBackup, backupDownloadUrl, restoreBackup,
     getNasConfig, saveNasConfig,
     listNasBackups, nasBackupDownloadUrl, copyNasToLocal, restoreNasBackup,
+    getSystemInfo,
     getBase
   };
 })();

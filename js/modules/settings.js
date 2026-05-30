@@ -6267,8 +6267,78 @@ const SettingsModule = (function() {
 
     // 시스템 탭
     // =====================================================
+    function _fmtBytes(b) {
+        if (!b && b !== 0) return '-';
+        const gb = b / (1024 ** 3);
+        if (gb >= 1) return gb.toFixed(1) + ' GB';
+        const mb = b / (1024 ** 2);
+        return mb.toFixed(0) + ' MB';
+    }
+    function _fmtUptime(sec) {
+        if (!sec && sec !== 0) return '-';
+        const d = Math.floor(sec / 86400);
+        const h = Math.floor((sec % 86400) / 3600);
+        const m = Math.floor((sec % 3600) / 60);
+        return (d ? `${d}일 ` : '') + (h ? `${h}시간 ` : '') + `${m}분`;
+    }
+    function _statusDot(ok) {
+        return ok
+            ? `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#22c55e;margin-right:6px;flex-shrink:0;"></span>`
+            : `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#ef4444;margin-right:6px;flex-shrink:0;"></span>`;
+    }
+    function _gauge(pct, color) {
+        const p = Math.min(100, Math.max(0, pct || 0));
+        const c = color || (p > 85 ? '#ef4444' : p > 65 ? '#f59e0b' : '#22c55e');
+        return `
+            <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
+                <div style="flex:1;height:7px;background:var(--bg-secondary);border-radius:999px;overflow:hidden;">
+                    <div style="height:100%;width:${p}%;background:${c};border-radius:999px;transition:width 0.4s;"></div>
+                </div>
+                <span style="font-size:0.75rem;font-weight:700;color:${c};min-width:38px;text-align:right;">${p.toFixed(1)}%</span>
+            </div>`;
+    }
+    function _sysCard(icon, title, content) {
+        return `
+            <div class="card" style="flex:1;min-width:240px;">
+                <div class="card-header" style="padding:12px 16px;">
+                    <h4 style="font-size:0.88rem;font-weight:700;display:flex;align-items:center;gap:6px;margin:0;">
+                        <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-blue);">${icon}</span>
+                        ${title}
+                    </h4>
+                </div>
+                <div class="card-body" style="padding:12px 16px;">${content}</div>
+            </div>`;
+    }
+    function _row(label, value) {
+        return `<div style="display:flex;justify-content:space-between;align-items:center;
+                            padding:4px 0;border-bottom:1px solid var(--border-color);font-size:0.82rem;">
+                    <span style="color:var(--text-muted);">${label}</span>
+                    <span style="font-weight:600;">${value}</span>
+                </div>`;
+    }
+
     function renderSystemTab(el) {
         el.innerHTML = `
+            <!-- ── 서버 운영 상태 ───────────────────────────────── -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <h4 style="margin:0;font-size:1rem;font-weight:700;display:flex;align-items:center;gap:6px;">
+                    <span class="material-symbols-outlined" style="color:var(--accent-blue);">monitor_heart</span>
+                    서버 운영 상태
+                </h4>
+                <button class="btn btn-sm btn-outline" onclick="SettingsModule.refreshSystemInfo()">
+                    <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">refresh</span>
+                    새로고침
+                </button>
+            </div>
+            <div id="sysInfoArea">
+                <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px;">
+                    ${_sysCard('memory', 'RAM', '<div style="color:var(--text-muted);font-size:0.82rem;text-align:center;padding:12px 0;">로딩 중…</div>')}
+                    ${_sysCard('developer_board', 'CPU', '<div style="color:var(--text-muted);font-size:0.82rem;text-align:center;padding:12px 0;">로딩 중…</div>')}
+                    ${_sysCard('storage', '디스크', '<div style="color:var(--text-muted);font-size:0.82rem;text-align:center;padding:12px 0;">로딩 중…</div>')}
+                    ${_sysCard('database', 'MariaDB / API', '<div style="color:var(--text-muted);font-size:0.82rem;text-align:center;padding:12px 0;">로딩 중…</div>')}
+                </div>
+            </div>
+
             <div class="card" style="margin-bottom:20px;">
                 <div class="card-header">
                     <h4><span class="material-symbols-outlined">tune</span> 시스템 정보</h4>
@@ -6454,7 +6524,106 @@ const SettingsModule = (function() {
             if (statusEl && apiBase) {
                 statusEl.innerHTML = `현재 연결 중: <code style="background:var(--bg-secondary);padding:1px 5px;border-radius:3px;">${apiBase}</code>`;
             }
+
+            // 탭 진입 시 서버 상태 자동 조회
+            refreshSystemInfo();
         }, 50);
+    }
+
+    async function refreshSystemInfo() {
+        const area = document.getElementById('sysInfoArea');
+        if (!area) return;
+
+        // 로딩 스피너 표시
+        area.innerHTML = `
+            <div style="display:flex;align-items:center;gap:10px;padding:20px;
+                        color:var(--text-muted);font-size:0.88rem;">
+                <span class="material-symbols-outlined" style="animation:spin 1s linear infinite;font-size:20px;">sync</span>
+                서버 상태를 가져오는 중…
+            </div>
+            <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+        `;
+
+        let d;
+        try {
+            d = await ApiClient.getSystemInfo();
+        } catch(err) {
+            area.innerHTML = `
+                <div style="padding:16px;background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.3);
+                            border-radius:8px;color:#dc2626;font-size:0.85rem;margin-bottom:20px;">
+                    <span class="material-symbols-outlined" style="vertical-align:middle;margin-right:6px;">error</span>
+                    서버 상태 조회 실패: ${err.message || err}
+                </div>`;
+            return;
+        }
+
+        // ── 메모리 카드 ──────────────────────────────────────────────
+        const memUsedPct = d.mem.total ? (d.mem.used / d.mem.total * 100) : 0;
+        const memCard = _sysCard('memory', 'RAM',
+            _row('전체', _fmtBytes(d.mem.total)) +
+            _row('사용', _fmtBytes(d.mem.used)) +
+            _row('여유', _fmtBytes(d.mem.free)) +
+            _gauge(memUsedPct)
+        );
+
+        // ── CPU 카드 ─────────────────────────────────────────────────
+        const la = d.cpu.loadAvg || [0, 0, 0];
+        const cpuCard = _sysCard('developer_board', 'CPU',
+            _row('모델', `<span style="font-size:0.75rem;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;">${d.cpu.model}</span>`) +
+            _row('코어 수', `${d.cpu.count}개`) +
+            _row('부하 (1/5/15m)', `${la[0].toFixed(2)} / ${la[1].toFixed(2)} / ${la[2].toFixed(2)}`) +
+            _gauge(d.cpu.usagePct)
+        );
+
+        // ── 디스크 카드 ──────────────────────────────────────────────
+        const diskPct = d.disk ? parseFloat(d.disk.usePct) : 0;
+        const diskCard = _sysCard('storage', '디스크 (/)',
+            d.disk
+                ? _row('전체', d.disk.total) +
+                  _row('사용', d.disk.used) +
+                  _row('여유', d.disk.avail) +
+                  _gauge(diskPct)
+                : '<span style="color:var(--text-muted);font-size:0.82rem;">정보 없음</span>'
+        );
+
+        // ── DB / API 카드 ─────────────────────────────────────────────
+        const dbOk  = d.db?.ok;
+        const apiOk = true; // 여기까지 왔으면 API는 정상
+        const nodeRss = _fmtBytes(d.process?.rss);
+        const dbCard = _sysCard('database', 'MariaDB / API',
+            `<div style="display:flex;align-items:center;padding:4px 0;border-bottom:1px solid var(--border-color);font-size:0.82rem;">
+                 ${_statusDot(apiOk)}<span style="color:var(--text-muted);">API 서버</span>
+                 <span style="margin-left:auto;font-weight:600;color:#22c55e;">정상</span>
+             </div>` +
+            `<div style="display:flex;align-items:center;padding:4px 0;border-bottom:1px solid var(--border-color);font-size:0.82rem;">
+                 ${_statusDot(dbOk)}<span style="color:var(--text-muted);">MariaDB</span>
+                 <span style="margin-left:auto;font-weight:600;color:${dbOk ? '#22c55e' : '#ef4444'};">
+                     ${dbOk ? '정상' : '오류'}${dbOk && d.db.latency != null ? ` (${d.db.latency}ms)` : ''}
+                 </span>
+             </div>` +
+            (d.db?.version ? _row('DB 버전', d.db.version) : '') +
+            _row('Node.js RSS', nodeRss) +
+            _row('서버 업타임', _fmtUptime(d.uptime?.node)) +
+            _row('OS 업타임', _fmtUptime(d.uptime?.system))
+        );
+
+        // ── OS 정보 배너 ─────────────────────────────────────────────
+        const osBanner = `
+            <div style="display:flex;gap:20px;flex-wrap:wrap;padding:10px 16px;
+                        background:var(--bg-secondary);border-radius:8px;margin-bottom:16px;
+                        font-size:0.8rem;color:var(--text-secondary);">
+                <span><strong>호스트</strong>: ${d.os?.hostname || '-'}</span>
+                <span><strong>OS</strong>: ${d.os?.platform || '-'} ${d.os?.release || ''}</span>
+                <span><strong>아키텍처</strong>: ${d.os?.arch || '-'}</span>
+                <span style="margin-left:auto;color:var(--text-muted);">
+                    조회 시각: ${new Date(d.timestamp).toLocaleTimeString('ko-KR')}
+                </span>
+            </div>`;
+
+        area.innerHTML = osBanner +
+            `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px;">
+                ${memCard}${cpuCard}${diskCard}${dbCard}
+             </div>`;
     }
 
     function saveApiBase() {
@@ -8227,6 +8396,7 @@ const SettingsModule = (function() {
         _applyInjPickMat,
         saveApiBase,
         clearApiBase,
+        refreshSystemInfo,
         _askCascadeRename,
         _doCascadeRename,
         deleteRecordsByPartNames,

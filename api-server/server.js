@@ -4,6 +4,8 @@ const cors = require('cors');
 const fsSync = require('fs');
 const fs = require('fs/promises');
 const path = require('path');
+const os = require('os');
+const { exec } = require('child_process');
 
 function loadEnvFile() {
   const envPath = path.join(__dirname, '.env');
@@ -125,6 +127,85 @@ app.use(express.json({ limit: '50mb' }));
 // ── 헬스체크 ──
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// ── 시스템 상태 정보 ──
+app.get('/api/system', async (req, res) => {
+  try {
+    // ── CPU ───────────────────────────────────────────────────────
+    const cpus     = os.cpus();
+    const loadAvg  = os.loadavg();          // [1m, 5m, 15m]
+    const cpuModel = cpus[0]?.model?.trim() || 'Unknown';
+    const cpuCount = cpus.length;
+    // 전체 코어 사용률 계산 (user+sys / total tick 비율)
+    const cpuUsage = (() => {
+      let idle = 0, total = 0;
+      for (const c of cpus) {
+        for (const t in c.times) total += c.times[t];
+        idle += c.times.idle;
+      }
+      return total ? +(((total - idle) / total) * 100).toFixed(1) : 0;
+    })();
+
+    // ── 메모리 ────────────────────────────────────────────────────
+    const totalMem = os.totalmem();
+    const freeMem  = os.freemem();
+    const usedMem  = totalMem - freeMem;
+
+    // ── 업타임 ────────────────────────────────────────────────────
+    const sysUptime  = os.uptime();   // 초 단위
+    const nodeUptime = process.uptime();
+
+    // ── 디스크 (df -h /) ─────────────────────────────────────────
+    const diskInfo = await new Promise(resolve => {
+      exec("df -h / | tail -1 | awk '{print $2,$3,$4,$5}'", (err, stdout) => {
+        if (err) { resolve(null); return; }
+        const parts = stdout.trim().split(/\s+/);
+        resolve({
+          total: parts[0] || '-',
+          used:  parts[1] || '-',
+          avail: parts[2] || '-',
+          usePct: parts[3] || '-'
+        });
+      });
+    });
+
+    // ── MariaDB 상태 ──────────────────────────────────────────────
+    let dbStatus = { ok: false, latency: null, version: null };
+    try {
+      if (pool) {
+        const t0 = Date.now();
+        const conn = await pool.getConnection();
+        const [[row]] = await conn.query('SELECT VERSION() AS v');
+        conn.release();
+        dbStatus = { ok: true, latency: Date.now() - t0, version: row?.v || '' };
+      }
+    } catch(_) {}
+
+    // ── Node.js 프로세스 메모리 ────────────────────────────────────
+    const procMem = process.memoryUsage();
+
+    // ── OS ────────────────────────────────────────────────────────
+    const osInfo = {
+      platform: os.platform(),
+      release:  os.release(),
+      hostname: os.hostname(),
+      arch:     os.arch()
+    };
+
+    res.json({
+      timestamp: new Date().toISOString(),
+      cpu:  { model: cpuModel, count: cpuCount, usagePct: cpuUsage, loadAvg },
+      mem:  { total: totalMem, used: usedMem, free: freeMem },
+      disk: diskInfo,
+      uptime: { system: sysUptime, node: nodeUptime },
+      db:   dbStatus,
+      process: { rss: procMem.rss, heapUsed: procMem.heapUsed, heapTotal: procMem.heapTotal },
+      os:   osInfo
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── 문서 전체 조회 ──
