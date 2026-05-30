@@ -28,6 +28,12 @@ var JigModule = (function () {
     const _fmt = n => (UIUtils.formatNumber ? UIUtils.formatNumber(n) : Number(n || 0).toLocaleString('ko-KR'));
     const _esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const _js = s => String(s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ');
+    const _isAdminUser = () => {
+        const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
+            ? AuthModule.getCurrentUser()
+            : null;
+        return !!(user && user.role === 'admin');
+    };
 
     const JIG_MENUS = [
         { id: 'painting-jig', label: '메인', icon: 'dashboard' },
@@ -36,7 +42,7 @@ var JigModule = (function () {
         { id: 'jig-layout', label: '지그창고 레이아웃', icon: 'map' },
         { id: 'jig-disposal', label: '지그 폐기 대장', icon: 'delete_sweep' },
         { id: 'jig-cleaning', label: '세척 이력', icon: 'cleaning_services' },
-        { id: 'jig-change-history', label: '교체 이력', icon: 'sync_alt' },
+        { id: 'jig-change-history', label: '조치 이력', icon: 'sync_alt' },
         { id: 'jig-repair-history', label: '지그수리/개선 이력', icon: 'build_circle' }
     ];
 
@@ -107,14 +113,13 @@ var JigModule = (function () {
                     <button id="jigFilterAll" class="btn btn-primary btn-sm" onclick="JigModule.filterLine('')">전체</button>
                     <button id="jigFilterA" class="btn btn-outline btn-sm" onclick="JigModule.filterLine('A라인')">A라인</button>
                     <button id="jigFilterB" class="btn btn-outline btn-sm" onclick="JigModule.filterLine('B라인')">B라인</button>
-                    <button id="jigFilterWarning" class="btn btn-outline btn-sm" onclick="JigModule.filterStatus('warning')">수명 임박</button>
-                    <button id="jigFilterExceeded" class="btn btn-outline btn-sm" onclick="JigModule.filterStatus('exceeded')">수명 초과</button>
-                    <button class="btn btn-outline btn-sm" onclick="JigModule.syncFromPaintingWork()"
-                        title="도장 작업 실적의 SPINDLE 수로 JIG 사용 횟수를 자동 계산합니다.">
-                        <span class="material-symbols-outlined">sync</span> 도장 실적 동기화
-                    </button>
+                    ${_isAdminUser() ? `
+                        <button class="btn btn-outline btn-sm" onclick="JigModule.syncFromPaintingWork()"
+                            title="자동 생성된 JIG 사용 이력을 삭제 후 도장 작업 실적 기준으로 다시 계산합니다.">
+                            <span class="material-symbols-outlined">sync</span> 데이터 보정/재계산
+                        </button>
+                    ` : ''}
                 </div>
-                <div class="jig-mini-stats" id="jigStats"></div>
             </div>
 
             <div id="jigLifeView">
@@ -226,17 +231,46 @@ var JigModule = (function () {
         return max ? ((Number(j.usedCount) || 0) / max) * 100 : 0;
     }
 
+    function _resetActionForJig(jig) {
+        const material = String(jig && jig.material || '').toUpperCase().replace(/\s+/g, '');
+        if (material.includes('STEEL') || material.includes('스틸') || material.includes('SUS') || material.includes('STS')) {
+            return '박리 세척';
+        }
+        return '교체';
+    }
+
+    function _isResetWorkType(workType) {
+        return ['교체', '박리 세척'].includes(String(workType || ''));
+    }
+
+    function _latestReplacementDate(logs, jigId) {
+        return (logs || []).reduce((latest, log) => {
+            if (log.jigId !== jigId || !_isResetWorkType(log.workType)) return latest;
+            const date = String(log.date || '');
+            return date && (!latest || date > latest) ? date : latest;
+        }, null);
+    }
+
+    function _isOnOrAfterReplacement(date, replacementDate) {
+        if (!replacementDate) return true;
+        const targetDate = String(date || '');
+        return !!targetDate && targetDate >= replacementDate;
+    }
+
     function _enrichedJigs() {
         const jigs = Storage.getAll(STORE) || [];
         const logs = Storage.getAll(LOG_STORE) || [];
         const countMap = {};
         const lastResetMap = {};
         logs.forEach(log => {
-            if (!countMap[log.jigId]) countMap[log.jigId] = 0;
-            countMap[log.jigId] += Number(log.useCount) || 0;
-            if (log.workType === '교체' && (!lastResetMap[log.jigId] || log.date > lastResetMap[log.jigId])) {
+            if (_isResetWorkType(log.workType) && (!lastResetMap[log.jigId] || log.date > lastResetMap[log.jigId])) {
                 lastResetMap[log.jigId] = log.date;
             }
+        });
+        logs.forEach(log => {
+            if (!_isOnOrAfterReplacement(log.date, lastResetMap[log.jigId])) return;
+            if (!countMap[log.jigId]) countMap[log.jigId] = 0;
+            countMap[log.jigId] += Number(log.useCount) || 0;
         });
         return jigs.map(j => ({
             ...j,
@@ -247,7 +281,6 @@ var JigModule = (function () {
 
     function loadAll() {
         const enriched = _enrichedJigs();
-        renderStats(enriched);
         renderBlocks(_applyJigFilters(enriched));
         _populateLogFilter(Storage.getAll(STORE) || []);
         renderLog();
@@ -290,20 +323,6 @@ var JigModule = (function () {
         renderBlocks(_applyJigFilters(enriched));
     }
 
-    function renderStats(jigs) {
-        const el = document.getElementById('jigStats');
-        if (!el) return;
-        const total = jigs.length;
-        const warning = jigs.filter(j => _lifePct(j) >= 80 && _lifePct(j) < 100).length;
-        const exceeded = jigs.filter(j => _lifePct(j) >= 100).length;
-        const normal = total - warning - exceeded;
-        el.innerHTML = `
-            <div class="jig-mini-stat blue"><strong>${total}</strong><span>전체 지그 수</span></div>
-            <div class="jig-mini-stat green"><strong>${normal}</strong><span>정상</span></div>
-            <div class="jig-mini-stat orange"><strong>${warning}</strong><span>수명 임박</span></div>
-            <div class="jig-mini-stat red"><strong>${exceeded}</strong><span>수명 초과</span></div>`;
-    }
-
     function renderBlocks(jigs) {
         const el = document.getElementById('jigBlocks');
         if (!el) return;
@@ -332,8 +351,7 @@ var JigModule = (function () {
             <col style="width:43%">
             <col style="width:10%">
             <col style="width:6%">
-            <col style="width:4%">
-            <col style="width:4%">
+            <col style="width:8%">
         </colgroup>`;
 
         const sorted = jigs.slice().sort((a, b) =>
@@ -368,8 +386,9 @@ var JigModule = (function () {
                 <td style="${tdn}text-align:center;color:var(--accent-blue);font-weight:700;">${_fmt(j.usedCount || 0)}</td>
                 <td style="${td}">
                     <div style="display:flex;align-items:center;gap:6px;">
-                        <div style="flex:1;background:var(--bg-secondary);border-radius:4px;height:7px;overflow:hidden;min-width:0;">
+                        <div title="90% 도달 시 조치 준비" style="position:relative;flex:1;background:var(--bg-secondary);border-radius:4px;height:7px;overflow:hidden;min-width:0;">
                             <div style="width:${pct}%;background:${barColor};height:100%;border-radius:4px;"></div>
+                            <div style="position:absolute;left:90%;top:0;bottom:0;width:2px;background:var(--accent-red);box-shadow:0 0 0 1px rgba(255,255,255,.8);"></div>
                         </div>
                         <span style="font-size:0.75rem;font-weight:700;color:${barColor};flex-shrink:0;">${pct.toFixed(0)}%</span>
                     </div>
@@ -377,10 +396,7 @@ var JigModule = (function () {
                 <td style="${tdn}text-align:center;color:var(--text-muted);">${j.lastResetDate || j.registDate || '-'}</td>
                 <td style="${tdn}text-align:center;"><span style="background:${status[1]};color:#fff;padding:1px 7px;border-radius:4px;font-size:0.68rem;">${status[0]}</span></td>
                 <td style="${td}text-align:center;">
-                    <button class="btn btn-sm btn-outline" onclick="JigModule.openEditModal('${_js(j.id)}')" style="padding:2px 8px;font-size:0.78rem;">조회/입력</button>
-                </td>
-                <td style="${td}text-align:center;">
-                    <button class="btn btn-sm btn-outline" onclick="JigModule.resetCount('${_js(j.id)}')" style="padding:2px 8px;font-size:0.78rem;" title="교체 초기화">
+                    <button class="btn btn-sm btn-outline" onclick="JigModule.resetCount('${_js(j.id)}')" style="padding:2px 8px;font-size:0.78rem;" title="조치 초기화">
                         조치
                     </button>
                 </td>
@@ -401,7 +417,6 @@ var JigModule = (function () {
                     <th style="${thStyle}">수명진행률</th>
                     <th style="${thStyle}">이전교체일</th>
                     <th style="${thStyle}">상태</th>
-                    <th style="${thStyle}">정보</th>
                     <th style="${thStyle}">수명조치</th>
                 </tr></thead>
                 <tbody>${rows}</tbody>
@@ -690,7 +705,7 @@ var JigModule = (function () {
         UIUtils.showModal(
             'JIG 품목 병합',
             `<div style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px;padding:10px 12px;background:var(--bg-secondary);border-radius:8px;">
-                선택한 품목들은 하나의 JIG 수명으로 누적됩니다. 도장 실적 동기화 시 아래 모든 품명이 같은 JIG로 연결됩니다.
+                선택한 품목들은 하나의 JIG 수명으로 누적됩니다. 데이터 보정/재계산 시 아래 모든 품명이 같은 JIG로 연결됩니다.
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
                 <div class="form-group"><label class="form-label">차종</label><input class="form-input" value="${_esc(carSet[0])}" disabled></div>
@@ -955,10 +970,6 @@ var JigModule = (function () {
                     <button class="btn btn-primary btn-sm" onclick="JigModule.openJigMasterModal()">
                         <span class="material-symbols-outlined">add</span> 지그 등록
                     </button>
-                    <button class="btn btn-outline btn-sm" onclick="Router.navigate('jig-layout')"
-                        title="공장 JIG 배치 레이아웃을 시각적으로 편집합니다.">
-                        <span class="material-symbols-outlined">map</span> 레이아웃
-                    </button>
                 </div>
             </div>
             <div id="jigMasterView"></div>
@@ -977,7 +988,7 @@ var JigModule = (function () {
         const disposal = await _loadConfigList(DISPOSAL_KEY);
         const cleaning = await _loadConfigList(CLEANING_KEY);
         const repair = await _loadConfigList(REPAIR_KEY);
-        const changeLogs = (Storage.getAll(LOG_STORE) || []).filter(l => l.workType === '교체');
+        const changeLogs = (Storage.getAll(LOG_STORE) || []).filter(l => _isResetWorkType(l.workType));
 
         container.innerHTML = `
             <div class="fade-in-up jig-page">
@@ -998,7 +1009,7 @@ var JigModule = (function () {
                             ${_homeCard('지그창고 레이아웃', '지그 보관 위치를 시각적으로 배치하고 확인합니다.', 'map', '배치도', 'jig-layout', 'purple')}
                             ${_homeCard('지그 폐기 대장', '폐기된 지그의 일자, 사유, 담당자 이력을 남깁니다.', 'delete_sweep', `${disposal.length}건`, 'jig-disposal', 'red')}
                             ${_homeCard('세척 이력', '세척 일자, 방법, 담당자, 비고를 기록합니다.', 'cleaning_services', `${cleaning.length}건`, 'jig-cleaning', 'cyan')}
-                            ${_homeCard('교체 이력', '수명 초기화 및 교체 기록을 확인합니다.', 'sync_alt', `${changeLogs.length}건`, 'jig-change-history', 'orange')}
+                            ${_homeCard('조치 이력', '수명 초기화 및 교체/박리 세척 기록을 확인합니다.', 'sync_alt', `${changeLogs.length}건`, 'jig-change-history', 'orange')}
                             ${_homeCard('지그수리/개선 이력', '수리, 개선, 보완 작업 내역과 진행 상태를 관리합니다.', 'build_circle', `${repair.length}건`, 'jig-repair-history', 'red')}
                         </div>
                     </div>
@@ -1023,15 +1034,24 @@ var JigModule = (function () {
     function _masterFormHtml(d = {}) {
         const jigPhotos = Array.isArray(d.jigPhotos) ? d.jigPhotos : [];
         const productFitPhotos = Array.isArray(d.productFitPhotos) ? d.productFitPhotos : [];
+        const isEdit = !!d.id;
+        const carField = isEdit
+            ? `<input type="hidden" id="jigMasterCarModel" value="${_esc(d.carModel || '')}">
+               <input type="text" class="form-input" value="${_esc(d.carModel || '')}" disabled>`
+            : `<select class="form-select" id="jigMasterCarModel" onchange="JigModule.onMasterCarModelChange()">${_carModelOptions(d.carModel || '')}</select>`;
+        const partField = isEdit
+            ? `<input type="hidden" id="jigMasterPartName" value="${_esc(d.partName || '')}">
+               <input type="text" class="form-input" value="${_esc(d.partName || '')}" disabled>`
+            : `<select class="form-select" id="jigMasterPartName">${_partNameOptions(d.carModel || '', d.partName || '')}</select>`;
         return `
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
                 <div class="form-group">
                     <label class="form-label">차종 <span style="color:var(--accent-red)">*</span></label>
-                    <select class="form-select" id="jigMasterCarModel" onchange="JigModule.onMasterCarModelChange()">${_carModelOptions(d.carModel || '')}</select>
+                    ${carField}
                 </div>
                 <div class="form-group">
                     <label class="form-label">품명 <span style="color:var(--accent-red)">*</span></label>
-                    <select class="form-select" id="jigMasterPartName">${_partNameOptions(d.carModel || '', d.partName || '')}</select>
+                    ${partField}
                 </div>
                 <div class="form-group">
                     <label class="form-label">수명 횟수 <span style="color:var(--accent-red)">*</span></label>
@@ -1193,10 +1213,10 @@ var JigModule = (function () {
         const jigs = Storage.getAll(STORE) || [];
         const jigMap = {};
         jigs.forEach(j => { jigMap[j.id] = j; });
-        const rows = (Storage.getAll(LOG_STORE) || []).filter(l => l.workType === '교체').sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+        const rows = (Storage.getAll(LOG_STORE) || []).filter(l => _isResetWorkType(l.workType)).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
         container.innerHTML = `
             <div class="fade-in-up jig-page">
-                ${renderMenu('jig-change-history', '교체 이력', '수명 초기화와 교체 기록을 조회합니다.')}
+                ${renderMenu('jig-change-history', '조치 이력', '수명 초기화와 교체/박리 세척 기록을 조회합니다.')}
                 <div class="card"><div class="card-body">
                     <table class="data-table">
                         <thead><tr><th>일자</th><th>차종</th><th>품명</th><th>라인</th><th>내용</th></tr></thead>
@@ -1204,7 +1224,7 @@ var JigModule = (function () {
                             ${rows.length ? rows.map(row => {
                                 const jig = jigMap[row.jigId] || {};
                                 return `<tr><td>${_esc(row.date || '-')}</td><td>${_esc(jig.carModel || '-')}</td><td>${_esc(jig.partName || '-')}</td><td>${_esc(jig.line || '-')}</td><td>${_esc(row.note || '교체')}</td></tr>`;
-                            }).join('') : `<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--text-muted);">교체 이력이 없습니다.</td></tr>`}
+                            }).join('') : `<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--text-muted);">조치 이력이 없습니다.</td></tr>`}
                         </tbody>
                     </table>
                 </div></div>
@@ -1305,10 +1325,11 @@ var JigModule = (function () {
     function resetCount(id) {
         const jig = Storage.getById(STORE, id);
         if (!jig) return;
-        UIUtils.confirm(`[${jig.carModel}] ${jig.partName} (${jig.line}) JIG를 교체 초기화하시겠습니까?\n기존 사용 이력은 삭제되고 교체 기록이 남습니다.`, async () => {
-            const logs = (Storage.getAll(LOG_STORE) || []).filter(l => l.jigId === id && l.workType !== '교체');
+        const action = _resetActionForJig(jig);
+        UIUtils.confirm(`[${jig.carModel}] ${jig.partName} (${jig.line}) JIG를 ${action} 초기화하시겠습니까?\n기존 사용 이력은 삭제되고 ${action} 기록이 남습니다.`, async () => {
+            const logs = (Storage.getAll(LOG_STORE) || []).filter(l => l.jigId === id && !_isResetWorkType(l.workType));
             for (const log of logs) await Storage.remove(LOG_STORE, log.id);
-            await Storage.add(LOG_STORE, { jigId: id, date: _today(), workType: '교체', useCount: 0, note: '교체 초기화' });
+            await Storage.add(LOG_STORE, { jigId: id, date: _today(), workType: action, useCount: 0, note: `${action} 초기화` });
             UIUtils.toast('사용 횟수가 초기화되었습니다.', 'success');
             loadAll();
         });
@@ -1393,6 +1414,8 @@ var JigModule = (function () {
         const jig = _findJigForProduct(Storage.getAll(STORE) || [], work.carModel, work.partName, line);
         if (!jig) return;
         const logs = Storage.getAll(LOG_STORE) || [];
+        const replacementDate = _latestReplacementDate(logs, jig.id);
+        if (!_isOnOrAfterReplacement(work.date, replacementDate)) return;
         if (logs.some(l => l.paintingWorkId === work.id && l.source === 'auto_painting')) return;
         await Storage.add(LOG_STORE, {
             jigId: jig.id,
@@ -1406,11 +1429,16 @@ var JigModule = (function () {
     }
 
     async function syncFromPaintingWork() {
-        UIUtils.confirm('도장 작업 실적 전체를 기준으로 JIG 자동 사용 이력을 재계산합니다.\n기존 자동 생성 이력은 삭제 후 재등록됩니다.\n계속하시겠습니까?', async () => {
+        if (!_isAdminUser()) {
+            UIUtils.toast('데이터 보정/재계산은 관리자만 실행할 수 있습니다.', 'warning');
+            return;
+        }
+        UIUtils.confirm('도장 작업 실적 전체를 기준으로 JIG 자동 사용 이력을 재계산합니다.\n기존 자동 생성 이력은 삭제 후 재등록됩니다.\n교체일 이전 실적은 제외됩니다.\n계속하시겠습니까?', async () => {
             const oldLogs = (Storage.getAll(LOG_STORE) || []).filter(l => l.source === 'auto_painting');
             for (const log of oldLogs) await Storage.remove(LOG_STORE, log.id);
             const works = Storage.getAll(DB.STORES.PAINTING_WORK) || [];
             const jigs = Storage.getAll(STORE) || [];
+            const resetLogs = Storage.getAll(LOG_STORE) || [];
             let added = 0;
             let skipped = 0;
             for (const work of works) {
@@ -1421,6 +1449,8 @@ var JigModule = (function () {
                 const spindle = Math.ceil(inputQty / cvt);
                 const jig = _findJigForProduct(jigs, work.carModel, work.partName, line);
                 if (!jig) { skipped++; continue; }
+                const replacementDate = _latestReplacementDate(resetLogs, jig.id);
+                if (!_isOnOrAfterReplacement(work.date, replacementDate)) { skipped++; continue; }
                 await Storage.add(LOG_STORE, {
                     jigId: jig.id,
                     date: work.date,
@@ -1439,6 +1469,7 @@ var JigModule = (function () {
 
     return {
         init: render,
+        renderMenu,
         renderHub,
         render,
         renderMasterPage,

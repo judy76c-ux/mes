@@ -127,6 +127,9 @@ var JigLayoutModule = (function () {
     async function render(container) {
         container.innerHTML = `
         <div class="fade-in-up" style="display:flex;flex-direction:column;height:100%;min-height:0;">
+          ${typeof JigModule !== 'undefined' && JigModule.renderMenu
+              ? JigModule.renderMenu('jig-layout', '지그창고 레이아웃', '도장 지그의 보관 위치와 박스 배치를 관리합니다.')
+              : ''}
 
           <!-- ── 툴바 ── -->
           <div style="display:flex;align-items:center;gap:8px;padding:10px 16px;

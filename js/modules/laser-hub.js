@@ -14,6 +14,7 @@ var LaserProcessUI = (function () {
         { id: 'laser-work', label: '레이져 작업일지', icon: 'history' },
         { id: 'laser-inspection', label: '외관 검사 일지', icon: 'fact_check' },
         { id: 'laser-jig-master', label: '레이져 지그대장', icon: 'view_list' },
+        { id: 'laser-layout', label: '지그창고 레이아웃', icon: 'map' },
         { id: 'laser-jig-disposal', label: '폐기 대장', icon: 'delete_sweep' },
         { id: 'laser-jig-cleaning', label: '지그 세척일지', icon: 'cleaning_services' },
         { id: 'laser-equipment-history', label: '장비 점검/수리 내역', icon: 'build_circle' }

@@ -269,7 +269,7 @@ var LaserLayoutModule = (function () {
         container.innerHTML = `
         <div class="fade-in-up" style="display:flex;flex-direction:column;height:100%;min-height:0;">
           ${typeof LaserProcessUI !== 'undefined'
-              ? LaserProcessUI.renderSection('laser-standby', '레이져대기품현황 레이아웃', '레이져 대기품 적치 위치와 박스 배치를 레이아웃으로 관리합니다.')
+              ? LaserProcessUI.renderSection('laser-layout', '레이져 지그창고 레이아웃', '레이져 지그 보관 위치와 박스 배치를 레이아웃으로 관리합니다.')
               : ''}
 
           <!-- ── 툴바 ── -->
