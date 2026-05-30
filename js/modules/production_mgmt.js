@@ -7478,17 +7478,57 @@ var PaintMixModule = (function() {
     function render(container) {
         container.innerHTML = `
         <div class="fade-in-up">
-            <div class="page-header">
-                <div class="page-actions" id="pmixPageActions"></div>
+            <!-- 준비 중 안내 배너 -->
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+                        min-height:320px;padding:40px 20px;text-align:center;">
+
+                <div style="width:72px;height:72px;border-radius:20px;
+                            background:linear-gradient(135deg,#eff6ff,#dbeafe);
+                            display:flex;align-items:center;justify-content:center;
+                            margin-bottom:20px;box-shadow:0 4px 16px rgba(37,99,235,0.15);">
+                    <span class="material-symbols-outlined" style="font-size:38px;color:#2563eb;">science</span>
+                </div>
+
+                <h3 style="margin:0 0 10px;font-size:1.25rem;font-weight:800;color:var(--text-primary);">
+                    배합 / 사용 이력
+                </h3>
+                <p style="margin:0 0 24px;font-size:0.92rem;color:var(--text-muted);max-width:420px;line-height:1.7;">
+                    도장 생산 실적 연동 및 배합 등록 기능이<br>
+                    준비되면 이 화면에서 이력을 관리할 수 있습니다.
+                </p>
+
+                <!-- 진행 단계 -->
+                <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-bottom:28px;">
+                    ${[
+                        { icon:'check_circle', label:'도료 수입검사', done: true },
+                        { icon:'check_circle', label:'도료 창고 관리', done: true },
+                        { icon:'pending',      label:'도장 실적 연동', done: false },
+                        { icon:'pending',      label:'배합 등록',      done: false }
+                    ].map(s => `
+                        <div style="display:flex;align-items:center;gap:6px;padding:7px 14px;
+                                    border-radius:999px;font-size:0.82rem;font-weight:600;
+                                    background:${s.done ? '#dcfce7' : '#f1f5f9'};
+                                    color:${s.done ? '#15803d' : '#94a3b8'};
+                                    border:1px solid ${s.done ? '#86efac' : '#e2e8f0'};">
+                            <span class="material-symbols-outlined" style="font-size:16px;">${s.icon}</span>
+                            ${s.label}
+                        </div>`).join('')}
+                </div>
+
+                <div style="padding:14px 24px;background:rgba(37,99,235,0.05);
+                            border:1px solid rgba(37,99,235,0.2);border-radius:10px;
+                            font-size:0.82rem;color:#1d4ed8;max-width:420px;line-height:1.6;">
+                    <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;margin-right:4px;">info</span>
+                    도장 작업일지에서 배합 데이터가 등록되면<br>이 화면에서 자동으로 이력을 확인할 수 있습니다.
+                </div>
             </div>
 
             <div id="pmixPane_formula" style="display:none;"></div>
-            <div id="pmixPane_history"></div>
+            <div id="pmixPane_history" style="display:none;"></div>
             <div id="pmixPane_residual" style="display:none;"></div>
         </div>`;
 
         _curTab = 'history';
-        renderHistoryTab();
     }
 
     function switchTab(tab) {
