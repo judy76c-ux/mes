@@ -69,9 +69,7 @@ var ImprovementActivityModule = (function() {
                     <button class="btn btn-primary" onclick="ImprovementActivityModule.openProposalModal()">
                         <span class="material-symbols-outlined">add</span> 제안 등록
                     </button>
-                    <button class="btn btn-outline" onclick="ImprovementActivityModule.exportData()">
-                        <span class="material-symbols-outlined">download</span> CSV
-                    </button>
+
                 </div>
 
                 <div style="display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;margin-bottom:14px;">
