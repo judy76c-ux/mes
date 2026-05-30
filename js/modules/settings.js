@@ -10,7 +10,10 @@ const SettingsModule = (function() {
     const INSPECTORS_STORE = DB.STORES.INSPECTORS;
     const OPERATORS_STORE = DB.STORES.OPERATORS;
 
-    let currentTab = 'products';
+    const SETTINGS_TAB_KEY = 'mes_settings_tab';
+    let currentTab = (() => {
+        try { return sessionStorage.getItem(SETTINGS_TAB_KEY) || 'products'; } catch(e) { return 'products'; }
+    })();
     let _pendingPhoto = null; // 모달 사진 임시 보관
 
     // ── 제조 공정 타입 관리 ──────────────────────────────────────────
@@ -74,6 +77,7 @@ const SettingsModule = (function() {
 
     function switchTab(tab) {
         currentTab = tab;
+        try { sessionStorage.setItem(SETTINGS_TAB_KEY, tab); } catch(e) {}
         const container = document.getElementById('contentArea');
         render(container);
     }
