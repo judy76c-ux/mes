@@ -38,8 +38,9 @@ const Router = (function() {
         'shipping-inspection': '출하검사 일지',
         'product-warehouse': '제품창고',
         'product-outgoing': '제품 출고',
-        'sales-delivery': '납품관리',
+        'sales-delivery': '출고 등록',
         'sales-delivery-plan': '납품 계획',
+        'sales-analytics': '영업관리',
         'painting-jig': '도장지그',
         'jig-management': '도장 JIG 수명 현황',
         'jig-master': '도장 지그 대장',
@@ -110,7 +111,6 @@ const Router = (function() {
 
         'shipping-inspection': { target: 'shipping-standby', label: '출하검사로 돌아가기' },
         'product-outgoing': { target: 'product-warehouse', label: '제품창고로 돌아가기' },
-        'sales-delivery-plan': { target: 'sales-delivery', label: '납품관리로 돌아가기' },
         'painting-quality-performance': { target: 'quality-performance', label: '품질 실적으로 돌아가기' },
         'jig-management': { target: 'painting-jig', label: '도장지그로 돌아가기' },
         'jig-master': { target: 'painting-jig', label: '도장지그로 돌아가기' },

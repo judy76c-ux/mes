@@ -178,6 +178,7 @@ const App = (function() {
         Router.registerModule('product-warehouse', ProductWarehouseModule);
         Router.registerModule('sales-delivery', SalesDeliveryModule);
         Router.registerModule('sales-delivery-plan', SalesDeliveryPlanModule);
+        Router.registerModule('sales-analytics', SalesAnalyticsModule);
         Router.registerModule('painting-jig', {
             render: function(container) {
                 JigModule.renderHub(container);

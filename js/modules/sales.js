@@ -45,8 +45,40 @@ const SalesUtils = {
     }
 };
 
+// 영업 관리 공통 상단 네비게이션 (납품계획 / 출고 등록 / 영업관리)
+var SalesProcessUI = (function () {
+    const MENUS = [
+        { id: 'sales-delivery-plan', label: '납품계획', icon: 'event_note' },
+        { id: 'sales-delivery', label: '출고 등록', icon: 'local_shipping' },
+        { id: 'sales-analytics', label: '영업관리', icon: 'analytics' }
+    ];
+    function renderSection(activePage, title, desc) {
+        return `
+            <div style="margin-bottom:18px;">
+                <div style="margin-bottom:14px;">
+                    <h3 style="margin:0 0 6px;font-size:1.15rem;">${title}</h3>
+                    <p style="margin:0;color:var(--text-muted);font-size:.9rem;">${desc || ''}</p>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    ${MENUS.map(function (menu) {
+                        const active = menu.id === activePage;
+                        return `
+                            <button type="button"
+                                onclick="Router.navigate('${menu.id}')"
+                                class="btn ${active ? 'btn-primary' : 'btn-outline'}"
+                                style="display:flex;align-items:center;gap:6px;${active ? '' : 'background:#fff;'}">
+                                <span class="material-symbols-outlined" style="font-size:18px;">${menu.icon}</span>
+                                ${menu.label}
+                            </button>`;
+                    }).join('')}
+                </div>
+            </div>`;
+    }
+    return { renderSection: renderSection };
+})();
+
 /**
- * 1) 납품관리 (Delivery Management)
+ * 1) 출고 등록 (구 납품관리) — 출고 리스트 + 납품처별 리스트업
  */
 var SalesDeliveryModule = (function() {
     const STORE = DB.STORES.SALES_DELIVERY;
@@ -133,7 +165,61 @@ var SalesDeliveryModule = (function() {
             </div>
         `;
         const headers = ['No', '출고일', '납품처', '차종', '품명', '수량', '단가', '금액', '비고'];
-        SalesUtils.renderMain(container, '납품관리', '납품처별 제품 출고 및 매출 실적을 관리합니다.', 'SalesDeliveryModule.openAddModal()', 'SalesDeliveryModule.exportData()', filterHTML, 'sdTable', headers, '출고');
+        container.innerHTML = `
+            <div class="fade-in-up">
+                ${SalesProcessUI.renderSection('sales-delivery', '출고 등록', '제품 출고를 등록하고 출고 리스트와 납품처별 실적을 확인합니다.')}
+                <div class="page-header">
+                    <div class="page-actions">
+                        <button class="btn btn-primary" onclick="SalesDeliveryModule.openAddModal()">
+                            <span class="material-symbols-outlined">add</span> 출고 등록
+                        </button>
+                        <button class="btn btn-outline" onclick="SalesDeliveryModule.exportData()">
+                            <span class="material-symbols-outlined">download</span> 내보내기
+                        </button>
+                    </div>
+                </div>
+                <div class="filter-bar" style="flex-wrap:wrap; gap:10px;">${filterHTML}</div>
+                <div class="stat-cards" id="sdTableStats"></div>
+
+                <div class="card" style="margin-bottom:16px;">
+                    <div class="card-header">
+                        <h4><span class="material-symbols-outlined">storefront</span> 납품처별 리스트업</h4>
+                        <span style="font-size:0.78rem;color:var(--text-muted);">조회 기간 내 납품처별 출고 집계</span>
+                    </div>
+                    <div class="card-body" style="padding:0;">
+                        <div class="data-table-wrapper">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>납품처</th>
+                                        <th style="text-align:right;">출고 건수</th>
+                                        <th style="text-align:right;">총 수량</th>
+                                        <th style="text-align:right;">총 매출</th>
+                                        <th>주요 차종</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="sdCustomerSummaryBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h4><span class="material-symbols-outlined">list_alt</span> 출고 리스트</h4>
+                    </div>
+                    <div class="card-body" style="padding:0;">
+                        <div class="data-table-wrapper">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>${headers.map(h => `<th>${h}</th>`).join('')}<th>작업</th></tr>
+                                </thead>
+                                <tbody id="sdTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
         search();
     }
 
@@ -149,7 +235,40 @@ var SalesDeliveryModule = (function() {
         data.sort((a, b) => b.date.localeCompare(a.date));
 
         renderStats(data);
+        renderCustomerSummary(data);
         renderTable(data);
+    }
+
+    function renderCustomerSummary(data) {
+        const tbody = document.getElementById('sdCustomerSummaryBody');
+        if (!tbody) return;
+        const map = {};
+        data.forEach(d => {
+            const key = d.customer || '(미지정)';
+            if (!map[key]) map[key] = { count: 0, qty: 0, amount: 0, cars: {} };
+            map[key].count += 1;
+            map[key].qty += Number(d.qty) || 0;
+            map[key].amount += Number(d.amount) || 0;
+            const car = d.carModel || '-';
+            map[key].cars[car] = (map[key].cars[car] || 0) + (Number(d.qty) || 0);
+        });
+        const rows = Object.entries(map).sort((a, b) => b[1].amount - a[1].amount);
+        if (!rows.length) {
+            tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-muted);">집계할 출고 내역이 없습니다.</td></tr>`;
+            return;
+        }
+        tbody.innerHTML = rows.map(([cust, v]) => {
+            const topCars = Object.entries(v.cars).sort((a, b) => b[1] - a[1]).slice(0, 3)
+                .map(c => `<span style="display:inline-block;padding:1px 7px;margin:1px;border-radius:999px;background:var(--bg-secondary);border:1px solid var(--border-color);font-size:0.72rem;">${_esc(c[0])}</span>`).join(' ');
+            return `
+                <tr>
+                    <td><strong>${_esc(cust)}</strong></td>
+                    <td style="text-align:right;">${UIUtils.formatNumber(v.count)}</td>
+                    <td style="text-align:right;">${UIUtils.formatNumber(v.qty)}</td>
+                    <td style="text-align:right;font-weight:700;color:var(--accent-blue);">₩${UIUtils.formatNumber(v.amount)}</td>
+                    <td>${topCars}</td>
+                </tr>`;
+        }).join('');
     }
 
     function renderStats(data) {
@@ -893,11 +1012,8 @@ var SalesDeliveryPlanModule = (function() {
 
         container.innerHTML = `
             <div class="fade-in-up sdp-page">
+                ${SalesProcessUI.renderSection('sales-delivery-plan', '납품 계획', '납품 스케쥴, 계획·납품·미납과 공정별 부족 현황을 관리합니다.')}
                 <div class="page-header">
-                    <div class="page-header-left">
-                        <h3>납품 계획</h3>
-                        <p>납품 스케쥴, 계획·납품·미납과 공정별 부족 현황을 관리합니다.</p>
-                    </div>
                     <div class="page-actions">
                         <button class="btn btn-primary" onclick="SalesDeliveryPlanModule.openAddModal()">
                             <span class="material-symbols-outlined">grid_on</span> 계획 등록
@@ -2569,6 +2685,235 @@ var SalesDeliveryPlanModule = (function() {
         _deleteCurrentPreset,
         _confirmExcelImport
     };
+})();
+
+/**
+ * 1-2) 영업관리 (매출 분석) — 연간/월간/주간 + 납품처별/차종별
+ */
+var SalesAnalyticsModule = (function () {
+    const STORE = DB.STORES.SALES_DELIVERY;
+    const PALETTE = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#6366f1', '#14b8a6', '#a855f7'];
+    let _charts = {};
+
+    function _esc(v) {
+        return String(v == null ? '' : v).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+    }
+    function _fmt(v) { return UIUtils.formatNumber(Number(v) || 0); }
+    function _won(v) { return '₩' + _fmt(v); }
+    function _num(v) { return Number(v) || 0; }
+
+    function _destroyCharts() {
+        Object.values(_charts).forEach(c => { try { c && c.destroy(); } catch (e) {} });
+        _charts = {};
+    }
+
+    function _allYears(rows) {
+        const ys = new Set(rows.map(r => String(r.date || '').slice(0, 4)).filter(Boolean));
+        ys.add(String(new Date().getFullYear()));
+        return Array.from(ys).filter(Boolean).sort((a, b) => b.localeCompare(a));
+    }
+
+    function _weekStart(dateStr) {
+        const d = new Date(`${dateStr}T00:00:00`);
+        if (isNaN(d.getTime())) return null;
+        const day = (d.getDay() + 6) % 7; // 월요일=0
+        d.setDate(d.getDate() - day);
+        return d.toISOString().slice(0, 10);
+    }
+    function _mmdd(dateStr) { return dateStr ? dateStr.slice(5).replace('-', '/') : ''; }
+
+    function render(container) {
+        const rows = Storage.getAll(STORE) || [];
+        const years = _allYears(rows);
+        const curYear = years[0] || String(new Date().getFullYear());
+
+        container.innerHTML = `
+            <div class="fade-in-up">
+                ${SalesProcessUI.renderSection('sales-analytics', '영업관리', '연간·월간·주간 매출과 납품처별·차종별 매출을 분석합니다.')}
+                <div class="filter-bar" style="gap:10px;align-items:flex-end;">
+                    <div class="form-group">
+                        <label class="form-label">분석 연도</label>
+                        <select class="form-select" id="saYear" onchange="SalesAnalyticsModule.onYearChange()">
+                            ${years.map(y => `<option value="${y}" ${y === curYear ? 'selected' : ''}>${y}년</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group" style="align-self:flex-end;">
+                        <button class="btn btn-outline" onclick="SalesAnalyticsModule.onYearChange()">
+                            <span class="material-symbols-outlined">refresh</span> 새로고침
+                        </button>
+                    </div>
+                </div>
+                <div id="saContent"></div>
+            </div>`;
+        _renderAnalytics(curYear);
+    }
+
+    function onYearChange() {
+        const year = document.getElementById('saYear')?.value || String(new Date().getFullYear());
+        _renderAnalytics(year);
+    }
+
+    function _renderAnalytics(year) {
+        _destroyCharts();
+        const el = document.getElementById('saContent');
+        if (!el) return;
+        const rows = Storage.getAll(STORE) || [];
+        const yearRows = rows.filter(r => String(r.date || '').slice(0, 4) === year);
+        const prevRows = rows.filter(r => String(r.date || '').slice(0, 4) === String(Number(year) - 1));
+
+        const yearAmount = yearRows.reduce((s, r) => s + _num(r.amount), 0);
+        const yearQty = yearRows.reduce((s, r) => s + _num(r.qty), 0);
+        const prevAmount = prevRows.reduce((s, r) => s + _num(r.amount), 0);
+        const yoy = prevAmount > 0 ? ((yearAmount - prevAmount) / prevAmount * 100) : null;
+        const activeMonths = new Set(yearRows.map(r => String(r.date || '').slice(5, 7))).size || 1;
+        const monthAvg = yearAmount / activeMonths;
+
+        // 월별 집계
+        const monthly = Array.from({ length: 12 }, () => ({ amount: 0, qty: 0 }));
+        yearRows.forEach(r => {
+            const m = Number(String(r.date || '').slice(5, 7)) - 1;
+            if (m >= 0 && m < 12) { monthly[m].amount += _num(r.amount); monthly[m].qty += _num(r.qty); }
+        });
+
+        // 주별 집계 (최근 12주)
+        const weekMap = {};
+        yearRows.forEach(r => {
+            const ws = _weekStart(r.date);
+            if (!ws) return;
+            if (!weekMap[ws]) weekMap[ws] = 0;
+            weekMap[ws] += _num(r.amount);
+        });
+        const weeks = Object.keys(weekMap).sort().slice(-12);
+
+        // 납품처별
+        const byCust = {};
+        yearRows.forEach(r => {
+            const k = r.customer || '(미지정)';
+            byCust[k] = (byCust[k] || 0) + _num(r.amount);
+        });
+        const custRows = Object.entries(byCust).sort((a, b) => b[1] - a[1]);
+
+        // 차종별
+        const byCar = {};
+        yearRows.forEach(r => {
+            const k = r.carModel || '(미지정)';
+            byCar[k] = (byCar[k] || 0) + _num(r.amount);
+        });
+        const carRows = Object.entries(byCar).sort((a, b) => b[1] - a[1]);
+
+        const yoyHtml = yoy == null
+            ? '<span style="color:var(--text-muted);font-size:0.78rem;">전년 데이터 없음</span>'
+            : `<span style="color:${yoy >= 0 ? 'var(--accent-green)' : 'var(--accent-red)'};font-weight:700;">${yoy >= 0 ? '▲' : '▼'} ${Math.abs(yoy).toFixed(1)}%</span>`;
+
+        el.innerHTML = `
+            <div class="stat-cards" style="margin-bottom:16px;">
+                <div class="stat-card blue"><div class="stat-card-value">${_won(yearAmount)}</div><div class="stat-card-label">${year}년 연 매출</div></div>
+                <div class="stat-card green"><div class="stat-card-value">${yoy == null ? '-' : (yoy >= 0 ? '+' : '') + yoy.toFixed(1) + '%'}</div><div class="stat-card-label">전년 대비 (${_won(prevAmount)})</div></div>
+                <div class="stat-card orange"><div class="stat-card-value">${_won(monthAvg)}</div><div class="stat-card-label">월 평균 매출</div></div>
+                <div class="stat-card red"><div class="stat-card-value">${_fmt(yearQty)}</div><div class="stat-card-label">총 출고수량</div></div>
+            </div>
+
+            <div class="card" style="margin-bottom:16px;">
+                <div class="card-header"><h4><span class="material-symbols-outlined">bar_chart</span> 월간 매출 현황 (${year}년 1~12월)</h4></div>
+                <div class="card-body">
+                    <div style="height:300px;"><canvas id="saMonthlyChart"></canvas></div>
+                    <div class="data-table-wrapper" style="margin-top:14px;">
+                        <table class="data-table">
+                            <thead><tr><th>월</th>${monthly.map((_, i) => `<th style="text-align:right;">${i + 1}월</th>`).join('')}<th style="text-align:right;">합계</th></tr></thead>
+                            <tbody>
+                                <tr><td>매출</td>${monthly.map(m => `<td style="text-align:right;">${m.amount ? _fmt(m.amount) : '-'}</td>`).join('')}<td style="text-align:right;font-weight:700;color:var(--accent-blue);">${_fmt(yearAmount)}</td></tr>
+                                <tr><td>수량</td>${monthly.map(m => `<td style="text-align:right;">${m.qty ? _fmt(m.qty) : '-'}</td>`).join('')}<td style="text-align:right;font-weight:700;">${_fmt(yearQty)}</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-bottom:16px;">
+                <div class="card-header"><h4><span class="material-symbols-outlined">calendar_view_week</span> 주간 매출 현황 (최근 12주)</h4></div>
+                <div class="card-body">
+                    ${weeks.length ? `<div style="height:260px;"><canvas id="saWeeklyChart"></canvas></div>` : `<p style="color:var(--text-muted);text-align:center;padding:24px;">${year}년 주간 데이터가 없습니다.</p>`}
+                </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                <div class="card">
+                    <div class="card-header"><h4><span class="material-symbols-outlined">storefront</span> 납품처별 매출</h4></div>
+                    <div class="card-body">
+                        ${custRows.length ? `<div style="height:240px;"><canvas id="saCustomerChart"></canvas></div>` : '<p style="color:var(--text-muted);text-align:center;padding:24px;">데이터 없음</p>'}
+                        <div class="data-table-wrapper" style="margin-top:12px;">
+                            <table class="data-table">
+                                <thead><tr><th>납품처</th><th style="text-align:right;">매출</th><th style="text-align:right;">비중</th></tr></thead>
+                                <tbody>
+                                    ${custRows.length ? custRows.map(([k, v]) => `<tr><td><strong>${_esc(k)}</strong></td><td style="text-align:right;">${_won(v)}</td><td style="text-align:right;">${yearAmount ? (v / yearAmount * 100).toFixed(1) : '0.0'}%</td></tr>`).join('') : '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:18px;">데이터 없음</td></tr>'}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h4><span class="material-symbols-outlined">directions_car</span> 차종별 매출</h4></div>
+                    <div class="card-body">
+                        ${carRows.length ? `<div style="height:240px;"><canvas id="saCarChart"></canvas></div>` : '<p style="color:var(--text-muted);text-align:center;padding:24px;">데이터 없음</p>'}
+                        <div class="data-table-wrapper" style="margin-top:12px;">
+                            <table class="data-table">
+                                <thead><tr><th>차종</th><th style="text-align:right;">매출</th><th style="text-align:right;">비중</th></tr></thead>
+                                <tbody>
+                                    ${carRows.length ? carRows.map(([k, v]) => `<tr><td><strong>${_esc(k)}</strong></td><td style="text-align:right;">${_won(v)}</td><td style="text-align:right;">${yearAmount ? (v / yearAmount * 100).toFixed(1) : '0.0'}%</td></tr>`).join('') : '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:18px;">데이터 없음</td></tr>'}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+
+        // 차트 생성
+        if (typeof Chart === 'undefined') return;
+        const moneyTick = { callback: function (v) { return _fmt(v); } };
+
+        const mCtx = document.getElementById('saMonthlyChart');
+        if (mCtx) {
+            _charts.monthly = new Chart(mCtx, {
+                type: 'bar',
+                data: {
+                    labels: monthly.map((_, i) => `${i + 1}월`),
+                    datasets: [{ label: '매출', data: monthly.map(m => m.amount), backgroundColor: '#3b82f6', borderRadius: 4 }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: moneyTick } } }
+            });
+        }
+        const wCtx = document.getElementById('saWeeklyChart');
+        if (wCtx && weeks.length) {
+            _charts.weekly = new Chart(wCtx, {
+                type: 'bar',
+                data: {
+                    labels: weeks.map(w => _mmdd(w) + '주'),
+                    datasets: [{ label: '주간 매출', data: weeks.map(w => weekMap[w]), backgroundColor: '#10b981', borderRadius: 4 }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: moneyTick } } }
+            });
+        }
+        const cCtx = document.getElementById('saCustomerChart');
+        if (cCtx && custRows.length) {
+            const top = custRows.slice(0, 8);
+            _charts.customer = new Chart(cCtx, {
+                type: 'doughnut',
+                data: { labels: top.map(r => r[0]), datasets: [{ data: top.map(r => r[1]), backgroundColor: PALETTE, borderWidth: 2, borderColor: '#fff' }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { boxWidth: 12, padding: 10, font: { size: 11 } } } } }
+            });
+        }
+        const carCtx = document.getElementById('saCarChart');
+        if (carCtx && carRows.length) {
+            const top = carRows.slice(0, 8);
+            _charts.car = new Chart(carCtx, {
+                type: 'doughnut',
+                data: { labels: top.map(r => r[0]), datasets: [{ data: top.map(r => r[1]), backgroundColor: PALETTE, borderWidth: 2, borderColor: '#fff' }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { boxWidth: 12, padding: 10, font: { size: 11 } } } } }
+            });
+        }
+    }
+
+    return { render: render, init: render, onYearChange: onYearChange };
 })();
 
 /**
