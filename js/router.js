@@ -69,6 +69,14 @@ const Router = (function() {
         'limit-samples': '한도 견본',
         'prod-spc': 'SPC 관리',
         'certifications-mgmt': '자격인증 관리',
+        'cert-standard': '자격인증 및 다기능 평가 기준서',
+        'cert-eval': '자격인증 평가서',
+        'cert-ledger': '자격인증 평가 관리대장',
+        'cert-multiskill-eval': '작업자 다기능 평가서',
+        'cert-multiskill-analysis': '작업자 다기능 분석표',
+        'gauge-rr-variable': '계량형 게이지 R&R 관리대장',
+        'gauge-rr-attribute': '계수형 GAUGE R&R 평가서',
+        'cert-status': '자격인증 현황',
         'inspectors-mgmt': '검사자 관리',
         'operators-mgmt': '작업자 관리',
         'settings': '관리 / 설정'
@@ -122,6 +130,14 @@ const Router = (function() {
         'robot-pg-std': { target: 'prod-standards', label: '제조 관리 표준 돌아가기' },
         'drying-std':   { target: 'prod-standards', label: '제조 관리 표준 돌아가기' },
 
+        'cert-standard': { target: 'certifications-mgmt', label: '자격인증 관리로 돌아가기' },
+        'cert-eval': { target: 'certifications-mgmt', label: '자격인증 관리로 돌아가기' },
+        'cert-ledger': { target: 'certifications-mgmt', label: '자격인증 관리로 돌아가기' },
+        'cert-multiskill-eval': { target: 'certifications-mgmt', label: '자격인증 관리로 돌아가기' },
+        'cert-multiskill-analysis': { target: 'certifications-mgmt', label: '자격인증 관리로 돌아가기' },
+        'gauge-rr-variable': { target: 'certifications-mgmt', label: '자격인증 관리로 돌아가기' },
+        'gauge-rr-attribute': { target: 'certifications-mgmt', label: '자격인증 관리로 돌아가기' },
+        'cert-status': { target: 'certifications-mgmt', label: '자격인증 관리로 돌아가기' },
         'inspectors-mgmt': { target: 'certifications-mgmt', label: '자격인증 관리로 돌아가기' },
         'operators-mgmt': { target: 'certifications-mgmt', label: '자격인증 관리로 돌아가기' }
     };

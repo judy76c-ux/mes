@@ -259,42 +259,39 @@ const App = (function() {
         Router.registerModule('incoming-overview', IncomingOverviewModule);
         Router.registerModule('warehouse-overview', WarehouseOverviewModule);
         Router.registerModule('work-standard', WorkStandardModule);
-        function _qualityPersonnelTabNav(active) {
-            return `
-                <div class="settings-tabs" style="margin-bottom:16px;">
-                    <button class="tab-btn ${active === 'certifications' ? 'active' : ''}"
-                        onclick="Router.navigate('certifications-mgmt')">
-                        <span class="material-symbols-outlined">workspace_premium</span> 자격인증 현황
-                    </button>
-                    <button class="tab-btn ${active === 'inspectors' ? 'active' : ''}"
-                        onclick="Router.navigate('inspectors-mgmt')">
-                        <span class="material-symbols-outlined">verified_user</span> 검사자 관리
-                    </button>
-                    <button class="tab-btn ${active === 'operators' ? 'active' : ''}"
-                        onclick="Router.navigate('operators-mgmt')">
-                        <span class="material-symbols-outlined">engineering</span> 작업자 관리
-                    </button>
-                </div>
-                <div id="settingsContent"></div>
-            `;
-        }
+        // ── 자격인증 관리 허브 + 서브 문서 ──────────────────────────────
+        Router.registerModule('certifications-mgmt', CertHubModule);
+        Router.registerModule('cert-standard', CertStandardModule);
+        Router.registerModule('cert-eval', CertEvalModule);
+        Router.registerModule('cert-ledger', CertLedgerModule);
+        Router.registerModule('cert-multiskill-eval', CertMultiskillEvalModule);
+        Router.registerModule('cert-multiskill-analysis', CertMultiskillAnalysisModule);
+        Router.registerModule('gauge-rr-variable', GaugeRRVariableModule);
+        Router.registerModule('gauge-rr-attribute', GaugeRRAttributeModule);
 
+        // 자격인증 현황 / 검사자 / 작업자 — 허브 네비게이션 + 설정 탭 재사용
+        Router.registerModule('cert-status', {
+            render(container) {
+                container.innerHTML = '<div class="fade-in-up">'
+                    + CertProcessUI.renderSection('cert-status', '자격인증 현황', '부여된 자격 인증 현황을 확인합니다.')
+                    + '<div id="settingsContent"></div></div>';
+                SettingsModule.renderCertificationTab(document.getElementById('settingsContent'));
+            }
+        });
         Router.registerModule('inspectors-mgmt', {
             render(container) {
-                container.innerHTML = '<div class="fade-in-up">' + _qualityPersonnelTabNav('inspectors') + '</div>';
+                container.innerHTML = '<div class="fade-in-up">'
+                    + CertProcessUI.renderSection('inspectors-mgmt', '검사자 관리', '검사자 인력 마스터를 관리합니다.')
+                    + '<div id="settingsContent"></div></div>';
                 SettingsModule.renderInspectorsTab(document.getElementById('settingsContent'));
             }
         });
         Router.registerModule('operators-mgmt', {
             render(container) {
-                container.innerHTML = '<div class="fade-in-up">' + _qualityPersonnelTabNav('operators') + '</div>';
+                container.innerHTML = '<div class="fade-in-up">'
+                    + CertProcessUI.renderSection('operators-mgmt', '작업자 관리', '작업자 인력 마스터를 관리합니다.')
+                    + '<div id="settingsContent"></div></div>';
                 SettingsModule.renderOperatorsTab(document.getElementById('settingsContent'));
-            }
-        });
-        Router.registerModule('certifications-mgmt', {
-            render(container) {
-                container.innerHTML = '<div class="fade-in-up">' + _qualityPersonnelTabNav('certifications') + '</div>';
-                SettingsModule.renderCertificationTab(document.getElementById('settingsContent'));
             }
         });
     }

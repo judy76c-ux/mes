@@ -64,6 +64,7 @@ const AuthModule = (function () {
         { id:'improvement-activity',      label:'개선활동',           group:'공정품질' },
         { id:'limit-samples',             label:'한도 견본',          group:'공정품질' },
         { id:'prod-spc',                  label:'SPC 관리',           group:'공정품질' },
+        { id:'certifications-mgmt',       label:'자격인증 관리',      group:'공정품질' },
         { id:'settings',                  label:'관리 / 설정',        group:'시스템' },
     ];
 
