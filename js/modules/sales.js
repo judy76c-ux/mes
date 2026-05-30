@@ -177,18 +177,39 @@ var SalesDeliveryModule = (function() {
         const headers = ['No', '출고일', '납품처', '차종', '품명', '수량', '단가', '금액', '비고'];
         container.innerHTML = `
             <div class="fade-in-up">
-                ${SalesProcessUI.renderSection('sales-delivery', '출고 등록', '제품 출고를 등록하고 출고 리스트와 납품처별 실적을 확인합니다.')}
-                <div class="page-header">
-                    <div class="page-actions">
+                ${SalesProcessUI.renderSection('sales-delivery')}
+                <div class="filter-bar" style="flex-wrap:wrap; gap:10px; align-items:flex-end;">
+                    <div class="form-group">
+                        <label class="form-label">시작일</label>
+                        <input type="date" class="form-input" id="sdFilterStart" value="${UIUtils.monthAgo()}">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">종료일</label>
+                        <input type="date" class="form-input" id="sdFilterEnd" value="${UIUtils.today()}">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">납품처</label>
+                        <select class="form-select" id="sdFilterCustomer" onchange="SalesDeliveryModule.onFilterCustomerChange()">
+                            ${customerOptions}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">차종</label>
+                        <select class="form-select" id="sdFilterCarModel">
+                            ${carOptions}
+                        </select>
+                    </div>
+                    <div class="form-group" style="align-self:flex-end;">
+                        <button class="btn btn-outline" onclick="SalesDeliveryModule.search()">
+                            <span class="material-symbols-outlined">search</span> 조회
+                        </button>
+                    </div>
+                    <div class="form-group" style="align-self:flex-end; margin-left:auto;">
                         <button class="btn btn-primary" onclick="SalesDeliveryModule.openAddModal()">
                             <span class="material-symbols-outlined">add</span> 출고 등록
                         </button>
-                        <button class="btn btn-outline" onclick="SalesDeliveryModule.exportData()">
-                            <span class="material-symbols-outlined">download</span> 내보내기
-                        </button>
                     </div>
                 </div>
-                <div class="filter-bar" style="flex-wrap:wrap; gap:10px;">${filterHTML}</div>
                 <div class="stat-cards" id="sdTableStats"></div>
 
                 <div class="card" style="margin-bottom:16px;">
