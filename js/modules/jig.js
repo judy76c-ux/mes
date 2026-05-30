@@ -17,6 +17,7 @@ var JigModule = (function () {
     let _currentStatus = '';
     let _batchMergeRows = [];
     let _activeView = 'life';
+    let _masterCarFilter = '';
 
     const _today = () => (UIUtils.today ? UIUtils.today() : new Date().toISOString().split('T')[0]);
     const _monthAgo = () => {
@@ -913,7 +914,10 @@ var JigModule = (function () {
     function renderJigMaster() {
         const el = document.getElementById('jigMasterView');
         if (!el) return;
-        const jigs = (Storage.getAll(STORE) || []).slice().sort((a, b) =>
+        const jigs = (Storage.getAll(STORE) || [])
+            .filter(j => !_masterCarFilter || j.carModel === _masterCarFilter)
+            .slice()
+            .sort((a, b) =>
             (a.carModel || '').localeCompare(b.carModel || '', 'ko') ||
             (a.partName || '').localeCompare(b.partName || '', 'ko')
         );
@@ -961,7 +965,14 @@ var JigModule = (function () {
             </div>`;
     }
 
+    function onMasterCarFilterChange() {
+        _masterCarFilter = document.getElementById('jigMasterCarFilter')?.value || '';
+        renderJigMaster();
+    }
+
     function renderMasterPage(container) {
+        const cars = [...new Set((Storage.getAll(STORE) || []).map(j => j.carModel).filter(Boolean))]
+            .sort((a, b) => a.localeCompare(b, 'ko'));
         container.innerHTML = `
         <div class="fade-in-up jig-page">
             ${renderMenu('jig-master', '도장 지그대장', '도장 지그의 기본 정보와 사진 자료를 관리합니다.')}
@@ -970,6 +981,10 @@ var JigModule = (function () {
                     <button class="btn btn-primary btn-sm" onclick="JigModule.openJigMasterModal()">
                         <span class="material-symbols-outlined">add</span> 지그 등록
                     </button>
+                    <select id="jigMasterCarFilter" class="form-select" style="width:220px;height:34px;font-size:0.78rem;padding:5px 28px 5px 10px;" onchange="JigModule.onMasterCarFilterChange()">
+                        <option value="">전체 차종</option>
+                        ${cars.map(car => `<option value="${_esc(car)}" ${car === _masterCarFilter ? 'selected' : ''}>${_esc(car)}</option>`).join('')}
+                    </select>
                 </div>
             </div>
             <div id="jigMasterView"></div>
@@ -1023,9 +1038,10 @@ var JigModule = (function () {
             <div class="form-group">
                 <label class="form-label">${label} ${idx + 1}</label>
                 <input type="hidden" id="${id}Data" value="${_esc(value || '')}">
-                <input type="file" class="form-input" accept="image/*" onchange="JigModule.readJigMasterPhoto(this,'${id}')">
+                <input type="file" class="form-input" accept="image/*" capture="environment" onchange="JigModule.readJigMasterPhoto(this,'${id}')">
                 <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
                     <img id="${id}Preview" src="${_esc(value || '')}" alt="" style="width:84px;height:60px;object-fit:cover;border:1px solid var(--border-color);border-radius:6px;${value ? '' : 'display:none;'}">
+                    <button type="button" class="btn btn-outline btn-sm" onclick="JigModule.pasteJigMasterPhoto('${id}')">스크린샷 붙여넣기</button>
                     <button type="button" class="btn btn-outline btn-sm" onclick="JigModule.clearJigMasterPhoto('${id}')">삭제</button>
                 </div>
             </div>`;
@@ -1071,8 +1087,8 @@ var JigModule = (function () {
                 </div>
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px;">
-                ${_photoInputHtml('지그 사진', 'jigPhoto', 0, jigPhotos[0])}
-                ${_photoInputHtml('지그 사진', 'jigPhoto', 1, jigPhotos[1])}
+                ${_photoInputHtml('JIG 상측 이미지', 'jigPhoto', 0, jigPhotos[0])}
+                ${_photoInputHtml('JIG 옆면 이미지', 'jigPhoto', 1, jigPhotos[1])}
                 ${_photoInputHtml('제품결합 사진', 'productFitPhoto', 0, productFitPhotos[0])}
                 ${_photoInputHtml('제품결합 사진', 'productFitPhoto', 1, productFitPhotos[1])}
             </div>`;
@@ -1134,25 +1150,49 @@ var JigModule = (function () {
         if (!file) return;
         const reader = new FileReader();
         reader.onload = () => {
-            const hidden = document.getElementById(`${targetId}Data`);
-            const preview = document.getElementById(`${targetId}Preview`);
-            if (hidden) hidden.value = reader.result || '';
-            if (preview) {
-                preview.src = reader.result || '';
-                preview.style.display = reader.result ? 'block' : 'none';
-            }
+            _setJigMasterPhoto(targetId, reader.result || '');
         };
         reader.readAsDataURL(file);
     }
 
-    function clearJigMasterPhoto(targetId) {
+    function _setJigMasterPhoto(targetId, src) {
         const hidden = document.getElementById(`${targetId}Data`);
         const preview = document.getElementById(`${targetId}Preview`);
-        if (hidden) hidden.value = '';
+        if (hidden) hidden.value = src || '';
         if (preview) {
-            preview.removeAttribute('src');
-            preview.style.display = 'none';
+            preview.src = src || '';
+            preview.style.display = src ? 'block' : 'none';
         }
+    }
+
+    async function pasteJigMasterPhoto(targetId) {
+        try {
+            if (!navigator.clipboard || !navigator.clipboard.read) {
+                UIUtils.toast('이 브라우저는 클립보드 이미지 붙여넣기를 지원하지 않습니다.', 'warning');
+                return;
+            }
+            const items = await navigator.clipboard.read();
+            for (const item of items) {
+                const imageType = item.types.find(type => type.startsWith('image/'));
+                if (!imageType) continue;
+                const blob = await item.getType(imageType);
+                const reader = new FileReader();
+                reader.onload = () => {
+                    _setJigMasterPhoto(targetId, reader.result || '');
+                    UIUtils.toast('스크린샷이 등록되었습니다.', 'success');
+                };
+                reader.readAsDataURL(blob);
+                return;
+            }
+            UIUtils.toast('클립보드에 이미지가 없습니다. 스크린샷 복사 후 다시 시도하세요.', 'warning');
+        } catch (e) {
+            UIUtils.toast('스크린샷 붙여넣기에 실패했습니다. 브라우저 권한을 확인하세요.', 'error');
+            console.warn('[JigModule] paste screenshot failed:', e);
+        }
+    }
+
+    function clearJigMasterPhoto(targetId) {
+        _setJigMasterPhoto(targetId, '');
     }
 
     function viewJigPhoto(id, key, idx) {
@@ -1482,6 +1522,7 @@ var JigModule = (function () {
         renderLog,
         onCarModelChange,
         onMasterCarModelChange,
+        onMasterCarFilterChange,
         onLogCarChange,
         resetLogFilter,
         openJigMasterModal,
@@ -1499,6 +1540,7 @@ var JigModule = (function () {
         saveEdit,
         saveLog,
         readJigMasterPhoto,
+        pasteJigMasterPhoto,
         clearJigMasterPhoto,
         viewJigPhoto,
         openHistoryModal,
