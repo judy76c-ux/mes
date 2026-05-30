@@ -1066,10 +1066,6 @@ var SalesDeliveryPlanModule = (function() {
                             ${carOptions}
                         </select>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">품명</label>
-                        <input type="text" class="form-input" id="sdpKeyword" placeholder="품명 또는 컬러">
-                    </div>
                     <div class="form-group" style="align-self:flex-end;">
                         <button class="btn btn-outline" onclick="SalesDeliveryPlanModule.search()">
                             <span class="material-symbols-outlined">search</span> 조회
@@ -1106,7 +1102,6 @@ var SalesDeliveryPlanModule = (function() {
         const end = document.getElementById('sdpEnd')?.value || _addDays(start, 30);
         const customer = _norm(document.getElementById('sdpCustomerFilter')?.value);
         const car = _norm(document.getElementById('sdpCarFilter')?.value);
-        const keyword = _norm(document.getElementById('sdpKeyword')?.value);
         const days = _days(start, end);
 
         let plans = Storage.getByDateRange(STORE, start, end);
@@ -1115,12 +1110,6 @@ var SalesDeliveryPlanModule = (function() {
             const product = _findProduct(p);
             return _norm(p.carModel) === car || _norm(product?.carModel) === car;
         });
-        if (keyword) {
-            plans = plans.filter(p =>
-                _norm(p.partName).includes(keyword) ||
-                _norm(p.color).includes(keyword)
-            );
-        }
 
         const rows = _buildRows(plans, days, start, end);
         _lastRows = rows;
