@@ -45,33 +45,43 @@ const SalesUtils = {
     }
 };
 
-// 영업 관리 공통 상단 네비게이션 (납품계획 / 출고 등록 / 영업관리)
+// 영업 관리 공통 상단 네비게이션 (수입검사/자재창고 허브 카드 스타일)
 var SalesProcessUI = (function () {
     const MENUS = [
-        { id: 'sales-delivery-plan', label: '납품계획', icon: 'event_note' },
-        { id: 'sales-delivery', label: '출고 등록', icon: 'local_shipping' },
-        { id: 'sales-analytics', label: '영업관리', icon: 'analytics' }
+        { id: 'sales-delivery-plan', label: '납품계획', desc: '납품 스케쥴·계획·미납 현황', icon: 'event_note', accent: 'var(--accent-blue)' },
+        { id: 'sales-delivery', label: '출고 등록', desc: '출고 리스트·납품처별 실적', icon: 'local_shipping', accent: '#8b5cf6' },
+        { id: 'sales-analytics', label: '영업관리', desc: '연간·월간·주간 매출 분석', icon: 'analytics', accent: '#10b981' }
     ];
-    function renderSection(activePage, title, desc) {
+    function renderSection(activePage) {
         return `
-            <div style="margin-bottom:18px;">
-                <div style="margin-bottom:14px;">
-                    <h3 style="margin:0 0 6px;font-size:1.15rem;">${title}</h3>
-                    <p style="margin:0;color:var(--text-muted);font-size:.9rem;">${desc || ''}</p>
-                </div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    ${MENUS.map(function (menu) {
-                        const active = menu.id === activePage;
-                        return `
-                            <button type="button"
-                                onclick="Router.navigate('${menu.id}')"
-                                class="btn ${active ? 'btn-primary' : 'btn-outline'}"
-                                style="display:flex;align-items:center;gap:6px;${active ? '' : 'background:#fff;'}">
-                                <span class="material-symbols-outlined" style="font-size:18px;">${menu.icon}</span>
-                                ${menu.label}
-                            </button>`;
-                    }).join('')}
-                </div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:24px;">
+                ${MENUS.map(function (menu) {
+                    const active = menu.id === activePage;
+                    return `
+                        <div onclick="Router.navigate('${menu.id}')"
+                             onmouseenter="this.style.boxShadow='0 6px 20px rgba(0,0,0,0.12)';this.style.transform='translateY(-2px)'"
+                             onmouseleave="this.style.boxShadow='${active ? '0 4px 14px rgba(59,130,246,0.18)' : '0 2px 8px rgba(0,0,0,0.06)'}';this.style.transform=''"
+                             style="cursor:pointer;display:flex;align-items:center;gap:14px;
+                                    background:${active ? '#eff6ff' : '#ffffff'};
+                                    border:1px solid ${active ? menu.accent : 'var(--border-color)'};
+                                    border-left:4px solid ${active ? menu.accent : 'var(--border-color)'};
+                                    border-radius:12px;padding:16px 20px;
+                                    box-shadow:${active ? '0 4px 14px rgba(59,130,246,0.18)' : '0 2px 8px rgba(0,0,0,0.06)'};
+                                    transition:box-shadow 0.2s,transform 0.2s;">
+                            <div style="width:44px;height:44px;border-radius:10px;flex-shrink:0;
+                                        display:flex;align-items:center;justify-content:center;
+                                        background:${active ? menu.accent : '#f1f5f9'};">
+                                <span class="material-symbols-outlined"
+                                      style="font-size:24px;color:${active ? '#ffffff' : 'var(--text-muted)'};">${menu.icon}</span>
+                            </div>
+                            <div style="flex:1;min-width:0;">
+                                <div style="font-size:1rem;font-weight:700;color:${active ? menu.accent : 'var(--text-primary)'};">${menu.label}</div>
+                                <div style="font-size:0.8rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${menu.desc}</div>
+                            </div>
+                            ${active ? `<span class="material-symbols-outlined" style="color:${menu.accent};flex-shrink:0;font-size:20px;">check_circle</span>`
+                                     : `<span class="material-symbols-outlined" style="color:var(--text-muted);flex-shrink:0;">chevron_right</span>`}
+                        </div>`;
+                }).join('')}
             </div>`;
     }
     return { renderSection: renderSection };
