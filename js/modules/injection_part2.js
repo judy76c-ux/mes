@@ -608,9 +608,18 @@ var InjectionWarehouseModule = (function() {
                         <span style="font-size:0.75rem; color:var(--text-muted); font-weight:400;">(수입 검사 완료품)</span>
                         <span style="font-size:0.78rem; background:var(--accent-orange,#f59e0b); color:#fff; padding:2px 8px; border-radius:12px; font-weight:600;">대기 ${pendingRows.length}건</span>
                     </h4>
-                    <button class="btn btn-sm btn-outline" onclick="InjectionWarehouseModule.renderInspStandby()">
-                        <span class="material-symbols-outlined" style="font-size:1rem;">refresh</span>
-                    </button>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        ${_testInspections().length ? `
+                        <button class="btn btn-sm" onclick="InjectionWarehouseModule.clearTestInspections()"
+                            style="background:#fee2e2; color:#dc2626; border:1px solid #fca5a5;"
+                            title="LOT 260101 등 [DEV] 테스트 시드 검사 데이터를 삭제합니다.">
+                            <span class="material-symbols-outlined" style="font-size:1rem;">delete_sweep</span>
+                            테스트 데이터 정리 (${_testInspections().length})
+                        </button>` : ''}
+                        <button class="btn btn-sm btn-outline" onclick="InjectionWarehouseModule.renderInspStandby()">
+                            <span class="material-symbols-outlined" style="font-size:1rem;">refresh</span>
+                        </button>
+                    </div>
                 </div>
                 <div class="card-body" id="injInspStandbyBody" style="padding:0;"></div>
             </div>`;
@@ -659,6 +668,41 @@ var InjectionWarehouseModule = (function() {
                     </tbody>
                 </table>
             </div>`;
+    }
+
+    // DEV 테스트 시드 검사 기록 판별 ([DEV] 표기 또는 LOT 260101 + 테스트 검사자)
+    function _isTestInspection(insp) {
+        const note = String(insp.note || '');
+        if (note.indexOf('[DEV]') > -1) return true;
+        const lotMatch = insp.lotNo === '260101' ||
+            (Array.isArray(insp.lots) && insp.lots.some(function (l) { return l.lotNo === '260101'; }));
+        return lotMatch && String(insp.inspector || '') === '테스트';
+    }
+
+    function _testInspections() {
+        return (Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || []).filter(_isTestInspection);
+    }
+
+    // 테스트 시드 검사 데이터 일괄 삭제 (실제 검사 기록은 보존)
+    function clearTestInspections() {
+        const targets = _testInspections();
+        if (!targets.length) {
+            UIUtils.toast('삭제할 테스트 데이터가 없습니다.', 'info');
+            return;
+        }
+        UIUtils.confirm(
+            `[DEV] 테스트 시드 수입검사 ${targets.length}건을 삭제하시겠습니까?\n` +
+            `(LOT 260101 등 테스트 데이터만 삭제되며, 실제 검사 기록은 보존됩니다.)`,
+            async function () {
+                let removed = 0;
+                for (const insp of targets) {
+                    try { await Storage.remove(DB.STORES.INJECTION_INSPECTIONS, insp.id); removed++; }
+                    catch (e) { console.warn('[clearTestInspections] remove failed:', insp.id, e); }
+                }
+                UIUtils.toast(`테스트 데이터 ${removed}건을 삭제했습니다.`, 'success');
+                renderInspStandby();
+            }
+        );
     }
 
     // 검사 기록으로부터 입고 모달 자동 채움
@@ -2367,6 +2411,7 @@ var InjectionWarehouseModule = (function() {
         render,
         loadData,
         renderInspStandby,
+        clearTestInspections,
         renderCarTiles,
         filterTransactions,
         onTxCarChange,
