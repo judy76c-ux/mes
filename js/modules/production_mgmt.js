@@ -7474,77 +7474,167 @@ var PaintMixModule = (function() {
 
     let _curTab = 'history';
 
-    /* ─── 탭 전환 ─────────────────────────────────────────────── */
+    /* ─── 탭 타일 카드 네비게이션 ──────────────────────────────── */
+    const _PMIX_TABS = [
+        { key: 'history',  label: '배합 등록',    desc: '도장 실적 연동 · 도료 출고/사용량 기록', icon: 'science',    accent: '#2563eb' },
+        { key: 'mixhist',  label: '배합 이력',    desc: '등록된 배합 기록 조회',                  icon: 'receipt_long', accent: '#8b5cf6' },
+        { key: 'residual', label: '배합실 잔량',  desc: '도료 잔량 재고 현황 · 사용/폐기 처리',  icon: 'inventory_2', accent: '#10b981' }
+    ];
+
     function render(container) {
         container.innerHTML = `
         <div class="fade-in-up">
-            <!-- 준비 중 안내 배너 -->
-            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
-                        min-height:320px;padding:40px 20px;text-align:center;">
-
-                <div style="width:72px;height:72px;border-radius:20px;
-                            background:linear-gradient(135deg,#eff6ff,#dbeafe);
-                            display:flex;align-items:center;justify-content:center;
-                            margin-bottom:20px;box-shadow:0 4px 16px rgba(37,99,235,0.15);">
-                    <span class="material-symbols-outlined" style="font-size:38px;color:#2563eb;">science</span>
-                </div>
-
-                <h3 style="margin:0 0 10px;font-size:1.25rem;font-weight:800;color:var(--text-primary);">
-                    배합 / 사용 이력
-                </h3>
-                <p style="margin:0 0 24px;font-size:0.92rem;color:var(--text-muted);max-width:420px;line-height:1.7;">
-                    도장 생산 실적 연동 및 배합 등록 기능이<br>
-                    준비되면 이 화면에서 이력을 관리할 수 있습니다.
-                </p>
-
-                <!-- 진행 단계 -->
-                <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-bottom:28px;">
-                    ${[
-                        { icon:'check_circle', label:'도료 수입검사', done: true },
-                        { icon:'check_circle', label:'도료 창고 관리', done: true },
-                        { icon:'pending',      label:'도장 실적 연동', done: false },
-                        { icon:'pending',      label:'배합 등록',      done: false }
-                    ].map(s => `
-                        <div style="display:flex;align-items:center;gap:6px;padding:7px 14px;
-                                    border-radius:999px;font-size:0.82rem;font-weight:600;
-                                    background:${s.done ? '#dcfce7' : '#f1f5f9'};
-                                    color:${s.done ? '#15803d' : '#94a3b8'};
-                                    border:1px solid ${s.done ? '#86efac' : '#e2e8f0'};">
-                            <span class="material-symbols-outlined" style="font-size:16px;">${s.icon}</span>
-                            ${s.label}
-                        </div>`).join('')}
-                </div>
-
-                <div style="padding:14px 24px;background:rgba(37,99,235,0.05);
-                            border:1px solid rgba(37,99,235,0.2);border-radius:10px;
-                            font-size:0.82rem;color:#1d4ed8;max-width:420px;line-height:1.6;">
-                    <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;margin-right:4px;">info</span>
-                    도장 작업일지에서 배합 데이터가 등록되면<br>이 화면에서 자동으로 이력을 확인할 수 있습니다.
-                </div>
-            </div>
-
-            <div id="pmixPane_formula" style="display:none;"></div>
-            <div id="pmixPane_history" style="display:none;"></div>
+            <div id="pmixTileNav" style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px;"></div>
+            <div id="pmixPane_formula"  style="display:none;"></div>
+            <div id="pmixPane_history"  style="display:none;"></div>
+            <div id="pmixPane_mixhist"  style="display:none;"></div>
             <div id="pmixPane_residual" style="display:none;"></div>
         </div>`;
-
         _curTab = 'history';
+        _renderTileNav('history');
+        renderHistoryTab();
+    }
+
+    function _renderTileNav(activeKey) {
+        const nav = document.getElementById('pmixTileNav');
+        if (!nav) return;
+        nav.innerHTML = _PMIX_TABS.map(tab => {
+            const active = tab.key === activeKey;
+            return `
+            <div onclick="PaintMixModule.switchTab('${tab.key}')"
+                 onmouseenter="this.style.boxShadow='0 6px 20px rgba(0,0,0,0.12)';this.style.transform='translateY(-2px)'"
+                 onmouseleave="this.style.boxShadow='${active ? '0 4px 14px rgba(37,99,235,0.15)' : '0 2px 8px rgba(0,0,0,0.06)'}';this.style.transform=''"
+                 style="cursor:pointer;display:flex;align-items:center;gap:14px;
+                        background:${active ? '#eff6ff' : '#ffffff'};
+                        border:1px solid ${active ? tab.accent : 'var(--border-color)'};
+                        border-left:4px solid ${active ? tab.accent : 'var(--border-color)'};
+                        border-radius:12px;padding:14px 18px;
+                        box-shadow:${active ? '0 4px 14px rgba(37,99,235,0.15)' : '0 2px 8px rgba(0,0,0,0.06)'};
+                        transition:box-shadow 0.2s,transform 0.2s;">
+                <div style="width:42px;height:42px;border-radius:10px;flex-shrink:0;
+                            display:flex;align-items:center;justify-content:center;
+                            background:${active ? tab.accent : '#f1f5f9'};">
+                    <span class="material-symbols-outlined" style="font-size:22px;color:${active ? '#fff' : 'var(--text-muted)'};">${tab.icon}</span>
+                </div>
+                <div style="flex:1;min-width:0;">
+                    <div style="font-size:0.95rem;font-weight:700;color:${active ? tab.accent : 'var(--text-primary)'};">${tab.label}</div>
+                    <div style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${tab.desc}</div>
+                </div>
+                ${active
+                    ? `<span class="material-symbols-outlined" style="color:${tab.accent};flex-shrink:0;font-size:18px;">check_circle</span>`
+                    : `<span class="material-symbols-outlined" style="color:var(--text-muted);flex-shrink:0;">chevron_right</span>`}
+            </div>`;
+        }).join('');
     }
 
     function switchTab(tab) {
         _curTab = tab;
-        ['usage','history','residual'].forEach(t => {
-            const btn  = document.getElementById('pmixTabBtn_' + t);
+        _renderTileNav(tab);
+        /* 모든 pane 숨김 */
+        ['formula','history','mixhist','residual'].forEach(t => {
             const pane = document.getElementById('pmixPane_' + t);
-            if (btn)  btn.className  = 'btn btn-sm ' + (t === tab ? 'btn-primary' : 'btn-outline');
-            if (pane) pane.style.display = t === tab ? '' : 'none';
+            if (pane) pane.style.display = 'none';
         });
-        /* formula pane은 제조관리표준 > 배합기준서에서만 사용 */
-        const fp = document.getElementById('pmixPane_formula');
-        if (fp) fp.style.display = 'none';
-        if (tab === 'usage')    renderUsageTab();
         if (tab === 'history')  renderHistoryTab();
+        if (tab === 'mixhist')  renderMixHistTab();
         if (tab === 'residual') renderResidualTab();
+    }
+
+    /* ── 배합 이력만 별도 탭 ── */
+    function renderMixHistTab() {
+        const pane = document.getElementById('pmixPane_mixhist');
+        if (!pane) return;
+        pane.style.display = '';
+        pane.innerHTML = `
+        <div class="filter-bar" style="flex-wrap:wrap;gap:10px;margin-bottom:14px;">
+            <div class="form-group">
+                <label class="form-label">시작일</label>
+                <input type="date" class="form-input" id="pmixHistStart" value="${UIUtils.monthAgo()}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">종료일</label>
+                <input type="date" class="form-input" id="pmixHistEnd" value="${UIUtils.today()}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">차종</label>
+                <select class="form-select" id="pmixHistCar">
+                    <option value="">전체</option>${_carOptions('')}
+                </select>
+            </div>
+            <div class="form-group" style="align-self:flex-end;">
+                <button class="btn btn-outline" onclick="PaintMixModule.searchMixHist()">
+                    <span class="material-symbols-outlined">search</span> 조회
+                </button>
+            </div>
+        </div>
+        <div class="stat-cards" style="margin-bottom:14px;" id="pmixHistStats"></div>
+        <div class="card">
+            <div class="card-header"><h4><span class="material-symbols-outlined">receipt_long</span> 배합 / 사용 이력</h4></div>
+            <div class="card-body" style="padding:0;">
+                <div class="data-table-wrapper">
+                    <table class="data-table">
+                        <thead><tr>
+                            <th>No</th><th>작업일</th><th>라인</th><th>차종 / 품명</th><th>생산 LOT</th>
+                            <th>사용 도료</th><th style="text-align:right;">총 사용(g)</th><th>작업자</th><th>작업</th>
+                        </tr></thead>
+                        <tbody id="pmixHistBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>`;
+        searchMixHist();
+    }
+
+    function searchMixHist() {
+        const start = document.getElementById('pmixHistStart')?.value || '';
+        const end   = document.getElementById('pmixHistEnd')?.value   || '';
+        const car   = document.getElementById('pmixHistCar')?.value   || '';
+        const mixes = _mixes()
+            .filter(m => (!start || (m.date||'') >= start) && (!end || (m.date||'') <= end))
+            .filter(m => !car || m.carModel === car)
+            .sort((a, b) => (b.date||'').localeCompare(a.date||''));
+
+        const statsEl = document.getElementById('pmixHistStats');
+        if (statsEl) {
+            const totalG = mixes.reduce((s,m) => s + (m.usages||[]).reduce((a,u) => a + (Number(u.usageG)||0), 0), 0);
+            const totalCans = mixes.reduce((s,m) => s + (m.usages||[]).reduce((a,u) => a + (Number(u.warehouseCans)||0), 0), 0);
+            statsEl.innerHTML = `
+                <div class="stat-card blue"><div class="stat-card-value">${mixes.length}</div><div class="stat-card-label">배합 건수</div></div>
+                <div class="stat-card green"><div class="stat-card-value">${UIUtils.formatNumber(totalG)}g</div><div class="stat-card-label">총 사용량</div></div>
+                <div class="stat-card orange"><div class="stat-card-value">${UIUtils.formatNumber(totalCans)}</div><div class="stat-card-label">총 출고 캔</div></div>`;
+        }
+
+        const tbody = document.getElementById('pmixHistBody');
+        if (!tbody) return;
+        if (!mixes.length) {
+            tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:30px;color:var(--text-muted);">배합 기록이 없습니다.</td></tr>`;
+            return;
+        }
+        tbody.innerHTML = mixes.map((m, i) => {
+            const totalG = (m.usages||[]).reduce((s,u) => s + (Number(u.usageG)||0), 0);
+            const summary = (m.usages||[]).map(u => {
+                const parts = [];
+                if (Number(u.usageG) > 0) parts.push(`사용 ${UIUtils.formatNumber(u.usageG)}g`);
+                if (Number(u.warehouseCans) > 0) parts.push(`출고 ${u.warehouseCans}캔`);
+                const residG = (Number(u.warehouseCans)||0) * (Number(u.packUnitKg)||0) * 1000 - (Number(u.usageG)||0);
+                if (residG > 0) parts.push(`<span style="color:#f59e0b;">잔량 ${UIUtils.formatNumber(residG)}g</span>`);
+                return `<span style="font-size:0.78rem;">[${_esc(u.usageType||'-')}] ${_esc(u.paintName||'-')}${parts.length?' ('+parts.join(', ')+')':''}</span>`;
+            }).join('<br>');
+            return `<tr>
+                <td>${mixes.length-i}</td>
+                <td>${_esc(m.date||'-')}</td>
+                <td>${_esc(m.line||'-')}</td>
+                <td><strong>${_esc(m.carModel||'-')}</strong><br><span style="font-size:0.78rem;color:var(--text-muted);">${_esc(m.partName||'-')}</span></td>
+                <td style="font-family:monospace;font-size:0.8rem;">${_esc(m.productionLot||'-')}</td>
+                <td style="font-size:0.8rem;line-height:1.7;">${summary||'-'}</td>
+                <td style="text-align:right;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(totalG)}g</td>
+                <td>${_esc(m.operator||'-')}</td>
+                <td>
+                    <button class="btn btn-sm btn-outline" onclick="PaintMixModule.edit('${_js(m.id)}')">수정</button>
+                    <button class="btn btn-sm btn-danger"  onclick="PaintMixModule.remove('${_js(m.id)}')">삭제</button>
+                </td>
+            </tr>`;
+        }).join('');
     }
 
     /* ══════════════════════════════════════════════════════
@@ -8811,10 +8901,16 @@ var PaintMixModule = (function() {
     function renderHistoryTab() {
         const pane = document.getElementById('pmixPane_history');
         if (!pane) return;
-        _tabButtons('history');
+        pane.style.display = '';
 
         pane.innerHTML = `
-        <div class="filter-bar" style="flex-wrap:wrap;gap:10px;">
+        <div style="padding:10px 14px;background:rgba(37,99,235,0.05);border:1px solid rgba(37,99,235,0.2);
+                    border-radius:8px;margin-bottom:14px;font-size:0.83rem;color:#1d4ed8;line-height:1.6;">
+            <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;margin-right:4px;">info</span>
+            도장 작업 완료 실적을 선택하여 <strong>배합 등록</strong>을 누르면 도료 출고량·사용량·잔량을 기록할 수 있습니다.<br>
+            도료 창고에서 출고 처리가 자동으로 연결됩니다.
+        </div>
+        <div class="filter-bar" style="flex-wrap:wrap;gap:10px;margin-bottom:14px;">
             <div class="form-group">
                 <label class="form-label">시작일</label>
                 <input type="date" class="form-input" id="pmixStart" value="${UIUtils.today()}">
@@ -8835,33 +8931,20 @@ var PaintMixModule = (function() {
                 </button>
             </div>
         </div>
-        <div class="stat-cards" id="pmixStats"></div>
-        <div class="card" style="margin-bottom:16px;">
-            <div class="card-header">
-                <h4><span class="material-symbols-outlined">format_paint</span> 도장 생산실적 연동 대상</h4>
-            </div>
-            <div class="card-body" style="padding:0;">
-                <div class="data-table-wrapper">
-                    <table class="data-table">
-                        <thead><tr>
-                            <th>작업일</th><th>라인</th><th>차종</th><th>품명</th><th>컬러</th><th>생산 LOT</th><th>생산수량</th><th>도료정보</th><th>작업</th>
-                        </tr></thead>
-                        <tbody id="pmixWorkBody"></tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
+        <div class="stat-cards" id="pmixStats" style="margin-bottom:14px;"></div>
         <div class="card">
             <div class="card-header">
-                <h4><span class="material-symbols-outlined">receipt_long</span> 배합/사용 이력</h4>
+                <h4><span class="material-symbols-outlined">format_paint</span> 도장 완료 실적 — 배합 등록 대상</h4>
+                <span style="font-size:0.78rem;color:var(--text-muted);">미등록: 파란 버튼 / 등록완료: 회색 버튼</span>
             </div>
             <div class="card-body" style="padding:0;">
                 <div class="data-table-wrapper">
                     <table class="data-table">
                         <thead><tr>
-                            <th>No</th><th>일자</th><th>라인</th><th>차종/품명</th><th>생산 LOT</th><th>도료 사용</th><th>총 사용량(g)</th><th>작업자</th><th>작업</th>
+                            <th>작업일</th><th>라인</th><th>차종</th><th>품명</th><th>컬러</th>
+                            <th>생산 LOT</th><th style="text-align:right;">생산수량</th><th>도료정보</th><th>배합 등록</th>
                         </tr></thead>
-                        <tbody id="pmixBody"></tbody>
+                        <tbody id="pmixWorkBody"></tbody>
                     </table>
                 </div>
             </div>
@@ -8966,21 +9049,113 @@ var PaintMixModule = (function() {
         }).join('');
     }
 
+    /* ── 배합실 잔량: 배합 기록에서 (출고량 × 포장단위) - 사용량 집계 ── */
+    function _calcMixingRoomResiduals() {
+        const mats  = Storage.getAll(PAINT_MAT_STORE) || [];
+        const mixes = _mixes();
+        const map   = {};  // key: materialId__lotNo
+        mixes.forEach(m => {
+            (m.usages || []).forEach(u => {
+                const matId   = u.materialId || '';
+                const lotNo   = u.prodLot || u.lotNo || '미기입';
+                const key     = `${matId}__${lotNo}`;
+                if (!map[key]) {
+                    const mat = mats.find(x => x.id === matId);
+                    map[key] = {
+                        materialId: matId,
+                        lotNo,
+                        paintName:  u.paintName || (mat ? mat.name : ''),
+                        supplier:   mat ? mat.supplier || '' : '',
+                        packUnit:   Number(u.packUnitKg) || (mat ? Number(mat.packUnit) || 0 : 0),
+                        usageType:  u.usageType || '',
+                        totalWithdrawG: 0,   // 총 출고량 (g 환산)
+                        totalUsedG:     0,   // 총 사용량 (g)
+                        residualG:      0    // 잔량 (g)
+                    };
+                }
+                const cans    = Number(u.warehouseCans) || 0;
+                const packKg  = map[key].packUnit;
+                const withdrawG = cans * packKg * 1000;
+                const usedG   = Number(u.usageG) || 0;
+                map[key].totalWithdrawG += withdrawG;
+                map[key].totalUsedG     += usedG;
+                map[key].residualG      = map[key].totalWithdrawG - map[key].totalUsedG;
+            });
+        });
+        return Object.values(map)
+            .filter(r => r.residualG > 0)
+            .sort((a, b) => (a.paintName||'').localeCompare(b.paintName||'', 'ko'));
+    }
+
     function renderResidualTab() {
         const pane = document.getElementById('pmixPane_residual');
         if (!pane) return;
-        _tabButtons('residual');
+        pane.style.display = '';
+
+        const mixResiduals = _calcMixingRoomResiduals();
+
         pane.innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+            <!-- 배합실 잔량 (배합 기록 기반) -->
+            <div class="card" style="grid-column:span 2;">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">science</span> 배합실 잔량
+                        <span style="font-size:0.78rem;font-weight:400;color:var(--text-muted);margin-left:6px;">도료 출고량 - 실제 사용량 = 배합실 남은 잔량</span>
+                    </h4>
+                    <button class="btn btn-sm btn-outline" onclick="PaintMixModule.renderResidualTab()">
+                        <span class="material-symbols-outlined" style="font-size:16px;">refresh</span>
+                    </button>
+                </div>
+                <div class="card-body" style="padding:0;">
+                    ${mixResiduals.length ? `
+                    <div class="data-table-wrapper">
+                        <table class="data-table" style="font-size:0.85rem;">
+                            <thead><tr>
+                                <th>도료명</th><th>용도</th><th>제조 LOT</th><th>공급사</th>
+                                <th style="text-align:right;">총 출고(g)</th>
+                                <th style="text-align:right;">총 사용(g)</th>
+                                <th style="text-align:right;">잔량(g)</th>
+                                <th style="text-align:right;">잔량(KG)</th>
+                            </tr></thead>
+                            <tbody>
+                                ${mixResiduals.map(r => {
+                                    const residKg = (r.residualG / 1000).toFixed(2);
+                                    const pct = r.totalWithdrawG > 0 ? (r.residualG / r.totalWithdrawG * 100).toFixed(0) : 0;
+                                    const color = Number(pct) > 50 ? '#15803d' : Number(pct) > 20 ? '#b45309' : '#b91c1c';
+                                    return `<tr>
+                                        <td><strong>${_esc(r.paintName||'-')}</strong></td>
+                                        <td>${r.usageType ? `<span class="badge badge-info" style="font-size:0.75rem;">${_esc(r.usageType)}</span>` : '-'}</td>
+                                        <td style="font-family:monospace;font-size:0.8rem;">${_esc(r.lotNo)}</td>
+                                        <td style="font-size:0.8rem;">${_esc(r.supplier||'-')}</td>
+                                        <td style="text-align:right;">${UIUtils.formatNumber(r.totalWithdrawG)}</td>
+                                        <td style="text-align:right;">${UIUtils.formatNumber(r.totalUsedG)}</td>
+                                        <td style="text-align:right;font-weight:700;color:${color};">${UIUtils.formatNumber(r.residualG)}</td>
+                                        <td style="text-align:right;font-weight:700;color:${color};">${residKg}</td>
+                                    </tr>`;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>` : `
+                    <div style="text-align:center;padding:36px;color:var(--text-muted);">
+                        <span class="material-symbols-outlined" style="font-size:32px;display:block;margin-bottom:8px;">inventory_2</span>
+                        배합실에 잔량이 없습니다.<br>
+                        <span style="font-size:0.82rem;">배합 등록 탭에서 도료 사용량을 등록하면 잔량이 자동으로 계산됩니다.</span>
+                    </div>`}
+                </div>
+            </div>
+        </div>
+        <!-- 도료 창고 LOT별 재고 -->
         <div class="card">
             <div class="card-header">
-                <h4><span class="material-symbols-outlined">inventory_2</span> 도료 창고 LOT별 잔량</h4>
+                <h4><span class="material-symbols-outlined">warehouse</span> 도료 창고 LOT별 재고</h4>
             </div>
             <div class="card-body" style="padding:0;">
                 <div class="data-table-wrapper">
                     <table class="data-table" style="font-size:0.85rem;">
                         <thead><tr>
-                            <th>공급사</th><th>도료명</th><th>제조 LOT</th><th>입고 LOT</th>
-                            <th>포장</th><th>창고잔량(KG)</th><th>포장수</th><th>개봉잔량</th><th>상태</th><th>작업</th>
+                            <th>공급사</th><th>도료명</th><th>제조 LOT</th>
+                            <th>포장</th><th style="text-align:right;">창고 재고(KG)</th>
+                            <th>포장수</th><th>개봉잔량</th><th>상태</th>
                         </tr></thead>
                         <tbody id="pmixResidualBody"></tbody>
                     </table>
@@ -9003,7 +9178,7 @@ var PaintMixModule = (function() {
         if (!tbody) return;
         const rows = _paintLotStockRows();
         if (!rows.length) {
-            tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:30px;">잔여 도료 재고가 없습니다.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--text-muted);">잔여 도료 재고가 없습니다.</td></tr>`;
             return;
         }
         tbody.innerHTML = rows.map(r => {
@@ -9014,15 +9189,11 @@ var PaintMixModule = (function() {
                     <td>${_esc(r.supplier || '-')}</td>
                     <td><strong>${_esc(r.paintName || '-')}</strong><div style="font-size:0.75rem;color:var(--text-muted);">${_esc([r.paintType, r.paintSpec].filter(Boolean).join(' · '))}</div></td>
                     <td style="font-family:monospace;">${_esc(r.prodLot || '-')}</td>
-                    <td style="font-family:monospace;color:var(--text-secondary);">${_esc(r.lotNo || '-')}</td>
                     <td>${r.packUnit ? `${UIUtils.formatNumber(r.packUnit)} KG/포` : '-'}</td>
                     <td style="text-align:right;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(r.balance)} KG</td>
                     <td>${p.packText}</td>
                     <td style="text-align:right;">${p.openText}</td>
                     <td>${UIUtils.badge(p.status, badge)}</td>
-                    <td style="white-space:nowrap;">
-                        <button class="btn btn-sm btn-outline" onclick="PaintMixModule.openResidualAdjust('${_js(r.materialId)}','${_js(r.prodLot)}')">잔량 조정</button>
-                    </td>
                 </tr>`;
         }).join('');
     }
@@ -9780,7 +9951,7 @@ var PaintMixModule = (function() {
         renderFormulaTab, filterFormula, onFormulaCarChange, openFormulaModal, saveFormula, removeFormula, exportFormula,
         _addPrimerRow, _delPrimerRow, _addColorRow, _delColorRow,
         _onFormulaModalCarChange, viewControlPlan, showFormulaValidation,
-        renderHistoryTab, renderResidualTab, search,
+        renderHistoryTab, renderResidualTab, renderMixHistTab, search, searchMixHist,
         openFromWork, openManualModal,
         _onLotChange, _onRowCalc,
         renderResidualStock, exportResidualData, openResidualAdjust, saveResidualAdjust,
