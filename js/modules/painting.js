@@ -2299,18 +2299,39 @@ const PaintingInspectionModule = (function() {
                     </div>
                 </div>
 
-                <!-- 탭 네비게이션 -->
-                <div style="display:flex; gap:12px; margin-bottom:20px; border-bottom:2px solid var(--border); flex-wrap:wrap;">
-                    <button class="tab-button ${state.currentTab === 'inspection' ? 'active' : ''}"
-                        onclick="PaintingInspectionModule._switchTab('inspection')"
-                        style="padding:12px 16px; border:none; background:none; cursor:pointer; font-size:1rem; font-weight:500; color:${state.currentTab === 'inspection' ? 'var(--accent-blue)' : 'var(--text-muted)'}; border-bottom:3px solid ${state.currentTab === 'inspection' ? 'var(--accent-blue)' : 'transparent'};">
-                        <span class="material-symbols-outlined" style="vertical-align:middle; font-size:20px;">done_all</span> 외관 검사
-                    </button>
-                    <button class="tab-button ${state.currentTab === 'completion' ? 'active' : ''}"
-                        onclick="PaintingInspectionModule._switchTab('completion')"
-                        style="padding:12px 16px; border:none; background:none; cursor:pointer; font-size:1rem; font-weight:500; color:${state.currentTab === 'completion' ? 'var(--accent-blue)' : 'var(--text-muted)'}; border-bottom:3px solid ${state.currentTab === 'completion' ? 'var(--accent-blue)' : 'transparent'};">
-                        <span class="material-symbols-outlined" style="vertical-align:middle; font-size:20px;">task_alt</span> 검사 완료 실적
-                    </button>
+                <!-- 탭 네비게이션 (타일 카드 스타일) -->
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px;">
+                    ${[
+                        { key: 'inspection', label: '외관 검사', desc: '도장 완료품 외관 검사 진행', icon: 'done_all', accent: 'var(--accent-blue)' },
+                        { key: 'completion', label: '검사 완료 실적', desc: '외관 검사 완료 이력 조회', icon: 'task_alt', accent: '#10b981' }
+                    ].map(tab => {
+                        const active = state.currentTab === tab.key;
+                        return `
+                        <div onclick="PaintingInspectionModule._switchTab('${tab.key}')"
+                             onmouseenter="this.style.boxShadow='0 6px 20px rgba(0,0,0,0.12)';this.style.transform='translateY(-2px)'"
+                             onmouseleave="this.style.boxShadow='${active ? '0 4px 14px rgba(37,99,235,0.15)' : '0 2px 8px rgba(0,0,0,0.06)'}';this.style.transform=''"
+                             style="cursor:pointer;display:flex;align-items:center;gap:14px;
+                                    background:${active ? '#eff6ff' : '#ffffff'};
+                                    border:1px solid ${active ? tab.accent : 'var(--border-color)'};
+                                    border-left:4px solid ${active ? tab.accent : 'var(--border-color)'};
+                                    border-radius:12px;padding:16px 20px;
+                                    box-shadow:${active ? '0 4px 14px rgba(37,99,235,0.15)' : '0 2px 8px rgba(0,0,0,0.06)'};
+                                    transition:box-shadow 0.2s,transform 0.2s;">
+                            <div style="width:44px;height:44px;border-radius:10px;flex-shrink:0;
+                                        display:flex;align-items:center;justify-content:center;
+                                        background:${active ? tab.accent : '#f1f5f9'};">
+                                <span class="material-symbols-outlined"
+                                      style="font-size:24px;color:${active ? '#ffffff' : 'var(--text-muted)'};">${tab.icon}</span>
+                            </div>
+                            <div style="flex:1;min-width:0;">
+                                <div style="font-size:1rem;font-weight:700;color:${active ? tab.accent : 'var(--text-primary)'};">${tab.label}</div>
+                                <div style="font-size:0.8rem;color:var(--text-muted);">${tab.desc}</div>
+                            </div>
+                            ${active
+                                ? `<span class="material-symbols-outlined" style="color:${tab.accent};flex-shrink:0;font-size:20px;">check_circle</span>`
+                                : `<span class="material-symbols-outlined" style="color:var(--text-muted);flex-shrink:0;">chevron_right</span>`}
+                        </div>`;
+                    }).join('')}
                 </div>
 
                 <!-- 탭 컨텐츠 -->
