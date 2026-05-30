@@ -10,7 +10,7 @@ var FiveSModule = (function () {
     const STORE       = DB.STORES.S5_INSPECTIONS;
     const ISSUE_STORE = DB.STORES.S5_ISSUES;
 
-    let _tab = 'inspection';
+    let _tab = 'main';
 
     const _today = () => new Date().toISOString().split('T')[0];
     const _esc   = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -33,6 +33,35 @@ var FiveSModule = (function () {
     ];
 
     const CAT_COLOR = { '3정': '#3b82f6', '5행': '#22c55e', '안전': '#f59e0b', '공정': '#8b5cf6' };
+
+    const MENUS = [
+        { id: 'main', label: '메인', icon: 'dashboard' },
+        { id: 'inspection', label: '점검일지', icon: 'assignment' },
+        { id: 'issue', label: '지적사항', icon: 'report_problem' },
+        { id: 'plan', label: '점검계획', icon: 'calendar_month' },
+        { id: 'assignment', label: '업무 분담', icon: 'groups' },
+        { id: 'standard', label: '3정 5행 관리 기준서', icon: 'rule' }
+    ];
+
+    function _menu(active, title, desc) {
+        return `
+            <div style="margin-bottom:18px;">
+                <div style="margin-bottom:14px;">
+                    <h3 style="margin:0 0 6px;font-size:1.15rem;">${title}</h3>
+                    <p style="margin:0;color:var(--text-muted);font-size:.9rem;">${desc || ''}</p>
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                    ${MENUS.map(m => `
+                        <button type="button" onclick="FiveSModule.switchTab('${m.id}')"
+                            class="btn ${m.id === active ? 'btn-primary' : 'btn-outline'}"
+                            style="display:flex;align-items:center;gap:6px;${m.id === active ? '' : 'background:#fff;'}">
+                            <span class="material-symbols-outlined" style="font-size:18px;">${m.icon}</span>
+                            ${m.label}
+                        </button>
+                    `).join('')}
+                </div>
+            </div>`;
+    }
 
     /* ─── 점수 → 등급 ─────────────────────────────────────────── */
     function _grade(score) {
