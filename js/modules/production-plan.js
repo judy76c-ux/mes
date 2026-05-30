@@ -396,6 +396,15 @@ const ProductionPlanModule = (function() {
         const modal = document.getElementById('modal');
         const header = modal ? modal.querySelector('.modal-header') : null;
         if (!header) return;
+        // 모달 컨테이너 상단 강조선
+        const container = modal.querySelector('.modal-container');
+        if (container) {
+            const isB = line === '도장-B';
+            container.style.borderTop = `4px solid ${isB ? '#f97316' : '#2563eb'}`;
+            container.style.boxShadow = isB
+                ? '0 8px 40px rgba(249,115,22,0.18)'
+                : '0 8px 40px rgba(37,99,235,0.15)';
+        }
         header.classList.add('plan-day-modal-header');
         header.querySelector('.plan-day-line-switch')?.remove();
         const switchEl = document.createElement('div');
@@ -414,10 +423,12 @@ const ProductionPlanModule = (function() {
     }
 
     function _lineGridHTML(suffix, line, color) {
+        const bgTint = line === '도장-B' ? 'rgba(249,115,22,0.04)' : 'rgba(37,99,235,0.04)';
+        const shadowColor = line === '도장-B' ? 'rgba(249,115,22,0.25)' : 'rgba(37,99,235,0.20)';
         return `
-            <div class="card grid-card" style="margin-bottom:8px;">
-                <div class="card-header" style="padding:6px 14px;background:var(--bg-secondary);border-bottom:1px solid var(--border-color);display:flex;justify-content:space-between;align-items:center;">
-                    <h4 style="margin:0;color:${color};"><span class="material-symbols-outlined" style="vertical-align:middle;margin-right:4px;">factory</span>${line}</h4>
+            <div class="card grid-card" style="margin-bottom:8px;border:1.5px solid ${color};border-top:4px solid ${color};box-shadow:0 4px 18px ${shadowColor};">
+                <div class="card-header" style="padding:6px 14px;background:${bgTint};border-bottom:1px solid ${color}33;display:flex;justify-content:space-between;align-items:center;">
+                    <h4 style="margin:0;color:${color};font-weight:800;"><span class="material-symbols-outlined" style="vertical-align:middle;margin-right:4px;">factory</span>${line}</h4>
                     <button class="btn btn-outline btn-sm" onclick="ProductionPlanModule.printWorkOrder('${line}')">
                         <span class="material-symbols-outlined" style="font-size:16px;">print</span> 인쇄
                     </button>
