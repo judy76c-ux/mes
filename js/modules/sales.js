@@ -1022,22 +1022,9 @@ var SalesDeliveryPlanModule = (function() {
 
         container.innerHTML = `
             <div class="fade-in-up sdp-page">
-                ${SalesProcessUI.renderSection('sales-delivery-plan', '납품 계획', '납품 스케쥴, 계획·납품·미납과 공정별 부족 현황을 관리합니다.')}
-                <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-primary" onclick="SalesDeliveryPlanModule.openAddModal()">
-                            <span class="material-symbols-outlined">grid_on</span> 계획 등록
-                        </button>
-                        <button class="btn btn-secondary" onclick="SalesDeliveryPlanModule.openSingleModal()">
-                            <span class="material-symbols-outlined">add</span> 단건 등록
-                        </button>
-                        <button class="btn btn-outline" onclick="SalesDeliveryPlanModule.openExcelUploadModal()">
-                            <span class="material-symbols-outlined">upload_file</span> 엑셀 업로드
-                        </button>
-                    </div>
-                </div>
+                ${SalesProcessUI.renderSection('sales-delivery-plan')}
 
-                <div class="filter-bar" style="flex-wrap:wrap; gap:10px;">
+                <div class="filter-bar" style="flex-wrap:wrap; gap:10px; align-items:flex-end;">
                     <div class="form-group">
                         <label class="form-label">시작일</label>
                         <input type="date" class="form-input" id="sdpStart" value="${start}">
@@ -1067,9 +1054,15 @@ var SalesDeliveryPlanModule = (function() {
                             <span class="material-symbols-outlined">search</span> 조회
                         </button>
                     </div>
+                    <div class="form-group" style="align-self:flex-end;margin-left:auto;display:flex;gap:8px;">
+                        <button class="btn btn-primary" onclick="SalesDeliveryPlanModule.openAddModal()">
+                            <span class="material-symbols-outlined">grid_on</span> 차종별 등록
+                        </button>
+                        <button class="btn btn-outline" onclick="SalesDeliveryPlanModule.openExcelUploadModal()">
+                            <span class="material-symbols-outlined">upload_file</span> 납품등록 (엑셀)
+                        </button>
+                    </div>
                 </div>
-
-                <div class="stat-cards" id="sdpStats"></div>
 
                 <div class="card">
                     <div class="card-header">
@@ -1111,7 +1104,6 @@ var SalesDeliveryPlanModule = (function() {
         const rows = _buildRows(plans, days, start, end);
         _lastRows = rows;
         _lastDays = days;
-        _renderStats(rows);
         _renderTable(rows, days);
     }
 
