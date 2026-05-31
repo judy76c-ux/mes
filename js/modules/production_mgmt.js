@@ -9146,8 +9146,23 @@ var PaintMixModule = (function() {
         </div>
         <!-- 도료 창고 LOT별 재고 -->
         <div class="card">
-            <div class="card-header">
+            <div class="card-header" style="flex-direction:column;align-items:flex-start;gap:10px;">
                 <h4><span class="material-symbols-outlined">warehouse</span> 도료 창고 LOT별 재고</h4>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <div class="form-group" style="margin:0;">
+                        <select class="form-select" id="pmixResidualSupplier" onchange="PaintMixModule.filterResidualStock()"
+                                style="min-width:150px;font-size:0.85rem;">
+                            <option value="">전체 공급사</option>
+                            ${[...new Set((_paintLotStockRows()).map(r => r.supplier).filter(Boolean))].sort()
+                                .map(s => `<option value="${_esc(s)}">${_esc(s)}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <input type="text" class="form-input" id="pmixResidualPaint" placeholder="도료명 검색"
+                               oninput="PaintMixModule.filterResidualStock()"
+                               style="min-width:160px;font-size:0.85rem;">
+                    </div>
+                </div>
             </div>
             <div class="card-body" style="padding:0;">
                 <div class="data-table-wrapper">
@@ -9173,10 +9188,18 @@ var PaintMixModule = (function() {
         Storage.exportToCSV(['공급사','도료명','제조LOT','입고LOT','포장','창고잔량(KG)','포장수','개봉잔량','상태'], rows, '도료잔량현황');
     }
 
-    function renderResidualStock() {
+    function filterResidualStock() {
+        const supplier = (document.getElementById('pmixResidualSupplier')?.value || '').trim();
+        const paint    = (document.getElementById('pmixResidualPaint')?.value   || '').trim().toLowerCase();
+        renderResidualStock(supplier, paint);
+    }
+
+    function renderResidualStock(supplierFilter, paintFilter) {
         const tbody = document.getElementById('pmixResidualBody');
         if (!tbody) return;
-        const rows = _paintLotStockRows();
+        let rows = _paintLotStockRows();
+        if (supplierFilter) rows = rows.filter(r => (r.supplier || '') === supplierFilter);
+        if (paintFilter)    rows = rows.filter(r => (r.paintName || '').toLowerCase().includes(paintFilter));
         if (!rows.length) {
             tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--text-muted);">잔여 도료 재고가 없습니다.</td></tr>`;
             return;
@@ -9954,7 +9977,7 @@ var PaintMixModule = (function() {
         renderHistoryTab, renderResidualTab, renderMixHistTab, search, searchMixHist,
         openFromWork, openManualModal,
         _onLotChange, _onRowCalc,
-        renderResidualStock, exportResidualData, openResidualAdjust, saveResidualAdjust,
+        renderResidualStock, filterResidualStock, exportResidualData, openResidualAdjust, saveResidualAdjust,
         saveNew, edit, saveEdit, remove, exportData,
         renderFormulaAsStandard, renderUsageAsStandard
     };
