@@ -2272,8 +2272,10 @@ const PaintInventoryModule = (function() {
             objects: {
                 settingTemp: { slot: 'controller', x: 77, y: 17, w: 22, h: 13, bg: '#9bbb59', color: '#fff', text: '셋팅온도' },
                 heatButton:  { slot: 'controller', x: 10, y: 78, w: 22, h: 18, bg: '#b0443e', color: '#fff', text: '난방 가동<br>운전/정지' },
-                coolButton:  { slot: 'controller', x: 80, y: 78, w: 24, h: 18, bg: '#3f6fa6', color: '#fff', text: '냉방 가동<br>운전/정지' }
-            }
+                coolButton:  { slot: 'controller', x: 80, y: 78, w: 24, h: 18, bg: '#3f6fa6', color: '#fff', text: '냉방 가동<br>운전/정지' },
+                recordNote:  { slot: 'recordMethod', x: 72, y: 13, w: 26, h: 55, bg: '#9bbb59', color: '#fff', text: '온도계 체크<br>시트에 기록' }
+            },
+            boxes: {}
         };
     }
 
@@ -2293,12 +2295,44 @@ const PaintInventoryModule = (function() {
         };
     }
 
+    function _boxData(data, key) {
+        if (!Object.prototype.hasOwnProperty.call(TEMP_STANDARD_BOX_DEFAULTS, key)) {
+            return { x: 0, y: 0, w: 0, h: 0, deleted: false };
+        }
+        const defaults = TEMP_STANDARD_BOX_DEFAULTS[key];
+        const value = data.boxes && data.boxes[key];
+        const raw = {
+            x: Number(value?.x ?? defaults.x ?? 0),
+            y: Number(value?.y ?? defaults.y ?? 0),
+            w: Number(value?.w ?? defaults.w ?? 0),
+            h: Number(value?.h ?? defaults.h ?? 0)
+        };
+        const invalid = [raw.x, raw.y, raw.w, raw.h].some(v => !Number.isFinite(v))
+            || raw.w > 140 || raw.h > 700 || raw.w < 0 || raw.h < 0
+            || raw.x < -50 || raw.x > 150 || raw.y < -50 || raw.y > 250;
+        return {
+            x: invalid ? Number(defaults.x ?? 0) : raw.x,
+            y: invalid ? Number(defaults.y ?? 0) : raw.y,
+            w: invalid ? Number(defaults.w ?? 0) : raw.w,
+            h: invalid ? Number(defaults.h ?? 0) : raw.h,
+            deleted: !!value?.deleted
+        };
+    }
+
     function _photoImgHtml(photo) {
         return `<img src="${photo.src}" alt="" draggable="false"
                     style="position:absolute;left:${photo.x}%;top:${photo.y}%;width:${photo.scale}%;height:auto;max-width:none;max-height:none;transform:translate(-50%,-50%);display:block;user-select:none;">`;
     }
 
     const TEMP_STANDARD_IMAGE_FALLBACKS = {};
+    const TEMP_STANDARD_BOX_DEFAULTS = {
+        kcRangeBox: { x: 0, y: 0, w: 100, h: 43 },
+        operationTable: { x: 0, y: 0, w: 100, h: 164 },
+        controller: { x: 0, y: 0, w: 100, h: 278 },
+        recordBackground: { x: 0, y: 0, w: 69, h: 185 },
+        thermometer: { x: 3, y: 7, w: 32, h: 72 },
+        checkSheet: { x: 42, y: 42, w: 52, h: 110 }
+    };
 
     function _objectData(data, key) {
         const base = _defaultTemperatureStandard().objects[key] || {};
@@ -2308,43 +2342,167 @@ const PaintInventoryModule = (function() {
     function _standardObjectHtml(key, data) {
         const o = _objectData(data, key);
         if (o.deleted) return '';
-        return `<div class="pts-object" data-pts-object="${key}" data-x="${o.x}" data-y="${o.y}" data-w="${o.w}" data-h="${o.h}"
+        const bg = o.bg ?? 'transparent';
+        const color = o.color ?? '#111827';
+        const z = Number(o.z ?? 4);
+        return `<div class="pts-object" data-pts-object="${key}" data-slot="${o.slot || ''}" data-kind="${o.kind || 'box'}" data-bg="${bg}" data-color="${color}" data-z="${z}" data-x="${o.x}" data-y="${o.y}" data-w="${o.w}" data-h="${o.h}"
                     onmousedown="PaintInventoryModule.startTemperatureStandardObjectDrag(event, '${key}')"
                     onclick="PaintInventoryModule.selectTemperatureStandardObject('${key}');event.stopPropagation();"
-                    style="position:absolute;left:${o.x}%;top:${o.y}%;width:${o.w}%;height:${o.h}%;background:${o.bg};color:${o.color};font-weight:800;text-align:center;display:flex;align-items:center;justify-content:center;line-height:1.25;border:2px solid rgba(15,23,42,.35);z-index:4;user-select:none;">
-                    <span data-pts-object-text="${key}" contenteditable="false">${o.text || ''}</span>
+                    style="position:absolute;left:${o.x}%;top:${o.y}%;width:${o.w}%;height:${o.h}%;background:${bg};color:${color};font-weight:800;text-align:center;display:flex;align-items:center;justify-content:center;line-height:1.25;border:2px solid rgba(15,23,42,.35);z-index:${z};user-select:none;">
+                    <span data-pts-object-text="${key}" contenteditable="false"
+                        ondblclick="PaintInventoryModule.editTemperatureStandardObjectText(event, '${key}')"
+                        style="display:block;width:100%;padding:2px 4px;box-sizing:border-box;">${o.text || ''}</span>
                     <span class="pts-object-resize" onmousedown="PaintInventoryModule.startTemperatureStandardObjectResize(event, '${key}')"></span>
                 </div>`;
+    }
+
+    function _standardObjectsHtml(slot, data, keys = []) {
+        const rendered = new Set(keys);
+        let html = keys.map(key => _standardObjectHtml(key, data)).join('');
+        Object.entries(data.objects || {}).forEach(([key, object]) => {
+            if (rendered.has(key) || object.slot !== slot) return;
+            html += _standardObjectHtml(key, data);
+        });
+        return html;
     }
 
     function _photoSlot(key, data, fallbackHtml, style = '', overlayHtml = '') {
         TEMP_STANDARD_IMAGE_FALLBACKS[key] = fallbackHtml;
         const photo = _photoData(data, key);
+        const box = _boxData(data, key);
+        if (box.deleted) return '';
+        const boxStyle = `${box.x || box.y ? `left:${box.x}%;top:${box.y}%;` : ''}${box.w ? `width:${box.w}%;` : ''}${box.h ? `height:${box.h}px;` : ''}`;
+        const position = (box.x || box.y || box.w || box.h) ? 'absolute' : 'relative';
         return `<div class="pts-photo-slot" data-pts-image="${key}" tabindex="0"
                     data-x="${photo ? photo.x : 50}" data-y="${photo ? photo.y : 50}" data-scale="${photo ? photo.scale : 100}"
-                    onclick="PaintInventoryModule.selectTemperatureStandardImage('${key}')"
+                    data-box-x="${box.x}" data-box-y="${box.y}" data-box-w="${box.w}" data-box-h="${box.h}" data-box-key="${Object.prototype.hasOwnProperty.call(TEMP_STANDARD_BOX_DEFAULTS, key) ? 'true' : 'false'}"
+                    onclick="PaintInventoryModule.selectTemperatureStandardImage('${key}', event)"
                     onmousedown="PaintInventoryModule.startTemperatureStandardImageDrag(event, '${key}')"
                     onpaste="PaintInventoryModule.pasteTemperatureStandardImage(event, '${key}')"
-                    style="${style};position:relative;outline:none;overflow:hidden;">
+                    style="${style};${boxStyle};position:${position};outline:none;overflow:hidden;">
                     ${photo
                         ? _photoImgHtml(photo)
                         : `<div class="pts-photo-fallback" style="width:100%;height:100%;">${fallbackHtml}</div>`}
                     ${overlayHtml}
-                    <div class="pts-image-tools" onmousedown="event.stopPropagation();" onclick="event.stopPropagation();">
-                        <button type="button" data-pts-action="up" title="위로">↑</button>
-                        <button type="button" data-pts-action="down" title="아래로">↓</button>
-                        <button type="button" data-pts-action="left" title="왼쪽">←</button>
-                        <button type="button" data-pts-action="right" title="오른쪽">→</button>
-                        <button type="button" data-pts-action="smaller" title="축소">−</button>
-                        <button type="button" data-pts-action="larger" title="확대">＋</button>
-                        <button type="button" data-pts-action="fit" title="맞춤">맞춤</button>
-                        <button type="button" data-pts-action="delete" title="삭제">삭제</button>
-                    </div>
                     <span class="pts-resize-handle pts-resize-nw" data-pts-resize="nw" title="크기 조절"></span>
                     <span class="pts-resize-handle pts-resize-ne" data-pts-resize="ne" title="크기 조절"></span>
                     <span class="pts-resize-handle pts-resize-sw" data-pts-resize="sw" title="크기 조절"></span>
                     <span class="pts-resize-handle pts-resize-se" data-pts-resize="se" title="크기 조절"></span>
                 </div>`;
+    }
+
+    function _prepareTemperatureStandardLayout(data) {
+        const doc = document.getElementById('paintTempStandardDoc');
+        if (!doc) return;
+        const table = doc.querySelector('table');
+        if (!table || table.closest('[data-pts-image="operationTable"]')) return;
+
+        const box = _boxData(data, 'operationTable');
+        if (box.deleted) {
+            table.remove();
+            return;
+        }
+
+        const surface = document.createElement('div');
+        surface.dataset.ptsSurface = 'operationCriteria';
+        surface.style.cssText = `position:relative;min-height:${Math.max(180, box.h + 18)}px;margin-top:6px;`;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'pts-photo-slot';
+        wrapper.tabIndex = 0;
+        wrapper.dataset.ptsImage = 'operationTable';
+        wrapper.dataset.x = '50';
+        wrapper.dataset.y = '50';
+        wrapper.dataset.scale = '100';
+        wrapper.dataset.boxX = String(box.x);
+        wrapper.dataset.boxY = String(box.y);
+        wrapper.dataset.boxW = String(box.w);
+        wrapper.dataset.boxH = String(box.h);
+        wrapper.dataset.boxKey = 'true';
+        wrapper.setAttribute('onclick', "PaintInventoryModule.selectTemperatureStandardImage('operationTable', event)");
+        wrapper.setAttribute('onmousedown', "PaintInventoryModule.startTemperatureStandardImageDrag(event, 'operationTable')");
+        wrapper.setAttribute('onpaste', "PaintInventoryModule.pasteTemperatureStandardImage(event, 'operationTable')");
+        wrapper.style.cssText = `position:absolute;left:${box.x}%;top:${box.y}%;width:${box.w}%;height:${box.h}px;background:#fff;z-index:2;outline:none;overflow:hidden;`;
+
+        table.parentNode.insertBefore(surface, table);
+        surface.appendChild(wrapper);
+        wrapper.appendChild(table);
+        table.style.marginTop = '0';
+        wrapper.insertAdjacentHTML('beforeend', `${_standardObjectsHtml('operationTable', data)}
+            <span class="pts-resize-handle pts-resize-nw" data-pts-resize="nw" title="크기 조절"></span>
+            <span class="pts-resize-handle pts-resize-ne" data-pts-resize="ne" title="크기 조절"></span>
+            <span class="pts-resize-handle pts-resize-sw" data-pts-resize="sw" title="크기 조절"></span>
+            <span class="pts-resize-handle pts-resize-se" data-pts-resize="se" title="크기 조절"></span>`);
+    }
+
+    function _temperatureStandardState() {
+        const doc = document.getElementById('paintTempStandardDoc');
+        if (!doc) return null;
+        return {
+            html: doc.innerHTML,
+            deletedBoxes: doc.dataset.deletedBoxes || '',
+            deletedObjects: doc.dataset.deletedObjects || ''
+        };
+    }
+
+    function _restoreTemperatureStandardState(state) {
+        const doc = document.getElementById('paintTempStandardDoc');
+        if (!doc || !state) return;
+        window._paintTempStandardRestoring = true;
+        doc.innerHTML = state.html;
+        doc.dataset.deletedBoxes = state.deletedBoxes || '';
+        doc.dataset.deletedObjects = state.deletedObjects || '';
+        doc.querySelectorAll('[data-pts-field]').forEach(el => {
+            el.contentEditable = doc.dataset.editing === 'true' ? 'true' : 'false';
+        });
+        doc.querySelectorAll('[data-pts-object-text]').forEach(el => {
+            el.contentEditable = 'false';
+        });
+        const selectedObject = doc.querySelector('[data-pts-object].pts-selected');
+        const selectedImage = doc.querySelector('[data-pts-image].pts-selected');
+        window._paintTempStandardSelectedObject = selectedObject ? selectedObject.dataset.ptsObject : '';
+        window._paintTempStandardSelectedImage = selectedImage ? selectedImage.dataset.ptsImage : '';
+        window._paintTempStandardSelectedType = selectedObject ? 'object' : (selectedImage ? 'image' : '');
+        window._paintTempStandardRestoring = false;
+    }
+
+    function _initTemperatureStandardHistory() {
+        const state = _temperatureStandardState();
+        window._paintTempStandardHistory = state ? [state] : [];
+        window._paintTempStandardHistoryIndex = state ? 0 : -1;
+    }
+
+    function _commitTemperatureStandardHistory() {
+        if (window._paintTempStandardRestoring) return;
+        const state = _temperatureStandardState();
+        if (!state) return;
+        const stack = window._paintTempStandardHistory || [];
+        let index = Number(window._paintTempStandardHistoryIndex ?? -1);
+        const prev = stack[index];
+        if (prev && prev.html === state.html && prev.deletedBoxes === state.deletedBoxes && prev.deletedObjects === state.deletedObjects) return;
+        const nextStack = stack.slice(0, index + 1);
+        nextStack.push(state);
+        while (nextStack.length > 60) nextStack.shift();
+        window._paintTempStandardHistory = nextStack;
+        window._paintTempStandardHistoryIndex = nextStack.length - 1;
+    }
+
+    function undoTemperatureStandardEdit() {
+        const stack = window._paintTempStandardHistory || [];
+        let index = Number(window._paintTempStandardHistoryIndex ?? -1);
+        if (index <= 0) return;
+        index -= 1;
+        window._paintTempStandardHistoryIndex = index;
+        _restoreTemperatureStandardState(stack[index]);
+    }
+
+    function redoTemperatureStandardEdit() {
+        const stack = window._paintTempStandardHistory || [];
+        let index = Number(window._paintTempStandardHistoryIndex ?? -1);
+        if (index < 0 || index >= stack.length - 1) return;
+        index += 1;
+        window._paintTempStandardHistoryIndex = index;
+        _restoreTemperatureStandardState(stack[index]);
     }
 
     async function _loadTemperatureStandard() {
@@ -2358,6 +2516,12 @@ const PaintInventoryModule = (function() {
 
     async function openTemperatureStandard() {
         const data = await _loadTemperatureStandard();
+        const deletedBoxes = Object.keys(TEMP_STANDARD_BOX_DEFAULTS)
+            .filter(key => data.boxes && data.boxes[key] && data.boxes[key].deleted)
+            .join(',');
+        const deletedObjects = Object.keys(_defaultTemperatureStandard().objects)
+            .filter(key => data.objects && data.objects[key] && data.objects[key].deleted)
+            .join(',');
         UIUtils.showModal('도료 보관창고 온도관리 기준서', `
             <style>
                 #paintTempStandardDoc [contenteditable="true"] {
@@ -2385,30 +2549,6 @@ const PaintInventoryModule = (function() {
                     border-radius: 4px;
                     pointer-events: none;
                 }
-                #paintTempStandardDoc .pts-image-tools {
-                    display: none;
-                    position: absolute;
-                    z-index: 5;
-                    right: 6px;
-                    top: 6px;
-                    gap: 3px;
-                    flex-wrap: wrap;
-                    justify-content: flex-end;
-                    max-width: 190px;
-                }
-                #paintTempStandardDoc .pts-photo-slot.pts-editing.pts-selected .pts-image-tools {
-                    display: flex;
-                }
-                #paintTempStandardDoc .pts-image-tools button {
-                    border: 1px solid #94a3b8;
-                    background: rgba(255,255,255,.92);
-                    color: #0f172a;
-                    border-radius: 4px;
-                    padding: 2px 6px;
-                    font-size: 11px;
-                    line-height: 1.3;
-                    cursor: pointer;
-                }
                 #paintTempStandardDoc .pts-resize-handle {
                     display: none;
                     position: absolute;
@@ -2427,9 +2567,36 @@ const PaintInventoryModule = (function() {
                 #paintTempStandardDoc .pts-resize-ne { right: 6px; top: 6px; cursor: nesw-resize; }
                 #paintTempStandardDoc .pts-resize-sw { left: 6px; bottom: 6px; cursor: nesw-resize; }
                 #paintTempStandardDoc .pts-resize-se { right: 6px; bottom: 6px; cursor: nwse-resize; }
+                #paintTempStandardDoc .pts-object.pts-selected {
+                    outline: 3px solid #ef4444;
+                    outline-offset: 2px;
+                }
+                #paintTempStandardDoc .pts-object {
+                    cursor: move;
+                }
+                #paintTempStandardDoc .pts-object [contenteditable="true"] {
+                    cursor: text;
+                    user-select: text;
+                }
+                #paintTempStandardDoc .pts-object-resize {
+                    display: none;
+                    position: absolute;
+                    right: -7px;
+                    bottom: -7px;
+                    width: 13px;
+                    height: 13px;
+                    border-radius: 50%;
+                    background: #ef4444;
+                    border: 2px solid #fff;
+                    cursor: nwse-resize;
+                    box-shadow: 0 1px 4px rgba(15,23,42,.35);
+                }
+                #paintTempStandardDoc .pts-object.pts-selected .pts-object-resize {
+                    display: block;
+                }
             </style>
             <div style="border:2px solid #1d4ed8;background:#fff;color:#111827;font-family:Inter,'Malgun Gothic',sans-serif;">
-                <div id="paintTempStandardDoc" style="background:#fff;">
+                <div id="paintTempStandardDoc" data-deleted-boxes="${deletedBoxes}" data-deleted-objects="${deletedObjects}" style="background:#fff;">
                 <div style="display:grid;grid-template-columns:235px 1fr 250px;border-bottom:1px solid #111827;">
                     <div style="border-right:1px solid #111827;">
                         <div style="display:grid;grid-template-columns:82px 1fr;border-bottom:1px solid #111827;">
@@ -2501,32 +2668,36 @@ const PaintInventoryModule = (function() {
                             </tbody>
                         </table>
                         <div style="margin-top:28px;font-weight:800;">■ 기록 방법</div>
-                        <div style="display:grid;grid-template-columns:1fr 150px;gap:14px;margin-top:10px;align-items:center;">
-                            <div style="border:1px solid #d1d5db;padding:12px;background:#f8fafc;min-height:145px;">
-                                ${_photoSlot('thermometer', data, `<div style="display:inline-block;border:3px dashed #facc15;border-radius:10px;padding:10px 18px;font-size:28px;font-weight:800;color:#64748b;background:#fff;">${data.recordBox}</div>`, 'min-height:64px')}
-                                ${_photoSlot('checkSheet', data, `<div style="border:1px solid #111827;background:#fff;height:70px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#475569;">${data.sheetLabel}</div>`, 'margin-top:14px;height:70px')}
-                            </div>
-                            <div style="background:#9bbb59;color:#fff;font-weight:800;text-align:center;padding:18px 10px;border:2px solid #111827;font-size:16px;line-height:1.45;">${_editableField('recordNote', data)}</div>
+                        <div data-pts-surface="recordMethod" class="pts-object-surface"
+                            style="position:relative;min-height:220px;margin-top:10px;border:1px solid transparent;">
+                            ${_photoSlot('recordBackground', data, '', 'background:#f8fafc;border:1px solid #d1d5db;box-sizing:border-box;z-index:1;')}
+                            ${_photoSlot('thermometer', data, `<div style="display:inline-block;border:3px dashed #facc15;border-radius:10px;padding:10px 18px;font-size:28px;font-weight:800;color:#64748b;background:#fff;">${data.recordBox}</div>`, 'z-index:2;')}
+                            ${_photoSlot('checkSheet', data, `<div style="border:1px solid #111827;background:#fff;height:100%;display:flex;align-items:center;justify-content:center;font-size:12px;color:#475569;box-sizing:border-box;">${data.sheetLabel}</div>`, 'z-index:2;')}
+                            ${_standardObjectsHtml('recordMethod', data, ['recordNote'])}
                         </div>
                     </section>
 
                     <section style="padding:8px 10px 16px;">
-                        <div style="background:#d9d9d9;padding:7px 8px;font-size:20px;color:#ff0000;">
-                            <span style="font-weight:900;">■</span>
-                            ${_editableField('kcRange', data, 'margin-left:8px;')}
+                        <div data-pts-surface="kcRangeSurface" style="position:relative;min-height:52px;">
+                            ${_photoSlot('kcRangeBox', data, `
+                                <div style="background:#d9d9d9;padding:7px 8px;font-size:20px;color:#ff0000;box-sizing:border-box;height:100%;display:flex;align-items:center;">
+                                    <span style="font-weight:900;">■</span>
+                                    ${_editableField('kcRange', data, 'margin-left:8px;')}
+                                </div>
+                            `, 'z-index:2;')}
                         </div>
                         <div style="margin-top:28px;font-weight:800;">■ 냉난방기 작동 방법</div>
-                        ${_photoSlot('controller', data, `
-                        <div style="position:relative;background:#e5e7eb;border:1px solid #cbd5e1;height:278px;overflow:hidden;">
-                            <div style="position:absolute;left:72px;right:130px;top:36px;height:72px;background:#1f2937;border-radius:45px 45px 16px 16px;box-shadow:inset 0 0 0 10px #64748b;"></div>
-                            <div style="position:absolute;left:205px;top:55px;background:#0f172a;color:#7cff00;font-size:34px;font-family:monospace;padding:8px 30px;border-radius:4px;">16</div>
-                            <div style="position:absolute;right:18px;top:26px;background:#9bbb59;color:#fff;font-weight:800;padding:12px 24px;">${data.settingTemp}</div>
-                            <div style="position:absolute;left:18px;bottom:18px;background:#b0443e;color:#fff;font-weight:800;text-align:center;padding:12px 18px;border:2px solid #8b2d2a;">${data.heatButton}</div>
-                            <div style="position:absolute;right:8px;bottom:18px;background:#3f6fa6;color:#fff;font-weight:800;text-align:center;padding:12px 18px;border:2px solid #2e5c8d;">${data.coolButton}</div>
-                            <div style="position:absolute;left:160px;right:160px;top:130px;height:52px;background:#cbd5e1;border-radius:26px;"></div>
-                            <div style="position:absolute;left:230px;top:143px;width:34px;height:22px;background:#94a3b8;border-radius:50%;"></div>
-                            <div style="position:absolute;left:278px;top:143px;width:50px;height:22px;background:#94a3b8;border-radius:50%;"></div>
-                        </div>`, 'margin-top:12px;height:278px')}
+                        <div data-pts-surface="controllerSurface" style="position:relative;min-height:300px;margin-top:12px;">
+                            ${_photoSlot('controller', data, `
+                            <div style="position:relative;background:#e5e7eb;border:1px solid #cbd5e1;height:100%;overflow:hidden;box-sizing:border-box;">
+                                <div style="position:absolute;left:72px;right:130px;top:36px;height:72px;background:#1f2937;border-radius:45px 45px 16px 16px;box-shadow:inset 0 0 0 10px #64748b;"></div>
+                                <div style="position:absolute;left:205px;top:55px;background:#0f172a;color:#7cff00;font-size:34px;font-family:monospace;padding:8px 30px;border-radius:4px;">16</div>
+                                <div style="position:absolute;left:160px;right:160px;top:130px;height:52px;background:#cbd5e1;border-radius:26px;"></div>
+                                <div style="position:absolute;left:230px;top:143px;width:34px;height:22px;background:#94a3b8;border-radius:50%;"></div>
+                                <div style="position:absolute;left:278px;top:143px;width:50px;height:22px;background:#94a3b8;border-radius:50%;"></div>
+                            </div>`, 'z-index:1;',
+                            `${_standardObjectsHtml('controller', data, ['settingTemp', 'heatButton', 'coolButton'])}`)}
+                        </div>
                         <ol style="margin:28px 0 0 18px;padding:0;font-size:16px;line-height:1.65;">
                             <li>${_editableField('step1', data)}</li>
                             <li><span style="color:#c2410c;">${_editableField('step2Heat', data)}</span><br>
@@ -2539,11 +2710,20 @@ const PaintInventoryModule = (function() {
             </div>
         `, `
             <button class="btn btn-outline" onclick="PaintInventoryModule.setTemperatureStandardEdit(true)">편집</button>
+            <button class="btn btn-outline" onclick="PaintInventoryModule.undoTemperatureStandardEdit()">되돌리기</button>
+            <button class="btn btn-outline" onclick="PaintInventoryModule.redoTemperatureStandardEdit()">다시실행</button>
+            <button class="btn btn-outline" onclick="PaintInventoryModule.addTemperatureStandardObject('text')">텍스트</button>
+            <button class="btn btn-outline" onclick="PaintInventoryModule.addTemperatureStandardObject('box')">사각형</button>
+            <button class="btn btn-outline" onclick="PaintInventoryModule.duplicateTemperatureStandardObject()">복제</button>
+            <button class="btn btn-outline" onclick="PaintInventoryModule.arrangeTemperatureStandardObject('front')">앞으로</button>
+            <button class="btn btn-outline" onclick="PaintInventoryModule.arrangeTemperatureStandardObject('back')">뒤로</button>
             <button class="btn btn-primary" onclick="PaintInventoryModule.saveTemperatureStandard()">저장</button>
             <button class="btn btn-outline" onclick="PaintInventoryModule.resetTemperatureStandard()">기본값 복원</button>
             <button class="btn btn-secondary" onclick="PaintInventoryModule.printTemperatureStandard()">인쇄</button>
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
         `, 'xl');
+        _prepareTemperatureStandardLayout(data);
+        _initTemperatureStandardHistory();
     }
 
     function setTemperatureStandardEdit(enabled) {
@@ -2555,36 +2735,114 @@ const PaintInventoryModule = (function() {
         doc.querySelectorAll('[data-pts-image]').forEach(el => {
             el.classList.toggle('pts-editing', !!enabled);
         });
+        doc.dataset.editing = enabled ? 'true' : 'false';
         if (window._paintTempStandardPasteHandler) {
             document.removeEventListener('paste', window._paintTempStandardPasteHandler, true);
             window._paintTempStandardPasteHandler = null;
+        }
+        if (window._paintTempStandardKeyHandler) {
+            document.removeEventListener('keydown', window._paintTempStandardKeyHandler, true);
+            window._paintTempStandardKeyHandler = null;
+        }
+        if (window._paintTempStandardPointerHandler) {
+            doc.removeEventListener('mousedown', window._paintTempStandardPointerHandler, true);
+            window._paintTempStandardPointerHandler = null;
+        }
+        if (window._paintTempStandardClickHandler) {
+            doc.removeEventListener('click', window._paintTempStandardClickHandler, true);
+            window._paintTempStandardClickHandler = null;
         }
         if (window._paintTempStandardToolHandler) {
             doc.removeEventListener('click', window._paintTempStandardToolHandler, true);
             window._paintTempStandardToolHandler = null;
         }
         if (enabled) {
+            doc.querySelectorAll('[data-pts-object-text]').forEach(el => {
+                el.contentEditable = 'false';
+            });
             window._paintTempStandardPasteHandler = (event) => pasteTemperatureStandardImage(event);
             document.addEventListener('paste', window._paintTempStandardPasteHandler, true);
-            window._paintTempStandardToolHandler = (event) => {
-                const btn = event.target.closest('[data-pts-action]');
-                if (!btn) return;
-                const slot = btn.closest('[data-pts-image]');
-                if (!slot) return;
+            window._paintTempStandardKeyHandler = (event) => {
+                const key = event.key.toLowerCase();
+                const active = document.activeElement;
+                if ((event.ctrlKey || event.metaKey) && !active?.isContentEditable) {
+                    if (key === 'z') {
+                        event.preventDefault();
+                        if (event.shiftKey) redoTemperatureStandardEdit();
+                        else undoTemperatureStandardEdit();
+                        return;
+                    }
+                    if (key === 'y') {
+                        event.preventDefault();
+                        redoTemperatureStandardEdit();
+                        return;
+                    }
+                }
+                if (!['Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+                if (active && active.isContentEditable) return;
                 event.preventDefault();
-                event.stopPropagation();
-                adjustTemperatureStandardImage(slot.dataset.ptsImage, btn.dataset.ptsAction);
+                if (event.key === 'Delete') deleteSelectedTemperatureStandardObject();
+                else nudgeSelectedTemperatureStandardObject(event.key, event.ctrlKey, event.altKey);
             };
-            doc.addEventListener('click', window._paintTempStandardToolHandler, true);
+            document.addEventListener('keydown', window._paintTempStandardKeyHandler, true);
+            window._paintTempStandardPointerHandler = (event) => {
+                const editable = event.target.closest('[contenteditable="true"]');
+                if (editable) return;
+
+                const objectEl = event.target.closest('[data-pts-object]');
+                if (objectEl) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (event.target.closest('.pts-object-resize')) {
+                        startTemperatureStandardObjectResize(event, objectEl.dataset.ptsObject);
+                    } else {
+                        startTemperatureStandardObjectDrag(event, objectEl.dataset.ptsObject);
+                    }
+                    return;
+                }
+
+                const imageEl = event.target.closest('[data-pts-image]');
+                if (imageEl) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    startTemperatureStandardImageDrag(event, imageEl.dataset.ptsImage);
+                }
+            };
+            doc.addEventListener('mousedown', window._paintTempStandardPointerHandler, true);
+            window._paintTempStandardClickHandler = (event) => {
+                const editable = event.target.closest('[contenteditable="true"]');
+                if (editable) return;
+
+                const objectEl = event.target.closest('[data-pts-object]');
+                if (objectEl) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    selectTemperatureStandardObject(objectEl.dataset.ptsObject);
+                    return;
+                }
+
+                const imageEl = event.target.closest('[data-pts-image]');
+                if (imageEl) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    selectTemperatureStandardImage(imageEl.dataset.ptsImage);
+                }
+            };
+            doc.addEventListener('click', window._paintTempStandardClickHandler, true);
             const firstSlot = doc.querySelector('[data-pts-image]');
             if (firstSlot && !doc.querySelector('.pts-photo-slot.pts-selected')) {
                 selectTemperatureStandardImage(firstSlot.dataset.ptsImage);
             }
+            _initTemperatureStandardHistory();
         } else {
+            doc.querySelectorAll('[data-pts-object-text]').forEach(el => {
+                el.contentEditable = 'false';
+            });
             doc.querySelectorAll('.pts-selected').forEach(el => el.classList.remove('pts-selected'));
             window._paintTempStandardSelectedImage = '';
+            window._paintTempStandardSelectedObject = '';
         }
-        UIUtils.toast(enabled ? '편집 모드입니다. 사진 칸을 선택한 뒤 Ctrl+V로 스크린샷을 붙여넣으세요. 선택한 이미지는 화살표/확대/축소로 조정할 수 있습니다.' : '편집 모드를 종료했습니다.', 'info');
+        UIUtils.toast(enabled ? '편집 모드입니다. 사각 객체는 클릭으로 선택하고 더블클릭으로 글자를 수정합니다. Delete는 선택 객체 삭제, Ctrl/Alt+방향키는 이동/크기 조절입니다.' : '편집 모드를 종료했습니다.', 'info');
     }
 
     function _collectTemperatureStandard() {
@@ -2605,6 +2863,45 @@ const PaintInventoryModule = (function() {
                     scale: Number(el.dataset.scale || 100)
                 };
             }
+        });
+        data.boxes = {};
+        const deletedBoxes = new Set((doc.dataset.deletedBoxes || '').split(',').filter(Boolean));
+        Object.keys(TEMP_STANDARD_BOX_DEFAULTS).forEach(key => {
+            if (deletedBoxes.has(key)) {
+                data.boxes[key] = { ..._boxData(data, key), deleted: true };
+                return;
+            }
+            const el = doc.querySelector(`[data-pts-image="${key}"]`);
+            if (!el) return;
+            data.boxes[key] = {
+                x: Number(el.dataset.boxX || 0),
+                y: Number(el.dataset.boxY || 0),
+                w: Number(el.dataset.boxW || 0),
+                h: Number(el.dataset.boxH || 0),
+                deleted: false
+            };
+        });
+        data.objects = {};
+        const deletedObjects = (doc.dataset.deletedObjects || '').split(',').filter(Boolean);
+        deletedObjects.forEach(key => {
+            data.objects[key] = { ..._objectData(data, key), deleted: true };
+        });
+        doc.querySelectorAll('[data-pts-object]').forEach(el => {
+            const key = el.dataset.ptsObject;
+            const base = _objectData(data, key);
+            data.objects[key] = {
+                ...base,
+                slot: el.dataset.slot || base.slot || '',
+                kind: el.dataset.kind || base.kind || 'box',
+                bg: el.dataset.bg || base.bg || 'transparent',
+                color: el.dataset.color || base.color || '#111827',
+                z: Number(el.dataset.z || base.z || 4),
+                x: Number(el.dataset.x || base.x || 50),
+                y: Number(el.dataset.y || base.y || 50),
+                w: Number(el.dataset.w || base.w || 20),
+                h: Number(el.dataset.h || base.h || 12),
+                text: (el.querySelector('[data-pts-object-text]') || el).innerHTML.trim()
+            };
         });
         return data;
     }
@@ -2633,15 +2930,297 @@ const PaintInventoryModule = (function() {
         });
     }
 
-    function selectTemperatureStandardImage(slotKey) {
+    function selectTemperatureStandardImage(slotKey, event = null) {
+        if (event && event.target.closest('[data-pts-object]')) {
+            event.stopPropagation();
+            return;
+        }
         const doc = document.getElementById('paintTempStandardDoc');
         if (!doc) return;
-        doc.querySelectorAll('.pts-photo-slot').forEach(el => el.classList.remove('pts-selected'));
+        doc.querySelectorAll('.pts-selected').forEach(el => el.classList.remove('pts-selected'));
         const target = doc.querySelector(`[data-pts-image="${slotKey}"]`);
         if (!target) return;
         target.classList.add('pts-selected');
         target.focus();
         window._paintTempStandardSelectedImage = slotKey;
+        window._paintTempStandardSelectedObject = '';
+        window._paintTempStandardSelectedType = 'image';
+    }
+
+    function selectTemperatureStandardObject(objectKey) {
+        const doc = document.getElementById('paintTempStandardDoc');
+        if (!doc) return;
+        doc.querySelectorAll('[data-pts-object-text][contenteditable="true"]').forEach(el => {
+            el.contentEditable = 'false';
+        });
+        doc.querySelectorAll('.pts-selected').forEach(el => el.classList.remove('pts-selected'));
+        const target = doc.querySelector(`[data-pts-object="${objectKey}"]`);
+        if (!target) return;
+        target.classList.add('pts-selected');
+        const slot = target.closest('[data-pts-image]');
+        window._paintTempStandardSelectedImage = slot ? slot.dataset.ptsImage : '';
+        window._paintTempStandardSelectedObject = objectKey;
+        window._paintTempStandardSelectedType = 'object';
+    }
+
+    function editTemperatureStandardObjectText(event, objectKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        selectTemperatureStandardObject(objectKey);
+        const textEl = document.querySelector(`[data-pts-object-text="${objectKey}"]`);
+        if (!textEl) return;
+        textEl.contentEditable = 'true';
+        textEl.focus();
+        const range = document.createRange();
+        range.selectNodeContents(textEl);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        textEl.addEventListener('blur', () => {
+            textEl.contentEditable = 'false';
+            _commitTemperatureStandardHistory();
+        }, { once: true });
+    }
+
+    function _setObjectGeometry(target, x, y, w, h) {
+        target.dataset.x = String(x);
+        target.dataset.y = String(y);
+        target.dataset.w = String(w);
+        target.dataset.h = String(h);
+        target.style.left = `${x}%`;
+        target.style.top = `${y}%`;
+        target.style.width = `${w}%`;
+        target.style.height = `${h}%`;
+    }
+
+    function _setBoxGeometry(target, x, y, w, h) {
+        target.dataset.boxX = String(x);
+        target.dataset.boxY = String(y);
+        target.dataset.boxW = String(w);
+        target.dataset.boxH = String(h);
+        target.style.left = `${x}%`;
+        target.style.top = `${y}%`;
+        if (w > 0) target.style.width = `${w}%`;
+        if (h > 0) target.style.height = `${h}px`;
+    }
+
+    function nudgeSelectedTemperatureStandardObject(key, ctrlKey, altKey) {
+        const step = ctrlKey ? 1 : 3;
+        const resize = !!altKey;
+        const dir = {
+            ArrowLeft: [-step, 0],
+            ArrowRight: [step, 0],
+            ArrowUp: [0, -step],
+            ArrowDown: [0, step]
+        }[key];
+        if (!dir) return;
+
+        const objectKey = window._paintTempStandardSelectedObject;
+        if (objectKey) {
+            const target = document.querySelector(`[data-pts-object="${objectKey}"]`);
+            if (!target) return;
+            const x = Number(target.dataset.x || 50);
+            const y = Number(target.dataset.y || 50);
+            const w = Number(target.dataset.w || 20);
+            const h = Number(target.dataset.h || 12);
+            if (resize) _setObjectGeometry(target, x, y, Math.max(6, w + dir[0]), Math.max(5, h + dir[1]));
+            else _setObjectGeometry(target, x + dir[0], y + dir[1], w, h);
+            _commitTemperatureStandardHistory();
+            return;
+        }
+
+        const imageKey = window._paintTempStandardSelectedImage;
+        const target = imageKey ? document.querySelector(`[data-pts-image="${imageKey}"]`) : null;
+        if (!target) return;
+        const isBoxSlot = target.dataset.boxKey === 'true';
+        const img = target.querySelector('img');
+        if (img && !isBoxSlot) {
+            let x = Number(target.dataset.x || 50);
+            let y = Number(target.dataset.y || 50);
+            let scale = Number(target.dataset.scale || 100);
+            if (resize) scale = Math.max(20, Math.min(260, scale + dir[0] + dir[1]));
+            else { x += dir[0]; y += dir[1]; }
+            target.dataset.x = String(x);
+            target.dataset.y = String(y);
+            target.dataset.scale = String(scale);
+            img.style.left = `${x}%`;
+            img.style.top = `${y}%`;
+            img.style.width = `${scale}%`;
+            _commitTemperatureStandardHistory();
+            return;
+        }
+        if (!isBoxSlot) return;
+        const bx = Number(target.dataset.boxX || 0);
+        const by = Number(target.dataset.boxY || 0);
+        const bw = Number(target.dataset.boxW || 0) || Math.round((target.offsetWidth / Math.max(1, target.parentElement.offsetWidth)) * 100);
+        const bh = Number(target.dataset.boxH || 0) || target.offsetHeight;
+        if (resize) _setBoxGeometry(target, bx, by, Math.max(8, bw + dir[0]), Math.max(24, bh + dir[1] * 3));
+        else _setBoxGeometry(target, bx + dir[0], by + dir[1], bw, bh);
+        _commitTemperatureStandardHistory();
+    }
+
+    function startTemperatureStandardObjectDrag(event, objectKey) {
+        const target = document.querySelector(`[data-pts-object="${objectKey}"]`);
+        const surface = target && (target.closest('[data-pts-image]') || target.closest('[data-pts-surface]'));
+        const doc = document.getElementById('paintTempStandardDoc');
+        if (!target || !surface || doc?.dataset.editing !== 'true') return;
+        if (event.target.closest('.pts-object-resize')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        selectTemperatureStandardObject(objectKey);
+        const rect = surface.getBoundingClientRect();
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const originX = Number(target.dataset.x || 50);
+        const originY = Number(target.dataset.y || 50);
+        const w = Number(target.dataset.w || 20);
+        const h = Number(target.dataset.h || 12);
+        const onMove = (moveEvent) => {
+            const x = originX + ((moveEvent.clientX - startX) / rect.width) * 100;
+            const y = originY + ((moveEvent.clientY - startY) / rect.height) * 100;
+            _setObjectGeometry(target, x, y, w, h);
+        };
+        const onUp = () => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            _commitTemperatureStandardHistory();
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    }
+
+    function startTemperatureStandardObjectResize(event, objectKey) {
+        const target = document.querySelector(`[data-pts-object="${objectKey}"]`);
+        const surface = target && (target.closest('[data-pts-image]') || target.closest('[data-pts-surface]'));
+        const doc = document.getElementById('paintTempStandardDoc');
+        if (!target || !surface || doc?.dataset.editing !== 'true') return;
+        event.preventDefault();
+        event.stopPropagation();
+        selectTemperatureStandardObject(objectKey);
+        const rect = surface.getBoundingClientRect();
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const x = Number(target.dataset.x || 50);
+        const y = Number(target.dataset.y || 50);
+        const originW = Number(target.dataset.w || 20);
+        const originH = Number(target.dataset.h || 12);
+        const onMove = (moveEvent) => {
+            const w = Math.max(6, Math.min(60, originW + ((moveEvent.clientX - startX) / rect.width) * 100));
+            const h = Math.max(5, Math.min(40, originH + ((moveEvent.clientY - startY) / rect.height) * 100));
+            _setObjectGeometry(target, x, y, w, h);
+        };
+        const onUp = () => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            _commitTemperatureStandardHistory();
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    }
+
+    function _selectedTemperatureStandardContainer() {
+        const doc = document.getElementById('paintTempStandardDoc');
+        if (!doc) return null;
+        const selectedObject = doc.querySelector('[data-pts-object].pts-selected');
+        if (selectedObject) return selectedObject.closest('[data-pts-image]') || selectedObject.closest('[data-pts-surface]');
+        const selectedImage = doc.querySelector('[data-pts-image].pts-selected');
+        if (selectedImage) return selectedImage;
+        return doc.querySelector('[data-pts-image="controller"]') || doc.querySelector('[data-pts-image]');
+    }
+
+    function _appendTemperatureStandardObject(container, object) {
+        const data = { objects: { [object.key]: object } };
+        const firstHandle = container.querySelector('.pts-resize-handle');
+        if (firstHandle) firstHandle.insertAdjacentHTML('beforebegin', _standardObjectHtml(object.key, data));
+        else container.insertAdjacentHTML('beforeend', _standardObjectHtml(object.key, data));
+        selectTemperatureStandardObject(object.key);
+        _commitTemperatureStandardHistory();
+    }
+
+    function addTemperatureStandardObject(type = 'text') {
+        const doc = document.getElementById('paintTempStandardDoc');
+        if (!doc) return;
+        if (doc.dataset.editing !== 'true') setTemperatureStandardEdit(true);
+        const container = _selectedTemperatureStandardContainer();
+        if (!container) return;
+        const key = `custom_${Date.now()}`;
+        const slot = container.dataset.ptsImage || container.dataset.ptsSurface || 'controller';
+        const isText = type === 'text';
+        _appendTemperatureStandardObject(container, {
+            key,
+            slot,
+            kind: isText ? 'text' : 'box',
+            x: 12,
+            y: 12,
+            w: isText ? 24 : 22,
+            h: isText ? 12 : 18,
+            z: 8,
+            bg: isText ? 'rgba(255,255,255,0)' : '#2563eb',
+            color: isText ? '#111827' : '#ffffff',
+            text: isText ? '텍스트' : '사각형'
+        });
+    }
+
+    function duplicateTemperatureStandardObject() {
+        const source = document.querySelector('[data-pts-object].pts-selected');
+        const container = source && (source.closest('[data-pts-image]') || source.closest('[data-pts-surface]'));
+        if (!source || !container) return;
+        const key = `custom_${Date.now()}`;
+        _appendTemperatureStandardObject(container, {
+            key,
+            slot: source.dataset.slot || container.dataset.ptsImage || container.dataset.ptsSurface || '',
+            kind: source.dataset.kind || 'box',
+            x: Number(source.dataset.x || 10) + 3,
+            y: Number(source.dataset.y || 10) + 3,
+            w: Number(source.dataset.w || 20),
+            h: Number(source.dataset.h || 12),
+            z: Number(source.dataset.z || 4) + 1,
+            bg: source.dataset.bg || 'transparent',
+            color: source.dataset.color || '#111827',
+            text: (source.querySelector('[data-pts-object-text]') || source).innerHTML.trim()
+        });
+    }
+
+    function arrangeTemperatureStandardObject(direction) {
+        const target = document.querySelector('[data-pts-object].pts-selected');
+        if (!target) return;
+        const current = Number(target.dataset.z || target.style.zIndex || 4);
+        const next = direction === 'back' ? Math.max(1, current - 1) : current + 1;
+        target.dataset.z = String(next);
+        target.style.zIndex = String(next);
+        _commitTemperatureStandardHistory();
+    }
+
+    function deleteSelectedTemperatureStandardObject() {
+        const objectKey = window._paintTempStandardSelectedObject;
+        if (objectKey) {
+            const doc = document.getElementById('paintTempStandardDoc');
+            if (doc) {
+                const deleted = new Set((doc.dataset.deletedObjects || '').split(',').filter(Boolean));
+                deleted.add(objectKey);
+                doc.dataset.deletedObjects = Array.from(deleted).join(',');
+            }
+            document.querySelector(`[data-pts-object="${objectKey}"]`)?.remove();
+            window._paintTempStandardSelectedObject = '';
+            _commitTemperatureStandardHistory();
+            return;
+        }
+        const imageKey = window._paintTempStandardSelectedImage;
+        if (!imageKey) return;
+        if (Object.prototype.hasOwnProperty.call(TEMP_STANDARD_BOX_DEFAULTS, imageKey)) {
+            const doc = document.getElementById('paintTempStandardDoc');
+            if (doc) {
+                const deleted = new Set((doc.dataset.deletedBoxes || '').split(',').filter(Boolean));
+                deleted.add(imageKey);
+                doc.dataset.deletedBoxes = Array.from(deleted).join(',');
+            }
+            document.querySelector(`[data-pts-image="${imageKey}"]`)?.remove();
+            window._paintTempStandardSelectedImage = '';
+            _commitTemperatureStandardHistory();
+            return;
+        }
+        adjustTemperatureStandardImage(imageKey, 'delete');
+        _commitTemperatureStandardHistory();
     }
 
     function _renderTemperatureImage(target, src, meta = {}) {
@@ -2651,9 +3230,9 @@ const PaintInventoryModule = (function() {
         target.dataset.x = String(x);
         target.dataset.y = String(y);
         target.dataset.scale = String(scale);
-        const tools = target.querySelector('.pts-image-tools')?.outerHTML || '';
         const handles = Array.from(target.querySelectorAll('.pts-resize-handle')).map(el => el.outerHTML).join('');
-        target.innerHTML = _photoImgHtml({ src, x, y, scale }) + tools + handles;
+        const objects = Array.from(target.querySelectorAll('.pts-object')).map(el => el.outerHTML).join('');
+        target.innerHTML = _photoImgHtml({ src, x, y, scale }) + objects + handles;
     }
 
     function adjustTemperatureStandardImage(slotKey, action) {
@@ -2666,10 +3245,11 @@ const PaintInventoryModule = (function() {
             target.dataset.x = '50';
             target.dataset.y = '50';
             target.dataset.scale = '100';
-            const tools = target.querySelector('.pts-image-tools')?.outerHTML || '';
             const handles = Array.from(target.querySelectorAll('.pts-resize-handle')).map(el => el.outerHTML).join('');
-            target.innerHTML = `<div class="pts-photo-fallback" style="width:100%;height:100%;">${TEMP_STANDARD_IMAGE_FALLBACKS[slotKey] || ''}</div>${tools}${handles}`;
+            const objects = Array.from(target.querySelectorAll('.pts-object')).map(el => el.outerHTML).join('');
+            target.innerHTML = `<div class="pts-photo-fallback" style="width:100%;height:100%;">${TEMP_STANDARD_IMAGE_FALLBACKS[slotKey] || ''}</div>${objects}${handles}`;
             target.classList.add('pts-selected');
+            _commitTemperatureStandardHistory();
             return;
         }
         if (!img) return;
@@ -2689,33 +3269,52 @@ const PaintInventoryModule = (function() {
         img.style.left = `${x}%`;
         img.style.top = `${y}%`;
         img.style.width = `${scale}%`;
+        _commitTemperatureStandardHistory();
     }
 
     function startTemperatureStandardImageDrag(event, slotKey) {
         const target = document.querySelector(`[data-pts-image="${slotKey}"]`);
-        if (!target || !target.classList.contains('pts-editing') || !target.querySelector('img')) return;
-        if (event.target.closest('.pts-image-tools')) return;
+        if (!target || !target.classList.contains('pts-editing')) return;
+        if (event.target.closest('.pts-object')) return;
         event.preventDefault();
         selectTemperatureStandardImage(slotKey);
         const rect = target.getBoundingClientRect();
+        const parentRect = target.parentElement.getBoundingClientRect();
         const startX = event.clientX;
         const startY = event.clientY;
         const originX = Number(target.dataset.x || 50);
         const originY = Number(target.dataset.y || 50);
         const originScale = Number(target.dataset.scale || 100);
+        const originBoxX = Number(target.dataset.boxX || 0);
+        const originBoxY = Number(target.dataset.boxY || 0);
+        const originBoxW = Number(target.dataset.boxW || 0) || Math.round((target.offsetWidth / Math.max(1, parentRect.width)) * 100);
+        const originBoxH = Number(target.dataset.boxH || 0) || target.offsetHeight;
         const resizeHandle = event.target.closest('[data-pts-resize]');
+        const isBoxSlot = target.dataset.boxKey === 'true';
         const onMove = (moveEvent) => {
             const img = target.querySelector('img');
-            if (!img) return;
             if (resizeHandle) {
                 const dx = moveEvent.clientX - startX;
                 const dy = moveEvent.clientY - startY;
-                const dir = resizeHandle.dataset.ptsResize || 'se';
-                const horizontal = (dir.includes('e') ? dx : -dx) / rect.width * 100;
-                const vertical = (dir.includes('s') ? dy : -dy) / rect.height * 100;
-                const scale = Math.max(20, Math.min(260, originScale + horizontal + vertical));
-                target.dataset.scale = String(scale);
-                img.style.width = `${scale}%`;
+                if (img && !isBoxSlot) {
+                    const dir = resizeHandle.dataset.ptsResize || 'se';
+                    const horizontal = (dir.includes('e') ? dx : -dx) / rect.width * 100;
+                    const vertical = (dir.includes('s') ? dy : -dy) / rect.height * 100;
+                    const scale = Math.max(20, Math.min(260, originScale + horizontal + vertical));
+                    target.dataset.scale = String(scale);
+                    img.style.width = `${scale}%`;
+                } else if (isBoxSlot) {
+                    const w = Math.max(8, originBoxW + (dx / Math.max(1, parentRect.width)) * 100);
+                    const h = Math.max(24, originBoxH + dy);
+                    _setBoxGeometry(target, originBoxX, originBoxY, w, h);
+                }
+                return;
+            }
+            if (!img || isBoxSlot) {
+                if (!isBoxSlot) return;
+                const x = originBoxX + ((moveEvent.clientX - startX) / Math.max(1, parentRect.width)) * 100;
+                const y = originBoxY + ((moveEvent.clientY - startY) / Math.max(1, parentRect.height)) * 100;
+                _setBoxGeometry(target, x, y, originBoxW, originBoxH);
                 return;
             }
             const x = originX + ((moveEvent.clientX - startX) / rect.width) * 100;
@@ -2728,6 +3327,7 @@ const PaintInventoryModule = (function() {
         const onUp = () => {
             document.removeEventListener('mousemove', onMove);
             document.removeEventListener('mouseup', onUp);
+            _commitTemperatureStandardHistory();
         };
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
@@ -2741,14 +3341,17 @@ const PaintInventoryModule = (function() {
         const items = event.clipboardData && event.clipboardData.items;
         if (!items) return;
         const imageItem = Array.from(items).find(item => item.type && item.type.startsWith('image/'));
-        if (!imageItem) return;
+        const file = imageItem
+            ? imageItem.getAsFile()
+            : Array.from(event.clipboardData.files || []).find(f => f.type && f.type.startsWith('image/'));
+        if (!file) return;
         event._paintTempStandardHandled = true;
         event.preventDefault();
-        const file = imageItem.getAsFile();
         const reader = new FileReader();
         reader.onload = () => {
             selectTemperatureStandardImage(target.dataset.ptsImage);
             _renderTemperatureImage(target, reader.result, { x: 50, y: 50, scale: 100 });
+            _commitTemperatureStandardHistory();
             UIUtils.toast('스크린샷이 붙여넣기 되었습니다. 저장을 눌러 반영하세요.', 'success');
         };
         reader.readAsDataURL(file);
@@ -2770,7 +3373,6 @@ const PaintInventoryModule = (function() {
                 body { margin:0; font-family: Inter, 'Malgun Gothic', sans-serif; }
                 [contenteditable] { outline: none !important; background: transparent !important; }
                 .pts-photo-slot::after { display:none !important; }
-                .pts-image-tools { display:none !important; }
                 .pts-selected { box-shadow:none !important; }
             </style></head><body>${doc.outerHTML}</body></html>
         `);
@@ -2824,7 +3426,18 @@ const PaintInventoryModule = (function() {
         pasteTemperatureStandardImage,
         printTemperatureStandard,
         selectTemperatureStandardImage,
+        selectTemperatureStandardObject,
+        editTemperatureStandardObjectText,
         adjustTemperatureStandardImage,
-        startTemperatureStandardImageDrag
+        startTemperatureStandardImageDrag,
+        startTemperatureStandardObjectDrag,
+        startTemperatureStandardObjectResize,
+        deleteSelectedTemperatureStandardObject,
+        nudgeSelectedTemperatureStandardObject,
+        addTemperatureStandardObject,
+        duplicateTemperatureStandardObject,
+        arrangeTemperatureStandardObject,
+        undoTemperatureStandardEdit,
+        redoTemperatureStandardEdit
     };
 })();

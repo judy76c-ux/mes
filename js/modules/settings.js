@@ -4973,6 +4973,7 @@ const SettingsModule = (function() {
                                         <th>제조사</th>
                                         <th>도료종류</th>
                                         <th>도료 사양</th>
+                                        <th style="text-align:center;">제품구분</th>
                                         <th>포장 용량</th>
                                         <th>매입 단가</th>
                                         <th>유효기한</th>
@@ -4980,7 +4981,13 @@ const SettingsModule = (function() {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    ${paints.map((p, i) => `
+                                    ${paints.map((p, i) => {
+                                        const itColors = { '양산': '#059669', 'A/S': '#2563eb', '개발': '#7c3aed' };
+                                        const it = (p.itemType || '').replace(/품$/, '');
+                                        const itBadge = it
+                                            ? `<span style="font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:999px;background:${(itColors[it]||'#6b7280')}22;color:${itColors[it]||'#6b7280'};border:1px solid ${(itColors[it]||'#6b7280')}44;">${it}</span>`
+                                            : `<span style="font-size:.7rem;color:#9ca3af;cursor:pointer;" onclick="SettingsModule.editPaint('${p.id}')" title="클릭하여 구분 설정">미지정 ✏</span>`;
+                                        return `
                                         <tr>
                                             <td>${i + 1}</td>
                                             <td>${p.supplier || '-'}</td>
@@ -4988,6 +4995,7 @@ const SettingsModule = (function() {
                                             <td>${p.manufacturer || '-'}</td>
                                             <td>${p.paintType ? UIUtils.badge(p.paintType, paintTypeBadge(p.paintType)) : '-'}</td>
                                             <td>${p.paintSpec ? UIUtils.badge(p.paintSpec, paintSpecBadge(p.paintSpec)) : '-'}</td>
+                                            <td style="text-align:center;">${itBadge}</td>
                                             <td>${p.packUnit ? p.packUnit + ' KG' : '-'}</td>
                                             <td style="text-align:right;">${p.purchasePrice ? (Number(String(p.purchasePrice).replace(/,/g, '')) || 0).toLocaleString() : '-'}</td>
                                             <td>${p.shelfLife || '-'}</td>
@@ -4995,8 +5003,8 @@ const SettingsModule = (function() {
                                                 <button class="btn btn-sm btn-outline" onclick="SettingsModule.editPaint('${p.id}')">수정</button>
                                                 <button class="btn btn-sm btn-danger" onclick="SettingsModule.removePaint('${p.id}')">삭제</button>
                                             </td>
-                                        </tr>
-                                    `).join('')}
+                                        </tr>`;
+                                    }).join('')}
                                 </tbody>
                             </table>
                         </div>`
@@ -5068,7 +5076,15 @@ const SettingsModule = (function() {
                     <label class="form-label">유효기한</label>
                     <input type="text" class="form-input" id="addPaintShelfLife" placeholder="예: 12개월, 6개월">
                 </div>
-                <div class="form-group" style="visibility:hidden;"></div>
+                <div class="form-group">
+                    <label class="form-label" style="font-weight:700;color:var(--accent-blue);">제품 구분</label>
+                    <select class="form-select" id="addPaintItemType">
+                        <option value="">-- 미지정 --</option>
+                        <option value="양산">양산</option>
+                        <option value="A/S">A/S</option>
+                        <option value="개발">개발</option>
+                    </select>
+                </div>
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
@@ -5090,6 +5106,7 @@ const SettingsModule = (function() {
             return;
         }
 
+        const itemType = document.getElementById('addPaintItemType').value;
         await Storage.add(PAINT_STORE, {
             supplier,
             name,
@@ -5098,7 +5115,8 @@ const SettingsModule = (function() {
             purchasePrice: document.getElementById('addPaintPurchasePrice').value.trim(),
             shelfLife,
             paintType,
-            paintSpec
+            paintSpec,
+            itemType
         });
         UIUtils.closeModal();
         UIUtils.toast('도료 정보가 추가되었습니다.', 'success');
@@ -5139,10 +5157,17 @@ const SettingsModule = (function() {
                     <label class="form-label">도료종류</label>
                     <select class="form-select" id="editPaintType">
                         <option value="">-- 선택 --</option>
-                        <option value="주제"   ${p.paintType === '주제'   ? 'selected' : ''}>주제</option>
-                        <option value="경화제" ${p.paintType === '경화제' ? 'selected' : ''}>경화제</option>
-                        <option value="희석제" ${p.paintType === '희석제' ? 'selected' : ''}>희석제</option>
-                        <option value="안료"   ${p.paintType === '안료'   ? 'selected' : ''}>안료</option>
+                        <optgroup label="도료">
+                            <option value="주제"    ${p.paintType === '주제'    ? 'selected' : ''}>주제</option>
+                            <option value="경화제"  ${p.paintType === '경화제'  ? 'selected' : ''}>경화제</option>
+                            <option value="희석제"  ${p.paintType === '희석제'  ? 'selected' : ''}>희석 신너</option>
+                            <option value="안료"    ${p.paintType === '안료'    ? 'selected' : ''}>안료</option>
+                        </optgroup>
+                        <optgroup label="세척제">
+                            <option value="IPA세척제" ${p.paintType === 'IPA세척제' ? 'selected' : ''}>IPA 세척제</option>
+                            <option value="세척신너"  ${p.paintType === '세척신너'  ? 'selected' : ''}>세척신너</option>
+                            <option value="세척제"    ${p.paintType === '세척제'    ? 'selected' : ''}>기타 세척제</option>
+                        </optgroup>
                     </select>
                 </div>
                 <div class="form-group">
@@ -5171,7 +5196,15 @@ const SettingsModule = (function() {
                     <label class="form-label">유효기한</label>
                     <input type="text" class="form-input" id="editPaintShelfLife" value="${p.shelfLife || ''}">
                 </div>
-                <div class="form-group" style="visibility:hidden;"></div>
+                <div class="form-group">
+                    <label class="form-label" style="font-weight:700;color:var(--accent-blue);">제품 구분 ★</label>
+                    <select class="form-select" id="editPaintItemType">
+                        <option value=""  ${!p.itemType               ? 'selected' : ''}>-- 미지정 --</option>
+                        <option value="양산" ${p.itemType === '양산' ? 'selected' : ''}>양산</option>
+                        <option value="A/S" ${p.itemType === 'A/S'  ? 'selected' : ''}>A/S</option>
+                        <option value="개발" ${p.itemType === '개발' ? 'selected' : ''}>개발</option>
+                    </select>
+                </div>
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
@@ -5193,6 +5226,7 @@ const SettingsModule = (function() {
             return;
         }
 
+        const itemType = document.getElementById('editPaintItemType').value;
         await Storage.update(PAINT_STORE, id, {
             supplier,
             name,
@@ -5201,7 +5235,8 @@ const SettingsModule = (function() {
             purchasePrice: document.getElementById('editPaintPurchasePrice').value.trim(),
             shelfLife,
             paintType,
-            paintSpec
+            paintSpec,
+            itemType
         });
         UIUtils.closeModal();
         UIUtils.toast('도료 정보가 수정되었습니다.', 'success');
