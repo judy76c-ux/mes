@@ -2326,7 +2326,11 @@ const PaintInventoryModule = (function() {
 
     const TEMP_STANDARD_IMAGE_FALLBACKS = {};
     const TEMP_STANDARD_BOX_DEFAULTS = {
+        makerRangeBox: { x: 0, y: 0, w: 100, h: 43 },
+        operationTitle: { x: 0, y: 0, w: 56, h: 28 },
+        recordTitle: { x: 0, y: 0, w: 30, h: 28 },
         kcRangeBox: { x: 0, y: 0, w: 100, h: 43 },
+        controllerTitle: { x: 0, y: 0, w: 42, h: 28 },
         operationTable: { x: 0, y: 0, w: 100, h: 164 },
         controller: { x: 0, y: 0, w: 100, h: 278 },
         recordBackground: { x: 0, y: 0, w: 69, h: 185 },
@@ -2628,11 +2632,17 @@ const PaintInventoryModule = (function() {
 
                 <div style="display:grid;grid-template-columns:1fr 1fr;">
                     <section style="border-right:1px dotted #6b7280;padding:8px 10px 16px;">
-                        <div style="background:#d9d9d9;padding:7px 8px;font-size:20px;color:#111827;">
-                            <span style="color:#000;font-weight:900;">■</span>
-                            ${_editableField('makerRange', data, 'margin-left:8px;')}
+                        <div data-pts-surface="makerRangeSurface" style="position:relative;min-height:52px;">
+                            ${_photoSlot('makerRangeBox', data, `
+                                <div style="background:#d9d9d9;padding:7px 8px;font-size:20px;color:#111827;box-sizing:border-box;height:100%;display:flex;align-items:center;">
+                                    <span style="color:#000;font-weight:900;">■</span>
+                                    ${_editableField('makerRange', data, 'margin-left:8px;')}
+                                </div>
+                            `, 'z-index:2;')}
                         </div>
-                        <div style="margin-top:28px;font-weight:800;">■ 냉난방기 가동 기준</div>
+                        <div data-pts-surface="operationTitleSurface" style="position:relative;min-height:36px;margin-top:20px;">
+                            ${_photoSlot('operationTitle', data, `<div style="font-weight:800;height:100%;display:flex;align-items:center;">■ 냉난방기 가동 기준</div>`, 'z-index:2;')}
+                        </div>
                         <table style="width:100%;border-collapse:collapse;margin-top:6px;font-size:14px;text-align:center;">
                             <thead>
                                 <tr style="background:#c4d79b;">
@@ -2667,7 +2677,9 @@ const PaintInventoryModule = (function() {
                                 </tr>
                             </tbody>
                         </table>
-                        <div style="margin-top:28px;font-weight:800;">■ 기록 방법</div>
+                        <div data-pts-surface="recordTitleSurface" style="position:relative;min-height:36px;margin-top:20px;">
+                            ${_photoSlot('recordTitle', data, `<div style="font-weight:800;height:100%;display:flex;align-items:center;">■ 기록 방법</div>`, 'z-index:2;')}
+                        </div>
                         <div data-pts-surface="recordMethod" class="pts-object-surface"
                             style="position:relative;min-height:220px;margin-top:10px;border:1px solid transparent;">
                             ${_photoSlot('recordBackground', data, '', 'background:#f8fafc;border:1px solid #d1d5db;box-sizing:border-box;z-index:1;')}
@@ -2686,7 +2698,9 @@ const PaintInventoryModule = (function() {
                                 </div>
                             `, 'z-index:2;')}
                         </div>
-                        <div style="margin-top:28px;font-weight:800;">■ 냉난방기 작동 방법</div>
+                        <div data-pts-surface="controllerTitleSurface" style="position:relative;min-height:36px;margin-top:20px;">
+                            ${_photoSlot('controllerTitle', data, `<div style="font-weight:800;height:100%;display:flex;align-items:center;">■ 냉난방기 작동 방법</div>`, 'z-index:2;')}
+                        </div>
                         <div data-pts-surface="controllerSurface" style="position:relative;min-height:300px;margin-top:12px;">
                             ${_photoSlot('controller', data, `
                             <div style="position:relative;background:#e5e7eb;border:1px solid #cbd5e1;height:100%;overflow:hidden;box-sizing:border-box;">

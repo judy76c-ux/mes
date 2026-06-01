@@ -1878,8 +1878,8 @@ var SafetyChecklistModule = (function () {
                         <table style="width:100%;border-collapse:collapse;font-size:.76rem;table-layout:fixed;">
                             <colgroup>
                                 <col style="width:26px;">   <!-- 항목번호 -->
-                                <col style="width:72px;">   <!-- 점검내용 라벨 -->
-                                <col style="width:58px;">   <!-- 서브 구분 -->
+                                <col style="width:62px;">   <!-- 점검내용 라벨 -->
+                                <col style="width:38px;">   <!-- 서브 구분 -->
                                 <col style="width:22px;">   <!-- 주기 -->
                                 ${dateCols.map(function(){ return '<col>'; }).join('')}  <!-- 날짜: 균등 분배 -->
                                 <col style="width:36px;">   <!-- 비고 -->
