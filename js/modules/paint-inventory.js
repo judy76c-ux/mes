@@ -2777,6 +2777,11 @@ const PaintInventoryModule = (function() {
                         redoTemperatureStandardEdit();
                         return;
                     }
+                    if (key === 'v') {
+                        event.preventDefault();
+                        pasteTemperatureStandardImage(event);
+                        return;
+                    }
                 }
                 if (!['Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
                 if (active && active.isContentEditable) return;
@@ -3333,19 +3338,73 @@ const PaintInventoryModule = (function() {
         document.addEventListener('mouseup', onUp);
     }
 
+    function _temperaturePasteTarget(slotKey = '') {
+        const doc = document.getElementById('paintTempStandardDoc');
+        if (!doc || doc.dataset.editing !== 'true') return null;
+        const selectedKey = slotKey
+            || window._paintTempStandardSelectedImage
+            || doc.querySelector('[data-pts-image].pts-selected')?.dataset.ptsImage
+            || doc.querySelector('[data-pts-object].pts-selected')?.closest('[data-pts-image]')?.dataset.ptsImage
+            || 'controller';
+        const target = selectedKey ? doc.querySelector(`[data-pts-image="${selectedKey}"]`) : null;
+        if (target && target.classList.contains('pts-editing')) return target;
+        return doc.querySelector('[data-pts-image].pts-editing');
+    }
+
+    function _fileFromTemperaturePasteEvent(event) {
+        const data = event?.clipboardData;
+        if (!data) return null;
+        const item = Array.from(data.items || []).find(entry => entry.type && entry.type.startsWith('image/'));
+        if (item) return item.getAsFile();
+        return Array.from(data.files || []).find(file => file.type && file.type.startsWith('image/')) || null;
+    }
+
+    function _readTemperatureImageFile(target, file) {
+        if (!target || !file) return false;
+        const reader = new FileReader();
+        reader.onload = () => {
+            selectTemperatureStandardImage(target.dataset.ptsImage);
+            _renderTemperatureImage(target, reader.result, { x: 50, y: 50, scale: 100 });
+            _commitTemperatureStandardHistory();
+            UIUtils.toast('스크린샷을 붙여넣었습니다. 저장을 눌러 반영하세요.', 'success');
+        };
+        reader.readAsDataURL(file);
+        return true;
+    }
+
+    async function _pasteTemperatureImageFromClipboard(target) {
+        if (!target || !navigator.clipboard || !navigator.clipboard.read) return false;
+        try {
+            const items = await navigator.clipboard.read();
+            for (const item of items) {
+                const type = item.types.find(t => t.startsWith('image/'));
+                if (!type) continue;
+                const blob = await item.getType(type);
+                return _readTemperatureImageFile(target, blob);
+            }
+        } catch (err) {
+            console.warn('[PaintInventory] clipboard image read failed', err);
+        }
+        return false;
+    }
+
     function pasteTemperatureStandardImage(event, slotKey) {
-        if (event._paintTempStandardHandled) return;
-        const selectedKey = slotKey || window._paintTempStandardSelectedImage;
-        const target = selectedKey ? document.querySelector(`[data-pts-image="${selectedKey}"]`) : null;
-        if (!target || !target.classList.contains('pts-editing')) return;
-        const items = event.clipboardData && event.clipboardData.items;
-        if (!items) return;
-        const imageItem = Array.from(items).find(item => item.type && item.type.startsWith('image/'));
-        const file = imageItem
-            ? imageItem.getAsFile()
-            : Array.from(event.clipboardData.files || []).find(f => f.type && f.type.startsWith('image/'));
-        if (!file) return;
+        if (event?._paintTempStandardHandled) return;
+        const target = _temperaturePasteTarget(slotKey);
+        if (!target) return;
+        const file = _fileFromTemperaturePasteEvent(event);
+        if (!file) {
+            _pasteTemperatureImageFromClipboard(target).then(ok => {
+                if (!ok && event?.type === 'keydown') {
+                    UIUtils.toast('클립보드에서 이미지 파일을 찾지 못했습니다. 캡처 후 Ctrl+V를 다시 눌러주세요.', 'warning');
+                }
+            });
+            return;
+        }
         event._paintTempStandardHandled = true;
+        event?.preventDefault?.();
+        _readTemperatureImageFile(target, file);
+        return;
         event.preventDefault();
         const reader = new FileReader();
         reader.onload = () => {

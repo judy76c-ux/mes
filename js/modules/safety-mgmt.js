@@ -1105,7 +1105,7 @@ var MSDSModule = (function () {
                 ? `<span style="font-size:.63rem;background:${ptColor}22;color:${ptColor};border-radius:3px;padding:1px 5px;font-weight:700;">${esc(pt)}</span>`
                 : `<span style="font-size:.63rem;background:#f3f4f6;color:#9ca3af;border-radius:3px;padding:1px 5px;">미지정</span>`;
 
-            return `<tr style="${rowBg}" data-pt="${esc(pt)}" data-cat="${esc(cat)}" data-sup="${esc(sup)}" data-missing="${hasF ? '0' : '1'}" data-name="${esc((mat.name||'').toLowerCase())}">
+            return `<tr style="${rowBg}" data-pt="${esc(pt)}" data-cat="${esc(cat)}" data-sup="${esc(sup)}" data-missing="${hasF ? '0' : '1'}">
                 <td style="text-align:center;font-size:.8rem;">${i + 1}</td>
                 <td style="font-size:.82rem;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(mat.name)}"><strong>${esc(mat.name)}</strong></td>
                 <td style="text-align:center;">${catBadge}</td>
@@ -1116,8 +1116,7 @@ var MSDSModule = (function () {
                 <td style="text-align:center;">${hCell('④')}</td>
                 <td style="text-align:center;">${hCell('⑤')}</td>
                 <td style="text-align:center;">${hCell('⑥')}</td>
-                <td style="font-size:.82rem;">${esc(sup || '-')}</td>
-                <td style="text-align:center;font-size:.82rem;">${esc(d.pageNo || '-')}</td>
+                <td style="font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(sup)}">${esc(sup || '-')}</td>
                 <td style="text-align:center;">${fileCell}</td>
                 <td style="font-size:.76rem;color:var(--text-muted);">${esc(d.note || '')}</td>
                 <td style="text-align:center;white-space:nowrap;">
@@ -1187,25 +1186,12 @@ var MSDSModule = (function () {
             <!-- 검색 + 필터 바 -->
             <div class="card" style="margin-bottom:10px;">
                 <div class="card-body" style="padding:10px 14px;">
-                    <!-- 1행: 검색 + 공급처 + 누락 + 초기화 -->
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
-                        <div style="position:relative;flex:1;min-width:160px;">
-                            <span class="material-symbols-outlined" style="position:absolute;left:8px;top:50%;transform:translateY(-50%);font-size:18px;color:var(--text-muted);pointer-events:none;">search</span>
-                            <input id="msds-search-kw" type="text" class="form-control" placeholder="도료명 검색..."
-                                style="padding-left:32px;"
-                                oninput="MSDSModule._applyFilter()"
-                                value="${SafetyCommon.esc(_fState.keyword)}">
-                        </div>
-                        <div style="min-width:140px;">
-                            <select id="msds-search-sup" class="form-control" onchange="MSDSModule._applyFilter()">
-                                <option value="">전체 제조사</option>
-                                ${suppliers.map(function(s){
-                                    return `<option value="${esc(s)}" ${_fState.sup === s ? 'selected' : ''}>${esc(s)}</option>`;
-                                }).join('')}
-                            </select>
-                        </div>
+                    <!-- 1행: 도료 유형 + 누락 + 초기화 -->
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin-bottom:6px;">
+                        <span style="font-size:.72rem;color:var(--text-muted);margin-right:2px;white-space:nowrap;">도료 유형</span>
+                        ${catBtns}
                         <label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-size:.78rem;
-                            padding:5px 10px;border-radius:6px;flex-shrink:0;
+                            padding:5px 10px;border-radius:6px;flex-shrink:0;margin-left:8px;
                             border:1px solid ${_fState.missing ? '#dc2626' : 'var(--border-color)'};
                             background:${_fState.missing ? '#dc262611' : 'var(--bg-secondary)'};
                             color:${_fState.missing ? '#dc2626' : 'var(--text-primary)'};">
@@ -1215,15 +1201,18 @@ var MSDSModule = (function () {
                         </label>
                         <button class="btn btn-sm btn-outline" onclick="MSDSModule._resetFilter()" style="font-size:.76rem;flex-shrink:0;">초기화</button>
                     </div>
-                    <!-- 2행: 도료 유형 -->
-                    <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin-bottom:6px;">
-                        <span style="font-size:.72rem;color:var(--text-muted);margin-right:2px;white-space:nowrap;">도료 유형</span>
-                        ${catBtns}
-                    </div>
-                    <!-- 3행: 제품 구분 -->
+                    <!-- 2행: 제품 구분 + 제조사 -->
                     <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
                         <span style="font-size:.72rem;color:var(--text-muted);margin-right:2px;white-space:nowrap;">제품 구분</span>
                         ${ptBtns}
+                        <div style="margin-left:auto;min-width:150px;">
+                            <select id="msds-search-sup" class="form-control" style="font-size:.8rem;" onchange="MSDSModule._applyFilter()">
+                                <option value="">전체 제조사</option>
+                                ${suppliers.map(function(s){
+                                    return `<option value="${esc(s)}" ${_fState.sup === s ? 'selected' : ''}>${esc(s)}</option>`;
+                                }).join('')}
+                            </select>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1252,19 +1241,18 @@ var MSDSModule = (function () {
                         <table class="data-table" style="table-layout:fixed;width:100%;">
                             <colgroup>
                                 <col style="width:36px;">        <!-- No -->
-                                <col style="width:180px;">       <!-- 제품명 -->
-                                <col style="width:90px;">        <!-- 도료 유형 -->
-                                <col style="width:70px;">        <!-- 제품 구분 -->
-                                <col style="width:48px;">        <!-- ① -->
-                                <col style="width:48px;">        <!-- ② -->
-                                <col style="width:48px;">        <!-- ③ -->
-                                <col style="width:48px;">        <!-- ④ -->
-                                <col style="width:48px;">        <!-- ⑤ -->
-                                <col style="width:48px;">        <!-- ⑥ -->
-                                <col style="width:96px;">        <!-- 제조사 -->
-                                <col style="width:44px;">        <!-- 쪽수 -->
-                                <col style="width:72px;">        <!-- MSDS 파일 -->
-                                <col>                            <!-- 비고 (나머지) -->
+                                <col style="width:200px;">       <!-- 제품명 -->
+                                <col style="width:80px;">        <!-- 도료 유형 -->
+                                <col style="width:66px;">        <!-- 제품 구분 -->
+                                <col style="width:36px;">        <!-- ① -->
+                                <col style="width:36px;">        <!-- ② -->
+                                <col style="width:36px;">        <!-- ③ -->
+                                <col style="width:36px;">        <!-- ④ -->
+                                <col style="width:36px;">        <!-- ⑤ -->
+                                <col style="width:36px;">        <!-- ⑥ -->
+                                <col style="width:110px;">       <!-- 제조사 -->
+                                <col style="width:66px;">        <!-- MSDS 파일 -->
+                                <col style="width:120px;">       <!-- 비고 -->
                                 <col style="width:70px;">        <!-- 작업 -->
                             </colgroup>
                             <thead>
@@ -1280,7 +1268,6 @@ var MSDSModule = (function () {
                                     <th style="text-align:center;padding:5px 1px;line-height:1.3;">⑤<br><span style="font-size:.62rem;font-weight:400;color:var(--text-muted);">피부부식</span></th>
                                     <th style="text-align:center;padding:5px 1px;line-height:1.3;">⑥<br><span style="font-size:.62rem;font-weight:400;color:var(--text-muted);">수생유해</span></th>
                                     <th>제조사</th>
-                                    <th style="text-align:center;">쪽수</th>
                                     <th style="text-align:center;">MSDS<br>파일</th>
                                     <th>비 고</th>
                                     <th style="text-align:center;">작업</th>
@@ -1341,11 +1328,9 @@ var MSDSModule = (function () {
 
     /* ── 복합 필터 적용 ── */
     function _applyFilter() {
-        const kwEl  = document.getElementById('msds-search-kw');
         const supEl = document.getElementById('msds-search-sup');
         const misEl = document.getElementById('msds-chk-missing');
-        if (kwEl)  _fState.keyword = kwEl.value.trim().toLowerCase();
-        if (supEl) _fState.sup     = supEl.value;
+        if (supEl) _fState.sup = supEl.value;
         if (misEl) _fState.missing = misEl.checked;
 
         const tbody = document.getElementById('msds-tbody');
@@ -1362,10 +1347,9 @@ var MSDSModule = (function () {
             const ptOk  = _fState.pt  === '전체' || pt  === _fState.pt;
             const catOk = _fState.cat === '전체' || cat === _fState.cat;
             const supOk = !_fState.sup     || sup === _fState.sup;
-            const kwOk  = !_fState.keyword || name.indexOf(_fState.keyword) !== -1;
             const misOk = !_fState.missing || missing;
 
-            const show = ptOk && catOk && supOk && kwOk && misOk;
+            const show = ptOk && catOk && supOk && misOk;
             tr.style.display = show ? '' : 'none';
             if (show) visible++;
         });
@@ -1376,11 +1360,9 @@ var MSDSModule = (function () {
 
     /* ── 필터 초기화 ── */
     function _resetFilter() {
-        _fState = { pt: '전체', cat: '전체', sup: '', keyword: '', missing: false };
-        const kw = document.getElementById('msds-search-kw');
+        _fState = { pt: '전체', cat: '전체', sup: '', missing: false };
         const sp = document.getElementById('msds-search-sup');
         const ms = document.getElementById('msds-chk-missing');
-        if (kw) kw.value = '';
         if (sp) sp.value = '';
         if (ms) ms.checked = false;
         _setPt('전체');
@@ -1617,17 +1599,16 @@ var MSDSModule = (function () {
 
     /* ── 세척제 신규 등록 ── */
     function _addCleaner() {
-        const esc = SafetyCommon.esc;
         const body = `
-            <div style="background:#e0f2fe;border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:8px;">
-                <span class="material-symbols-outlined" style="color:#0891b2;">cleaning_services</span>
-                <span style="font-size:.85rem;color:#0e7490;">IPA 세척제 · 세척신너 등 세척 소재를 도료 마스터에 등록합니다.</span>
+            <!-- 필수: 도료명 -->
+            <div class="form-group" style="margin-bottom:10px;">
+                <label class="form-label" style="font-weight:700;">도료명 (세척제명) <span style="color:#dc2626;">*</span></label>
+                <input class="form-control" id="cl-name" placeholder="예) IPA 세척제, 세척신너 SP-100" autofocus
+                    style="font-size:.95rem;">
             </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-                <div class="form-group" style="grid-column:1/-1;">
-                    <label class="form-label">도료명 (세척제명) *</label>
-                    <input class="form-control" id="cl-name" placeholder="예) IPA 세척제, 세척신너 SP-100">
-                </div>
+
+            <!-- 세척제 종류 + 제품 구분 -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
                 <div class="form-group">
                     <label class="form-label">세척제 종류</label>
                     <select class="form-control" id="cl-type">
@@ -1638,13 +1619,26 @@ var MSDSModule = (function () {
                 </div>
                 <div class="form-group">
                     <label class="form-label">제품 구분</label>
-                    <select class="form-control" id="cl-itemType">
-                        <option value="">-- 미지정 --</option>
-                        <option value="양산">양산</option>
-                        <option value="A/S">A/S</option>
-                        <option value="개발">개발</option>
-                    </select>
+                    <div style="display:flex;gap:6px;padding-top:4px;">
+                        ${['양산','A/S','개발'].map(function(t){
+                            const col = {'양산':'#059669','A/S':'#2563eb','개발':'#7c3aed'}[t];
+                            return `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;
+                                        padding:4px 10px;border-radius:6px;font-size:.8rem;font-weight:600;
+                                        border:1px solid ${col}44;background:${col}11;color:${col};">
+                                        <input type="radio" name="cl-itemType" value="${t}" style="accent-color:${col};"
+                                            ${t==='양산'?'checked':''}>
+                                        ${t}
+                                    </label>`;
+                        }).join('')}
+                    </div>
                 </div>
+            </div>
+
+            <!-- 구분선 -->
+            <div style="border-top:1px solid var(--border-color);margin:12px 0 10px;"></div>
+
+            <!-- 구매처 + 제조사 -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
                 <div class="form-group">
                     <label class="form-label">구매처 / 공급사</label>
                     <input class="form-control" id="cl-supplier" placeholder="예) 화인플러스, KCC">
@@ -1653,9 +1647,13 @@ var MSDSModule = (function () {
                     <label class="form-label">제조사</label>
                     <input class="form-control" id="cl-manufacturer" placeholder="제조사명">
                 </div>
+            </div>
+
+            <!-- 포장 용량 + 유효기한 -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                 <div class="form-group">
                     <label class="form-label">포장 용량 (KG)</label>
-                    <input class="form-control" id="cl-pack" type="number" placeholder="예) 20">
+                    <input class="form-control" id="cl-pack" type="number" min="0" placeholder="예) 20">
                 </div>
                 <div class="form-group">
                     <label class="form-label">유효기한</label>
@@ -1665,11 +1663,11 @@ var MSDSModule = (function () {
         `;
         const footer = `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" style="background:#0891b2;" onclick="MSDSModule._saveCleaner()">
+            <button class="btn btn-primary" style="background:#0891b2;min-width:90px;" onclick="MSDSModule._saveCleaner()">
                 <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">add</span> 등록
             </button>
         `;
-        UIUtils.showModal('세척제 신규 등록', body, footer, 'md');
+        UIUtils.showModal('세척제 신규 등록', body, footer, 'sm');
     }
 
     async function _saveCleaner() {
@@ -1679,7 +1677,7 @@ var MSDSModule = (function () {
         const newMat = {
             name,
             paintType:    document.getElementById('cl-type').value,
-            itemType:     document.getElementById('cl-itemType').value,
+            itemType:     (document.querySelector('input[name="cl-itemType"]:checked') || {}).value || '',
             supplier:     document.getElementById('cl-supplier').value.trim(),
             manufacturer: document.getElementById('cl-manufacturer').value.trim(),
             packUnit:     document.getElementById('cl-pack').value.trim(),
@@ -1700,255 +1698,422 @@ var MSDSModule = (function () {
 })();
 
 /* ════════════════════════════════════════════════════════════════════
-   SafetyChecklistModule — 안전관리 점검표
+   SafetyChecklistModule — 안전관리 점검표 (월간 일일 일지)
+   데이터: { "YYYY-MM": { results:{itemKey:{day:val}}, dailySig:{day:name},
+                           monthlySig, note, checker:{writer,reviewer,approver} } }
 ════════════════════════════════════════════════════════════════════ */
 var SafetyChecklistModule = (function () {
-    const KEY = 'safety_checklist_v1';
-    let _rows = [];
+    const KEY = 'safety_checklist_v2';
+    let _data  = {};
+    let _ym    = '';
+    let _m     = 1;    // 현재 월 (숫자, _openPhotoModal에서 참조)
 
-    // Excel 실제 10개 항목 (안전관리 점검표 시트 기준)
-    const DEFAULT_ITEMS = [
-        { no: '①', zone: '세척 / 배합·도장 / 레이저·포장', item: '작업자 보호구 착용여부',                                            criteria: '전 공정 작업자 보호구 착용 확인', cycle: '일' },
-        { no: '②', zone: '',                                item: '도장부스 출입문 안전장치 작동은 이상 없는가?',                       criteria: '도장부스 출입문 안전장치 정상 작동 확인', cycle: '일' },
-        { no: '③', zone: '',                                item: '작업자 휴대폰 지정장소 보관 하는가?',                               criteria: '작업 중 휴대폰 지정 보관함 보관', cycle: '일' },
-        { no: '④', zone: '',                                item: '컨베이어 벨트주변 안전관리는 잘 이루어지고 있는가?',                  criteria: '컨베이어 주변 이물질 없음, 안전 확보', cycle: '일' },
-        { no: '⑤', zone: '',                                item: '전선 및 배선관리의 안정성은 확보되어 있는가?',                       criteria: '전선·배선 피복 손상 없음, 정리 정돈', cycle: '일' },
-        { no: '⑥', zone: '',                                item: '대차적재 이동 시 시야가 확보 되는가?',                              criteria: '대차 이동 시 전방 시야 확보', cycle: '일' },
-        { no: '⑦', zone: '',                                item: '인화성 도료 주변에 발화용품이 있지 않는가? (성냥/라이터 등)',        criteria: '도료 보관·사용 구역 발화물 없음', cycle: '일' },
-        { no: '⑧', zone: '',                                item: '신체적 과부담 업무가 진행되지 않는가? (단순반복/고중량 이동작업)',   criteria: '고중량 작업 시 보조기구 사용, 2인 1조', cycle: '일' },
-        { no: '⑨', zone: '',                                item: '환기에 대한 적정기준은 유지되고 있는가?',                           criteria: '환기팬·후드 정상 작동, 적정 환기 유지', cycle: '일' },
-        { no: '⑩', zone: '',                                item: '조명에 대한 적정기준을 유지하고 있는가?',                           criteria: '작업장 조도 기준 이상 유지', cycle: '일' }
+    /* 점검 항목 정의 — ①은 3개 서브행 */
+    const ITEMS = [
+        { key: '①-세척',      no: '①', sub: '세척',      label: '작업자 보호구\n착용여부', rowspan: 3, cycle: '일' },
+        { key: '①-배합도장',  no: '',  sub: '배합·도장', label: '',                        rowspan: 0, cycle: '일' },
+        { key: '①-레이저포장',no: '',  sub: '레이저,포장',label: '',                        rowspan: 0, cycle: '일' },
+        { key: '②', no: '②', sub: '', label: '도장부스 출입문 안전장치 작동은 이상 없는가?',          rowspan: 1, cycle: '일' },
+        { key: '③', no: '③', sub: '', label: '작업자 휴대폰 지정장소 보관 하는가?',                  rowspan: 1, cycle: '일' },
+        { key: '④', no: '④', sub: '', label: '컨베이어 벨트주변 안전관리는 잘 이루어지고 있는가?',    rowspan: 1, cycle: '일' },
+        { key: '⑤', no: '⑤', sub: '', label: '전선 및 배선관리의 안정성은 확보 되어 있는가?',        rowspan: 1, cycle: '일' },
+        { key: '⑥', no: '⑥', sub: '', label: '대차적재 이동 시 시야가 확보 되는가?',                 rowspan: 1, cycle: '일' },
+        { key: '⑦', no: '⑦', sub: '', label: '인화성 도료 주변에 발화용품이 있지 않는가? (성냥/라이터 등)', rowspan: 1, cycle: '일' },
+        { key: '⑧', no: '⑧', sub: '', label: '신체적 과부담 업무가 진행되지 않는가? (단순반복/고중량 이동작업)', rowspan: 1, cycle: '일' },
+        { key: '⑨', no: '⑨', sub: '', label: '환기에 대한 적정기준은 유지되고 있는가?',              rowspan: 1, cycle: '일' },
+        { key: '⑩', no: '⑩', sub: '', label: '조명에 대한 적정기준을 유지하고 있는가?',              rowspan: 1, cycle: '일' }
     ];
+    const TOGGLE = { '': 'O', 'O': '△', '△': 'X', 'X': '' };
+    const VAL_STYLE = {
+        'O':  'color:#1d4ed8;font-weight:900;',
+        '△': 'color:#d97706;font-weight:900;',
+        'X':  'color:#dc2626;font-weight:900;'
+    };
 
     async function render(container) {
-        _rows = await SafetyCommon.load(KEY);
+        const saved = await SafetyCommon.load(KEY);
+        _data = (saved && !Array.isArray(saved) && typeof saved === 'object') ? saved : {};
+        const now = new Date();
+        _ym = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
         _draw(container);
     }
 
+    /* ── 현재 월 데이터 (없으면 빈 객체) ── */
+    function _cur() {
+        if (!_data[_ym]) _data[_ym] = { results: {}, dailySig: {}, monthlySig: '', note: '', checker: {} };
+        return _data[_ym];
+    }
+
+    /* ── 달력 일수 ── */
+    function _daysInMonth(ym) {
+        const [y, m] = ym.split('-').map(Number);
+        return new Date(y, m, 0).getDate();
+    }
+
     function _draw(container) {
-        const esc = SafetyCommon.esc;
-        const js  = SafetyCommon.js;
+        const esc   = SafetyCommon.esc;
+        const cur   = _cur();
+        const days  = _daysInMonth(_ym);
+        const [y, m] = _ym.split('-').map(Number);
+        _m = m;
+
+        /* 날짜 헤더 (1 ~ days) */
+        const dateCols = Array.from({ length: days }, function(_, i) { return i + 1; });
+
+        /* 셀 렌더 */
+        /* 셀 렌더 — 사진 있으면 점 표시 */
+        function cell(key, day) {
+            const val    = ((cur.results[key] || {})[day]) || '';
+            const hasPhoto = !!(cur.photos && cur.photos[key] && cur.photos[key][day] && cur.photos[key][day].images && cur.photos[key][day].images.length);
+            const st     = VAL_STYLE[val] || 'color:#bbb;';
+            const dot    = hasPhoto ? `<span style="position:absolute;top:1px;right:2px;width:5px;height:5px;border-radius:50%;background:#dc2626;"></span>` : '';
+            return `<td style="text-align:center;padding:1px 0;cursor:pointer;border:1px solid #ccc;font-size:.82rem;position:relative;${st}"
+                        onclick="SafetyChecklistModule._toggle('${key}',${day})">${dot}${val || '·'}</td>`;
+        }
+
+        /* 항목 행 생성 */
+        let itemRows = '';
+        const s1 = ITEMS[0], s2 = ITEMS[1], s3 = ITEMS[2];
+        itemRows += `<tr>
+            <td rowspan="3" style="text-align:center;font-weight:700;border:1px solid #ccc;vertical-align:middle;font-size:.88rem;">①</td>
+            <td rowspan="3" style="font-size:.76rem;text-align:center;border:1px solid #ccc;vertical-align:middle;padding:2px 4px;white-space:nowrap;">작업자<br>보호구<br>착용여부</td>
+            <td style="font-size:.72rem;text-align:center;border:1px solid #ccc;padding:2px 3px;white-space:nowrap;">${s1.sub}</td>
+            <td style="text-align:center;font-size:.68rem;border:1px solid #ccc;white-space:nowrap;">일</td>
+            ${dateCols.map(function(d){ return cell(s1.key, d); }).join('')}
+            <td style="border:1px solid #ccc;"></td>
+        </tr><tr>
+            <td style="font-size:.72rem;text-align:center;border:1px solid #ccc;padding:2px 3px;white-space:nowrap;">${s2.sub}</td>
+            <td style="text-align:center;font-size:.68rem;border:1px solid #ccc;">일</td>
+            ${dateCols.map(function(d){ return cell(s2.key, d); }).join('')}
+            <td style="border:1px solid #ccc;"></td>
+        </tr><tr>
+            <td style="font-size:.72rem;text-align:center;border:1px solid #ccc;padding:2px 3px;white-space:nowrap;">${s3.sub}</td>
+            <td style="text-align:center;font-size:.68rem;border:1px solid #ccc;">일</td>
+            ${dateCols.map(function(d){ return cell(s3.key, d); }).join('')}
+            <td style="border:1px solid #ccc;"></td>
+        </tr>`;
+
+        ITEMS.slice(3).forEach(function(it) {
+            itemRows += `<tr>
+                <td style="text-align:center;font-weight:700;border:1px solid #ccc;font-size:.82rem;">${it.no}</td>
+                <td colspan="2" style="font-size:.75rem;border:1px solid #ccc;padding:3px 5px;">${esc(it.label)}</td>
+                <td style="text-align:center;font-size:.68rem;border:1px solid #ccc;white-space:nowrap;">일</td>
+                ${dateCols.map(function(d){ return cell(it.key, d); }).join('')}
+                <td style="border:1px solid #ccc;"></td>
+            </tr>`;
+        });
+
+        /* 현장관리자 서명 행 — 날짜별 클릭 → 서명 팝업 */
+        const sigRow = dateCols.map(function(d) {
+            const sig = cur.dailySig && cur.dailySig[d];
+            const hasPhoto = !!(cur.sigPhotos && cur.sigPhotos[d] && cur.sigPhotos[d].images && cur.sigPhotos[d].images.length);
+            const dot = hasPhoto ? `<span style="position:absolute;top:1px;right:1px;width:4px;height:4px;border-radius:50%;background:#dc2626;"></span>` : '';
+            return `<td style="text-align:center;font-size:.62rem;border:1px solid #ccc;padding:1px;cursor:pointer;position:relative;"
+                        onclick="SafetyChecklistModule._openSig(${d})" title="${d}일 서명">
+                        ${dot}${sig ? `<span style="color:#1d4ed8;font-weight:700;">(인)</span>` : '<span style="color:#ddd;">(인)</span>'}
+                    </td>`;
+        }).join('');
+
         container.innerHTML = `<div class="fade-in-up">
-            ${SafetyProcessUI.renderSection('safety-checklist', '안전관리 점검표', '정기 안전 점검 기록을 등록·관리합니다.')}
+            ${SafetyProcessUI.renderSection('safety-checklist', '안전관리 점검표', '월간 일일 안전점검 일지입니다.')}
+
+            <!-- 월 이동 + 저장 -->
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+                <button class="btn btn-sm btn-outline" onclick="SafetyChecklistModule._goMonth('${_prevYm(_ym)}')">◀ 이전 달</button>
+                <span style="font-size:1rem;font-weight:700;">${y}년 ${m}월</span>
+                <button class="btn btn-sm btn-outline" onclick="SafetyChecklistModule._goMonth('${_nextYm(_ym)}')">다음 달 ▶</button>
+                <button class="btn btn-sm btn-primary" onclick="SafetyChecklistModule._saveMonth()" style="margin-left:8px;">
+                    <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">save</span> 저장
+                </button>
+                <button class="btn btn-sm btn-outline" onclick="SafetyChecklistModule._printDoc()" style="margin-left:4px;">
+                    <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">print</span> 인쇄
+                </button>
+            </div>
+
             <div class="card">
-                <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
-                    <h4 style="margin:0;font-size:1rem;">점검 기록 <span style="color:var(--text-muted);font-size:.85rem;">(${_rows.length}건)</span></h4>
-                    <button class="btn btn-primary btn-sm" onclick="SafetyChecklistModule._openAdd()">
-                        <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">add</span> 점검 등록
-                    </button>
-                </div>
-                <div class="card-body" style="padding:0;">
-                    <div class="data-table-wrapper">
-                        <table class="data-table">
+                <div class="card-body" style="padding:8px;overflow-x:auto;">
+                    <div id="cl-doc" style="font-family:'Malgun Gothic','맑은 고딕',sans-serif;">
+
+                        <!-- 헤더 -->
+                        <table style="width:100%;border-collapse:collapse;">
+                            <tr>
+                                <td style="border:2px solid #555;padding:6px 10px;width:120px;vertical-align:middle;">
+                                    <div style="display:flex;align-items:center;gap:5px;">
+                                        <div style="width:32px;height:32px;background:#1d4ed8;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                                            <span style="color:#fff;font-weight:900;font-size:.72rem;">KC</span>
+                                        </div>
+                                        <div style="font-size:.65rem;font-weight:700;line-height:1.3;">KC 케미칼<br>주식회사</div>
+                                    </div>
+                                </td>
+                                <td style="border:2px solid #555;padding:8px;text-align:center;">
+                                    <span style="font-size:1.25rem;font-weight:900;">${y}년 ${m}월 안전관리 점검표</span>
+                                </td>
+                                <td style="border:2px solid #555;padding:0;vertical-align:top;width:190px;">
+                                    <table style="width:100%;border-collapse:collapse;">
+                                        <tr style="background:#e5e7eb;">
+                                            <td rowspan="3" style="border:1px solid #aaa;padding:3px;text-align:center;font-size:.68rem;font-weight:700;vertical-align:middle;">범<br>례</td>
+                                            <td style="border:1px solid #aaa;padding:2px 5px;font-size:.68rem;">양호</td>
+                                            <td style="border:1px solid #aaa;padding:2px 5px;text-align:center;font-size:.85rem;font-weight:900;color:#1d4ed8;">O</td>
+                                            <td rowspan="3" style="border:1px solid #aaa;padding:3px;text-align:center;font-size:.68rem;font-weight:700;vertical-align:middle;">결<br>재</td>
+                                            <td style="border:1px solid #aaa;padding:2px 4px;text-align:center;font-size:.68rem;">작성</td>
+                                            <td style="border:1px solid #aaa;padding:2px 4px;text-align:center;font-size:.68rem;">검토</td>
+                                            <td style="border:1px solid #aaa;padding:2px 4px;text-align:center;font-size:.68rem;">승인</td>
+                                        </tr>
+                                        <tr>
+                                            <td style="border:1px solid #aaa;padding:2px 5px;font-size:.62rem;line-height:1.2;">주의요<br>계속관찰</td>
+                                            <td style="border:1px solid #aaa;padding:2px 5px;text-align:center;font-size:.85rem;font-weight:900;color:#d97706;">△</td>
+                                            <td style="border:1px solid #aaa;padding:3px;"></td><td style="border:1px solid #aaa;padding:3px;"></td><td style="border:1px solid #aaa;padding:3px;"></td>
+                                        </tr>
+                                        <tr>
+                                            <td style="border:1px solid #aaa;padding:2px 5px;font-size:.62rem;line-height:1.2;">불량<br>조치필요</td>
+                                            <td style="border:1px solid #aaa;padding:2px 5px;text-align:center;font-size:.85rem;font-weight:900;color:#dc2626;">X</td>
+                                            <td style="border:1px solid #aaa;padding:2px;font-size:.65rem;text-align:center;color:#888;" colspan="3">/ / /</td>
+                                        </tr>
+                                    </table>
+                                </td>
+                            </tr>
+                        </table>
+
+                        <!-- 점검 테이블: table-layout fixed, 내용컬럼 고정 + 날짜컬럼 균등 분배 -->
+                        <table style="width:100%;border-collapse:collapse;font-size:.76rem;table-layout:fixed;">
+                            <colgroup>
+                                <col style="width:26px;">   <!-- 항목번호 -->
+                                <col style="width:72px;">   <!-- 점검내용 라벨 -->
+                                <col style="width:58px;">   <!-- 서브 구분 -->
+                                <col style="width:22px;">   <!-- 주기 -->
+                                ${dateCols.map(function(){ return '<col>'; }).join('')}  <!-- 날짜: 균등 분배 -->
+                                <col style="width:36px;">   <!-- 비고 -->
+                            </colgroup>
                             <thead>
-                                <tr>
-                                    <th style="width:40px;">No</th>
-                                    <th style="width:110px;">점검일</th>
-                                    <th style="width:90px;">점검구분</th>
-                                    <th style="width:90px;">점검자</th>
-                                    <th style="width:70px;">항목수</th>
-                                    <th style="width:80px;">적합</th>
-                                    <th style="width:80px;">부적합</th>
-                                    <th style="width:70px;">결과</th>
-                                    <th style="width:50px;">사진</th>
-                                    <th style="width:90px;">작업</th>
+                                <tr style="background:#dbeafe;">
+                                    <th style="border:1px solid #aaa;padding:3px 1px;text-align:center;font-size:.7rem;">항<br>목</th>
+                                    <th colspan="2" style="border:1px solid #aaa;padding:3px;text-align:center;font-size:.72rem;">점검 내용</th>
+                                    <th style="border:1px solid #aaa;padding:2px 0;text-align:center;font-size:.65rem;writing-mode:vertical-rl;letter-spacing:.1em;">점검주기</th>
+                                    ${dateCols.map(function(d){ return `<th style="border:1px solid #aaa;padding:1px 0;text-align:center;font-size:.7rem;">${d}</th>`; }).join('')}
+                                    <th style="border:1px solid #aaa;padding:3px 1px;text-align:center;font-size:.7rem;">비고</th>
                                 </tr>
                             </thead>
-                            <tbody>
-                                ${_rows.length === 0 ? `<tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:32px;">등록된 점검 기록이 없습니다.</td></tr>` :
-                                _rows.map(function (r, i) {
-                                    const items = r.items || [];
-                                    const ok = items.filter(function (it) { return it.result === '적합'; }).length;
-                                    const ng = items.filter(function (it) { return it.result === '부적합'; }).length;
-                                    const overallOk = ng === 0 && items.length > 0;
-                                    const resultColor = overallOk ? '#059669' : '#dc2626';
-                                    const hasImg = r.images && r.images.length > 0;
-                                    return `<tr>
-                                        <td style="text-align:center;">${i + 1}</td>
-                                        <td>${esc(r.checkDate)}</td>
-                                        <td style="text-align:center;">
-                                            <span style="padding:2px 7px;border-radius:999px;font-size:.75rem;font-weight:700;background:#e0e7ff;color:#4338ca;">${esc(r.checkType || '월간')}</span>
-                                        </td>
-                                        <td>${esc(r.inspector)}</td>
-                                        <td style="text-align:center;">${items.length}</td>
-                                        <td style="text-align:center;color:#059669;font-weight:700;">${ok}</td>
-                                        <td style="text-align:center;color:#dc2626;font-weight:700;">${ng}</td>
-                                        <td style="text-align:center;">
-                                            <span style="font-size:.75rem;font-weight:700;padding:2px 7px;border-radius:999px;background:${resultColor}22;color:${resultColor};">
-                                                ${overallOk ? '적합' : (ng > 0 ? '부적합' : '-')}
-                                            </span>
-                                        </td>
-                                        <td style="text-align:center;">
-                                            ${hasImg ? `<span class="material-symbols-outlined" style="font-size:16px;color:#3b82f6;cursor:pointer;" onclick="SafetyChecklistModule._viewImg('${js(r.id)}')">photo_library</span>` : '-'}
-                                        </td>
-                                        <td style="text-align:center;">
-                                            <button class="btn btn-sm btn-outline" onclick="SafetyChecklistModule._detail('${js(r.id)}')" style="margin-right:4px;">상세</button>
-                                            <button class="btn btn-sm btn-danger" onclick="SafetyChecklistModule._del('${js(r.id)}')">삭제</button>
-                                        </td>
-                                    </tr>`;
-                                }).join('')}
+                            <tbody id="cl-tbody">
+                                ${itemRows}
                             </tbody>
+                            <tfoot>
+                                <tr style="background:#f0fdf4;">
+                                    <td colspan="2" style="border:1px solid #aaa;padding:3px;font-weight:700;font-size:.72rem;text-align:center;">점검<br>담당자</td>
+                                    <td style="border:1px solid #aaa;padding:3px;font-size:.7rem;text-align:center;">현장<br>관리자</td>
+                                    <td style="border:1px solid #aaa;padding:2px 0;font-size:.62rem;text-align:center;writing-mode:vertical-rl;">1회/일 점검</td>
+                                    ${sigRow}
+                                    <td style="border:1px solid #aaa;"></td>
+                                </tr>
+                                <tr style="background:#f0fdf4;">
+                                    <td colspan="2" style="border:1px solid #aaa;"></td>
+                                    <td style="border:1px solid #aaa;padding:3px;font-size:.7rem;text-align:center;">생산<br>부장</td>
+                                    <td style="border:1px solid #aaa;padding:2px 0;font-size:.62rem;text-align:center;writing-mode:vertical-rl;">1회/월 말일</td>
+                                    ${dateCols.map(function(){ return '<td style="border:1px solid #ccc;"></td>'; }).join('')}
+                                    <td style="border:1px solid #aaa;padding:3px;font-size:.72rem;text-align:center;cursor:pointer;"
+                                        onclick="SafetyChecklistModule._toggleMonthSig()">
+                                        ${cur.monthlySig ? '<span style="color:#1d4ed8;font-weight:700;">(인)</span>' : '<span style="color:#ddd;">(인)</span>'}
+                                    </td>
+                                </tr>
+                            </tfoot>
                         </table>
+
+                        <!-- 이상 발생 시 조치 사항 -->
+                        <table style="width:100%;border-collapse:collapse;">
+                            <tr>
+                                <td style="border:2px solid #555;padding:5px 8px;width:100px;font-size:.76rem;font-weight:700;text-align:center;vertical-align:top;">이상 발생 시<br>조치 사항</td>
+                                <td style="border:2px solid #555;padding:3px 6px;">
+                                    <textarea id="cl-note" style="width:100%;min-height:42px;border:none;resize:vertical;background:transparent;font-family:inherit;font-size:.8rem;"
+                                        placeholder="이상 발생 내용 및 조치 사항을 입력하세요.">${esc(cur.note || '')}</textarea>
+                                </td>
+                            </tr>
+                        </table>
+                        <div style="display:flex;justify-content:space-between;padding:3px 2px;font-size:.68rem;color:#888;">
+                            <span>Rev.00</span><span>케이씨케미칼㈜</span><span>A4 (297 × 210 mm)</span>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>`;
     }
 
-    function _openAdd() {
-        const items = DEFAULT_ITEMS.map(function (it) {
-            return { id: SafetyCommon.genId(), no: it.no, zone: it.zone, item: it.item, criteria: it.criteria, cycle: it.cycle, result: '적합', action: '' };
-        });
-        _openModal(null, items);
+    /* ── 월 이동 ── */
+    function _prevYm(ym) {
+        const [y, m] = ym.split('-').map(Number);
+        return m === 1 ? (y-1) + '-12' : y + '-' + String(m-1).padStart(2,'0');
     }
-
-    function _detail(id) {
-        const r = _rows.find(function (x) { return x.id === id; });
-        if (r) _openModal(r, r.items || []);
+    function _nextYm(ym) {
+        const [y, m] = ym.split('-').map(Number);
+        return m === 12 ? (y+1) + '-01' : y + '-' + String(m+1).padStart(2,'0');
     }
-
-    function _openModal(row, items) {
-        const esc = SafetyCommon.esc;
-        const today = SafetyCommon.today();
-
-        const itemsHTML = items.map(function (it) {
-            const zoneHtml = it.zone ? `<div style="font-size:.7rem;color:#6b7280;margin-bottom:2px;">(${esc(it.zone)})</div>` : '';
-            return `<tr>
-                <td style="text-align:center;font-weight:700;font-size:.9rem;color:var(--accent-blue);">${esc(it.no || '')}</td>
-                <td style="font-size:.83rem;">${zoneHtml}${esc(it.item)}</td>
-                <td style="font-size:.78rem;color:var(--text-muted);">${esc(it.criteria)}</td>
-                <td style="text-align:center;font-size:.75rem;">${esc(it.cycle || '일')}</td>
-                <td style="text-align:center;">
-                    <select class="form-control" style="padding:3px 4px;font-size:.78rem;width:76px;" id="cl-result-${esc(it.id)}">
-                        <option value="적합" ${it.result === '적합' ? 'selected' : ''}>적합 ○</option>
-                        <option value="부적합" ${it.result === '부적합' ? 'selected' : ''}>부적합 ×</option>
-                        <option value="해당없음" ${it.result === '해당없음' ? 'selected' : ''}>해당없음</option>
-                    </select>
-                </td>
-                <td><input class="form-control" style="padding:3px 6px;font-size:.78rem;" id="cl-action-${esc(it.id)}" value="${esc(it.action)}" placeholder="조치내용"></td>
-            </tr>`;
-        }).join('');
-
-        const body = `
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">
-                <div class="form-group">
-                    <label class="form-label">점검일 *</label>
-                    <input class="form-control" id="cl-date" type="date" value="${esc(row ? row.checkDate : today)}">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">점검구분</label>
-                    <select class="form-control" id="cl-type">
-                        ${['월간','주간','수시'].map(function (t) {
-                            return `<option value="${t}" ${row && row.checkType === t ? 'selected' : ''}>${t}</option>`;
-                        }).join('')}
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">점검자(담당자)</label>
-                    <input class="form-control" id="cl-inspector" value="${esc(row ? row.inspector : '')}" placeholder="예) 현장 관리자">
-                </div>
-            </div>
-            <div class="data-table-wrapper" style="max-height:340px;overflow-y:auto;margin-bottom:12px;">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th style="width:32px;">항목</th>
-                            <th>점검 내용</th>
-                            <th style="width:150px;">점검 기준</th>
-                            <th style="width:48px;">주기</th>
-                            <th style="width:80px;">결과</th>
-                            <th style="width:130px;">조치내용</th>
-                        </tr>
-                    </thead>
-                    <tbody>${itemsHTML}</tbody>
-                </table>
-            </div>
-            ${SafetyImageEditor.imageAreaHTML('clImgContainer')}
-        `;
-
-        // Serialize items for save
-        const itemsData = JSON.stringify(items).replace(/'/g, "\\'");
-
-        const footer = `
-            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
-            <button class="btn btn-primary" onclick="SafetyChecklistModule._save('${row ? row.id : ''}', ${itemsData.replace(/"/g, '&quot;')})">
-                ${row ? '수정 저장' : '등록'}
-            </button>
-        `;
-
-        UIUtils.showModal(row ? '점검표 상세' : '안전관리 점검 등록', body, footer, 'xl');
-
-        if (row && row.images) {
-            setTimeout(function () {
-                SafetyImageEditor.renderImageArea('clImgContainer', row.images);
-            }, 50);
-        }
-    }
-
-    async function _save(editId, itemsTemplate) {
-        const checkDate = document.getElementById('cl-date').value;
-        if (!checkDate) { UIUtils.toast('점검일은 필수입니다.', 'warning'); return; }
-
-        // Collect items results
-        const items = (itemsTemplate || []).map(function (it) {
-            const resultEl = document.getElementById('cl-result-' + it.id);
-            const actionEl = document.getElementById('cl-action-' + it.id);
-            return {
-                id: it.id,
-                no: it.no || '',
-                zone: it.zone || '',
-                item: it.item,
-                criteria: it.criteria,
-                cycle: it.cycle || '일',
-                result: resultEl ? resultEl.value : it.result,
-                action: actionEl ? actionEl.value.trim() : it.action
-            };
-        });
-
-        const row = {
-            id: editId || SafetyCommon.genId(),
-            checkDate,
-            checkType: document.getElementById('cl-type').value,
-            inspector: document.getElementById('cl-inspector').value.trim(),
-            items,
-            images: SafetyImageEditor.collectImages('clImgContainer'),
-            updatedAt: SafetyCommon.today()
-        };
-
-        if (editId) {
-            const idx = _rows.findIndex(function (x) { return x.id === editId; });
-            if (idx !== -1) _rows[idx] = row;
-        } else {
-            _rows.unshift(row);
-        }
-
-        await SafetyCommon.save(KEY, _rows);
-        UIUtils.closeModal();
-        UIUtils.toast(editId ? '점검 기록이 수정되었습니다.' : '점검 기록이 등록되었습니다.', 'success');
+    function _goMonth(ym) {
+        _ym = ym;
+        if (!_data[_ym]) _data[_ym] = { results:{}, dailySig:{}, sigPhotos:{}, photos:{}, monthlySig:'', note:'', checker:{} };
         _draw(document.getElementById('contentArea'));
     }
 
-    function _del(id) {
-        UIUtils.confirm('이 점검 기록을 삭제하시겠습니까?', async function () {
-            _rows = _rows.filter(function (x) { return x.id !== id; });
-            await SafetyCommon.save(KEY, _rows);
-            UIUtils.toast('삭제되었습니다.', 'success');
-            _draw(document.getElementById('contentArea'));
+    /* ── 셀 클릭: O → △(사진팝업) → X(사진팝업) → blank ── */
+    function _toggle(key, day) {
+        const cur  = _cur();
+        if (!cur.results[key]) cur.results[key] = {};
+        const prev = cur.results[key][day] || '';
+        const next = TOGGLE[prev];
+        if (next === '') {
+            delete cur.results[key][day];
+            _updateCell(key, day, '', cur);
+        } else if (next === '△' || next === 'X') {
+            cur.results[key][day] = next;
+            _updateCell(key, day, next, cur);
+            /* 사진 등록 팝업 */
+            _openPhotoModal(key, day, next);
+        } else {
+            cur.results[key][day] = next;
+            _updateCell(key, day, next, cur);
+        }
+    }
+
+    function _updateCell(key, day, val, cur) {
+        const st = VAL_STYLE[val] || 'color:#bbb;';
+        const hasPhoto = !!(cur.photos && cur.photos[key] && cur.photos[key][day] && cur.photos[key][day].images && cur.photos[key][day].images.length);
+        const dot = hasPhoto ? `<span style="position:absolute;top:1px;right:2px;width:5px;height:5px;border-radius:50%;background:#dc2626;"></span>` : '';
+        document.querySelectorAll('#cl-tbody td[onclick]').forEach(function(td) {
+            const a = td.getAttribute('onclick') || '';
+            if (a.includes("'" + key + "'," + day + ")")) {
+                td.style.cssText = 'text-align:center;padding:1px 0;cursor:pointer;border:1px solid #ccc;font-size:.82rem;position:relative;' + st;
+                td.innerHTML = dot + (val || '·');
+            }
         });
     }
 
-    function _viewImg(id) {
-        const r = _rows.find(function (x) { return x.id === id; });
-        if (!r || !r.images || r.images.length === 0) return;
+    /* ── △/X 사진 등록 팝업 ── */
+    function _openPhotoModal(key, day, val) {
+        const esc = SafetyCommon.esc;
+        const js  = SafetyCommon.js;
+        const cur = _cur();
+        const existing = (cur.photos && cur.photos[key] && cur.photos[key][day]) || { note:'', images:[] };
+        const valLabel = val === '△' ? '⚠ 주의요 · 계속관찰' : '✖ 불량 · 조치필요';
+        const valColor = val === '△' ? '#d97706' : '#dc2626';
+        const itemLabel = ITEMS.find(function(it){ return it.key === key; });
         const body = `
-            ${SafetyImageEditor.imageAreaHTML('clViewImgContainer')}
-            <style>#clViewImgContainer .safety-img-delete, #clViewImgContainer .safety-img-resize { display:none!important; }</style>
+            <div style="background:${valColor}11;border-left:4px solid ${valColor};border-radius:6px;padding:8px 12px;margin-bottom:12px;">
+                <span style="font-size:.9rem;font-weight:700;color:${valColor};">${valLabel}</span>
+                <span style="font-size:.8rem;color:var(--text-muted);margin-left:8px;">${_m}월 ${day}일 / ${esc(itemLabel ? (itemLabel.sub || itemLabel.no) : key)}</span>
+            </div>
+            <div class="form-group">
+                <label class="form-label">조치 내용</label>
+                <textarea class="form-control" id="clp-note" rows="3" style="resize:vertical;"
+                    placeholder="발생 상황 및 조치 내용을 입력하세요.">${esc(existing.note)}</textarea>
+            </div>
+            ${SafetyImageEditor.imageAreaHTML('clpImgContainer')}
         `;
-        UIUtils.showModal('점검표 첨부 이미지 — ' + SafetyCommon.esc(r.checkDate), body, '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>', 'xl');
-        setTimeout(function () { SafetyImageEditor.renderImageArea('clViewImgContainer', r.images, true); }, 50);
+        const footer = `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+            <button class="btn btn-primary" onclick="SafetyChecklistModule._savePhoto('${js(key)}',${day})">저장</button>
+        `;
+        UIUtils.showModal('사진 등록 — ' + valLabel, body, footer, 'md');
+        if (existing.images && existing.images.length) {
+            setTimeout(function(){ SafetyImageEditor.renderImageArea('clpImgContainer', existing.images); }, 50);
+        }
     }
 
-    return { render, _openAdd, _detail, _save, _del, _viewImg };
+    async function _savePhoto(key, day) {
+        const cur = _cur();
+        if (!cur.photos) cur.photos = {};
+        if (!cur.photos[key]) cur.photos[key] = {};
+        const note   = (document.getElementById('clp-note') || {}).value || '';
+        const images = SafetyImageEditor.collectImages('clpImgContainer');
+        cur.photos[key][day] = { note, images };
+        await SafetyCommon.save(KEY, _data);
+        UIUtils.closeModal();
+        UIUtils.toast('저장되었습니다.', 'success');
+        _updateCell(key, day, (cur.results[key] || {})[day] || '', cur);
+    }
+
+    /* ── 현장관리자 서명 팝업 ── */
+    function _openSig(day) {
+        const esc = SafetyCommon.esc;
+        const js  = SafetyCommon.js;
+        const cur = _cur();
+        const existing = (cur.sigPhotos && cur.sigPhotos[day]) || { name:'', images:[] };
+        const body = `
+            <div style="background:#eff6ff;border-left:4px solid #2563eb;border-radius:6px;padding:8px 12px;margin-bottom:12px;">
+                <span style="font-size:.88rem;font-weight:700;color:#2563eb;">${_m}월 ${day}일 — 현장 관리자 점검 서명</span>
+            </div>
+            <div class="form-group">
+                <label class="form-label">서명자 (이름 또는 서명)</label>
+                <input class="form-control" id="cls-name" value="${esc(existing.name)}" placeholder="서명자 성명">
+            </div>
+            ${SafetyImageEditor.imageAreaHTML('clsImgContainer')}
+        `;
+        const footer = `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            ${existing.name || (existing.images && existing.images.length)
+                ? `<button class="btn btn-danger btn-sm" onclick="SafetyChecklistModule._clearSig(${day})" style="margin-right:auto;">서명 삭제</button>`
+                : ''}
+            <button class="btn btn-primary" onclick="SafetyChecklistModule._saveSig(${day})">서명 완료</button>
+        `;
+        UIUtils.showModal('현장관리자 서명', body, footer, 'md');
+        if (existing.images && existing.images.length) {
+            setTimeout(function(){ SafetyImageEditor.renderImageArea('clsImgContainer', existing.images); }, 50);
+        }
+    }
+
+    async function _saveSig(day) {
+        const cur = _cur();
+        if (!cur.sigPhotos) cur.sigPhotos = {};
+        const name   = (document.getElementById('cls-name') || {}).value || '';
+        const images = SafetyImageEditor.collectImages('clsImgContainer');
+        cur.sigPhotos[day] = { name, images };
+        cur.dailySig[day]  = name || '✓';
+        await SafetyCommon.save(KEY, _data);
+        UIUtils.closeModal();
+        UIUtils.toast(day + '일 서명이 등록되었습니다.', 'success');
+        _draw(document.getElementById('contentArea'));
+    }
+
+    async function _clearSig(day) {
+        const cur = _cur();
+        delete cur.dailySig[day];
+        if (cur.sigPhotos) delete cur.sigPhotos[day];
+        await SafetyCommon.save(KEY, _data);
+        UIUtils.closeModal();
+        _draw(document.getElementById('contentArea'));
+    }
+
+    function _toggleMonthSig() {
+        const cur = _cur();
+        cur.monthlySig = cur.monthlySig ? '' : '✓';
+        _draw(document.getElementById('contentArea'));
+    }
+
+    /* ── 저장 ── */
+    async function _saveMonth() {
+        const cur = _cur();
+        const noteEl = document.getElementById('cl-note');
+        if (noteEl) cur.note = noteEl.value;
+        await SafetyCommon.save(KEY, _data);
+        UIUtils.toast(_ym + ' 점검표가 저장되었습니다.', 'success');
+    }
+
+    /* ── 인쇄 ── */
+    function _printDoc() {
+        const el = document.getElementById('cl-doc');
+        if (!el) return;
+        const w = window.open('', '_blank', 'width=1200,height=800');
+        w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>안전관리 점검표</title>
+            <style>
+                body{font-family:'Malgun Gothic','맑은 고딕',sans-serif;margin:8mm;font-size:8pt;}
+                table{border-collapse:collapse;width:100%;}
+                td,th{border:1px solid #555;padding:2px 3px;font-size:7.5pt;}
+                textarea{border:none;resize:none;font-family:inherit;font-size:7.5pt;width:100%;}
+                @page{size:A4 landscape;margin:8mm;}
+            </style></head><body>${el.innerHTML}</body></html>`);
+        w.document.close();
+        w.focus();
+        setTimeout(function(){ w.print(); }, 400);
+    }
+
+    return { render, _toggle, _openSig, _saveSig, _clearSig, _toggleMonthSig,
+             _openPhotoModal, _savePhoto, _goMonth, _saveMonth, _printDoc };
 })();
 
 /* ════════════════════════════════════════════════════════════════════
