@@ -317,7 +317,7 @@ var IncomingOverviewModule = (function () {
             </tr>`).join('');
         UIUtils.showModal('도료 수입검사 — 불합격 목록', `
             <table class="data-table">
-                <thead><tr><th>검사일자</th><th>구매처</th><th>원료명</th><th>입고수량</th><th>제조사 LOT</th><th>판정</th></tr></thead>
+                <thead><tr><th>검사일자</th><th>구매처</th><th>원료명</th><th>입고수량</th><th>제조사 표기 LOT</th><th>판정</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>`, '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>', 'lg');
     }
@@ -336,7 +336,7 @@ var IncomingOverviewModule = (function () {
             </tr>`).join('');
         UIUtils.showModal('도료 수입검사 — 성적서 미접수 목록', `
             <table class="data-table">
-                <thead><tr><th>검사일자</th><th>구매처</th><th>원료명</th><th>입고수량</th><th>제조사 LOT</th><th>접수상태</th></tr></thead>
+                <thead><tr><th>검사일자</th><th>구매처</th><th>원료명</th><th>입고수량</th><th>제조사 표기 LOT</th><th>접수상태</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>`, '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>', 'lg');
     }

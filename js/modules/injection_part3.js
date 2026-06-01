@@ -60,7 +60,7 @@ var PaintIncomingInspectionModule = (function() {
                                         <th>도료품명</th>
                                         <th>입고수량</th>
                                         <th>제조일자</th>
-                                        <th>제조사 LOT</th>
+                                        <th>제조사 표기 LOT</th>
                                         <th>LOT구분</th>
                                         <th>용기상태</th>
                                         <th>유효기간</th>
@@ -373,8 +373,8 @@ var PaintIncomingInspectionModule = (function() {
                     <input type="text" class="form-input" id="piShelfLife" placeholder="예: 12개월, 6개월" value="${d.shelfLife || ''}">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">제조사 LOT</label>
-                    <input type="text" class="form-input" id="piLotNo" placeholder="제조사 LOT" value="${d.lotNo || ''}">
+                    <label class="form-label">제조사 표기 LOT</label>
+                    <input type="text" class="form-input" id="piLotNo" placeholder="제조사 표기 LOT" value="${d.lotNo || ''}">
                 </div>
             </div>
 
@@ -873,7 +873,7 @@ var PaintIncomingInspectionModule = (function() {
         }
         const headers = [
             '검사일자', '검사자', '구매처', '원료명', '포장단위', '입고수량',
-            '제조일자', '유효기간(만료일)', '유통기한', '제조사 LOT',
+            '제조일자', '유효기간(만료일)', '유통기한', '제조사 표기 LOT',
             '용기상태', '용기상태_비고', '유효기간확인', '유효기간확인_비고',
             '성적서접수확인', '성적서확인_비고', 'LOT구분', '최종판정', '비고'
         ];
@@ -917,7 +917,7 @@ var PaintIncomingInspectionModule = (function() {
                                 <th>원료명</th>
                                 <th>구매처</th>
                                 <th>제조일자</th>
-                                <th>제조사 LOT</th>
+                                <th>제조사 표기 LOT</th>
                                 <th>입고수량</th>
                                 <th>LOT구분</th>
                                 <th style="text-align:center;">접수 처리</th>

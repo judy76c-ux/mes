@@ -4975,7 +4975,7 @@ const SettingsModule = (function() {
                                         <th>도료 사양</th>
                                         <th>포장 용량</th>
                                         <th>매입 단가</th>
-                                        <th>유통기한</th>
+                                        <th>유효기한</th>
                                         <th>작업</th>
                                     </tr>
                                 </thead>
@@ -5065,7 +5065,7 @@ const SettingsModule = (function() {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">유통기한</label>
+                    <label class="form-label">유효기한</label>
                     <input type="text" class="form-input" id="addPaintShelfLife" placeholder="예: 12개월, 6개월">
                 </div>
                 <div class="form-group" style="visibility:hidden;"></div>
@@ -5168,7 +5168,7 @@ const SettingsModule = (function() {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">유통기한</label>
+                    <label class="form-label">유효기한</label>
                     <input type="text" class="form-input" id="editPaintShelfLife" value="${p.shelfLife || ''}">
                 </div>
                 <div class="form-group" style="visibility:hidden;"></div>
@@ -5250,7 +5250,7 @@ const SettingsModule = (function() {
         },
         {
             key: 'shelfLife',
-            label: '유통기한'
+            label: '유효기한'
         },
         {
             key: 'usage',
@@ -6978,7 +6978,7 @@ const SettingsModule = (function() {
     }
 
     async function migrateExpDates() {
-        UIUtils.confirm('도료 수입검사 기록의 유효기간을 재계산합니까?\n제조일자 + 유통기한으로 유효기간을 다시 계산하고,\n도료 창고 재고의 유효기간도 함께 갱신됩니다.', async () => {
+        UIUtils.confirm('도료 수입검사 기록의 유효기간을 재계산합니까?\n제조일자 + 유효기한으로 유효기간을 다시 계산하고,\n도료 창고 재고의 유효기간도 함께 갱신됩니다.', async () => {
             // shelfLife 문자열 → 개월 수
             function _parseMonths(val) {
                 if (!val) return 12;

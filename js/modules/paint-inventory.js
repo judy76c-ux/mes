@@ -11,6 +11,46 @@ const PaintInventoryModule = (function() {
     let _page     = 1;
     let _pageSize = 50;
 
+    function _parseShelfLifeMonths(value) {
+        if (!value) return null;
+        const s = String(value).trim();
+        const year = s.match(/(\d+)\s*년/);
+        const month = s.match(/(\d+)\s*개월/);
+        const number = s.match(/^(\d+)$/);
+        if (year) return parseInt(year[1], 10) * 12;
+        if (month) return parseInt(month[1], 10);
+        if (number) return parseInt(number[1], 10);
+        return null;
+    }
+
+    function _dateFromProdLot(value) {
+        const lot = String(value || '').trim();
+        if (!/^\d{6}$/.test(lot)) return '';
+        const yy = parseInt(lot.slice(0, 2), 10);
+        const mm = parseInt(lot.slice(2, 4), 10);
+        const dd = parseInt(lot.slice(4, 6), 10);
+        if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return '';
+
+        const date = new Date(2000 + yy, mm - 1, dd);
+        if (date.getFullYear() !== 2000 + yy || date.getMonth() !== mm - 1 || date.getDate() !== dd) return '';
+        return `${date.getFullYear()}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+    }
+
+    function _addMonths(dateStr, months) {
+        if (!dateStr || !months) return '';
+        const m = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (!m) return '';
+        const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+        date.setMonth(date.getMonth() + months);
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    }
+
+    function _resolveLotDates(record, material) {
+        const mfgDate = record.mfgDate || _dateFromProdLot(record.prodLot || record.lotNo);
+        const expDate = record.expDate || _addMonths(mfgDate, _parseShelfLifeMonths(material && material.shelfLife));
+        return { mfgDate, expDate };
+    }
+
     function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
@@ -19,6 +59,10 @@ const PaintInventoryModule = (function() {
                         <button class="btn btn-outline" onclick="Router.navigate('paint-layout')"
                             title="도료 보관 창고 배치 레이아웃을 시각적으로 편집합니다.">
                             <span class="material-symbols-outlined">map</span> 레이아웃
+                        </button>
+                        <button class="btn btn-outline" onclick="PaintInventoryModule.openTemperatureStandard()"
+                            title="도료 보관창고 온도관리 기준서를 확인합니다.">
+                            <span class="material-symbols-outlined">device_thermostat</span> 온도관리 기준서
                         </button>
                         <button class="btn btn-primary" onclick="PaintInventoryModule.openIncomingModal()">
                             <span class="material-symbols-outlined">login</span> 도료 입고
@@ -75,9 +119,8 @@ const PaintInventoryModule = (function() {
                                         <th>구매처</th>
                                         <th>도료명</th>
                                         <th>포장 단위</th>
-                                        <th>제조사 LOT</th>
-                                        <th>제조 LOT</th>
                                         <th>수량</th>
+                                        <th>제조 LOT</th>
                                         <th>제조일자</th>
                                         <th>유효기간</th>
                                         <th>잔여 유효기간</th>
@@ -167,7 +210,7 @@ const PaintInventoryModule = (function() {
         const tbody = document.getElementById('paintInvTableBody');
 
         if (total === 0) {
-            if (tbody) tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-muted);">재고 데이터가 없습니다.</td></tr>`;
+            if (tbody) tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:40px;color:var(--text-muted);">재고 데이터가 없습니다.</td></tr>`;
             const pEl = document.getElementById('paintInvPagination');
             if (pEl) pEl.innerHTML = '';
             return;
@@ -180,12 +223,13 @@ const PaintInventoryModule = (function() {
             const mPackUnit = mat ? (mat.packUnit ? mat.packUnit + ' KG' : '-') : '-';
 
             const mSupplier = mat ? (mat.supplier || '-') : '-';
+            const lotDates = _resolveLotDates(d, mat);
 
-            // 남은 유효기간 계산
+            // 남은 유효기한 계산
             let remainHtml = '-';
-            if (d.expDate) {
+            if (lotDates.expDate) {
                 const today = new Date(); today.setHours(0,0,0,0);
-                const exp   = new Date(d.expDate); exp.setHours(0,0,0,0);
+                const exp   = new Date(lotDates.expDate); exp.setHours(0,0,0,0);
                 const diffDays = Math.round((exp - today) / 86400000);
                 if (diffDays < 0) {
                     remainHtml = `<span style="color:var(--accent-red);font-weight:700;">만료 (${Math.abs(diffDays)}일 경과)</span>`;
@@ -204,11 +248,10 @@ const PaintInventoryModule = (function() {
                     <td>${mSupplier}</td>
                     <td><strong>${mName}</strong></td>
                     <td>${mPackUnit}</td>
-                    <td style="font-family:monospace;">${d.lotNo || '-'}</td>
-                    <td style="font-family:monospace;color:var(--text-secondary);">${d.prodLot || '-'}</td>
                     <td style="text-align:right">${UIUtils.formatNumber(d.quantity)}</td>
-                    <td style="font-size:0.82rem;">${d.mfgDate || '-'}</td>
-                    <td style="font-size:0.82rem;">${d.expDate || '-'}</td>
+                    <td style="font-family:monospace;color:var(--text-secondary);">${d.prodLot || '-'}</td>
+                    <td style="font-size:0.82rem;">${lotDates.mfgDate || '-'}</td>
+                    <td style="font-size:0.82rem;">${lotDates.expDate || '-'}</td>
                     <td style="font-size:0.82rem; white-space:nowrap;">${remainHtml}</td>
                     <td>${UIUtils.badge(d.type || '입고', typeBadge)}</td>
                     <td style="white-space:nowrap;">
@@ -250,13 +293,13 @@ const PaintInventoryModule = (function() {
         const rows = matItems
             .sort((a, b) => (a.paintType || '').localeCompare(b.paintType || '') || a.name.localeCompare(b.name))
             .map(item => {
-                // 유효기간 경고 표시
+                // 유효기한 경고 표시
                 let expHtml = '';
                 if (item.minExpDate) {
                     const exp = new Date(item.minExpDate); exp.setHours(0, 0, 0, 0);
                     const diff = Math.round((exp - today) / 86400000);
                     if (diff < 0) {
-                        expHtml = `<span title="유효기간 만료" style="color:var(--accent-red);font-size:0.75rem;font-weight:700;margin-left:4px;">⚠만료</span>`;
+                        expHtml = `<span title="유효기한 만료" style="color:var(--accent-red);font-size:0.75rem;font-weight:700;margin-left:4px;">⚠만료</span>`;
                     } else if (diff <= 30) {
                         expHtml = `<span title="${diff}일 남음" style="color:var(--accent-orange,#f59e0b);font-size:0.75rem;font-weight:700;margin-left:4px;">⚠${diff}일</span>`;
                     }
@@ -356,16 +399,18 @@ const PaintInventoryModule = (function() {
         const matStock = {};  // matId -> { stock, lots: {key->{prodLot,lotNo,qty,expDate}} }
         data.forEach(d => {
             if (!d.materialId) return;
+            const mat = materials.find(m => m.id === d.materialId);
+            const lotDates = _resolveLotDates(d, mat);
             if (!matStock[d.materialId]) matStock[d.materialId] = { stock: 0, lots: {} };
             const qty = Number(d.quantity) || 0;
-            // 제조 LOT(prodLot) 우선, 없으면 제조사 LOT(lotNo) 키로 구분
+            // 제조 LOT(prodLot) 우선, 없으면 제조사 표기 LOT(lotNo) 키로 구분
             const lotKey = (d.prodLot || d.lotNo || '__');
             if (!matStock[d.materialId].lots[lotKey]) {
                 matStock[d.materialId].lots[lotKey] = {
                     prodLot: d.prodLot || '',
                     lotNo:   d.lotNo   || '',
                     qty: 0,
-                    expDate: d.expDate || ''
+                    expDate: lotDates.expDate || ''
                 };
             }
             if (d.type === '출고') {
@@ -374,14 +419,14 @@ const PaintInventoryModule = (function() {
             } else {
                 matStock[d.materialId].stock += qty;
                 matStock[d.materialId].lots[lotKey].qty += qty;
-                if (d.expDate && (!matStock[d.materialId].lots[lotKey].expDate ||
-                    d.expDate < matStock[d.materialId].lots[lotKey].expDate)) {
-                    matStock[d.materialId].lots[lotKey].expDate = d.expDate;
+                if (lotDates.expDate && (!matStock[d.materialId].lots[lotKey].expDate ||
+                    lotDates.expDate < matStock[d.materialId].lots[lotKey].expDate)) {
+                    matStock[d.materialId].lots[lotKey].expDate = lotDates.expDate;
                 }
             }
         });
 
-        // 활성 LOT 정렬 + 최소 유효기간
+        // 활성 LOT 정렬 + 최소 유효기한
         Object.keys(matStock).forEach(mid => {
             const activeLots = Object.values(matStock[mid].lots)
                 .filter(l => l.qty > 0)
@@ -455,19 +500,20 @@ const PaintInventoryModule = (function() {
         records.forEach(d => {
             const qty = Number(d.quantity) || 0;
             const key = d.prodLot || d.lotNo || '__';
+            const lotDates = _resolveLotDates(d, mat);
             if (!lotMap[key]) lotMap[key] = {
                 prodLot: d.prodLot || '',
                 lotNo:   d.lotNo   || '',
-                mfgDate: d.mfgDate || '',
-                expDate: d.expDate || '',
+                mfgDate: lotDates.mfgDate || '',
+                expDate: lotDates.expDate || '',
                 qty: 0
             };
             if (d.type === '출고') { lotMap[key].qty -= qty; totalStock -= qty; }
             else                   { lotMap[key].qty += qty; totalStock += qty;
-                if (d.mfgDate && (!lotMap[key].mfgDate || d.mfgDate < lotMap[key].mfgDate))
-                    lotMap[key].mfgDate = d.mfgDate;
-                if (d.expDate && (!lotMap[key].expDate || d.expDate < lotMap[key].expDate))
-                    lotMap[key].expDate = d.expDate;
+                if (lotDates.mfgDate && (!lotMap[key].mfgDate || lotDates.mfgDate < lotMap[key].mfgDate))
+                    lotMap[key].mfgDate = lotDates.mfgDate;
+                if (lotDates.expDate && (!lotMap[key].expDate || lotDates.expDate < lotMap[key].expDate))
+                    lotMap[key].expDate = lotDates.expDate;
             }
         });
 
@@ -570,9 +616,9 @@ const PaintInventoryModule = (function() {
                     <thead>
                         <tr>
                             <th>제조 LOT</th>
-                            <th>제조사 LOT</th>
+                            <th>제조사 표기 LOT</th>
                             <th style="text-align:center;">제조일자</th>
-                            <th>유효기간</th>
+                            <th>유효기한</th>
                             <th style="text-align:right;">재고 수량</th>
                             <th style="text-align:center;">출고</th>
                         </tr>
@@ -590,7 +636,7 @@ const PaintInventoryModule = (function() {
                         <tr>
                             <th>날짜</th>
                             <th>제조 LOT</th>
-                            <th>제조사 LOT</th>
+                            <th>제조사 표기 LOT</th>
                             <th style="text-align:right;">수량</th>
                             <th style="text-align:center;">유형</th>
                         </tr>
@@ -783,10 +829,10 @@ const PaintInventoryModule = (function() {
                             <th>검사일</th>
                             <th>공급처</th>
                             <th>도료명</th>
-                            <th>제조사 LOT</th>
+                            <th>제조사 표기 LOT</th>
                             <th style="text-align:right;">입고수량</th>
                             <th>제조일자</th>
-                            <th>유효기간</th>
+                            <th>유효기한</th>
                             <th style="text-align:center;">상태</th>
                             <th></th>
                         </tr>
@@ -957,7 +1003,7 @@ const PaintInventoryModule = (function() {
                     <label class="form-label">
                         ${type === '출고'
                             ? '제조 LOT <span style="color:var(--accent-red)">*</span>'
-                            : '제조사 LOT <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;margin-left:4px;">(선택)</span>'}
+                            : '제조사 표기 LOT <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;margin-left:4px;">(선택)</span>'}
                     </label>
                     ${type === '출고'
                 ? `<select class="form-select" id="addPaintInvLot" onchange="PaintInventoryModule.onLotSelectChange(); PaintInventoryModule.checkStockLive('add');"><option value="">-- 도료 먼저 선택 --</option></select>`
@@ -994,7 +1040,7 @@ const PaintInventoryModule = (function() {
                         onchange="PaintInventoryModule.autoFillProdLot(this.value)">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">유효기간</label>
+                    <label class="form-label">유효기한</label>
                     <input type="date" class="form-input" id="addPaintInvExpDate">
                 </div>
             </div>` : ''}
@@ -1118,7 +1164,7 @@ const PaintInventoryModule = (function() {
         }
     }
 
-    function onLotInput() {} // 제조사 LOT 형식 제한 없음 — 공급사 자체 코드
+    function onLotInput() {} // 제조사 표기 LOT 형식 제한 없음 — 공급사 자체 코드
 
     // ── 입고 대기 취소 (단건) ──────────────────────────────────────────
     function cancelPaintInspectionStandby(id) {
@@ -1798,7 +1844,7 @@ const PaintInventoryModule = (function() {
                 </div>
                 <div class="form-group">
                     <label class="form-label">
-                        ${d.type === '출고' ? '제조 LOT' : '제조사 LOT'} <span style="color:var(--accent-red)">*</span>
+                        ${d.type === '출고' ? '제조 LOT' : '제조사 표기 LOT'} <span style="color:var(--accent-red)">*</span>
                     </label>
                     ${d.type === '출고'
                 ? `<select class="form-select" id="editPaintInvLot" onchange="PaintInventoryModule.onLotSelectChange_Edit(); PaintInventoryModule.checkStockLive('edit');"><option value="">-- 도료 먼저 선택 --</option></select>`
@@ -2198,6 +2244,541 @@ const PaintInventoryModule = (function() {
         UIUtils.toast('내보내기 완료', 'success');
     }
 
+    const TEMP_STANDARD_CONFIG_KEY = 'paint_temperature_standard';
+
+    function _defaultTemperatureStandard() {
+        return {
+            deptName: '도장사업부',
+            processName: '도료보관창고',
+            makerRange: '도료MAKER 보관 권장 범위 ▶ 5℃~35℃',
+            kcRange: 'KC케미칼 보관 관리 범위 ▶ 10℃~30℃',
+            springRange: '3월~5월<br>5.0 ~ 17℃',
+            summerRange: '6월~8월<br>21.0 ~ 30℃',
+            autumnRange: '9월~11월<br>28.0 ~ 5℃',
+            winterRange: '11월~2월<br>0 ~ -20℃',
+            coolRule: '28℃ 이상시<br>냉방',
+            heatRule: '10℃ 이하 시<br>난방',
+            recordBox: '25.8℃',
+            sheetLabel: '월별 온도 일일 CHECK SHEET',
+            recordNote: '온도계 체크<br>시트에 기록',
+            settingTemp: '셋팅온도',
+            heatButton: '난방 가동<br>운전/정지',
+            coolButton: '냉방 가동<br>운전/정지',
+            step1: '온도계 온도를 확인한다.',
+            step2Heat: '온도가 10℃ 미만 일 시 왼쪽의 난방 운전 버튼을 눌러 가동.',
+            step2Cool: '온도가 28℃ 이상 일시는 오른쪽의 냉방 운전 버튼을 눌러 가동',
+            step3: '셋팅 온도는 난방 16℃~20℃, 냉방 22℃~26℃로 한다.<br><span style="margin-left:20px;">(창고 내부 온도 상황에 맞게 조절한다.)</span>',
+            images: {},
+            objects: {
+                settingTemp: { slot: 'controller', x: 77, y: 17, w: 22, h: 13, bg: '#9bbb59', color: '#fff', text: '셋팅온도' },
+                heatButton:  { slot: 'controller', x: 10, y: 78, w: 22, h: 18, bg: '#b0443e', color: '#fff', text: '난방 가동<br>운전/정지' },
+                coolButton:  { slot: 'controller', x: 80, y: 78, w: 24, h: 18, bg: '#3f6fa6', color: '#fff', text: '냉방 가동<br>운전/정지' }
+            }
+        };
+    }
+
+    function _editableField(key, data, extraStyle = '') {
+        return `<span data-pts-field="${key}" contenteditable="false" style="${extraStyle}">${data[key] || ''}</span>`;
+    }
+
+    function _photoData(data, key) {
+        const value = data.images && data.images[key];
+        if (!value) return null;
+        if (typeof value === 'string') return { src: value, x: 50, y: 50, scale: 100 };
+        return {
+            src: value.src || '',
+            x: Number(value.x ?? 50),
+            y: Number(value.y ?? 50),
+            scale: Number(value.scale ?? 100)
+        };
+    }
+
+    function _photoImgHtml(photo) {
+        return `<img src="${photo.src}" alt="" draggable="false"
+                    style="position:absolute;left:${photo.x}%;top:${photo.y}%;width:${photo.scale}%;height:auto;max-width:none;max-height:none;transform:translate(-50%,-50%);display:block;user-select:none;">`;
+    }
+
+    const TEMP_STANDARD_IMAGE_FALLBACKS = {};
+
+    function _objectData(data, key) {
+        const base = _defaultTemperatureStandard().objects[key] || {};
+        return { ...base, ...((data.objects && data.objects[key]) || {}) };
+    }
+
+    function _standardObjectHtml(key, data) {
+        const o = _objectData(data, key);
+        if (o.deleted) return '';
+        return `<div class="pts-object" data-pts-object="${key}" data-x="${o.x}" data-y="${o.y}" data-w="${o.w}" data-h="${o.h}"
+                    onmousedown="PaintInventoryModule.startTemperatureStandardObjectDrag(event, '${key}')"
+                    onclick="PaintInventoryModule.selectTemperatureStandardObject('${key}');event.stopPropagation();"
+                    style="position:absolute;left:${o.x}%;top:${o.y}%;width:${o.w}%;height:${o.h}%;background:${o.bg};color:${o.color};font-weight:800;text-align:center;display:flex;align-items:center;justify-content:center;line-height:1.25;border:2px solid rgba(15,23,42,.35);z-index:4;user-select:none;">
+                    <span data-pts-object-text="${key}" contenteditable="false">${o.text || ''}</span>
+                    <span class="pts-object-resize" onmousedown="PaintInventoryModule.startTemperatureStandardObjectResize(event, '${key}')"></span>
+                </div>`;
+    }
+
+    function _photoSlot(key, data, fallbackHtml, style = '', overlayHtml = '') {
+        TEMP_STANDARD_IMAGE_FALLBACKS[key] = fallbackHtml;
+        const photo = _photoData(data, key);
+        return `<div class="pts-photo-slot" data-pts-image="${key}" tabindex="0"
+                    data-x="${photo ? photo.x : 50}" data-y="${photo ? photo.y : 50}" data-scale="${photo ? photo.scale : 100}"
+                    onclick="PaintInventoryModule.selectTemperatureStandardImage('${key}')"
+                    onmousedown="PaintInventoryModule.startTemperatureStandardImageDrag(event, '${key}')"
+                    onpaste="PaintInventoryModule.pasteTemperatureStandardImage(event, '${key}')"
+                    style="${style};position:relative;outline:none;overflow:hidden;">
+                    ${photo
+                        ? _photoImgHtml(photo)
+                        : `<div class="pts-photo-fallback" style="width:100%;height:100%;">${fallbackHtml}</div>`}
+                    ${overlayHtml}
+                    <div class="pts-image-tools" onmousedown="event.stopPropagation();" onclick="event.stopPropagation();">
+                        <button type="button" data-pts-action="up" title="위로">↑</button>
+                        <button type="button" data-pts-action="down" title="아래로">↓</button>
+                        <button type="button" data-pts-action="left" title="왼쪽">←</button>
+                        <button type="button" data-pts-action="right" title="오른쪽">→</button>
+                        <button type="button" data-pts-action="smaller" title="축소">−</button>
+                        <button type="button" data-pts-action="larger" title="확대">＋</button>
+                        <button type="button" data-pts-action="fit" title="맞춤">맞춤</button>
+                        <button type="button" data-pts-action="delete" title="삭제">삭제</button>
+                    </div>
+                    <span class="pts-resize-handle pts-resize-nw" data-pts-resize="nw" title="크기 조절"></span>
+                    <span class="pts-resize-handle pts-resize-ne" data-pts-resize="ne" title="크기 조절"></span>
+                    <span class="pts-resize-handle pts-resize-sw" data-pts-resize="sw" title="크기 조절"></span>
+                    <span class="pts-resize-handle pts-resize-se" data-pts-resize="se" title="크기 조절"></span>
+                </div>`;
+    }
+
+    async function _loadTemperatureStandard() {
+        try {
+            return { ..._defaultTemperatureStandard(), ...((await Storage.getConfigValue(TEMP_STANDARD_CONFIG_KEY)) || {}) };
+        } catch (err) {
+            console.warn('[PaintInventory] 온도관리 기준서 설정 로드 실패', err);
+            return _defaultTemperatureStandard();
+        }
+    }
+
+    async function openTemperatureStandard() {
+        const data = await _loadTemperatureStandard();
+        UIUtils.showModal('도료 보관창고 온도관리 기준서', `
+            <style>
+                #paintTempStandardDoc [contenteditable="true"] {
+                    outline: 2px dashed #2563eb;
+                    outline-offset: 2px;
+                    background: rgba(219,234,254,.45);
+                    border-radius: 3px;
+                }
+                #paintTempStandardDoc .pts-photo-slot.pts-editing {
+                    box-shadow: inset 0 0 0 3px #2563eb;
+                    cursor: copy;
+                }
+                #paintTempStandardDoc .pts-photo-slot.pts-selected {
+                    box-shadow: inset 0 0 0 3px #ef4444;
+                }
+                #paintTempStandardDoc .pts-photo-slot.pts-editing::after {
+                    content: "클릭 후 Ctrl+V";
+                    position: absolute;
+                    left: 8px;
+                    bottom: 8px;
+                    background: rgba(15,23,42,.78);
+                    color: #fff;
+                    font-size: 12px;
+                    padding: 4px 7px;
+                    border-radius: 4px;
+                    pointer-events: none;
+                }
+                #paintTempStandardDoc .pts-image-tools {
+                    display: none;
+                    position: absolute;
+                    z-index: 5;
+                    right: 6px;
+                    top: 6px;
+                    gap: 3px;
+                    flex-wrap: wrap;
+                    justify-content: flex-end;
+                    max-width: 190px;
+                }
+                #paintTempStandardDoc .pts-photo-slot.pts-editing.pts-selected .pts-image-tools {
+                    display: flex;
+                }
+                #paintTempStandardDoc .pts-image-tools button {
+                    border: 1px solid #94a3b8;
+                    background: rgba(255,255,255,.92);
+                    color: #0f172a;
+                    border-radius: 4px;
+                    padding: 2px 6px;
+                    font-size: 11px;
+                    line-height: 1.3;
+                    cursor: pointer;
+                }
+                #paintTempStandardDoc .pts-resize-handle {
+                    display: none;
+                    position: absolute;
+                    z-index: 6;
+                    width: 12px;
+                    height: 12px;
+                    border: 2px solid #fff;
+                    background: #ef4444;
+                    box-shadow: 0 1px 4px rgba(15,23,42,.35);
+                    border-radius: 50%;
+                }
+                #paintTempStandardDoc .pts-photo-slot.pts-editing.pts-selected .pts-resize-handle {
+                    display: block;
+                }
+                #paintTempStandardDoc .pts-resize-nw { left: 6px; top: 6px; cursor: nwse-resize; }
+                #paintTempStandardDoc .pts-resize-ne { right: 6px; top: 6px; cursor: nesw-resize; }
+                #paintTempStandardDoc .pts-resize-sw { left: 6px; bottom: 6px; cursor: nesw-resize; }
+                #paintTempStandardDoc .pts-resize-se { right: 6px; bottom: 6px; cursor: nwse-resize; }
+            </style>
+            <div style="border:2px solid #1d4ed8;background:#fff;color:#111827;font-family:Inter,'Malgun Gothic',sans-serif;">
+                <div id="paintTempStandardDoc" style="background:#fff;">
+                <div style="display:grid;grid-template-columns:235px 1fr 250px;border-bottom:1px solid #111827;">
+                    <div style="border-right:1px solid #111827;">
+                        <div style="display:grid;grid-template-columns:82px 1fr;border-bottom:1px solid #111827;">
+                            <div style="padding:10px 12px;font-weight:800;text-align:center;border-right:1px solid #111827;">부서명</div>
+                            <div style="padding:10px 12px;text-align:center;">${_editableField('deptName', data)}</div>
+                        </div>
+                        <div style="display:grid;grid-template-columns:82px 1fr;">
+                            <div style="padding:10px 12px;font-weight:800;text-align:center;border-right:1px solid #111827;">공정명</div>
+                            <div style="padding:10px 12px;text-align:center;">${_editableField('processName', data)}</div>
+                        </div>
+                    </div>
+                    <div style="display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:900;">작업기준서</div>
+                    <div style="display:grid;grid-template-columns:34px 1fr;border-left:1px solid #111827;">
+                        <div style="display:flex;align-items:center;justify-content:center;font-weight:800;border-right:1px solid #111827;">결<br>재</div>
+                        <div>
+                            <div style="display:grid;grid-template-columns:repeat(3,1fr);border-bottom:1px solid #111827;">
+                                <div style="padding:4px;text-align:center;font-weight:800;border-right:1px solid #111827;">작성</div>
+                                <div style="padding:4px;text-align:center;font-weight:800;border-right:1px solid #111827;">검토</div>
+                                <div style="padding:4px;text-align:center;font-weight:800;">승인</div>
+                            </div>
+                            <div style="display:grid;grid-template-columns:repeat(3,1fr);height:52px;">
+                                <div style="border-right:1px solid #111827;"></div>
+                                <div style="border-right:1px solid #111827;"></div>
+                                <div></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display:grid;grid-template-columns:1fr 1fr;">
+                    <section style="border-right:1px dotted #6b7280;padding:8px 10px 16px;">
+                        <div style="background:#d9d9d9;padding:7px 8px;font-size:20px;color:#111827;">
+                            <span style="color:#000;font-weight:900;">■</span>
+                            ${_editableField('makerRange', data, 'margin-left:8px;')}
+                        </div>
+                        <div style="margin-top:28px;font-weight:800;">■ 냉난방기 가동 기준</div>
+                        <table style="width:100%;border-collapse:collapse;margin-top:6px;font-size:14px;text-align:center;">
+                            <thead>
+                                <tr style="background:#c4d79b;">
+                                    <th style="border:1px solid #111827;padding:4px;">계절별</th>
+                                    <th style="border:1px solid #111827;padding:4px;">외부평균온도</th>
+                                    <th style="border:1px solid #111827;padding:4px;">가동구분</th>
+                                    <th style="border:1px solid #111827;padding:4px;">온도별</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td style="border:1px solid #111827;padding:4px;background:#e5e7eb;">봄</td>
+                                    <td style="border:1px solid #111827;padding:4px;">${_editableField('springRange', data)}</td>
+                                    <td style="border:1px solid #111827;padding:4px;">비가동</td>
+                                    <td rowspan="2" style="border:1px solid #111827;padding:4px;background:#5b9bd5;color:#001f3f;font-weight:800;">${_editableField('coolRule', data)}</td>
+                                </tr>
+                                <tr>
+                                    <td style="border:1px solid #111827;padding:4px;background:#5b9bd5;color:#fff;">여름</td>
+                                    <td style="border:1px solid #111827;padding:4px;background:#5b9bd5;color:#fff;">${_editableField('summerRange', data)}</td>
+                                    <td style="border:1px solid #111827;padding:4px;background:#5b9bd5;color:#fff;">냉방</td>
+                                </tr>
+                                <tr>
+                                    <td style="border:1px solid #111827;padding:4px;background:#e5e7eb;">가을</td>
+                                    <td style="border:1px solid #111827;padding:4px;">${_editableField('autumnRange', data)}</td>
+                                    <td style="border:1px solid #111827;padding:4px;">비가동</td>
+                                    <td rowspan="2" style="border:1px solid #111827;padding:4px;background:#ff0000;color:#fff;font-weight:800;">${_editableField('heatRule', data)}</td>
+                                </tr>
+                                <tr>
+                                    <td style="border:1px solid #111827;padding:4px;background:#ff0000;color:#fff;">겨울</td>
+                                    <td style="border:1px solid #111827;padding:4px;background:#ff0000;color:#fff;">${_editableField('winterRange', data)}</td>
+                                    <td style="border:1px solid #111827;padding:4px;background:#ff0000;color:#fff;">난방</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <div style="margin-top:28px;font-weight:800;">■ 기록 방법</div>
+                        <div style="display:grid;grid-template-columns:1fr 150px;gap:14px;margin-top:10px;align-items:center;">
+                            <div style="border:1px solid #d1d5db;padding:12px;background:#f8fafc;min-height:145px;">
+                                ${_photoSlot('thermometer', data, `<div style="display:inline-block;border:3px dashed #facc15;border-radius:10px;padding:10px 18px;font-size:28px;font-weight:800;color:#64748b;background:#fff;">${data.recordBox}</div>`, 'min-height:64px')}
+                                ${_photoSlot('checkSheet', data, `<div style="border:1px solid #111827;background:#fff;height:70px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#475569;">${data.sheetLabel}</div>`, 'margin-top:14px;height:70px')}
+                            </div>
+                            <div style="background:#9bbb59;color:#fff;font-weight:800;text-align:center;padding:18px 10px;border:2px solid #111827;font-size:16px;line-height:1.45;">${_editableField('recordNote', data)}</div>
+                        </div>
+                    </section>
+
+                    <section style="padding:8px 10px 16px;">
+                        <div style="background:#d9d9d9;padding:7px 8px;font-size:20px;color:#ff0000;">
+                            <span style="font-weight:900;">■</span>
+                            ${_editableField('kcRange', data, 'margin-left:8px;')}
+                        </div>
+                        <div style="margin-top:28px;font-weight:800;">■ 냉난방기 작동 방법</div>
+                        ${_photoSlot('controller', data, `
+                        <div style="position:relative;background:#e5e7eb;border:1px solid #cbd5e1;height:278px;overflow:hidden;">
+                            <div style="position:absolute;left:72px;right:130px;top:36px;height:72px;background:#1f2937;border-radius:45px 45px 16px 16px;box-shadow:inset 0 0 0 10px #64748b;"></div>
+                            <div style="position:absolute;left:205px;top:55px;background:#0f172a;color:#7cff00;font-size:34px;font-family:monospace;padding:8px 30px;border-radius:4px;">16</div>
+                            <div style="position:absolute;right:18px;top:26px;background:#9bbb59;color:#fff;font-weight:800;padding:12px 24px;">${data.settingTemp}</div>
+                            <div style="position:absolute;left:18px;bottom:18px;background:#b0443e;color:#fff;font-weight:800;text-align:center;padding:12px 18px;border:2px solid #8b2d2a;">${data.heatButton}</div>
+                            <div style="position:absolute;right:8px;bottom:18px;background:#3f6fa6;color:#fff;font-weight:800;text-align:center;padding:12px 18px;border:2px solid #2e5c8d;">${data.coolButton}</div>
+                            <div style="position:absolute;left:160px;right:160px;top:130px;height:52px;background:#cbd5e1;border-radius:26px;"></div>
+                            <div style="position:absolute;left:230px;top:143px;width:34px;height:22px;background:#94a3b8;border-radius:50%;"></div>
+                            <div style="position:absolute;left:278px;top:143px;width:50px;height:22px;background:#94a3b8;border-radius:50%;"></div>
+                        </div>`, 'margin-top:12px;height:278px')}
+                        <ol style="margin:28px 0 0 18px;padding:0;font-size:16px;line-height:1.65;">
+                            <li>${_editableField('step1', data)}</li>
+                            <li><span style="color:#c2410c;">${_editableField('step2Heat', data)}</span><br>
+                                <span style="color:#2563eb;">${_editableField('step2Cool', data)}</span></li>
+                            <li>${_editableField('step3', data)}</li>
+                        </ol>
+                    </section>
+                </div>
+                </div>
+            </div>
+        `, `
+            <button class="btn btn-outline" onclick="PaintInventoryModule.setTemperatureStandardEdit(true)">편집</button>
+            <button class="btn btn-primary" onclick="PaintInventoryModule.saveTemperatureStandard()">저장</button>
+            <button class="btn btn-outline" onclick="PaintInventoryModule.resetTemperatureStandard()">기본값 복원</button>
+            <button class="btn btn-secondary" onclick="PaintInventoryModule.printTemperatureStandard()">인쇄</button>
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+        `, 'xl');
+    }
+
+    function setTemperatureStandardEdit(enabled) {
+        const doc = document.getElementById('paintTempStandardDoc');
+        if (!doc) return;
+        doc.querySelectorAll('[data-pts-field]').forEach(el => {
+            el.contentEditable = enabled ? 'true' : 'false';
+        });
+        doc.querySelectorAll('[data-pts-image]').forEach(el => {
+            el.classList.toggle('pts-editing', !!enabled);
+        });
+        if (window._paintTempStandardPasteHandler) {
+            document.removeEventListener('paste', window._paintTempStandardPasteHandler, true);
+            window._paintTempStandardPasteHandler = null;
+        }
+        if (window._paintTempStandardToolHandler) {
+            doc.removeEventListener('click', window._paintTempStandardToolHandler, true);
+            window._paintTempStandardToolHandler = null;
+        }
+        if (enabled) {
+            window._paintTempStandardPasteHandler = (event) => pasteTemperatureStandardImage(event);
+            document.addEventListener('paste', window._paintTempStandardPasteHandler, true);
+            window._paintTempStandardToolHandler = (event) => {
+                const btn = event.target.closest('[data-pts-action]');
+                if (!btn) return;
+                const slot = btn.closest('[data-pts-image]');
+                if (!slot) return;
+                event.preventDefault();
+                event.stopPropagation();
+                adjustTemperatureStandardImage(slot.dataset.ptsImage, btn.dataset.ptsAction);
+            };
+            doc.addEventListener('click', window._paintTempStandardToolHandler, true);
+            const firstSlot = doc.querySelector('[data-pts-image]');
+            if (firstSlot && !doc.querySelector('.pts-photo-slot.pts-selected')) {
+                selectTemperatureStandardImage(firstSlot.dataset.ptsImage);
+            }
+        } else {
+            doc.querySelectorAll('.pts-selected').forEach(el => el.classList.remove('pts-selected'));
+            window._paintTempStandardSelectedImage = '';
+        }
+        UIUtils.toast(enabled ? '편집 모드입니다. 사진 칸을 선택한 뒤 Ctrl+V로 스크린샷을 붙여넣으세요. 선택한 이미지는 화살표/확대/축소로 조정할 수 있습니다.' : '편집 모드를 종료했습니다.', 'info');
+    }
+
+    function _collectTemperatureStandard() {
+        const doc = document.getElementById('paintTempStandardDoc');
+        const data = _defaultTemperatureStandard();
+        if (!doc) return data;
+        doc.querySelectorAll('[data-pts-field]').forEach(el => {
+            data[el.dataset.ptsField] = el.innerHTML.trim();
+        });
+        data.images = {};
+        doc.querySelectorAll('[data-pts-image]').forEach(el => {
+            const img = el.querySelector('img');
+            if (img && img.src) {
+                data.images[el.dataset.ptsImage] = {
+                    src: img.src,
+                    x: Number(el.dataset.x || 50),
+                    y: Number(el.dataset.y || 50),
+                    scale: Number(el.dataset.scale || 100)
+                };
+            }
+        });
+        return data;
+    }
+
+    async function saveTemperatureStandard() {
+        try {
+            await Storage.setConfigValue(TEMP_STANDARD_CONFIG_KEY, _collectTemperatureStandard());
+            setTemperatureStandardEdit(false);
+            UIUtils.toast('온도관리 기준서가 저장되었습니다.', 'success');
+        } catch (err) {
+            console.error('[PaintInventory] 온도관리 기준서 저장 실패', err);
+            UIUtils.toast('저장에 실패했습니다. 서버 연결 상태를 확인하세요.', 'error');
+        }
+    }
+
+    async function resetTemperatureStandard() {
+        UIUtils.confirm('온도관리 기준서를 기본값으로 복원하시겠습니까?', async () => {
+            try {
+                await Storage.setConfigValue(TEMP_STANDARD_CONFIG_KEY, _defaultTemperatureStandard());
+                UIUtils.toast('기본값으로 복원되었습니다.', 'success');
+                openTemperatureStandard();
+            } catch (err) {
+                console.error('[PaintInventory] 온도관리 기준서 복원 실패', err);
+                UIUtils.toast('복원에 실패했습니다. 서버 연결 상태를 확인하세요.', 'error');
+            }
+        });
+    }
+
+    function selectTemperatureStandardImage(slotKey) {
+        const doc = document.getElementById('paintTempStandardDoc');
+        if (!doc) return;
+        doc.querySelectorAll('.pts-photo-slot').forEach(el => el.classList.remove('pts-selected'));
+        const target = doc.querySelector(`[data-pts-image="${slotKey}"]`);
+        if (!target) return;
+        target.classList.add('pts-selected');
+        target.focus();
+        window._paintTempStandardSelectedImage = slotKey;
+    }
+
+    function _renderTemperatureImage(target, src, meta = {}) {
+        const x = Number(meta.x ?? target.dataset.x ?? 50);
+        const y = Number(meta.y ?? target.dataset.y ?? 50);
+        const scale = Number(meta.scale ?? target.dataset.scale ?? 100);
+        target.dataset.x = String(x);
+        target.dataset.y = String(y);
+        target.dataset.scale = String(scale);
+        const tools = target.querySelector('.pts-image-tools')?.outerHTML || '';
+        const handles = Array.from(target.querySelectorAll('.pts-resize-handle')).map(el => el.outerHTML).join('');
+        target.innerHTML = _photoImgHtml({ src, x, y, scale }) + tools + handles;
+    }
+
+    function adjustTemperatureStandardImage(slotKey, action) {
+        const target = document.querySelector(`[data-pts-image="${slotKey}"]`);
+        if (!target) return;
+        selectTemperatureStandardImage(slotKey);
+        const img = target.querySelector('img');
+        if (action === 'delete') {
+            img?.remove();
+            target.dataset.x = '50';
+            target.dataset.y = '50';
+            target.dataset.scale = '100';
+            const tools = target.querySelector('.pts-image-tools')?.outerHTML || '';
+            const handles = Array.from(target.querySelectorAll('.pts-resize-handle')).map(el => el.outerHTML).join('');
+            target.innerHTML = `<div class="pts-photo-fallback" style="width:100%;height:100%;">${TEMP_STANDARD_IMAGE_FALLBACKS[slotKey] || ''}</div>${tools}${handles}`;
+            target.classList.add('pts-selected');
+            return;
+        }
+        if (!img) return;
+        let x = Number(target.dataset.x || 50);
+        let y = Number(target.dataset.y || 50);
+        let scale = Number(target.dataset.scale || 100);
+        if (action === 'left') x -= 3;
+        if (action === 'right') x += 3;
+        if (action === 'up') y -= 3;
+        if (action === 'down') y += 3;
+        if (action === 'smaller') scale = Math.max(20, scale - 10);
+        if (action === 'larger') scale = Math.min(260, scale + 10);
+        if (action === 'fit') { x = 50; y = 50; scale = 100; }
+        target.dataset.x = String(x);
+        target.dataset.y = String(y);
+        target.dataset.scale = String(scale);
+        img.style.left = `${x}%`;
+        img.style.top = `${y}%`;
+        img.style.width = `${scale}%`;
+    }
+
+    function startTemperatureStandardImageDrag(event, slotKey) {
+        const target = document.querySelector(`[data-pts-image="${slotKey}"]`);
+        if (!target || !target.classList.contains('pts-editing') || !target.querySelector('img')) return;
+        if (event.target.closest('.pts-image-tools')) return;
+        event.preventDefault();
+        selectTemperatureStandardImage(slotKey);
+        const rect = target.getBoundingClientRect();
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const originX = Number(target.dataset.x || 50);
+        const originY = Number(target.dataset.y || 50);
+        const originScale = Number(target.dataset.scale || 100);
+        const resizeHandle = event.target.closest('[data-pts-resize]');
+        const onMove = (moveEvent) => {
+            const img = target.querySelector('img');
+            if (!img) return;
+            if (resizeHandle) {
+                const dx = moveEvent.clientX - startX;
+                const dy = moveEvent.clientY - startY;
+                const dir = resizeHandle.dataset.ptsResize || 'se';
+                const horizontal = (dir.includes('e') ? dx : -dx) / rect.width * 100;
+                const vertical = (dir.includes('s') ? dy : -dy) / rect.height * 100;
+                const scale = Math.max(20, Math.min(260, originScale + horizontal + vertical));
+                target.dataset.scale = String(scale);
+                img.style.width = `${scale}%`;
+                return;
+            }
+            const x = originX + ((moveEvent.clientX - startX) / rect.width) * 100;
+            const y = originY + ((moveEvent.clientY - startY) / rect.height) * 100;
+            target.dataset.x = String(x);
+            target.dataset.y = String(y);
+            img.style.left = `${x}%`;
+            img.style.top = `${y}%`;
+        };
+        const onUp = () => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    }
+
+    function pasteTemperatureStandardImage(event, slotKey) {
+        if (event._paintTempStandardHandled) return;
+        const selectedKey = slotKey || window._paintTempStandardSelectedImage;
+        const target = selectedKey ? document.querySelector(`[data-pts-image="${selectedKey}"]`) : null;
+        if (!target || !target.classList.contains('pts-editing')) return;
+        const items = event.clipboardData && event.clipboardData.items;
+        if (!items) return;
+        const imageItem = Array.from(items).find(item => item.type && item.type.startsWith('image/'));
+        if (!imageItem) return;
+        event._paintTempStandardHandled = true;
+        event.preventDefault();
+        const file = imageItem.getAsFile();
+        const reader = new FileReader();
+        reader.onload = () => {
+            selectTemperatureStandardImage(target.dataset.ptsImage);
+            _renderTemperatureImage(target, reader.result, { x: 50, y: 50, scale: 100 });
+            UIUtils.toast('스크린샷이 붙여넣기 되었습니다. 저장을 눌러 반영하세요.', 'success');
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function printTemperatureStandard() {
+        const doc = document.getElementById('paintTempStandardDoc');
+        if (!doc) return;
+        const win = window.open('', '_blank');
+        if (!win) {
+            UIUtils.toast('인쇄 창을 열 수 없습니다. 팝업 차단 설정을 확인하세요.', 'warning');
+            return;
+        }
+        win.document.write(`
+            <!doctype html>
+            <html><head><meta charset="utf-8"><title>도료 보관창고 온도관리 기준서</title>
+            <style>
+                @page { size: A4 landscape; margin: 8mm; }
+                body { margin:0; font-family: Inter, 'Malgun Gothic', sans-serif; }
+                [contenteditable] { outline: none !important; background: transparent !important; }
+                .pts-photo-slot::after { display:none !important; }
+                .pts-image-tools { display:none !important; }
+                .pts-selected { box-shadow:none !important; }
+            </style></head><body>${doc.outerHTML}</body></html>
+        `);
+        win.document.close();
+        win.focus();
+        setTimeout(() => win.print(), 250);
+    }
+
     return {
         render,
         loadData,
@@ -2235,6 +2816,15 @@ const PaintInventoryModule = (function() {
         filterStock,
         remove,
         clearAllInventory,
-        exportData
+        exportData,
+        openTemperatureStandard,
+        setTemperatureStandardEdit,
+        saveTemperatureStandard,
+        resetTemperatureStandard,
+        pasteTemperatureStandardImage,
+        printTemperatureStandard,
+        selectTemperatureStandardImage,
+        adjustTemperatureStandardImage,
+        startTemperatureStandardImageDrag
     };
 })();
