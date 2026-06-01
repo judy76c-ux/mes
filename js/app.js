@@ -262,6 +262,13 @@ const App = (function() {
         Router.registerModule('work-standard', WorkStandardModule);
         // ── 자격인증 관리 허브 + 서브 문서 ──────────────────────────────
         Router.registerModule('certifications-mgmt', CertHubModule);
+        // ── 안전 관리 허브 + 서브 문서 ──────────────────────────────────
+        Router.registerModule('safety-hub', SafetyHubModule);
+        Router.registerModule('safety-standard', SafetyStandardModule);
+        Router.registerModule('safety-msds', MSDSModule);
+        Router.registerModule('safety-checklist', SafetyChecklistModule);
+        Router.registerModule('safety-ppe', PPEStandardModule);
+        Router.registerModule('safety-rules', SafetyRulesModule);
         Router.registerModule('cert-standard', CertStandardModule);
         Router.registerModule('cert-eval', CertEvalModule);
         Router.registerModule('cert-ledger', CertLedgerModule);

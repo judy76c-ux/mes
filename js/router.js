@@ -70,6 +70,12 @@ const Router = (function() {
         'limit-samples': '한도 견본',
         'prod-spc': 'SPC 관리',
         'certifications-mgmt': '자격인증 관리',
+        'safety-hub': '안전관리',
+        'safety-standard': '안전관리 표준서',
+        'safety-msds': 'MSDS 등록대장',
+        'safety-checklist': '안전관리 점검표',
+        'safety-ppe': '보호구 적용기준',
+        'safety-rules': '안전수칙 기준서',
         'cert-standard': '자격인증 및 다기능 평가 기준서',
         'cert-eval': '자격인증 평가서',
         'cert-ledger': '자격인증 평가 관리대장',
@@ -139,7 +145,12 @@ const Router = (function() {
         'gauge-rr-attribute': { target: 'certifications-mgmt', label: '자격인증 관리로 돌아가기' },
         'cert-status': { target: 'certifications-mgmt', label: '자격인증 관리로 돌아가기' },
         'inspectors-mgmt': { target: 'certifications-mgmt', label: '자격인증 관리로 돌아가기' },
-        'operators-mgmt': { target: 'certifications-mgmt', label: '자격인증 관리로 돌아가기' }
+        'operators-mgmt': { target: 'certifications-mgmt', label: '자격인증 관리로 돌아가기' },
+        'safety-standard': { target: 'safety-hub', label: '안전관리로 돌아가기' },
+        'safety-msds': { target: 'safety-hub', label: '안전관리로 돌아가기' },
+        'safety-checklist': { target: 'safety-hub', label: '안전관리로 돌아가기' },
+        'safety-ppe': { target: 'safety-hub', label: '안전관리로 돌아가기' },
+        'safety-rules': { target: 'safety-hub', label: '안전관리로 돌아가기' }
     };
 
     const PAGE_TITLE_HTML = Object.fromEntries(
