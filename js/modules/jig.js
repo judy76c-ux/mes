@@ -1180,11 +1180,25 @@ var JigModule = (function () {
     }
 
     function _imageFileFromPasteEvent(event) {
+        const files = Array.from(event.clipboardData?.files || []);
+        const imageFile = files.find(file => file.type && file.type.startsWith('image/'));
+        if (imageFile) return imageFile;
+
         const items = Array.from(event.clipboardData?.items || []);
         for (const item of items) {
             if (item.type && item.type.startsWith('image/')) return item.getAsFile();
         }
         return null;
+    }
+
+    function _imageSrcFromPasteHtml(event) {
+        const html = event.clipboardData?.getData?.('text/html') || '';
+        if (!html) return '';
+        const match = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+        if (!match) return '';
+        const src = match[1] || '';
+        if (src.startsWith('data:image/')) return src;
+        return '';
     }
 
     function _ensureJigPasteListener() {
@@ -1195,7 +1209,14 @@ var JigModule = (function () {
             const hidden = document.getElementById(`${_jigPasteTargetId}Data`);
             if (!hidden) return;
             const file = _imageFileFromPasteEvent(event);
-            if (!file) return;
+            if (!file) {
+                const htmlSrc = _imageSrcFromPasteHtml(event);
+                if (!htmlSrc) return;
+                event.preventDefault();
+                _setJigMasterPhoto(_jigPasteTargetId, htmlSrc);
+                UIUtils.toast('엑셀 이미지 객체를 등록했습니다.', 'success');
+                return;
+            }
             event.preventDefault();
             _readJigImageBlob(_jigPasteTargetId, file);
         });
@@ -1204,6 +1225,16 @@ var JigModule = (function () {
     function pasteJigMasterPhoto(targetId) {
         _jigPasteTargetId = targetId;
         _ensureJigPasteListener();
+        ['jigPhoto0Preview', 'jigPhoto1Preview', 'productFitPhoto0Preview', 'productFitPhoto1Preview'].forEach(id => {
+            const img = document.getElementById(id);
+            if (img) img.style.outline = '';
+        });
+        const preview = document.getElementById(`${targetId}Preview`);
+        if (preview) {
+            preview.style.display = 'block';
+            preview.style.outline = '3px solid var(--accent-blue)';
+            preview.style.outlineOffset = '2px';
+        }
         UIUtils.toast('이미지 칸 선택됨: Ctrl+V로 붙여넣으세요.', 'info');
     }
 
