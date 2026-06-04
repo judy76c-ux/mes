@@ -261,11 +261,30 @@ const Router = (function() {
     }
 
     function setupSidebarToggle() {
-        const btn = document.getElementById('sidebarToggle');
-        if (!btn) return;
-        btn.addEventListener('click', function() {
-            document.body.classList.toggle('sidebar-collapsed');
-        });
+        const hideBtn = document.getElementById('sidebarToggle');
+        const showBtn = document.getElementById('sidebarShowBtn');
+        const storageKey = 'mes_sidebar_hidden';
+        const setHidden = (hidden) => {
+            document.body.classList.toggle('sidebar-hidden', hidden);
+            try { localStorage.setItem(storageKey, hidden ? '1' : '0'); } catch(e) {}
+        };
+        try {
+            setHidden(localStorage.getItem(storageKey) === '1');
+        } catch(e) {
+            setHidden(false);
+        }
+        if (hideBtn) {
+            hideBtn.title = '메뉴 숨기기';
+            hideBtn.setAttribute('aria-label', '메뉴 숨기기');
+            hideBtn.addEventListener('click', function() {
+                setHidden(true);
+            });
+        }
+        if (showBtn) {
+            showBtn.addEventListener('click', function() {
+                setHidden(false);
+            });
+        }
     }
 
     function updateDateTime() {
