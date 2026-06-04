@@ -60,8 +60,8 @@ var IncomingOverviewModule = (function () {
         _inj   = _calcInjStats(monthStr);
         _paint = _calcPaintStats(monthStr);
 
-        // 기준서 등록 현황
-        const allProds = (Storage.getAll(DB.STORES.PRODUCTS) || []).filter(p => p.injPartName);
+        // 기준서 등록 현황 (사출 자재 마스터 기준)
+        const allProds = (Storage.getAll(DB.STORES.INJECTION_MATERIALS) || []).filter(p => p.carModel && p.injPartName);
         const allStds  = Storage.getAll(DB.STORES.INJ_INCOMING_STD) || [];
         const stdCount = allStds.length;
         const unregCount = Math.max(0, allProds.length - stdCount);

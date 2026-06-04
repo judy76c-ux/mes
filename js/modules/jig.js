@@ -1148,14 +1148,48 @@ var JigModule = (function () {
         renderJigMaster();
     }
 
-    function readJigMasterPhoto(input, targetId) {
+    function _compressJigImage(fileOrBlob, options = {}) {
+        const maxSize = options.maxSize || 1280;
+        const quality = options.quality || 0.78;
+        return new Promise((resolve, reject) => {
+            if (!fileOrBlob) {
+                resolve('');
+                return;
+            }
+            const reader = new FileReader();
+            reader.onerror = () => reject(reader.error || new Error('이미지 파일을 읽을 수 없습니다.'));
+            reader.onload = () => {
+                const img = new Image();
+                img.onerror = () => reject(new Error('이미지를 불러올 수 없습니다.'));
+                img.onload = () => {
+                    const ratio = Math.min(1, maxSize / Math.max(img.width || 1, img.height || 1));
+                    const width = Math.max(1, Math.round((img.width || 1) * ratio));
+                    const height = Math.max(1, Math.round((img.height || 1) * ratio));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#fff';
+                    ctx.fillRect(0, 0, width, height);
+                    ctx.drawImage(img, 0, 0, width, height);
+                    resolve(canvas.toDataURL('image/jpeg', quality));
+                };
+                img.src = reader.result || '';
+            };
+            reader.readAsDataURL(fileOrBlob);
+        });
+    }
+
+    async function readJigMasterPhoto(input, targetId) {
         const file = input?.files?.[0];
         if (!file) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-            _setJigMasterPhoto(targetId, reader.result || '');
-        };
-        reader.readAsDataURL(file);
+        try {
+            _setJigMasterPhoto(targetId, await _compressJigImage(file));
+            UIUtils.toast('사진을 압축하여 등록했습니다.', 'success');
+        } catch (e) {
+            UIUtils.toast('사진 압축에 실패했습니다.', 'error');
+            console.warn('[JigModule] image compression failed:', e);
+        }
     }
 
     function _setJigMasterPhoto(targetId, src) {
@@ -1168,15 +1202,17 @@ var JigModule = (function () {
         }
     }
 
-    function _readJigImageBlob(targetId, blob) {
+    async function _readJigImageBlob(targetId, blob) {
         if (!targetId || !blob) return false;
-        const reader = new FileReader();
-        reader.onload = () => {
-            _setJigMasterPhoto(targetId, reader.result || '');
+        try {
+            _setJigMasterPhoto(targetId, await _compressJigImage(blob));
             UIUtils.toast('스크린샷이 등록되었습니다.', 'success');
-        };
-        reader.readAsDataURL(blob);
-        return true;
+            return true;
+        } catch (e) {
+            UIUtils.toast('이미지 압축에 실패했습니다.', 'error');
+            console.warn('[JigModule] paste image compression failed:', e);
+            return false;
+        }
     }
 
     function _imageFileFromPasteEvent(event) {
@@ -1201,6 +1237,11 @@ var JigModule = (function () {
         return '';
     }
 
+    async function _blobFromDataUrl(src) {
+        const response = await fetch(src);
+        return response.blob();
+    }
+
     function _ensureJigPasteListener() {
         if (_jigPasteListenerReady) return;
         _jigPasteListenerReady = true;
@@ -1213,8 +1254,12 @@ var JigModule = (function () {
                 const htmlSrc = _imageSrcFromPasteHtml(event);
                 if (!htmlSrc) return;
                 event.preventDefault();
-                _setJigMasterPhoto(_jigPasteTargetId, htmlSrc);
-                UIUtils.toast('엑셀 이미지 객체를 등록했습니다.', 'success');
+                _blobFromDataUrl(htmlSrc)
+                    .then(blob => _readJigImageBlob(_jigPasteTargetId, blob))
+                    .catch(e => {
+                        UIUtils.toast('엑셀 이미지 변환에 실패했습니다.', 'error');
+                        console.warn('[JigModule] pasted html image conversion failed:', e);
+                    });
                 return;
             }
             event.preventDefault();

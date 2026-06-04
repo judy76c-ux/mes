@@ -4,7 +4,7 @@
  */
 var InjIncomingStdModule = (function () {
     const STORE    = DB.STORES.INJ_INCOMING_STD;
-    const PROD_ST  = DB.STORES.PRODUCTS;
+    const PROD_ST  = DB.STORES.INJECTION_MATERIALS; // 사출 자재 마스터 (외주 입고품)
 
     const _esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
@@ -89,8 +89,8 @@ var InjIncomingStdModule = (function () {
     }
 
     function _carOptions() {
-        const products = Storage.getAll(PROD_ST) || [];
-        const cars = [...new Set(products.map(p => p.carModel).filter(Boolean))].sort();
+        const mats = Storage.getAll(PROD_ST) || [];
+        const cars = [...new Set(mats.map(p => p.carModel).filter(Boolean))].sort();
         return cars.map(c => `<option value="${_esc(c)}">${_esc(c)}</option>`).join('');
     }
 
@@ -100,10 +100,14 @@ var InjIncomingStdModule = (function () {
         const regFilter  = (document.getElementById('stdFilterReg')     || {}).value || '';
         const kw         = ((document.getElementById('stdFilterKeyword') || {}).value || '').toLowerCase();
 
-        // 제품 마스터 (사내 제품 제외: injPartName 없는 것 = 사내 생산)
+        // 사출 자재 마스터 전체 (INJECTION_MATERIALS = 외주 입고품)
         const allProds = (Storage.getAll(PROD_ST) || []).filter(p =>
-            p.carModel && p.partName && p.injPartName  // 사출자재(외주품)만
-        );
+            p.carModel && p.injPartName
+        ).map(p => ({
+            ...p,
+            partName: p.injPartName,  // 표시용 통일
+            color:    p.injColor || ''
+        }));
 
         // 기준서 목록
         const allStds = Storage.getAll(STORE) || [];
@@ -241,13 +245,13 @@ var InjIncomingStdModule = (function () {
                 </td>
             </tr>`).join('');
 
-        // 제품 목록 (productId select)
-        const allProds = (Storage.getAll(PROD_ST) || []).filter(p => p.carModel && p.partName && p.injPartName);
+        // 제품 목록 (productId select) — INJECTION_MATERIALS
+        const allProds = (Storage.getAll(PROD_ST) || []).filter(p => p.carModel && p.injPartName);
         const prodOptions = allProds.map(p =>
             `<option value="${p.id}" ${std && std.productId === p.id ? 'selected' : ''}
-                data-car="${_esc(p.carModel)}" data-part="${_esc(p.partName)}" data-color="${_esc(p.color||'')}"
+                data-car="${_esc(p.carModel)}" data-part="${_esc(p.injPartName)}" data-color="${_esc(p.injColor||'')}"
                 data-type="${_esc(p.itemType||'')}">
-                [${_esc(p.carModel)}] ${_esc(p.partName)} ${p.color ? '/ ' + _esc(p.color) : ''}
+                [${_esc(p.carModel)}] ${_esc(p.injPartName)} ${p.injColor ? '/ ' + _esc(p.injColor) : ''}
             </option>`).join('');
 
         UIUtils.showModal(isEdit ? '수입검사 기준서 편집' : '수입검사 기준서 등록', `

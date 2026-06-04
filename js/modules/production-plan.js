@@ -1752,7 +1752,7 @@ const ProductionPlanModule = (function() {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">도장 컬러</label>
+                    <label class="form-label">도장 컬러 <span style="color:var(--accent-red)">*</span></label>
                     <select class="form-select" id="sColor" onchange="ProductionPlanModule.calcEndTime(); ProductionPlanModule._autoFillItemType(); ProductionPlanModule.updatePaintStockPanel(); ProductionPlanModule.updateLaserWipPanel();">
                         <option value="">선택</option>
                         ${colors.map(c => `<option value="${c}" ${c === colorValue ? 'selected' : ''}>${c}</option>`).join('')}
@@ -1961,6 +1961,13 @@ const ProductionPlanModule = (function() {
         const planQty   = Number(document.getElementById('sQty').value) || 0;
         const status    = document.getElementById('sStatus').value;
         const itemType  = (document.getElementById('sItemType') || {}).value || '';
+
+        if (!color) {
+            UIUtils.toast('도장 컬러를 선택하세요.', 'warning');
+            const colorEl = document.getElementById('sColor');
+            if (colorEl) colorEl.focus();
+            return;
+        }
 
         // v19: productId — products에서 carModel+partName+color 로 ID 조회
         const _allProds = Storage.getAll(DB.STORES.PRODUCTS) || [];

@@ -5,7 +5,7 @@ const fsSync = require('fs');
 const fs = require('fs/promises');
 const path = require('path');
 const os = require('os');
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 
 function loadEnvFile() {
   const envPath = path.join(__dirname, '.env');
@@ -129,6 +129,57 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+function readDiskUsage(targetPath) {
+  return new Promise(resolve => {
+    if (!targetPath) {
+      resolve(null);
+      return;
+    }
+    execFile('df', ['-h', targetPath], (err, stdout) => {
+      if (err) {
+        resolve(null);
+        return;
+      }
+      const lines = stdout.trim().split(/\r?\n/);
+      const parts = (lines[1] || '').trim().split(/\s+/);
+      resolve({
+        path: targetPath,
+        filesystem: parts[0] || '-',
+        total: parts[1] || '-',
+        used: parts[2] || '-',
+        avail: parts[3] || '-',
+        usePct: parts[4] || '-',
+        mountedOn: parts[5] || targetPath
+      });
+    });
+  });
+}
+
+async function readNasStatus() {
+  const configured = !!NAS_BACKUP_DIR;
+  const mounted = configured ? await isNasBackupMounted() : false;
+  const disk = configured ? await readDiskUsage(NAS_BACKUP_DIR) : null;
+  let writable = false;
+  let error = '';
+  if (configured && mounted) {
+    try {
+      await fs.access(NAS_BACKUP_DIR, fsSync.constants.W_OK);
+      writable = true;
+    } catch (err) {
+      error = err.message;
+    }
+  }
+  return {
+    configured,
+    mounted,
+    writable,
+    path: NAS_BACKUP_DIR || '',
+    keepCount: NAS_KEEP_COUNT,
+    disk,
+    error
+  };
+}
+
 // ── 시스템 상태 정보 ──
 app.get('/api/system', async (req, res) => {
   try {
@@ -157,18 +208,7 @@ app.get('/api/system', async (req, res) => {
     const nodeUptime = process.uptime();
 
     // ── 디스크 (df -h /) ─────────────────────────────────────────
-    const diskInfo = await new Promise(resolve => {
-      exec("df -h / | tail -1 | awk '{print $2,$3,$4,$5}'", (err, stdout) => {
-        if (err) { resolve(null); return; }
-        const parts = stdout.trim().split(/\s+/);
-        resolve({
-          total: parts[0] || '-',
-          used:  parts[1] || '-',
-          avail: parts[2] || '-',
-          usePct: parts[3] || '-'
-        });
-      });
-    });
+    const diskInfo = await readDiskUsage('/');
 
     // ── MariaDB 상태 ──────────────────────────────────────────────
     let dbStatus = { ok: false, latency: null, version: null };
@@ -198,6 +238,7 @@ app.get('/api/system', async (req, res) => {
       cpu:  { model: cpuModel, count: cpuCount, usagePct: cpuUsage, loadAvg },
       mem:  { total: totalMem, used: usedMem, free: freeMem },
       disk: diskInfo,
+      nas: await readNasStatus(),
       uptime: { system: sysUptime, node: nodeUptime },
       db:   dbStatus,
       process: { rss: procMem.rss, heapUsed: procMem.heapUsed, heapTotal: procMem.heapTotal },

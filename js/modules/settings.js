@@ -566,10 +566,11 @@ const SettingsModule = (function() {
         const products = Storage.getAll(PRODUCTS_STORE).sort((a, b) =>
             (a.carModel || '').localeCompare(b.carModel || '', 'ko') || (a.partName || '').localeCompare(b.partName || '', 'ko')
         );
-        const injMaterials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+        const injMaterials  = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+        const paintMaterials = Storage.getAll(DB.STORES.PAINT_MATERIALS) || [];
         const uniqueCarModels = UIUtils.sortCarModels(products.map(p => p.carModel), products);
         const uniqueCustomers = [...new Set(products.map(p => p.customer).filter(Boolean))].sort();
-        const colspan = 13;
+        const colspan = 14;
 
         el.innerHTML = `
             ${buildProductValidationPanel()}
@@ -608,25 +609,42 @@ const SettingsModule = (function() {
                         <table class="data-table">
                             <thead>
                                 <tr>
-                                    <th>No</th>
-                                    <th>차종</th>
+                                    <th style="width:36px;">No</th>
+                                    <th style="width:80px;">차종</th>
                                     <th>품명</th>
-                                    <th>도장 컬러</th>
-                                    <th>품목구분</th>
-                                    <th>납품포장용량</th>
-                                    <th>납품처</th>
-                                    <th>판매가격</th>
-                                    <th>사출매입가</th>
-                                    <th>제조가격</th>
-                                    <th>공정별 사양 (공정 | CVT | C/T)</th>
-                                    <th>사용 사출 자재</th>
-                                    <th>작업</th>
+                                    <th style="width:70px;white-space:nowrap;">도장컬러</th>
+                                    <th style="width:64px;white-space:nowrap;text-align:center;">구분</th>
+                                    <th style="width:64px;white-space:nowrap;text-align:center;">포장</th>
+                                    <th style="width:80px;white-space:nowrap;">납품처</th>
+                                    <th style="width:80px;white-space:nowrap;text-align:right;">판매가</th>
+                                    <th style="width:80px;white-space:nowrap;text-align:right;">사출매입</th>
+                                    <th style="width:80px;white-space:nowrap;text-align:right;">제조가</th>
+                                    <th style="white-space:nowrap;">공정별 사양</th>
+                                    <th style="white-space:nowrap;">사용 사출 자재</th>
+                                    <th style="white-space:nowrap;">도료 자재</th>
+                                    <th style="width:80px;">작업</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 ${products.length === 0 ?
                 `<tr><td colspan="${colspan}" style="text-align:center;padding:40px;color:var(--text-muted);">등록된 제품이 없습니다.</td></tr>` :
                 products.map((p, i) => {
+                    // 도료 자재 매칭: 컬러 기준 (paintSpec/paintType 별로 묶어 표시)
+                    const pColorKey = (p.color || '').trim().toUpperCase();
+                    const matchedPaints = paintMaterials.filter(pm => {
+                        const pmColor = (pm.name || '').toUpperCase();
+                        return pColorKey && (pmColor.includes(pColorKey) || pColorKey.includes(pmColor.slice(0,4)));
+                    });
+                    const paintBadges = matchedPaints.length > 0
+                        ? matchedPaints.map(pm => {
+                            const typeColor = { 'Primer':'#6366f1','Color':'#ec4899','희석제':'#0ea5e9','경화제':'#f59e0b' }[pm.paintType] || '#6b7280';
+                            return `<span style="display:inline-block;font-size:.68rem;font-weight:700;padding:1px 5px;border-radius:3px;
+                                background:${typeColor}18;color:${typeColor};border:1px solid ${typeColor}44;white-space:nowrap;margin:1px;"
+                                title="${pm.supplier||''}">
+                                ${pm.paintType ? `<span style="opacity:.7;">${pm.paintType.slice(0,1)}</span> ` : ''}${pm.name||'-'}</span>`;
+                          }).join('')
+                        : '<span style="color:var(--text-muted);font-size:0.75rem;">-</span>';
+
                     // 사용 사출 자재 매칭: productIds(우선) 또는 mfgProductName 텍스트(fallback)
                     const pName  = (p.partName || '').trim();
                     const pColor = (p.color    || '').trim().toLowerCase();
@@ -663,23 +681,26 @@ const SettingsModule = (function() {
                           }).join('')
                         : '<span style="color:var(--text-muted);font-size:0.8rem;">-</span>';
 
+                    const itBadge = p.itemType === '양산품'
+                        ? '<span class="badge" style="background:rgba(52,211,153,0.15);color:var(--accent-green);border:1px solid var(--accent-green);font-size:.68rem;">양산</span>'
+                        : p.itemType === '개발품'
+                        ? '<span class="badge" style="background:rgba(59,130,246,0.15);color:var(--accent-blue);border:1px solid var(--accent-blue);font-size:.68rem;">개발</span>'
+                        : p.itemType === 'A/S품'
+                        ? '<span class="badge" style="background:rgba(245,158,11,0.15);color:#d97706;border:1px solid #d97706;font-size:.68rem;">A/S</span>'
+                        : '<span style="color:var(--text-muted);font-size:0.75rem;">-</span>';
+
                     return `
                                     <tr>
-                                        <td>${i + 1}</td>
-                                        <td>${p.carModel || '-'}</td>
-                                        <td><strong>${p.partName || '-'}</strong></td>
-                                        <td>${p.color || '-'}</td>
-                                        <td style="text-align:center;">${
-                                            p.itemType === '양산품' ? '<span class="badge" style="background:rgba(52,211,153,0.15);color:var(--accent-green);border:1px solid var(--accent-green);">양산품</span>'
-                                            : p.itemType === '개발품' ? '<span class="badge" style="background:rgba(59,130,246,0.15);color:var(--accent-blue);border:1px solid var(--accent-blue);">개발품</span>'
-                                            : p.itemType === 'A/S품' ? '<span class="badge" style="background:rgba(245,158,11,0.15);color:#d97706;border:1px solid #d97706;">A/S품</span>'
-                                            : '<span style="color:var(--text-muted);font-size:0.8rem;">-</span>'
-                                        }</td>
-                                        <td>${p.packUnit || '-'}</td>
-                                        <td>${p.customer || '-'}</td>
-                                        <td style="text-align:right">${p.salePrice ? Number(p.salePrice).toLocaleString() : '-'}</td>
-                                        <td style="text-align:right">${p.injectionPrice ? Number(p.injectionPrice).toLocaleString() : '-'}</td>
-                                        <td style="text-align:right">${p.manufacturePrice ? Number(p.manufacturePrice).toLocaleString() : '-'}</td>
+                                        <td style="text-align:center;">${i + 1}</td>
+                                        <td style="white-space:nowrap;font-size:.82rem;">${p.carModel || '-'}</td>
+                                        <td><strong style="font-size:.85rem;">${p.partName || '-'}</strong></td>
+                                        <td style="font-size:.8rem;white-space:nowrap;">${p.color || '-'}</td>
+                                        <td style="text-align:center;">${itBadge}</td>
+                                        <td style="text-align:center;font-size:.8rem;white-space:nowrap;">${p.packUnit || '-'}</td>
+                                        <td style="font-size:.8rem;white-space:nowrap;max-width:80px;overflow:hidden;text-overflow:ellipsis;" title="${p.customer||''}">${p.customer || '-'}</td>
+                                        <td style="text-align:right;font-size:.8rem;white-space:nowrap;">${p.salePrice ? Number(p.salePrice).toLocaleString() : '-'}</td>
+                                        <td style="text-align:right;font-size:.8rem;white-space:nowrap;">${p.injectionPrice ? Number(p.injectionPrice).toLocaleString() : '-'}</td>
+                                        <td style="text-align:right;font-size:.8rem;white-space:nowrap;">${p.manufacturePrice ? Number(p.manufacturePrice).toLocaleString() : '-'}</td>
                                         <td>
                                             <div style="display:flex; align-items:center; gap:6px; font-size:0.75rem; flex-wrap:wrap;">
                                                 ${[
@@ -692,7 +713,8 @@ const SettingsModule = (function() {
                                             </div>
                                         </td>
                                         <td><div style="display:flex;flex-wrap:nowrap;gap:4px;overflow:hidden;">${matBadges}</div></td>
-                                        <td>
+                                        <td><div style="display:flex;flex-wrap:wrap;gap:2px;">${paintBadges}</div></td>
+                                        <td style="white-space:nowrap;">
                                             <button class="btn btn-sm btn-outline" onclick="SettingsModule.editProduct('${p.id}')">수정</button>
                                             <button class="btn btn-sm btn-danger" onclick="SettingsModule.removeProduct('${p.id}')">삭제</button>
                                         </td>
@@ -6452,6 +6474,7 @@ const SettingsModule = (function() {
                     ${_sysCard('memory', 'RAM', '<div style="color:var(--text-muted);font-size:0.82rem;text-align:center;padding:12px 0;">로딩 중…</div>')}
                     ${_sysCard('developer_board', 'CPU', '<div style="color:var(--text-muted);font-size:0.82rem;text-align:center;padding:12px 0;">로딩 중…</div>')}
                     ${_sysCard('storage', '디스크', '<div style="color:var(--text-muted);font-size:0.82rem;text-align:center;padding:12px 0;">로딩 중…</div>')}
+                    ${_sysCard('cloud_sync', 'NAS 저장소', '<div style="color:var(--text-muted);font-size:0.82rem;text-align:center;padding:12px 0;">로딩 중</div>')}
                     ${_sysCard('database', 'MariaDB / API', '<div style="color:var(--text-muted);font-size:0.82rem;text-align:center;padding:12px 0;">로딩 중…</div>')}
                 </div>
             </div>
@@ -6513,6 +6536,18 @@ const SettingsModule = (function() {
                 </div>
             </div>
 
+            <div class="card" style="margin-bottom:20px;border-left:3px solid var(--accent-blue);">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">photo_library</span> 이미지 저장 정책</h4>
+                </div>
+                <div class="card-body">
+                    <p style="margin:0;font-size:0.875rem;color:var(--text-secondary);line-height:1.65;">
+                        지그 대장처럼 변경이 적은 이미지는 현재 방식으로도 큰 문제는 없습니다.
+                        작업조건 관리 C/S처럼 매일 여러 장 촬영되는 이미지는 장기적으로 NAS 파일 저장 방식이 적합합니다.
+                        DB에는 파일 경로, 촬영일, 공정, 등록자, 압축 정보만 저장하고 실제 이미지는 NAS 폴더에 저장하는 구조로 설계하는 것을 권장합니다.
+                    </p>
+                </div>
+            </div>
             <div class="card">
                 <div class="card-header">
                     <h4><span class="material-symbols-outlined">find_replace</span> 데이터 일괄 수정</h4>
@@ -6703,6 +6738,42 @@ const SettingsModule = (function() {
                 : '<span style="color:var(--text-muted);font-size:0.82rem;">정보 없음</span>'
         );
 
+        let nas = d.nas || null;
+        if (!nas && typeof ApiClient !== 'undefined' && ApiClient.getNasConfig) {
+            try {
+                const cfg = await ApiClient.getNasConfig();
+                nas = {
+                    configured: !!(cfg?.nasDir),
+                    mounted: false,
+                    writable: false,
+                    path: cfg?.nasDir || '',
+                    keepCount: cfg?.keepCount || '',
+                    disk: null,
+                    legacyOnly: true
+                };
+            } catch (_) {
+                nas = { configured: false, mounted: false, writable: false, path: '', keepCount: '', disk: null, legacyOnly: true };
+            }
+        }
+        nas = nas || {};
+        const nasPct = nas.disk ? parseFloat(nas.disk.usePct) : 0;
+        const nasStatusText = nas.legacyOnly ? '상태 조회 미지원' : !nas.configured ? '미설정' : nas.mounted ? (nas.writable ? '정상' : '쓰기 불가') : '마운트 안 됨';
+        const nasStatusColor = nas.mounted && nas.writable ? '#22c55e' : '#ef4444';
+        const nasCard = _sysCard('cloud_sync', 'NAS 저장소',
+            `<div style="display:flex;align-items:center;padding:4px 0;border-bottom:1px solid var(--border-color);font-size:0.82rem;">
+                 ${_statusDot(nas.mounted && nas.writable)}<span style="color:var(--text-muted);">상태</span>
+                 <span style="margin-left:auto;font-weight:600;color:${nasStatusColor};">${nasStatusText}</span>
+             </div>` +
+            _row('경로', `<span style="font-size:0.72rem;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;">${nas.path || '-'}</span>`) +
+            (nas.disk
+                ? _row('전체', nas.disk.total) +
+                  _row('사용', nas.disk.used) +
+                  _row('여유', nas.disk.avail) +
+                  _gauge(nasPct)
+                : _row('용량', nas.legacyOnly ? '서버 배포 후 표시' : '정보 없음')) +
+            _row('보관 개수', `${nas.keepCount || '-'}개`)
+        );
+
         // ── DB / API 카드 ─────────────────────────────────────────────
         const dbOk  = d.db?.ok;
         const apiOk = true; // 여기까지 왔으면 API는 정상
@@ -6739,7 +6810,7 @@ const SettingsModule = (function() {
 
         area.innerHTML = osBanner +
             `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px;">
-                ${memCard}${cpuCard}${diskCard}${dbCard}
+                ${memCard}${cpuCard}${diskCard}${nasCard}${dbCard}
              </div>`;
     }
 
