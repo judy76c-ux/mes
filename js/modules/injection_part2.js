@@ -8,26 +8,23 @@ var InjectionWarehouseModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-outline" onclick="Router.navigate('injection-layout')"
+                    <div class="page-actions" style="display:flex;align-items:center;gap:8px;width:100%;">
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                            <button class="btn btn-primary" onclick="InjectionWarehouseModule.openAddModal('입고')">
+                                <span class="material-symbols-outlined">add_circle</span> 사출입고
+                            </button>
+                            <button class="btn btn-danger" onclick="InjectionWarehouseModule.openAddModal('출고')">
+                                <span class="material-symbols-outlined">do_not_disturb_on</span> 사출출고
+                            </button>
+                            <button class="btn btn-outline"
+                                onclick="InjectionWarehouseModule.openBulkPasteModal()"
+                                title="관리자 계정으로 로그인한 경우에만 일괄 반영할 수 있습니다.">
+                                <span class="material-symbols-outlined">admin_panel_settings</span> 재고일괄등록
+                            </button>
+                        </div>
+                        <button class="btn btn-outline" style="margin-left:auto;" onclick="Router.navigate('injection-layout')"
                             title="1층 소재/완제품 보관창고 배치 레이아웃을 시각적으로 편집합니다.">
                             <span class="material-symbols-outlined">map</span> 레이아웃
-                        </button>
-                        <button class="btn btn-primary" onclick="InjectionWarehouseModule.openAddModal('입고')">
-                            <span class="material-symbols-outlined">add_circle</span> 사출 입고
-                        </button>
-                        <button class="btn btn-danger" onclick="InjectionWarehouseModule.openAddModal('출고')">
-                            <span class="material-symbols-outlined">do_not_disturb_on</span> 사출 출고
-                        </button>
-                        <button class="btn btn-outline" style="margin-left:auto;"
-                            onclick="InjectionWarehouseModule.openBulkPasteModal()"
-                            title="관리자 계정으로 로그인한 경우에만 일괄 반영할 수 있습니다.">
-                            <span class="material-symbols-outlined">admin_panel_settings</span> 재고 일괄 등록/수정
-                        </button>
-                        <button class="btn btn-outline" style="color:var(--accent-orange,#f59e0b);border-color:var(--accent-orange,#f59e0b);"
-                            onclick="InjectionWarehouseModule.openColorCleanupModal()"
-                            title="컬러 미설정·숫자 컬러 등 잘못된 입출고 레코드를 확인하고 삭제합니다.">
-                            <span class="material-symbols-outlined">auto_fix_high</span> 데이터 정리
                         </button>
                     </div>
                 </div>

@@ -13,6 +13,9 @@ const Router = (function() {
         'injection-incoming': '사출 입고',
         'paint-incoming-inspection': '도료 입고',
         'incoming-overview': '수입검사',
+        'inj-incoming-std': '사출 수입검사 기준서',
+        'paint-incoming-std': '도료 수입검사 기준서',
+        'inj-insp-std-photo': '수입검사 표준서',
         'warehouse-overview': '자재 창고',
         'injection-process': '사출 공정',
         'injection-work': '사출 작업일지',
@@ -94,8 +97,11 @@ const Router = (function() {
     }
 
     const PAGE_PARENT_LINKS = {
-        'injection-incoming': { target: 'incoming-overview', label: '수입검사로 돌아가기' },
+        'injection-incoming':        { target: 'incoming-overview', label: '수입검사로 돌아가기' },
         'paint-incoming-inspection': { target: 'incoming-overview', label: '수입검사로 돌아가기' },
+        'inj-incoming-std':          { target: 'incoming-overview', label: '수입검사로 돌아가기' },
+        'paint-incoming-std':        { target: 'incoming-overview', label: '수입검사로 돌아가기' },
+        'inj-insp-std-photo':        { target: 'incoming-overview', label: '수입검사로 돌아가기' },
 
         'injection-warehouse': { target: 'warehouse-overview', label: '자재 창고로 돌아가기' },
         'paint-inventory': { target: 'warehouse-overview', label: '자재 창고로 돌아가기' },

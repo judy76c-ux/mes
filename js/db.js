@@ -5,7 +5,7 @@
 
 const DB = (function() {
     const DB_NAME = 'ProductionMES_DB';
-    const DB_VERSION = 48;
+    const DB_VERSION = 49;
     let db = null;
 
     // 스토어 이름 - 전체 공정에 대응
@@ -151,6 +151,9 @@ const DB = (function() {
         // MES 운영 게시판 (v48)
         BOARD_POSTS:    'board_posts',    // 게시글 (본문 + 이미지)
         BOARD_REPLIES:  'board_replies',  // 답글
+
+        // 수입검사 기준서 (v49)
+        INJ_INCOMING_STD: 'inj_incoming_std', // 사출 수입검사 기준서
 
         // 설정
         CONFIG: 'config'
@@ -1315,6 +1318,12 @@ const DB = (function() {
                     }
                     if (!database.objectStoreNames.contains(STORES.BOARD_REPLIES)) {
                         database.createObjectStore(STORES.BOARD_REPLIES, { keyPath: 'id' });
+                    }
+                    // v49: 수입검사 기준서
+                    if (!database.objectStoreNames.contains(STORES.INJ_INCOMING_STD)) {
+                        const s = database.createObjectStore(STORES.INJ_INCOMING_STD, { keyPath: 'id' });
+                        s.createIndex('productId', 'productId', { unique: false });
+                        s.createIndex('carModel',  'carModel',  { unique: false });
                     }
                 }
             };

@@ -7,6 +7,7 @@ var PaintIncomingInspectionModule = (function() {
     function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
+                ${IncomingUI.renderSection('paint-incoming-inspection')}
                 <div class="page-header">
                     <div class="page-actions">
                         <button class="btn btn-primary" onclick="PaintIncomingInspectionModule.openAddModal()">

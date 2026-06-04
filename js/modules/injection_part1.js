@@ -14,12 +14,9 @@ var InjectionIncomingModule = (function() {
     function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
+                ${IncomingUI.renderSection('injection-incoming')}
                 <div class="page-header">
                     <div class="page-actions">
-                        <button class="btn btn-outline" onclick="InjectionIncomingModule.openStdModal()"
-                            style="gap:6px;">
-                            <span class="material-symbols-outlined">photo_library</span> 수입검사 표준
-                        </button>
                         <button class="btn btn-primary" onclick="InjectionIncomingModule.openAddModal()">
                             <span class="material-symbols-outlined">add</span> 검사 등록
                         </button>

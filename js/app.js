@@ -258,6 +258,9 @@ const App = (function() {
         Router.registerModule('prod-equipment', ProdEquipmentModule);
         Router.registerModule('settings', SettingsModule);
         Router.registerModule('incoming-overview', IncomingOverviewModule);
+        Router.registerModule('inj-incoming-std', InjIncomingStdModule);
+        Router.registerModule('paint-incoming-std', PaintIncomingStdModule);
+        Router.registerModule('inj-insp-std-photo', InjInspStdPhotoModule);
         Router.registerModule('warehouse-overview', WarehouseOverviewModule);
         Router.registerModule('work-standard', WorkStandardModule);
         // ── 자격인증 관리 허브 + 서브 문서 ──────────────────────────────

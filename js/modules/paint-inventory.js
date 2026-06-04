@@ -55,26 +55,30 @@ const PaintInventoryModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-outline" onclick="Router.navigate('paint-layout')"
-                            title="도료 보관 창고 배치 레이아웃을 시각적으로 편집합니다.">
-                            <span class="material-symbols-outlined">map</span> 레이아웃
-                        </button>
-                        <button class="btn btn-outline" onclick="PaintInventoryModule.openTemperatureStandard()"
-                            title="도료 보관창고 온도관리 기준서를 확인합니다.">
-                            <span class="material-symbols-outlined">device_thermostat</span> 온도관리 기준서
-                        </button>
-                        <button class="btn btn-primary" onclick="PaintInventoryModule.openIncomingModal()">
-                            <span class="material-symbols-outlined">login</span> 도료 입고
-                        </button>
-                        <button class="btn btn-danger" onclick="PaintInventoryModule.openOutgoingModal()">
-                            <span class="material-symbols-outlined">logout</span> 도료 출고
-                        </button>
-                        <button class="btn btn-outline" style="margin-left:auto;"
-                            onclick="PaintInventoryModule.openBulkModal()"
-                            title="관리자만 도료 창고 재고를 일괄 등록 및 전체 교체할 수 있습니다.">
-                            <span class="material-symbols-outlined">admin_panel_settings</span> 일괄 등록 및 수정
-                        </button>
+                    <div class="page-actions" style="display:flex;align-items:center;gap:8px;width:100%;">
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                            <button class="btn btn-primary" onclick="PaintInventoryModule.openIncomingModal()">
+                                <span class="material-symbols-outlined">login</span> 도료 입고
+                            </button>
+                            <button class="btn btn-danger" onclick="PaintInventoryModule.openOutgoingModal()">
+                                <span class="material-symbols-outlined">logout</span> 도료 출고
+                            </button>
+                            <button class="btn btn-outline"
+                                onclick="PaintInventoryModule.openBulkModal()"
+                                title="관리자만 도료 창고 재고를 일괄 등록 및 전체 교체할 수 있습니다.">
+                                <span class="material-symbols-outlined">admin_panel_settings</span> 일괄 등록 및 수정
+                            </button>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end;">
+                            <button class="btn btn-outline" onclick="PaintInventoryModule.openTemperatureStandard()"
+                                title="도료 보관창고 온도관리 기준서를 확인합니다.">
+                                <span class="material-symbols-outlined">device_thermostat</span> 온도관리 기준서
+                            </button>
+                            <button class="btn btn-outline" onclick="Router.navigate('paint-layout')"
+                                title="도료 보관 창고 배치 레이아웃을 시각적으로 편집합니다.">
+                                <span class="material-symbols-outlined">map</span> 레이아웃
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -93,8 +97,6 @@ const PaintInventoryModule = (function() {
                     </div>
                     <div class="card-body" id="paintInspStandbyBody" style="padding:0;"></div>
                 </div>
-
-                <div class="stat-cards" id="paintInvStats"></div>
 
                 <!-- 공급사별 재고 현황 타일 -->
                 <div class="card" style="margin-bottom:20px;">
@@ -177,21 +179,6 @@ const PaintInventoryModule = (function() {
 
         const totalStock    = Object.values(byMaterial).reduce((s, v) => s + v.qty, 0);
         const materialCount = Object.keys(byMaterial).length;
-
-        document.getElementById('paintInvStats').innerHTML = `
-            <div class="stat-card blue">
-                <div class="stat-card-value">${UIUtils.formatNumber(totalStock)}</div>
-                <div class="stat-card-label">총 재고 합산</div>
-            </div>
-            <div class="stat-card green" style="border-bottom: 4px solid var(--accent-green);">
-                <div class="stat-card-value" style="color:var(--accent-green);">${UIUtils.formatNumber(totalStockValue)}</div>
-                <div class="stat-card-label">총 재공 금액 (₩)</div>
-            </div>
-            <div class="stat-card purple">
-                <div class="stat-card-value">${materialCount}</div>
-                <div class="stat-card-label">분류 수</div>
-            </div>
-        `;
 
         // ★ 입고 대기 섹션 + 공급사 타일은 항상 렌더링
         setTimeout(() => {
@@ -2268,6 +2255,27 @@ const PaintInventoryModule = (function() {
             step2Heat: '온도가 10℃ 미만 일 시 왼쪽의 난방 운전 버튼을 눌러 가동.',
             step2Cool: '온도가 28℃ 이상 일시는 오른쪽의 냉방 운전 버튼을 눌러 가동',
             step3: '셋팅 온도는 난방 16℃~20℃, 냉방 22℃~26℃로 한다.<br><span style="margin-left:20px;">(창고 내부 온도 상황에 맞게 조절한다.)</span>',
+            stepNo1: '1.',
+            stepNo2: '2.',
+            stepNo3: '3.',
+            revisionNo: '1',
+            revisionDate: '23.08.01',
+            revisionReason: '최초 작성',
+            revisionWriter: '',
+            revisionReviewer: '',
+            revisionApprover: '',
+            revisionNo2: '2',
+            revisionDate2: '',
+            revisionReason2: '',
+            revisionWriter2: '',
+            revisionReviewer2: '',
+            revisionApprover2: '',
+            revisionNo3: '3',
+            revisionDate3: '',
+            revisionReason3: '',
+            revisionWriter3: '',
+            revisionReviewer3: '',
+            revisionApprover3: '',
             images: {},
             objects: {
                 settingTemp: { slot: 'controller', x: 77, y: 17, w: 22, h: 13, bg: '#9bbb59', color: '#fff', text: '셋팅온도' },
@@ -2349,13 +2357,21 @@ const PaintInventoryModule = (function() {
         const bg = o.bg ?? 'transparent';
         const color = o.color ?? '#111827';
         const z = Number(o.z ?? 4);
-        return `<div class="pts-object" data-pts-object="${key}" data-slot="${o.slot || ''}" data-kind="${o.kind || 'box'}" data-bg="${bg}" data-color="${color}" data-z="${z}" data-x="${o.x}" data-y="${o.y}" data-w="${o.w}" data-h="${o.h}"
+        const kind = o.kind || 'box';
+        const isLine = kind === 'line' || kind === 'arrow';
+        const rot = Number(o.rot || 0);
+        const textHtml = isLine
+            ? `<span style="display:block;width:100%;height:0;border-top:3px solid ${color};position:relative;">
+                    ${kind === 'arrow' ? `<span style="position:absolute;right:-2px;top:-7px;width:0;height:0;border-top:6px solid transparent;border-bottom:6px solid transparent;border-left:10px solid ${color};"></span>` : ''}
+               </span>`
+            : `<span data-pts-object-text="${key}" contenteditable="false"
+                    ondblclick="PaintInventoryModule.editTemperatureStandardObjectText(event, '${key}')"
+                    style="display:block;width:100%;padding:2px 4px;box-sizing:border-box;">${o.text || ''}</span>`;
+        return `<div class="pts-object" data-pts-object="${key}" data-slot="${o.slot || ''}" data-kind="${o.kind || 'box'}" data-bg="${bg}" data-color="${color}" data-z="${z}" data-x="${o.x}" data-y="${o.y}" data-w="${o.w}" data-h="${o.h}" data-rot="${rot}"
                     onmousedown="PaintInventoryModule.startTemperatureStandardObjectDrag(event, '${key}')"
                     onclick="PaintInventoryModule.selectTemperatureStandardObject('${key}');event.stopPropagation();"
-                    style="position:absolute;left:${o.x}%;top:${o.y}%;width:${o.w}%;height:${o.h}%;background:${bg};color:${color};font-weight:800;text-align:center;display:flex;align-items:center;justify-content:center;line-height:1.25;border:2px solid rgba(15,23,42,.35);z-index:${z};user-select:none;">
-                    <span data-pts-object-text="${key}" contenteditable="false"
-                        ondblclick="PaintInventoryModule.editTemperatureStandardObjectText(event, '${key}')"
-                        style="display:block;width:100%;padding:2px 4px;box-sizing:border-box;">${o.text || ''}</span>
+                    style="position:absolute;left:${o.x}%;top:${o.y}%;width:${o.w}%;height:${o.h}%;background:${bg};color:${color};font-weight:800;text-align:center;display:flex;align-items:center;justify-content:center;line-height:1.25;border:${isLine ? '1px dashed rgba(37,99,235,.35)' : '2px solid rgba(15,23,42,.35)'};z-index:${z};user-select:none;transform:rotate(${rot}deg);transform-origin:${isLine ? 'left center' : 'center center'};">
+                    ${textHtml}
                     <span class="pts-object-resize" onmousedown="PaintInventoryModule.startTemperatureStandardObjectResize(event, '${key}')"></span>
                 </div>`;
     }
@@ -2601,31 +2617,38 @@ const PaintInventoryModule = (function() {
             </style>
             <div style="border:2px solid #1d4ed8;background:#fff;color:#111827;font-family:Inter,'Malgun Gothic',sans-serif;">
                 <div id="paintTempStandardDoc" data-deleted-boxes="${deletedBoxes}" data-deleted-objects="${deletedObjects}" style="background:#fff;">
-                <div style="display:grid;grid-template-columns:235px 1fr 250px;border-bottom:1px solid #111827;">
-                    <div style="border-right:1px solid #111827;">
-                        <div style="display:grid;grid-template-columns:82px 1fr;border-bottom:1px solid #111827;">
-                            <div style="padding:10px 12px;font-weight:800;text-align:center;border-right:1px solid #111827;">부서명</div>
-                            <div style="padding:10px 12px;text-align:center;">${_editableField('deptName', data)}</div>
-                        </div>
-                        <div style="display:grid;grid-template-columns:82px 1fr;">
-                            <div style="padding:10px 12px;font-weight:800;text-align:center;border-right:1px solid #111827;">공정명</div>
-                            <div style="padding:10px 12px;text-align:center;">${_editableField('processName', data)}</div>
-                        </div>
+                <div style="display:grid;grid-template-columns:220px 1fr 450px;border-bottom:1px solid #111827;">
+                    <div style="border-right:1px solid #111827;display:flex;align-items:center;justify-content:center;padding:5px 10px;min-height:92px;">
+                        <img src="assets/viscosity-std/image3.png" alt="KC 케미칼 주식회사"
+                            style="width:190px;height:auto;max-height:82px;object-fit:contain;display:block;">
                     </div>
                     <div style="display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:900;">작업기준서</div>
-                    <div style="display:grid;grid-template-columns:34px 1fr;border-left:1px solid #111827;">
-                        <div style="display:flex;align-items:center;justify-content:center;font-weight:800;border-right:1px solid #111827;">결<br>재</div>
-                        <div>
-                            <div style="display:grid;grid-template-columns:repeat(3,1fr);border-bottom:1px solid #111827;">
-                                <div style="padding:4px;text-align:center;font-weight:800;border-right:1px solid #111827;">작성</div>
-                                <div style="padding:4px;text-align:center;font-weight:800;border-right:1px solid #111827;">검토</div>
-                                <div style="padding:4px;text-align:center;font-weight:800;">승인</div>
-                            </div>
-                            <div style="display:grid;grid-template-columns:repeat(3,1fr);height:52px;">
-                                <div style="border-right:1px solid #111827;"></div>
-                                <div style="border-right:1px solid #111827;"></div>
-                                <div></div>
-                            </div>
+                    <div style="border-left:1px solid #111827;display:flex;align-items:flex-end;">
+                        <div style="display:grid;grid-template-columns:48px 90px 1fr 52px 52px 52px;width:100%;font-size:13px;text-align:center;line-height:1.2;">
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionNo3', data)}</div>
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionDate3', data)}</div>
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionReason3', data)}</div>
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionWriter3', data)}</div>
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionReviewer3', data)}</div>
+                            <div style="border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionApprover3', data)}</div>
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionNo2', data)}</div>
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionDate2', data)}</div>
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionReason2', data)}</div>
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionWriter2', data)}</div>
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionReviewer2', data)}</div>
+                            <div style="border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionApprover2', data)}</div>
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionNo', data)}</div>
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionDate', data)}</div>
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionReason', data)}</div>
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionWriter', data)}</div>
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionReviewer', data)}</div>
+                            <div style="border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionApprover', data)}</div>
+                            <div style="border-right:1px solid #111827;padding:3px 4px;font-weight:800;">NO</div>
+                            <div style="border-right:1px solid #111827;padding:3px 4px;font-weight:800;">작성일자</div>
+                            <div style="border-right:1px solid #111827;padding:3px 4px;font-weight:800;">개정사유</div>
+                            <div style="border-right:1px solid #111827;padding:3px 4px;font-weight:800;">작성</div>
+                            <div style="border-right:1px solid #111827;padding:3px 4px;font-weight:800;">검토</div>
+                            <div style="padding:3px 4px;font-weight:800;">승인</div>
                         </div>
                     </div>
                 </div>
@@ -2712,32 +2735,51 @@ const PaintInventoryModule = (function() {
                             </div>`, 'z-index:1;',
                             `${_standardObjectsHtml('controller', data, ['settingTemp', 'heatButton', 'coolButton'])}`)}
                         </div>
-                        <ol style="margin:28px 0 0 18px;padding:0;font-size:16px;line-height:1.65;">
-                            <li>${_editableField('step1', data)}</li>
-                            <li><span style="color:#c2410c;">${_editableField('step2Heat', data)}</span><br>
-                                <span style="color:#2563eb;">${_editableField('step2Cool', data)}</span></li>
-                            <li>${_editableField('step3', data)}</li>
-                        </ol>
+                        <div style="display:grid;grid-template-columns:28px 1fr;column-gap:6px;row-gap:6px;margin:28px 0 0 0;font-size:16px;line-height:1.65;">
+                            <div style="text-align:right;">${_editableField('stepNo1', data)}</div>
+                            <div>${_editableField('step1', data)}</div>
+                            <div style="text-align:right;">${_editableField('stepNo2', data)}</div>
+                            <div><span style="color:#c2410c;">${_editableField('step2Heat', data)}</span><br>
+                                <span style="color:#2563eb;">${_editableField('step2Cool', data)}</span></div>
+                            <div style="text-align:right;">${_editableField('stepNo3', data)}</div>
+                            <div>${_editableField('step3', data)}</div>
+                        </div>
                     </section>
                 </div>
                 </div>
             </div>
-        `, `
-            <button class="btn btn-outline" onclick="PaintInventoryModule.setTemperatureStandardEdit(true)">편집</button>
-            <button class="btn btn-outline" onclick="PaintInventoryModule.undoTemperatureStandardEdit()">되돌리기</button>
-            <button class="btn btn-outline" onclick="PaintInventoryModule.redoTemperatureStandardEdit()">다시실행</button>
-            <button class="btn btn-outline" onclick="PaintInventoryModule.addTemperatureStandardObject('text')">텍스트</button>
-            <button class="btn btn-outline" onclick="PaintInventoryModule.addTemperatureStandardObject('box')">사각형</button>
-            <button class="btn btn-outline" onclick="PaintInventoryModule.duplicateTemperatureStandardObject()">복제</button>
-            <button class="btn btn-outline" onclick="PaintInventoryModule.arrangeTemperatureStandardObject('front')">앞으로</button>
-            <button class="btn btn-outline" onclick="PaintInventoryModule.arrangeTemperatureStandardObject('back')">뒤로</button>
-            <button class="btn btn-primary" onclick="PaintInventoryModule.saveTemperatureStandard()">저장</button>
-            <button class="btn btn-outline" onclick="PaintInventoryModule.resetTemperatureStandard()">기본값 복원</button>
-            <button class="btn btn-secondary" onclick="PaintInventoryModule.printTemperatureStandard()">인쇄</button>
-            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
-        `, 'xl');
+        `, `<div id="paintTempStandardFooter">${_temperatureStandardFooter(false)}</div>`, 'xl');
         _prepareTemperatureStandardLayout(data);
         _initTemperatureStandardHistory();
+        _renderTemperatureStandardFooter(false);
+    }
+
+    function _temperatureStandardFooter(editing) {
+        if (!editing) {
+            return `
+                <button class="btn btn-outline" onclick="PaintInventoryModule.setTemperatureStandardEdit(true)">편집</button>
+                <button class="btn btn-secondary" onclick="PaintInventoryModule.printTemperatureStandard()">인쇄</button>
+                <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`;
+        }
+        return `
+            <button class="btn btn-outline" onclick="PaintInventoryModule.addTemperatureStandardObject('text')">텍스트</button>
+            <button class="btn btn-outline" onclick="PaintInventoryModule.addTemperatureStandardObject('box')">사각형</button>
+            <button class="btn btn-outline" onclick="PaintInventoryModule.startTemperatureStandardLineTool('arrow')">화살표</button>
+            <button class="btn btn-outline" onclick="PaintInventoryModule.startTemperatureStandardLineTool('line')">선</button>
+            <button class="btn btn-outline" onclick="PaintInventoryModule.undoTemperatureStandardEdit()">되돌리기</button>
+            <button class="btn btn-outline" onclick="PaintInventoryModule.redoTemperatureStandardEdit()">다시실행</button>
+            <button class="btn btn-outline" onclick="PaintInventoryModule.duplicateTemperatureStandardObject()">복제</button>
+            <button class="btn btn-outline" onclick="PaintInventoryModule.rotateTemperatureStandardObject(-15)">왼쪽 회전</button>
+            <button class="btn btn-outline" onclick="PaintInventoryModule.rotateTemperatureStandardObject(15)">오른쪽 회전</button>
+            <button class="btn btn-outline" onclick="PaintInventoryModule.arrangeTemperatureStandardObject('front')">앞으로</button>
+            <button class="btn btn-outline" onclick="PaintInventoryModule.arrangeTemperatureStandardObject('back')">뒤로</button>
+            <button class="btn btn-outline" onclick="PaintInventoryModule.resetTemperatureStandard()">기본값(전 저장 정보)</button>
+            <button class="btn btn-primary" onclick="PaintInventoryModule.saveTemperatureStandard()">저장</button>`;
+    }
+
+    function _renderTemperatureStandardFooter(editing) {
+        const footer = document.getElementById('paintTempStandardFooter');
+        if (footer) footer.innerHTML = _temperatureStandardFooter(!!editing);
     }
 
     function setTemperatureStandardEdit(enabled) {
@@ -2771,6 +2813,7 @@ const PaintInventoryModule = (function() {
             window._paintTempStandardToolHandler = null;
         }
         if (enabled) {
+            _renderTemperatureStandardFooter(true);
             doc.querySelectorAll('[data-pts-object-text]').forEach(el => {
                 el.contentEditable = 'false';
             });
@@ -2805,6 +2848,7 @@ const PaintInventoryModule = (function() {
             };
             document.addEventListener('keydown', window._paintTempStandardKeyHandler, true);
             window._paintTempStandardPointerHandler = (event) => {
+                if (_handleTemperatureStandardDrawStart(event)) return;
                 const editable = event.target.closest('[contenteditable="true"]');
                 if (editable) return;
 
@@ -2854,6 +2898,7 @@ const PaintInventoryModule = (function() {
             }
             _initTemperatureStandardHistory();
         } else {
+            _renderTemperatureStandardFooter(false);
             doc.querySelectorAll('[data-pts-object-text]').forEach(el => {
                 el.contentEditable = 'false';
             });
@@ -2919,6 +2964,7 @@ const PaintInventoryModule = (function() {
                 y: Number(el.dataset.y || base.y || 50),
                 w: Number(el.dataset.w || base.w || 20),
                 h: Number(el.dataset.h || base.h || 12),
+                rot: Number(el.dataset.rot || base.rot || 0),
                 text: (el.querySelector('[data-pts-object-text]') || el).innerHTML.trim()
             };
         });
@@ -3156,6 +3202,81 @@ const PaintInventoryModule = (function() {
         _commitTemperatureStandardHistory();
     }
 
+    function startTemperatureStandardLineTool(type = 'line') {
+        const doc = document.getElementById('paintTempStandardDoc');
+        if (!doc) return;
+        if (doc.dataset.editing !== 'true') setTemperatureStandardEdit(true);
+        doc.dataset.drawTool = type === 'arrow' ? 'arrow' : 'line';
+        UIUtils.toast('그릴 영역에서 마우스로 드래그해 선을 그리세요.', 'info');
+    }
+
+    function _handleTemperatureStandardDrawStart(event) {
+        const doc = document.getElementById('paintTempStandardDoc');
+        const tool = doc?.dataset.drawTool;
+        if (!tool || doc.dataset.editing !== 'true') return false;
+        const surface = event.target.closest('[data-pts-image], [data-pts-surface]');
+        if (!surface || event.target.closest('[data-pts-object]')) return false;
+        event.preventDefault();
+        event.stopPropagation();
+
+        const rect = surface.getBoundingClientRect();
+        const startXPct = ((event.clientX - rect.left) / rect.width) * 100;
+        const startYPct = ((event.clientY - rect.top) / rect.height) * 100;
+        const key = `custom_${Date.now()}`;
+        const slot = surface.dataset.ptsImage || surface.dataset.ptsSurface || 'controller';
+        const object = {
+            key,
+            slot,
+            kind: tool,
+            x: startXPct,
+            y: startYPct,
+            w: 2,
+            h: 5,
+            rot: 0,
+            z: 9,
+            bg: 'rgba(255,255,255,0)',
+            color: '#111827',
+            text: tool === 'arrow' ? '화살표' : '선'
+        };
+        _appendTemperatureStandardObject(surface, object);
+        const target = surface.querySelector(`[data-pts-object="${key}"]`);
+
+        const onMove = (moveEvent) => {
+            if (!target) return;
+            const endXPct = ((moveEvent.clientX - rect.left) / rect.width) * 100;
+            const endYPct = ((moveEvent.clientY - rect.top) / rect.height) * 100;
+            const dx = endXPct - startXPct;
+            const dy = endYPct - startYPct;
+            const length = Math.max(3, Math.sqrt(dx * dx + dy * dy));
+            const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+            _setObjectGeometry(target, startXPct, startYPct, length, 5);
+            target.dataset.rot = String(angle);
+            target.style.transform = `rotate(${angle}deg)`;
+            target.style.transformOrigin = 'left center';
+        };
+        const onUp = () => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            delete doc.dataset.drawTool;
+            _commitTemperatureStandardHistory();
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+        return true;
+    }
+
+    function rotateTemperatureStandardObject(delta) {
+        const target = document.querySelector('[data-pts-object].pts-selected');
+        if (!target) return;
+        const kind = target.dataset.kind || 'box';
+        const current = Number(target.dataset.rot || 0);
+        const next = current + Number(delta || 0);
+        target.dataset.rot = String(next);
+        target.style.transform = `rotate(${next}deg)`;
+        target.style.transformOrigin = (kind === 'line' || kind === 'arrow') ? 'left center' : 'center center';
+        _commitTemperatureStandardHistory();
+    }
+
     function addTemperatureStandardObject(type = 'text') {
         const doc = document.getElementById('paintTempStandardDoc');
         if (!doc) return;
@@ -3165,18 +3286,20 @@ const PaintInventoryModule = (function() {
         const key = `custom_${Date.now()}`;
         const slot = container.dataset.ptsImage || container.dataset.ptsSurface || 'controller';
         const isText = type === 'text';
+        const isLine = type === 'line' || type === 'arrow';
         _appendTemperatureStandardObject(container, {
             key,
             slot,
-            kind: isText ? 'text' : 'box',
+            kind: isLine ? type : (isText ? 'text' : 'box'),
             x: 12,
             y: 12,
-            w: isText ? 24 : 22,
-            h: isText ? 12 : 18,
-            z: 8,
-            bg: isText ? 'rgba(255,255,255,0)' : '#2563eb',
-            color: isText ? '#111827' : '#ffffff',
-            text: isText ? '텍스트' : '사각형'
+            w: isLine ? 28 : (isText ? 24 : 22),
+            h: isLine ? 6 : (isText ? 12 : 18),
+            rot: 0,
+            z: isText ? 50 : 8,
+            bg: isText || isLine ? 'rgba(255,255,255,0)' : '#2563eb',
+            color: isLine ? '#111827' : (isText ? '#111827' : '#ffffff'),
+            text: isText ? '텍스트' : (type === 'arrow' ? '화살표' : (type === 'line' ? '선' : '사각형'))
         });
     }
 
@@ -3193,6 +3316,7 @@ const PaintInventoryModule = (function() {
             y: Number(source.dataset.y || 10) + 3,
             w: Number(source.dataset.w || 20),
             h: Number(source.dataset.h || 12),
+            rot: Number(source.dataset.rot || 0),
             z: Number(source.dataset.z || 4) + 1,
             bg: source.dataset.bg || 'transparent',
             color: source.dataset.color || '#111827',
@@ -3508,6 +3632,8 @@ const PaintInventoryModule = (function() {
         deleteSelectedTemperatureStandardObject,
         nudgeSelectedTemperatureStandardObject,
         addTemperatureStandardObject,
+        startTemperatureStandardLineTool,
+        rotateTemperatureStandardObject,
         duplicateTemperatureStandardObject,
         arrangeTemperatureStandardObject,
         undoTemperatureStandardEdit,

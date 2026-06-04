@@ -15,6 +15,7 @@ const SettingsModule = (function() {
         try { return sessionStorage.getItem(SETTINGS_TAB_KEY) || 'products'; } catch(e) { return 'products'; }
     })();
     let _pendingPhoto = null; // 모달 사진 임시 보관
+    let _pendingSeal = null;  // 모달 서명/날인 임시 보관
 
     // ── 제조 공정 타입 관리 ──────────────────────────────────────────
     const DEFAULT_PROCESS_TYPES = ['사출', '도장-A', '도장-B', '레이저', '인쇄', '외관 검사', '외관+각인 검사'];
@@ -4141,6 +4142,112 @@ const SettingsModule = (function() {
         return `<div style="width:${size}px;height:${size}px;border-radius:50%;background:var(--accent-blue);color:white;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:${Math.round(size*0.4)}px;flex-shrink:0;">${(person.name || '?').charAt(0)}</div>`;
     }
 
+    const USER_SEAL_FONTS = [
+        { key: 'gothic', label: '굵은 고딕', family: "'Malgun Gothic', 'Arial Black', sans-serif", weight: 900 },
+        { key: 'serif', label: '명조체', family: "'Batang', 'Gungsuh', serif", weight: 900 },
+        { key: 'gungseo', label: '궁서체', family: "'Gungsuh', 'Batang', serif", weight: 900 },
+        { key: 'brush', label: '필기 느낌', family: "'Brush Script MT', 'Gungsuh', cursive", weight: 900 },
+        { key: 'square', label: '각인체', family: "'Consolas', 'Malgun Gothic', monospace", weight: 900 }
+    ];
+
+    function _sealFontOptionHtml(selectedKey = 'gothic') {
+        return USER_SEAL_FONTS.map(font =>
+            `<option value="${font.key}" ${font.key === selectedKey ? 'selected' : ''}>${font.label}</option>`
+        ).join('');
+    }
+
+    function _sealPreviewHtml(existingSeal, selectedFont = 'gothic') {
+        const inner = existingSeal
+            ? `<img src="${existingSeal}" style="width:100%;height:100%;object-fit:contain;">`
+            : `<span style="color:#b91c1c;font-weight:800;font-size:0.78rem;">날인</span>`;
+        return `
+            <div class="form-group">
+                <label class="form-label">서명/날인</label>
+                <div style="display:flex;align-items:center;gap:16px;margin-top:8px;">
+                    <div id="userSealPreview"
+                        style="width:92px;height:92px;background:#fff;border:1px dashed #ef4444;display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;">
+                        ${inner}
+                    </div>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                        <select class="form-select" id="umSealFont" style="height:32px;min-width:120px;padding:3px 8px;">
+                            ${_sealFontOptionHtml(selectedFont)}
+                        </select>
+                        <button type="button" class="btn btn-outline btn-sm" onclick="SettingsModule.generateUserSeal()">
+                            이름으로 도장 생성
+                        </button>
+                        <button type="button" class="btn btn-sm" style="color:var(--accent-red);border:1px solid var(--accent-red);background:none;" onclick="SettingsModule.clearUserSeal()">
+                            삭제
+                        </button>
+                        <p style="width:100%;font-size:0.75rem;color:var(--text-muted);margin:2px 0 0;">이름 2~4자를 붉은 도장 이미지로 생성합니다.</p>
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    function generateUserSeal() {
+        const name = ((document.getElementById('umDisplayName') || {}).value || '').trim();
+        if (!name) {
+            UIUtils.toast('이름을 먼저 입력하세요.', 'warning');
+            return;
+        }
+        const fontKey = ((document.getElementById('umSealFont') || {}).value || 'gothic');
+        const font = USER_SEAL_FONTS.find(f => f.key === fontKey) || USER_SEAL_FONTS[0];
+        const chars = Array.from(name.replace(/\s+/g, '')).slice(0, 4);
+        const cvs = document.createElement('canvas');
+        const size = 220;
+        cvs.width = size;
+        cvs.height = size;
+        const ctx = cvs.getContext('2d');
+        ctx.clearRect(0, 0, size, size);
+        ctx.strokeStyle = '#dc2626';
+        ctx.fillStyle = '#dc2626';
+        ctx.lineWidth = 10;
+        ctx.beginPath();
+        ctx.arc(size / 2, size / 2, 92, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.arc(size / 2, size / 2, 76, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.font = `${font.weight} ${chars.length <= 2 ? 58 : 48}px ${font.family}`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        if (chars.length <= 2) {
+            chars.forEach((ch, i) => ctx.fillText(ch, size / 2, size / 2 - 30 + i * 60));
+        } else {
+            const pos = [
+                [size / 2 - 34, size / 2 - 34],
+                [size / 2 + 34, size / 2 - 34],
+                [size / 2 - 34, size / 2 + 34],
+                [size / 2 + 34, size / 2 + 34]
+            ];
+            chars.forEach((ch, i) => ctx.fillText(ch, pos[i][0], pos[i][1]));
+        }
+        ctx.globalAlpha = 0.16;
+        ctx.fillStyle = '#dc2626';
+        ctx.beginPath();
+        ctx.arc(58, 60, 4, 0, Math.PI * 2);
+        ctx.arc(158, 165, 3, 0, Math.PI * 2);
+        ctx.arc(148, 48, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        _pendingSeal = cvs.toDataURL('image/png');
+        const preview = document.getElementById('userSealPreview');
+        if (preview) {
+            preview.innerHTML = `<img src="${_pendingSeal}" style="width:100%;height:100%;object-fit:contain;">`;
+            preview.style.border = '1px solid #ef4444';
+        }
+    }
+
+    function clearUserSeal() {
+        _pendingSeal = '';
+        const preview = document.getElementById('userSealPreview');
+        if (preview) {
+            preview.innerHTML = `<span style="color:#b91c1c;font-weight:800;font-size:0.78rem;">날인</span>`;
+            preview.style.border = '1px dashed #ef4444';
+        }
+    }
+
     function renderInspectorsTab(el) {
         const inspectors = Storage.getAll(INSPECTORS_STORE);
 
@@ -4973,7 +5080,6 @@ const SettingsModule = (function() {
                                         <th>제조사</th>
                                         <th>도료종류</th>
                                         <th>도료 사양</th>
-                                        <th style="text-align:center;">제품구분</th>
                                         <th>포장 용량</th>
                                         <th>매입 단가</th>
                                         <th>유효기한</th>
@@ -4982,11 +5088,6 @@ const SettingsModule = (function() {
                                 </thead>
                                 <tbody>
                                     ${paints.map((p, i) => {
-                                        const itColors = { '양산': '#059669', 'A/S': '#2563eb', '개발': '#7c3aed' };
-                                        const it = (p.itemType || '').replace(/품$/, '');
-                                        const itBadge = it
-                                            ? `<span style="font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:999px;background:${(itColors[it]||'#6b7280')}22;color:${itColors[it]||'#6b7280'};border:1px solid ${(itColors[it]||'#6b7280')}44;">${it}</span>`
-                                            : `<span style="font-size:.7rem;color:#9ca3af;cursor:pointer;" onclick="SettingsModule.editPaint('${p.id}')" title="클릭하여 구분 설정">미지정 ✏</span>`;
                                         return `
                                         <tr>
                                             <td>${i + 1}</td>
@@ -4995,7 +5096,6 @@ const SettingsModule = (function() {
                                             <td>${p.manufacturer || '-'}</td>
                                             <td>${p.paintType ? UIUtils.badge(p.paintType, paintTypeBadge(p.paintType)) : '-'}</td>
                                             <td>${p.paintSpec ? UIUtils.badge(p.paintSpec, paintSpecBadge(p.paintSpec)) : '-'}</td>
-                                            <td style="text-align:center;">${itBadge}</td>
                                             <td>${p.packUnit ? p.packUnit + ' KG' : '-'}</td>
                                             <td style="text-align:right;">${p.purchasePrice ? (Number(String(p.purchasePrice).replace(/,/g, '')) || 0).toLocaleString() : '-'}</td>
                                             <td>${p.shelfLife || '-'}</td>
@@ -5076,15 +5176,6 @@ const SettingsModule = (function() {
                     <label class="form-label">유효기한</label>
                     <input type="text" class="form-input" id="addPaintShelfLife" placeholder="예: 12개월, 6개월">
                 </div>
-                <div class="form-group">
-                    <label class="form-label" style="font-weight:700;color:var(--accent-blue);">제품 구분</label>
-                    <select class="form-select" id="addPaintItemType">
-                        <option value="">-- 미지정 --</option>
-                        <option value="양산">양산</option>
-                        <option value="A/S">A/S</option>
-                        <option value="개발">개발</option>
-                    </select>
-                </div>
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
@@ -5106,7 +5197,6 @@ const SettingsModule = (function() {
             return;
         }
 
-        const itemType = document.getElementById('addPaintItemType').value;
         await Storage.add(PAINT_STORE, {
             supplier,
             name,
@@ -5115,8 +5205,7 @@ const SettingsModule = (function() {
             purchasePrice: document.getElementById('addPaintPurchasePrice').value.trim(),
             shelfLife,
             paintType,
-            paintSpec,
-            itemType
+            paintSpec
         });
         UIUtils.closeModal();
         UIUtils.toast('도료 정보가 추가되었습니다.', 'success');
@@ -5196,15 +5285,6 @@ const SettingsModule = (function() {
                     <label class="form-label">유효기한</label>
                     <input type="text" class="form-input" id="editPaintShelfLife" value="${p.shelfLife || ''}">
                 </div>
-                <div class="form-group">
-                    <label class="form-label" style="font-weight:700;color:var(--accent-blue);">제품 구분 ★</label>
-                    <select class="form-select" id="editPaintItemType">
-                        <option value=""  ${!p.itemType               ? 'selected' : ''}>-- 미지정 --</option>
-                        <option value="양산" ${p.itemType === '양산' ? 'selected' : ''}>양산</option>
-                        <option value="A/S" ${p.itemType === 'A/S'  ? 'selected' : ''}>A/S</option>
-                        <option value="개발" ${p.itemType === '개발' ? 'selected' : ''}>개발</option>
-                    </select>
-                </div>
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
@@ -5226,7 +5306,6 @@ const SettingsModule = (function() {
             return;
         }
 
-        const itemType = document.getElementById('editPaintItemType').value;
         await Storage.update(PAINT_STORE, id, {
             supplier,
             name,
@@ -5235,8 +5314,7 @@ const SettingsModule = (function() {
             purchasePrice: document.getElementById('editPaintPurchasePrice').value.trim(),
             shelfLife,
             paintType,
-            paintSpec,
-            itemType
+            paintSpec
         });
         UIUtils.closeModal();
         UIUtils.toast('도료 정보가 수정되었습니다.', 'success');
@@ -8111,6 +8189,7 @@ const SettingsModule = (function() {
         /* 페이지 그룹별 권한 매트릭스 */
         const groups = [...new Set(pages.map(p => p.group))];
         const nonAdminRoles = roles.filter(r => r.key !== 'admin');
+        const passwordMask = u => u.password ? '••••••' : '-';
 
         const matrixRows = groups.map(g => {
             const gPages = pages.filter(p => p.group === g);
@@ -8148,15 +8227,18 @@ const SettingsModule = (function() {
                 <div class="card-body" style="padding:0;">
                     <table class="data-table">
                         <thead><tr>
-                            <th>사용자 ID</th><th>이름</th><th>역할</th><th>상태</th><th>작업</th>
+                            <th>ID</th><th>사진</th><th>이름</th><th>비밀번호</th><th>전화번호</th><th>역할</th><th>상태</th><th>작업</th>
                         </tr></thead>
                         <tbody>
                         ${users.length === 0
-                            ? `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:20px;">등록된 사용자가 없습니다.</td></tr>`
+                            ? `<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px;">등록된 사용자가 없습니다.</td></tr>`
                             : users.map(u => `
                             <tr>
                                 <td style="font-weight:600;">${_esc(u.username)}</td>
+                                <td style="padding:6px 10px;">${_avatarHtml(u, 38)}</td>
                                 <td>${_esc(u.displayName)}</td>
+                                <td style="font-family:monospace;color:var(--text-muted);">${passwordMask(u)}</td>
+                                <td style="font-family:monospace;">${_esc(u.phone || '-')}</td>
                                 <td>${roleBadge(u.role)}</td>
                                 <td>
                                     <span style="color:${u.active !== false ? '#16a34a' : '#dc2626'};font-size:12px;font-weight:600;">
@@ -8215,16 +8297,23 @@ const SettingsModule = (function() {
         const users = AuthModule.getUsers();
         const u = userId ? users.find(x => x.id === userId) : null;
         const roles = AuthModule.ROLES;
+        _pendingPhoto = u ? undefined : null;
+        _pendingSeal = u ? undefined : null;
         UIUtils.showModal(
             `<span class="material-symbols-outlined" style="vertical-align:middle;margin-right:6px;">manage_accounts</span> ${u ? '사용자 수정' : '사용자 추가'}`,
-            `<div class="form-group"><label class="form-label">사용자 ID</label>
+            `${_photoUploadHtml(u ? (u.photo || null) : null)}
+            <div class="form-group"><label class="form-label">사용자 ID</label>
                 <input type="text" class="form-input" id="umUsername" value="${_esc(u ? u.username : '')}" ${u ? 'readonly style="background:var(--bg-secondary);"' : ''} placeholder="영문/숫자">
             </div>
             <div class="form-group"><label class="form-label">이름</label>
                 <input type="text" class="form-input" id="umDisplayName" value="${_esc(u ? u.displayName : '')}" placeholder="표시 이름">
             </div>
+            ${_sealPreviewHtml(u ? (u.seal || null) : null, u ? (u.sealFont || 'gothic') : 'gothic')}
             <div class="form-group"><label class="form-label">비밀번호 ${u ? '(변경 시만 입력)' : ''}</label>
                 <input type="password" class="form-input" id="umPassword" placeholder="${u ? '변경할 비밀번호' : '비밀번호'}">
+            </div>
+            <div class="form-group"><label class="form-label">전화번호</label>
+                <input type="text" class="form-input" id="umPhone" value="${_esc(u ? (u.phone || '') : '')}" placeholder="010-0000-0000">
             </div>
             <div class="form-group"><label class="form-label">역할</label>
                 <select class="form-select" id="umRole">
@@ -8246,6 +8335,8 @@ const SettingsModule = (function() {
         const username    = (document.getElementById('umUsername')    || {}).value || '';
         const displayName = (document.getElementById('umDisplayName') || {}).value || '';
         const password    = (document.getElementById('umPassword')    || {}).value || '';
+        const phone       = (document.getElementById('umPhone')       || {}).value || '';
+        const sealFont    = (document.getElementById('umSealFont')    || {}).value || 'gothic';
         const role        = (document.getElementById('umRole')        || {}).value || 'operator';
         const active      = (document.getElementById('umActive')      || {}).value !== 'false';
 
@@ -8257,7 +8348,9 @@ const SettingsModule = (function() {
             /* 수정 */
             const idx = users.findIndex(u => u.id === userId);
             if (idx < 0) return;
-            users[idx] = { ...users[idx], displayName: displayName.trim(), role, active,
+            const photo = _pendingPhoto !== undefined ? (_pendingPhoto || null) : (users[idx].photo || null);
+            const seal = _pendingSeal !== undefined ? (_pendingSeal || null) : (users[idx].seal || null);
+            users[idx] = { ...users[idx], displayName: displayName.trim(), phone: phone.trim(), photo, seal, sealFont, role, active,
                            ...(password ? { password } : {}) };
         } else {
             /* 추가 */
@@ -8266,8 +8359,10 @@ const SettingsModule = (function() {
                 UIUtils.toast('이미 존재하는 사용자 ID입니다.', 'warning'); return;
             }
             users.push({ id: 'user_' + Date.now(), username: username.trim(),
-                         displayName: displayName.trim(), password, role, active, createdAt: new Date().toISOString() });
+                         displayName: displayName.trim(), password, phone: phone.trim(), photo: _pendingPhoto || null, seal: _pendingSeal || null, sealFont, role, active, createdAt: new Date().toISOString() });
         }
+        _pendingPhoto = null;
+        _pendingSeal = null;
         AuthModule.saveUsers(users);
         UIUtils.closeModal();
         UIUtils.toast('저장되었습니다.', 'success');
@@ -8381,6 +8476,8 @@ const SettingsModule = (function() {
         filterInjectMatList,
         previewPersonPhoto,
         clearPersonPhoto,
+        generateUserSeal,
+        clearUserSeal,
         renderInspectorsTab,
         openAddInspectorModal,
         saveInspector,
