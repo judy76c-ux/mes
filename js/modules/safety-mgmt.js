@@ -1761,32 +1761,33 @@ var SafetyChecklistModule = (function () {
         const dateCols = Array.from({ length: days }, function(_, i) { return i + 1; });
 
         /* 셀 렌더 */
-        /* 셀 렌더 — 사진 있으면 점 표시 */
+        /* 셀 렌더 — data-key / data-day 속성으로 행열 특정 */
         function cell(key, day) {
-            const val    = ((cur.results[key] || {})[day]) || '';
+            const val      = ((cur.results[key] || {})[day]) || '';
             const hasPhoto = !!(cur.photos && cur.photos[key] && cur.photos[key][day] && cur.photos[key][day].images && cur.photos[key][day].images.length);
-            const st     = VAL_STYLE[val] || 'color:#bbb;';
-            const dot    = hasPhoto ? `<span style="position:absolute;top:1px;right:2px;width:5px;height:5px;border-radius:50%;background:#dc2626;"></span>` : '';
-            return `<td style="text-align:center;padding:1px 0;cursor:pointer;border:1px solid #ccc;font-size:.82rem;position:relative;${st}"
+            const st       = VAL_STYLE[val] || 'color:#bbb;';
+            const dot      = hasPhoto ? `<span style="position:absolute;top:1px;right:2px;width:5px;height:5px;border-radius:50%;background:#dc2626;"></span>` : '';
+            return `<td data-key="${key}" data-day="${day}"
+                        style="text-align:center;padding:1px 0;cursor:pointer;border:1px solid #ccc;font-size:.82rem;position:relative;${st}"
                         onclick="SafetyChecklistModule._toggle('${key}',${day})">${dot}${val || '·'}</td>`;
         }
 
         /* 항목 행 생성 */
         let itemRows = '';
         const s1 = ITEMS[0], s2 = ITEMS[1], s3 = ITEMS[2];
-        itemRows += `<tr>
+        itemRows += `<tr style="height:40px;">
             <td rowspan="3" style="text-align:center;font-weight:700;border:1px solid #ccc;vertical-align:middle;font-size:.88rem;">①</td>
             <td rowspan="3" style="font-size:.76rem;text-align:center;border:1px solid #ccc;vertical-align:middle;padding:2px 4px;white-space:nowrap;">작업자<br>보호구<br>착용여부</td>
             <td style="font-size:.72rem;text-align:center;border:1px solid #ccc;padding:2px 3px;white-space:nowrap;">${s1.sub}</td>
             <td style="text-align:center;font-size:.68rem;border:1px solid #ccc;white-space:nowrap;">일</td>
             ${dateCols.map(function(d){ return cell(s1.key, d); }).join('')}
             <td style="border:1px solid #ccc;"></td>
-        </tr><tr>
+        </tr><tr style="height:40px;">
             <td style="font-size:.72rem;text-align:center;border:1px solid #ccc;padding:2px 3px;white-space:nowrap;">${s2.sub}</td>
             <td style="text-align:center;font-size:.68rem;border:1px solid #ccc;">일</td>
             ${dateCols.map(function(d){ return cell(s2.key, d); }).join('')}
             <td style="border:1px solid #ccc;"></td>
-        </tr><tr>
+        </tr><tr style="height:40px;">
             <td style="font-size:.72rem;text-align:center;border:1px solid #ccc;padding:2px 3px;white-space:nowrap;">${s3.sub}</td>
             <td style="text-align:center;font-size:.68rem;border:1px solid #ccc;">일</td>
             ${dateCols.map(function(d){ return cell(s3.key, d); }).join('')}
@@ -1794,7 +1795,7 @@ var SafetyChecklistModule = (function () {
         </tr>`;
 
         ITEMS.slice(3).forEach(function(it) {
-            itemRows += `<tr>
+            itemRows += `<tr style="height:40px;">
                 <td style="text-align:center;font-weight:700;border:1px solid #ccc;font-size:.82rem;">${it.no}</td>
                 <td colspan="2" style="font-size:.75rem;border:1px solid #ccc;padding:3px 5px;">${esc(it.label)}</td>
                 <td style="text-align:center;font-size:.68rem;border:1px solid #ccc;white-space:nowrap;">일</td>
@@ -1804,13 +1805,33 @@ var SafetyChecklistModule = (function () {
         });
 
         /* 현장관리자 서명 행 — 날짜별 클릭 → 서명 팝업 */
+        /* 서명 행 — 로그인 사용자 seal 실시간 참조 */
+        const loginUserForSig = _getLoginUser();
+        const loginSeal = loginUserForSig && loginUserForSig.seal ? loginUserForSig.seal : null;
+
         const sigRow = dateCols.map(function(d) {
-            const sig = cur.dailySig && cur.dailySig[d];
-            const hasPhoto = !!(cur.sigPhotos && cur.sigPhotos[d] && cur.sigPhotos[d].images && cur.sigPhotos[d].images.length);
-            const dot = hasPhoto ? `<span style="position:absolute;top:1px;right:1px;width:4px;height:4px;border-radius:50%;background:#dc2626;"></span>` : '';
-            return `<td style="text-align:center;font-size:.62rem;border:1px solid #ccc;padding:1px;cursor:pointer;position:relative;"
+            const sigData = cur.sigPhotos && cur.sigPhotos[d];
+            const sig     = cur.dailySig  && cur.dailySig[d];
+            /* 저장된 도장 → 없으면 로그인 사용자 도장(서명 전 미리보기용) */
+            const sealImg = (sigData && sigData.sealImage) || null;
+            const sigName = sigData && sigData.name;
+
+            let inner;
+            if (sig && sealImg) {
+                /* 서명 완료 + 도장 있음 */
+                inner = `<img src="${SafetyCommon.esc(sealImg)}" style="max-height:30px;max-width:100%;object-fit:contain;" title="${SafetyCommon.esc(sigName||'')}">`;
+            } else if (sig) {
+                /* 서명 완료, 도장 없음 → 이름 텍스트 */
+                inner = `<span style="color:#1d4ed8;font-weight:700;font-size:.58rem;display:block;line-height:1.2;">${SafetyCommon.esc(sig)}</span>`;
+            } else {
+                /* 미서명 */
+                inner = `<span style="color:#d1d5db;font-size:.6rem;">(인)</span>`;
+            }
+
+            return `<td data-day="${d}" style="text-align:center;border:1px solid #ccc;padding:1px;cursor:pointer;
+                        height:34px;vertical-align:middle;position:relative;"
                         onclick="SafetyChecklistModule._openSig(${d})" title="${d}일 서명">
-                        ${dot}${sig ? `<span style="color:#1d4ed8;font-weight:700;">(인)</span>` : '<span style="color:#ddd;">(인)</span>'}
+                        ${inner}
                     </td>`;
         }).join('');
 
@@ -1848,26 +1869,20 @@ var SafetyChecklistModule = (function () {
                                 <td style="border:2px solid #555;padding:8px;text-align:center;">
                                     <span style="font-size:1.25rem;font-weight:900;">${y}년 ${m}월 안전관리 점검표</span>
                                 </td>
-                                <td style="border:2px solid #555;padding:0;vertical-align:top;width:190px;">
-                                    <table style="width:100%;border-collapse:collapse;">
+                                <td style="border:2px solid #555;padding:0;vertical-align:top;width:480px;">
+                                    <table style="width:100%;border-collapse:collapse;height:100%;">
                                         <tr style="background:#e5e7eb;">
-                                            <td rowspan="3" style="border:1px solid #aaa;padding:3px;text-align:center;font-size:.68rem;font-weight:700;vertical-align:middle;">범<br>례</td>
-                                            <td style="border:1px solid #aaa;padding:2px 5px;font-size:.68rem;">양호</td>
-                                            <td style="border:1px solid #aaa;padding:2px 5px;text-align:center;font-size:.85rem;font-weight:900;color:#1d4ed8;">O</td>
-                                            <td rowspan="3" style="border:1px solid #aaa;padding:3px;text-align:center;font-size:.68rem;font-weight:700;vertical-align:middle;">결<br>재</td>
-                                            <td style="border:1px solid #aaa;padding:2px 4px;text-align:center;font-size:.68rem;">작성</td>
-                                            <td style="border:1px solid #aaa;padding:2px 4px;text-align:center;font-size:.68rem;">검토</td>
-                                            <td style="border:1px solid #aaa;padding:2px 4px;text-align:center;font-size:.68rem;">승인</td>
+                                            <td rowspan="3" style="border:1px solid #aaa;padding:6px 10px;text-align:center;font-size:.82rem;font-weight:700;vertical-align:middle;white-space:nowrap;">범<br>례</td>
+                                            <td style="border:1px solid #aaa;padding:4px 14px;font-size:.82rem;font-weight:600;">양호</td>
+                                            <td style="border:1px solid #aaa;padding:4px 16px;text-align:center;font-size:1.1rem;font-weight:900;color:#1d4ed8;">O</td>
                                         </tr>
                                         <tr>
-                                            <td style="border:1px solid #aaa;padding:2px 5px;font-size:.62rem;line-height:1.2;">주의요<br>계속관찰</td>
-                                            <td style="border:1px solid #aaa;padding:2px 5px;text-align:center;font-size:.85rem;font-weight:900;color:#d97706;">△</td>
-                                            <td style="border:1px solid #aaa;padding:3px;"></td><td style="border:1px solid #aaa;padding:3px;"></td><td style="border:1px solid #aaa;padding:3px;"></td>
+                                            <td style="border:1px solid #aaa;padding:4px 14px;font-size:.78rem;line-height:1.4;">주의요 · 계속관찰</td>
+                                            <td style="border:1px solid #aaa;padding:4px 16px;text-align:center;font-size:1.1rem;font-weight:900;color:#d97706;">△</td>
                                         </tr>
                                         <tr>
-                                            <td style="border:1px solid #aaa;padding:2px 5px;font-size:.62rem;line-height:1.2;">불량<br>조치필요</td>
-                                            <td style="border:1px solid #aaa;padding:2px 5px;text-align:center;font-size:.85rem;font-weight:900;color:#dc2626;">X</td>
-                                            <td style="border:1px solid #aaa;padding:2px;font-size:.65rem;text-align:center;color:#888;" colspan="3">/ / /</td>
+                                            <td style="border:1px solid #aaa;padding:4px 14px;font-size:.78rem;line-height:1.4;">불량 · 조치필요</td>
+                                            <td style="border:1px solid #aaa;padding:4px 16px;text-align:center;font-size:1.1rem;font-weight:900;color:#dc2626;">X</td>
                                         </tr>
                                     </table>
                                 </td>
@@ -1878,9 +1893,9 @@ var SafetyChecklistModule = (function () {
                         <table style="width:100%;border-collapse:collapse;font-size:.76rem;table-layout:fixed;">
                             <colgroup>
                                 <col style="width:26px;">   <!-- 항목번호 -->
-                                <col style="width:62px;">   <!-- 점검내용 라벨 -->
-                                <col style="width:38px;">   <!-- 서브 구분 -->
-                                <col style="width:22px;">   <!-- 주기 -->
+                                <col style="width:250px;">  <!-- 점검내용 라벨 -->
+                                <col style="width:150px;">  <!-- 서브 구분 -->
+                                <col style="width:40px;">   <!-- 주기 -->
                                 ${dateCols.map(function(){ return '<col>'; }).join('')}  <!-- 날짜: 균등 분배 -->
                                 <col style="width:36px;">   <!-- 비고 -->
                             </colgroup>
@@ -1889,7 +1904,7 @@ var SafetyChecklistModule = (function () {
                                     <th style="border:1px solid #aaa;padding:3px 1px;text-align:center;font-size:.7rem;">항<br>목</th>
                                     <th colspan="2" style="border:1px solid #aaa;padding:3px;text-align:center;font-size:.72rem;">점검 내용</th>
                                     <th style="border:1px solid #aaa;padding:2px 0;text-align:center;font-size:.65rem;writing-mode:vertical-rl;letter-spacing:.1em;">점검주기</th>
-                                    ${dateCols.map(function(d){ return `<th style="border:1px solid #aaa;padding:1px 0;text-align:center;font-size:.7rem;">${d}</th>`; }).join('')}
+                                    ${dateCols.map(function(d){ return `<th data-day="${d}" style="border:1px solid #aaa;padding:1px 0;text-align:center;font-size:.7rem;">${d}</th>`; }).join('')}
                                     <th style="border:1px solid #aaa;padding:3px 1px;text-align:center;font-size:.7rem;">비고</th>
                                 </tr>
                             </thead>
@@ -1931,6 +1946,19 @@ var SafetyChecklistModule = (function () {
                             <span>Rev.00</span><span>케이씨케미칼㈜</span><span>A4 (297 × 210 mm)</span>
                         </div>
                     </div>
+
+                    <!-- 이슈 목록 (인쇄 제외) -->
+                    <div style="margin-top:16px;">
+                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                            <h4 style="margin:0;font-size:.95rem;">
+                                <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;color:#dc2626;">report_problem</span>
+                                불량·주의 이슈 목록
+                            </h4>
+                            <span style="font-size:.78rem;color:var(--text-muted);">${y}년 ${m}월 — △/X 항목 전체</span>
+                        </div>
+                        <div id="cl-issue-list">${_buildIssueListHTML()}</div>
+                    </div>
+                    </div>
                 </div>
             </div>
         </div>`;
@@ -1951,24 +1979,122 @@ var SafetyChecklistModule = (function () {
         _draw(document.getElementById('contentArea'));
     }
 
-    /* ── 셀 클릭: O → △(사진팝업) → X(사진팝업) → blank ── */
+    /* ── 행/열 하이라이트 적용/제거 (data-key / data-day 기반) ── */
+    function _hlApply(key, day) {
+        _hlClear();
+
+        /* 행: 같은 key를 가진 모든 결과 셀 → 연노랑 */
+        document.querySelectorAll('[data-key="' + key + '"]').forEach(function(c) {
+            c.dataset.hl = '1';
+            c.style.backgroundColor = '#fef9c3';
+        });
+
+        /* 열: 같은 day를 가진 모든 셀(thead th 포함) → 연파랑 */
+        document.querySelectorAll('[data-day="' + day + '"]').forEach(function(c) {
+            c.dataset.hl = '1';
+            /* 날짜 헤더(th) → 진한 파랑 + 흰 글자 */
+            if (c.tagName === 'TH') {
+                c.dataset.hlOrig = c.style.cssText;
+                c.style.backgroundColor = '#1d4ed8';
+                c.style.color = '#fff';
+                c.style.fontWeight = '900';
+            } else {
+                c.dataset.hlOrig = c.style.backgroundColor || '';
+                c.style.backgroundColor = '#dbeafe';
+            }
+        });
+
+        /* 교차 셀(클릭한 셀) → 중간 파랑 */
+        document.querySelectorAll('[data-key="' + key + '"][data-day="' + day + '"]').forEach(function(c) {
+            c.style.backgroundColor = '#93c5fd';
+        });
+    }
+
+    function _hlClear() {
+        document.querySelectorAll('[data-hl="1"]').forEach(function(c) {
+            if (c.tagName === 'TH') {
+                if (c.dataset.hlOrig !== undefined) { c.style.cssText = c.dataset.hlOrig; delete c.dataset.hlOrig; }
+                else { c.style.backgroundColor = ''; c.style.color = ''; c.style.fontWeight = ''; }
+            } else {
+                c.style.backgroundColor = c.dataset.hlOrig || '';
+                if (c.dataset.hlOrig !== undefined) delete c.dataset.hlOrig;
+            }
+            delete c.dataset.hl;
+        });
+    }
+
+    /* ── 셀 클릭: 선택 팝업 표시 ── */
     function _toggle(key, day) {
-        const cur  = _cur();
-        if (!cur.results[key]) cur.results[key] = {};
-        const prev = cur.results[key][day] || '';
-        const next = TOGGLE[prev];
-        if (next === '') {
-            delete cur.results[key][day];
-            _updateCell(key, day, '', cur);
-        } else if (next === '△' || next === 'X') {
-            cur.results[key][day] = next;
-            _updateCell(key, day, next, cur);
-            /* 사진 등록 팝업 */
-            _openPhotoModal(key, day, next);
-        } else {
-            cur.results[key][day] = next;
-            _updateCell(key, day, next, cur);
-        }
+        /* 이미 열려 있는 팝업 제거 */
+        const old = document.getElementById('cl-sel-popup');
+        if (old) { old.remove(); _hlClear(); return; }
+
+        const cur = _cur();
+        const cur_val = ((cur.results[key] || {})[day]) || '';
+
+        const OPTIONS = [
+            { val: 'O',  label: 'O',  desc: '양호',        color: '#1d4ed8' },
+            { val: '△', label: '△', desc: '주의·계속관찰', color: '#d97706' },
+            { val: 'X',  label: 'X',  desc: '불량·조치필요', color: '#dc2626' },
+            { val: '',   label: '─',  desc: '취소/초기화',   color: '#9ca3af' }
+        ];
+
+        /* 행/열 하이라이트 */
+        _hlApply(key, day);
+
+        /* 클릭한 TD 위치 기준 팝업 */
+        const td = event.currentTarget || event.target.closest('td');
+        const rect = td ? td.getBoundingClientRect() : { left: event.clientX, bottom: event.clientY };
+
+        const popup = document.createElement('div');
+        popup.id = 'cl-sel-popup';
+        popup.style.cssText = `position:fixed;z-index:9999;
+            left:${Math.min(rect.left, window.innerWidth - 220)}px;
+            top:${rect.bottom + 4}px;
+            background:var(--bg-primary);border:1px solid var(--border-color);
+            border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,.18);
+            padding:6px;display:flex;gap:6px;`;
+
+        OPTIONS.forEach(function(opt) {
+            const btn = document.createElement('button');
+            const isCur = opt.val === cur_val;
+            btn.style.cssText = `border:2px solid ${isCur ? opt.color : opt.color + '44'};
+                border-radius:6px;background:${isCur ? opt.color + '18' : 'transparent'};
+                cursor:pointer;padding:6px 10px;display:flex;flex-direction:column;align-items:center;gap:2px;
+                min-width:46px;`;
+            btn.innerHTML = `<span style="font-size:1.3rem;font-weight:900;color:${opt.color};line-height:1;">${opt.label}</span>
+                             <span style="font-size:.62rem;color:${opt.color};white-space:nowrap;">${opt.desc}</span>`;
+            btn.onclick = function(e) {
+                e.stopPropagation();
+                popup.remove();
+                _hlClear();
+                if (!cur.results[key]) cur.results[key] = {};
+                if (opt.val === '') {
+                    delete cur.results[key][day];
+                    _updateCell(key, day, '', cur);
+                } else {
+                    cur.results[key][day] = opt.val;
+                    _updateCell(key, day, opt.val, cur);
+                    if (opt.val === '△' || opt.val === 'X') {
+                        _openPhotoModal(key, day, opt.val);
+                    }
+                }
+            };
+            popup.appendChild(btn);
+        });
+
+        document.body.appendChild(popup);
+
+        /* 외부 클릭 시 닫기 + 하이라이트 제거 */
+        setTimeout(function() {
+            document.addEventListener('click', function handler(e) {
+                if (!popup.contains(e.target)) {
+                    popup.remove();
+                    _hlClear();
+                    document.removeEventListener('click', handler);
+                }
+            });
+        }, 50);
     }
 
     function _updateCell(key, day, val, cur) {
@@ -1985,85 +2111,319 @@ var SafetyChecklistModule = (function () {
     }
 
     /* ── △/X 사진 등록 팝업 ── */
+    /* ── △/X 사진·조치 등록 팝업 (문제점 + 조치 2단 구성) ── */
+    /* ── △/X 클릭 시: 문제점만 등록 ── */
     function _openPhotoModal(key, day, val) {
         const esc = SafetyCommon.esc;
         const js  = SafetyCommon.js;
         const cur = _cur();
-        const existing = (cur.photos && cur.photos[key] && cur.photos[key][day]) || { note:'', images:[] };
+        const ex  = (cur.photos && cur.photos[key] && cur.photos[key][day]) || {};
         const valLabel = val === '△' ? '⚠ 주의요 · 계속관찰' : '✖ 불량 · 조치필요';
         const valColor = val === '△' ? '#d97706' : '#dc2626';
-        const itemLabel = ITEMS.find(function(it){ return it.key === key; });
+        const itLabel  = ITEMS.find(function(it){ return it.key === key; });
+        const itName   = itLabel ? (itLabel.label || itLabel.sub || itLabel.no) : key;
+
         const body = `
-            <div style="background:${valColor}11;border-left:4px solid ${valColor};border-radius:6px;padding:8px 12px;margin-bottom:12px;">
-                <span style="font-size:.9rem;font-weight:700;color:${valColor};">${valLabel}</span>
-                <span style="font-size:.8rem;color:var(--text-muted);margin-left:8px;">${_m}월 ${day}일 / ${esc(itemLabel ? (itemLabel.sub || itemLabel.no) : key)}</span>
+            <div style="background:${valColor}11;border-left:4px solid ${valColor};border-radius:6px;
+                        padding:8px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <span style="font-size:.95rem;font-weight:700;color:${valColor};">${valLabel}</span>
+                <span style="font-size:.82rem;color:var(--text-muted);">${_m}월 ${day}일</span>
+                <span style="font-size:.8rem;background:var(--bg-secondary);border-radius:4px;padding:2px 8px;">${esc(itName)}</span>
             </div>
-            <div class="form-group">
-                <label class="form-label">조치 내용</label>
-                <textarea class="form-control" id="clp-note" rows="3" style="resize:vertical;"
-                    placeholder="발생 상황 및 조치 내용을 입력하세요.">${esc(existing.note)}</textarea>
+
+            <div style="border:1px solid #fbbf24;border-radius:8px;padding:14px;background:#fffbeb;">
+                <p style="margin:0 0 10px;font-size:.88rem;font-weight:700;color:#92400e;">
+                    <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">warning</span>
+                    문제점 내용
+                </p>
+                <div class="form-group" style="margin-bottom:10px;">
+                    <textarea class="form-control" id="clp-problem" rows="4" style="resize:vertical;"
+                        placeholder="발생한 문제 상황을 상세히 입력하세요.">${esc(ex.problem || '')}</textarea>
+                </div>
+                ${SafetyImageEditor.imageAreaHTML('clpProblemImg')}
             </div>
-            ${SafetyImageEditor.imageAreaHTML('clpImgContainer')}
+            <p style="margin:10px 0 0;font-size:.78rem;color:var(--text-muted);">
+                <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">info</span>
+                조치 내용은 하단 이슈 목록에서 등록하세요.
+            </p>
         `;
+
         const footer = `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
-            <button class="btn btn-primary" onclick="SafetyChecklistModule._savePhoto('${js(key)}',${day})">저장</button>
+            <button class="btn btn-primary" onclick="SafetyChecklistModule._savePhoto('${js(key)}',${day})">
+                <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">save</span> 문제점 저장
+            </button>
         `;
-        UIUtils.showModal('사진 등록 — ' + valLabel, body, footer, 'md');
-        if (existing.images && existing.images.length) {
-            setTimeout(function(){ SafetyImageEditor.renderImageArea('clpImgContainer', existing.images); }, 50);
-        }
+
+        UIUtils.showModal('문제점 등록', body, footer, 'md');
+
+        setTimeout(function(){
+            if (ex.problemImages && ex.problemImages.length)
+                SafetyImageEditor.renderImageArea('clpProblemImg', ex.problemImages);
+        }, 60);
     }
 
     async function _savePhoto(key, day) {
         const cur = _cur();
         if (!cur.photos) cur.photos = {};
         if (!cur.photos[key]) cur.photos[key] = {};
-        const note   = (document.getElementById('clp-note') || {}).value || '';
-        const images = SafetyImageEditor.collectImages('clpImgContainer');
-        cur.photos[key][day] = { note, images };
+        /* 기존 조치 정보는 유지하고 문제점만 갱신 */
+        const prev = cur.photos[key][day] || {};
+        cur.photos[key][day] = Object.assign({}, prev, {
+            problem:       (document.getElementById('clp-problem') || {}).value || '',
+            problemImages: SafetyImageEditor.collectImages('clpProblemImg'),
+            updatedAt:     SafetyCommon.today()
+        });
         await SafetyCommon.save(KEY, _data);
         UIUtils.closeModal();
-        UIUtils.toast('저장되었습니다.', 'success');
+        UIUtils.toast('문제점이 저장되었습니다.', 'success');
         _updateCell(key, day, (cur.results[key] || {})[day] || '', cur);
+        _refreshIssueList();
     }
 
-    /* ── 현장관리자 서명 팝업 ── */
-    function _openSig(day) {
+    /* ── 이슈 목록에서 조치 등록 ── */
+    function _openActionModal(key, day) {
         const esc = SafetyCommon.esc;
         const js  = SafetyCommon.js;
         const cur = _cur();
-        const existing = (cur.sigPhotos && cur.sigPhotos[day]) || { name:'', images:[] };
+        const ex  = (cur.photos && cur.photos[key] && cur.photos[key][day]) || {};
+        const val = (cur.results[key] || {})[day] || '';
+        const valColor = val === 'X' ? '#dc2626' : '#d97706';
+        const itLabel  = ITEMS.find(function(it){ return it.key === key; });
+        const itName   = itLabel ? (itLabel.label || itLabel.sub || itLabel.no) : key;
+
         const body = `
-            <div style="background:#eff6ff;border-left:4px solid #2563eb;border-radius:6px;padding:8px 12px;margin-bottom:12px;">
-                <span style="font-size:.88rem;font-weight:700;color:#2563eb;">${_m}월 ${day}일 — 현장 관리자 점검 서명</span>
+            <!-- 문제점 요약 (읽기 전용) -->
+            <div style="background:#fffbeb;border:1px solid #fbbf24;border-radius:8px;padding:10px 14px;margin-bottom:14px;">
+                <p style="margin:0 0 4px;font-size:.78rem;font-weight:700;color:#92400e;">
+                    <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">warning</span>
+                    문제점 — ${_m}월 ${day}일 · ${esc(itName)}
+                </p>
+                <p style="margin:0;font-size:.82rem;color:#78350f;">${esc(ex.problem || '(문제점 내용 없음)')}</p>
             </div>
-            <div class="form-group">
-                <label class="form-label">서명자 (이름 또는 서명)</label>
-                <input class="form-control" id="cls-name" value="${esc(existing.name)}" placeholder="서명자 성명">
+
+            <!-- 조치 내용 -->
+            <div style="border:1px solid #6ee7b7;border-radius:8px;padding:14px;background:#f0fdf4;">
+                <p style="margin:0 0 10px;font-size:.88rem;font-weight:700;color:#065f46;">
+                    <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">build</span>
+                    조치 내용
+                </p>
+                <div class="form-group" style="margin-bottom:10px;">
+                    <textarea class="form-control" id="cla-action" rows="4" style="resize:vertical;"
+                        placeholder="취한 조치 내용을 입력하세요.">${esc(ex.action || '')}</textarea>
+                </div>
+                ${SafetyImageEditor.imageAreaHTML('claActionImg')}
+                <label style="display:inline-flex;align-items:center;gap:8px;margin-top:12px;cursor:pointer;
+                    padding:8px 12px;background:#dcfce7;border-radius:6px;border:1px solid #6ee7b7;">
+                    <input type="checkbox" id="cla-resolved" style="accent-color:#059669;width:16px;height:16px;"
+                        ${ex.resolved ? 'checked' : ''}>
+                    <span style="font-size:.88rem;font-weight:700;color:#059669;">조치 완료 — 문제 해소됨</span>
+                </label>
             </div>
-            ${SafetyImageEditor.imageAreaHTML('clsImgContainer')}
         `;
+
+        const footer = `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+            <button class="btn btn-primary" style="background:#059669;" onclick="SafetyChecklistModule._saveAction('${js(key)}',${day})">
+                <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">check_circle</span> 조치 저장
+            </button>
+        `;
+
+        UIUtils.showModal('조치 내용 등록', body, footer, 'md');
+
+        setTimeout(function(){
+            if (ex.actionImages && ex.actionImages.length)
+                SafetyImageEditor.renderImageArea('claActionImg', ex.actionImages);
+        }, 60);
+    }
+
+    async function _saveAction(key, day) {
+        const cur = _cur();
+        if (!cur.photos) cur.photos = {};
+        if (!cur.photos[key]) cur.photos[key] = {};
+        const prev = cur.photos[key][day] || {};
+        cur.photos[key][day] = Object.assign({}, prev, {
+            action:       (document.getElementById('cla-action')   || {}).value || '',
+            actionImages: SafetyImageEditor.collectImages('claActionImg'),
+            resolved:     !!(document.getElementById('cla-resolved') || {}).checked,
+            resolvedAt:   SafetyCommon.today()
+        });
+        await SafetyCommon.save(KEY, _data);
+        UIUtils.closeModal();
+        UIUtils.toast('조치 내용이 저장되었습니다.', 'success');
+        _updateCell(key, day, (cur.results[key] || {})[day] || '', cur);
+        _refreshIssueList();
+    }
+
+    /* ── 이슈 목록 렌더 (점검표 하단) ── */
+    function _refreshIssueList() {
+        const el = document.getElementById('cl-issue-list');
+        if (!el) return;
+        el.innerHTML = _buildIssueListHTML();
+    }
+
+    function _buildIssueListHTML() {
+        const esc = SafetyCommon.esc;
+        const js  = SafetyCommon.js;
+        const cur = _cur();
+
+        /* 모든 △/X 항목 수집 */
+        const issues = [];
+        ITEMS.forEach(function(it) {
+            const dayMap = (cur.results && cur.results[it.key]) || {};
+            Object.keys(dayMap).forEach(function(d) {
+                const v = dayMap[d];
+                if (v === '△' || v === 'X') {
+                    const ph = (cur.photos && cur.photos[it.key] && cur.photos[it.key][Number(d)]) || {};
+                    issues.push({ key: it.key, day: Number(d), val: v, item: it, ph: ph });
+                }
+            });
+        });
+        issues.sort(function(a, b){ return a.day - b.day || (a.val === 'X' ? -1 : 1); });
+
+        if (!issues.length) return `<p style="color:var(--text-muted);font-size:.85rem;padding:12px 0;">이번 달 △/X 항목이 없습니다.</p>`;
+
+        return issues.map(function(iss) {
+            const valColor = iss.val === 'X' ? '#dc2626' : '#d97706';
+            const valLabel = iss.val === 'X' ? '✖ 불량·조치필요' : '⚠ 주의요·계속관찰';
+            const resolved = iss.ph.resolved;
+            const itName   = iss.item.label || iss.item.sub || iss.item.no;
+            const probPic  = iss.ph.problemImages && iss.ph.problemImages.length;
+            const actPic   = iss.ph.actionImages  && iss.ph.actionImages.length;
+
+            return `
+            <div style="border:1px solid ${resolved ? '#6ee7b7' : valColor + '55'};border-radius:8px;padding:10px 14px;
+                        background:${resolved ? '#f0fdf4' : valColor + '08'};margin-bottom:8px;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">
+                    <span style="font-size:.78rem;font-weight:700;background:${valColor}22;color:${valColor};
+                        border-radius:4px;padding:2px 8px;">${valLabel}</span>
+                    <span style="font-size:.8rem;font-weight:700;">${_m}월 ${iss.day}일</span>
+                    <span style="font-size:.78rem;color:var(--text-muted);">${esc(itName)}</span>
+                    ${resolved
+                        ? `<span style="margin-left:auto;font-size:.75rem;font-weight:700;color:#059669;background:#dcfce7;border-radius:4px;padding:2px 8px;">✔ 조치 완료</span>`
+                        : `<span style="margin-left:auto;font-size:.75rem;color:#dc2626;background:#fee2e2;border-radius:4px;padding:2px 8px;">미조치</span>`
+                    }
+                    <button class="btn btn-sm btn-outline" style="font-size:.72rem;"
+                        onclick="SafetyChecklistModule._openPhotoModal('${js(iss.key)}',${iss.day},'${iss.val}')">문제점 편집</button>
+                    <button class="btn btn-sm" style="font-size:.72rem;background:#059669;color:#fff;border:none;"
+                        onclick="SafetyChecklistModule._openActionModal('${js(iss.key)}',${iss.day})">
+                        ${resolved ? '조치 수정' : '조치 등록'}
+                    </button>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:.8rem;">
+                    <div>
+                        <p style="margin:0 0 2px;font-weight:600;color:#92400e;">문제점</p>
+                        <p style="margin:0;color:var(--text-muted);">${esc(iss.ph.problem || '—')}</p>
+                        ${probPic ? `<span style="font-size:.72rem;color:#2563eb;">📷 사진 ${iss.ph.problemImages.length}장</span>` : ''}
+                    </div>
+                    <div>
+                        <p style="margin:0 0 2px;font-weight:600;color:#065f46;">조치 내용</p>
+                        <p style="margin:0;color:var(--text-muted);">${esc(iss.ph.action || '—')}</p>
+                        ${actPic ? `<span style="font-size:.72rem;color:#2563eb;">📷 사진 ${iss.ph.actionImages.length}장</span>` : ''}
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    /* ── 현장관리자 서명 팝업 ── */
+    /* ── 현재 로그인 사용자 + seal 이미지 가져오기 ── */
+    function _getLoginUser() {
+        try {
+            if (typeof AuthModule === 'undefined') return null;
+            const session = AuthModule.getCurrentUser();
+            if (!session) return null;
+            const users   = AuthModule.getUsers ? AuthModule.getUsers() : [];
+            const full    = users.find(function(u){ return u.id === session.id; });
+            return full || session;
+        } catch(e) { return null; }
+    }
+
+    function _openSig(day) {
+        const esc      = SafetyCommon.esc;
+        const js       = SafetyCommon.js;
+        const cur      = _cur();
+        const existing = (cur.sigPhotos && cur.sigPhotos[day]) || {};
+        const loginUser = _getLoginUser();
+
+        /* 현재 등록된 서명 또는 로그인 사용자 기본값 */
+        const sigName  = existing.name || (loginUser ? loginUser.displayName || loginUser.username : '');
+        const sealImg  = existing.sealImage || (loginUser ? loginUser.seal : null);
+        const hasSeal  = !!sealImg;
+
+        const sealPreview = hasSeal
+            ? `<div style="display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:14px;">
+                   <p style="margin:0;font-size:.78rem;color:var(--text-muted);">등록된 서명 도장</p>
+                   <img src="${esc(sealImg)}" style="max-height:80px;max-width:160px;object-fit:contain;
+                       border:1px solid var(--border-color);border-radius:6px;padding:6px;background:#fff;">
+               </div>`
+            : `<div style="padding:10px;background:var(--bg-secondary);border-radius:6px;margin-bottom:14px;
+                    font-size:.78rem;color:var(--text-muted);text-align:center;">
+                   등록된 도장 이미지 없음 — 설정 &gt; 사용자 관리에서 도장을 등록하세요.
+               </div>`;
+
+        const autoSignBtn = loginUser
+            ? `<button type="button" class="btn btn-primary" style="width:100%;margin-bottom:14px;"
+                   onclick="SafetyChecklistModule._autoSign(${day})">
+                   <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">how_to_reg</span>
+                   ${loginUser.displayName || loginUser.username} 로 자동 서명
+               </button>`
+            : '';
+
+        const body = `
+            <div style="background:#eff6ff;border-left:4px solid #2563eb;border-radius:6px;
+                        padding:8px 12px;margin-bottom:14px;">
+                <span style="font-size:.88rem;font-weight:700;color:#2563eb;">${_m}월 ${day}일 — 현장 관리자 점검 서명</span>
+                ${loginUser ? `<span style="font-size:.78rem;color:var(--text-muted);margin-left:8px;">로그인: ${esc(loginUser.displayName || loginUser.username)}</span>` : ''}
+            </div>
+
+            ${autoSignBtn}
+            ${sealPreview}
+        `;
+
         const footer = `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            ${existing.name || (existing.images && existing.images.length)
+            ${existing.name || existing.sealImage
                 ? `<button class="btn btn-danger btn-sm" onclick="SafetyChecklistModule._clearSig(${day})" style="margin-right:auto;">서명 삭제</button>`
                 : ''}
-            <button class="btn btn-primary" onclick="SafetyChecklistModule._saveSig(${day})">서명 완료</button>
+            <button class="btn btn-outline" onclick="SafetyChecklistModule._saveSig(${day})">서명 완료</button>
         `;
-        UIUtils.showModal('현장관리자 서명', body, footer, 'md');
-        if (existing.images && existing.images.length) {
-            setTimeout(function(){ SafetyImageEditor.renderImageArea('clsImgContainer', existing.images); }, 50);
-        }
+
+        UIUtils.showModal('현장관리자 서명', body, footer, 'sm');
+    }
+
+    /* ── 자동 서명: 로그인 사용자 + 도장 이미지 자동 등록 ── */
+    async function _autoSign(day) {
+        const loginUser = _getLoginUser();
+        if (!loginUser) { UIUtils.toast('로그인이 필요합니다.', 'warning'); return; }
+        const cur = _cur();
+        if (!cur.sigPhotos) cur.sigPhotos = {};
+        cur.sigPhotos[day] = {
+            name:       loginUser.displayName || loginUser.username,
+            sealImage:  loginUser.seal || null,
+            userId:     loginUser.id,
+            signedAt:   SafetyCommon.today()
+        };
+        cur.dailySig[day] = loginUser.displayName || loginUser.username;
+        await SafetyCommon.save(KEY, _data);
+        UIUtils.closeModal();
+        UIUtils.toast(_m + '월 ' + day + '일 자동 서명 완료.', 'success');
+        _draw(document.getElementById('contentArea'));
     }
 
     async function _saveSig(day) {
-        const cur = _cur();
+        const cur       = _cur();
+        const loginUser = _getLoginUser();
+        const name      = loginUser ? (loginUser.displayName || loginUser.username) : '✓';
         if (!cur.sigPhotos) cur.sigPhotos = {};
-        const name   = (document.getElementById('cls-name') || {}).value || '';
-        const images = SafetyImageEditor.collectImages('clsImgContainer');
-        cur.sigPhotos[day] = { name, images };
-        cur.dailySig[day]  = name || '✓';
+        const prev = cur.sigPhotos[day] || {};
+        cur.sigPhotos[day] = Object.assign({}, prev, {
+            name,
+            sealImage: (loginUser && loginUser.seal) || prev.sealImage || null,
+            userId:    loginUser ? loginUser.id : null,
+            signedAt:  SafetyCommon.today()
+        });
+        cur.dailySig[day] = name;
         await SafetyCommon.save(KEY, _data);
         UIUtils.closeModal();
         UIUtils.toast(day + '일 서명이 등록되었습니다.', 'success');
@@ -2112,186 +2472,395 @@ var SafetyChecklistModule = (function () {
         setTimeout(function(){ w.print(); }, 400);
     }
 
-    return { render, _toggle, _openSig, _saveSig, _clearSig, _toggleMonthSig,
-             _openPhotoModal, _savePhoto, _goMonth, _saveMonth, _printDoc };
+    return { render, _toggle, _openSig, _autoSign, _saveSig, _clearSig, _toggleMonthSig,
+             _openPhotoModal, _savePhoto, _openActionModal, _saveAction,
+             _goMonth, _saveMonth, _printDoc, _refreshIssueList };
 })();
 
 /* ════════════════════════════════════════════════════════════════════
-   PPEStandardModule — 보호구 적용기준
+   PPEStandardModule — 공정별 보호구 착용 기준서 (단일 문서)
 ════════════════════════════════════════════════════════════════════ */
 var PPEStandardModule = (function () {
-    const KEY = 'safety_ppe_v1';
-    let _rows = [];
+    const KEY = 'safety_ppe_v2';
+    let _doc = null;
 
-    // Excel 보호구 시트 기준 작업자군 + 계절 (영문/러시아어 공통)
-    const WORKER_TYPES = [
-        '로딩·세척·레이저·언로딩·포장 작업자 (Line worker)',
-        '배합 작업자 (Paint mixing worker)',
-        '스프레이 작업자 (Painting worker)'
+    /* 기본 작업자 구역 정의 */
+    const DEFAULT_SECTIONS = [
+        { id: 's1', title: '로딩·세척·레이저·언로딩·포장 작업자', titleEn: 'Line worker',
+          subGroups: [
+              { label: '하절기', labelEn: 'Summer season', images: [] },
+              { label: '동절기', labelEn: 'Winter season', images: [] }
+          ]
+        },
+        { id: 's2', title: '배합 작업자', titleEn: 'Paint mixing worker',
+          subGroups: [{ label: '', labelEn: '', images: [] }]
+        },
+        { id: 's3', title: '스프레이 작업자', titleEn: 'Painting worker',
+          subGroups: [{ label: '', labelEn: '', images: [] }]
+        }
     ];
-    const SEASONS = ['하절기 (Summer)', '동절기 (Winter)', '연중'];
+
+    /* 기본 보호구 목록 */
+    const DEFAULT_PPE = [
+        { name: '장갑',      nameEn: 'Gloves',                    image: null },
+        { name: '방진복',    nameEn: 'Anti-static clothing',      image: null },
+        { name: '제전슬리퍼', nameEn: 'Work slippers',             image: null },
+        { name: '보호장갑',  nameEn: 'Protective gloves',         image: null },
+        { name: '방독마스크', nameEn: 'Gas mask',                  image: null },
+        { name: '보안경',    nameEn: 'Safety glasses',            image: null },
+        { name: '방진복',    nameEn: 'Anti-static clothing',      image: null },
+        { name: '제전슬리퍼', nameEn: 'Work slippers',             image: null }
+    ];
 
     async function render(container) {
-        _rows = await SafetyCommon.load(KEY);
+        const saved = await SafetyCommon.load(KEY);
+        _doc = (saved && !Array.isArray(saved) && typeof saved === 'object') ? saved : null;
         _draw(container);
     }
 
     function _draw(container) {
-        const esc = SafetyCommon.esc;
-        const js  = SafetyCommon.js;
+        const d = _doc;
         container.innerHTML = `<div class="fade-in-up">
-            ${SafetyProcessUI.renderSection('safety-ppe', '보호구 적용기준', '공정별 보호구 착용 기준을 등록·관리합니다.')}
+            ${SafetyProcessUI.renderSection('safety-ppe', '보호구 적용기준', '공정별 보호구 착용 기준서입니다.')}
             <div class="card">
-                <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
-                    <h4 style="margin:0;font-size:1rem;">보호구 기준 목록 <span style="color:var(--text-muted);font-size:.85rem;">(${_rows.length}건)</span></h4>
-                    <button class="btn btn-primary btn-sm" onclick="PPEStandardModule._openAdd()">
-                        <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">add</span> 신규 등록
-                    </button>
+                <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+                    <h4 style="margin:0;font-size:1rem;">공정별 보호구 착용 기준서</h4>
+                    <div style="display:flex;gap:6px;">
+                        ${d ? `<button class="btn btn-sm btn-outline" onclick="PPEStandardModule._print()">
+                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">print</span> 인쇄
+                        </button>` : ''}
+                        <button class="btn btn-sm btn-primary" onclick="PPEStandardModule._edit()">
+                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">edit</span>
+                            ${d ? '편집' : '작성'}
+                        </button>
+                    </div>
                 </div>
-                <div class="card-body" style="padding:0;">
-                    <div class="data-table-wrapper">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th style="width:40px;">No</th>
-                                    <th>공정명</th>
-                                    <th>보호구명</th>
-                                    <th>착용기준</th>
-                                    <th>적용조건</th>
-                                    <th style="width:130px;">규격/등급</th>
-                                    <th style="width:50px;">사진</th>
-                                    <th style="width:90px;">작업</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${_rows.length === 0 ? `<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:32px;">등록된 보호구 기준이 없습니다.</td></tr>` :
-                                _rows.map(function (r, i) {
-                                    const hasImg = r.images && r.images.length > 0;
-                                    return `<tr>
-                                        <td style="text-align:center;">${i + 1}</td>
-                                        <td style="font-weight:500;">${esc(r.process)}</td>
-                                        <td>${esc(r.ppeName)}</td>
-                                        <td style="font-size:.85rem;">${esc(r.criteria)}</td>
-                                        <td style="font-size:.85rem;">${esc(r.condition)}</td>
-                                        <td><code style="font-size:.8rem;">${esc(r.grade)}</code></td>
-                                        <td style="text-align:center;">
-                                            ${hasImg ? `<span class="material-symbols-outlined" style="font-size:16px;color:#3b82f6;cursor:pointer;" onclick="PPEStandardModule._view('${js(r.id)}')">photo_library</span>` : '-'}
-                                        </td>
-                                        <td style="text-align:center;">
-                                            <button class="btn btn-sm btn-outline" onclick="PPEStandardModule._edit('${js(r.id)}')" style="margin-right:4px;">수정</button>
-                                            <button class="btn btn-sm btn-danger" onclick="PPEStandardModule._del('${js(r.id)}')">삭제</button>
-                                        </td>
-                                    </tr>`;
-                                }).join('')}
-                            </tbody>
-                        </table>
+                <div class="card-body" style="padding:0;overflow-x:auto;">
+                    <div id="ppe-doc">
+                        ${d ? _docHTML(d) : _emptyHTML()}
                     </div>
                 </div>
             </div>
         </div>`;
     }
 
-    function _openAdd() { _openModal(null); }
-    function _edit(id) {
-        const r = _rows.find(function (x) { return x.id === id; });
-        if (r) _openModal(r);
+    function _emptyHTML() {
+        return `<div style="text-align:center;padding:60px 20px;color:var(--text-muted);">
+            <span class="material-symbols-outlined" style="font-size:48px;display:block;margin-bottom:12px;opacity:.4;">security</span>
+            <p style="margin:0 0 16px;">아직 작성된 보호구 기준서가 없습니다.</p>
+            <button class="btn btn-primary" onclick="PPEStandardModule._edit()">작성 시작</button>
+        </div>`;
     }
 
-    function _openModal(row) {
+    function _docHTML(d) {
         const esc = SafetyCommon.esc;
+        const sections = d.sections && d.sections.length ? d.sections : DEFAULT_SECTIONS;
+        const ppeItems = d.ppeItems && d.ppeItems.length ? d.ppeItems : DEFAULT_PPE;
+
+        /* 개정이력 행 */
+        const revHist = d.revHistory && d.revHistory.length ? d.revHistory : [];
+        while (revHist.length < 4) revHist.push({ no: revHist.length, date: '', content: '', writer: '', reviewer: '', approver: '' });
+        const revRows = revHist.slice(0, 4).map(function(h) {
+            return `<tr>
+                <td style="border:1px solid #888;padding:3px 5px;text-align:center;font-size:.72rem;">${esc(h.no !== undefined ? h.no : '')}</td>
+                <td style="border:1px solid #888;padding:3px 5px;text-align:center;font-size:.72rem;">${esc(h.date)}</td>
+                <td style="border:1px solid #888;padding:3px 5px;font-size:.72rem;">${esc(h.content)}</td>
+                <td style="border:1px solid #888;padding:3px 5px;text-align:center;font-size:.72rem;min-width:44px;">${esc(h.writer)}</td>
+                <td style="border:1px solid #888;padding:3px 5px;text-align:center;font-size:.72rem;min-width:44px;">${esc(h.reviewer)}</td>
+                <td style="border:1px solid #888;padding:3px 5px;text-align:center;font-size:.72rem;min-width:44px;">${esc(h.approver)}</td>
+            </tr>`;
+        }).join('');
+
+        /* 작업자 구역 컬럼 */
+        const sectionCols = sections.map(function(sec) {
+            const subHTML = sec.subGroups && sec.subGroups.length
+                ? sec.subGroups.map(function(sg) {
+                    const imgs = sg.images && sg.images.length
+                        ? sg.images.map(function(img) {
+                            return `<img src="${img.data || img}" style="max-width:100%;max-height:200px;object-fit:contain;border-radius:4px;margin:2px;">`;
+                          }).join('')
+                        : `<div style="background:#f3f4f6;border-radius:6px;padding:20px;text-align:center;color:#aaa;font-size:.78rem;">사진 없음</div>`;
+                    const labelHTML = sg.label
+                        ? `<p style="margin:6px 0 4px;font-size:.85rem;font-weight:700;">${esc(sg.label)}
+                               <span style="font-size:.75rem;font-weight:400;color:#666;">${esc(sg.labelEn)}</span>
+                           </p>`
+                        : '';
+                    return `<div style="margin-bottom:8px;">${labelHTML}<div style="display:flex;flex-wrap:wrap;gap:4px;">${imgs}</div></div>`;
+                  }).join('')
+                : '';
+            return `<td style="border:1px solid #aaa;padding:8px;vertical-align:top;width:${Math.floor(100/sections.length)}%;">
+                ${subHTML}
+            </td>`;
+        }).join('');
+
+        /* 보호구 목록 */
+        const ppeHTML = ppeItems.map(function(item) {
+            const imgHTML = item.image
+                ? `<img src="${esc(item.image)}" style="max-height:70px;max-width:100%;object-fit:contain;">`
+                : `<div style="height:60px;background:#f3f4f6;border-radius:4px;display:flex;align-items:center;justify-content:center;">
+                       <span class="material-symbols-outlined" style="color:#d1d5db;font-size:28px;">shield</span>
+                   </div>`;
+            return `<td style="border:1px solid #aaa;padding:6px;text-align:center;vertical-align:top;min-width:80px;">
+                <p style="margin:0 0 4px;font-size:.82rem;font-weight:700;">${esc(item.name)}</p>
+                <p style="margin:0 0 8px;font-size:.68rem;color:#666;">${esc(item.nameEn)}</p>
+                ${imgHTML}
+            </td>`;
+        }).join('');
+
+        return `
+        <div style="font-family:'Malgun Gothic','맑은 고딕',sans-serif;padding:14px;min-width:800px;">
+
+            <!-- 헤더 -->
+            <table style="width:100%;border-collapse:collapse;margin-bottom:0;">
+                <tr>
+                    <td style="border:2px solid #555;padding:8px 10px;width:150px;vertical-align:middle;">
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <div style="width:36px;height:36px;background:#1d4ed8;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                                <span style="color:#fff;font-weight:900;font-size:.72rem;">KC</span>
+                            </div>
+                            <div style="font-size:.65rem;font-weight:700;line-height:1.4;">KC 케미칼<br>주식회사</div>
+                        </div>
+                    </td>
+                    <td style="border:2px solid #555;padding:10px;text-align:center;vertical-align:middle;">
+                        <div style="font-size:1.5rem;font-weight:900;letter-spacing:.05em;">공정별 보호구 착용 기준서</div>
+                        <div style="font-size:.82rem;color:#555;margin-top:3px;">Protective equipment wearing standards by process</div>
+                    </td>
+                    <td style="border:2px solid #555;padding:0;vertical-align:top;width:310px;">
+                        <table style="width:100%;border-collapse:collapse;">
+                            <tr style="background:#e5e7eb;">
+                                <th style="border:1px solid #888;padding:3px 5px;font-size:.72rem;">No</th>
+                                <th style="border:1px solid #888;padding:3px 5px;font-size:.72rem;">개정일자</th>
+                                <th style="border:1px solid #888;padding:3px 5px;font-size:.72rem;">개정내용</th>
+                                <th style="border:1px solid #888;padding:3px 5px;font-size:.72rem;">작성</th>
+                                <th style="border:1px solid #888;padding:3px 5px;font-size:.72rem;">검토</th>
+                                <th style="border:1px solid #888;padding:3px 5px;font-size:.72rem;">승인</th>
+                            </tr>
+                            ${revRows}
+                        </table>
+                    </td>
+                </tr>
+            </table>
+
+            <!-- 작업자 구역 헤더 -->
+            <table style="width:100%;border-collapse:collapse;">
+                <tr style="background:#e8edf5;">
+                    ${sections.map(function(sec) {
+                        return `<th style="border:1px solid #aaa;padding:8px;text-align:center;font-size:.92rem;font-weight:700;">
+                            ${esc(sec.title)}<br>
+                            <span style="font-size:.75rem;font-weight:400;color:#555;">${esc(sec.titleEn)}</span>
+                        </th>`;
+                    }).join('')}
+                </tr>
+                <tr>${sectionCols}</tr>
+            </table>
+
+            <!-- 보호구 착용 기준 -->
+            <table style="width:100%;border-collapse:collapse;">
+                <tr style="background:#d1d5db;">
+                    <th colspan="${ppeItems.length}" style="border:1px solid #888;padding:7px;text-align:center;font-size:.9rem;font-weight:700;">
+                        보호구 착용 기준
+                        <span style="font-size:.75rem;font-weight:400;color:#444;margin-left:8px;">Protective equipment wearing standards</span>
+                    </th>
+                </tr>
+                <tr>${ppeHTML}</tr>
+            </table>
+
+            <!-- 푸터 -->
+            <div style="display:flex;justify-content:space-between;padding:4px 2px;font-size:.7rem;color:#888;margin-top:2px;">
+                <span>Rev.00</span>
+                <span>케이씨케미칼㈜</span>
+                <span>A3 (420 × 297 mm)</span>
+            </div>
+        </div>`;
+    }
+
+    /* ── 편집 모달 ── */
+    function _edit() {
+        const esc = SafetyCommon.esc;
+        const d   = _doc || {};
+        const sections = d.sections && d.sections.length ? d.sections : JSON.parse(JSON.stringify(DEFAULT_SECTIONS));
+        const ppeItems = d.ppeItems && d.ppeItems.length ? d.ppeItems : JSON.parse(JSON.stringify(DEFAULT_PPE));
+        const revHist  = d.revHistory && d.revHistory.length ? d.revHistory : [{ no: 0, date: SafetyCommon.today(), content: '최초 작성', writer: '', reviewer: '', approver: '' }];
+
+        /* 개정이력 입력 행 */
+        const revInputRows = revHist.slice(0, 4).map(function(h, i) {
+            return `<tr>
+                <td style="border:1px solid var(--border-color);padding:3px;text-align:center;font-size:.78rem;">${i}</td>
+                <td style="border:1px solid var(--border-color);padding:2px;"><input type="date" class="form-control" style="padding:3px;font-size:.76rem;" id="ppe-rv-date-${i}" value="${esc(h.date)}"></td>
+                <td style="border:1px solid var(--border-color);padding:2px;"><input class="form-control" style="padding:3px;font-size:.76rem;" id="ppe-rv-cont-${i}" value="${esc(h.content)}" placeholder="개정내용"></td>
+                <td style="border:1px solid var(--border-color);padding:2px;"><input class="form-control" style="padding:3px;font-size:.76rem;" id="ppe-rv-wr-${i}" value="${esc(h.writer)}" placeholder="작성"></td>
+                <td style="border:1px solid var(--border-color);padding:2px;"><input class="form-control" style="padding:3px;font-size:.76rem;" id="ppe-rv-re-${i}" value="${esc(h.reviewer)}" placeholder="검토"></td>
+                <td style="border:1px solid var(--border-color);padding:2px;"><input class="form-control" style="padding:3px;font-size:.76rem;" id="ppe-rv-ap-${i}" value="${esc(h.approver)}" placeholder="승인"></td>
+            </tr>`;
+        }).join('');
+
+        /* 작업자 구역 사진 입력 */
+        const secInputs = sections.map(function(sec, si) {
+            const sgHTML = sec.subGroups.map(function(sg, gi) {
+                const labelPart = sg.label
+                    ? `<label class="form-label" style="font-size:.8rem;">${esc(sg.label)} 사진</label>`
+                    : '';
+                return `<div style="margin-bottom:10px;">
+                    ${labelPart}
+                    ${SafetyImageEditor.imageAreaHTML('ppe-sec-' + si + '-' + gi)}
+                </div>`;
+            }).join('');
+            return `<div style="border:1px solid var(--border-color);border-radius:8px;padding:10px;margin-bottom:10px;">
+                <p style="margin:0 0 8px;font-weight:700;font-size:.85rem;">${esc(sec.title)}</p>
+                ${sgHTML}
+            </div>`;
+        }).join('');
+
+        /* 보호구 이미지 입력 */
+        const ppeInputs = `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">
+            ${ppeItems.map(function(item, pi) {
+                const thumb = item.image
+                    ? `<img src="${esc(item.image)}" style="max-height:50px;object-fit:contain;display:block;margin:4px auto;">`
+                    : '';
+                return `<div style="border:1px solid var(--border-color);border-radius:6px;padding:8px;text-align:center;">
+                    <p style="margin:0 0 4px;font-size:.8rem;font-weight:700;">${esc(item.name)}</p>
+                    <p style="margin:0 0 6px;font-size:.68rem;color:var(--text-muted);">${esc(item.nameEn)}</p>
+                    ${thumb}
+                    <label style="cursor:pointer;font-size:.72rem;color:#2563eb;">
+                        <input type="file" accept="image/*" style="display:none;" onchange="PPEStandardModule._onPpeImg(this,${pi})">
+                        📷 이미지 선택
+                    </label>
+                    ${item.image ? `<button type="button" onclick="PPEStandardModule._clearPpeImg(${pi})" style="display:block;margin:2px auto 0;background:none;border:none;cursor:pointer;font-size:.7rem;color:#dc2626;">✕ 삭제</button>` : ''}
+                </div>`;
+            }).join('')}
+        </div>`;
 
         const body = `
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-                <div class="form-group">
-                    <label class="form-label">공정명 *</label>
-                    <input class="form-control" id="ppe-process" value="${esc(row ? row.process : '')}" placeholder="예) 도장 공정, 사출 공정">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">보호구명 *</label>
-                    <input class="form-control" id="ppe-name" value="${esc(row ? row.ppeName : '')}" placeholder="예) 방진마스크, 보안경">
-                </div>
-                <div class="form-group" style="grid-column:1/-1;">
-                    <label class="form-label">착용기준</label>
-                    <input class="form-control" id="ppe-criteria" value="${esc(row ? row.criteria : '')}" placeholder="착용 기준 상세">
-                </div>
-                <div class="form-group" style="grid-column:1/-1;">
-                    <label class="form-label">적용조건</label>
-                    <input class="form-control" id="ppe-condition" value="${esc(row ? row.condition : '')}" placeholder="적용 조건 상세">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">규격/등급</label>
-                    <input class="form-control" id="ppe-grade" value="${esc(row ? row.grade : '')}" placeholder="예) KFI 2급, KS T 9007">
+            <!-- 개정이력 -->
+            <div class="form-group" style="margin-bottom:14px;">
+                <label class="form-label">개정 이력</label>
+                <div style="overflow-x:auto;">
+                    <table style="width:100%;border-collapse:collapse;font-size:.8rem;">
+                        <tr style="background:var(--bg-secondary);">
+                            <th style="border:1px solid var(--border-color);padding:5px;width:30px;">No</th>
+                            <th style="border:1px solid var(--border-color);padding:5px;width:110px;">개정일자</th>
+                            <th style="border:1px solid var(--border-color);padding:5px;">개정내용</th>
+                            <th style="border:1px solid var(--border-color);padding:5px;width:70px;">작성</th>
+                            <th style="border:1px solid var(--border-color);padding:5px;width:70px;">검토</th>
+                            <th style="border:1px solid var(--border-color);padding:5px;width:70px;">승인</th>
+                        </tr>
+                        <tbody>${revInputRows}</tbody>
+                    </table>
                 </div>
             </div>
-            ${SafetyImageEditor.imageAreaHTML('ppeImgContainer')}
+
+            <!-- 작업자 구역 사진 -->
+            <div class="form-group" style="margin-bottom:14px;">
+                <label class="form-label">작업자 구역별 사진</label>
+                ${secInputs}
+            </div>
+
+            <!-- 보호구 이미지 -->
+            <div class="form-group">
+                <label class="form-label">보호구 이미지</label>
+                ${ppeInputs}
+            </div>
         `;
 
         const footer = `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" onclick="PPEStandardModule._save('${row ? row.id : ''}')">
-                ${row ? '수정' : '등록'}
-            </button>
+            <button class="btn btn-primary" onclick="PPEStandardModule._save()">저장</button>
         `;
 
-        UIUtils.showModal(row ? '보호구 기준 수정' : '보호구 기준 신규 등록', body, footer, 'lg');
+        UIUtils.showModal('보호구 기준서 편집', body, footer, 'xl');
 
-        if (row && row.images) {
-            setTimeout(function () {
-                SafetyImageEditor.renderImageArea('ppeImgContainer', row.images);
-            }, 50);
-        }
+        /* 기존 이미지 렌더 */
+        setTimeout(function() {
+            sections.forEach(function(sec, si) {
+                sec.subGroups.forEach(function(sg, gi) {
+                    if (sg.images && sg.images.length)
+                        SafetyImageEditor.renderImageArea('ppe-sec-' + si + '-' + gi, sg.images);
+                });
+            });
+        }, 80);
     }
 
-    async function _save(editId) {
-        const process = document.getElementById('ppe-process').value.trim();
-        const ppeName = document.getElementById('ppe-name').value.trim();
-        if (!process || !ppeName) { UIUtils.toast('공정명과 보호구명은 필수입니다.', 'warning'); return; }
-
-        const row = {
-            id: editId || SafetyCommon.genId(),
-            process,
-            ppeName,
-            criteria: document.getElementById('ppe-criteria').value.trim(),
-            condition: document.getElementById('ppe-condition').value.trim(),
-            grade: document.getElementById('ppe-grade').value.trim(),
-            images: SafetyImageEditor.collectImages('ppeImgContainer'),
-            updatedAt: SafetyCommon.today()
+    /* ── 보호구 이미지 선택 ── */
+    var _ppeImgPending = {};
+    function _onPpeImg(input, idx) {
+        const file = input.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            _ppeImgPending[idx] = e.target.result;
+            /* 미리보기 갱신 */
+            const cont = input.closest('div');
+            if (!cont) return;
+            let img = cont.querySelector('img');
+            if (!img) { img = document.createElement('img'); img.style.cssText = 'max-height:50px;object-fit:contain;display:block;margin:4px auto;'; cont.insertBefore(img, input.parentElement); }
+            img.src = e.target.result;
         };
+        reader.readAsDataURL(file);
+    }
+    function _clearPpeImg(idx) {
+        _ppeImgPending[idx] = null;
+        _save._forceRedraw = true;
+    }
 
-        if (editId) {
-            const idx = _rows.findIndex(function (x) { return x.id === editId; });
-            if (idx !== -1) _rows[idx] = row;
-        } else {
-            _rows.unshift(row);
-        }
+    /* ── 저장 ── */
+    async function _save() {
+        const d = _doc || {};
+        const sections = (d.sections && d.sections.length) ? JSON.parse(JSON.stringify(d.sections)) : JSON.parse(JSON.stringify(DEFAULT_SECTIONS));
+        const ppeItems = (d.ppeItems && d.ppeItems.length) ? JSON.parse(JSON.stringify(d.ppeItems)) : JSON.parse(JSON.stringify(DEFAULT_PPE));
 
-        await SafetyCommon.save(KEY, _rows);
+        /* 개정이력 수집 */
+        const revHistory = [0,1,2,3].map(function(i) {
+            return {
+                no:       i,
+                date:     (document.getElementById('ppe-rv-date-' + i) || {}).value || '',
+                content:  (document.getElementById('ppe-rv-cont-' + i) || {}).value || '',
+                writer:   (document.getElementById('ppe-rv-wr-'   + i) || {}).value || '',
+                reviewer: (document.getElementById('ppe-rv-re-'   + i) || {}).value || '',
+                approver: (document.getElementById('ppe-rv-ap-'   + i) || {}).value || ''
+            };
+        }).filter(function(h){ return h.content || h.date; });
+
+        /* 작업자 구역 사진 수집 */
+        sections.forEach(function(sec, si) {
+            sec.subGroups.forEach(function(sg, gi) {
+                sg.images = SafetyImageEditor.collectImages('ppe-sec-' + si + '-' + gi);
+            });
+        });
+
+        /* 보호구 이미지 적용 */
+        ppeItems.forEach(function(item, pi) {
+            if (_ppeImgPending.hasOwnProperty(pi)) {
+                item.image = _ppeImgPending[pi];
+            }
+        });
+        _ppeImgPending = {};
+
+        _doc = { revHistory, sections, ppeItems, updatedAt: SafetyCommon.today() };
+        await SafetyCommon.save(KEY, _doc);
         UIUtils.closeModal();
-        UIUtils.toast(editId ? '보호구 기준이 수정되었습니다.' : '보호구 기준이 등록되었습니다.', 'success');
+        UIUtils.toast('보호구 기준서가 저장되었습니다.', 'success');
         _draw(document.getElementById('contentArea'));
     }
 
-    function _del(id) {
-        UIUtils.confirm('이 보호구 기준을 삭제하시겠습니까?', async function () {
-            _rows = _rows.filter(function (x) { return x.id !== id; });
-            await SafetyCommon.save(KEY, _rows);
-            UIUtils.toast('삭제되었습니다.', 'success');
-            _draw(document.getElementById('contentArea'));
-        });
+    /* ── 인쇄 ── */
+    function _print() {
+        const el = document.getElementById('ppe-doc');
+        if (!el) return;
+        const w = window.open('', '_blank', 'width=1200,height=800');
+        w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>보호구 기준서</title>
+            <style>
+                body{font-family:'Malgun Gothic','맑은 고딕',sans-serif;margin:8mm;font-size:9pt;}
+                table{border-collapse:collapse;width:100%;}
+                td,th{border:1px solid #666;padding:3px 4px;font-size:8pt;}
+                img{max-width:100%;object-fit:contain;}
+                @page{size:A3 landscape;margin:8mm;}
+            </style></head><body>${el.innerHTML}</body></html>`);
+        w.document.close();
+        w.focus();
+        setTimeout(function(){ w.print(); }, 400);
     }
 
-    function _view(id) {
-        const r = _rows.find(function (x) { return x.id === id; });
-        if (!r || !r.images || r.images.length === 0) return;
-        const body = `
-            ${SafetyImageEditor.imageAreaHTML('ppeViewImgContainer')}
-            <style>#ppeViewImgContainer .safety-img-delete, #ppeViewImgContainer .safety-img-resize { display:none!important; }</style>
-        `;
-        UIUtils.showModal('보호구 사진 — ' + SafetyCommon.esc(r.ppeName), body, '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>', 'xl');
-        setTimeout(function () { SafetyImageEditor.renderImageArea('ppeViewImgContainer', r.images, true); }, 50);
-    }
-
-    return { render, _openAdd, _edit, _save, _del, _view };
+    return { render, _edit, _save, _print, _onPpeImg, _clearPpeImg };
 })();
 
 /* ════════════════════════════════════════════════════════════════════

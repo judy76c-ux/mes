@@ -360,6 +360,20 @@ const DashboardModule = (function() {
             }));
         }
 
+        const prodAdjustLogs = (await Storage.getConfigValue('product_inventory_adjust_logs').catch(() => [])) || [];
+        const monthAdjustLogs = prodAdjustLogs.filter(r => String(r.date || r.at || '').slice(0, 7) === thisMonth);
+        const latestAdjust = prodAdjustLogs[0];
+        tiles.push(_tile({
+            icon:'manage_history',
+            title:'제품 현재고 보정 이력',
+            value: monthAdjustLogs.length + '건',
+            valueColor: monthAdjustLogs.length > 0 ? '#f59e0b' : '#64748b',
+            sub: latestAdjust ? `${latestAdjust.item?.partName || '-'} / ${latestAdjust.reason || '-'}` : '보정 이력 없음',
+            size:'xs',
+            onClick:"DashboardModule.openProductAdjustLogs()",
+            badge: monthAdjustLogs.length > 0 ? '보정' : ''
+        }));
+
         el.innerHTML = `
         <div class="card" style="margin-bottom:0;padding:8px 12px 10px;">
             <div style="font-size:.65rem;font-weight:700;color:var(--text-muted);
@@ -628,6 +642,41 @@ const DashboardModule = (function() {
         Router.navigate('prod-equipment');
     }
 
+    async function openProductAdjustLogs() {
+        const logs = (await Storage.getConfigValue('product_inventory_adjust_logs').catch(() => [])) || [];
+        const rows = logs.slice(0, 50).map(log => `
+            <tr>
+                <td style="padding:7px 8px;border-bottom:1px solid var(--border-color);white-space:nowrap;">${_esc((log.at || log.date || '').slice(0, 10))}</td>
+                <td style="padding:7px 8px;border-bottom:1px solid var(--border-color);">${_esc(log.item?.carModel || '-')}</td>
+                <td style="padding:7px 8px;border-bottom:1px solid var(--border-color);font-weight:700;">${_esc(log.item?.partName || '-')}</td>
+                <td style="padding:7px 8px;border-bottom:1px solid var(--border-color);">${_esc(log.item?.color || '-')}</td>
+                <td style="padding:7px 8px;border-bottom:1px solid var(--border-color);font-family:monospace;">${_esc(log.before?.lotNo || '-')} → ${_esc(log.after?.lotNo || '-')}</td>
+                <td style="padding:7px 8px;border-bottom:1px solid var(--border-color);text-align:right;">${UIUtils.formatNumber(log.before?.quantity || 0)} → ${UIUtils.formatNumber(log.after?.quantity || 0)}</td>
+                <td style="padding:7px 8px;border-bottom:1px solid var(--border-color);">${_esc(log.reason || '-')}</td>
+                <td style="padding:7px 8px;border-bottom:1px solid var(--border-color);">${_esc(log.user || '-')}</td>
+            </tr>
+        `).join('');
+        UIUtils.showModal('제품 현재고 보정 이력', `
+            <div style="max-height:520px;overflow:auto;border:1px solid var(--border-color);border-radius:8px;">
+                <table style="width:100%;border-collapse:collapse;font-size:0.84rem;">
+                    <thead style="position:sticky;top:0;background:var(--bg-secondary);z-index:1;">
+                        <tr>
+                            <th style="padding:8px;text-align:left;">일자</th>
+                            <th style="padding:8px;text-align:left;">차종</th>
+                            <th style="padding:8px;text-align:left;">품명</th>
+                            <th style="padding:8px;text-align:left;">컬러</th>
+                            <th style="padding:8px;text-align:left;">LOT 변경</th>
+                            <th style="padding:8px;text-align:right;">수량 변경</th>
+                            <th style="padding:8px;text-align:left;">수정 사유</th>
+                            <th style="padding:8px;text-align:left;">작업자</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows || `<tr><td colspan="8" style="padding:32px;text-align:center;color:var(--text-muted);">보정 이력이 없습니다.</td></tr>`}</tbody>
+                </table>
+            </div>
+        `, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'xl');
+    }
+
     function refresh() {
         const container = document.getElementById('contentArea');
         render(container);
@@ -639,6 +688,7 @@ const DashboardModule = (function() {
         refresh,
         openIlluminationCheck,
         openFProof,
-        openEquipMode
+        openEquipMode,
+        openProductAdjustLogs
     };
 })();

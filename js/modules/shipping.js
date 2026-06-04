@@ -18,7 +18,13 @@ const ShippingStandbyModule = (function() {
     function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
-                <div class="page-header"></div>
+                <div class="page-header">
+                    <div class="page-actions" style="display:flex;align-items:center;gap:8px;width:100%;">
+                        <button class="btn btn-outline" onclick="ShippingStandbyModule.openShippingStandardList()">
+                            <span class="material-symbols-outlined">fact_check</span> 출하검사 기준서
+                        </button>
+                    </div>
+                </div>
 
                 <!-- 통계 -->
                 <div class="stat-cards" id="ssStats"></div>
@@ -439,11 +445,242 @@ const ShippingStandbyModule = (function() {
         UIUtils.toast('내보내기 완료', 'success');
     }
 
+    const SHIP_STD_CONFIG_KEY = 'shipping_inspection_standards_v1';
+
+    function _stdProductKey(product) {
+        return product.id || `${product.carModel || ''}||${product.partName || ''}||${product.color || ''}`;
+    }
+
+    function _stdProductLabel(product) {
+        return [product.carModel, product.partName, product.color].filter(Boolean).join(' / ') || '품목 미지정';
+    }
+
+    async function _loadShipStandards() {
+        return (await Storage.getConfigValue(SHIP_STD_CONFIG_KEY).catch(() => ({}))) || {};
+    }
+
+    async function _saveShipStandards(data) {
+        await Storage.setConfigValue(SHIP_STD_CONFIG_KEY, data || {});
+    }
+
+    function _defaultShipStandard(product = {}) {
+        return {
+            processNo: '100',
+            processName: '출하검사',
+            equipmentName: '검사대',
+            docNo: 'KC-OS-021-1',
+            revNo: '00',
+            issueDate: UIUtils.today(),
+            reviseDate: '',
+            model: product.carModel || '',
+            partName: product.partName || '',
+            color: product.color || '',
+            points: [
+                { no: 1, item: '외관', standard: 'BURR, SINK MARK 및 유해한 흠이 없을 것.', method: '육안', sample: '10EA/LOT', action: '출하검사성적서' },
+                { no: 2, item: '외관(PAINT)', standard: '표면에 스크래치, 흑점, 이물질이 없을 것.', method: '육안', sample: '10EA/LOT', action: '출하검사성적서' },
+                { no: 3, item: 'COLOR(색차)', standard: '승인 한도 내 색차 기준을 만족할 것.', method: '색차계', sample: '2EA/LOT', action: '출하검사성적서' }
+            ],
+            procedure: '1. 제품의 표면상태를 검사한다.\n2. 중요치수를 측정한다.\n3. 불량은 해당 부위 마킹 후 별도의 불량 박스에 보관한다.',
+            actionNote: '1. 부적합 발생시 해당 제품 격리 후 부적합 식별을 실시한다.\n2. 부적합 사항은 보고서를 작성하여 담당자 및 조반장에게 통지한다.',
+            revisionNo: '00',
+            revisionReason: '최초 작성'
+        };
+    }
+
+    async function openShippingStandardList() {
+        const products = (Storage.getAll(DB.STORES.PRODUCTS) || [])
+            .slice()
+            .sort((a, b) => (a.carModel || '').localeCompare(b.carModel || '', 'ko') ||
+                (a.partName || '').localeCompare(b.partName || '', 'ko') ||
+                (a.color || '').localeCompare(b.color || '', 'ko'));
+        const standards = await _loadShipStandards();
+        const rows = products.map(product => {
+            const key = _stdProductKey(product);
+            const std = standards[key];
+            return `
+                <tr>
+                    <td style="padding:8px 10px;border-bottom:1px solid var(--border-color);">${product.carModel || '-'}</td>
+                    <td style="padding:8px 10px;border-bottom:1px solid var(--border-color);font-weight:700;">${product.partName || '-'}</td>
+                    <td style="padding:8px 10px;border-bottom:1px solid var(--border-color);">${product.color || '-'}</td>
+                    <td style="padding:8px 10px;border-bottom:1px solid var(--border-color);text-align:center;">
+                        ${std ? UIUtils.badge('등록', 'success') : UIUtils.badge('미등록', 'warning')}
+                    </td>
+                    <td style="padding:8px 10px;border-bottom:1px solid var(--border-color);text-align:center;white-space:nowrap;">
+                        <button class="btn btn-sm btn-outline" onclick="ShippingStandbyModule.openShippingStandardEditor('${encodeURIComponent(key)}')">${std ? '수정' : '등록'}</button>
+                        ${std ? `<button class="btn btn-sm btn-primary" onclick="ShippingStandbyModule.viewShippingStandard('${encodeURIComponent(key)}')" style="margin-left:4px;">보기</button>` : ''}
+                    </td>
+                </tr>`;
+        }).join('');
+        UIUtils.showModal('출하검사 기준서', `
+            <div style="margin-bottom:12px;font-size:0.84rem;color:var(--text-secondary);">
+                제품 마스터에 등록된 품목별 출하검사 기준서를 등록합니다. 모든 품목이 리스트업됩니다.
+            </div>
+            <div style="max-height:560px;overflow:auto;border:1px solid var(--border-color);border-radius:8px;">
+                <table style="width:100%;border-collapse:collapse;font-size:0.86rem;">
+                    <thead style="position:sticky;top:0;background:var(--bg-secondary);z-index:1;">
+                        <tr>
+                            <th style="padding:9px 10px;text-align:left;">차종</th>
+                            <th style="padding:9px 10px;text-align:left;">품명</th>
+                            <th style="padding:9px 10px;text-align:left;">컬러</th>
+                            <th style="padding:9px 10px;text-align:center;">상태</th>
+                            <th style="padding:9px 10px;text-align:center;">작업</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows || `<tr><td colspan="5" style="padding:36px;text-align:center;color:var(--text-muted);">제품 마스터에 등록된 품목이 없습니다.</td></tr>`}</tbody>
+                </table>
+            </div>
+        `, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'xl');
+    }
+
+    async function openShippingStandardEditor(encodedKey) {
+        const key = decodeURIComponent(encodedKey);
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const product = products.find(p => _stdProductKey(p) === key) || {};
+        const standards = await _loadShipStandards();
+        const data = { ..._defaultShipStandard(product), ...(standards[key] || {}) };
+        const pointsText = (data.points || []).map(p =>
+            [p.no, p.item, p.standard, p.method, p.sample, p.action].map(v => String(v ?? '').replace(/\t/g, ' ')).join('\t')
+        ).join('\n');
+        UIUtils.showModal(`출하검사 기준서 ${standards[key] ? '수정' : '등록'} — ${_stdProductLabel(product)}`, `
+            <div class="form-row">
+                <div class="form-group"><label class="form-label">공정NO</label><input id="shipStdProcessNo" class="form-input" value="${data.processNo || ''}"></div>
+                <div class="form-group"><label class="form-label">공정명</label><input id="shipStdProcessName" class="form-input" value="${data.processName || ''}"></div>
+                <div class="form-group"><label class="form-label">설비명</label><input id="shipStdEquipmentName" class="form-input" value="${data.equipmentName || ''}"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label">문서번호</label><input id="shipStdDocNo" class="form-input" value="${data.docNo || ''}"></div>
+                <div class="form-group"><label class="form-label">Rev No</label><input id="shipStdRevNo" class="form-input" value="${data.revNo || ''}"></div>
+                <div class="form-group"><label class="form-label">제정일자</label><input id="shipStdIssueDate" type="date" class="form-input" value="${data.issueDate || ''}"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label">모델</label><input id="shipStdModel" class="form-input" value="${data.model || product.carModel || ''}"></div>
+                <div class="form-group"><label class="form-label">품명</label><input id="shipStdPartName" class="form-input" value="${data.partName || product.partName || ''}"></div>
+                <div class="form-group"><label class="form-label">컬러</label><input id="shipStdColor" class="form-input" value="${data.color || product.color || ''}"></div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">주요검사 Point <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">No / 항목 / 기준 / 확인방법 / 시료 / 관리방안 순서로 탭 구분</span></label>
+                <textarea id="shipStdPoints" class="form-textarea" style="height:170px;font-family:Consolas,monospace;font-size:0.8rem;">${pointsText}</textarea>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label">검사순서</label><textarea id="shipStdProcedure" class="form-textarea" style="height:120px;">${data.procedure || ''}</textarea></div>
+                <div class="form-group"><label class="form-label">조치사항</label><textarea id="shipStdActionNote" class="form-textarea" style="height:120px;">${data.actionNote || ''}</textarea></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label">개정 NO</label><input id="shipStdRevisionNo" class="form-input" value="${data.revisionNo || ''}"></div>
+                <div class="form-group"><label class="form-label">개정사유</label><input id="shipStdRevisionReason" class="form-input" value="${data.revisionReason || ''}"></div>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="ShippingStandbyModule.openShippingStandardList()">목록</button>
+            <button class="btn btn-primary" onclick="ShippingStandbyModule.saveShippingStandard('${encodeURIComponent(key)}')">저장</button>
+        `, 'xl');
+    }
+
+    async function saveShippingStandard(encodedKey) {
+        const key = decodeURIComponent(encodedKey);
+        const parsePoints = String(document.getElementById('shipStdPoints')?.value || '')
+            .split('\n')
+            .map(line => line.split('\t').map(v => v.trim()))
+            .filter(cols => cols.some(Boolean))
+            .map((cols, idx) => ({
+                no: cols[0] || idx + 1,
+                item: cols[1] || '',
+                standard: cols[2] || '',
+                method: cols[3] || '',
+                sample: cols[4] || '',
+                action: cols[5] || ''
+            }));
+        const standards = await _loadShipStandards();
+        standards[key] = {
+            processNo: document.getElementById('shipStdProcessNo')?.value.trim() || '',
+            processName: document.getElementById('shipStdProcessName')?.value.trim() || '',
+            equipmentName: document.getElementById('shipStdEquipmentName')?.value.trim() || '',
+            docNo: document.getElementById('shipStdDocNo')?.value.trim() || '',
+            revNo: document.getElementById('shipStdRevNo')?.value.trim() || '',
+            issueDate: document.getElementById('shipStdIssueDate')?.value || '',
+            model: document.getElementById('shipStdModel')?.value.trim() || '',
+            partName: document.getElementById('shipStdPartName')?.value.trim() || '',
+            color: document.getElementById('shipStdColor')?.value.trim() || '',
+            points: parsePoints,
+            procedure: document.getElementById('shipStdProcedure')?.value || '',
+            actionNote: document.getElementById('shipStdActionNote')?.value || '',
+            revisionNo: document.getElementById('shipStdRevisionNo')?.value.trim() || '',
+            revisionReason: document.getElementById('shipStdRevisionReason')?.value.trim() || '',
+            updatedAt: new Date().toISOString()
+        };
+        await _saveShipStandards(standards);
+        UIUtils.toast('출하검사 기준서가 저장되었습니다.', 'success');
+        openShippingStandardList();
+    }
+
+    async function viewShippingStandard(encodedKey) {
+        const key = decodeURIComponent(encodedKey);
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const product = products.find(p => _stdProductKey(p) === key) || {};
+        const standards = await _loadShipStandards();
+        const data = standards[key] || _defaultShipStandard(product);
+        const pointRows = (data.points || []).map(p => `
+            <tr>
+                <td>${p.no || ''}</td><td>${p.item || ''}</td><td>${p.standard || ''}</td>
+                <td>${p.method || ''}</td><td>${p.sample || ''}</td><td>${p.action || ''}</td>
+            </tr>
+        `).join('');
+        UIUtils.showModal('출하검사 기준서', `
+            <div style="border:2px solid #1d4ed8;background:#fff;color:#111;font-size:13px;">
+                <table style="width:100%;border-collapse:collapse;text-align:center;">
+                    <tr>
+                        <td style="border:1px solid #111;width:80px;font-weight:700;">공정NO</td>
+                        <td style="border:1px solid #111;width:100px;">${data.processNo || ''}</td>
+                        <td style="border:1px solid #111;width:100px;font-weight:700;">공정명</td>
+                        <td style="border:1px solid #111;width:130px;">${data.processName || ''}</td>
+                        <td rowspan="3" style="border:1px solid #111;font-size:30px;font-weight:800;letter-spacing:10px;">출하검사 기준서</td>
+                        <td style="border:1px solid #111;width:90px;font-weight:700;">문서번호</td>
+                        <td style="border:1px solid #111;width:130px;">${data.docNo || ''}</td>
+                    </tr>
+                    <tr>
+                        <td style="border:1px solid #111;font-weight:700;">설비명</td>
+                        <td colspan="3" style="border:1px solid #111;">${data.equipmentName || ''}</td>
+                        <td style="border:1px solid #111;font-weight:700;">Rev No</td>
+                        <td style="border:1px solid #111;">${data.revNo || ''}</td>
+                    </tr>
+                    <tr>
+                        <td style="border:1px solid #111;font-weight:700;">모델</td>
+                        <td colspan="3" style="border:1px solid #111;">${data.model || ''}</td>
+                        <td style="border:1px solid #111;font-weight:700;">제정일자</td>
+                        <td style="border:1px solid #111;">${data.issueDate || ''}</td>
+                    </tr>
+                    <tr>
+                        <td style="border:1px solid #111;font-weight:700;">품명</td>
+                        <td colspan="6" style="border:1px solid #111;font-weight:700;">${data.partName || ''}${data.color ? ' / ' + data.color : ''}</td>
+                    </tr>
+                </table>
+                <div style="display:grid;grid-template-columns:42% 58%;min-height:520px;border-top:1px solid #111;">
+                    <div style="border-right:1px solid #111;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:72px;font-weight:800;">제품사진</div>
+                    <div>
+                        <div style="background:#93c5fd;border-bottom:1px solid #111;padding:9px;text-align:center;font-weight:800;">주요검사 Point</div>
+                        <table style="width:100%;border-collapse:collapse;text-align:center;font-size:12px;">
+                            <thead><tr><th>No</th><th>항목</th><th>기준</th><th>확인방법</th><th>시료</th><th>관리방안</th></tr></thead>
+                            <tbody>${pointRows}</tbody>
+                        </table>
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;border-top:1px solid #111;">
+                    <div><div style="background:#93c5fd;text-align:center;font-weight:800;padding:8px;border-bottom:1px solid #111;">검사순서</div><pre style="white-space:pre-wrap;margin:0;padding:10px;font-family:inherit;">${data.procedure || ''}</pre></div>
+                    <div style="border-left:1px solid #111;"><div style="background:#93c5fd;text-align:center;font-weight:800;padding:8px;border-bottom:1px solid #111;">조치사항</div><pre style="white-space:pre-wrap;margin:0;padding:10px;font-family:inherit;">${data.actionNote || ''}</pre></div>
+                </div>
+            </div>
+        `, `
+            <button class="btn btn-outline" onclick="ShippingStandbyModule.openShippingStandardEditor('${encodeURIComponent(key)}')">수정</button>
+            <button class="btn btn-secondary" onclick="ShippingStandbyModule.openShippingStandardList()">목록</button>
+        `, 'xl');
+    }
+
     return {
         render, loadData, loadHistory,
         onHistoryCarChange,
         _showDetail,
         removeStandby, removeHistory, exportHistory,
+        openShippingStandardList, openShippingStandardEditor,
+        saveShippingStandard, viewShippingStandard,
         // 하위호환 (구 코드 참조용)
         remove: removeStandby
     };
@@ -839,18 +1076,21 @@ const ProductWarehouseModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-outline" onclick="Router.navigate('injection-layout')"
+                    <div class="page-actions" style="display:flex;align-items:center;gap:8px;width:100%;">
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                            <button class="btn btn-primary" onclick="ProductWarehouseModule.openAddModal()"
+                                title="관리자 계정으로 제품 재고를 등록하고, 이력에서 수량과 LOT를 수정합니다.">
+                                <span class="material-symbols-outlined">edit_note</span> 재고 등록과 수정
+                            </button>
+                            <button class="btn btn-outline"
+                                onclick="ProductWarehouseModule.openBulkModal()"
+                                title="관리자 계정으로 로그인한 경우에만 일괄 반영할 수 있습니다.">
+                                <span class="material-symbols-outlined">admin_panel_settings</span> 일괄 등록 및 수정
+                            </button>
+                        </div>
+                        <button class="btn btn-outline" style="margin-left:auto;" onclick="Router.navigate('injection-layout')"
                             title="1층 소재/완제품 보관창고 배치 레이아웃을 시각적으로 편집합니다.">
                             <span class="material-symbols-outlined">map</span> 레이아웃
-                        </button>
-                        <button class="btn btn-primary" onclick="ProductWarehouseModule.openAddModal()">
-                            <span class="material-symbols-outlined">add</span> 재고 등록
-                        </button>
-                        <button class="btn btn-outline" style="margin-left:auto;"
-                            onclick="ProductWarehouseModule.openBulkModal()"
-                            title="관리자 계정으로 로그인한 경우에만 일괄 반영할 수 있습니다.">
-                            <span class="material-symbols-outlined">admin_panel_settings</span> 일괄 등록 및 수정
                         </button>
                     </div>
                 </div>
@@ -1116,13 +1356,9 @@ const ProductWarehouseModule = (function() {
                     ${lotCell(matLot, false)}
                     ${lotCell(inspLot, true)}
                     <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">${r.source || '-'}</td>
-                    <td style="padding:5px 8px;text-align:center;border-bottom:1px solid var(--border-color);">
-                        <button onclick="event.stopPropagation();ProductWarehouseModule.remove('${r.id}')"
-                            style="background:none;border:none;cursor:pointer;color:var(--accent-red);font-size:0.75rem;padding:2px 5px;">삭제</button>
-                    </td>
                 </tr>`;
             }).join('')
-            : `<tr><td colspan="9" style="text-align:center;padding:20px;color:var(--text-muted);">이력 없음</td></tr>`;
+            : `<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--text-muted);">이력 없음</td></tr>`;
 
         popup.innerHTML = `
             <div style="padding:14px 18px;border-bottom:1px solid var(--border);
@@ -1181,7 +1417,7 @@ const ProductWarehouseModule = (function() {
                         <th style="padding:6px 8px;font-size:0.7rem;font-weight:700;color:#059669;border-bottom:1px solid var(--border);white-space:nowrap;">도장 LOT</th>
                         <th style="padding:6px 8px;font-size:0.7rem;font-weight:700;color:#d97706;border-bottom:1px solid var(--border);white-space:nowrap;">도료 LOT</th>
                         <th style="padding:6px 8px;font-size:0.7rem;font-weight:700;color:#7c3aed;border-bottom:1px solid var(--border);white-space:nowrap;">검사 LOT</th>
-                        ${TH('출처/행선지')}<th style="border-bottom:1px solid var(--border);"></th>
+                        ${TH('출처/행선지')}
                     </tr>
                 </thead>
                 <tbody>${rowsHtml}</tbody>
@@ -1240,7 +1476,7 @@ const ProductWarehouseModule = (function() {
         return !!(user && user.role === 'admin');
     }
 
-    function _requireBulkAdmin(onPass) {
+    function _requireProductAdmin(onPass, message) {
         if (_isAdminUser()) {
             onPass();
             return;
@@ -1248,11 +1484,15 @@ const ProductWarehouseModule = (function() {
         if (typeof AuthModule !== 'undefined' && AuthModule.checkSettingsAuth) {
             AuthModule.checkSettingsAuth(function() {
                 if (_isAdminUser()) onPass();
-                else UIUtils.toast('제품 창고 일괄 등록 및 수정은 관리자만 가능합니다.', 'warning');
+                else UIUtils.toast(message || '제품 창고 재고 등록과 수정은 관리자만 가능합니다.', 'warning');
             });
             return;
         }
-        UIUtils.toast('제품 창고 일괄 등록 및 수정은 관리자만 가능합니다.', 'warning');
+        UIUtils.toast(message || '제품 창고 재고 등록과 수정은 관리자만 가능합니다.', 'warning');
+    }
+
+    function _requireBulkAdmin(onPass) {
+        _requireProductAdmin(onPass, '제품 창고 일괄 등록 및 수정은 관리자만 가능합니다.');
     }
 
     function _getCurrentStockMap() {
@@ -1600,68 +1840,181 @@ const ProductWarehouseModule = (function() {
     }
 
     function openAddModal() {
-        UIUtils.showModal('재고 등록', `
+        _requireProductAdmin(() => {
+            UIUtils.showModal('현재고 등록과 수정', _stockAdjustHtml(), `
+                <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+                <button class="btn btn-primary" onclick="ProductWarehouseModule.saveStockAdjustment()">보정 저장</button>
+            `);
+        });
+    }
+
+    function _itemKeyOf(r) {
+        return `${r.carModel || ''}||${r.partName || ''}||${r.color || ''}`;
+    }
+
+    function _stockAdjustHtml() {
+        const records = Storage.getAll(STORE) || [];
+        const itemMap = {};
+        records.forEach(r => {
+            const key = _itemKeyOf(r);
+            if (!itemMap[key]) itemMap[key] = { carModel: r.carModel || '', partName: r.partName || '', color: r.color || '', qty: 0 };
+            itemMap[key].qty += (r.type === '출고' ? -1 : 1) * (Number(r.quantity) || 0);
+        });
+        const carOptions = [...new Set(Object.values(itemMap).map(item => item.carModel || ''))]
+            .sort((a, b) => a.localeCompare(b, 'ko'))
+            .map(car => `<option value="${_escapeHtml(car)}">${_escapeHtml(car || '차종 미지정')}</option>`)
+            .join('');
+        return `
+            <div style="margin-bottom:12px;padding:10px 12px;border:1px solid rgba(59,130,246,0.25);border-radius:8px;background:rgba(59,130,246,0.06);font-size:0.82rem;color:var(--text-secondary);line-height:1.6;">
+                현장 실재고와 시스템 현재고가 맞지 않을 때 사용하는 관리자 보정 기능입니다. 입고/출고 처리가 아니라 선택한 제품 LOT의 수량과 LOT 정보를 직접 보정하며, 수정 사유는 필수입니다.
+            </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">날짜</label>
-                    <input type="date" class="form-input" id="addProdInvDate" value="${UIUtils.today()}">
+                    <label class="form-label">차종 선택</label>
+                    <select class="form-select" id="pwAdjustCar" onchange="ProductWarehouseModule.renderAdjustPartOptions()">
+                        <option value="">-- 차종 선택 --</option>
+                        ${carOptions}
+                    </select>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">유형</label>
-                    <select class="form-select" id="addProdInvType">
-                        <option value="입고">입고</option>
-                        <option value="출고">출고</option>
+                    <label class="form-label">품명 선택</label>
+                    <select class="form-select" id="pwAdjustItem" onchange="ProductWarehouseModule.renderAdjustRows()" disabled>
+                        <option value="">-- 차종을 먼저 선택 --</option>
                     </select>
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">품명</label>
-                    <input type="text" class="form-input" id="addProdInvPart" placeholder="품명">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">수량</label>
-                    <input type="number" class="form-input" id="addProdInvQty" min="0" placeholder="0">
+                    <label class="form-label">수정 사유 <span style="color:var(--accent-red)">*</span></label>
+                    <input type="text" class="form-input" id="pwAdjustReason" placeholder="예: 현장 실사 재고 보정">
                 </div>
             </div>
-            <div class="form-group">
-                <label class="form-label">출처/행선지</label>
-                <input type="text" class="form-input" id="addProdInvSource" placeholder="출처 또는 행선지">
-            </div>
-        `, `
-            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" onclick="ProductWarehouseModule.saveNew()">등록</button>
-        `);
+            <div id="pwAdjustRows" style="margin-top:12px;"></div>
+        `;
     }
 
-    async function saveNew() {
-        const data = {
-            date: document.getElementById('addProdInvDate').value,
-            type: document.getElementById('addProdInvType').value,
-            partName: document.getElementById('addProdInvPart').value.trim(),
-            quantity: Number(document.getElementById('addProdInvQty').value) || 0,
-            source: document.getElementById('addProdInvSource').value.trim()
-        };
-        if (!data.partName) {
-            UIUtils.toast('품명을 입력하세요.', 'warning');
+    function _currentProductStockItems() {
+        const itemMap = {};
+        (Storage.getAll(STORE) || []).forEach(r => {
+            const key = _itemKeyOf(r);
+            if (!itemMap[key]) itemMap[key] = { carModel: r.carModel || '', partName: r.partName || '', color: r.color || '', qty: 0 };
+            itemMap[key].qty += (r.type === '출고' ? -1 : 1) * (Number(r.quantity) || 0);
+        });
+        return itemMap;
+    }
+
+    function renderAdjustPartOptions() {
+        const car = (document.getElementById('pwAdjustCar') || {}).value || '';
+        const partSelect = document.getElementById('pwAdjustItem');
+        const wrap = document.getElementById('pwAdjustRows');
+        if (wrap) wrap.innerHTML = '';
+        if (!partSelect) return;
+        if (!car) {
+            partSelect.disabled = true;
+            partSelect.innerHTML = '<option value="">-- 차종을 먼저 선택 --</option>';
             return;
         }
-
-        await Storage.add(STORE, data);
-        UIUtils.closeModal();
-        UIUtils.toast('등록되었습니다.', 'success');
-        loadData();
+        const options = Object.entries(_currentProductStockItems())
+            .filter(([, item]) => (item.carModel || '') === car)
+            .sort((a, b) => `${a[1].partName} ${a[1].color}`.localeCompare(`${b[1].partName} ${b[1].color}`, 'ko'))
+            .map(([key, item]) => `<option value="${_escapeHtml(key)}">${_escapeHtml(item.partName || '-')} / ${_escapeHtml(item.color || '-')} (${UIUtils.formatNumber(item.qty)} EA)</option>`)
+            .join('');
+        partSelect.disabled = false;
+        partSelect.innerHTML = `<option value="">-- 품명 / 컬러 선택 --</option>${options}`;
     }
 
-    function remove(id) {
-        UIUtils.confirm('삭제하시겠습니까?', async () => {
-            await Storage.remove(STORE, id);
-            // 팝업 열려있으면 닫기
-            const popup = document.getElementById('pwHistoryPopup');
-            if (popup) popup.remove();
-            UIUtils.toast('삭제되었습니다.', 'success');
-            loadData();
+    function renderAdjustRows() {
+        const key = (document.getElementById('pwAdjustItem') || {}).value || '';
+        const wrap = document.getElementById('pwAdjustRows');
+        if (!wrap) return;
+        if (!key) {
+            wrap.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted);border:1px dashed var(--border-color);border-radius:8px;">제품을 선택하면 LOT별 현재고가 표시됩니다.</div>';
+            return;
+        }
+        const rows = (Storage.getAll(STORE) || []).filter(r => _itemKeyOf(r) === key);
+        const html = rows.map(r => `
+            <tr>
+                <td style="padding:6px 8px;">${_escapeHtml(r.date || '-')}</td>
+                <td style="padding:6px 8px;">${_escapeHtml(r.type || '입고')}</td>
+                <td style="padding:6px 8px;"><input class="form-input pw-adjust-row" data-id="${r.id}" data-field="lotNo" value="${_escapeHtml(r.lotNo || '')}" placeholder="LOT"></td>
+                <td style="padding:6px 8px;"><input class="form-input pw-adjust-row" data-id="${r.id}" data-field="paintingDate" value="${_escapeHtml(r.paintingDate || '')}" placeholder="도장 LOT"></td>
+                <td style="padding:6px 8px;"><input type="number" min="0" class="form-input pw-adjust-row" data-id="${r.id}" data-field="quantity" value="${Number(r.quantity) || 0}" style="text-align:right;"></td>
+                <td style="padding:6px 8px;color:var(--text-muted);font-size:0.78rem;">${_escapeHtml(r.source || '-')}</td>
+            </tr>
+        `).join('');
+        wrap.innerHTML = `
+            <div style="max-height:340px;overflow:auto;border:1px solid var(--border-color);border-radius:8px;">
+                <table style="width:100%;border-collapse:collapse;font-size:0.84rem;">
+                    <thead style="position:sticky;top:0;background:var(--bg-secondary);z-index:1;">
+                        <tr>
+                            <th style="padding:7px 8px;text-align:left;">날짜</th>
+                            <th style="padding:7px 8px;text-align:left;">유형</th>
+                            <th style="padding:7px 8px;text-align:left;">LOT</th>
+                            <th style="padding:7px 8px;text-align:left;">도장 LOT</th>
+                            <th style="padding:7px 8px;text-align:right;">수량</th>
+                            <th style="padding:7px 8px;text-align:left;">출처</th>
+                        </tr>
+                    </thead>
+                    <tbody>${html || `<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--text-muted);">대상 재고 기록이 없습니다.</td></tr>`}</tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    async function saveStockAdjustment() {
+        if (!_isAdminUser()) {
+            UIUtils.toast('제품 창고 현재고 보정은 관리자만 가능합니다.', 'warning');
+            return;
+        }
+        const reason = _normalizeText((document.getElementById('pwAdjustReason') || {}).value);
+        if (!reason) {
+            UIUtils.toast('수정 사유를 입력하세요.', 'warning');
+            return;
+        }
+        const inputs = Array.from(document.querySelectorAll('.pw-adjust-row'));
+        if (!inputs.length) {
+            UIUtils.toast('보정할 제품을 선택하세요.', 'warning');
+            return;
+        }
+        const byId = {};
+        inputs.forEach(input => {
+            const id = input.dataset.id;
+            const field = input.dataset.field;
+            if (!byId[id]) byId[id] = {};
+            byId[id][field] = field === 'quantity'
+                ? Math.max(0, Math.round(Number(input.value) || 0))
+                : _normalizeText(input.value);
         });
+
+        const all = Storage.getAll(STORE) || [];
+        const user = typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser ? AuthModule.getCurrentUser() : null;
+        const logs = [];
+        for (const [id, changes] of Object.entries(byId)) {
+            const old = all.find(r => r.id === id);
+            if (!old) continue;
+            const changed = ['lotNo', 'paintingDate', 'quantity'].some(field => String(old[field] ?? '') !== String(changes[field] ?? ''));
+            if (!changed) continue;
+            await Storage.update(STORE, id, changes);
+            logs.push({
+                id: Storage.generateId ? Storage.generateId() : `${Date.now()}_${Math.random()}`,
+                date: UIUtils.today(),
+                at: new Date().toISOString(),
+                user: user ? (user.name || user.username || user.id || '') : '',
+                reason,
+                item: { carModel: old.carModel || '', partName: old.partName || '', color: old.color || '' },
+                before: { lotNo: old.lotNo || '', paintingDate: old.paintingDate || '', quantity: Number(old.quantity) || 0 },
+                after: { lotNo: changes.lotNo || '', paintingDate: changes.paintingDate || '', quantity: Number(changes.quantity) || 0 }
+            });
+        }
+        if (!logs.length) {
+            UIUtils.toast('변경된 내용이 없습니다.', 'info');
+            return;
+        }
+        const prev = (await Storage.getConfigValue('product_inventory_adjust_logs').catch(() => [])) || [];
+        await Storage.setConfigValue('product_inventory_adjust_logs', [...logs, ...prev].slice(0, 200));
+        UIUtils.closeModal();
+        UIUtils.toast(`현재고 보정 ${logs.length}건이 저장되었습니다.`, 'success');
+        loadData();
     }
 
     function exportData() {
@@ -1686,8 +2039,9 @@ const ProductWarehouseModule = (function() {
         _bulkSave,
         _bulkRecords: [],
         openAddModal,
-        saveNew,
-        remove,
+        renderAdjustPartOptions,
+        renderAdjustRows,
+        saveStockAdjustment,
         exportData
     };
 })();

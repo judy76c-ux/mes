@@ -89,7 +89,14 @@ const UIUtils = (function () {
         if (!overlay) return;
 
         const container = overlay.querySelector('.modal-container');
+        const header = overlay.querySelector('.modal-header');
+        if (header) {
+            header.classList.remove('plan-day-modal-header');
+            header.querySelector('.plan-day-line-switch')?.remove();
+        }
         if (container) {
+            container.style.borderTop = '';
+            container.style.boxShadow = '';
             const sizeMap = {
                 sm: 'min(420px, calc(100vw - 32px))',
                 md: 'min(920px, calc(100vw - 32px))',
@@ -140,7 +147,19 @@ const UIUtils = (function () {
 
     function closeModal() {
         const overlay = document.getElementById('modal');
-        if (overlay) overlay.classList.remove('active');
+        if (overlay) {
+            overlay.classList.remove('active');
+            const header = overlay.querySelector('.modal-header');
+            const container = overlay.querySelector('.modal-container');
+            if (header) {
+                header.classList.remove('plan-day-modal-header');
+                header.querySelector('.plan-day-line-switch')?.remove();
+            }
+            if (container) {
+                container.style.borderTop = '';
+                container.style.boxShadow = '';
+            }
+        }
     }
 
     // showModal: 객체 형식({ title, body, footer, size }) 또는 위치 인자(title, body, footer, size) 모두 지원

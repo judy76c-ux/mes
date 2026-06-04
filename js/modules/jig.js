@@ -18,6 +18,8 @@ var JigModule = (function () {
     let _batchMergeRows = [];
     let _activeView = 'life';
     let _masterCarFilter = '';
+    let _jigPasteTargetId = '';
+    let _jigPasteListenerReady = false;
 
     const _today = () => (UIUtils.today ? UIUtils.today() : new Date().toISOString().split('T')[0]);
     const _monthAgo = () => {
@@ -1132,6 +1134,7 @@ var JigModule = (function () {
             `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="JigModule.saveJigMaster('${_js(id)}')">저장</button>`,
             'xl'
         );
+        _ensureJigPasteListener();
     }
 
     async function saveJigMaster(id = '') {
@@ -1165,30 +1168,43 @@ var JigModule = (function () {
         }
     }
 
-    async function pasteJigMasterPhoto(targetId) {
-        try {
-            if (!navigator.clipboard || !navigator.clipboard.read) {
-                UIUtils.toast('이 브라우저는 클립보드 이미지 붙여넣기를 지원하지 않습니다.', 'warning');
-                return;
-            }
-            const items = await navigator.clipboard.read();
-            for (const item of items) {
-                const imageType = item.types.find(type => type.startsWith('image/'));
-                if (!imageType) continue;
-                const blob = await item.getType(imageType);
-                const reader = new FileReader();
-                reader.onload = () => {
-                    _setJigMasterPhoto(targetId, reader.result || '');
-                    UIUtils.toast('스크린샷이 등록되었습니다.', 'success');
-                };
-                reader.readAsDataURL(blob);
-                return;
-            }
-            UIUtils.toast('클립보드에 이미지가 없습니다. 스크린샷 복사 후 다시 시도하세요.', 'warning');
-        } catch (e) {
-            UIUtils.toast('스크린샷 붙여넣기에 실패했습니다. 브라우저 권한을 확인하세요.', 'error');
-            console.warn('[JigModule] paste screenshot failed:', e);
+    function _readJigImageBlob(targetId, blob) {
+        if (!targetId || !blob) return false;
+        const reader = new FileReader();
+        reader.onload = () => {
+            _setJigMasterPhoto(targetId, reader.result || '');
+            UIUtils.toast('스크린샷이 등록되었습니다.', 'success');
+        };
+        reader.readAsDataURL(blob);
+        return true;
+    }
+
+    function _imageFileFromPasteEvent(event) {
+        const items = Array.from(event.clipboardData?.items || []);
+        for (const item of items) {
+            if (item.type && item.type.startsWith('image/')) return item.getAsFile();
         }
+        return null;
+    }
+
+    function _ensureJigPasteListener() {
+        if (_jigPasteListenerReady) return;
+        _jigPasteListenerReady = true;
+        document.addEventListener('paste', function(event) {
+            if (!_jigPasteTargetId) return;
+            const hidden = document.getElementById(`${_jigPasteTargetId}Data`);
+            if (!hidden) return;
+            const file = _imageFileFromPasteEvent(event);
+            if (!file) return;
+            event.preventDefault();
+            _readJigImageBlob(_jigPasteTargetId, file);
+        });
+    }
+
+    function pasteJigMasterPhoto(targetId) {
+        _jigPasteTargetId = targetId;
+        _ensureJigPasteListener();
+        UIUtils.toast('이미지 칸 선택됨: Ctrl+V로 붙여넣으세요.', 'info');
     }
 
     function clearJigMasterPhoto(targetId) {
