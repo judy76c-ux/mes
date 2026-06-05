@@ -140,7 +140,7 @@ var InjIncomingStdModule = (function () {
                 <td>${has?_esc(std.createdDate||'-'):'-'}</td>
                 <td style="text-align:center;white-space:nowrap;">
                     ${has
-                        ?`<button class="btn btn-sm btn-outline" onclick="InjIncomingStdModule.openEditForm('${std.id}')">편집</button>
+                        ?`<button class="btn btn-sm btn-primary" onclick="InjIncomingStdModule.openViewForm('${std.id}')">보기</button>
                           <button class="btn btn-sm btn-outline" onclick="InjIncomingStdModule.printStd('${std.id}')" title="출력"><span class="material-symbols-outlined" style="font-size:.9rem;">print</span></button>`
                         :`<button class="btn btn-sm btn-primary" onclick="InjIncomingStdModule.openNewFormForProduct('${p.id}')">등록</button>`}
                 </td></tr>`;
@@ -191,8 +191,8 @@ var InjIncomingStdModule = (function () {
             <td style="text-align:center;padding:3px;border:1px solid #bbb;font-size:.8rem;">${i+1}</td>
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-item" type="text" value="${_esc(pt.item||'')}"
                 style="width:100%;border:none;background:transparent;font-size:.8rem;padding:2px;"></td>
-            <td style="padding:2px;border:1px solid #bbb;"><textarea class="std-pt-std" rows="2"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;resize:none;line-height:1.4;">${_esc(pt.standard||'')}</textarea></td>
+            <td style="padding:4px 2px;border:1px solid #bbb;"><div class="std-pt-std" contenteditable="true"
+                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;line-height:1.5;outline:none;white-space:pre-wrap;min-height:1.5em;">${_esc(pt.standard||'')}</div></td>
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-method" type="text" value="${_esc(pt.method||'')}"
                 style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-sample" type="text" value="${_esc(pt.sample||'')}"
@@ -217,15 +217,15 @@ var InjIncomingStdModule = (function () {
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-rev-reason" type="text" value="${_esc(r.reason||'')}"
                 style="width:100%;border:none;background:transparent;font-size:.78rem;"></td>
             <td style="padding:2px;border:1px solid #bbb;"></td>
-            <td style="padding:2px;border:1px solid #bbb;text-align:center;">
+            <td style="padding:2px;border:1px solid #bbb;text-align:right;">
                 <button type="button" onclick="InjIncomingStdModule._insertRevRowAfter(this)"
                     style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;" title="아래 행 추가">+</button>
                 <button type="button" onclick="this.closest('tr').remove()"
                     style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px;line-height:1;" title="행 삭제">×</button>
             </td></tr>`).join('');
 
-        // 이미지 목록 초기화
-        _formImages = std ? [...(std.images||[])] : [];
+        // 이미지 목록 초기화 (기존 string 포맷도 정규화)
+        _formImages = (std ? (std.images||[]) : []).map(_normImg);
 
         /* ── 인라인 CSS (문서 스타일) ── */
         const docStyle = `
@@ -307,16 +307,28 @@ var InjIncomingStdModule = (function () {
         <table style="margin-top:0;">
             <tr>
                 <!-- 이미지 영역 -->
-                <td style="width:50%;vertical-align:top;border:1px solid #888;padding:6px;">
-                    <div style="text-align:center;font-weight:700;font-size:11px;margin-bottom:4px;">외관 / 치수포인트</div>
-                    <div id="stdImgGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;min-height:160px;">
-                        ${_renderImgGrid(_formImages)}
-                    </div>
-                    <div style="margin-top:6px;display:flex;align-items:center;gap:6px;">
-                        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:.75rem;color:#2563eb;white-space:nowrap;">
-                            <span class="material-symbols-outlined" style="font-size:16px;">add_photo_alternate</span> 이미지 추가
-                            <input type="file" accept="image/*" multiple style="display:none;" onchange="InjIncomingStdModule._addImages(this)">
+                <td style="width:50%;border:1px solid #888;padding:0;height:1px;">
+                    <div class="doc-sec" style="display:flex;align-items:center;justify-content:space-between;padding:5px 8px;">
+                        <span>외관 / 치수포인트</span>
+                        <label style="display:flex;align-items:center;gap:3px;cursor:pointer;
+                                      font-size:.72rem;font-weight:400;color:#2563eb;white-space:nowrap;">
+                            <span class="material-symbols-outlined" style="font-size:14px;">add_photo_alternate</span>
+                            <input type="file" accept="image/*" multiple style="display:none;"
+                                onchange="InjIncomingStdModule._addImages(this)">
                         </label>
+                    </div>
+                    <div id="stdImgPasteZone" tabindex="0"
+                        onpaste="InjIncomingStdModule._onPaste(event)"
+                        onfocus="this.style.outline='2px dashed #2563eb';this.style.outlineOffset='-3px'"
+                        onblur="this.style.outline='none'"
+                        onclick="this.focus()"
+                        style="outline:none;padding:6px;cursor:pointer;
+                               display:flex;flex-direction:column;height:calc(100% - 28px);">
+                        <!-- 이미지 그리드: flex-grow로 남은 공간 채움 -->
+                        <div id="stdImgGrid"
+                            style="display:grid;grid-template-columns:1fr 1fr;gap:4px;flex:1;align-content:start;">
+                            ${_renderImgGrid(_formImages)}
+                        </div>
                     </div>
                 </td>
                 <!-- 주요검사 Point -->
@@ -347,14 +359,18 @@ var InjIncomingStdModule = (function () {
                 <td style="width:50%;vertical-align:top;border:1px solid #888;padding:0;">
                     <div class="doc-sec">검 사 순 서</div>
                     <div style="padding:6px;">
-                        <textarea id="stdProcedure" style="width:100%;border:none;background:transparent;font-family:'Malgun Gothic',sans-serif;font-size:11px;line-height:1.8;resize:none;min-height:120px;outline:none;"
+                        <textarea id="stdProcedure"
+                            oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"
+                            style="width:100%;border:none;background:transparent;font-family:'Malgun Gothic',sans-serif;font-size:11px;line-height:1.8;resize:none;overflow:hidden;outline:none;display:block;"
                             >${std?_esc(std.procedure||''):'1. 소재의 표면상태를 검사한다.\n 1-1. 전면 → 후면 순으로 검사한다.\n2. 소재불량은 해당부위 마킹 후 별도의 불량 박스에 보관한다.\n3. 사출품의 표면 장력 Test를 실시한다.\n4. BOX내부에 이물질 유무검사를 실시한다.\n5. 내 포장 상태를 확인한다. (찢어짐등이 없을 것)\n6. 명세표 대비 수량을 확인한다.'}</textarea>
                     </div>
                 </td>
                 <td style="width:50%;vertical-align:top;border:1px solid #888;padding:0;">
                     <div class="doc-sec">조 치 사 항</div>
                     <div style="padding:6px;">
-                        <textarea id="stdCorrective" style="width:100%;border:none;background:transparent;font-family:'Malgun Gothic',sans-serif;font-size:11px;line-height:1.8;resize:none;min-height:70px;outline:none;"
+                        <textarea id="stdCorrective"
+                            oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"
+                            style="width:100%;border:none;background:transparent;font-family:'Malgun Gothic',sans-serif;font-size:11px;line-height:1.8;resize:none;overflow:hidden;outline:none;display:block;"
                             >${std?_esc(std.corrective||''):'1. 무결함을 원칙으로 한다.\n2. 불량 발생 시 반품, 선별, 폐기, 특채 의 조치를 취할 수 있다.'}</textarea>
                     </div>
                     <!-- 개정내용 -->
@@ -390,38 +406,176 @@ var InjIncomingStdModule = (function () {
             </button>
             <button class="btn btn-primary" onclick="InjIncomingStdModule.saveForm('${isEdit?std.id:''}')">저장</button>
         `, 'xl');
+
+        // 모달 렌더 후 textarea 초기 높이 자동 계산
+        setTimeout(() => {
+            ['stdProcedure','stdCorrective'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }
+            });
+        }, 50);
     }
+
+    /* ── 이미지 정규화: src 문자열 or {src,h,label} → 객체 ── */
+    function _normImg(v) {
+        if (typeof v === 'string') return {src:v, h:100, label:''};
+        return {src:v.src||'', h:v.h||100, label:v.label||''};
+    }
+
+    /* ── 공통 핸들 스타일 ── */
+    const _HDL = `position:absolute;width:10px;height:10px;background:#2563eb;border:2px solid #fff;
+                  border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,.4);z-index:10;`;
 
     /* ── 이미지 그리드 렌더 ── */
     function _renderImgGrid(images) {
-        if(!images||!images.length) return `<div style="grid-column:1/-1;display:flex;align-items:center;justify-content:center;
-            min-height:150px;border:2px dashed #ccc;border-radius:6px;color:#bbb;font-size:.8rem;">이미지를 추가하세요</div>`;
-        return images.map((src,i)=>`
-            <div style="position:relative;border:1px solid #ddd;border-radius:4px;overflow:hidden;background:#f9f9f9;">
-                <img src="${src}" style="width:100%;height:100px;object-fit:cover;display:block;">
-                <button type="button" onclick="InjIncomingStdModule._removeImage(${i})"
-                    style="position:absolute;top:2px;right:2px;background:rgba(220,38,38,.8);border:none;color:#fff;border-radius:50%;
-                    width:18px;height:18px;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;">✕</button>
-            </div>`).join('');
+        if (!images || !images.length) return `
+            <div style="grid-column:1/-1;display:flex;flex-direction:column;align-items:center;
+                justify-content:center;min-height:150px;color:#bbb;gap:6px;">
+                <span class="material-symbols-outlined" style="font-size:32px;">content_paste</span>
+                <span style="font-size:.75rem;">클릭 후 Ctrl+V 또는 파일 선택</span>
+            </div>`;
+        return images.map((img, i) => {
+            const o = _normImg(img);
+            return `
+            <div class="std-img-card" data-idx="${i}" draggable="true"
+                ondragstart="InjIncomingStdModule._dragStart(event,${i})"
+                ondragover="InjIncomingStdModule._dragOver(event)"
+                ondrop="InjIncomingStdModule._dragDrop(event,${i})"
+                ondragend="InjIncomingStdModule._dragEnd(event)"
+                style="position:relative;border:1px solid #ddd;border-radius:4px;
+                       background:#f9f9f9;user-select:none;cursor:grab;">
+                <!-- 라벨 -->
+                <div style="padding:2px 22px 2px 4px;background:#e8edf2;border-bottom:1px solid #ddd;">
+                    <input type="text" value="${_esc(o.label)}" placeholder="라벨 (예: 외관)"
+                        onchange="InjIncomingStdModule._updateImgLabel(${i},this.value)"
+                        onclick="event.stopPropagation()"
+                        style="width:100%;border:none;background:transparent;font-size:10px;outline:none;">
+                </div>
+                <!-- 이미지 영역 (리사이즈 핸들 포함) -->
+                <div class="std-img-wrap" style="position:relative;overflow:visible;">
+                    <img src="${o.src}" style="width:100%;height:${o.h}px;object-fit:contain;display:block;background:#fff;">
+                    <!-- 4 모서리 리사이즈 핸들 -->
+                    <div style="${_HDL}top:-5px;left:-5px;cursor:nw-resize;"
+                        onmousedown="event.stopPropagation();InjIncomingStdModule._startResize(event,${i},'nw')"></div>
+                    <div style="${_HDL}top:-5px;right:-5px;cursor:ne-resize;"
+                        onmousedown="event.stopPropagation();InjIncomingStdModule._startResize(event,${i},'ne')"></div>
+                    <div style="${_HDL}bottom:-5px;left:-5px;cursor:sw-resize;"
+                        onmousedown="event.stopPropagation();InjIncomingStdModule._startResize(event,${i},'sw')"></div>
+                    <div style="${_HDL}bottom:-5px;right:-5px;cursor:se-resize;"
+                        onmousedown="event.stopPropagation();InjIncomingStdModule._startResize(event,${i},'se')"></div>
+                </div>
+                <!-- 삭제 버튼 -->
+                <button type="button" onclick="event.stopPropagation();InjIncomingStdModule._removeImage(${i})"
+                    style="position:absolute;top:22px;right:2px;background:rgba(220,38,38,.8);border:none;
+                    color:#fff;border-radius:50%;width:18px;height:18px;font-size:11px;cursor:pointer;
+                    display:flex;align-items:center;justify-content:center;line-height:1;z-index:11;">✕</button>
+            </div>`;
+        }).join('');
     }
 
-    function _addImages(input) {
-        Array.from(input.files).forEach(file=>{
-            const r=new FileReader();
-            r.onload=e=>{
-                _formImages.push(e.target.result);
-                const g=document.getElementById('stdImgGrid');
-                if(g) g.innerHTML=_renderImgGrid(_formImages);
+    /* ── drag & drop 변수 ── */
+    let _dragIdx = -1;
+
+    function _dragStart(e, idx) {
+        _dragIdx = idx;
+        e.dataTransfer.effectAllowed = 'move';
+        e.currentTarget.style.opacity = '0.5';
+    }
+    function _dragOver(e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+    }
+    function _dragEnd(e) {
+        e.currentTarget.style.opacity = '';
+        _dragIdx = -1;
+    }
+    function _dragDrop(e, toIdx) {
+        e.preventDefault();
+        if (_dragIdx < 0 || _dragIdx === toIdx) return;
+        const imgs = _formImages.map(_normImg);
+        const moved = imgs.splice(_dragIdx, 1)[0];
+        imgs.splice(toIdx, 0, moved);
+        _formImages = imgs;
+        const g = document.getElementById('stdImgGrid');
+        if (g) g.innerHTML = _renderImgGrid(_formImages);
+    }
+
+    function _resizeImg(idx, h) {
+        _formImages = _formImages.map(_normImg);
+        _formImages[idx].h = Number(h);
+        const card = document.querySelectorAll('.std-img-card')[idx];
+        if (card) { const im = card.querySelector('img'); if (im) im.style.height = h + 'px'; }
+    }
+
+    function _startResize(e, idx, dir) {
+        e.preventDefault();
+        _formImages = _formImages.map(_normImg);
+        const startY = e.clientY;
+        const startH = _formImages[idx].h;
+
+        const card = document.querySelectorAll('.std-img-card')[idx];
+        const imgEl = card ? card.querySelector('img') : null;
+
+        // 리사이즈 중 드래그 비활성화
+        if (card) card.draggable = false;
+
+        function onMove(ev) {
+            const dy = dir.includes('s') ? ev.clientY - startY : startY - ev.clientY;
+            const newH = Math.max(50, Math.min(400, startH + dy));
+            _formImages[idx].h = newH;
+            if (imgEl) imgEl.style.height = newH + 'px';
+        }
+        function onUp() {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            if (card) card.draggable = true;
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    }
+
+    function _updateImgLabel(idx, label) {
+        _formImages = _formImages.map(_normImg);
+        _formImages[idx].label = label;
+    }
+
+    function _onPaste(e) {
+        e.preventDefault();
+        const items = ((e.clipboardData || {}).items) || [];
+        Array.from(items).forEach(item => {
+            if (!item.type.startsWith('image/')) return;
+            const file = item.getAsFile();
+            if (!file) return;
+            const r = new FileReader();
+            r.onload = ev => {
+                _formImages = _formImages.map(_normImg);
+                _formImages.push({src: ev.target.result, h: 100, label: ''});
+                const g = document.getElementById('stdImgGrid');
+                if (g) g.innerHTML = _renderImgGrid(_formImages);
             };
             r.readAsDataURL(file);
         });
-        input.value='';
+    }
+
+    function _addImages(input) {
+        Array.from(input.files).forEach(file => {
+            const r = new FileReader();
+            r.onload = e => {
+                _formImages = _formImages.map(_normImg);
+                _formImages.push({src: e.target.result, h: 100, label: ''});
+                const g = document.getElementById('stdImgGrid');
+                if (g) g.innerHTML = _renderImgGrid(_formImages);
+            };
+            r.readAsDataURL(file);
+        });
+        input.value = '';
     }
 
     function _removeImage(idx) {
-        _formImages.splice(idx,1);
-        const g=document.getElementById('stdImgGrid');
-        if(g) g.innerHTML=_renderImgGrid(_formImages);
+        _formImages = _formImages.map(_normImg);
+        _formImages.splice(idx, 1);
+        const g = document.getElementById('stdImgGrid');
+        if (g) g.innerHTML = _renderImgGrid(_formImages);
     }
 
     function _onCarFilterChange() {
@@ -463,8 +617,8 @@ var InjIncomingStdModule = (function () {
             <td style="text-align:center;padding:3px;border:1px solid #bbb;font-size:.8rem;">${i}</td>
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-item" type="text"
                 style="width:100%;border:none;background:transparent;font-size:.8rem;padding:2px;"></td>
-            <td style="padding:2px;border:1px solid #bbb;"><textarea class="std-pt-std" rows="2"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;resize:none;"></textarea></td>
+            <td style="padding:4px 2px;border:1px solid #bbb;"><div class="std-pt-std" contenteditable="true"
+                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;line-height:1.5;outline:none;white-space:pre-wrap;min-height:1.5em;"></div></td>
             <td style="padding:2px;border:1px solid #bbb;text-align:center;"><input class="std-pt-method" type="text"
                 style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
             <td style="padding:2px;border:1px solid #bbb;text-align:center;"><input class="std-pt-sample" type="text"
@@ -490,8 +644,8 @@ var InjIncomingStdModule = (function () {
             <td style="text-align:center;padding:3px;border:1px solid #bbb;font-size:.8rem;">-</td>
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-item" type="text"
                 style="width:100%;border:none;background:transparent;font-size:.8rem;padding:2px;"></td>
-            <td style="padding:2px;border:1px solid #bbb;"><textarea class="std-pt-std" rows="2"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;resize:none;"></textarea></td>
+            <td style="padding:4px 2px;border:1px solid #bbb;"><div class="std-pt-std" contenteditable="true"
+                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;line-height:1.5;outline:none;white-space:pre-wrap;min-height:1.5em;"></div></td>
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-method" type="text"
                 style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-sample" type="text"
@@ -519,7 +673,7 @@ var InjIncomingStdModule = (function () {
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-rev-reason" type="text"
                 style="width:100%;border:none;background:transparent;font-size:.78rem;"></td>
             <td style="padding:2px;border:1px solid #bbb;"></td>
-            <td style="padding:2px;border:1px solid #bbb;text-align:center;">
+            <td style="padding:2px;border:1px solid #bbb;text-align:right;">
                 <button type="button" onclick="InjIncomingStdModule._insertRevRowAfter(this)"
                     style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;" title="아래 행 추가">+</button>
                 <button type="button" onclick="this.closest('tr').remove()"
@@ -558,7 +712,7 @@ var InjIncomingStdModule = (function () {
         const checkPoints=[];
         document.querySelectorAll('#stdCheckBody tr').forEach(tr=>{
             const item=(tr.querySelector('.std-pt-item')||{}).value||'';
-            const std=(tr.querySelector('.std-pt-std')||{}).value||'';
+            const stdEl=tr.querySelector('.std-pt-std'); const std=stdEl?(stdEl.value!==undefined?stdEl.value:stdEl.innerText||stdEl.textContent||''):'';
             const method=(tr.querySelector('.std-pt-method')||{}).value||'';
             const sample=(tr.querySelector('.std-pt-sample')||{}).value||'';
             const mgmt=(tr.querySelector('.std-pt-mgmt')||{}).value||'';
@@ -589,7 +743,7 @@ var InjIncomingStdModule = (function () {
             approver:    g('stdApprover'),
             procedure:   g('stdProcedure'),
             corrective:  g('stdCorrective'),
-            images:      [..._formImages],
+            images:      _formImages.map(_normImg),
             checkPoints,
             revisions
         };
@@ -616,10 +770,14 @@ var InjIncomingStdModule = (function () {
             <td style="text-align:center;">${_esc(pt.sample||'')}</td>
             <td>${_esc(pt.management||'')}</td></tr>`).join('');
 
-        const imgHtml=(std.images||[]).map((src,i)=>`
-            <div style="border:1px solid #ccc;padding:2px;">
-                <img src="${src}" style="width:100%;height:110px;object-fit:cover;display:block;">
-            </div>`).join('');
+        const imgHtml=(std.images||[]).map(v=>{
+            const o=typeof v==='string'?{src:v,h:100,label:''}:{src:v.src||'',h:v.h||100,label:v.label||''};
+            const hmm = px2mm(o.h);
+            return `<div style="border:1px solid #ccc;padding:2px;">
+                ${o.label?`<div style="font-size:9px;font-weight:700;text-align:center;padding:2px 0;background:#e8edf2;">${_esc(o.label)}</div>`:''}
+                <img src="${o.src}" style="height:${hmm}mm;max-width:100%;">
+            </div>`;
+        }).join('');
 
         const revRows=(std.revisions||[]).map(r=>`<tr>
             <td style="text-align:center;">${_esc(r.no||'')}</td>
@@ -627,19 +785,24 @@ var InjIncomingStdModule = (function () {
             <td>${_esc(r.reason||'')}</td>
             <td style="text-align:center;">${_esc(r.confirmer||'')}</td></tr>`).join('');
 
+        // 화면 px → mm 변환 (96dpi 기준: 1px = 0.2646mm)
+        const px2mm = px => (Number(px) * 0.2646).toFixed(1);
+
         const win=window.open('','_blank','width=960,height=720');
         win.document.write(`<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
         <title>수입검사 기준서 — ${_esc(std.partName||'')}</title>
         <style>
+            @page{size:A4 landscape;margin:8mm;}
             *{box-sizing:border-box;margin:0;padding:0;}
-            body{font-family:'Malgun Gothic','맑은 고딕',sans-serif;font-size:11px;padding:12mm 8mm;color:#111;}
-            table{border-collapse:collapse;width:100%;}
-            th,td{border:1px solid #555;padding:4px 5px;vertical-align:middle;}
+            html,body{width:281mm;font-family:'Malgun Gothic','맑은 고딕',sans-serif;font-size:10px;color:#111;}
+            table{border-collapse:collapse;width:100%;table-layout:fixed;}
+            th,td{border:1px solid #555;padding:3px 5px;vertical-align:middle;overflow:hidden;}
             .doc-th{background:#d0e4f7;font-weight:700;text-align:center;}
-            .doc-sec{background:#d0e4f7;font-weight:700;text-align:center;font-size:12px;padding:5px;}
+            .doc-sec{background:#d0e4f7;font-weight:700;text-align:center;font-size:11px;padding:4px;}
             .doc-label{background:#f0f0f0;font-weight:700;text-align:center;white-space:nowrap;}
-            .doc-title{font-size:20px;font-weight:900;text-align:center;letter-spacing:2px;}
-            @media print{body{padding:0;} @page{size:A4 landscape;}}
+            .doc-title{font-size:18px;font-weight:900;text-align:center;letter-spacing:2px;}
+            img{display:block;width:100%;object-fit:contain;background:#fff;}
+            @media print{html,body{width:281mm;}}
         </style></head><body>
         <!-- 헤더 -->
         <table>
@@ -676,12 +839,13 @@ var InjIncomingStdModule = (function () {
             </tr>
         </table>
         <!-- 이미지 + 주요검사 -->
-        <table style="margin-top:0;">
+        <table style="margin-top:0;table-layout:fixed;">
+            <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
             <tr>
-                <td style="width:50%;vertical-align:top;padding:6px;">
-                    <div style="font-weight:700;text-align:center;margin-bottom:4px;">외관 / 치수포인트</div>
-                    <div style="display:grid;grid-template-columns:${(std.images||[]).length>2?'1fr 1fr':'1fr'};gap:4px;">
-                        ${imgHtml||'<div style="text-align:center;padding:30px;color:#aaa;">이미지 없음</div>'}
+                <td style="vertical-align:top;padding:0;">
+                    <div class="doc-sec">외관 / 치수포인트</div>
+                    <div style="padding:4px;display:grid;grid-template-columns:${(std.images||[]).length>1?'1fr 1fr':'1fr'};gap:4px;align-items:start;">
+                        ${imgHtml||'<div style="text-align:center;padding:20px;color:#aaa;">이미지 없음</div>'}
                     </div>
                 </td>
                 <td style="width:50%;vertical-align:top;padding:0;">
@@ -701,13 +865,14 @@ var InjIncomingStdModule = (function () {
             </tr>
         </table>
         <!-- 검사순서 / 조치사항 -->
-        <table style="margin-top:0;">
+        <table style="margin-top:0;table-layout:fixed;">
+            <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
             <tr>
-                <td style="width:40%;vertical-align:top;padding:0;">
+                <td style="vertical-align:top;padding:0;">
                     <div class="doc-sec">검 사 순 서</div>
                     <div style="padding:8px;white-space:pre-wrap;line-height:1.8;font-size:11px;">${_esc(std.procedure||'')}</div>
                 </td>
-                <td style="width:50%;vertical-align:top;padding:0;">
+                <td style="vertical-align:top;padding:0;">
                     <div class="doc-sec">조 치 사 항</div>
                     <div style="padding:8px;white-space:pre-wrap;line-height:1.8;font-size:11px;">${_esc(std.corrective||'')}</div>
                     <table style="font-size:10px;margin-top:6px;">
@@ -739,7 +904,10 @@ var InjIncomingStdModule = (function () {
         init, render, renderList,
         openNewForm, openNewFormForProduct, openEditForm,
         saveForm, printStd,
-        _onCarFilterChange, _onProductChange, _addCheckRow, _insertCheckRowAfter, _addRevRow, _insertRevRowAfter,
+        _onCarFilterChange, _onProductChange, _onPaste,
+        _dragStart, _dragOver, _dragEnd, _dragDrop,
+        _startResize, _resizeImg, _updateImgLabel,
+        _addCheckRow, _insertCheckRowAfter, _addRevRow, _insertRevRowAfter,
         _addImages, _removeImage
     };
 })();

@@ -2276,6 +2276,7 @@ const PaintInventoryModule = (function() {
             revisionWriter3: '',
             revisionReviewer3: '',
             revisionApprover3: '',
+            approvals: window.ApprovalUtils ? ApprovalUtils.normalize() : {},
             images: {},
             objects: {
                 settingTemp: { slot: 'controller', x: 77, y: 17, w: 22, h: 13, bg: '#9bbb59', color: '#fff', text: '셋팅온도' },
@@ -2527,7 +2528,13 @@ const PaintInventoryModule = (function() {
 
     async function _loadTemperatureStandard() {
         try {
-            return { ..._defaultTemperatureStandard(), ...((await Storage.getConfigValue(TEMP_STANDARD_CONFIG_KEY)) || {}) };
+            const defaults = _defaultTemperatureStandard();
+            const saved = (await Storage.getConfigValue(TEMP_STANDARD_CONFIG_KEY)) || {};
+            return {
+                ...defaults,
+                ...saved,
+                approvals: window.ApprovalUtils ? ApprovalUtils.normalize(saved.approvals || defaults.approvals) : (saved.approvals || defaults.approvals || {})
+            };
         } catch (err) {
             console.warn('[PaintInventory] 온도관리 기준서 설정 로드 실패', err);
             return _defaultTemperatureStandard();
@@ -2536,6 +2543,7 @@ const PaintInventoryModule = (function() {
 
     async function openTemperatureStandard() {
         const data = await _loadTemperatureStandard();
+        window._paintTempStandardApprovals = window.ApprovalUtils ? ApprovalUtils.normalize(data.approvals) : (data.approvals || {});
         const deletedBoxes = Object.keys(TEMP_STANDARD_BOX_DEFAULTS)
             .filter(key => data.boxes && data.boxes[key] && data.boxes[key].deleted)
             .join(',');
@@ -2614,7 +2622,21 @@ const PaintInventoryModule = (function() {
                 #paintTempStandardDoc .pts-object.pts-selected .pts-object-resize {
                     display: block;
                 }
+                #paintTempApprovalBox {
+                    margin: 0 0 10px;
+                }
+                #paintTempApprovalBox .approval-widget {
+                    margin: 0;
+                }
             </style>
+            <div id="paintTempApprovalBox">
+                ${window.ApprovalUtils ? ApprovalUtils.render(data.approvals, {
+                    prefix: 'paintTempApproval',
+                    editable: true,
+                    signHandler: 'PaintInventoryModule.signTemperatureStandardApproval',
+                    clearHandler: 'PaintInventoryModule.clearTemperatureStandardApproval'
+                }) : ''}
+            </div>
             <div style="border:2px solid #1d4ed8;background:#fff;color:#111827;font-family:Inter,'Malgun Gothic',sans-serif;">
                 <div id="paintTempStandardDoc" data-deleted-boxes="${deletedBoxes}" data-deleted-objects="${deletedObjects}" style="background:#fff;">
                 <div style="display:grid;grid-template-columns:220px 1fr 450px;border-bottom:1px solid #111827;">
@@ -2782,6 +2804,43 @@ const PaintInventoryModule = (function() {
         if (footer) footer.innerHTML = _temperatureStandardFooter(!!editing);
     }
 
+    function _renderTemperatureStandardApprovals() {
+        const box = document.getElementById('paintTempApprovalBox');
+        if (!box || !window.ApprovalUtils) return;
+        window._paintTempStandardApprovals = ApprovalUtils.collect('paintTempApproval', window._paintTempStandardApprovals || {});
+        box.innerHTML = ApprovalUtils.render(window._paintTempStandardApprovals, {
+            prefix: 'paintTempApproval',
+            editable: true,
+            signHandler: 'PaintInventoryModule.signTemperatureStandardApproval',
+            clearHandler: 'PaintInventoryModule.clearTemperatureStandardApproval'
+        });
+    }
+
+    async function _persistTemperatureStandardApprovals() {
+        try {
+            await Storage.setConfigValue(TEMP_STANDARD_CONFIG_KEY, _collectTemperatureStandard());
+        } catch (err) {
+            console.error('[PaintInventory] approval save failed', err);
+            UIUtils.toast('서명 저장에 실패했습니다. 서버 연결 상태를 확인하세요.', 'error');
+        }
+    }
+
+    async function signTemperatureStandardApproval(roleKey) {
+        if (!window.ApprovalUtils) return;
+        window._paintTempStandardApprovals = ApprovalUtils.collect('paintTempApproval', window._paintTempStandardApprovals || {});
+        window._paintTempStandardApprovals = ApprovalUtils.sign(window._paintTempStandardApprovals, roleKey);
+        _renderTemperatureStandardApprovals();
+        await _persistTemperatureStandardApprovals();
+    }
+
+    async function clearTemperatureStandardApproval(roleKey) {
+        if (!window.ApprovalUtils) return;
+        window._paintTempStandardApprovals = ApprovalUtils.collect('paintTempApproval', window._paintTempStandardApprovals || {});
+        window._paintTempStandardApprovals = ApprovalUtils.clear(window._paintTempStandardApprovals, roleKey);
+        _renderTemperatureStandardApprovals();
+        await _persistTemperatureStandardApprovals();
+    }
+
     function setTemperatureStandardEdit(enabled) {
         const doc = document.getElementById('paintTempStandardDoc');
         if (!doc) return;
@@ -2913,6 +2972,10 @@ const PaintInventoryModule = (function() {
         const doc = document.getElementById('paintTempStandardDoc');
         const data = _defaultTemperatureStandard();
         if (!doc) return data;
+        data.approvals = window.ApprovalUtils
+            ? ApprovalUtils.collect('paintTempApproval', window._paintTempStandardApprovals || data.approvals)
+            : (window._paintTempStandardApprovals || data.approvals || {});
+        window._paintTempStandardApprovals = data.approvals;
         doc.querySelectorAll('[data-pts-field]').forEach(el => {
             data[el.dataset.ptsField] = el.innerHTML.trim();
         });
@@ -3557,6 +3620,11 @@ const PaintInventoryModule = (function() {
     function printTemperatureStandard() {
         const doc = document.getElementById('paintTempStandardDoc');
         if (!doc) return;
+        if (window.ApprovalUtils) {
+            window._paintTempStandardApprovals = ApprovalUtils.collect('paintTempApproval', window._paintTempStandardApprovals || {});
+            _renderTemperatureStandardApprovals();
+        }
+        const approvalBox = document.getElementById('paintTempApprovalBox');
         const win = window.open('', '_blank');
         if (!win) {
             UIUtils.toast('인쇄 창을 열 수 없습니다. 팝업 차단 설정을 확인하세요.', 'warning');
@@ -3571,7 +3639,7 @@ const PaintInventoryModule = (function() {
                 [contenteditable] { outline: none !important; background: transparent !important; }
                 .pts-photo-slot::after { display:none !important; }
                 .pts-selected { box-shadow:none !important; }
-            </style></head><body>${doc.outerHTML}</body></html>
+            </style></head><body>${approvalBox ? approvalBox.outerHTML : ''}${doc.outerHTML}</body></html>
         `);
         win.document.close();
         win.focus();
@@ -3617,6 +3685,8 @@ const PaintInventoryModule = (function() {
         clearAllInventory,
         exportData,
         openTemperatureStandard,
+        signTemperatureStandardApproval,
+        clearTemperatureStandardApproval,
         setTemperatureStandardEdit,
         saveTemperatureStandard,
         resetTemperatureStandard,

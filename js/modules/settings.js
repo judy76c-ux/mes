@@ -896,6 +896,62 @@ const SettingsModule = (function() {
         const initialPaintTableHtml = _paintTableHtml(idPrefix, initialPaintRows, allPaints);
 
         return `
+            <style>
+                #modalBody .form-row {
+                    gap: 10px !important;
+                    margin-bottom: 8px !important;
+                }
+                #modalBody .form-group {
+                    margin-bottom: 6px !important;
+                }
+                #modalBody .form-label {
+                    font-size: 0.74rem !important;
+                    margin-bottom: 4px !important;
+                }
+                #modalBody .form-input,
+                #modalBody .form-select {
+                    min-height: 32px !important;
+                    height: 32px !important;
+                    padding: 5px 10px !important;
+                    font-size: 0.82rem !important;
+                }
+                #modalBody [id$="PartNameHint"] {
+                    min-height: 10px !important;
+                    margin-top: 2px !important;
+                    font-size: 0.68rem !important;
+                }
+                #modalBody [id$="ProcessContainer"] > div {
+                    padding: 5px 8px !important;
+                    margin-bottom: 5px !important;
+                    gap: 8px !important;
+                    border-radius: 6px !important;
+                }
+                #modalBody [id$="ProcessContainer"] .form-label {
+                    width: 76px !important;
+                }
+                #modalBody [id$="ProcessContainer"] button {
+                    height: 32px !important;
+                    padding: 0 8px !important;
+                }
+                #modalBody [id$="PaintList"] table th,
+                #modalBody [id$="PaintList"] table td {
+                    padding: 4px 6px !important;
+                    line-height: 1.2 !important;
+                    font-size: 0.74rem !important;
+                }
+                #modalBody [id$="PaintList"] .form-select {
+                    height: 30px !important;
+                    min-height: 30px !important;
+                    padding: 3px 8px !important;
+                    font-size: 0.76rem !important;
+                }
+                #modalBody [style*="margin:16px 0 12px"],
+                #modalBody [style*="margin:20px 0 12px"] {
+                    margin-top: 10px !important;
+                    margin-bottom: 6px !important;
+                    padding-bottom: 5px !important;
+                }
+            </style>
             <div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid var(--accent-blue);">
                 <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;">category</span>
                 기본 정보
@@ -960,7 +1016,6 @@ const SettingsModule = (function() {
                 제조 공정 및 사양 (C/T, CVT)
             </div>
             
-            <div id="${idPrefix}ProcessContainer">
             <div id="${idPrefix}ProcessContainer">
                 <!-- 제조공정 Row 1 (항상 노출) -->
                 <div id="${idPrefix}Row1" style="background:var(--bg-secondary); padding:10px; border-radius:8px; margin-bottom:8px; display:flex !important; flex-wrap:nowrap; align-items:center; gap:12px;">
@@ -1754,12 +1809,12 @@ const SettingsModule = (function() {
         renderTabContent();
     }
 
-    function editProduct(id) {
+    function editProduct(id, returnToValidation = false) {
         const p = Storage.getById(PRODUCTS_STORE, id);
         if (!p) return;
         UIUtils.showModal({ title: '제품 수정', body: _productFormHTML(p, 'editProd'), footer: `
-            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" onclick="SettingsModule.updateProduct('${id}')">저장</button>
+            <button class="btn btn-secondary" onclick="${returnToValidation ? 'SettingsModule.openPaintValidationModal()' : 'UIUtils.closeModal()'}">취소</button>
+            <button class="btn btn-primary" onclick="SettingsModule.updateProduct('${id}', ${returnToValidation ? 'true' : 'false'})">저장</button>
         `, size: 'xxxl', noBackdropClose: true });
         setTimeout(() => {
             // 품명/컬러 변경 시 코드 자동 갱신
@@ -1777,7 +1832,7 @@ const SettingsModule = (function() {
         }, 100);
     }
 
-    async function updateProduct(id) {
+    async function updateProduct(id, returnToValidation = false) {
         const data = _collectProductForm('editProd');
         if (!data.partName) {
             UIUtils.toast('품명은 필수입니다.', 'warning');
@@ -1853,7 +1908,11 @@ const SettingsModule = (function() {
         UIUtils.closeModal();
         UIUtils.toast(injMatChanged ? '제품 및 사출 자재가 저장되었습니다.' : '수정되었습니다.', 'success');
 
-        renderTabContent();
+        if (returnToValidation) {
+            openPaintValidationModal();
+        } else {
+            renderTabContent();
+        }
 
         // ── 품명이 변경된 경우 → 전체 이력 일괄 변경 질의 ───────────
         if (partNameChanged) {
@@ -5117,14 +5176,8 @@ const SettingsModule = (function() {
                         </select>
                     </div>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                        <button class="btn btn-outline" onclick="SettingsModule.downloadPaintCSV()">
-                            <span class="material-symbols-outlined">download</span> CSV 다운로드
-                        </button>
                         <button class="btn btn-outline" style="border-color:#6366f1;color:#4f46e5;" onclick="SettingsModule.openPaintValidationModal()">
                             <span class="material-symbols-outlined">verified</span> 도료 검증
-                        </button>
-                        <button class="btn btn-secondary" onclick="SettingsModule.openPaintUploadModal()">
-                            <span class="material-symbols-outlined">upload_file</span> 일괄 업로드
                         </button>
                         <button class="btn btn-primary" onclick="SettingsModule.openAddPaintModal()">
                             <span class="material-symbols-outlined">add</span> 도료 추가
@@ -5232,8 +5285,9 @@ const SettingsModule = (function() {
                 <div style="font-size:1.2rem;font-weight:800;color:${color};">${value}</div>
                 <div style="font-size:0.78rem;color:var(--text-secondary);">${label}</div>
             </div>`;
-        const paintEditBtn = id => `<button class="btn btn-sm btn-outline" onclick="UIUtils.closeModal();SettingsModule.editPaint('${id}')">수정</button>`;
-        const productEditBtn = id => `<button class="btn btn-sm btn-outline" onclick="UIUtils.closeModal();SettingsModule.editProduct('${id}')">제품 수정</button>`;
+        const paintEditBtn = id => `<button class="btn btn-sm btn-outline" onclick="SettingsModule.editPaint('${id}', true)">수정</button>`;
+        const paintDeleteBtn = id => `<button class="btn btn-sm btn-danger" onclick="SettingsModule.deleteUnlinkedPaintFromValidation('${id}')">삭제</button>`;
+        const productEditBtn = id => `<button class="btn btn-sm btn-outline" onclick="SettingsModule.editProduct('${id}', true)">제품 수정</button>`;
         const paintLabel = p => `${p.supplier || '-'} / ${p.name || '-'} / ${p.manufacturer || '-'}`;
         const dupHtml = duplicateGroups.length ? duplicateGroups.map((list, i) => `
             <tr>
@@ -5263,7 +5317,7 @@ const SettingsModule = (function() {
                 <td>${p.manufacturer || '-'}</td>
                 <td>${p.paintType || '-'}</td>
                 <td>${p.paintSpec || '-'}</td>
-                <td>${paintEditBtn(p.id)}</td>
+                <td style="white-space:nowrap;">${paintEditBtn(p.id)} ${paintDeleteBtn(p.id)}</td>
             </tr>`).join('') : `<tr><td colspan="7" style="text-align:center;color:#10b981;padding:16px;">모든 도료가 제품정보에 연결되어 있습니다.</td></tr>`;
         const metaHtml = noMeta.length ? noMeta.map((p, i) => `
             <tr>
@@ -5275,6 +5329,52 @@ const SettingsModule = (function() {
             </tr>`).join('') : `<tr><td colspan="5" style="text-align:center;color:#10b981;padding:16px;">구매처/제조사 누락 없음</td></tr>`;
 
         UIUtils.showModal('도료 검증 — 제품정보 연결 및 명칭 점검', `
+            <style>
+                .paint-validation-view,
+                .paint-validation-view table,
+                .paint-validation-view th,
+                .paint-validation-view td,
+                .paint-validation-view div,
+                .paint-validation-view span {
+                    font-size: 12px !important;
+                }
+                .paint-validation-view .btn {
+                    font-size: 12px !important;
+                    padding: 2px 6px !important;
+                }
+                .paint-validation-view table {
+                    table-layout: fixed !important;
+                    width: 100% !important;
+                }
+                .paint-validation-view th,
+                .paint-validation-view td {
+                    white-space: nowrap !important;
+                    overflow: hidden !important;
+                    text-overflow: ellipsis !important;
+                    padding: 4px 6px !important;
+                    line-height: 1.25 !important;
+                }
+                .paint-validation-view th:nth-child(1),
+                .paint-validation-view td:nth-child(1) {
+                    width: 34px !important;
+                    max-width: 34px !important;
+                    text-align: center !important;
+                }
+                .paint-validation-view th:last-child,
+                .paint-validation-view td:last-child {
+                    width: 112px !important;
+                    max-width: 112px !important;
+                    text-align: center !important;
+                }
+                .paint-validation-view .pv-actions {
+                    width: 116px !important;
+                    max-width: 116px !important;
+                }
+                .paint-validation-view td strong {
+                    white-space: nowrap !important;
+                }
+            </style>
+            <div class="paint-validation-view" style="font-size:12px;">
             <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
                 ${stat('도료 마스터', paints.length, '#3b82f6')}
                 ${stat('제품정보 연결', usedIds.size, '#10b981')}
@@ -5289,27 +5389,44 @@ const SettingsModule = (function() {
                 <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
                     <h4 style="margin:0;padding:10px 12px;background:var(--bg-secondary);font-size:0.9rem;">중복/오타 후보</h4>
                     <div style="max-height:220px;overflow:auto;">
-                        <table class="data-table"><thead><tr><th>No</th><th>기준명</th><th>후보 목록</th></tr></thead><tbody>${dupHtml}</tbody></table>
+                        <table class="data-table">
+                            <colgroup><col style="width:34px"><col style="width:120px"><col></colgroup>
+                            <thead><tr><th>No</th><th>기준명</th><th>후보 목록</th></tr></thead><tbody>${dupHtml}</tbody>
+                        </table>
                     </div>
                 </div>
                 <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
                     <h4 style="margin:0;padding:10px 12px;background:var(--bg-secondary);font-size:0.9rem;">끊어진 제품 연결</h4>
                     <div style="max-height:220px;overflow:auto;">
-                        <table class="data-table"><thead><tr><th>No</th><th>차종</th><th>품명</th><th>구분</th><th>도료 ID</th><th>작업</th></tr></thead><tbody>${missingHtml}</tbody></table>
+                        <table class="data-table">
+                            <colgroup>
+                                <col style="width:34px"><col style="width:48px"><col><col style="width:48px"><col style="width:96px"><col style="width:116px">
+                            </colgroup>
+                            <thead><tr><th>No</th><th>차종</th><th>품명</th><th>구분</th><th>도료 ID</th><th class="pv-actions">작업</th></tr></thead><tbody>${missingHtml}</tbody>
+                        </table>
                     </div>
                 </div>
                 <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
                     <h4 style="margin:0;padding:10px 12px;background:var(--bg-secondary);font-size:0.9rem;">제품정보 미연결 도료</h4>
                     <div style="max-height:240px;overflow:auto;">
-                        <table class="data-table"><thead><tr><th>No</th><th>구매처</th><th>도료명</th><th>제조사</th><th>종류</th><th>사양</th><th>작업</th></tr></thead><tbody>${unlinkedHtml}</tbody></table>
+                        <table class="data-table">
+                            <colgroup>
+                                <col style="width:34px"><col style="width:78px"><col><col style="width:82px"><col style="width:52px"><col style="width:58px"><col style="width:116px">
+                            </colgroup>
+                            <thead><tr><th>No</th><th>구매처</th><th>도료명</th><th>제조사</th><th>종류</th><th>사양</th><th class="pv-actions">작업</th></tr></thead><tbody>${unlinkedHtml}</tbody>
+                        </table>
                     </div>
                 </div>
                 <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
                     <h4 style="margin:0;padding:10px 12px;background:var(--bg-secondary);font-size:0.9rem;">구매처/제조사 누락</h4>
                     <div style="max-height:240px;overflow:auto;">
-                        <table class="data-table"><thead><tr><th>No</th><th>구매처</th><th>도료명</th><th>제조사</th><th>작업</th></tr></thead><tbody>${metaHtml}</tbody></table>
+                        <table class="data-table">
+                            <colgroup><col style="width:34px"><col style="width:82px"><col><col style="width:92px"><col style="width:116px"></colgroup>
+                            <thead><tr><th>No</th><th>구매처</th><th>도료명</th><th>제조사</th><th class="pv-actions">작업</th></tr></thead><tbody>${metaHtml}</tbody>
+                        </table>
                     </div>
                 </div>
+            </div>
             </div>
         `, `<button class="btn btn-primary" onclick="UIUtils.closeModal()">닫기</button>`, 'xxl');
     }
@@ -5339,6 +5456,34 @@ const SettingsModule = (function() {
             await Storage.update(DB.STORES.PRODUCTS, productId, { ...product, paintMaterials: cleaned });
             await Storage.refresh(DB.STORES.PRODUCTS);
             UIUtils.toast('끊어진 도료 연결을 비웠습니다.', 'success');
+            openPaintValidationModal();
+        });
+    }
+
+    function deleteUnlinkedPaintFromValidation(paintId) {
+        const paint = Storage.getById(PAINT_STORE, paintId);
+        if (!paint) {
+            UIUtils.toast('도료 정보를 찾을 수 없습니다.', 'error');
+            return;
+        }
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const stillLinked = products.some(product =>
+            (product.paintMaterials || []).some(row =>
+                row.mainId === paintId ||
+                row.paintMaterialId === paintId ||
+                row.hardId === paintId ||
+                row.thinnerId === paintId
+            )
+        );
+        if (stillLinked) {
+            UIUtils.toast('제품정보에 연결된 도료는 여기서 삭제할 수 없습니다.', 'warning');
+            openPaintValidationModal();
+            return;
+        }
+        UIUtils.confirm(`제품정보 미연결 도료 "${paint.name || '-'}"를 삭제하시겠습니까?`, async () => {
+            await Storage.remove(PAINT_STORE, paintId);
+            await Storage.refresh(PAINT_STORE);
+            UIUtils.toast('미연결 도료를 삭제했습니다.', 'success');
             openPaintValidationModal();
         });
     }
@@ -5438,7 +5583,7 @@ const SettingsModule = (function() {
         renderTabContent();
     }
 
-    function editPaint(id) {
+    function editPaint(id, returnToValidation = false) {
         const p = Storage.getById(PAINT_STORE, id);
         if (!p) return;
 
@@ -5509,12 +5654,12 @@ const SettingsModule = (function() {
                 </div>
             </div>
         `, `
-            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" onclick="SettingsModule.updatePaint('${id}')">저장</button>
+            <button class="btn btn-secondary" onclick="${returnToValidation ? 'SettingsModule.openPaintValidationModal()' : 'UIUtils.closeModal()'}">취소</button>
+            <button class="btn btn-primary" onclick="SettingsModule.updatePaint('${id}', ${returnToValidation ? 'true' : 'false'})">저장</button>
         `);
     }
 
-    async function updatePaint(id) {
+    async function updatePaint(id, returnToValidation = false) {
         const supplier = document.getElementById('editPaintSupplier').value.trim();
         const name = document.getElementById('editPaintName').value.trim();
         const manufacturer = document.getElementById('editPaintManufacturer').value.trim();
@@ -5540,7 +5685,11 @@ const SettingsModule = (function() {
         });
         UIUtils.closeModal();
         UIUtils.toast('도료 정보가 수정되었습니다.', 'success');
-        renderTabContent();
+        if (returnToValidation) {
+            openPaintValidationModal();
+        } else {
+            renderTabContent();
+        }
     }
 
     function removePaint(id) {
@@ -8727,6 +8876,7 @@ const SettingsModule = (function() {
         updatePaint,
         openPaintValidationModal,
         clearMissingPaintRef,
+        deleteUnlinkedPaintFromValidation,
         removePaint,
         downloadPaintCSV,
         openPaintUploadModal,

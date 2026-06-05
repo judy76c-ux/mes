@@ -189,7 +189,7 @@ var InjectionIncomingModule = (function() {
         const allRecords = Storage.getAll(STORE);
         const pending = allRecords.filter(d => {
             const lots = (d.lots && d.lots.length > 0) ? d.lots : (d.lotNo ? [{ lotNo: d.lotNo, certReceived: d.certReceived || false }] : []);
-            return lots.some(l => !l.certReceived);
+            return lots.length > 0 && !lots.some(l => l.certReceived);
         }).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
         if (pending.length === 0) {
@@ -223,8 +223,7 @@ var InjectionIncomingModule = (function() {
                         <tbody>
                             ${pending.map(d => {
                                 const lots = (d.lots && d.lots.length > 0) ? d.lots : (d.lotNo ? [{ lotNo: d.lotNo, certReceived: d.certReceived || false, qty: d.incomingQty }] : []);
-                                const pendingLots = lots.filter(l => !l.certReceived);
-                                const lotBadges = pendingLots.map(l =>
+                                const lotBadges = lots.map(l =>
                                     `<span style="display:inline-flex;align-items:center;gap:2px;background:#fee2e2;border:1px solid #fca5a5;border-radius:4px;padding:1px 7px;font-size:0.8rem;font-family:monospace;color:#dc2626;font-weight:600;">
                                         <span class="material-symbols-outlined" style="font-size:0.85rem;">cancel</span>${l.lotNo || '-'}
                                     </span>`
@@ -279,14 +278,15 @@ var InjectionIncomingModule = (function() {
         if (!dateVal) { UIUtils.toast('접수일을 입력하세요.', 'warning'); return; }
         const record = Storage.getById(STORE, id);
         if (!record) return;
+        const representativeLotNo = record.certRepresentativeLotNo || (record.lots && record.lots[0] && record.lots[0].lotNo) || record.lotNo || '';
         const lots = (record.lots && record.lots.length > 0)
-            ? record.lots.map(l => ({ ...l, certReceived: true, certReceivedDate: dateVal }))
+            ? record.lots.map((l, idx) => ({ ...l, certReceived: true, certReceivedDate: dateVal, certRepresentative: (l.lotNo === representativeLotNo) || (!representativeLotNo && idx === 0) }))
             : [];
         if (lots.length > 0) {
-            await Storage.update(STORE, id, { lots, certReceivedDate: dateVal });
+            await Storage.update(STORE, id, { lots, certReceivedDate: dateVal, certRepresentativeLotNo: representativeLotNo });
             await propagateCertReceived(lots);
         } else {
-            await Storage.update(STORE, id, { certReceived: true, certReceivedDate: dateVal });
+            await Storage.update(STORE, id, { certReceived: true, certReceivedDate: dateVal, certRepresentativeLotNo: representativeLotNo });
         }
         UIUtils.closeModal();
         UIUtils.toast('성적서 접수 완료 처리되었습니다.', 'success');
@@ -303,15 +303,19 @@ var InjectionIncomingModule = (function() {
 
         // FIFO 위반 사전 계산: 차종+품명별 등록순 기준 최대 LOT 추적
         const fifoViolations = new Set(); // record id → 위반
+        const fifoViolationLots = {};
         const sorted = [...data].sort((a, b) => a.date < b.date ? -1 : 1);
         const maxLotByPart = {}; // 'carModel|partName' → maxLotNo
         sorted.forEach(r => {
             const key = `${r.carModel}|${r.partName}`;
             const lots = (r.lots && r.lots.length > 0) ? r.lots : (r.lotNo ? [{ lotNo: r.lotNo }] : []);
-            const minLot = lots.map(l => l.lotNo || '').filter(Boolean).sort()[0];
-            const maxLot = lots.map(l => l.lotNo || '').filter(Boolean).sort().pop();
-            if (maxLotByPart[key] && minLot && minLot < maxLotByPart[key]) {
+            const lotNos = lots.map(l => l.lotNo || '').filter(Boolean);
+            const minLot = lotNos.slice().sort()[0];
+            const maxLot = lotNos.slice().sort().pop();
+            const badLots = maxLotByPart[key] ? lotNos.filter(lotNo => lotNo < maxLotByPart[key]) : [];
+            if (badLots.length > 0) {
                 fifoViolations.add(r.id);
+                fifoViolationLots[r.id] = new Set(badLots);
             }
             if (maxLot && (!maxLotByPart[key] || maxLot > maxLotByPart[key])) {
                 maxLotByPart[key] = maxLot;
@@ -322,17 +326,23 @@ var InjectionIncomingModule = (function() {
             const verdict = (Number(d.failQty) || 0) === 0 ? 'success' : 'danger';
             const verdictText = (Number(d.failQty) || 0) === 0 ? '합격' : '불합격';
             const lotList = (d.lots && d.lots.length > 0) ? d.lots : (d.lotNo ? [{ lotNo: d.lotNo, certReceived: d.certReceived || false }] : []);
-            const certMissing = lotList.some(l => !l.certReceived);
+            const certLot = lotList.find(l => l.certRepresentative) || lotList.find(l => l.certReceived);
+            const certMissing = lotList.length > 0 && !certLot;
             const isFifoViolation = fifoViolations.has(d.id);
-            const injLotDisplay = lotList.map(l =>
-                `<span style="display:inline-block;background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:0.8rem;margin:1px;font-family:monospace;font-weight:600;">${l.lotNo || '-'}</span>`
-            ).join('') + (isFifoViolation
+            const badLotSet = fifoViolationLots[d.id] || new Set();
+            const injLotDisplay = lotList.map(l => {
+                const lotNo = l.lotNo || '-';
+                const bad = badLotSet.has(lotNo);
+                const style = bad
+                    ? 'display:inline-block;background:#fff7ed;border:1px solid #fb923c;border-radius:4px;padding:1px 6px;font-size:0.8rem;margin:1px;font-family:monospace;font-weight:800;color:#ea580c;'
+                    : 'display:inline-block;background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:0.8rem;margin:1px;font-family:monospace;font-weight:600;';
+                return `<span style="${style}" ${bad ? 'title="FIFO 위반 LOT"' : ''}>${lotNo}</span>`;
+            }).join('') + (isFifoViolation
                 ? `<span style="display:inline-flex;align-items:center;gap:2px;background:#fff7ed;border:1px solid #fed7aa;border-radius:4px;padding:1px 6px;font-size:0.75rem;margin:1px;color:#ea580c;font-weight:700;" title="선입선출 위반: 이전에 등록된 최신 LOT보다 오래된 재고입니다"><span class="material-symbols-outlined" style="font-size:0.85rem;">warning</span>FIFO</span>`
                 : '');
-            const certDisplay = lotList.map(l => l.certReceived
-                ? `<span style="display:inline-flex;align-items:center;gap:2px;background:#dcfce7;border:1px solid #86efac;border-radius:4px;padding:1px 6px;font-size:0.78rem;margin:1px;font-family:monospace;color:#16a34a;font-weight:600;"><span class="material-symbols-outlined" style="font-size:0.9rem;">check_circle</span>${l.lotNo || '-'}</span>`
-                : `<span style="display:inline-flex;align-items:center;gap:2px;background:#fee2e2;border:1px solid #fca5a5;border-radius:4px;padding:1px 6px;font-size:0.78rem;margin:1px;font-family:monospace;color:#dc2626;font-weight:600;" title="성적서 미접수"><span class="material-symbols-outlined" style="font-size:0.9rem;">cancel</span>미접수</span>`
-            ).join('');
+            const certDisplay = certLot
+                ? `<span style="display:inline-flex;align-items:center;gap:2px;background:#dcfce7;border:1px solid #86efac;border-radius:4px;padding:1px 6px;font-size:0.78rem;margin:1px;font-family:monospace;color:#16a34a;font-weight:600;"><span class="material-symbols-outlined" style="font-size:0.9rem;">check_circle</span>${certLot.lotNo || '-'}</span>`
+                : `<span style="display:inline-flex;align-items:center;gap:2px;background:#fee2e2;border:1px solid #fca5a5;border-radius:4px;padding:1px 6px;font-size:0.78rem;margin:1px;font-family:monospace;color:#dc2626;font-weight:600;" title="??? ???"><span class="material-symbols-outlined" style="font-size:0.9rem;">cancel</span>???</span>`;
             const rowStyle = isFifoViolation
                 ? ' style="background:rgba(234,88,12,0.05);"'
                 : certMissing ? ' style="background:rgba(220,38,38,0.05);"' : '';
@@ -554,13 +564,14 @@ var InjectionIncomingModule = (function() {
     }
 
     function addInjLotRow() {
-        const container = document.getElementById('injLotRows');
+        const editMode = !!document.getElementById('editInjLotRows');
+        const container = document.getElementById(editMode ? 'editInjLotRows' : 'injLotRows');
         if (!container) return;
         const div = document.createElement('div');
         div.className = 'inj-lot-row';
         div.style.cssText = 'display:grid; grid-template-columns:36px 1fr 90px 34px; gap:8px; align-items:center; margin-bottom:6px;';
         div.innerHTML = '<label style="display:flex; align-items:center; justify-content:center; cursor:pointer; padding:4px;" title="성적서 접수 여부">'
-            + '<input type="checkbox" class="inj-lot-cert" style="width:16px;height:16px;cursor:pointer;">'
+            + '<input type="checkbox" class="inj-lot-cert" onchange="InjectionIncomingModule.selectInjCertLot(this)" style="width:16px;height:16px;cursor:pointer;">'
             + '</label>'
             + '<input type="text" class="form-input inj-lot-no" placeholder="YYMMDD" maxlength="6"'
             + ' style="font-family:monospace; letter-spacing:1px;"'
@@ -568,24 +579,36 @@ var InjectionIncomingModule = (function() {
             + ' onblur="InjectionIncomingModule.onLotInput(this, null)">'
             + '<input type="number" class="form-input inj-lot-qty" min="0" placeholder="0"'
             + ' style="text-align:right;"'
-            + ' oninput="InjectionIncomingModule.calcInjLotTotal()">'
+            + ' oninput="InjectionIncomingModule.' + (editMode ? 'calcInjLotTotalEdit' : 'calcInjLotTotal') + '()">'
             + '<button type="button" onclick="InjectionIncomingModule.removeInjLotRow(this)"'
             + ' style="background:none;border:none;cursor:pointer;color:var(--accent-red);padding:4px;display:flex;align-items:center;justify-content:center;" title="행 삭제">'
             + '<span class="material-symbols-outlined" style="font-size:1.2rem;">remove_circle</span>'
             + '</button>';
         container.appendChild(div);
+        if (editMode) calcInjLotTotalEdit();
+        else calcInjLotTotal();
+    }
+
+    function selectInjCertLot(checkbox) {
+        if (!checkbox || !checkbox.checked) return;
+        const container = checkbox.closest('#editInjLotRows, #injLotRows');
+        if (!container) return;
+        container.querySelectorAll('.inj-lot-cert').forEach(cb => {
+            if (cb !== checkbox) cb.checked = false;
+        });
     }
 
     function removeInjLotRow(btn) {
         const row = btn.closest('.inj-lot-row');
         if (!row) return;
-        const container = document.getElementById('injLotRows');
+        const container = row.closest('#editInjLotRows, #injLotRows');
         if (container && container.querySelectorAll('.inj-lot-row').length <= 1) {
             UIUtils.toast('최소 1개의 LOT 행이 필요합니다.', 'warning');
             return;
         }
         row.remove();
-        calcInjLotTotal();
+        if (container && container.id === 'editInjLotRows') calcInjLotTotalEdit();
+        else calcInjLotTotal();
     }
 
     function calcInjLotTotal() {
@@ -814,6 +837,22 @@ var InjectionIncomingModule = (function() {
         }
     }
 
+    function normalizeCertLots(lots) {
+        const list = Array.isArray(lots) ? lots : [];
+        const representative = list.find(l => l.certReceived && l.lotNo);
+        if (!representative) {
+            return { lots: list, representativeLotNo: '' };
+        }
+        return {
+            representativeLotNo: representative.lotNo,
+            lots: list.map(l => ({
+                ...l,
+                certReceived: true,
+                certRepresentative: l.lotNo === representative.lotNo
+            }))
+        };
+    }
+
     async function saveNew() {
         const dateVal = document.getElementById('addInjDate').value;
         const timeVal = document.getElementById('addInjTime').value;
@@ -840,8 +879,9 @@ var InjectionIncomingModule = (function() {
         lots.forEach(l => {
             if (!l.certReceived && certifiedLotNos.has(l.lotNo)) l.certReceived = true;
         });
+        const certState = normalizeCertLots(lots);
 
-        const incomingQty = lots.reduce(function(s, l) { return s + l.qty; }, 0);
+        const incomingQty = certState.lots.reduce(function(s, l) { return s + l.qty; }, 0);
 
         const data = {
             date: `${dateVal} ${timeVal}`,
@@ -850,8 +890,9 @@ var InjectionIncomingModule = (function() {
             partName: document.getElementById('addInjPart').value.trim(),
             color: document.getElementById('addInjColor').value.trim(),
             incomingQty: incomingQty,
-            lots: lots,
-            lotNo: lots.length > 0 ? lots[0].lotNo : '',
+            lots: certState.lots,
+            lotNo: certState.lots.length > 0 ? certState.lots[0].lotNo : '',
+            certRepresentativeLotNo: certState.representativeLotNo,
             sampleCode: document.getElementById('injSampleCode') ?.textContent.trim() || '',
             acCriteria: document.getElementById('injSampleAc') ?.textContent.trim() !== '' ?
                 Number(document.getElementById('injSampleAc').textContent.trim()) : null,
@@ -1076,7 +1117,7 @@ var InjectionIncomingModule = (function() {
                         row.className = 'inj-lot-row';
                         row.style.cssText = 'display:grid; grid-template-columns:36px 1fr 90px 34px; gap:8px; align-items:center; margin-bottom:6px;';
                         row.innerHTML = '<label style="display:flex; align-items:center; justify-content:center; cursor:pointer; padding:4px;" title="성적서 접수 여부">'
-                            + '<input type="checkbox" class="inj-lot-cert" style="width:16px;height:16px;cursor:pointer;" ' + (lot.certReceived ? 'checked' : '') + '>'
+                            + '<input type="checkbox" class="inj-lot-cert" onchange="InjectionIncomingModule.selectInjCertLot(this)" style="width:16px;height:16px;cursor:pointer;" ' + ((lot.certRepresentative || (!d.certRepresentativeLotNo && lot.certReceived)) ? 'checked' : '') + '>'
                             + '</label>'
                             + '<input type="text" class="form-input inj-lot-no" value="' + (lot.lotNo || '') + '" maxlength="6" placeholder="YYMMDD"'
                             + ' style="font-family:monospace; letter-spacing:1px;"'
@@ -1095,7 +1136,7 @@ var InjectionIncomingModule = (function() {
                     row.className = 'inj-lot-row';
                     row.style.cssText = 'display:grid; grid-template-columns:36px 1fr 90px 34px; gap:8px; align-items:center; margin-bottom:6px;';
                     row.innerHTML = '<label style="display:flex; align-items:center; justify-content:center; cursor:pointer; padding:4px;" title="성적서 접수 여부">'
-                        + '<input type="checkbox" class="inj-lot-cert" style="width:16px;height:16px;cursor:pointer;">'
+                        + '<input type="checkbox" class="inj-lot-cert" onchange="InjectionIncomingModule.selectInjCertLot(this)" style="width:16px;height:16px;cursor:pointer;">'
                         + '</label>'
                         + '<input type="text" class="form-input inj-lot-no" value="' + (d.lotNo || '') + '" maxlength="6" placeholder="YYMMDD"'
                         + ' style="font-family:monospace; letter-spacing:1px;"'
@@ -1170,7 +1211,12 @@ var InjectionIncomingModule = (function() {
             return;
         }
 
-        const incomingQty = lots.reduce(function(s, l) { return s + l.qty; }, 0);
+        const certifiedLotNos = getCertifiedLotNos();
+        lots.forEach(l => {
+            if (!l.certReceived && certifiedLotNos.has(l.lotNo)) l.certReceived = true;
+        });
+        const certState = normalizeCertLots(lots);
+        const incomingQty = certState.lots.reduce(function(s, l) { return s + l.qty; }, 0);
 
         const updateData = {
             date: `${dateVal} ${timeVal}`,
@@ -1178,8 +1224,9 @@ var InjectionIncomingModule = (function() {
             carModel: document.getElementById('editInjCarModel').value.trim(),
             partName: document.getElementById('editInjPart').value.trim(),
             color: document.getElementById('editInjColor').value.trim(),
-            lots: lots,
-            lotNo: lots.length > 0 ? lots[0].lotNo : '',
+            lots: certState.lots,
+            lotNo: certState.lots.length > 0 ? certState.lots[0].lotNo : '',
+            certRepresentativeLotNo: certState.representativeLotNo,
             incomingQty: incomingQty,
             inspectionQty: Number(document.getElementById('editInjInspQty').value) || 0,
             passQty: Number(document.getElementById('editInjPassQty').value) || 0,
@@ -1620,6 +1667,7 @@ var InjectionIncomingModule = (function() {
         onColorSelectEdit,
         onIncomingQtyInput,
         addInjLotRow,
+        selectInjCertLot,
         removeInjLotRow,
         calcInjLotTotal,
         calcInjLotTotalEdit,

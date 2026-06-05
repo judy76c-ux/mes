@@ -17,24 +17,33 @@ var IncomingUI = (function () {
 
     function renderSection(activePage) {
         const activeMenu = MENUS.find(m => m.id === activePage) || MENUS[0];
+        const leftMenus  = MENUS.slice(0, 3);  // 수입검사 현황 / 사출 입고 / 도료 입고
+        const rightMenus = MENUS.slice(3);     // 사출 기준서 / 도료 기준서 / 수입검사 표준서
+
+        function makeBtn(menu) {
+            const active = menu.id === activePage;
+            return `<button type="button"
+                onclick="Router.navigate('${menu.id}')"
+                class="btn ${active ? 'btn-primary' : 'btn-outline'}"
+                style="display:flex;align-items:center;gap:6px;${active ? '' : 'background:#fff;'}">
+                <span class="material-symbols-outlined" style="font-size:18px;">${menu.icon}</span>
+                ${menu.label}
+            </button>`;
+        }
+
         return `
             <div style="margin-bottom:18px;">
                 <div style="margin-bottom:14px;">
                     <h3 style="margin:0 0 6px;font-size:1.15rem;">${activeMenu.label}</h3>
                     <p style="margin:0;color:var(--text-muted);font-size:.9rem;">${activeMenu.desc}</p>
                 </div>
-                <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                    ${MENUS.map(function (menu) {
-                        const active = menu.id === activePage;
-                        return `
-                            <button type="button"
-                                onclick="Router.navigate('${menu.id}')"
-                                class="btn ${active ? 'btn-primary' : 'btn-outline'}"
-                                style="display:flex;align-items:center;gap:6px;${active ? '' : 'background:#fff;'}">
-                                <span class="material-symbols-outlined" style="font-size:18px;">${menu.icon}</span>
-                                ${menu.label}
-                            </button>`;
-                    }).join('')}
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        ${leftMenus.map(makeBtn).join('')}
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        ${rightMenus.map(makeBtn).join('')}
+                    </div>
                 </div>
             </div>`;
     }
@@ -216,7 +225,7 @@ var IncomingOverviewModule = (function () {
         });
         const certPending = data.filter(d => {
             const lots = (d.lots && d.lots.length) ? d.lots : (d.lotNo ? [{ lotNo: d.lotNo, certReceived: d.certReceived||false }] : []);
-            return lots.some(l => !l.certReceived);
+            return lots.length > 0 && !lots.some(l => l.certReceived);
         });
         const failItems = data.filter(d => (Number(d.failQty)||0) > 0);
         const fifoItems = data.filter(d => fifoViolations.has(d.id));
@@ -274,7 +283,7 @@ var IncomingOverviewModule = (function () {
         if (!_inj || !_inj.certPendingItems.length) return;
         const rows = _inj.certPendingItems.map(d => {
             const lots = (d.lots && d.lots.length) ? d.lots : (d.lotNo ? [{ lotNo: d.lotNo, certReceived: d.certReceived||false }] : []);
-            const pendingLots = lots.filter(l => !l.certReceived).map(l => l.lotNo||'-').join(', ');
+            const pendingLots = lots.map(l => l.lotNo||'-').join(', ');
             return `<tr><td>${d.date||'-'}</td><td>${d.carModel||'-'}</td><td>${d.partName||'-'}</td>
                 <td style="text-align:right;">${UIUtils.formatNumber(d.incomingQty)}</td>
                 <td style="font-family:monospace;color:#dc2626;font-weight:700;">${pendingLots}</td>
