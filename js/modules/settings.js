@@ -610,18 +610,18 @@ const SettingsModule = (function() {
                             <thead>
                                 <tr>
                                     <th style="width:36px;">No</th>
-                                    <th style="width:80px;">차종</th>
-                                    <th>품명</th>
+                                    <th style="width:56px;">차종</th>
+                                    <th style="min-width:260px;">품명</th>
                                     <th style="width:70px;white-space:nowrap;">도장컬러</th>
-                                    <th style="width:64px;white-space:nowrap;text-align:center;">구분</th>
+                                    <th style="width:48px;white-space:nowrap;text-align:center;">구분</th>
                                     <th style="width:64px;white-space:nowrap;text-align:center;">포장</th>
-                                    <th style="width:80px;white-space:nowrap;">납품처</th>
-                                    <th style="width:80px;white-space:nowrap;text-align:right;">판매가</th>
-                                    <th style="width:80px;white-space:nowrap;text-align:right;">사출매입</th>
-                                    <th style="width:80px;white-space:nowrap;text-align:right;">제조가</th>
+                                    <th style="width:56px;white-space:nowrap;">납품처</th>
+                                    <th style="width:62px;white-space:nowrap;text-align:right;">판매가</th>
+                                    <th style="width:62px;white-space:nowrap;text-align:right;">사출매입</th>
+                                    <th style="width:62px;white-space:nowrap;text-align:right;">제조가</th>
                                     <th style="white-space:nowrap;">공정별 사양</th>
                                     <th style="white-space:nowrap;">사용 사출 자재</th>
-                                    <th style="white-space:nowrap;">도료 자재</th>
+                                    <th style="white-space:nowrap;min-width:360px;">도료 자재</th>
                                     <th style="width:80px;">작업</th>
                                 </tr>
                             </thead>
@@ -629,19 +629,32 @@ const SettingsModule = (function() {
                                 ${products.length === 0 ?
                 `<tr><td colspan="${colspan}" style="text-align:center;padding:40px;color:var(--text-muted);">등록된 제품이 없습니다.</td></tr>` :
                 products.map((p, i) => {
-                    // 도료 자재 매칭: 컬러 기준 (paintSpec/paintType 별로 묶어 표시)
-                    const pColorKey = (p.color || '').trim().toUpperCase();
-                    const matchedPaints = paintMaterials.filter(pm => {
-                        const pmColor = (pm.name || '').toUpperCase();
-                        return pColorKey && (pmColor.includes(pColorKey) || pColorKey.includes(pmColor.slice(0,4)));
-                    });
-                    const paintBadges = matchedPaints.length > 0
-                        ? matchedPaints.map(pm => {
-                            const typeColor = { 'Primer':'#6366f1','Color':'#ec4899','희석제':'#0ea5e9','경화제':'#f59e0b' }[pm.paintType] || '#6b7280';
-                            return `<span style="display:inline-block;font-size:.68rem;font-weight:700;padding:1px 5px;border-radius:3px;
-                                background:${typeColor}18;color:${typeColor};border:1px solid ${typeColor}44;white-space:nowrap;margin:1px;"
-                                title="${pm.supplier||''}">
-                                ${pm.paintType ? `<span style="opacity:.7;">${pm.paintType.slice(0,1)}</span> ` : ''}${pm.name||'-'}</span>`;
+                    // 도료 자재: 제품 정보에 등록된 프라이머/경화제/희석제, 컬러/경화제/희석제 조합 전체 표시
+                    const paintMap = {};
+                    paintMaterials.forEach(pm => { if (pm.id) paintMap[pm.id] = pm; });
+                    const paintRows = Array.isArray(p.paintMaterials) ? p.paintMaterials : [];
+                    const labelForSpec = spec => spec === 'Primer' ? '프라이머' : spec === 'Color' ? '컬러' : (spec || '도료');
+                    const paintName = id => id && paintMap[id] ? (paintMap[id].name || '-') : (id ? '미등록' : '-');
+                    const paintTitle = id => {
+                        const pm = id ? paintMap[id] : null;
+                        return pm ? `${pm.supplier || '-'} / ${pm.manufacturer || '-'} / ${pm.name || '-'}` : (id ? `미등록 ID: ${id}` : '');
+                    };
+                    const paintBadges = paintRows.length > 0
+                        ? paintRows.map(row => {
+                            const mainId = row.mainId || row.paintMaterialId || '';
+                            const hardId = row.hardId || '';
+                            const thinnerId = row.thinnerId || '';
+                            const spec = row.paintSpec || (mainId && paintMap[mainId] ? paintMap[mainId].paintSpec : '');
+                            const specColor = spec === 'Primer' ? '#6366f1' : spec === 'Color' ? '#ec4899' : '#6b7280';
+                            const missing = [mainId, hardId, thinnerId].some(id => id && !paintMap[id]);
+                            return `<div style="display:flex;align-items:center;gap:3px;flex-wrap:nowrap;font-size:.62rem;line-height:1.35;margin:1px 0;white-space:nowrap;">
+                                <span style="font-weight:800;color:${specColor};background:${specColor}15;border:1px solid ${specColor}55;border-radius:3px;padding:0 4px;min-width:42px;text-align:center;">${labelForSpec(spec)}</span>
+                                <span title="${paintTitle(mainId)}" style="font-weight:700;color:${missing && mainId && !paintMap[mainId] ? '#ef4444' : 'var(--text-primary)'};">${paintName(mainId)}</span>
+                                <span style="color:var(--text-muted);">/</span>
+                                <span title="${paintTitle(hardId)}" style="color:${hardId && !paintMap[hardId] ? '#ef4444' : '#92400e'};">${paintName(hardId)}</span>
+                                <span style="color:var(--text-muted);">/</span>
+                                <span title="${paintTitle(thinnerId)}" style="color:${thinnerId && !paintMap[thinnerId] ? '#ef4444' : '#0369a1'};">${paintName(thinnerId)}</span>
+                            </div>`;
                           }).join('')
                         : '<span style="color:var(--text-muted);font-size:0.75rem;">-</span>';
 
@@ -692,15 +705,15 @@ const SettingsModule = (function() {
                     return `
                                     <tr>
                                         <td style="text-align:center;">${i + 1}</td>
-                                        <td style="white-space:nowrap;font-size:.82rem;">${p.carModel || '-'}</td>
-                                        <td><strong style="font-size:.85rem;">${p.partName || '-'}</strong></td>
+                                        <td style="white-space:nowrap;font-size:.78rem;max-width:56px;overflow:hidden;text-overflow:ellipsis;" title="${p.carModel || ''}">${p.carModel || '-'}</td>
+                                        <td style="min-width:260px;"><strong style="font-size:.86rem;">${p.partName || '-'}</strong></td>
                                         <td style="font-size:.8rem;white-space:nowrap;">${p.color || '-'}</td>
                                         <td style="text-align:center;">${itBadge}</td>
                                         <td style="text-align:center;font-size:.8rem;white-space:nowrap;">${p.packUnit || '-'}</td>
-                                        <td style="font-size:.8rem;white-space:nowrap;max-width:80px;overflow:hidden;text-overflow:ellipsis;" title="${p.customer||''}">${p.customer || '-'}</td>
-                                        <td style="text-align:right;font-size:.8rem;white-space:nowrap;">${p.salePrice ? Number(p.salePrice).toLocaleString() : '-'}</td>
-                                        <td style="text-align:right;font-size:.8rem;white-space:nowrap;">${p.injectionPrice ? Number(p.injectionPrice).toLocaleString() : '-'}</td>
-                                        <td style="text-align:right;font-size:.8rem;white-space:nowrap;">${p.manufacturePrice ? Number(p.manufacturePrice).toLocaleString() : '-'}</td>
+                                        <td style="font-size:.76rem;white-space:nowrap;max-width:56px;overflow:hidden;text-overflow:ellipsis;" title="${p.customer||''}">${p.customer || '-'}</td>
+                                        <td style="text-align:right;font-size:.76rem;white-space:nowrap;">${p.salePrice ? Number(p.salePrice).toLocaleString() : '-'}</td>
+                                        <td style="text-align:right;font-size:.76rem;white-space:nowrap;">${p.injectionPrice ? Number(p.injectionPrice).toLocaleString() : '-'}</td>
+                                        <td style="text-align:right;font-size:.76rem;white-space:nowrap;">${p.manufacturePrice ? Number(p.manufacturePrice).toLocaleString() : '-'}</td>
                                         <td>
                                             <div style="display:flex; align-items:center; gap:6px; font-size:0.75rem; flex-wrap:wrap;">
                                                 ${[
@@ -713,7 +726,7 @@ const SettingsModule = (function() {
                                             </div>
                                         </td>
                                         <td><div style="display:flex;flex-wrap:nowrap;gap:4px;overflow:hidden;">${matBadges}</div></td>
-                                        <td><div style="display:flex;flex-wrap:wrap;gap:2px;">${paintBadges}</div></td>
+                                        <td style="min-width:360px;max-width:520px;"><div style="display:flex;flex-direction:column;gap:1px;overflow:hidden;">${paintBadges}</div></td>
                                         <td style="white-space:nowrap;">
                                             <button class="btn btn-sm btn-outline" onclick="SettingsModule.editProduct('${p.id}')">수정</button>
                                             <button class="btn btn-sm btn-danger" onclick="SettingsModule.removeProduct('${p.id}')">삭제</button>
@@ -5030,6 +5043,32 @@ const SettingsModule = (function() {
         return map[spec] || '';
     }
 
+    function _paintOptionHtml(values, selected = '', placeholder = '-- 선택 --') {
+        const selectedValue = (selected || '').trim();
+        const uniqueValues = [...new Set([selectedValue, ...values].map(v => (v || '').trim()).filter(Boolean))]
+            .sort((a, b) => a.localeCompare(b, 'ko'));
+        const esc = v => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+        return `<option value="">${placeholder}</option>` +
+            uniqueValues.map(v => `<option value="${esc(v)}" ${v === selectedValue ? 'selected' : ''}>${esc(v)}</option>`).join('');
+    }
+
+    function _paintSelectOptions(field, selected = '', defaults = []) {
+        const paints = Storage.getAll(PAINT_STORE) || [];
+        return _paintOptionHtml([
+            ...defaults,
+            ...paints.map(p => p[field]).filter(Boolean)
+        ], selected);
+    }
+
+    function _paintShelfLifeOptions(selected = '') {
+        return _paintOptionHtml([
+            '6개월',
+            '1년',
+            '2년',
+            ...((Storage.getAll(PAINT_STORE) || []).map(p => p.shelfLife).filter(Boolean))
+        ], selected);
+    }
+
     function filterPaintList() {
         const selectElement = document.getElementById('paintSupplierFilter');
         if (!selectElement) return;
@@ -5080,6 +5119,9 @@ const SettingsModule = (function() {
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
                         <button class="btn btn-outline" onclick="SettingsModule.downloadPaintCSV()">
                             <span class="material-symbols-outlined">download</span> CSV 다운로드
+                        </button>
+                        <button class="btn btn-outline" style="border-color:#6366f1;color:#4f46e5;" onclick="SettingsModule.openPaintValidationModal()">
+                            <span class="material-symbols-outlined">verified</span> 도료 검증
                         </button>
                         <button class="btn btn-secondary" onclick="SettingsModule.openPaintUploadModal()">
                             <span class="material-symbols-outlined">upload_file</span> 일괄 업로드
@@ -5136,20 +5178,179 @@ const SettingsModule = (function() {
         `;
     }
 
+    function _normPaintText(value) {
+        return String(value || '')
+            .toUpperCase()
+            .replace(/\s+/g, '')
+            .replace(/[._\-]/g, '')
+            .trim();
+    }
+
+    function openPaintValidationModal() {
+        const paints = Storage.getAll(PAINT_STORE) || [];
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const paintMap = {};
+        paints.forEach(p => { if (p.id) paintMap[p.id] = p; });
+
+        const usedIds = new Set();
+        const missingRefs = [];
+        products.forEach(product => {
+            (product.paintMaterials || []).forEach((row, rowIdx) => {
+                [
+                    ['주제', row.mainId || row.paintMaterialId || ''],
+                    ['경화제', row.hardId || ''],
+                    ['희석제', row.thinnerId || '']
+                ].forEach(([slot, id]) => {
+                    if (!id) return;
+                    if (paintMap[id]) usedIds.add(id);
+                    else missingRefs.push({ product, rowIdx, slot, id });
+                });
+            });
+        });
+
+        const groups = {};
+        paints.forEach(p => {
+            const key = _normPaintText(p.name);
+            if (!key) return;
+            if (!groups[key]) groups[key] = [];
+            groups[key].push(p);
+        });
+        const duplicateGroups = Object.values(groups).filter(list => list.length > 1);
+        const vendorMismatch = duplicateGroups.filter(list => {
+            const suppliers = new Set(list.map(p => (p.supplier || '').trim()).filter(Boolean));
+            const makers = new Set(list.map(p => (p.manufacturer || '').trim()).filter(Boolean));
+            return suppliers.size > 1 || makers.size > 1;
+        });
+        const unlinkedPaints = paints.filter(p => !usedIds.has(p.id));
+        const noName = paints.filter(p => !(p.name || '').trim());
+        const noMeta = paints.filter(p => !(p.supplier || '').trim() || !(p.manufacturer || '').trim());
+
+        const issueCount = missingRefs.length + duplicateGroups.length + noName.length + noMeta.length;
+        const warnCount = unlinkedPaints.length + vendorMismatch.length;
+        const stat = (label, value, color) => `
+            <div style="flex:1;min-width:130px;padding:10px 12px;border-radius:8px;background:${color}12;border:1px solid ${color}44;">
+                <div style="font-size:1.2rem;font-weight:800;color:${color};">${value}</div>
+                <div style="font-size:0.78rem;color:var(--text-secondary);">${label}</div>
+            </div>`;
+        const paintEditBtn = id => `<button class="btn btn-sm btn-outline" onclick="UIUtils.closeModal();SettingsModule.editPaint('${id}')">수정</button>`;
+        const productEditBtn = id => `<button class="btn btn-sm btn-outline" onclick="UIUtils.closeModal();SettingsModule.editProduct('${id}')">제품 수정</button>`;
+        const paintLabel = p => `${p.supplier || '-'} / ${p.name || '-'} / ${p.manufacturer || '-'}`;
+        const dupHtml = duplicateGroups.length ? duplicateGroups.map((list, i) => `
+            <tr>
+                <td>${i + 1}</td>
+                <td><strong>${list[0].name || '-'}</strong></td>
+                <td>${list.map(p => `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:0.78rem;padding:2px 0;">
+                    <span>${paintLabel(p)}</span>${paintEditBtn(p.id)}
+                </div>`).join('')}</td>
+            </tr>`).join('') : `<tr><td colspan="3" style="text-align:center;color:#10b981;padding:16px;">중복 후보 없음</td></tr>`;
+        const missingHtml = missingRefs.length ? missingRefs.map((r, i) => `
+            <tr>
+                <td>${i + 1}</td>
+                <td>${r.product.carModel || '-'}</td>
+                <td><strong>${r.product.partName || '-'}</strong></td>
+                <td>${r.slot}</td>
+                <td style="font-family:monospace;font-size:0.75rem;color:#ef4444;">${r.id}</td>
+                <td style="white-space:nowrap;">
+                    ${productEditBtn(r.product.id)}
+                    <button class="btn btn-sm btn-danger" onclick="SettingsModule.clearMissingPaintRef('${r.product.id}', ${r.rowIdx}, '${r.slot}')">연결 비우기</button>
+                </td>
+            </tr>`).join('') : `<tr><td colspan="6" style="text-align:center;color:#10b981;padding:16px;">끊어진 제품 연결 없음</td></tr>`;
+        const unlinkedHtml = unlinkedPaints.length ? unlinkedPaints.map((p, i) => `
+            <tr>
+                <td>${i + 1}</td>
+                <td>${p.supplier || '-'}</td>
+                <td><strong>${p.name || '-'}</strong></td>
+                <td>${p.manufacturer || '-'}</td>
+                <td>${p.paintType || '-'}</td>
+                <td>${p.paintSpec || '-'}</td>
+                <td>${paintEditBtn(p.id)}</td>
+            </tr>`).join('') : `<tr><td colspan="7" style="text-align:center;color:#10b981;padding:16px;">모든 도료가 제품정보에 연결되어 있습니다.</td></tr>`;
+        const metaHtml = noMeta.length ? noMeta.map((p, i) => `
+            <tr>
+                <td>${i + 1}</td>
+                <td>${p.supplier || '<span style="color:#ef4444;">구매처 없음</span>'}</td>
+                <td><strong>${p.name || '-'}</strong></td>
+                <td>${p.manufacturer || '<span style="color:#ef4444;">제조사 없음</span>'}</td>
+                <td>${paintEditBtn(p.id)}</td>
+            </tr>`).join('') : `<tr><td colspan="5" style="text-align:center;color:#10b981;padding:16px;">구매처/제조사 누락 없음</td></tr>`;
+
+        UIUtils.showModal('도료 검증 — 제품정보 연결 및 명칭 점검', `
+            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+                ${stat('도료 마스터', paints.length, '#3b82f6')}
+                ${stat('제품정보 연결', usedIds.size, '#10b981')}
+                ${stat('오류/확인 필요', issueCount, issueCount ? '#ef4444' : '#10b981')}
+                ${stat('미사용/주의', warnCount, warnCount ? '#f59e0b' : '#10b981')}
+            </div>
+            <p style="margin:0 0 12px;color:var(--text-secondary);font-size:0.84rem;line-height:1.6;">
+                도료명은 공백, 하이픈, 점, 밑줄을 제거하고 대문자로 변환해 중복 후보를 찾습니다.
+                제품정보의 도료 연결은 저장된 도료 ID 기준으로 검증합니다.
+            </p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
+                    <h4 style="margin:0;padding:10px 12px;background:var(--bg-secondary);font-size:0.9rem;">중복/오타 후보</h4>
+                    <div style="max-height:220px;overflow:auto;">
+                        <table class="data-table"><thead><tr><th>No</th><th>기준명</th><th>후보 목록</th></tr></thead><tbody>${dupHtml}</tbody></table>
+                    </div>
+                </div>
+                <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
+                    <h4 style="margin:0;padding:10px 12px;background:var(--bg-secondary);font-size:0.9rem;">끊어진 제품 연결</h4>
+                    <div style="max-height:220px;overflow:auto;">
+                        <table class="data-table"><thead><tr><th>No</th><th>차종</th><th>품명</th><th>구분</th><th>도료 ID</th><th>작업</th></tr></thead><tbody>${missingHtml}</tbody></table>
+                    </div>
+                </div>
+                <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
+                    <h4 style="margin:0;padding:10px 12px;background:var(--bg-secondary);font-size:0.9rem;">제품정보 미연결 도료</h4>
+                    <div style="max-height:240px;overflow:auto;">
+                        <table class="data-table"><thead><tr><th>No</th><th>구매처</th><th>도료명</th><th>제조사</th><th>종류</th><th>사양</th><th>작업</th></tr></thead><tbody>${unlinkedHtml}</tbody></table>
+                    </div>
+                </div>
+                <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
+                    <h4 style="margin:0;padding:10px 12px;background:var(--bg-secondary);font-size:0.9rem;">구매처/제조사 누락</h4>
+                    <div style="max-height:240px;overflow:auto;">
+                        <table class="data-table"><thead><tr><th>No</th><th>구매처</th><th>도료명</th><th>제조사</th><th>작업</th></tr></thead><tbody>${metaHtml}</tbody></table>
+                    </div>
+                </div>
+            </div>
+        `, `<button class="btn btn-primary" onclick="UIUtils.closeModal()">닫기</button>`, 'xxl');
+    }
+
+    function clearMissingPaintRef(productId, rowIdx, slot) {
+        const product = Storage.getById(DB.STORES.PRODUCTS, productId);
+        if (!product) {
+            UIUtils.toast('제품 정보를 찾을 수 없습니다.', 'error');
+            return;
+        }
+        UIUtils.confirm('끊어진 도료 연결을 비우시겠습니까?', async () => {
+            const paintMaterials = Array.isArray(product.paintMaterials) ? product.paintMaterials.map(r => ({ ...r })) : [];
+            const row = paintMaterials[rowIdx];
+            if (!row) {
+                UIUtils.toast('도료 연결 행을 찾을 수 없습니다.', 'error');
+                return;
+            }
+            if (slot === '주제') {
+                row.mainId = '';
+                row.paintMaterialId = '';
+            } else if (slot === '경화제') {
+                row.hardId = '';
+            } else if (slot === '희석제') {
+                row.thinnerId = '';
+            }
+            const cleaned = paintMaterials.filter(r => r.paintSpec || r.mainId || r.hardId || r.thinnerId || r.paintMaterialId);
+            await Storage.update(DB.STORES.PRODUCTS, productId, { ...product, paintMaterials: cleaned });
+            await Storage.refresh(DB.STORES.PRODUCTS);
+            UIUtils.toast('끊어진 도료 연결을 비웠습니다.', 'success');
+            openPaintValidationModal();
+        });
+    }
+
     function openAddPaintModal() {
         UIUtils.showModal('도료 정보 추가', `
-            <datalist id="manufacturerList">
-                <option value="NOROO">
-                <option value="KCC">
-                <option value="PPG">
-                <option value="YULIM">
-                <option value="REDSOPT">
-                <option value="ORIGIN">
-            </datalist>
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">구매처</label>
-                    <input type="text" class="form-input" id="addPaintSupplier" placeholder="예: KCC, 노루페인트">
+                    <select class="form-select" id="addPaintSupplier">
+                        ${_paintSelectOptions('supplier', '', ['페인트마당', '로얄페인트', 'KCC', '노루페인트'])}
+                    </select>
                 </div>
                 <div class="form-group">
                     <label class="form-label">도료명 <span style="color:var(--accent-red)">*</span></label>
@@ -5159,8 +5360,9 @@ const SettingsModule = (function() {
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">제조사</label>
-                    <input type="text" class="form-input" id="addPaintManufacturer"
-                        list="manufacturerList" placeholder="선택 또는 직접 입력" autocomplete="off">
+                    <select class="form-select" id="addPaintManufacturer">
+                        ${_paintSelectOptions('manufacturer', '', ['NOROO', 'KCC', 'PPG', 'YULIM', 'REDSOPT', 'ORIGIN'])}
+                    </select>
                 </div>
                 <div class="form-group">
                     <label class="form-label">도료종류</label>
@@ -5196,7 +5398,9 @@ const SettingsModule = (function() {
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">유효기한</label>
-                    <input type="text" class="form-input" id="addPaintShelfLife" placeholder="예: 12개월, 6개월">
+                    <select class="form-select" id="addPaintShelfLife">
+                        ${_paintShelfLifeOptions('')}
+                    </select>
                 </div>
             </div>
         `, `
@@ -5239,18 +5443,12 @@ const SettingsModule = (function() {
         if (!p) return;
 
         UIUtils.showModal('도료 정보 수정', `
-            <datalist id="manufacturerList">
-                <option value="NOROO">
-                <option value="KCC">
-                <option value="PPG">
-                <option value="YULIM">
-                <option value="REDSOPT">
-                <option value="ORIGIN">
-            </datalist>
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">구매처</label>
-                    <input type="text" class="form-input" id="editPaintSupplier" value="${p.supplier || ''}">
+                    <select class="form-select" id="editPaintSupplier">
+                        ${_paintSelectOptions('supplier', p.supplier || '', ['페인트마당', '로얄페인트', 'KCC', '노루페인트'])}
+                    </select>
                 </div>
                 <div class="form-group">
                     <label class="form-label">도료명 <span style="color:var(--accent-red)">*</span></label>
@@ -5260,9 +5458,9 @@ const SettingsModule = (function() {
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">제조사</label>
-                    <input type="text" class="form-input" id="editPaintManufacturer"
-                        list="manufacturerList" value="${p.manufacturer || ''}"
-                        placeholder="선택 또는 직접 입력" autocomplete="off">
+                    <select class="form-select" id="editPaintManufacturer">
+                        ${_paintSelectOptions('manufacturer', p.manufacturer || '', ['NOROO', 'KCC', 'PPG', 'YULIM', 'REDSOPT', 'ORIGIN'])}
+                    </select>
                 </div>
                 <div class="form-group">
                     <label class="form-label">도료종류</label>
@@ -5305,7 +5503,9 @@ const SettingsModule = (function() {
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">유효기한</label>
-                    <input type="text" class="form-input" id="editPaintShelfLife" value="${p.shelfLife || ''}">
+                    <select class="form-select" id="editPaintShelfLife">
+                        ${_paintShelfLifeOptions(p.shelfLife || '')}
+                    </select>
                 </div>
             </div>
         `, `
@@ -8525,6 +8725,8 @@ const SettingsModule = (function() {
         savePaint,
         editPaint,
         updatePaint,
+        openPaintValidationModal,
+        clearMissingPaintRef,
         removePaint,
         downloadPaintCSV,
         openPaintUploadModal,

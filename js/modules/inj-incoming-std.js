@@ -171,13 +171,18 @@ var InjIncomingStdModule = (function () {
         // 필드값 헬퍼
         const fv = (field, fallback='') => _esc(std ? (std[field]||fallback) : fallback);
 
-        // 제품 select 옵션
+        // 제품 select — 차종/사출품명 2단계 필터
         const allMats = (Storage.getAll(PROD_ST)||[]).filter(p=>p.carModel&&p.injPartName);
-        const prodSel = allMats.map(p=>`<option value="${p.id}"
+        const selectedMat = std && std.productId ? allMats.find(p=>p.id===std.productId) : null;
+        const selCarModel = selectedMat ? selectedMat.carModel : '';
+        const carList = [...new Set(allMats.map(p=>p.carModel))].sort();
+        const carOpts = carList.map(c=>`<option value="${_esc(c)}" ${selCarModel===c?'selected':''}>${_esc(c)}</option>`).join('');
+        const partMats = selCarModel ? allMats.filter(p=>p.carModel===selCarModel) : [];
+        const prodSel = partMats.map(p=>`<option value="${p.id}"
             ${std&&std.productId===p.id?'selected':''}
             data-car="${_esc(p.carModel)}" data-part="${_esc(p.injPartName)}"
             data-color="${_esc(p.injColor||'')}" data-type="${_esc(p.itemType||'')}">
-            [${_esc(p.carModel)}] ${_esc(p.injPartName)}${p.injColor?' / '+_esc(p.injColor):''}
+            ${_esc(p.injPartName)}${p.injColor?' / '+_esc(p.injColor):''}
         </option>`).join('');
 
         // 검사 항목 행
@@ -188,15 +193,17 @@ var InjIncomingStdModule = (function () {
                 style="width:100%;border:none;background:transparent;font-size:.8rem;padding:2px;"></td>
             <td style="padding:2px;border:1px solid #bbb;"><textarea class="std-pt-std" rows="2"
                 style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;resize:none;line-height:1.4;">${_esc(pt.standard||'')}</textarea></td>
-            <td style="padding:2px;border:1px solid #bbb;text-align:center;"><input class="std-pt-method" type="text" value="${_esc(pt.method||'')}"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;text-align:center;"></td>
-            <td style="padding:2px;border:1px solid #bbb;text-align:center;"><input class="std-pt-sample" type="text" value="${_esc(pt.sample||'')}"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;text-align:center;"></td>
+            <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-method" type="text" value="${_esc(pt.method||'')}"
+                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
+            <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-sample" type="text" value="${_esc(pt.sample||'')}"
+                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-mgmt" type="text" value="${_esc(pt.management||'')}"
                 style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
             <td style="padding:2px;border:1px solid #bbb;text-align:center;">
+                <button type="button" onclick="InjIncomingStdModule._insertCheckRowAfter(this)"
+                    style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;" title="아래 행 추가">+</button>
                 <button type="button" onclick="this.closest('tr').remove()"
-                    style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px;line-height:1;">✕</button>
+                    style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px;line-height:1;" title="행 삭제">×</button>
             </td></tr>`).join('');
 
         // 개정이력 행
@@ -225,11 +232,12 @@ var InjIncomingStdModule = (function () {
             <style>
             #stdDoc { font-family:'Malgun Gothic','맑은 고딕',sans-serif; font-size:11px; color:#111; }
             #stdDoc table { border-collapse:collapse; width:100%; }
+            #stdDoc td, #stdDoc th { vertical-align:middle; }
             #stdDoc .doc-th { background:#d0e4f7; font-weight:700; text-align:center; border:1px solid #888; padding:4px 6px; }
             #stdDoc .doc-sec { background:#d0e4f7; font-weight:700; text-align:center; border:1px solid #888; padding:5px; font-size:12px; }
-            #stdDoc .doc-cell { border:1px solid #888; padding:4px 6px; vertical-align:middle; }
-            #stdDoc .doc-label { background:#f0f0f0; font-weight:700; text-align:center; border:1px solid #888; padding:4px 6px; white-space:nowrap; }
-            #stdDoc .doc-input { border:none; background:transparent; width:100%; font-family:inherit; font-size:inherit; color:#111; padding:0; outline:none; }
+            #stdDoc .doc-cell { border:1px solid #888; padding:3px 6px; vertical-align:middle; text-align:left; }
+            #stdDoc .doc-label { background:#f0f0f0; font-weight:700; text-align:center; border:1px solid #888; padding:3px 6px; white-space:nowrap; vertical-align:middle; }
+            #stdDoc .doc-input { border:none; background:transparent; width:100%; font-family:inherit; font-size:inherit; color:#111; padding:0; outline:none; vertical-align:middle; text-align:left; }
             #stdDoc .doc-input:focus { background:#fffbeb; border-radius:2px; }
             #stdDoc .doc-title { font-size:22px; font-weight:900; text-align:center; letter-spacing:2px; }
             </style>`;
@@ -237,10 +245,15 @@ var InjIncomingStdModule = (function () {
         UIUtils.showModal(isEdit ? '수입검사 기준서 편집' : '수입검사 기준서 등록', `
         ${docStyle}
         <!-- 제품 연결 선택 (문서 위) -->
-        <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;padding:8px 12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;padding:8px 12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;flex-wrap:wrap;">
             <span style="font-size:.82rem;font-weight:700;white-space:nowrap;">제품 연결</span>
-            <select class="form-select" id="stdProductId" onchange="InjIncomingStdModule._onProductChange()" style="flex:1;height:34px;font-size:.82rem;">
-                <option value="">-- 제품 선택 --</option>${prodSel}
+            <select class="form-select" id="stdCarFilter" onchange="InjIncomingStdModule._onCarFilterChange()"
+                style="width:130px;height:34px;font-size:.82rem;">
+                <option value="">-- 차종 선택 --</option>${carOpts}
+            </select>
+            <select class="form-select" id="stdProductId" onchange="InjIncomingStdModule._onProductChange()"
+                style="flex:1;min-width:200px;height:34px;font-size:.82rem;">
+                <option value="">${selCarModel ? '-- 사출품명 선택 --' : '← 차종을 먼저 선택하세요'}</option>${prodSel}
             </select>
         </div>
 
@@ -262,15 +275,15 @@ var InjIncomingStdModule = (function () {
                 <td class="doc-label">공정NO</td>
                 <td class="doc-cell" style="text-align:center;font-weight:700;font-size:12px;">10</td>
                 <td rowspan="4" class="doc-cell doc-title" style="font-size:20px;letter-spacing:3px;">수입검사 기준서</td>
-                <td class="doc-cell" style="text-align:center;"></td>
-                <td class="doc-label" style="text-align:center;">작 성</td>
-                <td class="doc-label" style="text-align:center;">검 토</td>
-                <td class="doc-label" style="text-align:center;">승 인</td>
+                <td class="doc-th" style="border-bottom:none;"></td>
+                <td class="doc-th">작 성</td>
+                <td class="doc-th">검 토</td>
+                <td class="doc-th">승 인</td>
             </tr>
             <tr style="height:20px;">
                 <td class="doc-label">공정명</td>
                 <td class="doc-cell" style="text-align:center;"><input class="doc-input" id="stdProcessName" value="${fv('processName','수입검사')}" style="text-align:center;font-weight:700;"></td>
-                <td class="doc-label" rowspan="3" style="writing-mode:vertical-rl;text-align:center;padding:4px 2px;font-size:11px;letter-spacing:3px;">결 재</td>
+                <td class="doc-th" rowspan="3" style="writing-mode:vertical-rl;text-align:center;vertical-align:middle;padding:4px 2px;font-size:11px;letter-spacing:3px;border-top:none;">결 재</td>
                 <td class="doc-cell" rowspan="3" style="text-align:center;vertical-align:middle;"><input class="doc-input" id="stdAuthor" value="${fv('author')}" style="text-align:center;"></td>
                 <td class="doc-cell" rowspan="3" style="text-align:center;vertical-align:middle;"><input class="doc-input" id="stdReviewer" value="${fv('reviewer')}" style="text-align:center;"></td>
                 <td class="doc-cell" rowspan="3" style="text-align:center;vertical-align:middle;"><input class="doc-input" id="stdApprover" value="${fv('approver')}" style="text-align:center;"></td>
@@ -281,7 +294,7 @@ var InjIncomingStdModule = (function () {
             </tr>
             <tr style="height:20px;">
                 <td class="doc-label">품 명</td>
-                <td class="doc-cell" style="font-weight:700;color:#1d4ed8;"><input class="doc-input" id="stdPartName" value="${fv('partName')}" style="font-weight:700;color:#1d4ed8;"></td>
+                <td class="doc-cell" style="font-weight:700;color:#1d4ed8;text-align:center;"><input class="doc-input" id="stdPartName" value="${fv('partName')}" style="font-weight:700;color:#1d4ed8;text-align:center;"></td>
             </tr>
         </table>
         <!-- hidden 저장용 필드 -->
@@ -411,6 +424,20 @@ var InjIncomingStdModule = (function () {
         if(g) g.innerHTML=_renderImgGrid(_formImages);
     }
 
+    function _onCarFilterChange() {
+        const car = (document.getElementById('stdCarFilter')||{}).value || '';
+        const sel = document.getElementById('stdProductId');
+        if (!sel) return;
+        const allMats = (Storage.getAll(PROD_ST)||[]).filter(p=>p.carModel&&p.injPartName);
+        const filtered = car ? allMats.filter(p=>p.carModel===car) : [];
+        sel.innerHTML = `<option value="">${car ? '-- 사출품명 선택 --' : '← 차종을 먼저 선택하세요'}</option>`
+            + filtered.map(p=>`<option value="${p.id}"
+                data-car="${_esc(p.carModel)}" data-part="${_esc(p.injPartName)}"
+                data-color="${_esc(p.injColor||'')}" data-type="${_esc(p.itemType||'')}">
+                ${_esc(p.injPartName)}${p.injColor?' / '+_esc(p.injColor):''}
+            </option>`).join('');
+    }
+
     function _onProductChange() {
         const sel=document.getElementById('stdProductId');
         if(!sel||!sel.value) return;
@@ -439,16 +466,47 @@ var InjIncomingStdModule = (function () {
             <td style="padding:2px;border:1px solid #bbb;"><textarea class="std-pt-std" rows="2"
                 style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;resize:none;"></textarea></td>
             <td style="padding:2px;border:1px solid #bbb;text-align:center;"><input class="std-pt-method" type="text"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;text-align:center;"></td>
+                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
             <td style="padding:2px;border:1px solid #bbb;text-align:center;"><input class="std-pt-sample" type="text"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;text-align:center;"></td>
+                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-mgmt" type="text"
                 style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
             <td style="padding:2px;border:1px solid #bbb;text-align:center;">
+                <button type="button" onclick="InjIncomingStdModule._insertCheckRowAfter(this)"
+                    style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;" title="아래 행 추가">+</button>
                 <button type="button" onclick="this.closest('tr').remove()"
-                    style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px;line-height:1;">✕</button>
+                    style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px;line-height:1;" title="행 삭제">×</button>
             </td>`;
         tb.appendChild(tr);
+    }
+
+    function _insertCheckRowAfter(btn) {
+        let el = btn;
+        while (el && el.tagName !== 'TR') el = el.parentNode;
+        if (!el) return;
+        const tbody = el.parentNode;
+        const newTr = document.createElement('tr');
+        newTr.innerHTML = `
+            <td style="text-align:center;padding:3px;border:1px solid #bbb;font-size:.8rem;">-</td>
+            <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-item" type="text"
+                style="width:100%;border:none;background:transparent;font-size:.8rem;padding:2px;"></td>
+            <td style="padding:2px;border:1px solid #bbb;"><textarea class="std-pt-std" rows="2"
+                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;resize:none;"></textarea></td>
+            <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-method" type="text"
+                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
+            <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-sample" type="text"
+                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
+            <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-mgmt" type="text"
+                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
+            <td style="padding:2px;border:1px solid #bbb;text-align:center;">
+                <button type="button" onclick="InjIncomingStdModule._insertCheckRowAfter(this)"
+                    style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;" title="아래 행 추가">+</button>
+                <button type="button" onclick="this.closest('tr').remove()"
+                    style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px;line-height:1;" title="행 삭제">×</button>
+            </td>`;
+        const next = el.nextElementSibling;
+        if (next) tbody.insertBefore(newTr, next);
+        else tbody.appendChild(newTr);
     }
 
     function _makeRevRow(no) {
@@ -477,10 +535,16 @@ var InjIncomingStdModule = (function () {
     }
 
     function _insertRevRowAfter(btn) {
-        const tr = btn.closest('tr');
-        if (!tr) return;
+        // closest 대신 parentNode 체인으로 안전하게 tr 탐색
+        let el = btn;
+        while (el && el.tagName !== 'TR') el = el.parentNode;
+        if (!el) return;
+        const tbody = el.parentNode;
+        if (!tbody) return;
         const newTr = _makeRevRow('');
-        tr.parentNode.insertBefore(newTr, tr.nextSibling);
+        const next = el.nextElementSibling;
+        if (next) tbody.insertBefore(newTr, next);
+        else tbody.appendChild(newTr);
     }
 
     /* ═══════════════════════════════════════════════════════════════
@@ -589,15 +653,15 @@ var InjIncomingStdModule = (function () {
                 <td class="doc-label">공정NO</td>
                 <td style="text-align:center;font-weight:700;font-size:12px;">10</td>
                 <td rowspan="4" class="doc-title" style="font-size:20px;letter-spacing:3px;">수입검사 기준서</td>
-                <td style="text-align:center;"></td>
-                <td class="doc-label" style="text-align:center;">작 성</td>
-                <td class="doc-label" style="text-align:center;">검 토</td>
-                <td class="doc-label" style="text-align:center;">승 인</td>
+                <td class="doc-th" style="border-bottom:none;"></td>
+                <td class="doc-th">작 성</td>
+                <td class="doc-th">검 토</td>
+                <td class="doc-th">승 인</td>
             </tr>
             <tr style="height:20px;">
                 <td class="doc-label">공정명</td>
                 <td style="text-align:center;font-weight:700;">${_esc(std.processName||'수입검사')}</td>
-                <td class="doc-label" rowspan="3" style="writing-mode:vertical-rl;text-align:center;padding:4px 2px;font-size:11px;letter-spacing:3px;">결 재</td>
+                <td class="doc-th" rowspan="3" style="writing-mode:vertical-rl;text-align:center;vertical-align:middle;padding:4px 2px;font-size:11px;letter-spacing:3px;border-top:none;">결 재</td>
                 <td rowspan="3" style="text-align:center;vertical-align:middle;">${_esc(std.author||'')}</td>
                 <td rowspan="3" style="text-align:center;vertical-align:middle;">${_esc(std.reviewer||'')}</td>
                 <td rowspan="3" style="text-align:center;vertical-align:middle;">${_esc(std.approver||'')}</td>
@@ -608,7 +672,7 @@ var InjIncomingStdModule = (function () {
             </tr>
             <tr style="height:20px;">
                 <td class="doc-label">품 명</td>
-                <td style="font-weight:700;color:#1d4ed8;">${_esc(std.partName||'')}</td>
+                <td style="font-weight:700;color:#1d4ed8;text-align:center;">${_esc(std.partName||'')}</td>
             </tr>
         </table>
         <!-- 이미지 + 주요검사 -->
@@ -675,7 +739,7 @@ var InjIncomingStdModule = (function () {
         init, render, renderList,
         openNewForm, openNewFormForProduct, openEditForm,
         saveForm, printStd,
-        _onProductChange, _addCheckRow, _addRevRow, _insertRevRowAfter,
+        _onCarFilterChange, _onProductChange, _addCheckRow, _insertCheckRowAfter, _addRevRow, _insertRevRowAfter,
         _addImages, _removeImage
     };
 })();
