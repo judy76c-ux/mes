@@ -586,19 +586,23 @@ const ProductionPlanModule = (function() {
             const isOvertimeStart = (slot === '18:00');
 
             if (isMealTime) {
+                // 점심 두 슬롯(12:30, 13:00)을 한 행으로 병합: 13:00 슬롯은 건너뜀
+                if (slot === '13:00') return '';
                 let mealText = '';
                 let timeRange = '';
+                let rowspan = 1;
                 if (isLunch) {
                     mealText = '🍱 점심 시간 (LUNCH TIME)';
-                    timeRange = slot === '12:30' ? '12:30 ~ 13:00' : '13:00 ~ 13:30';
+                    timeRange = '12:30 ~ 13:30';
+                    rowspan = 2;
                 } else {
                     mealText = '☕ 저녁 식사 (DINNER TIME)';
                     timeRange = '17:30 ~ 18:00';
                 }
                 return `
                     <tr class="${isLunch ? 'lunch-time' : 'dinner-time'}" style="cursor: not-allowed; background-color: #f1f5f9;">
-                        <td class="sticky-col time-cell" style="text-align:center;">${timeRange}</td>
-                        <td colspan="7" style="text-align:center; font-weight:bold; color:#94a3b8; letter-spacing:2px;">${mealText}</td>
+                        <td class="sticky-col time-cell" style="text-align:center;" rowspan="${rowspan}">${timeRange}</td>
+                        <td colspan="7" style="text-align:center; font-weight:bold; color:#94a3b8; letter-spacing:2px;" rowspan="${rowspan}">${mealText}</td>
                     </tr>
                 `;
             }
