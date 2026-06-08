@@ -774,6 +774,7 @@ const PaintInventoryModule = (function() {
         );
 
         const pending = passed.filter(i => {
+            if (isPaintInspectionStandbyCanceled(i)) return false;
             if (processedInspIds.has(i.id)) return false;
             const mid = getMaterialId(i.paintName);
             if (mid && legacyStockSet.has(`${mid}||${i.lotNo}`)) return false;
@@ -890,27 +891,40 @@ const PaintInventoryModule = (function() {
         const insp = Storage.getById(DB.STORES.PAINT_INCOMING_INSPECTIONS, inspId);
         if (!insp) { UIUtils.toast('검사 정보를 찾을 수 없습니다.', 'error'); return; }
 
-        // 검사 기록의 supplier가 마스터와 다를 수 있으므로(오타 등) paintName 우선 매칭
+        const inspSupplier = _normalizeText(insp.supplier || insp.supplierName || '');
+        const inspPaintName = _normalizeText(insp.paintName || insp.name || '');
+        const norm = v => _normalizeText(v).toUpperCase();
+
+        // 검사 기록의 supplier가 마스터와 다를 수 있으므로 paintName 정규화 매칭 우선
         const materials = Storage.getAll(MATERIALS_STORE);
-        const mat = materials.find(m => m.name === insp.paintName && m.supplier === insp.supplier)
-                 || materials.find(m => m.name === insp.paintName);
+        const mat = materials.find(m => norm(m.name) === norm(inspPaintName) && norm(m.supplier) === norm(inspSupplier))
+                 || materials.find(m => norm(m.name) === norm(inspPaintName));
 
         // 실제 사용할 supplier는 마스터 기준으로 결정
-        const resolvedSupplier = mat ? (mat.supplier || insp.supplier || '') : (insp.supplier || '');
+        const resolvedSupplier = mat ? (mat.supplier || inspSupplier || '') : inspSupplier;
 
         window._sourceInspectionId = inspId;
         showRegistrationModal('입고');
         setTimeout(() => {
             const supplierSel = document.getElementById('addPaintInvSupplier');
             if (supplierSel) {
+                if (resolvedSupplier && ![...supplierSel.options].some(opt => opt.value === resolvedSupplier)) {
+                    supplierSel.insertAdjacentHTML('beforeend', `<option value="${_escapeHtml(resolvedSupplier)}">${_escapeHtml(resolvedSupplier)}</option>`);
+                }
                 supplierSel.value = resolvedSupplier;
                 PaintInventoryModule.onSupplierChange('입고');
             }
             setTimeout(() => {
                 const matSel = document.getElementById('addPaintInvMaterial');
                 if (matSel && mat) {
+                    if (![...matSel.options].some(opt => opt.value === mat.id)) {
+                        matSel.insertAdjacentHTML('beforeend', `<option value="${_escapeHtml(mat.id)}">${_escapeHtml(mat.name || inspPaintName)}</option>`);
+                    }
                     matSel.value = mat.id;
                     PaintInventoryModule.onMaterialChange('입고');
+                } else if (matSel && inspPaintName) {
+                    matSel.innerHTML = `<option value="">마스터 미등록: ${_escapeHtml(inspPaintName)}</option>`;
+                    UIUtils.toast(`도료 마스터에서 "${inspPaintName}"을 찾을 수 없습니다. 관리/설정에서 도료를 먼저 등록해주세요.`, 'warning');
                 }
                 setTimeout(() => {
                     const lotInput = document.getElementById('addPaintInvLot');
@@ -928,10 +942,12 @@ const PaintInventoryModule = (function() {
     }
 
     function openIncomingModal() {
+        window._sourceInspectionId = null;
         showRegistrationModal('입고');
     }
 
     function openOutgoingModal() {
+        window._sourceInspectionId = null;
         showRegistrationModal('출고');
     }
 
@@ -1154,6 +1170,10 @@ const PaintInventoryModule = (function() {
     function onLotInput() {} // 제조사 표기 LOT 형식 제한 없음 — 공급사 자체 코드
 
     // ── 입고 대기 취소 (단건) ──────────────────────────────────────────
+    function isPaintInspectionStandbyCanceled(insp) {
+        return (insp && insp.warehouseStatus) === '입고취소';
+    }
+
     function cancelPaintInspectionStandby(id) {
         const insp = Storage.getById(DB.STORES.PAINT_INCOMING_INSPECTIONS, id);
         if (!insp) {
@@ -1185,7 +1205,7 @@ const PaintInventoryModule = (function() {
                 .map(i => `${i.materialId}||${i.lotNo}`)
         );
         const pending = inspections.filter(i => {
-            if (i.verdict !== '합격' || i.warehouseStatus === '입고취소' || (Number(i.incomingQty) || 0) <= 0) return false;
+            if (i.verdict !== '합격' || isPaintInspectionStandbyCanceled(i) || (Number(i.incomingQty) || 0) <= 0) return false;
             if (processedInspIds.has(i.id)) return false;
             const mat = materials.find(m => m.name === i.paintName);
             if (mat && legacyStockSet.has(`${mat.id}||${i.lotNo}`)) return false;
@@ -1700,7 +1720,6 @@ const PaintInventoryModule = (function() {
             expDate: (document.getElementById('addPaintInvExpDate') || {}).value || '',
             sourceInspectionId: (type === '입고' && window._sourceInspectionId) ? window._sourceInspectionId : ''
         };
-        if (type === '입고') window._sourceInspectionId = null;
 
         if (!data.materialId) {
             UIUtils.toast('도료를 선택하세요.', 'warning');
@@ -1776,6 +1795,7 @@ const PaintInventoryModule = (function() {
         }
 
         await Storage.executeTransaction(txOps);
+        if (type === '입고') window._sourceInspectionId = null;
         UIUtils.closeModal();
         UIUtils.toast('등록되었습니다.', 'success');
         loadData();
@@ -2093,6 +2113,7 @@ const PaintInventoryModule = (function() {
         // 행 데이터 구성 (구매처 → 제품명 순 정렬)
         const rows = Object.entries(stockMap).map(([matId, stock]) => {
             const mat = materials.find(m => m.id === matId);
+            if (!mat) return null;
             const price = Number(mat ? mat.purchasePrice : 0) || 0;
             return {
                 supplier: mat ? (mat.supplier || '-') : '-',
@@ -2103,7 +2124,8 @@ const PaintInventoryModule = (function() {
                 value: stock.qty * price,
                 lots: stock.lots
             };
-        }).sort((a, b) => a.supplier.localeCompare(b.supplier) || a.name.localeCompare(b.name));
+        }).filter(Boolean)
+          .sort((a, b) => a.supplier.localeCompare(b.supplier) || a.name.localeCompare(b.name));
 
         const totalValue = rows.reduce((sum, r) => sum + r.value, 0);
 

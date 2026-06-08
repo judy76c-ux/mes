@@ -3525,6 +3525,7 @@ const PaintingInspectionModule = (function() {
             await Storage.add(DB.STORES.SHIPPING_STANDBY, {
                 date         : inspectionDate,
                 source       : 'painting_inspection',
+                paintingWorkId: workId,
                 carModel     : work.carModel     || '',
                 partName     : work.partName     || '',
                 color        : work.color        || '',
@@ -3532,7 +3533,7 @@ const PaintingInspectionModule = (function() {
                 lotNo        : work.lots && work.lots.length > 0
                                 ? work.lots.map(l => l.lotNo).join(', ')
                                 : (work.lotNo || ''),
-                inspectionQty: effectiveInspQty,
+                inspectionQty: goodQty,
                 customer     : _prod ? (_prod.customer || '') : '',
                 status       : '대기'
             });

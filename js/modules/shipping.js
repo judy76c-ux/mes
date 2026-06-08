@@ -413,9 +413,38 @@ const ShippingStandbyModule = (function() {
 
     // ── 삭제 ─────────────────────────────────────────────────────────
     function removeStandby(id) {
-        UIUtils.confirm('대기 항목을 삭제하시겠습니까?', async () => {
+        const item = Storage.getById(SB_STORE, id);
+        const isPaintingSource = item && item.source === 'painting_inspection' && item.paintingWorkId;
+        const confirmMsg = isPaintingSource
+            ? '삭제하면 도장 검사 일지가 외관 검사 대기 상태로 복원됩니다. 삭제하시겠습니까?'
+            : '대기 항목을 삭제하시겠습니까?';
+
+        UIUtils.confirm(confirmMsg, async () => {
+            if (isPaintingSource) {
+                // 도장 작업 inspectionStatus 초기화 → 외관 검사 대기로 복원
+                await Storage.update(DB.STORES.PAINTING_WORK, item.paintingWorkId, {
+                    inspectionStatus: null,
+                    inspectionDate: null,
+                    inspectionStartTime: null,
+                    inspectionEndTime: null,
+                    inspectors: null,
+                    updatedAt: new Date().toISOString()
+                });
+                // 해당 작업의 도장 검사 실적 삭제
+                const inspections = Storage.getAll(DB.STORES.PAINTING_INSPECTIONS) || [];
+                const linked = inspections.filter(i => i.workId === item.paintingWorkId);
+                for (const insp of linked) {
+                    await Storage.remove(DB.STORES.PAINTING_INSPECTIONS, insp.id);
+                }
+            }
+
             await Storage.remove(SB_STORE, id);
-            UIUtils.toast('삭제되었습니다.', 'success');
+            UIUtils.toast(
+                isPaintingSource
+                    ? '삭제되었습니다. 도장 검사 외관 검사 대기로 복원되었습니다.'
+                    : '삭제되었습니다.',
+                'success'
+            );
             loadData();
         });
     }

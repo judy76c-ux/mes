@@ -9,6 +9,7 @@ var InjIncomingStdModule = (function () {
     const _esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
     let _formImages = [];   // 편집 중 이미지 배열
+    let _kbHandler  = null; // 편집 모달 키보드 핸들러
 
     /* ═══════════════════════════════════════════════════════════════
        LIST 페이지
@@ -154,6 +155,292 @@ var InjIncomingStdModule = (function () {
     function openNewFormForProduct(pid)   { _openForm(null, Storage.getById(PROD_ST,pid)); }
     function openEditForm(id)             { const s=Storage.getById(STORE,id); if(s) _openForm(s, s.productId?Storage.getById(PROD_ST,s.productId):null); }
 
+    /* ── 뷰 모드 (읽기 전용) ── */
+    function openViewForm(id) {
+        const std = Storage.getById(STORE, id);
+        if (!std) { UIUtils.toast('기준서를 찾을 수 없습니다.', 'error'); return; }
+
+        // 주요검사 Point 읽기 전용
+        const ptRows = (std.checkPoints||[]).map((pt,i) => `<tr>
+            <td style="text-align:center;padding:3px;border:1px solid #bbb;font-size:10px;">${i+1}</td>
+            <td style="padding:4px;border:1px solid #bbb;font-size:10px;">${_esc(pt.item||'')}</td>
+            <td style="padding:4px;border:1px solid #bbb;font-size:10px;white-space:pre-wrap;">${_esc(pt.standard||'')}</td>
+            <td style="padding:4px;border:1px solid #bbb;font-size:10px;text-align:center;">${_esc(pt.method||'')}</td>
+            <td style="padding:4px;border:1px solid #bbb;font-size:10px;text-align:center;">${_esc(pt.sample||'')}</td>
+            <td style="padding:4px;border:1px solid #bbb;font-size:10px;">${_esc(pt.management||'')}</td>
+        </tr>`).join('');
+
+        // 개정이력 읽기 전용
+        const _DIAG = 'linear-gradient(to top right,transparent calc(50% - 0.5px),#bbb calc(50% - 0.5px),#bbb calc(50% + 0.5px),transparent calc(50% + 0.5px))';
+        const revRows = (std.revisions||[]).map(r => {
+            const cf = r.confirmer||'';
+            return `<tr style="height:32px;">
+            <td style="padding:3px;border:1px solid #bbb;text-align:center;font-size:10px;">${_esc(r.no||'')}</td>
+            <td style="padding:3px;border:1px solid #bbb;text-align:center;font-size:10px;">${_esc(r.date||'')}</td>
+            <td style="padding:3px;border:1px solid #bbb;text-align:center;font-size:10px;">${_esc(r.reason||'')}</td>
+            <td style="padding:${cf?'3px':'0'};border:1px solid #bbb;text-align:center;font-size:10px;${cf?'':'background:'+_DIAG}">${_esc(cf)}</td>
+        </tr>`;}).join('');
+
+        // 이미지
+        const imgs = (std.images||[]).map(_normImg);
+        const imgHtml = imgs.length ? imgs.map((o,i) => `
+            <div style="border:1px solid #ddd;border-radius:4px;overflow:hidden;background:#f9f9f9;">
+                ${o.label?`<div style="padding:2px 4px;background:#e8edf2;border-bottom:1px solid #ddd;font-size:10px;font-weight:700;">${_esc(o.label)}</div>`:''}
+                <img src="${o.src}" style="width:100%;height:${o.h}px;object-fit:contain;display:block;background:#fff;">
+            </div>`).join('')
+            : `<div style="display:flex;align-items:center;justify-content:center;min-height:120px;color:#bbb;font-size:.8rem;">이미지 없음</div>`;
+
+        UIUtils.showModal('수입검사 기준서 보기', `
+        <style>
+            #stdViewDoc { font-family:'Malgun Gothic','맑은 고딕',sans-serif; font-size:11px; color:#111; }
+            #stdViewDoc table { border-collapse:collapse; width:100%; }
+            #stdViewDoc td, #stdViewDoc th { border:1px solid #888; padding:3px 6px; vertical-align:middle; }
+            #stdViewDoc .dth { background:#d0e4f7; font-weight:700; text-align:center; }
+            #stdViewDoc .dlb { background:#f0f0f0; font-weight:700; text-align:center; white-space:nowrap; }
+            #stdViewDoc .dsec { background:#d0e4f7; font-weight:700; text-align:center; padding:5px; font-size:12px; }
+            #stdViewDoc .dtitle { font-size:20px; font-weight:900; text-align:center; letter-spacing:3px; }
+        </style>
+        <div id="stdViewDoc">
+            <!-- 헤더 -->
+            <table>
+                <colgroup><col style="width:58px"><col style="width:130px"><col style="width:auto"><col style="width:26px"><col style="width:80px"><col style="width:80px"><col style="width:80px"></colgroup>
+                <tr style="height:20px;">
+                    <td class="dlb">공정NO</td><td style="text-align:center;font-weight:700;">10</td>
+                    <td rowspan="4" class="dtitle">수입검사 기준서</td>
+                    <td class="dth" style="border-bottom:none;"></td>
+                    <td class="dth">작 성</td><td class="dth">검 토</td><td class="dth">승 인</td>
+                </tr>
+                <tr style="height:20px;">
+                    <td class="dlb">공정명</td><td style="text-align:center;font-weight:700;">${_esc(std.processName||'수입검사')}</td>
+                    <td class="dth" rowspan="3" style="writing-mode:vertical-rl;text-align:center;vertical-align:middle;border-top:none;font-size:11px;letter-spacing:3px;">결 재</td>
+                    <td rowspan="3" style="text-align:center;vertical-align:middle;height:22px;">${_esc(std.author||'')}</td>
+                    <td rowspan="3" style="text-align:center;vertical-align:middle;">${_esc(std.reviewer||'')}</td>
+                    <td rowspan="3" style="text-align:center;vertical-align:middle;">${_esc(std.approver||'')}</td>
+                </tr>
+                <tr style="height:20px;"><td class="dlb">차 종</td><td style="text-align:center;font-weight:700;">${_esc(std.carModel||'')}</td></tr>
+                <tr style="height:20px;"><td class="dlb">품 명</td><td style="text-align:center;font-weight:700;color:#1d4ed8;">${_esc(std.partName||'')}</td></tr>
+            </table>
+            <!-- 이미지 + 검사포인트 -->
+            <table style="margin-top:0;">
+                <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
+                <tr>
+                    <td style="vertical-align:top;padding:0;">
+                        <div class="dsec">외관 / 치수포인트</div>
+                        <div style="padding:6px;display:grid;grid-template-columns:${imgs.length>1?'1fr 1fr':'1fr'};gap:4px;">${imgHtml}</div>
+                    </td>
+                    <td style="vertical-align:top;padding:0;">
+                        <div class="dsec">주요검사 Point</div>
+                        <table style="font-size:10px;">
+                            <thead><tr>
+                                <td class="dth" style="width:24px;">No</td>
+                                <td class="dth" style="width:65px;">항 목</td>
+                                <td class="dth">기 준</td>
+                                <td class="dth" style="width:50px;">확인방법</td>
+                                <td class="dth" style="width:65px;">시 료</td>
+                                <td class="dth" style="width:70px;">관리방안</td>
+                            </tr></thead>
+                            <tbody>${ptRows}</tbody>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+            <!-- 검사순서 / 조치사항 -->
+            <table style="margin-top:0;width:100%;">
+                <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
+                <tr>
+                    <td style="vertical-align:top;padding:0;">
+                        <div class="dsec">검 사 순 서</div>
+                        <div style="padding:8px;white-space:pre-wrap;font-size:11px;line-height:1.8;">${_esc(std.procedure||'')}</div>
+                    </td>
+                    <td style="vertical-align:top;padding:0;height:1px;">
+                        <table style="font-size:10px;width:100%;border-collapse:collapse;height:100%;">
+                            <colgroup><col style="width:20px"><col style="width:28px"><col style="width:72px"><col><col style="width:60px"></colgroup>
+                            <tr>
+                                <td colspan="5" class="dsec">조 치 사 항</td>
+                            </tr>
+                            <tr>
+                                <td colspan="5" style="padding:8px;white-space:pre-wrap;font-size:11px;line-height:1.8;vertical-align:top;">${_esc(std.corrective||'')}</td>
+                            </tr>
+                            <tr style="height:24px;">
+                                <td class="dlb" rowspan="99" style="writing-mode:vertical-rl;text-align:center;vertical-align:middle;padding:2px;font-size:10px;">개정내용</td>
+                                <td class="dth">NO</td>
+                                <td class="dth">개정일자</td>
+                                <td class="dth">개정사유</td>
+                                <td class="dth">확 인</td>
+                            </tr>
+                            ${revRows}
+                        </table>
+                    </td>
+                </tr>
+                <tr>
+                    <td colspan="2" style="border:none;padding:3px 0 0 0;">
+                        <div style="display:flex;justify-content:space-between;font-size:9px;color:#888;">
+                            <span style="color:#555;">문서번호 : <strong>${_esc(std.docNo||'')}</strong></span>
+                            <span>(주)케이씨케미칼&nbsp;&nbsp;A4(297×210)</span>
+                        </div>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+            <button class="btn btn-outline" onclick="UIUtils.closeModal();InjIncomingStdModule.printStd('${id}')">
+                <span class="material-symbols-outlined">print</span> 출력
+            </button>
+            <button class="btn btn-primary" onclick="UIUtils.closeModal();InjIncomingStdModule.openEditForm('${id}')">
+                <span class="material-symbols-outlined">edit</span> 편집
+            </button>
+        `, 'xl');
+    }
+
+    /* 수입검사 기준서를 별도 오버레이로 보기 (등록 모달 위에 표시) */
+    function openViewFormOverlay(id) {
+        const std = Storage.getById(STORE, id);
+        if (!std) { UIUtils.toast('기준서를 찾을 수 없습니다.', 'error'); return; }
+
+        const old = document.getElementById('_injStdViewOv');
+        if (old) old.remove();
+
+        const ptRows = (std.checkPoints||[]).map((pt,i) => `<tr>
+            <td style="text-align:center;padding:3px;border:1px solid #bbb;font-size:10px;">${i+1}</td>
+            <td style="padding:4px;border:1px solid #bbb;font-size:10px;">${_esc(pt.item||'')}</td>
+            <td style="padding:4px;border:1px solid #bbb;font-size:10px;white-space:pre-wrap;">${_esc(pt.standard||'')}</td>
+            <td style="padding:4px;border:1px solid #bbb;font-size:10px;text-align:center;">${_esc(pt.method||'')}</td>
+            <td style="padding:4px;border:1px solid #bbb;font-size:10px;text-align:center;">${_esc(pt.sample||'')}</td>
+            <td style="padding:4px;border:1px solid #bbb;font-size:10px;">${_esc(pt.management||'')}</td>
+        </tr>`).join('');
+
+        const _DIAG = 'linear-gradient(to top right,transparent calc(50% - 0.5px),#bbb calc(50% - 0.5px),#bbb calc(50% + 0.5px),transparent calc(50% + 0.5px))';
+        const _rawRevsOv = (std.revisions||[]).filter(r=>!!(r.no||r.reason));
+        const revsOv = _rawRevsOv.length ? _rawRevsOv : [{no:'00', date:std.createdDate||UIUtils.today(), reason:'최초 작성', confirmer:''}];
+        const revRows = revsOv.map(r => {
+            const cf = r.confirmer||'';
+            return `<tr style="height:32px;">
+            <td style="padding:3px;border:1px solid #bbb;text-align:center;font-size:10px;">${_esc(r.no||'')}</td>
+            <td style="padding:3px;border:1px solid #bbb;text-align:center;font-size:10px;">${_esc(r.date||'')}</td>
+            <td style="padding:3px;border:1px solid #bbb;text-align:center;font-size:10px;">${_esc(r.reason||'')}</td>
+            <td style="padding:${cf?'3px':'0'};border:1px solid #bbb;text-align:center;font-size:10px;${cf?'':'background:'+_DIAG}">${_esc(cf)}</td>
+        </tr>`;}).join('');
+
+        const imgs = (std.images||[]).map(_normImg);
+        const imgHtml = imgs.length ? imgs.map(o => `
+            <div style="border:1px solid #ddd;border-radius:4px;overflow:hidden;background:#f9f9f9;">
+                ${o.label?`<div style="padding:2px 4px;background:#e8edf2;border-bottom:1px solid #ddd;font-size:10px;font-weight:700;">${_esc(o.label)}</div>`:''}
+                <img src="${o.src}" style="width:100%;height:${o.h}px;object-fit:contain;display:block;background:#fff;">
+            </div>`).join('')
+            : `<div style="display:flex;align-items:center;justify-content:center;min-height:120px;color:#bbb;font-size:.8rem;">이미지 없음</div>`;
+
+        const ov = document.createElement('div');
+        ov.id = '_injStdViewOv';
+        ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:10000;display:flex;flex-direction:column;overflow:auto;padding:16px;';
+        ov.innerHTML = `
+        <div style="max-width:1100px;margin:0 auto;width:100%;background:var(--bg-primary);border-radius:10px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.3);">
+            <div style="background:var(--bg-tertiary);padding:12px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border-color);">
+                <span style="font-weight:700;font-size:1rem;">
+                    <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px;">description</span>
+                    수입검사 기준서
+                </span>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn btn-outline btn-sm" onclick="InjIncomingStdModule.printStd('${id}')">
+                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">print</span> 출력
+                    </button>
+                    <button class="btn btn-secondary btn-sm" onclick="document.getElementById('_injStdViewOv').remove()">✕ 닫기</button>
+                </div>
+            </div>
+            <div style="padding:16px;overflow:auto;">
+                <style>
+                    #_stdOvDoc { font-family:'Malgun Gothic','맑은 고딕',sans-serif; font-size:11px; color:#111; }
+                    #_stdOvDoc table { border-collapse:collapse; width:100%; }
+                    #_stdOvDoc td, #_stdOvDoc th { border:1px solid #888; padding:3px 6px; vertical-align:middle; }
+                    #_stdOvDoc .dth { background:#d0e4f7; font-weight:700; text-align:center; }
+                    #_stdOvDoc .dlb { background:#f0f0f0; font-weight:700; text-align:center; white-space:nowrap; }
+                    #_stdOvDoc .dsec { background:#d0e4f7; font-weight:700; text-align:center; padding:5px; font-size:12px; }
+                    #_stdOvDoc .dtitle { font-size:20px; font-weight:900; text-align:center; letter-spacing:3px; }
+                </style>
+                <div id="_stdOvDoc">
+                    <table>
+                        <colgroup><col style="width:58px"><col style="width:130px"><col style="width:auto"><col style="width:26px"><col style="width:80px"><col style="width:80px"><col style="width:80px"></colgroup>
+                        <tr style="height:20px;">
+                            <td class="dlb">공정NO</td><td style="text-align:center;font-weight:700;">10</td>
+                            <td rowspan="4" class="dtitle">수입검사 기준서</td>
+                            <td class="dth" style="border-bottom:none;"></td>
+                            <td class="dth">작 성</td><td class="dth">검 토</td><td class="dth">승 인</td>
+                        </tr>
+                        <tr style="height:20px;">
+                            <td class="dlb">공정명</td><td style="text-align:center;font-weight:700;">${_esc(std.processName||'수입검사')}</td>
+                            <td class="dth" rowspan="3" style="writing-mode:vertical-rl;text-align:center;vertical-align:middle;border-top:none;font-size:11px;letter-spacing:3px;">결 재</td>
+                            <td rowspan="3" style="text-align:center;vertical-align:middle;">${_esc(std.author||'')}</td>
+                            <td rowspan="3" style="text-align:center;vertical-align:middle;">${_esc(std.reviewer||'')}</td>
+                            <td rowspan="3" style="text-align:center;vertical-align:middle;">${_esc(std.approver||'')}</td>
+                        </tr>
+                        <tr style="height:20px;"><td class="dlb">차 종</td><td style="text-align:center;font-weight:700;">${_esc(std.carModel||'')}</td></tr>
+                        <tr style="height:20px;"><td class="dlb">품 명</td><td style="text-align:center;font-weight:700;color:#1d4ed8;">${_esc(std.partName||'')}</td></tr>
+                    </table>
+                    <table style="margin-top:0;">
+                        <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
+                        <tr>
+                            <td style="vertical-align:top;padding:0;">
+                                <div class="dsec">외관 / 치수포인트</div>
+                                <div style="padding:6px;display:grid;grid-template-columns:${imgs.length>1?'1fr 1fr':'1fr'};gap:4px;">${imgHtml}</div>
+                            </td>
+                            <td style="vertical-align:top;padding:0;">
+                                <div class="dsec">주요검사 Point</div>
+                                <table style="font-size:10px;">
+                                    <thead><tr>
+                                        <td class="dth" style="width:24px;">No</td>
+                                        <td class="dth" style="width:65px;">항 목</td>
+                                        <td class="dth">기 준</td>
+                                        <td class="dth" style="width:50px;">확인방법</td>
+                                        <td class="dth" style="width:65px;">시 료</td>
+                                        <td class="dth" style="width:70px;">관리방안</td>
+                                    </tr></thead>
+                                    <tbody>${ptRows}</tbody>
+                                </table>
+                            </td>
+                        </tr>
+                    </table>
+                    <table style="margin-top:0;width:100%;">
+                        <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
+                        <tr>
+                            <td style="vertical-align:top;padding:0;">
+                                <div class="dsec">검 사 순 서</div>
+                                <div style="padding:8px;white-space:pre-wrap;font-size:11px;line-height:1.8;">${_esc(std.procedure||'')}</div>
+                            </td>
+                            <td style="vertical-align:top;padding:0;height:1px;">
+                                <table style="font-size:10px;width:100%;border-collapse:collapse;height:100%;">
+                                    <colgroup><col style="width:20px"><col style="width:28px"><col style="width:72px"><col><col style="width:60px"></colgroup>
+                                    <tr>
+                                        <td colspan="5" class="dsec">조 치 사 항</td>
+                                    </tr>
+                                    <tr>
+                                        <td colspan="5" style="padding:8px;white-space:pre-wrap;font-size:11px;line-height:1.8;vertical-align:top;">${_esc(std.corrective||'')}</td>
+                                    </tr>
+                                    <tr style="height:24px;">
+                                        <td class="dlb" rowspan="99" style="writing-mode:vertical-rl;text-align:center;vertical-align:middle;padding:2px;font-size:10px;">개정내용</td>
+                                        <td class="dth">NO</td>
+                                        <td class="dth">개정일자</td>
+                                        <td class="dth">개정사유</td>
+                                        <td class="dth">확 인</td>
+                                    </tr>
+                                    ${revRows}
+                                </table>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td colspan="2" style="border:none;padding:3px 0 0 0;">
+                                <div style="display:flex;justify-content:space-between;font-size:9px;color:#888;">
+                                    <span style="color:#555;">문서번호 : <strong>${_esc(std.docNo||'')}</strong></span>
+                                    <span>(주)케이씨케미칼&nbsp;&nbsp;A4(297×210)</span>
+                                </div>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+        </div>`;
+        document.body.appendChild(ov);
+    }
+
     /* ── 기본 10개 검사항목 ── */
     const DEFAULT_POINTS = [
         {item:'외관',      standard:'BURR, 이물, 흠, SINK MARK 없을 것',                  method:'육안',    sample:'10EA/LOT', management:'수입검사 성적서'},
@@ -188,18 +475,18 @@ var InjIncomingStdModule = (function () {
         // 검사 항목 행
         const pts = std ? (std.checkPoints||[]) : DEFAULT_POINTS;
         const ptRows = pts.map((pt,i)=>`<tr>
-            <td style="text-align:center;padding:3px;border:1px solid #bbb;font-size:.8rem;">${i+1}</td>
+            <td style="text-align:center;padding:3px;border:1px solid #bbb;font-size:10px;">${i+1}</td>
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-item" type="text" value="${_esc(pt.item||'')}"
-                style="width:100%;border:none;background:transparent;font-size:.8rem;padding:2px;"></td>
+                style="width:100%;border:none;background:transparent;font-size:10px;padding:2px;"></td>
             <td style="padding:4px 2px;border:1px solid #bbb;"><div class="std-pt-std" contenteditable="true"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;line-height:1.5;outline:none;white-space:pre-wrap;min-height:1.5em;">${_esc(pt.standard||'')}</div></td>
+                style="width:100%;border:none;background:transparent;font-size:10px;padding:2px;line-height:1.5;outline:none;white-space:pre-wrap;min-height:1.5em;">${_esc(pt.standard||'')}</div></td>
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-method" type="text" value="${_esc(pt.method||'')}"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
+                style="width:100%;border:none;background:transparent;font-size:10px;padding:2px;"></td>
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-sample" type="text" value="${_esc(pt.sample||'')}"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
+                style="width:100%;border:none;background:transparent;font-size:10px;padding:2px;"></td>
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-mgmt" type="text" value="${_esc(pt.management||'')}"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
-            <td style="padding:2px;border:1px solid #bbb;text-align:center;">
+                style="width:100%;border:none;background:transparent;font-size:10px;padding:2px;"></td>
+            <td style="padding:2px;border:1px solid #bbb;text-align:right;white-space:nowrap;">
                 <button type="button" onclick="InjIncomingStdModule._insertCheckRowAfter(this)"
                     style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;" title="아래 행 추가">+</button>
                 <button type="button" onclick="this.closest('tr').remove()"
@@ -207,22 +494,30 @@ var InjIncomingStdModule = (function () {
             </td></tr>`).join('');
 
         // 개정이력 행
-        const revs = std ? (std.revisions||[{no:'00',date:std.createdDate||'',reason:'최초 작성',confirmer:''}])
-                         : [{no:'00',date:UIUtils.today(),reason:'최초 작성',confirmer:''}];
-        const revRows = revs.map(r=>`<tr>
-            <td style="padding:2px;border:1px solid #bbb;text-align:center;"><input class="std-rev-no" type="text" value="${_esc(r.no||'')}"
-                style="width:38px;border:none;background:transparent;font-size:.78rem;text-align:center;"></td>
+        const _rawRevs = std ? (std.revisions||[]).filter(r=>!!(r.no||r.reason)) : [];
+        const revs = _rawRevs.length ? _rawRevs
+                   : [{no:'00', date:std?(std.createdDate||''):UIUtils.today(), reason:'최초 작성', confirmer:''}];
+        const _DIAG_E = 'linear-gradient(to top right,transparent calc(50% - 0.5px),#bbb calc(50% - 0.5px),#bbb calc(50% + 0.5px),transparent calc(50% + 0.5px))';
+        const revRows = revs.map(r=>{
+            const hasCf = !!(r.confirmer||'').trim();
+            return `<tr style="height:32px;">
+            <td style="padding:2px;border:1px solid #bbb;"><input class="std-rev-no" type="text" value="${_esc(r.no||'')}"
+                style="width:100%;height:28px;border:none;background:transparent;font-size:10px;text-align:center;"></td>
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-rev-date" type="text" value="${_esc(r.date||'')}"
-                style="width:80px;border:none;background:transparent;font-size:.78rem;"></td>
+                style="width:100%;height:28px;border:none;background:transparent;font-size:10px;text-align:center;"></td>
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-rev-reason" type="text" value="${_esc(r.reason||'')}"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;"></td>
-            <td style="padding:2px;border:1px solid #bbb;"></td>
-            <td style="padding:2px;border:1px solid #bbb;text-align:right;">
+                style="width:100%;height:28px;border:none;background:transparent;font-size:10px;"></td>
+            <td style="padding:0;border:1px solid #bbb;background:${hasCf?'none':_DIAG_E};">
+                <input class="std-rev-confirmer" type="text" value="${_esc(r.confirmer||'')}"
+                    style="width:100%;height:32px;border:none;background:transparent;font-size:10px;text-align:center;display:block;"
+                    oninput="InjIncomingStdModule._onCfInput(this)">
+            </td>
+            <td style="padding:2px;border:1px solid #bbb;text-align:right;white-space:nowrap;">
                 <button type="button" onclick="InjIncomingStdModule._insertRevRowAfter(this)"
                     style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;" title="아래 행 추가">+</button>
                 <button type="button" onclick="this.closest('tr').remove()"
                     style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px;line-height:1;" title="행 삭제">×</button>
-            </td></tr>`).join('');
+            </td></tr>`;}).join('');
 
         // 이미지 목록 초기화 (기존 string 포맷도 정규화)
         _formImages = (std ? (std.images||[]) : []).map(_normImg);
@@ -332,7 +627,7 @@ var InjIncomingStdModule = (function () {
                     </div>
                 </td>
                 <!-- 주요검사 Point -->
-                <td style="width:50%;vertical-align:top;border:1px solid #888;padding:0;">
+                <td style="width:50%;vertical-align:top;border:1px solid #888;padding:0;height:100%;">
                     <div class="doc-sec">주요검사 Point</div>
                     <table style="font-size:10px;">
                         <thead><tr>
@@ -342,7 +637,7 @@ var InjIncomingStdModule = (function () {
                             <td class="doc-th" style="width:50px;">확인방법</td>
                             <td class="doc-th" style="width:65px;">시 료</td>
                             <td class="doc-th" style="width:70px;">관리방안</td>
-                            <td class="doc-th" style="width:22px;">
+                            <td class="doc-th" style="width:44px;text-align:right;">
                                 <button type="button" onclick="InjIncomingStdModule._addCheckRow()"
                                     style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;" title="행 추가">+</button>
                             </td>
@@ -365,55 +660,92 @@ var InjIncomingStdModule = (function () {
                             >${std?_esc(std.procedure||''):'1. 소재의 표면상태를 검사한다.\n 1-1. 전면 → 후면 순으로 검사한다.\n2. 소재불량은 해당부위 마킹 후 별도의 불량 박스에 보관한다.\n3. 사출품의 표면 장력 Test를 실시한다.\n4. BOX내부에 이물질 유무검사를 실시한다.\n5. 내 포장 상태를 확인한다. (찢어짐등이 없을 것)\n6. 명세표 대비 수량을 확인한다.'}</textarea>
                     </div>
                 </td>
-                <td style="width:50%;vertical-align:top;border:1px solid #888;padding:0;">
-                    <div class="doc-sec">조 치 사 항</div>
-                    <div style="padding:6px;">
-                        <textarea id="stdCorrective"
-                            oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"
-                            style="width:100%;border:none;background:transparent;font-family:'Malgun Gothic',sans-serif;font-size:11px;line-height:1.8;resize:none;overflow:hidden;outline:none;display:block;"
-                            >${std?_esc(std.corrective||''):'1. 무결함을 원칙으로 한다.\n2. 불량 발생 시 반품, 선별, 폐기, 특채 의 조치를 취할 수 있다.'}</textarea>
-                    </div>
-                    <!-- 개정내용 -->
-                    <table style="margin-top:4px;font-size:10px;">
-                        <thead><tr>
-                            <td class="doc-label" rowspan="${revs.length+2}" style="writing-mode:vertical-rl;width:20px;padding:4px 2px;font-size:10px;">개정내용</td>
-                            <td class="doc-th" style="width:32px;">NO</td>
-                            <td class="doc-th" style="width:80px;">개정일자</td>
+                <td style="width:50%;vertical-align:top;border:1px solid #888;padding:0;height:1px;">
+                    <table style="font-size:10px;width:100%;border-collapse:collapse;height:100%;">
+                        <colgroup><col style="width:20px"><col style="width:28px"><col style="width:72px"><col><col style="width:60px"><col style="width:44px"></colgroup>
+                        <tbody>
+                        <tr>
+                            <td colspan="6" style="padding:0;border:none;">
+                                <div class="doc-sec">조 치 사 항</div>
+                                <div style="padding:6px;">
+                                    <textarea id="stdCorrective"
+                                        oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"
+                                        style="width:100%;border:none;background:transparent;font-family:'Malgun Gothic',sans-serif;font-size:11px;line-height:1.8;resize:none;overflow:hidden;outline:none;display:block;"
+                                        >${std?_esc(std.corrective||''):'1. 무결함을 원칙으로 한다.\n2. 불량 발생 시 반품, 선별, 폐기, 특채 의 조치를 취할 수 있다.'}</textarea>
+                                </div>
+                            </td>
+                        </tr>
+                        </tbody>
+                        <!-- 개정내용 -->
+                        <tbody id="stdRevBody">
+                        <tr style="height:24px;">
+                            <td class="doc-label" rowspan="99" style="writing-mode:vertical-rl;text-align:center;vertical-align:middle;padding:2px;font-size:10px;">개정내용</td>
+                            <td class="doc-th">NO</td>
+                            <td class="doc-th">개정일자</td>
                             <td class="doc-th">개정사유</td>
-                            <td class="doc-th" style="width:50px;">확 인</td>
-                            <td class="doc-th" style="width:22px;">
+                            <td class="doc-th">확 인</td>
+                            <td class="doc-th" style="text-align:right;">
                                 <button type="button" onclick="InjIncomingStdModule._addRevRow()"
                                     style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;" title="행 추가">+</button>
                             </td>
-                        </tr></thead>
-                        <tbody id="stdRevBody">${revRows}</tbody>
+                        </tr>
+                        ${revRows}
+                        </tbody>
                     </table>
                 </td>
             </tr>
+            <tr>
+                <td colspan="2" style="border:none;padding:3px 0 0 0;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div style="font-size:9px;color:#555;">
+                            문서번호 : <input class="doc-input" id="stdDocNo" value="${fv('docNo')}" placeholder="KC-IT-000"
+                                style="font-size:9px;font-weight:700;width:80px;display:inline-block;">
+                        </div>
+                        <div style="font-size:9px;color:#888;">(주)케이씨케미칼&nbsp;&nbsp;&nbsp;A4(297×210)</div>
+                    </div>
+                </td>
+            </tr>
         </table>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;">
-            <div style="font-size:9px;color:#555;">
-                문서번호 : <input class="doc-input" id="stdDocNo" value="${fv('docNo')}" placeholder="KC-IT-000"
-                    style="font-size:9px;font-weight:700;width:80px;display:inline-block;">
-            </div>
-            <div style="font-size:9px;color:#888;">(주)케이씨케미칼&nbsp;&nbsp;&nbsp;A4(297×210)</div>
-        </div>
         </div><!-- /#stdDoc -->
         `, `
-            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-secondary" onclick="InjIncomingStdModule._closeEditModal()">취소</button>
             <button class="btn btn-outline" onclick="InjIncomingStdModule.printStd('${isEdit?std.id:''}')">
                 <span class="material-symbols-outlined">print</span> 출력
             </button>
             <button class="btn btn-primary" onclick="InjIncomingStdModule.saveForm('${isEdit?std.id:''}')">저장</button>
         `, 'xl');
 
-        // 모달 렌더 후 textarea 초기 높이 자동 계산
+        // 모달 렌더 후 초기화
         setTimeout(() => {
             ['stdProcedure','stdCorrective'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }
             });
+            // confirmer 입력값이 있으면 대각선 제거
+            document.querySelectorAll('.std-rev-confirmer').forEach(inp => {
+                InjIncomingStdModule._onCfInput(inp);
+            });
+            // 제품이 선택된 경우 문서 내 차종/품명 동기화
+            const selProd = document.getElementById('stdProductId');
+            if (selProd && selProd.value) InjIncomingStdModule._onProductChange();
         }, 50);
+
+        // Ctrl+Z: 텍스트 입력 안에서는 네이티브 undo, 그 외엔 뒤로가기 방지
+        if (_kbHandler) document.removeEventListener('keydown', _kbHandler);
+        _kbHandler = function(e) {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+                const tag = (document.activeElement || {}).tagName;
+                const ce  = (document.activeElement || {}).contentEditable;
+                if (tag === 'INPUT' || tag === 'TEXTAREA' || ce === 'true') return;
+                e.preventDefault();
+            }
+        };
+        document.addEventListener('keydown', _kbHandler);
+    }
+
+    function _closeEditModal() {
+        if (_kbHandler) { document.removeEventListener('keydown', _kbHandler); _kbHandler = null; }
+        UIUtils.closeModal();
     }
 
     /* ── 이미지 정규화: src 문자열 or {src,h,label} → 객체 ── */
@@ -625,7 +957,7 @@ var InjIncomingStdModule = (function () {
                 style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-mgmt" type="text"
                 style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
-            <td style="padding:2px;border:1px solid #bbb;text-align:center;">
+            <td style="padding:2px;border:1px solid #bbb;text-align:right;white-space:nowrap;">
                 <button type="button" onclick="InjIncomingStdModule._insertCheckRowAfter(this)"
                     style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;" title="아래 행 추가">+</button>
                 <button type="button" onclick="this.closest('tr').remove()"
@@ -652,7 +984,7 @@ var InjIncomingStdModule = (function () {
                 style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-mgmt" type="text"
                 style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
-            <td style="padding:2px;border:1px solid #bbb;text-align:center;">
+            <td style="padding:2px;border:1px solid #bbb;text-align:right;white-space:nowrap;">
                 <button type="button" onclick="InjIncomingStdModule._insertCheckRowAfter(this)"
                     style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;" title="아래 행 추가">+</button>
                 <button type="button" onclick="this.closest('tr').remove()"
@@ -663,17 +995,28 @@ var InjIncomingStdModule = (function () {
         else tbody.appendChild(newTr);
     }
 
+    const _DIAG = 'linear-gradient(to top right,transparent calc(50% - 0.5px),#bbb calc(50% - 0.5px),#bbb calc(50% + 0.5px),transparent calc(50% + 0.5px))';
+
+    function _onCfInput(inp) {
+        inp.closest('td').style.background = inp.value.trim() ? 'none' : _DIAG;
+    }
+
     function _makeRevRow(no) {
         const tr = document.createElement('tr');
+        tr.style.height = '32px';
         tr.innerHTML = `
-            <td style="padding:2px;border:1px solid #bbb;text-align:center;"><input class="std-rev-no" type="text" value="${no}"
-                style="width:38px;border:none;background:transparent;font-size:.78rem;text-align:center;"></td>
+            <td style="padding:2px;border:1px solid #bbb;"><input class="std-rev-no" type="text" value="${no}"
+                style="width:100%;height:28px;border:none;background:transparent;font-size:10px;text-align:center;"></td>
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-rev-date" type="text"
-                style="width:80px;border:none;background:transparent;font-size:.78rem;"></td>
+                style="width:100%;height:28px;border:none;background:transparent;font-size:10px;text-align:center;"></td>
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-rev-reason" type="text"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;"></td>
-            <td style="padding:2px;border:1px solid #bbb;"></td>
-            <td style="padding:2px;border:1px solid #bbb;text-align:right;">
+                style="width:100%;height:28px;border:none;background:transparent;font-size:10px;"></td>
+            <td style="padding:0;border:1px solid #bbb;background:${_DIAG};">
+                <input class="std-rev-confirmer" type="text"
+                    style="width:100%;height:32px;border:none;background:transparent;font-size:10px;text-align:center;display:block;"
+                    oninput="InjIncomingStdModule._onCfInput(this)">
+            </td>
+            <td style="padding:2px;border:1px solid #bbb;text-align:right;white-space:nowrap;">
                 <button type="button" onclick="InjIncomingStdModule._insertRevRowAfter(this)"
                     style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;" title="아래 행 추가">+</button>
                 <button type="button" onclick="this.closest('tr').remove()"
@@ -685,7 +1028,9 @@ var InjIncomingStdModule = (function () {
     function _addRevRow() {
         const tb = document.getElementById('stdRevBody');
         if (!tb) return;
-        tb.appendChild(_makeRevRow(String(tb.rows.length).padStart(2,'0')));
+        // rows.length 에서 헤더 행(index 0) 제외
+        const no = String(tb.rows.length - 1).padStart(2,'0');
+        tb.appendChild(_makeRevRow(no));
     }
 
     function _insertRevRowAfter(btn) {
@@ -724,7 +1069,8 @@ var InjIncomingStdModule = (function () {
             const no=(tr.querySelector('.std-rev-no')||{}).value||'';
             const date=(tr.querySelector('.std-rev-date')||{}).value||'';
             const reason=(tr.querySelector('.std-rev-reason')||{}).value||'';
-            if(no||reason) revisions.push({no,date,reason,confirmer:''});
+            const confirmer=(tr.querySelector('.std-rev-confirmer')||{}).value||'';
+            if(no||reason) revisions.push({no,date,reason,confirmer});
         });
 
         const data={
@@ -750,6 +1096,7 @@ var InjIncomingStdModule = (function () {
 
         if(editId){await Storage.update(STORE,editId,data);UIUtils.toast('기준서가 수정되었습니다.','success');}
         else{await Storage.add(STORE,data);UIUtils.toast('기준서가 등록되었습니다.','success');}
+        if(_kbHandler){document.removeEventListener('keydown',_kbHandler);_kbHandler=null;}
         UIUtils.closeModal();
         renderList();
     }
@@ -761,6 +1108,9 @@ var InjIncomingStdModule = (function () {
         if(!id){UIUtils.toast('저장 후 출력할 수 있습니다.','info');return;}
         const std=Storage.getById(STORE,id);
         if(!std){UIUtils.toast('기준서를 찾을 수 없습니다.','error');return;}
+
+        // 화면 px → mm 변환 (96dpi 기준: 1px = 0.2646mm)
+        const px2mm = px => (Number(px) * 0.2646).toFixed(1);
 
         const ptRows=(std.checkPoints||[]).map((pt,i)=>`<tr>
             <td style="text-align:center;">${i+1}</td>
@@ -779,14 +1129,16 @@ var InjIncomingStdModule = (function () {
             </div>`;
         }).join('');
 
-        const revRows=(std.revisions||[]).map(r=>`<tr>
+        const _rawRevsPrint=(std.revisions||[]).filter(r=>!!(r.no||r.reason));
+        const revsPrint=_rawRevsPrint.length?_rawRevsPrint:[{no:'00',date:std.createdDate||UIUtils.today(),reason:'최초 작성',confirmer:''}];
+        const revRows=revsPrint.map(r=>{
+            const cf=r.confirmer||'';
+            const diagBg=cf?'':'background:linear-gradient(to top right,transparent calc(50% - 0.5px),#999 calc(50% - 0.5px),#999 calc(50% + 0.5px),transparent calc(50% + 0.5px));';
+            return `<tr style="height:30px;">
             <td style="text-align:center;">${_esc(r.no||'')}</td>
             <td style="text-align:center;">${_esc(r.date||'')}</td>
-            <td>${_esc(r.reason||'')}</td>
-            <td style="text-align:center;">${_esc(r.confirmer||'')}</td></tr>`).join('');
-
-        // 화면 px → mm 변환 (96dpi 기준: 1px = 0.2646mm)
-        const px2mm = px => (Number(px) * 0.2646).toFixed(1);
+            <td style="text-align:center;">${_esc(r.reason||'')}</td>
+            <td style="padding:${cf?'3px':'0'};text-align:center;${diagBg}">${_esc(cf)}</td></tr>`;}).join('');
 
         const win=window.open('','_blank','width=960,height=720');
         win.document.write(`<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
@@ -872,26 +1224,35 @@ var InjIncomingStdModule = (function () {
                     <div class="doc-sec">검 사 순 서</div>
                     <div style="padding:8px;white-space:pre-wrap;line-height:1.8;font-size:11px;">${_esc(std.procedure||'')}</div>
                 </td>
-                <td style="vertical-align:top;padding:0;">
-                    <div class="doc-sec">조 치 사 항</div>
-                    <div style="padding:8px;white-space:pre-wrap;line-height:1.8;font-size:11px;">${_esc(std.corrective||'')}</div>
-                    <table style="font-size:10px;margin-top:6px;">
+                <td style="vertical-align:top;padding:0;height:1px;">
+                    <table style="font-size:10px;width:100%;border-collapse:collapse;height:100%;">
+                        <colgroup><col style="width:20px"><col style="width:28px"><col style="width:72px"><col><col style="width:60px"></colgroup>
                         <tr>
-                            <td class="doc-label" rowspan="${(std.revisions||[]).length+2}" style="writing-mode:vertical-rl;width:20px;padding:4px 2px;">개정내용</td>
-                            <th class="doc-th" style="width:32px;">NO</th>
-                            <th class="doc-th" style="width:80px;">개정일자</th>
+                            <td colspan="5" class="doc-sec">조 치 사 항</td>
+                        </tr>
+                        <tr>
+                            <td colspan="5" style="padding:8px;white-space:pre-wrap;line-height:1.8;font-size:11px;vertical-align:top;">${_esc(std.corrective||'')}</td>
+                        </tr>
+                        <tr style="height:24px;">
+                            <td class="doc-label" rowspan="99" style="writing-mode:vertical-rl;text-align:center;vertical-align:middle;padding:2px;">개정내용</td>
+                            <th class="doc-th">NO</th>
+                            <th class="doc-th">개정일자</th>
                             <th class="doc-th">개정사유</th>
-                            <th class="doc-th" style="width:50px;">확 인</th>
+                            <th class="doc-th">확 인</th>
                         </tr>
                         ${revRows}
                     </table>
                 </td>
             </tr>
+            <tr>
+                <td colspan="2" style="border:none;padding:3px 0 0 0;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div style="font-size:9px;color:#555;">문서번호 : <strong>${_esc(std.docNo||'')}</strong></div>
+                        <div style="font-size:9px;color:#888;">(주)케이씨케미칼&nbsp;&nbsp;&nbsp;A4(297×210)</div>
+                    </div>
+                </td>
+            </tr>
         </table>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
-            <div style="font-size:9px;color:#555;">문서번호 : <strong>${_esc(std.docNo||'')}</strong></div>
-            <div style="font-size:9px;color:#888;">(주)케이씨케미칼&nbsp;&nbsp;&nbsp;A4(297×210)</div>
-        </div>
         <script>window.onload=function(){window.print();}<\/script>
         </body></html>`);
         win.document.close();
@@ -902,12 +1263,12 @@ var InjIncomingStdModule = (function () {
     ═══════════════════════════════════════════════════════════════ */
     return {
         init, render, renderList,
-        openNewForm, openNewFormForProduct, openEditForm,
+        openNewForm, openNewFormForProduct, openViewForm, openViewFormOverlay, openEditForm,
         saveForm, printStd,
         _onCarFilterChange, _onProductChange, _onPaste,
         _dragStart, _dragOver, _dragEnd, _dragDrop,
         _startResize, _resizeImg, _updateImgLabel,
         _addCheckRow, _insertCheckRowAfter, _addRevRow, _insertRevRowAfter,
-        _addImages, _removeImage
+        _addImages, _removeImage, _closeEditModal, _onCfInput
     };
 })();

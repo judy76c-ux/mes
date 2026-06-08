@@ -432,6 +432,8 @@ var InjectionIncomingModule = (function() {
                     <input type="text" class="form-input" id="addInjSupplier" placeholder="자동 입력" readonly style="background:var(--bg-secondary);">
                 </div>
             </div>
+            <!-- 수입검사 기준서 버튼 -->
+            <div id="injStdLinkArea" style="display:none;margin-bottom:8px;"></div>
             <!-- 수입검사 기준 사진 미리보기 -->
             <div id="injStdPhotoPreview" style="display:none;background:rgba(59,130,246,0.05);
                 border:1px solid rgba(59,130,246,0.3);border-radius:8px;padding:10px 14px;margin-bottom:12px;">
@@ -639,6 +641,8 @@ var InjectionIncomingModule = (function() {
         partSelect.innerHTML = '<option value="">-- 품명 선택 --</option>';
         colorSelect.innerHTML = '<option value="">-- 컬러 선택 --</option>';
         document.getElementById('addInjSupplier').value = '';
+        const _laC = document.getElementById('injStdLinkArea');
+        if (_laC) { _laC.style.display = 'none'; _laC.innerHTML = ''; }
 
         if (!carModel) return;
 
@@ -664,6 +668,8 @@ var InjectionIncomingModule = (function() {
 
         colorSelect.innerHTML = '<option value="">-- 컬러 선택 --</option>';
         document.getElementById('addInjSupplier').value = '';
+        const _laP = document.getElementById('injStdLinkArea');
+        if (_laP) { _laP.style.display = 'none'; _laP.innerHTML = ''; }
 
         _refreshStdPreview(carModel, partName);
 
@@ -688,9 +694,11 @@ var InjectionIncomingModule = (function() {
         const carModel = document.getElementById('addInjCarModel').value;
         const partName = document.getElementById('addInjPart').value;
         const color = document.getElementById('addInjColor').value;
+        const linkArea = document.getElementById('injStdLinkArea');
 
         if (!color) {
             document.getElementById('addInjSupplier').value = '';
+            if (linkArea) { linkArea.style.display = 'none'; linkArea.innerHTML = ''; }
             return;
         }
         // 공급처가 "사내"가 아닌 제품만 검색
@@ -698,6 +706,27 @@ var InjectionIncomingModule = (function() {
             return m.carModel === carModel && m.injPartName === partName && m.injColor === color && (m.supplier !== '사내');
         });
         document.getElementById('addInjSupplier').value = material ? (material.supplier || '') : '';
+
+        // 수입검사 기준서 버튼
+        if (linkArea) {
+            if (material) {
+                const stds = Storage.getAll(DB.STORES.INJ_INCOMING_STD) || [];
+                const std = stds.find(function(s) { return s.productId === material.id; });
+                if (std) {
+                    linkArea.innerHTML = `<button type="button" class="btn btn-outline btn-sm"
+                        style="color:var(--accent-blue);border-color:var(--accent-blue);display:inline-flex;align-items:center;gap:4px;"
+                        onclick="InjIncomingStdModule.openViewFormOverlay('${std.id}')">
+                        <span class="material-symbols-outlined" style="font-size:14px;">description</span>
+                        수입검사 기준서
+                    </button>`;
+                    linkArea.style.display = 'block';
+                } else {
+                    linkArea.style.display = 'none'; linkArea.innerHTML = '';
+                }
+            } else {
+                linkArea.style.display = 'none'; linkArea.innerHTML = '';
+            }
+        }
     }
 
     // Edit 모달용 cascading selector 함수

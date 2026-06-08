@@ -463,18 +463,59 @@ var InjectionWarehouseModule = (function() {
         const mat   = mats.find(m => m.carModel === carModel && m.injPartName === partName);
         const price = Number(mat ? mat.unitPrice : 0) || 0;
 
-        // 입고 내역만 표시 (출고 제외)
-        const inItems = items.filter(d => d.type !== '출고');
+        // LOT별 현재 잔량만 표시한다. LOT가 비어 있는 출고는 오래된 LOT부터 차감한다.
+        const lotMap = {};
+        const orderedItems = items.slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 
-        const rows = inItems.map(d => {
+        orderedItems.forEach(d => {
+            const lot = d.lotNo || '무표기';
             const qty = Number(d.quantity) || 0;
+
+            if (d.type === '출고') {
+                let remaining = qty;
+
+                if (d.lotNo && lotMap[lot]) {
+                    const used = Math.min(lotMap[lot].qty, remaining);
+                    lotMap[lot].qty -= used;
+                    remaining -= used;
+                }
+
+                if (remaining > 0) {
+                    Object.values(lotMap)
+                        .filter(item => item.qty > 0)
+                        .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+                        .some(item => {
+                            const used = Math.min(item.qty, remaining);
+                            item.qty -= used;
+                            remaining -= used;
+                            return remaining <= 0;
+                        });
+                }
+            } else {
+                if (!lotMap[lot]) {
+                    lotMap[lot] = { qty: 0, date: '', supplier: '' };
+                }
+                lotMap[lot].qty += qty;
+                if (!lotMap[lot].date || (d.date || '') > lotMap[lot].date) {
+                    lotMap[lot].date = d.date || '';
+                    lotMap[lot].supplier = d.supplier || '';
+                }
+            }
+        });
+
+        const currentLots = Object.entries(lotMap)
+            .map(([lot, info]) => ({ lot, ...info }))
+            .filter(item => item.qty > 0)
+            .sort((a, b) => (b.date || '').localeCompare(a.date || '') || a.lot.localeCompare(b.lot));
+
+        const rows = currentLots.map(d => {
             return `
                 <tr>
                     <td style="white-space:nowrap;">${d.date || '-'}</td>
-                    <td>${d.lotNo || '-'}</td>
+                    <td>${d.lot || '-'}</td>
                     <td>${d.supplier || '-'}</td>
                     <td style="text-align:right; color:var(--accent-green); font-weight:600;">
-                        ${UIUtils.formatNumber(qty)}
+                        ${UIUtils.formatNumber(d.qty)}
                     </td>
                 </tr>
             `;
@@ -493,8 +534,8 @@ var InjectionWarehouseModule = (function() {
                     <div style="font-size:0.8rem; color:var(--text-muted);">재고 금액 (₩)</div>
                 </div>
                 <div style="background:var(--bg-secondary); padding:12px 20px; border-radius:8px; text-align:center;">
-                    <div style="font-size:1.4rem; font-weight:700;">${inItems.length}</div>
-                    <div style="font-size:0.8rem; color:var(--text-muted);">입고 건수</div>
+                    <div style="font-size:1.4rem; font-weight:700;">${currentLots.length}</div>
+                    <div style="font-size:0.8rem; color:var(--text-muted);">보유 LOT 수</div>
                 </div>
             </div>
             <div style="overflow-x:auto;">
@@ -504,11 +545,11 @@ var InjectionWarehouseModule = (function() {
                             <th>입고일</th>
                             <th>LOT번호</th>
                             <th>생산처</th>
-                            <th style="text-align:right;">수량</th>
+                            <th style="text-align:right;">현재 수량</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${rows || `<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--text-muted);">입고 내역이 없습니다.</td></tr>`}
+                        ${rows || `<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--text-muted);">현재 보관중인 LOT가 없습니다.</td></tr>`}
                     </tbody>
                 </table>
             </div>
@@ -845,7 +886,7 @@ var InjectionWarehouseModule = (function() {
                 ${type === '출고' ? `
                 <div id="addInvStockArea" style="margin-bottom:10px; padding:10px 12px; background:var(--bg-secondary); border:1px solid var(--border); border-radius:8px;">
                     <div id="lotStockListContainer">
-                        <label class="form-label" style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:5px; display:block;">상세 LOT별 재고 (클릭 시 자동 입력)</label>
+                        <label class="form-label" style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:5px; display:block;">현재 보관중인 LOT (클릭 시 자동 입력)</label>
                         <div id="lotStockList" style="max-height:120px; overflow-y:auto; border:1px solid var(--border); border-radius:6px; background:white;">
                         </div>
                     </div>
@@ -871,7 +912,7 @@ var InjectionWarehouseModule = (function() {
                 </div>` : `
                 <div id="addInvStockArea" style="display:none; margin-bottom:10px; padding:10px 12px; background:var(--bg-secondary); border:1px solid var(--border); border-radius:8px;">
                     <div id="lotStockListContainer">
-                        <label class="form-label" style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:5px; display:block;">상세 LOT별 재고 (참조용)</label>
+                        <label class="form-label" style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:5px; display:block;">현재 보관중인 LOT</label>
                         <div id="lotStockList" style="max-height:120px; overflow-y:auto; border:1px solid var(--border); border-radius:6px; background:white;"></div>
                     </div>
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px; padding-top:8px; border-top:1px solid var(--border);">
@@ -1482,6 +1523,16 @@ var InjectionWarehouseModule = (function() {
         ) || null;
     }
 
+    function _isProductMasterName(carModel, partName) {
+        const target = (partName || '').trim();
+        if (!target) return false;
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        return products.some(p => {
+            const productName = ((p.partName || p.name || '') + '').trim();
+            return productName === target && (!carModel || !p.carModel || p.carModel === carModel);
+        });
+    }
+
     function _isAdminUser() {
         if (typeof AuthModule === 'undefined' || !AuthModule.getCurrentUser) return false;
         const user = AuthModule.getCurrentUser();
@@ -1529,10 +1580,10 @@ var InjectionWarehouseModule = (function() {
                 oninput="InjectionWarehouseModule.handleBulkPasteInput()"></textarea>
             <div style="display:flex;gap:14px;align-items:center;margin:10px 0 12px;">
                 <label style="display:flex;align-items:center;gap:7px;font-size:0.86rem;cursor:pointer;">
-                    <input type="checkbox" id="injBulkCreateMaterial" checked>
+                    <input type="checkbox" id="injBulkCreateMaterial">
                     사출자재 마스터에 없는 품목 자동 생성
                 </label>
-                <span style="color:var(--text-muted);font-size:0.78rem;">저장은 현재고가 목표 수량이 되도록 차이만 보정합니다.</span>
+                <span style="color:var(--text-muted);font-size:0.78rem;">제품명은 사출자재로 자동 생성되지 않습니다. 저장은 현재고가 목표 수량이 되도록 차이만 보정합니다.</span>
             </div>
             <div id="injBulkPreview"></div>
         `, `
@@ -1648,6 +1699,11 @@ var InjectionWarehouseModule = (function() {
         }
 
         const createMissing = !!document.getElementById('injBulkCreateMaterial')?.checked;
+        const productNameRows = rows.filter(row => !_findInjectionMaterial(row.carModel, row.partName, row.color) && _isProductMasterName(row.carModel, row.partName));
+        if (productNameRows.length) {
+            UIUtils.toast(`제품명으로 보이는 품목은 사출자재로 자동 생성할 수 없습니다: ${productNameRows.slice(0, 3).map(r => r.partName).join(', ')}`, 'error');
+            return;
+        }
         const currentMap = _getCurrentStockMap();
         const today = UIUtils.today ? UIUtils.today() : new Date().toISOString().slice(0, 10);
         const nowTime = new Date().toTimeString().slice(0, 5);

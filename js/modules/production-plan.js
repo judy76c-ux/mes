@@ -2158,6 +2158,7 @@ const ProductionPlanModule = (function() {
         let totalQty = 0;
         let totalMinutes = 0;
         let rowIdx = 1;
+        let renderedRowCount = 0;
 
         let tableRows = allSlots.map(slot => {
             const item = slotData[slot] || {};
@@ -2199,6 +2200,7 @@ const ProductionPlanModule = (function() {
                 }
 
                 const isOvertimeStart = (item.startTime === '18:00' || (!item.startTime && slot === '18:00'));
+                renderedRowCount += 1;
 
                 return `
                     <tr class="${isOvertimeStart ? 'overtime-row' : ''}">
@@ -2223,6 +2225,7 @@ const ProductionPlanModule = (function() {
                     mealText = '저녁 식사 (DINNER TIME)';
                     timeRange = '17:30 ~ 18:00';
                 }
+                renderedRowCount += 1;
                 return `
                     <tr class="${isLunch ? 'lunch-time' : 'dinner-time'}" style="background-color: #f1f5f9;">
                         <td style="text-align:center;">-</td>
@@ -2233,6 +2236,22 @@ const ProductionPlanModule = (function() {
             }
             return '';
         }).join('');
+
+        const minPrintableRows = 12;
+        const fillerCount = Math.max(0, minPrintableRows - renderedRowCount);
+        const fillerRows = Array.from({ length: fillerCount }, () => `
+            <tr class="filler-row">
+                <td style="text-align:center;">&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+            </tr>
+        `).join('');
 
         // 총 시간을 시간/분으로 변환
         const totalHours = Math.floor(totalMinutes / 60);
@@ -2253,6 +2272,7 @@ const ProductionPlanModule = (function() {
                     th, td { border: 1px solid #333; padding: 8px 4px; font-size: 11px; word-break: break-all; }
                     th { background-color: #f2f2f2; font-weight: bold; }
                     .overtime-row td { border-top: 3px solid #333 !important; }
+                    .filler-row td { height: 34px; }
                     .total-label { text-align:right; font-weight:bold; background:#f9f9f9; }
                     .total-value { text-align:right; font-weight:bold; background:#f9f9f9; color: #0056b3; }
                     .footer { margin-top: 30px; text-align: right; font-size: 12px; color: #666; }
@@ -2283,6 +2303,7 @@ const ProductionPlanModule = (function() {
                     </thead>
                     <tbody>
                         ${tableRows || '<tr><td colspan="9" style="text-align:center; padding:40px;">해당 날짜에 등록된 계획이 없습니다.</td></tr>'}
+                        ${tableRows ? fillerRows : ''}
                     </tbody>
                     <tfoot>
                         <tr>

@@ -23,28 +23,36 @@ var LaserWorkModule = (function() {
             return prod && (prod.process2 || '').trim() === '레이저';
         });
 
-        // 차종+품명+컬러별 레이저 처리 출고 합계
-        const outMap = {};
-        laserWorks.forEach(w => {
-            const key = `${w.carModel}||${w.partName}||${w.color || ''}`;
-            outMap[key] = (outMap[key] || 0) + (Number(w.quantity) || 0);
+        // 도장 날짜(paintDate) 단위로 레이저 처리 수량 집계
+        // key: 차종||품명||컬러||도장날짜
+        const outByDate = {};
+        laserWorks.forEach(lw => {
+            const base = `${lw.carModel}||${lw.partName}||${lw.color || ''}`;
+            // paintLots 배열에서 고유 도장날짜 추출
+            const dates = lw.paintLots && lw.paintLots.length > 0
+                ? [...new Set(lw.paintLots.map(l => l.paintDate).filter(Boolean))]
+                : (lw.paintDate ? [lw.paintDate] : []);
+
+            if (dates.length > 0) {
+                // 복수 날짜면 수량을 균등 배분
+                const qtyEach = (Number(lw.quantity) || 0) / dates.length;
+                dates.forEach(d => {
+                    const k = `${base}||${d}`;
+                    outByDate[k] = (outByDate[k] || 0) + qtyEach;
+                });
+            } else {
+                // 도장날짜 정보 없으면 제품 키 전체에 합산 (fallback)
+                const k = `${base}||`;
+                outByDate[k] = (outByDate[k] || 0) + (Number(lw.quantity) || 0);
+            }
         });
 
-        // 차종+품명+컬러별 입고 합계
-        const inMap = {};
-        laserPaintWorks.forEach(w => {
-            const key = `${w.carModel}||${w.partName}||${w.color || ''}`;
-            inMap[key] = (inMap[key] || 0) + (Number(w.productionQty) || 0);
-        });
-
-        // 재고 > 0인 key만 포함
-        const activeKeys = new Set(
-            Object.keys(inMap).filter(k => (inMap[k] - (outMap[k] || 0)) > 0)
-        );
-
-        return laserPaintWorks
-            .filter(w => activeKeys.has(`${w.carModel}||${w.partName}||${w.color || ''}`))
-            .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        // 각 도장 작업 레코드의 잔여 수량 계산 → 잔여 > 0인 것만 반환
+        return laserPaintWorks.filter(w => {
+            const k = `${w.carModel}||${w.partName}||${w.color || ''}||${w.date || ''}`;
+            const used = outByDate[k] || 0;
+            return (Number(w.productionQty) || 0) - used > 0;
+        }).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     }
 
     function render(container) {

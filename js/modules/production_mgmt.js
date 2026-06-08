@@ -9057,16 +9057,17 @@ var PaintMixModule = (function() {
         mixes.forEach(m => {
             (m.usages || []).forEach(u => {
                 const matId   = u.materialId || '';
+                const mat     = mats.find(x => x.id === matId);
+                if (!mat) return;
                 const lotNo   = u.prodLot || u.lotNo || '미기입';
                 const key     = `${matId}__${lotNo}`;
                 if (!map[key]) {
-                    const mat = mats.find(x => x.id === matId);
                     map[key] = {
                         materialId: matId,
                         lotNo,
-                        paintName:  u.paintName || (mat ? mat.name : ''),
-                        supplier:   mat ? mat.supplier || '' : '',
-                        packUnit:   Number(u.packUnitKg) || (mat ? Number(mat.packUnit) || 0 : 0),
+                        paintName:  u.paintName || mat.name || '',
+                        supplier:   mat.supplier || '',
+                        packUnit:   Number(u.packUnitKg) || Number(mat.packUnit) || 0,
                         usageType:  u.usageType || '',
                         totalWithdrawG: 0,   // 총 출고량 (g 환산)
                         totalUsedG:     0,   // 총 사용량 (g)
@@ -9095,9 +9096,8 @@ var PaintMixModule = (function() {
         const mixResiduals = _calcMixingRoomResiduals();
 
         pane.innerHTML = `
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
-            <!-- 배합실 잔량 (배합 기록 기반) -->
-            <div class="card" style="grid-column:span 2;">
+        <div style="margin-bottom:14px;">
+            <div class="card">
                 <div class="card-header">
                     <h4><span class="material-symbols-outlined">science</span> 배합실 잔량
                         <span style="font-size:0.78rem;font-weight:400;color:var(--text-muted);margin-left:6px;">도료 출고량 - 실제 사용량 = 배합실 남은 잔량</span>
@@ -9143,41 +9143,7 @@ var PaintMixModule = (function() {
                     </div>`}
                 </div>
             </div>
-        </div>
-        <!-- 도료 창고 LOT별 재고 -->
-        <div class="card">
-            <div class="card-header" style="flex-direction:column;align-items:flex-start;gap:10px;">
-                <h4><span class="material-symbols-outlined">warehouse</span> 도료 창고 LOT별 재고</h4>
-                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                    <div class="form-group" style="margin:0;">
-                        <select class="form-select" id="pmixResidualSupplier" onchange="PaintMixModule.filterResidualStock()"
-                                style="min-width:150px;font-size:0.85rem;">
-                            <option value="">전체 공급사</option>
-                            ${[...new Set((_paintLotStockRows()).map(r => r.supplier).filter(Boolean))].sort()
-                                .map(s => `<option value="${_esc(s)}">${_esc(s)}</option>`).join('')}
-                        </select>
-                    </div>
-                    <div class="form-group" style="margin:0;">
-                        <input type="text" class="form-input" id="pmixResidualPaint" placeholder="도료명 검색"
-                               oninput="PaintMixModule.filterResidualStock()"
-                               style="min-width:160px;font-size:0.85rem;">
-                    </div>
-                </div>
-            </div>
-            <div class="card-body" style="padding:0;">
-                <div class="data-table-wrapper">
-                    <table class="data-table" style="font-size:0.85rem;">
-                        <thead><tr>
-                            <th>공급사</th><th>도료명</th><th>제조 LOT</th>
-                            <th>포장</th><th style="text-align:right;">창고 재고(KG)</th>
-                            <th>포장수</th><th>개봉잔량</th><th>상태</th>
-                        </tr></thead>
-                        <tbody id="pmixResidualBody"></tbody>
-                    </table>
-                </div>
-            </div>
         </div>`;
-        renderResidualStock();
     }
 
     function exportResidualData() {
@@ -9584,15 +9550,53 @@ var PaintMixModule = (function() {
             lots.map((l, i) => `<option value="${_esc(l.prodLot)}" data-balance="${l.balance}" ${l.prodLot === selected ? 'selected' : ''}>${i === 0 ? '[선입] ' : ''}${_esc(l.prodLot)} · 창고 ${UIUtils.formatNumber(l.balance)} KG</option>`).join('');
     }
 
+    function _mixRoomLotOptions(materialId, selected, ignoreMixId = '') {
+        const lots = _mixRoomLots(materialId, ignoreMixId);
+        const hasSelected = selected && !lots.some(l => l.prodLot === selected);
+        return `<option value="">잔량 LOT 선택</option>` +
+            (hasSelected ? `<option value="${_esc(selected)}" selected>${_esc(selected)} (기존)</option>` : '') +
+            lots.map(l => `<option value="${_esc(l.prodLot)}" data-balance-g="${l.balanceG}" ${l.prodLot === selected ? 'selected' : ''}>${_esc(l.prodLot)} · 잔량 ${UIUtils.formatNumber(l.balanceG)}g</option>`).join('');
+    }
+
+    function _mixRoomLots(materialId, ignoreMixId = '') {
+        const map = {};
+        (_mixes()).forEach(m => {
+            if (ignoreMixId && m.id === ignoreMixId) return;
+            (m.usages || []).forEach(u => {
+                if (u.materialId !== materialId) return;
+                const prodLot = u.residualProdLot || u.prodLot || u.lotNo || '';
+                if (!prodLot) return;
+                if (!map[prodLot]) map[prodLot] = { prodLot, balanceG: 0 };
+                const legacyUsageG = Number(u.usageG) || 0;
+                const residualUseG = Number(u.residualUseG);
+                const warehouseUseG = Number(u.warehouseUseG);
+                const usedG = Number.isFinite(residualUseG) || Number.isFinite(warehouseUseG)
+                    ? (Number(u.residualUseG) || 0) + (Number(u.warehouseUseG) || 0)
+                    : legacyUsageG;
+                map[prodLot].balanceG += (Number(u.warehouseCans) || 0) * (Number(u.packUnit) || 0) * 1000;
+                map[prodLot].balanceG -= usedG;
+            });
+        });
+        return Object.values(map)
+            .map(l => ({ ...l, balanceG: Math.max(0, _roundQty(l.balanceG)) }))
+            .filter(l => l.balanceG > 0)
+            .sort((a, b) => (a.prodLot || '').localeCompare(b.prodLot || ''));
+    }
+
     // 배합실 잔량: 해당 LOT에서 꺼낸 캔 합계g - 사용량 합계g
     function _mixRoomBalanceG(materialId, prodLot, ignoreMixId = '') {
         let takenG = 0, usedG = 0;
         (_mixes()).forEach(m => {
             if (ignoreMixId && m.id === ignoreMixId) return;
             (m.usages || []).forEach(u => {
-                if (u.materialId !== materialId || u.prodLot !== prodLot) return;
+                const sourceLot = u.residualProdLot || u.prodLot;
+                if (u.materialId !== materialId || sourceLot !== prodLot) return;
                 takenG += (Number(u.warehouseCans) || 0) * (Number(u.packUnit) || 0) * 1000;
-                usedG  += (Number(u.usageG) || 0);
+                if (u.residualUseG != null || u.warehouseUseG != null) {
+                    usedG += (Number(u.residualUseG) || 0) + (Number(u.warehouseUseG) || 0);
+                } else {
+                    usedG += (Number(u.usageG) || 0);
+                }
             });
         });
         return Math.max(0, _roundQty(takenG - usedG));
@@ -9618,13 +9622,15 @@ var PaintMixModule = (function() {
         const ignoreMixId = data.id || '';
         const rows = components.map((c, i) => {
             const materialId = c.materialId || '';
-            const prodLot = c.prodLot || '';
+            const residualProdLot = c.residualProdLot || c.prodLot || '';
+            const warehouseProdLot = c.warehouseProdLot || c.prodLot || '';
             const packUnit = Number(c.packUnit) || 0;
             const warehouseCans = Number(c.warehouseCans) || 0;
-            const usageG = Number(c.usageG) || 0;
-            const mixRoomBal = materialId && prodLot ? _mixRoomBalanceG(materialId, prodLot, ignoreMixId) : 0;
-            const afterBal = Math.max(0, mixRoomBal + warehouseCans * packUnit * 1000 - usageG);
-            const afterBalDisplay = (warehouseCans > 0 || usageG > 0) ? `${UIUtils.formatNumber(afterBal)}g` : '-';
+            const residualUseG = Number(c.residualUseG ?? 0) || 0;
+            const warehouseUseG = Number(c.warehouseUseG ?? c.usageG ?? 0) || 0;
+            const mixRoomBal = materialId && residualProdLot ? _mixRoomBalanceG(materialId, residualProdLot, ignoreMixId) : 0;
+            const afterBal = Math.max(0, mixRoomBal - residualUseG + warehouseCans * packUnit * 1000 - warehouseUseG);
+            const afterBalDisplay = (warehouseCans > 0 || residualUseG > 0 || warehouseUseG > 0) ? `${UIUtils.formatNumber(afterBal)}g` : '-';
             return `
                 <tr class="pmix-row" data-row="${i}" data-pack-unit="${packUnit}">
                     <td>
@@ -9634,16 +9640,21 @@ var PaintMixModule = (function() {
                         <strong>${_esc(c.paintName || '-')}</strong>
                         <div style="font-size:0.75rem;color:var(--text-muted);">${_esc([c.paintSpec, c.role, c.supplier].filter(Boolean).join(' · '))}</div>
                     </td>
+                    <td class="pmix-mix-room-bal" style="text-align:right;white-space:nowrap;">${residualProdLot ? `${UIUtils.formatNumber(mixRoomBal)}g` : '-'}</td>
                     <td>
-                        <select class="form-select pmix-prod-lot" style="min-width:150px;" onchange="PaintMixModule._onLotChange(this,${i})">
-                            ${_lotOptions(materialId, prodLot, ignoreMixId)}
+                        <select class="form-select pmix-residual-lot" style="min-width:150px;" onchange="PaintMixModule._onResidualLotChange(this,${i})">
+                            ${_mixRoomLotOptions(materialId, residualProdLot, ignoreMixId)}
                         </select>
                     </td>
-                    <td class="pmix-mix-room-bal" style="text-align:right;white-space:nowrap;">${prodLot ? `${UIUtils.formatNumber(mixRoomBal)}g` : '-'}</td>
+                    <td><input type="number" class="form-input pmix-residual-use-g" value="${residualUseG || ''}" min="0" step="1" style="text-align:right;width:90px;" oninput="PaintMixModule._onRowCalc(${i})"></td>
                     <td><input type="number" class="form-input pmix-warehouse-cans" value="${warehouseCans || ''}" min="0" step="1" style="text-align:right;width:70px;" oninput="PaintMixModule._onRowCalc(${i})"></td>
-                    <td><input type="number" class="form-input pmix-usage-g" value="${usageG || ''}" min="0" step="1" style="text-align:right;width:90px;" oninput="PaintMixModule._onRowCalc(${i})"></td>
+                    <td>
+                        <select class="form-select pmix-warehouse-lot" style="min-width:150px;" onchange="PaintMixModule._onWarehouseLotChange(this,${i})">
+                            ${_lotOptions(materialId, warehouseProdLot, ignoreMixId)}
+                        </select>
+                    </td>
+                    <td><input type="number" class="form-input pmix-warehouse-use-g" value="${warehouseUseG || ''}" min="0" step="1" style="text-align:right;width:90px;" oninput="PaintMixModule._onRowCalc(${i})"></td>
                     <td class="pmix-after-bal" style="text-align:right;white-space:nowrap;">${afterBalDisplay}</td>
-                    <td style="white-space:nowrap;">${_esc(packUnit ? packUnit + ' KG/캔' : '-')}</td>
                 </tr>`;
         }).join('');
         return `
@@ -9668,14 +9679,14 @@ var PaintMixModule = (function() {
                 <div style="padding:9px 12px;background:var(--bg-secondary);font-weight:700;">도료 구성 및 LOT 사용량</div>
                 <div class="data-table-wrapper">
                     <table class="data-table" style="font-size:0.82rem;">
-                        <thead><tr><th>도료</th><th>사용 LOT</th><th>배합실잔량</th><th>창고출고(캔)</th><th>사용량(g)</th><th>사용후잔량</th><th>포장</th></tr></thead>
-                        <tbody>${rows || `<tr><td colspan="7" style="text-align:center;padding:24px;">제품 기본정보에 등록된 도료 정보가 없습니다.</td></tr>`}</tbody>
+                        <thead><tr><th>도료명</th><th>배합실 현재 잔량(g)</th><th>잔량 LOT</th><th>잔량 사용량(g)</th><th>도료창고 출고(캔)</th><th>출고 LOT</th><th>출고캔 사용량(g)</th><th>사용 후 잔량 g</th></tr></thead>
+                        <tbody>${rows || `<tr><td colspan="8" style="text-align:center;padding:24px;">제품 기본정보에 등록된 도료 정보가 없습니다.</td></tr>`}</tbody>
                     </table>
                 </div>
             </div>`;
     }
 
-    function _onLotChange(selectEl, rowIdx) {
+    function _onResidualLotChange(selectEl, rowIdx) {
         const row = document.querySelector(`.pmix-row[data-row="${rowIdx}"]`);
         if (!row) return;
         const materialId = row.querySelector('.pmix-material-id')?.value || '';
@@ -9687,21 +9698,26 @@ var PaintMixModule = (function() {
         _onRowCalc(rowIdx);
     }
 
+    function _onWarehouseLotChange(selectEl, rowIdx) {
+        _onRowCalc(rowIdx);
+    }
+
     function _onRowCalc(rowIdx) {
         const row = document.querySelector(`.pmix-row[data-row="${rowIdx}"]`);
         if (!row) return;
         const packUnit = Number(row.dataset.packUnit) || 0;
         const warehouseCans = Number(row.querySelector('.pmix-warehouse-cans')?.value) || 0;
-        const usageG = Number(row.querySelector('.pmix-usage-g')?.value) || 0;
+        const residualUseG = Number(row.querySelector('.pmix-residual-use-g')?.value) || 0;
+        const warehouseUseG = Number(row.querySelector('.pmix-warehouse-use-g')?.value) || 0;
         const balCell = row.querySelector('.pmix-mix-room-bal');
         const mixRoomBal = balCell ? parseFloat((balCell.textContent || '0').replace(/[^0-9.]/g, '')) || 0 : 0;
         const afterBalCell = row.querySelector('.pmix-after-bal');
         if (!afterBalCell) return;
-        if (warehouseCans === 0 && usageG === 0) {
+        if (warehouseCans === 0 && residualUseG === 0 && warehouseUseG === 0) {
             afterBalCell.textContent = '-';
             afterBalCell.style.color = '';
         } else {
-            const afterBal = Math.max(0, mixRoomBal + warehouseCans * packUnit * 1000 - usageG);
+            const afterBal = Math.max(0, mixRoomBal - residualUseG + warehouseCans * packUnit * 1000 - warehouseUseG);
             afterBalCell.textContent = `${UIUtils.formatNumber(afterBal)}g`;
             afterBalCell.style.color = afterBal === 0 ? 'var(--accent-red)' : '';
         }
@@ -9712,11 +9728,13 @@ var PaintMixModule = (function() {
         const usages = [...document.querySelectorAll('.pmix-row')].map(row => {
             const materialId = row.querySelector('.pmix-material-id')?.value || '';
             const mat = (Storage.getAll(PAINT_MAT_STORE) || []).find(m => m.id === materialId);
-            const prodLot = row.querySelector('.pmix-prod-lot')?.value || '';
+            const residualProdLot = row.querySelector('.pmix-residual-lot')?.value || '';
+            const warehouseProdLot = row.querySelector('.pmix-warehouse-lot')?.value || '';
             const packUnit = Number(row.dataset.packUnit) || 0;
             const warehouseCans = Number(row.querySelector('.pmix-warehouse-cans')?.value) || 0;
-            const usageG = Number(row.querySelector('.pmix-usage-g')?.value) || 0;
-            const lotInfo = _lotBalances(materialId, ignoreMixId).find(l => l.prodLot === prodLot);
+            const residualUseG = Number(row.querySelector('.pmix-residual-use-g')?.value) || 0;
+            const warehouseUseG = Number(row.querySelector('.pmix-warehouse-use-g')?.value) || 0;
+            const lotInfo = _lotBalances(materialId, ignoreMixId).find(l => l.prodLot === warehouseProdLot);
             return {
                 materialId,
                 paintName: mat ? mat.name : '',
@@ -9724,13 +9742,17 @@ var PaintMixModule = (function() {
                 role: row.querySelector('.pmix-role')?.value || '',
                 paintSpec: row.querySelector('.pmix-paint-spec')?.value || '',
                 packUnit,
-                prodLot,
-                lotNo: lotInfo ? lotInfo.lotNo : prodLot,
+                residualProdLot,
+                warehouseProdLot,
+                prodLot: warehouseProdLot || residualProdLot,
+                lotNo: lotInfo ? lotInfo.lotNo : (warehouseProdLot || residualProdLot),
                 warehouseCans,
-                usageG,
+                residualUseG,
+                warehouseUseG,
+                usageG: residualUseG + warehouseUseG,
                 quantity: _roundQty(warehouseCans * packUnit)
             };
-        }).filter(u => u.materialId && u.prodLot && (u.usageG > 0 || u.warehouseCans > 0));
+        }).filter(u => u.materialId && (u.residualProdLot || u.warehouseProdLot) && (u.residualUseG > 0 || u.warehouseUseG > 0 || u.warehouseCans > 0));
         return {
             _docKind: DOC_KIND,
             workId: document.getElementById('pmixWorkId')?.value || '',
@@ -9850,18 +9872,25 @@ var PaintMixModule = (function() {
         if (!data.usages.length) return '도료 LOT와 사용량(g)을 1개 이상 입력하세요.';
         for (const u of data.usages) {
             if (u.warehouseCans > 0) {
-                const lot = _lotBalances(u.materialId, ignoreMixId).find(l => l.prodLot === u.prodLot);
+                if (!u.warehouseProdLot) return `${u.paintName || '도료'}의 출고 LOT를 선택하세요.`;
+                const lot = _lotBalances(u.materialId, ignoreMixId).find(l => l.prodLot === u.warehouseProdLot);
                 const available = lot ? Number(lot.balance) || 0 : 0;
                 const required = _roundQty(u.warehouseCans * u.packUnit);
                 if (required > available) {
-                    return `${u.paintName || '도료'} LOT ${u.prodLot} 창고 재고가 부족합니다. 출고 필요: ${UIUtils.formatNumber(required)} KG, 가용: ${UIUtils.formatNumber(available)} KG`;
+                    return `${u.paintName || '도료'} LOT ${u.warehouseProdLot} 창고 재고가 부족합니다. 출고 필요: ${UIUtils.formatNumber(required)} KG, 가용: ${UIUtils.formatNumber(available)} KG`;
                 }
             }
-            if (u.usageG > 0) {
-                const mixRoomBal = _mixRoomBalanceG(u.materialId, u.prodLot, ignoreMixId);
-                const totalAvailG = mixRoomBal + (u.warehouseCans * u.packUnit * 1000);
-                if (u.usageG > totalAvailG) {
-                    return `${u.paintName || '도료'} LOT ${u.prodLot} 사용량(${UIUtils.formatNumber(u.usageG)}g)이 배합실 가용량(${UIUtils.formatNumber(totalAvailG)}g)을 초과합니다.`;
+            if (u.residualUseG > 0) {
+                if (!u.residualProdLot) return `${u.paintName || '도료'}의 잔량 LOT를 선택하세요.`;
+                const mixRoomBal = _mixRoomBalanceG(u.materialId, u.residualProdLot, ignoreMixId);
+                if (u.residualUseG > mixRoomBal) {
+                    return `${u.paintName || '도료'} 잔량 LOT ${u.residualProdLot} 사용량(${UIUtils.formatNumber(u.residualUseG)}g)이 배합실 잔량(${UIUtils.formatNumber(mixRoomBal)}g)을 초과합니다.`;
+                }
+            }
+            if (u.warehouseUseG > 0) {
+                const totalWithdrawG = u.warehouseCans * u.packUnit * 1000;
+                if (u.warehouseUseG > totalWithdrawG) {
+                    return `${u.paintName || '도료'} 출고캔 사용량(${UIUtils.formatNumber(u.warehouseUseG)}g)이 창고 출고량(${UIUtils.formatNumber(totalWithdrawG)}g)을 초과합니다.`;
                 }
             }
         }
@@ -9881,8 +9910,8 @@ var PaintMixModule = (function() {
                 date: data.date,
                 type: '출고',
                 materialId: u.materialId,
-                lotNo: u.lotNo || u.prodLot,
-                prodLot: u.prodLot,
+                lotNo: u.lotNo || u.warehouseProdLot,
+                prodLot: u.warehouseProdLot,
                 quantity: u.quantity,
                 warehouseCans: u.warehouseCans,
                 packUnit: u.packUnit,
@@ -9976,7 +10005,7 @@ var PaintMixModule = (function() {
         _onFormulaModalCarChange, viewControlPlan, showFormulaValidation,
         renderHistoryTab, renderResidualTab, renderMixHistTab, search, searchMixHist,
         openFromWork, openManualModal,
-        _onLotChange, _onRowCalc,
+        _onResidualLotChange, _onWarehouseLotChange, _onRowCalc,
         renderResidualStock, filterResidualStock, exportResidualData, openResidualAdjust, saveResidualAdjust,
         saveNew, edit, saveEdit, remove, exportData,
         renderFormulaAsStandard, renderUsageAsStandard
@@ -10257,11 +10286,12 @@ var ProdQualityModule = (function() {
     const ITEM_MASTER_KIND = 'quality_item_master';
     const PRESET_KIND     = 'quality_preset'; // 사용자 저장 프레셋
 
+    let _rootContainer = null;
 
     const DEFAULT_ITEMS = [
         { key: 'film_under', label: '도막두께(하도)', unit: 'μm', spec: '', method: '도막 두께계', inputType: 'number' },
         { key: 'film_top', label: '도막두께(상도)', unit: 'μm', spec: '', method: '도막 두께계', inputType: 'number' },
-        { key: 'adhesion', label: '부착력', unit: '등급', spec: '박리 없을 것', method: '크로스컷', inputType: 'text' },
+        { key: 'adhesion', label: '부착력', unit: '등급', spec: '박리 없을 것', method: '크로스컷', inputType: 'select' },
         { key: 'injection_color', label: '사출품 컬러', unit: '-', spec: '기준 시편 대비 이색 없을 것', method: '육안', inputType: 'select' },
         { key: 'touch', label: '촉감', unit: '-', spec: '끈적임, 거칠음 없을 것', method: '촉감', inputType: 'select' },
         { key: 'fit_check', label: '형합 검사', unit: '-', spec: '간섭, 유격 없을 것', method: '조립 확인', inputType: 'select' },
@@ -10277,38 +10307,30 @@ var ProdQualityModule = (function() {
     const _js = s => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ');
 
     function render(container) {
+        _rootContainer = container;
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-outline" onclick="ProdQualityModule.openPresetMgmtModal()">
-                            <span class="material-symbols-outlined">bookmarks</span> 프레셋 관리
-                        </button>
-                        <button class="btn btn-outline" onclick="ProdQualityModule.openItemListModal()">
-                            <span class="material-symbols-outlined">list_alt</span> 관리항목
-                        </button>
-                        <button class="btn btn-secondary" onclick="ProdQualityModule.openBulkTemplateModal()">
-                            <span class="material-symbols-outlined">library_add</span> 일괄 기준설정
-                        </button>
-                        <button class="btn btn-primary" onclick="ProdQualityModule.openAddModal()">
-                            <span class="material-symbols-outlined">edit_document</span> 수기 작성
-                        </button>
-                    </div>
-                </div>
-
-                <!-- ── 차종별 기준 현황 ── -->
-                <div class="card" style="margin-bottom:16px;">
-                    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-                        <h4><span class="material-symbols-outlined">tune</span> 차종별 기준 현황</h4>
-                        <div style="display:flex;gap:8px;align-items:center;">
-                            <select class="form-select" id="pqStdFilterCar" style="height:36px;min-width:130px;" onchange="ProdQualityModule.renderStandardsCard()">
-                                <option value="">전체 차종</option>
-                                ${_carOptions('')}
-                            </select>
+                    <div class="page-actions" style="width:100%;justify-content:space-between;gap:12px;">
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                            <button class="btn btn-primary" onclick="ProdQualityModule.openAddModal()">
+                                <span class="material-symbols-outlined">edit_document</span> 작성 등록
+                            </button>
+                            <button class="btn btn-outline" onclick="ProdQualityModule.openStandardsPage()">
+                                <span class="material-symbols-outlined">rule</span> 품목별 항목 기준
+                            </button>
+                            <button class="btn btn-secondary" onclick="ProdQualityModule.openBulkTemplateModal()">
+                                <span class="material-symbols-outlined">library_add</span> 일괄 기준설정
+                            </button>
                         </div>
-                    </div>
-                    <div class="card-body" style="padding:0;">
-                        <div id="pqStandardsBody"></div>
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
+                            <button class="btn btn-outline" onclick="ProdQualityModule.openPresetMgmtModal()">
+                                <span class="material-symbols-outlined">bookmarks</span> 프레셋 관리
+                            </button>
+                            <button class="btn btn-outline" onclick="ProdQualityModule.openItemListModal()">
+                                <span class="material-symbols-outlined">list_alt</span> 관리항목
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -10383,11 +10405,53 @@ var ProdQualityModule = (function() {
             sessionStorage.removeItem('mixStd_qualityFilter_car');
             sessionStorage.removeItem('mixStd_qualityFilter_part');
         }
-        renderStandardsCard();
         search();
     }
 
-    // ── 차종별 기준 현황 카드 렌더링 ─────────────────────────────────────────
+    function openStandardsPage() {
+        const container = _rootContainer || document.getElementById('contentArea');
+        if (!container) return;
+        _rootContainer = container;
+        container.innerHTML = `
+            <div class="fade-in-up">
+                <div class="page-header">
+                    <div class="page-actions">
+                        <button class="btn btn-outline" onclick="ProdQualityModule.backToMain()">
+                            <span class="material-symbols-outlined">arrow_back</span> 초중종물 관리
+                        </button>
+                        <button class="btn btn-outline" onclick="ProdQualityModule.openItemListModal()">
+                            <span class="material-symbols-outlined">list_alt</span> 관리항목
+                        </button>
+                        <button class="btn btn-secondary" onclick="ProdQualityModule.openBulkTemplateModal()">
+                            <span class="material-symbols-outlined">library_add</span> 일괄 기준설정
+                        </button>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-bottom:16px;">
+                    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                        <h4><span class="material-symbols-outlined">rule</span> 품목별 항목 기준</h4>
+                        <div style="display:flex;gap:8px;align-items:center;">
+                            <select class="form-select" id="pqStdFilterCar" style="height:36px;min-width:130px;" onchange="ProdQualityModule.renderStandardsCard()">
+                                <option value="">전체 차종</option>
+                                ${_carOptions('')}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="card-body" style="padding:0;">
+                        <div id="pqStandardsBody"></div>
+                    </div>
+                </div>
+            </div>
+        `;
+        renderStandardsCard();
+    }
+
+    function backToMain() {
+        if (_rootContainer) render(_rootContainer);
+    }
+
+    // ── 품목별 항목 기준 카드 렌더링 ─────────────────────────────────────────
     function renderStandardsCard() {
         const el = document.getElementById('pqStandardsBody');
         if (!el) return;
@@ -10515,10 +10579,14 @@ var ProdQualityModule = (function() {
                     <td>${_esc(w.color || '-')}</td>
                     <td style="font-family:monospace;font-size:0.8rem;">${_esc(w.lotNo || '-')}</td>
                     <td style="text-align:right;">${UIUtils.formatNumber(w.productionQty || 0)}</td>
-                    <td>${issue ? '<span class="badge badge-success">작성완료</span>' : (hasTemplate ? `<span class="badge badge-info">${(tmpl.items || []).length}항목</span>` : '<span class="badge badge-warning">기본값</span>')}</td>
+                    <td>${issue
+                        ? '<span class="badge badge-success">작성완료</span>'
+                        : (hasTemplate
+                            ? `<span class="badge badge-info">${(tmpl.items || []).length}항목</span>`
+                            : `<button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openTemplateModal('${_js(w.carModel || '')}','${_js(w.color || '')}')">항목설정필요</button>`)}</td>
                     <td style="white-space:nowrap;">
                         ${issue ? `<button class="btn btn-sm btn-primary" onclick="ProdQualityModule.printIssue('${_js(issue.id)}')">인쇄</button>` : ''}
-                        <button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openWriteFromWork('${_js(w.id)}')">${issue ? '재작성' : '작성'}</button>
+                        <button class="btn btn-sm ${issue ? 'btn-outline' : 'btn-primary'}" onclick="ProdQualityModule.openWriteFromWork('${_js(w.id)}')">${issue ? '재작성' : '작성'}</button>
                     </td>
                 </tr>`;
         }).join('');
@@ -10770,7 +10838,8 @@ var ProdQualityModule = (function() {
             <table class="data-table pq-issue-table" style="font-size:0.72rem;">
                 <thead>
                     <tr>
-                        <th style="width:22%;">관리항목</th>
+                        <th style="width:48px;">NO</th>
+                        <th style="width:20%;">관리항목</th>
                         <th>기준</th>
                         <th style="width:20%;">측정방법</th>
                         <th style="width:58px;">단위</th>
@@ -10781,25 +10850,36 @@ var ProdQualityModule = (function() {
                     </tr>
                 </thead>
                 <tbody id="pqIssueItemsBody">
-                    ${items.map(item => _issueItemRowHtml(item)).join('')}
+                    ${items.map((item, idx) => _issueItemRowHtml(item, idx + 1)).join('')}
                 </tbody>
             </table>`;
     }
 
-    function _issueItemRowHtml(item = {}) {
+    function _issueItemRowHtml(item = {}, no = '') {
         const isNum = _isNumericItem(item);
         const vals  = item.vals || {};
+        const inputType = isNum ? 'number' : (item.inputType || 'select');
+        const okNgSelect = (cls, val) => `
+            <td style="padding:2px 3px;background:rgba(59,130,246,0.03);">
+                <select class="form-select ${cls}" style="width:58px;height:30px;padding:3px 4px;font-size:0.76rem;text-align:center;">
+                    <option value="" ${!val ? 'selected' : ''}></option>
+                    <option value="OK" ${val === 'OK' ? 'selected' : ''}>OK</option>
+                    <option value="NG" ${val === 'NG' ? 'selected' : ''}>NG</option>
+                </select>
+            </td>`;
         const vInp  = (cls, val) => isNum
             ? `<td style="padding:2px 3px;background:rgba(59,130,246,0.03);">
                    <input type="number" step="0.01" class="form-input ${cls}" value="${val??''}"
                        style="width:56px;height:30px;padding:3px 5px;font-size:0.78rem;text-align:right;">
                </td>`
-            : `<td style="text-align:center;color:var(--text-muted);background:rgba(59,130,246,0.03);">-</td>`;
+            : okNgSelect(cls, val || '');
         return `
             <tr class="pq-issue-item-row">
+                <td class="pq-item-no" style="text-align:center;font-weight:700;color:var(--text-secondary);">${_esc(no)}</td>
                 <td>
                     <input type="hidden" class="pq-item-key"     value="${_esc(item.key || Storage.generateId())}">
                     <input type="hidden" class="pq-item-numeric" value="${isNum?'1':'0'}">
+                    <input type="hidden" class="pq-item-input-type" value="${_esc(inputType)}">
                     <input type="text" class="form-input pq-item-label" value="${_esc(item.label || '')}"
                         style="min-width:100px;height:30px;padding:4px 6px;font-size:0.78rem;">
                 </td>
@@ -10828,10 +10908,19 @@ var ProdQualityModule = (function() {
             label: '',
             spec: '',
             method: '',
-            unit: ''
-        }));
+            unit: '',
+            inputType: 'select'
+        }, body.children.length + 1));
+        renumberIssueRows();
         const input = body.querySelector('tr:last-child .pq-item-label');
         if (input) input.focus();
+    }
+
+    function renumberIssueRows() {
+        [...document.querySelectorAll('.pq-issue-item-row')].forEach((row, idx) => {
+            const cell = row.querySelector('.pq-item-no');
+            if (cell) cell.textContent = String(idx + 1);
+        });
     }
 
     function removeIssueItemRow(btn) {
@@ -10841,7 +10930,10 @@ var ProdQualityModule = (function() {
             return;
         }
         const row = btn && btn.closest ? btn.closest('.pq-issue-item-row') : null;
-        if (row) row.remove();
+        if (row) {
+            row.remove();
+            renumberIssueRows();
+        }
     }
 
     function collectData() {
@@ -10853,23 +10945,26 @@ var ProdQualityModule = (function() {
                 label:  row.querySelector('.pq-item-label')?.value.trim()  || '',
                 spec:   row.querySelector('.pq-item-spec')?.value.trim()   || '',
                 method: row.querySelector('.pq-item-method')?.value.trim() || '',
-                unit:   row.querySelector('.pq-item-unit')?.value.trim()   || ''
+                unit:   row.querySelector('.pq-item-unit')?.value.trim()   || '',
+                inputType: row.querySelector('.pq-item-input-type')?.value || (isNum ? 'number' : 'select')
             };
-            if (isNum) {
-                // 초물/중물/종물 순서는 types 배열 기준
-                const typeKeys = types.length ? types : ['초물','중물','종물'];
-                const raw = [
-                    row.querySelector('.pq-item-val1')?.value,
-                    row.querySelector('.pq-item-val2')?.value,
-                    row.querySelector('.pq-item-val3')?.value
-                ];
-                const vals = {};
-                typeKeys.forEach((t, idx) => {
+            // 초물/중물/종물 순서는 types 배열 기준
+            const typeKeys = types.length ? types : ['초물','중물','종물'];
+            const raw = [
+                row.querySelector('.pq-item-val1')?.value,
+                row.querySelector('.pq-item-val2')?.value,
+                row.querySelector('.pq-item-val3')?.value
+            ];
+            const vals = {};
+            typeKeys.forEach((t, idx) => {
+                if (isNum) {
                     const v = parseFloat(raw[idx]);
                     if (!isNaN(v)) vals[t] = v;
-                });
-                if (Object.keys(vals).length) obj.vals = vals;
-            }
+                } else if (raw[idx]) {
+                    vals[t] = raw[idx];
+                }
+            });
+            if (Object.keys(vals).length) obj.vals = vals;
             return obj;
         }).filter(i => i.label);
         return {
@@ -11541,6 +11636,7 @@ var ProdQualityModule = (function() {
         else await Storage.add(STORE, payload);
         UIUtils.closeModal();
         UIUtils.toast('차종/컬러별 기준설정이 저장되었습니다.', 'success');
+        renderStandardsCard();
         search();
     }
 
@@ -11850,6 +11946,8 @@ table{border-collapse:collapse;width:100%}
         ,saveCurrentAsPreset
         ,_confirmSavePreset
         ,deleteUserPreset
+        ,openStandardsPage
+        ,backToMain
         ,renderStandardsCard
         ,openPresetMgmtModal
         ,openPresetEditModal
