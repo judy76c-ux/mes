@@ -586,8 +586,8 @@ const ProductionPlanModule = (function() {
             const isOvertimeStart = (slot === '18:00');
 
             if (isMealTime) {
-                // 점심 두 슬롯(12:30, 13:00)을 한 행으로 병합: 13:00 슬롯은 건너뜀
-                if (slot === '13:00') return '';
+                // 점심 두 슬롯(12:30, 13:00)을 한 행으로 병합: 13:00 슬롯은 빈 tr만 렌더링
+                if (slot === '13:00') return '<tr class="lunch-time" style="cursor:not-allowed;background-color:#f1f5f9;"></tr>';
                 let mealText = '';
                 let timeRange = '';
                 let rowspan = 1;
