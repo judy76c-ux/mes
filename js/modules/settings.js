@@ -4186,12 +4186,47 @@ const SettingsModule = (function() {
         if (!file) return;
         _compressPersonPhoto(file, b64 => {
             _pendingPhoto = b64;
-            const preview = document.getElementById('personPhotoPreview');
-            if (preview) {
-                preview.innerHTML = `<img src="${b64}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
-                preview.style.border = 'none';
-            }
+            _renderPersonPhotoPreview(b64);
         });
+    }
+
+    function _renderPersonPhotoPreview(photo) {
+        const preview = document.getElementById('personPhotoPreview');
+        if (!preview) return;
+        if (photo) {
+            preview.innerHTML = `<img src="${photo}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
+            preview.style.border = 'none';
+        } else {
+            preview.innerHTML = `<span class="material-symbols-outlined" style="color:var(--text-muted);font-size:32px;">person</span>`;
+            preview.style.border = '2px dashed var(--border-color)';
+        }
+    }
+
+    function _handlePersonPhotoBlob(fileOrBlob) {
+        if (!fileOrBlob) return;
+        _compressPersonPhoto(fileOrBlob, b64 => {
+            _pendingPhoto = b64;
+            _renderPersonPhotoPreview(b64);
+            UIUtils.toast('클립보드 사진이 반영되었습니다.', 'success');
+        });
+    }
+
+    function _bindPersonPhotoPaste() {
+        const modal = document.getElementById('modal');
+        if (!modal) return;
+        modal.onpaste = function (e) {
+            const items = (e.clipboardData || window.clipboardData || {}).items || [];
+            for (const item of items) {
+                if (item && item.type && item.type.startsWith('image/')) {
+                    const blob = item.getAsFile ? item.getAsFile() : null;
+                    if (blob) {
+                        e.preventDefault();
+                        _handlePersonPhotoBlob(blob);
+                        break;
+                    }
+                }
+            }
+        };
     }
 
     function _photoUploadHtml(existingPhoto) {
@@ -4213,7 +4248,7 @@ const SettingsModule = (function() {
                         </button>
                         <input type="file" id="personPhotoInput" accept="image/*" style="display:none"
                             onchange="SettingsModule.previewPersonPhoto(this)">
-                        <p style="font-size:0.75rem;color:var(--text-muted);margin-top:6px;">클릭하여 업로드 · 자동 압축 (400px)</p>
+                        <p style="font-size:0.75rem;color:var(--text-muted);margin-top:6px;">클릭하여 업로드 · 자동 압축 (400px) · 클립보드 붙여넣기 가능</p>
                         ${existingPhoto ? `<button type="button" class="btn btn-sm" style="margin-top:4px;color:var(--accent-red);font-size:0.75rem;padding:2px 8px;border:1px solid var(--accent-red);border-radius:4px;background:none;cursor:pointer;" onclick="SettingsModule.clearPersonPhoto()">사진 삭제</button>` : ''}
                     </div>
                 </div>
@@ -4222,11 +4257,7 @@ const SettingsModule = (function() {
 
     function clearPersonPhoto() {
         _pendingPhoto = '';  // empty string = delete
-        const preview = document.getElementById('personPhotoPreview');
-        if (preview) {
-            preview.innerHTML = `<span class="material-symbols-outlined" style="color:var(--text-muted);font-size:32px;">person</span>`;
-            preview.style.border = '2px dashed var(--border-color)';
-        }
+        _renderPersonPhotoPreview('');
     }
 
     function _avatarHtml(person, size = 48) {
@@ -4426,6 +4457,7 @@ const SettingsModule = (function() {
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="SettingsModule.saveInspector()">추가</button>
         `);
+        _bindPersonPhotoPaste();
     }
 
     async function saveInspector() {
@@ -4493,6 +4525,7 @@ const SettingsModule = (function() {
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="SettingsModule.updateInspector('${id}')">저장</button>
         `);
+        _bindPersonPhotoPaste();
     }
 
     async function updateInspector(id) {
@@ -4617,6 +4650,7 @@ const SettingsModule = (function() {
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="SettingsModule.saveOperator()">등록</button>
         `);
+        _bindPersonPhotoPaste();
     }
 
     async function saveOperator() {
@@ -4672,6 +4706,7 @@ const SettingsModule = (function() {
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="SettingsModule.updateOperator('${id}')">저장</button>
         `);
+        _bindPersonPhotoPaste();
     }
 
     async function updateOperator(id) {
