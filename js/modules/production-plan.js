@@ -511,7 +511,7 @@ const ProductionPlanModule = (function() {
             const q = Number(item.planQty) || 0;
             totalQty += q;
 
-            // 작업 시간 계산 (점심 시간 12:30~13:30 제외 로직)
+            // 작업 시간 계산 (점심 시간 12:30~13:30 제외 로직, 식사 시간 가동 제외)
             if (item.startTime && item.endTime) {
                 const [sH, sM] = item.startTime.split(':').map(Number);
                 const [eH, eM] = item.endTime.split(':').map(Number);
@@ -520,24 +520,18 @@ const ProductionPlanModule = (function() {
 
                 let diff = eTotal - sTotal;
 
-                // 식사 시간(점심 12:30~13:30, 석식 17:30~18:00) 중첩 확인 및 차감
-                const breaks = [{
-                        s: 12 * 60 + 30,
-                        e: 13 * 60 + 30
-                    }, // 점심
-                    {
-                        s: 17 * 60 + 30,
-                        e: 18 * 60
-                    } // 석식
-                ];
-
-                breaks.forEach(b => {
-                    const overlapStart = Math.max(sTotal, b.s);
-                    const overlapEnd = Math.min(eTotal, b.e);
-                    if (overlapStart < overlapEnd) {
-                        diff -= (overlapEnd - overlapStart);
-                    }
-                });
+                // 식사 시간 가동이 아닌 경우에만 식사 시간 차감
+                if (!item.mealTimeWork) {
+                    const breaks = [
+                        { s: 12 * 60 + 30, e: 13 * 60 + 30 }, // 점심
+                        { s: 17 * 60 + 30, e: 18 * 60 }        // 석식
+                    ];
+                    breaks.forEach(b => {
+                        const overlapStart = Math.max(sTotal, b.s);
+                        const overlapEnd = Math.min(eTotal, b.e);
+                        if (overlapStart < overlapEnd) diff -= (overlapEnd - overlapStart);
+                    });
+                }
 
                 if (diff > 0) totalMinutes += diff;
             }
@@ -599,10 +593,18 @@ const ProductionPlanModule = (function() {
                     mealText = '☕ 저녁 식사 (DINNER TIME)';
                     timeRange = '17:30 ~ 18:00';
                 }
+                // 식사 시간 가동 계획이 이 시간대에 걸쳐 있으면 배너 표시
+                const isMealRunning = activeItem && activeItem.mealTimeWork && activeEndTime > slot;
+                const mealRunBanner = isMealRunning
+                    ? `<span style="margin-left:12px;display:inline-flex;align-items:center;gap:4px;padding:2px 10px;background:rgba(249,115,22,0.15);border:1px solid rgba(249,115,22,0.4);border-radius:12px;font-size:0.75rem;font-weight:700;color:#ea580c;">
+                           🔄 교대 가동 중 — ${activeItem.carModel} ${activeItem.partName}
+                       </span>`
+                    : '';
+                const mealBg = isMealRunning ? 'background:rgba(249,115,22,0.06);' : 'background-color:#f1f5f9;';
                 return `
-                    <tr class="${isLunch ? 'lunch-time' : 'dinner-time'}" style="cursor: not-allowed; background-color: #f1f5f9;">
+                    <tr class="${isLunch ? 'lunch-time' : 'dinner-time'}" style="cursor: not-allowed; ${mealBg}">
                         <td class="sticky-col time-cell" style="text-align:center;" rowspan="${rowspan}">${timeRange}</td>
-                        <td colspan="7" style="text-align:center; font-weight:bold; color:#94a3b8; letter-spacing:2px;" rowspan="${rowspan}">${mealText}</td>
+                        <td colspan="7" style="text-align:center; font-weight:bold; color:#94a3b8; letter-spacing:2px;" rowspan="${rowspan}">${mealText}${mealRunBanner}</td>
                     </tr>
                 `;
             }
@@ -1496,35 +1498,46 @@ const ProductionPlanModule = (function() {
 
         if (ctPerPiece > 0 && qty > 0) {
             // 시간 계산 (CT/CVT 기반)
-            // CT = Cycle Time (초), CVT = Standard Sample Count (개수)
-            // ctPerPiece = CT / CVT (1개 당 소요 시간, 초)
-            // totalSeconds = 수량 × 1개 당 소요 시간
             const totalSeconds = qty * ctPerPiece;
             const totalMinutes = Math.ceil(totalSeconds / 60);
 
             const parts = startTimeStr.split(':');
-            let currentMins = parseInt(parts[0]) * 60 + parseInt(parts[1]);
+            const startMins = parseInt(parts[0]) * 60 + parseInt(parts[1]);
 
-            // 작업 시간 추가 (점심/석식 시간 제외)
-            let remaining = totalMinutes;
-            while (remaining > 0) {
-                currentMins++;
+            const lunchStart  = 12 * 60 + 30;  // 12:30
+            const lunchEnd    = 13 * 60 + 30;  // 13:30
+            const dinnerStart = 17 * 60 + 30;  // 17:30
+            const dinnerEnd   = 18 * 60;        // 18:00
 
-                // 점심 시간 범위 확인 (12:30 ~ 13:30)
-                const lunchStart = 12 * 60 + 30;  // 12:30
-                const lunchEnd = 13 * 60 + 30;    // 13:30
-                if (currentMins >= lunchStart && currentMins < lunchEnd) {
-                    currentMins = lunchEnd;
+            // 식사 시간 제외 없이 단순 합산한 원시 종료 시각
+            const rawEndMins = startMins + totalMinutes;
+
+            // 이 계획이 식사 시간을 포함하는지 확인
+            const spansLunch  = startMins < lunchEnd  && rawEndMins > lunchStart;
+            const spansDinner = startMins < dinnerEnd && rawEndMins > dinnerStart;
+            const spansMeal   = spansLunch || spansDinner;
+
+            // 식사 시간 가동 패널 표시/숨김
+            const mealPanel = document.getElementById('mealTimeWorkPanel');
+            if (mealPanel) mealPanel.style.display = spansMeal ? 'block' : 'none';
+
+            // 체크박스 상태 읽기
+            const mealTimeWork = !!(document.getElementById('sMealTimeWork')?.checked);
+
+            let currentMins;
+            if (mealTimeWork) {
+                // 식사 시간도 가동 → 단순 합산
+                currentMins = rawEndMins;
+            } else {
+                // 식사 시간 제외 (기존 로직)
+                currentMins = startMins;
+                let remaining = totalMinutes;
+                while (remaining > 0) {
+                    currentMins++;
+                    if (currentMins >= lunchStart  && currentMins < lunchEnd)  currentMins = lunchEnd;
+                    if (currentMins >= dinnerStart && currentMins < dinnerEnd) currentMins = dinnerEnd;
+                    remaining--;
                 }
-
-                // 석식 시간 범위 확인 (17:30 ~ 18:00)
-                const dinnerStart = 17 * 60 + 30; // 17:30
-                const dinnerEnd = 18 * 60;         // 18:00
-                if (currentMins >= dinnerStart && currentMins < dinnerEnd) {
-                    currentMins = dinnerEnd;
-                }
-
-                remaining--;
             }
 
             // 종료 시간 계산
@@ -1538,13 +1551,16 @@ const ProductionPlanModule = (function() {
             // 정보 표시
             const nextSlotInfo = document.getElementById('nextSlotInfo');
             if (nextSlotInfo) {
+                const mealNote = mealTimeWork ? ' <span style="color:#ea580c;font-weight:700;">[식사 시간 가동]</span>' : '';
                 nextSlotInfo.innerHTML = `
                     <span style="color:var(--accent-blue);font-size:0.8rem;">
-                        (${processName} 기준: 수량 ${UIUtils.formatNumber(qty)}EA × C/T ${ctNum}초 ÷ CVT ${cvtNum}개 = 총 소요 ${totalMinutes}분, 예상 종료 ${endH}:${endM})
+                        (${processName} 기준: 수량 ${UIUtils.formatNumber(qty)}EA × C/T ${ctNum}초 ÷ CVT ${cvtNum}개 = 총 소요 ${totalMinutes}분, 예상 종료 ${endH}:${endM})${mealNote}
                     </span>
                 `;
             }
         } else {
+            const mealPanel = document.getElementById('mealTimeWorkPanel');
+            if (mealPanel) mealPanel.style.display = 'none';
             const nextSlotInfo = document.getElementById('nextSlotInfo');
             if (nextSlotInfo) nextSlotInfo.innerHTML = '';
         }
@@ -1586,6 +1602,7 @@ const ProductionPlanModule = (function() {
         const startTimeValue = (currentItem && currentItem.startTime) || slot;
         const endTimeValue = (currentItem && currentItem.endTime) || '';
         const statusValue = (currentItem && currentItem.status) || '대기';
+        const mealTimeWorkValue = !!(currentItem && currentItem.mealTimeWork);
 
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
         // 라인명이 "도장-A" 또는 "도장-B" 형식이므로 라인명 자체를 사용
@@ -1825,6 +1842,13 @@ const ProductionPlanModule = (function() {
                     <input type="time" class="form-input" id="sEndTime" value="${endTimeValue}">
                 </div>
             </div>
+            <div id="mealTimeWorkPanel" style="display:none; margin:0 0 12px; padding:10px 14px; background:rgba(249,115,22,0.06); border-radius:8px; border:1px solid rgba(249,115,22,0.3);">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.88rem;font-weight:600;color:#ea580c;">
+                    <input type="checkbox" id="sMealTimeWork" onchange="ProductionPlanModule.calcEndTime()" style="width:16px;height:16px;cursor:pointer;" ${mealTimeWorkValue ? 'checked' : ''}>
+                    🍱 식사 시간 가동 (교대 생산)
+                </label>
+                <p style="margin:4px 0 0 24px;font-size:0.78rem;color:var(--text-muted);">체크 시 점심/석식 시간을 포함하여 종료 시간을 계산합니다.</p>
+            </div>
             <div class="form-group">
                 <label class="form-label">상태</label>
                 <select class="form-select" id="sStatus">
@@ -1918,16 +1942,18 @@ const ProductionPlanModule = (function() {
             const extra = _exchangeMin(prevInfo, item);
             nextStart += extra;
 
-            // 휴식 시간 건너뜀
-            nextStart = _skipBreak(nextStart);
+            // 식사 시간 가동이 아닌 경우만 휴식 시간 건너뜀
+            if (!item.mealTimeWork) nextStart = _skipBreak(nextStart);
 
-            // 원래 순수 작업 시간 보존
+            // 원래 순수 작업 시간 보존 (식사 시간 가동이면 식사 시간 포함)
             const origStart = _timeToMinPlan(item.startTime);
             const origEnd   = _timeToMinPlan(item.endTime);
-            const workMin   = (origEnd - origStart) - _breakOverlap(origStart, origEnd);
+            const workMin   = item.mealTimeWork
+                ? (origEnd - origStart)
+                : (origEnd - origStart) - _breakOverlap(origStart, origEnd);
 
             let newEnd = nextStart + workMin;
-            newEnd += _breakOverlap(nextStart, newEnd);
+            if (!item.mealTimeWork) newEnd += _breakOverlap(nextStart, newEnd);
 
             const newStartStr = _minToTime(nextStart);
             const newEndStr   = _minToTime(newEnd);
@@ -1959,12 +1985,13 @@ const ProductionPlanModule = (function() {
             return;
         }
 
-        const carModel  = document.getElementById('sModel').value.trim();
-        const partName  = document.getElementById('sPart').value.trim();
-        const color     = document.getElementById('sColor').value.trim();
-        const planQty   = Number(document.getElementById('sQty').value) || 0;
-        const status    = document.getElementById('sStatus').value;
-        const itemType  = (document.getElementById('sItemType') || {}).value || '';
+        const carModel      = document.getElementById('sModel').value.trim();
+        const partName      = document.getElementById('sPart').value.trim();
+        const color         = document.getElementById('sColor').value.trim();
+        const planQty       = Number(document.getElementById('sQty').value) || 0;
+        const status        = document.getElementById('sStatus').value;
+        const itemType      = (document.getElementById('sItemType') || {}).value || '';
+        const mealTimeWork  = !!(document.getElementById('sMealTimeWork')?.checked);
 
         if (!color) {
             UIUtils.toast('도장 컬러를 선택하세요.', 'warning');
@@ -2076,16 +2103,16 @@ const ProductionPlanModule = (function() {
             } else {
                 await Storage.update(STORE, existingId, {
                     slot: newSlot, carModel, partName, color, itemType, planQty,
-                    startTime, endTime, status,
-                    productId: productId || undefined  // v19
+                    startTime, endTime, status, mealTimeWork,
+                    productId: productId || undefined
                 });
             }
         } else {
             if (carModel || partName || planQty > 0) {
                 await Storage.add(STORE, {
                     date, line, slot: newSlot, carModel, partName, color, itemType, planQty,
-                    startTime, endTime, status,
-                    productId: productId || undefined  // v19
+                    startTime, endTime, status, mealTimeWork,
+                    productId: productId || undefined
                 });
             }
         }
