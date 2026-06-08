@@ -511,11 +511,24 @@ const PaintingWorkModule = (function() {
             const infoStr = `<strong>${plan.carModel || ''}</strong><br><span style="font-size:0.78rem;color:var(--text-muted);">${plan.partName || ''} (${plan.color || '-'})</span>`;
 
             const isCompleted = dayWorks.some(w => w.planId === plan.id);
-            const btnText = isCompleted ? '입력 완료' : '실적입력';
-            const btnIcon = isCompleted ? 'check_circle' : 'edit_note';
-            const btnBg = isCompleted ? 'var(--accent-green)' : 'var(--accent-blue)';
-            const btnShadow = isCompleted ? 'rgba(76,175,80,0.2)' : 'rgba(66,133,244,0.2)';
-            const btnOpacity = isCompleted ? '0.85' : '1';
+
+            // 오늘 계획이고 시작시간이 현재보다 미래면 → 대기 상태 (실적 없는 경우에만)
+            const _nowD = new Date();
+            const _nowTimeStr = _nowD.getHours().toString().padStart(2,'0') + ':' + _nowD.getMinutes().toString().padStart(2,'0');
+            const _planStart = plan.startTime || plan.slot || '';
+            const isFuture = !isCompleted && (targetDate === UIUtils.today()) && !!_planStart && _planStart > _nowTimeStr;
+
+            const btnText   = isCompleted ? '입력 완료' : (isFuture ? '대기' : '실적입력');
+            const btnIcon   = isCompleted ? 'check_circle' : (isFuture ? 'schedule' : 'edit_note');
+            const btnBg     = isCompleted ? 'var(--accent-green)' : (isFuture ? '#94a3b8' : 'var(--accent-blue)');
+            const btnShadow = isCompleted ? 'rgba(76,175,80,0.2)' : (isFuture ? 'rgba(0,0,0,0.06)' : 'rgba(66,133,244,0.2)');
+            const btnOpacity = isCompleted ? '0.85' : (isFuture ? '0.65' : '1');
+            const btnDisabled = isCompleted || isFuture;
+            const btnOnclick = isCompleted
+                ? `UIUtils.toast('이미 실적이 등록된 계획입니다.', 'info')`
+                : isFuture
+                    ? `UIUtils.toast('아직 시작되지 않은 계획입니다.', 'info')`
+                    : `PaintingWorkModule.openAddModalFromPlan('${plan.id}')`;
 
             return `
                 <tr>
@@ -532,10 +545,10 @@ const PaintingWorkModule = (function() {
                         </div>
                     </td>
                     <td>
-                        <button class="btn btn-xs" 
-                            style="padding:6px 12px; font-size:0.8rem; background:${btnBg}; color:#fff; border:none; border-radius:4px; display:inline-flex; align-items:center; gap:6px; transition:all 0.2s; box-shadow:0 2px 4px ${btnShadow}; white-space:nowrap; width:max-content; opacity:${btnOpacity}; cursor:${isCompleted ? 'default' : 'pointer'};"
-                            onclick="${isCompleted ? 'UIUtils.toast(\'이미 실적이 등록된 계획입니다.\', \'info\')' : `PaintingWorkModule.openAddModalFromPlan('${plan.id}')`}"
-                            ${!isCompleted ? `onmouseover="this.style.filter='brightness(1.1)';this.style.transform='translateY(-1px)';" onmouseout="this.style.filter='none';this.style.transform='none';"` : ''}>
+                        <button class="btn btn-xs"
+                            style="padding:6px 12px; font-size:0.8rem; background:${btnBg}; color:#fff; border:none; border-radius:4px; display:inline-flex; align-items:center; gap:6px; transition:all 0.2s; box-shadow:0 2px 4px ${btnShadow}; white-space:nowrap; width:max-content; opacity:${btnOpacity}; cursor:${btnDisabled ? 'default' : 'pointer'};"
+                            onclick="${btnOnclick}"
+                            ${!btnDisabled ? `onmouseover="this.style.filter='brightness(1.1)';this.style.transform='translateY(-1px)';" onmouseout="this.style.filter='none';this.style.transform='none';"` : ''}>
                             <span class="material-symbols-outlined" style="font-size:16px;">${btnIcon}</span>
                             ${btnText}
                         </button>
@@ -1009,7 +1022,10 @@ const PaintingWorkModule = (function() {
     // LOT 수량 재고 초과 방지 — 입력 즉시 차단
     function _validateLotQty(input) {
         var max = parseInt(input.max);
-        if (isNaN(max) || max < 0) return;
+        if (isNaN(max) || max < 0) {
+            _updateLotSummary();
+            return;
+        }
         var val = Number(input.value);
         if (val > max) {
             input.value = max;
@@ -1030,6 +1046,46 @@ const PaintingWorkModule = (function() {
                 input._warnTimer = setTimeout(function() { warn.textContent = ''; }, 2500);
             }
         }
+        _updateLotSummary();
+    }
+
+    // ── 실시간 LOT 합계 vs 산출수량 표시 ──
+    function _updateLotSummary() {
+        var container = document.getElementById('pwLotRows');
+        if (!container) return;
+
+        var lots = _collectLots();
+        var totalLotQty = lots.reduce(function(s, l) { return s + (Number(l.qty) || 0); }, 0);
+
+        var prodQtyEl = document.getElementById('addPwProdQty') || document.getElementById('editPwProdQty');
+        var prodQty = prodQtyEl ? (Number(prodQtyEl.value) || 0) : 0;
+
+        // 요약 요소 찾기 또는 생성 (LOT 행 컨테이너 바로 뒤에 삽입)
+        var summaryEl = document.getElementById('pwLotQtySummary');
+        if (!summaryEl) {
+            summaryEl = document.createElement('div');
+            summaryEl.id = 'pwLotQtySummary';
+            summaryEl.style.cssText = 'margin-top:7px;padding:6px 10px;border-radius:6px;font-size:0.81rem;font-weight:600;display:flex;align-items:center;gap:6px;transition:all 0.2s;';
+            container.parentNode.insertBefore(summaryEl, container.nextSibling);
+        }
+
+        if (prodQty === 0) {
+            summaryEl.style.display = 'none';
+            return;
+        }
+        summaryEl.style.display = 'flex';
+
+        var isMatch = totalLotQty === prodQty;
+        summaryEl.style.background   = isMatch ? 'rgba(76,175,80,0.1)'  : 'rgba(239,68,68,0.08)';
+        summaryEl.style.border       = isMatch ? '1px solid rgba(76,175,80,0.35)' : '1px solid rgba(239,68,68,0.35)';
+        summaryEl.style.color        = isMatch ? '#16a34a' : '#dc2626';
+
+        var icon    = isMatch ? '✅' : '⚠️';
+        var diffMsg = isMatch ? ' (산출수량 일치)' : (' — 차이: ' + (totalLotQty > prodQty ? '+' : '') + UIUtils.formatNumber(totalLotQty - prodQty) + ' EA');
+        summaryEl.innerHTML =
+            icon + ' LOT 수량 합계: <strong>' + UIUtils.formatNumber(totalLotQty) + ' EA</strong>' +
+            ' / 산출수량: <strong>' + UIUtils.formatNumber(prodQty) + ' EA</strong>' +
+            '<span style="font-size:0.76rem;font-weight:400;">' + diffMsg + '</span>';
     }
 
     function _buildLotRow(lotsHtml, lotNo, qty) {
@@ -1094,6 +1150,7 @@ const PaintingWorkModule = (function() {
         var excludeLots = _getSelectedLotNos(null);
         var lotsHtml = _buildFilteredLotOptions(injPartName, cm, pn, excludeLots);
         container.insertAdjacentHTML('beforeend', _buildLotRow(lotsHtml, '', ''));
+        setTimeout(_updateLotSummary, 60);
     }
 
     // LOT 행 제거
@@ -1106,6 +1163,7 @@ const PaintingWorkModule = (function() {
             return;
         }
         row.remove();
+        _updateLotSummary();
     }
 
     // LOT 드롭다운 → 직접입력 자동 채우기 + 선입선출 경고 체크
@@ -1444,7 +1502,7 @@ const PaintingWorkModule = (function() {
             '<div class="form-group" style="margin:0;">' +
             '<label class="form-label" style="font-size:0.84rem;">산출 수량 (OUT PUT) <span style="color:var(--accent-red)">*</span></label>' +
             '<input type="number" class="form-input" id="addPwProdQty" min="0" placeholder="0"' +
-            ' oninput="PaintingWorkModule.calcCT(); PaintingWorkModule.checkQtyDiff(); PaintingWorkModule.checkOverPlanQty();"' +
+            ' oninput="PaintingWorkModule.calcCT(); PaintingWorkModule.checkQtyDiff(); PaintingWorkModule.checkOverPlanQty(); PaintingWorkModule._updateLotSummary();"' +
             ' style="font-size:1.05rem;font-weight:600;text-align:right;color:var(--accent-green);"></div>' +
             '<div class="form-group" style="margin:0;">' +
             '<label class="form-label" style="font-size:0.84rem;">투입인원 (명) <span style="color:var(--accent-red)">*</span></label>' +
@@ -1746,6 +1804,18 @@ const PaintingWorkModule = (function() {
         var endTime = (document.getElementById('addPwEndTime') || {}).value || '';
         var prodQty = Number((document.getElementById('addPwProdQty') || {}).value) || 0;
 
+        // ── 사출 LOT 합계 ≠ 산출수량 → 저장 차단 ──
+        var _lotTotalForSave = lots.reduce(function(s, l) { return s + (Number(l.qty) || 0); }, 0);
+        if (_lotTotalForSave !== prodQty) {
+            UIUtils.toast(
+                '사출 LOT 수량 합계(' + UIUtils.formatNumber(_lotTotalForSave) + ' EA)와 산출수량(' + UIUtils.formatNumber(prodQty) + ' EA)이 일치하지 않습니다.',
+                'warning'
+            );
+            var lotSection = document.getElementById('pwLotRows');
+            if (lotSection) lotSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return;
+        }
+
         var avgCT = 0;
         if (startTime && endTime && prodQty > 0) {
             var sh = parseInt(startTime.split(':')[0]),
@@ -1974,7 +2044,9 @@ const PaintingWorkModule = (function() {
             '<div class="form-group" style="margin:0;"><label class="form-label" style="font-size:0.83rem;">투입수량 (IN PUT)</label>' +
             '<input type="number" class="form-input" id="editPwInputQty" value="' + (d.inputQty || 0) + '" style="text-align:right;font-weight:600;"></div>' +
             '<div class="form-group" style="margin:0;"><label class="form-label" style="font-size:0.83rem;">산출 수량 (OUT PUT)</label>' +
-            '<input type="number" class="form-input" id="editPwProdQty" value="' + (d.productionQty || 0) + '" style="text-align:right;font-weight:600;color:var(--accent-green);"></div>' +
+            '<input type="number" class="form-input" id="editPwProdQty" value="' + (d.productionQty || 0) + '"' +
+            ' oninput="PaintingWorkModule._updateLotSummary();"' +
+            ' style="text-align:right;font-weight:600;color:var(--accent-green);"></div>' +
             '<div class="form-group" style="margin:0;"><label class="form-label" style="font-size:0.83rem;">투입인원 (명)</label>' +
             '<input type="number" class="form-input" id="editPwWorkers" value="' + (d.workers || 0) + '" style="text-align:right;font-weight:600;"></div></div>' +
 
@@ -2019,6 +2091,7 @@ const PaintingWorkModule = (function() {
                     }
                 }
             });
+            _updateLotSummary(); // 수정 모달 열릴 때 초기 합계 표시
         }, 60);
     }
 
@@ -2028,6 +2101,20 @@ const PaintingWorkModule = (function() {
         const startTime = (document.getElementById('editPwStartTime') || {}).value || '';
         const endTime = (document.getElementById('editPwEndTime') || {}).value || '';
         const prodQty = Number((document.getElementById('editPwProdQty') || {}).value) || 0;
+
+        // ── 사출 LOT 합계 ≠ 산출수량 → 저장 차단 ──
+        if (lots.length > 0) {
+            const _lotTotalEdit = lots.reduce((s, l) => s + (Number(l.qty) || 0), 0);
+            if (_lotTotalEdit !== prodQty) {
+                UIUtils.toast(
+                    '사출 LOT 수량 합계(' + UIUtils.formatNumber(_lotTotalEdit) + ' EA)와 산출수량(' + UIUtils.formatNumber(prodQty) + ' EA)이 일치하지 않습니다.',
+                    'warning'
+                );
+                const lotSection = document.getElementById('pwLotRows');
+                if (lotSection) lotSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
+        }
 
         let avgCT = 0;
         if (startTime && endTime && prodQty > 0) {
@@ -2267,7 +2354,8 @@ const PaintingWorkModule = (function() {
         confirmDeletePlan,
         _validateLotFormat,
         _checkLotFormat,
-        _validateLotQty
+        _validateLotQty,
+        _updateLotSummary
     };
 })();
 

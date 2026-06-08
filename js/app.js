@@ -185,6 +185,11 @@ const App = (function() {
             }
         });
         Router.registerModule('jig-management', JigModule);
+        Router.registerModule('jig-life-standard', {
+            render: function(container) {
+                JigModule.renderLifeStandardPage(container);
+            }
+        });
         Router.registerModule('jig-master', {
             render: function(container) {
                 JigModule.renderMasterPage(container);

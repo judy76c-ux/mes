@@ -11,6 +11,7 @@ const SettingsModule = (function() {
     const OPERATORS_STORE = DB.STORES.OPERATORS;
 
     const SETTINGS_TAB_KEY = 'mes_settings_tab';
+    const DOCUMENT_DESIGN_KEY = 'mes_document_designs_v1';
     let currentTab = (() => {
         try { return sessionStorage.getItem(SETTINGS_TAB_KEY) || 'products'; } catch(e) { return 'products'; }
     })();
@@ -52,6 +53,10 @@ const SettingsModule = (function() {
                     <button class="tab-btn ${currentTab === 'process' ? 'active' : ''}"
                         onclick="SettingsModule.switchTab('process')">
                         <span class="material-symbols-outlined">settings_applications</span> 공정 관리
+                    </button>
+                    <button class="tab-btn ${currentTab === 'documentDesign' ? 'active' : ''}"
+                        onclick="SettingsModule.switchTab('documentDesign')">
+                        <span class="material-symbols-outlined">draw_collage</span> 문서 디자인
                     </button>
                     <button class="tab-btn ${currentTab === 'backup' ? 'active' : ''}"
                         onclick="SettingsModule.switchTab('backup')">
@@ -144,6 +149,9 @@ const SettingsModule = (function() {
                 break;
             case 'process':
                 renderProcessTab(el);
+                break;
+            case 'documentDesign':
+                renderDocumentDesignTab(el);
                 break;
             case 'backup':
                 renderBackupTab(el);
@@ -6840,6 +6848,349 @@ const SettingsModule = (function() {
                 </div>`;
     }
 
+    let _docDesignEditorId = '';
+    let _docDesignSelectedElementId = '';
+
+    function _docDesignSeed(id, name, category, paperSize, elements, extra) {
+        return { id, name, category, paperSize, elements, ...(extra || {}) };
+    }
+
+    function _docDesignElement(type, x, y, w, h, extra) {
+        return { id: `dde-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, type, x, y, w, h, ...(extra || {}) };
+    }
+
+    function _defaultDocumentDesigns() {
+        return [
+            _docDesignSeed('approval-standard', '기준서 결재형', '기준서', 'A4-L', [
+                _docDesignElement('rect', 10, 10, 170, 60, { label: '회사 영역' }),
+                _docDesignElement('rect', 180, 10, 540, 60, { label: '문서 제목', fill: '#bcd4f6' }),
+                _docDesignElement('approval', 720, 10, 170, 60),
+                _docDesignElement('text', 220, 28, 260, 22, { text: '기준서 제목', fontSize: 22, bold: true }),
+                _docDesignElement('line', 10, 88, 880, 2, { borderColor: '#111827' }),
+                _docDesignElement('table', 10, 110, 880, 180, { rows: 5, cols: 3 })
+            ]),
+            _docDesignSeed('work-standard', '작업표준 결재형', '작업표준', 'A4-L', [
+                _docDesignElement('rect', 10, 10, 120, 50, { label: '로고' }),
+                _docDesignElement('rect', 130, 10, 400, 50, { label: '작업표준서', fill: '#bcd4f6' }),
+                _docDesignElement('approval', 530, 10, 100, 50),
+                _docDesignElement('table', 10, 80, 620, 220, { rows: 6, cols: 4 }),
+                _docDesignElement('text', 20, 320, 220, 20, { text: '작업순서 / 관리기준', fontSize: 16, bold: true })
+            ])
+        ];
+    }
+
+    async function _loadDocumentDesigns() {
+        try {
+            const saved = await Storage.getConfigValue(DOCUMENT_DESIGN_KEY);
+            if (Array.isArray(saved) && saved.length) return saved;
+        } catch (e) {
+            console.warn('[Settings] document designs load failed', e);
+        }
+        return _defaultDocumentDesigns();
+    }
+
+    async function _saveDocumentDesigns(rows) {
+        await Storage.setConfigValue(DOCUMENT_DESIGN_KEY, Array.isArray(rows) ? rows : _defaultDocumentDesigns());
+    }
+
+    function _docCanvasSize() {
+        return { w: 900, h: 640 };
+    }
+
+    function _docSelectedDesign(rows) {
+        const active = rows.find(d => d.id === _docDesignEditorId) || rows[0] || null;
+        if (active) _docDesignEditorId = active.id;
+        return active;
+    }
+
+    function _docSelectedElement(design) {
+        if (!design) return null;
+        const active = (design.elements || []).find(el => el.id === _docDesignSelectedElementId) || (design.elements || [])[0] || null;
+        if (active) _docDesignSelectedElementId = active.id;
+        return active;
+    }
+
+    function _resolveReferenceType(file) {
+        const type = (file?.type || '').trim();
+        if (type) return type;
+        const name = (file?.name || '').toLowerCase();
+        if (name.endsWith('.pdf')) return 'application/pdf';
+        if (name.endsWith('.ppt')) return 'application/vnd.ms-powerpoint';
+        if (name.endsWith('.pptx')) return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+        if (name.endsWith('.xls')) return 'application/vnd.ms-excel';
+        if (name.endsWith('.xlsx')) return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+        if (name.endsWith('.png')) return 'image/png';
+        if (name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'image/jpeg';
+        if (name.endsWith('.webp')) return 'image/webp';
+        if (name.endsWith('.gif')) return 'image/gif';
+        return '';
+    }
+
+    function _referenceKindLabel(type) {
+        if (!type) return '파일';
+        if (type.startsWith('image/')) return '이미지';
+        if (type === 'application/pdf') return 'PDF';
+        if (type.includes('presentation') || type.includes('powerpoint')) return 'PPT';
+        if (type.includes('spreadsheet') || type.includes('excel') || type.includes('sheet')) return 'Excel';
+        return '파일';
+    }
+
+    function _renderDocReference(design, size) {
+        if (!design || !design.referenceDataUrl) return '';
+        if ((design.referenceType || '').startsWith('image/')) {
+            return `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:12px;overflow:hidden;pointer-events:none;">
+                        <img src="${design.referenceDataUrl}" alt="${design.referenceName || 'reference'}"
+                            style="width:100%;height:100%;object-fit:contain;object-position:center top;opacity:.32;box-shadow:0 0 0 1px rgba(148,163,184,.28);">
+                    </div>`;
+        }
+        if ((design.referenceType || '') === 'application/pdf') {
+            return `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:12px;overflow:hidden;pointer-events:none;">
+                        <object data="${design.referenceDataUrl}#toolbar=0&navpanes=0&scrollbar=0" type="application/pdf"
+                            style="width:100%;height:100%;opacity:.45;">
+                            <embed src="${design.referenceDataUrl}#toolbar=0&navpanes=0&scrollbar=0" type="application/pdf"
+                                style="width:100%;height:100%;opacity:.45;">
+                        </object>
+                    </div>`;
+        }
+        return `<div style="position:absolute;left:24px;top:24px;right:24px;padding:18px;border:1px dashed #94a3b8;border-radius:14px;background:rgba(255,255,255,.94);color:#334155;pointer-events:none;">?? ??: ${design.referenceName || '??'} (${_referenceKindLabel(design.referenceType)})</div>`;
+    }
+
+    function _renderDocElement(el) {
+        const base = `position:absolute;left:${el.x}px;top:${el.y}px;width:${el.w}px;height:${el.h}px;`;
+        if (el.type === 'line') return `<div onclick="SettingsModule.selectDocumentElement('${el.id}')" style="${base}height:0;border-top:2px solid ${el.borderColor || '#111827'};cursor:pointer;"></div>`;
+        if (el.type === 'text') return `<div onclick="SettingsModule.selectDocumentElement('${el.id}')" style="${base}border:1px dashed #94a3b8;background:#fff;padding:4px;font-size:${el.fontSize || 14}px;font-weight:${el.bold ? '800' : '500'};cursor:pointer;overflow:hidden;">${el.text || '텍스트'}</div>`;
+        if (el.type === 'table') {
+            const rows = Math.max(1, Number(el.rows) || 1);
+            const cols = Math.max(1, Number(el.cols) || 1);
+            return `<div onclick="SettingsModule.selectDocumentElement('${el.id}')" style="${base}border:1px solid #111827;display:grid;grid-template-columns:repeat(${cols},1fr);grid-template-rows:repeat(${rows},1fr);cursor:pointer;background:#fff;">${Array.from({ length: rows * cols }).map(() => `<div style="border-right:1px solid #cbd5e1;border-bottom:1px solid #cbd5e1;"></div>`).join('')}</div>`;
+        }
+        if (el.type === 'approval') {
+            return `<div onclick="SettingsModule.selectDocumentElement('${el.id}')" style="${base}border:1px solid #111827;display:grid;grid-template-columns:48px 1fr 1fr 1fr;background:#fff;cursor:pointer;"><div style="border-right:1px solid #111827;display:flex;align-items:center;justify-content:center;background:#dbeafe;font-size:12px;font-weight:800;">결재</div>${['작성', '검토', '승인'].map((label, idx) => `<div style="border-right:${idx < 2 ? '1px solid #111827' : 'none'};display:flex;flex-direction:column;"><div style="padding:4px 0;border-bottom:1px solid #111827;text-align:center;font-size:11px;font-weight:700;">${label}</div><div style="flex:1;"></div></div>`).join('')}</div>`;
+        }
+        return `<div onclick="SettingsModule.selectDocumentElement('${el.id}')" style="${base}border:1px solid ${el.borderColor || '#111827'};background:${el.fill || 'transparent'};cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;color:#475569;">${el.label || '박스'}</div>`;
+    }
+
+    async function renderDocumentDesignTab(el) {
+        const designs = await _loadDocumentDesigns();
+        const active = _docSelectedDesign(designs);
+        const selected = _docSelectedElement(active);
+        const size = _docCanvasSize();
+
+        el.innerHTML = `
+            <div style="display:grid;grid-template-columns:260px minmax(0,1fr);gap:16px;">
+                <div class="card">
+                    <div class="card-header"><h4><span class="material-symbols-outlined">folder_managed</span> 디자인 목록</h4></div>
+                    <div class="card-body" style="display:flex;flex-direction:column;gap:10px;">
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                            <button class="btn btn-primary btn-sm" onclick="SettingsModule.createDocumentDesign()">빈 디자인 추가</button>
+                            <label class="btn btn-outline btn-sm" style="cursor:pointer;">
+                                <span class="material-symbols-outlined">upload_file</span> 양식으로 새 디자인
+                                <input type="file" accept="image/*,.pdf,.ppt,.pptx,.xls,.xlsx" style="display:none;" onchange="SettingsModule.createDocumentDesignFromUpload(event)">
+                            </label>
+                            <button class="btn btn-outline btn-sm" onclick="SettingsModule.resetDocumentDesigns()">샘플 복원</button>
+                        </div>
+                        ${(designs || []).map(d => `<button class="btn ${active && active.id === d.id ? 'btn-primary' : 'btn-outline'}" style="justify-content:flex-start;text-align:left;" onclick="SettingsModule.selectDocumentDesign('${d.id}')"><span class="material-symbols-outlined">description</span> ${d.name}${d.referenceDataUrl ? ` <span style="font-size:.72rem;opacity:.8;">(${_referenceKindLabel(d.referenceType)})</span>` : ''}</button>`).join('')}
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h4><span class="material-symbols-outlined">draw</span> 문서 디자인 편집기</h4></div>
+                    <div class="card-body" style="display:flex;flex-direction:column;gap:14px;">
+                        ${active ? `
+                            <div style="display:grid;grid-template-columns:1fr 160px 160px auto;gap:10px;align-items:end;">
+                                <div class="form-group"><label class="form-label">디자인명</label><input class="form-input" value="${active.name || ''}" onchange="SettingsModule.updateDocumentDesignMeta('name', this.value)"></div>
+                                <div class="form-group"><label class="form-label">카테고리</label><input class="form-input" value="${active.category || ''}" onchange="SettingsModule.updateDocumentDesignMeta('category', this.value)"></div>
+                                <div class="form-group"><label class="form-label">용지</label><input class="form-input" value="A4 가로 고정" readonly></div>
+                                <div style="display:flex;gap:8px;"><button class="btn btn-outline btn-sm" onclick="SettingsModule.removeDocumentDesign('${active.id}')">삭제</button><button class="btn btn-primary btn-sm" onclick="SettingsModule.saveActiveDocumentDesign()">저장</button></div>
+                            </div>
+                            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                                <button class="btn btn-outline btn-sm" onclick="SettingsModule.addDocumentElement('text')">텍스트</button>
+                                <button class="btn btn-outline btn-sm" onclick="SettingsModule.addDocumentElement('line')">선</button>
+                                <button class="btn btn-outline btn-sm" onclick="SettingsModule.addDocumentElement('rect')">박스</button>
+                                <button class="btn btn-outline btn-sm" onclick="SettingsModule.addDocumentElement('table')">표</button>
+                                <button class="btn btn-outline btn-sm" onclick="SettingsModule.addDocumentElement('approval')">결재칸</button>
+                            </div>
+                            <div style="display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;align-items:start;">
+                                <div style="overflow:hidden;border:1px solid var(--border-color);border-radius:12px;background:#eef2f7;padding:16px;">
+                                    <div style="position:relative;width:${size.w}px;height:${size.h}px;background:#fff;border:1px solid #111827;margin:0 auto;overflow:hidden;box-shadow:0 8px 24px rgba(15,23,42,.08);">
+                                        ${_renderDocReference(active, size)}
+                                        ${(active.elements || []).map(item => `${_renderDocElement(item)}${selected && selected.id === item.id ? `<div style="position:absolute;left:${item.x - 2}px;top:${item.y - 2}px;width:${item.w + 4}px;height:${Math.max(item.h, 2) + 4}px;border:2px solid #2563eb;pointer-events:none;"></div>` : ''}`).join('')}
+                                    </div>
+                                </div>
+                                <div style="border:1px solid var(--border-color);border-radius:12px;padding:12px;background:#fff;">
+                                    <div style="padding:10px;border:1px solid var(--border-color);border-radius:10px;background:#f8fafc;margin-bottom:12px;">
+                                        <div style="font-size:.82rem;font-weight:700;margin-bottom:8px;">현재 사용 양식 업로드</div>
+                                        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                                            <label class="btn btn-outline btn-sm" style="cursor:pointer;">
+                                                <span class="material-symbols-outlined">upload_file</span> 양식 업로드
+                                                <input type="file" accept="image/*,.pdf,.ppt,.pptx,.xls,.xlsx" style="display:none;" onchange="SettingsModule.handleDocumentDesignReferenceUpload(event)">
+                                            </label>
+                                            ${active.referenceDataUrl ? `<button class="btn btn-outline btn-sm" onclick="SettingsModule.clearDocumentDesignReference()">양식 제거</button>` : ''}
+                                            ${active.referenceDataUrl ? `<button class="btn btn-outline btn-sm" onclick="window.open('${active.referenceDataUrl}','_blank')">양식 열기</button>` : ''}
+                                        </div>
+                                        <div style="margin-top:6px;font-size:.76rem;color:var(--text-muted);">
+                                            ${active.referenceName ? `등록됨: ${active.referenceName}` : '이미지나 PDF를 올리면 현재 사용 양식을 캔버스 배경 참조로 볼 수 있습니다.'}
+                                        </div>
+                                    </div>
+                                    <div style="font-weight:800;margin-bottom:10px;">요소 속성</div>
+                                    ${selected ? `
+                                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                                            <div class="form-group"><label class="form-label">X</label><input class="form-input" type="number" value="${selected.x}" onchange="SettingsModule.updateDocumentElement('${selected.id}','x', this.value)"></div>
+                                            <div class="form-group"><label class="form-label">Y</label><input class="form-input" type="number" value="${selected.y}" onchange="SettingsModule.updateDocumentElement('${selected.id}','y', this.value)"></div>
+                                            <div class="form-group"><label class="form-label">W</label><input class="form-input" type="number" value="${selected.w}" onchange="SettingsModule.updateDocumentElement('${selected.id}','w', this.value)"></div>
+                                            <div class="form-group"><label class="form-label">H</label><input class="form-input" type="number" value="${selected.h}" onchange="SettingsModule.updateDocumentElement('${selected.id}','h', this.value)"></div>
+                                        </div>
+                                        ${selected.type === 'text' ? `<div class="form-group"><label class="form-label">텍스트</label><textarea class="form-textarea" rows="4" onchange="SettingsModule.updateDocumentElement('${selected.id}','text', this.value)">${selected.text || ''}</textarea></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="form-group"><label class="form-label">글자 크기</label><input class="form-input" type="number" value="${selected.fontSize || 14}" onchange="SettingsModule.updateDocumentElement('${selected.id}','fontSize', this.value)"></div><div class="form-group"><label class="form-label">굵기</label><select class="form-select" onchange="SettingsModule.updateDocumentElement('${selected.id}','bold', this.value)"><option value="false" ${!selected.bold ? 'selected' : ''}>보통</option><option value="true" ${selected.bold ? 'selected' : ''}>굵게</option></select></div></div>` : ''}
+                                        ${selected.type === 'rect' ? `<div class="form-group"><label class="form-label">라벨</label><input class="form-input" value="${selected.label || ''}" onchange="SettingsModule.updateDocumentElement('${selected.id}','label', this.value)"></div>` : ''}
+                                        ${selected.type === 'table' ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;"><div class="form-group"><label class="form-label">행</label><input class="form-input" type="number" value="${selected.rows || 2}" onchange="SettingsModule.updateDocumentElement('${selected.id}','rows', this.value)"></div><div class="form-group"><label class="form-label">열</label><input class="form-input" type="number" value="${selected.cols || 2}" onchange="SettingsModule.updateDocumentElement('${selected.id}','cols', this.value)"></div></div>` : ''}
+                                        <button class="btn btn-danger btn-sm" onclick="SettingsModule.removeDocumentElement('${selected.id}')">요소 삭제</button>
+                                    ` : `<div style="color:var(--text-muted);font-size:.86rem;">왼쪽 문서 캔버스에서 요소를 선택해 주세요.</div>`}
+                                </div>
+                            </div>
+                        ` : `<div style="color:var(--text-muted);">디자인이 없습니다.</div>`}
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    async function _replaceDocumentDesigns(updater) {
+        const rows = await _loadDocumentDesigns();
+        const next = typeof updater === 'function' ? updater(rows) : rows;
+        await _saveDocumentDesigns(next);
+        renderTabContent();
+    }
+
+    function selectDocumentDesign(id) {
+        _docDesignEditorId = id;
+        _docDesignSelectedElementId = '';
+        renderTabContent();
+    }
+
+    async function createDocumentDesign() {
+        await _replaceDocumentDesigns(rows => [
+            _docDesignSeed(`doc-design-${Date.now()}`, '새 빈 디자인', '기준서', 'A4-L', []),
+            ...rows
+        ]);
+    }
+
+    async function createDocumentDesignFromUpload(event) {
+        const file = event?.target?.files?.[0];
+        if (!file) return;
+        const referenceType = _resolveReferenceType(file);
+        const reader = new FileReader();
+        reader.onload = async () => {
+            const newId = `doc-design-${Date.now()}`;
+            _docDesignEditorId = newId;
+            _docDesignSelectedElementId = '';
+            await _replaceDocumentDesigns(rows => [
+                _docDesignSeed(newId, file.name.replace(/\.[^.]+$/, '') || '업로드 양식', '기준서', 'A4-L', [], {
+                    referenceName: file.name,
+                    referenceType,
+                    referenceDataUrl: String(reader.result || '')
+                }),
+                ...rows
+            ]);
+            UIUtils.toast('업로드 양식으로 빈 디자인을 만들었습니다.', 'success');
+        };
+        reader.readAsDataURL(file);
+        if (event.target) event.target.value = '';
+    }
+
+    async function updateDocumentDesignMeta(key, value) {
+        await _replaceDocumentDesigns(rows => rows.map(d => d.id === _docDesignEditorId ? { ...d, [key]: value } : d));
+    }
+
+    async function addDocumentElement(type) {
+        const extra = type === 'text'
+            ? { text: '텍스트', fontSize: 14, bold: false }
+            : type === 'table'
+                ? { rows: 3, cols: 3 }
+                : type === 'rect'
+                    ? { label: '박스', fill: 'transparent' }
+                    : {};
+        const h = type === 'line' ? 2 : type === 'approval' ? 60 : 80;
+        const w = type === 'approval' ? 180 : type === 'line' ? 300 : 180;
+        const newElement = _docDesignElement(type, 40, 40, w, h, extra);
+        _docDesignSelectedElementId = newElement.id;
+        await _replaceDocumentDesigns(rows => rows.map(d => d.id === _docDesignEditorId ? { ...d, elements: [...(d.elements || []), newElement] } : d));
+    }
+
+    function selectDocumentElement(id) {
+        _docDesignSelectedElementId = id;
+        renderTabContent();
+    }
+
+    async function updateDocumentElement(id, key, value) {
+        const numericKeys = ['x', 'y', 'w', 'h', 'rows', 'cols', 'fontSize'];
+        const boolKeys = ['bold'];
+        const parsed = numericKeys.includes(key)
+            ? Number(value) || 0
+            : boolKeys.includes(key)
+                ? value === true || value === 'true'
+                : value;
+        await _replaceDocumentDesigns(rows => rows.map(d => d.id === _docDesignEditorId ? {
+            ...d,
+            elements: (d.elements || []).map(el => el.id === id ? { ...el, [key]: parsed } : el)
+        } : d));
+    }
+
+    async function removeDocumentElement(id) {
+        _docDesignSelectedElementId = '';
+        await _replaceDocumentDesigns(rows => rows.map(d => d.id === _docDesignEditorId ? {
+            ...d,
+            elements: (d.elements || []).filter(el => el.id !== id)
+        } : d));
+    }
+
+    async function saveActiveDocumentDesign() {
+        const rows = await _loadDocumentDesigns();
+        await _saveDocumentDesigns(rows);
+        UIUtils.toast('문서 디자인을 저장했습니다.', 'success');
+    }
+
+    async function removeDocumentDesign(id) {
+        UIUtils.confirm('이 문서 디자인을 삭제하시겠습니까?', async () => {
+            _docDesignSelectedElementId = '';
+            await _replaceDocumentDesigns(rows => rows.filter(d => d.id !== id));
+        });
+    }
+
+    async function resetDocumentDesigns() {
+        UIUtils.confirm('문서 디자인 샘플을 기본값으로 복원하시겠습니까?', async () => {
+            _docDesignEditorId = '';
+            _docDesignSelectedElementId = '';
+            await _saveDocumentDesigns(_defaultDocumentDesigns());
+            UIUtils.toast('문서 디자인 샘플을 복원했습니다.', 'success');
+            renderTabContent();
+        });
+    }
+
+    async function handleDocumentDesignReferenceUpload(event) {
+        const file = event?.target?.files?.[0];
+        if (!file || !_docDesignEditorId) return;
+        const referenceType = _resolveReferenceType(file);
+        const reader = new FileReader();
+        reader.onload = async () => {
+            await _replaceDocumentDesigns(rows => rows.map(d => d.id === _docDesignEditorId ? {
+                ...d,
+                referenceName: file.name,
+                referenceType,
+                referenceDataUrl: String(reader.result || '')
+            } : d));
+            UIUtils.toast('양식을 디자인 참조로 등록했습니다.', 'success');
+        };
+        reader.readAsDataURL(file);
+        if (event.target) event.target.value = '';
+    }
+
+    async function clearDocumentDesignReference() {
+        await _replaceDocumentDesigns(rows => rows.map(d => d.id === _docDesignEditorId ? {
+            ...d,
+            referenceName: '',
+            referenceType: '',
+            referenceDataUrl: ''
+        } : d));
+    }
+
     function renderSystemTab(el) {
         el.innerHTML = `
             <!-- ── 서버 운영 상태 ───────────────────────────────── -->
@@ -9004,6 +9355,20 @@ const SettingsModule = (function() {
         updateProcess,
         removeProcess,
         moveProcess,
+        renderDocumentDesignTab,
+        selectDocumentDesign,
+        createDocumentDesign,
+        createDocumentDesignFromUpload,
+        updateDocumentDesignMeta,
+        addDocumentElement,
+        selectDocumentElement,
+        updateDocumentElement,
+        removeDocumentElement,
+        saveActiveDocumentDesign,
+        removeDocumentDesign,
+        resetDocumentDesigns,
+        handleDocumentDesignReferenceUpload,
+        clearDocumentDesignReference,
     };
 
     // ── 제작품목 연결 (제품 마스터에서 선택) ─────────────────────────────

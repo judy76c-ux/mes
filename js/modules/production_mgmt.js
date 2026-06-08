@@ -6121,7 +6121,7 @@ var ProdConditionsModule = (function() {
 
     // ── C/S 프리셋 & 탭 상태 ──────────────────────────────────────────
     let _csPresets = [];
-    let _pcTab = 'records'; // 'records' | 'presets'
+    let _pcTab = 'cs-form'; // 'cs-form' | 'records' | 'presets'
     const CS_TPL_LABELS = { 'A-KNOB': 'A라인 KNOB', 'A-COVER': 'A라인 COVER', 'B-LINE': 'B라인' };
 
     async function _loadPresets() {
@@ -6274,7 +6274,7 @@ var ProdConditionsModule = (function() {
         const sum = _summary(items);
 
         return `
-            <div style="max-height: 74vh; overflow-y: auto; padding-right: 10px;">
+            <div style="max-height: 74vh; overflow-y: auto; padding-right: 10px; font-size:11px;">
                 <div style="position:sticky;top:0;z-index:2;background:#fff;border:1px solid var(--border-color);border-radius:8px;padding:12px;margin-bottom:12px;box-shadow:0 4px 10px rgba(15,23,42,0.06);">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;">
                         <div style="font-weight:800;color:var(--text-primary);">공정 조건 C/S 일별 기록</div>
@@ -6301,15 +6301,35 @@ var ProdConditionsModule = (function() {
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label">차종</label>
-                        <input type="text" class="form-input" id="pcCarModel" value="${_esc(d.carModel || '')}">
+                        <select class="form-select" id="pcCarModel" onchange="ProdConditionsModule.onPcCarChange()">
+                            <option value="">-- 차종 선택 --</option>
+                            ${(()=>{
+                                const prods = Storage.getAll(DB.STORES.PRODUCTS) || [];
+                                const cars = [...new Set(prods.map(p=>p.carModel).filter(Boolean))].sort();
+                                return cars.map(c=>`<option value="${_esc(c)}" ${d.carModel===c?'selected':''}>${_esc(c)}</option>`).join('');
+                            })()}
+                        </select>
                     </div>
                     <div class="form-group">
                         <label class="form-label">품명</label>
-                        <input type="text" class="form-input" id="pcPartName" value="${_esc(d.partName || '')}">
+                        <select class="form-select" id="pcPartName">
+                            <option value="">-- 품명 선택 --</option>
+                            ${(()=>{
+                                const prods = Storage.getAll(DB.STORES.PRODUCTS) || [];
+                                const parts = [...new Set(prods.filter(p=>!d.carModel||p.carModel===d.carModel).map(p=>p.partName).filter(Boolean))].sort();
+                                return parts.map(p=>`<option value="${_esc(p)}" ${d.partName===p?'selected':''}>${_esc(p)}</option>`).join('');
+                            })()}
+                        </select>
                     </div>
                     <div class="form-group">
                         <label class="form-label">작업자</label>
-                        <input type="text" class="form-input" id="pcOperator" value="${_esc(d.operator || '')}" placeholder="기록인">
+                        <select class="form-select" id="pcOperator">
+                            <option value="">-- 작업자 선택 --</option>
+                            ${(()=>{
+                                const ops = Storage.getAll(DB.STORES.OPERATORS) || [];
+                                return ops.map(o => `<option value="${_esc(o.name)}" ${d.operator===o.name?'selected':''}>${_esc(o.name)}</option>`).join('');
+                            })()}
+                        </select>
                     </div>
                 </div>
 
@@ -6346,7 +6366,6 @@ var ProdConditionsModule = (function() {
                     <div>${_esc(item.item)}</div>
                     <div style="font-size:0.82rem;color:var(--text-muted);">${_esc(item.spec)}</div>
                     <div>${input}</div>
-                    <textarea class="form-textarea pc-note-input" data-id="${item.id}" rows="1" placeholder="비고" style="grid-column:2 / 6;min-height:34px;">${_esc(item.note)}</textarea>
                 </div>
             `;
         }).join('');
@@ -6479,10 +6498,23 @@ var ProdConditionsModule = (function() {
                 spec: row.dataset.spec || '',
                 type,
                 value: row.querySelector(`.pc-value-input[data-id="${id}"]`)?.value.trim() || '',
-                result: group?.dataset.result || '',
-                note: row.querySelector(`.pc-note-input[data-id="${id}"]`)?.value.trim() || ''
+                result: group?.dataset.result || ''
             };
         });
+    }
+
+    function onPcCarChange() {
+        const carSel = document.getElementById('pcCarModel');
+        const partSel = document.getElementById('pcPartName');
+        if (!carSel || !partSel) return;
+        const selectedCar = carSel.value;
+        const prods = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const parts = [...new Set(
+            prods.filter(p => !selectedCar || p.carModel === selectedCar)
+                 .map(p => p.partName).filter(Boolean)
+        )].sort();
+        partSel.innerHTML = '<option value="">-- 품명 선택 --</option>' +
+            parts.map(p => `<option value="${_esc(p)}">${_esc(p)}</option>`).join('');
     }
 
     function collectData() {
@@ -6540,13 +6572,10 @@ var ProdConditionsModule = (function() {
         }
         try {
             await Storage.add(STORE, data);
-            const startEl = document.getElementById('pcFilterStart');
-            const endEl = document.getElementById('pcFilterEnd');
-            if (startEl && data.date < startEl.value) startEl.value = data.date;
-            if (endEl && data.date > endEl.value) endEl.value = data.date;
-            closeInlineForm();
             UIUtils.toast('작업조건이 등록되었습니다.', 'success');
-            search();
+            // 폼 초기화 (날짜는 오늘로 유지, 나머지 리셋)
+            const content = document.getElementById('pcTabContent');
+            if (content) _renderCsFormView(content);
         } catch (err) {
             console.error('[ProdConditions] saveNew failed:', err);
             UIUtils.toast(`등록 실패: ${err.message || err}`, 'error');
@@ -7111,12 +7140,19 @@ var ProdConditionsModule = (function() {
             <div class="fade-in-up">
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:18px;
                             padding-bottom:12px;border-bottom:2px solid var(--border-color);">
+                    <button id="pcTabCsForm"
+                            class="btn btn-sm ${_pcTab === 'cs-form' ? 'btn-primary' : 'btn-outline'}"
+                            onclick="ProdConditionsModule.switchPcTab('cs-form')">
+                        <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">edit_note</span>
+                        공정 C/S 기록
+                    </button>
                     <button id="pcTabRecords"
                             class="btn btn-sm ${_pcTab === 'records' ? 'btn-primary' : 'btn-outline'}"
                             onclick="ProdConditionsModule.switchPcTab('records')">
                         <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">format_list_bulleted</span>
-                        기록 관리
+                        기록 조회
                     </button>
+                    <div style="flex:1;"></div>
                     <button id="pcTabPresets"
                             class="btn btn-sm ${_pcTab === 'presets' ? 'btn-primary' : 'btn-outline'}"
                             onclick="ProdConditionsModule.switchPcTab('presets')">
@@ -7132,15 +7168,36 @@ var ProdConditionsModule = (function() {
     function switchPcTab(tab) {
         _pcTab = tab;
         if (!_pcContainer) return;
-        // 탭 버튼 스타일만 교체
+        const csBtn  = document.getElementById('pcTabCsForm');
         const recBtn = document.getElementById('pcTabRecords');
         const preBtn = document.getElementById('pcTabPresets');
-        if (recBtn) recBtn.className = `btn btn-sm ${tab === 'records' ? 'btn-primary' : 'btn-outline'}`;
-        if (preBtn) preBtn.className = `btn btn-sm ${tab === 'presets' ? 'btn-primary' : 'btn-outline'}`;
+        if (csBtn)  csBtn.className  = `btn btn-sm ${tab === 'cs-form'  ? 'btn-primary' : 'btn-outline'}`;
+        if (recBtn) recBtn.className = `btn btn-sm ${tab === 'records'  ? 'btn-primary' : 'btn-outline'}`;
+        if (preBtn) preBtn.className = `btn btn-sm ${tab === 'presets'  ? 'btn-primary' : 'btn-outline'}`;
         const content = document.getElementById('pcTabContent');
         if (!content) return;
-        if (tab === 'records') _renderRecordsView(content);
+        if (tab === 'cs-form') _renderCsFormView(content);
+        else if (tab === 'records') _renderRecordsView(content);
         else _renderPresetsView(content);
+    }
+
+    function _renderCsFormView(content) {
+        content.innerHTML = `
+            <div class="card" style="border:1px solid var(--accent-blue);font-size:11px;">
+                <div class="card-header">
+                    <div style="font-weight:700;display:flex;align-items:center;gap:8px;font-size:11px;">
+                        <span class="material-symbols-outlined" style="font-size:16px;color:var(--accent-blue);">edit_note</span>
+                        공정 조건 C/S 등록
+                    </div>
+                </div>
+                <div class="card-body" id="pcCsFormBody" style="font-size:11px;">${fillForm()}</div>
+                <div class="card-footer" style="display:flex;justify-content:flex-end;gap:8px;">
+                    <button class="btn btn-primary" onclick="ProdConditionsModule.saveNew()">
+                        <span class="material-symbols-outlined">save</span> 등록
+                    </button>
+                </div>
+            </div>
+        `;
     }
 
     function _renderRecordsView(content) {
@@ -7170,18 +7227,18 @@ var ProdConditionsModule = (function() {
         `;
         content.innerHTML = `
             <div>
-                <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-primary" onclick="ProdConditionsModule.openAddModal()">
-                            <span class="material-symbols-outlined">add</span> 등록
-                        </button>
-                        <button class="btn btn-outline" onclick="ProdConditionsModule.exportData()">
-                            <span class="material-symbols-outlined">download</span> 내보내기
-                        </button>
-                    </div>
+                <div style="display:flex;gap:6px;margin-bottom:14px;">
+                    <button class="btn btn-sm btn-primary">
+                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">fact_check</span>
+                        공정 C/S
+                    </button>
+                    <button class="btn btn-sm btn-outline" disabled title="추가 예정"
+                            style="opacity:0.5;cursor:not-allowed;">
+                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">checklist</span>
+                        설비일상 C/S
+                    </button>
                 </div>
                 <div class="filter-bar" style="flex-wrap:wrap;gap:10px;">${filterHTML}</div>
-                <div id="pcInlineFormHost" style="display:none;"></div>
                 <div class="card">
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
@@ -7424,7 +7481,8 @@ var ProdConditionsModule = (function() {
             _renderTabShell(container);
             const content = document.getElementById('pcTabContent');
             if (!content) return;
-            if (_pcTab === 'records') _renderRecordsView(content);
+            if (_pcTab === 'cs-form') _renderCsFormView(content);
+            else if (_pcTab === 'records') _renderRecordsView(content);
             else _renderPresetsView(content);
         },
         search,
@@ -7437,6 +7495,7 @@ var ProdConditionsModule = (function() {
         exportData,
         switchPcTab,
         toggleLine,
+        onPcCarChange,
         setCheck,
         updateProgress,
         uploadColorStd,
