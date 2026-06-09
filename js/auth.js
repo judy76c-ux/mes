@@ -16,11 +16,16 @@ const AuthModule = (function () {
 
     /* ── 역할 정의 ─────────────────────────────────────────── */
     const ROLES = [
-        { key: 'admin',           label: '관리자',      color: '#dc2626', bg: '#fee2e2', canWrite: true  },
-        { key: 'prod_worker',     label: '생산 작업자',  color: '#2563eb', bg: '#dbeafe', canWrite: true  },
-        { key: 'prod_manager',    label: '생산관리자',   color: '#d97706', bg: '#fef3c7', canWrite: true  },
-        { key: 'quality_manager', label: '품질 관리자',  color: '#16a34a', bg: '#dcfce7', canWrite: true  },
-        { key: 'sales_manager',   label: '영업관리자',   color: '#7c3aed', bg: '#ede9fe', canWrite: true  },
+        { key: 'admin',           label: '관리자',         color: '#dc2626', bg: '#fee2e2', canWrite: true },
+        { key: 'prod_worker',     label: '생산 작업자',    color: '#2563eb', bg: '#dbeafe', canWrite: true },
+        { key: 'prod_manager',    label: '생산관리자',     color: '#d97706', bg: '#fef3c7', canWrite: true },
+        { key: 'quality_manager', label: '품질 관리자',    color: '#16a34a', bg: '#dcfce7', canWrite: true },
+        { key: 'sales_manager',   label: '영업관리자',     color: '#7c3aed', bg: '#ede9fe', canWrite: true },
+        { key: 'paint_line_op',   label: '도장라인운영자', color: '#0369a1', bg: '#e0f2fe', canWrite: true },
+        { key: 'self_inspector',  label: '자주검사자',     color: '#059669', bg: '#d1fae5', canWrite: true },
+        { key: 'laser_op',        label: '레이져운영자',   color: '#6d28d9', bg: '#ddd6fe', canWrite: true },
+        { key: 'laser_inspector', label: '레이져검사자',   color: '#9333ea', bg: '#fae8ff', canWrite: true },
+        { key: 'injection_op',    label: '사출운영자',     color: '#c2410c', bg: '#ffedd5', canWrite: true },
     ];
 
     /* ── 전체 페이지 목록 ────────────────────────────────────── */
@@ -78,20 +83,20 @@ const AuthModule = (function () {
     }
     function _saveUsers(u) { localStorage.setItem(USERS_KEY, JSON.stringify(u)); }
 
-    function _getPermissions() {
-        try {
-            const s = localStorage.getItem(PERMS_KEY);
-            return s ? JSON.parse(s) : _defaultPerms();
-        } catch { return _defaultPerms(); }
-    }
+    /* 권한 구조: { access:[pageIds], write:[pageIds] }
+       - access: 페이지 접근 허용
+       - write:  작성·등록·수정·삭제 허용
+       admin은 null (전체 접근+쓰기) */
     function _defaultPerms() {
         const all = ALL_PAGES.map(p => p.id);
         const noSettings = all.filter(id => id !== 'settings');
+        const rw = pages => ({ access: pages, write: pages });  // 접근+입력 동일
+
         return {
-            admin: null,  /* 전체 접근 */
+            admin: null,  /* null = 전체 접근 + 전체 쓰기 */
 
             /* 생산 작업자 — 작업일지·입고·창고 중심 */
-            prod_worker: [
+            prod_worker: rw([
                 'dashboard',
                 'incoming-overview','injection-incoming','paint-incoming-inspection',
                 'warehouse-overview','injection-warehouse','paint-inventory','raw-material-inventory',
@@ -99,13 +104,13 @@ const AuthModule = (function () {
                 'production-plan','painting-work','painting-inspection','paint-mix',
                 'laser-standby','laser-work','laser-inspection',
                 'shipping-standby','product-warehouse',
-            ],
+            ]),
 
             /* 생산관리자 — 생산 전반 + 관리 표준 (설정 제외) */
-            prod_manager: noSettings,
+            prod_manager: rw(noSettings),
 
             /* 품질 관리자 — 검사·품질 관련 전체 + 입고·출하 */
-            quality_manager: [
+            quality_manager: rw([
                 'dashboard',
                 'incoming-overview','injection-incoming','paint-incoming-inspection',
                 'warehouse-overview',
@@ -113,18 +118,110 @@ const AuthModule = (function () {
                 'shipping-standby','product-warehouse',
                 'prod-standards','prod-conditions','prod-quality',
                 'quality-performance','improvement-activity','limit-samples','prod-spc',
-            ],
+            ]),
 
             /* 영업관리자 — 영업·납품·제품창고 + 생산계획 조회 */
-            sales_manager: [
+            sales_manager: rw([
                 'dashboard',
                 'production-plan',
                 'shipping-standby','product-warehouse',
                 'sales-delivery','sales-outsourcing',
                 'incoming-overview','warehouse-overview',
-            ],
+            ]),
+
+            /* 도장라인운영자 — 도장 공정 전담 */
+            paint_line_op: rw([
+                'dashboard',
+                'incoming-overview','paint-incoming-inspection',
+                'warehouse-overview','paint-inventory',
+                'production-plan','painting-work','painting-inspection','paint-mix',
+            ]),
+
+            /* 자주검사자 — 공정 자주 검사 담당 */
+            self_inspector: rw([
+                'dashboard',
+                'production-plan',
+                'painting-work','painting-inspection',
+                'prod-quality','quality-performance',
+                'laser-inspection',
+            ]),
+
+            /* 레이져운영자 — 레이져 공정 전담 */
+            laser_op: rw([
+                'dashboard',
+                'laser-standby','laser-work','laser-inspection',
+                'laser-jig-master','laser-jig-cleaning',
+            ]),
+
+            /* 레이져검사자 — 레이져 검사 담당 */
+            laser_inspector: rw([
+                'dashboard',
+                'laser-standby','laser-inspection',
+                'quality-performance',
+            ]),
+
+            /* 사출운영자 — 사출 공정 전담 */
+            injection_op: rw([
+                'dashboard',
+                'incoming-overview','injection-incoming',
+                'warehouse-overview','injection-warehouse','raw-material-inventory',
+                'injection-process','injection-work',
+            ]),
         };
     }
+
+    /* 구버전(array) → 신버전({access,write}) 자동 변환 */
+    function _migratePerms(raw) {
+        if (!raw || typeof raw !== 'object') return _defaultPerms();
+        const defaults = _defaultPerms();
+        const result = { admin: (raw.admin !== undefined ? raw.admin : null) };
+        ROLES.forEach(r => {
+            if (r.key === 'admin') return;
+            const existing = raw[r.key];
+            if (existing === undefined || existing === null) {
+                result[r.key] = defaults[r.key] || { access: [], write: [] };
+            } else if (Array.isArray(existing)) {
+                /* 구버전 array → access/write 동일하게 변환 */
+                result[r.key] = { access: existing, write: existing };
+            } else if (existing && typeof existing === 'object' && Array.isArray(existing.access)) {
+                result[r.key] = existing;
+            } else {
+                result[r.key] = defaults[r.key] || { access: [], write: [] };
+            }
+        });
+        return result;
+    }
+
+    function _getPermissions() {
+        try {
+            const s = localStorage.getItem(PERMS_KEY);
+            if (!s) return _defaultPerms();
+            return _migratePerms(JSON.parse(s));
+        } catch { return _defaultPerms(); }
+    }
+
+    /* 역할 × 페이지 접근 허용 여부 */
+    function isPageAccessGranted(roleKey, pageId) {
+        if (roleKey === 'admin') return true;
+        const perms = _getPermissions();
+        const rp = perms[roleKey];
+        if (rp === null) return true;
+        if (!rp) return false;
+        if (Array.isArray(rp)) return rp.includes(pageId);
+        return Array.isArray(rp.access) && rp.access.includes(pageId);
+    }
+
+    /* 역할 × 페이지 입력/등록 허용 여부 */
+    function isPageWriteGranted(roleKey, pageId) {
+        if (roleKey === 'admin') return true;
+        const perms = _getPermissions();
+        const rp = perms[roleKey];
+        if (rp === null) return true;
+        if (!rp) return false;
+        if (Array.isArray(rp)) return rp.includes(pageId);
+        return Array.isArray(rp.write) && rp.write.includes(pageId);
+    }
+
     function _savePermissions(p) { localStorage.setItem(PERMS_KEY, JSON.stringify(p)); }
 
     function _getMessages() {
@@ -404,9 +501,16 @@ const AuthModule = (function () {
     }
 
     /* ── 쓰기 권한 ───────────────────────────────────────────── */
-    /* 테스트 모드: 로그인 없이 전체 쓰기 허용 (관리/설정 제외) */
+    /* 전역 쓰기 허용 (기존 호환성 유지) */
     function canWrite() {
         return true;
+    }
+
+    /* 현재 사용자가 특정 페이지에 입력/등록 권한이 있는지 확인 */
+    function canWritePage(pageId) {
+        const user = getCurrentUser();
+        if (!user) return false;
+        return isPageWriteGranted(user.role, pageId);
     }
 
     /* ── 기본 관리자 계정 보장 ───────────────────────────────── */
@@ -847,12 +951,15 @@ const AuthModule = (function () {
     return {
         ROLES,
         ALL_PAGES,
-        getUsers:        _getUsers,
-        saveUsers:       _saveUsers,
-        getPermissions:  _getPermissions,
-        savePermissions: _savePermissions,
+        getUsers:             _getUsers,
+        saveUsers:            _saveUsers,
+        getPermissions:       _getPermissions,
+        savePermissions:      _savePermissions,
+        isPageAccessGranted,
+        isPageWriteGranted,
         getCurrentUser,
         canWrite,
+        canWritePage,
         ensureAdminUser,
         doLogin,
         logout,

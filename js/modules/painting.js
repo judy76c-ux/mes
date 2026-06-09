@@ -239,6 +239,197 @@ const PaintingIncomingModule = (function() {
         });
     }
 
+    function renderWorkList() {
+        let data = Storage.getByDateRange(
+            STORE,
+            (document.getElementById('pwStart') || {}).value || _currentDate,
+            (document.getElementById('pwEnd') || {}).value || _currentDate
+        ).sort((a, b) => (b.date + (b.startTime || '')).localeCompare(a.date + (a.startTime || '')));
+
+        const carModelSel = document.getElementById('pwFilterCarModel');
+        const partNameSel = document.getElementById('pwFilterPartName');
+        const filterCarModel = carModelSel ? carModelSel.value : '';
+        const filterPartName = partNameSel ? partNameSel.value : '';
+        if (filterCarModel) data = data.filter(d => d.carModel === filterCarModel);
+        if (filterPartName) data = data.filter(d => d.partName === filterPartName);
+
+        const totalInput = data.reduce((s, d) => s + (Number(d.inputQty) || 0), 0);
+        const totalProd = data.reduce((s, d) => s + (Number(d.productionQty) || 0), 0);
+        const totalLoss = data.reduce((s, d) => s + ((Number(d.inputQty) || 0) - (Number(d.productionQty) || 0)), 0);
+        const totalReports = data.reduce((s, d) => s + ((d.planReason || d.qtyDiffReason) ? 1 : 0), 0);
+
+        const statsEl = document.getElementById('pwStats');
+        if (statsEl) {
+            statsEl.innerHTML = `
+                <div class="stat-card blue">
+                    <div class="stat-card-value">${UIUtils.formatNumber(totalInput)}</div>
+                    <div class="stat-card-label">투입 수량</div>
+                </div>
+                <div class="stat-card cyan">
+                    <div class="stat-card-value">${UIUtils.formatNumber(totalProd)}</div>
+                    <div class="stat-card-label">산출 수량</div>
+                </div>
+                <div class="stat-card red">
+                    <div class="stat-card-value">${UIUtils.formatNumber(totalLoss)}</div>
+                    <div class="stat-card-label">공정 LOSS 수량</div>
+                </div>
+                <div class="stat-card green">
+                    <div class="stat-card-value">${UIUtils.formatNumber(totalReports)}</div>
+                    <div class="stat-card-label">이상보고 건수</div>
+                </div>`;
+        }
+
+        const tbody = document.getElementById('pwTableBody');
+        if (!tbody) return;
+
+        const headerRow = tbody.closest('table')?.querySelector('thead tr');
+        if (headerRow && headerRow.children.length >= 17) {
+            headerRow.children[8].textContent = '산출 수량';
+            headerRow.children[9].textContent = '공정 LOSS 수량';
+            headerRow.children[10].textContent = '이상보고 이력';
+            headerRow.children[10].style.textAlign = 'left';
+        }
+
+        if (!data.length) {
+            tbody.innerHTML = `<tr><td colspan="17" style="text-align:center;padding:36px;color:var(--text-muted);">데이터가 없습니다.</td></tr>`;
+            return;
+        }
+
+        const users = (typeof AuthModule !== 'undefined' && typeof AuthModule.getUsers === 'function')
+            ? (AuthModule.getUsers() || [])
+            : [];
+
+        tbody.innerHTML = data.map(d => {
+            const lotDisplay = (() => {
+                if (d.lots && d.lots.length > 0) {
+                    return d.lots.map(l =>
+                        '<span style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:0.78rem;font-family:monospace;display:inline-block;margin:1px 2px 1px 0;">' +
+                        l.lotNo +
+                        (l.qty ? '<span style="color:var(--text-muted);margin-left:3px;">(' + UIUtils.formatNumber(l.qty) + ')</span>' : '') +
+                        '</span>'
+                    ).join('');
+                }
+                return d.lotNo
+                    ? '<span style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:0.78rem;font-family:monospace;">' + d.lotNo + '</span>'
+                    : '-';
+            })();
+
+            const timeStr = d.startTime ? d.startTime + (d.endTime ? '~' + d.endTime : '') : '-';
+            const ctStr = d.avgCT > 0
+                ? '<span style="color:var(--accent-blue);font-size:0.82rem;">' + d.avgCT.toFixed(1) + '초</span>'
+                : '-';
+
+            const _products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+            const _prod = _products.find(p => p.carModel === d.carModel && p.partName === d.partName);
+            let _cvt = 0;
+            if (_prod) {
+                for (let i = 1; i <= 4; i++) {
+                    const proc = (_prod['process' + i] || '').toLowerCase();
+                    if (proc.includes('?꾩옣')) {
+                        _cvt = Number(_prod['cvt' + i]) || 0;
+                        break;
+                    }
+                }
+                if (!_cvt) _cvt = Number(_prod.cvt1) || 0;
+            }
+
+            const inputQty = Number(d.inputQty) || 0;
+            const productionQty = Number(d.productionQty) || 0;
+            const processLoss = inputQty - productionQty;
+            const _spindle = (_cvt > 0 && inputQty > 0) ? Math.ceil(inputQty / _cvt) : 0;
+            const cvtStr = _cvt > 0
+                ? '<span style="font-weight:700;color:var(--accent-blue);">' + _cvt + '</span>'
+                : '<span style="color:var(--text-muted);">-</span>';
+            const spindleStr = _spindle > 0
+                ? '<span style="font-weight:700;color:var(--accent-green);">' + UIUtils.formatNumber(_spindle) + '</span>' +
+                  '<div style="font-size:0.65rem;color:var(--text-muted);white-space:nowrap;">' + UIUtils.formatNumber(inputQty) + '첨' + _cvt + '</div>'
+                : '<span style="color:var(--text-muted);">-</span>';
+
+            const recipientNames = function(ids) {
+                return (ids || []).map(function(id) {
+                    const user = users.find(function(row) { return String(row.id) === String(id); });
+                    return user ? (user.displayName || user.username || user.id) : String(id || '');
+                }).filter(Boolean).join(', ');
+            };
+            const reportItems = [];
+            if (d.planReason || d.planReasonDetail) {
+                reportItems.push(
+                    '<div style="display:flex;flex-direction:column;gap:2px;">' +
+                    '<span style="display:inline-block;background:#fef3c7;color:#92400e;padding:2px 7px;border-radius:999px;font-size:0.68rem;font-weight:700;width:max-content;">계획 미달</span>' +
+                    '<div style="font-size:0.76rem;color:var(--text-primary);">' + (d.planReason || '-') + (d.planReasonDetail ? ' / ' + d.planReasonDetail : '') + '</div>' +
+                    (d.planManagerRecipients && d.planManagerRecipients.length ? '<div style="font-size:0.68rem;color:var(--text-muted);">통보: ' + recipientNames(d.planManagerRecipients) + '</div>' : '') +
+                    '</div>'
+                );
+            }
+            if (d.qtyDiffReason || d.qtyDiffDetail) {
+                reportItems.push(
+                    '<div style="display:flex;flex-direction:column;gap:2px;">' +
+                    '<span style="display:inline-block;background:#fee2e2;color:#b91c1c;padding:2px 7px;border-radius:999px;font-size:0.68rem;font-weight:700;width:max-content;">투입/산출 차이</span>' +
+                    '<div style="font-size:0.76rem;color:var(--text-primary);">' + (d.qtyDiffReason || '-') + (d.qtyDiffDetail ? ' / ' + d.qtyDiffDetail : '') + '</div>' +
+                    (d.qtyDiffManagerRecipients && d.qtyDiffManagerRecipients.length ? '<div style="font-size:0.68rem;color:var(--text-muted);">통보: ' + recipientNames(d.qtyDiffManagerRecipients) + '</div>' : '') +
+                    '</div>'
+                );
+            }
+            const reportHistory = reportItems.length
+                ? '<div style="display:flex;flex-direction:column;gap:6px;min-width:180px;">' + reportItems.join('') + '</div>'
+                : '<span style="color:var(--text-muted);">-</span>';
+
+            const isInspectionCompleted = d.inspectionStatus === 'completed';
+            const statusBadge = isInspectionCompleted
+                ? '<span style="display:inline-block;background:var(--accent-green);color:#fff;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;margin-right:4px;">검사완료</span>'
+                : '';
+            const overPlanBadge = d.overPlanQty
+                ? '<span style="display:inline-block;background:#f59e0b;color:#fff;padding:2px 7px;border-radius:4px;font-size:0.7rem;font-weight:700;margin-right:3px;" title="계획수량 초과 등록">초과</span>'
+                : '';
+            const timeChangeBadge = d.timeReason
+                ? '<span style="display:inline-block;background:#ef4444;color:#fff;padding:2px 7px;border-radius:4px;font-size:0.7rem;font-weight:700;margin-right:3px;" title="시간변경 ' + (d.timeReason || '') + (d.timeReasonDetail ? ' / ' + d.timeReasonDetail : '') + '">시간변경</span>'
+                : '';
+            const actionButtons = isInspectionCompleted
+                ? '<span style="color:var(--text-muted);font-size:0.85rem;">검사완료</span>'
+                : '<button class="btn btn-sm btn-outline" onclick="PaintingWorkModule.edit(\'' + d.id + '\')">수정</button>';
+
+            return '<tr style="' + (isInspectionCompleted ? 'background:rgba(22,163,74,0.05);' : '') + '">' +
+                '<td>' + d.date + '</td>' +
+                '<td>' + (d.line || '-') + '</td>' +
+                '<td>' + (d.carModel || '-') + '</td>' +
+                '<td>' + (d.partName || '-') + '</td>' +
+                '<td>' + (d.color || '-') + '</td>' +
+                '<td style="text-align:center;">' + UIUtils.itemTypeBadge(d.carModel, d.partName, d.color) + '</td>' +
+                '<td>' + lotDisplay + '</td>' +
+                '<td style="text-align:right;">' + UIUtils.formatNumber(inputQty) + '</td>' +
+                '<td style="text-align:right;font-weight:600;">' + UIUtils.formatNumber(productionQty) + '</td>' +
+                '<td style="text-align:right;color:' + (processLoss > 0 ? 'var(--accent-red)' : (processLoss < 0 ? 'var(--accent-blue)' : 'var(--text-primary)')) + ';font-weight:700;">' + UIUtils.formatNumber(processLoss) + '</td>' +
+                '<td>' + reportHistory + '</td>' +
+                '<td style="text-align:center;">' + (d.workers > 0 ? d.workers + '명' : '-') + '</td>' +
+                '<td style="font-size:0.82rem;white-space:nowrap;">' + timeStr + '</td>' +
+                '<td style="text-align:right;">' + ctStr + '</td>' +
+                '<td style="text-align:center;">' + cvtStr + '</td>' +
+                '<td style="text-align:right;">' + spindleStr + '</td>' +
+                '<td style="white-space:nowrap;">' + overPlanBadge + timeChangeBadge + statusBadge + actionButtons + '</td></tr>';
+        }).join('');
+    }
+
+    function exportData() {
+        const data = Storage.getAll(STORE);
+        if (!data.length) {
+            UIUtils.toast('?곗씠?곌? ?놁뒿?덈떎.', 'warning');
+            return;
+        }
+        const headers = ['작업일', '라인', '차종', '품명', '컬러', '사출LOT', '투입수량', '산출 수량', '공정 LOSS 수량', '이상보고 이력', '투입인원', '시작시간', '완료시간', '평균CT(초)', '비고'];
+        const rows = data.map(d => {
+            const lotStr = (d.lots && d.lots.length > 0)
+                ? d.lots.map(l => l.lotNo + (l.qty ? '(' + l.qty + ')' : '')).join(' / ')
+                : (d.lotNo || '');
+            const reportHistory = [
+                d.planReason ? ('계획 미달: ' + d.planReason + (d.planReasonDetail ? ' / ' + d.planReasonDetail : '')) : '',
+                d.qtyDiffReason ? ('투입/산출 차이: ' + d.qtyDiffReason + (d.qtyDiffDetail ? ' / ' + d.qtyDiffDetail : '')) : ''
+            ].filter(Boolean).join(' | ');
+            return [d.date, d.line, d.carModel, d.partName, d.color, lotStr, d.inputQty, d.productionQty, (Number(d.inputQty) || 0) - (Number(d.productionQty) || 0), reportHistory, d.workers || 0, d.startTime || '', d.endTime || '', d.avgCT || 0, d.note || ''];
+        });
+        Storage.exportToCSV(headers, rows, '?꾩옣?묒뾽?쇱?');
+        UIUtils.toast('?대낫?닿린 ?꾨즺', 'success');
+    }
+
     return {
         render,
         search,

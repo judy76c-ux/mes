@@ -9868,13 +9868,27 @@ const SettingsModule = (function() {
             <tr>
                 <td style="padding:5px 10px;font-size:0.82rem;">${_esc(p.label)}</td>
                 ${nonAdminRoles.map(r => {
-                    const allowed = perms[r.key];
-                    const checked = allowed === null || (Array.isArray(allowed) && allowed.includes(p.id));
-                    return `<td style="text-align:center;padding:4px;">
-                        <input type="checkbox" data-role="${r.key}" data-page="${p.id}"
-                            ${checked ? 'checked' : ''}
-                            onchange="SettingsModule.onPermChange(this)"
-                            style="width:16px;height:16px;cursor:pointer;">
+                    const accessOk = AuthModule.isPageAccessGranted(r.key, p.id);
+                    const writeOk  = AuthModule.isPageWriteGranted(r.key, p.id);
+                    return `<td style="text-align:center;padding:3px 4px;">
+                        <div style="display:inline-flex;flex-direction:column;gap:2px;align-items:center;">
+                            <label style="display:flex;align-items:center;gap:2px;cursor:pointer;font-size:9px;color:var(--text-muted);white-space:nowrap;"
+                                title="${_esc(r.label)} — 접근 허용">
+                                <input type="checkbox" data-role="${r.key}" data-page="${p.id}" data-type="access"
+                                    ${accessOk ? 'checked' : ''}
+                                    onchange="SettingsModule.onPermChange(this)"
+                                    style="width:13px;height:13px;cursor:pointer;accent-color:${r.color};">
+                                <span>접</span>
+                            </label>
+                            <label style="display:flex;align-items:center;gap:2px;cursor:pointer;font-size:9px;color:var(--text-muted);white-space:nowrap;"
+                                title="${_esc(r.label)} — 입력 허용">
+                                <input type="checkbox" data-role="${r.key}" data-page="${p.id}" data-type="write"
+                                    ${writeOk ? 'checked' : ''}
+                                    onchange="SettingsModule.onPermChange(this)"
+                                    style="width:13px;height:13px;cursor:pointer;accent-color:#dc2626;">
+                                <span style="color:#dc2626;">입</span>
+                            </label>
+                        </div>
                     </td>`;
                 }).join('')}
             </tr>`).join('')}`;
@@ -9934,19 +9948,28 @@ const SettingsModule = (function() {
                         <table class="data-table" style="font-size:0.82rem;">
                             <thead style="position:sticky;top:0;z-index:1;">
                                 <tr>
-                                    <th style="min-width:130px;">페이지</th>
+                                    <th rowspan="2" style="min-width:130px;vertical-align:middle;">페이지</th>
                                     ${nonAdminRoles.map(r =>
-                                        `<th style="text-align:center;min-width:70px;color:${r.color};">${r.label}</th>`
+                                        `<th style="text-align:center;min-width:68px;color:${r.color};border-bottom:1px solid var(--border-color);padding-bottom:2px;">${r.label}</th>`
                                     ).join('')}
                                 </tr>
                                 <tr style="background:var(--bg-tertiary);">
-                                    <td style="padding:4px 10px;font-size:0.75rem;color:var(--text-muted);">관리자는 전체 접근</td>
                                     ${nonAdminRoles.map(r =>
-                                        `<td style="text-align:center;padding:4px;">
-                                            <button class="btn btn-sm" style="font-size:10px;padding:2px 6px;"
-                                                onclick="SettingsModule.toggleAllPerm('${r.key}',true)">전체</button>
-                                            <button class="btn btn-sm" style="font-size:10px;padding:2px 6px;"
-                                                onclick="SettingsModule.toggleAllPerm('${r.key}',false)">해제</button>
+                                        `<th style="text-align:center;padding:2px 4px;font-size:9px;font-weight:600;">
+                                            <span style="color:${r.color};">접</span>
+                                            <span style="color:var(--text-muted);margin:0 2px;">/</span>
+                                            <span style="color:#dc2626;">입</span>
+                                        </th>`
+                                    ).join('')}
+                                </tr>
+                                <tr style="background:var(--bg-secondary);">
+                                    <td style="padding:4px 10px;font-size:0.75rem;color:var(--text-muted);">관리자는 전체 접근+입력</td>
+                                    ${nonAdminRoles.map(r =>
+                                        `<td style="text-align:center;padding:3px 2px;">
+                                            <button class="btn btn-sm" style="font-size:9px;padding:1px 5px;"
+                                                onclick="SettingsModule.toggleAllPerm('${r.key}',true)" title="접근+입력 전체 허용">전체</button>
+                                            <button class="btn btn-sm" style="font-size:9px;padding:1px 5px;"
+                                                onclick="SettingsModule.toggleAllPerm('${r.key}',false)" title="접근+입력 전체 해제">해제</button>
                                         </td>`
                                     ).join('')}
                                 </tr>
@@ -10050,25 +10073,64 @@ const SettingsModule = (function() {
         SettingsModule.switchTab('users');
     }
 
-    /* 권한 체크박스 변경 */
+    /* 권한 체크박스 변경 (data-type="access"|"write") */
     function onPermChange(checkbox) {
         const role   = checkbox.dataset.role;
         const pageId = checkbox.dataset.page;
+        const type   = checkbox.dataset.type || 'access';  /* 'access' 또는 'write' */
         const perms  = AuthModule.getPermissions();
-        let allowed  = perms[role];
-        if (allowed === null) allowed = AuthModule.ALL_PAGES.map(p => p.id);
-        if (checkbox.checked) {
-            if (!allowed.includes(pageId)) allowed = [...allowed, pageId];
+
+        let rp = perms[role];
+        /* admin null → 체크박스 변경 불가(모든 항목 checked 상태이므로 건드리지 않음) */
+        if (rp === null) {
+            const all = AuthModule.ALL_PAGES.map(p => p.id);
+            rp = { access: [...all], write: [...all] };
+        } else if (Array.isArray(rp)) {
+            /* 구버전 array → 신버전 변환 */
+            rp = { access: [...rp], write: [...rp] };
+        } else if (!rp || typeof rp !== 'object') {
+            rp = { access: [], write: [] };
         } else {
-            allowed = allowed.filter(id => id !== pageId);
+            rp = { access: [...(rp.access || [])], write: [...(rp.write || [])] };
         }
-        perms[role] = allowed;
+
+        const list = rp[type] ? [...rp[type]] : [];
+        if (checkbox.checked) {
+            if (!list.includes(pageId)) list.push(pageId);
+            /* 입력 허용 시 접근도 자동 허용 */
+            if (type === 'write' && !rp.access.includes(pageId)) {
+                rp.access.push(pageId);
+                /* DOM에서 같은 페이지의 접근 체크박스도 체크 */
+                const accessCb = document.querySelector(
+                    `input[data-role="${role}"][data-page="${pageId}"][data-type="access"]`
+                );
+                if (accessCb) accessCb.checked = true;
+            }
+        } else {
+            const idx = list.indexOf(pageId);
+            if (idx >= 0) list.splice(idx, 1);
+            /* 접근 해제 시 입력도 자동 해제 */
+            if (type === 'access') {
+                const wi = rp.write.indexOf(pageId);
+                if (wi >= 0) rp.write.splice(wi, 1);
+                const writeCb = document.querySelector(
+                    `input[data-role="${role}"][data-page="${pageId}"][data-type="write"]`
+                );
+                if (writeCb) writeCb.checked = false;
+            }
+        }
+        rp[type] = list;
+        perms[role] = rp;
         AuthModule.savePermissions(perms);
     }
 
+    /* 전체/해제: 접근+입력 동시 적용 */
     function toggleAllPerm(role, grant) {
         const perms = AuthModule.getPermissions();
-        perms[role] = grant ? AuthModule.ALL_PAGES.map(p => p.id) : [];
+        const all = AuthModule.ALL_PAGES.map(p => p.id);
+        perms[role] = grant
+            ? { access: [...all], write: [...all] }
+            : { access: [], write: [] };
         AuthModule.savePermissions(perms);
         SettingsModule.switchTab('users');
     }
