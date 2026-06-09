@@ -916,7 +916,8 @@ const SettingsModule = (function() {
                 thinnerId:  row.thinnerId || ''
             }))
             : [{}];
-        const initialPaintTableHtml = _paintTableHtml(idPrefix, initialPaintRows, allPaints);
+        const uniquePaintSuppliers = [...new Set(allPaints.map(p => p.supplier).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+        const initialPaintTableHtml = _paintTableHtml(idPrefix, initialPaintRows, allPaints, '');
 
         return `
             <style>
@@ -1030,8 +1031,7 @@ const SettingsModule = (function() {
                 </div>
                 <div class="form-group">
                     <label class="form-label">납품처</label>
-                    <input type="text" class="form-input" id="${idPrefix}Customer" placeholder="예: 현대모비스" value="${v('customer')}"
-                        oninput="SettingsModule.onProductCustomerChange('${idPrefix}')" onchange="SettingsModule.onProductCustomerChange('${idPrefix}')" >
+                    <input type="text" class="form-input" id="${idPrefix}Customer" placeholder="예: 현대모비스" value="${v('customer')}">
                 </div>
             </div>
 
@@ -1138,10 +1138,20 @@ const SettingsModule = (function() {
             <input type="hidden" id="${idPrefix}Code" value="${v('code')}">
 
             <!-- 도료 정보 섹션 -->
-            <div style="font-weight:600;color:var(--text-primary);margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--accent-blue);">
-                <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;">water_drop</span>
-                도료 정보
-                <span style="font-size:0.75rem;font-weight:400;color:var(--text-muted);margin-left:8px;">도료 유형 먼저 선택 후 도료를 선택하세요 (복수 추가 가능)</span>
+            <div style="font-weight:600;color:var(--text-primary);margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--accent-blue);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                <div>
+                    <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;">water_drop</span>
+                    도료 정보
+                    <span style="font-size:0.75rem;font-weight:400;color:var(--text-muted);margin-left:8px;">도료 유형 먼저 선택 후 도료를 선택하세요 (복수 추가 가능)</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span style="font-size:0.78rem;color:var(--text-muted);font-weight:400;">구매처:</span>
+                    <select id="${idPrefix}PaintSupplierFilter" style="font-size:0.82rem;padding:3px 8px;border:1.5px solid var(--border-color);border-radius:6px;background:var(--bg-secondary);color:var(--text-primary);font-family:inherit;"
+                        onchange="SettingsModule.onProductPaintSupplierFilter('${idPrefix}')">
+                        <option value="">전체</option>
+                        ${uniquePaintSuppliers.map(s => '<option value="' + s + '">' + s + '</option>').join('')}
+                    </select>
+                </div>
             </div>
             <div id="${idPrefix}PaintList">
                 ${initialPaintTableHtml}
@@ -1390,34 +1400,34 @@ const SettingsModule = (function() {
 
     // 도료 행 1개 HTML 생성
     // 도료 행 1개 → <tr> 반환
-    function _paintRowHtml(idPrefix, rowIdx, rowData, allPaints, productCustomer) {
+    function _paintRowHtml(idPrefix, rowIdx, rowData, allPaints, supplierFilter) {
         const paintSpec  = rowData.paintSpec  || '';
         const processTag = rowData.processTag || '공용';
         const mainId     = rowData.mainId     || '';
         const hardId     = rowData.hardId     || '';
         const thinnerId  = rowData.thinnerId  || '';
 
-        // 납품처 필터링: 제품 납품처가 있으면 paint.customer가 없거나 일치하는 도료만 표시
-        const customerFiltered = productCustomer
-            ? allPaints.filter(p => !p.customer || p.customer === productCustomer)
+        // 구매처(공급사) 필터링: 선택된 구매처가 있으면 해당 구매처 도료만 표시
+        const basePaints = supplierFilter
+            ? allPaints.filter(p => p.supplier === supplierFilter)
             : allPaints;
 
-        // 선택된 주제 도료의 공급처 파악 (경화제/신너 필터링용)
+        // 선택된 주제 도료의 공급처 파악 (경화제/신너 자동 매칭용)
         const mainPm = mainId ? allPaints.find(p => p.id === mainId) : null;
-        const supplierFilter = mainPm ? (mainPm.supplier || '') : '';
+        const mainSupplier = mainPm ? (mainPm.supplier || '') : '';
 
-        // 주제 목록: 납품처 필터 후 도료 사양(Primer/Color/Clear/공용)으로 필터링
-        const mainPaints = customerFiltered.filter(p =>
+        // 주제 목록: 구매처 필터 후 도료 사양(Primer/Color/Clear/공용)으로 필터링
+        const mainPaints = basePaints.filter(p =>
             p.paintType === '주제' && (!paintSpec || p.paintSpec === paintSpec || p.paintSpec === '공용'));
 
-        // 경화제: 납품처 필터 후 동일 공급처 우선 → 없으면 폴백
-        const allHard    = customerFiltered.filter(p => p.paintType === '경화제');
-        const hardBySup  = supplierFilter ? allHard.filter(p => p.supplier === supplierFilter) : [];
+        // 경화제: 구매처 필터 후 동일 공급처 우선 → 없으면 폴백
+        const allHard    = basePaints.filter(p => p.paintType === '경화제');
+        const hardBySup  = mainSupplier ? allHard.filter(p => p.supplier === mainSupplier) : [];
         const hardPaints = hardBySup.length ? hardBySup : allHard;
 
-        // 신너(희석제): 납품처 필터 후 동일 공급처 우선 → 없으면 폴백
-        const allThinner     = customerFiltered.filter(p => p.paintType === '희석제');
-        const thinnerBySup   = supplierFilter ? allThinner.filter(p => p.supplier === supplierFilter) : [];
+        // 신너(희석제): 구매처 필터 후 동일 공급처 우선 → 없으면 폴백
+        const allThinner     = basePaints.filter(p => p.paintType === '희석제');
+        const thinnerBySup   = mainSupplier ? allThinner.filter(p => p.supplier === mainSupplier) : [];
         const thinnerPaints  = thinnerBySup.length ? thinnerBySup : allThinner;
 
         const mkOpts = (list, selectedId) => list.map(pm =>
@@ -1497,25 +1507,23 @@ const SettingsModule = (function() {
     }
 
     // 헤더 포함 테이블 HTML 문자열 생성 (초기 렌더 + 재렌더 공용)
-    function _paintTableHtml(idPrefix, paintRows, allPaints, productCustomer) {
+    function _paintTableHtml(idPrefix, paintRows, allPaints, supplierFilter) {
         if (!paintRows || paintRows.length === 0) paintRows = [{}];
         const thStyle = 'padding:6px 8px;font-size:0.78rem;font-weight:600;color:var(--text-secondary);background:var(--bg-primary);border-bottom:2px solid var(--border-color);white-space:nowrap;text-align:left;';
-        const customerHint = productCustomer
-            ? `<span style="font-size:0.72rem;font-weight:400;color:var(--accent-blue);margin-left:6px;">[${productCustomer} 전용 + 공용]</span>` : '';
         return `
         <table style="width:100%;border-collapse:collapse;border:1px solid var(--border-color);border-radius:8px;overflow:hidden;margin-bottom:4px;">
             <thead>
                 <tr>
                     <th style="${thStyle}width:80px;">공정</th>
                     <th style="${thStyle}width:110px;">도료 사양</th>
-                    <th style="${thStyle}">주제${customerHint}</th>
+                    <th style="${thStyle}">주제</th>
                     <th style="${thStyle}">경화제</th>
                     <th style="${thStyle}">신너</th>
                     <th style="${thStyle}width:36px;"></th>
                 </tr>
             </thead>
             <tbody>
-                ${paintRows.map((row, i) => _paintRowHtml(idPrefix, i, row, allPaints, productCustomer)).join('')}
+                ${paintRows.map((row, i) => _paintRowHtml(idPrefix, i, row, allPaints, supplierFilter)).join('')}
             </tbody>
         </table>`;
     }
@@ -1525,9 +1533,9 @@ const SettingsModule = (function() {
         const container = document.getElementById(`${idPrefix}PaintList`);
         if (!container) return;
         const ap = Storage.getAll(PAINT_STORE) || [];
-        // 현재 제품 폼의 납품처 읽기 (없으면 전체 표시)
-        const productCustomer = (document.getElementById(`${idPrefix}Customer`) || {}).value || '';
-        container.innerHTML = _paintTableHtml(idPrefix, paintRows, ap, productCustomer);
+        // 구매처 필터 값 읽기 (도료 섹션 위의 필터 셀렉트)
+        const supplierFilter = (document.getElementById(`${idPrefix}PaintSupplierFilter`) || {}).value || '';
+        container.innerHTML = _paintTableHtml(idPrefix, paintRows, ap, supplierFilter);
     }
 
     // 도료 행 추가
@@ -1558,8 +1566,8 @@ const SettingsModule = (function() {
         _renderPaintList(idPrefix, rows);
     }
 
-    // 납품처 변경 → 도료 목록 재필터링
-    function onProductCustomerChange(idPrefix) {
+    // 구매처 필터 변경 → 도료 목록 재필터링
+    function onProductPaintSupplierFilter(idPrefix) {
         _renderPaintList(idPrefix, _getCurrentPaintRows(idPrefix));
     }
 
@@ -5333,7 +5341,7 @@ const SettingsModule = (function() {
                                             <td>${p.packUnit ? p.packUnit + ' KG' : '-'}</td>
                                             <td style="text-align:right;">${p.purchasePrice ? (Number(String(p.purchasePrice).replace(/,/g, '')) || 0).toLocaleString() : '-'}</td>
                                             <td>${p.shelfLife || '-'}</td>
-                                            <td>${p.customer ? \`<span style="font-size:0.8rem;padding:2px 7px;border-radius:10px;background:var(--accent-blue)18;color:var(--accent-blue);border:1px solid var(--accent-blue)44;">\${p.customer}</span>\` : '<span style="color:var(--text-muted);font-size:0.8rem;">공용</span>'}</td>
+                                            <td>${p.customer ? '<span style="font-size:0.8rem;padding:2px 7px;border-radius:10px;background:rgba(37,99,235,0.08);color:#2563eb;border:1px solid rgba(37,99,235,0.3);">' + p.customer + '</span>' : '<span style="color:var(--text-muted);font-size:0.8rem;">공용</span>'}</td>
                                             <td>
                                                 <button class="btn btn-sm btn-outline" onclick="SettingsModule.editPaint('${p.id}')">수정</button>
                                                 <button class="btn btn-sm btn-danger" onclick="SettingsModule.removePaint('${p.id}')">삭제</button>
@@ -10224,7 +10232,7 @@ const SettingsModule = (function() {
         removeProductPaintRow,
         onProductPaintSpecChange,
         onProductPaintMainSelect,
-        onProductCustomerChange,
+        onProductPaintSupplierFilter,
         updateProductInjInfo,
         onProdInjFiltCarChange,
         onProdInjFiltPartChange,

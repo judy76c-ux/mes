@@ -10292,8 +10292,15 @@ var PaintMixModule = (function() {
  */
 var ProdSubMaterialsModule = (function() {
     const STORE = DB.STORES.PROD_SUB_MATERIALS;
+    const TYPE_KIND = 'consumable_type_master';
     const UNITS = ['EA', 'SET', 'BOX', 'ROLL', 'KG', 'G', 'L', 'ML', '개', '기타'];
     const CATEGORIES = ['포장재', '라벨', '테이프', '지그/소모품', '검사 부자재', '기타'];
+    const PROCESS_MAP = {
+        '사출공정': ['수입검사', '사출창고', '사출성형', '조립/포장'],
+        '도장공정': ['수입검사', '배합/사용', '도장-A', '도장-B', '건조', '검사', '포장'],
+        '레이저공정': ['대기품', '레이저가공', '검사', '지그관리'],
+        '출하공정': ['출하검사', '제품창고', '출고']
+    };
 
     function render(container) {
         const filterHTML = `
@@ -10330,11 +10337,241 @@ var ProdSubMaterialsModule = (function() {
             'psmTable',
             headers
         );
+        _renderTypeMasterSection(container);
         search();
     }
 
     function _rows() {
         return (Storage.getAll(STORE) || []).filter(r => !r._docKind);
+    }
+
+    function _typeRows() {
+        return (Storage.getAll(STORE) || [])
+            .filter(r => r._docKind === TYPE_KIND)
+            .sort((a, b) =>
+                String(a.mainProcess || '').localeCompare(String(b.mainProcess || '')) ||
+                String(a.subProcess || '').localeCompare(String(b.subProcess || '')) ||
+                String(a.materialName || '').localeCompare(String(b.materialName || ''))
+            );
+    }
+
+    function _renderTypeMasterSection(container) {
+        const filterBar = container.querySelector('.filter-bar');
+        if (!filterBar) return;
+        filterBar.insertAdjacentHTML('beforebegin', `
+            <div class="card" style="margin-bottom:16px;">
+                <div class="card-body">
+                    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+                        <div>
+                            <div style="font-size:1rem;font-weight:800;color:var(--text-primary);">주공정 &gt; 소공정별 소모자재 종류 LIST</div>
+                            <div style="font-size:0.82rem;color:var(--text-muted);margin-top:4px;">
+                                공정별로 어떤 소모자재를 사용하는지 종류 마스터를 먼저 정의합니다.
+                            </div>
+                        </div>
+                        <button class="btn btn-primary" onclick="ProdSubMaterialsModule.openTypeModal()">
+                            <span class="material-symbols-outlined">playlist_add</span> 종류 등록
+                        </button>
+                    </div>
+                    <div class="filter-bar" style="padding:0;background:transparent;border:none;box-shadow:none;gap:10px;flex-wrap:wrap;">
+                        <div class="form-group">
+                            <label class="form-label">주공정</label>
+                            <select class="form-select" id="psmTypeFilterMain" onchange="ProdSubMaterialsModule.onTypeMainFilterChange();ProdSubMaterialsModule.searchTypeList()">
+                                <option value="">전체</option>
+                                ${Object.keys(PROCESS_MAP).map(main => `<option value="${_esc(main)}">${_esc(main)}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">소공정</label>
+                            <select class="form-select" id="psmTypeFilterSub" onchange="ProdSubMaterialsModule.searchTypeList()">
+                                <option value="">전체</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">소모자재 종류</label>
+                            <input type="text" class="form-input" id="psmTypeFilterItem" placeholder="예: 마스킹 테이프, 라벨">
+                        </div>
+                        <div class="form-group" style="align-self:flex-end;">
+                            <button class="btn btn-outline" onclick="ProdSubMaterialsModule.searchTypeList()">
+                                <span class="material-symbols-outlined">search</span> 조회
+                            </button>
+                        </div>
+                    </div>
+                    <div class="data-table-wrapper" style="margin-top:10px;">
+                        <table class="data-table" id="psmTypeTable">
+                            <thead>
+                                <tr>
+                                    <th style="width:56px;">No</th>
+                                    <th>주공정</th>
+                                    <th>소공정</th>
+                                    <th>소모자재 종류</th>
+                                    <th>규격/용도</th>
+                                    <th style="width:80px;">단위</th>
+                                    <th>비고</th>
+                                    <th style="width:120px;">작업</th>
+                                </tr>
+                            </thead>
+                            <tbody id="psmTypeTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        `);
+        onTypeMainFilterChange();
+        searchTypeList();
+    }
+
+    function onTypeMainFilterChange(modalPrefix = '') {
+        const mainId = modalPrefix ? `${modalPrefix}MainProcess` : 'psmTypeFilterMain';
+        const subId = modalPrefix ? `${modalPrefix}SubProcess` : 'psmTypeFilterSub';
+        const main = document.getElementById(mainId)?.value || '';
+        const subSelect = document.getElementById(subId);
+        if (!subSelect) return;
+        const subs = main ? (PROCESS_MAP[main] || []) : [];
+        const current = subSelect.value || '';
+        subSelect.innerHTML = `<option value="">${modalPrefix ? '소공정 선택' : '전체'}</option>` +
+            subs.map(sub => `<option value="${_esc(sub)}" ${current === sub ? 'selected' : ''}>${_esc(sub)}</option>`).join('');
+    }
+
+    function searchTypeList() {
+        const main = document.getElementById('psmTypeFilterMain')?.value || '';
+        const sub = document.getElementById('psmTypeFilterSub')?.value || '';
+        const item = (document.getElementById('psmTypeFilterItem')?.value || '').trim().toLowerCase();
+        let data = _typeRows();
+        if (main) data = data.filter(d => (d.mainProcess || '') === main);
+        if (sub) data = data.filter(d => (d.subProcess || '') === sub);
+        if (item) data = data.filter(d =>
+            (d.materialName || '').toLowerCase().includes(item) ||
+            (d.spec || '').toLowerCase().includes(item)
+        );
+        renderTypeTable(data);
+    }
+
+    function renderTypeTable(data) {
+        const tbody = document.getElementById('psmTypeTableBody');
+        if (!tbody) return;
+        tbody.innerHTML = data.length
+            ? data.map((d, i) => `
+                <tr>
+                    <td>${i + 1}</td>
+                    <td><strong>${_esc(d.mainProcess || '-')}</strong></td>
+                    <td>${_esc(d.subProcess || '-')}</td>
+                    <td style="font-weight:700;color:var(--text-primary);">${_esc(d.materialName || '-')}</td>
+                    <td>${_esc(d.spec || '-')}</td>
+                    <td>${_esc(d.unit || '-')}</td>
+                    <td style="max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_esc(d.note || '-')}</td>
+                    <td>
+                        <button class="btn btn-sm btn-outline" onclick="ProdSubMaterialsModule.editType('${_js(d.id)}')">수정</button>
+                        <button class="btn btn-sm btn-danger" onclick="ProdSubMaterialsModule.removeType('${_js(d.id)}')">삭제</button>
+                    </td>
+                </tr>
+            `).join('')
+            : `<tr><td colspan="8" style="text-align:center;padding:26px;color:var(--text-muted);">등록된 소모자재 종류가 없습니다.</td></tr>`;
+    }
+
+    function _typeFormHtml(d = {}) {
+        return `
+            <div style="display:flex;flex-direction:column;gap:12px;">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">주공정 <span style="color:var(--accent-red)">*</span></label>
+                        <select class="form-select" id="psmTypeMainProcess" onchange="ProdSubMaterialsModule.onTypeMainFilterChange('psmType')">
+                            <option value="">주공정 선택</option>
+                            ${Object.keys(PROCESS_MAP).map(main => `<option value="${_esc(main)}" ${(d.mainProcess || '') === main ? 'selected' : ''}>${_esc(main)}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">소공정 <span style="color:var(--accent-red)">*</span></label>
+                        <select class="form-select" id="psmTypeSubProcess">
+                            <option value="">소공정 선택</option>
+                            ${((d.mainProcess && PROCESS_MAP[d.mainProcess]) || []).map(sub => `<option value="${_esc(sub)}" ${(d.subProcess || '') === sub ? 'selected' : ''}>${_esc(sub)}</option>`).join('')}
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">소모자재 종류 <span style="color:var(--accent-red)">*</span></label>
+                        <input type="text" class="form-input" id="psmTypeMaterialName" value="${_esc(d.materialName || '')}" placeholder="예: 마스킹 테이프, 보호필름, 흡착패드">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">단위</label>
+                        <select class="form-select" id="psmTypeUnit">
+                            ${UNITS.map(u => `<option value="${_esc(u)}" ${(d.unit || 'EA') === u ? 'selected' : ''}>${_esc(u)}</option>`).join('')}
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">규격/용도</label>
+                    <input type="text" class="form-input" id="psmTypeSpec" value="${_esc(d.spec || '')}" placeholder="예: 20mm / 포장용 / 외관검사용">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">비고</label>
+                    <textarea class="form-textarea" id="psmTypeNote" rows="3" placeholder="사용 기준이나 관리 포인트를 입력">${_esc(d.note || '')}</textarea>
+                </div>
+            </div>
+        `;
+    }
+
+    function _collectTypeData() {
+        return {
+            _docKind: TYPE_KIND,
+            mainProcess: document.getElementById('psmTypeMainProcess')?.value || '',
+            subProcess: document.getElementById('psmTypeSubProcess')?.value || '',
+            materialName: document.getElementById('psmTypeMaterialName')?.value.trim() || '',
+            unit: document.getElementById('psmTypeUnit')?.value || 'EA',
+            spec: document.getElementById('psmTypeSpec')?.value.trim() || '',
+            note: document.getElementById('psmTypeNote')?.value.trim() || ''
+        };
+    }
+
+    function _validateType(data) {
+        if (!data.mainProcess) return '주공정을 선택하세요.';
+        if (!data.subProcess) return '소공정을 선택하세요.';
+        if (!data.materialName) return '소모자재 종류를 입력하세요.';
+        return '';
+    }
+
+    function openTypeModal() {
+        UIUtils.showModal('소모자재 종류 등록', _typeFormHtml(), `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="ProdSubMaterialsModule.saveTypeNew()">등록</button>
+        `, 'lg');
+    }
+
+    async function saveTypeNew() {
+        const data = _collectTypeData();
+        const err = _validateType(data);
+        if (err) { UIUtils.toast(err, 'warning'); return; }
+        await Storage.add(STORE, data);
+        UIUtils.closeModal();
+        UIUtils.toast('소모자재 종류가 등록되었습니다.', 'success');
+        searchTypeList();
+    }
+
+    function editType(id) {
+        const data = Storage.getById(STORE, id);
+        if (!data) return;
+        UIUtils.showModal('소모자재 종류 수정', _typeFormHtml(data), `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="ProdSubMaterialsModule.saveTypeEdit('${_js(id)}')">저장</button>
+        `, 'lg');
+    }
+
+    async function saveTypeEdit(id) {
+        const data = _collectTypeData();
+        const err = _validateType(data);
+        if (err) { UIUtils.toast(err, 'warning'); return; }
+        await Storage.update(STORE, id, data);
+        UIUtils.closeModal();
+        UIUtils.toast('소모자재 종류가 수정되었습니다.', 'success');
+        searchTypeList();
+    }
+
+    function removeType(id) {
+        UIUtils.confirm('소모자재 종류를 삭제하시겠습니까?', async () => {
+            await Storage.remove(STORE, id);
+            UIUtils.toast('삭제했습니다.', 'success');
+            searchTypeList();
+        });
     }
 
     function search() {
@@ -10540,6 +10777,13 @@ var ProdSubMaterialsModule = (function() {
     return {
         render,
         search,
+        onTypeMainFilterChange,
+        searchTypeList,
+        openTypeModal,
+        saveTypeNew,
+        editType,
+        saveTypeEdit,
+        removeType,
         openAddModal,
         saveNew,
         edit,

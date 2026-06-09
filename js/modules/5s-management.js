@@ -885,12 +885,12 @@ var FiveSModule = (function () {
             </div>`;
 
         document.getElementById('s5Content').innerHTML = `
-        <div class="card">
-            <div class="card-body" style="padding:12px;overflow:auto;">
+        <div class="card" style="display:inline-block;width:auto;max-width:100%;">
+            <div class="card-body" style="padding:12px;overflow:auto;width:auto;">
                 <div id="s5StandardPasteZone" tabindex="0" onpaste="FiveSModule.handleStandardPaste(event)"
                      style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;" aria-hidden="true"></div>
                 ${_standardClipboardImage
-                    ? `<div style="display:inline-flex;justify-content:flex-start;align-items:flex-start;width:fit-content;max-width:100%;border:1px solid #111;">
+                    ? `<div style="display:inline-flex;justify-content:flex-start;align-items:flex-start;width:fit-content;max-width:100%;border:1px solid #111;box-shadow:0 10px 28px rgba(15,23,42,0.18), 0 3px 8px rgba(15,23,42,0.12);">
                         <img src="${_standardClipboardImage}" alt="3정5S 기준서 붙여넣기 이미지"
                              style="display:block;max-width:100%;height:auto;">
                        </div>`
