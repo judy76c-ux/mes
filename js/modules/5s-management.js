@@ -872,7 +872,11 @@ var FiveSModule = (function () {
         const actions = document.getElementById('s5Actions');
         const canUpload = _canUploadStandard();
         if (actions) actions.innerHTML = `
-            <div style="display:flex;justify-content:flex-end;width:100%;">
+            <div style="display:flex;justify-content:flex-end;gap:6px;width:100%;">
+                <button class="btn btn-outline" onclick="FiveSModule.printStandardPage()"
+                        style="padding:5px 10px;font-size:0.76rem;line-height:1.2;min-height:auto;">
+                    <span class="material-symbols-outlined" style="font-size:15px;">print</span> 인쇄
+                </button>
                 <button class="btn btn-outline" onclick="FiveSModule.focusStandardPasteZone()"
                         ${canUpload ? '' : 'disabled'}
                         style="padding:5px 10px;font-size:0.76rem;line-height:1.2;min-height:auto;${canUpload ? '' : 'opacity:.5;cursor:not-allowed;'}">
@@ -886,7 +890,7 @@ var FiveSModule = (function () {
                 <div id="s5StandardPasteZone" tabindex="0" onpaste="FiveSModule.handleStandardPaste(event)"
                      style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;" aria-hidden="true"></div>
                 ${_standardClipboardImage
-                    ? `<div style="min-width:980px;display:flex;justify-content:flex-start;align-items:flex-start;">
+                    ? `<div style="display:inline-flex;justify-content:flex-start;align-items:flex-start;width:fit-content;max-width:100%;border:1px solid #111;">
                         <img src="${_standardClipboardImage}" alt="3정5S 기준서 붙여넣기 이미지"
                              style="display:block;max-width:100%;height:auto;">
                        </div>`
@@ -941,6 +945,41 @@ var FiveSModule = (function () {
         };
         reader.onerror = () => UIUtils.toast('클립보드 이미지 읽기에 실패했습니다.', 'error');
         reader.readAsDataURL(file);
+    }
+
+    function printStandardPage() {
+        const content = document.getElementById('s5Content');
+        if (!content) return;
+        const printBody = content.innerHTML;
+        const win = window.open('', 's5_standard_print', 'width=1200,height=900');
+        if (!win) {
+            UIUtils.toast('인쇄 창을 열 수 없습니다. 팝업 차단을 확인해 주세요.', 'warning');
+            return;
+        }
+
+        win.document.open();
+        win.document.write(`
+            <!doctype html>
+            <html lang="ko">
+            <head>
+                <meta charset="utf-8">
+                <title>3정5S 관리 기준서 인쇄</title>
+                <style>
+                    html, body { margin:0; padding:0; background:#fff; }
+                    body { font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; }
+                    .card { border:0 !important; box-shadow:none !important; }
+                    .card-body { padding:0 !important; overflow:visible !important; }
+                    #s5StandardPasteZone { display:none !important; }
+                    img { display:block; max-width:100%; height:auto; }
+                    @page { size: A4 landscape; margin: 8mm; }
+                </style>
+            </head>
+            <body>${printBody}</body>
+            </html>
+        `);
+        win.document.close();
+        win.focus();
+        win.print();
     }
 
     async function _renderPlanTab(mode = 'plan') {
@@ -1145,6 +1184,7 @@ var FiveSModule = (function () {
         removeIssue,
         savePlan,
         focusStandardPasteZone,
-        handleStandardPaste
+        handleStandardPaste,
+        printStandardPage
     };
 })();
