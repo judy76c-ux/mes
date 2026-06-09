@@ -10,78 +10,50 @@ var LaserWipModule = (function() {
 
     let _activeTab = 'standby'; // 'standby' | 'after-laser'
 
+    const TABS = [
+        { id: 'standby',     label: '레이져 대기품 현황',    icon: 'hourglass_top' },
+        { id: 'after-laser', label: '레이져 후 재공품 현황', icon: 'bolt' }
+    ];
+
+    function _tabNav() {
+        return `
+        <div style="margin-bottom:18px;">
+            <div style="margin-bottom:14px;">
+                <h3 style="margin:0 0 6px;font-size:1.15rem;">명치 재공품 현황</h3>
+                <p style="margin:0;color:var(--text-muted);font-size:.9rem;">도장 공정 전·후 재공품 재고를 한 곳에서 확인합니다.</p>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+                ${TABS.map(t => `
+                    <button type="button" id="wipTab-${t.id}"
+                        onclick="LaserWipModule.switchTab('${t.id}')"
+                        class="btn ${_activeTab === t.id ? 'btn-primary' : 'btn-outline'}"
+                        style="display:flex;align-items:center;gap:6px;${_activeTab === t.id ? '' : 'background:#fff;'}">
+                        <span class="material-symbols-outlined" style="font-size:18px;">${t.icon}</span>
+                        ${t.label}
+                    </button>`).join('')}
+                <button class="btn btn-secondary" style="display:flex;align-items:center;gap:4px;font-size:0.85rem;margin-left:auto;"
+                    onclick="LaserWipModule.refresh()">
+                    <span class="material-symbols-outlined" style="font-size:1rem;">refresh</span> 새로고침
+                </button>
+            </div>
+        </div>`;
+    }
+
     // ── 페이지 전체 렌더 ──────────────────────────────────────────────────
     function render(container) {
         container.innerHTML = `
         <div style="padding:20px;">
-
-            <!-- 페이지 헤더 -->
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:8px;">
-                <div>
-                    <h3 style="margin:0;font-size:1.1rem;font-weight:700;color:var(--text-primary);display:flex;align-items:center;gap:6px;">
-                        <span class="material-symbols-outlined" style="font-size:1.2rem;color:var(--accent-blue);">inventory</span>
-                        재공품 현황
-                    </h3>
-                    <p style="margin:4px 0 0;font-size:0.82rem;color:var(--text-secondary);">
-                        도장 공정 전·후 재공품 재고를 한 곳에서 확인합니다.
-                    </p>
-                </div>
-                <div style="display:flex;gap:8px;">
-                    <button class="btn btn-secondary" style="display:flex;align-items:center;gap:4px;font-size:0.85rem;"
-                        onclick="LaserWipModule.refresh()">
-                        <span class="material-symbols-outlined" style="font-size:1rem;">refresh</span> 새로고침
-                    </button>
-                </div>
-            </div>
-
-            <!-- 탭 버튼 -->
-            <div style="display:flex;gap:0;margin-bottom:20px;border-bottom:2px solid var(--border-color);">
-                <button id="wipTab-standby"
-                    onclick="LaserWipModule.switchTab('standby')"
-                    style="padding:9px 20px;font-size:0.88rem;font-weight:600;border:none;border-bottom:3px solid transparent;
-                           background:none;cursor:pointer;display:flex;align-items:center;gap:6px;
-                           color:${_activeTab==='standby'?'var(--accent-blue)':'var(--text-secondary)'};
-                           border-bottom-color:${_activeTab==='standby'?'var(--accent-blue)':'transparent'};
-                           margin-bottom:-2px;">
-                    <span class="material-symbols-outlined" style="font-size:1rem;">hourglass_top</span>
-                    레이져 대기품 현황
-                </button>
-                <button id="wipTab-after-laser"
-                    onclick="LaserWipModule.switchTab('after-laser')"
-                    style="padding:9px 20px;font-size:0.88rem;font-weight:600;border:none;border-bottom:3px solid transparent;
-                           background:none;cursor:pointer;display:flex;align-items:center;gap:6px;
-                           color:${_activeTab==='after-laser'?'var(--accent-purple)':'var(--text-secondary)'};
-                           border-bottom-color:${_activeTab==='after-laser'?'var(--accent-purple)':'transparent'};
-                           margin-bottom:-2px;">
-                    <span class="material-symbols-outlined" style="font-size:1rem;">bolt</span>
-                    레이져 후 재공품 현황
-                </button>
-            </div>
-
-            <!-- 탭 컨텐츠 -->
+            <div id="wipTabNav">${_tabNav()}</div>
             <div id="wipTabContent"></div>
         </div>`;
-
         _renderTabContent();
     }
 
     // ── 탭 전환 ──────────────────────────────────────────────────────────
     function switchTab(tab) {
         _activeTab = tab;
-
-        // 탭 버튼 스타일 업데이트
-        const tabs = {
-            'standby':     { color: 'var(--accent-blue)',   el: 'wipTab-standby' },
-            'after-laser': { color: 'var(--accent-purple)', el: 'wipTab-after-laser' }
-        };
-        Object.entries(tabs).forEach(([id, t]) => {
-            const btn = document.getElementById(t.el);
-            if (!btn) return;
-            const isActive = id === tab;
-            btn.style.color            = isActive ? t.color : 'var(--text-secondary)';
-            btn.style.borderBottomColor = isActive ? t.color : 'transparent';
-        });
-
+        const navEl = document.getElementById('wipTabNav');
+        if (navEl) navEl.innerHTML = _tabNav();
         _renderTabContent();
     }
 

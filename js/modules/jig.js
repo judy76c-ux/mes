@@ -11,8 +11,10 @@ var JigModule = (function () {
     const CLEANING_KEY = 'painting_jig_cleaning_v1';
     const REPAIR_KEY = 'painting_jig_repair_v1';
     const LIFE_STANDARD_KEY = 'painting_jig_life_standard_v1';
+    const LIFE_STANDARD_IMAGE_KEY = 'painting_jig_life_standard_image_v1';
     const A_LINE_CYCLE = 1092;
     const B_LINE_CYCLE = 175;
+    const STANDARD_UPLOAD_ROLES = ['admin', 'prod_manager', 'quality_manager'];
 
     let _currentLine = '';
     let _currentStatus = '';
@@ -21,6 +23,7 @@ var JigModule = (function () {
     let _masterCarFilter = '';
     let _jigPasteTargetId = '';
     let _jigPasteListenerReady = false;
+    let _lifeStandardImage = null;
 
     const _today = () => (UIUtils.today ? UIUtils.today() : new Date().toISOString().split('T')[0]);
     const _monthAgo = () => {
@@ -37,6 +40,19 @@ var JigModule = (function () {
             ? AuthModule.getCurrentUser()
             : null;
         return !!(user && user.role === 'admin');
+    };
+    const _currentUser = () => {
+        try {
+            return (typeof AuthModule !== 'undefined' && typeof AuthModule.getCurrentUser === 'function')
+                ? AuthModule.getCurrentUser()
+                : null;
+        } catch (e) {
+            return null;
+        }
+    };
+    const _canUploadLifeStandard = () => {
+        const user = _currentUser();
+        return !!(user && STANDARD_UPLOAD_ROLES.includes(String(user.role || '')));
     };
 
     const JIG_MENUS = [
@@ -182,6 +198,19 @@ var JigModule = (function () {
     async function saveLifeStandard() {
         await _saveLifeStandard(_collectLifeStandard());
         UIUtils.toast('도장지그 수명관리 기준서를 저장했습니다.', 'success');
+    }
+
+    async function _loadLifeStandardImage() {
+        try {
+            return await Storage.getConfigValue(LIFE_STANDARD_IMAGE_KEY) || null;
+        } catch (e) {
+            console.warn('[JigModule] life standard image load failed:', e);
+            return null;
+        }
+    }
+
+    async function _saveLifeStandardImage(dataUrl) {
+        await Storage.setConfigValue(LIFE_STANDARD_IMAGE_KEY, dataUrl || null);
     }
 
     function _homeCard(title, desc, icon, countText, route, tone) {
@@ -1137,244 +1166,127 @@ var JigModule = (function () {
     }
 
     async function renderLifeStandardPage(container) {
-        const doc = await _loadLifeStandard();
-        container.innerHTML = `
+        _lifeStandardImage = await _loadLifeStandardImage();
+        const canUpload = _canUploadLifeStandard();
+        container.innerHTML =             `
             <div class="fade-in-up jig-page">
-                ${renderMenu('jig-life-standard', '도장지그 수명관리 기준서', '첨부 양식 형태로 관리하며, 문서 안의 글자를 직접 수정할 수 있습니다.')}
+                ${renderMenu('jig-life-standard', '지그수명기준서', '도장 지그 수명 관리 기준서를 등록하고 인쇄합니다.')}
                 <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-outline btn-sm" onclick="window.print()">
-                            <span class="material-symbols-outlined">print</span> 인쇄
+                    <div class="page-actions" style="display:flex;justify-content:flex-end;gap:6px;width:100%;">
+                        <button class="btn btn-outline btn-sm" onclick="JigModule.printLifeStandardPage()"
+                            style="padding:5px 10px;font-size:0.76rem;line-height:1.2;min-height:auto;">
+                            <span class="material-symbols-outlined" style="font-size:15px;">print</span> 인쇄
                         </button>
-                        <button class="btn btn-primary btn-sm" onclick="JigModule.saveLifeStandard()">
-                            <span class="material-symbols-outlined">save</span> 저장
+                        <button class="btn btn-outline btn-sm" onclick="JigModule.focusLifeStandardPasteZone()"
+                            ${canUpload ? '' : 'disabled'}
+                            style="padding:5px 10px;font-size:0.76rem;line-height:1.2;min-height:auto;${canUpload ? '' : 'opacity:.5;cursor:not-allowed;'}">
+                            <span class="material-symbols-outlined" style="font-size:15px;">upload_file</span> 기준서 업로드
                         </button>
                     </div>
                 </div>
 
                 <style>
-                    .jig-life-standard-wrap { background:#fff; border:1px solid #cbd5e1; overflow:auto; }
-                    .jig-life-standard-doc { min-width:1080px; color:#111827; font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif; }
-                    .jig-life-standard-doc table { width:100%; border-collapse:collapse; table-layout:fixed; }
-                    .jig-life-standard-doc td, .jig-life-standard-doc th { border:1px solid #111827; padding:4px 6px; vertical-align:middle; }
-                    .jig-life-standard-doc .head-blue { background:#74a7da; }
-                    .jig-life-standard-doc .sub-blue { background:#d8e8f7; }
-                    .jig-life-standard-doc .sub-gray { background:#e5e7eb; }
-                    .jig-life-standard-doc .center { text-align:center; }
-                    .jig-life-standard-doc .title-cell { font-size:26px; font-weight:800; letter-spacing:1px; }
-                    .jig-life-standard-doc .logo-box { height:88px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; }
-                    .jig-life-standard-doc .logo-mark { font-size:28px; font-weight:900; color:#1d4ed8; }
-                    .jig-life-standard-doc .logo-sub { font-size:10px; color:#6b7280; }
-                    .jig-life-standard-doc .approve-sign { height:52px; display:flex; align-items:center; justify-content:center; font-size:18px; color:#64748b; }
-                    .jig-life-standard-doc .section-block { padding:10px 14px; line-height:1.45; }
-                    .jig-life-standard-doc .section-title { font-size:16px; font-weight:800; margin-bottom:4px; }
-                    .jig-life-standard-doc .section-en { color:#6b7280; }
-                    .jig-life-standard-doc .table-note { line-height:1.4; }
-                    .jig-life-standard-doc .replace-list { padding:10px 14px 16px; line-height:1.55; }
-                    .jig-life-standard-doc .footer-row { padding:8px 10px; font-size:12px; color:#374151; }
-                    .jig-life-edit { width:100%; outline:none; white-space:pre-wrap; word-break:keep-all; min-height:1.2em; }
-                    .jig-life-edit:focus { box-shadow:inset 0 0 0 1px #3b82f6; background:#eff6ff; }
+                    .jig-life-standard-wrap { display:inline-block; width:auto; max-width:100%; background:#fff; overflow:auto; }
+                    .jig-life-standard-doc { width:auto; color:#111827; font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif; }
                     @media print {
                         .page-header, .jig-page > div:first-child { display:none !important; }
-                        .jig-life-standard-wrap { border:none; overflow:visible; }
-                        .jig-life-standard-doc { min-width:auto; }
-                        .jig-life-edit:focus { box-shadow:none; background:transparent; }
+                        .jig-life-standard-wrap { border:none; overflow:visible; box-shadow:none !important; }
+                        .jig-life-standard-doc { width:auto; }
                     }
                 </style>
 
                 <div class="section-card jig-life-standard-wrap">
                     <div id="jigLifeStandardDoc" class="jig-life-standard-doc">
-                        <table>
-                            <colgroup>
-                                <col style="width:190px;">
-                                <col style="width:auto;">
-                                <col style="width:64px;">
-                                <col style="width:85px;">
-                                <col style="width:85px;">
-                                <col style="width:85px;">
-                            </colgroup>
-                            <tr>
-                                <td class="center">
-                                    <div class="logo-box">
-                                        <div class="logo-mark">KC</div>
-                                        ${_lifeField('companyKo', doc.companyKo, 'div', 'center')}
-                                        ${_lifeField('companyEn', doc.companyEn, 'div', 'center logo-sub')}
-                                    </div>
-                                </td>
-                                <td class="head-blue center title-cell">${_lifeField('title', doc.title, 'div', 'center')}</td>
-                                <td class="sub-blue center" style="font-weight:800;">${_lifeField('revisionLabel', doc.revisionLabel, 'div', 'center')}</td>
-                                <td class="center" style="font-weight:700;">
-                                    ${_lifeField('writerTitle', doc.writerTitle, 'div', 'center')}
-                                    <div class="approve-sign">${_lifeField('writerSign', doc.writerSign, 'div', 'center')}</div>
-                                </td>
-                                <td class="center" style="font-weight:700;">
-                                    ${_lifeField('reviewerTitle', doc.reviewerTitle, 'div', 'center')}
-                                    <div class="approve-sign">${_lifeField('reviewerSign', doc.reviewerSign, 'div', 'center')}</div>
-                                </td>
-                                <td class="center" style="font-weight:700;">
-                                    ${_lifeField('approverTitle', doc.approverTitle, 'div', 'center')}
-                                    <div class="approve-sign">${_lifeField('approverSign', doc.approverSign, 'div', 'center')}</div>
-                                </td>
-                            </tr>
-                        </table>
-
-                        <div class="section-block">
-                            <div class="section-title">${_lifeField('section1Title', doc.section1Title, 'div')}</div>
-                            <div style="background:#e5e7eb;padding:2px 8px;margin-bottom:2px;">${_lifeField('section1DescKo', doc.section1DescKo, 'div')}</div>
-                            <div class="section-en">${_lifeField('section1DescEn', doc.section1DescEn, 'div')}</div>
-                            <div style="margin-top:8px;font-weight:700;">${_lifeField('section1LifeKo', doc.section1LifeKo, 'div')}</div>
-                            <div class="section-en">${_lifeField('section1LifeEn', doc.section1LifeEn, 'div')}</div>
-                        </div>
-
-                        <div class="section-block">
-                            <div class="section-title">${_lifeField('section2Title', doc.section2Title, 'div')}</div>
-                            <div>${_lifeField('section2DescKo', doc.section2DescKo, 'div')}</div>
-                            <div class="section-en">${_lifeField('section2DescEn', doc.section2DescEn, 'div')}</div>
-                        </div>
-
-                        <div class="section-block" style="padding-bottom:0;">
-                            <div class="section-title">${_lifeField('section3Title', doc.section3Title, 'div')}</div>
-                        </div>
-                        <table>
-                            <colgroup>
-                                <col style="width:24%;">
-                                <col style="width:40%;">
-                                <col style="width:14%;">
-                                <col style="width:22%;">
-                            </colgroup>
-                            <tr class="sub-gray center" style="font-weight:800;">
-                                <td>${_lifeField('table1Head1', doc.table1Head1, 'div', 'center')}</td>
-                                <td>${_lifeField('table1Head2', doc.table1Head2, 'div', 'center')}</td>
-                                <td>${_lifeField('table1Head3', doc.table1Head3, 'div', 'center')}</td>
-                                <td>${_lifeField('table1Head4', doc.table1Head4, 'div', 'center')}</td>
-                            </tr>
-                            <tr>
-                                <td class="center">
-                                    ${_lifeField('row1ItemKo', doc.row1ItemKo, 'div', 'center')}
-                                    <div class="section-en">${_lifeField('row1ItemEn', doc.row1ItemEn, 'div', 'center')}</div>
-                                </td>
-                                <td class="center">
-                                    ${_lifeField('row1DescKo', doc.row1DescKo, 'div', 'center')}
-                                    <div class="section-en">${_lifeField('row1DescEn', doc.row1DescEn, 'div', 'center')}</div>
-                                </td>
-                                <td class="center table-note">${_lifeField('row1Std', doc.row1Std, 'div', 'center')}</td>
-                                <td class="center table-note">${_lifeField('row1Mgmt', doc.row1Mgmt, 'div', 'center')}</td>
-                            </tr>
-                            <tr>
-                                <td class="center">
-                                    ${_lifeField('row2ItemKo', doc.row2ItemKo, 'div', 'center')}
-                                    <div class="section-en">${_lifeField('row2ItemEn', doc.row2ItemEn, 'div', 'center')}</div>
-                                </td>
-                                <td class="center">
-                                    ${_lifeField('row2DescKo', doc.row2DescKo, 'div', 'center')}
-                                    <div class="section-en">${_lifeField('row2DescEn', doc.row2DescEn, 'div', 'center')}</div>
-                                </td>
-                                <td class="center table-note">${_lifeField('row2Std', doc.row2Std, 'div', 'center')}</td>
-                                <td class="center table-note">${_lifeField('row2Mgmt', doc.row2Mgmt, 'div', 'center')}</td>
-                            </tr>
-                        </table>
-
-                        <div class="section-block">
-                            <div class="section-title">${_lifeField('section5Title', doc.section5Title, 'div')}</div>
-                            <div class="section-en">${_lifeField('section5Bullet', doc.section5Bullet, 'div')}</div>
-                        </div>
-
-                        <table>
-                            <colgroup>
-                                <col style="width:17%;">
-                                <col style="width:22%;">
-                                <col style="width:61%;">
-                            </colgroup>
-                            <tr class="sub-gray center" style="font-weight:800;">
-                                <td>${_lifeField('historyHead1', doc.historyHead1, 'div', 'center')}</td>
-                                <td>${_lifeField('historyHead2', doc.historyHead2, 'div', 'center')}</td>
-                                <td>${_lifeField('historyHead3', doc.historyHead3, 'div', 'center')}</td>
-                            </tr>
-                            <tr>
-                                <td class="center">${_lifeField('historyRow1Line', doc.historyRow1Line, 'div', 'center')}</td>
-                                <td class="center">${_lifeField('historyRow1Cycle', doc.historyRow1Cycle, 'div', 'center')}</td>
-                                <td>${_lifeField('historyRow1Rule', doc.historyRow1Rule, 'div')}</td>
-                            </tr>
-                            <tr>
-                                <td class="center">${_lifeField('historyRow2Line', doc.historyRow2Line, 'div', 'center')}</td>
-                                <td class="center">${_lifeField('historyRow2Cycle', doc.historyRow2Cycle, 'div', 'center')}</td>
-                                <td>${_lifeField('historyRow2Rule', doc.historyRow2Rule, 'div')}</td>
-                            </tr>
-                        </table>
-
-                        <div class="replace-list">
-                            <div class="section-title">${_lifeField('section6Title', doc.section6Title, 'div')}</div>
-                            <div>${_lifeField('replaceLine1', doc.replaceLine1, 'div')}</div>
-                            <div class="section-en" style="padding-left:24px;">${_lifeField('replaceLine1En', doc.replaceLine1En, 'div')}</div>
-                            <div style="margin-top:6px;">${_lifeField('replaceLine2', doc.replaceLine2, 'div')}</div>
-                            <div class="section-en" style="padding-left:24px;">${_lifeField('replaceLine2En', doc.replaceLine2En, 'div')}</div>
-                        </div>
-
-                        <div class="footer-row">${_lifeField('footerDocNo', doc.footerDocNo, 'div')}</div>
+                        <div id="jigLifeStandardPasteZone" tabindex="0" onpaste="JigModule.handleLifeStandardPaste(event)"
+                            style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;" aria-hidden="true"></div>
+                        ${_lifeStandardImage
+                            ? `<div style="display:inline-flex;justify-content:flex-start;align-items:flex-start;width:fit-content;max-width:100%;border:1px solid #111;box-shadow:0 10px 28px rgba(15,23,42,0.18), 0 3px 8px rgba(15,23,42,0.12);">
+                                <img src="${_lifeStandardImage}" alt="지그 수명 관리 기준서"
+                                    style="display:block;max-width:100%;height:auto;">
+                               </div>`
+                            : `<div style="min-width:980px;min-height:1385px;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:1rem;">
+                                등록된 기준서 이미지가 없습니다.
+                               </div>`}
                     </div>
                 </div>
             </div>`;
     }
-    function _photoInputHtml(label, key, idx, value) {
-        const id = `${key}${idx}`;
-        return `
-            <div class="form-group">
-                <label class="form-label">${label} ${idx + 1}</label>
-                <input type="hidden" id="${id}Data" value="${_esc(value || '')}">
-                <input type="file" class="form-input" accept="image/*" capture="environment" onchange="JigModule.readJigMasterPhoto(this,'${id}')">
-                <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
-                    <img id="${id}Preview" src="${_esc(value || '')}" alt="" style="width:84px;height:60px;object-fit:cover;border:1px solid var(--border-color);border-radius:6px;${value ? '' : 'display:none;'}">
-                    <button type="button" class="btn btn-outline btn-sm" onclick="JigModule.pasteJigMasterPhoto('${id}')">스크린샷 붙여넣기</button>
-                    <button type="button" class="btn btn-outline btn-sm" onclick="JigModule.clearJigMasterPhoto('${id}')">삭제</button>
-                </div>
-            </div>`;
+
+    function focusLifeStandardPasteZone() {
+        if (!_canUploadLifeStandard()) {
+            UIUtils.toast('지그 기준서 업로드는 관리자 또는 관리 권한자만 가능합니다.', 'warning');
+            return;
+        }
+        const zone = document.getElementById('jigLifeStandardPasteZone');
+        if (!zone) return;
+        zone.focus();
+        UIUtils.toast('기준서 업로드 영역이 선택되었습니다. Ctrl+V로 붙여넣어 주세요.', 'info');
     }
 
-    function _masterFormHtml(d = {}) {
-        const jigPhotos = Array.isArray(d.jigPhotos) ? d.jigPhotos : [];
-        const productFitPhotos = Array.isArray(d.productFitPhotos) ? d.productFitPhotos : [];
-        const isEdit = !!d.id;
-        const carField = isEdit
-            ? `<input type="hidden" id="jigMasterCarModel" value="${_esc(d.carModel || '')}">
-               <input type="text" class="form-input" value="${_esc(d.carModel || '')}" disabled>`
-            : `<select class="form-select" id="jigMasterCarModel" onchange="JigModule.onMasterCarModelChange()">${_carModelOptions(d.carModel || '')}</select>`;
-        const partField = isEdit
-            ? `<input type="hidden" id="jigMasterPartName" value="${_esc(d.partName || '')}">
-               <input type="text" class="form-input" value="${_esc(d.partName || '')}" disabled>`
-            : `<select class="form-select" id="jigMasterPartName">${_partNameOptions(d.carModel || '', d.partName || '')}</select>`;
-        return `
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-                <div class="form-group">
-                    <label class="form-label">차종 <span style="color:var(--accent-red)">*</span></label>
-                    ${carField}
-                </div>
-                <div class="form-group">
-                    <label class="form-label">품명 <span style="color:var(--accent-red)">*</span></label>
-                    ${partField}
-                </div>
-                <div class="form-group">
-                    <label class="form-label">수명 횟수 <span style="color:var(--accent-red)">*</span></label>
-                    <input type="number" class="form-input" id="jigMasterMaxCount" value="${d.maxCount || ''}" min="1">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">재질</label>
-                    <input type="text" class="form-input" id="jigMasterMaterial" value="${_esc(d.material || '')}">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">규격</label>
-                    <input type="text" class="form-input" id="jigMasterSpec" value="${_esc(d.spec || '')}">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">제작일</label>
-                    <input type="date" class="form-input" id="jigMasterMadeDate" value="${d.madeDate || d.registDate || _today()}">
-                </div>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px;">
-                ${_photoInputHtml('JIG 상측 이미지', 'jigPhoto', 0, jigPhotos[0])}
-                ${_photoInputHtml('JIG 옆면 이미지', 'jigPhoto', 1, jigPhotos[1])}
-                ${_photoInputHtml('제품결합 사진', 'productFitPhoto', 0, productFitPhotos[0])}
-                ${_photoInputHtml('제품결합 사진', 'productFitPhoto', 1, productFitPhotos[1])}
-            </div>`;
+    async function handleLifeStandardPaste(event) {
+        event.preventDefault();
+        if (!_canUploadLifeStandard()) {
+            UIUtils.toast('기준서 업로드 권한이 없습니다.', 'warning');
+            return;
+        }
+        const items = Array.from(event.clipboardData?.items || []);
+        const imageItem = items.find(item => item.type && item.type.startsWith('image/'));
+        if (!imageItem) {
+            UIUtils.toast('클립보드 이미지가 없습니다. 엑셀이나 화면을 복사한 뒤 다시 붙여넣어 주세요.', 'warning');
+            return;
+        }
+        const file = imageItem.getAsFile();
+        if (!file) {
+            UIUtils.toast('이미지 읽기 중 오류가 발생했습니다.', 'error');
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = async () => {
+            try {
+                _lifeStandardImage = reader.result;
+                await _saveLifeStandardImage(_lifeStandardImage);
+                UIUtils.toast('기준서 이미지가 저장되었습니다.', 'success');
+                const root = document.querySelector('.jig-page');
+                if (root && root.parentElement) await renderLifeStandardPage(root.parentElement);
+            } catch (error) {
+                console.error('Failed to save jig life standard image:', error);
+                UIUtils.toast('기준서 저장 중 오류가 발생했습니다.', 'error');
+            }
+        };
+        reader.onerror = () => UIUtils.toast('클립보드 이미지를 읽을 수 없습니다.', 'error');
+        reader.readAsDataURL(file);
+    }
+
+    function printLifeStandardPage() {
+        const content = document.getElementById('jigLifeStandardDoc');
+        if (!content) return;
+        const printBody = content.innerHTML;
+        const win = window.open('', 'jig_life_standard_print', 'width=1200,height=900');
+        if (!win) {
+            UIUtils.toast('인쇄할 기준서가 없습니다. 먼저 기준서를 업로드해 주세요.', 'warning');
+            return;
+        }
+        win.document.open();
+        win.document.write(`
+            <!doctype html>
+            <html lang="ko">
+            <head>
+                <meta charset="utf-8">
+                <title>지그 수명 관리 기준서</title>
+                <style>
+                    html, body { margin:0; padding:0; background:#fff; }
+                    body { font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif; }
+                    #jigLifeStandardPasteZone { display:none !important; }
+                    img { display:block; max-width:100%; height:auto; }
+                    @page { size: A4 landscape; margin:8mm; }
+                </style>
+            </head>
+            <body>${printBody}</body>
+            </html>
+        `);
+        win.document.close();
+        win.focus();
+        win.print();
     }
 
     function onMasterCarModelChange() {
@@ -1914,6 +1826,9 @@ var JigModule = (function () {
         saveEdit,
         saveLog,
         saveLifeStandard,
+        focusLifeStandardPasteZone,
+        handleLifeStandardPaste,
+        printLifeStandardPage,
         readJigMasterPhoto,
         pasteJigMasterPhoto,
         clearJigMasterPhoto,

@@ -10337,6 +10337,24 @@ var ProdSubMaterialsModule = (function() {
             'psmTable',
             headers
         );
+        const actions = container.querySelector('.page-actions');
+        if (actions) actions.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;flex-wrap:wrap;">
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <button class="btn btn-outline" onclick="ProdSubMaterialsModule.openTypeModal()">
+                        <span class="material-symbols-outlined">list_alt</span> 소모자재 종류
+                    </button>
+                    <button class="btn btn-primary" onclick="ProdSubMaterialsModule.openAddModal()">
+                        <span class="material-symbols-outlined">add</span> 입고 등록
+                    </button>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap;">
+                    <button class="btn btn-outline" onclick="ProdSubMaterialsModule.exportData()">
+                        <span class="material-symbols-outlined">download</span> 내보내기
+                    </button>
+                </div>
+            </div>
+        `;
         _renderTypeMasterSection(container);
         search();
     }
@@ -10360,19 +10378,16 @@ var ProdSubMaterialsModule = (function() {
         if (!filterBar) return;
         filterBar.insertAdjacentHTML('beforebegin', `
             <div class="card" style="margin-bottom:16px;">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">inventory_2</span> 주공정 &gt; 소공정별 소모자재 종류 LIST</h4>
+                    <span style="font-size:0.78rem;color:var(--text-muted);">공정별 사용 종류를 먼저 정의하는 기준 목록</span>
+                </div>
                 <div class="card-body">
-                    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
-                        <div>
-                            <div style="font-size:1rem;font-weight:800;color:var(--text-primary);">주공정 &gt; 소공정별 소모자재 종류 LIST</div>
-                            <div style="font-size:0.82rem;color:var(--text-muted);margin-top:4px;">
-                                공정별로 어떤 소모자재를 사용하는지 종류 마스터를 먼저 정의합니다.
-                            </div>
-                        </div>
-                        <button class="btn btn-primary" onclick="ProdSubMaterialsModule.openTypeModal()">
-                            <span class="material-symbols-outlined">playlist_add</span> 종류 등록
-                        </button>
+                    <div style="padding:10px 14px;background:rgba(37,99,235,0.05);border:1px solid rgba(37,99,235,0.16);border-radius:8px;margin-bottom:12px;font-size:0.82rem;color:#1d4ed8;line-height:1.6;">
+                        <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;margin-right:4px;">info</span>
+                        주공정과 소공정별로 사용하는 소모자재 종류를 먼저 정의해두면, 이후 부자재 입고 관리와 사용 기준 연결이 쉬워집니다.
                     </div>
-                    <div class="filter-bar" style="padding:0;background:transparent;border:none;box-shadow:none;gap:10px;flex-wrap:wrap;">
+                    <div class="filter-bar" style="padding:0;background:transparent;border:none;box-shadow:none;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
                         <div class="form-group">
                             <label class="form-label">주공정</label>
                             <select class="form-select" id="psmTypeFilterMain" onchange="ProdSubMaterialsModule.onTypeMainFilterChange();ProdSubMaterialsModule.searchTypeList()">
@@ -10395,8 +10410,13 @@ var ProdSubMaterialsModule = (function() {
                                 <span class="material-symbols-outlined">search</span> 조회
                             </button>
                         </div>
+                        <div class="form-group" style="align-self:flex-end;">
+                            <button class="btn btn-primary" onclick="ProdSubMaterialsModule.openTypeModal()">
+                                <span class="material-symbols-outlined">playlist_add</span> 종류 등록
+                            </button>
+                        </div>
                     </div>
-                    <div class="data-table-wrapper" style="margin-top:10px;">
+                    <div class="data-table-wrapper">
                         <table class="data-table" id="psmTypeTable">
                             <thead>
                                 <tr>
