@@ -233,7 +233,8 @@ var PaintIncomingInspectionModule = (function() {
     function buildFormHTML(d = {}) {
         const paints = Storage.getAll(DB.STORES.PAINT_MATERIALS) || [];
         const uniqueSuppliers = [...new Set(paints.map(p => p.supplier).filter(Boolean))].sort();
-        const inspectors = Storage.getAll(DB.STORES.INSPECTORS) || [];
+        const inspectors = (Storage.getAll(DB.STORES.INSPECTORS) || [])
+            .filter(i => (i.processes || []).includes('incoming'));
         const inspectorOptions = inspectors.map(i => `<option value="${i.name}" ${i.name === (d.inspector || '') ? 'selected' : ''}>${i.name}</option>`).join('');
 
         let supplierOptions = `<option value="">-- 구매처 선택 --</option>`;

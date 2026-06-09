@@ -285,7 +285,7 @@ const AuthModule = (function () {
         }
         const users = _getUsers().filter(u => u.active !== false);
         const roleOptions = ROLES.map(role => `<option value="${role.key}">${role.label}</option>`).join('');
-        const userOptions = users.map(user => `<option value="${user.id}">${user.displayName} (${user.username})</option>`).join('');
+        const userOptions = users.map(user => `<option value="${user.id}">${user.displayName}</option>`).join('');
         UIUtils.showModal(
             '쪽지 보내기',
             `<div style="display:flex;flex-direction:column;gap:12px;">
@@ -333,7 +333,7 @@ const AuthModule = (function () {
             return;
         }
         const users = _getUsers().filter(u => u.active !== false);
-        const userOptions = users.map(user => `<option value="${user.id}">${user.displayName} (${user.username})</option>`).join('');
+        const userOptions = users.map(user => `<option value="${user.id}">${user.displayName}</option>`).join('');
         const roleOptions = ROLES.map(role => `<option value="${role.key}">${role.label}</option>`).join('');
         wrap.innerHTML = `<label class="form-label">수신 대상</label><select class="form-select" id="mesMsgTargetId">${type === 'role' ? roleOptions : userOptions}</select>`;
     }
@@ -628,6 +628,215 @@ const AuthModule = (function () {
         showUnreadInboxPopup();
     }
 
+    function _normalizeMessageTargetIds(payload) {
+        const raw = Array.isArray(payload?.targetIds)
+            ? payload.targetIds
+            : (payload?.targetId ? [payload.targetId] : []);
+        return [...new Set(raw.map(value => String(value || '').trim()).filter(Boolean))];
+    }
+
+    function _cloneRecipients(targetType, targetIds) {
+        if (targetType === 'all') {
+            return [{ type: 'all', id: 'all', label: '전체 사용자' }];
+        }
+        const users = _getUsers().filter(user => user.active !== false);
+        const ids = Array.isArray(targetIds) ? targetIds : [targetIds];
+        const recipients = ids.map(targetId => {
+            const user = users.find(row =>
+                String(row.id) === String(targetId) ||
+                String(row.username) === String(targetId)
+            );
+            if (!user) return null;
+            return {
+                type: 'user',
+                id: String(user.id),
+                label: String(user.displayName || user.username || user.id || ''),
+                role: String(user.role || '')
+            };
+        }).filter(Boolean);
+        return recipients;
+    }
+
+    function sendInternalMessage(payload) {
+        const current = getCurrentUser();
+        if (!current) {
+            UIUtils.toast('로그인 후 메시지를 보낼 수 있습니다.', 'warning');
+            return false;
+        }
+        const targetType = String(payload?.targetType || 'user');
+        const targetIds = _normalizeMessageTargetIds(payload);
+        const title = String(payload?.title || '').trim();
+        const body = String(payload?.body || '').trim();
+        if (!title || !body) {
+            UIUtils.toast('제목과 내용을 입력해 주세요.', 'warning');
+            return false;
+        }
+        if (targetType !== 'all' && !targetIds.length) {
+            UIUtils.toast('수신 대상을 선택해 주세요.', 'warning');
+            return false;
+        }
+        const recipients = _cloneRecipients(targetType, targetIds);
+        if (targetType !== 'all' && !recipients.length) {
+            UIUtils.toast('선택한 수신자를 찾을 수 없습니다.', 'warning');
+            return false;
+        }
+        const rows = _getMessages();
+        rows.push({
+            id: _newMessageId(),
+            title,
+            body,
+            category: String(payload?.category || 'general'),
+            priority: String(payload?.priority || 'normal'),
+            senderId: String(current.id || ''),
+            senderName: String(current.displayName || current.username || ''),
+            recipients,
+            sentAt: new Date().toISOString(),
+            readBy: []
+        });
+        _saveMessages(rows);
+        _updateTopbar();
+        return true;
+    }
+
+    function _renderComposeTargetChecklist(type) {
+        const users = _getUsers().filter(user => user.active !== false);
+        if (type === 'all') {
+            return `
+                <label class="form-label">수신 대상</label>
+                <div class="form-input" style="display:flex;align-items:center;background:#f8fafc;">전체 사용자</div>
+            `;
+        }
+        if (!users.length) {
+            return `
+                <label class="form-label">수신 대상</label>
+                <div class="form-input" style="display:flex;align-items:center;background:#f8fafc;color:var(--text-muted);">선택 가능한 사용자가 없습니다.</div>
+            `;
+        }
+        const renderOption = (user) => `
+            <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border-color);border-radius:8px;background:#fff;cursor:pointer;">
+                <input type="checkbox" class="mes-msg-target-check" value="${_esc(user.id)}" style="width:16px;height:16px;">
+                <span style="font-size:.9rem;color:var(--text-primary);">${_esc(user.displayName || user.username || user.id)}</span>
+                <span style="margin-left:auto;font-size:.72rem;color:var(--text-muted);">${_esc(_roleLabel(user.role))}</span>
+            </label>
+        `;
+        if (type === 'role') {
+            const roleGroups = ROLES.map(role => {
+                const members = users.filter(user => String(user.role || '') === String(role.key));
+                if (!members.length) return '';
+                return `
+                    <div style="display:flex;flex-direction:column;gap:8px;">
+                        <div style="font-size:.78rem;font-weight:700;color:${role.color || 'var(--text-secondary)'};">${_esc(role.label)}</div>
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;">
+                            ${members.map(renderOption).join('')}
+                        </div>
+                    </div>
+                `;
+            }).filter(Boolean).join('');
+            return `
+                <label class="form-label">통보 대상</label>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                    <span style="font-size:.75rem;color:var(--text-muted);">역할별로 필요한 담당자를 여러 명 선택하세요.</span>
+                    <button type="button" class="btn btn-outline btn-sm" id="mesMsgToggleChecks" onclick="AuthModule._toggleComposeChecks(true)">전체 선택</button>
+                </div>
+                <div id="mesMsgTargetChecks" style="display:flex;flex-direction:column;gap:12px;max-height:220px;overflow:auto;padding:2px;">
+                    ${roleGroups}
+                </div>
+            `;
+        }
+        return `
+            <label class="form-label">수신 대상</label>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <span style="font-size:.75rem;color:var(--text-muted);">메시지를 받을 사용자를 여러 명 선택하세요.</span>
+                <button type="button" class="btn btn-outline btn-sm" id="mesMsgToggleChecks" onclick="AuthModule._toggleComposeChecks(true)">전체 선택</button>
+            </div>
+            <div id="mesMsgTargetChecks" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;max-height:220px;overflow:auto;padding:2px;">
+                ${users.map(renderOption).join('')}
+            </div>
+        `;
+    }
+
+    function _toggleComposeChecks(forceCheck) {
+        const checks = Array.from(document.querySelectorAll('.mes-msg-target-check'));
+        if (!checks.length) return;
+        const shouldCheck = typeof forceCheck === 'boolean'
+            ? forceCheck
+            : checks.some(check => !check.checked);
+        checks.forEach(check => { check.checked = shouldCheck; });
+        const actionButton = document.getElementById('mesMsgToggleChecks');
+        if (actionButton) {
+            actionButton.textContent = shouldCheck ? '전체 해제' : '전체 선택';
+            actionButton.setAttribute('onclick', `AuthModule._toggleComposeChecks(${shouldCheck ? 'false' : 'true'})`);
+        }
+    }
+
+    function _getComposeTargetIds() {
+        return Array.from(document.querySelectorAll('.mes-msg-target-check:checked'))
+            .map(check => String(check.value || '').trim())
+            .filter(Boolean);
+    }
+
+    function openComposeMessageModal() {
+        const current = getCurrentUser();
+        if (!current) {
+            showLoginModal(() => openComposeMessageModal());
+            return;
+        }
+        UIUtils.showModal(
+            '쪽지 보내기',
+            `<div style="display:flex;flex-direction:column;gap:12px;">
+                <div style="display:grid;grid-template-columns:140px 1fr;gap:10px;">
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label">수신 방식</label>
+                        <select class="form-select" id="mesMsgTargetType" onchange="AuthModule._toggleComposeTarget()">
+                            <option value="user">이름 선택</option>
+                            <option value="role">역할별 통보</option>
+                            <option value="all">전체 공지</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin:0;" id="mesMsgTargetWrap"></div>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label class="form-label">제목</label>
+                    <input class="form-input" id="mesMsgTitle" placeholder="예: 결재 확인 요청">
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label class="form-label">내용</label>
+                    <textarea class="form-textarea" id="mesMsgBody" rows="8" placeholder="전달할 내용을 입력해 주세요."></textarea>
+                </div>
+            </div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+             <button class="btn btn-primary" onclick="AuthModule._submitComposeMessage()">보내기</button>`
+        );
+        setTimeout(() => {
+            _toggleComposeTarget();
+            document.getElementById('mesMsgTitle')?.focus();
+        }, 30);
+    }
+
+    function _toggleComposeTarget() {
+        const type = document.getElementById('mesMsgTargetType')?.value || 'user';
+        const wrap = document.getElementById('mesMsgTargetWrap');
+        if (!wrap) return;
+        wrap.innerHTML = _renderComposeTargetChecklist(type);
+        const actionButton = document.getElementById('mesMsgToggleChecks');
+        if (actionButton) {
+            actionButton.textContent = '전체 선택';
+            actionButton.setAttribute('onclick', 'AuthModule._toggleComposeChecks(true)');
+        }
+    }
+
+    function _submitComposeMessage() {
+        const type = document.getElementById('mesMsgTargetType')?.value || 'user';
+        const targetIds = type === 'all' ? ['all'] : _getComposeTargetIds();
+        const title = document.getElementById('mesMsgTitle')?.value || '';
+        const body = document.getElementById('mesMsgBody')?.value || '';
+        const ok = sendInternalMessage({ targetType: type, targetIds, title, body });
+        if (!ok) return;
+        UIUtils.closeModal();
+        UIUtils.toast('쪽지를 보냈습니다.', 'success');
+        openInboxModal();
+    }
+
     return {
         ROLES,
         ALL_PAGES,
@@ -648,6 +857,7 @@ const AuthModule = (function () {
         openComposeMessageModal,
         markMessageRead,
         showUnreadInboxPopup,
+        _toggleComposeChecks,
         _toggleComposeTarget,
         _submitComposeMessage,
         _doLoginModal,

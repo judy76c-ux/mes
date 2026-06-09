@@ -385,7 +385,8 @@ var InjectionIncomingModule = (function() {
         );
         const carModelOptions = carModelsWithExternal.map(c => `<option value="${c}">${c}</option>`).join('');
 
-        const inspectors = Storage.getAll(DB.STORES.INSPECTORS);
+        const inspectors = (Storage.getAll(DB.STORES.INSPECTORS) || [])
+            .filter(i => (i.processes || []).includes('incoming'));
         const inspectorOptions = inspectors.map(i => `<option value="${i.name}">${i.name}</option>`).join('');
 
         UIUtils.showModal('수입검사 등록', `
@@ -965,7 +966,8 @@ var InjectionIncomingModule = (function() {
         const fullDate = d.date || '';
         const [datePart, timePart] = fullDate.split(' ');
 
-        const inspectors = Storage.getAll(DB.STORES.INSPECTORS);
+        const inspectors = (Storage.getAll(DB.STORES.INSPECTORS) || [])
+            .filter(i => (i.processes || []).includes('incoming'));
         const inspectorOptions = inspectors.map(i => `<option value="${i.name}" ${d.inspector === i.name ? 'selected' : ''}>${i.name}</option>`).join('');
 
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
