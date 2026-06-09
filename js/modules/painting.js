@@ -1512,13 +1512,21 @@ const PaintingWorkModule = (function() {
         var planQty = Number(section.getAttribute('data-plan-qty')) || 0;
         if (planQty <= 0) return;
         var inputQty = Number((document.getElementById('addPwInputQty') || {}).value) || 0;
-        // 투입수량이 계획수량의 95% 미만일 때만 표시 (5% 초과 미달)
+        // 투입수량이 계획수량의 95% 미만일 때만 사유 섹션 표시 (5% 초과 미달)
         var threshold = planQty * 0.95;
         var show = inputQty > 0 && inputQty < threshold;
         section.style.display = show ? 'block' : 'none';
-        // 실제 투입수량 레이블 업데이트
         var label = document.getElementById('pwPlanInputQtyLabel');
         if (label) label.textContent = show ? UIUtils.formatNumber(inputQty) : '-';
+
+        // 투입수량 기준으로 완료시간 자동 재계산 (계획 미달 시에도 시간이 달라짐)
+        if (inputQty > 0 && planQty > 0 && inputQty < planQty) {
+            _recalcEndTimeForOverQty(inputQty, planQty);
+        } else {
+            // 계획수량 이상이면 힌트 숨김 (over-plan 쪽에서 처리)
+            var hint = document.getElementById('pwEndTimeHint');
+            if (hint && inputQty >= planQty) hint.style.display = 'none';
+        }
     }
 
     // 초과 수량 비례로 작업 완료시간 재계산 (계획 CT 기준)
@@ -1548,10 +1556,25 @@ const PaintingWorkModule = (function() {
         var newEndTime   = String(newEndHour).padStart(2, '0') + ':' + String(newEndMinute).padStart(2, '0');
 
         var endEl = document.getElementById('addPwEndTime');
-        if (endEl && endEl.value !== newEndTime) {
+        if (endEl) {
+            var prevEnd = endEl.value;
             endEl.value = newEndTime;
-            // CT 재계산
             calcCT();
+            // 완료시간 변경 안내 힌트
+            var hint = document.getElementById('pwEndTimeHint');
+            if (hint) {
+                if (newEndTime !== planEnd) {
+                    var diffMin = Math.round(_timeToMin(newEndTime) - _timeToMin(planEnd));
+                    var sign = diffMin >= 0 ? '+' : '';
+                    hint.innerHTML =
+                        '<span class="material-symbols-outlined" style="font-size:12px;vertical-align:middle;">schedule</span>' +
+                        ' 수량 기준 자동조정 → <strong>' + newEndTime + '</strong>' +
+                        ' (계획 대비 ' + sign + diffMin + '분)';
+                    hint.style.display = 'block';
+                } else {
+                    hint.style.display = 'none';
+                }
+            }
         }
     }
 
@@ -1776,7 +1799,12 @@ const PaintingWorkModule = (function() {
             '<input type="time" class="form-input" id="addPwEndTime"' +
             ' value="' + planEndTime + '"' +
             ' oninput="PaintingWorkModule.calcCT();">' +
-            (planEndTime ? '<div style="font-size:0.72rem;color:var(--accent-blue);margin-top:3px;">계획: ' + planEndTime + '</div>' : '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:3px;">선택 입력</div>') +
+            (planEndTime
+                ? '<div style="font-size:0.72rem;color:var(--accent-blue);margin-top:3px;">계획: ' + planEndTime + '</div>'
+                : '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:3px;">선택 입력</div>') +
+            '<div id="pwEndTimeHint" style="display:none;font-size:0.71rem;margin-top:4px;' +
+            'color:#b45309;background:rgba(245,158,11,0.09);border:1px solid rgba(245,158,11,0.4);' +
+            'border-radius:5px;padding:3px 8px;line-height:1.4;"></div>' +
             '</div>' +
 
             '<div class="form-group" style="margin:0;">' +
@@ -2073,6 +2101,30 @@ const PaintingWorkModule = (function() {
             var lotSection = document.getElementById('pwLotRows');
             if (lotSection) lotSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
             return;
+        }
+
+        // ── 완료시간 확인 팝업 (계획 완료시간과 5분 이상 차이 나면 경고) ──
+        var _planEndVal   = (document.getElementById('addPwPlanEndHidden')   || {}).value || '';
+        var _planStartVal = (document.getElementById('addPwPlanStartHidden') || {}).value || '';
+        if (_planEndVal && endTime && _planStartVal && startTime) {
+            var _planEndMin  = _timeToMin(_planEndVal);
+            var _actualEndMin = _timeToMin(endTime);
+            var _timeDiffMin  = _actualEndMin - _planEndMin;  // + 초과 / - 미달
+            if (Math.abs(_timeDiffMin) > 5) {
+                var _sign = _timeDiffMin > 0 ? '+' : '';
+                var _msg =
+                    '⏱  작업 완료시간을 확인해 주세요.\n\n' +
+                    '  계획 완료시간 :  ' + _planEndVal + '\n' +
+                    '  실제 완료시간 :  ' + endTime + '\n' +
+                    '  차       이 :  ' + _sign + _timeDiffMin + '분\n\n' +
+                    '이 시간으로 저장하시겠습니까?\n' +
+                    '(수정하려면 [취소] 후 완료시간을 변경해 주세요.)';
+                if (!window.confirm(_msg)) {
+                    var _endTimeEl = document.getElementById('addPwEndTime');
+                    if (_endTimeEl) { _endTimeEl.focus(); _endTimeEl.select(); }
+                    return;
+                }
+            }
         }
 
         var avgCT = 0;

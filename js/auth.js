@@ -11,6 +11,8 @@ const AuthModule = (function () {
     const USERS_KEY   = 'mes_users';
     const PERMS_KEY   = 'mes_role_permissions';
     const SESSION_KEY = 'mes_current_user';
+    const MESSAGES_KEY = 'mes_internal_messages_v1';
+    const POPUP_STATE_PREFIX = 'mes_inbox_popup_seen_';
 
     /* ── 역할 정의 ─────────────────────────────────────────── */
     const ROLES = [
@@ -125,6 +127,277 @@ const AuthModule = (function () {
     }
     function _savePermissions(p) { localStorage.setItem(PERMS_KEY, JSON.stringify(p)); }
 
+    function _getMessages() {
+        try { return JSON.parse(localStorage.getItem(MESSAGES_KEY) || '[]'); } catch { return []; }
+    }
+    function _saveMessages(rows) {
+        localStorage.setItem(MESSAGES_KEY, JSON.stringify(Array.isArray(rows) ? rows : []));
+    }
+    function _roleLabel(roleKey) {
+        const role = ROLES.find(r => r.key === roleKey);
+        return role ? role.label : roleKey;
+    }
+    function _esc(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+    function _newMessageId() {
+        return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    }
+    function _cloneRecipients(targetType, targetId) {
+        if (targetType === 'all') return [{ type: 'all', id: 'all', label: '전체 사용자' }];
+        if (targetType === 'role') return [{ type: 'role', id: targetId, label: _roleLabel(targetId) }];
+        const user = _getUsers().find(u => String(u.id) === String(targetId) || String(u.username) === String(targetId));
+        return [{ type: 'user', id: String(targetId || ''), label: user ? user.displayName : String(targetId || '') }];
+    }
+    function _messageTargetsUser(message, user) {
+        if (!message || !user) return false;
+        return (message.recipients || []).some(rec => {
+            if (!rec) return false;
+            if (rec.type === 'all') return true;
+            if (rec.type === 'role') return rec.id === user.role;
+            return String(rec.id) === String(user.id) || String(rec.id) === String(user.username);
+        });
+    }
+    function _messageReadByUser(message, user) {
+        if (!message || !user) return false;
+        return Array.isArray(message.readBy) && message.readBy.some(row => String(row.userId) === String(user.id));
+    }
+    function _inboxMessagesForUser(user, options) {
+        const opts = options || {};
+        return _getMessages()
+            .filter(msg => _messageTargetsUser(msg, user))
+            .filter(msg => !opts.unreadOnly || !_messageReadByUser(msg, user))
+            .sort((a, b) => String(b.sentAt || '').localeCompare(String(a.sentAt || '')));
+    }
+    function _sentMessagesForUser(user) {
+        if (!user) return [];
+        return _getMessages()
+            .filter(msg => String(msg.senderId || '') === String(user.id))
+            .sort((a, b) => String(b.sentAt || '').localeCompare(String(a.sentAt || '')));
+    }
+    function getUnreadInboxCount(user) {
+        const targetUser = user || getCurrentUser();
+        if (!targetUser) return 0;
+        return _inboxMessagesForUser(targetUser, { unreadOnly: true }).length;
+    }
+    function markMessageRead(messageId, user) {
+        const targetUser = user || getCurrentUser();
+        if (!targetUser || !messageId) return;
+        const rows = _getMessages();
+        let changed = false;
+        const next = rows.map(msg => {
+            if (msg.id !== messageId) return msg;
+            const readBy = Array.isArray(msg.readBy) ? [...msg.readBy] : [];
+            if (!readBy.some(row => String(row.userId) === String(targetUser.id))) {
+                readBy.push({ userId: String(targetUser.id), readAt: new Date().toISOString() });
+                changed = true;
+            }
+            return { ...msg, readBy };
+        });
+        if (changed) {
+            _saveMessages(next);
+            _updateTopbar();
+        }
+    }
+    function sendInternalMessage(payload) {
+        const current = getCurrentUser();
+        if (!current) {
+            UIUtils.toast('로그인 후 쪽지를 보낼 수 있습니다.', 'warning');
+            return false;
+        }
+        const targetType = String(payload?.targetType || 'user');
+        const targetId = String(payload?.targetId || '');
+        const title = String(payload?.title || '').trim();
+        const body = String(payload?.body || '').trim();
+        if (!title || !body) {
+            UIUtils.toast('제목과 내용을 입력하세요.', 'warning');
+            return false;
+        }
+        if (targetType !== 'all' && !targetId) {
+            UIUtils.toast('수신 대상을 선택하세요.', 'warning');
+            return false;
+        }
+        const rows = _getMessages();
+        rows.push({
+            id: _newMessageId(),
+            title,
+            body,
+            category: String(payload?.category || 'general'),
+            priority: String(payload?.priority || 'normal'),
+            senderId: String(current.id || ''),
+            senderName: String(current.displayName || current.username || ''),
+            recipients: _cloneRecipients(targetType, targetId),
+            sentAt: new Date().toISOString(),
+            readBy: []
+        });
+        _saveMessages(rows);
+        _updateTopbar();
+        return true;
+    }
+    function _popupStateKey(user) {
+        return `${POPUP_STATE_PREFIX}${user?.id || 'guest'}`;
+    }
+    function _shouldShowUnreadPopup(user) {
+        if (!user) return false;
+        const unreadIds = _inboxMessagesForUser(user, { unreadOnly: true }).map(msg => msg.id).join('|');
+        if (!unreadIds) return false;
+        try {
+            const saved = sessionStorage.getItem(_popupStateKey(user)) || '';
+            return saved !== unreadIds;
+        } catch {
+            return true;
+        }
+    }
+    function _rememberUnreadPopup(user) {
+        if (!user) return;
+        const unreadIds = _inboxMessagesForUser(user, { unreadOnly: true }).map(msg => msg.id).join('|');
+        try { sessionStorage.setItem(_popupStateKey(user), unreadIds); } catch {}
+    }
+    function _messageRecipientText(message) {
+        return (message?.recipients || []).map(rec => rec.label || rec.id || '').filter(Boolean).join(', ');
+    }
+    function _renderInboxList(messages, user, selectedId, emptyText) {
+        if (!messages.length) {
+            return `<div style="padding:28px 16px;text-align:center;color:var(--text-muted);font-size:.9rem;">${emptyText}</div>`;
+        }
+        return messages.map(msg => {
+            const unread = !_messageReadByUser(msg, user);
+            return `<button type="button" onclick="AuthModule.openInboxModal('${msg.id}')" style="width:100%;text-align:left;border:1px solid ${selectedId === msg.id ? 'var(--accent-blue)' : 'var(--border-color)'};background:${selectedId === msg.id ? 'rgba(37,99,235,.06)' : '#fff'};border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;cursor:pointer;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                            <strong style="font-size:.88rem;color:var(--text-primary);">${_esc(msg.title)}</strong>
+                            ${unread ? `<span style="font-size:.7rem;background:#dbeafe;color:#1d4ed8;padding:2px 6px;border-radius:999px;font-weight:700;">NEW</span>` : ''}
+                        </div>
+                        <div style="font-size:.76rem;color:var(--text-muted);">${_esc(msg.senderName || '시스템')} · ${new Date(msg.sentAt).toLocaleString('ko-KR')}</div>
+                        <div style="font-size:.78rem;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_esc(msg.body || '')}</div>
+                    </button>`;
+        }).join('');
+    }
+    function openComposeMessageModal() {
+        const current = getCurrentUser();
+        if (!current) {
+            showLoginModal(() => openComposeMessageModal());
+            return;
+        }
+        const users = _getUsers().filter(u => u.active !== false);
+        const roleOptions = ROLES.map(role => `<option value="${role.key}">${role.label}</option>`).join('');
+        const userOptions = users.map(user => `<option value="${user.id}">${user.displayName} (${user.username})</option>`).join('');
+        UIUtils.showModal(
+            '쪽지 보내기',
+            `<div style="display:flex;flex-direction:column;gap:12px;">
+                <div style="display:grid;grid-template-columns:140px 1fr;gap:10px;">
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label">수신 방식</label>
+                        <select class="form-select" id="mesMsgTargetType" onchange="AuthModule._toggleComposeTarget()">
+                            <option value="user">담당자 지정</option>
+                            <option value="role">역할 통보</option>
+                            <option value="all">전체 공지</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin:0;" id="mesMsgTargetWrap">
+                        <label class="form-label">수신 대상</label>
+                        <select class="form-select" id="mesMsgTargetId">${userOptions}</select>
+                    </div>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label class="form-label">제목</label>
+                    <input class="form-input" id="mesMsgTitle" placeholder="예: 결재 확인 요청">
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label class="form-label">내용</label>
+                    <textarea class="form-textarea" id="mesMsgBody" rows="8" placeholder="전달할 내용을 입력하세요."></textarea>
+                </div>
+            </div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+             <button class="btn btn-primary" onclick="AuthModule._submitComposeMessage()">보내기</button>`
+        );
+        setTimeout(() => {
+            const roleSelect = document.getElementById('mesMsgRoleOptions');
+            if (!roleSelect) {
+                const wrap = document.getElementById('mesMsgTargetWrap');
+                if (wrap) wrap.dataset.roleOptions = roleOptions;
+            }
+            document.getElementById('mesMsgTitle')?.focus();
+        }, 30);
+    }
+    function _toggleComposeTarget() {
+        const type = document.getElementById('mesMsgTargetType')?.value || 'user';
+        const wrap = document.getElementById('mesMsgTargetWrap');
+        if (!wrap) return;
+        if (type === 'all') {
+            wrap.innerHTML = `<label class="form-label">수신 대상</label><div class="form-input" style="display:flex;align-items:center;background:#f8fafc;">전체 사용자</div>`;
+            return;
+        }
+        const users = _getUsers().filter(u => u.active !== false);
+        const userOptions = users.map(user => `<option value="${user.id}">${user.displayName} (${user.username})</option>`).join('');
+        const roleOptions = ROLES.map(role => `<option value="${role.key}">${role.label}</option>`).join('');
+        wrap.innerHTML = `<label class="form-label">수신 대상</label><select class="form-select" id="mesMsgTargetId">${type === 'role' ? roleOptions : userOptions}</select>`;
+    }
+    function _submitComposeMessage() {
+        const type = document.getElementById('mesMsgTargetType')?.value || 'user';
+        const targetId = type === 'all' ? 'all' : (document.getElementById('mesMsgTargetId')?.value || '');
+        const title = document.getElementById('mesMsgTitle')?.value || '';
+        const body = document.getElementById('mesMsgBody')?.value || '';
+        const ok = sendInternalMessage({ targetType: type, targetId, title, body });
+        if (!ok) return;
+        UIUtils.closeModal();
+        UIUtils.toast('쪽지를 보냈습니다.', 'success');
+        openInboxModal();
+    }
+    function openInboxModal(selectedId) {
+        const current = getCurrentUser();
+        if (!current) {
+            showLoginModal(() => openInboxModal(selectedId));
+            return;
+        }
+        const inbox = _inboxMessagesForUser(current);
+        const sent = _sentMessagesForUser(current);
+        const selected = inbox.find(msg => msg.id === selectedId) || inbox[0] || null;
+        if (selected) markMessageRead(selected.id, current);
+        _rememberUnreadPopup(current);
+        const freshInbox = _inboxMessagesForUser(current);
+        const active = freshInbox.find(msg => msg.id === (selected?.id || selectedId)) || freshInbox[0] || null;
+        const unreadCount = getUnreadInboxCount(current);
+        UIUtils.showModal(
+            `수신함${unreadCount ? ` (${unreadCount})` : ''}`,
+            `<div style="display:grid;grid-template-columns:320px minmax(0,1fr);gap:14px;min-height:460px;">
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                        <strong style="font-size:.9rem;">받은 메시지</strong>
+                        <button class="btn btn-outline btn-sm" onclick="AuthModule.openComposeMessageModal()">새 쪽지</button>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:8px;max-height:420px;overflow:auto;">${_renderInboxList(freshInbox, current, active?.id, '받은 메시지가 없습니다.')}</div>
+                    <div style="margin-top:8px;">
+                        <strong style="font-size:.85rem;">보낸 메시지</strong>
+                        <div style="display:flex;flex-direction:column;gap:8px;max-height:180px;overflow:auto;margin-top:8px;">${_renderInboxList(sent, current, '', '보낸 메시지가 없습니다.')}</div>
+                    </div>
+                </div>
+                <div style="border:1px solid var(--border-color);border-radius:12px;padding:14px;background:#fff;">
+                    ${active ? `
+                        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px;">
+                            <div>
+                                <div style="font-size:1rem;font-weight:800;color:var(--text-primary);">${_esc(active.title)}</div>
+                                <div style="font-size:.8rem;color:var(--text-muted);margin-top:4px;">${_esc(active.senderName || '시스템')} · ${new Date(active.sentAt).toLocaleString('ko-KR')}</div>
+                                <div style="font-size:.78rem;color:var(--text-muted);margin-top:4px;">수신: ${_esc(_messageRecipientText(active))}</div>
+                            </div>
+                        </div>
+                        <div style="min-height:280px;white-space:pre-wrap;line-height:1.6;font-size:.92rem;color:var(--text-primary);background:#f8fafc;border:1px solid var(--border-color);border-radius:10px;padding:12px;">${_esc(active.body)}</div>
+                    ` : `<div style="display:flex;align-items:center;justify-content:center;height:100%;min-height:320px;color:var(--text-muted);">확인할 메시지가 없습니다.</div>`}
+                </div>
+            </div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`
+        );
+    }
+    function showUnreadInboxPopup() {
+        const current = getCurrentUser();
+        if (!current || !_shouldShowUnreadPopup(current)) return;
+        setTimeout(() => openInboxModal(), 120);
+    }
+
     /* ── 세션 ────────────────────────────────────────────────── */
     function getCurrentUser() {
         try { return JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null'); } catch { return null; }
@@ -218,6 +491,7 @@ const AuthModule = (function () {
             UIUtils.toast(`${result.user.displayName}님 로그인되었습니다.`, 'success');
             _applyWriteMode();
             _updateTopbar();
+            showUnreadInboxPopup();
             if (typeof _loginCallback === 'function') { _loginCallback(); _loginCallback = null; }
         } else {
             if (errEl) errEl.style.display = 'block';
@@ -314,6 +588,46 @@ const AuthModule = (function () {
         _updateTopbar();
     }
 
+    function _updateTopbar() {
+        const badge = document.getElementById('topbarUserBadge');
+        if (!badge) return;
+        const user = getCurrentUser();
+        const role = ROLES.find(r => r.key === (user ? user.role : ''));
+        if (user) {
+            const unreadCount = getUnreadInboxCount(user);
+            badge.innerHTML = `
+                <div class="topbar-user-icon">
+                    <span class="material-symbols-outlined" style="font-size:20px;">person</span>
+                </div>
+                <div style="line-height:1.3;margin:0 6px;white-space:nowrap;">
+                    <div style="font-size:12px;font-weight:700;color:var(--text-primary);">${user.displayName}</div>
+                    <div style="font-size:10px;color:${role ? role.color : 'var(--text-muted)'};">${role ? role.label : ''}</div>
+                </div>
+                <button onclick="AuthModule.openInboxModal()" title="수신함"
+                    style="position:relative;background:none;border:none;cursor:pointer;padding:3px;color:var(--text-muted);display:flex;align-items:center;flex-shrink:0;">
+                    <span class="material-symbols-outlined" style="font-size:18px;">mail</span>
+                    ${unreadCount ? `<span style="position:absolute;right:-2px;top:-2px;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:#2563eb;color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;">${unreadCount > 99 ? '99+' : unreadCount}</span>` : ''}
+                </button>
+                <button onclick="AuthModule.logout()" title="로그아웃"
+                    style="background:none;border:none;cursor:pointer;padding:3px;color:var(--text-muted);display:flex;align-items:center;flex-shrink:0;">
+                    <span class="material-symbols-outlined" style="font-size:18px;">logout</span>
+                </button>`;
+        } else {
+            badge.innerHTML = `
+                <button onclick="AuthModule.showLoginModal()" title="로그인"
+                    style="background:none;border:1px solid var(--border-color);border-radius:6px;cursor:pointer;padding:4px 10px;display:flex;align-items:center;gap:4px;color:var(--text-secondary);font-size:12px;">
+                    <span class="material-symbols-outlined" style="font-size:16px;">login</span> 로그인
+                </button>`;
+        }
+    }
+
+    function init() {
+        _setupInterceptor();
+        _applyWriteMode();
+        _updateTopbar();
+        showUnreadInboxPopup();
+    }
+
     return {
         ROLES,
         ALL_PAGES,
@@ -328,6 +642,14 @@ const AuthModule = (function () {
         logout,
         showLoginModal,
         checkSettingsAuth,
+        getUnreadInboxCount,
+        sendInternalMessage,
+        openInboxModal,
+        openComposeMessageModal,
+        markMessageRead,
+        showUnreadInboxPopup,
+        _toggleComposeTarget,
+        _submitComposeMessage,
         _doLoginModal,
         _updateTopbar,
         _applyWriteMode,
