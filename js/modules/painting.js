@@ -1720,6 +1720,40 @@ const PaintingWorkModule = (function() {
             ' style="font-size:1.05rem;font-weight:600;text-align:right;"></div>' +
             '</div>';
 
+        // ③-0 기본 CT 계산 (계획 시간·수량 기준)
+        var baseCTSec = 0;
+        if (planStartTime && planEndTime && planQty > 0) {
+            var _bsh = parseInt(planStartTime.split(':')[0]);
+            var _bsm = parseInt(planStartTime.split(':')[1]);
+            var _beh = parseInt(planEndTime.split(':')[0]);
+            var _bem = parseInt(planEndTime.split(':')[1]);
+            var _planMin = (_beh * 60 + _bem) - (_bsh * 60 + _bsm);
+            if (_planMin > 0) baseCTSec = (_planMin * 60) / planQty;
+        }
+        var baseCTLabel = baseCTSec > 0
+            ? '<span style="color:var(--accent-blue);font-weight:700;">' + baseCTSec.toFixed(1) + '초/EA</span>'
+            : '<span style="color:var(--text-muted);">-</span>';
+
+        // ③-1 CVT 조회 (제품 마스터 → 도장 공정 슬롯)
+        var _planCvt = 0;
+        var _masterProds = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        var _masterProd = _masterProds.find(function(mp) {
+            return mp.carModel === carModel && mp.partName === partName;
+        });
+        if (_masterProd) {
+            for (var _ci = 1; _ci <= 4; _ci++) {
+                var _proc = (_masterProd['process' + _ci] || '').toLowerCase();
+                if (_proc.includes('도장')) {
+                    _planCvt = Number(_masterProd['cvt' + _ci]) || 0;
+                    break;
+                }
+            }
+            if (!_planCvt) _planCvt = Number(_masterProd.cvt1) || 0;
+        }
+        var cvtInfoLabel = _planCvt > 0
+            ? '<span style="color:var(--accent-green);font-weight:700;">' + _planCvt + ' EA</span>'
+            : '<span style="color:var(--text-muted);">-</span>';
+
         // ③ 시간 행 — 계획시간 자동 반영, 힌트 표시
         var timeRowHtml =
             '<div style="display:grid;grid-template-columns:1fr 1fr 1.4fr;gap:12px;margin-bottom:10px;' +
@@ -1751,7 +1785,14 @@ const PaintingWorkModule = (function() {
             '평균 CT (자동계산)</label>' +
             '<div id="pwCtInfo" style="height:36px;display:flex;align-items:center;">' +
             '<span style="color:var(--text-muted);font-size:0.8rem;">완료수량·시간 입력 시 자동계산</span></div>' +
-            (planStartTime && planEndTime ? '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:3px;">시간 변경 시 사유 입력 필요</div>' : '') +
+            '<div style="display:flex;gap:14px;margin-top:5px;flex-wrap:wrap;">' +
+            '<div style="font-size:0.72rem;color:var(--text-muted);line-height:1.5;">' +
+            '<span style="font-weight:600;color:var(--text-secondary);">기본 CT</span>&nbsp;' + baseCTLabel +
+            '</div>' +
+            '<div style="font-size:0.72rem;color:var(--text-muted);line-height:1.5;">' +
+            '<span style="font-weight:600;color:var(--text-secondary);">CVT</span>&nbsp;' + cvtInfoLabel +
+            '</div>' +
+            '</div>' +
             '</div>' +
 
             '</div>';

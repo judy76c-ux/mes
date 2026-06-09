@@ -7474,6 +7474,11 @@ const SettingsModule = (function() {
         const file = event?.target?.files?.[0];
         if (!file) return;
         const referenceType = _resolveReferenceType(file);
+        if (!_isDesignTemplateReferenceType(referenceType)) {
+            UIUtils.toast('문서 디자인 양식은 PDF 또는 이미지 파일만 사용할 수 있습니다.', 'warning');
+            if (event.target) event.target.value = '';
+            return;
+        }
         const reader = new FileReader();
         reader.onload = async () => {
             let previewMeta = {};
@@ -7582,6 +7587,11 @@ const SettingsModule = (function() {
         const file = event?.target?.files?.[0];
         if (!file || !_docDesignEditorId) return;
         const referenceType = _resolveReferenceType(file);
+        if (!_isDesignTemplateReferenceType(referenceType)) {
+            UIUtils.toast('문서 디자인 양식은 PDF 또는 이미지 파일만 사용할 수 있습니다.', 'warning');
+            if (event.target) event.target.value = '';
+            return;
+        }
         const reader = new FileReader();
         reader.onload = async () => {
             let previewMeta = {};
