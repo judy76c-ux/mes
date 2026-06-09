@@ -1506,10 +1506,8 @@ const PaintingWorkModule = (function() {
 
     // 초과 수량 비례로 작업 완료시간 재계산 (계획 CT 기준)
     function _recalcEndTimeForOverQty(actualQty, planQty) {
-        var timeSection = document.getElementById('pwTimeReasonSection');
-        if (!timeSection) return;
-        var planStart = timeSection.getAttribute('data-plan-start') || '';
-        var planEnd   = timeSection.getAttribute('data-plan-end')   || '';
+        var planStart = ((document.getElementById('addPwPlanStartHidden') || {}).value) || '';
+        var planEnd   = ((document.getElementById('addPwPlanEndHidden')   || {}).value) || '';
         if (!planStart || !planEnd) return;
 
         var planStartMin = _timeToMin(planStart);
@@ -1535,9 +1533,8 @@ const PaintingWorkModule = (function() {
         var endEl = document.getElementById('addPwEndTime');
         if (endEl && endEl.value !== newEndTime) {
             endEl.value = newEndTime;
-            // CT 재계산 + 시간변동 섹션 갱신
+            // CT 재계산
             calcCT();
-            onTimeChange();
         }
     }
 
@@ -1563,12 +1560,11 @@ const PaintingWorkModule = (function() {
                 var endEl = document.getElementById('addPwEndTime');
                 var recalcNote = '';
                 if (endEl) {
-                    var timeSection = document.getElementById('pwTimeReasonSection');
-                    var planEnd = timeSection ? timeSection.getAttribute('data-plan-end') : '';
-                    if (planEnd && endEl.value && endEl.value !== planEnd) {
+                    var planEndVal = ((document.getElementById('addPwPlanEndHidden') || {}).value) || '';
+                    if (planEndVal && endEl.value && endEl.value !== planEndVal) {
                         recalcNote = '<br><span style="color:#6b7280;font-size:0.78rem;">▶ 작업 완료시간이 ' +
                             '<strong>' + endEl.value + '</strong>으로 자동 재계산되었습니다.' +
-                            ' (계획 CT 기준, 계획 완료: ' + planEnd + ')</span>';
+                            ' (계획 CT 기준, 계획 완료: ' + planEndVal + ')</span>';
                     }
                 }
                 msgEl.innerHTML =
@@ -1581,8 +1577,7 @@ const PaintingWorkModule = (function() {
             // 재계산 후 msg 업데이트 (endEl.value가 바뀐 뒤)
             if (msgEl) {
                 var endEl2 = document.getElementById('addPwEndTime');
-                var ts2 = document.getElementById('pwTimeReasonSection');
-                var planEnd2 = ts2 ? ts2.getAttribute('data-plan-end') : '';
+                var planEnd2 = ((document.getElementById('addPwPlanEndHidden') || {}).value) || '';
                 var which2 = (inputQty > planQty && outQty > planQty) ? '투입·산출 수량' :
                              (inputQty > planQty ? '투입수량' : '산출수량');
                 var recalcNote2 = (endEl2 && planEnd2 && endEl2.value !== planEnd2)
@@ -1719,7 +1714,7 @@ const PaintingWorkModule = (function() {
             '작업 시작시간</label>' +
             '<input type="time" class="form-input" id="addPwStartTime"' +
             ' value="' + planStartTime + '"' +
-            ' oninput="PaintingWorkModule.calcCT(); PaintingWorkModule.onTimeChange();">' +
+            ' oninput="PaintingWorkModule.calcCT();">' +
             (planStartTime ? '<div style="font-size:0.72rem;color:var(--accent-blue);margin-top:3px;">계획: ' + planStartTime + '</div>' : '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:3px;">선택 입력</div>') +
             '</div>' +
 
@@ -1729,7 +1724,7 @@ const PaintingWorkModule = (function() {
             '작업 완료시간</label>' +
             '<input type="time" class="form-input" id="addPwEndTime"' +
             ' value="' + planEndTime + '"' +
-            ' oninput="PaintingWorkModule.calcCT(); PaintingWorkModule.onTimeChange();">' +
+            ' oninput="PaintingWorkModule.calcCT();">' +
             (planEndTime ? '<div style="font-size:0.72rem;color:var(--accent-blue);margin-top:3px;">계획: ' + planEndTime + '</div>' : '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:3px;">선택 입력</div>') +
             '</div>' +
 
@@ -1745,47 +1740,8 @@ const PaintingWorkModule = (function() {
             '</div>';
 
         // ④ 계획 시간 변경 사유 섹션 (초기 hidden, 시간 변경 시 표시)
-        var reasonHtml =
-            '<div id="pwTimeReasonSection"' +
-            ' data-plan-start="' + planStartTime + '"' +
-            ' data-plan-end="' + planEndTime + '"' +
-            ' style="display:none;margin-bottom:14px;' +
-            'background:rgba(255,152,0,0.07);border:1px solid rgba(255,152,0,0.35);' +
-            'border-radius:8px;padding:12px;">' +
-            '<div style="font-size:0.82rem;color:#e65100;font-weight:600;margin-bottom:10px;">' +
-            '<span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;margin-right:4px;">warning</span>' +
-            '계획 시간과 다릅니다' +
-            (planTimeLabel ? ' &nbsp;<span style="font-weight:400;color:#b26a00;">(계획: ' + planTimeLabel + ')</span>' : '') +
-            ' — 변경 사유를 선택해 주세요' +
-            '</div>' +
-            '<div style="display:grid;grid-template-columns:1fr 1.8fr;gap:10px;">' +
-            '<div class="form-group" style="margin:0;">' +
-            '<label class="form-label" style="font-size:0.82rem;">변경 사유 <span style="color:var(--accent-red);">*</span></label>' +
-            '<select class="form-select" id="addPwTimeReason" style="font-size:0.85rem;">' +
-            '<option value="">선택</option>' +
-            '<option value="ITEM 교체">ITEM 교체</option>' +
-            '<option value="설비 속도 저하">설비 속도 저하</option>' +
-            '<option value="순간정지(공정문제)">순간정지(공정문제)</option>' +
-            '<option value="품질 문제">품질 문제</option>' +
-            '<option value="설비고장">설비고장</option>' +
-            '</select></div>' +
-            '<div class="form-group" style="margin:0;">' +
-            '<label class="form-label" style="font-size:0.82rem;">상세 내용</label>' +
-            '<input type="text" class="form-input" id="addPwTimeReasonDetail"' +
-            ' placeholder="구체적인 내용 (예: 컬러교체 청소, 아이템 교체, 자재 부족)"' +
-            ' style="font-size:0.85rem;"></div>' +
-            '</div>' +
-            '<div style="margin-top:10px;background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.3);border-radius:6px;padding:9px 14px;display:flex;align-items:center;gap:10px;">' +
-            '<span class="material-symbols-outlined" style="color:#dc2626;font-size:20px;flex-shrink:0;">campaign</span>' +
-            '<div style="flex:1;font-size:0.82rem;color:var(--text-primary);line-height:1.45;">' +
-            '<strong style="color:#dc2626;">관리자 통보 필요</strong> — 생산 시간 변동 내용을 작업 관리자에게 즉시 보고해 주세요.' +
-            '</div>' +
-            '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap;flex-shrink:0;">' +
-            '<input type="checkbox" id="addPwManagerNotified" style="width:16px;height:16px;accent-color:#dc2626;">' +
-            '<span style="font-size:0.82rem;font-weight:600;color:#dc2626;">통보 완료</span>' +
-            '</label>' +
-            '</div>' +
-            '</div>';
+        // ④ 계획 시간 변경 사유 섹션 — 삭제 (투입수량 미달/차이 섹션으로 통합)
+        var reasonHtml = '';
 
         // ⑤ LOT 섹션
         var lotSectionHtml =
@@ -1865,7 +1821,18 @@ const PaintingWorkModule = (function() {
               '<input type="text" class="form-input" id="addPwPlanReasonDetail"' +
               ' placeholder="구체적인 내용을 입력하세요"' +
               ' style="font-size:0.85rem;"></div>' +
-              '</div></div>'
+              '</div>' +
+              '<div style="margin-top:10px;background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.3);border-radius:6px;padding:9px 14px;display:flex;align-items:center;gap:10px;">' +
+              '<span class="material-symbols-outlined" style="color:#dc2626;font-size:20px;flex-shrink:0;">campaign</span>' +
+              '<div style="flex:1;font-size:0.82rem;color:var(--text-primary);line-height:1.45;">' +
+              '<strong style="color:#dc2626;">관리자 통보 필요</strong> — 계획 미달 내용을 작업 관리자에게 즉시 보고해 주세요.' +
+              '</div>' +
+              '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap;flex-shrink:0;">' +
+              '<input type="checkbox" id="addPwPlanManagerNotified" style="width:16px;height:16px;accent-color:#dc2626;">' +
+              '<span style="font-size:0.82rem;font-weight:600;color:#dc2626;">통보 완료</span>' +
+              '</label>' +
+              '</div>' +
+              '</div>'
             : '';
 
         // ⑦ 비고
@@ -1892,6 +1859,16 @@ const PaintingWorkModule = (function() {
             '<label class="form-label" style="font-size:0.82rem;">세부 사유 <span style="color:var(--accent-red);">*</span></label>' +
             '<input type="text" class="form-input" id="addPwQtyDiffDetail"' +
             ' placeholder="구체적인 내용을 입력하세요" style="font-size:0.85rem;"></div>' +
+            '</div>' +
+            '<div style="margin-top:10px;background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.3);border-radius:6px;padding:9px 14px;display:flex;align-items:center;gap:10px;">' +
+            '<span class="material-symbols-outlined" style="color:#dc2626;font-size:20px;flex-shrink:0;">campaign</span>' +
+            '<div style="flex:1;font-size:0.82rem;color:var(--text-primary);line-height:1.45;">' +
+            '<strong style="color:#dc2626;">관리자 통보 필요</strong> — 투입/산출 수량 차이 내용을 작업 관리자에게 즉시 보고해 주세요.' +
+            '</div>' +
+            '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap;flex-shrink:0;">' +
+            '<input type="checkbox" id="addPwQtyDiffManagerNotified" style="width:16px;height:16px;accent-color:#dc2626;">' +
+            '<span style="font-size:0.82rem;font-weight:600;color:#dc2626;">통보 완료</span>' +
+            '</label>' +
             '</div></div>' +
             // 비고
             '<div class="form-group" style="margin-bottom:0;">' +
@@ -1900,12 +1877,14 @@ const PaintingWorkModule = (function() {
 
         // ⑦ 숨김 필드
         var hiddenHtml =
-            '<input type="hidden" id="addPwCarModelHidden" value="' + carModel + '">' +
-            '<input type="hidden" id="addPwPartNameHidden" value="' + partName + '">' +
-            '<input type="hidden" id="addPwColorHidden"    value="' + color + '">' +
-            '<input type="hidden" id="addPwDateHidden"     value="' + _currentDate + '">' +
-            '<input type="hidden" id="addPwLineHidden"     value="' + effectiveLine + '">' +
-            '<input type="hidden" id="addPwPlanId"         value="' + planId + '">';
+            '<input type="hidden" id="addPwCarModelHidden"   value="' + carModel + '">' +
+            '<input type="hidden" id="addPwPartNameHidden"   value="' + partName + '">' +
+            '<input type="hidden" id="addPwColorHidden"      value="' + color + '">' +
+            '<input type="hidden" id="addPwDateHidden"       value="' + _currentDate + '">' +
+            '<input type="hidden" id="addPwLineHidden"       value="' + effectiveLine + '">' +
+            '<input type="hidden" id="addPwPlanId"           value="' + planId + '">' +
+            '<input type="hidden" id="addPwPlanStartHidden"  value="' + planStartTime + '">' +
+            '<input type="hidden" id="addPwPlanEndHidden"    value="' + planEndTime + '">';
 
         UIUtils.showModal('도장 작업 실적 등록',
             bannerHtml + hiddenHtml + qtyRowHtml + timeRowHtml + reasonHtml + lotSectionHtml + overPlanHtml + planQtyReasonHtml + noteHtml,
@@ -2048,25 +2027,6 @@ const PaintingWorkModule = (function() {
             if (totalMin > 0) avgCT = Number((totalMin * 60 / prodQty).toFixed(2));
         }
 
-        // 사유 섹션 표시 중인지 확인 (표시 중이면 사유 필수)
-        var reasonSection = document.getElementById('pwTimeReasonSection');
-        var reasonVisible = reasonSection && reasonSection.style.display !== 'none';
-        var timeReason = ((document.getElementById('addPwTimeReason') || {}).value || '').trim();
-        var timeReasonDetail = ((document.getElementById('addPwTimeReasonDetail') || {}).value || '').trim();
-        if (reasonVisible && !timeReason) {
-            UIUtils.toast('계획 시간 변경 사유를 선택해 주세요.', 'warning');
-            return;
-        }
-        // 시간 변동 → 관리자 통보 완료 체크 필수
-        if (reasonVisible) {
-            var managerNotifiedChk = document.getElementById('addPwManagerNotified');
-            if (!managerNotifiedChk || !managerNotifiedChk.checked) {
-                UIUtils.toast('시간 변동 내용을 관리자에게 통보 후 "통보 완료"를 체크해 주세요.', 'warning');
-                if (managerNotifiedChk) managerNotifiedChk.closest('div').scrollIntoView({ behavior: 'smooth', block: 'center' });
-                return;
-            }
-        }
-
         // 계획수량 초과 → 확인 체크 필수
         var overPlanSection = document.getElementById('pwOverPlanSection');
         var overPlanVisible = overPlanSection && overPlanSection.style.display !== 'none';
@@ -2096,6 +2056,15 @@ const PaintingWorkModule = (function() {
             if (qddEl) qddEl.focus();
             return;
         }
+        // 투입/산출 차이 → 관리자 통보 완료 체크 필수
+        if (hasQtyDiff) {
+            var qtyDiffMgrChk = document.getElementById('addPwQtyDiffManagerNotified');
+            if (!qtyDiffMgrChk || !qtyDiffMgrChk.checked) {
+                UIUtils.toast('투입/산출 수량 차이 내용을 관리자에게 통보 후 "통보 완료"를 체크해 주세요.', 'warning');
+                if (qtyDiffMgrChk) qtyDiffMgrChk.closest('div').scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
+        }
 
         // 계획 미달 사유 필수 검증
         var planReasonSection = document.getElementById('pwPlanQtyReasonSection');
@@ -2113,6 +2082,15 @@ const PaintingWorkModule = (function() {
             var prdEl = document.getElementById('addPwPlanReasonDetail');
             if (prdEl) prdEl.focus();
             return;
+        }
+        // 계획 미달 → 관리자 통보 완료 체크 필수
+        if (planReasonVisible) {
+            var planMgrChk = document.getElementById('addPwPlanManagerNotified');
+            if (!planMgrChk || !planMgrChk.checked) {
+                UIUtils.toast('계획 미달 내용을 관리자에게 통보 후 "통보 완료"를 체크해 주세요.', 'warning');
+                if (planMgrChk) planMgrChk.closest('div').scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
         }
 
         var data = {
@@ -2132,14 +2110,13 @@ const PaintingWorkModule = (function() {
             startTime: startTime,
             endTime: endTime,
             avgCT: avgCT,
-            timeReason: timeReason,
-            timeReasonDetail: timeReasonDetail,
-            managerNotified: reasonVisible ? true : false,
             overPlanQty: overPlanVisible ? true : false,
             planReason: planReasonVisible ? planReason : '',
             planReasonDetail: planReasonVisible ? planReasonDetail : '',
+            planManagerNotified: planReasonVisible ? true : false,
             qtyDiffReason: hasQtyDiff ? qtyDiffReason : '',
             qtyDiffDetail: hasQtyDiff ? qtyDiffDetail : '',
+            qtyDiffManagerNotified: hasQtyDiff ? true : false,
             note: ((document.getElementById('addPwNote') || {}).value || '').trim()
         };
 

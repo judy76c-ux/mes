@@ -7006,23 +7006,128 @@ const SettingsModule = (function() {
         };
     }
 
+    function _escapeDocHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/\n/g, '<br>');
+    }
+
+    function _excelPxWidth(col) {
+        if (col?.wpx) return Math.max(24, Math.round(col.wpx));
+        if (col?.wch) return Math.max(24, Math.round(col.wch * 7 + 12));
+        return 80;
+    }
+
+    function _excelPxHeight(row) {
+        if (row?.hpx) return Math.max(18, Math.round(row.hpx));
+        if (row?.hpt) return Math.max(18, Math.round((row.hpt * 96) / 72));
+        return 24;
+    }
+
+    function _excelColorHex(color, fallback) {
+        const raw = color?.rgb || color?.argb || '';
+        if (typeof raw === 'string' && raw.length >= 6) {
+            const hex = raw.slice(-6);
+            if (/^[0-9A-Fa-f]{6}$/.test(hex)) return `#${hex}`;
+        }
+        return fallback;
+    }
+
+    function _excelBorderCss(border) {
+        if (!border || border.style === 'none') return '1px solid #cbd5e1';
+        if (border.style === 'medium' || border.style === 'thick' || border.style === 'double') {
+            return `2px solid ${_excelColorHex(border.color, '#64748b')}`;
+        }
+        return `1px solid ${_excelColorHex(border.color, '#94a3b8')}`;
+    }
+
+    function _excelCellCss(cell) {
+        const style = cell?.s || {};
+        const font = style.font || {};
+        const fill = style.fill || {};
+        const alignment = style.alignment || {};
+        const border = style.border || {};
+        const css = [
+            'padding:4px 6px',
+            'vertical-align:middle',
+            'white-space:pre-wrap',
+            `font-size:${Math.max(10, Math.round(font.sz || 11))}px`,
+            `font-weight:${font.bold ? 700 : 400}`,
+            `font-style:${font.italic ? 'italic' : 'normal'}`,
+            `color:${_excelColorHex(font.color, '#111827')}`,
+            `background:${_excelColorHex(fill.fgColor || fill.bgColor, '#ffffff')}`,
+            `text-align:${alignment.horizontal || 'left'}`,
+            `border-top:${_excelBorderCss(border.top)}`,
+            `border-right:${_excelBorderCss(border.right)}`,
+            `border-bottom:${_excelBorderCss(border.bottom)}`,
+            `border-left:${_excelBorderCss(border.left)}`
+        ];
+        if (alignment.wrapText) css.push('word-break:break-word');
+        return css.join(';');
+    }
+
     async function _buildExcelReferencePreview(dataUrl) {
         if (!dataUrl || !window.XLSX) return null;
         const buffer = await fetch(dataUrl).then(res => res.arrayBuffer());
-        const workbook = XLSX.read(buffer, { type: 'array', cellStyles: true });
+        const workbook = XLSX.read(buffer, { type: 'array', cellStyles: true, cellNF: true, cellHTML: false });
         const sheetName = workbook.SheetNames?.[0];
         if (!sheetName) return null;
         const sheet = workbook.Sheets[sheetName];
         if (!sheet) return null;
-        const html = XLSX.utils.sheet_to_html(sheet, {
-            editable: false,
-            id: `doc-excel-preview-${Date.now()}`,
-            header: '',
-            footer: ''
+        const ref = sheet['!ref'];
+        if (!ref) return null;
+        const range = XLSX.utils.decode_range(ref);
+        const merges = Array.isArray(sheet['!merges']) ? sheet['!merges'] : [];
+        const mergeStartMap = new Map();
+        const coveredCells = new Set();
+        merges.forEach(merge => {
+            const key = `${merge.s.r}:${merge.s.c}`;
+            mergeStartMap.set(key, merge);
+            for (let r = merge.s.r; r <= merge.e.r; r += 1) {
+                for (let c = merge.s.c; c <= merge.e.c; c += 1) {
+                    if (r !== merge.s.r || c !== merge.s.c) coveredCells.add(`${r}:${c}`);
+                }
+            }
         });
+
+        const cols = [];
+        for (let c = range.s.c; c <= range.e.c; c += 1) {
+            cols.push(_excelPxWidth(sheet['!cols']?.[c]));
+        }
+        const rows = [];
+        for (let r = range.s.r; r <= range.e.r; r += 1) {
+            rows.push(_excelPxHeight(sheet['!rows']?.[r]));
+        }
+        const naturalWidth = cols.reduce((sum, value) => sum + value, 0);
+        const naturalHeight = rows.reduce((sum, value) => sum + value, 0);
+
+        const colGroup = cols.map(width => `<col style="width:${width}px;">`).join('');
+        const bodyRows = [];
+        for (let r = range.s.r; r <= range.e.r; r += 1) {
+            const rowHeight = rows[r - range.s.r];
+            const cells = [];
+            for (let c = range.s.c; c <= range.e.c; c += 1) {
+                const coveredKey = `${r}:${c}`;
+                if (coveredCells.has(coveredKey)) continue;
+                const addr = XLSX.utils.encode_cell({ r, c });
+                const cell = sheet[addr] || {};
+                const merge = mergeStartMap.get(coveredKey);
+                const rowspan = merge ? (merge.e.r - merge.s.r + 1) : 1;
+                const colspan = merge ? (merge.e.c - merge.s.c + 1) : 1;
+                const text = _escapeDocHtml(cell.w ?? cell.v ?? '');
+                cells.push(`<td${rowspan > 1 ? ` rowspan="${rowspan}"` : ''}${colspan > 1 ? ` colspan="${colspan}"` : ''} style="${_excelCellCss(cell)}">${text || '&nbsp;'}</td>`);
+            }
+            bodyRows.push(`<tr style="height:${rowHeight}px;">${cells.join('')}</tr>`);
+        }
+        const html = `<table style="border-collapse:collapse;table-layout:fixed;width:${naturalWidth}px;background:#fff;color:#0f172a;"><colgroup>${colGroup}</colgroup><tbody>${bodyRows.join('')}</tbody></table>`;
         return {
             referencePreviewHtml: html,
-            referenceSheetName: sheetName
+            referenceSheetName: sheetName,
+            referencePreviewWidth: naturalWidth,
+            referencePreviewHeight: naturalHeight
         };
     }
 
@@ -7117,6 +7222,18 @@ const SettingsModule = (function() {
                     </div>`;
         }
         if (((design.referenceType || '').includes('sheet') || (design.referenceType || '').includes('excel')) && design.referencePreviewHtml) {
+            const naturalWidth = Math.max(320, Number(design.referencePreviewWidth) || box.w);
+            const naturalHeight = Math.max(160, Number(design.referencePreviewHeight) || box.h);
+            const fitScale = Math.min(box.w / naturalWidth, box.h / naturalHeight);
+            return `<div id="doc-reference-preview" style="position:absolute;left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px;overflow:hidden;pointer-events:none;transform:${transform};transform-origin:center center;z-index:1;background:rgba(255,255,255,.92);box-shadow:0 0 0 1px rgba(148,163,184,.28);">
+                        <div style="position:absolute;left:8px;top:8px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.92);border:1px solid rgba(148,163,184,.5);font-size:11px;font-weight:700;color:#475569;">시트: ${design.referenceSheetName || 'Sheet1'}</div>
+                        <div style="width:${naturalWidth}px;height:${naturalHeight}px;transform:scale(${fitScale});transform-origin:left top;opacity:.62;">
+                            ${design.referencePreviewHtml}
+                        </div>
+                        <div style="position:absolute;right:8px;bottom:8px;padding:2px 6px;border-radius:8px;background:rgba(255,255,255,.88);font-size:10px;color:#64748b;">
+                            ${Math.round(naturalWidth)} x ${Math.round(naturalHeight)}
+                        </div>
+                    </div>`;
             return `<div id="doc-reference-preview" style="position:absolute;left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px;overflow:hidden;pointer-events:none;transform:${transform};transform-origin:center center;z-index:1;background:rgba(255,255,255,.92);box-shadow:0 0 0 1px rgba(148,163,184,.28);">
                         <div style="padding:14px;transform-origin:left top;">
                             <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:8px;">엑셀 시트: ${design.referenceSheetName || 'Sheet1'}</div>
