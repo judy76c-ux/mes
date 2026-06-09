@@ -7750,7 +7750,7 @@ var PaintMixModule = (function() {
 
     /* ─── 탭 타일 카드 네비게이션 ──────────────────────────────── */
     const _PMIX_TABS = [
-        { key: 'history',  label: '배합 등록',    desc: '도장 실적 연동 · 도료 출고/사용량 기록', icon: 'science',    accent: '#2563eb' },
+        { key: 'history',  label: '도료사용등록', desc: '도장 실적 연동 · 도료 출고/사용량 기록', icon: 'science',    accent: '#2563eb' },
         { key: 'mixhist',  label: '배합 이력',    desc: '등록된 배합 기록 조회',                  icon: 'receipt_long', accent: '#8b5cf6' },
         { key: 'residual', label: '배합실 잔량',  desc: '도료 잔량 재고 현황 · 사용/폐기 처리',  icon: 'inventory_2', accent: '#10b981' }
     ];
@@ -9181,7 +9181,7 @@ var PaintMixModule = (function() {
         <div style="padding:10px 14px;background:rgba(37,99,235,0.05);border:1px solid rgba(37,99,235,0.2);
                     border-radius:8px;margin-bottom:14px;font-size:0.83rem;color:#1d4ed8;line-height:1.6;">
             <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;margin-right:4px;">info</span>
-            도장 작업 완료 실적을 선택하여 <strong>배합 등록</strong>을 누르면 도료 출고량·사용량·잔량을 기록할 수 있습니다.<br>
+            도장 작업 완료 실적을 선택하여 <strong>도료사용등록</strong>을 누르면 도료 출고량·사용량·잔량을 기록할 수 있습니다.<br>
             도료 창고에서 출고 처리가 자동으로 연결됩니다.
         </div>
         <div class="filter-bar" style="flex-wrap:wrap;gap:10px;margin-bottom:14px;">
@@ -9208,7 +9208,7 @@ var PaintMixModule = (function() {
         <div class="stat-cards" id="pmixStats" style="margin-bottom:14px;"></div>
         <div class="card">
             <div class="card-header">
-                <h4><span class="material-symbols-outlined">format_paint</span> 도장 완료 실적 — 배합 등록 대상</h4>
+                <h4><span class="material-symbols-outlined">format_paint</span> 도장 완료 실적 — 도료사용등록 대상</h4>
                 <span style="font-size:0.78rem;color:var(--text-muted);">미등록: 파란 버튼 / 등록완료: 회색 버튼</span>
             </div>
             <div class="card-body" style="padding:0;">
@@ -9216,7 +9216,7 @@ var PaintMixModule = (function() {
                     <table class="data-table">
                         <thead><tr>
                             <th>작업일</th><th>라인</th><th>차종</th><th>품명</th><th>컬러</th>
-                            <th>생산 LOT</th><th style="text-align:right;">생산수량</th><th>도료정보</th><th>배합 등록</th>
+                            <th>생산 LOT</th><th style="text-align:right;">생산수량</th><th>도료정보</th><th>도료사용등록</th>
                         </tr></thead>
                         <tbody id="pmixWorkBody"></tbody>
                     </table>
@@ -9281,7 +9281,7 @@ var PaintMixModule = (function() {
                     <td style="text-align:right;">${UIUtils.formatNumber(w.productionQty || 0)}</td>
                     <td>${comps.length ? `<span class="badge badge-success">${comps.length}개</span>` : '<span class="badge badge-warning">미등록</span>'}</td>
                     <td style="white-space:nowrap;">
-                        <button class="btn btn-sm ${mixed.has(w.id) ? 'btn-outline' : 'btn-primary'}" onclick="PaintMixModule.openFromWork('${_js(w.id)}')">${mixed.has(w.id) ? '재등록' : '배합 등록'}</button>
+                        <button class="btn btn-sm ${mixed.has(w.id) ? 'btn-outline' : 'btn-primary'}" onclick="PaintMixModule.openFromWork('${_js(w.id)}')">${mixed.has(w.id) ? '재등록' : '도료사용등록'}</button>
                     </td>
                 </tr>`;
         }).join('');
@@ -9413,7 +9413,7 @@ var PaintMixModule = (function() {
                     <div style="text-align:center;padding:36px;color:var(--text-muted);">
                         <span class="material-symbols-outlined" style="font-size:32px;display:block;margin-bottom:8px;">inventory_2</span>
                         배합실에 잔량이 없습니다.<br>
-                        <span style="font-size:0.82rem;">배합 등록 탭에서 도료 사용량을 등록하면 잔량이 자동으로 계산됩니다.</span>
+                        <span style="font-size:0.82rem;">도료사용등록 탭에서 도료 사용량을 등록하면 잔량이 자동으로 계산됩니다.</span>
                     </div>`}
                 </div>
             </div>
@@ -10049,7 +10049,7 @@ var PaintMixModule = (function() {
         const existing = _mixes().find(m => m.workId === workId);
         if (existing) return edit(existing.id);
         const base = _baseFromWork(work);
-        UIUtils.showModal('도료 배합 등록', _formHtml(base), `
+        UIUtils.showModal('도료사용등록', _formHtml(base), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="PaintMixModule.saveNew()">등록</button>
         `, 'xl');
