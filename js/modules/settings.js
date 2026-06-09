@@ -7210,6 +7210,10 @@ const SettingsModule = (function() {
         return '파일';
     }
 
+    function _isDesignTemplateReferenceType(type) {
+        return Boolean(type) && (type === 'application/pdf' || type.startsWith('image/'));
+    }
+
     function _renderDocReference(design, size) {
         if (!design || !design.referenceDataUrl) return '';
         const { transform } = _docReferenceTransform(design);
@@ -7370,7 +7374,7 @@ const SettingsModule = (function() {
                             <button class="btn btn-primary btn-sm" onclick="SettingsModule.createDocumentDesign()">빈 디자인 추가</button>
                             <label class="btn btn-outline btn-sm" style="cursor:pointer;">
                                 <span class="material-symbols-outlined">upload_file</span> 양식으로 새 디자인
-                                <input type="file" accept="image/*,.pdf,.ppt,.pptx,.xls,.xlsx" style="display:none;" onchange="SettingsModule.createDocumentDesignFromUpload(event)">
+                                <input type="file" accept="image/*,.pdf" style="display:none;" onchange="SettingsModule.createDocumentDesignFromUpload(event)">
                             </label>
                             <button class="btn btn-outline btn-sm" onclick="SettingsModule.resetDocumentDesigns()">샘플 복원</button>
                         </div>
@@ -7408,7 +7412,7 @@ const SettingsModule = (function() {
                                         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
                                             <label class="btn btn-outline btn-sm" style="cursor:pointer;">
                                                 <span class="material-symbols-outlined">upload_file</span> 양식 업로드
-                                                <input type="file" accept="image/*,.pdf,.ppt,.pptx,.xls,.xlsx" style="display:none;" onchange="SettingsModule.handleDocumentDesignReferenceUpload(event)">
+                                                <input type="file" accept="image/*,.pdf" style="display:none;" onchange="SettingsModule.handleDocumentDesignReferenceUpload(event)">
                                             </label>
                                             ${active.referenceDataUrl ? `<button class="btn btn-outline btn-sm" onclick="SettingsModule.clearDocumentDesignReference()">양식 제거</button>` : ''}
                                             ${active.referenceDataUrl ? `<button class="btn btn-outline btn-sm" onclick="window.open('${active.referenceDataUrl}','_blank')">양식 열기</button>` : ''}

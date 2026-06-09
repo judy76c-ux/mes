@@ -1282,18 +1282,33 @@ const PaintingWorkModule = (function() {
         }
 
         // LOT 추가 버튼 활성화 갱신
+        _refreshAddLotBtn(injPartName, cm, pn);
+
+        _updateLotSummary();
+    }
+
+    // LOT 추가 버튼 활성화 상태 갱신 (행 추가/삭제/선택 변경 후 공통 호출)
+    function _refreshAddLotBtn(injPartName, cm, pn) {
+        if (injPartName === undefined) {
+            var injPartSel = document.getElementById('pwInjPartSelect');
+            injPartName = injPartSel ? injPartSel.value : '';
+        }
+        if (cm === undefined) {
+            cm = (document.getElementById('addPwCarModelHidden') || document.getElementById('editPwCarModel') || {}).value || '';
+        }
+        if (pn === undefined) {
+            pn = (document.getElementById('addPwPartNameHidden') || document.getElementById('editPwPartName') || {}).value || '';
+        }
         var excludeAll = _getSelectedLotNos(null);
         var moreHtml = _buildFilteredLotOptions(injPartName, cm, pn, excludeAll);
-        var tmpDiv2 = document.createElement('div');
-        tmpDiv2.innerHTML = moreHtml;
-        var hasMore = !!(tmpDiv2.querySelector('optgroup option[value]:not([value=""]), option[value]:not([value=""])'));
+        var tmpDiv = document.createElement('div');
+        tmpDiv.innerHTML = moreHtml;
+        var hasMore = !!(tmpDiv.querySelector('optgroup option[value]:not([value=""]), option[value]:not([value=""])'));
         var btn = document.getElementById('pwAddLotBtn');
         if (btn) {
             btn.disabled = !hasMore;
             btn.title = !hasMore ? '사출 창고 LOT가 더 이상 없습니다' : '';
         }
-
-        _updateLotSummary();
     }
 
     // LOT 행 제거
@@ -1307,6 +1322,7 @@ const PaintingWorkModule = (function() {
         }
         row.remove();
         _updateLotSummary();
+        _refreshAddLotBtn(); // 삭제 후 버튼 활성화 재확인
     }
 
     // LOT 드롭다운 → 직접입력 자동 채우기 + 선입선출 경고 체크
@@ -1337,6 +1353,7 @@ const PaintingWorkModule = (function() {
         }
 
         _refreshOtherLotDropdowns(row);      // 다른 행 드롭다운 갱신
+        _refreshAddLotBtn();                 // 버튼 활성화 재확인
     }
 
     // ── 선입선출(FIFO) 경고 표시/숨김 ──────────────────────────────────
