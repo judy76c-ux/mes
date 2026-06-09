@@ -23,6 +23,22 @@ const SettingsModule = (function() {
     let _processTypes = [...DEFAULT_PROCESS_TYPES];
     const PROCESS_CONFIG_KEY = 'processTypes';
 
+    // ── 세부 공정 관리 ───────────────────────────────────────────────
+    const SUB_PROCESS_CONFIG_KEY = 'subProcessTypes';
+    // CP 관리계획서 공정 명칭과 일치하는 기본 세부 공정
+    const DEFAULT_SUB_PROCESS_TYPES = {
+        '사출':           ['재료 투입', '사출 성형', '냉각', '취출', '게이트 처리', '외관 검사'],
+        '도장-A':         ['로딩', '세척', '제전', '배합', '하도 공급', '상도 공급', '하도 스프레이', '상도 스프레이', '건조', '언로딩', '도장 검사', '포장'],
+        '도장-B':         ['로딩', '세척', '제전', '배합', '하도 공급', '상도 공급', '하도 스프레이', '상도 스프레이', '건조', '언로딩', '도장 검사', '포장'],
+        '레이저':         ['레이져', '공정 검사'],
+        '인쇄':           ['로딩', '인쇄', '건조', '검사', '언로딩'],
+        '외관 검사':      ['외관 검사', '합부 판정'],
+        '외관+각인 검사': ['외관 검사', '각인 검사', '합부 판정'],
+        '조립압착':       ['부품 준비', '조립', '압착', '검사'],
+    };
+    let _subProcessTypes = {};          // { mainProcess: [subProc, ...] }
+    let _selectedMainForSub = '';       // 현재 선택된 주공정 (세부 공정 패널)
+
 
     async function render(container) {
         await _loadProcessTypes();
@@ -6850,9 +6866,22 @@ const SettingsModule = (function() {
 
     let _docDesignEditorId = '';
     let _docDesignSelectedElementId = '';
+    let _docReferenceDragState = null;
+    let _docElementDragState = null;
+    let _docPdfJsPromise = null;
 
     function _docDesignSeed(id, name, category, paperSize, elements, extra) {
-        return { id, name, category, paperSize, elements, ...(extra || {}) };
+        return {
+            id,
+            name,
+            category,
+            paperSize,
+            elements,
+            referenceScale: 1,
+            referenceOffsetX: 0,
+            referenceOffsetY: 0,
+            ...(extra || {})
+        };
     }
 
     function _docDesignElement(type, x, y, w, h, extra) {
@@ -6897,6 +6926,111 @@ const SettingsModule = (function() {
         return { w: 900, h: 640 };
     }
 
+    function _docReferenceTransform(design) {
+        const scale = Math.max(0.1, Number(design?.referenceScale) || 1);
+        const offsetX = Number(design?.referenceOffsetX) || 0;
+        const offsetY = Number(design?.referenceOffsetY) || 0;
+        return {
+            scale,
+            offsetX,
+            offsetY,
+            transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})`
+        };
+    }
+
+    function _docReferenceBox(size) {
+        return {
+            x: 12,
+            y: 12,
+            w: Math.max(120, (size?.w || 0) - 24),
+            h: Math.max(120, (size?.h || 0) - 24)
+        };
+    }
+
+    function _loadPdfJsLibrary() {
+        if (window.pdfjsLib) {
+            if (!window.pdfjsLib.GlobalWorkerOptions.workerSrc) {
+                window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            }
+            return Promise.resolve(window.pdfjsLib);
+        }
+        if (_docPdfJsPromise) return _docPdfJsPromise;
+        _docPdfJsPromise = new Promise((resolve, reject) => {
+            const existing = document.querySelector('script[data-doc-pdfjs="true"]');
+            if (existing) {
+                existing.addEventListener('load', () => resolve(window.pdfjsLib));
+                existing.addEventListener('error', reject);
+                return;
+            }
+            const script = document.createElement('script');
+            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+            script.async = true;
+            script.dataset.docPdfjs = 'true';
+            script.onload = () => {
+                if (!window.pdfjsLib) {
+                    reject(new Error('pdfjsLib not available'));
+                    return;
+                }
+                window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+                resolve(window.pdfjsLib);
+            };
+            script.onerror = reject;
+            document.head.appendChild(script);
+        }).catch(err => {
+            _docPdfJsPromise = null;
+            throw err;
+        });
+        return _docPdfJsPromise;
+    }
+
+    async function _buildPdfReferencePreview(dataUrl) {
+        if (!dataUrl) return null;
+        const pdfjsLib = await _loadPdfJsLibrary();
+        const buffer = await fetch(dataUrl).then(res => res.arrayBuffer());
+        const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer) });
+        const pdf = await loadingTask.promise;
+        const page = await pdf.getPage(1);
+        const viewport = page.getViewport({ scale: 1 });
+        const fitWidth = 1400;
+        const scale = Math.max(1, fitWidth / Math.max(1, viewport.width));
+        const renderViewport = page.getViewport({ scale });
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = Math.round(renderViewport.width);
+        canvas.height = Math.round(renderViewport.height);
+        await page.render({ canvasContext: context, viewport: renderViewport }).promise;
+        return {
+            referencePreviewDataUrl: canvas.toDataURL('image/png'),
+            referencePreviewWidth: canvas.width,
+            referencePreviewHeight: canvas.height
+        };
+    }
+
+    async function _normalizeDocumentReferencePreviews(rows) {
+        const list = Array.isArray(rows) ? rows : [];
+        let changed = false;
+        const next = [];
+        for (const row of list) {
+            if (row && row.referenceType === 'application/pdf' && row.referenceDataUrl && !row.referencePreviewDataUrl) {
+                try {
+                    const preview = await _buildPdfReferencePreview(row.referenceDataUrl);
+                    if (preview?.referencePreviewDataUrl) {
+                        next.push({ ...row, ...preview });
+                        changed = true;
+                        continue;
+                    }
+                } catch (error) {
+                    console.warn('[Settings] pdf preview build failed', error);
+                }
+            }
+            next.push(row);
+        }
+        if (changed) {
+            await _saveDocumentDesigns(next);
+        }
+        return next;
+    }
+
     function _docSelectedDesign(rows) {
         const active = rows.find(d => d.id === _docDesignEditorId) || rows[0] || null;
         if (active) _docDesignEditorId = active.id;
@@ -6937,14 +7071,17 @@ const SettingsModule = (function() {
 
     function _renderDocReference(design, size) {
         if (!design || !design.referenceDataUrl) return '';
-        if ((design.referenceType || '').startsWith('image/')) {
-            return `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:12px;overflow:hidden;pointer-events:none;">
-                        <img src="${design.referenceDataUrl}" alt="${design.referenceName || 'reference'}"
+        const { transform } = _docReferenceTransform(design);
+        const box = _docReferenceBox(size);
+        const previewSrc = design.referencePreviewDataUrl || design.referenceDataUrl;
+        if ((design.referenceType || '').startsWith('image/') || ((design.referenceType || '') === 'application/pdf' && design.referencePreviewDataUrl)) {
+            return `<div id="doc-reference-preview" style="position:absolute;left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px;display:flex;align-items:center;justify-content:center;overflow:hidden;pointer-events:none;transform:${transform};transform-origin:center center;z-index:1;">
+                        <img src="${previewSrc}" alt="${design.referenceName || 'reference'}"
                             style="width:100%;height:100%;object-fit:contain;object-position:center top;opacity:.32;box-shadow:0 0 0 1px rgba(148,163,184,.28);">
                     </div>`;
         }
         if ((design.referenceType || '') === 'application/pdf') {
-            return `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:12px;overflow:hidden;pointer-events:none;">
+            return `<div id="doc-reference-preview" style="position:absolute;left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px;display:flex;align-items:center;justify-content:center;overflow:hidden;pointer-events:none;transform:${transform};transform-origin:center center;z-index:1;">
                         <object data="${design.referenceDataUrl}#toolbar=0&navpanes=0&scrollbar=0" type="application/pdf"
                             style="width:100%;height:100%;opacity:.45;">
                             <embed src="${design.referenceDataUrl}#toolbar=0&navpanes=0&scrollbar=0" type="application/pdf"
@@ -6952,12 +7089,94 @@ const SettingsModule = (function() {
                         </object>
                     </div>`;
         }
-        return `<div style="position:absolute;left:24px;top:24px;right:24px;padding:18px;border:1px dashed #94a3b8;border-radius:14px;background:rgba(255,255,255,.94);color:#334155;pointer-events:none;">?? ??: ${design.referenceName || '??'} (${_referenceKindLabel(design.referenceType)})</div>`;
+        return `<div id="doc-reference-preview" style="position:absolute;left:${box.x}px;top:${box.y}px;width:${box.w}px;padding:18px;border:1px dashed #94a3b8;border-radius:14px;background:rgba(255,255,255,.94);color:#334155;pointer-events:none;transform:${transform};transform-origin:center center;z-index:1;">?? ??: ${design.referenceName || '??'} (${_referenceKindLabel(design.referenceType)})</div>`;
+    }
+
+    function _renderDocReferenceHandles(design, size) {
+        if (!design || !design.referenceDataUrl) return '';
+        const box = _docReferenceBox(size);
+        const { transform } = _docReferenceTransform(design);
+        const handles = [
+            { mode: 'resize-nw', cursor: 'nwse-resize', left: -6, top: -6 },
+            { mode: 'resize-ne', cursor: 'nesw-resize', right: -6, top: -6 },
+            { mode: 'resize-sw', cursor: 'nesw-resize', left: -6, bottom: -6 },
+            { mode: 'resize-se', cursor: 'nwse-resize', right: -6, bottom: -6 }
+        ];
+        return `
+            <div id="doc-reference-frame" style="position:absolute;left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px;transform:${transform};transform-origin:center center;pointer-events:none;z-index:5;">
+                <div style="position:absolute;inset:0;border:2px solid rgba(37,99,235,.85);box-shadow:0 0 0 1px rgba(255,255,255,.9) inset;border-radius:2px;"></div>
+                <div onmousedown="SettingsModule.startDocumentReferenceDrag(event, 'move')" style="position:absolute;left:50%;top:-18px;transform:translateX(-50%);padding:2px 10px;border:1px solid rgba(37,99,235,.35);border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:11px;font-weight:700;letter-spacing:0;cursor:move;pointer-events:auto;user-select:none;">양식 이동</div>
+                ${handles.map(handle => `<div onmousedown="SettingsModule.startDocumentReferenceDrag(event, '${handle.mode}')" style="position:absolute;width:12px;height:12px;border:2px solid #2563eb;background:#fff;pointer-events:auto;user-select:none;cursor:${handle.cursor};${handle.left != null ? `left:${handle.left}px;` : ''}${handle.right != null ? `right:${handle.right}px;` : ''}${handle.top != null ? `top:${handle.top}px;` : ''}${handle.bottom != null ? `bottom:${handle.bottom}px;` : ''}"></div>`).join('')}
+            </div>
+        `;
+    }
+
+    function _applyDocumentReferencePreview(scale, offsetX, offsetY) {
+        const transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+        ['doc-reference-preview', 'doc-reference-frame'].forEach(id => {
+            const node = document.getElementById(id);
+            if (node) node.style.transform = transform;
+        });
+    }
+
+    function _cleanupDocumentReferenceDrag() {
+        if (_docReferenceDragState?.moveHandler) {
+            document.removeEventListener('mousemove', _docReferenceDragState.moveHandler);
+        }
+        if (_docReferenceDragState?.upHandler) {
+            document.removeEventListener('mouseup', _docReferenceDragState.upHandler);
+        }
+        _docReferenceDragState = null;
+    }
+
+    function _renderDocElementHandles(el) {
+        if (!el) return '';
+        const handles = [
+            { mode: 'resize-nw', cursor: 'nwse-resize', left: -6, top: -6 },
+            { mode: 'resize-ne', cursor: 'nesw-resize', right: -6, top: -6 },
+            { mode: 'resize-sw', cursor: 'nesw-resize', left: -6, bottom: -6 },
+            { mode: 'resize-se', cursor: 'nwse-resize', right: -6, bottom: -6 }
+        ];
+        return `
+            <div id="doc-element-frame-${el.id}" style="position:absolute;left:${el.x - 2}px;top:${el.y - 2}px;width:${el.w + 4}px;height:${Math.max(el.h, 2) + 4}px;pointer-events:none;z-index:6;">
+                <div style="position:absolute;inset:0;border:2px solid rgba(37,99,235,.92);box-shadow:0 0 0 1px rgba(255,255,255,.9) inset;"></div>
+                <div onmousedown="SettingsModule.startDocumentElementDrag(event, '${el.id}', 'move')" style="position:absolute;left:50%;top:-18px;transform:translateX(-50%);padding:2px 10px;border:1px solid rgba(37,99,235,.35);border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:11px;font-weight:700;cursor:move;pointer-events:auto;user-select:none;">요소 이동</div>
+                ${handles.map(handle => `<div onmousedown="SettingsModule.startDocumentElementDrag(event, '${el.id}', '${handle.mode}')" style="position:absolute;width:12px;height:12px;border:2px solid #2563eb;background:#fff;pointer-events:auto;user-select:none;cursor:${handle.cursor};${handle.left != null ? `left:${handle.left}px;` : ''}${handle.right != null ? `right:${handle.right}px;` : ''}${handle.top != null ? `top:${handle.top}px;` : ''}${handle.bottom != null ? `bottom:${handle.bottom}px;` : ''}"></div>`).join('')}
+            </div>
+        `;
+    }
+
+    function _applyDocumentElementPreview(elementId, x, y, w, h) {
+        const node = document.getElementById(`doc-element-${elementId}`);
+        if (node) {
+            node.style.left = `${x}px`;
+            node.style.top = `${y}px`;
+            node.style.width = `${w}px`;
+            node.style.height = `${Math.max(h, 2)}px`;
+        }
+        const frame = document.getElementById(`doc-element-frame-${elementId}`);
+        if (frame) {
+            frame.style.left = `${x - 2}px`;
+            frame.style.top = `${y - 2}px`;
+            frame.style.width = `${w + 4}px`;
+            frame.style.height = `${Math.max(h, 2) + 4}px`;
+        }
+    }
+
+    function _cleanupDocumentElementDrag() {
+        if (_docElementDragState?.moveHandler) {
+            document.removeEventListener('mousemove', _docElementDragState.moveHandler);
+        }
+        if (_docElementDragState?.upHandler) {
+            document.removeEventListener('mouseup', _docElementDragState.upHandler);
+        }
+        _docElementDragState = null;
     }
 
     function _renderDocElement(el) {
-        const base = `position:absolute;left:${el.x}px;top:${el.y}px;width:${el.w}px;height:${el.h}px;`;
-        if (el.type === 'line') return `<div onclick="SettingsModule.selectDocumentElement('${el.id}')" style="${base}height:0;border-top:2px solid ${el.borderColor || '#111827'};cursor:pointer;"></div>`;
+        const base = `position:absolute;left:${el.x}px;top:${el.y}px;width:${el.w}px;height:${Math.max(el.h, 2)}px;`;
+        const idAttr = `id="doc-element-${el.id}"`;
+        if (el.type === 'line') return `<div ${idAttr} onclick="SettingsModule.selectDocumentElement('${el.id}')" style="${base}height:0;border-top:2px solid ${el.borderColor || '#111827'};cursor:pointer;"></div>`;
         if (el.type === 'text') return `<div onclick="SettingsModule.selectDocumentElement('${el.id}')" style="${base}border:1px dashed #94a3b8;background:#fff;padding:4px;font-size:${el.fontSize || 14}px;font-weight:${el.bold ? '800' : '500'};cursor:pointer;overflow:hidden;">${el.text || '텍스트'}</div>`;
         if (el.type === 'table') {
             const rows = Math.max(1, Number(el.rows) || 1);
@@ -6971,7 +7190,7 @@ const SettingsModule = (function() {
     }
 
     async function renderDocumentDesignTab(el) {
-        const designs = await _loadDocumentDesigns();
+        const designs = await _normalizeDocumentReferencePreviews(await _loadDocumentDesigns());
         const active = _docSelectedDesign(designs);
         const selected = _docSelectedElement(active);
         const size = _docCanvasSize();
@@ -7013,7 +7232,8 @@ const SettingsModule = (function() {
                                 <div style="overflow:hidden;border:1px solid var(--border-color);border-radius:12px;background:#eef2f7;padding:16px;">
                                     <div style="position:relative;width:${size.w}px;height:${size.h}px;background:#fff;border:1px solid #111827;margin:0 auto;overflow:hidden;box-shadow:0 8px 24px rgba(15,23,42,.08);">
                                         ${_renderDocReference(active, size)}
-                                        ${(active.elements || []).map(item => `${_renderDocElement(item)}${selected && selected.id === item.id ? `<div style="position:absolute;left:${item.x - 2}px;top:${item.y - 2}px;width:${item.w + 4}px;height:${Math.max(item.h, 2) + 4}px;border:2px solid #2563eb;pointer-events:none;"></div>` : ''}`).join('')}
+                                        ${_renderDocReferenceHandles(active, size)}
+                                        ${(active.elements || []).map(item => `${_renderDocElement(item)}${selected && selected.id === item.id ? _renderDocElementHandles(item) : ''}`).join('')}
                                     </div>
                                 </div>
                                 <div style="border:1px solid var(--border-color);border-radius:12px;padding:12px;background:#fff;">
@@ -7030,6 +7250,14 @@ const SettingsModule = (function() {
                                         <div style="margin-top:6px;font-size:.76rem;color:var(--text-muted);">
                                             ${active.referenceName ? `등록됨: ${active.referenceName}` : '이미지나 PDF를 올리면 현재 사용 양식을 캔버스 배경 참조로 볼 수 있습니다.'}
                                         </div>
+                                        ${active.referenceDataUrl ? `
+                                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;">
+                                                <div class="form-group" style="margin:0;"><label class="form-label">배율</label><input class="form-input" type="number" min="0.1" step="0.05" value="${active.referenceScale || 1}" onchange="SettingsModule.updateDocumentDesignMeta('referenceScale', this.value)"></div>
+                                                <div class="form-group" style="margin:0;"><label class="form-label">X 이동</label><input class="form-input" type="number" step="1" value="${active.referenceOffsetX || 0}" onchange="SettingsModule.updateDocumentDesignMeta('referenceOffsetX', this.value)"></div>
+                                                <div class="form-group" style="margin:0;"><label class="form-label">Y 이동</label><input class="form-input" type="number" step="1" value="${active.referenceOffsetY || 0}" onchange="SettingsModule.updateDocumentDesignMeta('referenceOffsetY', this.value)"></div>
+                                                <div class="form-group" style="margin:0;"><label class="form-label">빠른 조정</label><button class="btn btn-outline btn-sm" type="button" onclick="SettingsModule.resetDocumentReferenceView()">맞춤 초기화</button></div>
+                                            </div>
+                                        ` : ''}
                                     </div>
                                     <div style="font-weight:800;margin-bottom:10px;">요소 속성</div>
                                     ${selected ? `
@@ -7078,6 +7306,14 @@ const SettingsModule = (function() {
         const referenceType = _resolveReferenceType(file);
         const reader = new FileReader();
         reader.onload = async () => {
+            let previewMeta = {};
+            if (referenceType === 'application/pdf') {
+                try {
+                    previewMeta = await _buildPdfReferencePreview(String(reader.result || '')) || {};
+                } catch (error) {
+                    console.warn('[Settings] create design pdf preview failed', error);
+                }
+            }
             const newId = `doc-design-${Date.now()}`;
             _docDesignEditorId = newId;
             _docDesignSelectedElementId = '';
@@ -7085,7 +7321,8 @@ const SettingsModule = (function() {
                 _docDesignSeed(newId, file.name.replace(/\.[^.]+$/, '') || '업로드 양식', '기준서', 'A4-L', [], {
                     referenceName: file.name,
                     referenceType,
-                    referenceDataUrl: String(reader.result || '')
+                    referenceDataUrl: String(reader.result || ''),
+                    ...previewMeta
                 }),
                 ...rows
             ]);
@@ -7170,11 +7407,23 @@ const SettingsModule = (function() {
         const referenceType = _resolveReferenceType(file);
         const reader = new FileReader();
         reader.onload = async () => {
+            let previewMeta = {};
+            if (referenceType === 'application/pdf') {
+                try {
+                    previewMeta = await _buildPdfReferencePreview(String(reader.result || '')) || {};
+                } catch (error) {
+                    console.warn('[Settings] replace design pdf preview failed', error);
+                }
+            }
             await _replaceDocumentDesigns(rows => rows.map(d => d.id === _docDesignEditorId ? {
                 ...d,
                 referenceName: file.name,
                 referenceType,
-                referenceDataUrl: String(reader.result || '')
+                referenceDataUrl: String(reader.result || ''),
+                referencePreviewDataUrl: '',
+                referencePreviewWidth: 0,
+                referencePreviewHeight: 0,
+                ...previewMeta
             } : d));
             UIUtils.toast('양식을 디자인 참조로 등록했습니다.', 'success');
         };
@@ -7187,8 +7436,188 @@ const SettingsModule = (function() {
             ...d,
             referenceName: '',
             referenceType: '',
-            referenceDataUrl: ''
+            referenceDataUrl: '',
+            referencePreviewDataUrl: '',
+            referencePreviewWidth: 0,
+            referencePreviewHeight: 0,
+            referenceScale: 1,
+            referenceOffsetX: 0,
+            referenceOffsetY: 0
         } : d));
+    }
+
+    async function resetDocumentReferenceView() {
+        await _replaceDocumentDesigns(rows => rows.map(d => d.id === _docDesignEditorId ? {
+            ...d,
+            referenceScale: 1,
+            referenceOffsetX: 0,
+            referenceOffsetY: 0
+        } : d));
+    }
+
+    async function startDocumentReferenceDrag(event, mode) {
+        if (!_docDesignEditorId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        _cleanupDocumentReferenceDrag();
+
+        const rows = await _loadDocumentDesigns();
+        const active = _docSelectedDesign(rows);
+        if (!active || !active.referenceDataUrl) return;
+
+        const { scale, offsetX, offsetY } = _docReferenceTransform(active);
+        const size = _docCanvasSize();
+        const box = _docReferenceBox(size);
+
+        const dragState = {
+            mode,
+            startX: event.clientX,
+            startY: event.clientY,
+            startScale: scale,
+            startOffsetX: offsetX,
+            startOffsetY: offsetY,
+            boxW: box.w,
+            boxH: box.h
+        };
+
+        const moveHandler = (moveEvent) => {
+            const dx = moveEvent.clientX - dragState.startX;
+            const dy = moveEvent.clientY - dragState.startY;
+            let nextScale = dragState.startScale;
+            let nextOffsetX = dragState.startOffsetX;
+            let nextOffsetY = dragState.startOffsetY;
+
+            if (dragState.mode === 'move') {
+                nextOffsetX += dx;
+                nextOffsetY += dy;
+            } else {
+                let ratioDelta = 0;
+                if (dragState.mode === 'resize-se') ratioDelta = Math.max(dx / dragState.boxW, dy / dragState.boxH);
+                if (dragState.mode === 'resize-ne') ratioDelta = Math.max(dx / dragState.boxW, -dy / dragState.boxH);
+                if (dragState.mode === 'resize-sw') ratioDelta = Math.max(-dx / dragState.boxW, dy / dragState.boxH);
+                if (dragState.mode === 'resize-nw') ratioDelta = Math.max(-dx / dragState.boxW, -dy / dragState.boxH);
+                nextScale = Math.max(0.1, Math.min(5, dragState.startScale * (1 + ratioDelta)));
+            }
+
+            dragState.currentScale = Number(nextScale.toFixed(3));
+            dragState.currentOffsetX = Math.round(nextOffsetX);
+            dragState.currentOffsetY = Math.round(nextOffsetY);
+            _applyDocumentReferencePreview(dragState.currentScale, dragState.currentOffsetX, dragState.currentOffsetY);
+        };
+
+        const upHandler = async () => {
+            document.removeEventListener('mousemove', moveHandler);
+            document.removeEventListener('mouseup', upHandler);
+            const finalScale = dragState.currentScale ?? dragState.startScale;
+            const finalOffsetX = dragState.currentOffsetX ?? dragState.startOffsetX;
+            const finalOffsetY = dragState.currentOffsetY ?? dragState.startOffsetY;
+            _docReferenceDragState = null;
+            await _replaceDocumentDesigns(items => items.map(item => item.id === _docDesignEditorId ? {
+                ...item,
+                referenceScale: finalScale,
+                referenceOffsetX: finalOffsetX,
+                referenceOffsetY: finalOffsetY
+            } : item));
+        };
+
+        dragState.moveHandler = moveHandler;
+        dragState.upHandler = upHandler;
+        _docReferenceDragState = dragState;
+        document.addEventListener('mousemove', moveHandler);
+        document.addEventListener('mouseup', upHandler);
+    }
+
+    async function startDocumentElementDrag(event, elementId, mode) {
+        if (!_docDesignEditorId || !elementId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        _cleanupDocumentElementDrag();
+
+        const rows = await _loadDocumentDesigns();
+        const active = _docSelectedDesign(rows);
+        const target = (active?.elements || []).find(el => el.id === elementId);
+        if (!target) return;
+
+        const dragState = {
+            id: elementId,
+            mode,
+            startX: event.clientX,
+            startY: event.clientY,
+            startLeft: Number(target.x) || 0,
+            startTop: Number(target.y) || 0,
+            startWidth: Math.max(2, Number(target.w) || 0),
+            startHeight: Math.max(2, Number(target.h) || 0)
+        };
+
+        const moveHandler = (moveEvent) => {
+            const dx = moveEvent.clientX - dragState.startX;
+            const dy = moveEvent.clientY - dragState.startY;
+            let nextX = dragState.startLeft;
+            let nextY = dragState.startTop;
+            let nextW = dragState.startWidth;
+            let nextH = dragState.startHeight;
+
+            if (dragState.mode === 'move') {
+                nextX += dx;
+                nextY += dy;
+            } else if (dragState.mode === 'resize-se') {
+                nextW += dx;
+                nextH += dy;
+            } else if (dragState.mode === 'resize-sw') {
+                nextX += dx;
+                nextW -= dx;
+                nextH += dy;
+            } else if (dragState.mode === 'resize-ne') {
+                nextY += dy;
+                nextW += dx;
+                nextH -= dy;
+            } else if (dragState.mode === 'resize-nw') {
+                nextX += dx;
+                nextY += dy;
+                nextW -= dx;
+                nextH -= dy;
+            }
+
+            nextW = Math.max(target.type === 'line' ? 40 : 24, Math.round(nextW));
+            nextH = Math.max(target.type === 'line' ? 2 : 24, Math.round(nextH));
+            nextX = Math.round(nextX);
+            nextY = Math.round(nextY);
+
+            dragState.currentX = nextX;
+            dragState.currentY = nextY;
+            dragState.currentW = nextW;
+            dragState.currentH = nextH;
+
+            const frame = document.getElementById(`doc-element-frame-${elementId}`);
+            if (frame) {
+                frame.style.left = `${nextX - 2}px`;
+                frame.style.top = `${nextY - 2}px`;
+                frame.style.width = `${nextW + 4}px`;
+                frame.style.height = `${Math.max(nextH, 2) + 4}px`;
+            }
+        };
+
+        const upHandler = async () => {
+            document.removeEventListener('mousemove', moveHandler);
+            document.removeEventListener('mouseup', upHandler);
+            _docElementDragState = null;
+            await _replaceDocumentDesigns(items => items.map(item => item.id === _docDesignEditorId ? {
+                ...item,
+                elements: (item.elements || []).map(el => el.id === elementId ? {
+                    ...el,
+                    x: dragState.currentX ?? dragState.startLeft,
+                    y: dragState.currentY ?? dragState.startTop,
+                    w: dragState.currentW ?? dragState.startWidth,
+                    h: dragState.currentH ?? dragState.startHeight
+                } : el)
+            } : item));
+        };
+
+        dragState.moveHandler = moveHandler;
+        dragState.upHandler = upHandler;
+        _docElementDragState = dragState;
+        document.addEventListener('mousemove', moveHandler);
+        document.addEventListener('mouseup', upHandler);
     }
 
     function renderSystemTab(el) {
@@ -7958,39 +8387,99 @@ const SettingsModule = (function() {
             const saved = await Storage.getConfigValue(PROCESS_CONFIG_KEY);
             if (Array.isArray(saved) && saved.length > 0) _processTypes = saved;
         } catch(e) {}
+        try {
+            const savedSub = await Storage.getConfigValue(SUB_PROCESS_CONFIG_KEY);
+            if (savedSub && typeof savedSub === 'object' && !Array.isArray(savedSub)) {
+                _subProcessTypes = savedSub;
+            } else {
+                // 기본값 복사 (새 설치 또는 첫 로드)
+                _subProcessTypes = JSON.parse(JSON.stringify(DEFAULT_SUB_PROCESS_TYPES));
+            }
+        } catch(e) {
+            _subProcessTypes = JSON.parse(JSON.stringify(DEFAULT_SUB_PROCESS_TYPES));
+        }
+        // 현재 주공정 중 세부 공정 키가 없으면 빈 배열로 초기화
+        _processTypes.forEach(p => {
+            if (!_subProcessTypes[p]) _subProcessTypes[p] = [];
+        });
+        // 초기 선택 주공정
+        if (!_selectedMainForSub || !_processTypes.includes(_selectedMainForSub)) {
+            _selectedMainForSub = _processTypes[0] || '';
+        }
     }
 
     async function _saveProcessTypes() {
         await Storage.setConfigValue(PROCESS_CONFIG_KEY, _processTypes);
     }
 
+    async function _saveSubProcessTypes() {
+        await Storage.setConfigValue(SUB_PROCESS_CONFIG_KEY, _subProcessTypes);
+    }
+
     function renderProcessTab(el) {
         el.innerHTML = `
-            <div class="card">
-                <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
-                    <h4>
-                        <span class="material-symbols-outlined">settings_applications</span>
-                        제조 공정 관리
-                    </h4>
-                    <button class="btn btn-primary btn-sm" onclick="SettingsModule.openAddProcessModal()">
-                        <span class="material-symbols-outlined">add</span> 공정 추가
-                    </button>
-                </div>
-                <div class="card-body">
-                    <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:16px;">
-                        제품 정보의 <strong>제조 공정</strong> 선택 항목을 관리합니다.<br>
-                        순서를 변경하거나 항목을 추가/삭제할 수 있습니다.
-                    </p>
-                    <div id="processTypeList">
-                        ${_renderProcessList()}
+            <div style="display:grid;grid-template-columns:1fr 1.6fr;gap:20px;align-items:start;">
+
+                <!-- ① 주공정 카드 -->
+                <div class="card">
+                    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+                        <h4 style="margin:0;font-size:0.95rem;display:flex;align-items:center;gap:6px;">
+                            <span class="material-symbols-outlined" style="font-size:18px;">account_tree</span>
+                            주공정 관리
+                        </h4>
+                        <button class="btn btn-primary btn-sm" onclick="SettingsModule.openAddProcessModal()">
+                            <span class="material-symbols-outlined">add</span> 추가
+                        </button>
                     </div>
-                    <div style="margin-top:16px;padding:10px 14px;
-                                background:rgba(59,130,246,0.06);border-radius:8px;
-                                font-size:0.8rem;color:var(--text-muted);">
-                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">info</span>
-                        공정 항목 변경 시 기존 제품 정보에 이미 저장된 공정 값은 자동으로 변경되지 않습니다.
+                    <div class="card-body">
+                        <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:12px;">
+                            제품 정보의 <strong>제조 공정</strong> 선택 항목을 관리합니다.
+                        </p>
+                        <div id="processTypeList">
+                            ${_renderProcessList()}
+                        </div>
+                        <div style="margin-top:12px;padding:8px 12px;
+                                    background:rgba(59,130,246,0.06);border-radius:8px;
+                                    font-size:0.78rem;color:var(--text-muted);">
+                            <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">info</span>
+                            공정 변경 시 기존 저장된 값은 자동 변경되지 않습니다.
+                        </div>
                     </div>
                 </div>
+
+                <!-- ② 세부 공정 카드 -->
+                <div class="card">
+                    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+                        <h4 style="margin:0;font-size:0.95rem;display:flex;align-items:center;gap:6px;">
+                            <span class="material-symbols-outlined" style="font-size:18px;">device_hub</span>
+                            세부 공정 관리
+                        </h4>
+                        <button class="btn btn-primary btn-sm" onclick="SettingsModule.openAddSubProcessModal()">
+                            <span class="material-symbols-outlined">add</span> 추가
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:12px;">
+                            주공정별 <strong>세부 공정(스테이션)</strong>을 관리합니다.
+                            CP 관리계획서의 공정 명칭과 일치해야 합니다.
+                        </p>
+                        <!-- 주공정 탭 선택 -->
+                        <div id="subProcMainTabs" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">
+                            ${_renderMainProcTabs()}
+                        </div>
+                        <!-- 세부 공정 목록 -->
+                        <div id="subProcessList">
+                            ${_renderSubProcessList()}
+                        </div>
+                        <div style="margin-top:12px;padding:8px 12px;
+                                    background:rgba(16,185,129,0.06);border-radius:8px;
+                                    font-size:0.78rem;color:var(--text-muted);">
+                            <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">info</span>
+                            세부 공정명은 관리계획서(CP)의 공정 스테이션 명칭과 일치시켜 주세요.
+                        </div>
+                    </div>
+                </div>
+
             </div>
         `;
     }
@@ -8039,6 +8528,180 @@ const SettingsModule = (function() {
     function _refreshProcessList() {
         const el = document.getElementById('processTypeList');
         if (el) el.innerHTML = _renderProcessList();
+        // 주공정 탭도 갱신
+        const tabEl = document.getElementById('subProcMainTabs');
+        if (tabEl) tabEl.innerHTML = _renderMainProcTabs();
+        _refreshSubProcessList();
+    }
+
+    // ── 세부 공정 렌더링 ──────────────────────────────────────────────
+
+    function _renderMainProcTabs() {
+        if (_processTypes.length === 0) return '';
+        // 선택된 주공정이 현재 목록에 없으면 첫 번째로 재설정
+        if (!_processTypes.includes(_selectedMainForSub)) {
+            _selectedMainForSub = _processTypes[0];
+        }
+        return _processTypes.map(p => {
+            const isActive = p === _selectedMainForSub;
+            const subCnt   = (_subProcessTypes[p] || []).length;
+            return `
+                <button onclick="SettingsModule.selectMainForSub('${p.replace(/'/g, "\\'")}')"
+                        style="padding:5px 12px;border-radius:20px;border:1px solid;font-size:0.8rem;
+                               cursor:pointer;display:flex;align-items:center;gap:5px;
+                               background:${isActive ? 'var(--accent-blue)' : 'transparent'};
+                               color:${isActive ? '#fff' : 'var(--text-primary)'};
+                               border-color:${isActive ? 'var(--accent-blue)' : 'var(--border-color)'};">
+                    ${p}
+                    <span style="font-size:0.72rem;padding:1px 5px;border-radius:10px;
+                                 background:${isActive ? 'rgba(255,255,255,0.25)' : 'var(--bg-secondary)'};
+                                 color:${isActive ? '#fff' : 'var(--text-muted)'};">${subCnt}</span>
+                </button>`;
+        }).join('');
+    }
+
+    function _renderSubProcessList() {
+        const main = _selectedMainForSub;
+        if (!main) return `<p style="color:var(--text-muted);text-align:center;padding:20px;">주공정을 선택하세요.</p>`;
+        const subs = _subProcessTypes[main] || [];
+        if (subs.length === 0) {
+            return `<p style="color:var(--text-muted);text-align:center;padding:20px;">
+                        등록된 세부 공정이 없습니다. <strong>추가</strong> 버튼으로 등록하세요.
+                    </p>`;
+        }
+        return `
+            <div style="display:flex;flex-direction:column;gap:5px;">
+                ${subs.map((sub, idx) => `
+                    <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;
+                                background:var(--bg-secondary);border-radius:8px;
+                                border:1px solid var(--border-color);">
+                        <span style="display:flex;flex-direction:column;gap:1px;">
+                            <button onclick="SettingsModule.moveSubProcess(${idx}, -1)"
+                                    style="background:none;border:none;cursor:pointer;
+                                           color:${idx === 0 ? 'var(--border-color)' : 'var(--text-muted)'};
+                                           padding:0;line-height:1;font-size:12px;"
+                                    ${idx === 0 ? 'disabled' : ''}>▲</button>
+                            <button onclick="SettingsModule.moveSubProcess(${idx}, 1)"
+                                    style="background:none;border:none;cursor:pointer;
+                                           color:${idx === subs.length - 1 ? 'var(--border-color)' : 'var(--text-muted)'};
+                                           padding:0;line-height:1;font-size:12px;"
+                                    ${idx === subs.length - 1 ? 'disabled' : ''}>▼</button>
+                        </span>
+                        <span style="font-size:0.78rem;color:var(--text-muted);width:20px;
+                                     text-align:right;flex-shrink:0;">${idx + 1}</span>
+                        <span style="flex:1;font-weight:600;font-size:0.88rem;
+                                     color:var(--text-primary);">${sub}</span>
+                        <button class="btn btn-sm btn-outline"
+                                onclick="SettingsModule.editSubProcess(${idx})">수정</button>
+                        <button class="btn btn-sm"
+                                style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;"
+                                onclick="SettingsModule.removeSubProcess(${idx})">삭제</button>
+                    </div>
+                `).join('')}
+            </div>`;
+    }
+
+    function _refreshSubProcessList() {
+        const el = document.getElementById('subProcessList');
+        if (el) el.innerHTML = _renderSubProcessList();
+        const tabEl = document.getElementById('subProcMainTabs');
+        if (tabEl) tabEl.innerHTML = _renderMainProcTabs();
+    }
+
+    function selectMainForSub(mainProc) {
+        _selectedMainForSub = mainProc;
+        _refreshSubProcessList();
+    }
+
+    function openAddSubProcessModal() {
+        const main = _selectedMainForSub;
+        if (!main) { UIUtils.toast('먼저 주공정을 선택하세요.', 'warning'); return; }
+        UIUtils.showModal(`세부 공정 추가 — ${main}`, `
+            <div class="form-group">
+                <label class="form-label">세부 공정명 <span style="color:red;">*</span></label>
+                <input id="newSubProcessName" class="form-control" type="text"
+                       placeholder="예: 로딩, 세척, 상도 스프레이" style="font-size:1rem;">
+                <p style="font-size:0.8rem;color:var(--text-muted);margin-top:6px;">
+                    CP 관리계획서의 스테이션 명칭과 일치하게 입력하세요.
+                </p>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="SettingsModule.addSubProcess()">추가</button>
+        `, 'sm');
+        setTimeout(() => { const el = document.getElementById('newSubProcessName'); if(el) el.focus(); }, 80);
+    }
+
+    async function addSubProcess() {
+        const name = (document.getElementById('newSubProcessName')?.value || '').trim();
+        if (!name) { UIUtils.toast('세부 공정명을 입력하세요.', 'warning'); return; }
+        const main = _selectedMainForSub;
+        if (!main) { UIUtils.toast('주공정이 선택되지 않았습니다.', 'warning'); return; }
+        if (!_subProcessTypes[main]) _subProcessTypes[main] = [];
+        if (_subProcessTypes[main].includes(name)) {
+            UIUtils.toast('이미 존재하는 세부 공정명입니다.', 'warning'); return;
+        }
+        _subProcessTypes[main].push(name);
+        await _saveSubProcessTypes();
+        UIUtils.closeModal();
+        UIUtils.toast(`"${name}" 세부 공정이 추가되었습니다.`, 'success');
+        _refreshSubProcessList();
+    }
+
+    function editSubProcess(idx) {
+        const main = _selectedMainForSub;
+        const current = (_subProcessTypes[main] || [])[idx] || '';
+        UIUtils.showModal('세부 공정 수정', `
+            <div class="form-group">
+                <label class="form-label">세부 공정명</label>
+                <input id="editSubProcessName" class="form-control" type="text"
+                       value="${current}" style="font-size:1rem;">
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="SettingsModule.updateSubProcess(${idx})">수정</button>
+        `, 'sm');
+        setTimeout(() => { const el = document.getElementById('editSubProcessName'); if(el) el.focus(); }, 80);
+    }
+
+    async function updateSubProcess(idx) {
+        const name = (document.getElementById('editSubProcessName')?.value || '').trim();
+        if (!name) { UIUtils.toast('세부 공정명을 입력하세요.', 'warning'); return; }
+        const main = _selectedMainForSub;
+        const subs = _subProcessTypes[main] || [];
+        if (subs.includes(name) && subs[idx] !== name) {
+            UIUtils.toast('이미 존재하는 세부 공정명입니다.', 'warning'); return;
+        }
+        subs[idx] = name;
+        _subProcessTypes[main] = subs;
+        await _saveSubProcessTypes();
+        UIUtils.closeModal();
+        UIUtils.toast('수정되었습니다.', 'success');
+        _refreshSubProcessList();
+    }
+
+    async function removeSubProcess(idx) {
+        const main = _selectedMainForSub;
+        const subs = _subProcessTypes[main] || [];
+        const name = subs[idx];
+        UIUtils.confirm(`"${name}" 세부 공정을 삭제하시겠습니까?`, async () => {
+            subs.splice(idx, 1);
+            _subProcessTypes[main] = subs;
+            await _saveSubProcessTypes();
+            UIUtils.toast(`"${name}" 세부 공정이 삭제되었습니다.`, 'success');
+            _refreshSubProcessList();
+        });
+    }
+
+    async function moveSubProcess(idx, dir) {
+        const main = _selectedMainForSub;
+        const subs = _subProcessTypes[main] || [];
+        const newIdx = idx + dir;
+        if (newIdx < 0 || newIdx >= subs.length) return;
+        [subs[idx], subs[newIdx]] = [subs[newIdx], subs[idx]];
+        _subProcessTypes[main] = subs;
+        await _saveSubProcessTypes();
+        _refreshSubProcessList();
     }
 
     function openAddProcessModal() {
@@ -9347,7 +10010,7 @@ const SettingsModule = (function() {
         deleteRecordsByPartNames,
         openInvPartNameEditModal,
         applyInvPartNameEdit,
-        // 제조 공정 관리
+        // 제조 공정 관리 — 주공정
         renderProcessTab,
         openAddProcessModal,
         addProcess,
@@ -9355,6 +10018,14 @@ const SettingsModule = (function() {
         updateProcess,
         removeProcess,
         moveProcess,
+        // 세부 공정 관리
+        selectMainForSub,
+        openAddSubProcessModal,
+        addSubProcess,
+        editSubProcess,
+        updateSubProcess,
+        removeSubProcess,
+        moveSubProcess,
         renderDocumentDesignTab,
         selectDocumentDesign,
         createDocumentDesign,
@@ -9369,6 +10040,9 @@ const SettingsModule = (function() {
         resetDocumentDesigns,
         handleDocumentDesignReferenceUpload,
         clearDocumentDesignReference,
+        resetDocumentReferenceView,
+        startDocumentReferenceDrag,
+        startDocumentElementDrag,
     };
 
     // ── 제작품목 연결 (제품 마스터에서 선택) ─────────────────────────────

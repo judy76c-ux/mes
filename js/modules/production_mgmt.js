@@ -6206,16 +6206,91 @@ var ProdConditionsModule = (function() {
             const prev = byId.get(id) || {};
             return {
                 id,
-                section: row[0],
-                process: row[1],
-                item: row[2],
-                spec: row[3],
-                type: row[4],
-                value: prev.value || '',
-                result: prev.result || '',
-                note: prev.note || ''
+                section:   row[0],
+                process:   row[1],
+                item:      row[2],
+                spec:      row[3],
+                type:      row[4],
+                value:     prev.value     || '',
+                result:    prev.result    || '',
+                checkTime: prev.checkTime || ''
             };
         });
+    }
+
+    // ── 도장 공정 CP 필드 매핑 (관리계획서 연동용) ─────────────────────
+    const _PAINT_STATION_FIELDS = {
+        '로딩':  [
+            { key:'ld_speed', label:'컨베이어속도'   },
+            { key:'ld_press', label:'컨베이어압력'   },
+            { key:'ld_cover', label:'봉커버/체인오염'},
+            { key:'ld_jig',   label:'JIG 수명'      },
+            { key:'ld_grip',  label:'파지 위치'      },
+            { key:'ld_glove', label:'장갑 교환'      },
+        ],
+        '세척': [
+            { key:'wsh_temp', label:'세척 온도'   },
+            { key:'wsh_time', label:'세척 시간'   },
+            { key:'wsh_conc', label:'세척제 농도' },
+        ],
+        '제전': [
+            { key:'ion_volt', label:'제전기 전압' },
+            { key:'ion_air',  label:'에어 압력'   },
+        ],
+        '배합': [
+            { key:'mix_main', label:'주제 비율'   },
+            { key:'mix_hard', label:'경화제 비율' },
+            { key:'mix_thin', label:'희석제 비율' },
+            { key:'mix_visc', label:'점도'        },
+        ],
+        '상도 공급': [
+            { key:'us_press', label:'공급 압력' },
+            { key:'us_flow',  label:'유량'      },
+            { key:'us_visc',  label:'점도'      },
+        ],
+        '건조': [
+            { key:'ov_z1',   label:'Zone 1 온도' },
+            { key:'ov_z2',   label:'Zone 2 온도' },
+            { key:'ov_z3',   label:'Zone 3 온도' },
+            { key:'ov_time', label:'건조 시간'    },
+        ],
+        '언로딩': [
+            { key:'ul_speed', label:'컨베이어 속도' },
+            { key:'ul_cool',  label:'냉각 시간'     },
+        ],
+    };
+
+    // 차종·품명·C/S타입에 해당하는 CP 스펙을 label→value 맵으로 반환
+    function _buildCpLabelSpecMap(carModel, partName, csType) {
+        if (!carModel || !partName) return {};
+        const all = Storage.getAll(DB.STORES.PROD_STANDARDS) || [];
+        const procName = csType === 'B-LINE' ? '도장(B)' : '도장(A)';
+        const result = {};
+        Object.entries(_PAINT_STATION_FIELDS).forEach(([station, fields]) => {
+            const rec = all.find(r =>
+                r.carModel === carModel &&
+                r.partName === partName &&
+                r.process  === procName &&
+                r.station  === station
+            );
+            if (!rec) return;
+            fields.forEach(({ key, label }) => {
+                const val = rec[key];
+                if (val && val !== '') result[label] = String(val);
+            });
+        });
+        return result;
+    }
+
+    // C/S 항목명 → CP 스펙 퍼지 매칭
+    function _findCpSpec(cpMap, itemName) {
+        const norm = (s) => (s || '').replace(/[\s\/\-\_\(\)]/g, '').toLowerCase();
+        const ni = norm(itemName);
+        const found = Object.entries(cpMap).find(([label]) => {
+            const nl = norm(label);
+            return nl === ni || ni.includes(nl) || nl.includes(ni);
+        });
+        return found ? found[1] : null;
     }
 
     function _summary(items = []) {
@@ -6312,7 +6387,7 @@ var ProdConditionsModule = (function() {
                     </div>
                     <div class="form-group">
                         <label class="form-label">품명</label>
-                        <select class="form-select" id="pcPartName">
+                        <select class="form-select" id="pcPartName" onchange="ProdConditionsModule.onPcPartChange()">
                             <option value="">-- 품명 선택 --</option>
                             ${(()=>{
                                 const prods = Storage.getAll(DB.STORES.PRODUCTS) || [];
@@ -6335,9 +6410,21 @@ var ProdConditionsModule = (function() {
 
                 <div style="margin:16px 0 10px; font-weight:700; color:var(--accent-blue); display:flex; align-items:center; gap:8px;">
                      <span class="material-symbols-outlined">fact_check</span> 왼쪽 위부터 아래 순서로 입력
+                     <span id="pcCpStatusBadge" style="font-size:9px;font-weight:600;border:1px solid;border-radius:4px;padding:2px 6px;margin-left:auto;
+                         ${(()=>{
+                             const cpMap = _buildCpLabelSpecMap(d.carModel||'', d.partName||'', selectedType);
+                             return Object.keys(cpMap).length > 0
+                                 ? 'background:rgba(16,185,129,0.12);color:#059669;border-color:rgba(16,185,129,0.3);'
+                                 : 'background:rgba(156,163,175,0.15);color:var(--text-muted);border-color:var(--border-color);';
+                         })()}">
+                         ${(()=>{
+                             const cpMap = _buildCpLabelSpecMap(d.carModel||'', d.partName||'', selectedType);
+                             return Object.keys(cpMap).length > 0 ? 'CP 연동 완료' : 'CP 미연동';
+                         })()}
+                     </span>
                 </div>
 
-                <div id="pcLineSpecificContent">
+                <div id="pcCheckItemsBody">
                     ${renderLineSpecificFields(selectedType, { ...d, checkItems: items })}
                 </div>
             </div>
@@ -6346,29 +6433,94 @@ var ProdConditionsModule = (function() {
 
     function renderLineSpecificFields(type, d = {}) {
         const items = d.checkItems || _templateItems(type, []);
-        let current = '';
-        return items.map((item, idx) => {
-            const section = item.section !== current
-                ? (current = item.section, `<div style="margin:14px 0 8px;padding:8px 10px;background:var(--bg-secondary);border-left:4px solid var(--accent-blue);border-radius:6px;font-weight:800;">${_esc(item.section)}</div>`)
-                : '';
-            const input = item.type === 'check'
-                ? `<div class="pc-check-group" data-id="${item.id}" data-result="${_esc(item.result)}" style="display:flex;gap:6px;">
-                       <button type="button" class="btn btn-sm ${item.result === 'OK' ? 'btn-success' : 'btn-outline'}" onclick="ProdConditionsModule.setCheck('${item.id}','OK')">OK</button>
-                       <button type="button" class="btn btn-sm ${item.result === 'NG' ? 'btn-danger' : 'btn-outline'}" onclick="ProdConditionsModule.setCheck('${item.id}','NG')">NG</button>
-                   </div>`
-                : `<input type="text" class="form-input pc-value-input" data-id="${item.id}" value="${_esc(item.value)}" placeholder="${_esc(item.spec)}" oninput="ProdConditionsModule.updateProgress()">`;
-            return `
-                ${section}
-                <div class="pc-csheet-row" data-id="${item.id}" data-type="${item.type}" data-section="${_esc(item.section)}" data-process="${_esc(item.process)}" data-item="${_esc(item.item)}" data-spec="${_esc(item.spec)}"
-                     style="display:grid;grid-template-columns:42px 1fr 1.1fr 1.2fr 1fr;gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--border-color);border-radius:8px;margin-bottom:6px;background:#fff;">
-                    <div style="font-weight:800;color:var(--text-muted);">${idx + 1}</div>
-                    <div style="font-weight:700;">${_esc(item.process)}</div>
-                    <div>${_esc(item.item)}</div>
-                    <div style="font-size:0.82rem;color:var(--text-muted);">${_esc(item.spec)}</div>
-                    <div>${input}</div>
+        const carModel = (document.getElementById('pcCarModel') || {}).value || d.carModel || '';
+        const partName  = (document.getElementById('pcPartName')  || {}).value || d.partName  || '';
+        const cpMap     = _buildCpLabelSpecMap(carModel, partName, type);
+        const hasCp     = Object.keys(cpMap).length > 0;
+
+        const colGrid = 'grid-template-columns:1.8fr 2.5fr 2fr 68px';
+
+        const header = `
+            <div style="display:grid;${colGrid};gap:6px;padding:5px 10px;
+                        background:var(--bg-secondary);border:1px solid var(--border-color);
+                        border-radius:6px;margin-bottom:4px;">
+                <div style="font-size:10px;font-weight:700;color:var(--text-muted);">공정명</div>
+                <div style="font-size:10px;font-weight:700;color:var(--text-muted);">관리항목
+                    ${hasCp ? '<span style="font-size:9px;background:rgba(16,185,129,0.12);color:#059669;border:1px solid rgba(16,185,129,0.3);border-radius:3px;padding:1px 4px;margin-left:4px;">CP 연동</span>' : ''}
                 </div>
-            `;
+                <div style="font-size:10px;font-weight:700;color:var(--text-muted);">점검사항</div>
+                <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-align:center;">점검시간</div>
+            </div>`;
+
+        let currentSection = '';
+        const rows = items.map((item) => {
+            const sectionRow = item.section !== currentSection
+                ? (currentSection = item.section, `
+                    <div style="margin:10px 0 3px;padding:4px 10px;
+                                background:rgba(37,99,235,0.08);border-left:3px solid var(--accent-blue);
+                                border-radius:4px;font-weight:700;font-size:10px;color:var(--accent-blue);">
+                        ${_esc(item.section)}
+                    </div>`)
+                : '';
+
+            const cpSpec  = _findCpSpec(cpMap, item.item);
+            const cpBadge = cpSpec
+                ? `<span style="font-size:9px;background:rgba(16,185,129,0.1);color:#059669;border:1px solid rgba(16,185,129,0.3);border-radius:3px;padding:1px 4px;margin-left:3px;">CP</span>`
+                : '';
+            const specHint = cpSpec || item.spec;
+            const checkTimeVal = item.checkTime || '';
+
+            const input = item.type === 'check'
+                ? `<div class="pc-check-group" data-id="${item.id}" data-result="${_esc(item.result)}"
+                        style="display:flex;gap:4px;align-items:center;">
+                       <button type="button"
+                               class="btn btn-sm ${item.result === 'OK' ? 'btn-success' : 'btn-outline'}"
+                               onclick="ProdConditionsModule.setCheck('${item.id}','OK')"
+                               style="padding:2px 8px;font-size:10px;">OK</button>
+                       <button type="button"
+                               class="btn btn-sm ${item.result === 'NG' ? 'btn-danger' : 'btn-outline'}"
+                               onclick="ProdConditionsModule.setCheck('${item.id}','NG')"
+                               style="padding:2px 8px;font-size:10px;">NG</button>
+                   </div>`
+                : `<div>
+                       <input type="text" class="form-input pc-value-input" data-id="${item.id}"
+                              value="${_esc(item.value)}"
+                              placeholder="${_esc(specHint)}"
+                              style="font-size:10px;padding:3px 6px;height:26px;"
+                              oninput="ProdConditionsModule._onCsValueInput(this,'${item.id}')">
+                       ${cpSpec ? `<div style="font-size:9px;color:#059669;margin-top:2px;">기준: ${_esc(cpSpec)}</div>` : ''}
+                   </div>`;
+
+            const ngBg = item.result === 'NG' ? 'background:rgba(239,68,68,0.04);' : '';
+
+            return `
+                ${sectionRow}
+                <div class="pc-csheet-row"
+                     data-id="${item.id}"
+                     data-type="${item.type}"
+                     data-section="${_esc(item.section)}"
+                     data-process="${_esc(item.process)}"
+                     data-item="${_esc(item.item)}"
+                     data-spec="${_esc(item.spec)}"
+                     data-checktime="${_esc(checkTimeVal)}"
+                     style="display:grid;${colGrid};gap:6px;align-items:center;
+                            padding:5px 10px;border:1px solid var(--border-color);
+                            border-radius:6px;margin-bottom:3px;${ngBg}">
+                    <div style="font-size:11px;font-weight:600;line-height:1.3;">${_esc(item.process)}</div>
+                    <div>
+                        <div style="font-size:11px;font-weight:600;line-height:1.3;">${_esc(item.item)}${cpBadge}</div>
+                        ${specHint ? `<div style="font-size:9px;color:var(--text-muted);margin-top:1px;line-height:1.3;">${_esc(specHint)}</div>` : ''}
+                    </div>
+                    <div>${input}</div>
+                    <div class="pc-checktime" data-id="${item.id}"
+                         style="text-align:center;font-size:10px;font-family:monospace;
+                                color:${checkTimeVal ? 'var(--accent-blue)' : 'var(--text-muted)'};">
+                        ${checkTimeVal || '—'}
+                    </div>
+                </div>`;
         }).join('');
+
+        return header + rows;
     }
 
     function _presetSelectorHtml(csType) {
@@ -6451,7 +6603,7 @@ var ProdConditionsModule = (function() {
     }
 
     function toggleLine(type) {
-        const content = document.getElementById('pcLineSpecificContent');
+        const content = document.getElementById('pcCheckItemsBody');
         if (!content) return;
         content.innerHTML = renderLineSpecificFields(type, { checkItems: _templateItems(type, []) });
         // 프리셋 드롭다운도 현재 C/S 양식에 맞게 갱신
@@ -6473,7 +6625,30 @@ var ProdConditionsModule = (function() {
         group.querySelectorAll('button').forEach(btn => {
             btn.className = `btn btn-sm ${btn.textContent.trim() === result ? (result === 'OK' ? 'btn-success' : 'btn-danger') : 'btn-outline'}`;
         });
+        // 자동 점검시간 기록
+        _stampCheckTime(id);
         updateProgress();
+    }
+
+    function _onCsValueInput(inputEl, id) {
+        if (inputEl && inputEl.value.trim()) {
+            _stampCheckTime(id);
+        }
+        updateProgress();
+    }
+
+    function _stampCheckTime(id) {
+        const now = new Date();
+        const timeStr = now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0');
+        // data-checktime on row
+        const row = document.querySelector(`.pc-csheet-row[data-id="${id}"]`);
+        if (row) row.dataset.checktime = timeStr;
+        // display cell
+        const cell = document.querySelector(`.pc-checktime[data-id="${id}"]`);
+        if (cell) {
+            cell.textContent = timeStr;
+            cell.style.color = 'var(--accent-blue)';
+        }
     }
 
     function updateProgress() {
@@ -6498,7 +6673,8 @@ var ProdConditionsModule = (function() {
                 spec: row.dataset.spec || '',
                 type,
                 value: row.querySelector(`.pc-value-input[data-id="${id}"]`)?.value.trim() || '',
-                result: group?.dataset.result || ''
+                result: group?.dataset.result || '',
+                checkTime: row.dataset.checktime || ''
             };
         });
     }
@@ -6515,6 +6691,43 @@ var ProdConditionsModule = (function() {
         )].sort();
         partSel.innerHTML = '<option value="">-- 품명 선택 --</option>' +
             parts.map(p => `<option value="${_esc(p)}">${_esc(p)}</option>`).join('');
+        // 품명도 초기화됐으므로 점검항목 재로드
+        _reloadCheckItemsWithCp();
+    }
+
+    function onPcPartChange() {
+        _reloadCheckItemsWithCp();
+    }
+
+    function _reloadCheckItemsWithCp() {
+        const body = document.getElementById('pcCheckItemsBody');
+        if (!body) return;
+        const csTypeSel = document.getElementById('pcCsType');
+        if (!csTypeSel) return;
+        const type = csTypeSel.value;
+        // 현재 입력 중인 값들 보존
+        const currentItems = _collectCsheetItems();
+        const freshItems = _templateItems(type, currentItems);
+        body.innerHTML = renderLineSpecificFields(type, { checkItems: freshItems });
+        updateProgress();
+        // CP 연동 상태 배지 갱신
+        const carModel = (document.getElementById('pcCarModel') || {}).value || '';
+        const partName  = (document.getElementById('pcPartName')  || {}).value || '';
+        const cpMap = _buildCpLabelSpecMap(carModel, partName, type);
+        const badge = document.getElementById('pcCpStatusBadge');
+        if (badge) {
+            if (Object.keys(cpMap).length > 0) {
+                badge.textContent = 'CP 연동 완료';
+                badge.style.background = 'rgba(16,185,129,0.12)';
+                badge.style.color = '#059669';
+                badge.style.borderColor = 'rgba(16,185,129,0.3)';
+            } else {
+                badge.textContent = 'CP 미연동';
+                badge.style.background = 'rgba(156,163,175,0.15)';
+                badge.style.color = 'var(--text-muted)';
+                badge.style.borderColor = 'var(--border-color)';
+            }
+        }
     }
 
     function collectData() {
@@ -7496,7 +7709,9 @@ var ProdConditionsModule = (function() {
         switchPcTab,
         toggleLine,
         onPcCarChange,
+        onPcPartChange,
         setCheck,
+        _onCsValueInput,
         updateProgress,
         uploadColorStd,
         downloadColorStd,
