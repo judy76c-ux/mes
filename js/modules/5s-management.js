@@ -9,8 +9,10 @@ var FiveSModule = (function () {
 
     const STORE       = DB.STORES.S5_INSPECTIONS;
     const ISSUE_STORE = DB.STORES.S5_ISSUES;
+    const STANDARD_IMAGE_CONFIG_KEY = 's5_standard_clipboard_image';
 
     let _tab = 'main';
+    let _standardClipboardImage = null;
 
     const _today = () => new Date().toISOString().split('T')[0];
     const _esc   = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -80,7 +82,13 @@ var FiveSModule = (function () {
     /* ══════════════════════════════════════════════════════════
        MAIN RENDER
     ══════════════════════════════════════════════════════════ */
-    function render(container) {
+    async function render(container) {
+        try {
+            _standardClipboardImage = await Storage.getConfigValue(STANDARD_IMAGE_CONFIG_KEY) || null;
+        } catch (e) {
+            _standardClipboardImage = null;
+        }
+
         container.innerHTML = `
         <div class="fade-in-up">
             <div id="s5Shell"></div>
@@ -847,12 +855,28 @@ var FiveSModule = (function () {
 
     function _renderStandardPage() {
         const actions = document.getElementById('s5Actions');
-        if (actions) actions.innerHTML = '';
+        if (actions) actions.innerHTML = `
+            <button class="btn btn-outline" onclick="FiveSModule.focusStandardPasteZone()">
+                <span class="material-symbols-outlined">content_paste</span> 클립보드 붙여넣기
+            </button>
+            ${_standardClipboardImage ? `
+            <button class="btn btn-danger" onclick="FiveSModule.clearStandardClipboardImage()">
+                <span class="material-symbols-outlined">delete</span> 붙여넣기 제거
+            </button>` : ''}`;
 
         document.getElementById('s5Content').innerHTML = `
         <div class="card">
-            <div class="card-body" style="padding:0;overflow:auto;">
-                <div style="min-width:980px;border:1px solid #111;background:#fff;color:#111;font-size:13px;">
+            <div class="card-body" style="padding:12px;overflow:auto;">
+                <div id="s5StandardPasteZone" tabindex="0" onpaste="FiveSModule.handleStandardPaste(event)"
+                     style="margin-bottom:12px;padding:10px 12px;border:1px dashed var(--accent-blue);border-radius:8px;background:#f8fbff;color:var(--text-muted);font-size:.86rem;outline:none;">
+                    엑셀에서 복사한 화면을 여기서 <strong>Ctrl+V</strong>로 붙여넣으면 기준서 배경 이미지로 저장됩니다.
+                </div>
+                ${_standardClipboardImage
+                    ? `<div style="min-width:980px;border:1px solid #111;background:#fff;display:flex;justify-content:center;">
+                        <img src="${_standardClipboardImage}" alt="3정5S 기준서 붙여넣기 이미지"
+                             style="display:block;max-width:100%;height:auto;">
+                       </div>`
+                    : `<div style="min-width:980px;border:1px solid #111;background:#fff;color:#111;font-size:13px;">
                     <div style="display:grid;grid-template-columns:120px 1fr 360px;border-bottom:1px solid #111;">
                         <div style="display:flex;align-items:center;justify-content:center;border-right:1px solid #111;font-weight:800;color:#1d4ed8;">KC<br>케미칼</div>
                         <div style="background:#6fa8dc;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:900;letter-spacing:0;">3정 5S 관리 기준서</div>
@@ -917,9 +941,54 @@ var FiveSModule = (function () {
                             </tbody>
                         </table>
                     </div>
-                </div>
+                </div>`}
             </div>
         </div>`;
+    }
+
+    function focusStandardPasteZone() {
+        const zone = document.getElementById('s5StandardPasteZone');
+        if (!zone) return;
+        zone.focus();
+        UIUtils.toast('붙여넣기 영역이 선택되었습니다. Ctrl+V로 붙여넣어 주세요.', 'info');
+    }
+
+    async function clearStandardClipboardImage() {
+        _standardClipboardImage = null;
+        await Storage.setConfigValue(STANDARD_IMAGE_CONFIG_KEY, null);
+        UIUtils.toast('붙여넣은 기준서 이미지가 제거되었습니다.', 'success');
+        _renderStandardPage();
+    }
+
+    async function handleStandardPaste(event) {
+        event.preventDefault();
+        const items = Array.from(event.clipboardData?.items || []);
+        const imageItem = items.find(item => item.type && item.type.startsWith('image/'));
+        if (!imageItem) {
+            UIUtils.toast('클립보드에 이미지가 없습니다. 엑셀에서 범위를 복사한 뒤 다시 붙여넣어 주세요.', 'warning');
+            return;
+        }
+
+        const file = imageItem.getAsFile();
+        if (!file) {
+            UIUtils.toast('클립보드 이미지를 읽지 못했습니다.', 'error');
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = async () => {
+            try {
+                _standardClipboardImage = reader.result;
+                await Storage.setConfigValue(STANDARD_IMAGE_CONFIG_KEY, _standardClipboardImage);
+                UIUtils.toast('클립보드 이미지가 기준서에 저장되었습니다.', 'success');
+                _renderStandardPage();
+            } catch (error) {
+                console.error('Failed to save standard clipboard image:', error);
+                UIUtils.toast('기준서 이미지 저장 중 오류가 발생했습니다.', 'error');
+            }
+        };
+        reader.onerror = () => UIUtils.toast('클립보드 이미지 읽기에 실패했습니다.', 'error');
+        reader.readAsDataURL(file);
     }
 
     async function _renderPlanTab(mode = 'plan') {
@@ -1122,6 +1191,9 @@ var FiveSModule = (function () {
         saveIssue,
         completeIssue,
         removeIssue,
-        savePlan
+        savePlan,
+        focusStandardPasteZone,
+        clearStandardClipboardImage,
+        handleStandardPaste
     };
 })();

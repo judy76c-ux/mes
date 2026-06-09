@@ -41,6 +41,7 @@ const SettingsModule = (function() {
 
 
     async function render(container) {
+        if (currentTab === 'documentDesign') currentTab = 'products';
         await _loadProcessTypes();
         container.innerHTML = `
             <div class="fade-in-up">
@@ -70,10 +71,6 @@ const SettingsModule = (function() {
                         onclick="SettingsModule.switchTab('process')">
                         <span class="material-symbols-outlined">settings_applications</span> 공정 관리
                     </button>
-                    <button class="tab-btn ${currentTab === 'documentDesign' ? 'active' : ''}"
-                        onclick="SettingsModule.switchTab('documentDesign')">
-                        <span class="material-symbols-outlined">draw_collage</span> 문서 디자인
-                    </button>
                     <button class="tab-btn ${currentTab === 'backup' ? 'active' : ''}"
                         onclick="SettingsModule.switchTab('backup')">
                         <span class="material-symbols-outlined">backup</span> 백업/복원
@@ -98,6 +95,7 @@ const SettingsModule = (function() {
     }
 
     function switchTab(tab) {
+        if (tab === 'documentDesign') tab = 'products';
         currentTab = tab;
         try { sessionStorage.setItem(SETTINGS_TAB_KEY, tab); } catch(e) {}
         const container = document.getElementById('contentArea');
@@ -165,9 +163,6 @@ const SettingsModule = (function() {
                 break;
             case 'process':
                 renderProcessTab(el);
-                break;
-            case 'documentDesign':
-                renderDocumentDesignTab(el);
                 break;
             case 'backup':
                 renderBackupTab(el);
@@ -992,9 +987,28 @@ const SettingsModule = (function() {
                     <div id="${idPrefix}PartNameHint" style="margin-top:4px;font-size:0.76rem;min-height:18px;"></div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">도장 컬러</label>
+                    <label class="form-label">도장 컬러 <span style="font-size:0.68rem;font-weight:400;color:var(--text-muted);">(공통 기본값)</span></label>
                     <input type="text" class="form-input" id="${idPrefix}Color" placeholder="예: 화이트" value="${v('color')}">
                 </div>
+            </div>
+            <div class="form-row" style="margin-top:0;">
+                <div class="form-group" style="flex:1;">
+                    <label class="form-label" style="display:flex;align-items:center;gap:5px;">
+                        <span style="width:9px;height:9px;border-radius:2px;background:var(--accent-blue);display:inline-block;flex-shrink:0;"></span>
+                        도장-A 컬러
+                        <span style="font-size:0.66rem;font-weight:400;color:var(--text-muted);">미입력 시 공통 컬러 사용</span>
+                    </label>
+                    <input type="text" class="form-input" id="${idPrefix}PaintColorA" placeholder="예: 하도 그레이" value="${v('paintColorA')}">
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label class="form-label" style="display:flex;align-items:center;gap:5px;">
+                        <span style="width:9px;height:9px;border-radius:2px;background:var(--accent-orange);display:inline-block;flex-shrink:0;"></span>
+                        도장-B 컬러
+                        <span style="font-size:0.66rem;font-weight:400;color:var(--text-muted);">미입력 시 공통 컬러 사용</span>
+                    </label>
+                    <input type="text" class="form-input" id="${idPrefix}PaintColorB" placeholder="예: 외관 블랙" value="${v('paintColorB')}">
+                </div>
+                <div class="form-group" style="flex:1;"></div>
             </div>
             <div class="form-row">
                 <div class="form-group">
@@ -1731,6 +1745,8 @@ const SettingsModule = (function() {
             carModel: g(`${prefix}CarModel`).trim(),
             partName: g(`${prefix}PartName`).trim(),
             color: g(`${prefix}Color`).trim(),
+            paintColorA: g(`${prefix}PaintColorA`).trim(),
+            paintColorB: g(`${prefix}PaintColorB`).trim(),
             itemType: g(`${prefix}ItemType`).trim(),
             packUnit: g(`${prefix}PackUnit`).trim(),
             customer: g(`${prefix}Customer`).trim(),

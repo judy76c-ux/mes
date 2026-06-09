@@ -694,8 +694,14 @@ const ProductionPlanModule = (function() {
         } else if (target === 'part') {
             const selectedModel = modelSel.value;
             const selectedPart = partSel.value;
-            const validColors = [...new Set(lineProducts.filter(p => p.carModel === selectedModel && p.partName === selectedPart).map(p => p.color).filter(Boolean))];
-            // colorValue는 이 스코프에 없으므로 selected 없이 렌더링
+            // 라인별 컬러 우선: paintColorA/B 있으면 그 값, 없으면 product.color
+            const _curLine = line || (document.getElementById('sLine') || {}).value || '';
+            const validColors = [...new Set(
+                lineProducts
+                    .filter(p => p.carModel === selectedModel && p.partName === selectedPart)
+                    .map(p => _getPlanColorForLine(p, _curLine))
+                    .filter(Boolean)
+            )];
             colorSel.innerHTML = '<option value="">선택</option>' + validColors.map(c => `<option value="${c}">${c}</option>`).join('');
             colorSel.value = '';
         }
@@ -753,6 +759,18 @@ const ProductionPlanModule = (function() {
         return products.find(p =>
             p.partName === partName && p.carModel === carModel && (p.color === color || !color || !p.color)
         ) || products.find(p => p.partName === partName && p.carModel === carModel);
+    }
+
+    /* 라인별 컬러 결정 헬퍼
+     * - 도장-A: product.paintColorA 있으면 사용, 없으면 product.color
+     * - 도장-B: product.paintColorB 있으면 사용, 없으면 product.color
+     * - 그 외:  product.color
+     */
+    function _getPlanColorForLine(product, line) {
+        if (!product) return '';
+        if (line === '도장-A' && product.paintColorA) return product.paintColorA;
+        if (line === '도장-B' && product.paintColorB) return product.paintColorB;
+        return product.color || '';
     }
 
     function _usesLaserWipForLine(product, line) {
@@ -1623,15 +1641,27 @@ const ProductionPlanModule = (function() {
         let parts = [];
         let colors = [];
         if (modelValue) parts = [...new Set(lineProducts.filter(p => p.carModel === modelValue).map(p => p.partName).filter(Boolean))];
-        if (modelValue && partValue) colors = [...new Set(lineProducts.filter(p => p.carModel === modelValue && p.partName === partValue).map(p => p.color).filter(Boolean))];
+        if (modelValue && partValue) {
+            colors = [...new Set(
+                lineProducts
+                    .filter(p => p.carModel === modelValue && p.partName === partValue)
+                    .map(p => _getPlanColorForLine(p, line))   // ← 라인별 컬러 우선
+                    .filter(Boolean)
+            )];
+        }
 
         // 저장된 계획값이 드롭다운에 없을 경우 강제 추가
         // (lineProducts 필터에서 제외된 품명/컬러도 기존 계획 수정 시 표시되어야 함)
         if (partValue && !parts.includes(partValue)) parts.push(partValue);
         if (colorValue && !colors.includes(colorValue)) colors.push(colorValue);
-        // 컬러 드롭다운이 비어있으면 전체 products 에서 보완
+        // 컬러 드롭다운이 비어있으면 전체 products 에서 보완 (라인별 컬러 포함)
         if (modelValue && partValue && colors.length === 0) {
-            colors = [...new Set(products.filter(p => p.carModel === modelValue && p.partName === partValue).map(p => p.color).filter(Boolean))];
+            colors = [...new Set(
+                products
+                    .filter(p => p.carModel === modelValue && p.partName === partValue)
+                    .map(p => _getPlanColorForLine(p, line))
+                    .filter(Boolean)
+            )];
             if (colorValue && !colors.includes(colorValue)) colors.push(colorValue);
         }
 
