@@ -1153,19 +1153,22 @@ const PaintingWorkModule = (function() {
             'border-radius:6px;padding:4px 6px;min-width:34px;">' +
             '<span class="material-symbols-outlined" style="font-size:15px;display:block;">remove</span>' +
             '</button></div>' +
-            '<div class="pw-fifo-warn" style="display:none;margin-top:5px;padding:7px 10px;' +
-            'background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.5);border-radius:6px;">' +
-            '<div style="display:flex;align-items:center;gap:4px;color:#b45309;font-weight:600;margin-bottom:6px;font-size:0.76rem;">' +
-            '<span class="material-symbols-outlined" style="font-size:15px;">warning</span>' +
+            '<div class="pw-fifo-warn" style="display:none;margin-top:5px;padding:8px 12px;' +
+            'background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.55);border-radius:6px;">' +
+            '<div style="display:flex;align-items:center;gap:5px;color:#b45309;font-weight:700;margin-bottom:7px;font-size:0.78rem;">' +
+            '<span class="material-symbols-outlined" style="font-size:16px;">priority_high</span>' +
             '<span class="pw-fifo-warn-msg"></span>' +
             '</div>' +
             '<div style="display:flex;align-items:center;gap:8px;">' +
-            '<label style="font-size:0.76rem;color:#b45309;white-space:nowrap;font-weight:600;">' +
-            '선입선출 미준수 사유&nbsp;<span style="color:var(--accent-red);">*</span></label>' +
-            '<select class="form-select pw-fifo-reason" style="font-size:0.8rem;flex:1;border-color:rgba(245,158,11,0.6);">' +
-            '<option value="">-- 사유 선택 (필수) --</option>' +
-            '<option value="자재 불량">자재 불량</option>' +
-            '<option value="자재수량 부족">자재수량 부족</option>' +
+            '<label style="font-size:0.76rem;color:#b45309;white-space:nowrap;font-weight:700;">' +
+            '미준수 사유&nbsp;<span style="color:var(--accent-red);">*</span></label>' +
+            '<select class="form-select pw-fifo-reason" style="font-size:0.8rem;flex:1;border-color:rgba(245,158,11,0.7);background:#fffbeb;">' +
+            '<option value="">-- 사유 선택 필수 --</option>' +
+            '<option value="자재 불량">자재 불량 (이전 LOT 사용 불가)</option>' +
+            '<option value="자재수량 부족">자재수량 부족 (이전 LOT 잔량 부족)</option>' +
+            '<option value="색상 불일치">색상 불일치</option>' +
+            '<option value="긴급 생산">긴급 생산 지시</option>' +
+            '<option value="기타">기타 (비고 입력)</option>' +
             '</select></div>' +
             '</div>' +
             '</div>';
@@ -1228,21 +1231,67 @@ const PaintingWorkModule = (function() {
         _refreshOtherLotDropdowns(row);      // 다른 행 드롭다운 갱신
     }
 
-    // 선입선출 경고 표시/숨김
+    // ── 선입선출(FIFO) 경고 표시/숨김 ──────────────────────────────────
+    // 규칙:
+    //  1) 같은 사출명(injPartName) 내 → 더 오래된 LOT(숫자 작음)가 잔량 있으면 위반
+    //  2) "창고 전체 재고" 그룹에서 선택 + "사출명 일치" 그룹에 잔량 있음 → 위반
     function checkFifoWarning(row, sel) {
-        const warnEl = row.querySelector('.pw-fifo-warn');
-        const msgEl  = row.querySelector('.pw-fifo-warn-msg');
+        var warnEl = row.querySelector('.pw-fifo-warn');
+        var msgEl  = row.querySelector('.pw-fifo-warn-msg');
         if (!warnEl || !msgEl) return;
 
-        // 선택된 값이 없거나 첫 번째(가장 오래된) 옵션이면 정상
-        const firstOpt = sel.options[0];
-        if (!sel.value || !firstOpt || !firstOpt.value || sel.selectedIndex === 0) {
+        var selectedLotNo = sel.value;
+        if (!selectedLotNo) {
             warnEl.style.display = 'none';
             return;
         }
 
-        // 첫 번째 옵션보다 최신 LOT를 선택 → 선입선출 위반
-        msgEl.textContent = '선입선출 위반 — ' + firstOpt.value + ' 재고가 먼저 소진되어야 합니다.';
+        // optgroup 구조에서 각 그룹 옵션 추출
+        var primaryOpts = [];   // 사출명 일치 LOT
+        var otherOpts   = [];   // 창고 전체 재고
+        var optgroups = sel.getElementsByTagName('optgroup');
+
+        if (optgroups.length >= 1) {
+            primaryOpts = Array.from(optgroups[0].getElementsByTagName('option'))
+                              .filter(function(o) { return o.value; });
+        }
+        if (optgroups.length >= 2) {
+            otherOpts = Array.from(optgroups[1].getElementsByTagName('option'))
+                            .filter(function(o) { return o.value; });
+        }
+        // optgroup 없는 경우(이전 버전 호환)
+        if (optgroups.length === 0) {
+            primaryOpts = Array.from(sel.options).filter(function(o) { return o.value; });
+        }
+
+        // 현재 선택이 어느 그룹인지 판별
+        var isInPrimary = primaryOpts.some(function(o) { return o.value === selectedLotNo; });
+        var isInOther   = otherOpts.some(function(o)   { return o.value === selectedLotNo; });
+
+        // Case 1: "창고 전체 재고"에서 선택했는데 "사출명 일치" 그룹에 잔량 있음
+        if (isInOther && primaryOpts.length > 0) {
+            var oldestPrimary = primaryOpts.reduce(function(min, o) {
+                return o.value < min ? o.value : min;
+            }, primaryOpts[0].value);
+            msgEl.textContent = '선입선출 위반 — LOT ' + oldestPrimary +
+                ' (사출명 일치 재고)를 먼저 소진해야 합니다.';
+            warnEl.style.display = 'flex';
+            return;
+        }
+
+        // Case 2: 같은 사출명 그룹 내 — 더 오래된 LOT가 존재
+        var searchPool = isInPrimary ? primaryOpts : Array.from(sel.options).filter(function(o) { return o.value; });
+        var olderLots  = searchPool.filter(function(o) { return o.value < selectedLotNo; });
+
+        if (olderLots.length === 0) {
+            warnEl.style.display = 'none';
+            return;
+        }
+
+        var oldestLotNo = olderLots.reduce(function(min, o) {
+            return o.value < min ? o.value : min;
+        }, olderLots[0].value);
+        msgEl.textContent = '선입선출 위반 — LOT ' + oldestLotNo + ' 재고가 먼저 소진되어야 합니다.';
         warnEl.style.display = 'flex';
     }
 
