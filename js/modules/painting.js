@@ -964,26 +964,24 @@ const PaintingWorkModule = (function() {
     }
 
     // 선택 제외 목록을 반영한 LOT 옵션 HTML 생성 (데이터-balance 포함, 컬러 필터)
-    // ★ 사출명 일치 LOT를 먼저 표시하고, 창고 전체 잔량 LOT도 그룹 구분으로 추가
+    // ★ 사출명 지정 시: 해당 사출명 LOT만 표시 (다른 부품 LOT 혼입 방지)
+    // ★ 사출명 미지정 시: carModel 전체 창고 재고 표시
     function _buildFilteredLotOptions(injPartName, carModel, partName, excludeLotNos) {
         var planColor = (document.getElementById('addPwColorHidden') || {}).value || '';
 
-        // ① 사출명 일치 LOT (우선 후보)
-        var primaryLots = injPartName
-            ? getInjectionLotsByInjPart(injPartName, planColor)
-            : getInjectionLots(carModel || '', '');
+        var primaryLots, otherLots;
 
-        // ② 창고 전체 잔량 LOT (carModel 전체 — 사출명 불문)
-        var allCarLots = getInjectionLots(carModel || '', '');
+        if (injPartName) {
+            // 사출명 지정: 해당 사출명 LOT만 표시, 다른 사출명(1SPOT↔3SPOT 등) 혼입 없음
+            primaryLots = getInjectionLotsByInjPart(injPartName, planColor);
+            otherLots   = []; // 물리적으로 다른 부품이므로 표시 안 함
+        } else {
+            // 사출명 미지정(사출자재 마스터 미등록): carModel 전체를 창고 전체 재고로 표시
+            primaryLots = [];
+            otherLots   = getInjectionLots(carModel || '', '');
+        }
 
-        // ③ 이미 primary에 있는 lotNo Set
-        var primarySet = {};
-        primaryLots.forEach(function(l) { primarySet[l.lotNo] = true; });
-
-        // ④ primary에 없는 나머지 LOT
-        var otherLots = allCarLots.filter(function(l) { return !primarySet[l.lotNo]; });
-
-        // ⑤ excludeLotNos 제거
+        // excludeLotNos 제거
         function applyExclude(arr) {
             if (!excludeLotNos || excludeLotNos.length === 0) return arr;
             return arr.filter(function(l) { return excludeLotNos.indexOf(l.lotNo) < 0; });
@@ -994,11 +992,10 @@ const PaintingWorkModule = (function() {
         if (filteredPrimary.length === 0 && filteredOther.length === 0)
             return '<option value="">-- 사출 창고 재고 없음 --</option>';
 
-        function lotOptionHtml(l, groupLabel) {
+        function lotOptionHtml(l) {
             var colorTag = l.color ? ' │ ' + l.color : '';
-            var label = groupLabel ? '[' + groupLabel + '] ' : '';
             return '<option value="' + l.lotNo + '" data-balance="' + l.balance + '">' +
-                label + l.lotNo + ' │ ' + (l.partName || l.carModel) + colorTag +
+                l.lotNo + ' │ ' + (l.partName || l.carModel) + colorTag +
                 ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA</option>';
         }
 
@@ -1006,12 +1003,12 @@ const PaintingWorkModule = (function() {
 
         if (filteredPrimary.length > 0) {
             html += '<optgroup label="▶ 사출명 일치 LOT">';
-            html += filteredPrimary.map(function(l) { return lotOptionHtml(l, ''); }).join('');
+            html += filteredPrimary.map(lotOptionHtml).join('');
             html += '</optgroup>';
         }
         if (filteredOther.length > 0) {
             html += '<optgroup label="▶ 창고 전체 재고">';
-            html += filteredOther.map(function(l) { return lotOptionHtml(l, ''); }).join('');
+            html += filteredOther.map(lotOptionHtml).join('');
             html += '</optgroup>';
         }
         return html;
@@ -1124,8 +1121,16 @@ const PaintingWorkModule = (function() {
         // 선입선출: lotNo 미지정 시 selected 옵션 값(가장 오래된 LOT)을 자동 사용
         var autoLotNo = lotNo;
         if (!autoLotNo) {
+            // optgroup 내부 option도 포함해 첫 번째 비어있지 않은 value 탐색
             var m = lotsHtml.match(/<option value="([^"]+)"[^>]*selected/);
-            if (!m) m = lotsHtml.match(/<option value="([^"]+)">/);
+            if (!m) {
+                // value="..." 에 추가 속성이 있어도 매칭되도록 개선
+                var all = lotsHtml.match(/<option[^>]+value="([^"]+)"/g) || [];
+                for (var _i = 0; _i < all.length; _i++) {
+                    var _vm = all[_i].match(/value="([^"]+)"/);
+                    if (_vm && _vm[1]) { m = _vm; break; }
+                }
+            }
             if (m && m[1]) autoLotNo = m[1];
         }
         // 자동 선택 LOT의 잔량을 max로 설정
@@ -1186,6 +1191,106 @@ const PaintingWorkModule = (function() {
         var lotsHtml = _buildFilteredLotOptions(injPartName, cm, pn, excludeLots);
         container.insertAdjacentHTML('beforeend', _buildLotRow(lotsHtml, '', ''));
         setTimeout(_updateLotSummary, 60);
+    }
+
+    // ── 산출수량 입력 시 LOT 행 자동 채우기 + 부족한 경우 다음 LOT 자동 추가 ──
+    function _autoFillLotQtys() {
+        var prodQtyEl = document.getElementById('addPwProdQty');
+        var needed = Number(prodQtyEl ? prodQtyEl.value : 0) || 0;
+        if (needed <= 0) { _updateLotSummary(); return; }
+
+        var container = document.getElementById('pwLotRows');
+        if (!container) return;
+
+        // 현재 이미 입력된 총합 계산
+        var currentTotal = 0;
+        container.querySelectorAll('.pw-lot-row').forEach(function(row) {
+            currentTotal += Number((row.querySelector('.pw-lot-qty') || {}).value) || 0;
+        });
+        if (currentTotal >= needed) { _updateLotSummary(); return; }
+
+        // 기존 빈 LOT 행 우선 채우기 (이미 입력된 행은 건드리지 않음)
+        container.querySelectorAll('.pw-lot-row').forEach(function(row) {
+            var qtyInp = row.querySelector('.pw-lot-qty');
+            if (!qtyInp || Number(qtyInp.value) > 0) return;
+            var maxVal = parseInt(qtyInp.max);
+            if (isNaN(maxVal) || maxVal <= 0) return;
+            var remaining = needed - currentTotal;
+            if (remaining <= 0) return;
+            var toFill = Math.min(maxVal, remaining);
+            qtyInp.value = toFill;
+            currentTotal += toFill;
+        });
+
+        if (currentTotal >= needed) { _updateLotSummary(); return; }
+
+        // 아직 부족하면 다음 LOT 행 자동 추가
+        var injPartSel = document.getElementById('pwInjPartSelect');
+        var injPartName = injPartSel ? injPartSel.value : '';
+        var cm = (document.getElementById('addPwCarModelHidden') || document.getElementById('editPwCarModel') || {}).value || '';
+        var pn = (document.getElementById('addPwPartNameHidden') || document.getElementById('editPwPartName') || {}).value || '';
+
+        var MAX_AUTO = 10;
+        var added = 0;
+        while (currentTotal < needed && added < MAX_AUTO) {
+            var excludeLots = _getSelectedLotNos(null);
+            var lotsHtml = _buildFilteredLotOptions(injPartName, cm, pn, excludeLots);
+
+            // 추가 가능한 LOT 확인 (optgroup 내 option 또는 일반 option)
+            var tmpDiv = document.createElement('div');
+            tmpDiv.innerHTML = lotsHtml;
+            var nextOpt = tmpDiv.querySelector('optgroup option[value]:not([value=""]), option[value]:not([value=""])');
+            if (!nextOpt || !nextOpt.value) break;
+            var nextBalance = parseInt(nextOpt.getAttribute('data-balance')) || 0;
+            if (nextBalance <= 0) break;
+
+            container.insertAdjacentHTML('beforeend', _buildLotRow(lotsHtml, '', ''));
+            added++;
+
+            // 새로 추가된 행 qty 채우기
+            var newRows = container.querySelectorAll('.pw-lot-row');
+            var newRow = newRows[newRows.length - 1];
+            if (!newRow) break;
+
+            // LOT 선택 드롭다운 동기화 (optgroup 지원)
+            var lotSel = newRow.querySelector('.pw-lot-sel');
+            if (lotSel && nextOpt.value) {
+                for (var _k = 0; _k < lotSel.options.length; _k++) {
+                    if (lotSel.options[_k].value === nextOpt.value) {
+                        lotSel.selectedIndex = _k;
+                        break;
+                    }
+                }
+            }
+            // LOT 직접입력 필드 동기화
+            var lotNoInp = newRow.querySelector('.pw-lot-no');
+            if (lotNoInp) lotNoInp.value = nextOpt.value;
+
+            // qty 입력 max 확정 후 채우기
+            var qtyInp = newRow.querySelector('.pw-lot-qty');
+            if (!qtyInp) break;
+            qtyInp.max = nextBalance;
+            qtyInp.placeholder = '최대 ' + UIUtils.formatNumber(nextBalance);
+
+            var remaining = needed - currentTotal;
+            var toFill = Math.min(nextBalance, remaining);
+            qtyInp.value = toFill;
+            currentTotal += toFill;
+        }
+
+        // LOT 추가 버튼 활성화 여부 갱신
+        var excludeAll = _getSelectedLotNos(null);
+        var moreHtml = _buildFilteredLotOptions(injPartName, cm, pn, excludeAll);
+        var tmpDiv2 = document.createElement('div');
+        tmpDiv2.innerHTML = moreHtml;
+        var hasMore = !!(tmpDiv2.querySelector('optgroup option[value]:not([value=""]), option[value]:not([value=""])'));
+        var btn = document.getElementById('pwAddLotBtn');
+        if (btn) {
+            btn.disabled = !hasMore;
+            btn.title = !hasMore ? '사출 창고 LOT가 더 이상 없습니다' : '';
+        }
+
+        _updateLotSummary();
     }
 
     // LOT 행 제거
@@ -1583,7 +1688,7 @@ const PaintingWorkModule = (function() {
             '<div class="form-group" style="margin:0;">' +
             '<label class="form-label" style="font-size:0.84rem;">산출 수량 (OUT PUT) <span style="color:var(--accent-red)">*</span></label>' +
             '<input type="number" class="form-input" id="addPwProdQty" min="0" placeholder="0"' +
-            ' oninput="PaintingWorkModule.calcCT(); PaintingWorkModule.checkQtyDiff(); PaintingWorkModule.checkOverPlanQty(); PaintingWorkModule._updateLotSummary();"' +
+            ' oninput="PaintingWorkModule.calcCT(); PaintingWorkModule.checkQtyDiff(); PaintingWorkModule.checkOverPlanQty(); PaintingWorkModule._autoFillLotQtys();"' +
             ' style="font-size:1.05rem;font-weight:600;text-align:right;color:var(--accent-green);"></div>' +
             '<div class="form-group" style="margin:0;">' +
             '<label class="form-label" style="font-size:0.84rem;">투입인원 (명) <span style="color:var(--accent-red)">*</span></label>' +
@@ -2436,7 +2541,8 @@ const PaintingWorkModule = (function() {
         _validateLotFormat,
         _checkLotFormat,
         _validateLotQty,
-        _updateLotSummary
+        _updateLotSummary,
+        _autoFillLotQtys
     };
 })();
 
