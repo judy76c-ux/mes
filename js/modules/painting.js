@@ -1519,13 +1519,22 @@ const PaintingWorkModule = (function() {
         var label = document.getElementById('pwPlanInputQtyLabel');
         if (label) label.textContent = show ? UIUtils.formatNumber(inputQty) : '-';
 
-        // 투입수량 기준으로 완료시간 자동 재계산 (계획 미달 시에도 시간이 달라짐)
-        if (inputQty > 0 && planQty > 0 && inputQty < planQty) {
-            _recalcEndTimeForOverQty(inputQty, planQty);
-        } else {
-            // 계획수량 이상이면 힌트 숨김 (over-plan 쪽에서 처리)
-            var hint = document.getElementById('pwEndTimeHint');
-            if (hint && inputQty >= planQty) hint.style.display = 'none';
+        // 계획 미달 시: 자동 재계산 안 함 — 실제 완료시간 직접 입력 유도
+        var hint = document.getElementById('pwEndTimeHint');
+        var endEl = document.getElementById('addPwEndTime');
+        if (hint && endEl) {
+            if (show) {
+                hint.innerHTML =
+                    '<span class="material-symbols-outlined" style="font-size:12px;vertical-align:middle;color:#b45309;">warning</span>' +
+                    ' 투입 미달 — 설비고장·품질문제 등 정지 시간 포함 가능.' +
+                    ' <strong>실제 완료시간을 직접 확인·수정하세요.</strong>';
+                hint.style.display = 'block';
+                hint.style.color = '#b45309';
+                endEl.style.outline = '2px solid rgba(245,158,11,0.7)';
+            } else {
+                hint.style.display = 'none';
+                endEl.style.outline = '';
+            }
         }
     }
 
@@ -1556,25 +1565,9 @@ const PaintingWorkModule = (function() {
         var newEndTime   = String(newEndHour).padStart(2, '0') + ':' + String(newEndMinute).padStart(2, '0');
 
         var endEl = document.getElementById('addPwEndTime');
-        if (endEl) {
-            var prevEnd = endEl.value;
+        if (endEl && endEl.value !== newEndTime) {
             endEl.value = newEndTime;
             calcCT();
-            // 완료시간 변경 안내 힌트
-            var hint = document.getElementById('pwEndTimeHint');
-            if (hint) {
-                if (newEndTime !== planEnd) {
-                    var diffMin = Math.round(_timeToMin(newEndTime) - _timeToMin(planEnd));
-                    var sign = diffMin >= 0 ? '+' : '';
-                    hint.innerHTML =
-                        '<span class="material-symbols-outlined" style="font-size:12px;vertical-align:middle;">schedule</span>' +
-                        ' 수량 기준 자동조정 → <strong>' + newEndTime + '</strong>' +
-                        ' (계획 대비 ' + sign + diffMin + '분)';
-                    hint.style.display = 'block';
-                } else {
-                    hint.style.display = 'none';
-                }
-            }
         }
     }
 
@@ -2103,14 +2096,35 @@ const PaintingWorkModule = (function() {
             return;
         }
 
-        // ── 완료시간 확인 팝업 (계획 완료시간과 5분 이상 차이 나면 경고) ──
+        // ── 완료시간 확인 팝업 ──
         var _planEndVal   = (document.getElementById('addPwPlanEndHidden')   || {}).value || '';
         var _planStartVal = (document.getElementById('addPwPlanStartHidden') || {}).value || '';
         if (_planEndVal && endTime && _planStartVal && startTime) {
-            var _planEndMin  = _timeToMin(_planEndVal);
+            var _planEndMin   = _timeToMin(_planEndVal);
             var _actualEndMin = _timeToMin(endTime);
-            var _timeDiffMin  = _actualEndMin - _planEndMin;  // + 초과 / - 미달
-            if (Math.abs(_timeDiffMin) > 5) {
+            var _timeDiffMin  = _actualEndMin - _planEndMin;   // + 초과 / - 미달
+
+            // 계획 미달 여부 확인
+            var _planQtySection = document.getElementById('pwPlanQtyReasonSection');
+            var _planQtyBase = _planQtySection ? (Number(_planQtySection.getAttribute('data-plan-qty')) || 0) : 0;
+            var _isPlanShortfall = _planQtyBase > 0 && _saveInputQty > 0 && _saveInputQty < _planQtyBase;
+
+            if (_isPlanShortfall && Math.abs(_timeDiffMin) <= 5) {
+                // 계획 미달인데 완료시간이 계획 그대로 — 직접 입력 유도 팝업
+                var _shortMsg =
+                    '⚠  완료시간을 직접 확인해 주세요.\n\n' +
+                    '  투입수량이 계획보다 부족합니다.\n' +
+                    '  설비 고장 · 품질 문제 등으로 라인이 정지된 경우\n' +
+                    '  완료시간이 계획(' + _planEndVal + ')과 달라집니다.\n\n' +
+                    '  현재 입력된 완료시간 : ' + endTime + '\n\n' +
+                    '[확인] 이 시간으로 저장   [취소] 시간 수정';
+                if (!window.confirm(_shortMsg)) {
+                    var _etEl = document.getElementById('addPwEndTime');
+                    if (_etEl) { _etEl.focus(); _etEl.select(); }
+                    return;
+                }
+            } else if (Math.abs(_timeDiffMin) > 5) {
+                // 계획 완료시간과 5분 이상 차이 나면 일반 확인 팝업
                 var _sign = _timeDiffMin > 0 ? '+' : '';
                 var _msg =
                     '⏱  작업 완료시간을 확인해 주세요.\n\n' +
