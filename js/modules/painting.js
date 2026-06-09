@@ -1478,9 +1478,14 @@ const PaintingWorkModule = (function() {
         var warn   = document.getElementById('qtyDiffWarning');
         var req    = document.getElementById('addPwNoteRequired');
         if (!warn) return;
-        var exceed = inQty > 0 && Math.abs(inQty - outQty) / inQty > 0.01;
+        var exceed = inQty > 0 && outQty > 0 && Math.abs(inQty - outQty) / inQty > 0.01;
         warn.style.display = exceed ? 'block' : 'none';
         if (req) req.style.display = exceed ? 'inline' : 'none';
+        // 실제 수량 레이블 업데이트
+        var inLabel  = document.getElementById('pwDiffInQty');
+        var outLabel = document.getElementById('pwDiffOutQty');
+        if (inLabel)  inLabel.textContent  = exceed ? UIUtils.formatNumber(inQty)  : '-';
+        if (outLabel) outLabel.textContent = exceed ? UIUtils.formatNumber(outQty) : '-';
     }
 
     // 투입수량이 계획수량 대비 -5% 초과 미달일 때만 사유 섹션 표시
@@ -1865,8 +1870,30 @@ const PaintingWorkModule = (function() {
 
         // ⑦ 비고
         var noteHtml =
-            '<div id="qtyDiffWarning" style="display:none;background:rgba(239,68,68,0.08);border:1px solid var(--accent-red);border-radius:6px;padding:7px 12px;margin-bottom:8px;font-size:0.82rem;color:var(--accent-red);font-weight:600;">' +
-            '⚠ 투입수량과 산출수량 다시 확인 — 비고란에 사유를 입력해 주세요.</div>' +
+            // 투입/산출 차이 사유 섹션 (1% 이상 차이 시 표시)
+            '<div id="qtyDiffWarning" style="display:none;margin-bottom:12px;' +
+            'background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.45);border-radius:8px;padding:12px;">' +
+            '<div style="font-size:0.82rem;color:#dc2626;font-weight:700;margin-bottom:10px;">' +
+            '<span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;margin-right:4px;">warning</span>' +
+            '투입수량(<strong id="pwDiffInQty">-</strong> EA) ≠ 산출수량(<strong id="pwDiffOutQty">-</strong> EA) — 차이 사유를 입력해 주세요.' +
+            '</div>' +
+            '<div style="display:grid;grid-template-columns:1fr 1.8fr;gap:10px;">' +
+            '<div class="form-group" style="margin:0;">' +
+            '<label class="form-label" style="font-size:0.82rem;">사유구분 <span style="color:var(--accent-red);">*</span></label>' +
+            '<select class="form-select" id="addPwQtyDiffReason" style="font-size:0.85rem;">' +
+            '<option value="">-- 선택 --</option>' +
+            '<option value="자재 불량">자재 불량</option>' +
+            '<option value="설비 고장">설비 고장</option>' +
+            '<option value="생산조건 NG">생산조건 NG</option>' +
+            '<option value="작업 불량">작업 불량</option>' +
+            '<option value="기타">기타</option>' +
+            '</select></div>' +
+            '<div class="form-group" style="margin:0;">' +
+            '<label class="form-label" style="font-size:0.82rem;">세부 사유 <span style="color:var(--accent-red);">*</span></label>' +
+            '<input type="text" class="form-input" id="addPwQtyDiffDetail"' +
+            ' placeholder="구체적인 내용을 입력하세요" style="font-size:0.85rem;"></div>' +
+            '</div></div>' +
+            // 비고
             '<div class="form-group" style="margin-bottom:0;">' +
             '<label class="form-label" style="font-size:0.84rem;">비고 <span id="addPwNoteRequired" style="display:none;color:var(--accent-red);">*</span></label>' +
             '<input type="text" class="form-input" id="addPwNote" placeholder="특이사항 / 변동 사항"></div>';
@@ -2052,13 +2079,21 @@ const PaintingWorkModule = (function() {
             }
         }
 
-        // IN/OUT 1% 초과 차이 → 비고 필수
+        // IN/OUT 1% 초과 차이 → 사유구분 + 세부사유 필수
         var inputQtyVal  = Number((document.getElementById('addPwInputQty') || {}).value) || 0;
-        var noteVal = ((document.getElementById('addPwNote') || {}).value || '').trim();
-        if (inputQtyVal > 0 && Math.abs(inputQtyVal - prodQty) / inputQtyVal > 0.01 && !noteVal) {
-            UIUtils.toast('투입/산출 수량 차이가 1% 초과입니다. 비고란에 사유를 입력해 주세요.', 'warning');
-            var noteEl = document.getElementById('addPwNote');
-            if (noteEl) noteEl.focus();
+        var hasQtyDiff = inputQtyVal > 0 && prodQty > 0 && Math.abs(inputQtyVal - prodQty) / inputQtyVal > 0.01;
+        var qtyDiffReason = ((document.getElementById('addPwQtyDiffReason') || {}).value || '').trim();
+        var qtyDiffDetail = ((document.getElementById('addPwQtyDiffDetail') || {}).value || '').trim();
+        if (hasQtyDiff && !qtyDiffReason) {
+            UIUtils.toast('투입/산출 수량 차이 사유구분을 선택해 주세요.', 'warning');
+            var qdrEl = document.getElementById('addPwQtyDiffReason');
+            if (qdrEl) qdrEl.focus();
+            return;
+        }
+        if (hasQtyDiff && !qtyDiffDetail) {
+            UIUtils.toast('투입/산출 수량 차이 세부 사유를 입력해 주세요.', 'warning');
+            var qddEl = document.getElementById('addPwQtyDiffDetail');
+            if (qddEl) qddEl.focus();
             return;
         }
 
@@ -2103,6 +2138,8 @@ const PaintingWorkModule = (function() {
             overPlanQty: overPlanVisible ? true : false,
             planReason: planReasonVisible ? planReason : '',
             planReasonDetail: planReasonVisible ? planReasonDetail : '',
+            qtyDiffReason: hasQtyDiff ? qtyDiffReason : '',
+            qtyDiffDetail: hasQtyDiff ? qtyDiffDetail : '',
             note: ((document.getElementById('addPwNote') || {}).value || '').trim()
         };
 

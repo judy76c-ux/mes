@@ -7363,6 +7363,13 @@ const SettingsModule = (function() {
                     console.warn('[Settings] create design pdf preview failed', error);
                 }
             }
+            if (referenceType.includes('sheet') || referenceType.includes('excel')) {
+                try {
+                    previewMeta = await _buildExcelReferencePreview(String(reader.result || '')) || {};
+                } catch (error) {
+                    console.warn('[Settings] create design excel preview failed', error);
+                }
+            }
             const newId = `doc-design-${Date.now()}`;
             _docDesignEditorId = newId;
             _docDesignSelectedElementId = '';
@@ -7464,6 +7471,13 @@ const SettingsModule = (function() {
                     console.warn('[Settings] replace design pdf preview failed', error);
                 }
             }
+            if (referenceType.includes('sheet') || referenceType.includes('excel')) {
+                try {
+                    previewMeta = await _buildExcelReferencePreview(String(reader.result || '')) || {};
+                } catch (error) {
+                    console.warn('[Settings] replace design excel preview failed', error);
+                }
+            }
             await _replaceDocumentDesigns(rows => rows.map(d => d.id === _docDesignEditorId ? {
                 ...d,
                 referenceName: file.name,
@@ -7472,6 +7486,8 @@ const SettingsModule = (function() {
                 referencePreviewDataUrl: '',
                 referencePreviewWidth: 0,
                 referencePreviewHeight: 0,
+                referencePreviewHtml: '',
+                referenceSheetName: '',
                 ...previewMeta
             } : d));
             UIUtils.toast('양식을 디자인 참조로 등록했습니다.', 'success');
@@ -7489,6 +7505,8 @@ const SettingsModule = (function() {
             referencePreviewDataUrl: '',
             referencePreviewWidth: 0,
             referencePreviewHeight: 0,
+            referencePreviewHtml: '',
+            referenceSheetName: '',
             referenceScale: 1,
             referenceOffsetX: 0,
             referenceOffsetY: 0
