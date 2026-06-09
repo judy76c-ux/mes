@@ -12,6 +12,90 @@
 const PaintingIncomingModule = (function() {
     const STORE = DB.STORES.PAINTING_INCOMING;
 
+    function _getNotifyUsersByRole() {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.getUsers !== 'function') return [];
+        const users = AuthModule.getUsers() || [];
+        const roleMap = (AuthModule.ROLES || []).reduce(function(map, role) {
+            map[role.key] = role;
+            return map;
+        }, {});
+        return users
+            .filter(function(user) { return user && user.active !== false; })
+            .map(function(user) {
+                const role = roleMap[user.role] || null;
+                return {
+                    id: String(user.id || ''),
+                    name: String(user.displayName || user.username || user.id || ''),
+                    role: String(user.role || ''),
+                    roleLabel: role ? role.label : String(user.role || '미지정'),
+                    roleColor: role ? role.color : 'var(--text-muted)'
+                };
+            });
+    }
+
+    function _buildNotifySelectorHtml(prefix, helpText) {
+        const users = _getNotifyUsersByRole();
+        if (!users.length) {
+            return '<div style="margin-top:10px;padding:10px 12px;border:1px dashed rgba(239,68,68,0.35);border-radius:6px;font-size:0.8rem;color:var(--text-muted);">선택 가능한 통보 대상 사용자가 없습니다.</div>';
+        }
+        const groups = {};
+        users.forEach(function(user) {
+            const key = user.role || '__none__';
+            if (!groups[key]) groups[key] = { label: user.roleLabel, color: user.roleColor, items: [] };
+            groups[key].items.push(user);
+        });
+        const roleBlocks = Object.keys(groups).map(function(key) {
+            const group = groups[key];
+            return '<div style="display:flex;flex-direction:column;gap:8px;">' +
+                '<div style="font-size:0.78rem;font-weight:700;color:' + group.color + ';">' + group.label + '</div>' +
+                '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;">' +
+                group.items.map(function(user) {
+                    return '<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid rgba(239,68,68,0.18);border-radius:8px;background:#fff;cursor:pointer;">' +
+                        '<input type="checkbox" class="' + prefix + '-notify-user" value="' + user.id + '" style="width:16px;height:16px;accent-color:#dc2626;">' +
+                        '<span style="font-size:0.82rem;color:var(--text-primary);font-weight:600;">' + user.name + '</span>' +
+                        '</label>';
+                }).join('') +
+                '</div>' +
+                '</div>';
+        }).join('');
+        return '<div style="margin-top:10px;border:1px solid rgba(239,68,68,0.25);border-radius:8px;background:#fff;padding:10px;">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">' +
+            '<div style="font-size:0.8rem;font-weight:700;color:#dc2626;">통보 대상 선택</div>' +
+            '<button type="button" class="btn btn-outline btn-sm" onclick="PaintingWorkModule.toggleNotifyUsers(\'' + prefix + '\', true)">전체 선택</button>' +
+            '</div>' +
+            '<div style="font-size:0.76rem;color:var(--text-muted);margin-bottom:10px;">' + helpText + '</div>' +
+            '<div id="' + prefix + 'NotifyUserWrap" style="display:flex;flex-direction:column;gap:12px;max-height:210px;overflow:auto;">' + roleBlocks + '</div>' +
+            '</div>';
+    }
+
+    function _getSelectedNotifyUsers(prefix) {
+        return Array.from(document.querySelectorAll('.' + prefix + '-notify-user:checked'))
+            .map(function(el) { return String(el.value || '').trim(); })
+            .filter(Boolean);
+    }
+
+    function toggleNotifyUsers(prefix, forceCheck) {
+        const checks = Array.from(document.querySelectorAll('.' + prefix + '-notify-user'));
+        if (!checks.length) return;
+        const shouldCheck = typeof forceCheck === 'boolean'
+            ? forceCheck
+            : checks.some(function(check) { return !check.checked; });
+        checks.forEach(function(check) { check.checked = shouldCheck; });
+    }
+
+    function _sendManagerNotification(title, body, recipientIds) {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+        if (!Array.isArray(recipientIds) || !recipientIds.length) return;
+        AuthModule.sendInternalMessage({
+            targetType: 'user',
+            targetIds: recipientIds,
+            title: title,
+            body: body,
+            category: 'manager_notice',
+            priority: 'high'
+        });
+    }
+
     function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
@@ -177,6 +261,90 @@ const PaintingWorkModule = (function() {
     // 현재 선택된 날짜/라인 (모듈 내 상태)
     let _currentDate = '';
     let _currentLine = '도장-A';
+
+    function _getNotifyUsersByRole() {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.getUsers !== 'function') return [];
+        const users = AuthModule.getUsers() || [];
+        const roleMap = (AuthModule.ROLES || []).reduce(function(map, role) {
+            map[role.key] = role;
+            return map;
+        }, {});
+        return users
+            .filter(function(user) { return user && user.active !== false; })
+            .map(function(user) {
+                const role = roleMap[user.role] || null;
+                return {
+                    id: String(user.id || ''),
+                    name: String(user.displayName || user.username || user.id || ''),
+                    role: String(user.role || ''),
+                    roleLabel: role ? role.label : String(user.role || ''),
+                    roleColor: role ? role.color : 'var(--text-muted)'
+                };
+            });
+    }
+
+    function _buildNotifySelectorHtml(prefix, helpText) {
+        const users = _getNotifyUsersByRole();
+        if (!users.length) {
+            return '<div style="margin-top:10px;padding:10px 12px;border:1px dashed rgba(239,68,68,0.35);border-radius:6px;font-size:0.8rem;color:var(--text-muted);">선택 가능한 통보 대상 사용자가 없습니다.</div>';
+        }
+        const groups = {};
+        users.forEach(function(user) {
+            const key = user.role || '__none__';
+            if (!groups[key]) groups[key] = { label: user.roleLabel, color: user.roleColor, items: [] };
+            groups[key].items.push(user);
+        });
+        const roleBlocks = Object.keys(groups).map(function(key) {
+            const group = groups[key];
+            return '<div style="display:flex;flex-direction:column;gap:8px;">' +
+                '<div style="font-size:0.78rem;font-weight:700;color:' + group.color + ';">' + group.label + '</div>' +
+                '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;">' +
+                group.items.map(function(user) {
+                    return '<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid rgba(239,68,68,0.18);border-radius:8px;background:#fff;cursor:pointer;">' +
+                        '<input type="checkbox" class="' + prefix + '-notify-user" value="' + user.id + '" style="width:16px;height:16px;accent-color:#dc2626;">' +
+                        '<span style="font-size:0.82rem;color:var(--text-primary);font-weight:600;">' + user.name + '</span>' +
+                        '</label>';
+                }).join('') +
+                '</div>' +
+                '</div>';
+        }).join('');
+        return '<div style="margin-top:10px;border:1px solid rgba(239,68,68,0.25);border-radius:8px;background:#fff;padding:10px;">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">' +
+            '<div style="font-size:0.8rem;font-weight:700;color:#dc2626;">통보 대상 선택</div>' +
+            '<button type="button" class="btn btn-outline btn-sm" onclick="PaintingWorkModule.toggleNotifyUsers(\'' + prefix + '\', true)">전체 선택</button>' +
+            '</div>' +
+            '<div style="font-size:0.76rem;color:var(--text-muted);margin-bottom:10px;">' + helpText + '</div>' +
+            '<div id="' + prefix + 'NotifyUserWrap" style="display:flex;flex-direction:column;gap:12px;max-height:210px;overflow:auto;">' + roleBlocks + '</div>' +
+            '</div>';
+    }
+
+    function _getSelectedNotifyUsers(prefix) {
+        return Array.from(document.querySelectorAll('.' + prefix + '-notify-user:checked'))
+            .map(function(el) { return String(el.value || '').trim(); })
+            .filter(Boolean);
+    }
+
+    function toggleNotifyUsers(prefix, forceCheck) {
+        const checks = Array.from(document.querySelectorAll('.' + prefix + '-notify-user'));
+        if (!checks.length) return;
+        const shouldCheck = typeof forceCheck === 'boolean'
+            ? forceCheck
+            : checks.some(function(check) { return !check.checked; });
+        checks.forEach(function(check) { check.checked = shouldCheck; });
+    }
+
+    function _sendManagerNotification(title, body, recipientIds) {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+        if (!Array.isArray(recipientIds) || !recipientIds.length) return;
+        AuthModule.sendInternalMessage({
+            targetType: 'user',
+            targetIds: recipientIds,
+            title: title,
+            body: body,
+            category: 'manager_notice',
+            priority: 'high'
+        });
+    }
 
     function render(container) {
         _currentDate = UIUtils.today();
@@ -1490,8 +1658,10 @@ const PaintingWorkModule = (function() {
 
     // IN/OUT 수량 1% 초과 차이 감지 → 경고 표시 / 비고 필수 표시
     function checkQtyDiff() {
-        var inQty  = Number((document.getElementById('addPwInputQty') || {}).value) || 0;
-        var outQty = Number((document.getElementById('addPwProdQty')  || {}).value) || 0;
+        var inQtyEl  = document.getElementById('addPwInputQty') || document.getElementById('editPwInputQty');
+        var outQtyEl = document.getElementById('addPwProdQty')  || document.getElementById('editPwProdQty');
+        var inQty  = Number((inQtyEl || {}).value) || 0;
+        var outQty = Number((outQtyEl || {}).value) || 0;
         var warn   = document.getElementById('qtyDiffWarning');
         var req    = document.getElementById('addPwNoteRequired');
         if (!warn) return;
@@ -1511,7 +1681,8 @@ const PaintingWorkModule = (function() {
         if (!section) return;
         var planQty = Number(section.getAttribute('data-plan-qty')) || 0;
         if (planQty <= 0) return;
-        var inputQty = Number((document.getElementById('addPwInputQty') || {}).value) || 0;
+        var inputQtyEl = document.getElementById('addPwInputQty') || document.getElementById('editPwInputQty');
+        var inputQty = Number((inputQtyEl || {}).value) || 0;
         // 투입수량이 계획수량의 95% 미만일 때만 사유 섹션 표시 (5% 초과 미달)
         var threshold = planQty * 0.95;
         var show = inputQty > 0 && inputQty < threshold;
@@ -1521,7 +1692,7 @@ const PaintingWorkModule = (function() {
 
         // 계획 미달 시: 자동 재계산 안 함 — 실제 완료시간 직접 입력 유도
         var hint = document.getElementById('pwEndTimeHint');
-        var endEl = document.getElementById('addPwEndTime');
+        var endEl = document.getElementById('addPwEndTime') || document.getElementById('editPwEndTime');
         if (hint && endEl) {
             if (show) {
                 hint.innerHTML =
@@ -1577,8 +1748,10 @@ const PaintingWorkModule = (function() {
         if (!section) return;
         var planQty = Number(section.getAttribute('data-plan-qty')) || 0;
         if (planQty <= 0) return;
-        var inputQty = Number((document.getElementById('addPwInputQty') || {}).value) || 0;
-        var outQty   = Number((document.getElementById('addPwProdQty')  || {}).value) || 0;
+        var inputQtyEl = document.getElementById('addPwInputQty') || document.getElementById('editPwInputQty');
+        var outQtyEl   = document.getElementById('addPwProdQty')  || document.getElementById('editPwProdQty');
+        var inputQty = Number((inputQtyEl || {}).value) || 0;
+        var outQty   = Number((outQtyEl  || {}).value) || 0;
         var maxQty   = Math.max(inputQty, outQty);
         var overAmt  = maxQty - planQty;
         var show     = maxQty > planQty;
@@ -1590,7 +1763,7 @@ const PaintingWorkModule = (function() {
                             (inputQty > planQty ? '투입수량' : '산출수량');
 
                 // 재계산된 완료시간 표시용
-                var endEl = document.getElementById('addPwEndTime');
+                var endEl = document.getElementById('addPwEndTime') || document.getElementById('editPwEndTime');
                 var recalcNote = '';
                 if (endEl) {
                     var planEndVal = ((document.getElementById('addPwPlanEndHidden') || {}).value) || '';
@@ -1911,6 +2084,7 @@ const PaintingWorkModule = (function() {
               '<span style="font-size:0.82rem;font-weight:600;color:#dc2626;">통보 완료</span>' +
               '</label>' +
               '</div>' +
+              _buildNotifySelectorHtml('plan', '메시지를 받을 담당자를 여러 명 선택하세요. 역할별로 묶어서 표시합니다.') +
               '</div>'
             : '';
 
@@ -1944,12 +2118,14 @@ const PaintingWorkModule = (function() {
             '<div style="flex:1;font-size:0.82rem;color:var(--text-primary);line-height:1.45;">' +
             '<strong style="color:#dc2626;">관리자 통보 필요</strong> — 투입/산출 수량 차이 내용을 작업 관리자에게 즉시 보고해 주세요.' +
             '</div>' +
-            '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap;flex-shrink:0;">' +
-            '<input type="checkbox" id="addPwQtyDiffManagerNotified" style="width:16px;height:16px;accent-color:#dc2626;">' +
-            '<span style="font-size:0.82rem;font-weight:600;color:#dc2626;">통보 완료</span>' +
-            '</label>' +
-            '</div></div>' +
-            // 비고
+             '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap;flex-shrink:0;">' +
+             '<input type="checkbox" id="addPwQtyDiffManagerNotified" style="width:16px;height:16px;accent-color:#dc2626;">' +
+             '<span style="font-size:0.82rem;font-weight:600;color:#dc2626;">통보 완료</span>' +
+             '</label>' +
+             '</div>' +
+             _buildNotifySelectorHtml('qtyDiff', '투입/산출 차이 통보를 받을 담당자를 여러 명 선택하세요.') +
+             '</div>' +
+             // 비고
             '<div class="form-group" style="margin-bottom:0;">' +
             '<label class="form-label" style="font-size:0.84rem;">비고 <span id="addPwNoteRequired" style="display:none;color:var(--accent-red);">*</span></label>' +
             '<input type="text" class="form-input" id="addPwNote" placeholder="특이사항 / 변동 사항"></div>';
@@ -2188,6 +2364,13 @@ const PaintingWorkModule = (function() {
                 if (qtyDiffMgrChk) qtyDiffMgrChk.closest('div').scrollIntoView({ behavior: 'smooth', block: 'center' });
                 return;
             }
+            var qtyDiffNotifyUsersCheck = _getSelectedNotifyUsers('qtyDiff');
+            if (!qtyDiffNotifyUsersCheck.length) {
+                UIUtils.toast('투입/산출 차이 통보를 받을 사용자를 한 명 이상 선택해 주세요.', 'warning');
+                var qtyDiffNotifyWrap = document.getElementById('qtyDiffNotifyUserWrap');
+                if (qtyDiffNotifyWrap) qtyDiffNotifyWrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
         }
 
         // 계획 미달 사유 필수 검증
@@ -2215,7 +2398,17 @@ const PaintingWorkModule = (function() {
                 if (planMgrChk) planMgrChk.closest('div').scrollIntoView({ behavior: 'smooth', block: 'center' });
                 return;
             }
+            var planNotifyUsersCheck = _getSelectedNotifyUsers('plan');
+            if (!planNotifyUsersCheck.length) {
+                UIUtils.toast('계획 미달 통보를 받을 사용자를 한 명 이상 선택해 주세요.', 'warning');
+                var planNotifyWrap = document.getElementById('planNotifyUserWrap');
+                if (planNotifyWrap) planNotifyWrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
         }
+
+        var qtyDiffNotifyUsers = hasQtyDiff ? _getSelectedNotifyUsers('qtyDiff') : [];
+        var planNotifyUsers = planReasonVisible ? _getSelectedNotifyUsers('plan') : [];
 
         var data = {
             date: (document.getElementById('addPwDateHidden') || {}).value || _currentDate,
@@ -2238,9 +2431,11 @@ const PaintingWorkModule = (function() {
             planReason: planReasonVisible ? planReason : '',
             planReasonDetail: planReasonVisible ? planReasonDetail : '',
             planManagerNotified: planReasonVisible ? true : false,
+            planManagerRecipients: planNotifyUsers,
             qtyDiffReason: hasQtyDiff ? qtyDiffReason : '',
             qtyDiffDetail: hasQtyDiff ? qtyDiffDetail : '',
             qtyDiffManagerNotified: hasQtyDiff ? true : false,
+            qtyDiffManagerRecipients: qtyDiffNotifyUsers,
             note: ((document.getElementById('addPwNote') || {}).value || '').trim()
         };
 
@@ -2338,6 +2533,29 @@ const PaintingWorkModule = (function() {
         if (typeof JigModule !== 'undefined' && JigModule.addUsageFromWork) {
             JigModule.addUsageFromWork(savedWork);
         }
+        if (planReasonVisible && planNotifyUsers.length) {
+            var planQtyBase = Number((planReasonSection && planReasonSection.dataset && planReasonSection.dataset.planQty) || 0) || 0;
+            _sendManagerNotification(
+                '도장 작업 계획 미달 통보',
+                '[' + (data.line || '-') + '] ' + (data.carModel || '-') + ' / ' + (data.partName || '-') + '\n' +
+                '계획수량: ' + UIUtils.formatNumber(planQtyBase) + ' EA\n' +
+                '투입수량: ' + UIUtils.formatNumber(data.inputQty) + ' EA\n' +
+                '사유구분: ' + data.planReason + '\n' +
+                '세부사유: ' + data.planReasonDetail,
+                planNotifyUsers
+            );
+        }
+        if (hasQtyDiff && qtyDiffNotifyUsers.length) {
+            _sendManagerNotification(
+                '도장 작업 투입/산출 차이 통보',
+                '[' + (data.line || '-') + '] ' + (data.carModel || '-') + ' / ' + (data.partName || '-') + '\n' +
+                '투입수량: ' + UIUtils.formatNumber(data.inputQty) + ' EA\n' +
+                '산출수량: ' + UIUtils.formatNumber(data.productionQty) + ' EA\n' +
+                '사유구분: ' + data.qtyDiffReason + '\n' +
+                '세부사유: ' + data.qtyDiffDetail,
+                qtyDiffNotifyUsers
+            );
+        }
 
         UIUtils.toast('작업 실적이 등록되었습니다.', 'success');
         loadAll();
@@ -2349,6 +2567,11 @@ const PaintingWorkModule = (function() {
     function edit(id) {
         const d = Storage.getById(STORE, id);
         if (!d) return;
+        const editPlan = d.planId ? Storage.getById(PLAN_STORE, d.planId) : null;
+        const editPlanQty = Number((editPlan && editPlan.planQty) || d.planQty || 0);
+        const editPlanQtyFmt = UIUtils.formatNumber(editPlanQty || 0);
+        const editPlanReasonVisible = !!(d.planReason || d.planReasonDetail || d.planManagerNotified);
+        const editQtyDiffVisible = !!(d.qtyDiffReason || d.qtyDiffDetail || d.qtyDiffManagerNotified);
 
         const lotsHtml = buildLotOptionsHtml(d.carModel, d.partName);
         const existLots = (d.lots && d.lots.length > 0) ?
@@ -2363,6 +2586,76 @@ const PaintingWorkModule = (function() {
         const initialLotRows = existLots.map(function(l) {
             return _buildLotRow(lotsHtml, l.lotNo, l.qty);
         }).join('');
+        const editPlanReasonHtml = editPlanQty > 0
+            ? '<div id="pwPlanQtyReasonSection" data-plan-qty="' + editPlanQty + '"' +
+              ' style="display:' + (editPlanReasonVisible ? 'block' : 'none') + ';margin-bottom:14px;' +
+              'background:rgba(220,38,38,0.06);border:1px solid rgba(220,38,38,0.35);border-radius:8px;padding:12px;">' +
+              '<div style="font-size:0.82rem;color:#dc2626;font-weight:600;margin-bottom:10px;">' +
+              '<span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;margin-right:4px;">trending_down</span>' +
+              '투입수량 (<strong id="pwPlanInputQtyLabel">' + (editPlanReasonVisible ? UIUtils.formatNumber(d.inputQty || 0) : '-') + '</strong> EA) 이 계획수량(<strong>' + editPlanQtyFmt + ' EA</strong>) 대비 5% 이상 미달 — 사유를 입력해 주세요.' +
+              '</div>' +
+              '<div style="display:grid;grid-template-columns:1fr 1.8fr;gap:10px;">' +
+              '<div class="form-group" style="margin:0;">' +
+              '<label class="form-label" style="font-size:0.82rem;">사유구분 <span style="color:var(--accent-red);">*</span></label>' +
+              '<select class="form-select" id="editPwPlanReason" style="font-size:0.85rem;">' +
+              '<option value="">-- 선택 --</option>' +
+              '<option value="계획변경"' + (d.planReason === '계획변경' ? ' selected' : '') + '>계획변경</option>' +
+              '<option value="시간정지(공정문제)"' + (d.planReason === '시간정지(공정문제)' ? ' selected' : '') + '>시간정지(공정문제)</option>' +
+              '<option value="설비 이상정지"' + (d.planReason === '설비 이상정지' ? ' selected' : '') + '>설비 이상정지</option>' +
+              '<option value="설비고장"' + (d.planReason === '설비고장' ? ' selected' : '') + '>설비고장</option>' +
+              '<option value="원자재문제"' + (d.planReason === '원자재문제' ? ' selected' : '') + '>원자재문제</option>' +
+              '<option value="자재결품"' + (d.planReason === '자재결품' ? ' selected' : '') + '>자재결품</option>' +
+              '</select></div>' +
+              '<div class="form-group" style="margin:0;">' +
+              '<label class="form-label" style="font-size:0.82rem;">세부 사유 <span style="color:var(--accent-red);">*</span></label>' +
+              '<input type="text" class="form-input" id="editPwPlanReasonDetail" value="' + (d.planReasonDetail || '') + '" placeholder="구체적인 내용을 입력해 주세요." style="font-size:0.85rem;"></div>' +
+              '</div>' +
+              '<div style="margin-top:10px;background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.3);border-radius:6px;padding:9px 14px;display:flex;align-items:center;gap:10px;">' +
+              '<span class="material-symbols-outlined" style="color:#dc2626;font-size:20px;flex-shrink:0;">campaign</span>' +
+              '<div style="flex:1;font-size:0.82rem;color:var(--text-primary);line-height:1.45;">' +
+              '<strong style="color:#dc2626;">관리자 통보 필요</strong> — 계획 미달 내용을 작업 관리자에게 즉시 보고해 주세요.' +
+              '</div>' +
+              '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap;flex-shrink:0;">' +
+              '<input type="checkbox" id="editPwPlanManagerNotified" style="width:16px;height:16px;accent-color:#dc2626;"' + (d.planManagerNotified ? ' checked' : '') + '>' +
+              '<span style="font-size:0.82rem;font-weight:600;color:#dc2626;">통보 완료</span>' +
+              '</label>' +
+              '</div>' +
+              _buildNotifySelectorHtml('editPlan', '계획 미달 통보를 받을 담당자를 여러 명 선택하세요.') +
+              '</div>'
+            : '';
+        const editQtyDiffHtml =
+            '<div id="qtyDiffWarning" style="display:' + (editQtyDiffVisible ? 'block' : 'none') + ';margin-bottom:12px;background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.45);border-radius:8px;padding:12px;">' +
+            '<div style="font-size:0.82rem;color:#dc2626;font-weight:700;margin-bottom:10px;">' +
+            '<span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;margin-right:4px;">warning</span>' +
+            '투입수량(<strong id="pwDiffInQty">' + (editQtyDiffVisible ? UIUtils.formatNumber(d.inputQty || 0) : '-') + '</strong> EA) 과 산출수량(<strong id="pwDiffOutQty">' + (editQtyDiffVisible ? UIUtils.formatNumber(d.productionQty || 0) : '-') + '</strong> EA) 차이 사유를 입력해 주세요.' +
+            '</div>' +
+            '<div style="display:grid;grid-template-columns:1fr 1.8fr;gap:10px;">' +
+            '<div class="form-group" style="margin:0;">' +
+            '<label class="form-label" style="font-size:0.82rem;">사유구분 <span style="color:var(--accent-red);">*</span></label>' +
+            '<select class="form-select" id="editPwQtyDiffReason" style="font-size:0.85rem;">' +
+            '<option value="">-- 선택 --</option>' +
+            '<option value="자재 불량"' + (d.qtyDiffReason === '자재 불량' ? ' selected' : '') + '>자재 불량</option>' +
+            '<option value="설비 고장"' + (d.qtyDiffReason === '설비 고장' ? ' selected' : '') + '>설비 고장</option>' +
+            '<option value="생산조건 NG"' + (d.qtyDiffReason === '생산조건 NG' ? ' selected' : '') + '>생산조건 NG</option>' +
+            '<option value="작업 불량"' + (d.qtyDiffReason === '작업 불량' ? ' selected' : '') + '>작업 불량</option>' +
+            '<option value="기타"' + (d.qtyDiffReason === '기타' ? ' selected' : '') + '>기타</option>' +
+            '</select></div>' +
+            '<div class="form-group" style="margin:0;">' +
+            '<label class="form-label" style="font-size:0.82rem;">세부 사유 <span style="color:var(--accent-red);">*</span></label>' +
+            '<input type="text" class="form-input" id="editPwQtyDiffDetail" value="' + (d.qtyDiffDetail || '') + '" placeholder="구체적인 내용을 입력해 주세요." style="font-size:0.85rem;"></div>' +
+            '</div>' +
+            '<div style="margin-top:10px;background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.3);border-radius:6px;padding:9px 14px;display:flex;align-items:center;gap:10px;">' +
+            '<span class="material-symbols-outlined" style="color:#dc2626;font-size:20px;flex-shrink:0;">campaign</span>' +
+            '<div style="flex:1;font-size:0.82rem;color:var(--text-primary);line-height:1.45;">' +
+            '<strong style="color:#dc2626;">관리자 통보 필요</strong> — 투입/산출 수량 차이 내용을 작업 관리자에게 즉시 보고해 주세요.' +
+            '</div>' +
+            '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap;flex-shrink:0;">' +
+            '<input type="checkbox" id="editPwQtyDiffManagerNotified" style="width:16px;height:16px;accent-color:#dc2626;"' + (d.qtyDiffManagerNotified ? ' checked' : '') + '>' +
+            '<span style="font-size:0.82rem;font-weight:600;color:#dc2626;">통보 완료</span>' +
+            '</label>' +
+            '</div>' +
+            _buildNotifySelectorHtml('editQtyDiff', '투입/산출 차이 통보를 받을 담당자를 여러 명 선택하세요.') +
+            '</div>';
 
         UIUtils.showModal('도장 작업 수정',
             '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:14px;">' +
@@ -2401,6 +2694,8 @@ const PaintingWorkModule = (function() {
             ' style="margin-top:7px;font-size:0.82rem;">' +
             '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">add</span> LOT 추가</button>' +
             '</div></div>' +
+            editPlanReasonHtml +
+            editQtyDiffHtml +
 
             '<div class="form-group" style="margin-bottom:0;">' +
             '<label class="form-label" style="font-size:0.83rem;">비고</label>' +
@@ -2678,6 +2973,7 @@ const PaintingWorkModule = (function() {
         checkQtyDiff,
         checkPlanQtyDiff,
         checkOverPlanQty,
+        toggleNotifyUsers,
         saveNew,
         edit,
         saveEdit,

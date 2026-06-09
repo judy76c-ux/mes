@@ -64,7 +64,7 @@ const Router = (function() {
         'robot-pg-std': '로봇 프로그램 기준서',
         'drying-std':   '건조 및 셋팅룸 온도 기준서',
         'prod-conditions': '작업조건 관리',
-        'paint-mix': '배합/사용 이력',
+        'paint-mix': '도료사용이력',
         'prod-sub-materials': '부자재 관리',
         'prod-equipment': '설비관리',
         'five-s': '3정5S 관리',
