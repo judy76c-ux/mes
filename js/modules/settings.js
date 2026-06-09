@@ -7006,21 +7006,57 @@ const SettingsModule = (function() {
         };
     }
 
+    async function _buildExcelReferencePreview(dataUrl) {
+        if (!dataUrl || !window.XLSX) return null;
+        const buffer = await fetch(dataUrl).then(res => res.arrayBuffer());
+        const workbook = XLSX.read(buffer, { type: 'array', cellStyles: true });
+        const sheetName = workbook.SheetNames?.[0];
+        if (!sheetName) return null;
+        const sheet = workbook.Sheets[sheetName];
+        if (!sheet) return null;
+        const html = XLSX.utils.sheet_to_html(sheet, {
+            editable: false,
+            id: `doc-excel-preview-${Date.now()}`,
+            header: '',
+            footer: ''
+        });
+        return {
+            referencePreviewHtml: html,
+            referenceSheetName: sheetName
+        };
+    }
+
     async function _normalizeDocumentReferencePreviews(rows) {
         const list = Array.isArray(rows) ? rows : [];
         let changed = false;
         const next = [];
         for (const row of list) {
-            if (row && row.referenceType === 'application/pdf' && row.referenceDataUrl && !row.referencePreviewDataUrl) {
-                try {
-                    const preview = await _buildPdfReferencePreview(row.referenceDataUrl);
-                    if (preview?.referencePreviewDataUrl) {
-                        next.push({ ...row, ...preview });
-                        changed = true;
-                        continue;
+            if (row && row.referenceDataUrl) {
+                if (row.referenceType === 'application/pdf' && !row.referencePreviewDataUrl) {
+                    try {
+                        const preview = await _buildPdfReferencePreview(row.referenceDataUrl);
+                        if (preview?.referencePreviewDataUrl) {
+                            next.push({ ...row, ...preview });
+                            changed = true;
+                            continue;
+                        }
+                    } catch (error) {
+                        console.warn('[Settings] pdf preview build failed', error);
                     }
-                } catch (error) {
-                    console.warn('[Settings] pdf preview build failed', error);
+                }
+                if ((row.referenceType || '').includes('sheet') || (row.referenceType || '').includes('excel')) {
+                    if (!row.referencePreviewHtml) {
+                        try {
+                            const preview = await _buildExcelReferencePreview(row.referenceDataUrl);
+                            if (preview?.referencePreviewHtml) {
+                                next.push({ ...row, ...preview });
+                                changed = true;
+                                continue;
+                            }
+                        } catch (error) {
+                            console.warn('[Settings] excel preview build failed', error);
+                        }
+                    }
                 }
             }
             next.push(row);
@@ -7078,6 +7114,19 @@ const SettingsModule = (function() {
             return `<div id="doc-reference-preview" style="position:absolute;left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px;display:flex;align-items:center;justify-content:center;overflow:hidden;pointer-events:none;transform:${transform};transform-origin:center center;z-index:1;">
                         <img src="${previewSrc}" alt="${design.referenceName || 'reference'}"
                             style="width:100%;height:100%;object-fit:contain;object-position:center top;opacity:.32;box-shadow:0 0 0 1px rgba(148,163,184,.28);">
+                    </div>`;
+        }
+        if (((design.referenceType || '').includes('sheet') || (design.referenceType || '').includes('excel')) && design.referencePreviewHtml) {
+            return `<div id="doc-reference-preview" style="position:absolute;left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px;overflow:hidden;pointer-events:none;transform:${transform};transform-origin:center center;z-index:1;background:rgba(255,255,255,.92);box-shadow:0 0 0 1px rgba(148,163,184,.28);">
+                        <div style="padding:14px;transform-origin:left top;">
+                            <div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:8px;">엑셀 시트: ${design.referenceSheetName || 'Sheet1'}</div>
+                            <div style="overflow:hidden;opacity:.55;font-size:11px;line-height:1.25;color:#111827;">
+                                ${design.referencePreviewHtml
+                                    .replace('<table', '<table style="border-collapse:collapse;background:#fff;min-width:max-content;font-size:11px;color:#0f172a;"')
+                                    .replace(/<td/g, '<td style="border:1px solid #cbd5e1;padding:4px 6px;vertical-align:middle;white-space:pre-wrap;"')
+                                    .replace(/<th/g, '<th style="border:1px solid #94a3b8;padding:4px 6px;background:#e2e8f0;font-weight:800;vertical-align:middle;white-space:pre-wrap;"')}
+                            </div>
+                        </div>
                     </div>`;
         }
         if ((design.referenceType || '') === 'application/pdf') {

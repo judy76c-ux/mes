@@ -1492,7 +1492,11 @@ const PaintingWorkModule = (function() {
         var inputQty = Number((document.getElementById('addPwInputQty') || {}).value) || 0;
         // 투입수량이 계획수량의 95% 미만일 때만 표시 (5% 초과 미달)
         var threshold = planQty * 0.95;
-        section.style.display = (inputQty > 0 && inputQty < threshold) ? 'block' : 'none';
+        var show = inputQty > 0 && inputQty < threshold;
+        section.style.display = show ? 'block' : 'none';
+        // 실제 투입수량 레이블 업데이트
+        var label = document.getElementById('pwPlanInputQtyLabel');
+        if (label) label.textContent = show ? UIUtils.formatNumber(inputQty) : '-';
     }
 
     // 초과 수량 비례로 작업 완료시간 재계산 (계획 CT 기준)
@@ -1837,7 +1841,7 @@ const PaintingWorkModule = (function() {
               'border-radius:8px;padding:12px;">' +
               '<div style="font-size:0.82rem;color:#dc2626;font-weight:600;margin-bottom:10px;">' +
               '<span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;margin-right:4px;">trending_down</span>' +
-              '투입수량이 계획수량(<strong>' + planQtyFmt + ' EA</strong>) 대비 5% 이상 미달 — 사유를 입력해 주세요' +
+              '투입수량 (<strong id="pwPlanInputQtyLabel">-</strong> EA) 이 계획수량(<strong>' + planQtyFmt + ' EA</strong>) 대비 5% 이상 미달 — 사유를 입력해 주세요' +
               '</div>' +
               '<div style="display:grid;grid-template-columns:1fr 1.8fr;gap:10px;">' +
               '<div class="form-group" style="margin:0;">' +
