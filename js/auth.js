@@ -560,10 +560,13 @@ const AuthModule = (function () {
         const user = getCurrentUser();
         const role = ROLES.find(r => r.key === (user ? user.role : ''));
         if (user) {
+            const fullUser2 = _getUsers().find(u => u.id === user.id);
+            const photo2 = fullUser2 && fullUser2.photo ? fullUser2.photo : null;
+            const avatarHtml2 = photo2
+                ? `<img src="${photo2}" style="width:32px;height:32px;border-radius:50%;object-fit:cover;flex-shrink:0;border:2px solid var(--border-color);">`
+                : `<div class="topbar-user-icon"><span class="material-symbols-outlined" style="font-size:20px;">person</span></div>`;
             badge.innerHTML = `
-                <div class="topbar-user-icon">
-                    <span class="material-symbols-outlined" style="font-size:20px;">person</span>
-                </div>
+                ${avatarHtml2}
                 <div style="line-height:1.3;margin:0 6px;white-space:nowrap;">
                     <div style="font-size:12px;font-weight:700;color:var(--text-primary);">${user.displayName}</div>
                     <div style="font-size:10px;color:${role ? role.color : 'var(--text-muted)'};">${role ? role.label : ''}</div>
@@ -595,10 +598,14 @@ const AuthModule = (function () {
         const role = ROLES.find(r => r.key === (user ? user.role : ''));
         if (user) {
             const unreadCount = getUnreadInboxCount(user);
+            // 사용자 사진: localStorage users에서 photo 필드 조회
+            const fullUser = _getUsers().find(u => u.id === user.id);
+            const photo = fullUser && fullUser.photo ? fullUser.photo : null;
+            const avatarHtml = photo
+                ? `<img src="${photo}" style="width:32px;height:32px;border-radius:50%;object-fit:cover;flex-shrink:0;border:2px solid var(--border-color);">`
+                : `<div class="topbar-user-icon"><span class="material-symbols-outlined" style="font-size:20px;">person</span></div>`;
             badge.innerHTML = `
-                <div class="topbar-user-icon">
-                    <span class="material-symbols-outlined" style="font-size:20px;">person</span>
-                </div>
+                ${avatarHtml}
                 <div style="line-height:1.3;margin:0 6px;white-space:nowrap;">
                     <div style="font-size:12px;font-weight:700;color:var(--text-primary);">${user.displayName}</div>
                     <div style="font-size:10px;color:${role ? role.color : 'var(--text-muted)'};">${role ? role.label : ''}</div>

@@ -2720,6 +2720,17 @@ const PaintingWorkModule = (function() {
                 }
             });
             _updateLotSummary(); // 수정 모달 열릴 때 초기 합계 표시
+            (d.planManagerRecipients || []).forEach(function(userId) {
+                var check = document.querySelector('.editPlan-notify-user[value="' + userId + '"]');
+                if (check) check.checked = true;
+            });
+            (d.qtyDiffManagerRecipients || []).forEach(function(userId) {
+                var check = document.querySelector('.editQtyDiff-notify-user[value="' + userId + '"]');
+                if (check) check.checked = true;
+            });
+            checkQtyDiff();
+            checkPlanQtyDiff();
+            checkOverPlanQty();
         }, 60);
     }
 
@@ -2728,7 +2739,15 @@ const PaintingWorkModule = (function() {
         const lotNo = lots.length > 0 ? lots[0].lotNo : '';
         const startTime = (document.getElementById('editPwStartTime') || {}).value || '';
         const endTime = (document.getElementById('editPwEndTime') || {}).value || '';
+        const inputQty = Number((document.getElementById('editPwInputQty') || {}).value) || 0;
         const prodQty = Number((document.getElementById('editPwProdQty') || {}).value) || 0;
+        const hasQtyDiff = inputQty > 0 && prodQty > 0 && Math.abs(inputQty - prodQty) / inputQty > 0.01;
+        const qtyDiffReason = ((document.getElementById('editPwQtyDiffReason') || {}).value || '').trim();
+        const qtyDiffDetail = ((document.getElementById('editPwQtyDiffDetail') || {}).value || '').trim();
+        const planReasonSection = document.getElementById('pwPlanQtyReasonSection');
+        const planReasonVisible = !!(planReasonSection && planReasonSection.style.display !== 'none');
+        const planReason = ((document.getElementById('editPwPlanReason') || {}).value || '').trim();
+        const planReasonDetail = ((document.getElementById('editPwPlanReasonDetail') || {}).value || '').trim();
 
         // ── 사출 LOT 합계 ≠ 산출수량 → 저장 차단 ──
         if (lots.length > 0) {
@@ -2743,6 +2762,56 @@ const PaintingWorkModule = (function() {
                 return;
             }
         }
+
+        if (hasQtyDiff && !qtyDiffReason) {
+            UIUtils.toast('투입/산출 수량 차이 사유구분을 선택해 주세요.', 'warning');
+            var eqdrEl = document.getElementById('editPwQtyDiffReason');
+            if (eqdrEl) eqdrEl.focus();
+            return;
+        }
+        if (hasQtyDiff && !qtyDiffDetail) {
+            UIUtils.toast('투입/산출 수량 차이 세부 사유를 입력해 주세요.', 'warning');
+            var eqddEl = document.getElementById('editPwQtyDiffDetail');
+            if (eqddEl) eqddEl.focus();
+            return;
+        }
+        if (hasQtyDiff) {
+            var editQtyDiffMgrChk = document.getElementById('editPwQtyDiffManagerNotified');
+            if (!editQtyDiffMgrChk || !editQtyDiffMgrChk.checked) {
+                UIUtils.toast('투입/산출 수량 차이 내용을 관리자에게 통보 후 "통보 완료"를 체크해 주세요.', 'warning');
+                return;
+            }
+            if (!_getSelectedNotifyUsers('editQtyDiff').length) {
+                UIUtils.toast('투입/산출 차이 통보를 받을 사용자를 한 명 이상 선택해 주세요.', 'warning');
+                return;
+            }
+        }
+        if (planReasonVisible && !planReason) {
+            UIUtils.toast('계획 미달 사유구분을 선택해 주세요.', 'warning');
+            var eprEl = document.getElementById('editPwPlanReason');
+            if (eprEl) eprEl.focus();
+            return;
+        }
+        if (planReasonVisible && !planReasonDetail) {
+            UIUtils.toast('계획 미달 세부 사유를 입력해 주세요.', 'warning');
+            var eprdEl = document.getElementById('editPwPlanReasonDetail');
+            if (eprdEl) eprdEl.focus();
+            return;
+        }
+        if (planReasonVisible) {
+            var editPlanMgrChk = document.getElementById('editPwPlanManagerNotified');
+            if (!editPlanMgrChk || !editPlanMgrChk.checked) {
+                UIUtils.toast('계획 미달 내용을 관리자에게 통보 후 "통보 완료"를 체크해 주세요.', 'warning');
+                return;
+            }
+            if (!_getSelectedNotifyUsers('editPlan').length) {
+                UIUtils.toast('계획 미달 통보를 받을 사용자를 한 명 이상 선택해 주세요.', 'warning');
+                return;
+            }
+        }
+
+        const editPlanNotifyUsers = planReasonVisible ? _getSelectedNotifyUsers('editPlan') : [];
+        const editQtyDiffNotifyUsers = hasQtyDiff ? _getSelectedNotifyUsers('editQtyDiff') : [];
 
         let avgCT = 0;
         if (startTime && endTime && prodQty > 0) {
@@ -2760,12 +2829,20 @@ const PaintingWorkModule = (function() {
             color: ((document.getElementById('editPwColor') || {}).value || '').trim(),
             lotNo: lotNo,
             lots: lots,
-            inputQty: Number((document.getElementById('editPwInputQty') || {}).value) || 0,
+            inputQty: inputQty,
             productionQty: prodQty,
             workers: Number((document.getElementById('editPwWorkers') || {}).value) || 0,
             startTime: startTime,
             endTime: endTime,
             avgCT: avgCT,
+            planReason: planReasonVisible ? planReason : '',
+            planReasonDetail: planReasonVisible ? planReasonDetail : '',
+            planManagerNotified: planReasonVisible ? true : false,
+            planManagerRecipients: editPlanNotifyUsers,
+            qtyDiffReason: hasQtyDiff ? qtyDiffReason : '',
+            qtyDiffDetail: hasQtyDiff ? qtyDiffDetail : '',
+            qtyDiffManagerNotified: hasQtyDiff ? true : false,
+            qtyDiffManagerRecipients: editQtyDiffNotifyUsers,
             note: ((document.getElementById('editPwNote') || {}).value || '').trim()
         });
         UIUtils.closeModal();
