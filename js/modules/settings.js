@@ -9944,7 +9944,7 @@ const SettingsModule = (function() {
                     <h4><span class="material-symbols-outlined">security</span> 역할별 접근 권한</h4>
                 </div>
                 <div class="card-body" style="padding:0;">
-                    <div style="overflow-x:auto;max-height:520px;overflow-y:auto;">
+                    <div style="overflow-x:auto;max-height:75vh;overflow-y:auto;">
                         <table class="data-table" style="font-size:0.82rem;">
                             <thead style="position:sticky;top:0;z-index:1;">
                                 <tr>
