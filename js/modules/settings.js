@@ -887,6 +887,10 @@ const SettingsModule = (function() {
         const processes = ['', ..._processTypes];
         const processOptions = val => processes.map(proc => `<option value="${proc}" ${val === proc ? 'selected' : ''}>${proc || '선택 안함'}</option>`).join('');
 
+        // 도장-A / 도장-B 컬러 행 초기 표시 여부 (둘 다 있을 때만)
+        const _procVals = [v('process1'), v('process2'), v('process3'), v('process4')];
+        const _showPaintColorRow = _procVals.includes('도장-A') && _procVals.includes('도장-B');
+
         // 수정 모드: 이 제품에 연결된 사출 자재 조회
         const linkedInjMats = isEdit
             ? (Storage.getAll(INJECT_MAT_STORE) || []).filter(m => {
@@ -991,7 +995,7 @@ const SettingsModule = (function() {
                     <input type="text" class="form-input" id="${idPrefix}Color" placeholder="예: 화이트" value="${v('color')}">
                 </div>
             </div>
-            <div class="form-row" style="margin-top:0;">
+            <div id="${idPrefix}PaintColorRow" class="form-row" style="margin-top:0;display:${_showPaintColorRow ? '' : 'none'};">
                 <div class="form-group" style="flex:1;">
                     <label class="form-label" style="display:flex;align-items:center;gap:5px;">
                         <span style="width:9px;height:9px;border-radius:2px;background:var(--accent-blue);display:inline-block;flex-shrink:0;"></span>
@@ -1059,7 +1063,7 @@ const SettingsModule = (function() {
                 <div id="${idPrefix}Row1" style="background:var(--bg-secondary); padding:10px; border-radius:8px; margin-bottom:8px; display:flex !important; flex-wrap:nowrap; align-items:center; gap:12px;">
                     <div style="display:flex; align-items:center; gap:8px; flex: 0 0 380px;">
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:85px;">제조공정-1</label>
-                        <select class="form-input" id="${idPrefix}Process1" style="margin-top:0;">${processOptions(v('process1'))}</select>
+                        <select class="form-input" id="${idPrefix}Process1" style="margin-top:0;" onchange="SettingsModule.onProductProcessChange('${idPrefix}')">${processOptions(v('process1'))}</select>
                     </div>
                     <div style="display:flex; align-items:center; gap:8px; flex: 0 0 200px;">
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:50px;">CVT</label>
@@ -1078,7 +1082,7 @@ const SettingsModule = (function() {
                 <div id="${idPrefix}Row2" style="background:var(--bg-secondary); padding:10px; border-radius:8px; margin-bottom:8px; display:${v('process2') ? 'flex' : 'none'} !important; flex-wrap:nowrap; align-items:center; gap:12px;">
                     <div style="display:flex; align-items:center; gap:8px; flex: 0 0 380px;">
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:85px;">제조공정-2</label>
-                        <select class="form-input" id="${idPrefix}Process2" style="margin-top:0;">${processOptions(v('process2'))}</select>
+                        <select class="form-input" id="${idPrefix}Process2" style="margin-top:0;" onchange="SettingsModule.onProductProcessChange('${idPrefix}')">${processOptions(v('process2'))}</select>
                     </div>
                     <div style="display:flex; align-items:center; gap:8px; flex: 0 0 200px;">
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:50px;">CVT</label>
@@ -1097,7 +1101,7 @@ const SettingsModule = (function() {
                 <div id="${idPrefix}Row3" style="background:var(--bg-secondary); padding:10px; border-radius:8px; margin-bottom:8px; display:${v('process3') ? 'flex' : 'none'} !important; flex-wrap:nowrap; align-items:center; gap:12px;">
                     <div style="display:flex; align-items:center; gap:8px; flex: 0 0 380px;">
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:85px;">제조공정-3</label>
-                        <select class="form-input" id="${idPrefix}Process3" style="margin-top:0;">${processOptions(v('process3'))}</select>
+                        <select class="form-input" id="${idPrefix}Process3" style="margin-top:0;" onchange="SettingsModule.onProductProcessChange('${idPrefix}')">${processOptions(v('process3'))}</select>
                     </div>
                     <div style="display:flex; align-items:center; gap:8px; flex: 0 0 200px;">
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:50px;">CVT</label>
@@ -1116,7 +1120,7 @@ const SettingsModule = (function() {
                 <div id="${idPrefix}Row4" style="background:var(--bg-secondary); padding:10px; border-radius:8px; margin-bottom:8px; display:${v('process4') ? 'flex' : 'none'} !important; flex-wrap:nowrap; align-items:center; gap:12px;">
                     <div style="display:flex; align-items:center; gap:8px; flex: 0 0 380px;">
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:85px;">제조공정-4</label>
-                        <select class="form-input" id="${idPrefix}Process4" style="margin-top:0;">${processOptions(v('process4'))}</select>
+                        <select class="form-input" id="${idPrefix}Process4" style="margin-top:0;" onchange="SettingsModule.onProductProcessChange('${idPrefix}')">${processOptions(v('process4'))}</select>
                     </div>
                     <div style="display:flex; align-items:center; gap:8px; flex: 0 0 200px;">
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:50px;">CVT</label>
@@ -1737,6 +1741,16 @@ const SettingsModule = (function() {
         const colorSel = document.getElementById(`${idPrefix}InjFiltColor`);
         if (colorSel) colorSel.innerHTML = '<option value="">전체</option>';
         updateProductInjInfo(idPrefix);
+    }
+
+    /* 제조공정 셀렉트 변경 시 도장-A/B 컬러 행 표시/숨김 */
+    function onProductProcessChange(prefix) {
+        const g = id => (document.getElementById(id) || {}).value || '';
+        const procs = [1,2,3,4].map(i => g(`${prefix}Process${i}`));
+        const hasA = procs.includes('도장-A');
+        const hasB = procs.includes('도장-B');
+        const row = document.getElementById(`${prefix}PaintColorRow`);
+        if (row) row.style.display = (hasA && hasB) ? '' : 'none';
     }
 
     function _collectProductForm(prefix) {
@@ -10159,6 +10173,7 @@ const SettingsModule = (function() {
         saveProduct,
         editProduct,
         updateProduct,
+        onProductProcessChange,
         removeProduct,
         addProductPaintRow,
         removeProductPaintRow,

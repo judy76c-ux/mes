@@ -10,6 +10,7 @@ var FiveSModule = (function () {
     const STORE       = DB.STORES.S5_INSPECTIONS;
     const ISSUE_STORE = DB.STORES.S5_ISSUES;
     const STANDARD_IMAGE_CONFIG_KEY = 's5_standard_clipboard_image';
+    const STANDARD_UPLOAD_ROLES = ['admin', 'prod_manager', 'quality_manager'];
 
     let _tab = 'main';
     let _standardClipboardImage = null;
@@ -77,6 +78,20 @@ var FiveSModule = (function () {
         const valid = items.filter(i => Number(i.score) > 0);
         if (!valid.length) return 0;
         return Math.round(valid.reduce((s, i) => s + Number(i.score), 0) / valid.length / 5 * 100);
+    }
+
+    function _currentUser() {
+        try {
+            if (typeof AuthModule !== 'undefined' && typeof AuthModule.getCurrentUser === 'function') {
+                return AuthModule.getCurrentUser();
+            }
+        } catch (e) {}
+        return null;
+    }
+
+    function _canUploadStandard() {
+        const user = _currentUser();
+        return !!(user && STANDARD_UPLOAD_ROLES.includes(String(user.role || '')));
     }
 
     /* ══════════════════════════════════════════════════════════
@@ -855,117 +870,54 @@ var FiveSModule = (function () {
 
     function _renderStandardPage() {
         const actions = document.getElementById('s5Actions');
+        const canUpload = _canUploadStandard();
         if (actions) actions.innerHTML = `
-            <button class="btn btn-outline" onclick="FiveSModule.focusStandardPasteZone()">
-                <span class="material-symbols-outlined">content_paste</span> 클립보드 붙여넣기
-            </button>
-            ${_standardClipboardImage ? `
-            <button class="btn btn-danger" onclick="FiveSModule.clearStandardClipboardImage()">
-                <span class="material-symbols-outlined">delete</span> 붙여넣기 제거
-            </button>` : ''}`;
+            <div style="display:flex;justify-content:flex-end;width:100%;">
+                <button class="btn btn-outline" onclick="FiveSModule.focusStandardPasteZone()"
+                        ${canUpload ? '' : 'disabled'}
+                        style="padding:5px 10px;font-size:0.76rem;line-height:1.2;min-height:auto;${canUpload ? '' : 'opacity:.5;cursor:not-allowed;'}">
+                    <span class="material-symbols-outlined" style="font-size:15px;">upload_file</span> 기준서 업로드
+                </button>
+            </div>`;
 
         document.getElementById('s5Content').innerHTML = `
         <div class="card">
             <div class="card-body" style="padding:12px;overflow:auto;">
                 <div id="s5StandardPasteZone" tabindex="0" onpaste="FiveSModule.handleStandardPaste(event)"
-                     style="margin-bottom:12px;padding:10px 12px;border:1px dashed var(--accent-blue);border-radius:8px;background:#f8fbff;color:var(--text-muted);font-size:.86rem;outline:none;">
-                    엑셀에서 복사한 화면을 여기서 <strong>Ctrl+V</strong>로 붙여넣으면 기준서 배경 이미지로 저장됩니다.
-                </div>
+                     style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;" aria-hidden="true"></div>
                 ${_standardClipboardImage
-                    ? `<div style="min-width:980px;border:1px solid #111;background:#fff;display:flex;justify-content:center;">
+                    ? `<div style="min-width:980px;display:flex;justify-content:flex-start;align-items:flex-start;">
                         <img src="${_standardClipboardImage}" alt="3정5S 기준서 붙여넣기 이미지"
                              style="display:block;max-width:100%;height:auto;">
                        </div>`
-                    : `<div style="min-width:980px;border:1px solid #111;background:#fff;color:#111;font-size:13px;">
-                    <div style="display:grid;grid-template-columns:120px 1fr 360px;border-bottom:1px solid #111;">
-                        <div style="display:flex;align-items:center;justify-content:center;border-right:1px solid #111;font-weight:800;color:#1d4ed8;">KC<br>케미칼</div>
-                        <div style="background:#6fa8dc;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:900;letter-spacing:0;">3정 5S 관리 기준서</div>
-                        <table style="width:100%;border-collapse:collapse;font-size:12px;">
-                            <tr><th rowspan="4" style="border-left:1px solid #111;border-right:1px solid #111;">개<br>정<br>이<br>력</th><td style="border-bottom:1px solid #111;text-align:center;">2</td><td style="border-bottom:1px solid #111;"></td><td style="border-bottom:1px solid #111;"></td><td style="border-bottom:1px solid #111;"></td></tr>
-                            <tr><td style="border-bottom:1px solid #111;text-align:center;">1</td><td style="border-bottom:1px solid #111;"></td><td style="border-bottom:1px solid #111;"></td><td style="border-bottom:1px solid #111;"></td></tr>
-                            <tr><td style="border-bottom:1px solid #111;text-align:center;">0</td><td style="border-bottom:1px solid #111;text-align:center;">24.04.26</td><td style="border-bottom:1px solid #111;text-align:center;">최초 작성</td><td style="border-bottom:1px solid #111;text-align:center;">작성/확인</td></tr>
-                            <tr><td style="text-align:center;">NO</td><td style="text-align:center;">개정일자</td><td style="text-align:center;">개정내용</td><td style="text-align:center;">승인</td></tr>
-                        </table>
-                    </div>
-
-                    <div style="display:grid;grid-template-columns:58% 42%;border-bottom:1px solid #111;">
-                        <div style="border-right:1px solid #111;">
-                            <div style="background:#bdd7ee;text-align:center;font-weight:800;padding:10px;border-bottom:1px solid #111;">업무 내용</div>
-                            <div style="padding:12px 16px;line-height:1.55;">
-                                <div style="font-weight:800;margin-bottom:6px;">1. 용어의 정의</div>
-                                <div style="font-weight:700;">1) 3정(三定)</div>
-                                <div style="padding-left:16px;">정품(正品): 일정한 양품을 둔다.</div>
-                                <div style="padding-left:16px;">정량(定量): 일정한 용기에 정해진 양을 담는다.</div>
-                                <div style="padding-left:16px;">정위치(定位置): 정해진 위치에 둔다.</div>
-                                <div style="font-weight:700;margin-top:10px;">2) 5S 활동</div>
-                                <div style="padding-left:16px;">정리(整理): 필요한 것과 불필요한 것을 구분하여 불필요한 것을 정리한다.</div>
-                                <div style="padding-left:16px;">정돈(整頓): 필요한 것을 필요할 때 즉시 사용할 수 있도록 지정 장소에 둔다.</div>
-                                <div style="padding-left:16px;">청소(淸掃): 쓸고 닦고 청소하여 문제를 눈으로 찾을 수 있도록 한다.</div>
-                                <div style="padding-left:16px;">청결(淸潔): 설비와 작업환경을 더럽히지 않고 항상 깨끗한 상태로 유지한다.</div>
-                                <div style="padding-left:16px;">습관화(習慣化): 정장의 규칙을 준수하고 정확한 예방활동을 습관화한다.</div>
-
-                                <div style="font-weight:800;margin:18px 0 6px;">2. 3정 5행 평가 주기 및 후속 조치 기준</div>
-                                <table style="width:100%;border-collapse:collapse;text-align:center;">
-                                    <tr style="background:#f3f4f6;"><th style="border:1px solid #111;padding:6px;">항목/점수</th><th style="border:1px solid #111;">90점 이상</th><th style="border:1px solid #111;">89~80점</th><th style="border:1px solid #111;">79점 이하</th></tr>
-                                    <tr><th style="border:1px solid #111;padding:6px;">조치 방법</th><td style="border:1px solid #111;">지속적 유지</td><td style="border:1px solid #111;">중기 개선 계획</td><td style="border:1px solid #111;">즉시 개선</td></tr>
-                                    <tr><th style="border:1px solid #111;padding:6px;">판정기준</th><td style="border:1px solid #111;">모든 상태가 관리됨</td><td style="border:1px solid #111;">일부 미준수</td><td style="border:1px solid #111;">전반적 미준수 및 관리 미흡</td></tr>
-                                    <tr><th style="border:1px solid #111;padding:6px;">점검주기</th><td colspan="3" style="border:1px solid #111;">월 1회(셋째 주) 실시함</td></tr>
-                                </table>
-                            </div>
-                        </div>
-                        <div>
-                            <div style="background:#bdd7ee;text-align:center;font-weight:800;padding:10px;border-bottom:1px solid #111;">업무 FLOW</div>
-                            <div style="padding:34px 28px;display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:center;">
-                                ${['1. 점검계획 수립','2. 3정5S 점검','5. 결과보고','6. 차기계획 수립'].map((t, i) => `
-                                    <div style="grid-column:1;border:2px solid #0f4c75;border-radius:8px;padding:14px;text-align:center;font-weight:800;${i === 1 ? 'background:#ef4444;color:#111;' : ''}">${t}</div>
-                                `).join('')}
-                                <div style="grid-column:2;grid-row:2;border:2px solid #0f4c75;border-radius:8px;padding:14px;text-align:center;font-weight:800;">3. 시정조치 발행</div>
-                                <div style="grid-column:2;grid-row:3;border:2px solid #0f4c75;border-radius:8px;padding:14px;text-align:center;font-weight:800;">4. 시정조치 실시</div>
-                                <div style="grid-column:1 / span 2;color:#ef4444;font-weight:800;text-align:center;">80점 미만 시 시정조치 발행, 기준 만족 시 결과보고</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div>
-                        <div style="background:#bdd7ee;font-weight:800;padding:6px;border-bottom:1px solid #111;">3. 업무 절차</div>
-                        <table style="width:100%;border-collapse:collapse;text-align:center;font-size:12px;">
-                            <thead><tr style="background:#f8fafc;"><th style="border:1px solid #111;padding:5px;">NO</th><th style="border:1px solid #111;">관리 내용</th><th style="border:1px solid #111;">점검주기</th><th style="border:1px solid #111;">담당자</th><th style="border:1px solid #111;">관련 표준 및 기준</th><th style="border:1px solid #111;">이상 발생 시 조치</th><th style="border:1px solid #111;">기록 관리</th></tr></thead>
-                            <tbody>
-                                ${[
-                                    ['1','3정5S 점검 주기 수립','년간 사업계획 수립 시','품질경영부장','3정5S 관리기준서','재 수립','사업계획서'],
-                                    ['2','3정5S 점검','1회/월','품질경영부장','3정5S 체크시트 기준','재 점검','3정5S 체크시트'],
-                                    ['3','시정조치 발행','부적합 발생 시','품질경영부장','부적합 보고서','조치 계획 수립','시정조치 요구서'],
-                                    ['4','시정조치 실시','조치 계획 수립 후','해당부서장','시정조치 요구서','시정조치 재 실시','시정조치 요구서'],
-                                    ['5','결과 보고','시정조치 완료 후','품질경영부장','3정5행 개선 현황 보고서','시정조치 재 실시','개선현황 보고서']
-                                ].map(r => `<tr>${r.map(c => `<td style="border:1px solid #111;padding:5px;">${c}</td>`).join('')}</tr>`).join('')}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>`}
+                    : `<div style="min-width:980px;min-height:1385px;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:1rem;">
+                        업로드된 기준서가 없습니다.
+                       </div>`}
             </div>
         </div>`;
     }
 
     function focusStandardPasteZone() {
+        if (!_canUploadStandard()) {
+            UIUtils.toast('기준서 업로드는 관리자 또는 관리 권한자만 가능합니다.', 'warning');
+            return;
+        }
         const zone = document.getElementById('s5StandardPasteZone');
         if (!zone) return;
         zone.focus();
-        UIUtils.toast('붙여넣기 영역이 선택되었습니다. Ctrl+V로 붙여넣어 주세요.', 'info');
-    }
-
-    async function clearStandardClipboardImage() {
-        _standardClipboardImage = null;
-        await Storage.setConfigValue(STANDARD_IMAGE_CONFIG_KEY, null);
-        UIUtils.toast('붙여넣은 기준서 이미지가 제거되었습니다.', 'success');
-        _renderStandardPage();
+        UIUtils.toast('기준서 업로드 영역이 선택되었습니다. Ctrl+V로 붙여넣어 주세요.', 'info');
     }
 
     async function handleStandardPaste(event) {
         event.preventDefault();
+        if (!_canUploadStandard()) {
+            UIUtils.toast('기준서 업로드 권한이 없습니다.', 'warning');
+            return;
+        }
         const items = Array.from(event.clipboardData?.items || []);
         const imageItem = items.find(item => item.type && item.type.startsWith('image/'));
         if (!imageItem) {
-            UIUtils.toast('클립보드에 이미지가 없습니다. 엑셀에서 범위를 복사한 뒤 다시 붙여넣어 주세요.', 'warning');
+            UIUtils.toast('클립보드에 이미지가 없습니다. 기준서 화면을 복사한 뒤 다시 붙여넣어 주세요.', 'warning');
             return;
         }
 
@@ -980,11 +932,11 @@ var FiveSModule = (function () {
             try {
                 _standardClipboardImage = reader.result;
                 await Storage.setConfigValue(STANDARD_IMAGE_CONFIG_KEY, _standardClipboardImage);
-                UIUtils.toast('클립보드 이미지가 기준서에 저장되었습니다.', 'success');
+                UIUtils.toast('기준서 이미지가 업로드되었습니다.', 'success');
                 _renderStandardPage();
             } catch (error) {
                 console.error('Failed to save standard clipboard image:', error);
-                UIUtils.toast('기준서 이미지 저장 중 오류가 발생했습니다.', 'error');
+                UIUtils.toast('기준서 업로드 중 오류가 발생했습니다.', 'error');
             }
         };
         reader.onerror = () => UIUtils.toast('클립보드 이미지 읽기에 실패했습니다.', 'error');
@@ -1193,7 +1145,6 @@ var FiveSModule = (function () {
         removeIssue,
         savePlan,
         focusStandardPasteZone,
-        clearStandardClipboardImage,
         handleStandardPaste
     };
 })();
