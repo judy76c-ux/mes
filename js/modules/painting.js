@@ -964,23 +964,57 @@ const PaintingWorkModule = (function() {
     }
 
     // 선택 제외 목록을 반영한 LOT 옵션 HTML 생성 (데이터-balance 포함, 컬러 필터)
+    // ★ 사출명 일치 LOT를 먼저 표시하고, 창고 전체 잔량 LOT도 그룹 구분으로 추가
     function _buildFilteredLotOptions(injPartName, carModel, partName, excludeLotNos) {
         var planColor = (document.getElementById('addPwColorHidden') || {}).value || '';
-        var lots = injPartName
+
+        // ① 사출명 일치 LOT (우선 후보)
+        var primaryLots = injPartName
             ? getInjectionLotsByInjPart(injPartName, planColor)
-            : getInjectionLots(carModel || '', ''); // partName은 제품명이므로 사출 창고 조회 시 carModel만 사용
-        var filtered = (excludeLotNos && excludeLotNos.length > 0)
-            ? lots.filter(function(l) { return excludeLotNos.indexOf(l.lotNo) < 0; })
-            : lots;
-        if (filtered.length === 0)
-            return '<option value="">-- 선택 가능한 LOT 없음 --</option>';
-        return '<option value="" data-balance="">-- LOT 선택 --</option>' +
-            filtered.map(function(l) {
-                var colorTag = l.color ? ' │ ' + l.color : '';
-                return '<option value="' + l.lotNo + '" data-balance="' + l.balance + '">' +
-                    l.lotNo + ' │ ' + (l.partName || l.carModel) + colorTag +
-                    ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA</option>';
-            }).join('');
+            : getInjectionLots(carModel || '', '');
+
+        // ② 창고 전체 잔량 LOT (carModel 전체 — 사출명 불문)
+        var allCarLots = getInjectionLots(carModel || '', '');
+
+        // ③ 이미 primary에 있는 lotNo Set
+        var primarySet = {};
+        primaryLots.forEach(function(l) { primarySet[l.lotNo] = true; });
+
+        // ④ primary에 없는 나머지 LOT
+        var otherLots = allCarLots.filter(function(l) { return !primarySet[l.lotNo]; });
+
+        // ⑤ excludeLotNos 제거
+        function applyExclude(arr) {
+            if (!excludeLotNos || excludeLotNos.length === 0) return arr;
+            return arr.filter(function(l) { return excludeLotNos.indexOf(l.lotNo) < 0; });
+        }
+        var filteredPrimary = applyExclude(primaryLots);
+        var filteredOther   = applyExclude(otherLots);
+
+        if (filteredPrimary.length === 0 && filteredOther.length === 0)
+            return '<option value="">-- 사출 창고 재고 없음 --</option>';
+
+        function lotOptionHtml(l, groupLabel) {
+            var colorTag = l.color ? ' │ ' + l.color : '';
+            var label = groupLabel ? '[' + groupLabel + '] ' : '';
+            return '<option value="' + l.lotNo + '" data-balance="' + l.balance + '">' +
+                label + l.lotNo + ' │ ' + (l.partName || l.carModel) + colorTag +
+                ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA</option>';
+        }
+
+        var html = '<option value="" data-balance="">-- LOT 선택 --</option>';
+
+        if (filteredPrimary.length > 0) {
+            html += '<optgroup label="▶ 사출명 일치 LOT">';
+            html += filteredPrimary.map(function(l) { return lotOptionHtml(l, ''); }).join('');
+            html += '</optgroup>';
+        }
+        if (filteredOther.length > 0) {
+            html += '<optgroup label="▶ 창고 전체 재고">';
+            html += filteredOther.map(function(l) { return lotOptionHtml(l, ''); }).join('');
+            html += '</optgroup>';
+        }
+        return html;
     }
 
     // 선택된 LOT의 재고 잔량을 qty 입력의 max로 설정
@@ -989,12 +1023,10 @@ const PaintingWorkModule = (function() {
         var qtyInp = row.querySelector('.pw-lot-qty');
         if (!qtyInp) return;
         if (!lotNo) { qtyInp.removeAttribute('max'); return; }
-        var injPartSel = document.getElementById('pwInjPartSelect');
-        var injPartName = injPartSel ? injPartSel.value : '';
         var cm = (document.getElementById('addPwCarModelHidden') || {}).value || '';
-        var planColor   = (document.getElementById('addPwColorHidden') || {}).value || '';
-        var lots = injPartName ? getInjectionLotsByInjPart(injPartName, planColor) : getInjectionLots(cm, '');
-        var lot = lots.find(function(l) { return l.lotNo === lotNo; });
+        // 창고 전체 LOT에서 잔량 조회 (사출명 필터 없이)
+        var allLots = getInjectionLots(cm, '');
+        var lot = allLots.find(function(l) { return l.lotNo === lotNo; });
         if (lot) {
             qtyInp.max = lot.balance;
             qtyInp.placeholder = '최대 ' + UIUtils.formatNumber(lot.balance);
