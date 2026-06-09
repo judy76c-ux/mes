@@ -1086,8 +1086,9 @@ const PaintingWorkModule = (function() {
         var lots = _collectLots();
         var totalLotQty = lots.reduce(function(s, l) { return s + (Number(l.qty) || 0); }, 0);
 
-        var prodQtyEl = document.getElementById('addPwProdQty') || document.getElementById('editPwProdQty');
-        var prodQty = prodQtyEl ? (Number(prodQtyEl.value) || 0) : 0;
+        // ★ 투입수량 기준 비교 (LOT = 사출부품 투입량 = IN PUT)
+        var inputQtyEl = document.getElementById('addPwInputQty') || document.getElementById('editPwInputQty');
+        var inputQty = inputQtyEl ? (Number(inputQtyEl.value) || 0) : 0;
 
         // 요약 요소 찾기 또는 생성 (LOT 행 컨테이너 바로 뒤에 삽입)
         var summaryEl = document.getElementById('pwLotQtySummary');
@@ -1098,22 +1099,22 @@ const PaintingWorkModule = (function() {
             container.parentNode.insertBefore(summaryEl, container.nextSibling);
         }
 
-        if (prodQty === 0) {
+        if (inputQty === 0) {
             summaryEl.style.display = 'none';
             return;
         }
         summaryEl.style.display = 'flex';
 
-        var isMatch = totalLotQty === prodQty;
+        var isMatch = totalLotQty === inputQty;
         summaryEl.style.background   = isMatch ? 'rgba(76,175,80,0.1)'  : 'rgba(239,68,68,0.08)';
         summaryEl.style.border       = isMatch ? '1px solid rgba(76,175,80,0.35)' : '1px solid rgba(239,68,68,0.35)';
         summaryEl.style.color        = isMatch ? '#16a34a' : '#dc2626';
 
         var icon    = isMatch ? '✅' : '⚠️';
-        var diffMsg = isMatch ? ' (산출수량 일치)' : (' — 차이: ' + (totalLotQty > prodQty ? '+' : '') + UIUtils.formatNumber(totalLotQty - prodQty) + ' EA');
+        var diffMsg = isMatch ? ' (투입수량 일치)' : (' — 차이: ' + (totalLotQty > inputQty ? '+' : '') + UIUtils.formatNumber(totalLotQty - inputQty) + ' EA');
         summaryEl.innerHTML =
             icon + ' LOT 수량 합계: <strong>' + UIUtils.formatNumber(totalLotQty) + ' EA</strong>' +
-            ' / 산출수량: <strong>' + UIUtils.formatNumber(prodQty) + ' EA</strong>' +
+            ' / 투입수량: <strong>' + UIUtils.formatNumber(inputQty) + ' EA</strong>' +
             '<span style="font-size:0.76rem;font-weight:400;">' + diffMsg + '</span>';
     }
 
@@ -1193,9 +1194,9 @@ const PaintingWorkModule = (function() {
         setTimeout(_updateLotSummary, 60);
     }
 
-    // ── 산출수량 입력 시 LOT 행 자동 채우기 + 부족한 경우 다음 LOT 자동 추가 ──
+    // ── 투입수량 입력 시 LOT 행 자동 채우기 + 부족한 경우 다음 LOT 자동 추가 ──
     function _autoFillLotQtys() {
-        var prodQtyEl = document.getElementById('addPwProdQty');
+        var prodQtyEl = document.getElementById('addPwInputQty') || document.getElementById('editPwInputQty');
         var needed = Number(prodQtyEl ? prodQtyEl.value : 0) || 0;
         if (needed <= 0) { _updateLotSummary(); return; }
 
@@ -1683,12 +1684,12 @@ const PaintingWorkModule = (function() {
             '<label class="form-label" style="font-size:0.84rem;">투입수량 (IN PUT) <span style="color:var(--accent-red)">*</span>' +
             '<span style="color:var(--text-muted);font-size:0.75rem;"> 계획: ' + planQtyFmt + '</span></label>' +
             '<input type="number" class="form-input" id="addPwInputQty" min="0" placeholder="0"' +
-            ' oninput="PaintingWorkModule.checkQtyDiff(); PaintingWorkModule.checkPlanQtyDiff(); PaintingWorkModule.checkOverPlanQty();"' +
+            ' oninput="PaintingWorkModule.checkQtyDiff(); PaintingWorkModule.checkPlanQtyDiff(); PaintingWorkModule.checkOverPlanQty(); PaintingWorkModule._autoFillLotQtys();"' +
             ' style="font-size:1.05rem;font-weight:600;text-align:right;"></div>' +
             '<div class="form-group" style="margin:0;">' +
             '<label class="form-label" style="font-size:0.84rem;">산출 수량 (OUT PUT) <span style="color:var(--accent-red)">*</span></label>' +
             '<input type="number" class="form-input" id="addPwProdQty" min="0" placeholder="0"' +
-            ' oninput="PaintingWorkModule.calcCT(); PaintingWorkModule.checkQtyDiff(); PaintingWorkModule.checkOverPlanQty(); PaintingWorkModule._autoFillLotQtys();"' +
+            ' oninput="PaintingWorkModule.calcCT(); PaintingWorkModule.checkQtyDiff(); PaintingWorkModule.checkOverPlanQty(); PaintingWorkModule._updateLotSummary();"' +
             ' style="font-size:1.05rem;font-weight:600;text-align:right;color:var(--accent-green);"></div>' +
             '<div class="form-group" style="margin:0;">' +
             '<label class="form-label" style="font-size:0.84rem;">투입인원 (명) <span style="color:var(--accent-red)">*</span></label>' +
@@ -1989,12 +1990,14 @@ const PaintingWorkModule = (function() {
         var startTime = (document.getElementById('addPwStartTime') || {}).value || '';
         var endTime = (document.getElementById('addPwEndTime') || {}).value || '';
         var prodQty = Number((document.getElementById('addPwProdQty') || {}).value) || 0;
+        // ★ LOT 합계는 투입수량(IN PUT)과 일치해야 함
+        var _saveInputQty = Number((document.getElementById('addPwInputQty') || {}).value) || 0;
 
-        // ── 사출 LOT 합계 ≠ 산출수량 → 저장 차단 ──
+        // ── 사출 LOT 합계 ≠ 투입수량 → 저장 차단 ──
         var _lotTotalForSave = lots.reduce(function(s, l) { return s + (Number(l.qty) || 0); }, 0);
-        if (_lotTotalForSave !== prodQty) {
+        if (_lotTotalForSave !== _saveInputQty) {
             UIUtils.toast(
-                '사출 LOT 수량 합계(' + UIUtils.formatNumber(_lotTotalForSave) + ' EA)와 산출수량(' + UIUtils.formatNumber(prodQty) + ' EA)이 일치하지 않습니다.',
+                '사출 LOT 수량 합계(' + UIUtils.formatNumber(_lotTotalForSave) + ' EA)와 투입수량(' + UIUtils.formatNumber(_saveInputQty) + ' EA)이 일치하지 않습니다.',
                 'warning'
             );
             var lotSection = document.getElementById('pwLotRows');
