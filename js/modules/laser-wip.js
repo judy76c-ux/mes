@@ -19,7 +19,7 @@ var LaserWipModule = (function() {
         return `
         <div style="margin-bottom:18px;">
             <div style="margin-bottom:14px;">
-                <h3 style="margin:0 0 6px;font-size:1.15rem;">명치 재공품 현황</h3>
+                <h3 style="margin:0 0 6px;font-size:1.15rem;">${TABS.find(t => t.id === _activeTab)?.label || '재공품 현황'}</h3>
                 <p style="margin:0;color:var(--text-muted);font-size:.9rem;">도장 공정 전·후 재공품 재고를 한 곳에서 확인합니다.</p>
             </div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
@@ -31,6 +31,12 @@ var LaserWipModule = (function() {
                         <span class="material-symbols-outlined" style="font-size:18px;">${t.icon}</span>
                         ${t.label}
                     </button>`).join('')}
+                <button type="button" onclick="Router.navigate('laser-layout')"
+                    class="btn btn-outline"
+                    style="display:flex;align-items:center;gap:6px;background:#fff;">
+                    <span class="material-symbols-outlined" style="font-size:18px;">map</span>
+                    지그창고 레이아웃
+                </button>
                 <button class="btn btn-secondary" style="display:flex;align-items:center;gap:4px;font-size:0.85rem;margin-left:auto;"
                     onclick="LaserWipModule.refresh()">
                     <span class="material-symbols-outlined" style="font-size:1rem;">refresh</span> 새로고침

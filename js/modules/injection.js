@@ -466,6 +466,11 @@ var InjectionIncomingModule = (function() {
                 if (totalEl) totalEl.textContent = UIUtils.formatNumber(total);
                 const hiddenEl = document.getElementById('addInjInQty');
                 if (hiddenEl) hiddenEl.value = total;
+                // 합격수량이 비어있으면 LOT 합계로 자동 동기화
+                const passEl = document.getElementById('addInjPassQty');
+                if (passEl && (passEl.value === '' || passEl.value === '0' || Number(passEl.value) === 0)) {
+                    passEl.value = total;
+                }
                 onIncomingQtyInput();
             }
 

@@ -14,6 +14,7 @@ var FiveSModule = (function () {
 
     let _tab = 'main';
     let _standardClipboardImage = null;
+    let _inspectionEditId = null;
 
     const _today = () => new Date().toISOString().split('T')[0];
     const _esc   = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -39,7 +40,8 @@ var FiveSModule = (function () {
 
     const MENUS = [
         { id: 'main', label: '메인', icon: 'dashboard' },
-        { id: 'inspection', label: '점검일지', icon: 'assignment' },
+        { id: 'inspection', label: '점검일지 작성', icon: 'edit_document' },
+        { id: 'inspection-history', label: '점검일지 이력', icon: 'assignment' },
         { id: 'issue', label: '지적사항', icon: 'report_problem' },
         { id: 'plan', label: '점검계획', icon: 'calendar_month' },
         { id: 'assignment', label: '업무 분담', icon: 'groups' },
@@ -124,7 +126,8 @@ var FiveSModule = (function () {
 
         const page = {
             main:       { title: '3정5S 관리', desc: '점검일지, 지적사항, 점검계획과 기준서를 한 화면에서 관리합니다.' },
-            inspection: { title: '점검일지', desc: '현장 3정5S 점검 결과와 사진을 기록합니다.' },
+            inspection: { title: '점검일지 작성', desc: '현장 3정 5행 점검 결과를 페이지에서 바로 작성합니다.' },
+            'inspection-history': { title: '점검일지 이력', desc: '점검 결과와 월별/구역별 누락 여부를 함께 확인합니다.' },
             issue:      { title: '지적사항', desc: '점검 중 발견된 미흡 사항과 시정조치 상태를 추적합니다.' },
             plan:       { title: '점검계획', desc: '구역별 점검 예정 일정을 확인합니다.' },
             assignment: { title: '업무 분담', desc: '구역별 담당자와 점검 주기를 설정합니다.' },
@@ -143,7 +146,9 @@ var FiveSModule = (function () {
             _refreshStats();
             _renderMainPage();
         } else if (_tab === 'inspection') {
-            _renderInspectionTab();
+            _renderInspectionFormPage();
+        } else if (_tab === 'inspection-history') {
+            _renderInspectionHistoryPage();
         } else if (_tab === 'issue') {
             _renderIssueTab();
         } else if (_tab === 'plan') {
@@ -190,31 +195,124 @@ var FiveSModule = (function () {
     /* ══════════════════════════════════════════════════════════
        TAB 1 : 점검 일지
     ══════════════════════════════════════════════════════════ */
-    function _renderInspectionTab() {
+    function _inspectionFormHtml(rec) {
+        const items = rec ? (rec.checkItems || []) : CHECK_ITEMS.map(d => ({ ...d, score: 0, note: '' }));
+        const tbody = items.map((item, idx) => {
+            const cc = CAT_COLOR[item.cat] || '#94a3b8';
+            const opts = [
+                { v: 5, l: '5 - 우수' }, { v: 4, l: '4 - 양호' }, { v: 3, l: '3 - 보통' },
+                { v: 2, l: '2 - 미흡' }, { v: 1, l: '1 - 불량' }, { v: 0, l: '해당없음' }
+            ].map(o => `<option value="${o.v}" ${Number(item.score) === o.v ? 'selected' : ''}>${o.l}</option>`).join('');
+            return `<tr>
+                <td style="text-align:center;padding:8px 8px;"><span style="font-size:0.68rem;padding:1px 6px;border-radius:4px;background:${cc}22;color:${cc};font-weight:700;">${_esc(item.cat)}</span></td>
+                <td style="font-weight:700;font-size:0.84rem;padding:8px 8px;">${_esc(item.label)}</td>
+                <td style="font-size:0.78rem;color:var(--text-muted);padding:8px 8px;">${_esc(item.desc)}</td>
+                <td style="padding:6px 8px;"><select class="form-select s5-score" data-idx="${idx}" style="min-width:118px;font-size:0.8rem;" onchange="FiveSModule._calcPreview();FiveSModule._togglePhotoRows()">${opts}</select></td>
+                <td style="padding:6px 8px;"><input type="text" class="form-input s5-note" data-idx="${idx}" value="${_esc(item.note || '')}" placeholder="특이사항" style="font-size:0.8rem;"></td>
+                <td style="padding:6px 8px;min-width:170px;">
+                    <div class="s5-photo-wrap" data-idx="${idx}" style="display:none;">
+                        <input type="file" class="form-input s5-photo" data-idx="${idx}" accept="image/*" multiple style="font-size:0.75rem;padding:6px;">
+                        <div style="font-size:0.72rem;color:var(--text-muted);margin-top:3px;">기존 사진 ${(item.photos || []).length}개</div>
+                    </div>
+                </td>
+            </tr>`;
+        }).join('');
+        return `<div class="card"><div class="card-body">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:16px;">
+                <div>
+                    <div style="font-size:1rem;font-weight:800;color:var(--text-primary);">${rec ? '점검일지 수정' : '점검일지 작성'}</div>
+                    <div style="font-size:.84rem;color:var(--text-muted);margin-top:4px;">팝업이 아닌 페이지에서 바로 저장합니다.</div>
+                </div>
+                <div style="font-size:0.82rem;">종합점수: <strong id="s5Preview" style="color:var(--accent-blue);">-</strong></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">
+                <div class="form-group"><label class="form-label">점검일 <span style="color:var(--accent-red)">*</span></label><input type="date" class="form-input" id="s5IDate" value="${rec?.date || _today()}"></div>
+                <div class="form-group"><label class="form-label">구역 <span style="color:var(--accent-red)">*</span></label><select class="form-select" id="s5IAreaSel">${AREAS.map(a => `<option ${rec?.area === a ? 'selected' : ''}>${_esc(a)}</option>`).join('')}</select></div>
+                <div class="form-group"><label class="form-label">점검자 <span style="color:var(--accent-red)">*</span></label><input type="text" class="form-input" id="s5IInspector" value="${_esc(rec?.inspector || '')}" placeholder="성명"></div>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;"><strong style="font-size:0.9rem;">점검 체크시트</strong><span style="font-size:0.78rem;color:var(--text-muted);">미흡/불량 항목은 사진 첨부가 열립니다.</span></div>
+            <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;margin-bottom:14px;">
+                <table style="width:100%;border-collapse:collapse;font-size:0.81rem;">
+                    <thead><tr style="background:var(--bg-secondary);">
+                        <th style="padding:7px 8px;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);width:52px;text-align:center;">구분</th>
+                        <th style="padding:7px 8px;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);width:74px;">항목</th>
+                        <th style="padding:7px 8px;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">평가 기준</th>
+                        <th style="padding:7px 8px;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);width:130px;">평가</th>
+                        <th style="padding:7px 8px;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">특이사항</th>
+                        <th style="padding:7px 8px;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);width:180px;">사진</th>
+                    </tr></thead>
+                    <tbody>${tbody}</tbody>
+                </table>
+            </div>
+            <div class="form-group"><label class="form-label">종합의견</label><textarea class="form-textarea" id="s5ISummary" rows="3" placeholder="현장 종합 상태 의견">${_esc(rec?.summary || '')}</textarea></div>
+            <div style="margin-top:8px;padding:8px 12px;background:rgba(59,130,246,0.06);border-left:3px solid var(--accent-blue);border-radius:0 6px 6px 0;font-size:0.77rem;color:var(--text-muted);">평가: 5=우수, 4=양호, 3=보통, 2=미흡, 1=불량, 해당없음=점수 제외 | <strong>95↑=S</strong> · <strong>85↑=A</strong> · <strong>75↑=B</strong> · <strong>75미만=C</strong></div>
+        </div></div>`;
+    }
+
+    function _renderInspectionFormPage() {
+        const rec = _inspectionEditId ? Storage.getById(STORE, _inspectionEditId) : null;
         const actions = document.getElementById('s5Actions');
-        if (actions) actions.innerHTML = `
-            <button class="btn btn-primary" onclick="FiveSModule.openInspModal()">
-                <span class="material-symbols-outlined">add</span> 새 점검 일지
-            </button>`;
+        if (actions) actions.innerHTML = `${_inspectionEditId ? `<button class="btn btn-outline" onclick="FiveSModule.newInspPage()"><span class="material-symbols-outlined">add</span> 새 점검일지</button>` : ''}<button class="btn btn-primary" onclick="FiveSModule.saveInsp(${_inspectionEditId ? `'${_js(_inspectionEditId)}'` : 'null'})"><span class="material-symbols-outlined">save</span> 저장</button>`;
+        document.getElementById('s5Content').innerHTML = _inspectionFormHtml(rec);
+        setTimeout(() => { FiveSModule._calcPreview(); FiveSModule._togglePhotoRows(); }, 30);
+    }
 
-        const now  = new Date();
+    function _calcMonthSchedule(assignments, monthKey) {
+        const dayMap = { '월요일': 1, '화요일': 2, '수요일': 3, '목요일': 4, '금요일': 5 };
+        const year = Number(monthKey.slice(0, 4));
+        const monthIndex = Number(monthKey.slice(5, 7)) - 1;
+        const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+        const results = [];
+        assignments.forEach(a => {
+            if (!a?.assignee) return;
+            const targetDay = dayMap[a.day] ?? 1;
+            for (let day = 1; day <= daysInMonth; day++) {
+                const date = new Date(year, monthIndex, day);
+                if (date.getDay() !== targetDay) continue;
+                const weekIndex = Math.floor((day - 1) / 7);
+                if (a.cycle === '격주' && weekIndex % 2 === 1) continue;
+                if (a.cycle === '월간' && weekIndex !== 0) continue;
+                results.push({ date: date.toISOString().split('T')[0], area: a.area, assignee: a.assignee, cycle: a.cycle });
+            }
+        });
+        return results.sort((a, b) => a.date.localeCompare(b.date) || a.area.localeCompare(b.area));
+    }
+
+    async function _renderInspectionHistoryPage() {
+        const actions = document.getElementById('s5Actions');
+        if (actions) actions.innerHTML = `<button class="btn btn-outline" onclick="FiveSModule.switchTab('inspection')"><span class="material-symbols-outlined">edit_document</span> 점검일지 작성</button>`;
+        const now = new Date();
         const from = new Date(now.getFullYear(), now.getMonth() - 2, 1).toISOString().split('T')[0];
-
-        document.getElementById('s5Content').innerHTML = `
-        <div class="card"><div class="card-body">
-            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;
-                        padding:10px 12px;background:var(--bg-secondary);border-radius:8px;margin-bottom:16px;">
+        const saved = await Storage.getConfigValue('s5_plan');
+        const assignments = saved?.assignments || AREAS.map(a => ({ area: a, assignee: '', cycle: '주간', day: '월요일' }));
+        const inspections = Storage.getAll(STORE) || [];
+        const months = Array.from({ length: 6 }).map((_, idx) => { const d = new Date(); d.setMonth(d.getMonth() - idx); return d.toISOString().slice(0, 7); }).reverse();
+        const monthCards = months.map(monthKey => {
+            const expected = _calcMonthSchedule(assignments, monthKey);
+            const doneSet = new Set(inspections.filter(r => (r.date || '').startsWith(monthKey)).map(r => `${r.date}|${r.area}`));
+            const missing = expected.filter(row => !doneSet.has(`${row.date}|${row.area}`));
+            const doneCount = expected.length - missing.length;
+            const plannedAreas = [...new Set(expected.map(r => r.area))];
+            const missedAreas = [...new Set(missing.map(r => r.area))];
+            return `<div style="border:1px solid var(--border-color);border-radius:10px;padding:14px;background:#fff;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px;"><strong style="font-size:0.92rem;">${monthKey}</strong><span style="font-size:0.76rem;color:${missing.length ? 'var(--accent-red)' : '#16a34a'};font-weight:700;">${missing.length ? `누락 ${missing.length}건` : '누락 없음'}</span></div>
+                <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:10px;">
+                    <div style="padding:10px;border-radius:8px;background:var(--bg-secondary);text-align:center;"><div style="font-size:1rem;font-weight:800;">${expected.length}</div><div style="font-size:.72rem;color:var(--text-muted);">예정</div></div>
+                    <div style="padding:10px;border-radius:8px;background:#ecfdf5;text-align:center;"><div style="font-size:1rem;font-weight:800;color:#16a34a;">${doneCount}</div><div style="font-size:.72rem;color:var(--text-muted);">완료</div></div>
+                    <div style="padding:10px;border-radius:8px;background:${missing.length ? '#fef2f2' : 'var(--bg-secondary)'};text-align:center;"><div style="font-size:1rem;font-weight:800;color:${missing.length ? '#dc2626' : 'var(--text-primary)'};">${missing.length}</div><div style="font-size:.72rem;color:var(--text-muted);">누락</div></div>
+                </div>
+                <div style="font-size:.76rem;color:var(--text-muted);line-height:1.45;">${plannedAreas.length ? `계획 공정: ${_esc(plannedAreas.join(', '))}` : '계획된 공정이 없습니다.'}<br>${missedAreas.length ? `누락 공정: <span style="color:#dc2626;font-weight:700;">${_esc(missedAreas.join(', '))}</span>` : '누락 공정 없음'}</div>
+            </div>`;
+        }).join('');
+        document.getElementById('s5Content').innerHTML = `<div class="card"><div class="card-body">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 12px;background:var(--bg-secondary);border-radius:8px;margin-bottom:16px;">
                 <input type="date" id="s5IFrom" class="form-input" style="width:130px;" value="${from}">
                 <span style="color:var(--text-muted);">~</span>
-                <input type="date" id="s5ITo"   class="form-input" style="width:130px;" value="${_today()}">
-                <select id="s5IArea" class="form-select" style="width:140px;">
-                    <option value="">전체 구역</option>
-                    ${AREAS.map(a => `<option>${_esc(a)}</option>`).join('')}
-                </select>
-                <button class="btn btn-primary btn-sm" onclick="FiveSModule.searchInsp()">
-                    <span class="material-symbols-outlined">search</span> 조회
-                </button>
+                <input type="date" id="s5ITo" class="form-input" style="width:130px;" value="${_today()}">
+                <select id="s5IArea" class="form-select" style="width:140px;"><option value="">전체 구역</option>${AREAS.map(a => `<option>${_esc(a)}</option>`).join('')}</select>
+                <button class="btn btn-primary btn-sm" onclick="FiveSModule.searchInsp()"><span class="material-symbols-outlined">search</span> 조회</button>
             </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:18px;">${monthCards}</div>
             <div id="s5ITable"></div>
         </div></div>`;
         searchInsp();
@@ -223,32 +321,18 @@ var FiveSModule = (function () {
     function searchInsp() {
         const from = document.getElementById('s5IFrom')?.value || '';
         const to   = document.getElementById('s5ITo')?.value   || '';
-        const area = document.getElementById('s5IArea')?.value  || '';
+        const area = document.getElementById('s5IArea')?.value || '';
         const el   = document.getElementById('s5ITable');
         if (!el) return;
-
         const issueCount = {};
-        (Storage.getAll(ISSUE_STORE) || []).forEach(i => {
-            if (i.inspectionId) issueCount[i.inspectionId] = (issueCount[i.inspectionId] || 0) + 1;
-        });
-
-        const recs = (Storage.getAll(STORE) || [])
-            .filter(r => (!from || r.date >= from) && (!to || r.date <= to) && (!area || r.area === area))
-            .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-
+        (Storage.getAll(ISSUE_STORE) || []).forEach(i => { if (i.inspectionId) issueCount[i.inspectionId] = (issueCount[i.inspectionId] || 0) + 1; });
+        const recs = (Storage.getAll(STORE) || []).filter(r => (!from || r.date >= from) && (!to || r.date <= to) && (!area || r.area === area)).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
         if (!recs.length) {
-            el.innerHTML = `<div style="text-align:center;padding:48px;color:var(--text-muted);">
-                <span class="material-symbols-outlined"
-                    style="font-size:3rem;display:block;opacity:0.3;margin-bottom:8px;">assignment</span>
-                조회된 점검 일지가 없습니다.<br>
-                <button class="btn btn-primary btn-sm" style="margin-top:12px;"
-                    onclick="FiveSModule.openInspModal()">첫 점검 일지 작성하기</button>
-            </div>`;
+            el.innerHTML = `<div style="text-align:center;padding:48px;color:var(--text-muted);"><span class="material-symbols-outlined" style="font-size:3rem;display:block;opacity:0.3;margin-bottom:8px;">assignment</span>조회된 점검 일지가 없습니다.<br><button class="btn btn-primary btn-sm" style="margin-top:12px;" onclick="FiveSModule.newInspPage()">첫 점검 일지 작성하기</button></div>`;
             return;
         }
-
         const rows = recs.map((r, i) => {
-            const g  = _grade(r.totalScore || 0);
+            const g = _grade(r.totalScore || 0);
             const ic = issueCount[r.id] || 0;
             return `<tr>
                 <td style="text-align:center;color:var(--text-muted);">${i + 1}</td>
@@ -256,146 +340,27 @@ var FiveSModule = (function () {
                 <td>${_esc(r.area || '-')}</td>
                 <td>${_esc(r.inspector || '-')}</td>
                 <td style="text-align:center;font-size:0.95rem;font-weight:700;">${r.totalScore || 0}점</td>
-                <td style="text-align:center;">
-                    <span style="background:${g.bg};color:${g.color};font-weight:700;
-                                 padding:2px 10px;border-radius:4px;">${g.g}등급</span>
-                </td>
-                <td style="text-align:center;">
-                    ${ic ? `<span style="color:var(--accent-orange);font-weight:700;">${ic}건</span>` : '-'}
-                </td>
-                <td>
-                    <div style="display:flex;gap:4px;">
-                        <button class="btn btn-sm btn-outline"
-                            onclick="FiveSModule.viewInsp('${_js(r.id)}')">상세</button>
-                        <button class="btn btn-sm btn-danger"
-                            onclick="FiveSModule.removeInsp('${_js(r.id)}')">삭제</button>
-                    </div>
-                </td>
+                <td style="text-align:center;"><span style="background:${g.bg};color:${g.color};font-weight:700;padding:2px 10px;border-radius:4px;">${g.g}등급</span></td>
+                <td style="text-align:center;">${ic ? `<span style="color:var(--accent-orange);font-weight:700;">${ic}건</span>` : '-'}</td>
+                <td><div style="display:flex;gap:4px;"><button class="btn btn-sm btn-outline" onclick="FiveSModule.editInsp('${_js(r.id)}')">수정</button><button class="btn btn-sm btn-outline" onclick="FiveSModule.viewInsp('${_js(r.id)}')">상세</button><button class="btn btn-sm btn-danger" onclick="FiveSModule.removeInsp('${_js(r.id)}')">삭제</button></div></td>
             </tr>`;
         }).join('');
-
-        el.innerHTML = `
-        <div class="data-table-wrapper">
-        <table class="data-table">
-            <thead><tr>
-                <th style="width:40px;">No</th><th>점검일</th><th>구역</th><th>점검자</th>
-                <th>총점</th><th>등급</th><th>지적건수</th>
-                <th style="width:120px;">작업</th>
-            </tr></thead>
-            <tbody>${rows}</tbody>
-        </table></div>`;
+        el.innerHTML = `<div class="data-table-wrapper"><table class="data-table"><thead><tr><th style="width:40px;">No</th><th>점검일</th><th>구역</th><th>점검자</th><th>총점</th><th>등급</th><th>지적건수</th><th style="width:170px;">작업</th></tr></thead><tbody>${rows}</tbody></table></div>`;
     }
 
-    /* ── 점검 일지 작성 / 수정 모달 ──────────────────────────── */
     function openInspModal(id) {
-        const rec   = id ? Storage.getById(STORE, id) : null;
-        const items = rec
-            ? rec.checkItems
-            : CHECK_ITEMS.map(d => ({ ...d, score: 0, note: '' }));
+        _inspectionEditId = id || null;
+        switchTab('inspection');
+    }
 
-        const tbody = items.map((item, idx) => {
-            const cc   = CAT_COLOR[item.cat] || '#94a3b8';
-            const opts = [
-                { v: 5, l: '5 - 우수' }, { v: 4, l: '4 - 양호' }, { v: 3, l: '3 - 보통' },
-                { v: 2, l: '2 - 미흡' }, { v: 1, l: '1 - 불량' }, { v: 0, l: '해당없음' }
-            ].map(o =>
-                `<option value="${o.v}" ${Number(item.score) === o.v ? 'selected' : ''}>${o.l}</option>`
-            ).join('');
+    function newInspPage() {
+        _inspectionEditId = null;
+        switchTab('inspection');
+    }
 
-            return `<tr>
-                <td style="text-align:center;padding:6px 8px;">
-                    <span style="font-size:0.68rem;padding:1px 5px;border-radius:3px;
-                                 background:${cc}22;color:${cc};font-weight:600;">${_esc(item.cat)}</span>
-                </td>
-                <td style="font-weight:600;font-size:0.82rem;padding:6px 8px;">${_esc(item.label)}</td>
-                <td style="font-size:0.77rem;color:var(--text-muted);padding:6px 8px;">${_esc(item.desc)}</td>
-                <td style="padding:4px 6px;">
-                    <select class="form-select s5-score" data-idx="${idx}"
-                            style="width:112px;font-size:0.8rem;"
-                            onchange="FiveSModule._calcPreview();FiveSModule._togglePhotoRows()">
-                        ${opts}
-                    </select>
-                </td>
-                <td style="padding:4px 6px;">
-                    <input type="text" class="form-input s5-note" data-idx="${idx}"
-                           value="${_esc(item.note || '')}" placeholder="특이사항"
-                           style="font-size:0.8rem;">
-                </td>
-                <td style="padding:4px 6px;min-width:150px;">
-                    <div class="s5-photo-wrap" data-idx="${idx}" style="display:none;">
-                        <input type="file" class="form-input s5-photo" data-idx="${idx}" accept="image/*" multiple style="font-size:0.75rem;padding:6px;">
-                        <div style="font-size:0.72rem;color:var(--text-muted);margin-top:3px;">기존 사진 ${(item.photos || []).length}개</div>
-                    </div>
-                </td>
-            </tr>`;
-        }).join('');
-
-        UIUtils.showModal(
-            rec ? '점검 일지 수정' : '3정5S 점검 일지 작성',
-            `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">
-                <div class="form-group">
-                    <label class="form-label">점검일 <span style="color:var(--accent-red)">*</span></label>
-                    <input type="date" class="form-input" id="s5IDate" value="${rec?.date || _today()}">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">구역 <span style="color:var(--accent-red)">*</span></label>
-                    <select class="form-select" id="s5IAreaSel">
-                        ${AREAS.map(a => `<option ${rec?.area === a ? 'selected' : ''}>${_esc(a)}</option>`).join('')}
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">점검자 <span style="color:var(--accent-red)">*</span></label>
-                    <input type="text" class="form-input" id="s5IInspector"
-                           value="${_esc(rec?.inspector || '')}" placeholder="성명">
-                </div>
-            </div>
-
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-                <strong style="font-size:0.88rem;">📋 점검 체크시트</strong>
-                <span style="font-size:0.82rem;">종합점수: <strong id="s5Preview" style="color:var(--accent-blue);">-</strong></span>
-            </div>
-
-            <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;margin-bottom:14px;">
-            <table style="width:100%;border-collapse:collapse;font-size:0.81rem;">
-                <thead>
-                    <tr style="background:var(--bg-secondary);">
-                        <th style="padding:7px 8px;font-size:0.72rem;color:var(--text-muted);
-                                   border-bottom:1px solid var(--border-color);width:48px;text-align:center;">구분</th>
-                        <th style="padding:7px 8px;font-size:0.72rem;color:var(--text-muted);
-                                   border-bottom:1px solid var(--border-color);width:60px;">항목</th>
-                        <th style="padding:7px 8px;font-size:0.72rem;color:var(--text-muted);
-                                   border-bottom:1px solid var(--border-color);">평가 기준</th>
-                        <th style="padding:7px 8px;font-size:0.72rem;color:var(--text-muted);
-                                   border-bottom:1px solid var(--border-color);width:120px;">평가</th>
-                        <th style="padding:7px 8px;font-size:0.72rem;color:var(--text-muted);
-                                   border-bottom:1px solid var(--border-color);">특이사항</th>
-                        <th style="padding:7px 8px;font-size:0.72rem;color:var(--text-muted);
-                                   border-bottom:1px solid var(--border-color);width:160px;">사진</th>
-                    </tr>
-                </thead>
-                <tbody>${tbody}</tbody>
-            </table>
-            </div>
-
-            <div class="form-group">
-                <label class="form-label">종합의견</label>
-                <textarea class="form-textarea" id="s5ISummary" rows="2"
-                    placeholder="현장 종합 상태 의견">${_esc(rec?.summary || '')}</textarea>
-            </div>
-            <div style="margin-top:8px;padding:8px 12px;background:rgba(59,130,246,0.06);
-                        border-left:3px solid var(--accent-blue);border-radius:0 6px 6px 0;
-                        font-size:0.77rem;color:var(--text-muted);">
-                평가: 5=우수, 4=양호, 3=보통, 2=미흡, 1=불량, 해당없음=점수 제외 |
-                <strong>95↑=S</strong> · <strong>85↑=A</strong> · <strong>75↑=B</strong> · <strong>75미만=C</strong>
-            </div>`,
-            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-             <button class="btn btn-primary"
-                onclick="FiveSModule.saveInsp(${id ? `'${_js(id)}'` : 'null'})">
-                <span class="material-symbols-outlined" style="font-size:0.9rem;vertical-align:middle;">save</span> 저장
-             </button>`,
-            'xl'
-        );
-        setTimeout(() => { FiveSModule._calcPreview(); FiveSModule._togglePhotoRows(); }, 50);
+    function editInsp(id) {
+        _inspectionEditId = id || null;
+        switchTab('inspection');
     }
 
     function _calcPreview() {
@@ -478,9 +443,9 @@ var FiveSModule = (function () {
                 UIUtils.toast(`점검 일지 저장 완료 (${totalScore}점 / ${grade}등급)`, 'success');
             }
         }
-        UIUtils.closeModal();
+        _inspectionEditId = null;
         _refreshStats();
-        searchInsp();
+        switchTab('inspection-history');
     }
 
     /* ── 점검 일지 상세 보기 ──────────────────────────────────── */
@@ -844,7 +809,8 @@ var FiveSModule = (function () {
         const openIssues  = issues.filter(i => i.status !== '완료').length;
 
         const cards = [
-            { tab: 'inspection', icon: 'assignment', title: '점검일지', desc: '현장별 3정5S 점검 결과를 등록하고 조회합니다.', meta: `이번 달 ${monthInsp}건` },
+            { tab: 'inspection', icon: 'edit_document', title: '점검일지 작성', desc: '현장별 3정 5행 점검 결과를 페이지에서 직접 작성합니다.', meta: '작성 페이지' },
+            { tab: 'inspection-history', icon: 'assignment', title: '점검일지 이력', desc: '점검 기록과 월별/구역별 누락 여부를 함께 확인합니다.', meta: `이번 달 ${monthInsp}건` },
             { tab: 'issue', icon: 'report_problem', title: '지적사항', desc: '미흡 사항, 담당자, 기한과 시정조치 완료 여부를 관리합니다.', meta: `미완료 ${openIssues}건` },
             { tab: 'plan', icon: 'calendar_month', title: '점검계획', desc: '구역별 예정 점검 일정과 누락 상태를 확인합니다.', meta: '예정 일정' },
             { tab: 'assignment', icon: 'groups', title: '업무 분담', desc: '구역별 담당자와 점검 주기를 설정합니다.', meta: '담당 설정' },
@@ -1173,6 +1139,8 @@ var FiveSModule = (function () {
         searchInsp,
         searchIssues,
         openInspModal,
+        newInspPage,
+        editInsp,
         _calcPreview,
         _togglePhotoRows,
         saveInsp,

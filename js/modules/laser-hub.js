@@ -12,13 +12,29 @@ var LaserProcessUI = (function () {
     const MENUS = [
         { id: 'laser-process', label: '메인', icon: 'dashboard' },
         { id: 'laser-work', label: '레이져 작업일지', icon: 'history' },
-        { id: 'laser-inspection', label: '외관 검사 일지', icon: 'fact_check' },
+        { id: 'laser-inspection', label: '외관 검사 일지', icon: 'fact_check', onclick: "LaserInspectionModule.showInspectionPage()" },
         { id: 'laser-jig-master', label: '레이져 지그대장', icon: 'view_list' },
-        { id: 'laser-layout', label: '지그창고 레이아웃', icon: 'map' },
-        { id: 'laser-jig-disposal', label: '폐기 대장', icon: 'delete_sweep' },
-        { id: 'laser-jig-cleaning', label: '지그 세척일지', icon: 'cleaning_services' },
-        { id: 'laser-equipment-history', label: '장비 점검/수리 내역', icon: 'build_circle' }
     ];
+
+    const JIG_SUB_MENUS = [
+        { id: 'laser-jig-master',   label: '레이져 지그대장', icon: 'view_list' },
+        { id: 'laser-jig-disposal', label: '폐기 대장',       icon: 'delete_sweep' },
+        { id: 'laser-jig-cleaning', label: '지그 세척일지',   icon: 'cleaning_services' }
+    ];
+
+    function renderJigSubNav(activePage, extraHtml) {
+        return `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+            ${JIG_SUB_MENUS.map(function(m) {
+                const active = m.id === activePage;
+                return `<button type="button" onclick="Router.navigate('${m.id}')"
+                    class="btn btn-sm ${active ? 'btn-primary' : 'btn-outline'}"
+                    style="display:flex;align-items:center;gap:6px;${active ? '' : 'background:#fff;'}">
+                    <span class="material-symbols-outlined" style="font-size:16px;">${m.icon}</span>${m.label}
+                </button>`;
+            }).join('')}
+            ${extraHtml ? `<div style="margin-left:auto;">${extraHtml}</div>` : ''}
+        </div>`;
+    }
 
     function renderSection(activePage, title, desc) {
         return `
@@ -32,7 +48,7 @@ var LaserProcessUI = (function () {
                         const active = menu.id === activePage;
                         return `
                             <button type="button"
-                                onclick="Router.navigate('${menu.id}')"
+                                onclick="${menu.onclick || "Router.navigate('" + menu.id + "')"}"
                                 class="btn ${active ? 'btn-primary' : 'btn-outline'}"
                                 style="display:flex;align-items:center;gap:6px;${active ? '' : 'background:#fff;'}">
                                 <span class="material-symbols-outlined" style="font-size:18px;">${menu.icon}</span>
@@ -46,7 +62,8 @@ var LaserProcessUI = (function () {
     }
 
     return {
-        renderSection: renderSection
+        renderSection: renderSection,
+        renderJigSubNav: renderJigSubNav
     };
 })();
 
@@ -227,7 +244,6 @@ var LaserHubModule = (function () {
                 _homeCard('폐기 대장', '폐기 처리된 레이져 지그 이력을 확인합니다.', 'delete_sweep', `${disposalRows.length}건`, "Router.navigate('laser-jig-disposal')", 'red'),
                 _homeCard('지그 세척일지', '지그 세척 실적과 다음 세척 예정일을 기록합니다.', 'cleaning_services', `${cleanThisMonth}건`, "Router.navigate('laser-jig-cleaning')", 'cyan'),
                 _homeCard('레이져대기품현황', '도장 완료 후 레이져 대기 중인 재공 현황을 확인합니다.', 'hourglass_top', `${standbyItems}건`, "Router.navigate('laser-standby')", 'orange'),
-                _homeCard('레이져 장비 점검/수리 내역', '설비 점검, 이상, 수리 이력을 관리합니다.', 'build_circle', `${repairOpenCount}건 진행`, "Router.navigate('laser-equipment-history')", 'red')
             ].join('');
         }
     }
@@ -397,13 +413,7 @@ var LaserJigMasterModule = (function () {
         container.innerHTML = `
             <div class="fade-in-up">
                 ${LaserProcessUI.renderSection('laser-jig-master', '레이져 지그대장', '제품 정보에서 제조공정에 레이져가 포함된 제품을 체크 선택하여 레이져 지그명을 등록합니다.')}
-                <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-primary" onclick="LaserJigMasterModule.openModal()">
-                            <span class="material-symbols-outlined">add</span> 레이져 지그 등록
-                        </button>
-                    </div>
-                </div>
+                ${LaserProcessUI.renderJigSubNav('laser-jig-master', `<button class="btn btn-primary btn-sm" onclick="LaserJigMasterModule.openModal()"><span class="material-symbols-outlined" style="font-size:16px;">add</span> 레이져 지그 등록</button>`)}
                 <div class="card">
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
@@ -748,6 +758,7 @@ var LaserJigDisposalModule = (function () {
         container.innerHTML = `
             <div class="fade-in-up">
                 ${LaserProcessUI.renderSection('laser-jig-disposal', '폐기 대장', '폐기 처리된 레이져 지그 이력을 확인합니다.')}
+                ${LaserProcessUI.renderJigSubNav('laser-jig-disposal')}
                 <div class="card">
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
@@ -882,6 +893,7 @@ var LaserJigCleaningModule = (function () {
         container.innerHTML = `
             <div class="fade-in-up">
                 ${LaserProcessUI.renderSection('laser-jig-cleaning', '지그 세척일지', '지그 세척 이력과 세척 방법, 담당자, 다음 세척 예정일을 기록합니다.')}
+                ${LaserProcessUI.renderJigSubNav('laser-jig-cleaning')}
                 <div class="page-header">
                     <div class="page-actions">
                         <button class="btn btn-primary" onclick="LaserJigCleaningModule.openModal()">

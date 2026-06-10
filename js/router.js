@@ -29,6 +29,7 @@ const Router = (function() {
         'painting-inspection': '도장 검사 일지',
         'painting-quality-performance': '도장품 실적',
         'laser-process': '레이져 공정',
+        'laser-wip': '재공품 현황',
         'laser-standby': '레이져대기품현황',
         'laser-work': '레이져 작업일지',
         'laser-inspection': '외관 검사 일지',

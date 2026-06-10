@@ -14,7 +14,7 @@ var JigModule = (function () {
     const LIFE_STANDARD_IMAGE_KEY = 'painting_jig_life_standard_image_v1';
     const A_LINE_CYCLE = 1092;
     const B_LINE_CYCLE = 175;
-    const STANDARD_UPLOAD_ROLES = ['admin', 'prod_manager', 'quality_manager'];
+    const STANDARD_UPLOAD_ROLES = ['admin', 'prod_manager', 'quality_manager', 'paint_line_op'];
 
     let _currentLine = '';
     let _currentStatus = '';
@@ -23,6 +23,7 @@ var JigModule = (function () {
     let _masterCarFilter = '';
     let _jigPasteTargetId = '';
     let _jigPasteListenerReady = false;
+    let _lifeStandardPasteArmed = false;
     let _lifeStandardImage = null;
 
     const _today = () => (UIUtils.today ? UIUtils.today() : new Date().toISOString().split('T')[0]);
@@ -1186,11 +1187,25 @@ var JigModule = (function () {
                 </div>
 
                 <style>
-                    .jig-life-standard-wrap { display:inline-block; width:auto; max-width:100%; background:#fff; overflow:auto; }
-                    .jig-life-standard-doc { width:auto; color:#111827; font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif; }
+                    .jig-life-standard-wrap {
+                        display:inline-block;
+                        width:auto;
+                        max-width:100%;
+                        background:linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+                        overflow:auto;
+                        padding:18px 18px 24px;
+                        border-radius:18px;
+                        box-shadow:0 18px 42px rgba(15,23,42,0.14), 0 6px 14px rgba(15,23,42,0.10);
+                    }
+                    .jig-life-standard-doc {
+                        width:auto;
+                        color:#111827;
+                        font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;
+                        background:transparent;
+                    }
                     @media print {
                         .page-header, .jig-page > div:first-child { display:none !important; }
-                        .jig-life-standard-wrap { border:none; overflow:visible; box-shadow:none !important; }
+                        .jig-life-standard-wrap { border:none; overflow:visible; box-shadow:none !important; padding:0; background:#fff; }
                         .jig-life-standard-doc { width:auto; }
                     }
                 </style>
@@ -1217,9 +1232,10 @@ var JigModule = (function () {
             UIUtils.toast('지그 기준서 업로드는 관리자 또는 관리 권한자만 가능합니다.', 'warning');
             return;
         }
+        _ensureJigPasteListener();
+        _lifeStandardPasteArmed = true;
         const zone = document.getElementById('jigLifeStandardPasteZone');
-        if (!zone) return;
-        zone.focus();
+        if (zone) zone.focus();
         UIUtils.toast('기준서 업로드 영역이 선택되었습니다. Ctrl+V로 붙여넣어 주세요.', 'info');
     }
 
@@ -1258,9 +1274,12 @@ var JigModule = (function () {
     }
 
     function printLifeStandardPage() {
-        const content = document.getElementById('jigLifeStandardDoc');
-        if (!content) return;
-        const printBody = content.innerHTML;
+        const img = document.querySelector('#jigLifeStandardDoc img');
+        const imageSrc = img ? String(img.getAttribute('src') || '') : String(_lifeStandardImage || '');
+        if (!imageSrc) {
+            UIUtils.toast('인쇄할 기준서가 없습니다. 먼저 기준서를 업로드해 주세요.', 'warning');
+            return;
+        }
         const win = window.open('', 'jig_life_standard_print', 'width=1200,height=900');
         if (!win) {
             UIUtils.toast('인쇄할 기준서가 없습니다. 먼저 기준서를 업로드해 주세요.', 'warning');
@@ -1274,14 +1293,51 @@ var JigModule = (function () {
                 <meta charset="utf-8">
                 <title>지그 수명 관리 기준서</title>
                 <style>
-                    html, body { margin:0; padding:0; background:#fff; }
-                    body { font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif; }
-                    #jigLifeStandardPasteZone { display:none !important; }
-                    img { display:block; max-width:100%; height:auto; }
-                    @page { size: A4 landscape; margin:8mm; }
+                    @page { size: A4 landscape; margin:4mm 6mm 6mm 6mm; }
+                    html, body {
+                        margin:0;
+                        padding:0;
+                        background:#fff;
+                    }
+                    body {
+                        font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;
+                        display:flex;
+                        align-items:flex-start;
+                        justify-content:center;
+                        overflow:hidden;
+                    }
+                    .print-sheet {
+                        width:285mm;
+                        height:198mm;
+                        display:flex;
+                        align-items:flex-start;
+                        justify-content:center;
+                        overflow:hidden;
+                        margin:0 auto;
+                        padding-top:1mm;
+                    }
+                    img {
+                        display:block;
+                        width:auto;
+                        height:auto;
+                        max-width:285mm;
+                        max-height:197mm;
+                        object-fit:contain;
+                        break-inside:avoid;
+                        page-break-inside:avoid;
+                    }
+                    * {
+                        box-sizing:border-box;
+                        break-inside:avoid;
+                        page-break-inside:avoid;
+                    }
                 </style>
             </head>
-            <body>${printBody}</body>
+            <body>
+                <div class="print-sheet">
+                    <img src="${imageSrc}" alt="지그 수명 관리 기준서">
+                </div>
+            </body>
             </html>
         `);
         win.document.close();
@@ -1439,6 +1495,49 @@ var JigModule = (function () {
         if (_jigPasteListenerReady) return;
         _jigPasteListenerReady = true;
         document.addEventListener('paste', function(event) {
+            if (_lifeStandardPasteArmed) {
+                const saveLifeStandardBlob = function(blob) {
+                    const reader = new FileReader();
+                    reader.onload = async () => {
+                        try {
+                            await _saveLifeStandardImage(String(reader.result || ''));
+                            _lifeStandardImage = await _loadLifeStandardImage();
+                            const container = document.getElementById('page-content');
+                            if (container) {
+                                await renderLifeStandardPage(container);
+                            }
+                            UIUtils.toast('기준서 이미지가 저장되었습니다.', 'success');
+                        } catch (e) {
+                            console.warn('[JigModule] life standard paste save failed:', e);
+                            UIUtils.toast('기준서 저장 중 오류가 발생했습니다.', 'error');
+                        }
+                    };
+                    reader.onerror = () => UIUtils.toast('클립보드 이미지를 읽을 수 없습니다.', 'error');
+                    reader.readAsDataURL(blob);
+                };
+
+                const file = _imageFileFromPasteEvent(event);
+                if (!file) {
+                    const htmlSrc = _imageSrcFromPasteHtml(event);
+                    if (!htmlSrc) {
+                        UIUtils.toast('클립보드 이미지가 없습니다. 엑셀이나 화면을 복사한 뒤 다시 붙여넣어 주세요.', 'warning');
+                        return;
+                    }
+                    event.preventDefault();
+                    _lifeStandardPasteArmed = false;
+                    _blobFromDataUrl(htmlSrc)
+                        .then(saveLifeStandardBlob)
+                        .catch(e => {
+                            UIUtils.toast('엑셀 이미지 변환에 실패했습니다.', 'error');
+                            console.warn('[JigModule] life standard pasted html image conversion failed:', e);
+                        });
+                    return;
+                }
+                event.preventDefault();
+                _lifeStandardPasteArmed = false;
+                saveLifeStandardBlob(file);
+                return;
+            }
             if (!_jigPasteTargetId) return;
             const hidden = document.getElementById(`${_jigPasteTargetId}Data`);
             if (!hidden) return;

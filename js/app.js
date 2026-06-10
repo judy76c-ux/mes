@@ -14,8 +14,7 @@ const App = (function() {
             console.log('✅ 스토리지 초기화 완료');
 
             // 2. 인증 모듈 초기화 (기본 계정 보장 + 전역 인터셉터 등록)
-            AuthModule.ensureAdminUser();
-            AuthModule.init();
+            await AuthModule.init();
 
             // 2-1. 기존 차종(carModel) 데이터 대문자 변환 (최초 1회)
             await _migrateCarModelUppercase();

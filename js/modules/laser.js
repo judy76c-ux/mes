@@ -655,6 +655,34 @@ var LaserWorkModule = (function() {
  */
 var LaserInspectionModule = (function() {
     const STORE = DB.STORES.LASER_INSPECTIONS;
+    const STANDARD_UPLOAD_ROLES = ['admin', 'prod_manager', 'quality_manager', 'paint_line_op'];
+    const NONCONFORM_STANDARD_IMAGE_KEY = 'laser_nonconform_standard_image_v1';
+    let _currentView = 'inspection';
+    let _nonconformStandardImage = null;
+
+    function _currentUser() {
+        try {
+            return (typeof AuthModule !== 'undefined' && typeof AuthModule.getCurrentUser === 'function')
+                ? AuthModule.getCurrentUser()
+                : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function _canUploadNonconformStandard() {
+        const user = _currentUser();
+        return !!(user && STANDARD_UPLOAD_ROLES.includes(String(user.role || '')));
+    }
+
+    async function _loadNonconformStandardImage() {
+        try {
+            return await Storage.getConfigValue(NONCONFORM_STANDARD_IMAGE_KEY) || null;
+        } catch (e) {
+            console.warn('[LaserInspectionModule] standard image load failed:', e);
+            return null;
+        }
+    }
 
     // 검사 완료된 작업일지 ID Set 반환
     function getInspectedWorkIds() {
@@ -672,9 +700,24 @@ var LaserInspectionModule = (function() {
     }
 
     function render(container) {
+        if (_currentView === 'standard') {
+            renderNonconformStandardPage(container);
+            return;
+        }
         container.innerHTML = `
             <div class="fade-in-up">
                 ${LaserProcessUI.renderSection('laser-inspection', '외관 검사 일지', '레이져 작업 완료품의 외관 검사 결과와 불량 유형, 검사 대기 현황을 관리합니다.')}
+
+                <div class="page-header" style="margin:-6px 0 14px;">
+                    <div class="page-actions" style="display:flex;justify-content:flex-end;gap:8px;width:100%;">
+                        <button class="btn btn-outline btn-sm" onclick="LaserInspectionModule.showInspectionPage()">
+                            <span class="material-symbols-outlined" style="font-size:15px;">checklist</span> 검사일지
+                        </button>
+                        <button class="btn btn-outline btn-sm" onclick="LaserInspectionModule.showNonconformStandardPage()">
+                            <span class="material-symbols-outlined" style="font-size:15px;">description</span> 부적합 처리 기준서
+                        </button>
+                    </div>
+                </div>
 
                 <!-- 검사 대기 섹션 -->
                 <div class="card" style="margin-bottom:20px; border-left:3px solid var(--accent-orange, #f59e0b);">
@@ -813,6 +856,112 @@ var LaserInspectionModule = (function() {
         data.sort((a, b) => b.date.localeCompare(a.date));
         renderStats(data);
         renderTable(data);
+    }
+
+    async function renderNonconformStandardPage(container) {
+        _nonconformStandardImage = await _loadNonconformStandardImage();
+        const canUpload = _canUploadNonconformStandard();
+        container.innerHTML = `
+            <div class="fade-in-up">
+                ${LaserProcessUI.renderSection('laser-inspection-standard', '부적합 처리 기준서', '기준서 업로드 및 인쇄')}
+                <div class="page-header" style="margin:-6px 0 14px;">
+                    <div class="page-actions" style="display:flex;justify-content:flex-end;gap:8px;width:100%;">
+                        <button class="btn btn-outline btn-sm" onclick="LaserInspectionModule.printNonconformStandardPage()">
+                            <span class="material-symbols-outlined" style="font-size:15px;">print</span> 인쇄
+                        </button>
+                        <button class="btn btn-outline btn-sm" onclick="LaserInspectionModule.focusNonconformStandardPasteZone()" ${canUpload ? '' : 'disabled'} style="${canUpload ? '' : 'opacity:.5;cursor:not-allowed;'}">
+                            <span class="material-symbols-outlined" style="font-size:15px;">upload_file</span> 기준서 업로드
+                        </button>
+                    </div>
+                </div>
+                <div class="card" style="display:inline-block;width:auto;max-width:100%;background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);padding:18px 18px 24px;border-radius:18px;box-shadow:0 18px 42px rgba(15,23,42,0.14),0 6px 14px rgba(15,23,42,0.10);">
+                    <div id="laserNonconformStandardPasteZone" tabindex="0" onpaste="LaserInspectionModule.handleNonconformStandardPaste(event)" style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;" aria-hidden="true"></div>
+                    ${_nonconformStandardImage
+                        ? `<div style="display:inline-flex;justify-content:flex-start;align-items:flex-start;width:fit-content;max-width:100%;border:1px solid #111;box-shadow:0 10px 28px rgba(15,23,42,0.18),0 3px 8px rgba(15,23,42,0.12);"><img src="${_nonconformStandardImage}" alt="부적합 처리 기준서" style="display:block;max-width:100%;height:auto;"></div>`
+                        : `<div style="min-width:980px;min-height:1385px;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:1rem;">등록된 기준서 이미지가 없습니다.</div>`}
+                </div>
+            </div>
+        `;
+    }
+
+    function showNonconformStandardPage() {
+        _currentView = 'standard';
+        Router.navigate('laser-inspection');
+    }
+
+    function showInspectionPage() {
+        _currentView = 'inspection';
+        Router.navigate('laser-inspection');
+    }
+
+    function focusNonconformStandardPasteZone() {
+        if (!_canUploadNonconformStandard()) {
+            UIUtils.toast('기준서 업로드는 관리자 또는 관리 권한자만 가능합니다.', 'warning');
+            return;
+        }
+        const zone = document.getElementById('laserNonconformStandardPasteZone');
+        if (!zone) return;
+        zone.focus();
+        UIUtils.toast('기준서 업로드 영역이 선택되었습니다. Ctrl+V로 붙여넣어 주세요.', 'info');
+    }
+
+    async function handleNonconformStandardPaste(event) {
+        event.preventDefault();
+        if (!_canUploadNonconformStandard()) {
+            UIUtils.toast('기준서 업로드 권한이 없습니다.', 'warning');
+            return;
+        }
+        const items = Array.from(event.clipboardData?.items || []);
+        const imageItem = items.find(item => item.type && item.type.startsWith('image/'));
+        if (!imageItem) {
+            UIUtils.toast('클립보드 이미지가 없습니다. 기준서 화면을 복사한 뒤 다시 붙여넣어 주세요.', 'warning');
+            return;
+        }
+        const file = imageItem.getAsFile();
+        if (!file) {
+            UIUtils.toast('이미지 읽기 중 오류가 발생했습니다.', 'error');
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = async () => {
+            try {
+                _nonconformStandardImage = String(reader.result || '');
+                await Storage.setConfigValue(NONCONFORM_STANDARD_IMAGE_KEY, _nonconformStandardImage);
+                showNonconformStandardPage();
+                UIUtils.toast('기준서 이미지가 저장되었습니다.', 'success');
+            } catch (e) {
+                console.warn('[LaserInspectionModule] standard save failed:', e);
+                UIUtils.toast('기준서 저장 중 오류가 발생했습니다.', 'error');
+            }
+        };
+        reader.onerror = () => UIUtils.toast('클립보드 이미지를 읽을 수 없습니다.', 'error');
+        reader.readAsDataURL(file);
+    }
+
+    function printNonconformStandardPage() {
+        const img = document.querySelector('img[alt="부적합 처리 기준서"]');
+        const imageSrc = img ? String(img.getAttribute('src') || '') : String(_nonconformStandardImage || '');
+        if (!imageSrc) {
+            UIUtils.toast('인쇄할 기준서가 없습니다. 먼저 기준서를 업로드해 주세요.', 'warning');
+            return;
+        }
+        const win = window.open('', 'laser_nonconform_standard_print', 'width=1200,height=900');
+        if (!win) return;
+        win.document.open();
+        win.document.write(`
+            <!doctype html><html lang="ko"><head><meta charset="utf-8"><title>부적합 처리 기준서</title>
+            <style>
+                @page { size: A4 landscape; margin:4mm 6mm 6mm 6mm; }
+                html, body { margin:0; padding:0; background:#fff; }
+                body { display:flex; align-items:flex-start; justify-content:center; overflow:hidden; }
+                .print-sheet { width:285mm; height:198mm; display:flex; align-items:flex-start; justify-content:center; overflow:hidden; margin:0 auto; padding-top:1mm; }
+                img { display:block; width:auto; height:auto; max-width:285mm; max-height:197mm; object-fit:contain; break-inside:avoid; page-break-inside:avoid; }
+                * { box-sizing:border-box; break-inside:avoid; page-break-inside:avoid; }
+            </style></head><body><div class="print-sheet"><img src="${imageSrc}" alt="부적합 처리 기준서"></div></body></html>
+        `);
+        win.document.close();
+        win.focus();
+        win.print();
     }
 
     function renderStats(data) {
@@ -1548,6 +1697,8 @@ var LaserInspectionModule = (function() {
     return {
         render, openAddModal, openInspFromWork, search, renderStandby, onCarModelChange, edit, remove,
         _closeModal, _saveInspection, _showDetail,
+        showNonconformStandardPage, showInspectionPage,
+        focusNonconformStandardPasteZone, handleNonconformStandardPaste, printNonconformStandardPage,
         _updateDefectTotal, _updateDefectQty, _updateGoodQty, _calculateInspectionTime,
         _showNumericPad, _numpadInput, _numpadDelete, _numpadConfirm
     };

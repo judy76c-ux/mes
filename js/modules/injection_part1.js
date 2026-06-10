@@ -368,7 +368,10 @@ var InjectionIncomingModule = (function() {
                         ${d.note || '-'}
                     </td>
                     <td>
-                        <button class="btn btn-sm btn-outline" onclick="InjectionIncomingModule.edit('${d.id}')">수정</button>
+                        <div style="display:flex;gap:4px;">
+                            <button class="btn btn-sm btn-outline" onclick="InjectionIncomingModule.edit('${d.id}')">수정</button>
+                            <button class="btn btn-sm" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;" onclick="InjectionIncomingModule.remove('${d.id}')">삭제</button>
+                        </div>
                     </td>
                 </tr>
             `;
@@ -505,8 +508,13 @@ var InjectionIncomingModule = (function() {
                            readonly style="background:var(--bg-secondary);border-color:var(--accent-blue);color:var(--accent-blue);font-weight:600;">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">합격수량 <span style="color:var(--accent-red)">*</span></label>
-                    <input type="number" class="form-input" id="addInjPassQty" min="0" placeholder="0">
+                    <label class="form-label">합격 판정 <span style="color:var(--accent-red)">*</span></label>
+                    <select class="form-input" id="addInjVerdict" onchange="InjectionIncomingModule.onAddVerdictChange()">
+                        <option value="">-- 선택 --</option>
+                        <option value="합격">합격</option>
+                        <option value="불합격">불합격</option>
+                    </select>
+                    <input type="hidden" id="addInjPassQty" value="0">
                 </div>
             </div>
 
@@ -564,6 +572,7 @@ var InjectionIncomingModule = (function() {
             total += (Number(input.value) || 0);
         });
         document.getElementById('addInjFailQty').value = total || '';
+        onAddVerdictChange();
     }
 
     function addInjLotRow() {
@@ -622,7 +631,21 @@ var InjectionIncomingModule = (function() {
         if (totalEl) totalEl.textContent = UIUtils.formatNumber(total);
         const hiddenEl = document.getElementById('addInjInQty');
         if (hiddenEl) hiddenEl.value = total;
+        onAddVerdictChange();
         onIncomingQtyInput();
+    }
+
+    function onAddVerdictChange() {
+        const verdictEl = document.getElementById('addInjVerdict');
+        const passEl = document.getElementById('addInjPassQty');
+        if (!verdictEl || !passEl) return;
+        if (verdictEl.value === '합격') {
+            const inQty = Number(document.getElementById('addInjInQty')?.value || 0);
+            const failQty = Number(document.getElementById('addInjFailQty')?.value || 0);
+            passEl.value = Math.max(0, inQty - failQty);
+        } else {
+            passEl.value = 0;
+        }
     }
 
     function calcInjLotTotalEdit() {
@@ -631,6 +654,22 @@ var InjectionIncomingModule = (function() {
         qtyInputs.forEach(inp => { total += (Number(inp.value) || 0); });
         const totalEl = document.getElementById('editInjLotTotalQty');
         if (totalEl) totalEl.textContent = UIUtils.formatNumber(total);
+        const hiddenEl = document.getElementById('editInjInQty');
+        if (hiddenEl) hiddenEl.value = total;
+        onEditVerdictChange();
+    }
+
+    function onEditVerdictChange() {
+        const verdictEl = document.getElementById('editInjVerdict');
+        const passEl = document.getElementById('editInjPassQty');
+        if (!verdictEl || !passEl) return;
+        if (verdictEl.value === '합격') {
+            const inQty = Number(document.getElementById('editInjInQty')?.value || 0);
+            const failQty = Number(document.getElementById('editInjFailQty')?.value || 0);
+            passEl.value = Math.max(0, inQty - failQty);
+        } else {
+            passEl.value = 0;
+        }
     }
 
     function onCarModelSelect() {
@@ -930,6 +969,7 @@ var InjectionIncomingModule = (function() {
                 Number(document.getElementById('injSampleRe').textContent.trim()) : null,
             inspectionQty: Number(document.getElementById('addInjInspQty').value) || 0,
             passQty: Number(document.getElementById('addInjPassQty').value) || 0,
+            verdict: document.getElementById('addInjVerdict')?.value || '합격',
             failQty: Number(document.getElementById('addInjFailQty').value) || 0,
             defectDetails: {},
             supplierName: document.getElementById('addInjSupplier').value.trim(),
@@ -949,6 +989,10 @@ var InjectionIncomingModule = (function() {
             UIUtils.toast('날짜와 품명은 필수입니다.', 'warning');
             return;
         }
+        if (!data.verdict) {
+            UIUtils.toast('합격 판정을 선택하세요.', 'warning');
+            return;
+        }
 
         await Storage.add(STORE, data);
         await propagateCertReceived(data.lots);
@@ -957,6 +1001,17 @@ var InjectionIncomingModule = (function() {
         UIUtils.closeModal();
         UIUtils.toast('수입검사가 등록되었습니다.', 'success');
         search();
+    }
+
+    function remove(id) {
+        const d = Storage.getById(STORE, id);
+        if (!d) return;
+        const label = `${(d.date || '').slice(0, 10)} ${d.partName || ''} (LOT: ${d.lotNo || (d.lots && d.lots.map(l => l.lotNo).join(', ')) || '-'})`;
+        UIUtils.confirm(`수입검사 기록을 삭제하시겠습니까?\n\n${label}`, async function() {
+            await Storage.remove(STORE, id);
+            UIUtils.toast('수입검사 기록이 삭제되었습니다.', 'success');
+            loadData();
+        });
     }
 
     function edit(id) {
@@ -1054,8 +1109,12 @@ var InjectionIncomingModule = (function() {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">합격수량</label>
-                    <input type="number" class="form-input" id="editInjPassQty" value="${d.passQty || 0}">
+                    <label class="form-label">합격 판정</label>
+                    <select class="form-input" id="editInjVerdict" onchange="InjectionIncomingModule.onEditVerdictChange()">
+                        <option value="합격" ${(d.verdict || (d.passQty > 0 ? '합격' : '불합격')) === '합격' ? 'selected' : ''}>합격</option>
+                        <option value="불합격" ${(d.verdict || (d.passQty > 0 ? '합격' : '불합격')) === '불합격' ? 'selected' : ''}>불합격</option>
+                    </select>
+                    <input type="hidden" id="editInjPassQty" value="${d.passQty || 0}">
                 </div>
             </div>
 
@@ -1219,6 +1278,7 @@ var InjectionIncomingModule = (function() {
             total += (Number(input.value) || 0);
         });
         document.getElementById('editInjFailQty').value = total || 0;
+        onEditVerdictChange();
     }
 
     async function saveEdit(id) {
@@ -1261,6 +1321,7 @@ var InjectionIncomingModule = (function() {
             incomingQty: incomingQty,
             inspectionQty: Number(document.getElementById('editInjInspQty').value) || 0,
             passQty: Number(document.getElementById('editInjPassQty').value) || 0,
+            verdict: document.getElementById('editInjVerdict')?.value || '합격',
             failQty: Number(document.getElementById('editInjFailQty').value) || 0,
             defectDetails: {},
             supplierName: document.getElementById('editInjSupplier').value.trim(),
@@ -1276,6 +1337,10 @@ var InjectionIncomingModule = (function() {
             }
         });
 
+        if (!updateData.verdict) {
+            UIUtils.toast('합격 판정을 선택하세요.', 'warning');
+            return;
+        }
         await Storage.update(STORE, id, updateData);
         await propagateCertReceived(updateData.lots);
         UIUtils.closeModal();
@@ -1702,6 +1767,8 @@ var InjectionIncomingModule = (function() {
         removeInjLotRow,
         calcInjLotTotal,
         calcInjLotTotalEdit,
+        onAddVerdictChange,
+        onEditVerdictChange,
         calcTotalAddFailQty,
         calcTotalEditFailQty,
         saveNew,

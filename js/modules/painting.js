@@ -3267,6 +3267,8 @@ const PaintingInspectionModule = (function() {
     const PRODUCTS_STORE = DB.STORES.PRODUCTS;
     const PAINTING_WORK_STORE = DB.STORES.PAINTING_WORK;
     const PLAN_STORE = DB.STORES.PRODUCTION_PLANS;
+    const STANDARD_UPLOAD_ROLES = ['admin', 'prod_manager', 'quality_manager', 'paint_line_op'];
+    const NONCONFORM_STANDARD_IMAGE_KEY = 'painting_nonconform_standard_image_v1';
 
     // 현재 카운팅 상태
     let state = {
@@ -3274,8 +3276,33 @@ const PaintingInspectionModule = (function() {
         selectedPlan: null,
         selectedWork: null, // 도장 작업 완료에서 선택한 작업
         counts: {},
-        currentTab: 'inspection' // 'inspection' | 'completion'
+        currentTab: 'inspection' // 'inspection' | 'completion' | 'nonconform-standard'
     };
+    let _nonconformStandardImage = null;
+
+    function _currentUser() {
+        try {
+            return (typeof AuthModule !== 'undefined' && typeof AuthModule.getCurrentUser === 'function')
+                ? AuthModule.getCurrentUser()
+                : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function _canUploadNonconformStandard() {
+        const user = _currentUser();
+        return !!(user && STANDARD_UPLOAD_ROLES.includes(String(user.role || '')));
+    }
+
+    async function _loadNonconformStandardImage() {
+        try {
+            return await Storage.getConfigValue(NONCONFORM_STANDARD_IMAGE_KEY) || null;
+        } catch (e) {
+            console.warn('[PaintingInspectionModule] standard image load failed:', e);
+            return null;
+        }
+    }
 
     function render(container) {
         container.innerHTML = `
@@ -3286,10 +3313,11 @@ const PaintingInspectionModule = (function() {
                 </div>
 
                 <!-- 탭 네비게이션 (타일 카드 스타일) -->
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px;">
+                <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:20px;">
                     ${[
                         { key: 'inspection', label: '외관 검사', desc: '도장 완료품 외관 검사 진행', icon: 'done_all', accent: 'var(--accent-blue)' },
-                        { key: 'completion', label: '검사 완료 실적', desc: '외관 검사 완료 이력 조회', icon: 'task_alt', accent: '#10b981' }
+                        { key: 'completion', label: '검사 완료 실적', desc: '외관 검사 완료 이력 조회', icon: 'task_alt', accent: '#10b981' },
+                        { key: 'nonconform-standard', label: '부적합 처리 기준서', desc: '기준서 업로드 및 인쇄', icon: 'description', accent: '#8b5cf6' }
                     ].map(tab => {
                         const active = state.currentTab === tab.key;
                         return `
@@ -3385,7 +3413,104 @@ const PaintingInspectionModule = (function() {
         } else if (state.currentTab === 'completion') {
             // 검사 완료 실적 탭
             showCompletionResults();
+        } else if (state.currentTab === 'nonconform-standard') {
+            renderNonconformStandardPage();
         }
+    }
+
+    async function renderNonconformStandardPage() {
+        const tabContent = document.getElementById('tabContent');
+        if (!tabContent) return;
+        _nonconformStandardImage = await _loadNonconformStandardImage();
+        const canUpload = _canUploadNonconformStandard();
+        tabContent.innerHTML = `
+            <div class="page-header" style="margin-bottom:14px;">
+                <div class="page-actions" style="display:flex;justify-content:flex-end;gap:8px;width:100%;">
+                    <button class="btn btn-outline btn-sm" onclick="PaintingInspectionModule.printNonconformStandardPage()">
+                        <span class="material-symbols-outlined" style="font-size:15px;">print</span> 인쇄
+                    </button>
+                    <button class="btn btn-outline btn-sm" onclick="PaintingInspectionModule.focusNonconformStandardPasteZone()" ${canUpload ? '' : 'disabled'} style="${canUpload ? '' : 'opacity:.5;cursor:not-allowed;'}">
+                        <span class="material-symbols-outlined" style="font-size:15px;">upload_file</span> 기준서 업로드
+                    </button>
+                </div>
+            </div>
+            <div class="card" style="display:inline-block;width:auto;max-width:100%;background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);padding:18px 18px 24px;border-radius:18px;box-shadow:0 18px 42px rgba(15,23,42,0.14),0 6px 14px rgba(15,23,42,0.10);">
+                <div id="paintingNonconformStandardPasteZone" tabindex="0" onpaste="PaintingInspectionModule.handleNonconformStandardPaste(event)" style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;" aria-hidden="true"></div>
+                ${_nonconformStandardImage
+                    ? `<div style="display:inline-flex;justify-content:flex-start;align-items:flex-start;width:fit-content;max-width:100%;border:1px solid #111;box-shadow:0 10px 28px rgba(15,23,42,0.18),0 3px 8px rgba(15,23,42,0.12);"><img src="${_nonconformStandardImage}" alt="부적합 처리 기준서" style="display:block;max-width:100%;height:auto;"></div>`
+                    : `<div style="min-width:980px;min-height:1385px;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:1rem;">등록된 기준서 이미지가 없습니다.</div>`}
+            </div>
+        `;
+    }
+
+    function focusNonconformStandardPasteZone() {
+        if (!_canUploadNonconformStandard()) {
+            UIUtils.toast('기준서 업로드는 관리자 또는 관리 권한자만 가능합니다.', 'warning');
+            return;
+        }
+        const zone = document.getElementById('paintingNonconformStandardPasteZone');
+        if (!zone) return;
+        zone.focus();
+        UIUtils.toast('기준서 업로드 영역이 선택되었습니다. Ctrl+V로 붙여넣어 주세요.', 'info');
+    }
+
+    async function handleNonconformStandardPaste(event) {
+        event.preventDefault();
+        if (!_canUploadNonconformStandard()) {
+            UIUtils.toast('기준서 업로드 권한이 없습니다.', 'warning');
+            return;
+        }
+        const items = Array.from(event.clipboardData?.items || []);
+        const imageItem = items.find(item => item.type && item.type.startsWith('image/'));
+        if (!imageItem) {
+            UIUtils.toast('클립보드 이미지가 없습니다. 기준서 화면을 복사한 뒤 다시 붙여넣어 주세요.', 'warning');
+            return;
+        }
+        const file = imageItem.getAsFile();
+        if (!file) {
+            UIUtils.toast('이미지 읽기 중 오류가 발생했습니다.', 'error');
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = async () => {
+            try {
+                _nonconformStandardImage = String(reader.result || '');
+                await Storage.setConfigValue(NONCONFORM_STANDARD_IMAGE_KEY, _nonconformStandardImage);
+                await renderNonconformStandardPage();
+                UIUtils.toast('기준서 이미지가 저장되었습니다.', 'success');
+            } catch (e) {
+                console.warn('[PaintingInspectionModule] standard save failed:', e);
+                UIUtils.toast('기준서 저장 중 오류가 발생했습니다.', 'error');
+            }
+        };
+        reader.onerror = () => UIUtils.toast('클립보드 이미지를 읽을 수 없습니다.', 'error');
+        reader.readAsDataURL(file);
+    }
+
+    function printNonconformStandardPage() {
+        const img = document.querySelector('#tabContent img');
+        const imageSrc = img ? String(img.getAttribute('src') || '') : String(_nonconformStandardImage || '');
+        if (!imageSrc) {
+            UIUtils.toast('인쇄할 기준서가 없습니다. 먼저 기준서를 업로드해 주세요.', 'warning');
+            return;
+        }
+        const win = window.open('', 'painting_nonconform_standard_print', 'width=1200,height=900');
+        if (!win) return;
+        win.document.open();
+        win.document.write(`
+            <!doctype html><html lang="ko"><head><meta charset="utf-8"><title>부적합 처리 기준서</title>
+            <style>
+                @page { size: A4 landscape; margin:4mm 6mm 6mm 6mm; }
+                html, body { margin:0; padding:0; background:#fff; }
+                body { display:flex; align-items:flex-start; justify-content:center; overflow:hidden; }
+                .print-sheet { width:285mm; height:198mm; display:flex; align-items:flex-start; justify-content:center; overflow:hidden; margin:0 auto; padding-top:1mm; }
+                img { display:block; width:auto; height:auto; max-width:285mm; max-height:197mm; object-fit:contain; break-inside:avoid; page-break-inside:avoid; }
+                * { box-sizing:border-box; break-inside:avoid; page-break-inside:avoid; }
+            </style></head><body><div class="print-sheet"><img src="${imageSrc}" alt="부적합 처리 기준서"></div></body></html>
+        `);
+        win.document.close();
+        win.focus();
+        win.print();
     }
 
     // 검사대기품 목록 표시 (도장 완료되었으나 검사 실적이 없는 목록)
@@ -5915,7 +6040,10 @@ const PaintingInspectionModule = (function() {
         _showNumericPad,
         _numpadInput,
         _numpadDelete,
-        _numpadConfirm
+        _numpadConfirm,
+        focusNonconformStandardPasteZone,
+        handleNonconformStandardPaste,
+        printNonconformStandardPage
     };
 })();
 

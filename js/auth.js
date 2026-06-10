@@ -13,6 +13,12 @@ const AuthModule = (function () {
     const SESSION_KEY = 'mes_current_user';
     const MESSAGES_KEY = 'mes_internal_messages_v1';
     const POPUP_STATE_PREFIX = 'mes_inbox_popup_seen_';
+    const AUTH_USERS_CONFIG_KEY = 'auth_users';
+    const AUTH_PERMS_CONFIG_KEY = 'auth_role_permissions';
+    const AUTH_MESSAGES_CONFIG_KEY = 'auth_internal_messages';
+    let _usersCache = null;
+    let _permissionsCache = null;
+    let _messagesCache = null;
 
     /* ── 역할 정의 ─────────────────────────────────────────── */
     const ROLES = [
@@ -78,10 +84,71 @@ const AuthModule = (function () {
     ];
 
     /* ── 내부 스토리지 ───────────────────────────────────────── */
-    function _getUsers() {
-        try { return JSON.parse(localStorage.getItem(USERS_KEY) || '[]'); } catch { return []; }
+    function _readLocalJson(key, fallback) {
+        try {
+            const raw = localStorage.getItem(key);
+            return raw ? JSON.parse(raw) : fallback;
+        } catch {
+            return fallback;
+        }
     }
-    function _saveUsers(u) { localStorage.setItem(USERS_KEY, JSON.stringify(u)); }
+    function _writeLocalJson(key, value) {
+        try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+    }
+    async function _loadAuthStateFromServer() {
+        if (typeof Storage === 'undefined' || !Storage.getConfigValue) return false;
+        try {
+            const localUsers = _readLocalJson(USERS_KEY, []);
+            const localPerms = _migratePerms(_readLocalJson(PERMS_KEY, _defaultPerms()));
+            const localMessages = _readLocalJson(MESSAGES_KEY, []);
+            const [users, perms, messages] = await Promise.all([
+                Storage.getConfigValue(AUTH_USERS_CONFIG_KEY).catch(() => null),
+                Storage.getConfigValue(AUTH_PERMS_CONFIG_KEY).catch(() => null),
+                Storage.getConfigValue(AUTH_MESSAGES_CONFIG_KEY).catch(() => null),
+            ]);
+            _usersCache = Array.isArray(users) && users.length ? users : localUsers;
+            _permissionsCache = perms && typeof perms === 'object' ? _migratePerms(perms) : localPerms;
+            _messagesCache = Array.isArray(messages) && messages.length ? messages : localMessages;
+            _writeLocalJson(USERS_KEY, _usersCache);
+            _writeLocalJson(PERMS_KEY, _permissionsCache);
+            _writeLocalJson(MESSAGES_KEY, _messagesCache);
+            if ((!Array.isArray(users) || users.length === 0) && localUsers.length) {
+                await Storage.setConfigValue(AUTH_USERS_CONFIG_KEY, _usersCache);
+            }
+            if ((!perms || typeof perms !== 'object') && localPerms) {
+                await Storage.setConfigValue(AUTH_PERMS_CONFIG_KEY, _permissionsCache);
+            }
+            if ((!Array.isArray(messages) || messages.length === 0) && localMessages.length) {
+                await Storage.setConfigValue(AUTH_MESSAGES_CONFIG_KEY, _messagesCache);
+            }
+            return true;
+        } catch (e) {
+            console.warn('[AuthModule] server auth state load failed:', e);
+            return false;
+        }
+    }
+    function _primeLocalAuthCache() {
+        if (_usersCache === null) _usersCache = _readLocalJson(USERS_KEY, []);
+        if (_permissionsCache === null) _permissionsCache = _migratePerms(_readLocalJson(PERMS_KEY, _defaultPerms()));
+        if (_messagesCache === null) _messagesCache = _readLocalJson(MESSAGES_KEY, []);
+    }
+    async function _persistAuthState(configKey, value, localKey) {
+        _writeLocalJson(localKey, value);
+        if (typeof Storage === 'undefined' || !Storage.setConfigValue) return;
+        try {
+            await Storage.setConfigValue(configKey, value);
+        } catch (e) {
+            console.warn('[AuthModule] auth state persist failed:', configKey, e);
+        }
+    }
+    function _getUsers() {
+        _primeLocalAuthCache();
+        return Array.isArray(_usersCache) ? _usersCache : [];
+    }
+    function _saveUsers(u) {
+        _usersCache = Array.isArray(u) ? u : [];
+        return _persistAuthState(AUTH_USERS_CONFIG_KEY, _usersCache, USERS_KEY);
+    }
 
     /* 권한 구조: { access:[pageIds], write:[pageIds] }
        - access: 페이지 접근 허용
@@ -193,11 +260,8 @@ const AuthModule = (function () {
     }
 
     function _getPermissions() {
-        try {
-            const s = localStorage.getItem(PERMS_KEY);
-            if (!s) return _defaultPerms();
-            return _migratePerms(JSON.parse(s));
-        } catch { return _defaultPerms(); }
+        _primeLocalAuthCache();
+        return _permissionsCache || _defaultPerms();
     }
 
     /* 역할 × 페이지 접근 허용 여부 */
@@ -222,13 +286,18 @@ const AuthModule = (function () {
         return Array.isArray(rp.write) && rp.write.includes(pageId);
     }
 
-    function _savePermissions(p) { localStorage.setItem(PERMS_KEY, JSON.stringify(p)); }
+    function _savePermissions(p) {
+        _permissionsCache = _migratePerms(p);
+        return _persistAuthState(AUTH_PERMS_CONFIG_KEY, _permissionsCache, PERMS_KEY);
+    }
 
     function _getMessages() {
-        try { return JSON.parse(localStorage.getItem(MESSAGES_KEY) || '[]'); } catch { return []; }
+        _primeLocalAuthCache();
+        return Array.isArray(_messagesCache) ? _messagesCache : [];
     }
     function _saveMessages(rows) {
-        localStorage.setItem(MESSAGES_KEY, JSON.stringify(Array.isArray(rows) ? rows : []));
+        _messagesCache = Array.isArray(rows) ? rows : [];
+        return _persistAuthState(AUTH_MESSAGES_CONFIG_KEY, _messagesCache, MESSAGES_KEY);
     }
     function _roleLabel(roleKey) {
         const role = ROLES.find(r => r.key === roleKey);
@@ -514,9 +583,9 @@ const AuthModule = (function () {
     }
 
     /* ── 기본 관리자 계정 보장 ───────────────────────────────── */
-    function ensureAdminUser() {
+    async function ensureAdminUser() {
         if (_getUsers().length === 0) {
-            _saveUsers([{
+            await _saveUsers([{
                 id: 'user_admin_default',
                 username: 'admin',
                 displayName: '관리자',
@@ -732,7 +801,9 @@ const AuthModule = (function () {
         }
     }
 
-    function init() {
+    async function init() {
+        await _loadAuthStateFromServer();
+        await ensureAdminUser();
         _setupInterceptor();
         _applyWriteMode();
         _updateTopbar();
