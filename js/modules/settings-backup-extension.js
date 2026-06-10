@@ -467,6 +467,16 @@ const SettingsBackupExtension = (function() {
                                 <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">save</span> 저장
                             </button>
                         </div>
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;">
+                            <label style="font-size:.82rem;white-space:nowrap;color:var(--text-muted);min-width:80px;">사진 저장 경로</label>
+                            <input type="text" id="nasUploadDirInput" class="form-input"
+                                style="flex:1;min-width:260px;font-family:monospace;font-size:.85rem;"
+                                placeholder="/mnt/nas-backup/uploads  (비워두면 서버 로컬 저장)"
+                                value="${esc(nasCfg.nasUploadDir || '')}">
+                        </div>
+                        <div style="margin-top:4px;font-size:.78rem;color:var(--text-muted);">
+                            사진 저장 경로: 수입검사 사진 등 업로드 파일을 NAS에 직접 저장할 경로. 비워두면 MES 서버 로컬(/opt/mes/uploads)에 저장됩니다.
+                        </div>
                         ${!connected && nasCfg.nasDir ? `
                         <div style="margin-top:8px;font-size:.8rem;color:var(--accent-red);">
                             ⚠ 경로가 설정되어 있으나 마운트되지 않았습니다.
@@ -531,8 +541,9 @@ const SettingsBackupExtension = (function() {
     async function saveNasConfig() {
         const nasDir = document.getElementById('nasBackupDirInput')?.value?.trim() || '';
         const keepCount = Number(document.getElementById('nasKeepCountInput')?.value || 365);
+        const nasUploadDir = document.getElementById('nasUploadDirInput')?.value?.trim() || '';
         try {
-            await ApiClient.saveNasConfig({ nasDir, keepCount });
+            await ApiClient.saveNasConfig({ nasDir, keepCount, nasUploadDir });
             UIUtils.toast('NAS 경로 설정이 저장되었습니다.', 'success');
             renderNasPanel();
         } catch (e) {

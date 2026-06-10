@@ -33,6 +33,7 @@ const PORT = process.env.PORT || 3000;
 const BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, 'backups');
 let NAS_BACKUP_DIR = process.env.NAS_BACKUP_DIR || '';   // NAS 마운트 경로 (비어있으면 NAS 백업 안 함)
 let NAS_KEEP_COUNT = parseInt(process.env.NAS_KEEP_COUNT || '365');  // NAS에 보관할 최대 파일 수
+let NAS_UPLOAD_DIR = process.env.NAS_UPLOAD_DIR || '';   // NAS 사진 저장 경로 (비어있으면 서버 로컬 저장)
 const BACKUP_CONFIG_KEY = 'server_backup_config';
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
 const DEFAULT_BACKUP_CONFIG = {
@@ -107,6 +108,11 @@ async function initDB() {
           if (cfg.keepCount) NAS_KEEP_COUNT = Math.max(1, Number(cfg.keepCount));
           console.log('✅ NAS 백업 경로 (DB):', cfg.nasDir);
         }
+        if (cfg?.nasUploadDir) {
+          NAS_UPLOAD_DIR = cfg.nasUploadDir;
+          process.env.NAS_UPLOAD_DIR = cfg.nasUploadDir;
+          console.log('✅ NAS 사진 저장 경로 (DB):', cfg.nasUploadDir);
+        }
       }
     } catch (_) {}
 
@@ -125,8 +131,10 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '50mb' }));
 
-// ── 업로드 파일 정적 서빙 ──
-app.use('/uploads', express.static(UPLOAD_DIR));
+// ── 업로드 파일 정적 서빙 (NAS_UPLOAD_DIR 설정 시 NAS에서 서빙) ──
+app.use('/uploads', (req, res, next) => {
+  express.static(NAS_UPLOAD_DIR || UPLOAD_DIR)(req, res, next);
+});
 
 // ── 헬스체크 ──
 app.get('/health', (req, res) => {
@@ -620,6 +628,7 @@ app.get('/api/nas-config', async (req, res) => {
     res.json({
       nasDir: saved?.nasDir ?? NAS_BACKUP_DIR,
       keepCount: saved?.keepCount ?? NAS_KEEP_COUNT,
+      nasUploadDir: saved?.nasUploadDir ?? NAS_UPLOAD_DIR,
       fromEnv: !saved
     });
   } catch (err) {
@@ -634,9 +643,13 @@ app.get('/api/nas-config', async (req, res) => {
 
 // ── NAS 설정 저장 ──
 app.put('/api/nas-config', async (req, res) => {
-  const { nasDir = '', keepCount = 365 } = req.body || {};
+  const { nasDir = '', keepCount = 365, nasUploadDir = '' } = req.body || {};
   try {
-    const value = { nasDir: String(nasDir).trim(), keepCount: Math.max(1, Number(keepCount)) };
+    const value = {
+      nasDir: String(nasDir).trim(),
+      keepCount: Math.max(1, Number(keepCount)),
+      nasUploadDir: String(nasUploadDir).trim()
+    };
     await pool.query(
       `INSERT INTO mes_config (\`key\`, \`value\`) VALUES ('nas_backup_config', ?)
        ON DUPLICATE KEY UPDATE \`value\` = VALUES(\`value\`), updated_at = NOW()`,
@@ -645,7 +658,9 @@ app.put('/api/nas-config', async (req, res) => {
     // 런타임 즉시 반영
     NAS_BACKUP_DIR = value.nasDir;
     NAS_KEEP_COUNT = value.keepCount;
+    NAS_UPLOAD_DIR = value.nasUploadDir;
     process.env.NAS_BACKUP_DIR = value.nasDir;
+    process.env.NAS_UPLOAD_DIR = value.nasUploadDir;
     res.json({ success: true, ...value });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -804,7 +819,8 @@ app.post('/api/photos', async (req, res) => {
   const allowed = /^[a-zA-Z0-9_\-\.]+$/;
   if (!allowed.test(filename)) return res.status(400).json({ error: '파일명에 허용되지 않는 문자' });
   const safeSub = String(subdir).replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 40) || 'misc';
-  const dir = path.join(UPLOAD_DIR, safeSub);
+  const baseDir = NAS_UPLOAD_DIR || UPLOAD_DIR;
+  const dir = path.join(baseDir, safeSub);
   try {
     await fs.mkdir(dir, { recursive: true });
     const buf = Buffer.from(data, 'base64');
@@ -821,7 +837,7 @@ app.delete('/api/photos', async (req, res) => {
   const { url } = req.body || {};
   if (!url || !url.startsWith('/uploads/')) return res.status(400).json({ error: '잘못된 경로' });
   const rel = url.slice('/uploads/'.length);
-  const filePath = path.join(UPLOAD_DIR, rel);
+  const filePath = path.join(NAS_UPLOAD_DIR || UPLOAD_DIR, rel);
   try {
     await fs.unlink(filePath).catch(() => {});
     res.json({ success: true });
