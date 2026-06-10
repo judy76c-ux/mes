@@ -67,6 +67,7 @@ var PaintIncomingInspectionModule = (function() {
                                         <th>유효기간</th>
                                         <th>성적서</th>
                                         <th>판정</th>
+                                        <th>검사자</th>
                                         <th>작업</th>
                                     </tr>
                                 </thead>
@@ -201,7 +202,7 @@ var PaintIncomingInspectionModule = (function() {
     function renderTable(data) {
         const tbody = document.getElementById('piTableBody');
         if (data.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:40px;color:var(--text-muted);">데이터가 없습니다.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-muted);">데이터가 없습니다.</td></tr>`;
             return;
         }
 
@@ -222,6 +223,7 @@ var PaintIncomingInspectionModule = (function() {
                     <td>${d.expDateCheck && expType ? UIUtils.badge(d.expDateCheck, expType) : (d.expDateCheck || '-')}</td>
                     <td>${d.certCheck && certType ? UIUtils.badge(d.certCheck, certType) : (d.certCheck || '-')}</td>
                     <td>${UIUtils.badge(d.verdict || '-', verdictType)}</td>
+                    <td style="font-size:0.8rem;color:var(--text-muted);">${d.inspector || '-'}</td>
                     <td>
                         <button class="btn btn-sm btn-outline" onclick="PaintIncomingInspectionModule.edit('${d.id}')">수정</button>
                     </td>
