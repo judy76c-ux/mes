@@ -323,7 +323,7 @@ var InjectionIncomingModule = (function() {
         });
 
         tbody.innerHTML = data.map(d => {
-            const verdictText = d.verdict || ((Number(d.passQty) || 0) > 0 ? '합격' : '불합격');
+            const verdictText = d.verdict || '';
             const verdict = verdictText === '합격' ? 'success' : 'danger';
             const lotList = (d.lots && d.lots.length > 0) ? d.lots : (d.lotNo ? [{ lotNo: d.lotNo, certReceived: d.certReceived || false }] : []);
             const certLot = lotList.find(l => l.certRepresentative) || lotList.find(l => l.certReceived);
@@ -360,7 +360,7 @@ var InjectionIncomingModule = (function() {
                     <td style="text-align:center;font-size:0.82rem;color:var(--text-secondary)">${d.acCriteria != null ? d.acCriteria + '/' + d.reCriteria : '-'}</td>
                     <td style="text-align:right;color:var(--accent-green)">${UIUtils.formatNumber(d.passQty)}</td>
                     <td style="text-align:right;color:var(--accent-red)">${UIUtils.formatNumber(d.failQty)}</td>
-                    <td>${UIUtils.badge(verdictText, verdict)}</td>
+                    <td>${verdictText ? UIUtils.badge(verdictText, verdict) : '-'}</td>
                     <td>
                         <div style="font-size:0.8rem;color:var(--accent-red);margin-bottom:2px;">
                             ${Object.entries(d.defectDetails || {}).map(([k, v]) => `${k}(${v})`).join(', ')}
