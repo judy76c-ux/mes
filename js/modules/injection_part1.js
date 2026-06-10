@@ -402,7 +402,7 @@ var InjectionIncomingModule = (function() {
                     </div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">검사자</label>
+                    <label class="form-label">검사자 <span style="color:var(--accent-red)">*</span></label>
                     <select class="form-input" id="addInjInspector">
                         <option value="">-- 검사자 선택 --</option>
                         ${inspectorOptions}
@@ -989,6 +989,10 @@ var InjectionIncomingModule = (function() {
             UIUtils.toast('날짜와 품명은 필수입니다.', 'warning');
             return;
         }
+        if (!data.inspector) {
+            UIUtils.toast('검사자를 선택하세요.', 'warning');
+            return;
+        }
         if (!data.verdict) {
             UIUtils.toast('합격 판정을 선택하세요.', 'warning');
             return;
@@ -1336,6 +1340,10 @@ var InjectionIncomingModule = (function() {
             }
         });
 
+        if (!updateData.inspector) {
+            UIUtils.toast('검사자를 선택하세요.', 'warning');
+            return;
+        }
         if (!updateData.verdict) {
             UIUtils.toast('합격 판정을 선택하세요.', 'warning');
             return;
