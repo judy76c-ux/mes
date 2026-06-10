@@ -114,6 +114,9 @@ const DashboardModule = (function() {
             <!-- 점검/관리 타일 -->
             <div id="dashMonitorTiles"></div>
 
+            <!-- 운영 게시판 -->
+            <div id="dashBoardSection"></div>
+
             <!-- 하단: 개선활동(좌) + 차트 2×2(우) -->
             <div style="display:grid;grid-template-columns:minmax(220px,1fr) minmax(0,2.4fr);gap:10px;min-height:0;">
                 <div id="dashImprovementTiles"></div>
@@ -160,6 +163,7 @@ const DashboardModule = (function() {
         renderProductionTiles();
         renderMonitorTiles();   // async
         renderImprovementTiles();
+        renderBoardSection();
         renderCharts();
     }
 
@@ -502,6 +506,77 @@ const DashboardModule = (function() {
         const until = new Date(base.getTime() + 35 * ms1day).toISOString().split('T')[0];
         return results.filter(r => r.date >= from && r.date <= until)
                       .sort((a, b) => a.date.localeCompare(b.date));
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       운영 게시판 섹션
+    ══════════════════════════════════════════════════════════ */
+    function renderBoardSection() {
+        const el = document.getElementById('dashBoardSection');
+        if (!el) return;
+
+        const CAT_COLOR = {
+            '오류 보고': { bg:'#fee2e2', text:'#dc2626' },
+            '개선 요청': { bg:'#fef3c7', text:'#d97706' },
+            '문의':      { bg:'#dbeafe', text:'#2563eb' },
+            '기타':      { bg:'#f1f5f9', text:'#64748b' }
+        };
+
+        const posts = (Storage.getAll(DB.STORES.BOARD_POSTS) || [])
+            .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+            .slice(0, 5);
+
+        const replies = Storage.getAll(DB.STORES.BOARD_REPLIES) || [];
+
+        function relDate(iso) {
+            if (!iso) return '';
+            const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+            if (diff === 0) return '오늘';
+            if (diff === 1) return '어제';
+            if (diff < 7)  return `${diff}일 전`;
+            return iso.slice(0, 10);
+        }
+
+        const rows = posts.length ? posts.map(p => {
+            const cc  = CAT_COLOR[p.category] || CAT_COLOR['기타'];
+            const cnt = (replies).filter(r => r.postId === p.id).length;
+            return `
+            <div onclick="Router.navigate('board')"
+                 style="display:flex;align-items:center;gap:10px;padding:7px 12px;
+                        border-bottom:1px solid var(--border-color);cursor:pointer;
+                        transition:background .15s;"
+                 onmouseover="this.style.background='var(--bg-secondary)'"
+                 onmouseout="this.style.background=''">
+                <span style="flex-shrink:0;font-size:.72rem;font-weight:700;padding:2px 7px;
+                             border-radius:10px;background:${cc.bg};color:${cc.text};
+                             white-space:nowrap;">${_esc(p.category || '기타')}</span>
+                <span style="flex:1;font-size:.85rem;color:var(--text-primary);
+                             white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                    ${_esc(p.title || '(제목 없음)')}
+                    ${cnt ? `<span style="font-size:.72rem;color:var(--accent-blue);margin-left:4px;">[${cnt}]</span>` : ''}
+                </span>
+                <span style="flex-shrink:0;font-size:.75rem;color:var(--text-muted);white-space:nowrap;">${_esc(p.author || '')}</span>
+                <span style="flex-shrink:0;font-size:.72rem;color:var(--text-muted);white-space:nowrap;min-width:42px;text-align:right;">${relDate(p.createdAt)}</span>
+            </div>`;
+        }).join('') : `<div style="text-align:center;padding:20px;font-size:.85rem;color:var(--text-muted);">
+            등록된 게시글이 없습니다.
+        </div>`;
+
+        el.innerHTML = `
+        <div class="card" style="margin-bottom:0;">
+            <div class="card-header" style="padding:8px 12px;">
+                <h4 style="font-size:.8rem;display:flex;align-items:center;gap:5px;margin:0;">
+                    <span class="material-symbols-outlined" style="font-size:15px;color:var(--accent-blue);">forum</span>
+                    운영 게시판
+                    ${posts.length ? `<span style="font-size:.72rem;font-weight:400;color:var(--text-muted);margin-left:2px;">최근 ${posts.length}건</span>` : ''}
+                </h4>
+                <button onclick="Router.navigate('board')" class="btn btn-sm btn-outline"
+                    style="font-size:.75rem;padding:2px 10px;height:24px;">
+                    전체보기
+                </button>
+            </div>
+            <div style="overflow:hidden;">${rows}</div>
+        </div>`;
     }
 
     /* ══════════════════════════════════════════════════════════
