@@ -175,8 +175,9 @@ const Router = (function() {
         updateDateTime();
         setInterval(updateDateTime, 60000);
 
+        const user = (typeof AuthModule !== 'undefined') ? AuthModule.getCurrentUser() : null;
         const lastPage = localStorage.getItem('last_page') || 'dashboard';
-        navigate(lastPage);
+        navigate(user ? lastPage : 'dashboard');
     }
 
     function registerModule(name, moduleObj) {
