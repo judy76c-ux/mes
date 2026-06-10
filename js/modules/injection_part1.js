@@ -1362,11 +1362,21 @@ var InjectionIncomingModule = (function() {
         const verdictText = d.verdict || '-';
         const verdictColor = d.verdict === '합격' ? 'var(--accent-green)' : d.verdict === '불합격' ? 'var(--accent-red)' : 'var(--text-muted)';
         const lotList = (d.lots && d.lots.length > 0) ? d.lots : (d.lotNo ? [{ lotNo: d.lotNo, certReceived: d.certReceived || false, qty: d.incomingQty }] : []);
-        const lotDisplay = lotList.map(l =>
-            `<span style="display:inline-block;background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-family:monospace;font-size:0.85rem;margin:2px;">
-                ${l.lotNo || '-'} ${l.certReceived ? '<span style="color:var(--accent-green);font-size:0.75rem;">✓성적서</span>' : ''}
-            </span>`
-        ).join('');
+        // certRepresentative=true 인 lot만 성적서 표기 (normalizeCertLots이 모든 lot에 certReceived:true를 설정하기 때문)
+        const certRepLot = lotList.find(l => l.certRepresentative) || null;
+        const lotDisplay = lotList.map(l => {
+            const isCert = l.certRepresentative === true;
+            const qtyText = l.qty != null ? ` <span style="color:var(--text-muted);font-size:0.78rem;">${UIUtils.formatNumber(l.qty)}EA</span>` : '';
+            const certBadge = isCert
+                ? ` <span style="color:var(--accent-green);font-size:0.75rem;font-weight:600;">✓성적서</span>`
+                : '';
+            return `<span style="display:inline-flex;align-items:center;gap:3px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font-family:monospace;font-size:0.85rem;margin:2px 2px 4px;">
+                <span style="font-weight:600;">${l.lotNo || '-'}</span>${qtyText}${certBadge}
+            </span>`;
+        }).join('');
+        const certStatusDisplay = certRepLot
+            ? `<span style="color:var(--accent-green);font-weight:600;">${certRepLot.lotNo} ✓ 접수완료</span>`
+            : `<span style="color:var(--accent-red);">미접수</span>`;
         const defectStr = Object.entries(d.defectDetails || {}).map(([k, v]) => `${k}(${v})`).join(', ') || '-';
 
         const row = (label, value) =>
@@ -1385,6 +1395,7 @@ var InjectionIncomingModule = (function() {
                 ${row('사출처', d.supplierName || '-')}
                 ${row('입고수량', UIUtils.formatNumber(d.incomingQty) + ' EA')}
                 ${row('사출 LOT', lotDisplay || '-')}
+                ${row('성적서 접수', certStatusDisplay)}
                 ${row('시료코드', d.sampleCode || '-')}
                 ${row('검사수량', UIUtils.formatNumber(d.inspectionQty))}
                 ${row('AC/RE', (d.acCriteria != null ? d.acCriteria + ' / ' + d.reCriteria : '-'))}
