@@ -7981,15 +7981,34 @@ const SettingsModule = (function() {
                 </div>
             </div>
 
-            <div class="card" style="margin-bottom:20px;border-left:3px solid var(--accent-blue);">
+            <div class="card" id="imageStoragePolicyCard" style="margin-bottom:20px;border-left:3px solid var(--accent-blue);">
                 <div class="card-header">
-                    <h4><span class="material-symbols-outlined">photo_library</span> 이미지 저장 정책</h4>
+                    <h4><span class="material-symbols-outlined">photo_library</span> 이미지 저장 정책 (NAS 경로)</h4>
                 </div>
-                <div class="card-body">
-                    <p style="margin:0;font-size:0.875rem;color:var(--text-secondary);line-height:1.65;">
-                        지그 대장처럼 변경이 적은 이미지는 현재 방식으로도 큰 문제는 없습니다.
-                        작업조건 관리 C/S처럼 매일 여러 장 촬영되는 이미지는 장기적으로 NAS 파일 저장 방식이 적합합니다.
-                        DB에는 파일 경로, 촬영일, 공정, 등록자, 압축 정보만 저장하고 실제 이미지는 NAS 폴더에 저장하는 구조로 설계하는 것을 권장합니다.
+                <div class="card-body" style="display:flex;flex-direction:column;gap:12px;">
+                    <!-- 현재 저장 위치 상태 -->
+                    <div id="imageStorageStatus" style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;">
+                        <span class="material-symbols-outlined" style="font-size:18px;color:#d97706;">photo_camera</span>
+                        <span style="font-size:.85rem;color:#92400e;">사진 저장 경로 로딩 중...</span>
+                    </div>
+                    <!-- NAS 사진 경로 입력 -->
+                    <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+                        <div style="flex:1;min-width:260px;">
+                            <label class="form-label" style="font-size:.82rem;">
+                                NAS 사진 저장 경로
+                                <span style="font-weight:400;color:var(--text-muted);margin-left:4px;">(비워두면 NAS 백업경로/photos 자동 사용)</span>
+                            </label>
+                            <input type="text" id="sysNasUploadDirInput" class="form-input"
+                                style="font-family:monospace;font-size:.85rem;"
+                                placeholder="/mnt/nas-backup/photos">
+                        </div>
+                        <button class="btn btn-primary" onclick="SettingsModule.saveImageStoragePolicy()" style="white-space:nowrap;height:36px;">
+                            <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">save</span> 저장
+                        </button>
+                    </div>
+                    <p style="margin:0;font-size:0.8rem;color:var(--text-muted);line-height:1.6;">
+                        매일 촬영되는 수입검사 사진은 NAS에 직접 저장합니다.
+                        NAS 백업 경로(백업/복원 탭)가 설정된 경우 별도 경로를 입력하지 않아도 <code style="background:var(--bg-secondary);padding:1px 4px;border-radius:3px;">백업경로/photos</code>로 자동 저장됩니다.
                     </p>
                 </div>
             </div>
@@ -8124,7 +8143,52 @@ const SettingsModule = (function() {
 
             // 탭 진입 시 서버 상태 자동 조회
             refreshSystemInfo();
+            loadImageStoragePolicy();
         }, 50);
+    }
+
+    async function loadImageStoragePolicy() {
+        const statusEl = document.getElementById('imageStorageStatus');
+        const inputEl = document.getElementById('sysNasUploadDirInput');
+        if (!statusEl || !inputEl) return;
+        try {
+            const nasCfg = await ApiClient.getNasConfig();
+            const onNas = nasCfg.nasDir && nasCfg.effectivePhotoDir && nasCfg.effectivePhotoDir.startsWith(nasCfg.nasDir);
+            if (nasCfg.nasUploadDir) inputEl.value = nasCfg.nasUploadDir;
+            if (onNas) {
+                statusEl.style.background = '#f0fdf4';
+                statusEl.style.border = '1px solid #86efac';
+                statusEl.innerHTML = `<span class="material-symbols-outlined" style="font-size:18px;color:#16a34a;">photo_camera</span>
+                    <span style="font-size:.85rem;color:#166534;font-weight:600;">✓ NAS 저장 중</span>
+                    <code style="font-size:.82rem;padding:1px 6px;border-radius:4px;background:rgba(0,0,0,.06);margin-left:4px;">${nasCfg.effectivePhotoDir}</code>`;
+            } else {
+                statusEl.style.background = '#fff7ed';
+                statusEl.style.border = '1px solid #fdba74';
+                statusEl.innerHTML = `<span class="material-symbols-outlined" style="font-size:18px;color:#d97706;">photo_camera</span>
+                    <span style="font-size:.85rem;color:#92400e;font-weight:600;">⚠ 서버 로컬 저장 중</span>
+                    <code style="font-size:.82rem;padding:1px 6px;border-radius:4px;background:rgba(0,0,0,.06);margin-left:4px;">${nasCfg.effectivePhotoDir || '/opt/mes/uploads'}</code>
+                    <span style="font-size:.75rem;color:#d97706;margin-left:6px;">— NAS 백업 경로를 설정하면 자동으로 NAS에 저장됩니다</span>`;
+            }
+        } catch (e) {
+            statusEl.innerHTML = `<span style="font-size:.82rem;color:var(--text-muted);">API 서버 연결 필요 (${e.message})</span>`;
+        }
+    }
+
+    async function saveImageStoragePolicy() {
+        const inputEl = document.getElementById('sysNasUploadDirInput');
+        const nasUploadDir = (inputEl?.value || '').trim();
+        try {
+            const nasCfg = await ApiClient.getNasConfig();
+            await ApiClient.saveNasConfig({
+                nasDir: nasCfg.nasDir || '',
+                keepCount: nasCfg.keepCount || 365,
+                nasUploadDir
+            });
+            UIUtils.toast('사진 저장 경로가 저장되었습니다.', 'success');
+            loadImageStoragePolicy();
+        } catch (e) {
+            UIUtils.toast('저장 실패: ' + e.message, 'error');
+        }
     }
 
     async function refreshSystemInfo() {
@@ -10350,6 +10414,7 @@ const SettingsModule = (function() {
         saveApiBase,
         clearApiBase,
         refreshSystemInfo,
+        saveImageStoragePolicy,
         _askCascadeRename,
         _doCascadeRename,
         deleteRecordsByPartNames,
