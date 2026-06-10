@@ -293,9 +293,10 @@ var PaintIncomingInspectionModule = (function() {
         const [datePart, timePart] = fullDate.split(' ');
 
         return `
+            <!-- ① 입력 항목 -->
             <div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid var(--accent-blue);">
-                <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;">inventory</span>
-                기본 정보
+                <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;">edit_note</span>
+                입력 항목
             </div>
             <div class="form-row">
                 <div class="form-group">
@@ -306,7 +307,7 @@ var PaintIncomingInspectionModule = (function() {
                     </div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">검사자</label>
+                    <label class="form-label">검사자 <span style="color:var(--accent-red)">*</span></label>
                     <select class="form-select" id="piInspector">
                         <option value="">-- 검사자 선택 --</option>
                         ${inspectorOptions}
@@ -329,13 +330,16 @@ var PaintIncomingInspectionModule = (function() {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">제조사 <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(자동표시)</span></label>
-                    <input type="text" class="form-input" id="piManufacturer" readonly
-                        style="background:var(--bg-secondary);color:var(--accent-blue);font-weight:600;"
-                        placeholder="원료명 선택 시 자동 표시"
-                        value="${initialManufacturer}">
+                    <label class="form-label">제조사 표기 LOT <span style="color:var(--accent-red)">*</span></label>
+                    <input type="text" class="form-input" id="piLotNo" placeholder="제조사 표기 LOT 번호 입력" value="${d.lotNo || ''}">
                 </div>
-                <div class="form-group" style="visibility:hidden;"></div>
+                <div class="form-group">
+                    <label class="form-label">제조일자 <span style="color:var(--accent-red)">*</span></label>
+                    <input type="date" class="form-input" id="piMfgDate"
+                        value="${d.mfgDate || ''}"
+                        min="2000-01-01"
+                        max="${Storage.today()}">
+                </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
@@ -349,14 +353,27 @@ var PaintIncomingInspectionModule = (function() {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">제조일자</label>
-                    <input type="date" class="form-input" id="piMfgDate"
-                        value="${d.mfgDate || ''}"
-                        min="2000-01-01"
-                        max="${Storage.today()}">
+                    <label class="form-label">유통기한</label>
+                    <input type="text" class="form-input" id="piShelfLife" placeholder="예: 12개월, 6개월" value="${d.shelfLife || ''}">
+                </div>
+                <div class="form-group" style="visibility:hidden;"></div>
+            </div>
+
+            <!-- ② 자동 표시 항목 -->
+            <div style="font-weight:600;color:var(--text-primary);margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--accent-blue);">
+                <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;">auto_awesome</span>
+                자동 표시
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">제조사 <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(원료명 선택 시 자동)</span></label>
+                    <input type="text" class="form-input" id="piManufacturer" readonly
+                        style="background:var(--bg-secondary);color:var(--accent-blue);font-weight:600;"
+                        placeholder="원료명 선택 시 자동 표시"
+                        value="${initialManufacturer}">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">유효기간 (만료일)</label>
+                    <label class="form-label">유효기간 (만료일) <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(제조일자+유통기한 자동계산)</span></label>
                     <input type="date" class="form-input" id="piExpDate" value="${d.expDate || ''}">
                 </div>
             </div>
@@ -369,17 +386,29 @@ var PaintIncomingInspectionModule = (function() {
                     <span id="piExpDateWarningMsg" style="font-weight:600;"></span>
                 </div>
             </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">유통기한</label>
-                    <input type="text" class="form-input" id="piShelfLife" placeholder="예: 12개월, 6개월" value="${d.shelfLife || ''}">
+            <!-- LOT 변경 확인 (자동 판정) -->
+            <div style="display:flex;align-items:center;gap:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:10px 16px;margin-bottom:12px;">
+                <span style="font-size:0.85rem;color:var(--text-secondary);font-weight:600;white-space:nowrap;">LOT 변경 확인</span>
+                <span style="font-size:0.75rem;color:var(--text-muted);">(이전 입고 제조일 비교 자동 판정)</span>
+                <input type="hidden" id="piLotCheckValue" value="${d.lotCheck || ''}">
+                <div id="piLotCheckResult" style="display:flex;align-items:center;">
+                    ${lotCheckInitHTML}
                 </div>
-                <div class="form-group">
-                    <label class="form-label">제조사 표기 LOT</label>
-                    <input type="text" class="form-input" id="piLotNo" placeholder="제조사 표기 LOT" value="${d.lotNo || ''}">
+            </div>
+            <!-- 신LOT 입고 시 성적서 접수 안내 -->
+            <div id="piNewLotWarning" style="display:none;margin-bottom:12px;padding:12px 14px;background:#e8f5e9;border:1.5px solid var(--accent-green);border-radius:6px;color:var(--accent-green);font-weight:600;font-size:0.875rem;">
+                <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;margin-right:6px;">info</span>
+                신LOT 입고 - 성적서 접수 필요
+            </div>
+            <!-- 입고 도료 현재 재고 및 LOT 정보 -->
+            <div style="padding:12px 14px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;margin-bottom:4px;">
+                <div style="font-weight:600;color:var(--text-primary);margin-bottom:10px;font-size:0.875rem;">📦 입고 도료 현재 재고 및 LOT 정보</div>
+                <div id="piCurrentInventory" style="font-size:0.825rem;color:var(--text-muted);">
+                    <span>도료명을 선택하면 현재 재고 정보가 표시됩니다.</span>
                 </div>
             </div>
 
+            <!-- ③ 검사항목 -->
             <div style="font-weight:600;color:var(--text-primary);margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--accent-blue);">
                 <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;">fact_check</span>
                 검사항목
@@ -441,34 +470,8 @@ var PaintIncomingInspectionModule = (function() {
                             <input type="text" class="form-input" id="piCertNote" placeholder="특이사항" value="${d.certNote || ''}" style="margin:0;padding:6px 10px;">
                         </td>
                     </tr>
-                    <tr>
-                        <td style="padding:10px 14px;color:var(--text-primary);font-weight:500;">
-                            LOT 변경 확인
-                            <div style="font-size:0.75rem;color:var(--text-muted);font-weight:400;margin-top:2px;">이전 입고 제조일 비교 자동 판정</div>
-                        </td>
-                        <td colspan="2" style="padding:10px 14px;text-align:center;">
-                            <input type="hidden" id="piLotCheckValue" value="${d.lotCheck || ''}">
-                            <div id="piLotCheckResult" style="min-height:32px;display:flex;align-items:center;justify-content:center;">
-                                ${lotCheckInitHTML}
-                            </div>
-                        </td>
-                    </tr>
                 </tbody>
             </table>
-
-            <!-- 신LOT 입고 시 성적서 접수 안내 -->
-            <div id="piNewLotWarning" style="display:none;margin-top:16px;padding:12px 14px;background:#e8f5e9;border:1.5px solid var(--accent-green);border-radius:6px;color:var(--accent-green);font-weight:600;font-size:0.875rem;">
-                <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;margin-right:6px;">info</span>
-                신LOT 입고 - 성적서 접수 필요
-            </div>
-
-            <!-- 입고 도료 현재 재고 및 LOT 정보 -->
-            <div style="margin-top:20px;padding:12px 14px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;">
-                <div style="font-weight:600;color:var(--text-primary);margin-bottom:10px;font-size:0.875rem;">📦 입고 도료 현재 재고 및 LOT 정보</div>
-                <div id="piCurrentInventory" style="font-size:0.825rem;color:var(--text-muted);">
-                    <span>도료명을 선택하면 현재 재고 정보가 표시됩니다.</span>
-                </div>
-            </div>
 
             <div class="form-row" style="margin-top:20px;">
                 <div class="form-group">
@@ -811,6 +814,18 @@ var PaintIncomingInspectionModule = (function() {
             UIUtils.toast('검사일자, 구매처, 원료명은 필수입니다.', 'warning');
             return;
         }
+        if (!data.inspector) {
+            UIUtils.toast('검사자를 선택하세요.', 'warning');
+            return;
+        }
+        if (!data.lotNo) {
+            UIUtils.toast('제조사 표기 LOT를 입력하세요.', 'warning');
+            return;
+        }
+        if (!data.mfgDate) {
+            UIUtils.toast('제조일자를 입력하세요.', 'warning');
+            return;
+        }
         if (data.mfgDate && data.mfgDate > UIUtils.today()) {
             UIUtils.toast('제조일자는 오늘 날짜보다 미래일 수 없습니다.', 'warning');
             return;
@@ -839,6 +854,18 @@ var PaintIncomingInspectionModule = (function() {
         const data = collectFormData();
         if (!data.date || !data.supplier || !data.paintName) {
             UIUtils.toast('검사일자, 구매처, 원료명은 필수입니다.', 'warning');
+            return;
+        }
+        if (!data.inspector) {
+            UIUtils.toast('검사자를 선택하세요.', 'warning');
+            return;
+        }
+        if (!data.lotNo) {
+            UIUtils.toast('제조사 표기 LOT를 입력하세요.', 'warning');
+            return;
+        }
+        if (!data.mfgDate) {
+            UIUtils.toast('제조일자를 입력하세요.', 'warning');
             return;
         }
         if (data.mfgDate && data.mfgDate > UIUtils.today()) {
