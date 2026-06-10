@@ -166,6 +166,40 @@ const ApiClient = (function() {
     return request('GET', '/api/system', undefined, 8000);
   }
 
+  // 사진 업로드: base64 data URL → NAS 서버 저장, URL 반환
+  async function uploadPhoto(file, subdir) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = async function(e) {
+        try {
+          const dataUrl = e.target.result; // "data:image/jpeg;base64,..."
+          const commaIdx = dataUrl.indexOf(',');
+          const base64 = dataUrl.slice(commaIdx + 1);
+          const contentType = dataUrl.slice(5, commaIdx).split(';')[0];
+          const ext = file.name.split('.').pop().toLowerCase();
+          const safeName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+          const result = await request('POST', '/api/photos', {
+            subdir: subdir || 'misc',
+            filename: safeName,
+            data: base64,
+            contentType
+          }, 30000);
+          resolve(result.url);
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.onerror = () => reject(new Error('파일 읽기 실패'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function photoUrl(relUrl) {
+    if (!relUrl) return '';
+    if (relUrl.startsWith('http')) return relUrl;
+    return (API_BASE || '') + relUrl;
+  }
+
   // API 서버 주소 반환 (에러 메시지·UI 표시용)
   function getBase() { return API_BASE; }
 
@@ -176,6 +210,7 @@ const ApiClient = (function() {
     getNasConfig, saveNasConfig,
     listNasBackups, nasBackupDownloadUrl, copyNasToLocal, restoreNasBackup,
     getSystemInfo,
+    uploadPhoto, photoUrl,
     getBase
   };
 })();

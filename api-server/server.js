@@ -34,6 +34,7 @@ const BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, 'backups');
 let NAS_BACKUP_DIR = process.env.NAS_BACKUP_DIR || '';   // NAS 마운트 경로 (비어있으면 NAS 백업 안 함)
 let NAS_KEEP_COUNT = parseInt(process.env.NAS_KEEP_COUNT || '365');  // NAS에 보관할 최대 파일 수
 const BACKUP_CONFIG_KEY = 'server_backup_config';
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
 const DEFAULT_BACKUP_CONFIG = {
   enabled: true,
   frequency: 'daily',
@@ -123,6 +124,9 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE']
 }));
 app.use(express.json({ limit: '50mb' }));
+
+// ── 업로드 파일 정적 서빙 ──
+app.use('/uploads', express.static(UPLOAD_DIR));
 
 // ── 헬스체크 ──
 app.get('/health', (req, res) => {
@@ -788,6 +792,39 @@ app.post('/api/backups/:fileName/restore', async (req, res) => {
     } finally {
       conn.release();
     }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── 사진 업로드 (base64 JSON) ──
+app.post('/api/photos', async (req, res) => {
+  const { subdir = 'misc', filename, data, contentType } = req.body || {};
+  if (!filename || !data) return res.status(400).json({ error: 'filename과 data 필드 필요' });
+  const allowed = /^[a-zA-Z0-9_\-\.]+$/;
+  if (!allowed.test(filename)) return res.status(400).json({ error: '파일명에 허용되지 않는 문자' });
+  const safeSub = String(subdir).replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 40) || 'misc';
+  const dir = path.join(UPLOAD_DIR, safeSub);
+  try {
+    await fs.mkdir(dir, { recursive: true });
+    const buf = Buffer.from(data, 'base64');
+    const filePath = path.join(dir, filename);
+    await fs.writeFile(filePath, buf);
+    res.json({ url: `/uploads/${safeSub}/${filename}` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── 사진 삭제 ──
+app.delete('/api/photos', async (req, res) => {
+  const { url } = req.body || {};
+  if (!url || !url.startsWith('/uploads/')) return res.status(400).json({ error: '잘못된 경로' });
+  const rel = url.slice('/uploads/'.length);
+  const filePath = path.join(UPLOAD_DIR, rel);
+  try {
+    await fs.unlink(filePath).catch(() => {});
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -347,10 +347,28 @@ var PaintIncomingInspectionModule = (function() {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">입고수량</label>
-                    <input type="number" class="form-input" id="piIncomingQty" min="0" placeholder="0" value="${d.incomingQty || ''}">
+                    <label class="form-label">입고수량 <span style="color:var(--accent-red)">*</span></label>
+                    <input type="number" class="form-input" id="piIncomingQty" min="1" placeholder="0" value="${d.incomingQty || ''}">
                 </div>
-                <div class="form-group" style="visibility:hidden;"></div>
+                <div class="form-group">
+                    <label class="form-label">도료 명판 사진
+                        <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(NAS 저장)</span>
+                    </label>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <label style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.85rem;background:var(--bg-secondary);">
+                            <span class="material-symbols-outlined" style="font-size:18px;">photo_camera</span>
+                            <span>사진 선택</span>
+                            <input type="file" id="piNameplateFile" accept="image/*" style="display:none"
+                                onchange="PaintIncomingInspectionModule.onNameplateFileChange(this)">
+                        </label>
+                        <span id="piNameplateFileName" style="font-size:0.78rem;color:var(--text-muted);">미선택</span>
+                    </div>
+                    ${d.nameplatePhotoUrl ? `<div id="piNameplatePreview" style="margin-top:6px;">
+                        <img src="${ApiClient.photoUrl(d.nameplatePhotoUrl)}" style="max-height:80px;border-radius:6px;border:1px solid var(--border);">
+                        <span style="font-size:0.75rem;color:var(--accent-green);margin-left:6px;">✓ 저장됨</span>
+                    </div>` : `<div id="piNameplatePreview"></div>`}
+                    <input type="hidden" id="piNameplatePhotoUrl" value="${d.nameplatePhotoUrl || ''}">
+                </div>
             </div>
 
             <!-- ② 자동 표시 항목 -->
@@ -415,7 +433,8 @@ var PaintIncomingInspectionModule = (function() {
             <!-- ③ 검사항목 -->
             <div style="font-weight:600;color:var(--text-primary);margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--accent-blue);">
                 <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;">fact_check</span>
-                검사항목
+                검사항목 <span style="color:var(--accent-red);font-size:0.85rem;">*</span>
+                <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;margin-left:6px;">모든 항목 필수</span>
             </div>
             <table style="width:100%;border-collapse:collapse;font-size:0.875rem;margin-bottom:4px;">
                 <thead>
@@ -463,10 +482,14 @@ var PaintIncomingInspectionModule = (function() {
                         <td style="padding:10px 14px;text-align:center;">
                             <div style="display:flex;gap:20px;justify-content:center;">
                                 <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.875rem;">
-                                    <input type="radio" name="piCert" value="접수완료" ${d.certCheck === '접수완료' ? 'checked' : ''}> 접수완료
+                                    <input type="radio" name="piCert" value="접수완료"
+                                        ${d.certCheck === '접수완료' ? 'checked' : ''}
+                                        onchange="PaintIncomingInspectionModule.onCertCheckChange(this)"> 접수완료
                                 </label>
                                 <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.875rem;">
-                                    <input type="radio" name="piCert" value="접수대기" ${d.certCheck === '접수대기' ? 'checked' : ''}> 접수대기
+                                    <input type="radio" name="piCert" value="접수대기"
+                                        ${d.certCheck === '접수대기' ? 'checked' : ''}
+                                        onchange="PaintIncomingInspectionModule.onCertCheckChange(this)"> 접수대기
                                 </label>
                             </div>
                         </td>
@@ -474,14 +497,34 @@ var PaintIncomingInspectionModule = (function() {
                             <input type="text" class="form-input" id="piCertNote" placeholder="특이사항" value="${d.certNote || ''}" style="margin:0;padding:6px 10px;">
                         </td>
                     </tr>
+                    <tr id="piCertPhotoRow" style="border-bottom:1px solid var(--border);${d.certCheck === '접수완료' ? '' : 'display:none;'}">
+                        <td style="padding:10px 14px;color:var(--accent-green);font-weight:600;">성적서 사진</td>
+                        <td colspan="2" style="padding:10px 14px;">
+                            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                                <label style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border:1px solid var(--accent-green);border-radius:6px;cursor:pointer;font-size:0.85rem;background:#f0fdf4;color:var(--accent-green);">
+                                    <span class="material-symbols-outlined" style="font-size:18px;">upload_file</span>
+                                    <span>성적서 사진 업로드</span>
+                                    <input type="file" id="piCertFile" accept="image/*" style="display:none"
+                                        onchange="PaintIncomingInspectionModule.onCertFileChange(this)">
+                                </label>
+                                <span id="piCertFileName" style="font-size:0.78rem;color:var(--text-muted);">미선택</span>
+                                ${d.certPhotoUrl ? `<a href="${ApiClient.photoUrl(d.certPhotoUrl)}" target="_blank" style="font-size:0.78rem;color:var(--accent-green);">✓ 저장된 사진 보기</a>` : ''}
+                            </div>
+                            ${d.certPhotoUrl ? `<div id="piCertPreview" style="margin-top:8px;">
+                                <img src="${ApiClient.photoUrl(d.certPhotoUrl)}" style="max-height:100px;border-radius:6px;border:1px solid var(--border);">
+                            </div>` : `<div id="piCertPreview"></div>`}
+                            <input type="hidden" id="piCertPhotoUrl" value="${d.certPhotoUrl || ''}">
+                        </td>
+                    </tr>
                 </tbody>
             </table>
 
             <div class="form-row" style="margin-top:20px;">
                 <div class="form-group">
-                    <label class="form-label">최종 판정</label>
+                    <label class="form-label">최종 판정 <span style="color:var(--accent-red)">*</span></label>
                     <select class="form-select" id="piVerdict">
-                        <option value="합격" ${(d.verdict === '합격' || !d.verdict) ? 'selected' : ''}>✅ 합격</option>
+                        <option value="">-- 선택 --</option>
+                        <option value="합격" ${d.verdict === '합격' ? 'selected' : ''}>✅ 합격</option>
                         <option value="불합격" ${d.verdict === '불합격' ? 'selected' : ''}>❌ 불합격</option>
                     </select>
                 </div>
@@ -513,10 +556,88 @@ var PaintIncomingInspectionModule = (function() {
             expDateCheckNote: document.getElementById('piExpCheckNote').value.trim(),
             certCheck: (document.querySelector('input[name="piCert"]:checked') || {}).value || '',
             certNote: document.getElementById('piCertNote').value.trim(),
+            certPhotoUrl: (document.getElementById('piCertPhotoUrl') || {}).value || '',
+            nameplatePhotoUrl: (document.getElementById('piNameplatePhotoUrl') || {}).value || '',
             lotCheck: document.getElementById('piLotCheckValue')?.value || '',
             verdict: document.getElementById('piVerdict').value,
             note: document.getElementById('piNote').value.trim()
         };
+    }
+
+    // ── 사진 이벤트 핸들러 ──────────────────────────────────────────
+    function onCertCheckChange(radio) {
+        const row = document.getElementById('piCertPhotoRow');
+        if (row) row.style.display = radio.value === '접수완료' ? '' : 'none';
+    }
+
+    function onNameplateFileChange(input) {
+        const file = input.files && input.files[0];
+        const nameEl = document.getElementById('piNameplateFileName');
+        const previewEl = document.getElementById('piNameplatePreview');
+        if (!file) return;
+        if (nameEl) nameEl.textContent = file.name;
+        // 로컬 미리보기
+        const reader = new FileReader();
+        reader.onload = e => {
+            if (previewEl) previewEl.innerHTML = `<img src="${e.target.result}" style="max-height:80px;border-radius:6px;border:1px solid var(--border);margin-top:6px;">
+                <span style="font-size:0.75rem;color:var(--text-muted);margin-left:6px;">업로드 전</span>`;
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function onCertFileChange(input) {
+        const file = input.files && input.files[0];
+        const nameEl = document.getElementById('piCertFileName');
+        const previewEl = document.getElementById('piCertPreview');
+        if (!file) return;
+        if (nameEl) nameEl.textContent = file.name;
+        const reader = new FileReader();
+        reader.onload = e => {
+            if (previewEl) previewEl.innerHTML = `<img src="${e.target.result}" style="max-height:100px;border-radius:6px;border:1px solid var(--border);margin-top:8px;">`;
+        };
+        reader.readAsDataURL(file);
+    }
+
+    // 선택된 사진 파일을 NAS에 업로드하고 URL 반환 (없으면 기존 URL 유지)
+    async function _uploadPendingPhotos() {
+        const nameplateFile = (document.getElementById('piNameplateFile') || {}).files;
+        const certFile = (document.getElementById('piCertFile') || {}).files;
+        let nameplateUrl = (document.getElementById('piNameplatePhotoUrl') || {}).value || '';
+        let certUrl = (document.getElementById('piCertPhotoUrl') || {}).value || '';
+
+        if (nameplateFile && nameplateFile[0]) {
+            try {
+                nameplateUrl = await ApiClient.uploadPhoto(nameplateFile[0], 'paint-inspections');
+                const urlInput = document.getElementById('piNameplatePhotoUrl');
+                if (urlInput) urlInput.value = nameplateUrl;
+            } catch (e) {
+                UIUtils.toast('명판 사진 업로드 실패: ' + e.message, 'error');
+                throw e;
+            }
+        }
+        if (certFile && certFile[0]) {
+            try {
+                certUrl = await ApiClient.uploadPhoto(certFile[0], 'paint-inspections');
+                const urlInput = document.getElementById('piCertPhotoUrl');
+                if (urlInput) urlInput.value = certUrl;
+            } catch (e) {
+                UIUtils.toast('성적서 사진 업로드 실패: ' + e.message, 'error');
+                throw e;
+            }
+        }
+        return { nameplateUrl, certUrl };
+    }
+
+    function _validateFormData(data) {
+        if (!data.inspector) { UIUtils.toast('검사자를 선택하세요.', 'warning'); return false; }
+        if (!data.lotNo) { UIUtils.toast('제조사 표기 LOT를 입력하세요.', 'warning'); return false; }
+        if (!data.mfgDate) { UIUtils.toast('제조일자를 입력하세요.', 'warning'); return false; }
+        if (!data.incomingQty || data.incomingQty <= 0) { UIUtils.toast('입고수량을 입력하세요.', 'warning'); return false; }
+        if (!data.containerStatus) { UIUtils.toast('검사항목 — 용기 상태를 선택하세요.', 'warning'); return false; }
+        if (!data.expDateCheck) { UIUtils.toast('검사항목 — 유효기간 확인을 선택하세요.', 'warning'); return false; }
+        if (!data.certCheck) { UIUtils.toast('검사항목 — 성적서 접수 확인을 선택하세요.', 'warning'); return false; }
+        if (!data.verdict) { UIUtils.toast('최종 판정을 선택하세요.', 'warning'); return false; }
+        return true;
     }
 
     function setupPaintSelectSync(excludeId) {
@@ -818,27 +939,19 @@ var PaintIncomingInspectionModule = (function() {
             UIUtils.toast('검사일자, 구매처, 원료명은 필수입니다.', 'warning');
             return;
         }
-        if (!data.inspector) {
-            UIUtils.toast('검사자를 선택하세요.', 'warning');
-            return;
-        }
-        if (!data.lotNo) {
-            UIUtils.toast('제조사 표기 LOT를 입력하세요.', 'warning');
-            return;
-        }
-        if (!data.mfgDate) {
-            UIUtils.toast('제조일자를 입력하세요.', 'warning');
-            return;
-        }
+        if (!_validateFormData(data)) return;
         if (data.mfgDate && data.mfgDate > UIUtils.today()) {
             UIUtils.toast('제조일자는 오늘 날짜보다 미래일 수 없습니다.', 'warning');
             return;
         }
-        await Storage.add(STORE, data);
+        try {
+            await _uploadPendingPhotos();
+        } catch (e) { return; }
+        const finalData = collectFormData();
+        await Storage.add(STORE, finalData);
         UIUtils.closeModal();
         UIUtils.toast('도료 수입검사가 등록되었습니다.', 'success');
         search();
-        // 도료창고 대기품 리스트 자동 새로고침
         if (typeof PaintInventoryModule !== 'undefined' && PaintInventoryModule.renderPaintInspStandby) {
             PaintInventoryModule.renderPaintInspStandby();
         }
@@ -860,27 +973,19 @@ var PaintIncomingInspectionModule = (function() {
             UIUtils.toast('검사일자, 구매처, 원료명은 필수입니다.', 'warning');
             return;
         }
-        if (!data.inspector) {
-            UIUtils.toast('검사자를 선택하세요.', 'warning');
-            return;
-        }
-        if (!data.lotNo) {
-            UIUtils.toast('제조사 표기 LOT를 입력하세요.', 'warning');
-            return;
-        }
-        if (!data.mfgDate) {
-            UIUtils.toast('제조일자를 입력하세요.', 'warning');
-            return;
-        }
+        if (!_validateFormData(data)) return;
         if (data.mfgDate && data.mfgDate > UIUtils.today()) {
             UIUtils.toast('제조일자는 오늘 날짜보다 미래일 수 없습니다.', 'warning');
             return;
         }
-        await Storage.update(STORE, id, data);
+        try {
+            await _uploadPendingPhotos();
+        } catch (e) { return; }
+        const finalData = collectFormData();
+        await Storage.update(STORE, id, finalData);
         UIUtils.closeModal();
         UIUtils.toast('수정되었습니다.', 'success');
         search();
-        // 도료창고 대기품 리스트 자동 새로고침
         if (typeof PaintInventoryModule !== 'undefined' && PaintInventoryModule.renderPaintInspStandby) {
             PaintInventoryModule.renderPaintInspStandby();
         }
@@ -912,6 +1017,8 @@ var PaintIncomingInspectionModule = (function() {
                 ${row('용기 상태', d.containerStatus || '-')}
                 ${row('유효기간 확인', d.expDateCheck || '-')}
                 ${row('성적서 접수', d.certCheck || '-')}
+                ${d.certPhotoUrl ? row('성적서 사진', `<a href="${ApiClient.photoUrl(d.certPhotoUrl)}" target="_blank"><img src="${ApiClient.photoUrl(d.certPhotoUrl)}" style="max-height:80px;border-radius:6px;border:1px solid var(--border);cursor:pointer;"></a>`) : ''}
+                ${d.nameplatePhotoUrl ? row('명판 사진', `<a href="${ApiClient.photoUrl(d.nameplatePhotoUrl)}" target="_blank"><img src="${ApiClient.photoUrl(d.nameplatePhotoUrl)}" style="max-height:80px;border-radius:6px;border:1px solid var(--border);cursor:pointer;"></a>`) : ''}
                 ${row('비고', d.note || '-')}
                 ${row('최종 판정', `<strong style="color:${verdictColor};font-size:1rem;">${verdictText}</strong>`)}
             </div>
@@ -1117,6 +1224,9 @@ var PaintIncomingInspectionModule = (function() {
         confirmDelete,
         _doDelete,
         exportData,
+        onCertCheckChange,
+        onNameplateFileChange,
+        onCertFileChange,
         markCertReceived,
         confirmCertReceived
     };
