@@ -449,6 +449,26 @@ const SettingsBackupExtension = (function() {
                         </div>
                     </div>
 
+                    <!-- 사진 저장 현재 경로 상태 표시 -->
+                    ${(() => {
+                        const onNas = nasCfg.nasDir && nasCfg.effectivePhotoDir && nasCfg.effectivePhotoDir.startsWith(nasCfg.nasDir);
+                        const bgColor = onNas ? '#f0fdf4' : '#fff7ed';
+                        const borderColor = onNas ? '#86efac' : '#fdba74';
+                        const textColor = onNas ? '#166534' : '#92400e';
+                        const iconColor = onNas ? '#16a34a' : '#d97706';
+                        const statusLabel = onNas
+                            ? '<span style="font-size:.75rem;color:#16a34a;margin-left:6px;">✓ NAS 저장 중</span>'
+                            : '<span style="font-size:.75rem;color:#d97706;margin-left:6px;">⚠ NAS 미설정 — 서버 로컬에 저장 중</span>';
+                        return `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;background:${bgColor};border:1px solid ${borderColor};">
+                            <span class="material-symbols-outlined" style="font-size:18px;color:${iconColor};">photo_camera</span>
+                            <div>
+                                <span style="font-size:.8rem;font-weight:600;color:${textColor};">사진 현재 저장 위치:</span>
+                                <code style="font-size:.82rem;margin-left:6px;padding:1px 6px;border-radius:4px;background:rgba(0,0,0,.06);font-weight:700;color:${textColor};">${esc(nasCfg.effectivePhotoDir || '로컬 서버')}</code>
+                                ${statusLabel}
+                            </div>
+                        </div>`;
+                    })()}
+
                     <!-- NAS 경로 설정 -->
                     <div style="padding:12px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);">
                         <div style="font-size:.82rem;font-weight:600;margin-bottom:8px;color:var(--text-secondary);">NAS 마운트 경로 설정</div>
