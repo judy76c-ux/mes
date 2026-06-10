@@ -262,6 +262,7 @@ const App = (function() {
         Router.registerModule('prod-equipment', ProdEquipmentModule);
         Router.registerModule('settings', SettingsModule);
         Router.registerModule('incoming-overview', IncomingOverviewModule);
+        Router.registerModule('incoming-delete-log', IncomingDeleteLogModule);
         Router.registerModule('inj-incoming-std', InjIncomingStdModule);
         Router.registerModule('paint-incoming-std', PaintIncomingStdModule);
         Router.registerModule('inj-insp-std-photo', InjInspStdPhotoModule);

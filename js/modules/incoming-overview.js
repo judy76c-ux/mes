@@ -13,12 +13,13 @@ var IncomingUI = (function () {
         { id: 'inj-incoming-std',          label: '사출 수입검사 기준서', icon: 'description',     desc: '사출 수입검사 기준서 등록·편집·출력' },
         { id: 'paint-incoming-std',        label: '도료 수입검사 기준서', icon: 'picture_as_pdf',  desc: '입고 도료에 대한 수입검사 기준서 목록' },
         { id: 'inj-insp-std-photo',        label: '수입검사 표준서',  icon: 'photo_library',   desc: '차종·품명별 수입검사 기준 사진 및 표준서 관리' },
+        { id: 'incoming-delete-log',       label: '이력변경 관리',    icon: 'manage_history',  desc: '수입검사 삭제 이력 및 변경 감사 로그' },
     ];
 
     function renderSection(activePage) {
         const activeMenu = MENUS.find(m => m.id === activePage) || MENUS[0];
         const leftMenus  = MENUS.slice(0, 3);  // 수입검사 현황 / 사출 입고 / 도료 입고
-        const rightMenus = MENUS.slice(3);     // 사출 기준서 / 도료 기준서 / 수입검사 표준서
+        const rightMenus = MENUS.slice(3);     // 기준서 / 표준서 / 이력변경 관리
 
         function makeBtn(menu) {
             const active = menu.id === activePage;
@@ -361,4 +362,138 @@ var IncomingOverviewModule = (function () {
         showInjFail, showInjCert, showInjFifo,
         showPaintFail, showPaintCert, showPaintExpiring, showPaintExpired,
     };
+})();
+
+/* ══════════════════════════════════════════════════════════════
+   수입검사 이력변경 관리 (삭제 감사 로그)
+══════════════════════════════════════════════════════════════ */
+var IncomingDeleteLogModule = (function () {
+    const LOG_STORE = DB.STORES.INSPECTION_DELETE_LOGS;
+
+    function init() {}
+
+    function render(container) {
+        container.innerHTML = `
+        <div class="fade-in-up">
+            ${IncomingUI.renderSection('incoming-delete-log')}
+            <div class="card">
+                <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span class="material-symbols-outlined" style="color:var(--accent-red);">manage_history</span>
+                        <strong>수입검사 이력변경 관리</strong>
+                        <span style="font-size:0.8rem;color:var(--text-muted);">삭제된 검사 기록의 감사 로그입니다.</span>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <select class="form-select" id="delLogTypeFilter" style="min-width:120px;">
+                            <option value="">전체 유형</option>
+                            <option value="injection">사출 수입검사</option>
+                            <option value="paint">도료 수입검사</option>
+                        </select>
+                        <button class="btn btn-outline" onclick="IncomingDeleteLogModule.search()">
+                            <span class="material-symbols-outlined">search</span> 조회
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body" style="padding:0;">
+                    <div class="data-table-wrapper">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>삭제 일시</th>
+                                    <th>유형</th>
+                                    <th>원본 요약</th>
+                                    <th>삭제자</th>
+                                    <th>삭제 사유</th>
+                                    <th>원본 보기</th>
+                                </tr>
+                            </thead>
+                            <tbody id="delLogTableBody">
+                                <tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text-muted);">로딩 중...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+        search();
+    }
+
+    function search() {
+        const typeFilter = (document.getElementById('delLogTypeFilter') || {}).value || '';
+        let logs = (Storage.getAll(LOG_STORE) || [])
+            .sort((a, b) => (b.deletedAt || '').localeCompare(a.deletedAt || ''));
+        if (typeFilter) logs = logs.filter(l => l.type === typeFilter);
+
+        const tbody = document.getElementById('delLogTableBody');
+        if (!tbody) return;
+        if (!logs.length) {
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text-muted);">삭제 이력이 없습니다.</td></tr>`;
+            return;
+        }
+        tbody.innerHTML = logs.map(l => {
+            const deletedAt = l.deletedAt ? l.deletedAt.replace('T', ' ').slice(0, 19) : '-';
+            const typeLabel = l.typeLabel || (l.type === 'injection' ? '사출 수입검사' : '도료 수입검사');
+            const typeBadge = l.type === 'injection'
+                ? `<span style="background:#dbeafe;color:#2563eb;border-radius:4px;padding:2px 8px;font-size:0.78rem;font-weight:700;">사출</span>`
+                : `<span style="background:#ede9fe;color:#7c3aed;border-radius:4px;padding:2px 8px;font-size:0.78rem;font-weight:700;">도료</span>`;
+            return `<tr>
+                <td style="font-size:0.82rem;color:var(--text-muted);">${deletedAt}</td>
+                <td>${typeBadge}</td>
+                <td style="font-size:0.85rem;">${l.summary || '-'}</td>
+                <td style="font-size:0.85rem;">${l.deletedBy || '-'}</td>
+                <td style="font-size:0.85rem;color:var(--accent-red);">${l.reason || '-'}</td>
+                <td>
+                    <button class="btn btn-sm btn-outline" onclick="IncomingDeleteLogModule.viewOriginal('${l.id}')">
+                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">open_in_new</span> 원본
+                    </button>
+                </td>
+            </tr>`;
+        }).join('');
+    }
+
+    function viewOriginal(logId) {
+        const log = Storage.getById(LOG_STORE, logId);
+        if (!log) return;
+        const d = log.originalData || {};
+        const typeLabel = log.typeLabel || (log.type === 'injection' ? '사출 수입검사' : '도료 수입검사');
+        const deletedAt = log.deletedAt ? log.deletedAt.replace('T', ' ').slice(0, 19) : '-';
+
+        const row = (label, value) =>
+            `<div style="display:flex;gap:0;border-bottom:1px solid var(--border);">
+                <div style="width:140px;flex-shrink:0;padding:7px 12px;background:var(--bg-secondary);font-size:0.8rem;font-weight:600;color:var(--text-muted);">${label}</div>
+                <div style="flex:1;padding:7px 14px;font-size:0.85rem;">${value !== undefined && value !== null && value !== '' ? value : '-'}</div>
+            </div>`;
+
+        const fields = log.type === 'injection' ? [
+            row('검사일자', d.date), row('검사자', d.inspector), row('차종', d.carModel),
+            row('품명', d.partName), row('컬러', d.color), row('사출처', d.supplierName),
+            row('입고수량', UIUtils.formatNumber(d.incomingQty) + ' EA'),
+            row('검사수량', UIUtils.formatNumber(d.inspectionQty)),
+            row('합격수량', UIUtils.formatNumber(d.passQty)),
+            row('불합격수량', UIUtils.formatNumber(d.failQty)),
+            row('합격 판정', d.verdict), row('비고', d.note),
+        ] : [
+            row('검사일자', d.date), row('검사자', d.inspector), row('구매처', d.supplier),
+            row('도료품명', d.paintName), row('제조사 표기 LOT', d.lotNo),
+            row('제조일자', d.mfgDate), row('유효기간', d.expDate),
+            row('입고수량', UIUtils.formatNumber(d.incomingQty)),
+            row('용기 상태', d.containerStatus), row('유효기간 확인', d.expDateCheck),
+            row('성적서 접수', d.certCheck), row('최종 판정', d.verdict), row('비고', d.note),
+        ];
+
+        UIUtils.showModal(`원본 데이터 — ${typeLabel}`, `
+            <div style="padding:4px 0 12px;display:flex;gap:16px;font-size:0.82rem;color:var(--text-muted);">
+                <span><strong>삭제 일시:</strong> ${deletedAt}</span>
+                <span><strong>삭제자:</strong> ${log.deletedBy || '-'}</span>
+                <span><strong>사유:</strong> <span style="color:var(--accent-red);">${log.reason || '-'}</span></span>
+            </div>
+            <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+                ${fields.join('')}
+            </div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`,
+            '600px'
+        );
+    }
+
+    return { init, render, search, viewOriginal };
 })();

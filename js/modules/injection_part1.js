@@ -370,10 +370,9 @@ var InjectionIncomingModule = (function() {
                         ${d.note || '-'}
                     </td>
                     <td>
-                        <div style="display:flex;gap:4px;">
-                            <button class="btn btn-sm btn-outline" onclick="InjectionIncomingModule.edit('${d.id}')">수정</button>
-                            <button class="btn btn-sm" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;" onclick="InjectionIncomingModule.remove('${d.id}')">삭제</button>
-                        </div>
+                        <button class="btn btn-sm btn-outline" onclick="InjectionIncomingModule.view('${d.id}')">
+                            <span class="material-symbols-outlined" style="font-size:15px;vertical-align:-3px;">visibility</span> 보기
+                        </button>
                     </td>
                 </tr>
             `;
@@ -1357,12 +1356,114 @@ var InjectionIncomingModule = (function() {
         search();
     }
 
-    function remove(id) {
-        UIUtils.confirm('삭제하시겠습니까?', async () => {
+    function view(id) {
+        const d = Storage.getById(STORE, id);
+        if (!d) return;
+        const verdictText = d.verdict || '-';
+        const verdictColor = d.verdict === '합격' ? 'var(--accent-green)' : d.verdict === '불합격' ? 'var(--accent-red)' : 'var(--text-muted)';
+        const lotList = (d.lots && d.lots.length > 0) ? d.lots : (d.lotNo ? [{ lotNo: d.lotNo, certReceived: d.certReceived || false, qty: d.incomingQty }] : []);
+        const lotDisplay = lotList.map(l =>
+            `<span style="display:inline-block;background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-family:monospace;font-size:0.85rem;margin:2px;">
+                ${l.lotNo || '-'} ${l.certReceived ? '<span style="color:var(--accent-green);font-size:0.75rem;">✓성적서</span>' : ''}
+            </span>`
+        ).join('');
+        const defectStr = Object.entries(d.defectDetails || {}).map(([k, v]) => `${k}(${v})`).join(', ') || '-';
+
+        const row = (label, value) =>
+            `<div style="display:flex;gap:0;border-bottom:1px solid var(--border);">
+                <div style="width:130px;flex-shrink:0;padding:8px 12px;background:var(--bg-secondary);font-size:0.82rem;font-weight:600;color:var(--text-muted);">${label}</div>
+                <div style="flex:1;padding:8px 14px;font-size:0.9rem;">${value}</div>
+            </div>`;
+
+        UIUtils.showModal(`사출 수입검사 상세`, `
+            <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px;">
+                ${row('검사일자', d.date || '-')}
+                ${row('검사자', d.inspector || '-')}
+                ${row('차종', d.carModel || '-')}
+                ${row('품명', d.partName || '-')}
+                ${row('컬러', d.color || '-')}
+                ${row('사출처', d.supplierName || '-')}
+                ${row('입고수량', UIUtils.formatNumber(d.incomingQty) + ' EA')}
+                ${row('사출 LOT', lotDisplay || '-')}
+                ${row('시료코드', d.sampleCode || '-')}
+                ${row('검사수량', UIUtils.formatNumber(d.inspectionQty))}
+                ${row('AC/RE', (d.acCriteria != null ? d.acCriteria + ' / ' + d.reCriteria : '-'))}
+                ${row('합격수량', `<span style="color:var(--accent-green);font-weight:600;">${UIUtils.formatNumber(d.passQty)}</span>`)}
+                ${row('불합격수량', `<span style="color:var(--accent-red);font-weight:600;">${UIUtils.formatNumber(d.failQty)}</span>`)}
+                ${row('불량내역', defectStr)}
+                ${row('비고', d.note || '-')}
+                ${row('합격 판정', `<strong style="color:${verdictColor};font-size:1rem;">${verdictText}</strong>`)}
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+            <button class="btn btn-outline" onclick="UIUtils.closeModal();InjectionIncomingModule.edit('${id}')">
+                <span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px;">edit</span> 수정
+            </button>
+            <button class="btn" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;"
+                onclick="InjectionIncomingModule.confirmDelete('${id}')">
+                <span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px;">delete</span> 삭제
+            </button>
+        `, '700px');
+    }
+
+    function confirmDelete(id) {
+        const d = Storage.getById(STORE, id);
+        if (!d) return;
+        const label = `${d.date || ''} / ${d.carModel || ''} ${d.partName || ''}`;
+        UIUtils.showModal('삭제 확인 — 관리자 인증 필요',
+            `<div style="padding:8px 0;">
+                <div style="display:flex;align-items:center;gap:10px;padding:14px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;margin-bottom:16px;">
+                    <span class="material-symbols-outlined" style="color:#ea580c;font-size:28px;">warning</span>
+                    <div>
+                        <div style="font-weight:700;color:#c2410c;margin-bottom:4px;">삭제 후 복구가 불가능합니다</div>
+                        <div style="font-size:0.85rem;color:var(--text-secondary);">${label}</div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">삭제 사유 <span style="color:var(--accent-red)">*</span></label>
+                    <input type="text" class="form-input" id="deleteReasonInput" placeholder="삭제 사유를 입력하세요">
+                </div>
+                <div style="font-size:0.82rem;color:var(--text-muted);margin-top:8px;">
+                    <span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">info</span>
+                    삭제 시 관리자 인증이 필요하며, 삭제 이력이 기록됩니다.
+                </div>
+            </div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+             <button class="btn" style="background:#dc2626;color:#fff;" onclick="InjectionIncomingModule._doDelete('${id}')">
+                 <span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px;">lock</span> 관리자 인증 후 삭제
+             </button>`,
+            '520px'
+        );
+    }
+
+    async function _doDelete(id) {
+        const reason = (document.getElementById('deleteReasonInput') || {}).value || '';
+        if (!reason.trim()) { UIUtils.toast('삭제 사유를 입력하세요.', 'warning'); return; }
+        const d = Storage.getById(STORE, id);
+        if (!d) { UIUtils.toast('레코드를 찾을 수 없습니다.', 'error'); return; }
+        UIUtils.closeModal();
+        AuthModule.checkSettingsAuth(async function() {
+            const user = AuthModule.getCurrentUser();
+            const logEntry = {
+                id: Storage.generateId(),
+                type: 'injection',
+                typeLabel: '사출 수입검사',
+                deletedAt: new Date().toISOString(),
+                deletedBy: user ? user.displayName : '알 수 없음',
+                reason: reason,
+                originalId: id,
+                originalData: Object.assign({}, d),
+                summary: `${d.date || ''} / ${d.carModel || ''} ${d.partName || ''} / 입고${UIUtils.formatNumber(d.incomingQty)}EA`,
+            };
+            await Storage.add(DB.STORES.INSPECTION_DELETE_LOGS, logEntry);
             await Storage.remove(STORE, id);
-            UIUtils.toast('삭제되었습니다.', 'success');
+            UIUtils.toast('삭제 완료. 이력이 기록되었습니다.', 'success');
             search();
         });
+    }
+
+    function remove(id) {
+        confirmDelete(id);
     }
 
     function exportData() {
@@ -1781,9 +1882,12 @@ var InjectionIncomingModule = (function() {
         calcTotalAddFailQty,
         calcTotalEditFailQty,
         saveNew,
+        view,
         edit,
         saveEdit,
         remove,
+        confirmDelete,
+        _doDelete,
         exportData,
         onLotInput,
         checkFifoWarning,

@@ -5,7 +5,7 @@
 
 const DB = (function() {
     const DB_NAME = 'ProductionMES_DB';
-    const DB_VERSION = 49;
+    const DB_VERSION = 50;
     let db = null;
 
     // 스토어 이름 - 전체 공정에 대응
@@ -154,6 +154,9 @@ const DB = (function() {
 
         // 수입검사 기준서 (v49)
         INJ_INCOMING_STD: 'inj_incoming_std', // 사출 수입검사 기준서
+
+        // 수입검사 삭제 이력 (v50)
+        INSPECTION_DELETE_LOGS: 'inspection_delete_logs', // 수입검사 삭제 감사 로그
 
         // 설정
         CONFIG: 'config'
@@ -1325,6 +1328,12 @@ const DB = (function() {
                         s.createIndex('productId', 'productId', { unique: false });
                         s.createIndex('carModel',  'carModel',  { unique: false });
                     }
+                }
+                // v50: 수입검사 삭제 이력
+                if (oldVersion < 50 && !database.objectStoreNames.contains(STORES.INSPECTION_DELETE_LOGS)) {
+                    const s = database.createObjectStore(STORES.INSPECTION_DELETE_LOGS, { keyPath: 'id' });
+                    s.createIndex('deletedAt', 'deletedAt', { unique: false });
+                    s.createIndex('type',      'type',      { unique: false });
                 }
             };
         });
