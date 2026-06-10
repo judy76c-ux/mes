@@ -118,6 +118,7 @@ const PaintInventoryModule = (function() {
                                 <thead>
                                     <tr>
                                         <th>날짜</th>
+                                        <th>수입검사일</th>
                                         <th>구매처</th>
                                         <th>도료명</th>
                                         <th>포장 단위</th>
@@ -197,7 +198,7 @@ const PaintInventoryModule = (function() {
         const tbody = document.getElementById('paintInvTableBody');
 
         if (total === 0) {
-            if (tbody) tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:40px;color:var(--text-muted);">재고 데이터가 없습니다.</td></tr>`;
+            if (tbody) tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-muted);">재고 데이터가 없습니다.</td></tr>`;
             const pEl = document.getElementById('paintInvPagination');
             if (pEl) pEl.innerHTML = '';
             return;
@@ -232,6 +233,7 @@ const PaintInventoryModule = (function() {
             return `
                 <tr>
                     <td>${d.date || '-'}</td>
+                    <td style="font-size:0.82rem;color:var(--text-muted);">${d.inspDate ? d.inspDate.slice(0,10) : '-'}</td>
                     <td>${mSupplier}</td>
                     <td><strong>${mName}</strong></td>
                     <td>${mPackUnit}</td>
@@ -936,6 +938,8 @@ const PaintInventoryModule = (function() {
                     if (mfgInput) mfgInput.value = insp.mfgDate     || '';
                     if (expInput) expInput.value = insp.expDate      || '';
                     autoFillProdLot(insp.mfgDate || '');
+                    const inspDateInput = document.getElementById('addPaintInvInspDate');
+                    if (inspDateInput) inspDateInput.value = (insp.date || '').slice(0, 10);
                 }, 80);
             }, 80);
         }, 80);
@@ -968,6 +972,11 @@ const PaintInventoryModule = (function() {
                     <label class="form-label">날짜</label>
                     <input type="date" class="form-input" id="addPaintInvDate" value="${UIUtils.today()}">
                 </div>
+                ${type === '입고' ? `
+                <div class="form-group">
+                    <label class="form-label">수입검사일 <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(검사 연동 시 자동)</span></label>
+                    <input type="date" class="form-input" id="addPaintInvInspDate">
+                </div>` : '<div class="form-group" style="visibility:hidden;"></div>'}
             </div>
             <div class="form-row">
                 <div class="form-group">
@@ -1718,6 +1727,7 @@ const PaintInventoryModule = (function() {
             quantity: Number(document.getElementById('addPaintInvQty').value) || 0,
             mfgDate: (document.getElementById('addPaintInvMfgDate') || {}).value || '',
             expDate: (document.getElementById('addPaintInvExpDate') || {}).value || '',
+            inspDate: (document.getElementById('addPaintInvInspDate') || {}).value || '',
             sourceInspectionId: (type === '입고' && window._sourceInspectionId) ? window._sourceInspectionId : ''
         };
 
