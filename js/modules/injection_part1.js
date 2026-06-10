@@ -77,6 +77,7 @@ var InjectionIncomingModule = (function() {
                                         <th>합격</th>
                                         <th>불합격</th>
                                         <th>판정</th>
+                                        <th>검사자</th>
                                         <th>비고</th>
                                         <th>작업</th>
                                     </tr>
@@ -361,6 +362,7 @@ var InjectionIncomingModule = (function() {
                     <td style="text-align:right;color:var(--accent-green)">${UIUtils.formatNumber(d.passQty)}</td>
                     <td style="text-align:right;color:var(--accent-red)">${UIUtils.formatNumber(d.failQty)}</td>
                     <td>${verdictText ? UIUtils.badge(verdictText, verdict) : '-'}</td>
+                    <td style="font-size:0.8rem;color:var(--text-muted);">${d.inspector || '-'}</td>
                     <td>
                         <div style="font-size:0.8rem;color:var(--accent-red);margin-bottom:2px;">
                             ${Object.entries(d.defectDetails || {}).map(([k, v]) => `${k}(${v})`).join(', ')}

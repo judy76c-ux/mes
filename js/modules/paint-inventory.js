@@ -117,7 +117,7 @@ const PaintInventoryModule = (function() {
                             <table class="data-table">
                                 <thead>
                                     <tr>
-                                        <th>날짜</th>
+                                        <th>입고 일자</th>
                                         <th>수입검사일</th>
                                         <th>구매처</th>
                                         <th>도료명</th>
