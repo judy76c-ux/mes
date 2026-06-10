@@ -323,8 +323,8 @@ var InjectionIncomingModule = (function() {
         });
 
         tbody.innerHTML = data.map(d => {
-            const verdict = (Number(d.failQty) || 0) === 0 ? 'success' : 'danger';
-            const verdictText = (Number(d.failQty) || 0) === 0 ? '합격' : '불합격';
+            const verdictText = d.verdict || ((Number(d.failQty) || 0) === 0 ? '합격' : '불합격');
+            const verdict = verdictText === '합격' ? 'success' : 'danger';
             const lotList = (d.lots && d.lots.length > 0) ? d.lots : (d.lotNo ? [{ lotNo: d.lotNo, certReceived: d.certReceived || false }] : []);
             const certLot = lotList.find(l => l.certRepresentative) || lotList.find(l => l.certReceived);
             const certMissing = lotList.length > 0 && !certLot;
