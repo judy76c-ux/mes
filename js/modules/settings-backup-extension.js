@@ -471,11 +471,16 @@ const SettingsBackupExtension = (function() {
                             <label style="font-size:.82rem;white-space:nowrap;color:var(--text-muted);min-width:80px;">사진 저장 경로</label>
                             <input type="text" id="nasUploadDirInput" class="form-input"
                                 style="flex:1;min-width:260px;font-family:monospace;font-size:.85rem;"
-                                placeholder="/mnt/nas-backup/uploads  (비워두면 서버 로컬 저장)"
+                                placeholder="비워두면 위 NAS 백업 경로 + /photos 자동 사용"
                                 value="${esc(nasCfg.nasUploadDir || '')}">
                         </div>
                         <div style="margin-top:4px;font-size:.78rem;color:var(--text-muted);">
-                            사진 저장 경로: 수입검사 사진 등 업로드 파일을 NAS에 직접 저장할 경로. 비워두면 MES 서버 로컬(/opt/mes/uploads)에 저장됩니다.
+                            수입검사·도료 사진 업로드 저장 위치.
+                            비워두면 NAS 백업 경로가 설정된 경우 <code style="background:var(--bg-secondary);padding:1px 4px;border-radius:3px;">${esc(nasCfg.nasDir ? nasCfg.nasDir + '/photos' : '(NAS 백업 경로 미설정)')}</code> 자동 사용.
+                            NAS 미설정 시 MES 서버 로컬에 저장됩니다.
+                            &nbsp;<b style="color:${nasCfg.effectivePhotoDir && nasCfg.effectivePhotoDir !== '/opt/mes/uploads' ? 'var(--accent-green)' : 'var(--accent-orange)'};">
+                            현재: ${esc(nasCfg.effectivePhotoDir || '로컬')}
+                            </b>
                         </div>
                         ${!connected && nasCfg.nasDir ? `
                         <div style="margin-top:8px;font-size:.8rem;color:var(--accent-red);">

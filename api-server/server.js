@@ -131,9 +131,19 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '50mb' }));
 
-// ── 업로드 파일 정적 서빙 (NAS_UPLOAD_DIR 설정 시 NAS에서 서빙) ──
+// 사진 저장 경로 결정:
+//   1) NAS_UPLOAD_DIR 명시 설정 → 해당 경로
+//   2) NAS_BACKUP_DIR 설정됨 → NAS_BACKUP_DIR/photos
+//   3) 미설정 → 서버 로컬 UPLOAD_DIR
+function getPhotoDir() {
+  if (NAS_UPLOAD_DIR) return NAS_UPLOAD_DIR;
+  if (NAS_BACKUP_DIR) return path.join(NAS_BACKUP_DIR, 'photos');
+  return UPLOAD_DIR;
+}
+
+// ── 업로드 파일 정적 서빙 ──
 app.use('/uploads', (req, res, next) => {
-  express.static(NAS_UPLOAD_DIR || UPLOAD_DIR)(req, res, next);
+  express.static(getPhotoDir())(req, res, next);
 });
 
 // ── 헬스체크 ──
@@ -629,6 +639,7 @@ app.get('/api/nas-config', async (req, res) => {
       nasDir: saved?.nasDir ?? NAS_BACKUP_DIR,
       keepCount: saved?.keepCount ?? NAS_KEEP_COUNT,
       nasUploadDir: saved?.nasUploadDir ?? NAS_UPLOAD_DIR,
+      effectivePhotoDir: getPhotoDir(),
       fromEnv: !saved
     });
   } catch (err) {
@@ -819,8 +830,7 @@ app.post('/api/photos', async (req, res) => {
   const allowed = /^[a-zA-Z0-9_\-\.]+$/;
   if (!allowed.test(filename)) return res.status(400).json({ error: '파일명에 허용되지 않는 문자' });
   const safeSub = String(subdir).replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 40) || 'misc';
-  const baseDir = NAS_UPLOAD_DIR || UPLOAD_DIR;
-  const dir = path.join(baseDir, safeSub);
+  const dir = path.join(getPhotoDir(), safeSub);
   try {
     await fs.mkdir(dir, { recursive: true });
     const buf = Buffer.from(data, 'base64');
@@ -837,7 +847,7 @@ app.delete('/api/photos', async (req, res) => {
   const { url } = req.body || {};
   if (!url || !url.startsWith('/uploads/')) return res.status(400).json({ error: '잘못된 경로' });
   const rel = url.slice('/uploads/'.length);
-  const filePath = path.join(NAS_UPLOAD_DIR || UPLOAD_DIR, rel);
+  const filePath = path.join(getPhotoDir(), rel);
   try {
     await fs.unlink(filePath).catch(() => {});
     res.json({ success: true });
