@@ -1366,12 +1366,12 @@ var InjectionIncomingModule = (function() {
         const certRepLot = lotList.find(l => l.certRepresentative) || null;
         const lotDisplay = lotList.map(l => {
             const isCert = l.certRepresentative === true;
-            const qtyText = l.qty != null ? ` <span style="color:var(--text-muted);font-size:0.78rem;">${UIUtils.formatNumber(l.qty)}EA</span>` : '';
+            const qtyText = l.qty != null ? ` - ${UIUtils.formatNumber(l.qty)}EA` : '';
             const certBadge = isCert
                 ? ` <span style="color:var(--accent-green);font-size:0.75rem;font-weight:600;">✓성적서</span>`
                 : '';
-            return `<span style="display:inline-flex;align-items:center;gap:3px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font-family:monospace;font-size:0.85rem;margin:2px 2px 4px;">
-                <span style="font-weight:600;">${l.lotNo || '-'}</span>${qtyText}${certBadge}
+            return `<span style="display:inline-flex;align-items:center;gap:2px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;padding:3px 10px;font-family:monospace;font-size:0.85rem;margin:2px 2px 4px;">
+                <span style="font-weight:600;">${l.lotNo || '-'}</span><span style="color:var(--text-muted);">${qtyText}</span>${certBadge}
             </span>`;
         }).join('');
         const certStatusDisplay = certRepLot
