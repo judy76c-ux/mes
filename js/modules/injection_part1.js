@@ -507,15 +507,6 @@ var InjectionIncomingModule = (function() {
                     <input type="number" class="form-input" id="addInjInspQty" min="0" placeholder="자동입력"
                            readonly style="background:var(--bg-secondary);border-color:var(--accent-blue);color:var(--accent-blue);font-weight:600;">
                 </div>
-                <div class="form-group">
-                    <label class="form-label">합격 판정 <span style="color:var(--accent-red)">*</span></label>
-                    <select class="form-input" id="addInjVerdict" onchange="InjectionIncomingModule.onAddVerdictChange()">
-                        <option value="">-- 선택 --</option>
-                        <option value="합격">합격</option>
-                        <option value="불합격">불합격</option>
-                    </select>
-                    <input type="hidden" id="addInjPassQty" value="0">
-                </div>
             </div>
 
             <!-- 불량 상세 입력 별도 (사출 불량 목록 호출) -->
@@ -536,6 +527,15 @@ var InjectionIncomingModule = (function() {
                     <label class="form-label">비고</label>
                     <textarea class="form-textarea" id="addInjNote" placeholder="검사 상세 내용" style="height:38px;resize:none;"></textarea>
                 </div>
+            </div>
+            <div class="form-group" style="margin-top:12px;">
+                <label class="form-label">합격 판정 <span style="color:var(--accent-red)">*</span></label>
+                <select class="form-input" id="addInjVerdict" onchange="InjectionIncomingModule.onAddVerdictChange()">
+                    <option value="">-- 선택 --</option>
+                    <option value="합격">합격</option>
+                    <option value="불합격">불합격</option>
+                </select>
+                <input type="hidden" id="addInjPassQty" value="0">
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
@@ -1107,16 +1107,6 @@ var InjectionIncomingModule = (function() {
                     <input type="number" class="form-input" id="editInjInspQty" value="${d.inspectionQty || 0}">
                 </div>
             </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">합격 판정</label>
-                    <select class="form-input" id="editInjVerdict" onchange="InjectionIncomingModule.onEditVerdictChange()">
-                        <option value="합격" ${(d.verdict || (d.passQty > 0 ? '합격' : '불합격')) === '합격' ? 'selected' : ''}>합격</option>
-                        <option value="불합격" ${(d.verdict || (d.passQty > 0 ? '합격' : '불합격')) === '불합격' ? 'selected' : ''}>불합격</option>
-                    </select>
-                    <input type="hidden" id="editInjPassQty" value="${d.passQty || 0}">
-                </div>
-            </div>
 
             <!-- 불량 상세 입력 별도 (사출 불량 목록 호출) -->
             <div style="font-weight:600;color:var(--text-primary);margin:16px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--accent-red);">
@@ -1136,6 +1126,15 @@ var InjectionIncomingModule = (function() {
             <div class="form-group">
                 <label class="form-label">비고</label>
                 <textarea class="form-textarea" id="editInjNote">${d.note || ''}</textarea>
+            </div>
+            <div class="form-group" style="margin-top:12px;">
+                <label class="form-label">합격 판정 <span style="color:var(--accent-red)">*</span></label>
+                <select class="form-input" id="editInjVerdict" onchange="InjectionIncomingModule.onEditVerdictChange()">
+                    <option value="" ${!d.verdict ? 'selected' : ''}>-- 선택 --</option>
+                    <option value="합격" ${d.verdict === '합격' ? 'selected' : ''}>합격</option>
+                    <option value="불합격" ${d.verdict === '불합격' ? 'selected' : ''}>불합격</option>
+                </select>
+                <input type="hidden" id="editInjPassQty" value="${d.passQty || 0}">
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
