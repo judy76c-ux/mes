@@ -343,18 +343,8 @@ var PaintIncomingInspectionModule = (function() {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">포장단위</label>
-                    <input type="text" class="form-input" id="piPackUnit" placeholder="예: 20L/캔, 1kg/캔" value="${d.packUnit || ''}">
-                </div>
-                <div class="form-group">
                     <label class="form-label">입고수량</label>
                     <input type="number" class="form-input" id="piIncomingQty" min="0" placeholder="0" value="${d.incomingQty || ''}">
-                </div>
-            </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">유통기한</label>
-                    <input type="text" class="form-input" id="piShelfLife" placeholder="예: 12개월, 6개월" value="${d.shelfLife || ''}">
                 </div>
                 <div class="form-group" style="visibility:hidden;"></div>
             </div>
@@ -371,6 +361,16 @@ var PaintIncomingInspectionModule = (function() {
                         style="background:var(--bg-secondary);color:var(--accent-blue);font-weight:600;"
                         placeholder="원료명 선택 시 자동 표시"
                         value="${initialManufacturer}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">포장단위 <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(원료명 선택 시 자동)</span></label>
+                    <input type="text" class="form-input" id="piPackUnit" placeholder="예: 20L/캔, 1kg/캔" value="${d.packUnit || ''}">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">유통기한 <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(원료명 선택 시 자동)</span></label>
+                    <input type="text" class="form-input" id="piShelfLife" placeholder="예: 12개월, 6개월" value="${d.shelfLife || ''}">
                 </div>
                 <div class="form-group">
                     <label class="form-label">유효기간 (만료일) <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(제조일자+유통기한 자동계산)</span></label>
