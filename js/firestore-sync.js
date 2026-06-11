@@ -15,8 +15,8 @@
       }
 
       try {
-        // localStorage에서 마이그레이션 상태 확인
-        const migrationStatus = localStorage.getItem(MIGRATION_KEY);
+        // IndexedDB config에서 마이그레이션 상태 확인
+        const migrationStatus = await DB.getConfig(MIGRATION_KEY);
 
         if (migrationStatus) {
           console.log('[FirestoreSync] 마이그레이션 이미 완료:', migrationStatus);
@@ -26,16 +26,9 @@
         console.log('[FirestoreSync] 마이그레이션 시작...');
         await migrateIndexedDBToFirestore();
 
-        // 마이그레이션 완료 기록 (localStorage)
+        // 마이그레이션 완료 기록 (IndexedDB config)
         const timestamp = new Date().toISOString();
-        localStorage.setItem(MIGRATION_KEY, timestamp);
-
-        // IndexedDB에도 저장
-        await DB.save(DB.STORES.CONFIG, {
-          id: MIGRATION_KEY,
-          completedAt: timestamp,
-          version: 1
-        });
+        await DB.setConfig(MIGRATION_KEY, timestamp);
 
         console.log('[FirestoreSync] 마이그레이션 완료');
       } catch (error) {

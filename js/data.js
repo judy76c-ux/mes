@@ -9,17 +9,24 @@ const DataManager = (function() {
     const PRODUCTS_STORE = DB.STORES.PRODUCTS;
     const DEFECTS_STORE = DB.STORES.DEFECT_TYPES;
     const LEGACY_RECORDS_KEY = 'mes_legacy_defect_records';
+    let legacyRecordsCache = [];
 
-    function getLegacyRecords() {
+    async function init() {
         try {
-            return JSON.parse(localStorage.getItem(LEGACY_RECORDS_KEY) || '[]');
+            const saved = await DB.getConfig(LEGACY_RECORDS_KEY);
+            legacyRecordsCache = Array.isArray(saved) ? saved : [];
         } catch (e) {
-            return [];
+            legacyRecordsCache = [];
         }
     }
 
+    function getLegacyRecords() {
+        return Array.isArray(legacyRecordsCache) ? legacyRecordsCache : [];
+    }
+
     function saveLegacyRecords(records) {
-        localStorage.setItem(LEGACY_RECORDS_KEY, JSON.stringify(records || []));
+        legacyRecordsCache = Array.isArray(records) ? records : [];
+        DB.setConfig(LEGACY_RECORDS_KEY, legacyRecordsCache).catch(() => {});
     }
 
     function getDisplayName(product) {
@@ -299,6 +306,7 @@ const DataManager = (function() {
     }
 
     return {
+        init,
         ProductManager,
         DefectManager,
         RecordManager,

@@ -6,13 +6,13 @@
 
 const ApiClient = (function() {
   // API 서버 주소 결정 우선순위:
-  //   1) localStorage 'MES_API_BASE' (관리/설정 > 시스템 탭에서 변경 가능)
+  //   1) window.__MES_API_BASE__ override
   //   2) HTTP/HTTPS 접속 시 → 같은 호스트의 :3000 포트
-  //   3) file:// 직접 열기 → localStorage 설정 필수 (없으면 경고만)
+  //   3) file:// 직접 열기 → IndexedDB 설정 필요
   function resolveApiBase() {
     try {
-      const saved = localStorage.getItem('MES_API_BASE');
-      if (saved && saved.trim()) return saved.trim().replace(/\/$/, '');
+      const saved = window.__MES_API_BASE__;
+      if (saved && String(saved).trim()) return String(saved).trim().replace(/\/$/, '');
     } catch (e) {}
 
     if (typeof location !== 'undefined' && location.protocol && location.hostname) {
@@ -22,11 +22,13 @@ const ApiClient = (function() {
         return `${location.protocol}//${h}:3000`;
       }
     }
-    // file:// 등 — localStorage 미설정 시 빈 문자열(헬스체크 실패 → 오프라인 모드)
+    // file:// 등 — override 미설정 시 빈 문자열(헬스체크 실패 → 오프라인 모드)
     return '';
   }
 
-  const API_BASE = resolveApiBase();
+  function getApiBase() {
+    return resolveApiBase();
+  }
 
   // 타임아웃이 있는 fetch (기본 10초)
   async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
@@ -40,6 +42,7 @@ const ApiClient = (function() {
   }
 
   async function request(method, path, body, timeoutMs) {
+    const API_BASE = getApiBase();
     if (!API_BASE) {
       throw new Error('API 서버 주소가 설정되지 않았습니다. 관리/설정 > 시스템 탭에서 API 서버 URL을 입력하세요.');
     }
@@ -130,7 +133,7 @@ const ApiClient = (function() {
   }
 
   function backupDownloadUrl(fileName) {
-    return `${API_BASE}/api/backups/${encodeURIComponent(fileName)}`;
+    return `${getApiBase()}/api/backups/${encodeURIComponent(fileName)}`;
   }
 
   async function restoreBackup(fileName) {
@@ -150,7 +153,7 @@ const ApiClient = (function() {
   }
 
   function nasBackupDownloadUrl(fileName) {
-    return `${API_BASE}/api/nas-backups/${encodeURIComponent(fileName)}`;
+    return `${getApiBase()}/api/nas-backups/${encodeURIComponent(fileName)}`;
   }
 
   async function copyNasToLocal(fileName) {
@@ -197,11 +200,15 @@ const ApiClient = (function() {
   function photoUrl(relUrl) {
     if (!relUrl) return '';
     if (relUrl.startsWith('http')) return relUrl;
-    return (API_BASE || '') + relUrl;
+    return (getApiBase() || '') + relUrl;
+  }
+
+  async function mkdirPhotos(subdirs) {
+    return request('POST', '/api/photos/mkdirs', { subdirs });
   }
 
   // API 서버 주소 반환 (에러 메시지·UI 표시용)
-  function getBase() { return API_BASE; }
+  function getBase() { return getApiBase(); }
 
   return {
     init, getAll, save, saveAll, remove, getConfig, setConfig,
@@ -210,7 +217,7 @@ const ApiClient = (function() {
     getNasConfig, saveNasConfig,
     listNasBackups, nasBackupDownloadUrl, copyNasToLocal, restoreNasBackup,
     getSystemInfo,
-    uploadPhoto, photoUrl,
+    uploadPhoto, photoUrl, mkdirPhotos,
     getBase
   };
 })();

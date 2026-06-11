@@ -84,23 +84,22 @@ const AuthModule = (function () {
     ];
 
     /* ── 내부 스토리지 ───────────────────────────────────────── */
-    function _readLocalJson(key, fallback) {
+    async function _readPersistedJson(key, fallback) {
         try {
-            const raw = localStorage.getItem(key);
-            return raw ? JSON.parse(raw) : fallback;
+            const raw = await DB.getConfig(key);
+            return raw == null ? fallback : raw;
         } catch {
             return fallback;
         }
     }
-    function _writeLocalJson(key, value) {
-        try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+    async function _writePersistedJson(key, value) {
+        try { await DB.setConfig(key, value); } catch {}
     }
     async function _loadAuthStateFromServer() {
-        if (typeof Storage === 'undefined' || !Storage.getConfigValue) return false;
         try {
-            const localUsers = _readLocalJson(USERS_KEY, []);
-            const localPerms = _migratePerms(_readLocalJson(PERMS_KEY, _defaultPerms()));
-            const localMessages = _readLocalJson(MESSAGES_KEY, []);
+            const localUsers = await _readPersistedJson(USERS_KEY, []);
+            const localPerms = _migratePerms(await _readPersistedJson(PERMS_KEY, _defaultPerms()));
+            const localMessages = await _readPersistedJson(MESSAGES_KEY, []);
             const [users, perms, messages] = await Promise.all([
                 Storage.getConfigValue(AUTH_USERS_CONFIG_KEY).catch(() => null),
                 Storage.getConfigValue(AUTH_PERMS_CONFIG_KEY).catch(() => null),
@@ -109,9 +108,11 @@ const AuthModule = (function () {
             _usersCache = Array.isArray(users) && users.length ? users : localUsers;
             _permissionsCache = perms && typeof perms === 'object' ? _migratePerms(perms) : localPerms;
             _messagesCache = Array.isArray(messages) && messages.length ? messages : localMessages;
-            _writeLocalJson(USERS_KEY, _usersCache);
-            _writeLocalJson(PERMS_KEY, _permissionsCache);
-            _writeLocalJson(MESSAGES_KEY, _messagesCache);
+            await Promise.all([
+                _writePersistedJson(USERS_KEY, _usersCache),
+                _writePersistedJson(PERMS_KEY, _permissionsCache),
+                _writePersistedJson(MESSAGES_KEY, _messagesCache),
+            ]);
             if ((!Array.isArray(users) || users.length === 0) && localUsers.length) {
                 await Storage.setConfigValue(AUTH_USERS_CONFIG_KEY, _usersCache);
             }
@@ -124,16 +125,19 @@ const AuthModule = (function () {
             return true;
         } catch (e) {
             console.warn('[AuthModule] server auth state load failed:', e);
+            _usersCache = await _readPersistedJson(USERS_KEY, []);
+            _permissionsCache = _migratePerms(await _readPersistedJson(PERMS_KEY, _defaultPerms()));
+            _messagesCache = await _readPersistedJson(MESSAGES_KEY, []);
             return false;
         }
     }
     function _primeLocalAuthCache() {
-        if (_usersCache === null) _usersCache = _readLocalJson(USERS_KEY, []);
-        if (_permissionsCache === null) _permissionsCache = _migratePerms(_readLocalJson(PERMS_KEY, _defaultPerms()));
-        if (_messagesCache === null) _messagesCache = _readLocalJson(MESSAGES_KEY, []);
+        if (_usersCache === null) _usersCache = [];
+        if (_permissionsCache === null) _permissionsCache = _defaultPerms();
+        if (_messagesCache === null) _messagesCache = [];
     }
     async function _persistAuthState(configKey, value, localKey) {
-        _writeLocalJson(localKey, value);
+        await _writePersistedJson(localKey, value);
         if (typeof Storage === 'undefined' || !Storage.setConfigValue) return;
         try {
             await Storage.setConfigValue(configKey, value);
@@ -771,7 +775,7 @@ const AuthModule = (function () {
         const role = ROLES.find(r => r.key === (user ? user.role : ''));
         if (user) {
             const unreadCount = getUnreadInboxCount(user);
-            // 사용자 사진: localStorage users에서 photo 필드 조회
+            // 사용자 사진: 저장된 사용자 목록에서 photo 필드 조회
             const fullUser = _getUsers().find(u => u.id === user.id);
             const photo = fullUser && fullUser.photo ? fullUser.photo : null;
             const avatarHtml = photo

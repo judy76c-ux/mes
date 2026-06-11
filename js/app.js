@@ -4,14 +4,34 @@
  */
 
 const App = (function() {
+    const API_BASE_CONFIG_KEY = 'mes_api_base';
+
+    async function primeApiBaseOverride() {
+        try {
+            await DB.init();
+            const saved = await DB.getConfig(API_BASE_CONFIG_KEY);
+            if (saved && String(saved).trim()) {
+                window.__MES_API_BASE__ = String(saved).trim().replace(/\/$/, '');
+            } else {
+                delete window.__MES_API_BASE__;
+            }
+        } catch (error) {
+            console.warn('[App] API base override preload skipped:', error);
+        }
+    }
 
     async function init() {
+        await primeApiBaseOverride();
         console.log('🏭 생산 공정 관리 시스템 (MES) 시작...');
 
         try {
             // 1. 스토리지 초기화 (IndexedDB)
             await Storage.init();
             console.log('✅ 스토리지 초기화 완료');
+
+            if (typeof DataManager !== 'undefined' && DataManager.init) {
+                await DataManager.init();
+            }
 
             // 2. 인증 모듈 초기화 (기본 계정 보장 + 전역 인터셉터 등록)
             await AuthModule.init();

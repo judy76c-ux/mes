@@ -6,6 +6,8 @@
 const Router = (function() {
     let currentPage = 'dashboard';
     const modules = {};
+    const PAGE_STATE_KEY = 'mes_last_page';
+    const SIDEBAR_STATE_KEY = 'mes_sidebar_hidden';
 
     const PAGE_TITLES = {
         'dashboard': '대시보드',
@@ -176,7 +178,9 @@ const Router = (function() {
         setInterval(updateDateTime, 60000);
 
         const user = (typeof AuthModule !== 'undefined') ? AuthModule.getCurrentUser() : null;
-        const lastPage = localStorage.getItem('last_page') || 'dashboard';
+        const lastPage = (() => {
+            try { return sessionStorage.getItem(PAGE_STATE_KEY) || 'dashboard'; } catch (e) { return 'dashboard'; }
+        })();
         navigate(user ? lastPage : 'dashboard');
     }
 
@@ -208,7 +212,7 @@ const Router = (function() {
 
     function _doNavigate(pageName) {
         currentPage = pageName;
-        localStorage.setItem('last_page', pageName);
+        try { sessionStorage.setItem(PAGE_STATE_KEY, pageName); } catch (e) {}
 
         document.querySelectorAll('.nav-item').forEach(function(item) {
             item.classList.toggle('active', item.dataset.page === pageName);
@@ -267,13 +271,12 @@ const Router = (function() {
     function setupSidebarToggle() {
         const hideBtn = document.getElementById('sidebarToggle');
         const showBtn = document.getElementById('sidebarShowBtn');
-        const storageKey = 'mes_sidebar_hidden';
         const setHidden = (hidden) => {
             document.body.classList.toggle('sidebar-hidden', hidden);
-            try { localStorage.setItem(storageKey, hidden ? '1' : '0'); } catch(e) {}
+            try { sessionStorage.setItem(SIDEBAR_STATE_KEY, hidden ? '1' : '0'); } catch(e) {}
         };
         try {
-            setHidden(localStorage.getItem(storageKey) === '1');
+            setHidden(sessionStorage.getItem(SIDEBAR_STATE_KEY) === '1');
         } catch(e) {
             setHidden(false);
         }

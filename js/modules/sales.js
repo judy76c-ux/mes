@@ -687,12 +687,19 @@ var SalesDeliveryModule = (function() {
  */
 var SalesDeliveryPlanModule = (function() {
     const STORE = DB.STORES.SALES_DELIVERY_PLAN;
+    const HOLIDAYS_CONFIG_KEY = 'mes_holidays';
+    const XLSX_PRESET_CONFIG_KEY = 'mes_excel_delivery_presets';
 
     let _lastRows = [];
     let _lastDays = [];
     let _gridRows = [];
     let _dragPlan = null;
     let _dragSuppressClickUntil = 0;
+    let _holidayCache = [];
+    let _holidayCacheLoaded = false;
+    let _xlsxPresetCache = {};
+    let _xlsxPresetCacheLoaded = false;
+    let _salesConfigLoadPromise = null;
 
     function _esc(value) {
         return String(value ?? '').replace(/[&<>"']/g, m => ({
@@ -748,15 +755,59 @@ var SalesDeliveryPlanModule = (function() {
         '12-25'
     ]);
 
+    async function _readSalesConfig(key, fallback) {
+        let serverValue = null;
+        try {
+            if (typeof Storage !== 'undefined' && Storage.getConfigValue) {
+                serverValue = await Storage.getConfigValue(key);
+            }
+        } catch (error) {}
+        if (serverValue !== null && serverValue !== undefined) {
+            DB.setConfig(key, serverValue).catch(() => {});
+            return serverValue;
+        }
+        try {
+            const localValue = await DB.getConfig(key);
+            return localValue === null || localValue === undefined ? fallback : localValue;
+        } catch (error) {
+            return fallback;
+        }
+    }
+
+    async function _writeSalesConfig(key, value) {
+        await DB.setConfig(key, value).catch(() => {});
+        if (typeof Storage !== 'undefined' && Storage.setConfigValue) {
+            await Storage.setConfigValue(key, value).catch(() => {});
+        }
+    }
+
+    async function _ensureSalesConfigLoaded() {
+        if (_holidayCacheLoaded && _xlsxPresetCacheLoaded) return;
+        if (_salesConfigLoadPromise) {
+            await _salesConfigLoadPromise;
+            return;
+        }
+        _salesConfigLoadPromise = (async () => {
+            const [holidays, presets] = await Promise.all([
+                _readSalesConfig(HOLIDAYS_CONFIG_KEY, []),
+                _readSalesConfig(XLSX_PRESET_CONFIG_KEY, {}),
+            ]);
+            _holidayCache = Array.isArray(holidays) ? holidays : [];
+            _holidayCacheLoaded = true;
+            _xlsxPresetCache = presets && typeof presets === 'object' ? presets : {};
+            _xlsxPresetCacheLoaded = true;
+        })();
+        try {
+            await _salesConfigLoadPromise;
+        } finally {
+            _salesConfigLoadPromise = null;
+        }
+    }
+
     function _extraHolidaySet() {
         const holidays = [];
         if (Array.isArray(window.MES_HOLIDAYS)) holidays.push(...window.MES_HOLIDAYS);
-        try {
-            const saved = JSON.parse(localStorage.getItem('mes_holidays') || '[]');
-            if (Array.isArray(saved)) holidays.push(...saved);
-        } catch (error) {
-            // Invalid local holiday settings should not block the delivery grid.
-        }
+        if (Array.isArray(_holidayCache)) holidays.push(..._holidayCache);
         return new Set(holidays.map(date => String(date).slice(0, 10)));
     }
 
@@ -1036,6 +1087,11 @@ var SalesDeliveryPlanModule = (function() {
     }
 
     function render(container) {
+        _ensureSalesConfigLoaded().then(() => {
+            if (typeof Router !== 'undefined' && Router.getCurrentPage && Router.getCurrentPage() === 'sales-delivery-plan') {
+                search();
+            }
+        }).catch(() => {});
         const start = UIUtils.today();
         const end = _addDays(start, 30);
         const customerOptions = _selectOptions(_deliveryCustomers(), '', '전체 납품처');
@@ -1847,20 +1903,23 @@ var SalesDeliveryPlanModule = (function() {
 
     // ── 프리셋 저장/로드 ──
     function _getXlsxPresets() {
-        try { return JSON.parse(localStorage.getItem(_XLSX_PRESET_KEY) || '{}'); }
-        catch (e) { return {}; }
+        return _xlsxPresetCache && typeof _xlsxPresetCache === 'object' ? _xlsxPresetCache : {};
     }
     // key = 프리셋 이름(고유), cfg 안에 customer·presetName 포함
-    function _saveXlsxPreset(key, cfg) {
+    async function _saveXlsxPreset(key, cfg) {
         if (!key) return;
         const presets = _getXlsxPresets();
-        presets[key] = { ...cfg, savedAt: new Date().toISOString() };
-        localStorage.setItem(_XLSX_PRESET_KEY, JSON.stringify(presets));
+        _xlsxPresetCache = { ...presets, [key]: { ...cfg, savedAt: new Date().toISOString() } };
+        _xlsxPresetCacheLoaded = true;
+        await _writeSalesConfig(XLSX_PRESET_CONFIG_KEY, _xlsxPresetCache);
     }
-    function _deleteXlsxPreset(key) {
+    async function _deleteXlsxPreset(key) {
         const presets = _getXlsxPresets();
-        delete presets[key];
-        localStorage.setItem(_XLSX_PRESET_KEY, JSON.stringify(presets));
+        const next = { ...presets };
+        delete next[key];
+        _xlsxPresetCache = next;
+        _xlsxPresetCacheLoaded = true;
+        await _writeSalesConfig(XLSX_PRESET_CONFIG_KEY, _xlsxPresetCache);
     }
     // 특정 납품처에 속한 프리셋 [[key, preset], ...] (최신순)
     function _presetsForCustomer(customer) {
@@ -2039,7 +2098,8 @@ var SalesDeliveryPlanModule = (function() {
         });
     }
 
-    function openExcelUploadModal(activeTab = 'upload') {
+    async function openExcelUploadModal(activeTab = 'upload') {
+        await _ensureSalesConfigLoaded();
         _xlsxParsedData = null;
         _xlsxLastBuffer = null;
         _xlsxCurrentPresetKey = '';
@@ -2228,8 +2288,8 @@ var SalesDeliveryPlanModule = (function() {
     function _deleteCurrentPreset() {
         const key = _xlsxCurrentPresetKey || document.getElementById('xlsxCustomerSel')?.value || '';
         if (!key) return;
-        UIUtils.confirm(`"${key}" 프리셋을 삭제하시겠습니까?`, () => {
-            _deleteXlsxPreset(key);
+        UIUtils.confirm(`"${key}" 프리셋을 삭제하시겠습니까?`, async () => {
+            await _deleteXlsxPreset(key);
             _xlsxCurrentPresetKey = '';
             UIUtils.toast(`"${key}" 프리셋이 삭제되었습니다.`, 'success');
             const badge = document.getElementById('xlsxPresetBadge');
@@ -2251,7 +2311,7 @@ var SalesDeliveryPlanModule = (function() {
         catch (e) { UIUtils.toast(`파싱 오류: ${e.message}`, 'error'); }
     }
 
-    function _savePresetNow() {
+    async function _savePresetNow() {
         const customer = document.getElementById('xlsxCustomerSel')?.value || '';
         const presetNameInput = document.getElementById('xlsxPresetName')?.value?.trim() || '';
         const cfg = _readXlsxConfig();
@@ -2261,7 +2321,7 @@ var SalesDeliveryPlanModule = (function() {
             document.getElementById('xlsxPresetName')?.focus();
             return;
         }
-        _saveXlsxPreset(key, { ...cfg, customer, presetName: key });
+        await _saveXlsxPreset(key, { ...cfg, customer, presetName: key });
         _xlsxCurrentPresetKey = key;
         UIUtils.toast(`프리셋 저장 완료: "${key}"`, 'success');
         if (customer) {
@@ -2589,7 +2649,7 @@ var SalesDeliveryPlanModule = (function() {
         const presetKey = presetNameInput || customer || cfgForPreset.companyFilter || '';
         if (savePreset) {
             if (presetKey) {
-                _saveXlsxPreset(presetKey, { ...cfgForPreset, customer, presetName: presetKey });
+                await _saveXlsxPreset(presetKey, { ...cfgForPreset, customer, presetName: presetKey });
             } else {
                 UIUtils.toast('프리셋 저장 생략: 프리셋 이름 또는 납품처를 입력하세요.', 'warning');
             }

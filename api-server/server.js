@@ -842,6 +842,25 @@ app.post('/api/photos', async (req, res) => {
   }
 });
 
+// ── 공정별 사진 폴더 일괄 생성 ──
+app.post('/api/photos/mkdirs', async (req, res) => {
+  const { subdirs = [] } = req.body || {};
+  const baseDir = getPhotoDir();
+  const results = [];
+  for (const subdir of subdirs) {
+    const safeSub = String(subdir).replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 60);
+    if (!safeSub) continue;
+    const dir = path.join(baseDir, safeSub);
+    try {
+      await fs.mkdir(dir, { recursive: true });
+      results.push({ subdir: safeSub, path: dir, ok: true });
+    } catch (err) {
+      results.push({ subdir: safeSub, error: err.message, ok: false });
+    }
+  }
+  res.json({ baseDir, created: results.filter(r => r.ok).length, total: results.length, results });
+});
+
 // ── 사진 삭제 ──
 app.delete('/api/photos', async (req, res) => {
   const { url } = req.body || {};

@@ -12,6 +12,7 @@ const SettingsModule = (function() {
 
     const SETTINGS_TAB_KEY = 'mes_settings_tab';
     const DOCUMENT_DESIGN_KEY = 'mes_document_designs_v1';
+    const API_BASE_CONFIG_KEY = 'mes_api_base';
     let currentTab = (() => {
         try { return sessionStorage.getItem(SETTINGS_TAB_KEY) || 'products'; } catch(e) { return 'products'; }
     })();
@@ -1359,7 +1360,7 @@ const SettingsModule = (function() {
             <button class="btn btn-primary" onclick="SettingsModule.saveProduct()">추가</button>
         `, size: 'xxxl', noBackdropClose: true });
 
-        setTimeout(() => {
+        setTimeout(async () => {
             // ── 기본 정보: injPartName/injColor 경유 시 공란 유지 ──
             const fromInjMat = !!(init.injPartName || init.injColor);
             if (!fromInjMat) {
@@ -1893,7 +1894,7 @@ const SettingsModule = (function() {
             <button class="btn btn-secondary" onclick="${returnToValidation ? 'SettingsModule.openPaintValidationModal()' : 'UIUtils.closeModal()'}">취소</button>
             <button class="btn btn-primary" onclick="SettingsModule.updateProduct('${id}', ${returnToValidation ? 'true' : 'false'})">저장</button>
         `, size: 'xxxl', noBackdropClose: true });
-        setTimeout(() => {
+        setTimeout(async () => {
             // 품명/컬러 변경 시 코드 자동 갱신
             const upd = () => {
                 const cm = document.getElementById('editProdCarModel').value.trim();
@@ -7991,25 +7992,34 @@ const SettingsModule = (function() {
                         <span class="material-symbols-outlined" style="font-size:18px;color:#d97706;">photo_camera</span>
                         <span style="font-size:.85rem;color:#92400e;">사진 저장 경로 로딩 중...</span>
                     </div>
-                    <!-- NAS 사진 경로 입력 -->
+                    <!-- NAS 사진 기본 경로 입력 -->
                     <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
                         <div style="flex:1;min-width:260px;">
                             <label class="form-label" style="font-size:.82rem;">
-                                NAS 사진 저장 경로
+                                NAS 사진 저장 기본 경로
                                 <span style="font-weight:400;color:var(--text-muted);margin-left:4px;">(비워두면 NAS 백업경로/photos 자동 사용)</span>
                             </label>
                             <input type="text" id="sysNasUploadDirInput" class="form-input"
                                 style="font-family:monospace;font-size:.85rem;"
-                                placeholder="/mnt/nas-backup/photos">
+                                placeholder="/mnt/nas-backup/web/MES_uploade">
                         </div>
                         <button class="btn btn-primary" onclick="SettingsModule.saveImageStoragePolicy()" style="white-space:nowrap;height:36px;">
                             <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">save</span> 저장
                         </button>
                     </div>
-                    <p style="margin:0;font-size:0.8rem;color:var(--text-muted);line-height:1.6;">
-                        매일 촬영되는 수입검사 사진은 NAS에 직접 저장합니다.
-                        NAS 백업 경로(백업/복원 탭)가 설정된 경우 별도 경로를 입력하지 않아도 <code style="background:var(--bg-secondary);padding:1px 4px;border-radius:3px;">백업경로/photos</code>로 자동 저장됩니다.
-                    </p>
+                    <!-- 공정별 폴더 경로 테이블 -->
+                    <div>
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                            <span style="font-size:.82rem;font-weight:600;color:var(--text-secondary);">공정별 사진 저장 폴더</span>
+                            <button class="btn btn-sm btn-outline" onclick="SettingsModule.createAllPhotoDirs()" style="font-size:.75rem;">
+                                <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">create_new_folder</span>
+                                전체 폴더 생성
+                            </button>
+                        </div>
+                        <div id="photoProcessTable" style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;font-size:.8rem;">
+                            <div style="padding:12px;color:var(--text-muted);text-align:center;">경로 로딩 중...</div>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="card">
@@ -8122,10 +8132,10 @@ const SettingsModule = (function() {
         `;
 
         // ── API 서버 URL 표시 / 입력 초기화 ──────────────────────────
-        setTimeout(() => {
+        setTimeout(async () => {
             const apiBase = (typeof ApiClient !== 'undefined' && ApiClient.getBase)
                 ? ApiClient.getBase() : '';
-            const saved = (() => { try { return localStorage.getItem('MES_API_BASE') || ''; } catch(e) { return ''; } })();
+            const saved = await DB.getConfig(API_BASE_CONFIG_KEY).catch(() => '');
 
             const displayEl = document.getElementById('sysApiBaseDisplay');
             if (displayEl) {
@@ -8147,31 +8157,70 @@ const SettingsModule = (function() {
         }, 50);
     }
 
+    const PHOTO_PROCESSES = [
+        { name: '도료 수입검사',   subdir: 'paint-inspections' },
+        { name: '사출 수입검사',   subdir: 'inj-inspections' },
+        { name: '도장 공정',       subdir: 'painting' },
+        { name: '레이저 공정',     subdir: 'laser' },
+        { name: '출하검사',        subdir: 'shipping' },
+        { name: '작업조건 관리',   subdir: 'work-conditions' },
+        { name: '설비관리',        subdir: 'equipment' },
+        { name: '3정5S',           subdir: '5s-management' },
+        { name: '한도견본',        subdir: 'limit-samples' },
+        { name: '개선활동',        subdir: 'improvement' }
+    ];
+
     async function loadImageStoragePolicy() {
         const statusEl = document.getElementById('imageStorageStatus');
         const inputEl = document.getElementById('sysNasUploadDirInput');
         if (!statusEl || !inputEl) return;
         try {
             const nasCfg = await ApiClient.getNasConfig();
-            const onNas = nasCfg.nasDir && nasCfg.effectivePhotoDir && nasCfg.effectivePhotoDir.startsWith(nasCfg.nasDir);
+            const baseDir = nasCfg.effectivePhotoDir || '';
+            const onNas = nasCfg.nasDir && baseDir && baseDir.startsWith(nasCfg.nasDir);
             if (nasCfg.nasUploadDir) inputEl.value = nasCfg.nasUploadDir;
             if (onNas) {
                 statusEl.style.background = '#f0fdf4';
                 statusEl.style.border = '1px solid #86efac';
                 statusEl.innerHTML = `<span class="material-symbols-outlined" style="font-size:18px;color:#16a34a;">photo_camera</span>
                     <span style="font-size:.85rem;color:#166534;font-weight:600;">✓ NAS 저장 중</span>
-                    <code style="font-size:.82rem;padding:1px 6px;border-radius:4px;background:rgba(0,0,0,.06);margin-left:4px;">${nasCfg.effectivePhotoDir}</code>`;
+                    <code style="font-size:.82rem;padding:1px 6px;border-radius:4px;background:rgba(0,0,0,.06);margin-left:4px;">${baseDir}</code>`;
             } else {
                 statusEl.style.background = '#fff7ed';
                 statusEl.style.border = '1px solid #fdba74';
                 statusEl.innerHTML = `<span class="material-symbols-outlined" style="font-size:18px;color:#d97706;">photo_camera</span>
                     <span style="font-size:.85rem;color:#92400e;font-weight:600;">⚠ 서버 로컬 저장 중</span>
-                    <code style="font-size:.82rem;padding:1px 6px;border-radius:4px;background:rgba(0,0,0,.06);margin-left:4px;">${nasCfg.effectivePhotoDir || '/opt/mes/uploads'}</code>
+                    <code style="font-size:.82rem;padding:1px 6px;border-radius:4px;background:rgba(0,0,0,.06);margin-left:4px;">${baseDir || '/opt/mes/uploads'}</code>
                     <span style="font-size:.75rem;color:#d97706;margin-left:6px;">— NAS 백업 경로를 설정하면 자동으로 NAS에 저장됩니다</span>`;
             }
+            // 공정별 폴더 테이블 렌더
+            _renderPhotoProcessTable(baseDir);
         } catch (e) {
             statusEl.innerHTML = `<span style="font-size:.82rem;color:var(--text-muted);">API 서버 연결 필요 (${e.message})</span>`;
+            const tableEl = document.getElementById('photoProcessTable');
+            if (tableEl) tableEl.innerHTML = `<div style="padding:12px;color:var(--text-muted);text-align:center;font-size:.8rem;">API 서버 연결 필요</div>`;
         }
+    }
+
+    function _renderPhotoProcessTable(baseDir) {
+        const tableEl = document.getElementById('photoProcessTable');
+        if (!tableEl) return;
+        const sep = (baseDir || '').endsWith('/') ? '' : '/';
+        const rows = PHOTO_PROCESSES.map(p => {
+            const fullPath = baseDir ? `${baseDir}${sep}${p.subdir}` : p.subdir;
+            return `<div style="display:grid;grid-template-columns:130px 140px 1fr;gap:0;border-bottom:1px solid var(--border-color);">
+                <div style="padding:7px 10px;font-size:.8rem;font-weight:600;color:var(--text-primary);background:var(--bg-secondary);border-right:1px solid var(--border-color);">${p.name}</div>
+                <div style="padding:7px 10px;font-size:.78rem;font-family:monospace;color:var(--accent-blue);background:var(--bg-secondary);border-right:1px solid var(--border-color);">${p.subdir}</div>
+                <div style="padding:7px 10px;font-size:.78rem;font-family:monospace;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${fullPath}">${fullPath}</div>
+            </div>`;
+        }).join('');
+        tableEl.innerHTML = `
+            <div style="display:grid;grid-template-columns:130px 140px 1fr;gap:0;border-bottom:2px solid var(--border-color);background:var(--bg-tertiary);">
+                <div style="padding:6px 10px;font-size:.75rem;font-weight:700;color:var(--text-muted);border-right:1px solid var(--border-color);">공정명</div>
+                <div style="padding:6px 10px;font-size:.75rem;font-weight:700;color:var(--text-muted);border-right:1px solid var(--border-color);">폴더명</div>
+                <div style="padding:6px 10px;font-size:.75rem;font-weight:700;color:var(--text-muted);">전체 경로</div>
+            </div>
+            ${rows}`;
     }
 
     async function saveImageStoragePolicy() {
@@ -8188,6 +8237,24 @@ const SettingsModule = (function() {
             loadImageStoragePolicy();
         } catch (e) {
             UIUtils.toast('저장 실패: ' + e.message, 'error');
+        }
+    }
+
+    async function createAllPhotoDirs() {
+        const subdirs = PHOTO_PROCESSES.map(p => p.subdir);
+        try {
+            UIUtils.toast('폴더 생성 중...', 'info');
+            const result = await ApiClient.mkdirPhotos(subdirs);
+            const msg = `${result.created}/${result.total}개 폴더 생성 완료 (기본경로: ${result.baseDir})`;
+            UIUtils.toast(msg, result.created === result.total ? 'success' : 'warning');
+            if (result.results) {
+                const failed = result.results.filter(r => !r.ok);
+                if (failed.length) {
+                    console.warn('폴더 생성 실패:', failed);
+                }
+            }
+        } catch (e) {
+            UIUtils.toast('폴더 생성 실패: ' + e.message, 'error');
         }
     }
 
@@ -8323,15 +8390,17 @@ const SettingsModule = (function() {
              </div>`;
     }
 
-    function saveApiBase() {
+    async function saveApiBase() {
         const inputEl = document.getElementById('sysApiBaseInput');
         const val = (inputEl ? inputEl.value : '').trim().replace(/\/$/, '');
         try {
             if (val) {
-                localStorage.setItem('MES_API_BASE', val);
+                await DB.setConfig(API_BASE_CONFIG_KEY, val);
+                window.__MES_API_BASE__ = val;
                 UIUtils.toast(`API 서버 URL이 저장되었습니다. 새로고침합니다…`, 'success');
             } else {
-                localStorage.removeItem('MES_API_BASE');
+                await DB.setConfig(API_BASE_CONFIG_KEY, '');
+                delete window.__MES_API_BASE__;
                 UIUtils.toast('API 서버 URL이 초기화되었습니다(자동). 새로고침합니다…', 'success');
             }
             setTimeout(() => location.reload(), 1200);
@@ -8341,9 +8410,8 @@ const SettingsModule = (function() {
     }
 
     function clearApiBase() {
-        try {
-            localStorage.removeItem('MES_API_BASE');
-        } catch(e) {}
+        DB.setConfig(API_BASE_CONFIG_KEY, '').catch(() => {});
+        delete window.__MES_API_BASE__;
         const inputEl = document.getElementById('sysApiBaseInput');
         if (inputEl) inputEl.value = '';
         const statusEl = document.getElementById('sysApiBaseStatus');
@@ -10415,6 +10483,7 @@ const SettingsModule = (function() {
         clearApiBase,
         refreshSystemInfo,
         saveImageStoragePolicy,
+        createAllPhotoDirs,
         _askCascadeRename,
         _doCascadeRename,
         deleteRecordsByPartNames,
