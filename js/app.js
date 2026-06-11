@@ -43,20 +43,6 @@ const App = (function() {
             registerModules();
             console.log('✅ 모듈 등록 완료');
 
-            // 팝업 뷰 모드: index.html?pw_view=ID
-            const _pwViewId = new URLSearchParams(window.location.search).get('pw_view');
-            if (_pwViewId) {
-                const sidebar = document.getElementById('sidebar');
-                if (sidebar) sidebar.style.display = 'none';
-                const mainArea = document.querySelector('.main-area');
-                if (mainArea) mainArea.style.marginLeft = '0';
-                const topbar = document.querySelector('.topbar');
-                if (topbar) topbar.style.display = 'none';
-                document.title = '도장 작업 실적';
-                PaintingWorkModule.openWorkViewPage(_pwViewId);
-                return;
-            }
-
             // 4. 라우터 초기화
             Router.init();
             console.log('✅ 라우터 초기화 완료');

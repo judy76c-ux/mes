@@ -2826,25 +2826,6 @@ const PaintingWorkModule = (function() {
 
     // 보기 페이지 진입점: 부모창이면 팝업 열기, 팝업창이면 contentArea에 바로 렌더링
     function openWorkViewPage(id) {
-        if (_isPopupMode) {
-            // 팝업창 안에서 호출 (보기↔수정 전환 포함)
-            _renderWorkView(id);
-            return;
-        }
-        if (_workViewId !== null) {
-            // 수정 오버레이에서 "보기로" 버튼 → 오버레이 내 뷰 갱신
-            _renderWorkView(id);
-            return;
-        }
-        // 부모창 목록에서 클릭 → 새 팝업창 열기
-        var base = location.href.replace(/\?.*$/, '');
-        var popup = window.open(
-            base + '?pw_view=' + encodeURIComponent(id),
-            'pw_view_' + id,
-            'width=1080,height=780,resizable=yes,scrollbars=yes,location=no,menubar=no,toolbar=no'
-        );
-        if (popup) { popup.focus(); return; }
-        // 팝업 차단 시 오버레이 fallback
         _renderWorkView(id);
     }
 
@@ -2858,9 +2839,7 @@ const PaintingWorkModule = (function() {
         window.close();
     }
 
-    // 뷰/에디트 공통 컨테이너 반환
     function _getOrCreateWorkOverlay() {
-        if (_isPopupMode) return document.getElementById('contentArea');
         var ov = document.getElementById('pwWorkOverlay');
         if (!ov) {
             ov = document.createElement('div');
@@ -2873,11 +2852,8 @@ const PaintingWorkModule = (function() {
         return ov;
     }
 
-    // 닫기 버튼 핸들러 문자열
     function _closeHandler() {
-        return _isPopupMode
-            ? 'PaintingWorkModule._closePopup()'
-            : 'PaintingWorkModule._closeWorkViewPage()';
+        return 'PaintingWorkModule._closeWorkViewPage()';
     }
 
     // 실제 뷰 렌더링 (오버레이 or 팝업 contentArea)
@@ -3445,10 +3421,6 @@ const PaintingWorkModule = (function() {
         if (_workViewId) {
             const savedId = _workViewId;
             _workViewId = null;
-            // 팝업 모드: 부모창 목록도 갱신
-            if (_isPopupMode) {
-                try { if (window.opener && window.opener.PaintingWorkModule) window.opener.PaintingWorkModule.loadAll(); } catch(e) {}
-            }
             openWorkViewPage(savedId);
         } else {
             UIUtils.closeModal();
