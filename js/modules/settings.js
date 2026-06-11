@@ -10157,18 +10157,17 @@ const SettingsModule = (function() {
                 <div class="card-body" style="padding:0;">
                     <table class="data-table">
                         <thead><tr>
-                            <th>ID</th><th>사진</th><th>이름</th><th>비밀번호</th><th>전화번호</th><th>역할</th><th>상태</th><th>작업</th>
+                            <th>ID</th><th>사진</th><th>이름</th><th>비밀번호</th><th>역할</th><th>상태</th><th>작업</th>
                         </tr></thead>
                         <tbody>
                         ${users.length === 0
-                            ? `<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px;">등록된 사용자가 없습니다.</td></tr>`
+                            ? `<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px;">등록된 사용자가 없습니다.</td></tr>`
                             : users.map(u => `
                             <tr>
                                 <td style="font-weight:600;">${_esc(u.username)}</td>
                                 <td style="padding:6px 10px;">${_avatarHtml(u, 38)}</td>
                                 <td>${_esc(u.displayName)}</td>
                                 <td style="font-family:monospace;color:var(--text-muted);">${passwordMask(u)}</td>
-                                <td style="font-family:monospace;">${_esc(u.phone || '-')}</td>
                                 <td>${roleBadge(u.role)}</td>
                                 <td>
                                     <span style="color:${u.active !== false ? '#16a34a' : '#dc2626'};font-size:12px;font-weight:600;">

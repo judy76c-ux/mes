@@ -34,7 +34,9 @@ const PaintingIncomingModule = (function() {
     }
 
     function _buildNotifySelectorHtml(prefix, helpText) {
-        const users = _getNotifyUsersByRole();
+        const isPlanNotify = (prefix === 'plan' || prefix === 'editPlan');
+        let users = _getNotifyUsersByRole();
+        if (isPlanNotify) users = users.filter(function(u) { return u.role === 'prod_manager'; });
         if (!users.length) {
             return '<div style="margin-top:10px;padding:10px 12px;border:1px dashed rgba(239,68,68,0.35);border-radius:6px;font-size:0.8rem;color:var(--text-muted);">선택 가능한 통보 대상 사용자가 없습니다.</div>';
         }
@@ -480,7 +482,9 @@ const PaintingWorkModule = (function() {
     }
 
     function _buildNotifySelectorHtml(prefix, helpText) {
-        const users = _getNotifyUsersByRole();
+        const isPlanNotify = (prefix === 'plan' || prefix === 'editPlan');
+        let users = _getNotifyUsersByRole();
+        if (isPlanNotify) users = users.filter(function(u) { return u.role === 'prod_manager'; });
         if (!users.length) {
             return '<div style="margin-top:10px;padding:10px 12px;border:1px dashed rgba(239,68,68,0.35);border-radius:6px;font-size:0.8rem;color:var(--text-muted);">선택 가능한 통보 대상 사용자가 없습니다.</div>';
         }
