@@ -457,8 +457,6 @@ const PaintingWorkModule = (function() {
     let _currentDate = '';
     let _currentLine = '도장-A';
 
-    // 팝업 창 여부 (window.opener 존재 = 팝업)
-    var _isPopupMode = !!(window.opener);
 
     function _getNotifyUsersByRole() {
         if (typeof AuthModule === 'undefined' || typeof AuthModule.getUsers !== 'function') return [];
@@ -2829,34 +2827,7 @@ const PaintingWorkModule = (function() {
         _renderWorkView(id);
     }
 
-    // 팝업 닫기 (부모창 목록 갱신 후 window.close)
-    function _closePopup() {
-        try {
-            if (window.opener && window.opener.PaintingWorkModule) {
-                window.opener.PaintingWorkModule.loadAll();
-            }
-        } catch(e) {}
-        window.close();
-    }
 
-    function _getOrCreateWorkOverlay() {
-        var ov = document.getElementById('pwWorkOverlay');
-        if (!ov) {
-            ov = document.createElement('div');
-            ov.id = 'pwWorkOverlay';
-            ov.style.cssText =
-                'position:fixed;top:0;left:0;right:0;bottom:0;z-index:900;' +
-                'background:var(--bg-primary);overflow-y:auto;display:flex;flex-direction:column;';
-            document.body.appendChild(ov);
-        }
-        return ov;
-    }
-
-    function _closeHandler() {
-        return 'PaintingWorkModule._closeWorkViewPage()';
-    }
-
-    // 실제 뷰 렌더링 (오버레이 or 팝업 contentArea)
     function _renderWorkView(id) {
         var d = Storage.getById(STORE, id);
         if (!d) return;
@@ -2888,23 +2859,8 @@ const PaintingWorkModule = (function() {
 
         var processLoss = (Number(d.inputQty) || 0) - (Number(d.productionQty) || 0);
 
-        var ov = _getOrCreateWorkOverlay();
-        ov.innerHTML =
-            '<div style="position:sticky;top:0;z-index:10;background:var(--bg-primary);' +
-            'border-bottom:1px solid var(--border);padding:12px 24px;' +
-            'display:flex;justify-content:space-between;align-items:center;gap:10px;">' +
-            '<div style="display:flex;align-items:center;gap:10px;">' +
-            '<button class="btn btn-outline btn-sm" onclick="' + _closeHandler() + '">' +
-            '<span class="material-symbols-outlined" style="font-size:18px;">close</span> 닫기</button>' +
-            '<span style="font-size:0.95rem;font-weight:600;color:var(--text-muted);">도장 작업 실적 보기</span>' +
-            '</div>' +
-            '<button class="btn btn-primary btn-sm" onclick="PaintingWorkModule.openWorkEditPage(\'' + id + '\')">' +
-            '<span class="material-symbols-outlined" style="font-size:16px;">edit</span> 수정</button>' +
-            '</div>' +
-
-            // 본문
-            '<div class="fade-in-up" style="max-width:960px;margin:0 auto;padding:20px 24px;">' +
-
+        var bodyHtml =
+            '<div class="fade-in-up">' +
             '<div class="card" style="margin-bottom:14px;">' +
             '<div class="card-header" style="padding:10px 16px;"><h4 style="margin:0;font-size:0.9rem;">' +
             '<span class="material-symbols-outlined" style="font-size:1rem;vertical-align:middle;margin-right:4px;">info</span>상태 / 알림</h4></div>' +
@@ -2933,7 +2889,6 @@ const PaintingWorkModule = (function() {
             vf('불량수량', UIUtils.formatNumber(Number(d.defectQty) || 0), (Number(d.defectQty) || 0) > 0 ? 'var(--accent-red)' : 'var(--text-muted)') +
             vf('투입인원', (d.workers || 0) + '명') +
             '</div></div></div>' +
-
             '<div class="card">' +
             '<div class="card-header" style="padding:10px 16px;"><h4 style="margin:0;font-size:0.9rem;">작업 시간</h4></div>' +
             '<div class="card-body" style="padding:18px 20px;">' +
@@ -2948,10 +2903,17 @@ const PaintingWorkModule = (function() {
             '<div class="card-header" style="padding:10px 16px;"><h4 style="margin:0;font-size:0.9rem;">사출 LOT</h4></div>' +
             '<div class="card-body" style="padding:14px 20px;">' + lotDisplayHtml + '</div></div>' +
 
-            (d.note ? '<div class="card" style="margin-bottom:14px;">' +
+            (d.note ? '<div class="card" style="margin-bottom:0;">' +
             '<div class="card-header" style="padding:10px 16px;"><h4 style="margin:0;font-size:0.9rem;">비고</h4></div>' +
             '<div class="card-body" style="padding:14px 20px;font-size:0.9rem;">' + d.note + '</div></div>' : '') +
             '</div>';
+
+        var footerHtml =
+            '<button class="btn btn-secondary" onclick="PaintingWorkModule._closeWorkViewPage()">닫기</button>' +
+            '<button class="btn btn-primary" onclick="PaintingWorkModule.openWorkEditPage(\'' + id + '\')">' +
+            '<span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">edit</span> 수정</button>';
+
+        UIUtils.openModal({ title: '도장 작업 실적 보기', body: bodyHtml, footer: footerHtml, size: 'lg' });
     }
 
     // 수정 페이지 (입력 폼)
@@ -3022,22 +2984,8 @@ const PaintingWorkModule = (function() {
             ? wp[1] + '-' + wp[2] + ' <small style="color:var(--text-muted);">(' + wp[0] + ')</small>'
             : (d.date || '-');
 
-        var ov2 = _getOrCreateWorkOverlay();
-        ov2.innerHTML =
-            '<div style="position:sticky;top:0;z-index:10;background:var(--bg-primary);' +
-            'border-bottom:1px solid var(--border);padding:12px 24px;' +
-            'display:flex;justify-content:space-between;align-items:center;gap:10px;">' +
-            '<div style="display:flex;align-items:center;gap:10px;">' +
-            '<button class="btn btn-outline btn-sm" onclick="PaintingWorkModule.openWorkViewPage(\'' + id + '\')">' +
-            '<span class="material-symbols-outlined" style="font-size:18px;">arrow_back</span> 보기로</button>' +
-            '<span style="font-size:0.95rem;font-weight:600;color:var(--text-muted);">도장 작업 실적 수정</span>' +
-            '</div>' +
-            '<button class="btn btn-primary btn-sm" onclick="PaintingWorkModule.saveEdit(\'' + id + '\')">' +
-            '<span class="material-symbols-outlined" style="font-size:16px;">save</span> 저장</button>' +
-            '</div>' +
-
-            '<div class="fade-in-up" style="max-width:960px;margin:0 auto;padding:20px 24px;">' +
-
+        var bodyHtml2 =
+            '<div class="fade-in-up">' +
             '<div class="card" style="margin-bottom:14px;">' +
             '<div class="card-header" style="padding:10px 16px;"><h4 style="margin:0;font-size:0.9rem;">' +
             '<span class="material-symbols-outlined" style="font-size:1rem;vertical-align:middle;margin-right:4px;">info</span>상태 / 알림</h4></div>' +
@@ -3094,12 +3042,14 @@ const PaintingWorkModule = (function() {
             '<div class="form-group" style="margin-bottom:0;"><label class="form-label">비고</label>' +
             '<input type="text" class="form-input" id="editPwNote" value="' + (d.note || '') + '"></div>' +
             '</div></div>' +
+            '</div>';
 
-            '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">' +
+        var footerHtml2 =
             '<button class="btn btn-secondary" onclick="PaintingWorkModule.openWorkViewPage(\'' + id + '\')">취소</button>' +
             '<button class="btn btn-primary" onclick="PaintingWorkModule.saveEdit(\'' + id + '\')">' +
-            '<span class="material-symbols-outlined">save</span> 저장</button>' +
-            '</div></div>';
+            '<span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">save</span> 저장</button>';
+
+        UIUtils.openModal({ title: '도장 작업 실적 수정', body: bodyHtml2, footer: footerHtml2, size: 'lg' });
 
         setTimeout(function() {
             var rows = document.querySelectorAll('#pwLotRows .pw-lot-row');
@@ -3127,8 +3077,7 @@ const PaintingWorkModule = (function() {
     }
 
     function _closeWorkViewPage() {
-        var ov = document.getElementById('pwWorkOverlay');
-        if (ov) ov.remove();
+        UIUtils.closeModal();
         _workViewId = null;
         loadAll();
     }
@@ -3634,7 +3583,6 @@ const PaintingWorkModule = (function() {
         openWorkViewPage,
         openWorkEditPage,
         _closeWorkViewPage,
-        _closePopup,
         saveEdit,
         remove,
         exportData,
