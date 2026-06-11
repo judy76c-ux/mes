@@ -278,6 +278,20 @@ var LaserWorkModule = (function() {
                         </select>
                     </div>
                 </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">수량</label>
+                        <input type="number" class="form-input" id="lwQuantity" value="${d.quantity || ''}" placeholder="0">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">도장 LOT - 임의입력</label>
+                        <input type="text" class="form-input" id="lwManualPaintLot" value="${d.paintDate || ''}" placeholder="도장 LOT 입력">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">사출 LOT - 임의입력</label>
+                        <input type="text" class="form-input" id="lwManualInjLot" value="${d.paintLot || ''}" placeholder="사출 LOT 입력">
+                    </div>
+                </div>
             </div>
             <!-- 등록 모드: 레이저 대기품 불러오기 -->
             <div style="background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:8px; padding:12px 14px; margin-bottom:16px;">
@@ -323,12 +337,13 @@ var LaserWorkModule = (function() {
                     <input type="time" class="form-input" id="lwEndTime" value="${d.endTime || ''}">
                 </div>
             </div>
+            ${isEditMode ? `
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">수량 <span style="color:var(--accent-red)">*</span></label>
                     <input type="number" class="form-input" id="lwQuantity" value="${d.quantity || ''}" placeholder="0">
                 </div>
-            </div>
+            </div>` : ``}
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">각인 시간 (sec)</label>
@@ -575,6 +590,11 @@ var LaserWorkModule = (function() {
         const manualCarModel = (document.getElementById('lwCarModel') || {}).value || '';
         const manualPartName = (document.getElementById('lwPartName') || {}).value || '';
         const manualColor = (document.getElementById('lwColor') || {}).value || '';
+        const manualPaintLot = (document.getElementById('lwManualPaintLot') || {}).value || '';
+        const manualInjLot = (document.getElementById('lwManualInjLot') || {}).value || '';
+        const effectiveLots = _selectedLots.length > 0
+            ? _selectedLots
+            : ((manualPaintLot || manualInjLot) ? [{ paintDate: manualPaintLot, lotNo: manualInjLot }] : []);
         return {
             date: document.getElementById('lwDate').value,
             machine: document.getElementById('lwMachine').value,
@@ -583,11 +603,11 @@ var LaserWorkModule = (function() {
             carModel: _selectedCarModel || manualCarModel,
             partName: _selectedPartName || manualPartName,
             color: _selectedColor || manualColor,
-            paintDate: _selectedLots.length > 0 ? (_selectedLots[0].paintDate || '') : '',
-            paintLots: _selectedLots.map(l => ({ paintDate: l.paintDate, lotNo: l.lotNo })),
+            paintDate: effectiveLots.length > 0 ? (effectiveLots[0].paintDate || '') : '',
+            paintLots: effectiveLots.map(l => ({ paintDate: l.paintDate, lotNo: l.lotNo })),
             engravingTime: Number(document.getElementById('lwEngravingTime').value) || 0,
             quantity: Number(document.getElementById('lwQuantity').value) || 0,
-            paintLot: _selectedLots.map(l => l.lotNo).filter(Boolean).join(', '),
+            paintLot: effectiveLots.map(l => l.lotNo).filter(Boolean).join(', '),
             programName: document.getElementById('lwProgramName').value.trim(),
             lensHeight: document.getElementById('lwLensHeight').value.trim(),
             qcFirst: document.getElementById('lwQcFirst').checked,
