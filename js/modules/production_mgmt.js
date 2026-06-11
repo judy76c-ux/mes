@@ -11982,8 +11982,18 @@ var ProdQualityModule = (function() {
             </label>`).join('');
     }
 
+    function _sortItemsByMaster(items = []) {
+        const masterOrder = _masterItems().map(m => m.key);
+        const masterIdx = key => {
+            const i = masterOrder.indexOf(key);
+            return i === -1 ? 9999 : i;
+        };
+        return [...items].sort((a, b) => masterIdx(a.key) - masterIdx(b.key));
+    }
+
     function fillForm(d = {}) {
-        const items = d.items || _itemsForCar(d.carModel || '', d.color || '');
+        const rawItems = d.items || _itemsForCar(d.carModel || '', d.color || '');
+        const items = _sortItemsByMaster(rawItems);
         const compactGridTop = 'display:grid;grid-template-columns:0.9fr 1fr 1.6fr;gap:8px 12px;margin-bottom:8px;';
         const compactGrid = 'display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 12px;margin-bottom:8px;';
         const compactGrid4 = 'display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px 12px;margin-bottom:8px;';
