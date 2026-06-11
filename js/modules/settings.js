@@ -7987,21 +7987,23 @@ const SettingsModule = (function() {
                     <h4><span class="material-symbols-outlined">photo_library</span> 이미지 저장 정책 (NAS 경로)</h4>
                 </div>
                 <div class="card-body" style="display:flex;flex-direction:column;gap:12px;">
-                    <!-- 현재 저장 위치 상태 -->
-                    <div id="imageStorageStatus" style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;">
-                        <span class="material-symbols-outlined" style="font-size:18px;color:#d97706;">photo_camera</span>
-                        <span style="font-size:.85rem;color:#92400e;">사진 저장 경로 로딩 중...</span>
+                    <!-- NAS 마운트 + 저장 위치 상태 -->
+                    <div id="imageStorageStatus" style="display:flex;flex-direction:column;gap:6px;">
+                        <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;">
+                            <span class="material-symbols-outlined" style="font-size:18px;color:#d97706;">photo_camera</span>
+                            <span style="font-size:.85rem;color:#92400e;">사진 저장 경로 로딩 중...</span>
+                        </div>
                     </div>
                     <!-- NAS 사진 기본 경로 입력 -->
                     <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
                         <div style="flex:1;min-width:260px;">
                             <label class="form-label" style="font-size:.82rem;">
                                 NAS 사진 저장 기본 경로
-                                <span style="font-weight:400;color:var(--text-muted);margin-left:4px;">(비워두면 NAS 백업경로/photos 자동 사용)</span>
+                                <span style="font-weight:400;color:var(--text-muted);margin-left:4px;">(서버 마운트 경로 기준 — NAS <code style="font-size:.8rem;">kc-mes/Image</code> = <code style="font-size:.8rem;">/mnt/nas-backup/Image</code>)</span>
                             </label>
                             <input type="text" id="sysNasUploadDirInput" class="form-input"
                                 style="font-family:monospace;font-size:.85rem;"
-                                placeholder="/mnt/nas-backup/web/MES_uploade">
+                                placeholder="/mnt/nas-backup/Image">
                         </div>
                         <button class="btn btn-primary" onclick="SettingsModule.saveImageStoragePolicy()" style="white-space:nowrap;height:36px;">
                             <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">save</span> 저장
@@ -8175,28 +8177,59 @@ const SettingsModule = (function() {
         const inputEl = document.getElementById('sysNasUploadDirInput');
         if (!statusEl || !inputEl) return;
         try {
-            const nasCfg = await ApiClient.getNasConfig();
+            const [nasCfg, sysInfo] = await Promise.all([
+                ApiClient.getNasConfig(),
+                ApiClient.getSystemInfo().catch(() => null)
+            ]);
             const baseDir = nasCfg.effectivePhotoDir || '';
             const onNas = nasCfg.nasDir && baseDir && baseDir.startsWith(nasCfg.nasDir);
+            const nasMounted = sysInfo?.nas?.mounted === true;
+            const nasConfigured = sysInfo?.nas?.configured === true;
             if (nasCfg.nasUploadDir) inputEl.value = nasCfg.nasUploadDir;
-            if (onNas) {
-                statusEl.style.background = '#f0fdf4';
-                statusEl.style.border = '1px solid #86efac';
-                statusEl.innerHTML = `<span class="material-symbols-outlined" style="font-size:18px;color:#16a34a;">photo_camera</span>
-                    <span style="font-size:.85rem;color:#166534;font-weight:600;">✓ NAS 저장 중</span>
-                    <code style="font-size:.82rem;padding:1px 6px;border-radius:4px;background:rgba(0,0,0,.06);margin-left:4px;">${baseDir}</code>`;
-            } else {
-                statusEl.style.background = '#fff7ed';
-                statusEl.style.border = '1px solid #fdba74';
-                statusEl.innerHTML = `<span class="material-symbols-outlined" style="font-size:18px;color:#d97706;">photo_camera</span>
-                    <span style="font-size:.85rem;color:#92400e;font-weight:600;">⚠ 서버 로컬 저장 중</span>
-                    <code style="font-size:.82rem;padding:1px 6px;border-radius:4px;background:rgba(0,0,0,.06);margin-left:4px;">${baseDir || '/opt/mes/uploads'}</code>
-                    <span style="font-size:.75rem;color:#d97706;margin-left:6px;">— NAS 백업 경로를 설정하면 자동으로 NAS에 저장됩니다</span>`;
-            }
-            // 공정별 폴더 테이블 렌더
+
+            // NAS 마운트 상태 칩
+            const mountChip = (() => {
+                if (!nasConfigured) return `<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:8px;background:#f1f5f9;border:1px solid #cbd5e1;">
+                    <span class="material-symbols-outlined" style="font-size:16px;color:#64748b;">lan</span>
+                    <span style="font-size:.82rem;color:#475569;">NAS 백업 경로 미설정</span>
+                </div>`;
+                if (!nasMounted) return `<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:8px;background:#fef2f2;border:1px solid #fca5a5;">
+                    <span class="material-symbols-outlined" style="font-size:16px;color:#dc2626;">link_off</span>
+                    <span style="font-size:.82rem;color:#991b1b;font-weight:600;">NAS 마운트 안 됨</span>
+                    <code style="font-size:.78rem;padding:1px 5px;border-radius:3px;background:rgba(0,0,0,.06);">${nasCfg.nasDir || ''}</code>
+                    <span style="font-size:.75rem;color:#dc2626;">— 서버에서 NAS 마운트 후 사용 가능합니다</span>
+                </div>`;
+                return `<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:8px;background:#f0fdf4;border:1px solid #86efac;">
+                    <span class="material-symbols-outlined" style="font-size:16px;color:#16a34a;">link</span>
+                    <span style="font-size:.82rem;color:#166534;font-weight:600;">NAS 연결됨</span>
+                    <code style="font-size:.78rem;padding:1px 5px;border-radius:3px;background:rgba(0,0,0,.06);">${nasCfg.nasDir || ''}</code>
+                </div>`;
+            })();
+
+            // 사진 저장 위치 칩
+            const photoChip = (() => {
+                if (!nasMounted) return `<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;">
+                    <span class="material-symbols-outlined" style="font-size:16px;color:#d97706;">photo_camera</span>
+                    <span style="font-size:.82rem;color:#92400e;font-weight:600;">⚠ 서버 로컬 저장 중</span>
+                    <code style="font-size:.78rem;padding:1px 5px;border-radius:3px;background:rgba(0,0,0,.06);margin-left:2px;">${baseDir || '/opt/mes/uploads'}</code>
+                </div>`;
+                if (onNas) return `<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:8px;background:#f0fdf4;border:1px solid #86efac;">
+                    <span class="material-symbols-outlined" style="font-size:16px;color:#16a34a;">photo_camera</span>
+                    <span style="font-size:.82rem;color:#166534;font-weight:600;">✓ NAS 저장 중</span>
+                    <code style="font-size:.78rem;padding:1px 5px;border-radius:3px;background:rgba(0,0,0,.06);margin-left:2px;">${baseDir}</code>
+                </div>`;
+                return `<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;">
+                    <span class="material-symbols-outlined" style="font-size:16px;color:#d97706;">photo_camera</span>
+                    <span style="font-size:.82rem;color:#92400e;font-weight:600;">⚠ 서버 로컬 저장 중</span>
+                    <code style="font-size:.78rem;padding:1px 5px;border-radius:3px;background:rgba(0,0,0,.06);margin-left:2px;">${baseDir || '/opt/mes/uploads'}</code>
+                    <span style="font-size:.75rem;color:#d97706;margin-left:4px;">— NAS 경로를 설정하고 마운트하면 NAS에 저장됩니다</span>
+                </div>`;
+            })();
+
+            statusEl.innerHTML = mountChip + photoChip;
             _renderPhotoProcessTable(baseDir);
         } catch (e) {
-            statusEl.innerHTML = `<span style="font-size:.82rem;color:var(--text-muted);">API 서버 연결 필요 (${e.message})</span>`;
+            statusEl.innerHTML = `<div style="padding:8px 12px;border-radius:8px;background:#f1f5f9;border:1px solid #cbd5e1;font-size:.82rem;color:var(--text-muted);">API 서버 연결 필요 (${e.message})</div>`;
             const tableEl = document.getElementById('photoProcessTable');
             if (tableEl) tableEl.innerHTML = `<div style="padding:12px;color:var(--text-muted);text-align:center;font-size:.8rem;">API 서버 연결 필요</div>`;
         }

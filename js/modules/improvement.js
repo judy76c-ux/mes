@@ -226,13 +226,17 @@ var ImprovementActivityModule = (function() {
     }
     async function _readPhotos(input) {
         const files = Array.from(input?.files || []);
-        const jobs = files.map(file => new Promise(resolve => {
-            const reader = new FileReader();
-            reader.onload = () => resolve({ name: file.name, type: file.type, dataUrl: reader.result });
-            reader.onerror = () => resolve(null);
-            reader.readAsDataURL(file);
-        }));
-        return (await Promise.all(jobs)).filter(Boolean);
+        if (!files.length) return [];
+        const results = [];
+        for (const file of files) {
+            try {
+                const url = await ApiClient.uploadPhoto(file, 'improvement');
+                results.push({ name: file.name, url });
+            } catch (e) {
+                UIUtils.toast(`사진 업로드 실패: ${file.name} — ${e.message}`, 'error');
+            }
+        }
+        return results;
     }
     async function saveProposal(id = '') {
         const old = id ? Storage.getById(STORE, id) : {};
@@ -295,7 +299,11 @@ var ImprovementActivityModule = (function() {
     }
     function _photosHtml(photos = []) {
         if (!photos.length) return '';
-        return `<div class="card"><div class="card-body"><h4 style="margin-top:0;">첨부 사진</h4><div style="display:flex;gap:10px;flex-wrap:wrap;">${photos.map(p=>`<img src="${p.dataUrl}" alt="${_esc(p.name)}" style="width:120px;height:90px;object-fit:cover;border:1px solid var(--border-color);border-radius:8px;">`).join('')}</div></div></div>`;
+        const imgs = photos.map(p => {
+            const src = p.url ? ApiClient.photoUrl(p.url) : (p.dataUrl || '');
+            return src ? `<img src="${src}" alt="${_esc(p.name||'')}" style="width:120px;height:90px;object-fit:cover;border:1px solid var(--border-color);border-radius:8px;">` : '';
+        }).join('');
+        return `<div class="card"><div class="card-body"><h4 style="margin-top:0;">첨부 사진</h4><div style="display:flex;gap:10px;flex-wrap:wrap;">${imgs}</div></div></div>`;
     }
     function _pdcaForm(r) {
         return `<div class="card"><div class="card-body">

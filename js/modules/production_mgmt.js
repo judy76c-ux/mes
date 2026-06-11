@@ -10823,8 +10823,11 @@ var ProdQualityModule = (function() {
     const ISSUE_KIND      = 'quality_issue';
     const ITEM_MASTER_KIND = 'quality_item_master';
     const PRESET_KIND     = 'quality_preset'; // 사용자 저장 프레셋
+    const QUALITY_STANDARD_IMAGE_KEY = 'prod_quality_standard_image_v1';
+    const QUALITY_STANDARD_UPLOAD_ROLES = ['admin', 'prod_manager', 'quality_manager', 'paint_line_op'];
 
     let _rootContainer = null;
+    let _qualityStandardImage = null;
 
     const DEFAULT_ITEMS = [
         { key: 'film_under', label: '도막두께(하도)', unit: 'μm', spec: '', method: '도막 두께계', inputType: 'number' },
@@ -10844,6 +10847,30 @@ var ProdQualityModule = (function() {
     const _esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const _js = s => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ');
 
+    function _currentUser() {
+        try {
+            return (typeof AuthModule !== 'undefined' && typeof AuthModule.getCurrentUser === 'function')
+                ? AuthModule.getCurrentUser()
+                : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function _canUploadQualityStandard() {
+        const user = _currentUser();
+        return !!(user && QUALITY_STANDARD_UPLOAD_ROLES.includes(String(user.role || '')));
+    }
+
+    async function _loadQualityStandardImage() {
+        try {
+            return await Storage.getConfigValue(QUALITY_STANDARD_IMAGE_KEY) || null;
+        } catch (e) {
+            console.warn('[ProdQualityModule] standard image load failed:', e);
+            return null;
+        }
+    }
+
     function render(container) {
         _rootContainer = container;
         container.innerHTML = `
@@ -10853,6 +10880,9 @@ var ProdQualityModule = (function() {
                         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                             <button class="btn btn-primary" onclick="ProdQualityModule.openAddModal()">
                                 <span class="material-symbols-outlined">edit_document</span> 작성 등록
+                            </button>
+                            <button class="btn btn-outline" onclick="ProdQualityModule.openQualityStandardPage()">
+                                <span class="material-symbols-outlined">description</span> 초중종물 관리 기준서
                             </button>
                             <button class="btn btn-outline" onclick="ProdQualityModule.openStandardsPage()">
                                 <span class="material-symbols-outlined">rule</span> 품목별 항목 기준
@@ -10987,6 +11017,113 @@ var ProdQualityModule = (function() {
 
     function backToMain() {
         if (_rootContainer) render(_rootContainer);
+    }
+
+    async function openQualityStandardPage() {
+        const container = _rootContainer || document.getElementById('contentArea');
+        if (!container) return;
+        _rootContainer = container;
+        _qualityStandardImage = await _loadQualityStandardImage();
+        const canUpload = _canUploadQualityStandard();
+        container.innerHTML = `
+            <div class="fade-in-up">
+                <div class="page-header" style="margin-bottom:14px;">
+                    <div class="page-actions" style="width:100%;justify-content:space-between;gap:12px;">
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                            <button class="btn btn-outline" onclick="ProdQualityModule.backToMain()">
+                                <span class="material-symbols-outlined">arrow_back</span> 초중종물 관리
+                            </button>
+                        </div>
+                        <div style="display:flex;justify-content:flex-end;gap:8px;align-items:center;flex-wrap:wrap;">
+                            <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.printQualityStandardPage()">
+                                <span class="material-symbols-outlined" style="font-size:15px;">print</span> 인쇄
+                            </button>
+                            <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.focusQualityStandardPasteZone()" ${canUpload ? '' : 'disabled'} style="${canUpload ? '' : 'opacity:.5;cursor:not-allowed;'}">
+                                <span class="material-symbols-outlined" style="font-size:15px;">upload_file</span> 기준서 업로드
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="card" style="display:inline-block;width:auto;max-width:100%;background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);padding:18px 18px 24px;border-radius:18px;box-shadow:0 18px 42px rgba(15,23,42,0.14),0 6px 14px rgba(15,23,42,0.10);">
+                    <div id="prodQualityStandardPasteZone" tabindex="0" onpaste="ProdQualityModule.handleQualityStandardPaste(event)" style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;" aria-hidden="true"></div>
+                    ${_qualityStandardImage
+                        ? `<div style="display:inline-flex;justify-content:flex-start;align-items:flex-start;width:fit-content;max-width:100%;border:1px solid #111;box-shadow:0 10px 28px rgba(15,23,42,0.18),0 3px 8px rgba(15,23,42,0.12);"><img src="${_qualityStandardImage}" alt="초중종물 관리 기준서" style="display:block;max-width:100%;height:auto;"></div>`
+                        : `<div style="min-width:980px;min-height:1385px;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:1rem;">등록된 기준서 이미지가 없습니다.</div>`}
+                </div>
+            </div>
+        `;
+    }
+
+    function focusQualityStandardPasteZone() {
+        if (!_canUploadQualityStandard()) {
+            UIUtils.toast('기준서 업로드는 관리자 또는 관리 권한자만 가능합니다.', 'warning');
+            return;
+        }
+        const zone = document.getElementById('prodQualityStandardPasteZone');
+        if (!zone) return;
+        zone.focus();
+        UIUtils.toast('기준서 업로드 영역이 선택되었습니다. Ctrl+V로 붙여넣어 주세요.', 'info');
+    }
+
+    async function handleQualityStandardPaste(event) {
+        event.preventDefault();
+        if (!_canUploadQualityStandard()) {
+            UIUtils.toast('기준서 업로드 권한이 없습니다.', 'warning');
+            return;
+        }
+        const items = Array.from(event.clipboardData?.items || []);
+        const imageItem = items.find(item => item.type && item.type.startsWith('image/'));
+        if (!imageItem) {
+            UIUtils.toast('클립보드 이미지가 없습니다. 기준서 화면을 복사한 뒤 다시 붙여넣어 주세요.', 'warning');
+            return;
+        }
+        const file = imageItem.getAsFile();
+        if (!file) {
+            UIUtils.toast('이미지 읽기 중 오류가 발생했습니다.', 'error');
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = async () => {
+            try {
+                _qualityStandardImage = String(reader.result || '');
+                await Storage.setConfigValue(QUALITY_STANDARD_IMAGE_KEY, _qualityStandardImage);
+                await openQualityStandardPage();
+                UIUtils.toast('기준서 이미지가 저장되었습니다.', 'success');
+            } catch (e) {
+                console.warn('[ProdQualityModule] standard save failed:', e);
+                UIUtils.toast('기준서 저장 중 오류가 발생했습니다.', 'error');
+            }
+        };
+        reader.onerror = () => UIUtils.toast('클립보드 이미지를 읽을 수 없습니다.', 'error');
+        reader.readAsDataURL(file);
+    }
+
+    function printQualityStandardPage() {
+        const img = document.querySelector('#contentArea img');
+        const imageSrc = img ? String(img.getAttribute('src') || '') : String(_qualityStandardImage || '');
+        if (!imageSrc) {
+            UIUtils.toast('인쇄할 기준서가 없습니다. 먼저 기준서를 업로드해 주세요.', 'warning');
+            return;
+        }
+        const win = window.open('', 'prod_quality_standard_print', 'width=1200,height=900');
+        if (!win) return;
+        win.document.open();
+        win.document.write(`
+            <!doctype html><html lang="ko"><head><meta charset="utf-8"><title>초중종물 관리 기준서</title>
+            <style>
+                @page { size: A4 landscape; margin:4mm 6mm 6mm 6mm; }
+                html, body { margin:0; padding:0; background:#fff; }
+                body { display:flex; align-items:flex-start; justify-content:center; overflow:hidden; }
+                .print-sheet { width:285mm; height:198mm; display:flex; align-items:flex-start; justify-content:center; overflow:hidden; margin:0 auto; padding-top:1mm; }
+                img { display:block; width:auto; height:auto; max-width:285mm; max-height:197mm; object-fit:contain; break-inside:avoid; page-break-inside:avoid; }
+                * { box-sizing:border-box; break-inside:avoid; page-break-inside:avoid; }
+            </style></head><body><div class="print-sheet"><img src="${imageSrc}" alt="초중종물 관리 기준서"></div></body></html>
+        `);
+        win.document.close();
+        setTimeout(() => {
+            win.focus();
+            win.print();
+        }, 250);
     }
 
     // ── 품목별 항목 기준 카드 렌더링 ─────────────────────────────────────────
@@ -12486,6 +12623,10 @@ table{border-collapse:collapse;width:100%}
         ,deleteUserPreset
         ,openStandardsPage
         ,backToMain
+        ,openQualityStandardPage
+        ,focusQualityStandardPasteZone
+        ,handleQualityStandardPaste
+        ,printQualityStandardPage
         ,renderStandardsCard
         ,openPresetMgmtModal
         ,openPresetEditModal

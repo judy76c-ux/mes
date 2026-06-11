@@ -486,7 +486,6 @@ const ProductionPlanModule = (function() {
         const tbody = document.getElementById(tbodyId);
         const foot = document.getElementById(footId);
         const selectedDate = (document.getElementById('planDateFilter') || {}).value || UIUtils.today();
-        const isPastDate = selectedDate < UIUtils.today();
 
         let totalQty = 0;
         let totalMinutes = 0;
@@ -568,7 +567,7 @@ const ProductionPlanModule = (function() {
                 bgColorStyle = `background-color: ${highlightColor};`;
             }
 
-            let clickable = !isLunch && !isPastDate;
+            let clickable = !isLunch;
             if (isHighlight && !hasData) {
                 clickable = false;
             }
@@ -576,7 +575,7 @@ const ProductionPlanModule = (function() {
             const trCursor = clickable ? 'pointer' : 'not-allowed';
             const trClick = clickable
                 ? `onclick="ProductionPlanModule.editSlot('${slot}', '${lineName}')"`
-                : (isLunch ? '' : `onclick="event.stopPropagation(); UIUtils.toast('${isPastDate ? '지난 날짜의 계획은 수정할 수 없습니다.' : '해당 시간은 이미 다른 작업이 진행 중입니다.'}', 'warning');"`);
+                : (isLunch ? '' : `onclick="event.stopPropagation(); UIUtils.toast('해당 시간은 이미 다른 작업이 진행 중입니다.', 'warning');"`);
             const isOvertimeStart = (slot === '18:00');
 
             if (isMealTime) {
@@ -633,14 +632,14 @@ const ProductionPlanModule = (function() {
             return exchangeRow + `
                 <tr class="${rowClass} hover-row ${isOvertimeStart ? 'overtime-start' : ''}" style="cursor: ${trCursor}; ${bgColorStyle}">
                     <td class="sticky-col time-cell" ${trClick}>${item.startTime || slot}${item.endTime ? ' ~ ' + item.endTime : ''}</td>
-                    <td class="editable-cell" ${trClick}>${item.carModel || (clickable ? '<span style="color:#ccc;">(클릭하여 입력)</span>' : (isPastDate ? '' : `<span style="color:#aaa;">(${activeItem?.status === '완료' ? '작업 완료' : (activeItem?.status === '대기' ? '작업 대기' : '진행 중')})</span>`))}</td>
+                    <td class="editable-cell" ${trClick}>${item.carModel || (clickable ? '<span style="color:#ccc;">(클릭하여 입력)</span>' : `<span style="color:#aaa;">(${activeItem?.status === '완료' ? '작업 완료' : (activeItem?.status === '대기' ? '작업 대기' : '진행 중')})</span>`)}</td>
                     <td class="editable-cell" ${trClick}>${item.partName || ''}</td>
                     <td class="editable-cell" ${trClick}>${item.color || ''}</td>
                     <td class="editable-cell text-center" ${trClick}>${item.carModel ? UIUtils.itemTypeBadge(item.carModel, item.partName, item.color) : ''}</td>
                     <td class="editable-cell text-right" ${trClick}>${q > 0 ? UIUtils.formatNumber(q) : ''}</td>
                     <td class="editable-cell text-center" ${trClick}>${item.status ? UIUtils.badge(item.status, item.status === '완료' ? 'success' : (item.status === '진행' ? 'info' : 'warning')) : ''}</td>
                     <td class="text-center">
-                        ${hasData && !isPastDate ? `<button class="btn btn-xs btn-icon btn-danger" onclick="ProductionPlanModule.removeSlot('${slot}', '${lineName}')" title="삭제" style="position:relative; z-index:10;"><span class="material-symbols-outlined" style="font-size:14px;">delete</span></button>` : ''}
+                        ${hasData ? `<button class="btn btn-xs btn-icon btn-danger" onclick="ProductionPlanModule.removeSlot('${slot}', '${lineName}')" title="삭제" style="position:relative; z-index:10;"><span class="material-symbols-outlined" style="font-size:14px;">delete</span></button>` : ''}
                     </td>
                 </tr>
             `;
@@ -1586,11 +1585,6 @@ const ProductionPlanModule = (function() {
 
     function editSlot(slot, line) {
         const date = document.getElementById('planDateFilter').value;
-        if (date < UIUtils.today()) {
-            UIUtils.toast('지난 날짜의 계획은 수정할 수 없습니다.', 'warning');
-            return;
-        }
-
         const allData = Storage.getAll(STORE);
         let currentItem = null;
 
@@ -2002,11 +1996,6 @@ const ProductionPlanModule = (function() {
 
     async function saveSlot(originalSlot, line) {
         const date = document.getElementById('planDateFilter').value;
-        if (date < UIUtils.today()) {
-            UIUtils.toast('지난 날짜의 계획은 저장할 수 없습니다.', 'warning');
-            return;
-        }
-
         const startTime = document.getElementById('sStartTime').value;
         const endTime = document.getElementById('sEndTime').value;
         const newSlot = startTime;
@@ -2163,11 +2152,6 @@ const ProductionPlanModule = (function() {
     function removeSlot(slot, line) {
         UIUtils.confirm(`${slot} 시간대 계획을 삭제하시겠습니까?`, async () => {
             const date = document.getElementById('planDateFilter').value;
-            if (date < UIUtils.today()) {
-                UIUtils.toast('지난 날짜의 계획은 삭제할 수 없습니다.', 'warning');
-                return;
-            }
-
             const allData = Storage.getAll(STORE);
             for (const item of allData) {
                 if (item.date === date && item.line === line) {
