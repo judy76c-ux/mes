@@ -457,6 +457,9 @@ const PaintingWorkModule = (function() {
     let _currentDate = '';
     let _currentLine = '도장-A';
 
+    // 팝업 창 여부 (window.opener 존재 = 팝업)
+    var _isPopupMode = !!(window.opener);
+
     function _getNotifyUsersByRole() {
         if (typeof AuthModule === 'undefined' || typeof AuthModule.getUsers !== 'function') return [];
         const users = AuthModule.getUsers() || [];
@@ -2821,8 +2824,43 @@ const PaintingWorkModule = (function() {
         return alerts.join('');
     }
 
-    // 오버레이 헬퍼
+    // 보기 페이지 진입점: 부모창이면 팝업 열기, 팝업창이면 contentArea에 바로 렌더링
+    function openWorkViewPage(id) {
+        if (_isPopupMode) {
+            // 팝업창 안에서 호출 (보기↔수정 전환 포함)
+            _renderWorkView(id);
+            return;
+        }
+        if (_workViewId !== null) {
+            // 수정 오버레이에서 "보기로" 버튼 → 오버레이 내 뷰 갱신
+            _renderWorkView(id);
+            return;
+        }
+        // 부모창 목록에서 클릭 → 새 팝업창 열기
+        var base = location.href.replace(/\?.*$/, '');
+        var popup = window.open(
+            base + '?pw_view=' + encodeURIComponent(id),
+            'pw_view_' + id,
+            'width=1080,height=780,resizable=yes,scrollbars=yes,location=no,menubar=no,toolbar=no'
+        );
+        if (popup) { popup.focus(); return; }
+        // 팝업 차단 시 오버레이 fallback
+        _renderWorkView(id);
+    }
+
+    // 팝업 닫기 (부모창 목록 갱신 후 window.close)
+    function _closePopup() {
+        try {
+            if (window.opener && window.opener.PaintingWorkModule) {
+                window.opener.PaintingWorkModule.loadAll();
+            }
+        } catch(e) {}
+        window.close();
+    }
+
+    // 뷰/에디트 공통 컨테이너 반환
     function _getOrCreateWorkOverlay() {
+        if (_isPopupMode) return document.getElementById('contentArea');
         var ov = document.getElementById('pwWorkOverlay');
         if (!ov) {
             ov = document.createElement('div');
@@ -2835,8 +2873,15 @@ const PaintingWorkModule = (function() {
         return ov;
     }
 
-    // 읽기 전용 보기 페이지 (오버레이)
-    function openWorkViewPage(id) {
+    // 닫기 버튼 핸들러 문자열
+    function _closeHandler() {
+        return _isPopupMode
+            ? 'PaintingWorkModule._closePopup()'
+            : 'PaintingWorkModule._closeWorkViewPage()';
+    }
+
+    // 실제 뷰 렌더링 (오버레이 or 팝업 contentArea)
+    function _renderWorkView(id) {
         var d = Storage.getById(STORE, id);
         if (!d) return;
         _workViewId = id;
@@ -2869,12 +2914,11 @@ const PaintingWorkModule = (function() {
 
         var ov = _getOrCreateWorkOverlay();
         ov.innerHTML =
-            // 상단 고정 헤더
             '<div style="position:sticky;top:0;z-index:10;background:var(--bg-primary);' +
             'border-bottom:1px solid var(--border);padding:12px 24px;' +
             'display:flex;justify-content:space-between;align-items:center;gap:10px;">' +
             '<div style="display:flex;align-items:center;gap:10px;">' +
-            '<button class="btn btn-outline btn-sm" onclick="PaintingWorkModule._closeWorkViewPage()">' +
+            '<button class="btn btn-outline btn-sm" onclick="' + _closeHandler() + '">' +
             '<span class="material-symbols-outlined" style="font-size:18px;">close</span> 닫기</button>' +
             '<span style="font-size:0.95rem;font-weight:600;color:var(--text-muted);">도장 작업 실적 보기</span>' +
             '</div>' +
@@ -3002,8 +3046,8 @@ const PaintingWorkModule = (function() {
             ? wp[1] + '-' + wp[2] + ' <small style="color:var(--text-muted);">(' + wp[0] + ')</small>'
             : (d.date || '-');
 
-        var ov = _getOrCreateWorkOverlay();
-        ov.innerHTML =
+        var ov2 = _getOrCreateWorkOverlay();
+        ov2.innerHTML =
             '<div style="position:sticky;top:0;z-index:10;background:var(--bg-primary);' +
             'border-bottom:1px solid var(--border);padding:12px 24px;' +
             'display:flex;justify-content:space-between;align-items:center;gap:10px;">' +
@@ -3401,6 +3445,10 @@ const PaintingWorkModule = (function() {
         if (_workViewId) {
             const savedId = _workViewId;
             _workViewId = null;
+            // 팝업 모드: 부모창 목록도 갱신
+            if (_isPopupMode) {
+                try { if (window.opener && window.opener.PaintingWorkModule) window.opener.PaintingWorkModule.loadAll(); } catch(e) {}
+            }
             openWorkViewPage(savedId);
         } else {
             UIUtils.closeModal();

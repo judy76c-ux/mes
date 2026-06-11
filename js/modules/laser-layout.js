@@ -270,7 +270,7 @@ var LaserLayoutModule = (function () {
         <div class="fade-in-up" style="display:flex;flex-direction:column;height:100%;min-height:0;">
           <div style="margin-bottom:18px;">
             <div style="margin-bottom:14px;">
-              <h3 style="margin:0 0 6px;font-size:1.15rem;">재공품 현황 레이아웃</h3>
+              <h3 style="margin:0 0 6px;font-size:1.15rem;">재공품 현황</h3>
               <p style="margin:0;color:var(--text-muted);font-size:.9rem;">레이저 공정 대기 재공품의 보관 위치와 박스 배치를 레이아웃으로 관리합니다.</p>
             </div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;">

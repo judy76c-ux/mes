@@ -31,21 +31,21 @@ var LaserWipModule = (function() {
                         <span class="material-symbols-outlined" style="font-size:18px;">${t.icon}</span>
                         ${t.label}
                     </button>`).join('')}
-                <button type="button" onclick="Router.navigate('laser-layout')"
-                    class="btn btn-outline"
-                    style="display:flex;align-items:center;gap:6px;background:#fff;">
-                    <span class="material-symbols-outlined" style="font-size:18px;">map</span>
-                    재공품 현황 레이아웃
-                </button>
                 <button type="button" onclick="LaserWipModule.openManualInput()"
                     class="btn btn-outline"
                     style="display:flex;align-items:center;gap:6px;background:#fff;">
                     <span class="material-symbols-outlined" style="font-size:18px;">edit_square</span>
                     수기 등록
                 </button>
-                <button class="btn btn-secondary" style="display:flex;align-items:center;gap:4px;font-size:0.85rem;margin-left:auto;"
+                <button class="btn btn-secondary" style="display:flex;align-items:center;gap:4px;font-size:0.85rem;"
                     onclick="LaserWipModule.refresh()">
                     <span class="material-symbols-outlined" style="font-size:1rem;">refresh</span> 새로고침
+                </button>
+                <button type="button" onclick="Router.navigate('laser-layout')"
+                    class="btn btn-outline"
+                    style="display:flex;align-items:center;gap:6px;background:#fff;margin-left:auto;">
+                    <span class="material-symbols-outlined" style="font-size:18px;">map</span>
+                    재공품 현황 레이아웃
                 </button>
             </div>
         </div>`;
