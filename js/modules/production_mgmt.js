@@ -10847,6 +10847,142 @@ var ProdQualityModule = (function() {
     const _esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const _js = s => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ');
 
+    function _isRangeSpecItem(item = {}) {
+        return ['film_under', 'film_top', 'color_l', 'color_a', 'color_b'].includes(String(item.key || ''));
+    }
+
+    function _isFilmSpecItem(item = {}) {
+        return ['film_under', 'film_top'].includes(String(item.key || ''));
+    }
+
+    function _isColorSpecItem(item = {}) {
+        return ['color_l', 'color_a', 'color_b'].includes(String(item.key || ''));
+    }
+
+    function _isGlossSpecItem(item = {}) {
+        return String(item.key || '') === 'gloss';
+    }
+
+    // 항목별 기준값 입력 여부 판단
+    function _hasSpecValue(item = {}) {
+        if (_isGlossSpecItem(item)) {
+            const { targetSpec, toleranceSpec } = _glossValues(item);
+            return !!(targetSpec && toleranceSpec);
+        }
+        if (_isRangeSpecItem(item)) {
+            const { upperSpec, lowerSpec } = _rangeSpecValues(item);
+            return !!(upperSpec || lowerSpec || item.spec);
+        }
+        return !!(item.spec && String(item.spec).trim());
+    }
+
+    // 제품 기준값 상태: 'none' | 'items-only' | 'partial' | 'complete'
+    function _specStatus(tmplItems = []) {
+        if (!tmplItems.length) return 'none';
+        const filled = tmplItems.filter(_hasSpecValue).length;
+        if (filled === 0) return 'items-only';
+        if (filled < tmplItems.length) return 'partial';
+        return 'complete';
+    }
+
+    // 광택 ± 공차 값 추출 (targetSpec/toleranceSpec 우선, 없으면 upper/lower에서 역산)
+    function _glossValues(item = {}) {
+        const t = item.targetSpec !== undefined && item.targetSpec !== '' ? String(item.targetSpec) : '';
+        const tol = item.toleranceSpec !== undefined && item.toleranceSpec !== '' ? String(item.toleranceSpec) : '';
+        if (t !== '' && tol !== '') return { targetSpec: t, toleranceSpec: tol };
+        const u = parseFloat(item.upperSpec ?? '');
+        const l = parseFloat(item.lowerSpec ?? '');
+        if (!isNaN(u) && !isNaN(l)) {
+            const fmt = v => v % 1 === 0 ? String(v) : String(Math.round(v * 10) / 10);
+            return { targetSpec: fmt((u + l) / 2), toleranceSpec: fmt((u - l) / 2) };
+        }
+        return { targetSpec: '', toleranceSpec: '' };
+    }
+
+    function _glossSpecEditor(prefix, item = {}) {
+        const { targetSpec, toleranceSpec } = _glossValues(item);
+        return `
+            <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:4px;align-items:center;min-width:150px;">
+                <input type="number" step="0.1" class="form-input ${prefix}-gloss-target" value="${_esc(targetSpec)}" placeholder="기준값" style="height:30px;padding:4px 6px;font-size:0.78rem;text-align:right;">
+                <span style="font-size:0.88rem;font-weight:800;color:var(--accent-blue);padding:0 3px;">±</span>
+                <input type="number" step="0.1" class="form-input ${prefix}-gloss-tol" value="${_esc(toleranceSpec)}" placeholder="공차" style="height:30px;padding:4px 6px;font-size:0.78rem;text-align:right;">
+            </div>
+            <input type="hidden" class="${prefix}-spec" value="${_esc(item.spec || '')}">
+        `;
+    }
+
+    function _applyGlossSpec(obj, row, prefix) {
+        const tgt = parseFloat(row.querySelector(`.${prefix}-gloss-target`)?.value || '');
+        const tol = parseFloat(row.querySelector(`.${prefix}-gloss-tol`)?.value || '');
+        obj.targetSpec = isNaN(tgt) ? '' : String(tgt);
+        obj.toleranceSpec = isNaN(tol) ? '' : String(tol);
+        if (!isNaN(tgt) && !isNaN(tol)) {
+            obj.upperSpec = String(tgt + tol);
+            obj.lowerSpec = String(tgt - tol);
+            obj.spec = `${tgt} ± ${tol} GU`;
+        }
+    }
+
+    function _parseLegacyRangeSpec(spec = '') {
+        const text = String(spec || '').trim();
+        if (!text) return { upperSpec: '', lowerSpec: '' };
+        const nums = text.match(/[+\-]?\d+(?:\.\d+)?/g) || [];
+        if (nums.length < 2) return { upperSpec: '', lowerSpec: '' };
+        const a = nums[0];
+        const b = nums[1];
+        const na = Number(a);
+        const nb = Number(b);
+        if (!Number.isNaN(na) && !Number.isNaN(nb)) {
+            if (na >= nb) return { upperSpec: a, lowerSpec: b };
+            return { upperSpec: b, lowerSpec: a };
+        }
+        return { upperSpec: a, lowerSpec: b };
+    }
+
+    function _rangeSpecValues(item = {}) {
+        let upperSpec = item.upperSpec ?? item.maxSpec ?? '';
+        let lowerSpec = item.lowerSpec ?? item.minSpec ?? '';
+        if ((upperSpec === '' || upperSpec == null) && (lowerSpec === '' || lowerSpec == null) && item.spec) {
+            const legacy = _parseLegacyRangeSpec(item.spec);
+            upperSpec = legacy.upperSpec;
+            lowerSpec = legacy.lowerSpec;
+        }
+        return {
+            upperSpec: String(upperSpec ?? '').trim(),
+            lowerSpec: String(lowerSpec ?? '').trim()
+        };
+    }
+
+    function _composeRangeSpec(item = {}) {
+        if (_isGlossSpecItem(item)) {
+            const { targetSpec, toleranceSpec } = _glossValues(item);
+            if (targetSpec !== '' && toleranceSpec !== '') return `${targetSpec} ± ${toleranceSpec} GU`;
+        }
+        const { upperSpec, lowerSpec } = _rangeSpecValues(item);
+        const unit = String(item.unit || '').trim();
+        if (!upperSpec && !lowerSpec) return String(item.spec || '').trim();
+        if (_isFilmSpecItem(item)) return `(${lowerSpec || ''} ~ ${upperSpec || ''}) ${unit}`.trim();
+        if (_isColorSpecItem(item)) return `${upperSpec || ''} / ${lowerSpec || ''}`.trim();
+        return `${lowerSpec || ''} ~ ${upperSpec || ''}`.trim();
+    }
+
+    function _rangeSpecEditor(prefix, item = {}, placeholderUpper = '상한', placeholderLower = '하한') {
+        const { upperSpec, lowerSpec } = _rangeSpecValues(item);
+        return `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;min-width:160px;">
+                <div style="display:flex;align-items:center;gap:4px;">
+                    <span style="font-size:0.72rem;font-weight:700;color:var(--text-muted);min-width:18px;">상</span>
+                    <input type="text" class="form-input ${prefix}-upper" value="${_esc(upperSpec)}" placeholder="${placeholderUpper}" style="height:30px;padding:4px 6px;font-size:0.78rem;text-align:right;">
+                </div>
+                <div style="display:flex;align-items:center;gap:4px;">
+                    <span style="font-size:0.72rem;font-weight:700;color:var(--text-muted);min-width:18px;">하</span>
+                    <input type="text" class="form-input ${prefix}-lower" value="${_esc(lowerSpec)}" placeholder="${placeholderLower}" style="height:30px;padding:4px 6px;font-size:0.78rem;text-align:right;">
+                </div>
+            </div>
+            <input type="hidden" class="${prefix}-spec" value="${_esc(item.spec || '')}">
+        `;
+    }
+
     function _currentUser() {
         try {
             return (typeof AuthModule !== 'undefined' && typeof AuthModule.getCurrentUser === 'function')
@@ -10886,9 +11022,6 @@ var ProdQualityModule = (function() {
                             </button>
                             <button class="btn btn-outline" onclick="ProdQualityModule.openStandardsPage()">
                                 <span class="material-symbols-outlined">rule</span> 품목별 항목 기준
-                            </button>
-                            <button class="btn btn-secondary" onclick="ProdQualityModule.openBulkTemplateModal()">
-                                <span class="material-symbols-outlined">library_add</span> 일괄 기준설정
                             </button>
                         </div>
                         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
@@ -10983,33 +11116,36 @@ var ProdQualityModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-outline" onclick="ProdQualityModule.backToMain()">
-                            <span class="material-symbols-outlined">arrow_back</span> 초중종물 관리
-                        </button>
-                        <button class="btn btn-outline" onclick="ProdQualityModule.openItemListModal()">
-                            <span class="material-symbols-outlined">list_alt</span> 관리항목
-                        </button>
-                        <button class="btn btn-secondary" onclick="ProdQualityModule.openBulkTemplateModal()">
-                            <span class="material-symbols-outlined">library_add</span> 일괄 기준설정
-                        </button>
+                    <div class="page-actions" style="width:100%;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                            <button class="btn btn-outline" onclick="ProdQualityModule.backToMain()">
+                                <span class="material-symbols-outlined">arrow_back</span> 초중종물 관리
+                            </button>
+                        </div>
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
+                            <button class="btn btn-outline" onclick="ProdQualityModule.openPresetMgmtModal()">
+                                <span class="material-symbols-outlined">bookmarks</span> 프레셋 관리
+                            </button>
+                            <button class="btn btn-outline" onclick="ProdQualityModule.openItemListModal()">
+                                <span class="material-symbols-outlined">list_alt</span> 관리항목 설정
+                            </button>
+                        </div>
                     </div>
                 </div>
 
-                <div class="card" style="margin-bottom:16px;">
-                    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-                        <h4><span class="material-symbols-outlined">rule</span> 품목별 항목 기준</h4>
-                        <div style="display:flex;gap:8px;align-items:center;">
-                            <select class="form-select" id="pqStdFilterCar" style="height:36px;min-width:130px;" onchange="ProdQualityModule.renderStandardsCard()">
-                                <option value="">전체 차종</option>
-                                ${_carOptions('')}
-                            </select>
-                        </div>
-                    </div>
-                    <div class="card-body" style="padding:0;">
-                        <div id="pqStandardsBody"></div>
-                    </div>
+                <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;padding:10px 14px;background:rgba(59,130,246,0.06);border-radius:10px;border:1px solid rgba(59,130,246,0.18);font-size:0.83rem;color:var(--text-secondary);">
+                    <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);">info</span>
+                    <span>프레셋으로 관리항목을 선택하고, 아래 품목별로 <strong>기준값(±공차, 상/하한)</strong>을 입력하세요.</span>
                 </div>
+
+                <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
+                    <select class="form-select" id="pqStdFilterCar" style="height:36px;min-width:140px;max-width:200px;" onchange="ProdQualityModule.renderStandardsCard()">
+                        <option value="">전체 차종</option>
+                        ${_carOptions('')}
+                    </select>
+                </div>
+
+                <div id="pqStandardsBody"></div>
             </div>
         `;
         renderStandardsCard();
@@ -11126,77 +11262,464 @@ var ProdQualityModule = (function() {
         }, 250);
     }
 
-    // ── 품목별 항목 기준 카드 렌더링 ─────────────────────────────────────────
+    // 에디터 로드용 정규화 — 리스트 표시는 건드리지 않고 입력 필드만 채움
+    function _normalizeItemForEdit(item) {
+        const it = Object.assign({}, item);
+        if (_isGlossSpecItem(it)) {
+            // targetSpec/toleranceSpec 없으면 spec 문자열에서 추출 시도
+            if (!it.targetSpec && !it.toleranceSpec && it.spec) {
+                const nums = String(it.spec).match(/[+\-]?\d+(?:\.\d+)?/g) || [];
+                if (nums.length >= 2) {
+                    const a = parseFloat(nums[0]), b = parseFloat(nums[1]);
+                    it.targetSpec    = String(Math.round((a + b) / 2 * 10) / 10);
+                    it.toleranceSpec = String(Math.round((Math.abs(a - b) / 2) * 10) / 10);
+                } else if (nums.length === 1) {
+                    it.targetSpec = nums[0]; // 공차 없이 기준값만 표시
+                }
+            }
+        } else if (_isRangeSpecItem(it)) {
+            // upperSpec/lowerSpec 없으면 spec 문자열에서 추출 시도
+            if (!it.upperSpec && !it.lowerSpec && it.spec) {
+                const { upperSpec, lowerSpec } = _parseLegacyRangeSpec(it.spec);
+                if (upperSpec || lowerSpec) {
+                    it.upperSpec = upperSpec;
+                    it.lowerSpec = lowerSpec;
+                } else {
+                    // 숫자 1개짜리면 upper 칸에 표시
+                    const nums = String(it.spec).match(/[+\-]?\d+(?:\.\d+)?/g) || [];
+                    if (nums.length === 1) it.upperSpec = nums[0];
+                }
+            }
+        }
+        return it;
+    }
+
+    // ── 품목별 항목 기준 카드 렌더링 (제품 마스터 기준, 차종별 블럭) ───────────
     function renderStandardsCard() {
         const el = document.getElementById('pqStandardsBody');
         if (!el) return;
-        const carFilter = document.getElementById('pqStdFilterCar')?.value || '';
-        const combos = _carColorCombos().filter(c => !carFilter || c.carModel === carFilter);
+        const filterCar = document.getElementById('pqStdFilterCar')?.value || '';
+        const allProducts = (Storage.getAll(DB.STORES.PRODUCTS) || [])
+            .filter(p => _normText(p.carModel))
+            .filter(p => !filterCar || _normText(p.carModel) === filterCar)
+            .map(p => ({
+                id: p.id,
+                carModel: _normText(p.carModel),
+                partName: _normText(p.partName || '-'),
+                color: _normText(p.color || p.paintColor || p.paint || p.drawingColor || '')
+            }));
 
-        if (!combos.length) {
-            el.innerHTML = `<div style="padding:28px;text-align:center;color:var(--text-muted);">
-                <span class="material-symbols-outlined" style="font-size:32px;display:block;margin-bottom:8px;opacity:.4;">tune</span>
-                등록된 제품 또는 도장 작업일지가 없습니다.
+        if (!allProducts.length) {
+            el.innerHTML = `<div style="padding:36px;text-align:center;color:var(--text-muted);">
+                <span class="material-symbols-outlined" style="font-size:40px;display:block;margin-bottom:10px;opacity:.4;">inventory_2</span>
+                등록된 제품이 없습니다. <strong>설정 → 제품 관리</strong>에서 먼저 등록하세요.
             </div>`;
             return;
         }
 
-        const configured = combos.filter(c => {
-            const t = _exactTemplateFor(c.carModel, c.color);
-            return t && Array.isArray(t.items) && t.items.length > 0;
-        }).length;
-        const total = combos.length;
+        const masterItems = _masterItems();
+        const total = allProducts.length;
 
-        el.innerHTML = `
-            <div style="display:flex;gap:8px;padding:10px 16px;background:var(--bg-secondary);border-bottom:1px solid var(--border-color);font-size:0.82rem;flex-wrap:wrap;">
-                <span style="color:var(--text-muted);">전체 <strong style="color:var(--text-primary);">${total}</strong>개 차종/컬러</span>
-                <span style="color:var(--accent-green);font-weight:600;">✓ 설정완료 ${configured}</span>
-                <span style="color:var(--accent-orange);font-weight:600;">⚠ 미설정 ${total - configured}</span>
-            </div>
-            <div class="data-table-wrapper">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>차종</th>
-                            <th>컬러</th>
-                            <th>대상 품목</th>
-                            <th style="text-align:center;">관리항목 수</th>
-                            <th style="text-align:center;">상태</th>
-                            <th style="text-align:center;">기준 설정</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${combos.map(combo => {
-                            const tmpl = _exactTemplateFor(combo.carModel, combo.color);
-                            const itemCount = tmpl && Array.isArray(tmpl.items) ? tmpl.items.length : 0;
-                            const hasTmpl = itemCount > 0;
-                            const parts = combo.parts.filter(p => p !== '기준설정').join(', ') || '-';
-                            return `
-                                <tr style="${!hasTmpl ? 'background:rgba(251,146,60,0.04);' : ''}">
-                                    <td><strong>${_esc(combo.carModel)}</strong></td>
-                                    <td>${_esc(combo.color) || '<span style="color:var(--text-muted);font-size:0.8rem;">공통</span>'}</td>
-                                    <td style="font-size:0.8rem;color:var(--text-muted);max-width:200px;">${_esc(parts)}</td>
-                                    <td style="text-align:center;">
-                                        ${hasTmpl
-                                            ? `<strong style="color:var(--accent-blue);">${itemCount}</strong>`
-                                            : `<span style="color:var(--text-muted);">-</span>`}
-                                    </td>
-                                    <td style="text-align:center;">
-                                        ${hasTmpl
-                                            ? `<span class="badge badge-success">✓ 설정완료</span>`
-                                            : `<span class="badge badge-warning">미설정</span>`}
-                                    </td>
-                                    <td style="text-align:center;">
-                                        <button class="btn btn-sm ${hasTmpl ? 'btn-outline' : 'btn-primary'}"
-                                            onclick="ProdQualityModule.openTemplateModal('${_js(combo.carModel)}','${_js(combo.color)}')">
-                                            ${hasTmpl ? '수정' : '기준 설정'}
-                                        </button>
-                                    </td>
-                                </tr>`;
-                        }).join('')}
-                    </tbody>
-                </table>
+        const _prodStatus = p => {
+            const t = _templateForProduct(p.carModel, p.partName, p.color);
+            return _specStatus(t && Array.isArray(t.items) ? t.items : []);
+        };
+        const completeCount = allProducts.filter(p => _prodStatus(p) === 'complete').length;
+        const partialCount  = allProducts.filter(p => ['items-only','partial'].includes(_prodStatus(p))).length;
+        const noneCount     = total - completeCount - partialCount;
+
+        // 차종별 그룹핑
+        const carGroups = {};
+        allProducts.forEach(p => {
+            if (!carGroups[p.carModel]) carGroups[p.carModel] = [];
+            carGroups[p.carModel].push(p);
+        });
+
+        const summaryBar = `
+            <div style="display:flex;gap:12px;padding:10px 16px;background:var(--bg-secondary);border-radius:10px;margin-bottom:14px;font-size:0.83rem;flex-wrap:wrap;align-items:center;">
+                <span>전체 <strong style="color:var(--text-primary);">${total}</strong>개 품목</span>
+                <span style="color:var(--accent-green);font-weight:600;">✓ 항목+기준값 완료 ${completeCount}</span>
+                <span style="color:#2563eb;font-weight:600;">△ 기준값 미입력 ${partialCount}</span>
+                <span style="color:var(--accent-orange);font-weight:600;">✗ 미설정 ${noneCount}</span>
             </div>`;
+
+        const blocks = Object.entries(carGroups)
+            .sort(([a],[b]) => a.localeCompare(b, 'ko'))
+            .map(([carModel, prods]) => {
+                const completeInGroup = prods.filter(p => _prodStatus(p) === 'complete').length;
+                const partialInGroup  = prods.filter(p => ['items-only','partial'].includes(_prodStatus(p))).length;
+                const noneInGroup     = prods.length - completeInGroup - partialInGroup;
+                const allSet = completeInGroup === prods.length;
+                const blockId = `pqBlock_${carModel.replace(/\s+/g,'_')}`;
+
+                const headerCols = masterItems.map(item =>
+                    `<th style="text-align:center;min-width:88px;font-size:0.74rem;padding:6px 4px;">
+                        ${_esc(item.label)}<br>
+                        <span style="font-size:0.68rem;color:var(--text-muted);font-weight:400;">${_esc(item.unit||'')}</span>
+                    </th>`
+                ).join('');
+
+                const bodyRows = prods
+                    .sort((a,b) => a.partName.localeCompare(b.partName,'ko') || a.color.localeCompare(b.color,'ko'))
+                    .map(p => {
+                        const tmpl = _templateForProduct(p.carModel, p.partName, p.color);
+                        const tmplItems = tmpl && Array.isArray(tmpl.items) ? tmpl.items : [];
+                        const status = _specStatus(tmplItems);
+                        const filledCount = tmplItems.filter(_hasSpecValue).length;
+
+                        const specCells = masterItems.map(item => {
+                            const ti = tmplItems.find(x => x.key === item.key);
+                            let specText = '-';
+                            let hasVal = false;
+                            if (ti) {
+                                if (_isGlossSpecItem(ti)) {
+                                    const { targetSpec, toleranceSpec } = _glossValues(ti);
+                                    specText = (targetSpec && toleranceSpec) ? `${targetSpec}±${toleranceSpec}` : (ti.spec || '-');
+                                } else {
+                                    specText = _composeRangeSpec(ti) || ti.spec || '-';
+                                }
+                                hasVal = _hasSpecValue(ti);
+                            }
+                            const isEmpty = !specText || specText === '-';
+                            const cellColor = isEmpty ? 'var(--text-muted)' : hasVal ? 'var(--text-primary)' : '#d97706';
+                            return `<td style="text-align:center;font-size:0.78rem;padding:5px 4px;color:${cellColor};">${_esc(specText)}</td>`;
+                        }).join('');
+
+                        const badgeHtml = {
+                            complete:    `<span class="badge badge-success"   style="font-size:0.68rem;">✓ 항목+기준값</span>`,
+                            partial:     `<span class="badge badge-info"      style="font-size:0.68rem;">△ 기준값 ${filledCount}/${tmplItems.length}</span>`,
+                            'items-only':`<span style="font-size:0.68rem;color:#2563eb;font-weight:600;">항목만 설정</span>`,
+                            none:        `<span class="badge badge-warning"   style="font-size:0.68rem;">✗ 미설정</span>`
+                        }[status] || '';
+                        const rowBg = status === 'none' ? 'background:rgba(251,146,60,0.04);'
+                                    : status !== 'complete' ? 'background:rgba(37,99,235,0.03);' : '';
+
+                        return `<tr style="${rowBg}">
+                            <td style="font-size:0.83rem;font-weight:600;">${_esc(p.partName)}</td>
+                            <td style="font-size:0.82rem;">${_esc(p.color)||'<span style="color:var(--text-muted);">-</span>'}</td>
+                            ${specCells}
+                            <td style="text-align:center;padding:6px;">
+                                <div style="display:flex;flex-direction:column;align-items:center;gap:5px;">
+                                    <span style="display:inline-block;width:13px;height:13px;border-radius:50%;
+                                        background:${status==='complete'?'#22c55e':status==='none'?'#ef4444':'#f59e0b'};
+                                        box-shadow:0 0 0 3px ${status==='complete'?'rgba(34,197,94,.22)':status==='none'?'rgba(239,68,68,.22)':'rgba(245,158,11,.22)'};"
+                                        title="${status==='complete'?'기준값 설정완료':status==='none'?'기준값 없음':'기준값 미완성'}"></span>
+                                    <button class="btn btn-sm btn-outline" style="font-size:0.75rem;padding:3px 14px;"
+                                        onclick="ProdQualityModule.openSpecPage('${_js(p.id)}')">보기</button>
+                                </div>
+                            </td>
+                        </tr>`;
+                    }).join('');
+
+                return `<div class="card" style="margin-bottom:12px;">
+                    <div class="card-header" style="cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;padding:10px 16px;"
+                        onclick="const b=document.getElementById('${blockId}');if(b)b.style.display=b.style.display==='none'?'':'none';">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <span class="material-symbols-outlined" style="font-size:1.1rem;color:var(--accent-blue);">directions_car</span>
+                            <strong style="font-size:0.95rem;">${_esc(carModel)}</strong>
+                            <span style="font-size:0.78rem;color:var(--text-muted);">${prods.length}개 품목</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                            ${allSet
+                                ? `<span class="badge badge-success" style="font-size:0.72rem;">✓ 전체 완료</span>`
+                                : [
+                                    completeInGroup ? `<span style="font-size:0.75rem;color:var(--accent-green);font-weight:600;">✓${completeInGroup}</span>` : '',
+                                    partialInGroup  ? `<span style="font-size:0.75rem;color:#2563eb;font-weight:600;">△${partialInGroup}</span>` : '',
+                                    noneInGroup     ? `<span style="font-size:0.75rem;color:var(--accent-orange);font-weight:600;">✗${noneInGroup}</span>` : ''
+                                  ].filter(Boolean).join('<span style="color:var(--border-color);margin:0 1px;">|</span>')}
+                            <span class="material-symbols-outlined" style="font-size:1rem;color:var(--text-muted);">expand_more</span>
+                        </div>
+                    </div>
+                    <div id="${blockId}" style="overflow-x:auto;">
+                        <table class="data-table" style="min-width:500px;">
+                            <thead>
+                                <tr>
+                                    <th style="min-width:110px;">품명</th>
+                                    <th style="min-width:80px;">컬러</th>
+                                    ${headerCols}
+                                    <th style="text-align:center;min-width:80px;">작업</th>
+                                </tr>
+                            </thead>
+                            <tbody>${bodyRows}</tbody>
+                        </table>
+                    </div>
+                </div>`;
+            }).join('');
+
+        el.innerHTML = summaryBar + blocks;
+    }
+
+    // ── 품목별 기준값 편집 모달 ────────────────────────────────────────────────
+    function _specItemRowHtml(item = {}) {
+        const specEditor = _isGlossSpecItem(item)
+            ? _glossSpecEditor('pqs', item)
+            : _isRangeSpecItem(item)
+            ? _rangeSpecEditor('pqs', item)
+            : `<input type="text" class="form-input pqs-spec" value="${_esc(item.spec||'')}" placeholder="기준값 입력" style="height:30px;font-size:0.82rem;">`;
+        return `<tr class="pq-spec-item-row" data-key="${_esc(item.key||'')}">
+            <td>
+                <input type="hidden" class="pqs-key" value="${_esc(item.key||'')}">
+                <input type="hidden" class="pqs-label-val" value="${_esc(item.label||'')}">
+                <input type="hidden" class="pqs-unit-val" value="${_esc(item.unit||'')}">
+                <input type="hidden" class="pqs-method-val" value="${_esc(item.method||'')}">
+                <input type="hidden" class="pqs-input-type" value="${_esc(item.inputType||'text')}">
+                <strong style="font-size:0.85rem;">${_esc(item.label||'')}</strong>
+                <div style="font-size:0.75rem;color:var(--text-muted);">${_esc(item.method||'')}</div>
+            </td>
+            <td style="text-align:center;font-size:0.82rem;color:var(--text-muted);">${_esc(item.unit||'-')}</td>
+            <td>${specEditor}</td>
+        </tr>`;
+    }
+
+    function openSpecModal(productId) {
+        const product = (Storage.getAll(DB.STORES.PRODUCTS) || []).find(p => p.id === productId);
+        if (!product) { UIUtils.toast('제품 정보를 찾을 수 없습니다.', 'error'); return; }
+        const carModel = _normText(product.carModel);
+        const partName = _normText(product.partName || '');
+        const color = _normText(product.color || product.paintColor || product.paint || product.drawingColor || '');
+
+        const tmpl = _templateForProduct(carModel, partName, color);
+        const savedItems = tmpl && Array.isArray(tmpl.items) ? tmpl.items : [];
+        const masterItems = _masterItems();
+        const items = masterItems.map(mi => {
+            const saved = savedItems.find(si => si.key === mi.key) || {};
+            return _normalizeItemForEdit({ ...mi, ...saved, key: mi.key });
+        });
+
+        const userPresets = (Storage.getAll(STORE) || []).filter(d => d._docKind === PRESET_KIND);
+        const presetRow = userPresets.length ? `
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;padding:8px 12px;background:var(--bg-secondary);border-radius:8px;border:1px solid var(--border-color);">
+                <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);flex-shrink:0;">bookmarks</span>
+                <select class="form-select" id="pqSpecPresetSel" style="flex:1;">
+                    <option value="">프레셋으로 관리항목 적용 (기존 기준값 유지)</option>
+                    ${userPresets.map(p=>`<option value="${_esc(p.id)}">${_esc(p.name)} (${(p.items||[]).length}항목)</option>`).join('')}
+                </select>
+                <button type="button" class="btn btn-outline btn-sm" onclick="ProdQualityModule.applyPresetToSpec()">적용</button>
+            </div>` : '';
+
+        UIUtils.showModal(
+            `기준값 설정 — <span style="color:var(--accent-blue);">${_esc(carModel)}</span> / ${_esc(partName)} / ${_esc(color)||'공통'}`,
+            `<input type="hidden" id="pqSpecProductId" value="${_esc(productId)}">
+            ${presetRow}
+            <div style="overflow:auto;max-height:58vh;">
+                <table class="data-table">
+                    <thead><tr>
+                        <th style="min-width:140px;">관리항목</th>
+                        <th style="text-align:center;min-width:60px;">단위</th>
+                        <th style="min-width:180px;">기준값 / 범위</th>
+                    </tr></thead>
+                    <tbody id="pqSpecItemsBody">${items.map(i=>_specItemRowHtml(i)).join('')}</tbody>
+                </table>
+            </div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="ProdQualityModule.saveSpecModal()">저장</button>`,
+            'lg'
+        );
+    }
+
+    async function saveSpecModal() {
+        const productId = document.getElementById('pqSpecProductId')?.value;
+        const product = productId ? (Storage.getAll(DB.STORES.PRODUCTS)||[]).find(p=>p.id===productId) : null;
+        if (!product) { UIUtils.toast('제품 정보를 찾을 수 없습니다.', 'error'); return; }
+        const carModel = _normText(product.carModel);
+        const partName = _normText(product.partName||'');
+        const color = _normText(product.color||product.paintColor||product.paint||product.drawingColor||'');
+
+        const items = [...document.querySelectorAll('.pq-spec-item-row')].map(row => {
+            const obj = {
+                key:       row.querySelector('.pqs-key')?.value || '',
+                label:     row.querySelector('.pqs-label-val')?.value || '',
+                unit:      row.querySelector('.pqs-unit-val')?.value || '',
+                method:    row.querySelector('.pqs-method-val')?.value || '',
+                inputType: row.querySelector('.pqs-input-type')?.value || 'text',
+                spec:      row.querySelector('.pqs-spec')?.value?.trim() || '',
+                upperSpec: row.querySelector('.pqs-upper')?.value?.trim() || '',
+                lowerSpec: row.querySelector('.pqs-lower')?.value?.trim() || '',
+                selected: true
+            };
+            if (_isGlossSpecItem(obj)) _applyGlossSpec(obj, row, 'pqs');
+            else if (_isRangeSpecItem(obj)) obj.spec = _composeRangeSpec(obj);
+            return obj;
+        }).filter(i => i.key);
+
+        const existing = _templates().find(t =>
+            _normText(t.carModel)===carModel &&
+            _normText(t.partName||'')===partName &&
+            _normText(t.color||'')===color
+        );
+        const payload = { _docKind: TEMPLATE_KIND, carModel, partName, color, productId, items, updatedAt: UIUtils.now() };
+        if (existing) await Storage.update(STORE, existing.id, payload);
+        else await Storage.add(STORE, payload);
+
+        UIUtils.closeModal();
+        UIUtils.toast('기준값이 저장되었습니다.', 'success');
+        renderStandardsCard();
+    }
+
+    // ── 품목 기준값 보기/수정 페이지 (전체 페이지) ─────────────────────────────
+    function openSpecPage(productId) {
+        const container = _rootContainer || document.getElementById('contentArea');
+        if (!container) return;
+        const product = (Storage.getAll(DB.STORES.PRODUCTS)||[]).find(p => p.id === productId);
+        if (!product) { UIUtils.toast('제품 정보를 찾을 수 없습니다.', 'error'); return; }
+        const carModel = _normText(product.carModel);
+        const partName = _normText(product.partName||'');
+        const color = _normText(product.color||product.paintColor||product.paint||product.drawingColor||'');
+
+        const tmpl = _templateForProduct(carModel, partName, color);
+        const savedItems = tmpl && Array.isArray(tmpl.items) ? tmpl.items : [];
+        const masterItems = _masterItems();
+        const items = masterItems.map(mi => {
+            const saved = savedItems.find(si => si.key === mi.key) || {};
+            return _normalizeItemForEdit({ ...mi, ...saved, key: mi.key });
+        });
+
+        const status = _specStatus(savedItems);
+        const dotColor = status==='complete' ? '#22c55e' : status==='none' ? '#ef4444' : '#f59e0b';
+        const statusLabel = {
+            complete: '기준값 설정완료',
+            partial: '기준값 미완성',
+            'items-only': '항목만 설정됨',
+            none: '기준값 없음'
+        }[status] || '';
+
+        const userPresets = (Storage.getAll(STORE)||[]).filter(d => d._docKind === PRESET_KIND);
+        const presetRow = userPresets.length ? `
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;padding:8px 12px;background:var(--bg-secondary);border-radius:8px;border:1px solid var(--border-color);">
+                <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);flex-shrink:0;">bookmarks</span>
+                <select class="form-select" id="pqSpecPresetSel" style="flex:1;">
+                    <option value="">프레셋으로 관리항목 적용</option>
+                    ${userPresets.map(p=>`<option value="${_esc(p.id)}">${_esc(p.name)} (${(p.items||[]).length}항목)</option>`).join('')}
+                </select>
+                <button type="button" class="btn btn-outline btn-sm" onclick="ProdQualityModule.applyPresetToSpec()">적용</button>
+            </div>` : '';
+
+        container.innerHTML = `
+            <div class="fade-in-up">
+                <div class="page-header">
+                    <div class="page-actions" style="width:100%;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                        <button class="btn btn-outline" onclick="ProdQualityModule.openStandardsPage()">
+                            <span class="material-symbols-outlined">arrow_back</span> 품목별 항목 기준
+                        </button>
+                        <button class="btn btn-primary" onclick="ProdQualityModule.saveSpecPage()">
+                            <span class="material-symbols-outlined">save</span> 저장
+                        </button>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-bottom:16px;">
+                    <div class="card-body" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 18px;">
+                        <span style="display:inline-block;width:16px;height:16px;border-radius:50%;background:${dotColor};flex-shrink:0;
+                            box-shadow:0 0 0 4px ${dotColor}30;"></span>
+                        <div>
+                            <div style="font-size:0.95rem;font-weight:700;color:var(--text-primary);">
+                                ${_esc(carModel)} &nbsp;/&nbsp; ${_esc(partName)||'-'}
+                            </div>
+                            <div style="font-size:0.82rem;color:var(--text-muted);margin-top:3px;">
+                                컬러: ${_esc(color)||'공통'} &nbsp;·&nbsp; <span style="color:${dotColor};font-weight:600;">${statusLabel}</span>
+                            </div>
+                        </div>
+                        <input type="hidden" id="pqSpecProductId" value="${_esc(productId)}">
+                    </div>
+                </div>
+
+                ${presetRow}
+
+                <div class="card">
+                    <div class="card-header" style="padding:10px 16px;">
+                        <h4 style="margin:0;font-size:0.9rem;">
+                            <span class="material-symbols-outlined" style="font-size:1rem;vertical-align:middle;">rule</span>
+                            관리 기준값 입력
+                        </h4>
+                    </div>
+                    <div class="card-body" style="padding:0;">
+                        <div style="overflow:auto;">
+                            <table class="data-table">
+                                <thead><tr>
+                                    <th style="min-width:140px;">관리항목</th>
+                                    <th style="text-align:center;min-width:60px;">단위</th>
+                                    <th style="min-width:180px;">기준값 / 범위</th>
+                                </tr></thead>
+                                <tbody id="pqSpecItemsBody">${items.map(i => _specItemRowHtml(i)).join('')}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+                    <button class="btn btn-secondary" onclick="ProdQualityModule.openStandardsPage()">취소</button>
+                    <button class="btn btn-primary" onclick="ProdQualityModule.saveSpecPage()">
+                        <span class="material-symbols-outlined">save</span> 저장
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    async function saveSpecPage() {
+        const productId = document.getElementById('pqSpecProductId')?.value;
+        const product = productId ? (Storage.getAll(DB.STORES.PRODUCTS)||[]).find(p=>p.id===productId) : null;
+        if (!product) { UIUtils.toast('제품 정보를 찾을 수 없습니다.', 'error'); return; }
+        const carModel = _normText(product.carModel);
+        const partName = _normText(product.partName||'');
+        const color = _normText(product.color||product.paintColor||product.paint||product.drawingColor||'');
+
+        const items = [...document.querySelectorAll('.pq-spec-item-row')].map(row => {
+            const obj = {
+                key:       row.querySelector('.pqs-key')?.value || '',
+                label:     row.querySelector('.pqs-label-val')?.value || '',
+                unit:      row.querySelector('.pqs-unit-val')?.value || '',
+                method:    row.querySelector('.pqs-method-val')?.value || '',
+                inputType: row.querySelector('.pqs-input-type')?.value || 'text',
+                spec:      row.querySelector('.pqs-spec')?.value?.trim() || '',
+                upperSpec: row.querySelector('.pqs-upper')?.value?.trim() || '',
+                lowerSpec: row.querySelector('.pqs-lower')?.value?.trim() || '',
+                selected:  true
+            };
+            if (_isGlossSpecItem(obj)) _applyGlossSpec(obj, row, 'pqs');
+            else if (_isRangeSpecItem(obj)) obj.spec = _composeRangeSpec(obj);
+            return obj;
+        }).filter(i => i.key);
+
+        const existing = _templates().find(t =>
+            _normText(t.carModel)===carModel &&
+            _normText(t.partName||'')===partName &&
+            _normText(t.color||'')===color
+        );
+        const payload = { _docKind: TEMPLATE_KIND, carModel, partName, color, productId, items, updatedAt: UIUtils.now() };
+        if (existing) await Storage.update(STORE, existing.id, payload);
+        else await Storage.add(STORE, payload);
+
+        UIUtils.toast('기준값이 저장되었습니다.', 'success');
+        openSpecPage(productId);   // 페이지 새로고침 (상태 도트 반영)
+    }
+
+    function applyPresetToSpec() {
+        const presetId = document.getElementById('pqSpecPresetSel')?.value;
+        if (!presetId) return;
+        const preset = (Storage.getAll(STORE)||[]).find(d=>d._docKind===PRESET_KIND&&d.id===presetId);
+        if (!preset) return;
+
+        // 현재 입력된 기준값 보존
+        const current = new Map();
+        [...document.querySelectorAll('.pq-spec-item-row')].forEach(row => {
+            const key = row.dataset.key;
+            current.set(key, {
+                spec:          row.querySelector('.pqs-spec')?.value || '',
+                upperSpec:     row.querySelector('.pqs-upper')?.value || '',
+                lowerSpec:     row.querySelector('.pqs-lower')?.value || '',
+                targetSpec:    row.querySelector('.pqs-gloss-target')?.value || '',
+                toleranceSpec: row.querySelector('.pqs-gloss-tol')?.value || ''
+            });
+        });
+
+        const presetKeys = new Set((preset.items||[]).map(i=>i.key));
+        const items = _masterItems().filter(mi=>presetKeys.has(mi.key)).map(mi=>({
+            ...mi, ...(current.get(mi.key)||{})
+        }));
+
+        document.getElementById('pqSpecItemsBody').innerHTML = items.map(i=>_specItemRowHtml(i)).join('');
+        UIUtils.toast(`"${_esc(preset.name)}" 프레셋이 적용됐습니다.`, 'success');
     }
 
     function search() {
@@ -11318,6 +11841,16 @@ var ProdQualityModule = (function() {
             _normText(t.carModel) === _normText(carModel) &&
             _normText(t.color) === _normText(color)
         ) || null;
+    }
+
+    // 제품 마스터 기준 템플릿 조회 (carModel+partName+color 우선, 없으면 carModel+color, 없으면 carModel)
+    function _templateForProduct(carModel, partName, color) {
+        const car = _normText(carModel), part = _normText(partName), clr = _normText(color);
+        const tmpls = _templates();
+        return tmpls.find(t => _normText(t.carModel)===car && _normText(t.partName||'')===part && _normText(t.color||'')===clr)
+            || tmpls.find(t => _normText(t.carModel)===car && !t.partName && _normText(t.color||'')===clr)
+            || tmpls.find(t => _normText(t.carModel)===car && !t.partName && !_normText(t.color||''))
+            || null;
     }
 
     function _masterItemRecord() {
@@ -11534,6 +12067,12 @@ var ProdQualityModule = (function() {
         const isNum = _isNumericItem(item);
         const vals  = item.vals || {};
         const inputType = isNum ? 'number' : (item.inputType || 'select');
+        const specEditor = _isGlossSpecItem(item)
+            ? _glossSpecEditor('pq-item', item)
+            : _isRangeSpecItem(item)
+            ? _rangeSpecEditor('pq-item', item)
+            : `<input type="text" class="form-input pq-item-spec" value="${_esc(item.spec || '')}"
+                    placeholder="차종별 기준" style="height:30px;padding:4px 6px;font-size:0.78rem;">`;
         const okNgSelect = (cls, val) => `
             <td style="padding:2px 3px;background:rgba(59,130,246,0.03);">
                 <select class="form-select ${cls}" style="width:58px;height:30px;padding:3px 4px;font-size:0.76rem;text-align:center;">
@@ -11558,8 +12097,7 @@ var ProdQualityModule = (function() {
                     <input type="text" class="form-input pq-item-label" value="${_esc(item.label || '')}"
                         style="min-width:100px;height:30px;padding:4px 6px;font-size:0.78rem;">
                 </td>
-                <td><input type="text" class="form-input pq-item-spec" value="${_esc(item.spec || '')}"
-                    placeholder="차종별 기준" style="height:30px;padding:4px 6px;font-size:0.78rem;"></td>
+                <td>${specEditor}</td>
                 <td><input type="text" class="form-input pq-item-method" value="${_esc(item.method || '')}"
                     style="height:30px;padding:4px 6px;font-size:0.78rem;"></td>
                 <td><input type="text" class="form-input pq-item-unit" value="${_esc(item.unit || '')}"
@@ -11623,6 +12161,13 @@ var ProdQualityModule = (function() {
                 unit:   row.querySelector('.pq-item-unit')?.value.trim()   || '',
                 inputType: row.querySelector('.pq-item-input-type')?.value || (isNum ? 'number' : 'select')
             };
+            if (_isGlossSpecItem(obj)) {
+                _applyGlossSpec(obj, row, 'pq-item');
+            } else if (_isRangeSpecItem(obj)) {
+                obj.upperSpec = row.querySelector('.pq-item-upper')?.value.trim() || '';
+                obj.lowerSpec = row.querySelector('.pq-item-lower')?.value.trim() || '';
+                obj.spec = _composeRangeSpec(obj);
+            }
             // 초물/중물/종물 순서는 types 배열 기준
             const typeKeys = types.length ? types : ['초물','중물','종물'];
             const raw = [
@@ -11795,6 +12340,61 @@ var ProdQualityModule = (function() {
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="ProdQualityModule.saveItemMaster()">저장</button>
         `, 'xl');
+        requestAnimationFrame(_initMasterDrag);
+    }
+
+    function _initMasterDrag() {
+        const tbody = document.getElementById('pqMasterItemsBody');
+        if (!tbody) return;
+        let dragSrc = null;
+
+        function onDragStart(e) {
+            dragSrc = e.currentTarget;
+            dragSrc.style.opacity = '0.4';
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', '');
+        }
+        function onDragEnd(e) {
+            if (dragSrc) dragSrc.style.opacity = '';
+            tbody.querySelectorAll('.pq-master-item-row').forEach(r => r.classList.remove('pq-drag-over'));
+            dragSrc = null;
+        }
+        function onDragOver(e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            const target = e.currentTarget;
+            tbody.querySelectorAll('.pq-master-item-row').forEach(r => r.classList.remove('pq-drag-over'));
+            if (target !== dragSrc) target.classList.add('pq-drag-over');
+        }
+        function onDrop(e) {
+            e.preventDefault();
+            const target = e.currentTarget;
+            if (!dragSrc || dragSrc === target) return;
+            const rows = [...tbody.querySelectorAll('.pq-master-item-row')];
+            const srcIdx = rows.indexOf(dragSrc);
+            const tgtIdx = rows.indexOf(target);
+            if (srcIdx < tgtIdx) tbody.insertBefore(dragSrc, target.nextSibling);
+            else tbody.insertBefore(dragSrc, target);
+            tbody.querySelectorAll('.pq-master-item-row').forEach(r => r.classList.remove('pq-drag-over'));
+        }
+
+        function bindRow(row) {
+            row.addEventListener('dragstart', onDragStart);
+            row.addEventListener('dragend',   onDragEnd);
+            row.addEventListener('dragover',  onDragOver);
+            row.addEventListener('drop',      onDrop);
+        }
+        tbody.querySelectorAll('.pq-master-item-row').forEach(bindRow);
+
+        // 새 행 추가 시 자동 바인딩용 MutationObserver
+        if (tbody._pqDragObserver) tbody._pqDragObserver.disconnect();
+        const obs = new MutationObserver(mutations => {
+            mutations.forEach(m => m.addedNodes.forEach(n => {
+                if (n.nodeType === 1 && n.classList?.contains('pq-master-item-row')) bindRow(n);
+            }));
+        });
+        obs.observe(tbody, { childList: true });
+        tbody._pqDragObserver = obs;
     }
 
     function _itemMasterFormHtml(items) {
@@ -11814,7 +12414,7 @@ var ProdQualityModule = (function() {
                 <table class="data-table" style="font-size:0.82rem;">
                     <thead>
                         <tr>
-                            <th style="width:54px;">선택</th><th>관리항목</th><th>기본 기준</th><th>측정방법</th>
+                            <th style="width:36px;"></th><th style="width:44px;">삭제</th><th>관리항목</th><th>기본 기준</th><th>측정방법</th>
                             <th style="width:90px;">단위</th><th style="width:110px;">입력유형</th>
                         </tr>
                     </thead>
@@ -11824,14 +12424,22 @@ var ProdQualityModule = (function() {
     }
 
     function _masterItemRowHtml(item = {}) {
+        const specEditor = _isGlossSpecItem(item)
+            ? _glossSpecEditor('pq-master', item)
+            : _isRangeSpecItem(item)
+            ? _rangeSpecEditor('pq-master', item)
+            : `<input type="text" class="form-input pq-master-spec" value="${_esc(item.spec || '')}" placeholder="기본 기준">`;
         return `
-            <tr class="pq-master-item-row">
+            <tr class="pq-master-item-row" draggable="true">
+                <td style="text-align:center;cursor:grab;color:var(--text-muted);user-select:none;" class="pq-master-drag-handle" title="드래그하여 순서 변경">
+                    <span class="material-symbols-outlined" style="font-size:18px;vertical-align:middle;">drag_indicator</span>
+                </td>
                 <td style="text-align:center;"><input type="checkbox" class="pq-master-delete"></td>
                 <td>
                     <input type="hidden" class="pq-master-key" value="${_esc(item.key || Storage.generateId())}">
                     <input type="text" class="form-input pq-master-label" value="${_esc(item.label || '')}" placeholder="관리항목명">
                 </td>
-                <td><input type="text" class="form-input pq-master-spec" value="${_esc(item.spec || '')}" placeholder="기본 기준"></td>
+                <td>${specEditor}</td>
                 <td><input type="text" class="form-input pq-master-method" value="${_esc(item.method || '')}" placeholder="측정방법"></td>
                 <td><input type="text" class="form-input pq-master-unit" value="${_esc(item.unit || '')}" placeholder="단위"></td>
                 <td>
@@ -11865,15 +12473,22 @@ var ProdQualityModule = (function() {
     }
 
     async function saveItemMaster() {
-        const items = [...document.querySelectorAll('.pq-master-item-row')].map(row => ({
-            key: row.querySelector('.pq-master-key')?.value || Storage.generateId(),
-            label: row.querySelector('.pq-master-label')?.value.trim() || '',
-            spec: row.querySelector('.pq-master-spec')?.value.trim() || '',
-            method: row.querySelector('.pq-master-method')?.value.trim() || '',
-            unit: row.querySelector('.pq-master-unit')?.value.trim() || '',
-            inputType: row.querySelector('.pq-master-input-type')?.value || 'text',
-            selected: true
-        })).filter(item => item.label);
+        const items = [...document.querySelectorAll('.pq-master-item-row')].map(row => {
+            const obj = {
+                key: row.querySelector('.pq-master-key')?.value || Storage.generateId(),
+                label: row.querySelector('.pq-master-label')?.value.trim() || '',
+                spec: row.querySelector('.pq-master-spec')?.value.trim() || '',
+                method: row.querySelector('.pq-master-method')?.value.trim() || '',
+                unit: row.querySelector('.pq-master-unit')?.value.trim() || '',
+                upperSpec: row.querySelector('.pq-master-upper')?.value.trim() || '',
+                lowerSpec: row.querySelector('.pq-master-lower')?.value.trim() || '',
+                inputType: row.querySelector('.pq-master-input-type')?.value || 'text',
+                selected: true
+            };
+            if (_isGlossSpecItem(obj)) _applyGlossSpec(obj, row, 'pq-master');
+            else if (_isRangeSpecItem(obj)) obj.spec = _composeRangeSpec(obj);
+            return obj;
+        }).filter(item => item.label);
         if (!items.length) {
             UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning');
             return;
@@ -11979,6 +12594,11 @@ var ProdQualityModule = (function() {
     }   // ── end _templateFormHtml ──
 
     function _templateItemRowHtml(item = {}) {
+        const specEditor = _isGlossSpecItem(item)
+            ? _glossSpecEditor('pq-tpl', item)
+            : _isRangeSpecItem(item)
+            ? _rangeSpecEditor('pq-tpl', item)
+            : `<input type="text" class="form-input pq-tpl-spec" value="${_esc(item.spec || '')}" placeholder="예: 15~20">`;
         return `
             <tr class="pq-template-item-row">
                 <td style="text-align:center;"><input type="checkbox" class="pq-tpl-selected" ${item.selected === false ? '' : 'checked'}></td>
@@ -11990,7 +12610,7 @@ var ProdQualityModule = (function() {
                     <input type="hidden" class="pq-tpl-key" value="${_esc(item.key || Storage.generateId())}">
                     <input type="text" class="form-input pq-tpl-label" value="${_esc(item.label || '')}" placeholder="관리항목명">
                 </td>
-                <td><input type="text" class="form-input pq-tpl-spec" value="${_esc(item.spec || '')}" placeholder="예: 15~20"></td>
+                <td>${specEditor}</td>
                 <td><input type="text" class="form-input pq-tpl-method" value="${_esc(item.method || '')}" placeholder="측정방법"></td>
                 <td><input type="text" class="form-input pq-tpl-unit" value="${_esc(item.unit || '')}" style="width:90px;" placeholder="단위"></td>
                 <td style="text-align:center;"><input type="checkbox" class="pq-tpl-delete"></td>
@@ -12150,6 +12770,12 @@ var ProdQualityModule = (function() {
     }
 
     function _presetItemRowHtml(item = {}) {
+        const specEditor = _isGlossSpecItem(item)
+            ? _glossSpecEditor('pq-preset', item)
+            : _isRangeSpecItem(item)
+            ? _rangeSpecEditor('pq-preset', item)
+            : `<input type="text" class="form-input pq-preset-spec" value="${_esc(item.spec || '')}"
+                    placeholder="예: 15~20 / 없을 것">`;
         return `
             <tr class="pq-preset-item-row">
                 <td style="text-align:center;">
@@ -12160,8 +12786,7 @@ var ProdQualityModule = (function() {
                     <input type="text" class="form-input pq-preset-label" value="${_esc(item.label || '')}"
                         placeholder="관리항목명">
                 </td>
-                <td><input type="text" class="form-input pq-preset-spec" value="${_esc(item.spec || '')}"
-                    placeholder="예: 15~20 / 없을 것"></td>
+                <td>${specEditor}</td>
                 <td><input type="text" class="form-input pq-preset-method" value="${_esc(item.method || '')}"
                     placeholder="육안 / 도막두께계 …"></td>
                 <td><input type="text" class="form-input pq-preset-unit" value="${_esc(item.unit || '')}"
@@ -12187,14 +12812,21 @@ var ProdQualityModule = (function() {
         const name = document.getElementById('pqPresetEditName')?.value.trim();
         if (!name) { UIUtils.toast('프레셋 이름을 입력하세요.', 'warning'); return; }
 
-        const items = [...document.querySelectorAll('.pq-preset-item-row')].map(row => ({
-            key:    row.querySelector('.pq-preset-key')?.value  || Storage.generateId(),
-            label:  row.querySelector('.pq-preset-label')?.value.trim()  || '',
-            spec:   row.querySelector('.pq-preset-spec')?.value.trim()   || '',
-            method: row.querySelector('.pq-preset-method')?.value.trim() || '',
-            unit:   row.querySelector('.pq-preset-unit')?.value.trim()   || '',
-            selected: true
-        })).filter(i => i.label);
+        const items = [...document.querySelectorAll('.pq-preset-item-row')].map(row => {
+            const obj = {
+                key:    row.querySelector('.pq-preset-key')?.value  || Storage.generateId(),
+                label:  row.querySelector('.pq-preset-label')?.value.trim()  || '',
+                spec:   row.querySelector('.pq-preset-spec')?.value.trim()   || '',
+                method: row.querySelector('.pq-preset-method')?.value.trim() || '',
+                unit:   row.querySelector('.pq-preset-unit')?.value.trim()   || '',
+                upperSpec: row.querySelector('.pq-preset-upper')?.value.trim() || '',
+                lowerSpec: row.querySelector('.pq-preset-lower')?.value.trim() || '',
+                selected: true
+            };
+            if (_isGlossSpecItem(obj)) _applyGlossSpec(obj, row, 'pq-preset');
+            else if (_isRangeSpecItem(obj)) obj.spec = _composeRangeSpec(obj);
+            return obj;
+        }).filter(i => i.label);
 
         if (!items.length) { UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning'); return; }
 
@@ -12235,14 +12867,21 @@ var ProdQualityModule = (function() {
 
     async function saveCurrentAsPreset() {
         const rows = [...document.querySelectorAll('.pq-template-item-row')];
-        _pendingPresetItems = rows.map(row => ({
-            key:      row.querySelector('.pq-tpl-key')?.value           || Storage.generateId(),
-            label:    row.querySelector('.pq-tpl-label')?.value.trim()  || '',
-            spec:     row.querySelector('.pq-tpl-spec')?.value.trim()   || '',
-            method:   row.querySelector('.pq-tpl-method')?.value.trim() || '',
-            unit:     row.querySelector('.pq-tpl-unit')?.value.trim()   || '',
-            selected: !!row.querySelector('.pq-tpl-selected')?.checked
-        })).filter(i => i.label);
+        _pendingPresetItems = rows.map(row => {
+            const obj = {
+                key:      row.querySelector('.pq-tpl-key')?.value           || Storage.generateId(),
+                label:    row.querySelector('.pq-tpl-label')?.value.trim()  || '',
+                spec:     row.querySelector('.pq-tpl-spec')?.value.trim()   || '',
+                method:   row.querySelector('.pq-tpl-method')?.value.trim() || '',
+                unit:     row.querySelector('.pq-tpl-unit')?.value.trim()   || '',
+                upperSpec: row.querySelector('.pq-tpl-upper')?.value.trim() || '',
+                lowerSpec: row.querySelector('.pq-tpl-lower')?.value.trim() || '',
+                selected: !!row.querySelector('.pq-tpl-selected')?.checked
+            };
+            if (_isGlossSpecItem(obj)) _applyGlossSpec(obj, row, 'pq-tpl');
+            else if (_isRangeSpecItem(obj)) obj.spec = _composeRangeSpec(obj);
+            return obj;
+        }).filter(i => i.label);
 
         if (!_pendingPresetItems.length) {
             UIUtils.toast('저장할 관리항목이 없습니다.', 'warning');
@@ -12303,8 +12942,10 @@ var ProdQualityModule = (function() {
             spec: row.querySelector('.pq-tpl-spec')?.value.trim() || '',
             method: row.querySelector('.pq-tpl-method')?.value.trim() || '',
             unit: row.querySelector('.pq-tpl-unit')?.value.trim() || '',
+            upperSpec: row.querySelector('.pq-tpl-upper')?.value.trim() || '',
+            lowerSpec: row.querySelector('.pq-tpl-lower')?.value.trim() || '',
             selected: !!row.querySelector('.pq-tpl-selected')?.checked
-        })).filter(item => item.label);
+        })).map(item => _isRangeSpecItem(item) ? { ...item, spec: _composeRangeSpec(item) } : item).filter(item => item.label);
         const existing = _exactTemplateFor(carModel, color);
         const payload = { _docKind: TEMPLATE_KIND, carModel, color, items, updatedAt: UIUtils.now() };
         if (existing) await Storage.update(STORE, existing.id, payload);
@@ -12378,6 +13019,9 @@ var ProdQualityModule = (function() {
     }
 
     function _bulkItemRowHtml(item = {}) {
+        const specEditor = _isRangeSpecItem(item)
+            ? _rangeSpecEditor('pq-bulk', item)
+            : `<input type="text" class="form-input pq-bulk-spec" value="${_esc(item.spec || '')}" placeholder="예: 15~20">`;
         return `
             <tr class="pq-bulk-item-row">
                 <td style="text-align:center;"><input type="checkbox" class="pq-bulk-selected" ${item.selected === false ? '' : 'checked'}></td>
@@ -12385,7 +13029,7 @@ var ProdQualityModule = (function() {
                     <input type="hidden" class="pq-bulk-key" value="${_esc(item.key || Storage.generateId())}">
                     <input type="text" class="form-input pq-bulk-label" value="${_esc(item.label || '')}" placeholder="관리항목명">
                 </td>
-                <td><input type="text" class="form-input pq-bulk-spec" value="${_esc(item.spec || '')}" placeholder="예: 15~20"></td>
+                <td>${specEditor}</td>
                 <td><input type="text" class="form-input pq-bulk-method" value="${_esc(item.method || '')}" placeholder="측정방법"></td>
                 <td><input type="text" class="form-input pq-bulk-unit" value="${_esc(item.unit || '')}" placeholder="단위"></td>
             </tr>`;
@@ -12420,8 +13064,10 @@ var ProdQualityModule = (function() {
             spec: row.querySelector('.pq-bulk-spec')?.value.trim() || '',
             method: row.querySelector('.pq-bulk-method')?.value.trim() || '',
             unit: row.querySelector('.pq-bulk-unit')?.value.trim() || '',
+            upperSpec: row.querySelector('.pq-bulk-upper')?.value.trim() || '',
+            lowerSpec: row.querySelector('.pq-bulk-lower')?.value.trim() || '',
             selected: !!row.querySelector('.pq-bulk-selected')?.checked
-        })).filter(item => item.label);
+        })).map(item => _isRangeSpecItem(item) ? { ...item, spec: _composeRangeSpec(item) } : item).filter(item => item.label);
         if (!items.length) {
             UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning');
             return;
@@ -12466,8 +13112,16 @@ var ProdQualityModule = (function() {
         };
         const specCells = item => {
             const spec = item.spec || '';
-            if (/도막|두께/i.test(item.label || '')) {
-                return `<td class="spec-upper">${_esc((item.label || '').replace(/도막두께|\(|\)/g, '').trim() || '상')}</td><td class="spec-lower">${_esc(spec || '(      ~      ) ' + (item.unit || ''))}</td>`;
+            const { upperSpec, lowerSpec } = _rangeSpecValues(item);
+            if (_isColorSpecItem(item)) {
+                return `<td class="spec-upper">${_esc(upperSpec || '')}</td><td class="spec-lower">${_esc(lowerSpec || '')}</td>`;
+            }
+            if (_isFilmSpecItem(item)) {
+                const subLabel = (item.label || '').replace(/도막두께|\(|\)/g, '').trim() || '상';
+                const rangeText = (upperSpec || lowerSpec)
+                    ? `(${lowerSpec || ''} ~ ${upperSpec || ''}) ${item.unit || ''}`.trim()
+                    : (spec || '(      ~      ) ' + (item.unit || ''));
+                return `<td class="spec-upper">${_esc(subLabel)}</td><td class="spec-lower">${_esc(rangeText)}</td>`;
             }
             return `<td class="spec-text" colspan="2">${_esc(spec || '기준에 준할 것')}</td>`;
         };
@@ -12628,6 +13282,11 @@ table{border-collapse:collapse;width:100%}
         ,handleQualityStandardPaste
         ,printQualityStandardPage
         ,renderStandardsCard
+        ,openSpecModal
+        ,saveSpecModal
+        ,openSpecPage
+        ,saveSpecPage
+        ,applyPresetToSpec
         ,openPresetMgmtModal
         ,openPresetEditModal
         ,addPresetItemRow

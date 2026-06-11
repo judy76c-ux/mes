@@ -244,7 +244,12 @@ const PaintingIncomingModule = (function() {
             STORE,
             (document.getElementById('pwStart') || {}).value || _currentDate,
             (document.getElementById('pwEnd') || {}).value || _currentDate
-        ).sort((a, b) => (b.date + (b.startTime || '')).localeCompare(a.date + (a.startTime || '')));
+        ).sort((a, b) => {
+            const aReg = a.registeredAt || '', bReg = b.registeredAt || '';
+            if (bReg && aReg) return bReg.localeCompare(aReg);
+            const dc = b.date.localeCompare(a.date);
+            return dc !== 0 ? dc : (b.startTime || '').localeCompare(a.startTime || '');
+        });
 
         const carModelSel = document.getElementById('pwFilterCarModel');
         const partNameSel = document.getElementById('pwFilterPartName');
@@ -282,16 +287,8 @@ const PaintingIncomingModule = (function() {
         const tbody = document.getElementById('pwTableBody');
         if (!tbody) return;
 
-        const headerRow = tbody.closest('table')?.querySelector('thead tr');
-        if (headerRow && headerRow.children.length >= 17) {
-            headerRow.children[8].textContent = '산출 수량';
-            headerRow.children[9].textContent = '공정 LOSS 수량';
-            headerRow.children[10].textContent = '이상보고 이력';
-            headerRow.children[10].style.textAlign = 'left';
-        }
-
         if (!data.length) {
-            tbody.innerHTML = `<tr><td colspan="17" style="text-align:center;padding:36px;color:var(--text-muted);">데이터가 없습니다.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="14" style="text-align:center;padding:36px;color:var(--text-muted);">데이터가 없습니다.</td></tr>`;
             return;
         }
 
@@ -384,23 +381,30 @@ const PaintingIncomingModule = (function() {
             const timeChangeBadge = d.timeReason
                 ? '<span style="display:inline-block;background:#ef4444;color:#fff;padding:2px 7px;border-radius:4px;font-size:0.7rem;font-weight:700;margin-right:3px;" title="시간변경 ' + (d.timeReason || '') + (d.timeReasonDetail ? ' / ' + d.timeReasonDetail : '') + '">시간변경</span>'
                 : '';
-            const actionButtons = isInspectionCompleted
-                ? '<span style="color:var(--text-muted);font-size:0.85rem;">검사완료</span>'
-                : '<button class="btn btn-sm btn-outline" onclick="PaintingWorkModule.edit(\'' + d.id + '\')">수정</button>';
+            const actionButtons = '<button class="btn btn-sm btn-outline" onclick="PaintingWorkModule.openWorkViewPage(\'' + d.id + '\')">보기</button>';
+
+            const regDate = d.registeredAt ? d.registeredAt.slice(0, 10) : '-';
+            const wdParts = (d.date || '').split('-');
+            const lotShortInc = d.lots && d.lots.length > 0
+                ? d.lots.map(l => l.lotNo).join(' / ')
+                : (d.lotNo || '');
+            const workDateHtml = wdParts.length === 3
+                ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;">' + wdParts[0] + '</span>' +
+                  '<span style="font-weight:600;white-space:nowrap;">' + wdParts[1] + '-' + wdParts[2] + '</span>' +
+                  (lotShortInc ? '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:3px;font-family:monospace;">' + lotShortInc + '</div>' : '')
+                : (d.date || '-');
 
             return '<tr style="' + (isInspectionCompleted ? 'background:rgba(22,163,74,0.05);' : '') + '">' +
-                '<td>' + d.date + '</td>' +
+                '<td style="font-size:0.8rem;color:var(--text-muted);white-space:nowrap;">' + regDate + '</td>' +
+                '<td style="line-height:1.3;">' + workDateHtml + '</td>' +
                 '<td>' + (d.line || '-') + '</td>' +
                 '<td>' + (d.carModel || '-') + '</td>' +
                 '<td>' + (d.partName || '-') + '</td>' +
                 '<td>' + (d.color || '-') + '</td>' +
-                '<td style="text-align:center;">' + UIUtils.itemTypeBadge(d.carModel, d.partName, d.color) + '</td>' +
-                '<td>' + lotDisplay + '</td>' +
                 '<td style="text-align:right;">' + UIUtils.formatNumber(inputQty) + '</td>' +
                 '<td style="text-align:right;font-weight:600;">' + UIUtils.formatNumber(productionQty) + '</td>' +
                 '<td style="text-align:right;color:' + (processLoss > 0 ? 'var(--accent-red)' : (processLoss < 0 ? 'var(--accent-blue)' : 'var(--text-primary)')) + ';font-weight:700;">' + UIUtils.formatNumber(processLoss) + '</td>' +
                 '<td>' + reportHistory + '</td>' +
-                '<td style="text-align:center;">' + (d.workers > 0 ? d.workers + '명' : '-') + '</td>' +
                 '<td style="font-size:0.82rem;white-space:nowrap;">' + timeStr + '</td>' +
                 '<td style="text-align:right;">' + ctStr + '</td>' +
                 '<td style="text-align:center;">' + cvtStr + '</td>' +
@@ -609,7 +613,7 @@ const PaintingWorkModule = (function() {
                         border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
                         <h4 style="margin:0; color:#e65100;">
                             <span class="material-symbols-outlined" style="vertical-align:middle;margin-right:4px;font-size:18px;">warning</span>
-                            실적 미입력 계획 (전일~7일)
+                            실적 미입력 계획 (전일 이전)
                         </h4>
                         <span style="font-size:0.75rem;color:var(--text-muted);">계획은 있으나 실적이 등록되지 않은 항목입니다.</span>
                     </div>
@@ -624,7 +628,7 @@ const PaintingWorkModule = (function() {
                                 <table class="data-table compact">
                                     <thead style="position:sticky; top:0; z-index:1;">
                                         <tr>
-                                            <th style="width:90px;">날짜</th>
+                                            <th style="width:90px;">도장 작업일</th>
                                             <th style="width:95px;">시간대</th>
                                             <th>차종/품명</th>
                                             <th style="text-align:right;width:65px;">계획</th>
@@ -647,7 +651,7 @@ const PaintingWorkModule = (function() {
                                 <table class="data-table compact">
                                     <thead style="position:sticky; top:0; z-index:1;">
                                         <tr>
-                                            <th style="width:90px;">날짜</th>
+                                            <th style="width:90px;">도장 작업일</th>
                                             <th style="width:95px;">시간대</th>
                                             <th>차종/품명</th>
                                             <th style="text-align:right;width:65px;">계획</th>
@@ -662,8 +666,6 @@ const PaintingWorkModule = (function() {
                 </div>
 
                 <!-- 섹션 3: 작업 실적 통계 + 목록 -->
-                <div class="stat-cards" id="pwStats"></div>
-
                 <div class="card">
                     <div class="card-header" style="padding:8px 16px; background:var(--bg-secondary);
                         border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
@@ -694,20 +696,19 @@ const PaintingWorkModule = (function() {
                             <table class="data-table">
                                 <thead>
                                     <tr>
-                                        <th>작업일</th>
+                                        <th>등록일</th>
+                                        <th>도장 작업일 (LOT)</th>
                                         <th>라인</th>
                                         <th>차종</th>
                                         <th>품명</th>
                                         <th>컬러</th>
-                                        <th style="text-align:center;">품목구분</th>
                                         <th>사출 LOT</th>
                                         <th style="text-align:right;">투입수량</th>
                                         <th style="text-align:right;">완료수량</th>
-                                        <th style="text-align:right;">양품</th>
                                         <th style="text-align:right;">불량</th>
-                                        <th style="text-align:center;">인원</th>
                                         <th>작업시간</th>
-                                        <th style="text-align:right;">평균CT</th>
+                                        <th style="text-align:right;">작업C.T</th>
+                                        <th style="text-align:right;">효율</th>
                                         <th style="text-align:center;">CVT</th>
                                         <th style="text-align:right;">SPINDLE 수</th>
                                         <th>작업</th>
@@ -754,12 +755,11 @@ const PaintingWorkModule = (function() {
         const allPlans = Storage.getAll(PLAN_STORE) || [];
         const allWorks = Storage.getAll(STORE) || [];
 
-        // 전일부터 7일 전까지 (당일 제외) 실적 누락 항목 필터링
-        const sevenDaysAgo = UIUtils.daysAgo(7);
+        // 전일 이전 실적 누락 항목 필터링 (입력될 때까지 계속 표시)
         const today = UIUtils.today();
 
         const unentered = allPlans.filter(p => {
-            if (!p.date || p.date < sevenDaysAgo || p.date >= today) return false;  // 오늘 제외
+            if (!p.date || p.date >= today) return false;  // 오늘 이후 제외
             if (!(p.carModel || p.partName)) return false;
             return !allWorks.some(w => w.planId === p.id);
         }).sort((a, b) => b.date.localeCompare(a.date) || (a.startTime || '').localeCompare(b.startTime || ''));
@@ -925,17 +925,21 @@ const PaintingWorkModule = (function() {
         const start = startEl ? startEl.value : _currentDate;
         const end = endEl ? endEl.value : _currentDate;
 
-        // 기간 범위 데이터 조회 (날짜 + 시간으로 정렬, 최신순)
-        let data = Storage.getByDateRange(STORE, start, end)
+        // 등록일(registeredAt) 기준 필터 — 없는 구 데이터는 작업일로 대체
+        let data = Storage.getAll(STORE)
+            .filter(d => {
+                const regDate = d.registeredAt ? d.registeredAt.slice(0, 10) : (d.date || '');
+                return regDate >= start && regDate <= end;
+            })
             .sort((a, b) => {
-                // 날짜로 먼저 정렬 (최신순)
-                const dateCompare = b.date.localeCompare(a.date);
-                if (dateCompare !== 0) return dateCompare;
-
-                // 같은 날짜면 시간으로 정렬 (최신순)
-                const aTime = a.startTime || '00:00';
-                const bTime = b.startTime || '00:00';
-                return bTime.localeCompare(aTime);
+                const aReg = a.registeredAt || '';
+                const bReg = b.registeredAt || '';
+                if (aReg && bReg) return bReg.localeCompare(aReg);
+                if (bReg) return 1;   // b만 등록일 있음 → b 위로
+                if (aReg) return -1;  // a만 등록일 있음 → a 위로
+                // 둘 다 없으면 작업일 내림차순
+                const dc = b.date.localeCompare(a.date);
+                return dc !== 0 ? dc : (b.startTime || '').localeCompare(a.startTime || '');
             });
 
         // 차종·품명 드롭다운 초기화 (unique 값 수집)
@@ -969,32 +973,6 @@ const PaintingWorkModule = (function() {
             data = data.filter(d => d.partName === filterPartName);
         }
 
-        const totalInput = data.reduce((s, d) => s + (Number(d.inputQty) || 0), 0);
-        const totalProd = data.reduce((s, d) => s + (Number(d.productionQty) || 0), 0);
-        const totalGood = data.reduce((s, d) => s + (Number(d.goodQty) || 0), 0);
-        const totalBad = data.reduce((s, d) => s + (Number(d.defectQty) || 0), 0);
-
-        const statsEl = document.getElementById('pwStats');
-        if (statsEl) {
-            statsEl.innerHTML = `
-                <div class="stat-card blue">
-                    <div class="stat-card-value">${UIUtils.formatNumber(totalInput)}</div>
-                    <div class="stat-card-label">투입 수량</div>
-                </div>
-                <div class="stat-card cyan">
-                    <div class="stat-card-value">${UIUtils.formatNumber(totalProd)}</div>
-                    <div class="stat-card-label">생산 수량</div>
-                </div>
-                <div class="stat-card green">
-                    <div class="stat-card-value">${UIUtils.formatNumber(totalGood)}</div>
-                    <div class="stat-card-label">양품 수량</div>
-                </div>
-                <div class="stat-card red">
-                    <div class="stat-card-value">${UIUtils.formatNumber(totalBad)}</div>
-                    <div class="stat-card-label">불량 수량</div>
-                </div>`;
-        }
-
         const tbody = document.getElementById('pwTableBody');
         if (!tbody) return;
 
@@ -1024,9 +1002,29 @@ const PaintingWorkModule = (function() {
             const timeStr = d.startTime ?
                 d.startTime + (d.endTime ? '~' + d.endTime : '') :
                 '-';
-            const ctStr = d.avgCT > 0 ?
-                '<span style="color:var(--accent-blue);font-size:0.82rem;">' + d.avgCT.toFixed(1) + '초</span>' :
-                '-';
+            // 기본C.T: 생산계획의 시간/수량으로 계산
+            const _plan = d.planId ? Storage.getById(PLAN_STORE, d.planId) : null;
+            let _baseCT = 0;
+            if (_plan && _plan.startTime && _plan.endTime && Number(_plan.planQty) > 0) {
+                const _bsh = parseInt(_plan.startTime.split(':')[0]);
+                const _bsm = parseInt(_plan.startTime.split(':')[1]);
+                const _beh = parseInt(_plan.endTime.split(':')[0]);
+                const _bem = parseInt(_plan.endTime.split(':')[1]);
+                const _pm = (_beh * 60 + _bem) - (_bsh * 60 + _bsm);
+                if (_pm > 0) _baseCT = (_pm * 60) / Number(_plan.planQty);
+            }
+
+            const ctStr = d.avgCT > 0
+                ? '<span style="color:var(--accent-blue);font-size:0.84rem;font-weight:600;">' + d.avgCT.toFixed(1) + '초</span>' +
+                  (_baseCT > 0 ? '<div style="font-size:0.68rem;color:var(--text-muted);margin-top:1px;">기본 ' + _baseCT.toFixed(1) + '초</div>' : '')
+                : '-';
+
+            const effStr = (() => {
+                if (!d.avgCT || !_baseCT) return '<span style="color:var(--text-muted);">-</span>';
+                const eff = Math.round(_baseCT / d.avgCT * 100);
+                const color = eff >= 100 ? '#16a34a' : eff >= 85 ? '#d97706' : '#dc2626';
+                return '<span style="font-weight:700;color:' + color + ';">' + eff + '%</span>';
+            })();
 
             // CVT: 제품 마스터에서 도장 공정 슬롯의 cvt 값 조회
             const _products = Storage.getAll(DB.STORES.PRODUCTS) || [];
@@ -1071,24 +1069,37 @@ const PaintingWorkModule = (function() {
 
             // 검사 완료된 항목은 수정 버튼 비활성화 (삭제 버튼 없음)
             const actionButtons = isInspectionCompleted ?
-                '<span style="color:var(--text-muted); font-size:0.85rem;">검사 완료됨</span>' :
-                '<button class="btn btn-sm btn-outline" onclick="PaintingWorkModule.edit(\'' + d.id + '\')">수정</button>';
+                '<button class="btn btn-sm btn-outline" onclick="PaintingWorkModule.openWorkViewPage(\'' + d.id + '\')">보기</button>' :
+                '<button class="btn btn-sm btn-outline" onclick="PaintingWorkModule.openWorkViewPage(\'' + d.id + '\')">보기</button>';
 
+            const regDateRaw = d.registeredAt ? d.registeredAt.slice(0, 10) : '';
+            const regParts = regDateRaw.split('-');
+            const regDate = regParts.length === 3
+                ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;">' + regParts[0] + '</span>' +
+                  '<span style="font-weight:600;white-space:nowrap;">' + regParts[1] + '-' + regParts[2] + '</span>'
+                : '<span style="color:var(--text-muted);">-</span>';
+            const workDateParts = (d.date || '').split('-');
+            const lotShort = d.lots && d.lots.length > 0
+                ? d.lots.map(l => l.lotNo).join(' / ')
+                : (d.lotNo || '');
+            const workDateHtml = workDateParts.length === 3
+                ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;">' + workDateParts[0] + '</span>' +
+                  '<span style="font-weight:600;white-space:nowrap;">' + workDateParts[1] + '-' + workDateParts[2] + '</span>'
+                : (d.date || '-');
             return '<tr style="' + (isInspectionCompleted ? 'background:rgba(22,163,74,0.05);' : '') + '">' +
-                '<td>' + d.date + '</td>' +
+                '<td style="line-height:1.3;">' + regDate + '</td>' +
+                '<td style="line-height:1.3;">' + workDateHtml + '</td>' +
                 '<td>' + (d.line || '-') + '</td>' +
                 '<td>' + (d.carModel || '-') + '</td>' +
                 '<td>' + (d.partName || '-') + '</td>' +
                 '<td>' + (d.color || '-') + '</td>' +
-                '<td style="text-align:center;">' + UIUtils.itemTypeBadge(d.carModel, d.partName, d.color) + '</td>' +
                 '<td>' + lotDisplay + '</td>' +
                 '<td style="text-align:right;">' + UIUtils.formatNumber(d.inputQty) + '</td>' +
                 '<td style="text-align:right;font-weight:600;">' + UIUtils.formatNumber(d.productionQty) + '</td>' +
-                '<td style="text-align:right;color:var(--accent-green);">' + UIUtils.formatNumber(d.goodQty) + '</td>' +
                 '<td style="text-align:right;color:var(--accent-red);">' + UIUtils.formatNumber(d.defectQty) + '</td>' +
-                '<td style="text-align:center;">' + (d.workers > 0 ? d.workers + '명' : '-') + '</td>' +
                 '<td style="font-size:0.82rem;white-space:nowrap;">' + timeStr + '</td>' +
-                '<td style="text-align:right;">' + ctStr + '</td>' +
+                '<td style="text-align:right;line-height:1.4;">' + ctStr + '</td>' +
+                '<td style="text-align:right;">' + effStr + '</td>' +
                 '<td style="text-align:center;">' + cvtStr + '</td>' +
                 '<td style="text-align:right;">' + spindleStr + '</td>' +
                 '<td style="white-space:nowrap;">' + overPlanBadge + timeChangeBadge + statusBadge + actionButtons + '</td></tr>';
@@ -2073,7 +2084,7 @@ const PaintingWorkModule = (function() {
             '</div>' +
             '<div style="font-size:0.79rem;color:var(--text-secondary);border-top:1px solid rgba(66,133,244,0.15);padding-top:7px;">' +
             '<span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;margin-right:2px;">event</span>' +
-            _currentDate + ' &nbsp;·&nbsp; ' +
+            (p.planDate || _currentDate) + ' &nbsp;·&nbsp; ' +
             '<span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;margin-right:2px;">factory</span>' +
             effectiveLine +
             (planTimeLabel ? ' &nbsp;·&nbsp; <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;margin-right:2px;">schedule</span>계획: ' + planTimeLabel : '') +
@@ -2167,7 +2178,7 @@ const PaintingWorkModule = (function() {
             '<div class="form-group" style="margin:0;">' +
             '<label class="form-label" style="font-size:0.82rem;">' +
             '<span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">timer</span> ' +
-            '평균 CT (자동계산)</label>' +
+            '작업 C.T (자동계산)</label>' +
             '<div id="pwCtInfo" style="height:36px;display:flex;align-items:center;">' +
             '<span style="color:var(--text-muted);font-size:0.8rem;">완료수량·시간 입력 시 자동계산</span></div>' +
             '<div style="display:flex;gap:14px;margin-top:5px;flex-wrap:wrap;">' +
@@ -2326,7 +2337,7 @@ const PaintingWorkModule = (function() {
             '<input type="hidden" id="addPwCarModelHidden"   value="' + carModel + '">' +
             '<input type="hidden" id="addPwPartNameHidden"   value="' + partName + '">' +
             '<input type="hidden" id="addPwColorHidden"      value="' + color + '">' +
-            '<input type="hidden" id="addPwDateHidden"       value="' + _currentDate + '">' +
+            '<input type="hidden" id="addPwDateHidden"       value="' + (p.planDate || _currentDate) + '">' +
             '<input type="hidden" id="addPwLineHidden"       value="' + effectiveLine + '">' +
             '<input type="hidden" id="addPwPlanId"           value="' + planId + '">' +
             '<input type="hidden" id="addPwPlanStartHidden"  value="' + planStartTime + '">' +
@@ -2381,6 +2392,7 @@ const PaintingWorkModule = (function() {
             color: plan.color || '',
             planQty: plan.planQty || 0,
             planId: plan.id,
+            planDate: plan.date || '',
             planStartTime: plan.startTime || '',
             planEndTime: plan.endTime || '',
             achievedQty: achievedQty
@@ -2627,7 +2639,8 @@ const PaintingWorkModule = (function() {
             qtyDiffDetail: hasQtyDiff ? qtyDiffDetail : '',
             qtyDiffManagerNotified: hasQtyDiff ? true : false,
             qtyDiffManagerRecipients: qtyDiffNotifyUsers,
-            note: ((document.getElementById('addPwNote') || {}).value || '').trim()
+            note: ((document.getElementById('addPwNote') || {}).value || '').trim(),
+            registeredAt: new Date().toISOString()
         };
 
         if (!data.date) {
@@ -2749,6 +2762,354 @@ const PaintingWorkModule = (function() {
         }
 
         UIUtils.toast('작업 실적이 등록되었습니다.', 'success');
+        loadAll();
+    }
+
+    // ──────────────────────────────────────────────
+    // 보기 페이지 (읽기 전용) + 수정 페이지
+    // ──────────────────────────────────────────────
+    var _workViewId = null;
+
+    function _buildWorkAlerts(d) {
+        var alerts = [];
+        if (d.overPlanQty) {
+            alerts.push(
+                '<div style="display:flex;align-items:flex-start;gap:10px;background:rgba(245,158,11,.08);' +
+                'border:1px solid rgba(245,158,11,.4);border-radius:8px;padding:12px 14px;margin-bottom:8px;">' +
+                '<span class="material-symbols-outlined" style="color:#f59e0b;font-size:22px;flex-shrink:0;margin-top:1px;">warning</span>' +
+                '<div><div style="font-weight:700;color:#b45309;margin-bottom:4px;">⚠ 계획수량 초과 등록</div>' +
+                (d.planReason ? '<div style="font-size:0.84rem;">사유: <strong>' + d.planReason + '</strong>' + (d.planReasonDetail ? ' — ' + d.planReasonDetail : '') + '</div>' : '') +
+                '<div style="font-size:0.82rem;margin-top:3px;">' + (d.planManagerNotified ? '<span style="color:#16a34a;font-weight:600;">✓ 관리자 통보 완료</span>' : '<span style="color:#dc2626;font-weight:600;">✗ 관리자 미통보</span>') + '</div></div></div>'
+            );
+        }
+        if (d.timeReason) {
+            alerts.push(
+                '<div style="display:flex;align-items:flex-start;gap:10px;background:rgba(239,68,68,.07);' +
+                'border:1px solid rgba(239,68,68,.35);border-radius:8px;padding:12px 14px;margin-bottom:8px;">' +
+                '<span class="material-symbols-outlined" style="color:#ef4444;font-size:22px;flex-shrink:0;margin-top:1px;">schedule</span>' +
+                '<div><div style="font-weight:700;color:#dc2626;margin-bottom:4px;">⏱ 시간 변동</div>' +
+                '<div style="font-size:0.84rem;">사유: <strong>' + (d.timeReason || '') + '</strong>' + (d.timeReasonDetail ? ' — ' + d.timeReasonDetail : '') + '</div>' +
+                '<div style="font-size:0.82rem;margin-top:3px;">' + (d.timeManagerNotified ? '<span style="color:#16a34a;font-weight:600;">✓ 관리자 통보 완료</span>' : '<span style="color:#dc2626;font-weight:600;">✗ 관리자 미통보</span>') + '</div></div></div>'
+            );
+        }
+        if (d.qtyDiffReason) {
+            alerts.push(
+                '<div style="display:flex;align-items:flex-start;gap:10px;background:rgba(234,179,8,.08);' +
+                'border:1px solid rgba(234,179,8,.4);border-radius:8px;padding:12px 14px;margin-bottom:8px;">' +
+                '<span class="material-symbols-outlined" style="color:#ca8a04;font-size:22px;flex-shrink:0;margin-top:1px;">swap_vert</span>' +
+                '<div><div style="font-weight:700;color:#a16207;margin-bottom:4px;">↕ 투입/산출 수량 차이</div>' +
+                '<div style="font-size:0.84rem;">사유: <strong>' + (d.qtyDiffReason || '') + '</strong>' + (d.qtyDiffDetail ? ' — ' + d.qtyDiffDetail : '') + '</div>' +
+                '<div style="font-size:0.82rem;margin-top:3px;">' + (d.qtyDiffManagerNotified ? '<span style="color:#16a34a;font-weight:600;">✓ 관리자 통보 완료</span>' : '<span style="color:#dc2626;font-weight:600;">✗ 관리자 미통보</span>') + '</div></div></div>'
+            );
+        }
+        if (d.inspectionStatus === 'completed') {
+            alerts.push(
+                '<div style="display:flex;align-items:center;gap:10px;background:rgba(22,163,74,.07);' +
+                'border:1px solid rgba(22,163,74,.35);border-radius:8px;padding:10px 14px;margin-bottom:8px;">' +
+                '<span class="material-symbols-outlined" style="color:#16a34a;font-size:22px;flex-shrink:0;">verified</span>' +
+                '<div style="font-weight:600;color:#15803d;">✓ 도장 검사 완료</div></div>'
+            );
+        }
+        if (!alerts.length) {
+            alerts.push(
+                '<div style="display:flex;align-items:center;gap:10px;background:var(--bg-secondary);' +
+                'border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:8px;">' +
+                '<span class="material-symbols-outlined" style="color:var(--accent-green);font-size:20px;">check_circle</span>' +
+                '<span style="font-size:0.88rem;color:var(--text-muted);">특이사항 없음</span></div>'
+            );
+        }
+        return alerts.join('');
+    }
+
+    // 오버레이 헬퍼
+    function _getOrCreateWorkOverlay() {
+        var ov = document.getElementById('pwWorkOverlay');
+        if (!ov) {
+            ov = document.createElement('div');
+            ov.id = 'pwWorkOverlay';
+            ov.style.cssText =
+                'position:fixed;top:0;left:0;right:0;bottom:0;z-index:900;' +
+                'background:var(--bg-primary);overflow-y:auto;display:flex;flex-direction:column;';
+            document.body.appendChild(ov);
+        }
+        return ov;
+    }
+
+    // 읽기 전용 보기 페이지 (오버레이)
+    function openWorkViewPage(id) {
+        var d = Storage.getById(STORE, id);
+        if (!d) return;
+        _workViewId = id;
+
+        var alertsHtml = _buildWorkAlerts(d);
+
+        var lotItems = (d.lots && d.lots.length > 0) ? d.lots : (d.lotNo ? [{lotNo: d.lotNo, qty: 0}] : []);
+        var lotDisplayHtml = lotItems.length
+            ? lotItems.map(function(l) {
+                return '<span style="display:inline-block;background:var(--bg-secondary);border:1px solid var(--border);' +
+                    'border-radius:4px;padding:2px 10px;font-family:monospace;font-size:0.85rem;margin:2px 4px 2px 0;">' +
+                    l.lotNo + (l.qty ? ' <span style="color:var(--text-muted);font-size:0.78rem;">(' + UIUtils.formatNumber(l.qty) + ')</span>' : '') + '</span>';
+            }).join('')
+            : '<span style="color:var(--text-muted);">-</span>';
+
+        var wp = (d.date || '').split('-');
+        var workDateDisplay = wp.length === 3
+            ? wp[1] + '-' + wp[2] + '<small style="color:var(--text-muted);margin-left:4px;">(' + wp[0] + ')</small>'
+            : (d.date || '-');
+        var regDateDisplay = d.registeredAt ? d.registeredAt.slice(0, 10) : '-';
+
+        function vf(label, value, color) {
+            return '<div style="min-width:110px;">' +
+                '<div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:4px;">' + label + '</div>' +
+                '<div style="font-size:0.95rem;font-weight:600;color:' + (color || 'var(--text-primary)') + ';">' + value + '</div>' +
+                '</div>';
+        }
+
+        var processLoss = (Number(d.inputQty) || 0) - (Number(d.productionQty) || 0);
+
+        var ov = _getOrCreateWorkOverlay();
+        ov.innerHTML =
+            // 상단 고정 헤더
+            '<div style="position:sticky;top:0;z-index:10;background:var(--bg-primary);' +
+            'border-bottom:1px solid var(--border);padding:12px 24px;' +
+            'display:flex;justify-content:space-between;align-items:center;gap:10px;">' +
+            '<div style="display:flex;align-items:center;gap:10px;">' +
+            '<button class="btn btn-outline btn-sm" onclick="PaintingWorkModule._closeWorkViewPage()">' +
+            '<span class="material-symbols-outlined" style="font-size:18px;">close</span> 닫기</button>' +
+            '<span style="font-size:0.95rem;font-weight:600;color:var(--text-muted);">도장 작업 실적 보기</span>' +
+            '</div>' +
+            '<button class="btn btn-primary btn-sm" onclick="PaintingWorkModule.openWorkEditPage(\'' + id + '\')">' +
+            '<span class="material-symbols-outlined" style="font-size:16px;">edit</span> 수정</button>' +
+            '</div>' +
+
+            // 본문
+            '<div class="fade-in-up" style="max-width:960px;margin:0 auto;padding:20px 24px;">' +
+
+            '<div class="card" style="margin-bottom:14px;">' +
+            '<div class="card-header" style="padding:10px 16px;"><h4 style="margin:0;font-size:0.9rem;">' +
+            '<span class="material-symbols-outlined" style="font-size:1rem;vertical-align:middle;margin-right:4px;">info</span>상태 / 알림</h4></div>' +
+            '<div class="card-body" style="padding:12px 14px;">' + alertsHtml + '</div></div>' +
+
+            '<div class="card" style="margin-bottom:14px;">' +
+            '<div class="card-header" style="padding:10px 16px;"><h4 style="margin:0;font-size:0.9rem;">기본 정보</h4></div>' +
+            '<div class="card-body" style="padding:18px 20px;">' +
+            '<div style="display:flex;flex-wrap:wrap;gap:20px 40px;">' +
+            vf('등록일', regDateDisplay) +
+            vf('도장 작업일', workDateDisplay) +
+            vf('라인', d.line || '-') +
+            vf('차종', d.carModel || '-') +
+            vf('품명', d.partName || '-') +
+            vf('컬러', d.color || '-') +
+            '</div></div></div>' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">' +
+            '<div class="card">' +
+            '<div class="card-header" style="padding:10px 16px;"><h4 style="margin:0;font-size:0.9rem;">작업 수량</h4></div>' +
+            '<div class="card-body" style="padding:18px 20px;">' +
+            '<div style="display:flex;flex-wrap:wrap;gap:20px 36px;">' +
+            vf('투입수량', UIUtils.formatNumber(d.inputQty || 0), 'var(--accent-blue)') +
+            vf('완료수량', UIUtils.formatNumber(d.productionQty || 0), 'var(--accent-green)') +
+            vf('공정 LOSS', UIUtils.formatNumber(processLoss), processLoss > 0 ? 'var(--accent-red)' : 'var(--text-muted)') +
+            vf('불량수량', UIUtils.formatNumber(Number(d.defectQty) || 0), (Number(d.defectQty) || 0) > 0 ? 'var(--accent-red)' : 'var(--text-muted)') +
+            vf('투입인원', (d.workers || 0) + '명') +
+            '</div></div></div>' +
+
+            '<div class="card">' +
+            '<div class="card-header" style="padding:10px 16px;"><h4 style="margin:0;font-size:0.9rem;">작업 시간</h4></div>' +
+            '<div class="card-body" style="padding:18px 20px;">' +
+            '<div style="display:flex;flex-wrap:wrap;gap:20px 36px;">' +
+            vf('시작시간', d.startTime || '-') +
+            vf('완료시간', d.endTime || '-') +
+            vf('작업C.T', d.avgCT > 0 ? d.avgCT.toFixed(1) + '초' : '-', 'var(--accent-blue)') +
+            '</div></div></div>' +
+            '</div>' +
+
+            '<div class="card" style="margin-bottom:14px;">' +
+            '<div class="card-header" style="padding:10px 16px;"><h4 style="margin:0;font-size:0.9rem;">사출 LOT</h4></div>' +
+            '<div class="card-body" style="padding:14px 20px;">' + lotDisplayHtml + '</div></div>' +
+
+            (d.note ? '<div class="card" style="margin-bottom:14px;">' +
+            '<div class="card-header" style="padding:10px 16px;"><h4 style="margin:0;font-size:0.9rem;">비고</h4></div>' +
+            '<div class="card-body" style="padding:14px 20px;font-size:0.9rem;">' + d.note + '</div></div>' : '') +
+            '</div>';
+    }
+
+    // 수정 페이지 (입력 폼)
+    function openWorkEditPage(id) {
+        var d = Storage.getById(STORE, id);
+        if (!d) return;
+        _workViewId = id;
+
+        var alertsHtml = _buildWorkAlerts(d);
+        var editPlan = d.planId ? Storage.getById(PLAN_STORE, d.planId) : null;
+        var editPlanQty = Number((editPlan && editPlan.planQty) || d.planQty || 0);
+        var editPlanQtyFmt = UIUtils.formatNumber(editPlanQty || 0);
+        var editPlanReasonVisible = !!(d.planReason || d.planReasonDetail || d.planManagerNotified);
+        var editQtyDiffVisible = !!(d.qtyDiffReason || d.qtyDiffDetail || d.qtyDiffManagerNotified);
+        var lotsHtml = buildLotOptionsHtml(d.carModel, d.partName);
+        var existLots = (d.lots && d.lots.length > 0) ? d.lots
+            : (d.lotNo ? [{ lotNo: d.lotNo, qty: 0 }] : [{ lotNo: '', qty: 0 }]);
+        var initialLotRows = existLots.map(function(l) { return _buildLotRow(lotsHtml, l.lotNo, l.qty); }).join('');
+
+        var editPlanReasonHtml = editPlanQty > 0
+            ? '<div id="pwPlanQtyReasonSection" data-plan-qty="' + editPlanQty + '"' +
+              ' style="display:' + (editPlanReasonVisible ? 'block' : 'none') + ';margin-bottom:14px;' +
+              'background:rgba(220,38,38,0.06);border:1px solid rgba(220,38,38,0.35);border-radius:8px;padding:12px;">' +
+              '<div style="font-size:0.82rem;color:#dc2626;font-weight:600;margin-bottom:10px;">' +
+              '투입수량 대비 계획수량(<strong>' + editPlanQtyFmt + ' EA</strong>) 미달 — 사유를 입력해 주세요.</div>' +
+              '<div style="display:grid;grid-template-columns:1fr 1.8fr;gap:10px;">' +
+              '<div class="form-group" style="margin:0;"><label class="form-label" style="font-size:0.82rem;">사유구분</label>' +
+              '<select class="form-select" id="editPwPlanReason">' +
+              '<option value="">-- 선택 --</option>' +
+              ['계획변경','시간정지(공정문제)','설비 이상정지','설비고장','원자재문제','자재결품'].map(function(v) {
+                  return '<option value="' + v + '"' + (d.planReason === v ? ' selected' : '') + '>' + v + '</option>';
+              }).join('') +
+              '</select></div>' +
+              '<div class="form-group" style="margin:0;"><label class="form-label" style="font-size:0.82rem;">세부 사유</label>' +
+              '<input type="text" class="form-input" id="editPwPlanReasonDetail" value="' + (d.planReasonDetail || '') + '"></div>' +
+              '</div>' +
+              '<div style="margin-top:10px;background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.3);border-radius:6px;padding:9px 14px;display:flex;align-items:center;gap:10px;">' +
+              '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;">' +
+              '<input type="checkbox" id="editPwPlanManagerNotified" style="width:16px;height:16px;"' + (d.planManagerNotified ? ' checked' : '') + '>' +
+              '<span style="font-size:0.82rem;font-weight:600;color:#dc2626;">관리자 통보 완료</span></label></div>' +
+              _buildNotifySelectorHtml('editPlan', '계획 미달 통보를 받을 담당자') +
+              '</div>' : '';
+
+        var editQtyDiffHtml =
+            '<div id="qtyDiffWarning" style="display:' + (editQtyDiffVisible ? 'block' : 'none') + ';margin-bottom:12px;' +
+            'background:rgba(239,68,68,0.07);border:1px solid rgba(239,68,68,0.45);border-radius:8px;padding:12px;">' +
+            '<div style="font-size:0.82rem;color:#dc2626;font-weight:700;margin-bottom:10px;">투입/산출 수량 차이 사유</div>' +
+            '<div style="display:grid;grid-template-columns:1fr 1.8fr;gap:10px;">' +
+            '<div class="form-group" style="margin:0;"><label class="form-label" style="font-size:0.82rem;">사유구분</label>' +
+            '<select class="form-select" id="editPwQtyDiffReason">' +
+            '<option value="">-- 선택 --</option>' +
+            ['자재 불량','설비 고장','생산조건 NG','작업 불량','기타'].map(function(v) {
+                return '<option value="' + v + '"' + (d.qtyDiffReason === v ? ' selected' : '') + '>' + v + '</option>';
+            }).join('') +
+            '</select></div>' +
+            '<div class="form-group" style="margin:0;"><label class="form-label" style="font-size:0.82rem;">세부 사유</label>' +
+            '<input type="text" class="form-input" id="editPwQtyDiffDetail" value="' + (d.qtyDiffDetail || '') + '"></div>' +
+            '</div>' +
+            '<div style="margin-top:10px;display:flex;align-items:center;gap:10px;">' +
+            '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;">' +
+            '<input type="checkbox" id="editPwQtyDiffManagerNotified" style="width:16px;height:16px;"' + (d.qtyDiffManagerNotified ? ' checked' : '') + '>' +
+            '<span style="font-size:0.82rem;font-weight:600;color:#dc2626;">관리자 통보 완료</span></label></div>' +
+            _buildNotifySelectorHtml('editQtyDiff', '투입/산출 차이 통보 담당자') +
+            '</div>';
+
+        var wp = (d.date || '').split('-');
+        var workDateDisplay = wp.length === 3
+            ? wp[1] + '-' + wp[2] + ' <small style="color:var(--text-muted);">(' + wp[0] + ')</small>'
+            : (d.date || '-');
+
+        var ov = _getOrCreateWorkOverlay();
+        ov.innerHTML =
+            '<div style="position:sticky;top:0;z-index:10;background:var(--bg-primary);' +
+            'border-bottom:1px solid var(--border);padding:12px 24px;' +
+            'display:flex;justify-content:space-between;align-items:center;gap:10px;">' +
+            '<div style="display:flex;align-items:center;gap:10px;">' +
+            '<button class="btn btn-outline btn-sm" onclick="PaintingWorkModule.openWorkViewPage(\'' + id + '\')">' +
+            '<span class="material-symbols-outlined" style="font-size:18px;">arrow_back</span> 보기로</button>' +
+            '<span style="font-size:0.95rem;font-weight:600;color:var(--text-muted);">도장 작업 실적 수정</span>' +
+            '</div>' +
+            '<button class="btn btn-primary btn-sm" onclick="PaintingWorkModule.saveEdit(\'' + id + '\')">' +
+            '<span class="material-symbols-outlined" style="font-size:16px;">save</span> 저장</button>' +
+            '</div>' +
+
+            '<div class="fade-in-up" style="max-width:960px;margin:0 auto;padding:20px 24px;">' +
+
+            '<div class="card" style="margin-bottom:14px;">' +
+            '<div class="card-header" style="padding:10px 16px;"><h4 style="margin:0;font-size:0.9rem;">' +
+            '<span class="material-symbols-outlined" style="font-size:1rem;vertical-align:middle;margin-right:4px;">info</span>상태 / 알림</h4></div>' +
+            '<div class="card-body" style="padding:12px 14px;">' + alertsHtml + '</div></div>' +
+
+            '<div class="card" style="margin-bottom:14px;">' +
+            '<div class="card-body" style="padding:12px 18px;display:flex;flex-wrap:wrap;gap:14px;align-items:center;font-size:0.9rem;">' +
+            '<div><span style="font-size:0.72rem;color:var(--text-muted);">도장 작업일</span><div style="font-weight:700;">' + workDateDisplay + '</div></div>' +
+            '<div><span style="font-size:0.72rem;color:var(--text-muted);">라인</span><div style="font-weight:600;">' + (d.line || '-') + '</div></div>' +
+            '<div><span style="font-size:0.72rem;color:var(--text-muted);">차종/품명</span><div style="font-weight:600;">' + (d.carModel || '') + ' / ' + (d.partName || '') + '</div></div>' +
+            '</div></div>' +
+
+            '<div class="card">' +
+            '<div class="card-header" style="padding:10px 16px;"><h4 style="margin:0;font-size:0.9rem;">' +
+            '<span class="material-symbols-outlined" style="font-size:1rem;vertical-align:middle;margin-right:4px;">edit</span>수정</h4></div>' +
+            '<div class="card-body">' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:14px;">' +
+            '<div class="form-group" style="margin:0;"><label class="form-label">차종</label>' +
+            '<input type="text" class="form-input" id="editPwCarModel" value="' + (d.carModel || '') + '"></div>' +
+            '<div class="form-group" style="margin:0;"><label class="form-label">품명</label>' +
+            '<input type="text" class="form-input" id="editPwPartName" value="' + (d.partName || '') + '"></div>' +
+            '<div class="form-group" style="margin:0;"><label class="form-label">컬러</label>' +
+            '<input type="text" class="form-input" id="editPwColor" value="' + (d.color || '') + '"></div></div>' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:14px;">' +
+            '<div class="form-group" style="margin:0;"><label class="form-label">투입수량</label>' +
+            '<input type="number" class="form-input" id="editPwInputQty" value="' + (d.inputQty || 0) + '" style="text-align:right;font-weight:600;"></div>' +
+            '<div class="form-group" style="margin:0;"><label class="form-label">완료수량</label>' +
+            '<input type="number" class="form-input" id="editPwProdQty" value="' + (d.productionQty || 0) + '"' +
+            ' oninput="PaintingWorkModule._updateLotSummary();" style="text-align:right;font-weight:600;color:var(--accent-green);"></div>' +
+            '<div class="form-group" style="margin:0;"><label class="form-label">투입인원 (명)</label>' +
+            '<input type="number" class="form-input" id="editPwWorkers" value="' + (d.workers || 0) + '" style="text-align:right;"></div></div>' +
+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;' +
+            'background:var(--bg-secondary);border-radius:8px;padding:12px;">' +
+            '<div class="form-group" style="margin:0;"><label class="form-label">작업 시작시간</label>' +
+            '<input type="time" class="form-input" id="editPwStartTime" value="' + (d.startTime || '') + '"></div>' +
+            '<div class="form-group" style="margin:0;"><label class="form-label">작업 완료시간</label>' +
+            '<input type="time" class="form-input" id="editPwEndTime" value="' + (d.endTime || '') + '"></div></div>' +
+
+            '<div class="form-group" style="margin-bottom:14px;">' +
+            '<label class="form-label">사출 LOT</label>' +
+            '<div style="background:var(--bg-secondary);border-radius:8px;padding:10px 12px;">' +
+            '<div id="pwLotRows">' + initialLotRows + '</div>' +
+            '<button class="btn btn-outline btn-sm" onclick="PaintingWorkModule.addLotRow()"' +
+            ' style="margin-top:7px;font-size:0.82rem;">' +
+            '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">add</span> LOT 추가</button>' +
+            '</div></div>' +
+
+            editPlanReasonHtml +
+            editQtyDiffHtml +
+
+            '<div class="form-group" style="margin-bottom:0;"><label class="form-label">비고</label>' +
+            '<input type="text" class="form-input" id="editPwNote" value="' + (d.note || '') + '"></div>' +
+            '</div></div>' +
+
+            '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">' +
+            '<button class="btn btn-secondary" onclick="PaintingWorkModule.openWorkViewPage(\'' + id + '\')">취소</button>' +
+            '<button class="btn btn-primary" onclick="PaintingWorkModule.saveEdit(\'' + id + '\')">' +
+            '<span class="material-symbols-outlined">save</span> 저장</button>' +
+            '</div></div>';
+
+        setTimeout(function() {
+            var rows = document.querySelectorAll('#pwLotRows .pw-lot-row');
+            existLots.forEach(function(l, i) {
+                if (!l.lotNo || !rows[i]) return;
+                var sel = rows[i].querySelector('.pw-lot-sel');
+                if (!sel) return;
+                for (var j = 0; j < sel.options.length; j++) {
+                    if (sel.options[j].value === l.lotNo) { sel.value = l.lotNo; break; }
+                }
+            });
+            _updateLotSummary();
+            (d.planManagerRecipients || []).forEach(function(userId) {
+                var chk = document.querySelector('.editPlan-notify-user[value="' + userId + '"]');
+                if (chk) chk.checked = true;
+            });
+            (d.qtyDiffManagerRecipients || []).forEach(function(userId) {
+                var chk = document.querySelector('.editQtyDiff-notify-user[value="' + userId + '"]');
+                if (chk) chk.checked = true;
+            });
+            checkQtyDiff();
+            checkPlanQtyDiff();
+            checkOverPlanQty();
+        }, 60);
+    }
+
+    function _closeWorkViewPage() {
+        var ov = document.getElementById('pwWorkOverlay');
+        if (ov) ov.remove();
+        _workViewId = null;
         loadAll();
     }
 
@@ -3036,9 +3397,15 @@ const PaintingWorkModule = (function() {
             qtyDiffManagerRecipients: editQtyDiffNotifyUsers,
             note: ((document.getElementById('editPwNote') || {}).value || '').trim()
         });
-        UIUtils.closeModal();
         UIUtils.toast('수정되었습니다.', 'success');
-        loadAll();
+        if (_workViewId) {
+            const savedId = _workViewId;
+            _workViewId = null;
+            openWorkViewPage(savedId);
+        } else {
+            UIUtils.closeModal();
+            loadAll();
+        }
     }
 
     function remove(id) {
@@ -3244,6 +3611,9 @@ const PaintingWorkModule = (function() {
         toggleNotifyUsers,
         saveNew,
         edit,
+        openWorkViewPage,
+        openWorkEditPage,
+        _closeWorkViewPage,
         saveEdit,
         remove,
         exportData,
