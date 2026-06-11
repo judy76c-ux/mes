@@ -250,6 +250,35 @@ var LaserWorkModule = (function() {
                 </div>
             </div>
             ` : `
+            <!-- 등록 모드: 수기 입력 -->
+            <div style="background:rgba(59,130,246,0.06); border:1px solid rgba(59,130,246,0.18); border-radius:8px; padding:12px 14px; margin-bottom:16px;">
+                <div style="display:flex; align-items:center; gap:6px; margin-bottom:10px;">
+                    <span class="material-symbols-outlined" style="font-size:1.1rem; color:var(--accent-blue);">edit_square</span>
+                    <span class="form-label" style="margin:0; font-weight:600;">수기 등록</span>
+                    <span style="font-size:0.78rem; color:var(--text-muted);">도장공정 연계 없이 직접 입력할 수 있습니다.</span>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">차종</label>
+                        <select class="form-select" id="lwCarModel" onchange="LaserWorkModule.onCarModelChange()">
+                            <option value="">-- 차종 선택 --</option>
+                            ${[...new Set((Storage.getAll(DB.STORES.PRODUCTS) || []).map(p => p.carModel).filter(Boolean))].sort().map(car => `<option value="${car}" ${d.carModel === car ? 'selected' : ''}>${car}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">품명</label>
+                        <select class="form-select" id="lwPartName" onchange="LaserWorkModule.onPartChange()">
+                            <option value="">-- 품명 선택 --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">컬러</label>
+                        <select class="form-select" id="lwColor">
+                            <option value="">-- 컬러 선택 --</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
             <!-- 등록 모드: 레이저 대기품 불러오기 -->
             <div style="background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:8px; padding:12px 14px; margin-bottom:16px;">
                 <div style="display:flex; align-items:center; gap:6px; margin-bottom:10px;">
@@ -543,14 +572,17 @@ var LaserWorkModule = (function() {
     }
 
     function collectData() {
+        const manualCarModel = (document.getElementById('lwCarModel') || {}).value || '';
+        const manualPartName = (document.getElementById('lwPartName') || {}).value || '';
+        const manualColor = (document.getElementById('lwColor') || {}).value || '';
         return {
             date: document.getElementById('lwDate').value,
             machine: document.getElementById('lwMachine').value,
             startTime: document.getElementById('lwStartTime').value,
             endTime: document.getElementById('lwEndTime').value,
-            carModel: _selectedCarModel,
-            partName: _selectedPartName,
-            color: _selectedColor,
+            carModel: _selectedCarModel || manualCarModel,
+            partName: _selectedPartName || manualPartName,
+            color: _selectedColor || manualColor,
             paintDate: _selectedLots.length > 0 ? (_selectedLots[0].paintDate || '') : '',
             paintLots: _selectedLots.map(l => ({ paintDate: l.paintDate, lotNo: l.lotNo })),
             engravingTime: Number(document.getElementById('lwEngravingTime').value) || 0,
@@ -610,11 +642,19 @@ var LaserWorkModule = (function() {
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="LaserWorkModule.saveNew()">등록</button>
         `, 'lg');
+        if (!p) {
+            setTimeout(function() {
+                const carEl = document.getElementById('lwCarModel');
+                if (carEl) {
+                    onCarModelChange();
+                }
+            }, 0);
+        }
     }
 
     async function saveNew() {
         const data = collectData();
-        if (!data.date || !data.machine || !data.quantity) {
+        if (!data.date || !data.machine || !data.quantity || !data.carModel || !data.partName) {
             UIUtils.toast('필수 항목을 입력하세요.', 'warning');
             return;
         }
@@ -1955,9 +1995,6 @@ var LaserStandbyModule = (function() {
                             <td style="padding:5px 8px;font-size:0.7rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);white-space:nowrap;">
                                 ${lastIn}
                             </td>
-                            <td style="padding:5px 8px;text-align:center;border-bottom:1px solid var(--border-color);" onclick="event.stopPropagation();">
-                                <button class="btn btn-sm btn-primary" onclick="LaserStandbyModule.openIncoming('${encodeURIComponent(item.carModel+'||'+item.partName+'||'+item.color)}')">입고</button>
-                            </td>
                         </tr>`;
                     }).join('');
 
@@ -1981,7 +2018,6 @@ var LaserStandbyModule = (function() {
                                 <th style="padding:4px 8px;text-align:left;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">컬러</th>
                                 <th style="padding:4px 8px;text-align:right;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">재고</th>
                                 <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">최근입고</th>
-                                <th style="padding:4px 8px;text-align:center;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">작업</th>
                             </tr>
                         </thead>
                         <tbody>${rows}</tbody>
@@ -2236,73 +2272,6 @@ var LaserStandbyModule = (function() {
         Router.navigate('laser-layout');
     }
 
-    function openIncoming(keyEnc) {
-        const key = decodeURIComponent(keyEnc || '');
-        const [carModel, partName, color] = key.split('||');
-        if (typeof LaserWorkModule === 'undefined' || typeof LaserWorkModule.openAddModal !== 'function') {
-            UIUtils.toast('레이저 작업 등록 화면을 열 수 없습니다.', 'warning');
-            return;
-        }
-
-        const paintingWorks = Storage.getAll(DB.STORES.PAINTING_WORK) || [];
-        const laserWorks = Storage.getAll(DB.STORES.LASER_WORK_LOG) || [];
-        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-
-        const laserPaintWorks = paintingWorks.filter(function(w) {
-            if ((w.carModel || '') !== (carModel || '') || (w.partName || '') !== (partName || '') || ((w.color || '') !== (color || ''))) return false;
-            const prod = findProduct(products, w);
-            return !!prod && String(prod.process2 || '').trim() === '레이저';
-        });
-
-        const outByDate = {};
-        laserWorks.forEach(function(lw) {
-            if ((lw.carModel || '') !== (carModel || '') || (lw.partName || '') !== (partName || '') || ((lw.color || '') !== (color || ''))) return;
-            const base = `${lw.carModel}||${lw.partName}||${lw.color || ''}`;
-            const dates = lw.paintLots && lw.paintLots.length > 0
-                ? [...new Set(lw.paintLots.map(function(l) { return l.paintDate; }).filter(Boolean))]
-                : (lw.paintDate ? [lw.paintDate] : []);
-
-            if (dates.length > 0) {
-                const qtyEach = (Number(lw.quantity) || 0) / dates.length;
-                dates.forEach(function(d) {
-                    const keyByDate = `${base}||${d}`;
-                    outByDate[keyByDate] = (outByDate[keyByDate] || 0) + qtyEach;
-                });
-            } else {
-                const keyNoDate = `${base}||`;
-                outByDate[keyNoDate] = (outByDate[keyNoDate] || 0) + (Number(lw.quantity) || 0);
-            }
-        });
-
-        const pendingItems = laserPaintWorks
-            .map(function(w) {
-                const keyByDate = `${w.carModel}||${w.partName}||${w.color || ''}||${w.date || ''}`;
-                const remainQty = (Number(w.productionQty) || 0) - (outByDate[keyByDate] || 0);
-                return Object.assign({}, w, { remainQty: remainQty });
-            })
-            .filter(function(w) { return w.remainQty > 0; })
-            .sort(function(a, b) { return String(a.date || '').localeCompare(String(b.date || '')); });
-
-        const target = pendingItems[0];
-        if (!target) {
-            UIUtils.toast('입고 가능한 레이저 대기품이 없습니다.', 'warning');
-            return;
-        }
-
-        const lotNo = target.lots && target.lots.length > 0
-            ? target.lots.map(function(l) { return l.lotNo; }).filter(Boolean).join(', ')
-            : (target.lotNo || '');
-
-        LaserWorkModule.openAddModal({
-            carModel: target.carModel || '',
-            partName: target.partName || '',
-            color: target.color || '',
-            paintDate: target.date || '',
-            paintLot: lotNo,
-            quantity: target.remainQty
-        });
-    }
-
     async function _showItemDetail(keyEnc, event) {
         event.stopPropagation();
 
@@ -2450,7 +2419,6 @@ var LaserStandbyModule = (function() {
         renderContentOnly,
         refresh,
         openLayout,
-        openIncoming,
         _showItemDetail
     };
 })();
