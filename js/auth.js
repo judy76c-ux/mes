@@ -534,17 +534,13 @@ const AuthModule = (function () {
         const unreadCount = getUnreadInboxCount(current);
         UIUtils.showModal(
             `수신함${unreadCount ? ` (${unreadCount})` : ''}`,
-            `<div style="display:grid;grid-template-columns:320px minmax(0,1fr);gap:14px;min-height:460px;">
+            `<div style="display:grid;grid-template-columns:420px minmax(0,1fr);gap:14px;min-height:540px;">
                 <div style="display:flex;flex-direction:column;gap:10px;">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
                         <strong style="font-size:.9rem;">받은 메시지</strong>
                         <button class="btn btn-outline btn-sm" onclick="AuthModule.openComposeMessageModal()">새 쪽지</button>
                     </div>
-                    <div style="display:flex;flex-direction:column;gap:8px;max-height:420px;overflow:auto;">${_renderInboxList(freshInbox, current, active?.id, '받은 메시지가 없습니다.')}</div>
-                    <div style="margin-top:8px;">
-                        <strong style="font-size:.85rem;">보낸 메시지</strong>
-                        <div style="display:flex;flex-direction:column;gap:8px;max-height:180px;overflow:auto;margin-top:8px;">${_renderInboxList(sent, current, '', '보낸 메시지가 없습니다.')}</div>
-                    </div>
+                    <div style="display:flex;flex-direction:column;gap:8px;max-height:620px;overflow:auto;">${_renderInboxList(freshInbox, current, active?.id, '받은 메시지가 없습니다.')}</div>
                 </div>
                 <div style="border:1px solid var(--border-color);border-radius:12px;padding:14px;background:#fff;">
                     ${active ? `
@@ -559,7 +555,8 @@ const AuthModule = (function () {
                     ` : `<div style="display:flex;align-items:center;justify-content:center;height:100%;min-height:320px;color:var(--text-muted);">확인할 메시지가 없습니다.</div>`}
                 </div>
             </div>`,
-            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`,
+            'xl'
         );
     }
     function showUnreadInboxPopup() {

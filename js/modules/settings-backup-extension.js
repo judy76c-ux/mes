@@ -610,13 +610,16 @@ const SettingsBackupExtension = (function() {
         installed = true;
         const originalRender = SettingsModule.render;
         const originalSwitchTab = SettingsModule.switchTab;
-        SettingsModule.render = function(container) {
-            originalRender.call(SettingsModule, container);
+        SettingsModule.render = async function(container) {
+            const result = originalRender.call(SettingsModule, container);
+            if (result && typeof result.then === 'function') await result;
             setTimeout(renderPanel, 0);
+            return result;
         };
         SettingsModule.switchTab = function(tab) {
-            originalSwitchTab.call(SettingsModule, tab);
+            const result = originalSwitchTab.call(SettingsModule, tab);
             setTimeout(renderPanel, 0);
+            return result;
         };
     }
 

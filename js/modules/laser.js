@@ -142,6 +142,11 @@ var LaserWorkModule = (function() {
 
     function renderStats(data) {
         const total = data.reduce((s, d) => s + (Number(d.quantity) || 0), 0);
+        const inspections = Storage.getAll(DB.STORES.LASER_INSPECTIONS) || [];
+        const inspectedIds = new Set(inspections.map(item => item.workLogId).filter(Boolean));
+        const pendingWorks = data.filter(item => item.id && !inspectedIds.has(item.id));
+        const pendingCount = pendingWorks.length;
+        const pendingQty = pendingWorks.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
         const machines = MACHINES.map(m => ({
             name: m,
             qty: data.filter(d => d.machine === m).reduce((s, d) => s + (Number(d.quantity) || 0), 0)
@@ -151,6 +156,10 @@ var LaserWorkModule = (function() {
             <div class="stat-card blue">
                 <div class="stat-card-value">${UIUtils.formatNumber(total)}</div>
                 <div class="stat-card-label">총 작업수량</div>
+            </div>
+            <div class="stat-card orange">
+                <div class="stat-card-value">${UIUtils.formatNumber(pendingQty)}</div>
+                <div class="stat-card-label">검사 대기 수량 (${UIUtils.formatNumber(pendingCount)}건)</div>
             </div>
             ${machines.map(m => `
                 <div class="stat-card">
@@ -558,12 +567,46 @@ var LaserWorkModule = (function() {
         };
     }
 
-    function openAddModal() {
+    function openAddModal(prefill) {
+        const p = prefill || null;
         _selectedLots = [];
         _selectedCarModel = '';
         _selectedPartName = '';
         _selectedColor = '';
-        UIUtils.showModal('레이져 작업 등록', buildFormHTML(), `
+
+        let formData = {};
+        if (p) {
+            _selectedCarModel = p.carModel || '';
+            _selectedPartName = p.partName || '';
+            _selectedColor = p.color || '';
+            if (Array.isArray(p.paintLots) && p.paintLots.length > 0) {
+                _selectedLots = p.paintLots.map(function(lot) {
+                    return {
+                        paintDate: lot.paintDate || '',
+                        lotNo: lot.lotNo || ''
+                    };
+                });
+            } else if (p.paintDate || p.paintLot || p.lotNo) {
+                _selectedLots = [{
+                    paintDate: p.paintDate || p.date || '',
+                    lotNo: p.paintLot || p.lotNo || ''
+                }];
+            }
+            formData = {
+                date: p.workDate || UIUtils.today(),
+                machine: p.machine || '',
+                startTime: p.startTime || '',
+                endTime: p.endTime || '',
+                carModel: _selectedCarModel,
+                partName: _selectedPartName,
+                color: _selectedColor,
+                quantity: Number(p.quantity) || Number(p.productionQty) || 0,
+                programName: p.programName || '',
+                lensHeight: p.lensHeight || ''
+            };
+        }
+
+        UIUtils.showModal('레이져 작업 등록', buildFormHTML(formData), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="LaserWorkModule.saveNew()">등록</button>
         `, 'lg');
@@ -1728,7 +1771,7 @@ var LaserStandbyModule = (function() {
                     </div>
                     <div style="display:flex;gap:8px;align-items:center;">
                         <button class="btn btn-secondary" onclick="LaserStandbyModule.openLayout()">
-                            <span class="material-symbols-outlined">map</span> 레이아웃 보기
+                            <span class="material-symbols-outlined">map</span> 재공품 현황 레이아웃
                         </button>
                         <button class="btn btn-secondary" onclick="LaserStandbyModule.refresh()">
                             <span class="material-symbols-outlined">refresh</span> 새로고침
@@ -1912,6 +1955,9 @@ var LaserStandbyModule = (function() {
                             <td style="padding:5px 8px;font-size:0.7rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);white-space:nowrap;">
                                 ${lastIn}
                             </td>
+                            <td style="padding:5px 8px;text-align:center;border-bottom:1px solid var(--border-color);" onclick="event.stopPropagation();">
+                                <button class="btn btn-sm btn-primary" onclick="LaserStandbyModule.openIncoming('${encodeURIComponent(item.carModel+'||'+item.partName+'||'+item.color)}')">입고</button>
+                            </td>
                         </tr>`;
                     }).join('');
 
@@ -1935,6 +1981,7 @@ var LaserStandbyModule = (function() {
                                 <th style="padding:4px 8px;text-align:left;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">컬러</th>
                                 <th style="padding:4px 8px;text-align:right;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">재고</th>
                                 <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">최근입고</th>
+                                <th style="padding:4px 8px;text-align:center;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">작업</th>
                             </tr>
                         </thead>
                         <tbody>${rows}</tbody>
@@ -2189,6 +2236,73 @@ var LaserStandbyModule = (function() {
         Router.navigate('laser-layout');
     }
 
+    function openIncoming(keyEnc) {
+        const key = decodeURIComponent(keyEnc || '');
+        const [carModel, partName, color] = key.split('||');
+        if (typeof LaserWorkModule === 'undefined' || typeof LaserWorkModule.openAddModal !== 'function') {
+            UIUtils.toast('레이저 작업 등록 화면을 열 수 없습니다.', 'warning');
+            return;
+        }
+
+        const paintingWorks = Storage.getAll(DB.STORES.PAINTING_WORK) || [];
+        const laserWorks = Storage.getAll(DB.STORES.LASER_WORK_LOG) || [];
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+
+        const laserPaintWorks = paintingWorks.filter(function(w) {
+            if ((w.carModel || '') !== (carModel || '') || (w.partName || '') !== (partName || '') || ((w.color || '') !== (color || ''))) return false;
+            const prod = findProduct(products, w);
+            return !!prod && String(prod.process2 || '').trim() === '레이저';
+        });
+
+        const outByDate = {};
+        laserWorks.forEach(function(lw) {
+            if ((lw.carModel || '') !== (carModel || '') || (lw.partName || '') !== (partName || '') || ((lw.color || '') !== (color || ''))) return;
+            const base = `${lw.carModel}||${lw.partName}||${lw.color || ''}`;
+            const dates = lw.paintLots && lw.paintLots.length > 0
+                ? [...new Set(lw.paintLots.map(function(l) { return l.paintDate; }).filter(Boolean))]
+                : (lw.paintDate ? [lw.paintDate] : []);
+
+            if (dates.length > 0) {
+                const qtyEach = (Number(lw.quantity) || 0) / dates.length;
+                dates.forEach(function(d) {
+                    const keyByDate = `${base}||${d}`;
+                    outByDate[keyByDate] = (outByDate[keyByDate] || 0) + qtyEach;
+                });
+            } else {
+                const keyNoDate = `${base}||`;
+                outByDate[keyNoDate] = (outByDate[keyNoDate] || 0) + (Number(lw.quantity) || 0);
+            }
+        });
+
+        const pendingItems = laserPaintWorks
+            .map(function(w) {
+                const keyByDate = `${w.carModel}||${w.partName}||${w.color || ''}||${w.date || ''}`;
+                const remainQty = (Number(w.productionQty) || 0) - (outByDate[keyByDate] || 0);
+                return Object.assign({}, w, { remainQty: remainQty });
+            })
+            .filter(function(w) { return w.remainQty > 0; })
+            .sort(function(a, b) { return String(a.date || '').localeCompare(String(b.date || '')); });
+
+        const target = pendingItems[0];
+        if (!target) {
+            UIUtils.toast('입고 가능한 레이저 대기품이 없습니다.', 'warning');
+            return;
+        }
+
+        const lotNo = target.lots && target.lots.length > 0
+            ? target.lots.map(function(l) { return l.lotNo; }).filter(Boolean).join(', ')
+            : (target.lotNo || '');
+
+        LaserWorkModule.openAddModal({
+            carModel: target.carModel || '',
+            partName: target.partName || '',
+            color: target.color || '',
+            paintDate: target.date || '',
+            paintLot: lotNo,
+            quantity: target.remainQty
+        });
+    }
+
     async function _showItemDetail(keyEnc, event) {
         event.stopPropagation();
 
@@ -2336,6 +2450,7 @@ var LaserStandbyModule = (function() {
         renderContentOnly,
         refresh,
         openLayout,
+        openIncoming,
         _showItemDetail
     };
 })();

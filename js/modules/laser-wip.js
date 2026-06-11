@@ -35,7 +35,7 @@ var LaserWipModule = (function() {
                     class="btn btn-outline"
                     style="display:flex;align-items:center;gap:6px;background:#fff;">
                     <span class="material-symbols-outlined" style="font-size:18px;">map</span>
-                    지그창고 레이아웃
+                    재공품 현황 레이아웃
                 </button>
                 <button class="btn btn-secondary" style="display:flex;align-items:center;gap:4px;font-size:0.85rem;margin-left:auto;"
                     onclick="LaserWipModule.refresh()">
@@ -63,6 +63,17 @@ var LaserWipModule = (function() {
         _renderTabContent();
     }
 
+    function openTab(tab) {
+        _activeTab = tab === 'after-laser' ? 'after-laser' : 'standby';
+        if (typeof Router !== 'undefined' && Router.navigate) {
+            Router.navigate('laser-wip');
+            return;
+        }
+        const navEl = document.getElementById('wipTabNav');
+        if (navEl) navEl.innerHTML = _tabNav();
+        _renderTabContent();
+    }
+
     // ── 탭 컨텐츠 렌더 ───────────────────────────────────────────────────
     function _renderTabContent() {
         const el = document.getElementById('wipTabContent');
@@ -77,15 +88,7 @@ var LaserWipModule = (function() {
     // ── 탭 1: 레이져 대기품 현황 ─────────────────────────────────────────
     // LaserStandbyModule.renderContentOnly()에 위임
     function _renderStandbyTab(el) {
-        // 레이아웃 보기 버튼 포함 헤더 영역
-        el.innerHTML = `
-            <div style="display:flex;justify-content:flex-end;margin-bottom:12px;">
-                <button class="btn btn-secondary" style="font-size:0.85rem;display:flex;align-items:center;gap:4px;"
-                    onclick="Router.navigate('laser-layout')">
-                    <span class="material-symbols-outlined" style="font-size:1rem;">map</span> 레이아웃 보기
-                </button>
-            </div>
-            <div id="lsbContentWrapper"></div>`;
+        el.innerHTML = `<div id="lsbContentWrapper"></div>`;
 
         const wrapper = document.getElementById('lsbContentWrapper');
         if (wrapper && typeof LaserStandbyModule !== 'undefined') {
@@ -130,11 +133,12 @@ var LaserWipModule = (function() {
                                 <span class="material-symbols-outlined" style="font-size:0.9rem;vertical-align:middle;">inventory</span>재공품 현재고
                             </th>
                             <th style="padding:10px 14px;text-align:center;font-weight:600;color:var(--text-secondary);white-space:nowrap;">상태</th>
+                            <th style="padding:10px 14px;text-align:center;font-weight:600;color:var(--text-secondary);white-space:nowrap;">작업</th>
                         </tr>
                     </thead>
                     <tbody>
                         ${rows.length === 0
-                            ? `<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted);">
+                            ? `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-muted);">
                                 <span class="material-symbols-outlined" style="font-size:2rem;display:block;margin-bottom:8px;opacity:0.4;">inbox</span>
                                 도장-B 공정이 있는 제품의 레이져 작업 이력이 없습니다.
                                 <div style="font-size:0.78rem;margin-top:6px;">제품 설정에서 process에 '도장-B'가 등록된 제품의 레이져 작업 등록 시 표시됩니다.</div>
@@ -189,6 +193,9 @@ var LaserWipModule = (function() {
             <td style="padding:10px 14px;text-align:right;font-weight:600;color:var(--accent-blue);">${UIUtils.formatNumber(r.paintBQty)}</td>
             <td style="padding:10px 14px;text-align:right;font-size:1rem;font-weight:700;color:${wipColor};">${UIUtils.formatNumber(wip)}</td>
             <td style="padding:10px 14px;text-align:center;">${statusBadge}</td>
+            <td style="padding:10px 14px;text-align:center;">
+                ${wip > 0 ? `<button class="btn btn-sm btn-primary" onclick="LaserWipModule.openAfterLaserIncoming('${encodeURIComponent(r.carModel || '')}','${encodeURIComponent(r.partName || '')}','${encodeURIComponent(r.color || '')}', ${Number(wip) || 0})">입고</button>` : '-'}
+            </td>
         </tr>`;
     }
 
@@ -260,9 +267,31 @@ var LaserWipModule = (function() {
         UIUtils.toast('재공품 현황을 새로고침했습니다.', 'info');
     }
 
+    function openAfterLaserIncoming(carModelEnc, partNameEnc, colorEnc, qty) {
+        const carModel = decodeURIComponent(carModelEnc || '');
+        const partName = decodeURIComponent(partNameEnc || '');
+        const color = decodeURIComponent(colorEnc || '');
+        const remainQty = Number(qty) || 0;
+
+        if (typeof PaintingWorkModule === 'undefined' || typeof PaintingWorkModule.openAddModal !== 'function') {
+            UIUtils.toast('도장 작업 등록 화면을 열 수 없습니다.', 'warning');
+            return;
+        }
+
+        PaintingWorkModule.openAddModal({
+            line: '도장-B',
+            carModel: carModel,
+            partName: partName,
+            color: color,
+            planQty: remainQty,
+            planDate: UIUtils.today(),
+            achievedQty: 0
+        });
+    }
+
     function init(container) {
         render(container);
     }
 
-    return { init, render, refresh, switchTab, getWipStock, _calcWip };
+    return { init, render, refresh, switchTab, openTab, openAfterLaserIncoming, getWipStock, _calcWip };
 })();

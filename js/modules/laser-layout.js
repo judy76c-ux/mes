@@ -268,16 +268,41 @@ var LaserLayoutModule = (function () {
     async function render(container) {
         container.innerHTML = `
         <div class="fade-in-up" style="display:flex;flex-direction:column;height:100%;min-height:0;">
-          ${typeof LaserProcessUI !== 'undefined'
-              ? LaserProcessUI.renderSection('laser-layout', '레이져 지그창고 레이아웃', '레이져 지그 보관 위치와 박스 배치를 레이아웃으로 관리합니다.')
-              : ''}
+          <div style="margin-bottom:18px;">
+            <div style="margin-bottom:14px;">
+              <h3 style="margin:0 0 6px;font-size:1.15rem;">재공품 현황 레이아웃</h3>
+              <p style="margin:0;color:var(--text-muted);font-size:.9rem;">레이저 공정 대기 재공품의 보관 위치와 박스 배치를 레이아웃으로 관리합니다.</p>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+              <button type="button"
+                  onclick="LaserWipModule.openTab('standby')"
+                  class="btn btn-outline"
+                  style="display:flex;align-items:center;gap:6px;background:#fff;">
+                  <span class="material-symbols-outlined" style="font-size:18px;">hourglass_top</span>
+                  레이저 대기품 현황
+              </button>
+              <button type="button"
+                  onclick="LaserWipModule.openTab('after-laser')"
+                  class="btn btn-outline"
+                  style="display:flex;align-items:center;gap:6px;background:#fff;">
+                  <span class="material-symbols-outlined" style="font-size:18px;">bolt</span>
+                  레이저 후 재공품 현황
+              </button>
+              <button type="button"
+                  class="btn btn-primary"
+                  style="display:flex;align-items:center;gap:6px;">
+                  <span class="material-symbols-outlined" style="font-size:18px;">map</span>
+                  재공품 현황 레이아웃
+              </button>
+            </div>
+          </div>
 
           <!-- ── 툴바 ── -->
           <div style="display:flex;align-items:center;gap:8px;padding:10px 16px;
                       background:var(--bg-card);border-bottom:1px solid var(--border);
                       flex-wrap:wrap;flex-shrink:0;">
             <button class="btn btn-outline btn-sm" onclick="LaserLayoutModule.goBack()">
-              <span class="material-symbols-outlined">arrow_back</span> 목록으로
+              <span class="material-symbols-outlined">arrow_back</span> 재공품 현황
             </button>
             <div style="width:1px;height:22px;background:var(--border);"></div>
             <button id="llUndoBtn" class="btn btn-outline btn-sm" disabled
@@ -993,7 +1018,11 @@ var LaserLayoutModule = (function () {
         if (_isDirty && !confirm('저장하지 않은 변경 사항이 있습니다.\n그래도 이동할까요?')) return;
         document.removeEventListener('mousemove', _onMouseMove);
         document.removeEventListener('mouseup',   _onMouseUp);
-        Router.navigate('laser-standby');
+        if (typeof LaserWipModule !== 'undefined' && LaserWipModule.openTab) {
+            LaserWipModule.openTab('standby');
+            return;
+        }
+        Router.navigate('laser-wip');
     }
 
     /* ══════════════════════════════════════

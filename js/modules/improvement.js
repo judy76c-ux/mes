@@ -158,9 +158,9 @@ var ImprovementActivityModule = (function() {
             <td><span style="color:var(--accent-green);font-weight:800;">${votes.agree||0}</span> / <span style="color:var(--accent-red);font-weight:800;">${votes.disagree||0}</span></td>
             <td>${_statusBadge(r)}</td>
             <td style="white-space:nowrap;">
-                <button class="btn btn-xs btn-outline" onclick="ImprovementActivityModule.openDetail('${_js(r.id)}')">상세</button>
-                <button class="btn btn-xs btn-secondary" onclick="ImprovementActivityModule.openProposalModal('${_js(r.id)}')">수정</button>
-                <button class="btn btn-xs btn-danger" onclick="ImprovementActivityModule.remove('${_js(r.id)}')">삭제</button>
+                <button class="btn btn-sm btn-outline" onclick="ImprovementActivityModule.openDetail('${_js(r.id)}')">상세</button>
+                <button class="btn btn-sm btn-secondary" onclick="ImprovementActivityModule.openProposalModal('${_js(r.id)}')">수정</button>
+                <button class="btn btn-sm btn-danger" onclick="ImprovementActivityModule.remove('${_js(r.id)}')">삭제</button>
             </td>
         </tr>`;
     }
@@ -170,21 +170,28 @@ var ImprovementActivityModule = (function() {
         if (r.approval === 'approved') return _badge(_statusLabel(r.status),'rgba(16,185,129,.12)','#047857');
         return _badge(_statusLabel(r.status),'rgba(59,130,246,.12)','#1d4ed8');
     }
+    const PDCA_STEPS = [
+        { key: 'plan',  label: 'P 계획', status: 'planning',    color: '#3b82f6' },
+        { key: 'do',    label: 'D 실행', status: 'running',     color: '#8b5cf6' },
+        { key: 'check', label: 'C 점검', status: 'checking',    color: '#f97316' },
+        { key: 'act',   label: 'A 조치', status: 'maintaining', color: '#10b981' }
+    ];
+
     function _pdcaMini(stage) {
-        const idx = _stageIndex(stage);
-        return `<div style="display:flex;gap:3px;align-items:center;">${STAGES.map((s,i)=>`<span title="${s.label}" style="width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:0.68rem;font-weight:800;background:${i<=idx?'#3b82f6':'#e5e7eb'};color:${i<=idx?'white':'#64748b'};">${s.key[0].toUpperCase()}</span>`).join('')}</div>`;
+        const idx = PDCA_STEPS.findIndex(s => s.key === stage);
+        return `<div style="display:flex;gap:3px;align-items:center;">${
+            PDCA_STEPS.map((s, i) => `<span title="${s.label}" style="width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:0.68rem;font-weight:800;background:${i<=idx&&idx>=0?s.color:'#e5e7eb'};color:${i<=idx&&idx>=0?'white':'#64748b'};">${s.label[0]}</span>`).join('')
+        }</div>`;
     }
 
     function setFilter(key, value) { state[key] = value; render(document.getElementById('pageContent')); }
     function setMonth(value) { state.month = value || state.month; render(document.getElementById('pageContent')); }
 
     function _peopleList() {
-        const operators = (Storage.getAll(DB.STORES.OPERATORS) || [])
-            .map(p => ({ ...p, personKey: `operator:${p.id}`, roleLabel: '작업자', deptText: p.dept || p.position || '' }));
-        const inspectors = (Storage.getAll(DB.STORES.INSPECTORS) || [])
-            .map(p => ({ ...p, personKey: `inspector:${p.id}`, roleLabel: '검사자', deptText: p.qualification || (p.processes || []).join(', ') || '' }));
-        return [...operators, ...inspectors]
-            .filter(p => p.name)
+        const users = typeof AuthModule !== 'undefined' ? (AuthModule.getUsers() || []) : [];
+        return users
+            .filter(u => u.active !== false && u.displayName)
+            .map(u => ({ id: u.id, name: u.displayName, personKey: `user:${u.id}`, roleLabel: u.role || '', deptText: '' }))
             .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'));
     }
 
@@ -194,7 +201,7 @@ var ImprovementActivityModule = (function() {
         const legacy = selectedName && !selectedKey
             ? `<option value="legacy:${_esc(selectedName)}" selected>${_esc(selectedName)} (기존 등록명)</option>`
             : '';
-        return `<option value="">작업자/검사자 선택</option>` + legacy + people.map(p => `
+        return `<option value="">제안자 선택</option>` + legacy + people.map(p => `
             <option value="${_esc(p.personKey)}" ${selectedKey === p.personKey ? 'selected' : ''}>
                 ${_esc(p.name)} (${_esc(p.roleLabel)}${p.deptText ? ' · ' + _esc(p.deptText) : ''})
             </option>`).join('');
@@ -270,14 +277,26 @@ var ImprovementActivityModule = (function() {
         render(document.getElementById('pageContent'));
     }
 
+    function _ownerOptions(selected) {
+        const people = _peopleList();
+        return `<option value="">담당자 선택</option>` +
+            people.map(p => `<option value="${_esc(p.name)}" ${p.name === selected ? 'selected' : ''}>${_esc(p.name)}${p.deptText ? ' · ' + _esc(p.deptText) : ''}</option>`).join('');
+    }
+
     function openDetail(id) {
         const r = Storage.getById(STORE, id);
         if (!r) return;
         const votes = r.votes || { agree: 0, disagree: 0 };
-        UIUtils.showModal('개선활동 상세 / PDCA 진행', `
+        const isApproved = r.approval === 'approved';
+        const isRejected = r.approval === 'rejected';
+        const footerBtns = `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`;
+
+        UIUtils.showModal('개선활동 상세', `
             <div style="display:grid;gap:14px;">
                 <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
-                    <div><h3 style="margin:0 0 6px;">${_esc(r.title)}</h3><div style="color:var(--text-muted);font-size:0.85rem;">${_esc(r.proposer)} · ${_esc(r.process)} · ${_fmtDate(r.date)}</div></div>
+                    <div><h3 style="margin:0 0 6px;">${_esc(r.title)}</h3>
+                        <div style="color:var(--text-muted);font-size:0.85rem;">${_esc(r.proposer)} · ${_esc(r.process||'-')} · ${_fmtDate(r.date)}</div>
+                    </div>
                     <div>${_statusBadge(r)}</div>
                 </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
@@ -285,18 +304,17 @@ var ImprovementActivityModule = (function() {
                     <div class="card"><div class="card-body"><h4 style="margin-top:0;">개선제안</h4><div style="white-space:pre-wrap;">${_esc(r.proposal||'-')}</div></div></div>
                 </div>
                 ${_photosHtml(r.photos)}
-                <div class="card"><div class="card-body">
+                ${!isRejected && !isApproved ? `<div class="card"><div class="card-body">
                     <h4 style="margin-top:0;">관리자 검토</h4>
-                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">찬성 <strong style="color:var(--accent-green);">${votes.agree||0}</strong> / 반대 <strong style="color:var(--accent-red);">${votes.disagree||0}</strong>
-                        <button class="btn btn-sm btn-outline" onclick="ImprovementActivityModule.vote('${_js(id)}','agree')">찬성</button>
-                        <button class="btn btn-sm btn-outline" onclick="ImprovementActivityModule.vote('${_js(id)}','disagree')">반대</button>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                         <button class="btn btn-sm btn-primary" onclick="ImprovementActivityModule.setApproval('${_js(id)}','approved')">찬성 승인</button>
                         <button class="btn btn-sm btn-danger" onclick="ImprovementActivityModule.setApproval('${_js(id)}','rejected')">반려</button>
                     </div>
-                </div></div>
-                ${_pdcaForm(r)}
-            </div>`, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button><button class="btn btn-primary" onclick="ImprovementActivityModule.savePdca('${_js(id)}')">PDCA 저장</button>`, 'xxl');
+                </div></div>` : ''}
+                ${isApproved ? _pdcaForm(r) : ''}
+            </div>`, footerBtns, 'xxl');
     }
+
     function _photosHtml(photos = []) {
         if (!photos.length) return '';
         const imgs = photos.map(p => {
@@ -305,26 +323,185 @@ var ImprovementActivityModule = (function() {
         }).join('');
         return `<div class="card"><div class="card-body"><h4 style="margin-top:0;">첨부 사진</h4><div style="display:flex;gap:10px;flex-wrap:wrap;">${imgs}</div></div></div>`;
     }
+
+    function _participantCheckboxes(selected) {
+        const sel = Array.isArray(selected) ? selected : [];
+        const people = _peopleList();
+        if (!people.length) return '<span style="font-size:.8rem;color:var(--text-muted);">등록된 사용자 없음</span>';
+        return people.map(p => {
+            const checked = sel.includes(p.name);
+            return `<label style="display:flex;align-items:center;gap:4px;font-size:.82rem;cursor:pointer;padding:3px 8px;border-radius:4px;background:${checked?'rgba(59,130,246,.1)':'transparent'};border:1px solid ${checked?'#93c5fd':'transparent'};">
+                <input type="checkbox" value="${_esc(p.name)}" ${checked?'checked':''}
+                    style="margin:0;" onchange="this.parentElement.style.background=this.checked?'rgba(59,130,246,.1)':'transparent';this.parentElement.style.border=this.checked?'1px solid #93c5fd':'1px solid transparent';">
+                ${_esc(p.name)}
+            </label>`;
+        }).join('');
+    }
+
+    function _collectParticipants() {
+        const box = document.getElementById('iaParticipantsBox');
+        if (!box) return [];
+        return Array.from(box.querySelectorAll('input[type=checkbox]:checked')).map(cb => cb.value);
+    }
+
     function _pdcaForm(r) {
-        return `<div class="card"><div class="card-body">
-            <h4 style="margin-top:0;">PDCA 진행 입력</h4>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:12px;">
-                <div class="form-group"><label class="form-label">현재 단계</label><select class="form-select" id="iaPdcaStage">${STAGES.map(s=>`<option value="${s.key}" ${r.pdcaStage===s.key?'selected':''}>${s.label}</option>`).join('')}</select></div>
-                <div class="form-group"><label class="form-label">상태</label><select class="form-select" id="iaPdcaStatus">${Object.keys(STATUS).map(k=>`<option value="${k}" ${r.status===k?'selected':''}>${STATUS[k]}</option>`).join('')}</select></div>
-                <div class="form-group"><label class="form-label">담당자</label><input class="form-input" id="iaOwner" value="${_esc(r.owner||'')}"></div>
-                <div class="form-group"><label class="form-label">완료 예정일</label><input type="date" class="form-input" id="iaDue" value="${r.dueDate||''}"></div>
+        const stage = r.pdcaStage || 'plan';
+        const stepIdx = PDCA_STEPS.findIndex(s => s.key === stage);
+        const step = PDCA_STEPS[stepIdx] || PDCA_STEPS[0];
+        const hasNext = stepIdx < PDCA_STEPS.length - 1;
+        const isFinal = stepIdx === PDCA_STEPS.length - 1;
+
+        // 단계 진행 바
+        const progressBar = `<div style="display:flex;gap:0;margin-bottom:16px;border-radius:8px;overflow:hidden;border:1px solid var(--border-color);">
+            ${PDCA_STEPS.map((s, i) => {
+                const isDone = i < stepIdx;
+                const isActive = i === stepIdx;
+                return `<div style="flex:1;padding:7px 4px;text-align:center;font-size:.78rem;font-weight:${isActive?'800':'600'};
+                    background:${isDone?'#dbeafe':isActive?s.color:'var(--bg-secondary)'};
+                    color:${isDone?'#1d4ed8':isActive?'white':'var(--text-muted)'};
+                    border-right:${i<PDCA_STEPS.length-1?'1px solid var(--border-color)':'none'};">
+                    ${s.label}${isDone?' ✓':''}
+                </div>`;
+            }).join('')}
+        </div>`;
+
+        // 이전 단계 내용 요약 (읽기 전용)
+        function _prevSummary() {
+            if (stepIdx === 0) return '';
+            const empty = '<span style="font-size:.8rem;color:var(--text-muted);">입력 내용 없음</span>';
+            const prevItems = [];
+            if (stepIdx > 0) {
+                const planParts = [
+                    r.goal      && `<b>개선 목표:</b> ${_esc(r.goal)}`,
+                    r.rootCause && `<b>원인분석:</b> ${_esc(r.rootCause)}`,
+                    r.actionPlan && `<b>실행계획:</b> ${_esc(r.actionPlan)}`
+                ].filter(Boolean);
+                prevItems.push({ label: 'P 계획', color: '#3b82f6', html: planParts.length ? planParts.join('<br>') : empty });
+            }
+            if (stepIdx > 1) {
+                const doParts = [
+                    r.actionPlan && `<b>실행 내용:</b> ${_esc(r.actionPlan)}`,
+                    r.result     && `<b>수집 데이터:</b> ${_esc(r.result)}`
+                ].filter(Boolean);
+                prevItems.push({ label: 'D 실행', color: '#8b5cf6', html: doParts.length ? doParts.join('<br>') : empty });
+            }
+            if (stepIdx > 2) {
+                const checkParts = [
+                    r.result      && `<b>성과 평가:</b> ${_esc(r.result)}`,
+                    r.effect      && `<b>효과:</b> ${_esc(r.effect)}`,
+                    r.sustainCheck && `<b>개선 포인트:</b> ${_esc(r.sustainCheck)}`
+                ].filter(Boolean);
+                prevItems.push({ label: 'C 점검', color: '#f97316', html: checkParts.length ? checkParts.join('<br>') : empty });
+            }
+            return `<details style="margin-bottom:12px;" open>
+                <summary style="cursor:pointer;font-size:.82rem;font-weight:600;color:var(--text-secondary);padding:6px 0;list-style:none;display:flex;align-items:center;gap:6px;">
+                    <span class="material-symbols-outlined" style="font-size:16px;">history</span> 이전 단계 내용
+                </summary>
+                <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px;">
+                    ${prevItems.map(item => `<div style="padding:10px 12px;border-radius:8px;background:var(--bg-secondary);border-left:3px solid ${item.color};">
+                        <div style="font-size:.75rem;font-weight:700;color:${item.color};margin-bottom:6px;">${item.label}</div>
+                        <div style="font-size:.82rem;color:var(--text-secondary);line-height:1.7;">${item.html}</div>
+                    </div>`).join('')}
+                </div>
+            </details>`;
+        }
+        const prevHtml = _prevSummary();
+
+        // 단계별 입력 필드
+        let fields = prevHtml;
+        if (stage === 'plan') {
+            fields += `
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+                    <div class="form-group"><label class="form-label">담당자 <span style="color:var(--accent-red)">*</span></label>
+                        <select class="form-select" id="iaOwner">${_ownerOptions(r.owner||'')}</select>
+                    </div>
+                    <div class="form-group"><label class="form-label">완료 예정일</label>
+                        <input type="date" class="form-input" id="iaDue" value="${r.dueDate||''}">
+                    </div>
+                </div>
+                <div class="form-group"><label class="form-label">참여자</label>
+                    <div id="iaParticipantsBox" style="display:flex;flex-wrap:wrap;gap:6px;padding:8px;border:1px solid var(--border-color);border-radius:8px;min-height:42px;background:var(--bg-secondary);">
+                        ${_participantCheckboxes(r.participants||[])}
+                    </div>
+                </div>
+                <div class="form-group"><label class="form-label">개선 목표</label>
+                    <textarea class="form-textarea" id="iaGoal" rows="2" placeholder="무엇을 어느 수준까지 개선할 것인지 목표를 구체적으로 작성">${_esc(r.goal||'')}</textarea>
+                </div>
+                <div class="form-group"><label class="form-label">원인분석</label>
+                    <textarea class="form-textarea" id="iaRootCause" rows="3" placeholder="문제의 근본 원인을 분석 (5-Why, 특성요인도 등)">${_esc(r.rootCause||'')}</textarea>
+                </div>
+                <div class="form-group"><label class="form-label">실행 계획 / 추진 일정</label>
+                    <textarea class="form-textarea" id="iaPlan" rows="3" placeholder="원인 제거를 위한 구체적인 실행 방법과 일정">${_esc(r.actionPlan||'')}</textarea>
+                </div>`;
+        } else if (stage === 'do') {
+            fields += `
+                <div class="form-group"><label class="form-label">실행 내용</label>
+                    <textarea class="form-textarea" id="iaPlan" rows="4" placeholder="계획에 따라 수행한 실행 활동을 기록">${_esc(r.actionPlan||'')}</textarea>
+                </div>
+                <div class="form-group"><label class="form-label">수집 데이터 / 관찰 사항</label>
+                    <textarea class="form-textarea" id="iaResult" rows="4" placeholder="실행 중 수집한 데이터, 관찰된 변화 사항 기록">${_esc(r.result||'')}</textarea>
+                </div>`;
+        } else if (stage === 'check') {
+            fields += `
+                <div class="form-group"><label class="form-label">성과 평가 / 결과 분석</label>
+                    <textarea class="form-textarea" id="iaResult" rows="4" placeholder="목표 대비 실제 결과를 평가하고 데이터로 분석">${_esc(r.result||'')}</textarea>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                    <div class="form-group"><label class="form-label">개선 효과</label>
+                        <textarea class="form-textarea" id="iaEffect" rows="3" placeholder="수치화된 개선 효과 (불량률, 시간 단축 등)">${_esc(r.effect||'')}</textarea>
+                    </div>
+                    <div class="form-group"><label class="form-label">소요 비용</label>
+                        <textarea class="form-textarea" id="iaCost" rows="3">${_esc(r.cost||'')}</textarea>
+                    </div>
+                </div>
+                <div class="form-group"><label class="form-label">추가 개선 포인트</label>
+                    <textarea class="form-textarea" id="iaSustain" rows="2" placeholder="이번 사이클에서 발견된 추가 개선 필요 사항">${_esc(r.sustainCheck||'')}</textarea>
+                </div>`;
+        } else if (stage === 'act') {
+            fields += `
+                <div class="form-group"><label class="form-label">표준화 / 프로세스 개선 조치</label>
+                    <textarea class="form-textarea" id="iaSustain" rows="4" placeholder="개선 내용을 표준화하고 재발 방지 프로세스 정리">${_esc(r.sustainCheck||'')}</textarea>
+                </div>
+                <div class="form-group"><label class="form-label">지속 관리 방법</label>
+                    <textarea class="form-textarea" id="iaPlan" rows="3" placeholder="정기 점검 주기, 담당자, 확인 방법">${_esc(r.actionPlan||'')}</textarea>
+                </div>`;
+        }
+
+        const actionBtns = isFinal
+            ? `<button class="btn btn-primary" style="background:#10b981;border-color:#10b981;" onclick="ImprovementActivityModule.completePdca('${_js(r.id||'')}')">완료 처리</button>`
+            : `<button class="btn btn-primary" onclick="ImprovementActivityModule.nextPdcaStage('${_js(r.id||'')}')">다음 단계 →</button>`;
+
+        return `<div class="card" style="border-left:3px solid ${step.color};"><div class="card-body">
+            <h4 style="margin-top:0;">PDCA 진행</h4>
+            ${progressBar}
+            ${fields}
+            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+                <button class="btn btn-secondary" onclick="ImprovementActivityModule.savePdca('${_js(r.id||'')}')">저장</button>
+                ${actionBtns}
             </div>
-            <div class="form-group"><label class="form-label">처리 방법 / 추진 일정</label><textarea class="form-textarea" id="iaPlan" rows="3">${_esc(r.actionPlan||'')}</textarea></div>
-            <div class="form-group"><label class="form-label">개선 목표 설정</label><textarea class="form-textarea" id="iaGoal" rows="2">${_esc(r.goal||'')}</textarea></div>
-            <div class="form-group"><label class="form-label">원인분석</label><textarea class="form-textarea" id="iaRootCause" rows="3">${_esc(r.rootCause||'')}</textarea></div>
-            <div class="form-group"><label class="form-label">과제 해결 / 개선 결과</label><textarea class="form-textarea" id="iaResult" rows="3">${_esc(r.result||'')}</textarea></div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-                <div class="form-group"><label class="form-label">효과</label><textarea class="form-textarea" id="iaEffect" rows="2">${_esc(r.effect||'')}</textarea></div>
-                <div class="form-group"><label class="form-label">비용</label><textarea class="form-textarea" id="iaCost" rows="2">${_esc(r.cost||'')}</textarea></div>
-            </div>
-            <div class="form-group"><label class="form-label">유지관리 점검</label><textarea class="form-textarea" id="iaSustain" rows="3" placeholder="정기 점검 방법, 주기, 확인 결과">${_esc(r.sustainCheck||'')}</textarea></div>
         </div></div>`;
     }
+
+    async function _notifyOwner(r, ownerName) {
+        try {
+            const currentUser = typeof AuthModule !== 'undefined' ? AuthModule.getCurrentUser() : null;
+            const post = {
+                id: Storage.generateId ? Storage.generateId() : `notif_${Date.now()}`,
+                category: '업무알림',
+                title: `[개선활동] PDCA 담당자 지정 — ${_esc(r.title)}`,
+                content: `${ownerName}님이 개선활동 PDCA 담당자로 지정되었습니다.\n\n제안자: ${r.proposer}\n제목: ${r.title}\n문제점: ${r.problem || ''}`,
+                author: currentUser?.name || '관리자',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                replies: []
+            };
+            await Storage.add(DB.STORES.BOARD_POSTS, post);
+            UIUtils.toast(`${ownerName}님께 게시판 알림이 등록되었습니다.`, 'info');
+        } catch (e) {
+            console.warn('알림 등록 실패:', e);
+        }
+    }
+
     async function vote(id, type) {
         const r = Storage.getById(STORE, id); if (!r) return;
         const votes = r.votes || { agree: 0, disagree: 0 };
@@ -339,23 +516,58 @@ var ImprovementActivityModule = (function() {
         await Storage.update(STORE, id, { ...patch, approvedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
         UIUtils.closeModal(); openDetail(id);
     }
+    function _getPdcaPatch(old) {
+        const g = id => document.getElementById(id)?.value ?? null;
+        const trim = id => document.getElementById(id)?.value?.trim() ?? null;
+        const newOwner = g('iaOwner');
+        const patch = { updatedAt: new Date().toISOString() };
+        if (newOwner !== null) patch.owner = newOwner;
+        if (g('iaDue') !== null) patch.dueDate = g('iaDue');
+        if (trim('iaGoal') !== null) patch.goal = trim('iaGoal');
+        if (trim('iaPlan') !== null) patch.actionPlan = trim('iaPlan');
+        if (trim('iaRootCause') !== null) patch.rootCause = trim('iaRootCause');
+        if (trim('iaResult') !== null) patch.result = trim('iaResult');
+        if (trim('iaEffect') !== null) patch.effect = trim('iaEffect');
+        if (trim('iaCost') !== null) patch.cost = trim('iaCost');
+        if (trim('iaSustain') !== null) patch.sustainCheck = trim('iaSustain');
+        const participants = _collectParticipants();
+        if (participants.length || document.getElementById('iaParticipantsBox')) patch.participants = participants;
+        return { patch, newOwner };
+    }
+
     async function savePdca(id) {
-        await Storage.update(STORE, id, {
-            pdcaStage: document.getElementById('iaPdcaStage').value,
-            status: document.getElementById('iaPdcaStatus').value,
-            owner: document.getElementById('iaOwner').value.trim(),
-            dueDate: document.getElementById('iaDue').value,
-            actionPlan: document.getElementById('iaPlan').value.trim(),
-            goal: document.getElementById('iaGoal').value.trim(),
-            rootCause: document.getElementById('iaRootCause').value.trim(),
-            result: document.getElementById('iaResult').value.trim(),
-            effect: document.getElementById('iaEffect').value.trim(),
-            cost: document.getElementById('iaCost').value.trim(),
-            sustainCheck: document.getElementById('iaSustain').value.trim(),
-            updatedAt: new Date().toISOString()
-        });
+        const old = Storage.getById(STORE, id);
+        const { patch, newOwner } = _getPdcaPatch(old);
+        await Storage.update(STORE, id, patch);
+        if (newOwner && newOwner !== (old?.owner || '')) await _notifyOwner(old || {}, newOwner);
+        UIUtils.toast('저장되었습니다.', 'success');
+        render(document.getElementById('pageContent'));
+        openDetail(id);
+    }
+
+    async function nextPdcaStage(id) {
+        const old = Storage.getById(STORE, id);
+        const { patch, newOwner } = _getPdcaPatch(old);
+        const curIdx = PDCA_STEPS.findIndex(s => s.key === (old?.pdcaStage || 'plan'));
+        const next = PDCA_STEPS[curIdx + 1];
+        if (next) {
+            patch.pdcaStage = next.key;
+            patch.status = next.status;
+        }
+        await Storage.update(STORE, id, patch);
+        if (newOwner && newOwner !== (old?.owner || '')) await _notifyOwner(old || {}, newOwner);
+        render(document.getElementById('pageContent'));
+        openDetail(id);
+    }
+
+    async function completePdca(id) {
+        const old = Storage.getById(STORE, id);
+        const { patch } = _getPdcaPatch(old);
+        patch.status = 'closed';
+        patch.closedAt = new Date().toISOString();
+        await Storage.update(STORE, id, patch);
         UIUtils.closeModal();
-        UIUtils.toast('PDCA 진행 내용이 저장되었습니다.', 'success');
+        UIUtils.toast('개선활동이 완료 처리되었습니다.', 'success');
         render(document.getElementById('pageContent'));
     }
     function remove(id) {
@@ -369,5 +581,5 @@ var ImprovementActivityModule = (function() {
         Storage.exportToCSV(['등록일','제안자','구분','공정','제목','PDCA','상태','승인','담당자','예정일','목표','효과','비용'], rows, '개선활동');
     }
 
-    return { render, setFilter, setMonth, selectPerson, openProposalModal, saveProposal, openDetail, vote, setApproval, savePdca, remove, exportData };
+    return { render, setFilter, setMonth, selectPerson, openProposalModal, saveProposal, openDetail, vote, setApproval, savePdca, nextPdcaStage, completePdca, remove, exportData };
 })();

@@ -31,9 +31,10 @@ loadEnvFile();
 const app = express();
 const PORT = process.env.PORT || 3000;
 const BACKUP_DIR = process.env.BACKUP_DIR || path.join(__dirname, 'backups');
-let NAS_BACKUP_DIR = process.env.NAS_BACKUP_DIR || '';   // NAS 마운트 경로 (비어있으면 NAS 백업 안 함)
-let NAS_KEEP_COUNT = parseInt(process.env.NAS_KEEP_COUNT || '365');  // NAS에 보관할 최대 파일 수
-let NAS_UPLOAD_DIR = process.env.NAS_UPLOAD_DIR || '';   // NAS 사진 저장 경로 (비어있으면 서버 로컬 저장)
+const DEFAULT_NAS_BACKUP_DIR = '/mnt/nas-backup';
+let NAS_BACKUP_DIR = process.env.NAS_BACKUP_DIR || DEFAULT_NAS_BACKUP_DIR;
+let NAS_KEEP_COUNT = parseInt(process.env.NAS_KEEP_COUNT || '365');  // NAS??蹂닿???理쒕? ?뚯씪 ??
+let NAS_UPLOAD_DIR = process.env.NAS_UPLOAD_DIR || '';   // NAS ?ъ쭊 ???寃쎈줈 (鍮꾩뼱?덉쑝硫??쒕쾭 濡쒖뺄 ???
 const BACKUP_CONFIG_KEY = 'server_backup_config';
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
 const DEFAULT_BACKUP_CONFIG = {
@@ -73,9 +74,9 @@ async function initDB() {
   try {
     pool = mysql.createPool(DB_CONFIG);
     const conn = await pool.getConnection();
-    console.log('✅ MariaDB 연결 성공');
+    console.log('??MariaDB ?곌껐 ?깃났');
 
-    // 범용 JSON 문서 저장 테이블 자동 생성
+    // 踰붿슜 JSON 臾몄꽌 ????뚯씠釉??먮룞 ?앹꽦
     await conn.query(`
       CREATE TABLE IF NOT EXISTS mes_documents (
         id VARCHAR(100) NOT NULL,
@@ -88,7 +89,7 @@ async function initDB() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
-    // 설정 전용 테이블 자동 생성
+    // ?ㅼ젙 ?꾩슜 ?뚯씠釉??먮룞 ?앹꽦
     await conn.query(`
       CREATE TABLE IF NOT EXISTS mes_config (
         \`key\` VARCHAR(100) NOT NULL PRIMARY KEY,
@@ -97,7 +98,7 @@ async function initDB() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
-    // NAS 설정 DB → 환경변수 반영
+    // NAS ?ㅼ젙 DB ???섍꼍蹂??諛섏쁺
     try {
       const [cfgRows] = await conn.query("SELECT `value` FROM mes_config WHERE `key` = 'nas_backup_config'");
       if (cfgRows.length) {
@@ -106,47 +107,47 @@ async function initDB() {
           NAS_BACKUP_DIR = cfg.nasDir;
           process.env.NAS_BACKUP_DIR = cfg.nasDir;
           if (cfg.keepCount) NAS_KEEP_COUNT = Math.max(1, Number(cfg.keepCount));
-          console.log('✅ NAS 백업 경로 (DB):', cfg.nasDir);
+          console.log('??NAS 諛깆뾽 寃쎈줈 (DB):', cfg.nasDir);
         }
         if (cfg?.nasUploadDir) {
           NAS_UPLOAD_DIR = cfg.nasUploadDir;
           process.env.NAS_UPLOAD_DIR = cfg.nasUploadDir;
-          console.log('✅ NAS 사진 저장 경로 (DB):', cfg.nasUploadDir);
+          console.log('??NAS ?ъ쭊 ???寃쎈줈 (DB):', cfg.nasUploadDir);
         }
       }
     } catch (_) {}
 
     conn.release();
-    console.log('✅ 테이블 준비 완료');
+    console.log('???뚯씠釉?以鍮??꾨즺');
   } catch (err) {
-    console.error('❌ DB 초기화 실패:', err.message);
+    console.error('??DB 珥덇린???ㅽ뙣:', err.message);
     process.exit(1);
   }
 }
 
-// 미들웨어
+// 誘몃뱾?⑥뼱
 app.use(cors({
-  origin: (origin, cb) => cb(null, true),  // null(file://) 포함 전체 허용
+  origin: (origin, cb) => cb(null, true),  // null(file://) ?ы븿 ?꾩껜 ?덉슜
   methods: ['GET', 'POST', 'PUT', 'DELETE']
 }));
 app.use(express.json({ limit: '50mb' }));
 
-// 사진 저장 경로 결정:
-//   1) NAS_UPLOAD_DIR 명시 설정 → 해당 경로
-//   2) NAS_BACKUP_DIR 설정됨 → NAS_BACKUP_DIR/photos
-//   3) 미설정 → 서버 로컬 UPLOAD_DIR
+// ?ъ쭊 ???寃쎈줈 寃곗젙:
+//   1) NAS_UPLOAD_DIR 紐낆떆 ?ㅼ젙 ???대떦 寃쎈줈
+//   2) NAS_BACKUP_DIR ?ㅼ젙????NAS_BACKUP_DIR/photos
+//   3) 誘몄꽕?????쒕쾭 濡쒖뺄 UPLOAD_DIR
 function getPhotoDir() {
   if (NAS_UPLOAD_DIR) return NAS_UPLOAD_DIR;
   if (NAS_BACKUP_DIR) return path.join(NAS_BACKUP_DIR, 'photos');
   return UPLOAD_DIR;
 }
 
-// ── 업로드 파일 정적 서빙 ──
+// ?? ?낅줈???뚯씪 ?뺤쟻 ?쒕튃 ??
 app.use('/uploads', (req, res, next) => {
   express.static(getPhotoDir())(req, res, next);
 });
 
-// ── 헬스체크 ──
+// ?? ?ъ뒪泥댄겕 ??
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
@@ -202,15 +203,15 @@ async function readNasStatus() {
   };
 }
 
-// ── 시스템 상태 정보 ──
+// ?? ?쒖뒪???곹깭 ?뺣낫 ??
 app.get('/api/system', async (req, res) => {
   try {
-    // ── CPU ───────────────────────────────────────────────────────
+    // ?? CPU ???????????????????????????????????????????????????????
     const cpus     = os.cpus();
     const loadAvg  = os.loadavg();          // [1m, 5m, 15m]
     const cpuModel = cpus[0]?.model?.trim() || 'Unknown';
     const cpuCount = cpus.length;
-    // 전체 코어 사용률 계산 (user+sys / total tick 비율)
+    // ?꾩껜 肄붿뼱 ?ъ슜瑜?怨꾩궛 (user+sys / total tick 鍮꾩쑉)
     const cpuUsage = (() => {
       let idle = 0, total = 0;
       for (const c of cpus) {
@@ -220,19 +221,19 @@ app.get('/api/system', async (req, res) => {
       return total ? +(((total - idle) / total) * 100).toFixed(1) : 0;
     })();
 
-    // ── 메모리 ────────────────────────────────────────────────────
+    // ?? 硫붾え由?????????????????????????????????????????????????????
     const totalMem = os.totalmem();
     const freeMem  = os.freemem();
     const usedMem  = totalMem - freeMem;
 
-    // ── 업타임 ────────────────────────────────────────────────────
-    const sysUptime  = os.uptime();   // 초 단위
+    // ?? ?낇???????????????????????????????????????????????????????
+    const sysUptime  = os.uptime();   // 珥??⑥쐞
     const nodeUptime = process.uptime();
 
-    // ── 디스크 (df -h /) ─────────────────────────────────────────
+    // ?? ?붿뒪??(df -h /) ?????????????????????????????????????????
     const diskInfo = await readDiskUsage('/');
 
-    // ── MariaDB 상태 ──────────────────────────────────────────────
+    // ?? MariaDB ?곹깭 ??????????????????????????????????????????????
     let dbStatus = { ok: false, latency: null, version: null };
     try {
       if (pool) {
@@ -244,10 +245,10 @@ app.get('/api/system', async (req, res) => {
       }
     } catch(_) {}
 
-    // ── Node.js 프로세스 메모리 ────────────────────────────────────
+    // ?? Node.js ?꾨줈?몄뒪 硫붾え由?????????????????????????????????????
     const procMem = process.memoryUsage();
 
-    // ── OS ────────────────────────────────────────────────────────
+    // ?? OS ????????????????????????????????????????????????????????
     const osInfo = {
       platform: os.platform(),
       release:  os.release(),
@@ -271,7 +272,7 @@ app.get('/api/system', async (req, res) => {
   }
 });
 
-// ── 문서 전체 조회 ──
+// ?? 臾몄꽌 ?꾩껜 議고쉶 ??
 app.get('/api/docs/:storeName', async (req, res) => {
   const { storeName } = req.params;
   try {
@@ -289,7 +290,7 @@ app.get('/api/docs/:storeName', async (req, res) => {
   }
 });
 
-// ── 문서 저장 (upsert) ──
+// ?? 臾몄꽌 ???(upsert) ??
 app.put('/api/docs/:storeName/:id', async (req, res) => {
   const { storeName, id } = req.params;
   const data = req.body;
@@ -307,7 +308,7 @@ app.put('/api/docs/:storeName/:id', async (req, res) => {
   }
 });
 
-// ── 문서 삭제 ──
+// ?? 臾몄꽌 ??젣 ??
 app.delete('/api/docs/:storeName/:id', async (req, res) => {
   const { storeName, id } = req.params;
   try {
@@ -321,16 +322,16 @@ app.delete('/api/docs/:storeName/:id', async (req, res) => {
   }
 });
 
-// ── 스토어 전체 덮어쓰기 (배치 저장) ──
+// ?? ?ㅽ넗???꾩껜 ??뼱?곌린 (諛곗튂 ??? ??
 app.post('/api/docs/:storeName/bulk', async (req, res) => {
   const { storeName } = req.params;
   const { rows } = req.body;
-  if (!Array.isArray(rows)) return res.status(400).json({ error: '배열 필요' });
+  if (!Array.isArray(rows)) return res.status(400).json({ error: '諛곗뿴 ?꾩슂' });
 
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    // 기존 스토어 데이터 삭제 후 일괄 삽입
+    // 湲곗〈 ?ㅽ넗???곗씠????젣 ???쇨큵 ?쎌엯
     await conn.query('DELETE FROM mes_documents WHERE store_name = ?', [storeName]);
     for (const row of rows) {
       if (!row.id) continue;
@@ -349,7 +350,7 @@ app.post('/api/docs/:storeName/bulk', async (req, res) => {
   }
 });
 
-// ── 설정 조회 ──
+// ?? ?ㅼ젙 議고쉶 ??
 app.get('/api/config/:key', async (req, res) => {
   const { key } = req.params;
   try {
@@ -365,7 +366,7 @@ app.get('/api/config/:key', async (req, res) => {
   }
 });
 
-// ── 설정 저장 ──
+// ?? ?ㅼ젙 ?????
 app.put('/api/config/:key', async (req, res) => {
   const { key } = req.params;
   const value = req.body;
@@ -436,21 +437,49 @@ async function isNasBackupMounted() {
   }
 }
 
+// ?ъ쭊 寃쎈줈媛 CIFS/NFS 留덉슫???꾨옒???덈뒗吏 ?뺤씤 (?쒕툕?붾젆?곕━ ?ы븿)
+async function isNasPhotoMounted() {
+  const dir = getPhotoDir();
+  if (!dir || dir === UPLOAD_DIR) return false;
+  try {
+    const mounts = await fs.readFile('/proc/mounts', 'utf8');
+    return mounts.split('\n').some(line => {
+      const cols = line.split(' ');
+      const mountPoint = cols[1];
+      if (!mountPoint || mountPoint === '/') return false;
+      return dir.startsWith(mountPoint + '/') || dir === mountPoint;
+    });
+  } catch (_) {
+    return false;
+  }
+}
+
+async function readNasPhotoStatus() {
+  const photoDir = getPhotoDir();
+  const isLocal = photoDir === UPLOAD_DIR;
+  const configured = !isLocal;
+  const mounted = configured ? await isNasPhotoMounted() : false;
+  const disk = mounted ? await readDiskUsage(photoDir) : null;
+  return { configured, mounted, isLocal, path: photoDir, disk };
+}
+
 function backupFileName(date = new Date()) {
   return `MES_backup_${date.toISOString().replace(/[:.]/g, '-')}.json`;
 }
 
 async function copyToNas(fileName, content) {
-  if (!NAS_BACKUP_DIR) return;
+  if (!NAS_BACKUP_DIR) {
+    return { attempted: false, saved: false, reason: 'nas path not configured', path: '' };
+  }
   if (!(await isNasBackupMounted())) {
     console.warn(`[backup] NAS copy skipped: ${NAS_BACKUP_DIR} is not mounted`);
-    return;
+    return { attempted: true, saved: false, reason: 'nas path is not mounted', path: NAS_BACKUP_DIR };
   }
   try {
     await fs.mkdir(NAS_BACKUP_DIR, { recursive: true });
-    await fs.writeFile(path.join(NAS_BACKUP_DIR, fileName), content, 'utf8');
+    const nasPath = path.join(NAS_BACKUP_DIR, fileName);
+    await fs.writeFile(nasPath, content, 'utf8');
 
-    // NAS 오래된 파일 정리
     const files = (await fs.readdir(NAS_BACKUP_DIR)).filter(f => f.endsWith('.json'));
     if (files.length > NAS_KEEP_COUNT) {
       const sorted = [];
@@ -463,9 +492,11 @@ async function copyToNas(fileName, content) {
         await fs.unlink(path.join(NAS_BACKUP_DIR, old.name)).catch(() => {});
       }
     }
-    console.log(`[backup] NAS 복사 완료: ${path.join(NAS_BACKUP_DIR, fileName)}`);
+    console.log(`[backup] NAS copy complete: ${nasPath}`);
+    return { attempted: true, saved: true, reason: '', path: nasPath };
   } catch (err) {
-    console.warn(`[backup] NAS 복사 실패 (로컬 백업은 정상 저장됨): ${err.message}`);
+    console.warn(`[backup] NAS copy failed (local backup still saved): ${err.message}`);
+    return { attempted: true, saved: false, reason: err.message, path: path.join(NAS_BACKUP_DIR, fileName) };
   }
 }
 
@@ -501,10 +532,19 @@ async function createBackup(reason = 'manual') {
   await fs.writeFile(fullPath, content, 'utf8');
   await cleanupBackups(await getBackupConfig());
 
-  // NAS 백업 복사 (비동기 — 실패해도 로컬 백업은 정상)
-  copyToNas(fileName, content);
+  // NAS 諛깆뾽 蹂듭궗 (鍮꾨룞湲????ㅽ뙣?대룄 濡쒖뺄 諛깆뾽? ?뺤긽)
+  const nasResult = await copyToNas(fileName, content);
 
-  return { fileName, path: fullPath, size: Buffer.byteLength(content), meta: payload._meta };
+  return {
+    fileName,
+    path: fullPath,
+    backupDir: BACKUP_DIR,
+    nasDir: NAS_BACKUP_DIR,
+    size: Buffer.byteLength(content),
+    meta: payload._meta,
+    local: { saved: true, path: fullPath },
+    nas: nasResult
+  };
 }
 
 async function listBackups() {
@@ -624,7 +664,7 @@ app.delete('/api/backups/:fileName', async (req, res) => {
   }
 });
 
-// ── NAS 설정 조회 ──
+// ?? NAS ?ㅼ젙 議고쉶 ??
 app.get('/api/nas-config', async (req, res) => {
   try {
     const [rows] = await withTimeout(
@@ -635,11 +675,17 @@ app.get('/api/nas-config', async (req, res) => {
       'nas config query timeout'
     );
     const saved = rows.length ? (typeof rows[0].value === 'string' ? JSON.parse(rows[0].value) : rows[0].value) : null;
+    const [backupMounted, photoStatus] = await Promise.all([
+      isNasBackupMounted(),
+      readNasPhotoStatus()
+    ]);
     res.json({
       nasDir: saved?.nasDir ?? NAS_BACKUP_DIR,
       keepCount: saved?.keepCount ?? NAS_KEEP_COUNT,
       nasUploadDir: saved?.nasUploadDir ?? NAS_UPLOAD_DIR,
       effectivePhotoDir: getPhotoDir(),
+      backupMounted,
+      photo: photoStatus,
       fromEnv: !saved
     });
   } catch (err) {
@@ -652,12 +698,12 @@ app.get('/api/nas-config', async (req, res) => {
   }
 });
 
-// ── NAS 설정 저장 ──
+// ?? NAS ?ㅼ젙 ?????
 app.put('/api/nas-config', async (req, res) => {
-  const { nasDir = '', keepCount = 365, nasUploadDir = '' } = req.body || {};
+  const { nasDir = DEFAULT_NAS_BACKUP_DIR, keepCount = 365, nasUploadDir = '' } = req.body || {};
   try {
     const value = {
-      nasDir: String(nasDir).trim(),
+      nasDir: String(nasDir || DEFAULT_NAS_BACKUP_DIR).trim() || DEFAULT_NAS_BACKUP_DIR,
       keepCount: Math.max(1, Number(keepCount)),
       nasUploadDir: String(nasUploadDir).trim()
     };
@@ -666,7 +712,7 @@ app.put('/api/nas-config', async (req, res) => {
        ON DUPLICATE KEY UPDATE \`value\` = VALUES(\`value\`), updated_at = NOW()`,
       [JSON.stringify(value)]
     );
-    // 런타임 즉시 반영
+    // ?고???利됱떆 諛섏쁺
     NAS_BACKUP_DIR = value.nasDir;
     NAS_KEEP_COUNT = value.keepCount;
     NAS_UPLOAD_DIR = value.nasUploadDir;
@@ -678,7 +724,7 @@ app.put('/api/nas-config', async (req, res) => {
   }
 });
 
-// ── NAS 백업 목록 ──
+// ?? NAS 諛깆뾽 紐⑸줉 ??
 app.get('/api/nas-backups', async (req, res) => {
   if (!NAS_BACKUP_DIR) return res.json({ available: false, backups: [] });
   if (!(await isNasBackupMounted())) {
@@ -700,16 +746,16 @@ app.get('/api/nas-backups', async (req, res) => {
   }
 });
 
-// ── NAS 백업 파일 다운로드 ──
+// ?? NAS 諛깆뾽 ?뚯씪 ?ㅼ슫濡쒕뱶 ??
 app.get('/api/nas-backups/:fileName', async (req, res) => {
-  if (!NAS_BACKUP_DIR) return res.status(404).json({ error: 'NAS_BACKUP_DIR 미설정' });
+  if (!NAS_BACKUP_DIR) return res.status(404).json({ error: 'NAS_BACKUP_DIR not configured' });
   const fileName = path.basename(req.params.fileName);
   res.download(path.join(NAS_BACKUP_DIR, fileName));
 });
 
-// ── NAS → 로컬 수동 복사 ──
+// ?? NAS ??濡쒖뺄 ?섎룞 蹂듭궗 ??
 app.post('/api/nas-backups/:fileName/copy-to-local', async (req, res) => {
-  if (!NAS_BACKUP_DIR) return res.status(400).json({ error: 'NAS_BACKUP_DIR 미설정' });
+  if (!NAS_BACKUP_DIR) return res.status(400).json({ error: 'NAS_BACKUP_DIR not configured' });
   const fileName = path.basename(req.params.fileName);
   try {
     await ensureBackupDir();
@@ -722,9 +768,9 @@ app.post('/api/nas-backups/:fileName/copy-to-local', async (req, res) => {
   }
 });
 
-// ── NAS 백업 복원 ──
+// ?? NAS 諛깆뾽 蹂듭썝 ??
 app.post('/api/nas-backups/:fileName/restore', async (req, res) => {
-  if (!NAS_BACKUP_DIR) return res.status(400).json({ error: 'NAS_BACKUP_DIR 미설정' });
+  if (!NAS_BACKUP_DIR) return res.status(400).json({ error: 'NAS_BACKUP_DIR not configured' });
   const fileName = path.basename(req.params.fileName);
   const fullPath = path.join(NAS_BACKUP_DIR, fileName);
   try {
@@ -766,7 +812,7 @@ app.post('/api/nas-backups/:fileName/restore', async (req, res) => {
   }
 });
 
-// ── 서버 백업 복원 ──
+// ?? ?쒕쾭 諛깆뾽 蹂듭썝 ??
 app.post('/api/backups/:fileName/restore', async (req, res) => {
   const fileName = path.basename(req.params.fileName);
   const fullPath = path.join(BACKUP_DIR, fileName);
@@ -780,7 +826,7 @@ app.post('/api/backups/:fileName/restore', async (req, res) => {
     try {
       await conn.beginTransaction();
 
-      // stores 복원: 스토어별 전체 삭제 후 일괄 삽입
+      // stores 蹂듭썝: ?ㅽ넗?대퀎 ?꾩껜 ??젣 ???쇨큵 ?쎌엯
       for (const [storeName, records] of Object.entries(stores)) {
         await conn.query('DELETE FROM mes_documents WHERE store_name = ?', [storeName]);
         for (const row of records) {
@@ -792,7 +838,7 @@ app.post('/api/backups/:fileName/restore', async (req, res) => {
         }
       }
 
-      // configs 복원 (백업 설정 제외)
+      // configs 蹂듭썝 (諛깆뾽 ?ㅼ젙 ?쒖쇅)
       for (const [key, value] of Object.entries(configs)) {
         if (key === BACKUP_CONFIG_KEY) continue;
         await conn.query(
@@ -823,12 +869,12 @@ app.post('/api/backups/:fileName/restore', async (req, res) => {
   }
 });
 
-// ── 사진 업로드 (base64 JSON) ──
+// ?? ?ъ쭊 ?낅줈??(base64 JSON) ??
 app.post('/api/photos', async (req, res) => {
   const { subdir = 'misc', filename, data, contentType } = req.body || {};
-  if (!filename || !data) return res.status(400).json({ error: 'filename과 data 필드 필요' });
+  if (!filename || !data) return res.status(400).json({ error: 'filename怨?data ?꾨뱶 ?꾩슂' });
   const allowed = /^[a-zA-Z0-9_\-\.]+$/;
-  if (!allowed.test(filename)) return res.status(400).json({ error: '파일명에 허용되지 않는 문자' });
+  if (!allowed.test(filename)) return res.status(400).json({ error: '?뚯씪紐낆뿉 ?덉슜?섏? ?딅뒗 臾몄옄' });
   const safeSub = String(subdir).replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 40) || 'misc';
   const dir = path.join(getPhotoDir(), safeSub);
   try {
@@ -842,7 +888,7 @@ app.post('/api/photos', async (req, res) => {
   }
 });
 
-// ── 공정별 사진 폴더 일괄 생성 ──
+// ?? 怨듭젙蹂??ъ쭊 ?대뜑 ?쇨큵 ?앹꽦 ??
 app.post('/api/photos/mkdirs', async (req, res) => {
   const { subdirs = [] } = req.body || {};
   const baseDir = getPhotoDir();
@@ -861,10 +907,10 @@ app.post('/api/photos/mkdirs', async (req, res) => {
   res.json({ baseDir, created: results.filter(r => r.ok).length, total: results.length, results });
 });
 
-// ── 사진 삭제 ──
+// ?? ?ъ쭊 ??젣 ??
 app.delete('/api/photos', async (req, res) => {
   const { url } = req.body || {};
-  if (!url || !url.startsWith('/uploads/')) return res.status(400).json({ error: '잘못된 경로' });
+  if (!url || !url.startsWith('/uploads/')) return res.status(400).json({ error: '?섎せ??寃쎈줈' });
   const rel = url.slice('/uploads/'.length);
   const filePath = path.join(getPhotoDir(), rel);
   try {
@@ -875,10 +921,10 @@ app.delete('/api/photos', async (req, res) => {
   }
 });
 
-// 서버 시작
+// ?쒕쾭 ?쒖옉
 initDB().then(() => {
   startBackupScheduler();
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 MES API 서버 실행 중: http://0.0.0.0:${PORT}`);
+    console.log(`?? MES API ?쒕쾭 ?ㅽ뻾 以? http://0.0.0.0:${PORT}`);
   });
 });

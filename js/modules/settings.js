@@ -6421,6 +6421,9 @@ const SettingsModule = (function() {
         `;
 
         renderDataStatus();
+        if (typeof SettingsBackupExtension !== 'undefined' && SettingsBackupExtension.renderPanel) {
+            setTimeout(() => SettingsBackupExtension.renderPanel(), 0);
+        }
     }
 
     function renderDataStatus() {
@@ -8177,62 +8180,60 @@ const SettingsModule = (function() {
         const inputEl = document.getElementById('sysNasUploadDirInput');
         if (!statusEl || !inputEl) return;
         try {
-            const [nasCfg, sysInfo] = await Promise.all([
-                ApiClient.getNasConfig(),
-                ApiClient.getSystemInfo().catch(() => null)
-            ]);
+            const nasCfg = await ApiClient.getNasConfig();
             const baseDir = nasCfg.effectivePhotoDir || '';
-            const onNas = nasCfg.nasDir && baseDir && baseDir.startsWith(nasCfg.nasDir);
-            const nasMounted = sysInfo?.nas?.mounted === true;
-            const nasConfigured = sysInfo?.nas?.configured === true;
             if (nasCfg.nasUploadDir) inputEl.value = nasCfg.nasUploadDir;
 
-            // NAS 마운트 상태 칩
-            const mountChip = (() => {
-                if (!nasConfigured) return `<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:8px;background:#f1f5f9;border:1px solid #cbd5e1;">
-                    <span class="material-symbols-outlined" style="font-size:16px;color:#64748b;">lan</span>
-                    <span style="font-size:.82rem;color:#475569;">NAS 백업 경로 미설정</span>
-                </div>`;
-                if (!nasMounted) return `<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:8px;background:#fef2f2;border:1px solid #fca5a5;">
-                    <span class="material-symbols-outlined" style="font-size:16px;color:#dc2626;">link_off</span>
-                    <span style="font-size:.82rem;color:#991b1b;font-weight:600;">NAS 마운트 안 됨</span>
-                    <code style="font-size:.78rem;padding:1px 5px;border-radius:3px;background:rgba(0,0,0,.06);">${nasCfg.nasDir || ''}</code>
-                    <span style="font-size:.75rem;color:#dc2626;">— 서버에서 NAS 마운트 후 사용 가능합니다</span>
-                </div>`;
-                return `<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:8px;background:#f0fdf4;border:1px solid #86efac;">
-                    <span class="material-symbols-outlined" style="font-size:16px;color:#16a34a;">link</span>
-                    <span style="font-size:.82rem;color:#166534;font-weight:600;">NAS 연결됨</span>
-                    <code style="font-size:.78rem;padding:1px 5px;border-radius:3px;background:rgba(0,0,0,.06);">${nasCfg.nasDir || ''}</code>
-                </div>`;
-            })();
+            // 공정 사진 저장 NAS 상태만 표시 (백업 상태는 백업/복원 탭 NAS 저장소 카드에서 확인)
+            const photo = nasCfg.photo || {};
+            const photoChip = _nasChip('photo_camera', '공정 사진 저장',
+                photo.path || baseDir, photo.mounted === true, photo.configured === true,
+                photo.isLocal ? '로컬 서버 저장 중' : null,
+                photo.disk);
 
-            // 사진 저장 위치 칩
-            const photoChip = (() => {
-                if (!nasMounted) return `<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;">
-                    <span class="material-symbols-outlined" style="font-size:16px;color:#d97706;">photo_camera</span>
-                    <span style="font-size:.82rem;color:#92400e;font-weight:600;">⚠ 서버 로컬 저장 중</span>
-                    <code style="font-size:.78rem;padding:1px 5px;border-radius:3px;background:rgba(0,0,0,.06);margin-left:2px;">${baseDir || '/opt/mes/uploads'}</code>
-                </div>`;
-                if (onNas) return `<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:8px;background:#f0fdf4;border:1px solid #86efac;">
-                    <span class="material-symbols-outlined" style="font-size:16px;color:#16a34a;">photo_camera</span>
-                    <span style="font-size:.82rem;color:#166534;font-weight:600;">✓ NAS 저장 중</span>
-                    <code style="font-size:.78rem;padding:1px 5px;border-radius:3px;background:rgba(0,0,0,.06);margin-left:2px;">${baseDir}</code>
-                </div>`;
-                return `<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;">
-                    <span class="material-symbols-outlined" style="font-size:16px;color:#d97706;">photo_camera</span>
-                    <span style="font-size:.82rem;color:#92400e;font-weight:600;">⚠ 서버 로컬 저장 중</span>
-                    <code style="font-size:.78rem;padding:1px 5px;border-radius:3px;background:rgba(0,0,0,.06);margin-left:2px;">${baseDir || '/opt/mes/uploads'}</code>
-                    <span style="font-size:.75rem;color:#d97706;margin-left:4px;">— NAS 경로를 설정하고 마운트하면 NAS에 저장됩니다</span>
-                </div>`;
-            })();
-
-            statusEl.innerHTML = mountChip + photoChip;
+            statusEl.innerHTML = photoChip;
             _renderPhotoProcessTable(baseDir);
         } catch (e) {
             statusEl.innerHTML = `<div style="padding:8px 12px;border-radius:8px;background:#f1f5f9;border:1px solid #cbd5e1;font-size:.82rem;color:var(--text-muted);">API 서버 연결 필요 (${e.message})</div>`;
             const tableEl = document.getElementById('photoProcessTable');
             if (tableEl) tableEl.innerHTML = `<div style="padding:12px;color:var(--text-muted);text-align:center;font-size:.8rem;">API 서버 연결 필요</div>`;
         }
+    }
+
+    function _nasChip(icon, label, dirPath, mounted, configured, localLabel, disk) {
+        let bg, border, iconColor, statusText, statusColor;
+        if (!configured) {
+            bg = '#f8fafc'; border = '#e2e8f0'; iconColor = '#94a3b8';
+            statusText = '경로 미설정'; statusColor = '#64748b';
+        } else if (!mounted) {
+            bg = '#fef2f2'; border = '#fca5a5'; iconColor = '#dc2626';
+            statusText = localLabel || '마운트 안 됨'; statusColor = '#991b1b';
+        } else {
+            bg = '#f0fdf4'; border = '#86efac'; iconColor = '#16a34a';
+            statusText = '연결됨'; statusColor = '#166534';
+        }
+        const diskHtml = disk ? (() => {
+            const pct = disk.usePct || 0;
+            const barColor = pct >= 90 ? '#ef4444' : pct >= 70 ? '#f97316' : '#22c55e';
+            return `<div style="margin-top:6px;">
+                <div style="display:flex;justify-content:space-between;font-size:.75rem;color:${statusColor};margin-bottom:2px;">
+                    <span>${disk.used || '?'} / ${disk.total || '?'} 사용</span>
+                    <span>${pct}%</span>
+                </div>
+                <div style="height:4px;background:#e5e7eb;border-radius:2px;overflow:hidden;">
+                    <div style="height:100%;width:${pct}%;background:${barColor};border-radius:2px;"></div>
+                </div>
+            </div>`;
+        })() : '';
+        return `<div style="padding:10px 12px;border-radius:8px;background:${bg};border:1px solid ${border};">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                <span class="material-symbols-outlined" style="font-size:16px;color:${iconColor};">${icon}</span>
+                <span style="font-size:.8rem;font-weight:700;color:${statusColor};">${label}</span>
+                <span style="font-size:.75rem;padding:1px 6px;border-radius:999px;background:${border};color:${statusColor};font-weight:600;">${statusText}</span>
+            </div>
+            <code style="font-size:.75rem;color:${iconColor};word-break:break-all;">${dirPath || '-'}</code>
+            ${diskHtml}
+        </div>`;
     }
 
     function _renderPhotoProcessTable(baseDir) {

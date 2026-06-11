@@ -722,6 +722,19 @@ body.sidebar-hidden .sidebar-show-btn {
     font-size: 0.88rem;
 }
 
+/* 관리항목 드래그 피드백 */
+.pq-master-item-row.pq-drag-over {
+    outline: 2px dashed var(--accent-blue);
+    outline-offset: -2px;
+    background: rgba(59, 130, 246, 0.07) !important;
+}
+.pq-master-item-row[draggable="true"] .pq-master-drag-handle:hover {
+    color: var(--accent-blue);
+}
+.pq-master-item-row[draggable="true"]:active {
+    cursor: grabbing;
+}
+
 .data-table thead {
     background: linear-gradient(180deg, #f1f5f9, #e8ecf1);
 }
