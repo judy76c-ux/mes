@@ -10902,10 +10902,12 @@ var ProdQualityModule = (function() {
     function _glossSpecEditor(prefix, item = {}) {
         const { targetSpec, toleranceSpec } = _glossValues(item);
         return `
-            <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:4px;align-items:center;min-width:150px;">
-                <input type="number" step="0.1" class="form-input ${prefix}-gloss-target" value="${_esc(targetSpec)}" placeholder="기준값" style="height:30px;padding:4px 6px;font-size:0.78rem;text-align:right;">
-                <span style="font-size:0.88rem;font-weight:800;color:var(--accent-blue);padding:0 3px;">±</span>
-                <input type="number" step="0.1" class="form-input ${prefix}-gloss-tol" value="${_esc(toleranceSpec)}" placeholder="공차" style="height:30px;padding:4px 6px;font-size:0.78rem;text-align:right;">
+            <div style="display:flex;align-items:center;gap:4px;min-width:160px;flex-wrap:wrap;">
+                <span style="font-size:0.7rem;color:var(--text-muted);white-space:nowrap;">기준값</span>
+                <input type="number" step="0.1" class="form-input ${prefix}-gloss-target" value="${_esc(targetSpec)}" placeholder="기준값" style="height:30px;padding:4px 6px;font-size:0.78rem;text-align:right;width:70px;">
+                <span style="font-size:0.88rem;font-weight:800;color:#a16207;padding:0 2px;">±</span>
+                <input type="number" step="0.1" class="form-input ${prefix}-gloss-tol" value="${_esc(toleranceSpec)}" placeholder="허용오차" style="height:30px;padding:4px 6px;font-size:0.78rem;text-align:right;width:70px;">
+                <span style="font-size:0.7rem;color:var(--text-muted);">GU</span>
             </div>
             <input type="hidden" class="${prefix}-spec" value="${_esc(item.spec || '')}">
         `;
@@ -10961,22 +10963,44 @@ var ProdQualityModule = (function() {
         const { upperSpec, lowerSpec } = _rangeSpecValues(item);
         const unit = String(item.unit || '').trim();
         if (!upperSpec && !lowerSpec) return String(item.spec || '').trim();
-        if (_isFilmSpecItem(item)) return `(${lowerSpec || ''} ~ ${upperSpec || ''}) ${unit}`.trim();
-        if (_isColorSpecItem(item)) return `${upperSpec || ''} / ${lowerSpec || ''}`.trim();
+        if (_isFilmSpecItem(item)) {
+            const lo = lowerSpec || '';
+            const hi = upperSpec || '';
+            return `하(${lo}) ~ 상(${hi}) ${unit}`.trim();
+        }
+        if (_isColorSpecItem(item)) {
+            const plus  = upperSpec !== '' ? `+${upperSpec}` : '+?';
+            const minus = lowerSpec !== '' ? `−${lowerSpec}` : '−?';
+            return `${plus} / ${minus}`;
+        }
         return `${lowerSpec || ''} ~ ${upperSpec || ''}`.trim();
     }
 
     function _rangeSpecEditor(prefix, item = {}, placeholderUpper = '상한', placeholderLower = '하한') {
         const { upperSpec, lowerSpec } = _rangeSpecValues(item);
+        const isColor = _isColorSpecItem(item);
+        const isFilm  = _isFilmSpecItem(item);
+        // 색차: +공차(upper) / −공차(lower) 편차 관리
+        // 도막두께: 하(lower) ~ 상(upper) 범위 관리 — 하 먼저 표시
+        const label1 = isColor ? '+공차' : isFilm ? '하' : '상';
+        const label2 = isColor ? '−공차' : isFilm ? '상' : '하';
+        const val1   = isColor ? upperSpec : isFilm ? lowerSpec : upperSpec;
+        const val2   = isColor ? lowerSpec : isFilm ? upperSpec : lowerSpec;
+        const ph1    = isColor ? '+공차값' : isFilm ? '하한값' : placeholderUpper;
+        const ph2    = isColor ? '−공차값' : isFilm ? '상한값' : placeholderLower;
+        const cls1   = isColor ? `${prefix}-upper` : isFilm ? `${prefix}-lower` : `${prefix}-upper`;
+        const cls2   = isColor ? `${prefix}-lower` : isFilm ? `${prefix}-upper` : `${prefix}-lower`;
+        const color1 = isColor ? '#16a34a' : 'var(--text-muted)';
+        const color2 = isColor ? '#dc2626' : 'var(--text-muted)';
         return `
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;min-width:160px;">
                 <div style="display:flex;align-items:center;gap:4px;">
-                    <span style="font-size:0.72rem;font-weight:700;color:var(--text-muted);min-width:18px;">상</span>
-                    <input type="text" class="form-input ${prefix}-upper" value="${_esc(upperSpec)}" placeholder="${placeholderUpper}" style="height:30px;padding:4px 6px;font-size:0.78rem;text-align:right;">
+                    <span style="font-size:0.72rem;font-weight:700;color:${color1};min-width:26px;">${label1}</span>
+                    <input type="text" class="form-input ${cls1}" value="${_esc(val1)}" placeholder="${ph1}" style="height:30px;padding:4px 6px;font-size:0.78rem;text-align:right;">
                 </div>
                 <div style="display:flex;align-items:center;gap:4px;">
-                    <span style="font-size:0.72rem;font-weight:700;color:var(--text-muted);min-width:18px;">하</span>
-                    <input type="text" class="form-input ${prefix}-lower" value="${_esc(lowerSpec)}" placeholder="${placeholderLower}" style="height:30px;padding:4px 6px;font-size:0.78rem;text-align:right;">
+                    <span style="font-size:0.72rem;font-weight:700;color:${color2};min-width:26px;">${label2}</span>
+                    <input type="text" class="form-input ${cls2}" value="${_esc(val2)}" placeholder="${ph2}" style="height:30px;padding:4px 6px;font-size:0.78rem;text-align:right;">
                 </div>
             </div>
             <input type="hidden" class="${prefix}-spec" value="${_esc(item.spec || '')}">
@@ -11464,6 +11488,7 @@ var ProdQualityModule = (function() {
                 <input type="hidden" class="pqs-method-val" value="${_esc(item.method||'')}">
                 <input type="hidden" class="pqs-input-type" value="${_esc(item.inputType||'text')}">
                 <strong style="font-size:0.85rem;">${_esc(item.label||'')}</strong>
+                ${_isFilmSpecItem(item) ? '<span style="font-size:0.68rem;background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;border-radius:3px;padding:0 5px;margin-left:3px;">Range</span>' : _isColorSpecItem(item) ? '<span style="font-size:0.68rem;background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;border-radius:3px;padding:0 5px;margin-left:3px;">Deviation</span>' : _isGlossSpecItem(item) ? '<span style="font-size:0.68rem;background:#fefce8;color:#a16207;border:1px solid #fde68a;border-radius:3px;padding:0 5px;margin-left:3px;">Tolerance</span>' : ''}
                 <div style="font-size:0.75rem;color:var(--text-muted);">${_esc(item.method||'')}</div>
             </td>
             <td style="text-align:center;font-size:0.82rem;color:var(--text-muted);">${_esc(item.unit||'-')}</td>
