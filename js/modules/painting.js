@@ -3662,6 +3662,7 @@ const PaintingWorkModule = (function() {
         openWorkViewPage,
         openWorkEditPage,
         _closeWorkViewPage,
+        _closePopup,
         saveEdit,
         remove,
         exportData,
