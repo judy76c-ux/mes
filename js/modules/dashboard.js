@@ -111,6 +111,9 @@ const DashboardModule = (function() {
             <!-- 생산 현황 타일 (6-col 1행) -->
             <div id="dashProdTiles"></div>
 
+            <!-- 관리자 보고 누락 -->
+            <div id="dashManagerAlerts"></div>
+
             <!-- 점검/관리 타일 -->
             <div id="dashMonitorTiles"></div>
 
@@ -161,10 +164,84 @@ const DashboardModule = (function() {
         </div>`;
 
         renderProductionTiles();
+        renderManagerAlerts();
         renderMonitorTiles();   // async
         renderImprovementTiles();
         renderBoardSection();
         renderCharts();
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       관리자 보고 누락 섹션
+    ══════════════════════════════════════════════════════════ */
+    function renderManagerAlerts() {
+        const el = document.getElementById('dashManagerAlerts');
+        if (!el) return;
+
+        const WORK_STORE = DB.STORES.PAINTING_WORK;
+        const works = Storage.getAll(WORK_STORE) || [];
+
+        // 관리자 미통보 항목 수집
+        const items = [];
+        works.forEach(function(d) {
+            const types = [];
+            if (d.timeReason && !d.timeManagerNotified)
+                types.push({ label: '시간 변동', detail: d.timeReason + (d.timeReasonDetail ? ' — ' + d.timeReasonDetail : ''), color: '#ef4444', icon: 'schedule' });
+            if (d.qtyDiffReason && !d.qtyDiffManagerNotified)
+                types.push({ label: '투입/산출 차이', detail: d.qtyDiffReason + (d.qtyDiffDetail ? ' — ' + d.qtyDiffDetail : ''), color: '#ca8a04', icon: 'swap_vert' });
+            if (d.planReason && !d.planManagerNotified)
+                types.push({ label: '계획수량 미달', detail: d.planReason + (d.planReasonDetail ? ' — ' + d.planReasonDetail : ''), color: '#dc2626', icon: 'trending_down' });
+            if (types.length) items.push({ d, types });
+        });
+
+        if (!items.length) { el.innerHTML = ''; return; }
+
+        // 등록일 최신순 정렬, 최대 20건
+        items.sort(function(a, b) {
+            return (b.d.registeredAt || b.d.date || '').localeCompare(a.d.registeredAt || a.d.date || '');
+        });
+        const show = items.slice(0, 20);
+
+        var rows = show.map(function(item) {
+            const d = item.d;
+            const wp = (d.date || '').split('-');
+            const dateStr = wp.length === 3 ? wp[1] + '-' + wp[2] : (d.date || '-');
+            const badges = item.types.map(function(t) {
+                return '<span style="display:inline-flex;align-items:center;gap:3px;background:rgba(0,0,0,.04);' +
+                    'border:1px solid ' + t.color + '33;border-radius:4px;padding:1px 7px;font-size:0.75rem;color:' + t.color + ';font-weight:600;margin-right:4px;">' +
+                    '<span class="material-symbols-outlined" style="font-size:12px;">' + t.icon + '</span>' + t.label + '</span>';
+            }).join('');
+            const detail = item.types.map(function(t){ return t.detail; }).join(' / ');
+            return '<tr style="cursor:pointer;" onclick="PaintingWorkModule&&PaintingWorkModule.openWorkViewPage(\'' + d.id + '\')">' +
+                '<td style="white-space:nowrap;font-size:0.82rem;color:var(--text-muted);">' + dateStr + '</td>' +
+                '<td style="font-size:0.83rem;font-weight:600;">' + (d.carModel || '-') + '</td>' +
+                '<td style="font-size:0.83rem;">' + (d.partName || '-') + '</td>' +
+                '<td>' + badges + '</td>' +
+                '<td style="font-size:0.78rem;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _esc(detail) + '</td>' +
+                '</tr>';
+        }).join('');
+
+        el.innerHTML =
+            '<div class="card" style="margin-bottom:0;border-left:3px solid #ef4444;">' +
+            '<div style="padding:10px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">' +
+            '<div style="display:flex;align-items:center;gap:7px;">' +
+            '<span class="material-symbols-outlined" style="font-size:18px;color:#ef4444;">notification_important</span>' +
+            '<span style="font-weight:700;font-size:0.88rem;color:#dc2626;">관리자 보고 누락</span>' +
+            '<span style="background:#ef4444;color:#fff;border-radius:10px;padding:0 7px;font-size:0.73rem;font-weight:700;">' + items.length + '</span>' +
+            '</div>' +
+            '<span style="font-size:0.75rem;color:var(--text-muted);">도장 작업 실적 중 관리자 미통보 항목 · 클릭하여 이동</span>' +
+            '</div>' +
+            '<div style="overflow-x:auto;">' +
+            '<table style="width:100%;border-collapse:collapse;font-size:0.84rem;">' +
+            '<thead><tr style="background:var(--bg-secondary);">' +
+            '<th style="padding:6px 12px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;">작업일</th>' +
+            '<th style="padding:6px 12px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;">차종</th>' +
+            '<th style="padding:6px 12px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;">품명</th>' +
+            '<th style="padding:6px 12px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;">누락 항목</th>' +
+            '<th style="padding:6px 12px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;">사유</th>' +
+            '</tr></thead>' +
+            '<tbody>' + rows + '</tbody>' +
+            '</table></div></div>';
     }
 
     /* ══════════════════════════════════════════════════════════

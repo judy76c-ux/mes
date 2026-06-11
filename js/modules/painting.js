@@ -2774,14 +2774,24 @@ const PaintingWorkModule = (function() {
     function _buildWorkAlerts(d) {
         var alerts = [];
         if (d.overPlanQty) {
+            var _overPlan = d.planId ? Storage.getById(PLAN_STORE, d.planId) : null;
+            var _planQty = _overPlan ? Number(_overPlan.planQty || 0) : Number(d.planQty || 0);
+            var _inputQty = Number(d.inputQty || 0);
+            var _overAmt = _planQty > 0 ? _inputQty - _planQty : 0;
             alerts.push(
                 '<div style="display:flex;align-items:flex-start;gap:10px;background:rgba(245,158,11,.08);' +
                 'border:1px solid rgba(245,158,11,.4);border-radius:8px;padding:12px 14px;margin-bottom:8px;">' +
                 '<span class="material-symbols-outlined" style="color:#f59e0b;font-size:22px;flex-shrink:0;margin-top:1px;">warning</span>' +
-                '<div><div style="font-weight:700;color:#b45309;margin-bottom:4px;">⚠ 계획수량 초과 등록</div>' +
-                (d.planReason ? '<div style="font-size:0.84rem;">사유: <strong>' + d.planReason + '</strong>' + (d.planReasonDetail ? ' — ' + d.planReasonDetail : '') + '</div>' : '') +
-                '<div style="font-size:0.82rem;margin-top:3px;">' + (d.planManagerNotified ? '<span style="color:#16a34a;font-weight:600;">✓ 관리자 통보 완료</span>' : '<span style="color:#dc2626;font-weight:600;">✗ 관리자 미통보</span>') + '</div></div></div>'
+                '<div style="flex:1;"><div style="font-weight:700;color:#b45309;margin-bottom:6px;">⚠ 계획수량 초과 등록</div>' +
+                '<div style="display:flex;gap:20px;font-size:0.84rem;margin-bottom:4px;">' +
+                '<span>계획수량: <strong>' + UIUtils.formatNumber(_planQty) + ' EA</strong></span>' +
+                '<span>투입수량: <strong style="color:#b45309;">' + UIUtils.formatNumber(_inputQty) + ' EA</strong></span>' +
+                (_overAmt > 0 ? '<span style="color:#dc2626;font-weight:700;">+' + UIUtils.formatNumber(_overAmt) + ' EA 초과</span>' : '') +
+                '</div></div></div>'
             );
+        }
+        if (d.planReason || d.planManagerNotified !== undefined && (d.planReason)) {
+            // 계획수량 미달 사유
         }
         if (d.timeReason) {
             alerts.push(
@@ -2801,6 +2811,16 @@ const PaintingWorkModule = (function() {
                 '<div><div style="font-weight:700;color:#a16207;margin-bottom:4px;">↕ 투입/산출 수량 차이</div>' +
                 '<div style="font-size:0.84rem;">사유: <strong>' + (d.qtyDiffReason || '') + '</strong>' + (d.qtyDiffDetail ? ' — ' + d.qtyDiffDetail : '') + '</div>' +
                 '<div style="font-size:0.82rem;margin-top:3px;">' + (d.qtyDiffManagerNotified ? '<span style="color:#16a34a;font-weight:600;">✓ 관리자 통보 완료</span>' : '<span style="color:#dc2626;font-weight:600;">✗ 관리자 미통보</span>') + '</div></div></div>'
+            );
+        }
+        if (d.planReason) {
+            alerts.push(
+                '<div style="display:flex;align-items:flex-start;gap:10px;background:rgba(239,68,68,.06);' +
+                'border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:12px 14px;margin-bottom:8px;">' +
+                '<span class="material-symbols-outlined" style="color:#ef4444;font-size:22px;flex-shrink:0;margin-top:1px;">trending_down</span>' +
+                '<div><div style="font-weight:700;color:#dc2626;margin-bottom:4px;">↓ 계획수량 미달</div>' +
+                '<div style="font-size:0.84rem;">사유: <strong>' + d.planReason + '</strong>' + (d.planReasonDetail ? ' — ' + d.planReasonDetail : '') + '</div>' +
+                '<div style="font-size:0.82rem;margin-top:3px;">' + (d.planManagerNotified ? '<span style="color:#16a34a;font-weight:600;">✓ 관리자 통보 완료</span>' : '<span style="color:#dc2626;font-weight:600;">✗ 관리자 미통보</span>') + '</div></div></div>'
             );
         }
         if (d.inspectionStatus === 'completed') {
