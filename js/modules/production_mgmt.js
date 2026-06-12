@@ -11444,7 +11444,7 @@ var ProdQualityModule = (function() {
                             const hasVal = _hasSpecValue(ti);
                             if (!isNumeric) {
                                 const cell = hasVal
-                                    ? `<span style=\"color:#16a34a;font-weight:700;font-size:0.9rem;\">?</span>`
+                                    ? `<span style=\"color:#16a34a;font-weight:700;font-size:0.9rem;\">V</span>`
                                     : `<span style=\"color:var(--text-muted);\">-</span>`;
                                 return `<td style=\"text-align:center;padding:5px 3px;\">${cell}</td>`;
                             }
