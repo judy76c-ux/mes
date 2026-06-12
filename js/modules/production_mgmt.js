@@ -13049,7 +13049,10 @@ var ProdQualityModule = (function() {
         const footerHtml = viewOnly
             ? `
                 <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
-                ${canEdit ? `<button class="btn btn-primary" onclick="UIUtils.closeModal(); setTimeout(()=>ProdQualityModule.openPresetEditModal('${_js(presetId)}','edit'),50)"><span class="material-symbols-outlined">edit</span> 편집</button>` : ''}
+                <button class="btn btn-primary" onclick="${canEdit ? `UIUtils.closeModal(); setTimeout(()=>ProdQualityModule.openPresetEditModal('${_js(presetId)}','edit'),50)` : 'return false;'}"
+                    ${canEdit ? '' : 'disabled'} style="${canEdit ? '' : 'opacity:.45;cursor:not-allowed;'}">
+                    <span class="material-symbols-outlined">edit</span> 편집
+                </button>
             `
             : `
                 <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
