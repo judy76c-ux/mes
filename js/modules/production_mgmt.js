@@ -11586,11 +11586,20 @@ var ProdQualityModule = (function() {
     function openSpecPage(productId) {
         const container = _rootContainer || document.getElementById('contentArea');
         if (!container) return;
-        const product = (Storage.getAll(DB.STORES.PRODUCTS)||[]).find(p => p.id === productId);
+        const allProducts = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const product = allProducts.find(p => p.id === productId);
         if (!product) { UIUtils.toast('제품 정보를 찾을 수 없습니다.', 'error'); return; }
         const carModel = _normText(product.carModel);
         const partName = _normText(product.partName||'');
-        const color = _normText(product.color||product.paintColor||product.paint||product.drawingColor||'');
+        const color    = _normText(product.color||product.paintColor||product.paint||product.drawingColor||'');
+
+        // 동일 차종+컬러의 다른 품목
+        const sameColorProducts = allProducts.filter(p => {
+            const pc = _normText(p.color||p.paintColor||p.paint||p.drawingColor||'');
+            return p.id !== productId
+                && _normText(p.carModel) === carModel
+                && pc === color;
+        });
 
         const tmpl = _templateForProduct(carModel, partName, color);
         const savedItems = tmpl && Array.isArray(tmpl.items) ? tmpl.items : [];
@@ -11601,13 +11610,10 @@ var ProdQualityModule = (function() {
         });
 
         const status = _specStatus(savedItems);
-        const dotColor = status==='complete' ? '#22c55e' : status==='none' ? '#ef4444' : '#f59e0b';
-        const statusLabel = {
-            complete: '기준값 설정완료',
-            partial: '기준값 미완성',
-            'items-only': '항목만 설정됨',
-            none: '기준값 없음'
-        }[status] || '';
+        const filledCount = savedItems.filter(_hasSpecValue).length;
+        const countLabel = masterItems.length ? `${filledCount} / ${masterItems.length}` : '-';
+        const countColor = status==='complete' ? '#16a34a' : status==='none' ? '#9ca3af' : '#d97706';
+        const statusLabel = { complete: '기준값 설정완료', partial: '기준값 미완성', 'items-only': '항목만 설정됨', none: '기준값 없음' }[status] || '';
 
         const userPresets = (Storage.getAll(STORE)||[]).filter(d => d._docKind === PRESET_KIND);
         const presetRow = userPresets.length ? `
@@ -11618,6 +11624,44 @@ var ProdQualityModule = (function() {
                     ${userPresets.map(p=>`<option value="${_esc(p.id)}">${_esc(p.name)} (${(p.items||[]).length}항목)</option>`).join('')}
                 </select>
                 <button type="button" class="btn btn-outline btn-sm" onclick="ProdQualityModule.applyPresetToSpec()">적용</button>
+            </div>` : '';
+
+        // 동일 차종+컬러 품목 체크 패널
+        const sameColorPanel = sameColorProducts.length ? `
+            <div class="card" style="margin-bottom:14px;border-left:3px solid var(--accent-blue);">
+                <div class="card-body" style="padding:12px 16px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:8px;">
+                        <div style="display:flex;align-items:center;gap:7px;">
+                            <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);">content_copy</span>
+                            <span style="font-weight:700;font-size:0.88rem;">동일 컬러 품목에 기준값 동시 적용</span>
+                        </div>
+                        <div style="display:flex;gap:6px;">
+                            <button type="button" class="btn btn-sm btn-outline" onclick="ProdQualityModule._checkAllSameColor(true)" style="font-size:0.75rem;padding:3px 10px;">전체 선택</button>
+                            <button type="button" class="btn btn-sm btn-outline" onclick="ProdQualityModule._checkAllSameColor(false)" style="font-size:0.75rem;padding:3px 10px;">전체 해제</button>
+                        </div>
+                    </div>
+                    <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px;">
+                        <strong>${_esc(carModel)}</strong> / 컬러: <strong>${_esc(color)||'공통'}</strong> — 체크한 품목에 아래 기준값이 동일하게 저장됩니다.
+                    </div>
+                    <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                        ${sameColorProducts.map(p => {
+                            const pn = _normText(p.partName||'');
+                            const pt = _templateForProduct(_normText(p.carModel), pn, _normText(p.color||p.paintColor||p.paint||p.drawingColor||''));
+                            const ps = pt && Array.isArray(pt.items) ? pt.items : [];
+                            const pFilled = ps.filter(_hasSpecValue).length;
+                            const pTotal  = masterItems.length;
+                            const pColor  = pFilled === pTotal && pTotal > 0 ? '#16a34a' : pFilled > 0 ? '#d97706' : '#9ca3af';
+                            return `<label style="display:flex;align-items:center;gap:7px;padding:7px 12px;
+                                        border:1px solid var(--border-color);border-radius:7px;background:var(--bg-secondary);cursor:pointer;
+                                        font-size:0.83rem;min-width:140px;">
+                                <input type="checkbox" class="pq-same-color-chk" value="${_esc(p.id)}"
+                                    style="width:15px;height:15px;accent-color:var(--accent-blue);">
+                                <span style="font-weight:600;">${_esc(pn||p.id)}</span>
+                                <span style="font-size:0.72rem;font-weight:700;color:${pColor};margin-left:auto;">${pFilled}/${pTotal}</span>
+                            </label>`;
+                        }).join('')}
+                    </div>
+                </div>
             </div>` : '';
 
         container.innerHTML = `
@@ -11633,22 +11677,22 @@ var ProdQualityModule = (function() {
                     </div>
                 </div>
 
-                <div class="card" style="margin-bottom:16px;">
+                <div class="card" style="margin-bottom:14px;">
                     <div class="card-body" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 18px;">
-                        <span style="display:inline-block;width:16px;height:16px;border-radius:50%;background:${dotColor};flex-shrink:0;
-                            box-shadow:0 0 0 4px ${dotColor}30;"></span>
+                        <span style="font-size:1rem;font-weight:700;color:${countColor};">${countLabel}</span>
                         <div>
                             <div style="font-size:0.95rem;font-weight:700;color:var(--text-primary);">
                                 ${_esc(carModel)} &nbsp;/&nbsp; ${_esc(partName)||'-'}
                             </div>
                             <div style="font-size:0.82rem;color:var(--text-muted);margin-top:3px;">
-                                컬러: ${_esc(color)||'공통'} &nbsp;·&nbsp; <span style="color:${dotColor};font-weight:600;">${statusLabel}</span>
+                                컬러: ${_esc(color)||'공통'} &nbsp;·&nbsp; <span style="color:${countColor};font-weight:600;">${statusLabel}</span>
                             </div>
                         </div>
                         <input type="hidden" id="pqSpecProductId" value="${_esc(productId)}">
                     </div>
                 </div>
 
+                ${sameColorPanel}
                 ${presetRow}
 
                 <div class="card">
@@ -11682,14 +11726,17 @@ var ProdQualityModule = (function() {
         `;
     }
 
+    function _checkAllSameColor(checked) {
+        document.querySelectorAll('.pq-same-color-chk').forEach(el => { el.checked = checked; });
+    }
+
     async function saveSpecPage() {
         const productId = document.getElementById('pqSpecProductId')?.value;
-        const product = productId ? (Storage.getAll(DB.STORES.PRODUCTS)||[]).find(p=>p.id===productId) : null;
+        const allProducts = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const product = productId ? allProducts.find(p=>p.id===productId) : null;
         if (!product) { UIUtils.toast('제품 정보를 찾을 수 없습니다.', 'error'); return; }
-        const carModel = _normText(product.carModel);
-        const partName = _normText(product.partName||'');
-        const color = _normText(product.color||product.paintColor||product.paint||product.drawingColor||'');
 
+        // 폼에서 기준값 수집
         const items = [...document.querySelectorAll('.pq-spec-item-row')].map(row => {
             const obj = {
                 key:       row.querySelector('.pqs-key')?.value || '',
@@ -11707,17 +11754,32 @@ var ProdQualityModule = (function() {
             return obj;
         }).filter(i => i.key);
 
-        const existing = _templates().find(t =>
-            _normText(t.carModel)===carModel &&
-            _normText(t.partName||'')===partName &&
-            _normText(t.color||'')===color
-        );
-        const payload = { _docKind: TEMPLATE_KIND, carModel, partName, color, productId, items, updatedAt: UIUtils.now() };
-        if (existing) await Storage.update(STORE, existing.id, payload);
-        else await Storage.add(STORE, payload);
+        // 체크된 동일 컬러 품목 ID 목록
+        const checkedIds = [...document.querySelectorAll('.pq-same-color-chk:checked')].map(el => el.value);
 
-        UIUtils.toast('기준값이 저장되었습니다.', 'success');
-        openSpecPage(productId);   // 페이지 새로고침 (상태 도트 반영)
+        // 저장할 제품 목록 (기본: 현재 제품 + 체크된 품목)
+        const saveTargets = [product, ...checkedIds.map(id => allProducts.find(p=>p.id===id)).filter(Boolean)];
+
+        for (const p of saveTargets) {
+            const cm  = _normText(p.carModel);
+            const pn  = _normText(p.partName||'');
+            const col = _normText(p.color||p.paintColor||p.paint||p.drawingColor||'');
+            const existing = _templates().find(t =>
+                _normText(t.carModel)===cm &&
+                _normText(t.partName||'')===pn &&
+                _normText(t.color||'')===col
+            );
+            const payload = { _docKind: TEMPLATE_KIND, carModel: cm, partName: pn, color: col, productId: p.id, items, updatedAt: UIUtils.now() };
+            if (existing) await Storage.update(STORE, existing.id, payload);
+            else await Storage.add(STORE, payload);
+        }
+
+        const extraCount = saveTargets.length - 1;
+        const msg = extraCount > 0
+            ? `기준값이 저장되었습니다. (${extraCount}개 품목에 동일 적용)`
+            : '기준값이 저장되었습니다.';
+        UIUtils.toast(msg, 'success');
+        openSpecPage(productId);
     }
 
     function applyPresetToSpec() {
@@ -13337,6 +13399,7 @@ table{border-collapse:collapse;width:100%}
         ,saveSpecModal
         ,openSpecPage
         ,saveSpecPage
+        ,_checkAllSameColor
         ,applyPresetToSpec
         ,openPresetMgmtModal
         ,openPresetEditModal
