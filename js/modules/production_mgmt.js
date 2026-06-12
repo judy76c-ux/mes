@@ -11474,7 +11474,7 @@ var ProdQualityModule = (function() {
                                         ${specItems.length ? `${filledCount} / ${specItems.length}` : '-'}
                                     </span>
                                     <button class="btn btn-sm btn-outline" style="font-size:0.75rem;padding:3px 14px;"
-                                        onclick="ProdQualityModule.openSpecPage('${_js(p.id)}')">보기</button>
+                                        onclick="ProdQualityModule.openSpecPage('${_js(p.id)}','view')">보기</button>
                                 </div>
                             </td>
                         </tr>`;
@@ -11519,12 +11519,13 @@ var ProdQualityModule = (function() {
     }
 
     // ── 품목별 기준값 편집 모달 ────────────────────────────────────────────────
-    function _specItemRowHtml(item = {}) {
+    function _specItemRowHtml(item = {}, opts = {}) {
+        const readOnly = !!opts.readOnly;
         const specEditor = _isGlossSpecItem(item)
-            ? _glossSpecEditor('pqs', item)
+            ? _glossSpecEditor('pqs', item, { readOnly })
             : _isRangeSpecItem(item)
-            ? _rangeSpecEditor('pqs', item)
-            : `<input type="text" class="form-input pqs-spec" value="${_esc(item.spec||'')}" placeholder="기준값 입력" style="height:30px;font-size:0.82rem;">`;
+            ? _rangeSpecEditor('pqs', item, '상한', '하한', { readOnly })
+            : `<input type="text" class="form-input pqs-spec" value="${_esc(item.spec||'')}" placeholder="기준값 입력" ${readOnly ? 'disabled' : ''} style="height:30px;font-size:0.82rem;">`;
         return `<tr class="pq-spec-item-row" data-key="${_esc(item.key||'')}">
             <td>
                 <input type="hidden" class="pqs-key" value="${_esc(item.key||'')}">
@@ -11621,12 +11622,18 @@ var ProdQualityModule = (function() {
     }
 
     // ── 품목 기준값 보기/수정 페이지 (전체 페이지) ─────────────────────────────
-    function openSpecPage(productId) {
+    function openSpecPage(productId, mode = 'view') {
         const container = _rootContainer || document.getElementById('contentArea');
         if (!container) return;
         const allProducts = Storage.getAll(DB.STORES.PRODUCTS) || [];
         const product = allProducts.find(p => p.id === productId);
         if (!product) { UIUtils.toast('제품 정보를 찾을 수 없습니다.', 'error'); return; }
+        const canEdit = _canEditQualityPreset();
+        let viewOnly = String(mode || 'view').toLowerCase() !== 'edit';
+        if (!viewOnly && !canEdit) {
+            UIUtils.toast('품목별 항목 기준 편집 권한이 없습니다.', 'warning');
+            viewOnly = true;
+        }
         const carModel = _normText(product.carModel);
         const partName = _normText(product.partName||'');
         const color    = _normText(product.color||product.paintColor||product.paint||product.drawingColor||'');
@@ -11648,7 +11655,7 @@ var ProdQualityModule = (function() {
         const statusLabel = { complete: '기준값 설정완료', partial: '기준값 미완성', 'items-only': '항목만 설정됨', none: '기준값 없음' }[status] || '';
 
         const userPresets = (Storage.getAll(STORE)||[]).filter(d => d._docKind === PRESET_KIND);
-        const presetRow = userPresets.length ? `
+        const presetRow = !viewOnly && userPresets.length ? `
             <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;padding:8px 12px;background:var(--bg-secondary);border-radius:8px;border:1px solid var(--border-color);">
                 <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);flex-shrink:0;">bookmarks</span>
                 <select class="form-select" id="pqSpecPresetSel" style="flex:1;">
@@ -11659,7 +11666,7 @@ var ProdQualityModule = (function() {
             </div>` : '';
 
         // 동일 차종+컬러 품목 체크 패널
-        const sameColorPanel = sameColorProducts.length ? `
+        const sameColorPanel = !viewOnly && sameColorProducts.length ? `
             <div class="card" style="margin-bottom:14px;border-left:3px solid var(--accent-blue);">
                 <div class="card-body" style="padding:12px 16px;">
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:8px;">
@@ -11703,9 +11710,18 @@ var ProdQualityModule = (function() {
                         <button class="btn btn-outline" onclick="ProdQualityModule.openStandardsPage()">
                             <span class="material-symbols-outlined">arrow_back</span> 품목별 항목 기준
                         </button>
-                        <button class="btn btn-primary" onclick="ProdQualityModule.saveSpecPage()">
-                            <span class="material-symbols-outlined">save</span> 저장
-                        </button>
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
+                            ${viewOnly ? `
+                                <button class="btn btn-primary" onclick="${canEdit ? `ProdQualityModule.openSpecPage('${_js(productId)}','edit')` : 'return false;'}" ${canEdit ? '' : 'disabled'} style="${canEdit ? '' : 'opacity:.45;cursor:not-allowed;'}">
+                                    <span class="material-symbols-outlined">edit</span> 편집
+                                </button>
+                            ` : `
+                                <button class="btn btn-secondary" onclick="ProdQualityModule.openSpecPage('${_js(productId)}','view')">취소</button>
+                                <button class="btn btn-primary" onclick="ProdQualityModule.saveSpecPage()">
+                                    <span class="material-symbols-outlined">save</span> 저장
+                                </button>
+                            `}
+                        </div>
                     </div>
                 </div>
 
@@ -11721,8 +11737,16 @@ var ProdQualityModule = (function() {
                             </div>
                         </div>
                         <input type="hidden" id="pqSpecProductId" value="${_esc(productId)}">
+                        <input type="hidden" id="pqSpecMode" value="${viewOnly ? 'view' : 'edit'}">
                     </div>
                 </div>
+
+                ${viewOnly ? `
+                    <div style="margin-bottom:14px;padding:10px 14px;border:1px solid rgba(59,130,246,0.20);background:rgba(59,130,246,0.06);border-radius:10px;color:var(--text-secondary);font-size:0.83rem;display:flex;align-items:center;gap:8px;">
+                        <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);">visibility</span>
+                        보기 모드입니다. 우측의 <strong>편집</strong> 버튼을 눌러 수정하세요.
+                    </div>
+                ` : ''}
 
                 ${sameColorPanel}
                 ${presetRow}
@@ -11731,7 +11755,7 @@ var ProdQualityModule = (function() {
                     <div class="card-header" style="padding:10px 16px;">
                         <h4 style="margin:0;font-size:0.9rem;">
                             <span class="material-symbols-outlined" style="font-size:1rem;vertical-align:middle;">rule</span>
-                            관리 기준값 입력
+                            ${viewOnly ? '관리 기준값 보기' : '관리 기준값 입력'}
                         </h4>
                     </div>
                     <div class="card-body" style="padding:0;">
@@ -11742,18 +11766,20 @@ var ProdQualityModule = (function() {
                                     <th style="text-align:center;min-width:60px;">단위</th>
                                     <th style="min-width:180px;">기준값 / 범위</th>
                                 </tr></thead>
-                                <tbody id="pqSpecItemsBody">${items.map(i => _specItemRowHtml(i)).join('')}</tbody>
+                                <tbody id="pqSpecItemsBody">${items.map(i => _specItemRowHtml(i, { readOnly: viewOnly })).join('')}</tbody>
                             </table>
                         </div>
                     </div>
                 </div>
 
-                <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
-                    <button class="btn btn-secondary" onclick="ProdQualityModule.openStandardsPage()">취소</button>
-                    <button class="btn btn-primary" onclick="ProdQualityModule.saveSpecPage()">
-                        <span class="material-symbols-outlined">save</span> 저장
-                    </button>
-                </div>
+                ${viewOnly ? '' : `
+                    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+                        <button class="btn btn-secondary" onclick="ProdQualityModule.openSpecPage('${_js(productId)}','view')">취소</button>
+                        <button class="btn btn-primary" onclick="ProdQualityModule.saveSpecPage()">
+                            <span class="material-symbols-outlined">save</span> 저장
+                        </button>
+                    </div>
+                `}
             </div>
         `;
     }
@@ -11764,6 +11790,11 @@ var ProdQualityModule = (function() {
 
     async function saveSpecPage() {
         const productId = document.getElementById('pqSpecProductId')?.value;
+        const mode = document.getElementById('pqSpecMode')?.value || 'view';
+        if (mode !== 'edit') {
+            UIUtils.toast('보기 모드에서는 저장할 수 없습니다. 편집 버튼을 눌러주세요.', 'warning');
+            return;
+        }
         const allProducts = Storage.getAll(DB.STORES.PRODUCTS) || [];
         const product = productId ? allProducts.find(p=>p.id===productId) : null;
         if (!product) { UIUtils.toast('제품 정보를 찾을 수 없습니다.', 'error'); return; }
@@ -11811,7 +11842,7 @@ var ProdQualityModule = (function() {
             ? `기준값이 저장되었습니다. (${extraCount}개 품목에 동일 적용)`
             : '기준값이 저장되었습니다.';
         UIUtils.toast(msg, 'success');
-        openSpecPage(productId);
+        openSpecPage(productId, 'view');
     }
 
     function applyPresetToSpec() {

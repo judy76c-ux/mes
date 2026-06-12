@@ -1086,12 +1086,14 @@ const PaintingWorkModule = (function() {
                   (regTimeRaw ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1.4;">' + regTimeRaw + '</span>' : '')
                 : '<span style="color:var(--text-muted);">-</span>';
             const workDateParts = (d.date || '').split('-');
+            const workStartTime = (d.startTime || '').slice(0, 5);
             const lotShort = d.lots && d.lots.length > 0
                 ? d.lots.map(l => l.lotNo).join(' / ')
                 : (d.lotNo || '');
             const workDateHtml = workDateParts.length === 3
                 ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;">' + workDateParts[0] + '</span>' +
-                  '<span style="font-weight:600;white-space:nowrap;">' + workDateParts[1] + '-' + workDateParts[2] + '</span>'
+                  '<span style="font-weight:600;white-space:nowrap;">' + workDateParts[1] + '-' + workDateParts[2] + '</span>' +
+                  (workStartTime ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1.4;">' + workStartTime + '</span>' : '')
                 : (d.date || '-');
             return '<tr style="' + (isInspectionCompleted ? 'background:rgba(22,163,74,0.05);' : '') + '">' +
                 '<td style="line-height:1.3;">' + regDate + '</td>' +
