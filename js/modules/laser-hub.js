@@ -1065,6 +1065,15 @@ var LaserJigCleaningModule = (function () {
     };
 })();
 
+if (typeof window !== 'undefined') {
+    window._onMadeDateInput = function (el) {
+        if (window.LaserJigMasterModule && typeof window.LaserJigMasterModule.onMadeDateInput === 'function') {
+            return window.LaserJigMasterModule.onMadeDateInput(el);
+        }
+        return null;
+    };
+}
+
 var LaserEquipmentHistoryModule = (function () {
     const CONFIG_KEY = 'laser_equipment_history_v1';
 

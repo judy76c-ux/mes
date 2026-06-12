@@ -3973,9 +3973,15 @@ const PaintingInspectionModule = (function() {
             const lotDisplay = (w.lots && w.lots.length > 0) ?
                 w.lots.map(l => l.lotNo).join(', ') : (w.lotNo || '-');
 
+            const _wp = (w.date || '').split('-');
+            const _workDateHtml = _wp.length === 3
+                ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;">' + _wp[0] + '</span>' +
+                  '<span style="font-weight:600;white-space:nowrap;">' + _wp[1] + '-' + _wp[2] + '</span>'
+                : (w.date || '-');
+
             return `
                                 <tr>
-                                    <td>${w.date || '-'}</td>
+                                    <td style="line-height:1.3;">${_workDateHtml}</td>
                                     <td><span class="badge badge-info">${w.line || '-'}</span></td>
                                     <td>${w.carModel || '-'}</td>
                                     <td><strong>${w.partName || '-'}</strong></td>
@@ -4268,14 +4274,16 @@ const PaintingInspectionModule = (function() {
         // 부모 페이지 컨테이너 저장 (닫을 때 복귀하기 위해)
         modalEl.parentPageContainer = document.querySelector('[data-page="painting-inspection"]');
 
-        // 검사자 필드 초기화 (검사자1만 표시)
+        // 검사자 필드 초기화 (기본 4명)
         setTimeout(() => {
             const container = document.getElementById('inspectorContainer');
             if (container) {
                 container.innerHTML = '';
                 container.inspectorCount = 0;
-                // 검사자1 추가
                 PaintingInspectionModule._addInspectorField(true);
+                PaintingInspectionModule._addInspectorField();
+                PaintingInspectionModule._addInspectorField();
+                PaintingInspectionModule._addInspectorField();
             }
         }, 100);
     }
@@ -4697,9 +4705,14 @@ const PaintingInspectionModule = (function() {
                                 const insp = Number(i.inspectionQty) || 0;
                                 const defect = Number(i.defectQty) || 0;
                                 const rate = insp > 0 ? (defect / insp * 100).toFixed(1) : '0.0';
+                                const _ip = (i.date || '').split('-');
+                                const _inspDateHtml = _ip.length === 3
+                                    ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;">' + _ip[0] + '</span>' +
+                                      '<span style="font-weight:600;white-space:nowrap;">' + _ip[1] + '-' + _ip[2] + '</span>'
+                                    : (i.date || '-');
                                 return `
                                 <tr>
-                                    <td style="font-size:0.82rem;">${i.date || '-'}</td>
+                                    <td style="line-height:1.3;">${_inspDateHtml}</td>
                                     <td>${i.carModel || '-'}</td>
                                     <td><strong>${i.partName || '-'}</strong></td>
                                     <td>${i.color || '-'}</td>
