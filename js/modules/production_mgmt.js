@@ -12846,9 +12846,10 @@ var ProdQualityModule = (function() {
         const preset = presetId
             ? (Storage.getAll(STORE)||[]).find(d => d._docKind === PRESET_KIND && d.id === presetId)
             : null;
-        const items = preset && preset.items && preset.items.length
+        const rawPresetItems = preset && preset.items && preset.items.length
             ? preset.items
             : _masterItems().map(i => ({ ...i, selected: true }));
+        const items = _sortItemsByMaster(rawPresetItems);
 
         UIUtils.showModal(preset ? `프레셋 수정 — ${preset.name}` : '새 프레셋 추가', `
             <div class="form-group" style="margin-bottom:12px;">
@@ -12953,11 +12954,12 @@ var ProdQualityModule = (function() {
 
         if (!items.length) { UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning'); return; }
 
+        const sortedItems = _sortItemsByMaster(items);
         if (presetId) {
-            await Storage.update(STORE, presetId, { _docKind: PRESET_KIND, name, items, updatedAt: UIUtils.now() });
+            await Storage.update(STORE, presetId, { _docKind: PRESET_KIND, name, items: sortedItems, updatedAt: UIUtils.now() });
             UIUtils.toast(`"${name}" 프레셋이 수정됐습니다.`, 'success');
         } else {
-            await Storage.add(STORE, { _docKind: PRESET_KIND, name, items, createdAt: UIUtils.now() });
+            await Storage.add(STORE, { _docKind: PRESET_KIND, name, items: sortedItems, createdAt: UIUtils.now() });
             UIUtils.toast(`"${name}" 프레셋이 저장됐습니다.`, 'success');
         }
         openPresetMgmtModal(); // 목록으로 돌아가기
@@ -12968,7 +12970,7 @@ var ProdQualityModule = (function() {
         // 사용자 저장 프레셋 적용
         const userPreset = (Storage.getAll(STORE) || []).find(d => d._docKind === PRESET_KIND && d.id === presetId);
         if (!userPreset) { UIUtils.toast('프레셋을 찾을 수 없습니다.', 'error'); return; }
-        const items = (userPreset.items || []).map(i => ({ ...i, selected: true }));
+        const items = _sortItemsByMaster((userPreset.items || []).map(i => ({ ...i, selected: true })));
 
         // 관리항목 테이블에 반영
         const body = document.getElementById('pqTemplateItemsBody');
