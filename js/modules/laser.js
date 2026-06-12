@@ -204,6 +204,7 @@ var LaserWorkModule = (function() {
                 <td style="font-size:0.8rem;">${[d.worker1, d.worker2, d.worker3].filter(Boolean).join(', ')}</td>
                 <td>
                     <button class="btn btn-sm btn-outline" onclick="LaserWorkModule.edit('${d.id}')">수정</button>
+                    <button class="btn btn-sm btn-danger" onclick="LaserWorkModule.remove('${d.id}')" style="margin-left:4px;">삭제</button>
                 </td>
             </tr>
         `).join('');

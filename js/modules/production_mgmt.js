@@ -6441,86 +6441,115 @@ var ProdConditionsModule = (function() {
         const cpMap     = _buildCpLabelSpecMap(carModel, partName, type);
         const hasCp     = Object.keys(cpMap).length > 0;
 
-        const colGrid = 'grid-template-columns:1.2fr 2.5fr 2fr 68px';
+        // 공정명 기준으로 그룹핑
+        const groups = [];
+        let curProc = null;
+        items.forEach(item => {
+            if (item.process !== curProc) {
+                groups.push({ process: item.process, items: [] });
+                curProc = item.process;
+            }
+            groups[groups.length - 1].items.push(item);
+        });
 
+        const innerGrid = 'grid-template-columns:1.6fr 2fr 1.8fr 72px';
+        const PROC_W = '86px';
+        const BORDER = '1px solid var(--border-color)';
+        const HDR_BG = 'background:var(--bg-secondary)';
+
+        // 헤더
         const header = `
-            <div style="display:grid;${colGrid};gap:6px;padding:5px 10px;
-                        background:var(--bg-secondary);border:1px solid var(--border-color);
-                        border-radius:6px;margin-bottom:4px;">
-                <div style="font-size:10px;font-weight:700;color:var(--text-muted);">공정명</div>
-                <div style="font-size:10px;font-weight:700;color:var(--text-muted);">관리항목
-                    ${hasCp ? '<span style="font-size:9px;background:rgba(16,185,129,0.12);color:#059669;border:1px solid rgba(16,185,129,0.3);border-radius:3px;padding:1px 4px;margin-left:4px;">CP 연동</span>' : ''}
+            <div style="display:flex;${HDR_BG};border:${BORDER};border-radius:6px 6px 0 0;overflow:hidden;margin-bottom:0;">
+                <div style="width:${PROC_W};flex-shrink:0;padding:5px 8px;font-size:10px;font-weight:700;
+                            color:var(--text-muted);border-right:${BORDER};display:flex;align-items:center;justify-content:center;">공정명</div>
+                <div style="flex:1;display:grid;${innerGrid};">
+                    <div style="padding:5px 8px;font-size:10px;font-weight:700;color:var(--text-muted);border-right:${BORDER};">관리항목</div>
+                    <div style="padding:5px 8px;font-size:10px;font-weight:700;color:var(--text-muted);border-right:${BORDER};">관리기준
+                        ${hasCp ? '<span style="font-size:9px;background:rgba(16,185,129,0.12);color:#059669;border:1px solid rgba(16,185,129,0.3);border-radius:3px;padding:1px 4px;margin-left:4px;">CP</span>' : ''}
+                    </div>
+                    <div style="padding:5px 8px;font-size:10px;font-weight:700;color:var(--text-muted);border-right:${BORDER};">점검사항</div>
+                    <div style="padding:5px 8px;font-size:10px;font-weight:700;color:var(--text-muted);text-align:center;">점검시간</div>
                 </div>
-                <div style="font-size:10px;font-weight:700;color:var(--text-muted);">점검사항</div>
-                <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-align:center;">점검시간</div>
             </div>`;
 
-        let currentProcess = '';
-        const rows = items.map((item) => {
-            const sectionRow = '';
-            const processChanged = item.process !== currentProcess;
-            if (processChanged) currentProcess = item.process;
+        // 공정 그룹별 렌더
+        const rows = groups.map((group, gIdx) => {
+            const innerRows = group.items.map((item, iIdx) => {
+                const cpSpec  = _findCpSpec(cpMap, item.item);
+                const cpBadge = cpSpec
+                    ? `<span style="font-size:9px;background:rgba(16,185,129,0.1);color:#059669;border:1px solid rgba(16,185,129,0.3);border-radius:3px;padding:1px 4px;margin-left:3px;">CP</span>`
+                    : '';
+                const specText = cpSpec || item.spec || '';
+                const checkTimeVal = item.checkTime || '';
+                const ngBg = item.result === 'NG' ? 'background:rgba(239,68,68,0.04);' : '';
+                const topBorder = iIdx > 0 ? `border-top:${BORDER};` : '';
 
-            const cpSpec  = _findCpSpec(cpMap, item.item);
-            const cpBadge = cpSpec
-                ? `<span style="font-size:9px;background:rgba(16,185,129,0.1);color:#059669;border:1px solid rgba(16,185,129,0.3);border-radius:3px;padding:1px 4px;margin-left:3px;">CP</span>`
-                : '';
-            const specHint = cpSpec || item.spec;
-            const checkTimeVal = item.checkTime || '';
-
-            const input = item.type === 'check'
-                ? `<div class="pc-check-group" data-id="${item.id}" data-result="${_esc(item.result)}"
-                        style="display:flex;gap:4px;align-items:center;">
-                       <button type="button"
-                               class="btn btn-sm ${item.result === 'OK' ? 'btn-success' : 'btn-outline'}"
-                               onclick="ProdConditionsModule.setCheck('${item.id}','OK')"
-                               style="padding:2px 8px;font-size:10px;">OK</button>
-                       <button type="button"
-                               class="btn btn-sm ${item.result === 'NG' ? 'btn-danger' : 'btn-outline'}"
-                               onclick="ProdConditionsModule.setCheck('${item.id}','NG')"
-                               style="padding:2px 8px;font-size:10px;">NG</button>
-                   </div>`
-                : `<div>
-                       <input type="text" class="form-input pc-value-input" data-id="${item.id}"
+                const input = item.type === 'check'
+                    ? `<div class="pc-check-group" data-id="${item.id}" data-result="${_esc(item.result)}"
+                            style="display:flex;gap:4px;align-items:center;">
+                           <button type="button"
+                                   class="btn btn-sm ${item.result === 'OK' ? 'btn-success' : 'btn-outline'}"
+                                   onclick="ProdConditionsModule.setCheck('${item.id}','OK')"
+                                   style="padding:2px 8px;font-size:10px;">OK</button>
+                           <button type="button"
+                                   class="btn btn-sm ${item.result === 'NG' ? 'btn-danger' : 'btn-outline'}"
+                                   onclick="ProdConditionsModule.setCheck('${item.id}','NG')"
+                                   style="padding:2px 8px;font-size:10px;">NG</button>
+                       </div>`
+                    : `<input type="text" class="form-input pc-value-input" data-id="${item.id}"
                               value="${_esc(item.value)}"
-                              placeholder="${_esc(specHint)}"
-                              style="font-size:10px;padding:3px 6px;height:26px;"
-                              oninput="ProdConditionsModule._onCsValueInput(this,'${item.id}')">
-                       ${cpSpec ? `<div style="font-size:9px;color:#059669;margin-top:2px;">기준: ${_esc(cpSpec)}</div>` : ''}
-                   </div>`;
+                              placeholder="입력"
+                              style="font-size:10px;padding:3px 6px;height:26px;width:100%;"
+                              oninput="ProdConditionsModule._onCsValueInput(this,'${item.id}')">`;
 
-            const ngBg = item.result === 'NG' ? 'background:rgba(239,68,68,0.04);' : '';
+                return `
+                    <div class="pc-csheet-row"
+                         data-id="${item.id}"
+                         data-type="${item.type}"
+                         data-section="${_esc(item.section)}"
+                         data-process="${_esc(item.process)}"
+                         data-item="${_esc(item.item)}"
+                         data-spec="${_esc(item.spec)}"
+                         data-checktime="${_esc(checkTimeVal)}"
+                         style="display:grid;${innerGrid};align-items:stretch;${topBorder}${ngBg}">
+                        <div style="padding:5px 8px;border-right:${BORDER};display:flex;flex-direction:column;justify-content:center;">
+                            <div style="font-size:11px;font-weight:600;line-height:1.4;">${_esc(item.item)}${cpBadge}</div>
+                        </div>
+                        <div style="padding:5px 8px;border-right:${BORDER};display:flex;align-items:center;">
+                            <div style="font-size:10px;color:var(--text-secondary);line-height:1.4;">${_esc(specText)}</div>
+                        </div>
+                        <div style="padding:5px 8px;border-right:${BORDER};display:flex;align-items:center;">
+                            ${input}
+                        </div>
+                        <div class="pc-checktime" data-id="${item.id}"
+                             style="padding:5px 4px;text-align:center;font-size:10px;font-family:monospace;
+                                    display:flex;align-items:center;justify-content:center;
+                                    color:${checkTimeVal ? 'var(--accent-blue)' : 'var(--text-muted)'};">
+                            ${checkTimeVal || '—'}
+                        </div>
+                    </div>`;
+            }).join('');
 
+            const isFirst = gIdx === 0;
+            const topRadius = isFirst ? '' : 'border-radius:0;';
             return `
-                ${sectionRow}
-                <div class="pc-csheet-row"
-                     data-id="${item.id}"
-                     data-type="${item.type}"
-                     data-section="${_esc(item.section)}"
-                     data-process="${_esc(item.process)}"
-                     data-item="${_esc(item.item)}"
-                     data-spec="${_esc(item.spec)}"
-                     data-checktime="${_esc(checkTimeVal)}"
-                     style="display:grid;${colGrid};gap:6px;align-items:center;
-                            padding:5px 10px;border:1px solid var(--border-color);
-                            border-radius:6px;margin-bottom:3px;${ngBg}">
-                    ${processChanged
-                        ? `<div style="font-size:11px;font-weight:700;color:var(--accent-blue);line-height:1.3;border-left:3px solid var(--accent-blue);padding-left:6px;">${_esc(item.process)}</div>`
-                        : `<div style="border-left:2px solid rgba(37,99,235,0.18);margin-left:6px;height:100%;min-height:14px;"></div>`}
-                    <div>
-                        <div style="font-size:11px;font-weight:600;line-height:1.3;">${_esc(item.item)}${cpBadge}</div>
-                        ${specHint ? `<div style="font-size:9px;color:var(--text-muted);margin-top:1px;line-height:1.3;">${_esc(specHint)}</div>` : ''}
+                <div style="display:flex;border:${BORDER};border-top:none;overflow:hidden;${isFirst ? '' : ''}">
+                    <div style="width:${PROC_W};flex-shrink:0;
+                                border-right:${BORDER};
+                                background:rgba(37,99,235,0.04);
+                                display:flex;align-items:center;justify-content:center;
+                                padding:6px 4px;text-align:center;">
+                        <span style="font-size:11px;font-weight:700;color:var(--accent-blue);line-height:1.4;
+                                     writing-mode:horizontal-tb;">${_esc(group.process)}</span>
                     </div>
-                    <div>${input}</div>
-                    <div class="pc-checktime" data-id="${item.id}"
-                         style="text-align:center;font-size:10px;font-family:monospace;
-                                color:${checkTimeVal ? 'var(--accent-blue)' : 'var(--text-muted)'};">
-                        ${checkTimeVal || '—'}
-                    </div>
+                    <div style="flex:1;">${innerRows}</div>
                 </div>`;
         }).join('');
 
-        return header + rows;
+        const lastBorderFix = `<div style="border:${BORDER};border-top:none;border-radius:0 0 6px 6px;height:0;"></div>`;
+        return `<div style="border-radius:6px;overflow:hidden;border:${BORDER};margin-bottom:4px;">
+            ${header}${rows}
+        </div>`;
     }
 
     function _presetSelectorHtml(csType) {
@@ -12067,8 +12096,9 @@ var ProdQualityModule = (function() {
     }
 
     function fillForm(d = {}) {
-        const rawItems = d.items || _itemsForCar(d.carModel || '', d.color || '');
-        const items = _sortItemsByMaster(rawItems);
+        const items = d.items && d.items.length
+            ? d.items
+            : _issueItemsForProduct(d.carModel || '', d.partName || '', d.color || '', []);
         const compactGridTop = 'display:grid;grid-template-columns:0.9fr 1fr 1.6fr;gap:8px 12px;margin-bottom:8px;';
         const compactGrid = 'display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 12px;margin-bottom:8px;';
         const compactGrid4 = 'display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px 12px;margin-bottom:8px;';
@@ -12090,7 +12120,7 @@ var ProdQualityModule = (function() {
                 </div>
                 <div style="${compactField}">
                     <label style="${compactLabel}">품명</label>
-                    <select class="form-select" id="pqPartName" style="${compactSelect}">${_partOptions(d.carModel || '', d.partName || '')}</select>
+                    <select class="form-select" id="pqPartName" onchange="ProdQualityModule.onIssuePartChange()" style="${compactSelect}">${_partOptions(d.carModel || '', d.partName || '')}</select>
                 </div>
             </div>
             <div style="${compactGrid}">
@@ -12171,6 +12201,78 @@ var ProdQualityModule = (function() {
                     ${items.map((item, idx) => _issueItemRowHtml(item, idx + 1)).join('')}
                 </tbody>
             </table>`;
+    }
+
+    function _collectIssueItems() {
+        return [...document.querySelectorAll('.pq-issue-item-row')].map(row => {
+            const isNum = row.querySelector('.pq-item-numeric')?.value === '1';
+            const obj = {
+                key:    row.querySelector('.pq-item-key')?.value    || Storage.generateId(),
+                label:  row.querySelector('.pq-item-label')?.value.trim()  || '',
+                spec:   row.querySelector('.pq-item-spec')?.value.trim()   || '',
+                method: row.querySelector('.pq-item-method')?.value.trim() || '',
+                unit:   row.querySelector('.pq-item-unit')?.value.trim()   || '',
+                inputType: row.querySelector('.pq-item-input-type')?.value || (isNum ? 'number' : 'select')
+            };
+            if (_isGlossSpecItem(obj)) {
+                _applyGlossSpec(obj, row, 'pq-item');
+            } else if (_isRangeSpecItem(obj)) {
+                obj.upperSpec = row.querySelector('.pq-item-upper')?.value.trim() || '';
+                obj.lowerSpec = row.querySelector('.pq-item-lower')?.value.trim() || '';
+                obj.spec = _composeRangeSpec(obj);
+            }
+            const typeKeys = [...document.querySelectorAll('.pq-type-check:checked')].map(el => el.value);
+            const keys = typeKeys.length ? typeKeys : ['초물', '중물', '종물'];
+            const raw = [
+                row.querySelector('.pq-item-val1')?.value,
+                row.querySelector('.pq-item-val2')?.value,
+                row.querySelector('.pq-item-val3')?.value
+            ];
+            const vals = {};
+            keys.forEach((t, idx) => {
+                if (isNum) {
+                    const v = parseFloat(raw[idx]);
+                    if (!isNaN(v)) vals[t] = v;
+                } else if (raw[idx]) {
+                    vals[t] = raw[idx];
+                }
+            });
+            if (Object.keys(vals).length) obj.vals = vals;
+            return obj;
+        }).filter(i => i.label);
+    }
+
+    function _mergeIssueItems(baseItems = [], currentItems = []) {
+        const mergedMap = new Map();
+        (currentItems || []).forEach(item => {
+            if (item?.key) mergedMap.set(`key:${item.key}`, item);
+            if (item?.label) mergedMap.set(`label:${_normText(item.label)}`, item);
+        });
+        return (baseItems || []).map((item, idx) => {
+            const prev = mergedMap.get(`key:${item.key}`) || mergedMap.get(`label:${_normText(item.label || '')}`) || {};
+            const merged = {
+                ...item,
+                key: prev.key || item.key || Storage.generateId(),
+                label: prev.label || item.label || '',
+                spec: prev.spec || item.spec || '',
+                method: prev.method || item.method || '',
+                unit: prev.unit || item.unit || '',
+                inputType: prev.inputType || item.inputType || (idx >= 0 && _isNumericItem(item) ? 'number' : 'select'),
+                selected: prev.selected !== undefined ? prev.selected : item.selected
+            };
+            if (prev.upperSpec || item.upperSpec) merged.upperSpec = prev.upperSpec || item.upperSpec || '';
+            if (prev.lowerSpec || item.lowerSpec) merged.lowerSpec = prev.lowerSpec || item.lowerSpec || '';
+            if (prev.vals || item.vals) merged.vals = { ...(item.vals || {}), ...(prev.vals || {}) };
+            return merged;
+        });
+    }
+
+    function _issueItemsForProduct(carModel = '', partName = '', color = '', currentItems = []) {
+        const presetItems = _productSpecItems(carModel, partName, color, { fallbackToMaster: false });
+        const baseItems = presetItems.length
+            ? presetItems
+            : _itemsForCar(carModel, color);
+        return _mergeIssueItems(baseItems, currentItems);
     }
 
     function _issueItemRowHtml(item = {}, no = '') {
@@ -12322,8 +12424,8 @@ var ProdQualityModule = (function() {
 
     async function saveNew() {
         const data = collectData();
-        if (!data.date || !data.carModel) { UIUtils.toast('발행일자와 차종을 입력하세요.', 'warning'); return; }
-        if (!data.items.length) { UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning'); return; }
+            if (!data.date || !data.carModel) { UIUtils.toast('발행일자와 차종을 입력하세요.', 'warning'); return; }
+            if (!data.items.length) { UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning'); return; }
         const saved = await Storage.add(STORE, data);
         UIUtils.closeModal();
         UIUtils.toast('초중종물 C/S가 발행되었습니다.', 'success');
@@ -12395,7 +12497,7 @@ var ProdQualityModule = (function() {
             lotNo: work.lotNo || ((work.lots || []).map(l => l.lotNo).filter(Boolean).join(', ')),
             productionQty: Number(work.productionQty) || 0,
             time: '',
-            items: _itemsForCar(work.carModel, work.color).filter(item => item.selected !== false).map(item => ({ ...item })),
+            items: _issueItemsForProduct(work.carModel, work.partName, work.color, []).filter(item => item.selected !== false).map(item => ({ ...item })),
             status: '작성',
             inspector: '',
             note: ''
@@ -12432,7 +12534,7 @@ var ProdQualityModule = (function() {
     async function issueFromWork(workId) {
         const work = Storage.getById(PAINT_WORK_STORE, workId);
         if (!work) return;
-        const items = _itemsForCar(work.carModel, work.color).filter(item => item.selected !== false);
+        const items = _issueItemsForProduct(work.carModel, work.partName, work.color, []).filter(item => item.selected !== false);
         if (!items.length) {
             UIUtils.toast('해당 차종의 관리항목을 먼저 선택하세요.', 'warning');
             openTemplateModal(work.carModel || '', work.color || '');
@@ -13282,9 +13384,24 @@ var ProdQualityModule = (function() {
         const car = document.getElementById('pqCarModel')?.value || '';
         const color = document.getElementById('pqColor')?.value || '';
         const partSel = document.getElementById('pqPartName');
-        if (partSel) partSel.innerHTML = _partOptions(car, '');
+        const selectedPart = partSel?.value || '';
+        if (partSel) partSel.innerHTML = _partOptions(car, selectedPart);
         const itemsEl = document.getElementById('pqIssueItems');
-        if (itemsEl) itemsEl.innerHTML = _issueItemRows(_itemsForCar(car, color).filter(i => i.selected !== false));
+        if (itemsEl) {
+            const currentItems = _collectIssueItems();
+            itemsEl.innerHTML = _issueItemRows(_issueItemsForProduct(car, partSel?.value || '', color, currentItems));
+        }
+    }
+
+    function onIssuePartChange() {
+        const car = document.getElementById('pqCarModel')?.value || '';
+        const part = document.getElementById('pqPartName')?.value || '';
+        const color = document.getElementById('pqColor')?.value || '';
+        const itemsEl = document.getElementById('pqIssueItems');
+        if (itemsEl) {
+            const currentItems = _collectIssueItems();
+            itemsEl.innerHTML = _issueItemRows(_issueItemsForProduct(car, part, color, currentItems));
+        }
     }
 
     function printIssue(id) {
@@ -13459,6 +13576,7 @@ table{border-collapse:collapse;width:100%}
         ,removeIssueItemRow
         ,reloadTemplateForCar
         ,onIssueCarChange
+        ,onIssuePartChange
         ,printIssue
         ,applyPreset
         ,applyPresetFromSelect
