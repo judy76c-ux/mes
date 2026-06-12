@@ -11376,12 +11376,14 @@ var ProdQualityModule = (function() {
                 const allSet = completeInGroup === prods.length;
                 const blockId = `pqBlock_${carModel.replace(/\s+/g,'_')}`;
 
-                const headerCols = masterItems.map(item =>
-                    `<th style="text-align:center;min-width:88px;font-size:0.74rem;padding:6px 4px;">
+                const headerCols = masterItems.map(item => {
+                    const isNumeric = _isNumericItem(item);
+                    const minW = isNumeric ? '88px' : '46px';
+                    return `<th style="text-align:center;min-width:${minW};font-size:0.74rem;padding:6px 4px;">
                         ${_esc(item.label)}<br>
-                        <span style="font-size:0.68rem;color:var(--text-muted);font-weight:400;">${_esc(item.unit||'')}</span>
-                    </th>`
-                ).join('');
+                        <span style="font-size:0.68rem;color:var(--text-muted);font-weight:400;">${isNumeric ? _esc(item.unit||'') : '✓/-'}</span>
+                    </th>`;
+                }).join('');
 
                 const bodyRows = prods
                     .sort((a,b) => a.partName.localeCompare(b.partName,'ko') || a.color.localeCompare(b.color,'ko'))
@@ -11393,6 +11395,7 @@ var ProdQualityModule = (function() {
 
                         const specCells = masterItems.map(item => {
                             const ti = tmplItems.find(x => x.key === item.key);
+                            const isNumeric = _isNumericItem(item);
                             let specText = '-';
                             let hasVal = false;
                             if (ti) {
@@ -11403,6 +11406,13 @@ var ProdQualityModule = (function() {
                                     specText = _composeRangeSpec(ti) || ti.spec || '-';
                                 }
                                 hasVal = _hasSpecValue(ti);
+                            }
+                            if (!isNumeric) {
+                                // select 타입: ✓ / - 만 표시
+                                const cell = hasVal
+                                    ? `<span style="color:#16a34a;font-weight:700;font-size:0.9rem;">✓</span>`
+                                    : `<span style="color:var(--text-muted);">-</span>`;
+                                return `<td style="text-align:center;padding:5px 3px;">${cell}</td>`;
                             }
                             const isEmpty = !specText || specText === '-';
                             const cellColor = isEmpty ? 'var(--text-muted)' : hasVal ? 'var(--text-primary)' : '#d97706';
