@@ -1079,9 +1079,11 @@ const PaintingWorkModule = (function() {
 
             const regDateRaw = d.registeredAt ? d.registeredAt.slice(0, 10) : '';
             const regParts = regDateRaw.split('-');
+            const regTimeRaw = d.registeredAt && d.registeredAt.length >= 16 ? d.registeredAt.slice(11, 16) : '';
             const regDate = regParts.length === 3
                 ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;">' + regParts[0] + '</span>' +
-                  '<span style="font-weight:600;white-space:nowrap;">' + regParts[1] + '-' + regParts[2] + '</span>'
+                  '<span style="font-weight:600;white-space:nowrap;">' + regParts[1] + '-' + regParts[2] + '</span>' +
+                  (regTimeRaw ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1.4;">' + regTimeRaw + '</span>' : '')
                 : '<span style="color:var(--text-muted);">-</span>';
             const workDateParts = (d.date || '').split('-');
             const lotShort = d.lots && d.lots.length > 0
@@ -3901,8 +3903,15 @@ const PaintingInspectionModule = (function() {
             const product = findProduct(w);
             if (!product) return false;
 
-            // process2 또는 process4가 '외관 검사'를 포함하면 표시
-            // (product 미설정인 경우도 포함 - 모든 도장 완료 작업 표시)
+            // 제품의 전체 공정 슬롯 검사
+            const allProcs = [product.process1, product.process2, product.process3, product.process4]
+                .map(p => (p || '').trim());
+
+            // 레이져 공정이 포함된 제품은 외관 검사 대기 제외 (레이져 대기품으로 처리)
+            const hasLaserProcess = allProcs.some(p => p === '레이져' || p === '레이저'
+                || p.includes('레이져') || p.includes('레이저'));
+            if (hasLaserProcess) return false;
+
             const p2 = (product.process2 || '').trim();
             const p4 = (product.process4 || '').trim();
             const hasInspectionProcess = p2.includes('검사') || p4.includes('검사')

@@ -1498,14 +1498,19 @@ const SettingsModule = (function() {
     // 도료 행 1개 HTML 생성
     // 도료 행 1개 → <tr> 반환
     function _paintRowHtml(idPrefix, rowIdx, rowData, allPaints, supplierFilter) {
-        const paintSpec  = rowData.paintSpec  || '';
-        const mainId     = rowData.mainId     || '';
-        const hardId     = rowData.hardId     || '';
-        const thinnerId  = rowData.thinnerId  || '';
+        const paintSpec   = rowData.paintSpec   || '';
+        const mainId      = rowData.mainId      || '';
+        const hardId      = rowData.hardId      || '';
+        const thinnerId   = rowData.thinnerId   || '';
+        const rowSupplier = rowData.rowSupplier || '';
 
-        // 구매처(공급사) 필터링: 선택된 구매처가 있으면 해당 구매처 도료만 표시
-        const basePaints = supplierFilter
-            ? allPaints.filter(p => p.supplier === supplierFilter)
+        // 고유 도료사 목록 (행별 필터링용)
+        const uniqueSuppliers = [...new Set(allPaints.map(p => p.supplier).filter(Boolean))].sort((a,b) => a.localeCompare(b,'ko'));
+
+        // 행별 도료사 필터 우선, 없으면 전역 구매처 필터 사용
+        const effectiveSupplier = rowSupplier || supplierFilter;
+        const basePaints = effectiveSupplier
+            ? allPaints.filter(p => p.supplier === effectiveSupplier)
             : allPaints;
 
         // 선택된 주제 도료의 공급처 파악 (경화제/신너 자동 매칭용)
@@ -1545,6 +1550,14 @@ const SettingsModule = (function() {
                     <option value="Color"  ${paintSpec === 'Color'  ? 'selected' : ''}>Color</option>
                     <option value="Clear"  ${paintSpec === 'Clear'  ? 'selected' : ''}>Clear</option>
                     <option value="공용"   ${paintSpec === '공용'   ? 'selected' : ''}>공용</option>
+                </select>
+            </td>
+            <td style="${tdStyle}width:120px;">
+                <select id="${idPrefix}PaintSupplier_${rowIdx}"
+                    style="${selStyle}"
+                    onchange="SettingsModule.onProductPaintSupplierChange('${idPrefix}', ${rowIdx})">
+                    <option value="">-- 전체 --</option>
+                    ${uniqueSuppliers.map(s => `<option value="${s}" ${rowSupplier === s ? 'selected' : ''}>${s}</option>`).join('')}
                 </select>
             </td>
             <td style="${tdStyle}">
@@ -1588,10 +1601,11 @@ const SettingsModule = (function() {
             const ri = row.dataset.paintRow;
             const g = id => (document.getElementById(id) || {}).value || '';
             return {
-                paintSpec:  g(`${idPrefix}PaintSpec_${ri}`),
-                mainId:     g(`${idPrefix}PaintMain_${ri}`),
-                hardId:     g(`${idPrefix}PaintHard_${ri}`),
-                thinnerId:  g(`${idPrefix}PaintThinner_${ri}`)
+                paintSpec:   g(`${idPrefix}PaintSpec_${ri}`),
+                rowSupplier: g(`${idPrefix}PaintSupplier_${ri}`),
+                mainId:      g(`${idPrefix}PaintMain_${ri}`),
+                hardId:      g(`${idPrefix}PaintHard_${ri}`),
+                thinnerId:   g(`${idPrefix}PaintThinner_${ri}`)
             };
         });
     }
@@ -1605,6 +1619,7 @@ const SettingsModule = (function() {
             <thead>
                 <tr>
                     <th style="${thStyle}width:110px;">도료 사양</th>
+                    <th style="${thStyle}width:120px;">도료사</th>
                     <th style="${thStyle}">주제</th>
                     <th style="${thStyle}">경화제</th>
                     <th style="${thStyle}">신너</th>
@@ -1666,6 +1681,17 @@ const SettingsModule = (function() {
     // 구매처 필터 변경 → 도료 목록 재필터링
     function onProductPaintSupplierFilter(idPrefix) {
         _renderPaintList(idPrefix, _getCurrentPaintRows(idPrefix));
+    }
+
+    // 행별 도료사 변경 → 해당 행의 주제/경화제/신너 초기화 후 재렌더
+    function onProductPaintSupplierChange(idPrefix, rowIdx) {
+        const rows = _getCurrentPaintRows(idPrefix);
+        if (rows[rowIdx]) {
+            rows[rowIdx].mainId    = '';
+            rows[rowIdx].hardId    = '';
+            rows[rowIdx].thinnerId = '';
+        }
+        _renderPaintList(idPrefix, rows);
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -10694,6 +10720,7 @@ const SettingsModule = (function() {
         onProductPaintSpecChange,
         onProductPaintMainSelect,
         onProductPaintSupplierFilter,
+        onProductPaintSupplierChange,
         migrateOnePaintTag,
         migrateAllPaintTags,
         migrateInjPriceToUnitPrice,
