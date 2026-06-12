@@ -11424,10 +11424,11 @@ var ProdQualityModule = (function() {
                             ${specCells}
                             <td style="text-align:center;padding:6px;">
                                 <div style="display:flex;flex-direction:column;align-items:center;gap:5px;">
-                                    <span style="display:inline-block;width:13px;height:13px;border-radius:50%;
-                                        background:${status==='complete'?'#22c55e':status==='none'?'#ef4444':'#f59e0b'};
-                                        box-shadow:0 0 0 3px ${status==='complete'?'rgba(34,197,94,.22)':status==='none'?'rgba(239,68,68,.22)':'rgba(245,158,11,.22)'};"
-                                        title="${status==='complete'?'기준값 설정완료':status==='none'?'기준값 없음':'기준값 미완성'}"></span>
+                                    <span style="font-size:0.82rem;font-weight:700;
+                                        color:${status==='complete'?'#16a34a':status==='none'?'#9ca3af':'#d97706'};"
+                                        title="${status==='complete'?'기준값 설정완료':status==='none'?'기준값 없음':'기준값 미완성'}">
+                                        ${tmplItems.length ? `${filledCount} / ${tmplItems.length}` : '-'}
+                                    </span>
                                     <button class="btn btn-sm btn-outline" style="font-size:0.75rem;padding:3px 14px;"
                                         onclick="ProdQualityModule.openSpecPage('${_js(p.id)}')">보기</button>
                                 </div>
