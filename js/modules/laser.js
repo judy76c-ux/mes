@@ -1884,9 +1884,27 @@ var LaserStandbyModule = (function() {
         return Number.isFinite(qty) && qty > 0 ? qty : 0;
     }
 
+    function _normalizeFlowKey(value) {
+        return String(value || '')
+            .trim()
+            .replace(/\s+/g, '')
+            .replace(/[-_]/g, '');
+    }
+
+    function _hasLaserAfterPaintFlow(prod) {
+        if (!prod) return false;
+        const seq = [prod.process1, prod.process2, prod.process3, prod.process4]
+            .map(_normalizeFlowKey)
+            .filter(Boolean);
+        const idxPaintA = seq.findIndex(v => v === '도장A');
+        const idxLaser = seq.findIndex(v => v === '레이저' || v === '레이져');
+        const idxPaintB = seq.findIndex(v => v === '도장B');
+        return idxPaintA >= 0 && idxLaser > idxPaintA && idxPaintB > idxLaser;
+    }
+
     function _getLaserTargetProducts() {
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-        return products.filter(prod => (prod.process2 || '').trim() === '레이저');
+        return products.filter(prod => _hasLaserAfterPaintFlow(prod));
     }
 
     function _getOverrideByKey(key) {
@@ -1922,7 +1940,7 @@ var LaserStandbyModule = (function() {
         const laserPaintWorks = paintingWorks.filter(w => {
             const prod = findProduct(products, w);
             if (!prod) return false;
-            return (prod.process2 || '').trim() === '레이저';
+            return _hasLaserAfterPaintFlow(prod);
         });
 
         laserPaintWorks.forEach(w => {

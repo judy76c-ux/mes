@@ -461,7 +461,7 @@ const SettingsModule = (function() {
             }));
             return `<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--border-color);flex-wrap:wrap;">
                 <span style="flex:1;min-width:0;"><strong>${m.carModel||'-'}</strong> / 사출품명: ${m.injPartName||'-'}
-                    <span style="color:var(--text-muted);font-size:0.75rem;margin-left:4px;">컬러: ${m.injColor||'(없음)'}</span>
+                    <span style="color:var(--text-muted);font-size:0.75rem;margin-left:4px;">컬러: ${m.injColor||'(-)'}</span>
                     <span style="color:var(--accent-red);font-size:0.75rem;margin-left:4px;">→ 제작품목 미설정</span></span>
                 <button onclick="UIUtils.closeModal();SettingsModule.openAddProductModal(JSON.parse(decodeURIComponent('${enc}')))"
                     style="padding:2px 8px;font-size:0.72rem;background:var(--accent-blue);color:#fff;
@@ -524,7 +524,7 @@ const SettingsModule = (function() {
             return `<div style="padding:3px 0;border-bottom:1px solid var(--border-color);">
                 <strong>${cm||'-'}</strong> / ${pn||'-'} — ${arr.length}개 컬러:
                 ${arr.map(p => `<span style="background:rgba(217,119,6,0.15);color:#92400e;border:1px solid #d97706;
-                    border-radius:4px;padding:0 6px;font-size:0.75rem;margin-left:4px;">${p.color||'(없음)'}
+                    border-radius:4px;padding:0 6px;font-size:0.75rem;margin-left:4px;">${p.color||'(-)'}
                     <button onclick="SettingsModule.editProduct('${p.id}')"
                         style="margin-left:3px;padding:0 4px;font-size:0.68rem;background:#d97706;
                         color:#fff;border:none;border-radius:2px;cursor:pointer;">수정</button></span>`).join('')}
@@ -2576,7 +2576,7 @@ const SettingsModule = (function() {
         const _makeProductOptions = (selectedId) => {
             const opts = _filteredProds.map(p =>
                 `<option value="${p.id}" ${p.id === selectedId ? 'selected' : ''}>`
-                + `${p.partName || ''}${p.color ? ' / ' + p.color : ''}`
+                + `${p.partName || ''}${p.color ? ' / ' + p.color : ' / (-)'}`
                 + `</option>`
             ).join('');
             return opts;
@@ -2807,7 +2807,7 @@ const SettingsModule = (function() {
             `<option value="">${isFirst ? '-- 제품 선택 --' : '-- 선택 없음 --'}</option>` +
             filtered.map(p =>
                 `<option value="${p.id}" ${p.id === selectedId ? 'selected' : ''}>`
-                + `${p.partName || ''}${p.color ? ' / ' + p.color : ''}`
+                + `${p.partName || ''}${p.color ? ' / ' + p.color : ' / (-)'}`
                 + `</option>`
             ).join('');
         // 동적 슬롯 전체 갱신
@@ -2834,7 +2834,7 @@ const SettingsModule = (function() {
         const filtered = carModel ? products.filter(p => p.carModel === carModel) : products;
         const opts = '<option value="">-- 선택 없음 --</option>' +
             filtered.map(p =>
-                `<option value="${p.id}">${p.partName || ''}${p.color ? ' / '+p.color : ''}</option>`
+                `<option value="${p.id}">${p.partName || ''}${p.color ? ' / '+p.color : ' / (-)'}</option>`
             ).join('');
         const row = document.createElement('div');
         row.id = `imProductRow_${idx}`;
@@ -9301,7 +9301,7 @@ const SettingsModule = (function() {
         function slotCell(st) {
             if (st.type === 'linked') {
                 const name  = st.prod.partName || '-';
-                const color = st.prod.color ? ` / ${st.prod.color}` : '';
+                const color = st.prod.color ? ` / ${st.prod.color}` : ' / (-)';
                 return `<td style="padding:5px 8px;font-size:0.78rem;
                                    background:rgba(52,211,153,0.1);border-left:3px solid #10b981;">
                     <span style="font-weight:600;">${name}${color}</span>
@@ -9313,7 +9313,7 @@ const SettingsModule = (function() {
             }
             if (st.type === 'text') {
                 const name  = st.prod.partName || st.textName;
-                const color = st.prod.color ? ` / ${st.prod.color}` : '';
+                const color = st.prod.color ? ` / ${st.prod.color}` : ' / (-)';
                 return `<td style="padding:5px 8px;font-size:0.78rem;
                                    background:rgba(251,191,36,0.1);border-left:3px solid #f59e0b;">
                     <span style="font-weight:600;color:#92400e;">${name}${color}</span>
@@ -9727,7 +9727,7 @@ const SettingsModule = (function() {
         }
 
         // 같은 차종·품명, 다른 컬러
-        const colorList = sameName.map(p => p.color || '(컬러없음)').join(', ');
+        const colorList = sameName.map(p => p.color || '(-)').join(', ');
         hintEl.innerHTML = `<span style="color:#d97706;font-weight:600;">⚠ 동일 차종·품명이 이미 있습니다 (기존 컬러: ${colorList}).<br>
             사출 자재 등록 시 <strong>injColor</strong>로 컬러를 반드시 구분하세요.</span>`;
     }
@@ -9779,7 +9779,7 @@ const SettingsModule = (function() {
             exactDups.forEach(({ key, items }) => {
                 const [cm, pn, cl] = key.split('||');
                 html += `<div style="font-size:0.83rem;padding:4px 0;border-bottom:1px solid var(--border-color);">
-                    <strong>${cm} / ${pn} / ${cl || '(컬러없음)'}</strong>
+                <strong>${cm} / ${pn} / ${cl || '(-)'}</strong>
                     — ${items.length}개 중복
                     ${items.map(p =>
                         `<span style="margin-left:8px;font-size:0.75rem;color:var(--text-muted);">ID: ${p.id}
@@ -9814,7 +9814,7 @@ const SettingsModule = (function() {
                 arr.forEach(p => {
                     html += `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;
                                          border-bottom:1px solid var(--border-color);font-size:0.82rem;">
-                        <span style="min-width:80px;color:var(--text-muted);">컬러: <strong>${p.color||'(없음)'}</strong></span>
+                        <span style="min-width:80px;color:var(--text-muted);">컬러: <strong>${p.color||'(-)'}</strong></span>
                         <span style="flex:1;color:var(--text-muted);">코드: ${p.code||'-'}</span>
                         <button onclick="UIUtils.closeModal();SettingsModule.editProduct('${p.id}');"
                             style="padding:2px 10px;font-size:0.75rem;background:var(--accent-blue);
@@ -10573,7 +10573,7 @@ const SettingsModule = (function() {
             return blank + targetProds
                 .sort((a, b) => (a.partName||'').localeCompare(b.partName||'', 'ko'))
                 .map(p => {
-                    const label = `${p.partName}${p.color ? ' / '+p.color : ''}`;
+                    const label = `${p.partName}${p.color ? ' / '+p.color : ' / (-)'}`;
                     const sel   = selectedVal && selectedVal.trim() === (p.partName||'').trim() ? 'selected' : '';
                     return `<option value="${p.partName}" ${sel}>${label}</option>`;
                 }).join('');

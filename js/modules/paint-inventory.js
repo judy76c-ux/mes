@@ -152,7 +152,7 @@ const PaintInventoryModule = (function() {
         const byMaterial = {};
         allData.forEach(d => {
             const mat = materials.find(m => m.id === d.materialId);
-            const key = mat ? (mat.name + (mat.color ? ' (' + mat.color + ')' : '')) : '미분류';
+            const key = mat ? (mat.name + ' (' + (mat.color || '-') + ')') : '미분류';
             if (!byMaterial[key]) byMaterial[key] = {
                 qty: 0,
                 packUnit: mat ? (mat.packUnit || '-') : '-'

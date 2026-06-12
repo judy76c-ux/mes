@@ -10993,14 +10993,14 @@ var ProdQualityModule = (function() {
         const color1 = isColor ? '#16a34a' : 'var(--text-muted)';
         const color2 = isColor ? '#dc2626' : 'var(--text-muted)';
         return `
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;min-width:160px;">
-                <div style="display:flex;align-items:center;gap:4px;">
-                    <span style="font-size:0.72rem;font-weight:700;color:${color1};min-width:26px;">${label1}</span>
-                    <input type="text" class="form-input ${cls1}" value="${_esc(val1)}" placeholder="${ph1}" style="height:30px;padding:4px 6px;font-size:0.78rem;text-align:right;">
+            <div style="display:flex;gap:6px;flex-wrap:nowrap;">
+                <div style="display:flex;align-items:center;gap:4px;flex:1;min-width:0;">
+                    <span style="font-size:0.72rem;font-weight:700;color:${color1};white-space:nowrap;flex-shrink:0;">${label1}</span>
+                    <input type="text" class="form-input ${cls1}" value="${_esc(val1)}" placeholder="${ph1}" style="flex:1;min-width:0;height:30px;padding:4px 6px;font-size:0.78rem;text-align:right;">
                 </div>
-                <div style="display:flex;align-items:center;gap:4px;">
-                    <span style="font-size:0.72rem;font-weight:700;color:${color2};min-width:26px;">${label2}</span>
-                    <input type="text" class="form-input ${cls2}" value="${_esc(val2)}" placeholder="${ph2}" style="height:30px;padding:4px 6px;font-size:0.78rem;text-align:right;">
+                <div style="display:flex;align-items:center;gap:4px;flex:1;min-width:0;">
+                    <span style="font-size:0.72rem;font-weight:700;color:${color2};white-space:nowrap;flex-shrink:0;">${label2}</span>
+                    <input type="text" class="form-input ${cls2}" value="${_esc(val2)}" placeholder="${ph2}" style="flex:1;min-width:0;height:30px;padding:4px 6px;font-size:0.78rem;text-align:right;">
                 </div>
             </div>
             <input type="hidden" class="${prefix}-spec" value="${_esc(item.spec || '')}">
@@ -11398,14 +11398,15 @@ var ProdQualityModule = (function() {
                             const isNumeric = _isNumericItem(item);
                             let specText = '-';
                             let hasVal = false;
-                            if (ti) {
-                                if (_isGlossSpecItem(ti)) {
-                                    const { targetSpec, toleranceSpec } = _glossValues(ti);
-                                    specText = (targetSpec && toleranceSpec) ? `${targetSpec}±${toleranceSpec}` : (ti.spec || '-');
+                            const src = ti || item; // 제품 저장값 없으면 마스터 기본값 폴백
+                            if (src) {
+                                if (_isGlossSpecItem(src)) {
+                                    const { targetSpec, toleranceSpec } = _glossValues(src);
+                                    specText = (targetSpec && toleranceSpec) ? `${targetSpec}±${toleranceSpec}` : (src.spec || '-');
                                 } else {
-                                    specText = _composeRangeSpec(ti) || ti.spec || '-';
+                                    specText = _composeRangeSpec(src) || src.spec || '-';
                                 }
-                                hasVal = _hasSpecValue(ti);
+                                hasVal = _hasSpecValue(src);
                             }
                             if (!isNumeric) {
                                 // select 타입: ✓ / - 만 표시
@@ -11904,7 +11905,7 @@ var ProdQualityModule = (function() {
                     <td>${_esc(d.inspector || '-')}</td>
                     <td style="white-space:nowrap;">
                         <button class="btn btn-sm btn-primary" onclick="ProdQualityModule.printIssue('${_js(d.id)}')">C/S 인쇄</button>
-                        <button class="btn btn-sm btn-outline" onclick="ProdQualityModule.edit('${_js(d.id)}')">수정</button>
+                        <button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openView('${_js(d.id)}')">보기</button>
                         <button class="btn btn-sm btn-danger" onclick="ProdQualityModule.remove('${_js(d.id)}')">삭제</button>
                     </td>
                 </tr>
@@ -12329,9 +12330,26 @@ var ProdQualityModule = (function() {
         printIssue(saved.id);
     }
 
+    function openView(id) {
+        const d = Storage.getById(STORE, id);
+        if (!d) return;
+        UIUtils.showModal('초중종물 C/S 보기', fillForm(d), `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+            <button class="btn btn-primary" onclick="UIUtils.closeModal(); setTimeout(()=>ProdQualityModule.edit('${_js(id)}'),50)">
+                <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">edit</span> 편집
+            </button>
+        `, 'xl');
+        // 보기 모드: 모든 입력 비활성화
+        const body = document.getElementById('modalBody');
+        if (body) {
+            body.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
+            body.querySelectorAll('button').forEach(btn => { btn.disabled = true; });
+        }
+    }
+
     function edit(id) {
         const d = Storage.getById(STORE, id);
-        UIUtils.showModal('초중종물 C/S 수정', fillForm(d), `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="ProdQualityModule.saveEdit('${id}')">저장</button>`, 'xl');
+        UIUtils.showModal('초중종물 C/S 수정', fillForm(d), `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="ProdQualityModule.saveEdit('${_js(id)}')">저장</button>`, 'xl');
     }
 
     async function saveEdit(id) {
@@ -12605,9 +12623,39 @@ var ProdQualityModule = (function() {
         const payload = { _docKind: ITEM_MASTER_KIND, items, updatedAt: UIUtils.now() };
         if (existing) await Storage.update(STORE, existing.id, payload);
         else await Storage.add(STORE, payload);
+
+        // 프리셋·품목별 기준값 동기화 (삭제된 항목 제거, 레이블/단위/방법 업데이트)
+        await _syncPresetsAndTemplates(items);
+
         UIUtils.closeModal();
-        UIUtils.toast('관리항목이 저장되었습니다.', 'success');
+        UIUtils.toast('관리항목이 저장되었습니다. 프리셋·품목별 기준도 반영되었습니다.', 'success');
         search();
+    }
+
+    async function _syncPresetsAndTemplates(newMasterItems) {
+        const masterKeySet = new Set(newMasterItems.map(m => m.key));
+        const masterByKey  = Object.fromEntries(newMasterItems.map(m => [m.key, m]));
+        const allDocs = Storage.getAll(STORE) || [];
+
+        const syncItems = (items = []) =>
+            items
+                .filter(i => masterKeySet.has(i.key))
+                .map(i => {
+                    const m = masterByKey[i.key];
+                    return { ...i, label: m.label, unit: m.unit, method: m.method, inputType: m.inputType };
+                });
+
+        const presets   = allDocs.filter(d => d._docKind === PRESET_KIND);
+        const templates = allDocs.filter(d => d._docKind === TEMPLATE_KIND);
+
+        for (const p of presets) {
+            const newItems = syncItems(p.items);
+            await Storage.update(STORE, p.id, { ...p, items: newItems });
+        }
+        for (const t of templates) {
+            const newItems = syncItems(t.items);
+            await Storage.update(STORE, t.id, { ...t, items: newItems });
+        }
     }
 
     function openTemplateModal(carModel = '', color = '') {
@@ -13377,6 +13425,7 @@ table{border-collapse:collapse;width:100%}
         ,openWriteFromWork
         ,saveWriteAndPrint
         ,issueFromWork
+        ,openView
         ,openItemListModal
         ,saveItemMaster
         ,addMasterItemRow
@@ -16713,7 +16762,7 @@ var ProdEquipmentModule = (function() {
     function _stdRow(label, val, unit) {
         if (!val && val !== 0) return `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border-color);">
             <span style="min-width:180px;font-size:0.82rem;color:var(--text-muted);">${label}</span>
-            <span style="font-size:0.82rem;color:var(--text-muted);">미설정</span></div>`;
+            <span style="font-size:0.82rem;color:var(--text-muted);">-</span></div>`;
         return `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border-color);">
             <span style="min-width:180px;font-size:0.82rem;color:var(--text-secondary);">${label}</span>
             <span style="font-size:0.88rem;font-weight:600;">${_esc(String(val))}${unit ? ' <span style="font-size:.78rem;color:var(--text-muted);">'+unit+'</span>' : ''}</span>
