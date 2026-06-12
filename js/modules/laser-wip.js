@@ -270,11 +270,11 @@ var LaserWipModule = (function() {
     }
 
     function openManualInput() {
-        if (typeof LaserWorkModule === 'undefined' || typeof LaserWorkModule.openAddModal !== 'function') {
-            UIUtils.toast('레이저 작업 등록 화면을 열 수 없습니다.', 'warning');
+        if (typeof LaserStandbyModule === 'undefined' || typeof LaserStandbyModule.openAdjustModal !== 'function') {
+            UIUtils.toast('레이저 대기 재공품 추가 화면을 열 수 없습니다.', 'warning');
             return;
         }
-        LaserWorkModule.openAddModal();
+        LaserStandbyModule.openAdjustModal('', true);
     }
 
     function init(container) {
