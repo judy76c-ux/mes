@@ -229,9 +229,17 @@ var InjectionIncomingModule = (function() {
                                         <span class="material-symbols-outlined" style="font-size:0.85rem;">cancel</span>${l.lotNo || '-'}
                                     </span>`
                                 ).join('');
+                                const _dp0 = (d.date || '').split(' ');
+                                const _dp0p = (_dp0[0] || '').split('-');
+                                const _dp0h = _dp0[1] ? _dp0[1].slice(0,5) : '';
+                                const _dateFmt0 = _dp0p.length === 3
+                                    ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;">' + _dp0p[0] + '</span>' +
+                                      '<span style="font-weight:600;white-space:nowrap;">' + _dp0p[1] + '-' + _dp0p[2] + '</span>' +
+                                      (_dp0h ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1.4;">' + _dp0h + '</span>' : '')
+                                    : (d.date || '-');
                                 return `
                                     <tr style="background:rgba(220,38,38,0.03);">
-                                        <td>${d.date}</td>
+                                        <td style="line-height:1.3;">${_dateFmt0}</td>
                                         <td>${lotBadges}</td>
                                         <td>${d.carModel || '-'}</td>
                                         <td>${d.partName || '-'}</td>
@@ -347,9 +355,17 @@ var InjectionIncomingModule = (function() {
             const rowStyle = isFifoViolation
                 ? ' style="background:rgba(234,88,12,0.05);"'
                 : certMissing ? ' style="background:rgba(220,38,38,0.05);"' : '';
+            const _ds = (d.date || '').split(' ');
+            const _dp = (_ds[0] || '').split('-');
+            const _dt = _ds[1] ? _ds[1].slice(0,5) : '';
+            const _dateFmt = _dp.length === 3
+                ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;">' + _dp[0] + '</span>' +
+                  '<span style="font-weight:600;white-space:nowrap;">' + _dp[1] + '-' + _dp[2] + '</span>' +
+                  (_dt ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1.4;">' + _dt + '</span>' : '')
+                : (d.date || '-');
             return `
                 <tr${rowStyle}>
-                    <td>${d.date}</td>
+                    <td style="line-height:1.3;">${_dateFmt}</td>
                     <td>${d.carModel || '-'}</td>
                     <td>${d.partName || '-'}</td>
                     <td style="text-align:right">${UIUtils.formatNumber(d.incomingQty)}</td>

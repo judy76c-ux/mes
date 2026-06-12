@@ -723,7 +723,9 @@ var LaserJigMasterModule = (function () {
         openDisposeModal: openDisposeModal,
         dispose: dispose,
         remove: remove,
-        resetAll: resetAll
+        resetAll: resetAll,
+        onMadeDateInput: _onMadeDateInput,
+        _onMadeDateInput: _onMadeDateInput
     };
 })();
 
@@ -1059,9 +1061,7 @@ var LaserJigCleaningModule = (function () {
         init: render,
         openModal: openModal,
         save: save,
-        remove: remove,
-        onMadeDateInput: _onMadeDateInput,
-        _onMadeDateInput: _onMadeDateInput
+        remove: remove
     };
 })();
 

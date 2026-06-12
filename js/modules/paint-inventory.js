@@ -230,10 +230,19 @@ const PaintInventoryModule = (function() {
                 }
             }
 
+            function _fmtDateCell(raw) {
+                const sp = (raw || '').split(' ');
+                const pp = (sp[0] || '').split('-');
+                const tt = sp[1] ? sp[1].slice(0,5) : '';
+                if (pp.length !== 3) return raw || '-';
+                return '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;">' + pp[0] + '</span>' +
+                       '<span style="font-weight:600;white-space:nowrap;">' + pp[1] + '-' + pp[2] + '</span>' +
+                       (tt ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1.4;">' + tt + '</span>' : '');
+            }
             return `
                 <tr>
-                    <td>${d.date || '-'}</td>
-                    <td style="font-size:0.82rem;color:var(--text-muted);">${d.inspDate ? d.inspDate.slice(0,10) : '-'}</td>
+                    <td style="line-height:1.3;">${_fmtDateCell(d.date)}</td>
+                    <td style="line-height:1.3;">${_fmtDateCell(d.inspDate ? d.inspDate.slice(0,10) : '')}</td>
                     <td>${mSupplier}</td>
                     <td><strong>${mName}</strong></td>
                     <td>${mPackUnit}</td>

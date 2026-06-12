@@ -3974,9 +3974,11 @@ const PaintingInspectionModule = (function() {
                 w.lots.map(l => l.lotNo).join(', ') : (w.lotNo || '-');
 
             const _wp = (w.date || '').split('-');
+            const _wst = (w.startTime || '').slice(0, 5);
             const _workDateHtml = _wp.length === 3
                 ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;">' + _wp[0] + '</span>' +
-                  '<span style="font-weight:600;white-space:nowrap;">' + _wp[1] + '-' + _wp[2] + '</span>'
+                  '<span style="font-weight:600;white-space:nowrap;">' + _wp[1] + '-' + _wp[2] + '</span>' +
+                  (_wst ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1.4;">' + _wst + '</span>' : '')
                 : (w.date || '-');
 
             return `
@@ -4698,6 +4700,7 @@ const PaintingInspectionModule = (function() {
                                 <th style="text-align:right;">양품</th>
                                 <th style="text-align:right;">불량</th>
                                 <th style="text-align:right;">불량률</th>
+                                <th style="width:60px;"></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -4720,6 +4723,7 @@ const PaintingInspectionModule = (function() {
                                     <td style="text-align:right;color:var(--accent-green);font-weight:600;">${UIUtils.formatNumber(Number(i.goodQty) || 0)}</td>
                                     <td style="text-align:right;color:var(--accent-red);font-weight:600;">${UIUtils.formatNumber(defect)}</td>
                                     <td style="text-align:right;font-weight:600;color:${defect > 0 ? 'var(--accent-red)' : 'var(--text-muted)'};">${rate}%</td>
+                                    <td style="text-align:center;"><button class="btn btn-sm btn-outline" onclick="PaintingInspectionModule.showInspectionDetail('${i.id}')">보기</button></td>
                                 </tr>`;
                             }).join('')}
                         </tbody>
@@ -4731,6 +4735,117 @@ const PaintingInspectionModule = (function() {
         }
 
         el.innerHTML = html;
+    }
+
+    // 검사 상세 보기 모달
+    function showInspectionDetail(id) {
+        const allInspections = Storage.getAll(STORE) || [];
+        const i = allInspections.find(r => r.id === id);
+        if (!i) { UIUtils.toast('검사 기록을 찾을 수 없습니다.', 'error'); return; }
+
+        const insp = Number(i.inspectionQty) || 0;
+        const good = Number(i.goodQty) || 0;
+        const defect = Number(i.defectQty) || 0;
+        const rate = insp > 0 ? (defect / insp * 100).toFixed(1) : '0.0';
+
+        function fmtDate(d) {
+            const p = String(d || '').split('-');
+            if (p.length !== 3) return { year: '-', md: d || '-', raw: d || '-' };
+            return { year: p[0], md: p[1] + '-' + p[2], raw: d };
+        }
+        function infoRow(label, val) {
+            return '<div style="display:grid;grid-template-columns:112px minmax(0,1fr);gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid rgba(148,163,184,0.18);">' +
+                   '<div style="font-size:0.77rem;color:var(--text-muted);font-weight:700;letter-spacing:0.02em;">' + label + '</div>' +
+                   '<div style="font-size:0.95rem;font-weight:600;color:var(--text-primary);word-break:break-word;">' + val + '</div>' +
+                   '</div>';
+        }
+        function statCard(label, value, tone) {
+            const color = tone === 'green' ? '#059669' : tone === 'red' ? '#ef4444' : tone === 'orange' ? '#f97316' : '#1d4ed8';
+            const bg = tone === 'green' ? 'rgba(16,185,129,0.10)' : tone === 'red' ? 'rgba(239,68,68,0.10)' : tone === 'orange' ? 'rgba(249,115,22,0.10)' : 'rgba(37,99,235,0.10)';
+            return '<div style="padding:14px 16px;border-radius:16px;background:' + bg + ';border:1px solid rgba(148,163,184,0.14);min-height:86px;">' +
+                   '<div style="font-size:0.76rem;color:var(--text-muted);font-weight:700;margin-bottom:8px;">' + label + '</div>' +
+                   '<div style="font-size:1.5rem;font-weight:900;color:' + color + ';letter-spacing:0.01em;">' + value + '</div>' +
+                   '</div>';
+        }
+
+        const inspectionDate = fmtDate(i.date);
+        const paintingDate = fmtDate(i.paintingDate);
+        const inspectionTime = i.inspectionStartTime ? String(i.inspectionStartTime).slice(0, 5) : '-';
+        const inspectionRange = (i.inspectionStartTime || '-') + (i.inspectionEndTime ? ' ~ ' + i.inspectionEndTime : '');
+        const inspectorText = (i.inspectors && i.inspectors.length > 0) ? i.inspectors.join(', ') : '-';
+        const defectRows = (i.defects || []).map(function (d) {
+            const sourceLabel = d.defectType === 'painting' ? '도장' : '사출';
+            const sourceBg = d.defectType === 'painting' ? 'rgba(59,130,246,0.12)' : 'rgba(249,115,22,0.12)';
+            const sourceColor = d.defectType === 'painting' ? '#2563eb' : '#ea580c';
+            return '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;background:#fff;border:1px solid rgba(148,163,184,0.14);border-radius:14px;box-shadow:0 8px 18px rgba(15,23,42,0.04);">' +
+                '<div style="min-width:0;">' +
+                    '<div style="font-size:0.95rem;font-weight:700;color:var(--text-primary);word-break:break-word;">' + (d.defectName || d.defectId) + '</div>' +
+                    '<div style="margin-top:6px;"><span style="display:inline-flex;align-items:center;padding:4px 8px;border-radius:999px;background:' + sourceBg + ';color:' + sourceColor + ';font-size:0.72rem;font-weight:800;">' + sourceLabel + '</span></div>' +
+                '</div>' +
+                '<div style="flex-shrink:0;text-align:right;">' +
+                    '<div style="font-size:1.15rem;font-weight:900;color:var(--accent-red);">' + UIUtils.formatNumber(d.defectCount) + '</div>' +
+                    '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">불량 수량</div>' +
+                '</div>' +
+            '</div>';
+        }).join('');
+
+        const html =
+            '<div style="padding:6px 2px 2px;">' +
+                '<div style="padding:18px;border-radius:22px;background:linear-gradient(135deg,#f8fbff 0%,#eef6ff 52%,#f8fafc 100%);border:1px solid rgba(59,130,246,0.14);box-shadow:0 18px 34px rgba(15,23,42,0.08);">' +
+                    '<div style="display:flex;gap:16px;align-items:stretch;flex-wrap:wrap;">' +
+                        '<div style="padding:16px 14px;border-radius:18px;background:#fff;border:1px solid rgba(148,163,184,0.16);display:flex;flex-direction:column;justify-content:center;align-items:flex-start;box-shadow:0 10px 24px rgba(15,23,42,0.05);">' +
+                            '<div style="font-size:0.78rem;font-weight:700;color:var(--text-muted);margin-bottom:8px;">검사일자</div>' +
+                            '<div style="font-size:0.78rem;color:#64748b;font-weight:700;">' + inspectionDate.year + '</div>' +
+                            '<div style="font-size:1.8rem;line-height:1.1;font-weight:900;color:var(--text-primary);margin-top:2px;">' + inspectionDate.md + '</div>' +
+                            '<div style="font-size:0.86rem;color:#2563eb;font-weight:800;margin-top:8px;">' + inspectionTime + '</div>' +
+                        '</div>' +
+                        '<div style="display:flex;flex-direction:column;justify-content:space-between;gap:14px;flex:1 1 420px;min-width:280px;">' +
+                            '<div>' +
+                                '<div style="font-size:0.78rem;color:#2563eb;font-weight:800;letter-spacing:0.06em;">PAINT INSPECTION</div>' +
+                                '<div style="font-size:1.45rem;font-weight:900;color:var(--text-primary);margin-top:6px;">' + (i.carModel || '-') + ' / ' + (i.partName || '-') + '</div>' +
+                                '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">' +
+                                    '<span style="display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;background:#fff;border:1px solid rgba(148,163,184,0.16);font-size:0.78rem;color:var(--text-secondary);font-weight:700;">컬러&nbsp;&nbsp;<strong style="color:var(--text-primary);">' + (i.color || '-') + '</strong></span>' +
+                                    '<span style="display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;background:#fff;border:1px solid rgba(148,163,184,0.16);font-size:0.78rem;color:var(--text-secondary);font-weight:700;">검사자&nbsp;&nbsp;<strong style="color:var(--text-primary);">' + inspectorText + '</strong></span>' +
+                                '</div>' +
+                            '</div>' +
+                            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;">' +
+                                statCard('검사수량', UIUtils.formatNumber(insp), 'blue') +
+                                statCard('양품', UIUtils.formatNumber(good), 'green') +
+                                statCard('불량', UIUtils.formatNumber(defect), 'red') +
+                                statCard('불량률', rate + '%', defect > 0 ? 'orange' : 'blue') +
+                            '</div>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>' +
+
+                '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-top:14px;">' +
+                    '<div style="padding:16px 18px;border-radius:20px;background:#fff;border:1px solid rgba(148,163,184,0.14);box-shadow:0 14px 28px rgba(15,23,42,0.05);">' +
+                        '<div style="font-size:0.86rem;font-weight:900;color:var(--text-primary);margin-bottom:6px;">기본 정보</div>' +
+                        infoRow('검사 시간', inspectionRange) +
+                        infoRow('도장 작업일', paintingDate.raw ? paintingDate.raw : '-') +
+                        infoRow('사출 LOT', i.lotNo || '-') +
+                        infoRow('검사자', inspectorText) +
+                    '</div>' +
+                    '<div style="padding:16px 18px;border-radius:20px;background:#fff;border:1px solid rgba(148,163,184,0.14);box-shadow:0 14px 28px rgba(15,23,42,0.05);">' +
+                        '<div style="font-size:0.86rem;font-weight:900;color:var(--text-primary);margin-bottom:6px;">판정 요약</div>' +
+                        infoRow('차종 / 품명', (i.carModel || '-') + ' / ' + (i.partName || '-')) +
+                        infoRow('컬러', i.color || '-') +
+                        infoRow('양품', '<span style="color:var(--accent-green);font-weight:800;">' + UIUtils.formatNumber(good) + '</span>') +
+                        infoRow('불량', '<span style="color:var(--accent-red);font-weight:800;">' + UIUtils.formatNumber(defect) + '</span>') +
+                        infoRow('불량률', '<span style="font-weight:800;color:' + (defect > 0 ? 'var(--accent-red)' : 'var(--text-muted)') + ';">' + rate + '%</span>') +
+                    '</div>' +
+                '</div>' +
+
+                '<div style="margin-top:14px;padding:16px 18px;border-radius:20px;background:#fff;border:1px solid rgba(148,163,184,0.14);box-shadow:0 14px 28px rgba(15,23,42,0.05);">' +
+                    '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;">' +
+                        '<div style="font-size:0.9rem;font-weight:900;color:var(--text-primary);">불량 상세</div>' +
+                        '<div style="font-size:0.76rem;color:var(--text-muted);">총 ' + UIUtils.formatNumber(defect) + ' EA</div>' +
+                    '</div>' +
+                    (defectRows || '<div style="padding:24px 16px;border-radius:16px;background:var(--bg-secondary);text-align:center;color:var(--text-muted);font-size:0.9rem;">등록된 불량 상세가 없습니다.</div>') +
+                '</div>' +
+            '</div>';
+
+        UIUtils.showModal('외관 검사 정보', html, '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>', 'xl');
     }
 
     // 저장
@@ -6446,6 +6561,7 @@ const PaintingInspectionModule = (function() {
         _calculateInspectionTime,
         _saveInspection,
         _addInspectorField,
+        showInspectionDetail,
         _closeInspectionModal,
         _showNumericPad,
         _numpadInput,
