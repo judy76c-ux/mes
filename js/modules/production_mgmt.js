@@ -6320,7 +6320,13 @@ var ProdConditionsModule = (function() {
 
     function renderTable(data) {
         const tbody = document.getElementById('pcTableBody');
-        tbody.innerHTML = data.length === 0 ? `<tr><td colspan="7" style="text-align:center;padding:30px;">기록이 없습니다.</td></tr>` :
+        const timingBadge = t => {
+            if (!t || t === '조업전')    return `<span style="display:inline-block;font-size:10px;font-weight:700;background:rgba(37,99,235,0.1);color:var(--accent-blue);border:1px solid rgba(37,99,235,0.25);border-radius:4px;padding:1px 6px;">조업전</span>`;
+            if (t === '점심식사후')      return `<span style="display:inline-block;font-size:10px;font-weight:700;background:rgba(234,179,8,0.12);color:#b45309;border:1px solid rgba(234,179,8,0.35);border-radius:4px;padding:1px 6px;">점심식사후</span>`;
+            if (t === '아이템 변경')     return `<span style="display:inline-block;font-size:10px;font-weight:700;background:rgba(239,68,68,0.1);color:var(--accent-red);border:1px solid rgba(239,68,68,0.25);border-radius:4px;padding:1px 6px;">아이템 변경</span>`;
+            return `<span style="font-size:10px;">${_esc(t)}</span>`;
+        };
+        tbody.innerHTML = data.length === 0 ? `<tr><td colspan="9" style="text-align:center;padding:30px;">기록이 없습니다.</td></tr>` :
             data.map((d, i) => {
                 const sum = _summary(d.checkItems || []);
                 return `
@@ -6328,6 +6334,7 @@ var ProdConditionsModule = (function() {
                     <td>${data.length - i}</td>
                     <td>${_esc(d.date)}</td>
                     <td><span class="badge ${d.line === 'A-LINE' ? 'badge-info' : 'badge-warning'}">${_esc(_lineLabel(d))}</span></td>
+                    <td>${timingBadge(d.checkTiming)}</td>
                     <td style="font-weight:600;">${_esc(d.carModel || '-')} / ${_esc(d.partName || '-')}</td>
                     <td>${_esc(d.convSpeed || '-')}</td>
                     <td style="font-size:12px;max-width:300px;">
@@ -6350,34 +6357,30 @@ var ProdConditionsModule = (function() {
 
         return `
             <div style="max-height: 74vh; overflow-y: auto; padding-right: 10px; font-size:11px;">
-                <div style="position:sticky;top:0;z-index:2;background:#fff;border:1px solid var(--border-color);border-radius:8px;padding:12px;margin-bottom:12px;box-shadow:0 4px 10px rgba(15,23,42,0.06);">
-                    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;">
-                        <div style="font-weight:800;color:var(--text-primary);">공정 조건 C/S 일별 기록</div>
-                        <div id="pcProgressText" style="font-size:0.85rem;font-weight:700;color:var(--accent-blue);">${sum.done} / ${sum.total} 완료</div>
-                    </div>
-                    <div style="height:8px;background:var(--bg-secondary);border-radius:999px;overflow:hidden;">
-                        <div id="pcProgressBar" style="height:100%;width:${sum.total ? Math.round(sum.done / sum.total * 100) : 0}%;background:var(--accent-blue);"></div>
-                    </div>
-                </div>
-
                 ${_presetSelectorHtml(selectedType)}
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">기록일자 <span style="color:var(--accent-red)">*</span></label>
-                        <input type="date" class="form-input" id="pcDate" value="${_esc(d.date || UIUtils.today())}">
+                <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:6px;">
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-size:10px;margin-bottom:2px;">기록일자 <span style="color:var(--accent-red)">*</span></label>
+                        <input type="date" class="form-input" id="pcDate" style="height:30px;font-size:11px;padding:3px 6px;" value="${_esc(d.date || UIUtils.today())}">
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">C/S 양식 <span style="color:var(--accent-red)">*</span></label>
-                        <select class="form-select" id="pcCsType" onchange="ProdConditionsModule.toggleLine(this.value)">
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-size:10px;margin-bottom:2px;">작성 시점 <span style="color:var(--accent-red)">*</span></label>
+                        <select class="form-select" id="pcCheckTiming" style="height:30px;font-size:11px;padding:3px 6px;">
+                            <option value="조업전"     ${(d.checkTiming||'조업전')==='조업전'     ? 'selected':''}>조업전</option>
+                            <option value="점심식사후" ${(d.checkTiming||'')==='점심식사후' ? 'selected':''}>점심식사후</option>
+                            <option value="아이템 변경" ${(d.checkTiming||'')==='아이템 변경' ? 'selected':''}>아이템 변경</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-size:10px;margin-bottom:2px;">C/S 양식 <span style="color:var(--accent-red)">*</span></label>
+                        <select class="form-select" id="pcCsType" style="height:30px;font-size:11px;padding:3px 6px;" onchange="ProdConditionsModule.toggleLine(this.value)">
                             ${Object.entries(CSHEET_TEMPLATES).map(([key, tpl]) => `<option value="${key}" ${selectedType === key ? 'selected' : ''}>${tpl.label}</option>`).join('')}
                         </select>
                     </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">차종</label>
-                        <select class="form-select" id="pcCarModel" onchange="ProdConditionsModule.onPcCarChange()">
-                            <option value="">-- 차종 선택 --</option>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-size:10px;margin-bottom:2px;">차종</label>
+                        <select class="form-select" id="pcCarModel" style="height:30px;font-size:11px;padding:3px 6px;" onchange="ProdConditionsModule.onPcCarChange()">
+                            <option value="">-- 차종 --</option>
                             ${(()=>{
                                 const prods = Storage.getAll(DB.STORES.PRODUCTS) || [];
                                 const cars = [...new Set(prods.map(p=>p.carModel).filter(Boolean))].sort();
@@ -6385,10 +6388,10 @@ var ProdConditionsModule = (function() {
                             })()}
                         </select>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">품명</label>
-                        <select class="form-select" id="pcPartName" onchange="ProdConditionsModule.onPcPartChange()">
-                            <option value="">-- 품명 선택 --</option>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-size:10px;margin-bottom:2px;">품명</label>
+                        <select class="form-select" id="pcPartName" style="height:30px;font-size:11px;padding:3px 6px;" onchange="ProdConditionsModule.onPcPartChange()">
+                            <option value="">-- 품명 --</option>
                             ${(()=>{
                                 const prods = Storage.getAll(DB.STORES.PRODUCTS) || [];
                                 const parts = [...new Set(prods.filter(p=>!d.carModel||p.carModel===d.carModel).map(p=>p.partName).filter(Boolean))].sort();
@@ -6396,10 +6399,10 @@ var ProdConditionsModule = (function() {
                             })()}
                         </select>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">작업자</label>
-                        <select class="form-select" id="pcOperator">
-                            <option value="">-- 작업자 선택 --</option>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-size:10px;margin-bottom:2px;">작업자</label>
+                        <select class="form-select" id="pcOperator" style="height:30px;font-size:11px;padding:3px 6px;">
+                            <option value="">-- 작업자 --</option>
                             ${(()=>{
                                 const ops = Storage.getAll(DB.STORES.OPERATORS) || [];
                                 return ops.map(o => `<option value="${_esc(o.name)}" ${d.operator===o.name?'selected':''}>${_esc(o.name)}</option>`).join('');
@@ -6408,7 +6411,7 @@ var ProdConditionsModule = (function() {
                     </div>
                 </div>
 
-                <div style="margin:16px 0 10px; font-weight:700; color:var(--accent-blue); display:flex; align-items:center; gap:8px;">
+                <div style="margin:5px 0 4px; font-weight:700; color:var(--accent-blue); display:flex; align-items:center; gap:8px;">
                      <span class="material-symbols-outlined">fact_check</span> 왼쪽 위부터 아래 순서로 입력
                      <span id="pcCpStatusBadge" style="font-size:9px;font-weight:600;border:1px solid;border-radius:4px;padding:2px 6px;margin-left:auto;
                          ${(()=>{
@@ -6438,7 +6441,7 @@ var ProdConditionsModule = (function() {
         const cpMap     = _buildCpLabelSpecMap(carModel, partName, type);
         const hasCp     = Object.keys(cpMap).length > 0;
 
-        const colGrid = 'grid-template-columns:1.8fr 2.5fr 2fr 68px';
+        const colGrid = 'grid-template-columns:1.2fr 2.5fr 2fr 68px';
 
         const header = `
             <div style="display:grid;${colGrid};gap:6px;padding:5px 10px;
@@ -6452,16 +6455,11 @@ var ProdConditionsModule = (function() {
                 <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-align:center;">점검시간</div>
             </div>`;
 
-        let currentSection = '';
+        let currentProcess = '';
         const rows = items.map((item) => {
-            const sectionRow = item.section !== currentSection
-                ? (currentSection = item.section, `
-                    <div style="margin:10px 0 3px;padding:4px 10px;
-                                background:rgba(37,99,235,0.08);border-left:3px solid var(--accent-blue);
-                                border-radius:4px;font-weight:700;font-size:10px;color:var(--accent-blue);">
-                        ${_esc(item.section)}
-                    </div>`)
-                : '';
+            const sectionRow = '';
+            const processChanged = item.process !== currentProcess;
+            if (processChanged) currentProcess = item.process;
 
             const cpSpec  = _findCpSpec(cpMap, item.item);
             const cpBadge = cpSpec
@@ -6506,7 +6504,9 @@ var ProdConditionsModule = (function() {
                      style="display:grid;${colGrid};gap:6px;align-items:center;
                             padding:5px 10px;border:1px solid var(--border-color);
                             border-radius:6px;margin-bottom:3px;${ngBg}">
-                    <div style="font-size:11px;font-weight:600;line-height:1.3;">${_esc(item.process)}</div>
+                    ${processChanged
+                        ? `<div style="font-size:11px;font-weight:700;color:var(--accent-blue);line-height:1.3;border-left:3px solid var(--accent-blue);padding-left:6px;">${_esc(item.process)}</div>`
+                        : `<div style="border-left:2px solid rgba(37,99,235,0.18);margin-left:6px;height:100%;min-height:14px;"></div>`}
                     <div>
                         <div style="font-size:11px;font-weight:600;line-height:1.3;">${_esc(item.item)}${cpBadge}</div>
                         ${specHint ? `<div style="font-size:9px;color:var(--text-muted);margin-top:1px;line-height:1.3;">${_esc(specHint)}</div>` : ''}
@@ -6739,6 +6739,7 @@ var ProdConditionsModule = (function() {
             date: document.getElementById('pcDate').value,
             line: tpl.line,
             csType,
+            checkTiming: (document.getElementById('pcCheckTiming') || {}).value || '조업전',
             carModel: document.getElementById('pcCarModel').value.trim(),
             partName: document.getElementById('pcPartName').value.trim(),
             convSpeed: convItem ? convItem.value : '',
@@ -7458,7 +7459,7 @@ var ProdConditionsModule = (function() {
                             <table class="data-table" id="pcTable">
                                 <thead>
                                     <tr>
-                                        <th>No</th><th>일자</th><th>라인</th>
+                                        <th>No</th><th>일자</th><th>라인</th><th>작성시점</th>
                                         <th>차종/품명</th><th>컨베이어</th>
                                         <th>작업항목 확인</th><th>작업자</th><th>작업</th>
                                     </tr>
@@ -10825,6 +10826,7 @@ var ProdQualityModule = (function() {
     const PRESET_KIND     = 'quality_preset'; // 사용자 저장 프레셋
     const QUALITY_STANDARD_IMAGE_KEY = 'prod_quality_standard_image_v1';
     const QUALITY_STANDARD_UPLOAD_ROLES = ['admin', 'prod_manager', 'quality_manager', 'paint_line_op'];
+    const QUALITY_PRESET_EDIT_ROLES = QUALITY_STANDARD_UPLOAD_ROLES;
 
     let _rootContainer = null;
     let _qualityStandardImage = null;
@@ -10899,14 +10901,15 @@ var ProdQualityModule = (function() {
         return { targetSpec: '', toleranceSpec: '' };
     }
 
-    function _glossSpecEditor(prefix, item = {}) {
+    function _glossSpecEditor(prefix, item = {}, opts = {}) {
         const { targetSpec, toleranceSpec } = _glossValues(item);
+        const readOnly = !!opts.readOnly;
         return `
-            <div style="display:flex;align-items:center;gap:4px;min-width:160px;flex-wrap:wrap;">
-                <span style="font-size:0.7rem;color:var(--text-muted);white-space:nowrap;">기준값</span>
-                <input type="number" step="0.1" class="form-input ${prefix}-gloss-target" value="${_esc(targetSpec)}" placeholder="기준값" style="height:30px;padding:4px 6px;font-size:0.78rem;text-align:right;width:70px;">
-                <span style="font-size:0.88rem;font-weight:800;color:#a16207;padding:0 2px;">±</span>
-                <input type="number" step="0.1" class="form-input ${prefix}-gloss-tol" value="${_esc(toleranceSpec)}" placeholder="허용오차" style="height:30px;padding:4px 6px;font-size:0.78rem;text-align:right;width:70px;">
+            <div style="display:flex;align-items:center;gap:6px;min-width:220px;max-width:300px;flex-wrap:wrap;">
+                <span style="font-size:0.74rem;color:var(--text-muted);white-space:nowrap;">기준값</span>
+                <input type="number" step="0.1" class="form-input ${prefix}-gloss-target" value="${_esc(targetSpec)}" placeholder="기준값" ${readOnly ? 'disabled' : ''} style="height:40px;padding:6px 8px;font-size:1rem;font-weight:700;text-align:right;width:82px;min-width:82px;">
+                <span style="font-size:0.98rem;font-weight:900;color:#a16207;padding:0 2px;">±</span>
+                <input type="number" step="0.1" class="form-input ${prefix}-gloss-tol" value="${_esc(toleranceSpec)}" placeholder="허용오차" ${readOnly ? 'disabled' : ''} style="height:40px;padding:6px 8px;font-size:1rem;font-weight:700;text-align:right;width:82px;min-width:82px;">
                 <span style="font-size:0.7rem;color:var(--text-muted);">GU</span>
             </div>
             <input type="hidden" class="${prefix}-spec" value="${_esc(item.spec || '')}">
@@ -10976,31 +10979,30 @@ var ProdQualityModule = (function() {
         return `${lowerSpec || ''} ~ ${upperSpec || ''}`.trim();
     }
 
-    function _rangeSpecEditor(prefix, item = {}, placeholderUpper = '상한', placeholderLower = '하한') {
+    function _rangeSpecEditor(prefix, item = {}, placeholderUpper = '상한', placeholderLower = '하한', opts = {}) {
         const { upperSpec, lowerSpec } = _rangeSpecValues(item);
         const isColor = _isColorSpecItem(item);
         const isFilm  = _isFilmSpecItem(item);
-        // 색차: +공차(upper) / −공차(lower) 편차 관리
-        // 도막두께: 하(lower) ~ 상(upper) 범위 관리 — 하 먼저 표시
+        const readOnly = !!opts.readOnly;
         const label1 = isColor ? '+공차' : isFilm ? '하' : '상';
-        const label2 = isColor ? '−공차' : isFilm ? '상' : '하';
+        const label2 = isColor ? '-공차' : isFilm ? '상' : '하';
         const val1   = isColor ? upperSpec : isFilm ? lowerSpec : upperSpec;
         const val2   = isColor ? lowerSpec : isFilm ? upperSpec : lowerSpec;
         const ph1    = isColor ? '+공차값' : isFilm ? '하한값' : placeholderUpper;
-        const ph2    = isColor ? '−공차값' : isFilm ? '상한값' : placeholderLower;
+        const ph2    = isColor ? '-공차값' : isFilm ? '상한값' : placeholderLower;
         const cls1   = isColor ? `${prefix}-upper` : isFilm ? `${prefix}-lower` : `${prefix}-upper`;
         const cls2   = isColor ? `${prefix}-lower` : isFilm ? `${prefix}-upper` : `${prefix}-lower`;
         const color1 = isColor ? '#16a34a' : 'var(--text-muted)';
         const color2 = isColor ? '#dc2626' : 'var(--text-muted)';
         return `
-            <div style="display:flex;gap:6px;flex-wrap:nowrap;">
-                <div style="display:flex;align-items:center;gap:4px;flex:1;min-width:0;">
-                    <span style="font-size:0.72rem;font-weight:700;color:${color1};white-space:nowrap;flex-shrink:0;">${label1}</span>
-                    <input type="text" class="form-input ${cls1}" value="${_esc(val1)}" placeholder="${ph1}" style="flex:1;min-width:0;height:30px;padding:4px 6px;font-size:0.78rem;text-align:right;">
+            <div style="display:flex;gap:8px;flex-wrap:nowrap;align-items:center;max-width:380px;">
+                <div style="display:flex;align-items:center;gap:5px;flex:0 0 auto;">
+                    <span style="font-size:0.76rem;font-weight:700;color:${color1};white-space:nowrap;flex-shrink:0;">${label1}</span>
+                    <input type="text" class="form-input ${cls1}" value="${_esc(val1)}" placeholder="${ph1}" ${readOnly ? 'disabled' : ''} style="width:88px;min-width:88px;height:40px;padding:6px 8px;font-size:1rem;font-weight:700;text-align:right;">
                 </div>
-                <div style="display:flex;align-items:center;gap:4px;flex:1;min-width:0;">
-                    <span style="font-size:0.72rem;font-weight:700;color:${color2};white-space:nowrap;flex-shrink:0;">${label2}</span>
-                    <input type="text" class="form-input ${cls2}" value="${_esc(val2)}" placeholder="${ph2}" style="flex:1;min-width:0;height:30px;padding:4px 6px;font-size:0.78rem;text-align:right;">
+                <div style="display:flex;align-items:center;gap:5px;flex:0 0 auto;">
+                    <span style="font-size:0.76rem;font-weight:700;color:${color2};white-space:nowrap;flex-shrink:0;">${label2}</span>
+                    <input type="text" class="form-input ${cls2}" value="${_esc(val2)}" placeholder="${ph2}" ${readOnly ? 'disabled' : ''} style="width:88px;min-width:88px;height:40px;padding:6px 8px;font-size:1rem;font-weight:700;text-align:right;">
                 </div>
             </div>
             <input type="hidden" class="${prefix}-spec" value="${_esc(item.spec || '')}">
@@ -11020,6 +11022,11 @@ var ProdQualityModule = (function() {
     function _canUploadQualityStandard() {
         const user = _currentUser();
         return !!(user && QUALITY_STANDARD_UPLOAD_ROLES.includes(String(user.role || '')));
+    }
+
+    function _canEditQualityPreset() {
+        const user = _currentUser();
+        return !!(user && QUALITY_PRESET_EDIT_ROLES.includes(String(user.role || '')));
     }
 
     async function _loadQualityStandardImage() {
@@ -12826,17 +12833,18 @@ var ProdQualityModule = (function() {
 
     function _presetMgmtHtml() {
         const presets = (Storage.getAll(STORE) || []).filter(d => d._docKind === PRESET_KIND);
+        const canEdit = _canEditQualityPreset();
         const descHtml = `
             <div style="display:flex;align-items:flex-start;gap:10px;background:#eff6ff;border:1px solid #bfdbfe;
                         border-radius:8px;padding:12px 16px;margin-bottom:16px;">
                 <span class="material-symbols-outlined" style="color:#3b82f6;font-size:20px;flex-shrink:0;margin-top:1px;">info</span>
                 <div style="font-size:0.83rem;color:#1e40af;line-height:1.65;">
-                    <strong style="display:block;margin-bottom:4px;">프레셋이란?</strong>
-                    자주 사용하는 관리항목 묶음을 미리 저장해두는 기능입니다.<br>
-                    차종·컬러별 기준값 설정 시 <strong>프레셋 적용</strong> 버튼 한 번으로 항목을 일괄 불러올 수 있어
-                    반복 입력 없이 빠르게 초중종물 C/S를 작성할 수 있습니다.<br>
+                    <strong style="display:block;margin-bottom:4px;">프리셋 관리</strong>
+                    자주 사용하는 관리항목 모음을 미리 저장해 두는 기능입니다.<br>
+                    차종·컬러별 기준값 설정 시 <strong>프리셋 적용</strong> 버튼 한 번으로 항목을 불러와
+                    반복 입력 없이 빠르게 품질 기준을 작성할 수 있습니다.<br>
                     <span style="margin-top:4px;display:block;color:#2563eb;font-size:0.79rem;">
-                        예) "도장 공통 기준", "T1XX 전용" 처럼 용도별로 여러 프레셋을 만들어 두세요.
+                        예: "외장 공통 기준", "T1XX 전용"처럼 라인별로 여러 프리셋을 만들어 보세요.
                     </span>
                 </div>
             </div>`;
@@ -12845,9 +12853,9 @@ var ProdQualityModule = (function() {
                 <table class="data-table">
                     <thead>
                         <tr>
-                            <th>프레셋명</th>
+                            <th>프리셋명</th>
                             <th style="text-align:center;">관리항목 수</th>
-                            <th style="width:120px;">작업</th>
+                            <th style="width:220px;">작업</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -12855,12 +12863,13 @@ var ProdQualityModule = (function() {
                             <tr>
                                 <td>
                                     <strong>${_esc(p.name)}</strong>
-                                    ${p.items && p.items.length ? `<span style="margin-left:6px;font-size:0.75rem;color:var(--text-muted);">${p.items.map(i=>_esc(i.label)).filter(Boolean).slice(0,4).join(', ')}${p.items.length > 4 ? ' …' : ''}</span>` : ''}
+                                    ${p.items && p.items.length ? `<span style="margin-left:6px;font-size:0.75rem;color:var(--text-muted);">${p.items.map(i=>_esc(i.label)).filter(Boolean).slice(0,4).join(', ')}${p.items.length > 4 ? '…' : ''}</span>` : ''}
                                 </td>
                                 <td style="text-align:center;"><strong style="color:var(--accent-blue);">${(p.items||[]).length}</strong>개</td>
                                 <td style="white-space:nowrap;">
-                                    <button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openPresetEditModal('${_js(p.id)}')">수정</button>
-                                    <button class="btn btn-sm btn-danger"  onclick="ProdQualityModule.deleteUserPreset('${_js(p.id)}')">삭제</button>
+                                    <button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openPresetEditModal('${_js(p.id)}','view')">보기</button>
+                                    <button class="btn btn-sm btn-primary" onclick="ProdQualityModule.openPresetEditModal('${_js(p.id)}','edit')" ${canEdit ? '' : 'disabled'} style="${canEdit ? '' : 'opacity:.45;cursor:not-allowed;'}">편집</button>
+                                    <button class="btn btn-sm btn-danger" onclick="ProdQualityModule.deleteUserPreset('${_js(p.id)}')" ${canEdit ? '' : 'disabled'} style="${canEdit ? '' : 'opacity:.45;cursor:not-allowed;'}">삭제</button>
                                 </td>
                             </tr>
                         `).join('')}
@@ -12869,22 +12878,26 @@ var ProdQualityModule = (function() {
             </div>` : `
             <div style="text-align:center;padding:36px 20px;color:var(--text-muted);">
                 <span class="material-symbols-outlined" style="font-size:40px;display:block;margin-bottom:10px;opacity:.35;">bookmarks</span>
-                저장된 프레셋이 없습니다.<br>
-                <span style="font-size:0.82rem;">프레셋을 만들면 차종별 기준 설정 시 빠르게 적용할 수 있습니다.</span>
+                저장된 프리셋이 없습니다.<br>
+                <span style="font-size:0.82rem;">프리셋을 만들면 차종별 기준 설정 때 빠르게 적용할 수 있습니다.</span>
             </div>`;
 
         return `
             ${descHtml}
             <div style="display:flex;justify-content:flex-end;margin-bottom:12px;">
-                <button class="btn btn-primary" onclick="ProdQualityModule.openPresetEditModal(null)">
-                    <span class="material-symbols-outlined">add</span> 프레셋 추가
+                <button class="btn btn-primary" onclick="ProdQualityModule.openPresetEditModal(null,'edit')" ${canEdit ? '' : 'disabled'} style="${canEdit ? '' : 'opacity:.45;cursor:not-allowed;'}">
+                    <span class="material-symbols-outlined">add</span> 프리셋 추가
                 </button>
             </div>
             ${listHtml}`;
     }
-
-    // ── 프레셋 추가/수정 모달 ────────────────────────────────────────────────
-    function openPresetEditModal(presetId) {
+    function openPresetEditModal(presetId, mode = 'edit') {
+        const canEdit = _canEditQualityPreset();
+        const viewOnly = String(mode || 'edit') === 'view';
+        if (!viewOnly && !canEdit) {
+            UIUtils.toast('프리셋 편집 권한이 없습니다.', 'warning');
+            return;
+        }
         const preset = presetId
             ? (Storage.getAll(STORE)||[]).find(d => d._docKind === PRESET_KIND && d.id === presetId)
             : null;
@@ -12892,74 +12905,83 @@ var ProdQualityModule = (function() {
             ? preset.items
             : _masterItems().map(i => ({ ...i, selected: true }));
         const items = _sortItemsByMaster(rawPresetItems);
-
-        UIUtils.showModal(preset ? `프레셋 수정 — ${preset.name}` : '새 프레셋 추가', `
+        const modalTitle = viewOnly
+            ? `프리셋 보기 — ${preset ? preset.name : ''}`
+            : (preset ? `프리셋 수정 — ${preset.name}` : '새 프리셋 추가');
+        const bodyHtml = `
             <div class="form-group" style="margin-bottom:12px;">
-                <label class="form-label">프레셋 이름 <span style="color:var(--accent-red)">*</span></label>
+                <label class="form-label">프리셋 이름 <span style="color:var(--accent-red)">*</span></label>
                 <input type="text" class="form-input" id="pqPresetEditName"
                     value="${_esc(preset ? preset.name : '')}"
-                    placeholder="예: 도장A라인 기준, 외관검사 기준" style="font-size:1rem;" autofocus>
+                    placeholder="예: 외장 공통 기준, T1XX 전용 기준" style="font-size:1rem;${viewOnly ? 'background:#f8fafc;cursor:not-allowed;' : ''}" ${viewOnly ? 'disabled' : ''} autofocus>
             </div>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
                 <span style="font-size:0.85rem;font-weight:700;color:var(--text-primary);">
-                    관리항목 <span id="pqPresetEditCount" style="color:var(--accent-blue);"></span>
+                    관리항목 <span id="pqPresetEditCount" style="color:var(--accent-blue);">(${items.length}개)</span>
                 </span>
-                <div style="display:flex;gap:6px;">
-                    <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.deleteCheckedPresetItems()">
-                        <span class="material-symbols-outlined">delete</span> 선택 삭제
-                    </button>
-                    <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.addPresetItemRow()">
-                        <span class="material-symbols-outlined">add</span> 항목 추가
-                    </button>
-                </div>
+                ${viewOnly ? '' : `
+                    <div style="display:flex;gap:6px;">
+                        <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.deleteCheckedPresetItems()">
+                            <span class="material-symbols-outlined">delete</span> 선택 삭제
+                        </button>
+                        <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.addPresetItemRow()">
+                            <span class="material-symbols-outlined">add</span> 항목 추가
+                        </button>
+                    </div>`}
             </div>
             <div class="data-table-wrapper" style="max-height:48vh;overflow:auto;">
                 <table class="data-table" style="font-size:0.82rem;">
                     <thead><tr>
                         <th style="width:36px;text-align:center;">삭제</th>
-                        <th>관리항목명 <span style="font-weight:400;color:var(--text-muted);font-size:0.75rem;">(C/S에 표시)</span></th>
+                        <th>관리항목명 <span style="font-weight:400;color:var(--text-muted);font-size:0.75rem;">(C/S 표시용)</span></th>
                         <th>기준(Spec)</th>
                         <th>측정방법</th>
                         <th style="width:76px;">단위</th>
                     </tr></thead>
                     <tbody id="pqPresetEditBody">
-                        ${items.map(item => _presetItemRowHtml(item)).join('')}
+                        ${items.map(item => _presetItemRowHtml(item, { readOnly: viewOnly })).join('')}
                     </tbody>
                 </table>
             </div>
-        `, `
-            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" onclick="ProdQualityModule.savePresetEdit(${presetId ? `'${_js(presetId)}'` : 'null'})">
-                <span class="material-symbols-outlined">save</span> 저장
-            </button>
-        `, 'lg');
+        `;
+        const footerHtml = viewOnly
+            ? `
+                <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+                ${canEdit ? `<button class="btn btn-primary" onclick="UIUtils.closeModal(); setTimeout(()=>ProdQualityModule.openPresetEditModal('${_js(presetId)}','edit'),50)"><span class="material-symbols-outlined">edit</span> 편집</button>` : ''}
+            `
+            : `
+                <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+                <button class="btn btn-primary" onclick="ProdQualityModule.savePresetEdit(${presetId ? `'${_js(presetId)}'` : 'null'})">
+                    <span class="material-symbols-outlined">save</span> 저장
+                </button>
+            `;
+        UIUtils.showModal(modalTitle, bodyHtml, footerHtml, 'lg');
     }
-
-    function _presetItemRowHtml(item = {}) {
+    function _presetItemRowHtml(item = {}, opts = {}) {
+        const readOnly = !!opts.readOnly;
         const specEditor = _isGlossSpecItem(item)
-            ? _glossSpecEditor('pq-preset', item)
+            ? _glossSpecEditor('pq-preset', item, { readOnly })
             : _isRangeSpecItem(item)
-            ? _rangeSpecEditor('pq-preset', item)
+            ? _rangeSpecEditor('pq-preset', item, '상한', '하한', { readOnly })
             : `<input type="text" class="form-input pq-preset-spec" value="${_esc(item.spec || '')}"
-                    placeholder="예: 15~20 / 없을 것">`;
+                    placeholder="예: 15~20" ${readOnly ? 'disabled' : ''}>`;
         return `
             <tr class="pq-preset-item-row">
                 <td style="text-align:center;">
-                    <input type="checkbox" class="pq-preset-delete">
+                    <input type="checkbox" class="pq-preset-delete" ${readOnly ? 'disabled' : ''}>
                 </td>
                 <td>
                     <input type="hidden" class="pq-preset-key" value="${_esc(item.key || Storage.generateId())}">
                     <input type="text" class="form-input pq-preset-label" value="${_esc(item.label || '')}"
-                        placeholder="관리항목명">
+                        placeholder="관리항목명" ${readOnly ? 'disabled' : ''}>
                 </td>
                 <td>${specEditor}</td>
                 <td><input type="text" class="form-input pq-preset-method" value="${_esc(item.method || '')}"
-                    placeholder="육안 / 도막두께계 …"></td>
+                    placeholder="측정방법" ${readOnly ? 'disabled' : ''}></td>
                 <td><input type="text" class="form-input pq-preset-unit" value="${_esc(item.unit || '')}"
-                    placeholder="μm / - …" style="width:74px;"></td>
+                    placeholder="단위" style="width:74px;" ${readOnly ? 'disabled' : ''}></td>
             </tr>`;
     }
-
     function addPresetItemRow() {
         const body = document.getElementById('pqPresetEditBody');
         if (!body) return;
