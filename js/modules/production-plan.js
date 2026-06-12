@@ -800,12 +800,7 @@ const ProductionPlanModule = (function() {
         ) || products.find(p =>
             p.carModel === carModel && p.partName === partName
         );
-        const rows = (prod && prod.paintMaterials) ? prod.paintMaterials : [];
-        // line이 지정된 경우 processTag가 해당 라인이거나 '공용'(or 미설정)인 것만 반환
-        if (line) {
-            return rows.filter(r => !r.processTag || r.processTag === '공용' || r.processTag === line);
-        }
-        return rows;
+        return (prod && prod.paintMaterials) ? prod.paintMaterials : [];
     }
 
     // overrideCarModel / overridePartName / overrideColor : 편집 모달 초기화 시 직접 전달

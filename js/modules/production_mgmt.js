@@ -11341,12 +11341,10 @@ var ProdQualityModule = (function() {
             return;
         }
 
-        const masterItems = _masterItems();
         const total = allProducts.length;
 
         const _prodStatus = p => {
-            const t = _templateForProduct(p.carModel, p.partName, p.color);
-            return _specStatus(t && Array.isArray(t.items) ? t.items : []);
+            return _specStatus(_productSpecItems(p.carModel, p.partName, p.color, { fallbackToMaster: false }));
         };
         const completeCount = allProducts.filter(p => _prodStatus(p) === 'complete').length;
         const partialCount  = allProducts.filter(p => ['items-only','partial'].includes(_prodStatus(p))).length;
@@ -11375,6 +11373,7 @@ var ProdQualityModule = (function() {
                 const noneInGroup     = prods.length - completeInGroup - partialInGroup;
                 const allSet = completeInGroup === prods.length;
                 const blockId = `pqBlock_${carModel.replace(/\s+/g,'_')}`;
+                const masterItems = _masterItems();
 
                 const headerCols = masterItems.map(item => {
                     const isNumeric = _isNumericItem(item);
@@ -11388,41 +11387,39 @@ var ProdQualityModule = (function() {
                 const bodyRows = prods
                     .sort((a,b) => a.partName.localeCompare(b.partName,'ko') || a.color.localeCompare(b.color,'ko'))
                     .map(p => {
-                        const tmpl = _templateForProduct(p.carModel, p.partName, p.color);
-                        const tmplItems = tmpl && Array.isArray(tmpl.items) ? tmpl.items : [];
-                        const status = _specStatus(tmplItems);
-                        const filledCount = tmplItems.filter(_hasSpecValue).length;
+                        const specItems = _productSpecItems(p.carModel, p.partName, p.color, { fallbackToMaster: false });
+                        const status = _specStatus(specItems);
+                        const filledCount = specItems.filter(_hasSpecValue).length;
+                        const specMap = new Map(specItems.map(item => [item.key, item]));
 
                         const specCells = masterItems.map(item => {
-                            const ti = tmplItems.find(x => x.key === item.key);
+                            const ti = specMap.get(item.key);
                             const isNumeric = _isNumericItem(item);
-                            let specText = '-';
-                            let hasVal = false;
-                            const src = ti || item; // 제품 저장값 없으면 마스터 기본값 폴백
-                            if (src) {
-                                if (_isGlossSpecItem(src)) {
-                                    const { targetSpec, toleranceSpec } = _glossValues(src);
-                                    specText = (targetSpec && toleranceSpec) ? `${targetSpec}±${toleranceSpec}` : (src.spec || '-');
-                                } else {
-                                    specText = _composeRangeSpec(src) || src.spec || '-';
-                                }
-                                hasVal = _hasSpecValue(src);
+                            if (!ti) {
+                                return `<td style=\"text-align:center;padding:5px 3px;\"><span style=\"color:#ef4444;font-weight:700;\">X</span></td>`;
                             }
+                            let specText = '-';
+                            if (_isGlossSpecItem(ti)) {
+                                const { targetSpec, toleranceSpec } = _glossValues(ti);
+                                specText = (targetSpec && toleranceSpec) ? `${targetSpec}?${toleranceSpec}` : (ti.spec || '-');
+                            } else {
+                                specText = _composeRangeSpec(ti) || ti.spec || '-';
+                            }
+                            const hasVal = _hasSpecValue(ti);
                             if (!isNumeric) {
-                                // select 타입: ✓ / - 만 표시
                                 const cell = hasVal
-                                    ? `<span style="color:#16a34a;font-weight:700;font-size:0.9rem;">✓</span>`
-                                    : `<span style="color:var(--text-muted);">-</span>`;
-                                return `<td style="text-align:center;padding:5px 3px;">${cell}</td>`;
+                                    ? `<span style=\"color:#16a34a;font-weight:700;font-size:0.9rem;\">?</span>`
+                                    : `<span style=\"color:var(--text-muted);\">-</span>`;
+                                return `<td style=\"text-align:center;padding:5px 3px;\">${cell}</td>`;
                             }
                             const isEmpty = !specText || specText === '-';
                             const cellColor = isEmpty ? 'var(--text-muted)' : hasVal ? 'var(--text-primary)' : '#d97706';
-                            return `<td style="text-align:center;font-size:0.78rem;padding:5px 4px;color:${cellColor};">${_esc(specText)}</td>`;
+                            return `<td style=\"text-align:center;font-size:0.78rem;padding:5px 4px;color:${cellColor};\">${_esc(specText)}</td>`;
                         }).join('');
 
                         const badgeHtml = {
                             complete:    `<span class="badge badge-success"   style="font-size:0.68rem;">✓ 항목+기준값</span>`,
-                            partial:     `<span class="badge badge-info"      style="font-size:0.68rem;">△ 기준값 ${filledCount}/${tmplItems.length}</span>`,
+                            partial:     `<span class="badge badge-info"      style="font-size:0.68rem;">△ 기준값 ${filledCount}/${specItems.length}</span>`,
                             'items-only':`<span style="font-size:0.68rem;color:#2563eb;font-weight:600;">항목만 설정</span>`,
                             none:        `<span class="badge badge-warning"   style="font-size:0.68rem;">✗ 미설정</span>`
                         }[status] || '';
@@ -11438,7 +11435,7 @@ var ProdQualityModule = (function() {
                                     <span style="font-size:0.82rem;font-weight:700;
                                         color:${status==='complete'?'#16a34a':status==='none'?'#9ca3af':'#d97706'};"
                                         title="${status==='complete'?'기준값 설정완료':status==='none'?'기준값 없음':'기준값 미완성'}">
-                                        ${tmplItems.length ? `${filledCount} / ${tmplItems.length}` : '-'}
+                                        ${specItems.length ? `${filledCount} / ${specItems.length}` : '-'}
                                     </span>
                                     <button class="btn btn-sm btn-outline" style="font-size:0.75rem;padding:3px 14px;"
                                         onclick="ProdQualityModule.openSpecPage('${_js(p.id)}')">보기</button>
@@ -11515,13 +11512,7 @@ var ProdQualityModule = (function() {
         const partName = _normText(product.partName || '');
         const color = _normText(product.color || product.paintColor || product.paint || product.drawingColor || '');
 
-        const tmpl = _templateForProduct(carModel, partName, color);
-        const savedItems = tmpl && Array.isArray(tmpl.items) ? tmpl.items : [];
-        const masterItems = _masterItems();
-        const items = masterItems.map(mi => {
-            const saved = savedItems.find(si => si.key === mi.key) || {};
-            return _normalizeItemForEdit({ ...mi, ...saved, key: mi.key });
-        });
+        const items = _productSpecItems(carModel, partName, color).map(item => _normalizeItemForEdit({ ...item }));
 
         const userPresets = (Storage.getAll(STORE) || []).filter(d => d._docKind === PRESET_KIND);
         const presetRow = userPresets.length ? `
@@ -11612,17 +11603,11 @@ var ProdQualityModule = (function() {
                 && pc === color;
         });
 
-        const tmpl = _templateForProduct(carModel, partName, color);
-        const savedItems = tmpl && Array.isArray(tmpl.items) ? tmpl.items : [];
-        const masterItems = _masterItems();
-        const items = masterItems.map(mi => {
-            const saved = savedItems.find(si => si.key === mi.key) || {};
-            return _normalizeItemForEdit({ ...mi, ...saved, key: mi.key });
-        });
+        const items = _productSpecItems(carModel, partName, color).map(item => _normalizeItemForEdit({ ...item }));
 
-        const status = _specStatus(savedItems);
-        const filledCount = savedItems.filter(_hasSpecValue).length;
-        const countLabel = masterItems.length ? `${filledCount} / ${masterItems.length}` : '-';
+        const status = _specStatus(items);
+        const filledCount = items.filter(_hasSpecValue).length;
+        const countLabel = items.length ? `${filledCount} / ${items.length}` : '-';
         const countColor = status==='complete' ? '#16a34a' : status==='none' ? '#9ca3af' : '#d97706';
         const statusLabel = { complete: '기준값 설정완료', partial: '기준값 미완성', 'items-only': '항목만 설정됨', none: '기준값 없음' }[status] || '';
 
@@ -11660,7 +11645,7 @@ var ProdQualityModule = (function() {
                             const pt = _templateForProduct(_normText(p.carModel), pn, _normText(p.color||p.paintColor||p.paint||p.drawingColor||''));
                             const ps = pt && Array.isArray(pt.items) ? pt.items : [];
                             const pFilled = ps.filter(_hasSpecValue).length;
-                            const pTotal  = masterItems.length;
+                            const pTotal  = ps.length;
                             const pColor  = pFilled === pTotal && pTotal > 0 ? '#16a34a' : pFilled > 0 ? '#d97706' : '#9ca3af';
                             return `<label style="display:flex;align-items:center;gap:7px;padding:7px 12px;
                                         border:1px solid var(--border-color);border-radius:7px;background:var(--bg-secondary);cursor:pointer;
@@ -11950,6 +11935,15 @@ var ProdQualityModule = (function() {
             || tmpls.find(t => _normText(t.carModel)===car && !t.partName && _normText(t.color||'')===clr)
             || tmpls.find(t => _normText(t.carModel)===car && !t.partName && !_normText(t.color||''))
             || null;
+    }
+
+    function _productSpecItems(carModel, partName, color, { fallbackToMaster = true } = {}) {
+        const tmpl = _templateForProduct(carModel, partName, color);
+        const items = tmpl && Array.isArray(tmpl.items) && tmpl.items.length
+            ? _normalizeQualityItems(tmpl.items.map(item => ({ ...item })))
+            : [];
+        if (items.length) return items;
+        return fallbackToMaster ? _masterItems().map(item => ({ ...item, selected: true })) : [];
     }
 
     function _masterItemRecord() {

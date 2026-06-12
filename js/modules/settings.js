@@ -361,7 +361,53 @@ const SettingsModule = (function() {
         const injMatPartNames = new Set(injMats.map(m => (m.injPartName || '').trim()).filter(Boolean));
         const orphanInv = invPartNames.filter(n => !injMatPartNames.has(n));
 
-        // [8] 품명 중복 (carModel + partName 동일, 색상 다름)
+        // [8] 도장 공정 있는데 도료 미등록
+        const paintProcessSet = new Set(['도장-A', '도장-B']);
+        const noPaintMat = products.filter(p => {
+            const procs = [p.process1, p.process2, p.process3, p.process4].filter(Boolean);
+            return procs.some(pr => paintProcessSet.has(pr)) &&
+                   (!p.paintMaterials || p.paintMaterials.length === 0);
+        });
+
+        // [9] 도료 등록됐는데 경화제/신너 미선택 (사용불필요 제외)
+        const incompletePaint = products.filter(p =>
+            (p.paintMaterials || []).some(r =>
+                r.mainId && (!r.hardId || !r.thinnerId)
+            )
+        );
+
+        // [10] 사출 단가 불일치: 자재 unitPrice ≠ 연결 제품 injectionPrice
+        const priceMismatch = [];
+        injMats.forEach(mat => {
+            const matPrice = mat.unitPrice ? Number(mat.unitPrice) : null;
+            // 연결 제품 수집
+            const linkedProds = [];
+            if (mat.productIds && mat.productIds.length > 0) {
+                mat.productIds.forEach(pid => {
+                    const p = products.find(pr => pr.id === pid);
+                    if (p) linkedProds.push(p);
+                });
+            } else {
+                const n1 = (mat.mfgProductName  || '').trim();
+                const n2 = (mat.mfgProductName2 || '').trim();
+                products.forEach(p => {
+                    const pn = (p.partName || '').trim();
+                    if (pn && (pn === n1 || pn === n2)) linkedProds.push(p);
+                });
+            }
+            linkedProds.forEach(p => {
+                if (!p.injectionPrice) return;
+                const prodPrice = Number(p.injectionPrice);
+                if (matPrice === null) {
+                    // 자재 단가 미설정인데 제품 매입가 있음
+                    priceMismatch.push({ mat, prod: p, matPrice: null, prodPrice });
+                } else if (matPrice !== prodPrice) {
+                    priceMismatch.push({ mat, prod: p, matPrice, prodPrice });
+                }
+            });
+        });
+
+        // [11] 품명 중복 (carModel + partName 동일, 색상 다름)
         const nameSeen = {};
         products.forEach(p => {
             const k = `${p.carModel||''}||${(p.partName||'').trim()}`;
@@ -370,7 +416,7 @@ const SettingsModule = (function() {
         });
         const dupNames = Object.entries(nameSeen).filter(([, arr]) => arr.length > 1);
 
-        // [9] 사출자재 텍스트만 연결 (productIds 미등록)
+        // [12] 사출자재 텍스트만 연결 (productIds 미등록)
         //     mfgProductName/2 는 있지만 productIds 가 비어있는 자재 → ID 연결 권장
         const textOnlyMats = injMats.filter(m => {
             const n1 = (m.mfgProductName  || '').trim();
@@ -382,7 +428,8 @@ const SettingsModule = (function() {
         const errors   = missingBasic.length + orphanMfg.length;
         const warnings = noProcess.length + noInjMat.length + noMfgMap.length +
                          noColorMats.length + orphanInv.length + dupNames.length +
-                         textOnlyMats.length;
+                         textOnlyMats.length + noPaintMat.length + incompletePaint.length +
+                         priceMismatch.length;
         const allOk    = errors === 0 && warnings === 0;
 
         const headerColor = allOk ? 'var(--accent-green)'
@@ -546,6 +593,49 @@ const SettingsModule = (function() {
                     수정</button>
             </div>`;
 
+        const rowPriceMismatch = ({ mat, prod, matPrice, prodPrice }) => {
+            const prodLabel = `${prod.carModel||'-'} / ${prod.partName||'-'}${prod.color ? ' / '+prod.color : ''}`;
+            const matLabel  = `${mat.injPartName||'-'}${mat.injColor ? ' ('+mat.injColor+')' : ''}`;
+            const matPriceStr  = matPrice !== null ? Number(matPrice).toLocaleString() + '원' : '미설정';
+            const prodPriceStr = Number(prodPrice).toLocaleString() + '원';
+            return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border-color);flex-wrap:wrap;">
+                <span style="flex:1;min-width:0;font-size:0.82rem;">
+                    <strong>${prodLabel}</strong>
+                    <span style="color:var(--text-muted);margin:0 4px;">·</span>
+                    자재: <em>${matLabel}</em>
+                    <span style="margin-left:6px;color:#d97706;">
+                        자재단가 <b style="color:${matPrice===null?'var(--accent-red)':'#b45309'};">${matPriceStr}</b>
+                        → 제품매입가 <b style="color:var(--accent-blue);">${prodPriceStr}</b>
+                    </span>
+                </span>
+                <button onclick="SettingsModule._applyProdPriceToMat('${mat.id}', ${prodPrice})"
+                    style="padding:2px 8px;font-size:0.72rem;background:#d97706;color:#fff;border:none;border-radius:4px;cursor:pointer;white-space:nowrap;">
+                    단가 맞추기</button>
+                <button onclick="UIUtils.closeModal();SettingsModule.editInjectMat('${mat.id}')"
+                    style="padding:2px 8px;font-size:0.72rem;background:var(--accent-blue);color:#fff;border:none;border-radius:4px;cursor:pointer;white-space:nowrap;">
+                    수정</button>
+            </div>`;
+        };
+
+        const rowNoPaintMat = p =>
+            `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid var(--border-color);">
+                <span style="flex:1;"><strong>${p.carModel||'-'}</strong> / ${p.partName||'-'} / ${p.color||'-'}
+                    <span style="color:#d97706;font-size:0.75rem;margin-left:4px;">→ 도장 공정(${[p.process1,p.process2,p.process3,p.process4].filter(v=>paintProcessSet.has(v)).join('/')}) 있으나 도료 미등록</span></span>
+                <button onclick="UIUtils.closeModal();SettingsModule.editProduct('${p.id}')"
+                    style="padding:2px 8px;font-size:0.72rem;background:var(--accent-blue);color:#fff;border:none;border-radius:4px;cursor:pointer;">수정</button>
+            </div>`;
+
+        const rowIncompletePaint = p => {
+            const bad = (p.paintMaterials||[]).filter(r => r.mainId && (!r.hardId || !r.thinnerId));
+            const detail = bad.map(r => `${r.paintSpec||'?'}${!r.hardId?' (경화제없음)':''}${!r.thinnerId?' (신너없음)':''}`).join(', ');
+            return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid var(--border-color);">
+                <span style="flex:1;"><strong>${p.carModel||'-'}</strong> / ${p.partName||'-'} / ${p.color||'-'}
+                    <span style="color:#d97706;font-size:0.75rem;margin-left:4px;">→ ${detail}</span></span>
+                <button onclick="UIUtils.closeModal();SettingsModule.editProduct('${p.id}')"
+                    style="padding:2px 8px;font-size:0.72rem;background:var(--accent-blue);color:#fff;border:none;border-radius:4px;cursor:pointer;">수정</button>
+            </div>`;
+        };
+
         return `
         <div class="card" style="margin-bottom:16px;border:1px solid ${headerBdr};background:${headerBg};">
             <div class="card-header" style="padding:10px 16px;cursor:pointer;user-select:none;border-bottom:1px solid ${headerBdr};"
@@ -563,16 +653,23 @@ const SettingsModule = (function() {
                 </div>
             </div>
             <div id="pvBody" style="padding:12px 16px;display:${allOk ? 'none' : 'block'};">
-                ${issueRow('error',   '필수정보 누락 (차종/품명/컬러)',                missingBasic,   rowMissingBasic)}
-                ${issueRow('error',   '사출자재 제작품목 품명 불일치',                  orphanMfg,      rowOrphanMfg)}
-                ${issueRow('warning', '공정 미설정 (공정1~4 모두 없음)',               noProcess,      rowNoProcess)}
-                ${issueRow('warning', '사출자재 미연결 (이 품명 참조 자재 없음)',       noInjMat,       rowNoInjMat)}
-                ${issueRow('warning', '사출자재 제작품목 미설정',                      noMfgMap,       rowNoMfgMap)}
-                ${issueRow('warning', '사출자재 텍스트 연결만 있음 (ID 미등록)',        textOnlyMats,   rowTextOnly)}
-                ${issueRow('warning', '사출자재 컬러 미설정 (동명 자재 여러 개)',        noColorMats,    rowNoColor)}
-                ${issueRow('warning', '사출창고 재고 — 자재마스터 불일치',              orphanInv,      rowOrphanInv)}
+                ${issueRow('error',   '필수정보 누락 (차종/품명/컬러)',                missingBasic,     rowMissingBasic)}
+                ${issueRow('error',   '사출자재 제작품목 품명 불일치',                  orphanMfg,        rowOrphanMfg)}
+                ${issueRow('warning', '사출 단가 불일치 (자재 단가 ≠ 제품 사출매입가)',  priceMismatch,    rowPriceMismatch)}
+                ${issueRow('warning', '도장 공정 있으나 도료 미등록',                  noPaintMat,       rowNoPaintMat)}
+                ${issueRow('warning', '도료 경화제/신너 미선택',                       incompletePaint,  rowIncompletePaint)}
+                ${issueRow('warning', '공정 미설정 (공정1~4 모두 없음)',               noProcess,        rowNoProcess)}
+                ${issueRow('warning', '사출자재 미연결 (이 품명 참조 자재 없음)',       noInjMat,         rowNoInjMat)}
+                ${issueRow('warning', '사출자재 제작품목 미설정',                      noMfgMap,         rowNoMfgMap)}
+                ${issueRow('warning', '사출자재 텍스트 연결만 있음 (ID 미등록)',        textOnlyMats,     rowTextOnly)}
+                ${issueRow('warning', '사출자재 컬러 미설정 (동명 자재 여러 개)',        noColorMats,      rowNoColor)}
+                ${issueRow('warning', '사출창고 재고 — 자재마스터 불일치',              orphanInv,        rowOrphanInv)}
                 ${issueRow('warning', '동일 차종·품명 (컬러 다름, 품명 분리 검토)',     dupNames,       rowDupName)}
-                <div style="margin-top:8px;text-align:right;">
+                <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+                    <button onclick="SettingsModule.migrateInjPriceToUnitPrice()"
+                        style="padding:3px 12px;font-size:0.78rem;background:transparent;
+                               color:var(--accent-blue);border:1px solid var(--accent-blue);
+                               border-radius:4px;cursor:pointer;">💰 사출 단가 일괄 적용</button>
                     <button onclick="SettingsModule.switchTab('products')"
                         style="padding:3px 12px;font-size:0.78rem;background:transparent;
                                color:var(--text-muted);border:1px solid var(--border-color);
@@ -910,7 +1007,6 @@ const SettingsModule = (function() {
         const allPaints = Storage.getAll(PAINT_STORE) || [];
         const initialPaintRows = (p.paintMaterials && p.paintMaterials.length > 0)
             ? p.paintMaterials.map(row => ({
-                processTag: row.processTag || '공용',
                 paintSpec:  row.paintSpec || row.typeFilter || '',
                 mainId:     row.mainId    || row.paintMaterialId || '',
                 hardId:     row.hardId    || '',
@@ -1403,7 +1499,6 @@ const SettingsModule = (function() {
     // 도료 행 1개 → <tr> 반환
     function _paintRowHtml(idPrefix, rowIdx, rowData, allPaints, supplierFilter) {
         const paintSpec  = rowData.paintSpec  || '';
-        const processTag = rowData.processTag || '공용';
         const mainId     = rowData.mainId     || '';
         const hardId     = rowData.hardId     || '';
         const thinnerId  = rowData.thinnerId  || '';
@@ -1441,13 +1536,6 @@ const SettingsModule = (function() {
 
         return `
         <tr data-paint-row="${rowIdx}" style="border-bottom:1px solid var(--border-color);">
-            <td style="${tdStyle}width:80px;">
-                <select id="${idPrefix}ProcessTag_${rowIdx}" style="${selStyle}" title="공정 라인">
-                    <option value="공용"   ${processTag === '공용'   ? 'selected' : ''}>공용</option>
-                    <option value="도장-A" ${processTag === '도장-A' ? 'selected' : ''}>도장-A</option>
-                    <option value="도장-B" ${processTag === '도장-B' ? 'selected' : ''}>도장-B</option>
-                </select>
-            </td>
             <td style="${tdStyle}width:110px;">
                 <select id="${idPrefix}PaintSpec_${rowIdx}"
                     style="${selStyle}"
@@ -1469,12 +1557,14 @@ const SettingsModule = (function() {
             <td style="${tdStyle}">
                 <select id="${idPrefix}PaintHard_${rowIdx}" style="${selStyle}">
                     <option value="">${noSel}</option>
+                    <option value="사용불필요" ${hardId === '사용불필요' ? 'selected' : ''} style="color:#6b7280;font-style:italic;">사용불필요</option>
                     ${mkOpts(hardPaints, hardId)}
                 </select>
             </td>
             <td style="${tdStyle}">
                 <select id="${idPrefix}PaintThinner_${rowIdx}" style="${selStyle}">
                     <option value="">${noSel}</option>
+                    <option value="사용불필요" ${thinnerId === '사용불필요' ? 'selected' : ''} style="color:#6b7280;font-style:italic;">사용불필요</option>
                     ${mkOpts(thinnerPaints, thinnerId)}
                 </select>
             </td>
@@ -1498,7 +1588,6 @@ const SettingsModule = (function() {
             const ri = row.dataset.paintRow;
             const g = id => (document.getElementById(id) || {}).value || '';
             return {
-                processTag: g(`${idPrefix}ProcessTag_${ri}`) || '공용',
                 paintSpec:  g(`${idPrefix}PaintSpec_${ri}`),
                 mainId:     g(`${idPrefix}PaintMain_${ri}`),
                 hardId:     g(`${idPrefix}PaintHard_${ri}`),
@@ -1515,7 +1604,6 @@ const SettingsModule = (function() {
         <table style="width:100%;border-collapse:collapse;border:1px solid var(--border-color);border-radius:8px;overflow:hidden;margin-bottom:4px;">
             <thead>
                 <tr>
-                    <th style="${thStyle}width:80px;">공정</th>
                     <th style="${thStyle}width:110px;">도료 사양</th>
                     <th style="${thStyle}">주제</th>
                     <th style="${thStyle}">경화제</th>
@@ -1539,9 +1627,17 @@ const SettingsModule = (function() {
         container.innerHTML = _paintTableHtml(idPrefix, paintRows, ap, supplierFilter);
     }
 
+    // 현재 폼의 도장 공정 감지 (추가 버튼 기본값용)
+    function _detectFormPaintProcess(idPrefix) {
+        const procs = [1,2,3,4].map(n => (document.getElementById(`${idPrefix}Process${n}`) || {}).value || '');
+        if (procs.includes('도장-B') && !procs.includes('도장-A')) return '도장-B';
+        return '도장-A';
+    }
+
     // 도료 행 추가
     function addProductPaintRow(idPrefix) {
-        _renderPaintList(idPrefix, [..._getCurrentPaintRows(idPrefix), {}]);
+        const defaultTag = _detectFormPaintProcess(idPrefix);
+        _renderPaintList(idPrefix, [..._getCurrentPaintRows(idPrefix), { processTag: defaultTag }]);
     }
 
     // 도료 행 제거
@@ -1806,6 +1902,111 @@ const SettingsModule = (function() {
             code: g(`${prefix}Code`).trim(),
             paintMaterials: _getCurrentPaintRows(prefix).filter(r => r.paintSpec || r.mainId || r.hardId || r.thinnerId)
         };
+    }
+
+    // 한 제품의 도료 공정 태그를 제조공정에서 자동 결정해 변환
+    function _resolvePaintTag(processTag, procs) {
+        if (processTag && processTag !== '공용') return processTag;
+        const hasA = procs.includes('도장-A'), hasB = procs.includes('도장-B');
+        if (hasA && !hasB) return '도장-A';
+        if (hasB && !hasA) return '도장-B';
+        return '도장-A';
+    }
+
+    async function migrateOnePaintTag(productId) {
+        const p = Storage.getById(PRODUCTS_STORE, productId);
+        if (!p) return;
+        const procs = [p.process1, p.process2, p.process3, p.process4].filter(Boolean);
+        const hasA = procs.includes('도장-A'), hasB = procs.includes('도장-B');
+        const rows = p.paintMaterials || [];
+        let newRows;
+        if (hasA && hasB) {
+            newRows = [];
+            rows.forEach(r => {
+                if (!r.processTag || r.processTag === '공용') {
+                    newRows.push({ ...r, processTag: '도장-A' });
+                    newRows.push({ ...r, processTag: '도장-B' });
+                } else newRows.push(r);
+            });
+        } else {
+            newRows = rows.map(r => ({ ...r, processTag: _resolvePaintTag(r.processTag, procs) }));
+        }
+        await Storage.update(PRODUCTS_STORE, productId, { ...p, paintMaterials: newRows });
+        UIUtils.toast('도료 공정 태그가 자동 매핑되었습니다.', 'success');
+        switchTab('products');
+    }
+
+    async function migrateAllPaintTags() {
+        const products = Storage.getAll(PRODUCTS_STORE) || [];
+        let count = 0;
+        for (const p of products) {
+            const procs = [p.process1, p.process2, p.process3, p.process4].filter(Boolean);
+            const rows = p.paintMaterials || [];
+            if (!rows.length) continue;
+            const hasA = procs.includes('도장-A'), hasB = procs.includes('도장-B');
+            let newRows;
+            if (hasA && hasB) {
+                newRows = [];
+                rows.forEach(r => {
+                    if (!r.processTag || r.processTag === '공용') {
+                        newRows.push({ ...r, processTag: '도장-A' });
+                        newRows.push({ ...r, processTag: '도장-B' });
+                    } else newRows.push(r);
+                });
+            } else {
+                newRows = rows.map(r => ({ ...r, processTag: _resolvePaintTag(r.processTag, procs) }));
+            }
+            await Storage.update(PRODUCTS_STORE, p.id, { ...p, paintMaterials: newRows });
+            count++;
+        }
+        UIUtils.toast(`${count}개 제품의 도료 공정 태그가 변환되었습니다.`, 'success');
+        switchTab('products');
+    }
+
+    // 제품의 사출매입가(injectionPrice) → 연결된 사출자재 단가(unitPrice) 일괄 적용
+    async function migrateInjPriceToUnitPrice() {
+        const products = Storage.getAll(PRODUCTS_STORE) || [];
+        const injMats  = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+        let matCount = 0;
+
+        // 제품 ID → injectionPrice 맵
+        const priceById = {};
+        products.forEach(p => { if (p.injectionPrice) priceById[p.id] = Number(p.injectionPrice); });
+
+        for (const mat of injMats) {
+            // 연결된 제품 찾기: productIds 우선, 없으면 mfgProductName 텍스트 매칭
+            let price = null;
+            if (mat.productIds && mat.productIds.length > 0) {
+                for (const pid of mat.productIds) {
+                    if (priceById[pid]) { price = priceById[pid]; break; }
+                }
+            } else {
+                const n1 = (mat.mfgProductName  || '').trim();
+                const n2 = (mat.mfgProductName2 || '').trim();
+                const matched = products.find(p =>
+                    p.injectionPrice && (
+                        (n1 && (p.partName || '').trim() === n1) ||
+                        (n2 && (p.partName || '').trim() === n2)
+                    )
+                );
+                if (matched) price = Number(matched.injectionPrice);
+            }
+            if (price === null || price === 0) continue;
+            await Storage.update(DB.STORES.INJECTION_MATERIALS, mat.id, { ...mat, unitPrice: price });
+            matCount++;
+        }
+
+        UIUtils.toast(`${matCount}개 사출 자재의 단가가 업데이트되었습니다.`, 'success');
+        switchTab('products');
+    }
+
+    // 검증 패널의 "단가 맞추기" 버튼 — 단일 자재에 제품 매입가를 즉시 적용
+    async function _applyProdPriceToMat(matId, price) {
+        const mat = Storage.getById(DB.STORES.INJECTION_MATERIALS, matId);
+        if (!mat) return;
+        await Storage.update(DB.STORES.INJECTION_MATERIALS, matId, { ...mat, unitPrice: price });
+        UIUtils.toast(`단가를 ${Number(price).toLocaleString()}원으로 적용했습니다.`, 'success');
+        switchTab('products');
     }
 
     async function saveProduct() {
@@ -2601,6 +2802,23 @@ const SettingsModule = (function() {
             `<option value="${r.id}" ${selectedRawMatId === r.id ? 'selected' : ''}>` +
             `${r.matName}${r.color ? ' / ' + r.color : ''}${r.supplier ? ' (' + r.supplier + ')' : ''}</option>`
         ).join('');
+
+        // 연결된 제품의 사출매입가 초기 힌트 계산
+        const _linkedPids = (_productIds && _productIds.length > 0)
+            ? _productIds
+            : [_prodId1, _prodId2].filter(Boolean);
+        const _priceHintRows = _linkedPids
+            .map(pid => products.find(p => p.id === pid))
+            .filter(p => p && p.injectionPrice)
+            .map(p => {
+                const label = (p.partName || '?') + (p.color ? ' (' + p.color + ')' : '');
+                const price = Number(p.injectionPrice).toLocaleString();
+                const match = v('unitPrice') && Number(v('unitPrice')) === Number(p.injectionPrice);
+                return `<span style="background:${match ? 'var(--accent-green)' : 'var(--accent-orange,#ea580c)'};` +
+                    `color:#fff;padding:1px 6px;border-radius:3px;font-size:0.72rem;">${label}: ${price}원` +
+                    `${match ? ' ✓' : ''}</span>`;
+            });
+
         return `
             <div class="form-row">
                 <div class="form-group">
@@ -2629,7 +2847,17 @@ const SettingsModule = (function() {
                 </div>
                 <div class="form-group">
                     <label class="form-label">단가 (원)</label>
-                    <input type="number" class="form-input" id="imUnitPrice" placeholder="0" min="0" value="${v('unitPrice')}">
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <input type="number" class="form-input" id="imUnitPrice" placeholder="0" min="0" value="${v('unitPrice')}" style="flex:1;">
+                        <button type="button" onclick="SettingsModule._syncInjMatPriceFromProduct()"
+                            style="white-space:nowrap;flex-shrink:0;padding:0 10px;height:34px;font-size:0.75rem;
+                                   background:var(--accent-blue);color:#fff;border:none;border-radius:5px;cursor:pointer;">
+                            제품가로 설정
+                        </button>
+                    </div>
+                    <div id="imPriceHint" style="margin-top:5px;display:flex;flex-wrap:wrap;gap:5px;min-height:14px;">
+                        ${_priceHintRows.join('')}
+                    </div>
                 </div>
             </div>
             <div class="form-row">
@@ -2666,7 +2894,8 @@ const SettingsModule = (function() {
                     return initIds.map((pid, idx) => {
                         const isFirst = idx === 0;
                         return `<div id="imProductRow_${idx}" style="display:flex;align-items:center;gap:6px;">
-                            <select class="form-select" id="imProductId_${idx}" style="flex:1;">
+                            <select class="form-select" id="imProductId_${idx}" style="flex:1;"
+                                onchange="SettingsModule._onInjectMatPriceHint()">
                                 <option value="">-- 제품 선택 (차종 먼저 선택) --</option>
                                 ${_makeProductOptions(pid)}
                             </select>
@@ -2822,6 +3051,72 @@ const SettingsModule = (function() {
         const sel2 = document.getElementById('imProductId2');
         if (sel1) sel1.innerHTML = makeOpts(sel1.value, true);
         if (sel2) sel2.innerHTML = makeOpts(sel2.value, false);
+        _onInjectMatPriceHint();
+    }
+
+    // 연결 제품 매입가 힌트 갱신
+    function _onInjectMatPriceHint() {
+        const hint = document.getElementById('imPriceHint');
+        if (!hint) return;
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const unitPriceEl = document.getElementById('imUnitPrice');
+        const currentUnitPrice = unitPriceEl ? Number(unitPriceEl.value) : 0;
+
+        const pids = [];
+        let idx = 0;
+        while (document.getElementById(`imProductId_${idx}`)) {
+            const v = (document.getElementById(`imProductId_${idx}`) || {}).value || '';
+            if (v) pids.push(v);
+            idx++;
+        }
+
+        const badges = pids
+            .map(pid => products.find(p => p.id === pid))
+            .filter(p => p && p.injectionPrice)
+            .map(p => {
+                const label = (p.partName || '?') + (p.color ? ' (' + p.color + ')' : '');
+                const price = Number(p.injectionPrice);
+                const match = currentUnitPrice > 0 && currentUnitPrice === price;
+                return `<span style="background:${match ? 'var(--accent-green)' : 'var(--accent-orange,#ea580c)'};` +
+                    `color:#fff;padding:1px 6px;border-radius:3px;font-size:0.72rem;">${label}: ${price.toLocaleString()}원` +
+                    `${match ? ' ✓' : ''}</span>`;
+            });
+
+        hint.innerHTML = badges.join('');
+    }
+
+    // 연결 제품 사출매입가 → 단가 자동 설정 (첫 번째 제품 기준)
+    function _syncInjMatPriceFromProduct() {
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const pids = [];
+        let idx = 0;
+        while (document.getElementById(`imProductId_${idx}`)) {
+            const v = (document.getElementById(`imProductId_${idx}`) || {}).value || '';
+            if (v) pids.push(v);
+            idx++;
+        }
+        const priceList = pids
+            .map(pid => products.find(p => p.id === pid))
+            .filter(p => p && p.injectionPrice)
+            .map(p => Number(p.injectionPrice));
+
+        if (priceList.length === 0) {
+            UIUtils.toast('연결된 제품의 사출매입가가 없습니다.', 'warning');
+            return;
+        }
+        // 연결된 제품이 여러 개이고 가격이 다를 때 경고
+        const uniquePrices = [...new Set(priceList)];
+        const el = document.getElementById('imUnitPrice');
+        if (el) {
+            el.value = uniquePrices[0];
+            el.dispatchEvent(new Event('input'));
+        }
+        if (uniquePrices.length > 1) {
+            UIUtils.toast(`주의: 연결 제품의 사출매입가가 상이합니다. 첫 번째 값(${uniquePrices[0].toLocaleString()}원)을 입력했습니다.`, 'warning');
+        } else {
+            UIUtils.toast(`단가를 ${uniquePrices[0].toLocaleString()}원으로 설정했습니다.`, 'success');
+        }
+        _onInjectMatPriceHint();
     }
 
     // 제작품목 슬롯 추가
@@ -2840,7 +3135,8 @@ const SettingsModule = (function() {
         row.id = `imProductRow_${idx}`;
         row.style.cssText = 'display:flex;align-items:center;gap:6px;';
         row.innerHTML = `
-            <select class="form-select" id="imProductId_${idx}" style="flex:1;">
+            <select class="form-select" id="imProductId_${idx}" style="flex:1;"
+                onchange="SettingsModule._onInjectMatPriceHint()">
                 ${opts}
             </select>
             <button type="button" onclick="SettingsModule.removeInjMatProductSlot(${idx})"
@@ -10398,6 +10694,12 @@ const SettingsModule = (function() {
         onProductPaintSpecChange,
         onProductPaintMainSelect,
         onProductPaintSupplierFilter,
+        migrateOnePaintTag,
+        migrateAllPaintTags,
+        migrateInjPriceToUnitPrice,
+        _applyProdPriceToMat,
+        _onInjectMatPriceHint,
+        _syncInjMatPriceFromProduct,
         updateProductInjInfo,
         onProdInjFiltCarChange,
         onProdInjFiltPartChange,
