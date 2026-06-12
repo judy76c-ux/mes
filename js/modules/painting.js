@@ -701,9 +701,9 @@ const PaintingWorkModule = (function() {
                             <table class="data-table">
                                 <thead>
                                     <tr>
-                                        <th>등록일</th>
-                                        <th>도장 작업일 (LOT)</th>
-                                        <th>라인</th>
+                                        <th style="width:60px;">등록일</th>
+                                        <th style="width:60px;">도장작업일</th>
+                                        <th style="width:100px;">라인</th>
                                         <th>차종</th>
                                         <th>품명</th>
                                         <th>컬러</th>
@@ -1072,10 +1072,12 @@ const PaintingWorkModule = (function() {
                 ? '<span style="display:inline-block;background:#ef4444;color:#fff;padding:2px 7px;border-radius:4px;font-size:0.7rem;font-weight:700;margin-right:3px;" title="시간변동: ' + (d.timeReason || '') + (d.timeReasonDetail ? ' / ' + d.timeReasonDetail : '') + '">⏱ 시간변동</span>'
                 : '';
 
-            // 검사 완료된 항목은 수정 버튼 비활성화 (삭제 버튼 없음)
-            const actionButtons = isInspectionCompleted ?
-                '<button class="btn btn-sm btn-outline" onclick="PaintingWorkModule.openWorkViewPage(\'' + d.id + '\')">보기</button>' :
-                '<button class="btn btn-sm btn-outline" onclick="PaintingWorkModule.openWorkViewPage(\'' + d.id + '\')">보기</button>';
+            const _cu = AuthModule.getCurrentUser ? AuthModule.getCurrentUser() : null;
+            const _isAdmin = _cu && _cu.role === 'admin';
+            const deleteBtn = _isAdmin
+                ? '<button class="btn btn-sm btn-danger" onclick="PaintingWorkModule.removeWork(\'' + d.id + '\')" style="margin-left:4px;">삭제</button>'
+                : '';
+            const actionButtons = '<button class="btn btn-sm btn-outline" onclick="PaintingWorkModule.openWorkViewPage(\'' + d.id + '\')">보기</button>' + deleteBtn;
 
             const regDateRaw = d.registeredAt ? d.registeredAt.slice(0, 10) : '';
             const regParts = regDateRaw.split('-');
@@ -2850,6 +2852,14 @@ const PaintingWorkModule = (function() {
         return alerts.join('');
     }
 
+    function removeWork(id) {
+        UIUtils.confirm('이 도장 작업 실적을 삭제하시겠습니까?', async () => {
+            await Storage.remove(PAINTING_WORK_STORE, id);
+            UIUtils.toast('삭제되었습니다.', 'success');
+            renderWorkList();
+        });
+    }
+
     // 보기 페이지 진입점: 부모창이면 팝업 열기, 팝업창이면 contentArea에 바로 렌더링
     function openWorkViewPage(id) {
         _renderWorkView(id);
@@ -2866,17 +2876,29 @@ const PaintingWorkModule = (function() {
         var lotItems = (d.lots && d.lots.length > 0) ? d.lots : (d.lotNo ? [{lotNo: d.lotNo, qty: 0}] : []);
         var lotDisplayHtml = lotItems.length
             ? lotItems.map(function(l) {
-                return '<span style="display:inline-block;background:var(--bg-secondary);border:1px solid var(--border);' +
-                    'border-radius:4px;padding:2px 10px;font-family:monospace;font-size:0.85rem;margin:2px 4px 2px 0;">' +
-                    l.lotNo + (l.qty ? ' <span style="color:var(--text-muted);font-size:0.78rem;">(' + UIUtils.formatNumber(l.qty) + ')</span>' : '') + '</span>';
+                return '<div style="display:inline-flex;align-items:center;gap:6px;' +
+                    'background:var(--bg-secondary);border:1px solid var(--border);' +
+                    'border-radius:4px;padding:4px 12px;font-family:monospace;font-size:0.9rem;margin:3px 6px 3px 0;">' +
+                    '<span>' + l.lotNo + '</span>' +
+                    (l.qty ? '<span style="color:var(--text-muted);">—</span><span>' + UIUtils.formatNumber(l.qty) + ' 개</span>' : '') +
+                    '</div>';
             }).join('')
             : '<span style="color:var(--text-muted);">-</span>';
 
-        var wp = (d.date || '').split('-');
-        var workDateDisplay = wp.length === 3
-            ? wp[1] + '-' + wp[2] + '<small style="color:var(--text-muted);margin-left:4px;">(' + wp[0] + ')</small>'
-            : (d.date || '-');
-        var regDateDisplay = d.registeredAt ? d.registeredAt.slice(0, 10) : '-';
+        function _fmtDate(dateStr, timeStr) {
+            var p = (dateStr || '').split('-');
+            if (p.length !== 3) return dateStr || '-';
+            var t = (timeStr || '').slice(0, 5);
+            return '<span style="font-size:0.72rem;color:var(--text-muted);display:block;line-height:1.2;">' + p[0] + '</span>' +
+                   '<span style="font-size:0.95rem;font-weight:600;">' + p[1] + '-' + p[2] + '</span>' +
+                   (t ? '<span style="font-size:0.72rem;color:var(--text-muted);display:block;line-height:1.4;">' + t + '</span>' : '');
+        }
+
+        var workDateDisplay = _fmtDate(d.date, d.startTime);
+        var regDateDisplay  = _fmtDate(
+            d.registeredAt ? d.registeredAt.slice(0, 10) : '',
+            d.registeredAt && d.registeredAt.length >= 16 ? d.registeredAt.slice(11, 16) : ''
+        );
 
         function vf(label, value, color) {
             return '<div style="min-width:110px;">' +
@@ -3612,6 +3634,7 @@ const PaintingWorkModule = (function() {
         openWorkEditPage,
         _closeWorkViewPage,
         saveEdit,
+        removeWork,
         remove,
         exportData,
         deletePlan,

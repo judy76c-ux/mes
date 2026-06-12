@@ -85,6 +85,11 @@ var LaserHubModule = (function () {
             : Number(value || 0).toLocaleString('ko-KR');
     }
 
+    function _numValue(value) {
+        const n = Number(String(value == null ? '' : value).replace(/,/g, ''));
+        return Number.isFinite(n) ? n : 0;
+    }
+
     function _esc(value) {
         return String(value || '')
             .replace(/&/g, '&amp;')
@@ -553,10 +558,10 @@ var LaserJigMasterModule = (function () {
             `
                 <div class="form-row">
                     <div class="form-group"><label class="form-label">지그명 <span style="color:var(--accent-red)">*</span></label><input class="form-input" id="ljmName" value="${_esc(row && row.jigName || '')}" placeholder="예: T1XX LENS JIG" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9\s\-_.\/]/g,'')"></div>
-                    <div class="form-group"><label class="form-label">제작일</label><input class="form-input" id="ljmMadeDate" type="text" value="${_esc(_formatKoreanDate(row && row.madeDate || ''))}" placeholder="예: 2024년 01월 15일" oninput="LaserJigMasterModule._onMadeDateInput(this)" maxlength="13"></div>
+                    <div class="form-group"><label class="form-label">제작일</label><input class="form-input" id="ljmMadeDate" type="text" value="${_esc(_formatKoreanDate(row && row.madeDate || ''))}" placeholder="예: 2024년 01월 15일" oninput="LaserJigMasterModule.onMadeDateInput(this)" maxlength="13"></div>
                 </div>
                 <div class="form-row">
-                    <div class="form-group"><label class="form-label">수량</label><input class="form-input" id="ljmQty" type="number" min="0" value="${_esc(row && row.qty || 0)}"></div>
+                    <div class="form-group"><label class="form-label">수량</label><input class="form-input" id="ljmQty" type="number" min="0" value="${_esc(_numValue(row && row.qty || 0))}"></div>
                     <div class="form-group"><label class="form-label">품목구분</label>
                         <select class="form-select" id="ljmItemType">
                             ${['', '양산품', 'A/S', '개발품'].map(function (t) {
@@ -649,7 +654,7 @@ var LaserJigMasterModule = (function () {
                     <div class="form-group"><label class="form-label">폐기일</label><input class="form-input" id="ljmDisposeDate" type="date" value="${UIUtils.today()}"></div>
                 </div>
                 <div class="form-row">
-                    <div class="form-group"><label class="form-label">폐기 수량</label><input class="form-input" id="ljmDisposeQty" type="number" min="0" value="${_esc(row.qty || 0)}"></div>
+                    <div class="form-group"><label class="form-label">폐기 수량</label><input class="form-input" id="ljmDisposeQty" type="number" min="0" value="${_esc(_numValue(row.qty || 0))}"></div>
                     <div class="form-group"><label class="form-label">폐기자</label><input class="form-input" id="ljmDisposeWorker" placeholder="작업자명"></div>
                 </div>
                 <div class="form-group"><label class="form-label">폐기 사유</label><textarea class="form-textarea" id="ljmDisposeReason" rows="3" placeholder="예: 수명 초과, 파손, 제품 단종 등"></textarea></div>
@@ -982,7 +987,7 @@ var LaserJigCleaningModule = (function () {
                     </div>
                 </div>
                 <div class="form-row">
-                    <div class="form-group"><label class="form-label">세척수량</label><input class="form-input" id="ljcQty" type="number" min="0" value="${_esc((row && row.cleanQty) || 0)}"></div>
+                    <div class="form-group"><label class="form-label">세척수량</label><input class="form-input" id="ljcQty" type="number" min="0" value="${_esc(_numValue((row && row.cleanQty) || 0))}"></div>
                     <div class="form-group"><label class="form-label">세척자</label><input class="form-input" id="ljcCleaner" value="${_esc((row && row.cleaner) || '')}"></div>
                 </div>
                 <div class="form-row">
@@ -1055,6 +1060,7 @@ var LaserJigCleaningModule = (function () {
         openModal: openModal,
         save: save,
         remove: remove,
+        onMadeDateInput: _onMadeDateInput,
         _onMadeDateInput: _onMadeDateInput
     };
 })();
@@ -1187,10 +1193,10 @@ var LaserEquipmentHistoryModule = (function () {
                 </div>
                 <div class="form-row">
                     <div class="form-group"><label class="form-label">담당자</label><input class="form-input" id="lehWorker" value="${_esc((row && row.worker) || '')}"></div>
-                    <div class="form-group"><label class="form-label">비가동시간(h)</label><input class="form-input" id="lehDownHours" type="number" min="0" step="0.1" value="${_esc((row && row.downHours) || 0)}"></div>
+                    <div class="form-group"><label class="form-label">비가동시간(h)</label><input class="form-input" id="lehDownHours" type="number" min="0" step="0.1" value="${_esc(_numValue((row && row.downHours) || 0))}"></div>
                 </div>
                 <div class="form-row">
-                    <div class="form-group"><label class="form-label">비용</label><input class="form-input" id="lehCost" type="number" min="0" step="1000" value="${_esc((row && row.cost) || 0)}"></div>
+                    <div class="form-group"><label class="form-label">비용</label><input class="form-input" id="lehCost" type="number" min="0" step="1000" value="${_esc(_numValue((row && row.cost) || 0))}"></div>
                     <div class="form-group"><label class="form-label">이상 내용</label><input class="form-input" id="lehIssue" value="${_esc((row && row.issue) || '')}"></div>
                 </div>
                 <div class="form-group"><label class="form-label">조치 내용</label><textarea class="form-textarea" id="lehAction" rows="3">${_esc((row && row.actionTaken) || '')}</textarea></div>
