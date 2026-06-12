@@ -12711,6 +12711,20 @@ var ProdQualityModule = (function() {
 
     function _presetMgmtHtml() {
         const presets = (Storage.getAll(STORE) || []).filter(d => d._docKind === PRESET_KIND);
+        const descHtml = `
+            <div style="display:flex;align-items:flex-start;gap:10px;background:#eff6ff;border:1px solid #bfdbfe;
+                        border-radius:8px;padding:12px 16px;margin-bottom:16px;">
+                <span class="material-symbols-outlined" style="color:#3b82f6;font-size:20px;flex-shrink:0;margin-top:1px;">info</span>
+                <div style="font-size:0.83rem;color:#1e40af;line-height:1.65;">
+                    <strong style="display:block;margin-bottom:4px;">프레셋이란?</strong>
+                    자주 사용하는 관리항목 묶음을 미리 저장해두는 기능입니다.<br>
+                    차종·컬러별 기준값 설정 시 <strong>프레셋 적용</strong> 버튼 한 번으로 항목을 일괄 불러올 수 있어
+                    반복 입력 없이 빠르게 초중종물 C/S를 작성할 수 있습니다.<br>
+                    <span style="margin-top:4px;display:block;color:#2563eb;font-size:0.79rem;">
+                        예) "도장 공통 기준", "T1XX 전용" 처럼 용도별로 여러 프레셋을 만들어 두세요.
+                    </span>
+                </div>
+            </div>`;
         const listHtml = presets.length ? `
             <div class="data-table-wrapper">
                 <table class="data-table">
@@ -12745,6 +12759,7 @@ var ProdQualityModule = (function() {
             </div>`;
 
         return `
+            ${descHtml}
             <div style="display:flex;justify-content:flex-end;margin-bottom:12px;">
                 <button class="btn btn-primary" onclick="ProdQualityModule.openPresetEditModal(null)">
                     <span class="material-symbols-outlined">add</span> 프레셋 추가
