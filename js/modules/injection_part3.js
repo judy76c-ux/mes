@@ -211,9 +211,17 @@ var PaintIncomingInspectionModule = (function() {
             const containerType = d.containerStatus === '합격' ? 'success' : (d.containerStatus === '불합격' ? 'danger' : '');
             const expType = d.expDateCheck === '합격' ? 'success' : (d.expDateCheck === '불합격' ? 'danger' : '');
             const certType = d.certCheck === '합격' ? 'success' : (d.certCheck === '불합격' ? 'danger' : '');
+            const _dsp = (d.date || '').split(' ');
+            const _dpp = (_dsp[0] || '').split('-');
+            const _dtt = _dsp[1] ? _dsp[1].slice(0,5) : '';
+            const _dateFmt = _dpp.length === 3
+                ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;">' + _dpp[0] + '</span>' +
+                  '<span style="font-weight:600;white-space:nowrap;">' + _dpp[1] + '-' + _dpp[2] + '</span>' +
+                  (_dtt ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1.4;">' + _dtt + '</span>' : '')
+                : (d.date || '-');
             return `
                 <tr>
-                    <td>${d.date}</td>
+                    <td style="line-height:1.3;">${_dateFmt}</td>
                     <td><strong>${d.paintName || '-'}</strong></td>
                     <td style="text-align:right">${UIUtils.formatNumber(d.incomingQty)}</td>
                     <td>${d.mfgDate || '-'}</td>
@@ -1156,9 +1164,18 @@ var PaintIncomingInspectionModule = (function() {
                             </tr>
                         </thead>
                         <tbody>
-                            ${pending.map(d => `
+                            ${pending.map(d => {
+                                const _ps = (d.date || '').split(' ');
+                                const _pp = (_ps[0] || '').split('-');
+                                const _pt = _ps[1] ? _ps[1].slice(0,5) : '';
+                                const _pFmt = _pp.length === 3
+                                    ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;">' + _pp[0] + '</span>' +
+                                      '<span style="font-weight:600;white-space:nowrap;">' + _pp[1] + '-' + _pp[2] + '</span>' +
+                                      (_pt ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1.4;">' + _pt + '</span>' : '')
+                                    : (d.date || '-');
+                                return `
                                 <tr style="background:rgba(220,38,38,0.03);">
-                                    <td>${d.date}</td>
+                                    <td style="line-height:1.3;">${_pFmt}</td>
                                     <td><strong>${d.paintName || '-'}</strong></td>
                                     <td>${d.supplier || '-'}</td>
                                     <td>${d.mfgDate || '-'}</td>
@@ -1173,7 +1190,7 @@ var PaintIncomingInspectionModule = (function() {
                                             접수 완료
                                         </button>
                                     </td>
-                                </tr>`).join('')}
+                                </tr>`; }).join('')}
                         </tbody>
                     </table>
                 </div>
