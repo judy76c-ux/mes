@@ -136,7 +136,7 @@ const SettingsModule = (function() {
                 renderDefectsTab(el);
                 break;
             case 'paint': {
-                const saved = _saveFilters(['paintSupplierFilter']);
+                const saved = _saveFilters(['paintSupplierFilter', 'paintManufacturerFilter']);
                 renderPaintTab(el);
                 _restoreFilters(saved, filterPaintList);
                 break;
@@ -5591,9 +5591,11 @@ const SettingsModule = (function() {
     }
 
     function filterPaintList() {
-        const selectElement = document.getElementById('paintSupplierFilter');
-        if (!selectElement) return;
-        const selectedSupplier = selectElement.value;
+        const supplierElement = document.getElementById('paintSupplierFilter');
+        const manufacturerElement = document.getElementById('paintManufacturerFilter');
+        if (!supplierElement) return;
+        const selectedSupplier = supplierElement.value;
+        const selectedManufacturer = manufacturerElement ? manufacturerElement.value : '';
 
         const tbody = document.querySelector('#settingsContent .data-table tbody');
         if (!tbody) return;
@@ -5606,10 +5608,14 @@ const SettingsModule = (function() {
 
         rows.forEach(row => {
             const supplierCell = row.cells[1];
+            const manufacturerCell = row.cells[3];
             if (!supplierCell) return;
 
             const rowSupplier = supplierCell.textContent.trim();
-            if (selectedSupplier === '' || rowSupplier === selectedSupplier) {
+            const rowManufacturer = manufacturerCell ? manufacturerCell.textContent.trim() : '';
+            const matchSupplier = selectedSupplier === '' || rowSupplier === selectedSupplier;
+            const matchManufacturer = selectedManufacturer === '' || rowManufacturer === selectedManufacturer;
+            if (matchSupplier && matchManufacturer) {
                 row.style.display = '';
                 visibleCount++;
             } else {
@@ -5626,6 +5632,7 @@ const SettingsModule = (function() {
             (a.supplier || '').localeCompare(b.supplier || '', 'ko') || (a.name || '').localeCompare(b.name || '', 'ko')
         );
         const uniqueSuppliers = [...new Set(paints.map(p => p.supplier).filter(Boolean))].sort();
+        const uniqueManufacturers = [...new Set(paints.map(p => p.manufacturer).filter(Boolean))].sort();
 
         el.innerHTML = `
             <div class="card">
@@ -5635,6 +5642,10 @@ const SettingsModule = (function() {
                         <select id="paintSupplierFilter" class="form-input" style="width: 150px; padding: 4px 8px;" onchange="SettingsModule.filterPaintList()">
                             <option value="">전체 구매처</option>
                             ${uniqueSuppliers.map(supplier => `<option value="${supplier}">${supplier}</option>`).join('')}
+                        </select>
+                        <select id="paintManufacturerFilter" class="form-input" style="width: 150px; padding: 4px 8px;" onchange="SettingsModule.filterPaintList()">
+                            <option value="">전체 제조사</option>
+                            ${uniqueManufacturers.map(manufacturer => `<option value="${manufacturer}">${manufacturer}</option>`).join('')}
                         </select>
                     </div>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
