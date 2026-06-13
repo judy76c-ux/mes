@@ -1215,7 +1215,7 @@ var ProdStandardsModule = (function() {
                             <th colspan="2" style="text-align:center; border-bottom:1px solid var(--border-color); padding:4px 8px; white-space:nowrap;">관리 항목</th>
                             <th rowspan="2" style="width:1%; white-space:nowrap; text-align:center; vertical-align:middle; padding:4px 6px;">특별<br>특성</th>
                             <th rowspan="2" style="width:1%; white-space:nowrap; text-align:center; vertical-align:middle; padding:4px 6px;">F/P</th>
-                            <th colspan="4" style="text-align:center; border-bottom:1px solid var(--border-color); padding:4px 8px; white-space:nowrap;">관리 기준</th>
+                            <th colspan="5" style="text-align:center; border-bottom:1px solid var(--border-color); padding:4px 8px; white-space:nowrap;">관리 기준</th>
                         </tr>
                         <tr>
                             <th style="width:6%; font-size:11px; color:var(--accent-blue);   background:var(--bg-secondary); padding:3px 6px; white-space:nowrap;">제 품</th>
@@ -6119,6 +6119,12 @@ window.addEventListener('load', function() {
 var ProdConditionsModule = (function() {
     const STORE = DB.STORES.PROD_CONDITIONS;
 
+    const _isAdmin = () => {
+        const u = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
+            ? AuthModule.getCurrentUser() : null;
+        return !!(u && u.role === 'admin');
+    };
+
     // ── C/S 프리셋 & 탭 상태 ──────────────────────────────────────────
     let _csPresets = [];
     let _pcTab = 'cs-form'; // 'cs-form' | 'records' | 'presets'
@@ -6344,7 +6350,7 @@ var ProdConditionsModule = (function() {
                     <td>${_esc(d.operator || '-')}</td>
                     <td>
                         <button class="btn btn-sm btn-outline" onclick="ProdConditionsModule.edit('${d.id}')">상세/수정</button>
-                        <button class="btn btn-sm btn-danger" onclick="ProdConditionsModule.remove('${d.id}')">삭제</button>
+                        ${_isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="ProdConditionsModule.remove('${d.id}')">삭제</button>` : ''}
                     </td>
                 </tr>
             `}).join('');
@@ -6922,8 +6928,7 @@ var ProdConditionsModule = (function() {
                                 style="margin-right:4px;">
                                 <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">download</span> 다운로드
                             </button>
-                            <button class="btn btn-sm btn-danger"
-                                onclick="ProdConditionsModule.removeColorStd('${f.id}')">삭제</button>
+                            ${_isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="ProdConditionsModule.removeColorStd('${f.id}')">삭제</button>` : ''}
                         </td>
                     </tr>`).join('')}
                 </tbody>
@@ -7570,9 +7575,7 @@ var ProdConditionsModule = (function() {
                 </div>
                 <button class="btn btn-sm btn-outline"
                         onclick="ProdConditionsModule.editPreset('${js(p.id)}')">수정</button>
-                <button class="btn btn-sm"
-                        style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;"
-                        onclick="ProdConditionsModule.removePreset('${js(p.id)}')">삭제</button>
+                ${_isAdmin() ? `<button class="btn btn-sm" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;" onclick="ProdConditionsModule.removePreset('${js(p.id)}')">삭제</button>` : ''}
             </div>
         `;
     }
@@ -7775,6 +7778,11 @@ var PaintMixModule = (function() {
 
     const _esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const _js  = s => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ');
+    const _isAdmin = () => {
+        const u = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
+            ? AuthModule.getCurrentUser() : null;
+        return !!(u && u.role === 'admin');
+    };
 
     let _curTab = 'history';
 
@@ -7878,7 +7886,7 @@ var PaintMixModule = (function() {
                 <div class="data-table-wrapper">
                     <table class="data-table">
                         <thead><tr>
-                            <th>No</th><th>작업일</th><th>라인</th><th>차종 / 품명</th><th>생산 LOT</th>
+                            <th>No</th><th>도장작업일</th><th>라인</th><th>차종 / 품명</th><th>생산 LOT</th>
                             <th>사용 도료</th><th style="text-align:right;">총 사용(g)</th><th>작업자</th><th>작업</th>
                         </tr></thead>
                         <tbody id="pmixHistBody"></tbody>
@@ -7924,9 +7932,11 @@ var PaintMixModule = (function() {
                 if (residG > 0) parts.push(`<span style="color:#f59e0b;">잔량 ${UIUtils.formatNumber(residG)}g</span>`);
                 return `<span style="font-size:0.78rem;">[${_esc(u.usageType||'-')}] ${_esc(u.paintName||'-')}${parts.length?' ('+parts.join(', ')+')':''}</span>`;
             }).join('<br>');
+            const _mhd = (m.date||'').split(' ')[0]; const _mht = (m.date||'').split(' ')[1]||m.startTime||'';
+            const _mhp = _mhd.split('-'); const _mhDateFmt = _mhd ? `<span style="font-size:0.72rem;color:var(--text-muted);">${_mhp[0]||''}</span><br><strong>${(_mhp[1]||'')+'-'+(_mhp[2]||'')}</strong>${_mht?`<br><span style="font-size:0.72rem;color:var(--text-muted);">${_mht}</span>`:''}` : '-';
             return `<tr>
                 <td>${mixes.length-i}</td>
-                <td>${_esc(m.date||'-')}</td>
+                <td>${_mhDateFmt}</td>
                 <td>${_esc(m.line||'-')}</td>
                 <td><strong>${_esc(m.carModel||'-')}</strong><br><span style="font-size:0.78rem;color:var(--text-muted);">${_esc(m.partName||'-')}</span></td>
                 <td style="font-family:monospace;font-size:0.8rem;">${_esc(m.productionLot||'-')}</td>
@@ -7935,7 +7945,7 @@ var PaintMixModule = (function() {
                 <td>${_esc(m.operator||'-')}</td>
                 <td>
                     <button class="btn btn-sm btn-outline" onclick="PaintMixModule.edit('${_js(m.id)}')">수정</button>
-                    <button class="btn btn-sm btn-danger"  onclick="PaintMixModule.remove('${_js(m.id)}')">삭제</button>
+                    ${_isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="PaintMixModule.remove('${_js(m.id)}')">삭제</button>` : ''}
                 </td>
             </tr>`;
         }).join('');
@@ -8115,7 +8125,7 @@ var PaintMixModule = (function() {
                 <td style="color:var(--text-muted);font-size:0.85rem;">${_esc(r.note||'')}</td>
                 <td style="text-align:center;">
                     <button class="btn btn-sm btn-outline" onclick="PaintMixModule.openUsageModal('${_js(r.id)}')">수정</button>
-                    <button class="btn btn-sm btn-danger"  onclick="PaintMixModule.removeUsage('${_js(r.id)}')">삭제</button>
+                    ${_isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="PaintMixModule.removeUsage('${_js(r.id)}')">삭제</button>` : ''}
                 </td>
             </tr>`;
         }).join('');
@@ -8879,7 +8889,7 @@ var PaintMixModule = (function() {
                         </div>
                         <button class="btn btn-sm btn-outline" style="font-size:0.74rem;padding:2px 7px;" onclick="PaintMixModule.showFormulaValidation('${_js(r.id)}')">검증</button><br>
                         <button class="btn btn-sm btn-outline" style="margin-top:3px;" onclick="PaintMixModule.openFormulaModal('${_js(r.id)}')">수정</button>
-                        <button class="btn btn-sm btn-danger"  onclick="PaintMixModule.removeFormula('${_js(r.id)}')">삭제</button>
+                        ${_isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="PaintMixModule.removeFormula('${_js(r.id)}')">삭제</button>` : ''}
                     </td>`;
                 }
                 tr += '</tr>';
@@ -9188,7 +9198,7 @@ var PaintMixModule = (function() {
         acts.innerHTML = `
             <div style="display:flex;gap:6px;margin-right:8px;">
                 <button id="pmixTabBtn_history" class="btn btn-sm ${active === 'history' ? 'btn-primary' : 'btn-outline'}" onclick="PaintMixModule.switchTab('history')">
-                    <span class="material-symbols-outlined" style="font-size:16px;">receipt_long</span> 배합/사용 이력
+                    <span class="material-symbols-outlined" style="font-size:16px;">receipt_long</span> 도료사용이력
                 </button>
                 <button id="pmixTabBtn_residual" class="btn btn-sm ${active === 'residual' ? 'btn-primary' : 'btn-outline'}" onclick="PaintMixModule.switchTab('residual')">
                     <span class="material-symbols-outlined" style="font-size:16px;">inventory_2</span> 도료 잔량
@@ -9245,7 +9255,7 @@ var PaintMixModule = (function() {
                 <div class="data-table-wrapper">
                     <table class="data-table">
                         <thead><tr>
-                            <th>작업일</th><th>라인</th><th>차종</th><th>품명</th><th>컬러</th>
+                            <th>도장작업일</th><th>라인</th><th>차종</th><th>품명</th><th>컬러</th>
                             <th>생산 LOT</th><th style="text-align:right;">생산수량</th><th>도료정보</th><th>도료사용등록</th>
                         </tr></thead>
                         <tbody id="pmixWorkBody"></tbody>
@@ -9260,16 +9270,28 @@ var PaintMixModule = (function() {
         const start = document.getElementById('pmixStart')?.value || '';
         const end   = document.getElementById('pmixEnd')?.value || '';
         const car   = document.getElementById('pmixCarFilter')?.value || '';
-        const works = (Storage.getAll(PAINT_WORK_STORE) || [])
+        const allWorks = Storage.getAll(PAINT_WORK_STORE) || [];
+        const mixed = new Set(_mixes().map(m => m.workId).filter(Boolean));
+
+        const filtered = allWorks
             .filter(w => (!start || w.date >= start) && (!end || w.date <= end))
-            .filter(w => !car || w.carModel === car)
+            .filter(w => !car || w.carModel === car);
+
+        // 미등록 작업은 날짜 필터 밖이어도 항상 표시 (누락 방지)
+        const filteredIds = new Set(filtered.map(w => w.id));
+        const alwaysShow = allWorks
+            .filter(w => !mixed.has(w.id) && !filteredIds.has(w.id))
+            .filter(w => !car || w.carModel === car);
+
+        const works = [...filtered, ...alwaysShow]
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
         const mixes = _mixes()
             .filter(m => (!start || m.date >= start) && (!end || m.date <= end))
             .filter(m => !car || m.carModel === car)
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
         renderStats(works, mixes);
-        renderWorkTable(works);
+        renderWorkTable(works, mixed);
         renderMixTable(mixes);
     }
 
@@ -9286,32 +9308,41 @@ var PaintMixModule = (function() {
         `;
     }
 
-    function renderWorkTable(works) {
+    function renderWorkTable(works, mixed) {
         const tbody = document.getElementById('pmixWorkBody');
         if (!tbody) return;
         if (!works.length) {
             tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:30px;">해당 기간의 도장 작업실적이 없습니다.</td></tr>`;
             return;
         }
-        const mixed = new Set(_mixes().map(m => m.workId).filter(Boolean));
+        if (!mixed) mixed = new Set(_mixes().map(m => m.workId).filter(Boolean));
         tbody.innerHTML = works.map(w => {
             const product = _findProduct(w);
             const comps = _paintComponents(product);
             const lotDisplay = (w.lots && w.lots.length > 0)
                 ? w.lots.map(l => l.lotNo).filter(Boolean).join(', ')
                 : (w.lotNo || '-');
+            const _wkd = (w.date||'').split(' ')[0]; const _wkt = (w.date||'').split(' ')[1]||w.startTime||'';
+            const _wkp = _wkd.split('-'); const _wkDateFmt = _wkd ? `<span style="font-size:0.72rem;color:var(--text-muted);">${_wkp[0]||''}</span><br><strong>${(_wkp[1]||'')+'-'+(_wkp[2]||'')}</strong>${_wkt?`<br><span style="font-size:0.72rem;color:var(--text-muted);">${_wkt}</span>`:''}` : '-';
+            const isUnreg = !mixed.has(w.id);
+            const rowStyle = isUnreg
+                ? 'background:rgba(239,68,68,0.05);border-left:3px solid #ef4444;'
+                : 'border-left:3px solid transparent;';
             return `
-                <tr>
-                    <td>${_esc(w.date || '-')}</td>
+                <tr style="${rowStyle}">
+                    <td>${_wkDateFmt}</td>
                     <td>${_esc(w.line || '-')}</td>
                     <td><strong>${_esc(w.carModel || '-')}</strong></td>
                     <td>${_esc(w.partName || '-')}</td>
                     <td>${_esc(w.color || '-')}</td>
                     <td style="font-family:monospace;font-size:0.8rem;">${_esc(lotDisplay)}</td>
                     <td style="text-align:right;">${UIUtils.formatNumber(w.productionQty || 0)}</td>
-                    <td>${comps.length ? `<span class="badge badge-success">${comps.length}개</span>` : '<span class="badge badge-warning">미등록</span>'}</td>
+                    <td>${comps.length ? `<span class="badge badge-success">${comps.length}개</span>` : '<span class="badge badge-warning">미설정</span>'}</td>
                     <td style="white-space:nowrap;">
-                        <button class="btn btn-sm ${mixed.has(w.id) ? 'btn-outline' : 'btn-primary'}" onclick="PaintMixModule.openFromWork('${_js(w.id)}')">${mixed.has(w.id) ? '재등록' : '도료사용등록'}</button>
+                        ${isUnreg
+                            ? `<span style="display:inline-flex;align-items:center;gap:3px;background:#fef2f2;border:1px solid #fca5a5;border-radius:4px;padding:1px 6px;font-size:0.72rem;color:#dc2626;margin-bottom:3px;"><span class="material-symbols-outlined" style="font-size:12px;">warning</span>미등록</span><br>`
+                            : ''}
+                        <button class="btn btn-sm ${isUnreg ? 'btn-primary' : 'btn-outline'}" onclick="PaintMixModule.openFromWork('${_js(w.id)}')">${isUnreg ? '도료사용등록' : '재등록'}</button>
                     </td>
                 </tr>`;
         }).join('');
@@ -9335,10 +9366,12 @@ var PaintMixModule = (function() {
                 if (cans > 0) parts.push(`출고 ${cans}캔`);
                 return `${_esc(u.paintName || '-')} ${_esc(u.prodLot || u.lotNo || '-')}${parts.length ? ' (' + parts.join(', ') + ')' : ''}`;
             }).join('<br>');
+            const _rmd = (m.date||'').split(' ')[0]; const _rmt = (m.date||'').split(' ')[1]||m.startTime||'';
+            const _rmp = _rmd.split('-'); const _rmDateFmt = _rmd ? `<span style="font-size:0.72rem;color:var(--text-muted);">${_rmp[0]||''}</span><br><strong>${(_rmp[1]||'')+'-'+(_rmp[2]||'')}</strong>${_rmt?`<br><span style="font-size:0.72rem;color:var(--text-muted);">${_rmt}</span>`:''}` : '-';
             return `
                 <tr>
                     <td>${mixes.length - i}</td>
-                    <td>${_esc(m.date || '-')}</td>
+                    <td>${_rmDateFmt}</td>
                     <td>${_esc(m.line || '-')}</td>
                     <td><strong>${_esc(m.carModel || '-')}</strong><br><span style="font-size:0.78rem;color:var(--text-muted);">${_esc(m.partName || '-')}</span></td>
                     <td style="font-family:monospace;font-size:0.8rem;">${_esc(m.productionLot || '-')}</td>
@@ -9347,7 +9380,7 @@ var PaintMixModule = (function() {
                     <td>${_esc(m.operator || '-')}</td>
                     <td style="white-space:nowrap;">
                         <button class="btn btn-sm btn-outline" onclick="PaintMixModule.edit('${_js(m.id)}')">수정</button>
-                        <button class="btn btn-sm btn-danger" onclick="PaintMixModule.remove('${_js(m.id)}')">삭제</button>
+                        ${_isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="PaintMixModule.remove('${_js(m.id)}')">삭제</button>` : ''}
                     </td>
                 </tr>`;
         }).join('');
@@ -9482,7 +9515,7 @@ var PaintMixModule = (function() {
                     <td>${_esc(r.supplier || '-')}</td>
                     <td><strong>${_esc(r.paintName || '-')}</strong><div style="font-size:0.75rem;color:var(--text-muted);">${_esc([r.paintType, r.paintSpec].filter(Boolean).join(' · '))}</div></td>
                     <td style="font-family:monospace;">${_esc(r.prodLot || '-')}</td>
-                    <td>${r.packUnit ? `${UIUtils.formatNumber(r.packUnit)} KG/포` : '-'}</td>
+                    <td>${r.packUnit ? `${UIUtils.formatNumber(r.packUnit)} KG/캔` : '-'}</td>
                     <td style="text-align:right;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(r.balance)} KG</td>
                     <td>${p.packText}</td>
                     <td style="text-align:right;">${p.openText}</td>
@@ -9841,6 +9874,18 @@ var PaintMixModule = (function() {
             if (r.type === '출고') map[key].balance -= Number(r.quantity) || 0;
             else map[key].balance += Number(r.quantity) || 0;
         });
+        // 창고 재고가 없으면 도료 수입검사 합격 기록에서 LOT 보완
+        if (!Object.values(map).some(l => l.balance > 0)) {
+            const mat = (Storage.getAll(PAINT_MAT_STORE) || []).find(m => m.id === materialId);
+            if (mat) {
+                (Storage.getAll(DB.STORES.PAINT_INCOMING_INSPECTIONS) || [])
+                    .filter(r => r.paintName === mat.name && r.verdict !== '불합격' && r.lotNo)
+                    .forEach(r => {
+                        const prodLot = r.lotNo;
+                        if (!map[prodLot]) map[prodLot] = { prodLot, lotNo: r.lotNo, balance: Number(r.incomingQty) || 1, fromInspection: true };
+                    });
+            }
+        }
         return Object.values(map)
             .filter(l => l.balance > 0)
             .sort((a, b) => (a.prodLot || '').localeCompare(b.prodLot || ''));
@@ -9851,7 +9896,7 @@ var PaintMixModule = (function() {
         const hasSelected = selected && !lots.some(l => l.prodLot === selected);
         return `<option value="">LOT 선택</option>` +
             (hasSelected ? `<option value="${_esc(selected)}" selected>${_esc(selected)} (기존)</option>` : '') +
-            lots.map((l, i) => `<option value="${_esc(l.prodLot)}" data-balance="${l.balance}" ${l.prodLot === selected ? 'selected' : ''}>${i === 0 ? '[선입] ' : ''}${_esc(l.prodLot)} · 창고 ${UIUtils.formatNumber(l.balance)} KG</option>`).join('');
+            lots.map((l, i) => `<option value="${_esc(l.prodLot)}" data-balance="${l.balance}" ${l.prodLot === selected ? 'selected' : ''}>${l.fromInspection ? '[수입검사] ' : (i === 0 ? '[선입] ' : '')}${_esc(l.prodLot)}${l.fromInspection ? ` · 수입 ${UIUtils.formatNumber(l.balance)}캔` : ` · 창고 ${UIUtils.formatNumber(l.balance)}캔`}</option>`).join('');
     }
 
     function _mixRoomLotOptions(materialId, selected, ignoreMixId = '') {
@@ -9924,67 +9969,149 @@ var PaintMixModule = (function() {
         const product = work ? _findProduct(work) : _findProduct(data);
         const components = usages.length ? usages : _paintComponents(product);
         const ignoreMixId = data.id || '';
-        const rows = components.map((c, i) => {
+        // Primer → Color → Clear 순, 각 그룹 내 주제 → 경화제 → 희석제 순 정렬
+        const SPEC_ORD = { 'Primer': 0, 'Color': 1, 'Clear': 2 };
+        const ROLE_ORD = { '주제': 0, '경화제': 1, '희석제': 2 };
+        const sortedComponents = [...components].sort((a, b) => {
+            const sd = (SPEC_ORD[a.paintSpec] ?? 9) - (SPEC_ORD[b.paintSpec] ?? 9);
+            return sd !== 0 ? sd : (ROLE_ORD[a.role] ?? 9) - (ROLE_ORD[b.role] ?? 9);
+        });
+        const rows = sortedComponents.map((c, i) => {
             const materialId = c.materialId || '';
             const residualProdLot = c.residualProdLot || c.prodLot || '';
-            const warehouseProdLot = c.warehouseProdLot || c.prodLot || '';
+            const availInvLots = _lotBalances(materialId, ignoreMixId);
+            const autoLot = availInvLots.length > 0 ? availInvLots[0].prodLot : '';
+            const warehouseProdLot = c.warehouseProdLot || c.prodLot || autoLot;
             const packUnit = Number(c.packUnit) || 0;
+            // 창고 재고: balance는 이미 캔 단위 (paint_inventory.quantity 단위 = 캔)
+            const totalCans = availInvLots.reduce((s, l) => s + l.balance, 0);
+            const invRec = (Storage.getAll(PAINT_INV_STORE) || []).find(r =>
+                r.materialId === materialId && r.type !== '출고' && (r.prodLot || r.lotNo) === warehouseProdLot);
+            const mfgDateVal = invRec ? (invRec.mfgDate || '') : '';
+            const specColor = c.paintSpec === 'Primer' ? '#6366f1' : c.paintSpec === 'Color' ? '#ec4899' : '#6b7280';
+            const specLabel = c.paintSpec === 'Primer' ? 'P' : c.paintSpec === 'Color' ? 'C' : (c.paintSpec || '?').slice(0,2);
             const warehouseCans = Number(c.warehouseCans) || 0;
             const residualUseG = Number(c.residualUseG ?? 0) || 0;
             const warehouseUseG = Number(c.warehouseUseG ?? c.usageG ?? 0) || 0;
             const mixRoomBal = materialId && residualProdLot ? _mixRoomBalanceG(materialId, residualProdLot, ignoreMixId) : 0;
-            const afterBal = Math.max(0, mixRoomBal - residualUseG + warehouseCans * packUnit * 1000 - warehouseUseG);
+            const afterBal = warehouseCans > 0
+                ? Math.max(0, warehouseCans * packUnit * 1000 - warehouseUseG)
+                : Math.max(0, mixRoomBal - residualUseG);
             const afterBalDisplay = (warehouseCans > 0 || residualUseG > 0 || warehouseUseG > 0) ? `${UIUtils.formatNumber(afterBal)}g` : '-';
+            const totalUseG = residualUseG + warehouseUseG;
+            const canOpen = warehouseCans > 0;
+            const selectedLotCans = availInvLots.find(l => l.prodLot === warehouseProdLot)?.balance || 0;
+            const canAutoG = warehouseCans > 0 && packUnit > 0 ? UIUtils.formatNumber(warehouseCans * packUnit * 1000) : '';
+            const remainingLot = canOpen ? (warehouseProdLot || residualProdLot) : residualProdLot;
             return `
                 <tr class="pmix-row" data-row="${i}" data-pack-unit="${packUnit}">
-                    <td>
+                    <!-- ① 도료명 -->
+                    <td style="padding:8px 10px;min-width:140px;">
                         <input type="hidden" class="pmix-material-id" value="${_esc(materialId)}">
                         <input type="hidden" class="pmix-role" value="${_esc(c.role || '')}">
                         <input type="hidden" class="pmix-paint-spec" value="${_esc(c.paintSpec || '')}">
-                        <strong>${_esc(c.paintName || '-')}</strong>
-                        <div style="font-size:0.75rem;color:var(--text-muted);">${_esc([c.paintSpec, c.role, c.supplier].filter(Boolean).join(' · '))}</div>
+                        <div style="display:flex;align-items:flex-start;gap:5px;">
+                            <span style="flex-shrink:0;font-size:0.68rem;font-weight:800;color:#fff;background:${specColor};border-radius:3px;padding:1px 4px;margin-top:2px;">${specLabel}</span>
+                            <div>
+                                <strong style="font-size:0.84rem;">${_esc(c.paintName || '-')}</strong>
+                                <div style="font-size:0.72rem;color:var(--text-muted);">${_esc(c.role || '')}${c.supplier ? ' · ' + c.supplier : ''}</div>
+                            </div>
+                        </div>
+                        <div style="margin-top:5px;font-size:0.75rem;color:var(--text-muted);">
+                            창고&nbsp;<strong style="color:${totalCans > 0 ? 'var(--accent-blue)' : 'var(--text-muted)'};">${UIUtils.formatNumber(totalCans)}캔</strong>&nbsp;/ ${packUnit||'-'}kg/캔
+                        </div>
                     </td>
-                    <td class="pmix-mix-room-bal" style="text-align:right;white-space:nowrap;">${residualProdLot ? `${UIUtils.formatNumber(mixRoomBal)}g` : '-'}</td>
-                    <td>
-                        <select class="form-select pmix-residual-lot" style="min-width:150px;" onchange="PaintMixModule._onResidualLotChange(this,${i})">
-                            ${_mixRoomLotOptions(materialId, residualProdLot, ignoreMixId)}
-                        </select>
+                    <!-- ② 총 사용량(g) -->
+                    <td style="text-align:center;vertical-align:middle;padding:8px 10px;min-width:80px;">
+                        <span class="pmix-total-use-g" style="font-size:1rem;font-weight:700;color:${totalUseG > 0 ? 'var(--accent-green,#16a34a)' : 'var(--text-muted)'};">
+                            ${totalUseG > 0 ? UIUtils.formatNumber(totalUseG) + 'g' : '-'}
+                        </span>
                     </td>
-                    <td><input type="number" class="form-input pmix-residual-use-g" value="${residualUseG || ''}" min="0" step="1" style="text-align:right;width:90px;" oninput="PaintMixModule._onRowCalc(${i})"></td>
-                    <td><input type="number" class="form-input pmix-warehouse-cans" value="${warehouseCans || ''}" min="0" step="1" style="text-align:right;width:70px;" oninput="PaintMixModule._onRowCalc(${i})"></td>
-                    <td>
-                        <select class="form-select pmix-warehouse-lot" style="min-width:150px;" onchange="PaintMixModule._onWarehouseLotChange(this,${i})">
-                            ${_lotOptions(materialId, warehouseProdLot, ignoreMixId)}
-                        </select>
+                    <!-- ③ 배합실 잔량 사용량 / 잔량 LOT -->
+                    <td style="padding:8px 10px;min-width:185px;vertical-align:top;">
+                        <div style="display:flex;align-items:center;gap:5px;margin-bottom:4px;">
+                            <span style="font-size:0.7rem;color:var(--text-muted);white-space:nowrap;">배합실 잔량</span>
+                            <span class="pmix-mix-room-bal" style="font-weight:700;font-size:0.85rem;">${residualProdLot ? `${UIUtils.formatNumber(mixRoomBal)}g` : '-'}</span>
+                        </div>
+                        <div style="margin-bottom:4px;">
+                            <select class="form-select pmix-residual-lot" style="font-size:0.78rem;width:100%;" onchange="PaintMixModule._onResidualLotChange(this,${i})">
+                                ${_mixRoomLotOptions(materialId, residualProdLot, ignoreMixId)}
+                            </select>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:4px;">
+                            <span style="font-size:0.7rem;color:var(--text-muted);white-space:nowrap;">사용량(g)</span>
+                            <input type="number" class="form-input pmix-residual-use-g" value="${residualUseG || ''}" min="0" step="1"
+                                style="text-align:right;width:90px;${!residualProdLot ? 'background:var(--bg-secondary);color:var(--text-muted);' : ''}"
+                                ${!residualProdLot ? 'disabled' : ''}
+                                oninput="PaintMixModule._onRowCalc(${i})">
+                        </div>
                     </td>
-                    <td><input type="number" class="form-input pmix-warehouse-use-g" value="${warehouseUseG || ''}" min="0" step="1" style="text-align:right;width:90px;" oninput="PaintMixModule._onRowCalc(${i})"></td>
-                    <td class="pmix-after-bal" style="text-align:right;white-space:nowrap;">${afterBalDisplay}</td>
+                    <!-- ④ 도료 오픈 / 창고재고 LOT / 오픈 후 사용량 -->
+                    <td style="padding:8px 10px;min-width:235px;vertical-align:top;">
+                        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:0.82rem;font-weight:700;margin-bottom:5px;user-select:none;">
+                            <input type="checkbox" class="pmix-can-open-chk" ${canOpen ? 'checked' : ''}
+                                onchange="PaintMixModule._onCanOpenToggle(this,${i})"
+                                style="width:16px;height:16px;cursor:pointer;">
+                            도료 오픈
+                        </label>
+                        <div class="pmix-can-section" style="${canOpen ? '' : 'display:none;'}border-left:3px solid var(--accent-blue);padding-left:9px;">
+                            <div style="font-size:0.75rem;margin-bottom:4px;">
+                                창고 재고&nbsp;<strong style="color:var(--accent-blue);">${UIUtils.formatNumber(totalCans)}캔</strong>
+                                <span style="color:var(--text-muted);">&nbsp;/ ${packUnit||'-'}kg/캔</span>
+                                ${mfgDateVal ? `<span class="pmix-mfg-date" style="color:var(--text-muted);margin-left:4px;">제조: ${_esc(mfgDateVal)}</span>` : `<span class="pmix-mfg-date"></span>`}
+                            </div>
+                            <div style="margin-bottom:4px;">
+                                <select class="form-select pmix-warehouse-lot" style="font-size:0.78rem;width:100%;" onchange="PaintMixModule._onWarehouseLotChange(this,${i})">
+                                    ${_lotOptions(materialId, warehouseProdLot, ignoreMixId)}
+                                </select>
+                                <div class="pmix-lot-bal-disp" style="font-size:0.72rem;color:var(--accent-blue);margin-top:2px;">${warehouseProdLot && selectedLotCans > 0 ? `이 LOT 재고: ${UIUtils.formatNumber(selectedLotCans)}캔` : ''}</div>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:5px;margin-bottom:4px;">
+                                <input type="number" class="form-input pmix-warehouse-cans" value="${warehouseCans || ''}" min="0" step="1"
+                                    style="text-align:right;width:55px;" oninput="PaintMixModule._onCanCountChange(this,${i})">
+                                <span style="font-size:0.75rem;color:var(--text-muted);">캔</span>
+                                <span class="pmix-can-g-label" style="font-size:0.75rem;color:var(--accent-blue);white-space:nowrap;font-weight:600;">${canAutoG ? `= ${canAutoG}g` : (packUnit ? `1캔=${packUnit*1000}g` : '')}</span>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:4px;">
+                                <span style="font-size:0.7rem;color:var(--text-muted);white-space:nowrap;">오픈 후 사용(g)</span>
+                                <input type="number" class="form-input pmix-warehouse-use-g" value="${warehouseUseG || ''}" min="0" step="1"
+                                    style="text-align:right;width:85px;" oninput="PaintMixModule._onRowCalc(${i})">
+                            </div>
+                        </div>
+                    </td>
+                    <!-- ⑤ 사용후 잔량(g) / 도료 LOT -->
+                    <td style="text-align:center;vertical-align:middle;padding:8px 10px;min-width:90px;">
+                        <div class="pmix-after-bal" style="font-weight:700;font-size:0.95rem;">${afterBalDisplay}</div>
+                        <div class="pmix-remaining-lot" style="font-size:0.72rem;color:var(--text-muted);margin-top:4px;word-break:break-all;">
+                            ${remainingLot ? `LOT: ${_esc(remainingLot)}` : ''}
+                        </div>
+                    </td>
                 </tr>`;
         }).join('');
         return `
             <input type="hidden" id="pmixId" value="${_esc(data.id || '')}">
             <input type="hidden" id="pmixWorkId" value="${_esc(data.workId || '')}">
             <div class="form-row">
-                <div class="form-group"><label class="form-label">배합일자</label><input type="date" class="form-input" id="pmixDate" value="${_esc(data.date || UIUtils.today())}"></div>
-                <div class="form-group"><label class="form-label">라인</label><input type="text" class="form-input" id="pmixLine" value="${_esc(data.line || '')}"></div>
-                <div class="form-group"><label class="form-label">작업자</label><input type="text" class="form-input" id="pmixOperator" value="${_esc(data.operator || '')}"></div>
+                <div class="form-group"><label class="form-label">배합일자</label><input type="date" class="form-input" id="pmixDate" value="${_esc(data.date || UIUtils.today())}" readonly style="background:var(--bg-secondary);color:var(--text-muted);"></div>
+                <div class="form-group"><label class="form-label">라인</label><input type="text" class="form-input" id="pmixLine" value="${_esc(data.line || '')}" readonly style="background:var(--bg-secondary);color:var(--text-muted);"></div>
+                <div class="form-group"><label class="form-label">작업자</label><select class="form-select" id="pmixOperator">${(() => { const ops = Storage.getAll(DB.STORES.OPERATORS) || []; return '<option value="">선택</option>' + ops.map(o => `<option value="${_esc(o.name || o.id)}" ${(o.name || o.id) === (data.operator || '') ? 'selected' : ''}>${_esc(o.name || o.id)}</option>`).join(''); })()}</select></div>
             </div>
             <div class="form-row">
-                <div class="form-group"><label class="form-label">차종</label><input type="text" class="form-input" id="pmixCarModel" value="${_esc(data.carModel || '')}"></div>
-                <div class="form-group"><label class="form-label">품명</label><input type="text" class="form-input" id="pmixPartName" value="${_esc(data.partName || '')}"></div>
-                <div class="form-group"><label class="form-label">컬러</label><input type="text" class="form-input" id="pmixColor" value="${_esc(data.color || '')}"></div>
+                <div class="form-group"><label class="form-label">차종</label><input type="text" class="form-input" id="pmixCarModel" value="${_esc(data.carModel || '')}" readonly style="background:var(--bg-secondary);color:var(--text-muted);"></div>
+                <div class="form-group"><label class="form-label">품명</label><input type="text" class="form-input" id="pmixPartName" value="${_esc(data.partName || '')}" readonly style="background:var(--bg-secondary);color:var(--text-muted);"></div>
+                <div class="form-group"><label class="form-label">컬러</label><input type="text" class="form-input" id="pmixColor" value="${_esc(data.color || '')}" readonly style="background:var(--bg-secondary);color:var(--text-muted);"></div>
             </div>
             <div class="form-row">
-                <div class="form-group"><label class="form-label">생산 LOT</label><input type="text" class="form-input" id="pmixProductionLot" value="${_esc(data.productionLot || '')}"></div>
-                <div class="form-group"><label class="form-label">생산수량</label><input type="number" class="form-input" id="pmixProductionQty" value="${data.productionQty || ''}" style="text-align:right;"></div>
+                <div class="form-group"><label class="form-label">생산 LOT</label><input type="text" class="form-input" id="pmixProductionLot" value="${_esc(data.productionLot || '')}" readonly style="background:var(--bg-secondary);color:var(--text-muted);"></div>
+                <div class="form-group"><label class="form-label">생산수량</label><input type="number" class="form-input" id="pmixProductionQty" value="${data.productionQty || ''}" style="text-align:right;background:var(--bg-secondary);color:var(--text-muted);" readonly></div>
                 <div class="form-group"><label class="form-label">비고</label><input type="text" class="form-input" id="pmixNote" value="${_esc(data.note || '')}"></div>
             </div>
             <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
                 <div style="padding:9px 12px;background:var(--bg-secondary);font-weight:700;">도료 구성 및 LOT 사용량</div>
                 <div class="data-table-wrapper">
                     <table class="data-table" style="font-size:0.82rem;">
-                        <thead><tr><th>도료명</th><th>배합실 현재 잔량(g)</th><th>잔량 LOT</th><th>잔량 사용량(g)</th><th>도료창고 출고(캔)</th><th>출고 LOT</th><th>출고캔 사용량(g)</th><th>사용 후 잔량 g</th></tr></thead>
-                        <tbody>${rows || `<tr><td colspan="8" style="text-align:center;padding:24px;">제품 기본정보에 등록된 도료 정보가 없습니다.</td></tr>`}</tbody>
+                        <thead><tr><th>도료명</th><th>총 사용량(g)</th><th>배합실 잔량 사용량 / 잔량 LOT</th><th>도료 오픈 / 창고재고 LOT / 오픈 후 사용량</th><th>사용후 잔량(g) / 도료 LOT</th></tr></thead>
+                        <tbody>${rows || `<tr><td colspan="4" style="text-align:center;padding:24px;">제품 기본정보에 등록된 도료 정보가 없습니다.</td></tr>`}</tbody>
                     </table>
                 </div>
             </div>`;
@@ -9999,10 +10126,68 @@ var PaintMixModule = (function() {
         const mixRoomBal = materialId && prodLot ? _mixRoomBalanceG(materialId, prodLot, ignoreMixId) : 0;
         const balCell = row.querySelector('.pmix-mix-room-bal');
         if (balCell) balCell.textContent = prodLot ? `${UIUtils.formatNumber(mixRoomBal)}g` : '-';
+        // LOT 미선택 시 잔량 사용량 비활성화
+        const useGInput = row.querySelector('.pmix-residual-use-g');
+        if (useGInput) {
+            const hasLot = !!prodLot;
+            useGInput.disabled = !hasLot;
+            useGInput.style.background = hasLot ? '' : 'var(--bg-secondary)';
+            useGInput.style.color = hasLot ? '' : 'var(--text-muted)';
+            if (!hasLot) useGInput.value = '';
+        }
         _onRowCalc(rowIdx);
     }
 
     function _onWarehouseLotChange(selectEl, rowIdx) {
+        const row = document.querySelector(`.pmix-row[data-row="${rowIdx}"]`);
+        if (!row) return;
+        const materialId = row.querySelector('.pmix-material-id')?.value || '';
+        const ignoreMixId = document.getElementById('pmixId')?.value || '';
+        const prodLot = selectEl.value;
+        const lots = _lotBalances(materialId, ignoreMixId);
+        const lotInfo = lots.find(l => l.prodLot === prodLot);
+        const lotCans = lotInfo ? lotInfo.balance : 0;
+        // 이 LOT 재고 표시 갱신
+        const balDisp = row.querySelector('.pmix-lot-bal-disp');
+        if (balDisp) balDisp.textContent = prodLot && lotCans > 0 ? `이 LOT 재고: ${UIUtils.formatNumber(lotCans)}캔` : '';
+        // 제조일 갱신 (도료명 셀 내 .pmix-mfg-date)
+        const mfgSpan = row.querySelector('.pmix-mfg-date');
+        if (mfgSpan) {
+            const invRec = (Storage.getAll(PAINT_INV_STORE) || []).find(r =>
+                r.materialId === materialId && r.type !== '출고' && (r.prodLot || r.lotNo) === prodLot);
+            const mfg = invRec ? (invRec.mfgDate || '') : '';
+            mfgSpan.textContent = mfg ? `제조: ${mfg}` : '';
+            mfgSpan.style.display = mfg ? '' : 'none';
+        }
+        _onRowCalc(rowIdx);
+    }
+
+    function _onCanOpenToggle(chk, rowIdx) {
+        const row = document.querySelector(`.pmix-row[data-row="${rowIdx}"]`);
+        if (!row) return;
+        const section = row.querySelector('.pmix-can-section');
+        if (section) section.style.display = chk.checked ? '' : 'none';
+        if (!chk.checked) {
+            const cansInput = row.querySelector('.pmix-warehouse-cans');
+            const useGInput = row.querySelector('.pmix-warehouse-use-g');
+            if (cansInput) cansInput.value = '';
+            if (useGInput) useGInput.value = '';
+            const label = row.querySelector('.pmix-can-g-label');
+            const packUnit = Number(row.dataset.packUnit) || 0;
+            if (label) label.textContent = packUnit ? `1캔=${packUnit*1000}g` : '';
+        }
+        _onRowCalc(rowIdx);
+    }
+
+    function _onCanCountChange(input, rowIdx) {
+        const row = document.querySelector(`.pmix-row[data-row="${rowIdx}"]`);
+        if (!row) return;
+        const packUnit = Number(row.dataset.packUnit) || 0;
+        const cans = Number(input.value) || 0;
+        const grams = cans * packUnit * 1000;
+        const label = row.querySelector('.pmix-can-g-label');
+        if (label) label.textContent = cans > 0 ? `= ${UIUtils.formatNumber(grams)}g` : (packUnit ? `1캔=${packUnit*1000}g` : '');
+        // 자동 입력 없음 — 사용자가 직접 입력
         _onRowCalc(rowIdx);
     }
 
@@ -10021,10 +10206,76 @@ var PaintMixModule = (function() {
             afterBalCell.textContent = '-';
             afterBalCell.style.color = '';
         } else {
-            const afterBal = Math.max(0, mixRoomBal - residualUseG + warehouseCans * packUnit * 1000 - warehouseUseG);
+            // 사용후 잔량: 캔 오픈 시 = 캔 전체량 - 오픈 후 사용량
+            //             잔량만 사용 시 = 배합실 잔량 - 잔량 사용량
+            const afterBal = warehouseCans > 0
+                ? Math.max(0, warehouseCans * packUnit * 1000 - warehouseUseG)
+                : Math.max(0, mixRoomBal - residualUseG);
             afterBalCell.textContent = `${UIUtils.formatNumber(afterBal)}g`;
             afterBalCell.style.color = afterBal === 0 ? 'var(--accent-red)' : '';
         }
+        // 총 사용량 갱신
+        const totalUseEl = row.querySelector('.pmix-total-use-g');
+        if (totalUseEl) {
+            const total = residualUseG + warehouseUseG;
+            totalUseEl.textContent = total > 0 ? `${UIUtils.formatNumber(total)}g` : '-';
+            totalUseEl.style.color = total > 0 ? 'var(--accent-green,#16a34a)' : 'var(--text-muted)';
+        }
+        // 사용후 잔량 LOT 갱신
+        const remLotEl = row.querySelector('.pmix-remaining-lot');
+        if (remLotEl) {
+            const wLot = row.querySelector('.pmix-warehouse-lot')?.value || '';
+            const rLot = row.querySelector('.pmix-residual-lot')?.value || '';
+            const dispLot = wLot || rLot;
+            remLotEl.textContent = dispLot ? `LOT: ${dispLot}` : '';
+        }
+        // 미입력 필드 실시간 표시
+        _validateRow(row);
+    }
+
+    function _setFieldErr(el, isErr) {
+        if (!el) return;
+        el.style.borderColor = isErr ? 'var(--accent-red)' : '';
+        el.style.background  = isErr ? '#fff0f0' : '';
+        el.style.boxShadow   = isErr ? '0 0 0 2px rgba(239,68,68,.25)' : '';
+    }
+
+    function _validateRow(row) {
+        if (!row) return true;
+        let ok = true;
+        // 배합실: 사용량 입력 시 LOT 필수
+        const rUseG = Number(row.querySelector('.pmix-residual-use-g')?.value) || 0;
+        const rLotEl = row.querySelector('.pmix-residual-lot');
+        const rLotErr = rUseG > 0 && !rLotEl?.value;
+        _setFieldErr(rLotEl, rLotErr);
+        if (rLotErr) ok = false;
+        // 도료 오픈 섹션
+        const canOpen = row.querySelector('.pmix-can-open-chk')?.checked;
+        if (canOpen) {
+            const wLotEl = row.querySelector('.pmix-warehouse-lot');
+            const cansEl = row.querySelector('.pmix-warehouse-cans');
+            const useGEl = row.querySelector('.pmix-warehouse-use-g');
+            const wLotErr = !wLotEl?.value;
+            const cansErr = !(Number(cansEl?.value) > 0);
+            const useGErr = !(Number(useGEl?.value) > 0);
+            _setFieldErr(wLotEl, wLotErr);
+            _setFieldErr(cansEl, cansErr);
+            _setFieldErr(useGEl, useGErr);
+            if (wLotErr || cansErr || useGErr) ok = false;
+        } else {
+            _setFieldErr(row.querySelector('.pmix-warehouse-lot'), false);
+            _setFieldErr(row.querySelector('.pmix-warehouse-cans'), false);
+            _setFieldErr(row.querySelector('.pmix-warehouse-use-g'), false);
+        }
+        return ok;
+    }
+
+    function _validateAllRows() {
+        let ok = true;
+        document.querySelectorAll('.pmix-row').forEach(row => {
+            if (!_validateRow(row)) ok = false;
+        });
+        return ok;
     }
 
     function _collectData() {
@@ -10111,7 +10362,7 @@ var PaintMixModule = (function() {
                 </div>
                 <div class="form-group">
                     <label class="form-label">포장용량</label>
-                    <input type="text" class="form-input" value="${row.packUnit ? `${UIUtils.formatNumber(row.packUnit)} KG/포` : '-'}" readonly style="background:var(--bg-secondary);">
+                    <input type="text" class="form-input" value="${row.packUnit ? `${UIUtils.formatNumber(row.packUnit)} KG/캔` : '-'}" readonly style="background:var(--bg-secondary);">
                 </div>
             </div>
             <div class="form-row">
@@ -10229,6 +10480,7 @@ var PaintMixModule = (function() {
     }
 
     async function saveNew() {
+        if (!_validateAllRows()) { UIUtils.toast('도료 구성 미입력 항목을 확인하세요.', 'warning'); return; }
         const data = _collectData();
         const err = _validate(data);
         if (err) { UIUtils.toast(err, 'warning'); return; }
@@ -10252,6 +10504,7 @@ var PaintMixModule = (function() {
     }
 
     async function saveEdit(id) {
+        if (!_validateAllRows()) { UIUtils.toast('도료 구성 미입력 항목을 확인하세요.', 'warning'); return; }
         const data = _collectData();
         const err = _validate(data, id);
         if (err) { UIUtils.toast(err, 'warning'); return; }
@@ -10310,6 +10563,8 @@ var PaintMixModule = (function() {
         renderHistoryTab, renderResidualTab, renderMixHistTab, search, searchMixHist,
         openFromWork, openManualModal,
         _onResidualLotChange, _onWarehouseLotChange, _onRowCalc,
+        _onCanOpenToggle, _onCanCountChange,
+        _validateRow, _validateAllRows,
         renderResidualStock, filterResidualStock, exportResidualData, openResidualAdjust, saveResidualAdjust,
         saveNew, edit, saveEdit, remove, exportData,
         renderFormulaAsStandard, renderUsageAsStandard
@@ -10853,6 +11108,7 @@ var ProdQualityModule = (function() {
     const ISSUE_KIND      = 'quality_issue';
     const ITEM_MASTER_KIND = 'quality_item_master';
     const PRESET_KIND     = 'quality_preset'; // 사용자 저장 프레셋
+    const MEASURE_RECORD_KIND = 'quality_measure_record';
     const QUALITY_STANDARD_IMAGE_KEY = 'prod_quality_standard_image_v1';
     const QUALITY_STANDARD_UPLOAD_ROLES = ['admin', 'prod_manager', 'quality_manager', 'paint_line_op'];
     const QUALITY_PRESET_EDIT_ROLES = QUALITY_STANDARD_UPLOAD_ROLES;
@@ -11058,6 +11314,11 @@ var ProdQualityModule = (function() {
         return !!(user && QUALITY_PRESET_EDIT_ROLES.includes(String(user.role || '')));
     }
 
+    function _isAdminUser() {
+        const user = _currentUser();
+        return String(user?.role || '') === 'admin';
+    }
+
     async function _loadQualityStandardImage() {
         try {
             return await Storage.getConfigValue(QUALITY_STANDARD_IMAGE_KEY) || null;
@@ -11075,7 +11336,7 @@ var ProdQualityModule = (function() {
                     <div class="page-actions" style="width:100%;justify-content:space-between;gap:12px;">
                         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                             <button class="btn btn-primary" onclick="ProdQualityModule.openAddModal()">
-                                <span class="material-symbols-outlined">edit_document</span> 작성 등록
+                                <span class="material-symbols-outlined">edit_document</span> 기준 양식 발행
                             </button>
                             <button class="btn btn-outline" onclick="ProdQualityModule.openQualityStandardPage()">
                                 <span class="material-symbols-outlined">description</span> 초중종물 관리 기준서
@@ -11083,13 +11344,19 @@ var ProdQualityModule = (function() {
                             <button class="btn btn-outline" onclick="ProdQualityModule.openStandardsPage()">
                                 <span class="material-symbols-outlined">rule</span> 품목별 항목 기준
                             </button>
+                            <button class="btn btn-outline" onclick="ProdQualityModule.openMeasureHistory('colorGloss')">
+                                <span class="material-symbols-outlined">monitoring</span> 색차/광택 이력
+                            </button>
+                            <button class="btn btn-outline" onclick="ProdQualityModule.openMeasureHistory('film')">
+                                <span class="material-symbols-outlined">layers</span> 도막 이력
+                            </button>
                         </div>
                         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
                             <button class="btn btn-outline" onclick="ProdQualityModule.openPresetMgmtModal()">
                                 <span class="material-symbols-outlined">bookmarks</span> 프레셋 관리
                             </button>
                             <button class="btn btn-outline" onclick="ProdQualityModule.openItemListModal()">
-                                <span class="material-symbols-outlined">list_alt</span> 관리항목
+                                <span class="material-symbols-outlined">list_alt</span> 초중종 관리 항목
                             </button>
                         </div>
                     </div>
@@ -11130,7 +11397,7 @@ var ProdQualityModule = (function() {
                             <table class="data-table">
                                 <thead>
                                     <tr>
-                                        <th>작업일</th><th>라인</th><th>차종</th><th>품명</th><th>컬러</th><th>생산 LOT</th><th>산출수량</th><th>작성</th><th>작업</th>
+                                        <th>작업일</th><th>라인</th><th>차종</th><th>품명</th><th>컬러</th><th>생산 LOT</th><th>산출수량</th><th>기준 양식</th><th>작업</th>
                                     </tr>
                                 </thead>
                                 <tbody id="pqWorkBody"></tbody>
@@ -11148,7 +11415,7 @@ var ProdQualityModule = (function() {
                             <table class="data-table">
                                 <thead>
                                     <tr>
-                                        <th>No</th><th>발행일</th><th>구분</th><th>라인</th><th>차종/품명</th><th>LOT</th><th>항목수</th><th>상태</th><th>검사자</th><th>작업</th>
+                                        <th>No</th><th>발행일</th><th>구분</th><th>라인</th><th>차종/품명</th><th>LOT</th><th>항목수</th><th>상태</th><th>발행완료</th><th>DATA</th><th>작업</th>
                                     </tr>
                                 </thead>
                                 <tbody id="pqTableBody"></tbody>
@@ -11187,7 +11454,7 @@ var ProdQualityModule = (function() {
                                 <span class="material-symbols-outlined">bookmarks</span> 프레셋 관리
                             </button>
                             <button class="btn btn-outline" onclick="ProdQualityModule.openItemListModal()">
-                                <span class="material-symbols-outlined">list_alt</span> 관리항목 설정
+                                <span class="material-symbols-outlined">list_alt</span> 초중종 관리 항목
                             </button>
                         </div>
                     </div>
@@ -11901,7 +12168,7 @@ var ProdQualityModule = (function() {
         if (!el) return;
         el.innerHTML = `
             <div class="stat-card blue"><div class="stat-card-value">${works.length}</div><div class="stat-card-label">도장 작업 건수</div></div>
-            <div class="stat-card green"><div class="stat-card-value">${issues.length}</div><div class="stat-card-label">C/S 발행</div></div>
+            <div class="stat-card green"><div class="stat-card-value">${issues.length}</div><div class="stat-card-label">기준 양식 발행</div></div>
             <div class="stat-card orange"><div class="stat-card-value">${works.filter(w => !issuedWorkIds.has(w.id)).length}</div><div class="stat-card-label">미발행</div></div>
             <div class="stat-card purple"><div class="stat-card-value">${configuredCars.size}</div><div class="stat-card-label">기준설정 차종/컬러</div></div>
         `;
@@ -11934,8 +12201,8 @@ var ProdQualityModule = (function() {
                             ? `<span class="badge badge-info">${(tmpl.items || []).length}항목</span>`
                             : `<button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openTemplateModal('${_js(w.carModel || '')}','${_js(w.color || '')}')">항목설정필요</button>`)}</td>
                     <td style="white-space:nowrap;">
-                        ${issue ? `<button class="btn btn-sm btn-primary" onclick="ProdQualityModule.printIssue('${_js(issue.id)}')">인쇄</button>` : ''}
-                        <button class="btn btn-sm ${issue ? 'btn-outline' : 'btn-primary'}" onclick="ProdQualityModule.openWriteFromWork('${_js(w.id)}')">${issue ? '재작성' : '작성'}</button>
+                        ${issue ? `<button class="btn btn-sm btn-primary" onclick="ProdQualityModule.printIssue('${_js(issue.id)}')">인쇄물 발행</button>` : ''}
+                        <button class="btn btn-sm ${issue ? 'btn-outline' : 'btn-primary'}" onclick="ProdQualityModule.openWriteFromWork('${_js(w.id)}')">${issue ? '재발행' : '발행'}</button>
                     </td>
                 </tr>`;
         }).join('');
@@ -11943,8 +12210,15 @@ var ProdQualityModule = (function() {
 
     function renderTable(data) {
         const tbody = document.getElementById('pqTableBody');
-        tbody.innerHTML = data.length === 0 ? `<tr><td colspan="10" style="text-align:center;padding:30px;">기록이 없습니다.</td></tr>` :
-            data.map((d, i) => `
+        const recordMap = new Map(_measureRecords().filter(r => r.issueId).map(r => [r.issueId, r]));
+        const canDelete = _isAdminUser();
+        tbody.innerHTML = data.length === 0 ? `<tr><td colspan="11" style="text-align:center;padding:30px;">기록이 없습니다.</td></tr>` :
+            data.map((d, i) => {
+                const record = recordMap.get(d.id);
+                const printedText = d.printedAt ? String(d.printedAt).replace('T', ' ').slice(0, 16) : '-';
+                const status = d.status || (d.printedAt ? '발행완료' : '발행대기');
+                const statusClass = status === '발행완료' ? 'badge-success' : 'badge-warning';
+                return `
                 <tr>
                     <td>${data.length - i}</td>
                     <td>${_esc(d.date || '')}</td>
@@ -11953,19 +12227,369 @@ var ProdQualityModule = (function() {
                     <td><strong>${_esc(d.carModel || '-')}</strong><br><span style="font-size:0.78rem;color:var(--text-muted);">${_esc(d.partName || '-')}</span></td>
                     <td style="font-family:monospace;font-size:0.8rem;">${_esc(d.lotNo || '-')}</td>
                     <td style="text-align:right;">${(d.items || []).length}</td>
-                    <td><span class="badge badge-success">${_esc(d.status || '발행')}</span></td>
-                    <td>${_esc(d.inspector || '-')}</td>
+                    <td><span class="badge ${statusClass}">${_esc(status)}</span></td>
+                    <td style="font-size:0.78rem;color:var(--text-secondary);">${_esc(printedText)}</td>
+                    <td>${record ? '<span class="badge badge-success">입력완료</span>' : '<span class="badge badge-secondary">미입력</span>'}</td>
                     <td style="white-space:nowrap;">
-                        <button class="btn btn-sm btn-primary" onclick="ProdQualityModule.printIssue('${_js(d.id)}')">C/S 인쇄</button>
+                        <button class="btn btn-sm btn-primary" onclick="ProdQualityModule.printIssue('${_js(d.id)}')">인쇄물 발행</button>
+                        <button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openDataModal('${_js(d.id)}')">DATA 입력</button>
                         <button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openView('${_js(d.id)}')">보기</button>
-                        <button class="btn btn-sm btn-danger" onclick="ProdQualityModule.remove('${_js(d.id)}')">삭제</button>
+                        ${canDelete ? `<button class="btn btn-sm btn-danger" onclick="ProdQualityModule.remove('${_js(d.id)}')">삭제</button>` : ''}
                     </td>
                 </tr>
-            `).join('');
+            `;
+            }).join('');
     }
 
     function _issues() {
         return (Storage.getAll(STORE) || []).filter(d => (d._docKind || ISSUE_KIND) === ISSUE_KIND);
+    }
+
+    function _measureRecords() {
+        return (Storage.getAll(STORE) || []).filter(d => d._docKind === MEASURE_RECORD_KIND);
+    }
+
+    function _measureRecordForIssue(issueId) {
+        return _measureRecords()
+            .filter(r => r.issueId === issueId)
+            .sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')))[0] || null;
+    }
+
+    function _measureGroupOfItem(item = {}) {
+        const key = String(item.key || '');
+        const text = `${key} ${item.label || ''} ${item.method || ''}`;
+        if (_isColorSpecItem(item) || /색차|△L|△a|△b/i.test(text)) return 'color';
+        if (_isGlossSpecItem(item) || /광택|gloss/i.test(text)) return 'gloss';
+        if (_isFilmSpecItem(item) || /도막|두께|film/i.test(text)) return 'film';
+        return '';
+    }
+
+    function _measureGroupLabel(group) {
+        if (group === 'color') return '색차';
+        if (group === 'gloss') return '광택';
+        if (group === 'film') return '도막두께';
+        return '-';
+    }
+
+    function _measureStep(group) {
+        if (group === 'color') return '0.01';
+        if (group === 'gloss') return '0.1';
+        return '0.1';
+    }
+
+    function _measureItemsForIssue(issue = {}) {
+        return _sortItemsByMaster(_normalizeQualityItems(issue.items || []))
+            .map(item => ({ ...item, measureGroup: _measureGroupOfItem(item) }))
+            .filter(item => item.measureGroup);
+    }
+
+    function _formatMeasureValue(v) {
+        return v === 0 ? '0' : String(v ?? '');
+    }
+
+    function _formatPrintDateTime(v) {
+        const text = String(v || '').replace('T', ' ');
+        return text ? text.slice(0, 16) : '-';
+    }
+
+    async function markIssuePrinted(id) {
+        const d = Storage.getById(STORE, id);
+        if (!d) return;
+        const now = UIUtils.now();
+        const user = _currentUser();
+        const printHistory = Array.isArray(d.printHistory) ? d.printHistory.slice() : [];
+        printHistory.push({
+            printedAt: now,
+            userName: user?.name || user?.username || user?.id || ''
+        });
+        await Storage.update(STORE, id, {
+            ...d,
+            status: '발행완료',
+            printedAt: now,
+            printHistory
+        });
+        if (document.getElementById('pqTableBody')) search();
+    }
+
+    function _measureRecordForm(issue, record = {}) {
+        const items = _measureItemsForIssue(issue);
+        const typeOrder = ['초물', '중물', '종물'];
+        const selectedTypes = new Set(issue.types && issue.types.length ? issue.types : typeOrder);
+        const typeHeaders = typeOrder.filter(t => selectedTypes.has(t));
+        const storedItems = Array.isArray(record.items) ? record.items : [];
+        const valueOf = (item, type) => {
+            const key = String(item.key || item.label || '');
+            const saved = storedItems.find(row => String(row.key || '') === key);
+            return _formatMeasureValue(saved?.values?.[type]);
+        };
+        const noteOf = item => {
+            const key = String(item.key || item.label || '');
+            const saved = storedItems.find(row => String(row.key || '') === key);
+            return saved?.note || '';
+        };
+        const rows = items.map((item, idx) => {
+            const group = item.measureGroup;
+            return `
+                <tr class="pq-data-row"
+                    data-key="${_esc(item.key || item.label || '')}"
+                    data-label="${_esc(item.label || '')}"
+                    data-group="${_esc(group)}"
+                    data-unit="${_esc(item.unit || '')}"
+                    data-method="${_esc(item.method || '')}"
+                    data-spec="${_esc(_composeRangeSpec(item) || item.spec || '')}">
+                    <td><span class="badge badge-info">${_esc(_measureGroupLabel(group))}</span></td>
+                    <td><strong>${_esc(item.label || '-')}</strong><br><span style="font-size:0.72rem;color:var(--text-muted);">${_esc(item.method || '-')}</span></td>
+                    <td style="font-size:0.82rem;">${_esc(_composeRangeSpec(item) || item.spec || '-')}</td>
+                    <td style="text-align:center;">${_esc(item.unit || '-')}</td>
+                    ${typeOrder.map(type => typeHeaders.includes(type)
+                        ? `<td><input type="number" step="${_measureStep(group)}" class="form-input pq-data-val" data-type="${_esc(type)}" value="${_esc(valueOf(item, type))}" style="height:38px;text-align:right;font-weight:700;"></td>`
+                        : `<td style="background:#f8fafc;color:var(--text-muted);text-align:center;">-</td>`).join('')}
+                    <td><input type="text" class="form-input pq-data-note" value="${_esc(noteOf(item))}" placeholder="비고" style="height:38px;"></td>
+                </tr>`;
+        }).join('');
+
+        return `
+            <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:14px;">
+                <div class="form-group">
+                    <label class="form-label">기록일</label>
+                    <input type="date" class="form-input" id="pqDataDate" value="${_esc(record.recordDate || issue.date || UIUtils.today())}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">기록 시간</label>
+                    <input type="time" class="form-input" id="pqDataTime" value="${_esc(record.recordTime || '')}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">검사자</label>
+                    <input type="text" class="form-input" id="pqDataInspector" value="${_esc(record.inspector || issue.inspector || '')}" placeholder="검사자">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">상태</label>
+                    <div class="form-input" style="display:flex;align-items:center;background:#f8fafc;font-weight:700;">${record.id ? 'DATA 수정' : 'DATA 입력'}</div>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:12px;padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;background:#f8fafc;font-size:0.82rem;">
+                <div><span style="color:var(--text-muted);">차종</span><br><strong>${_esc(issue.carModel || '-')}</strong></div>
+                <div><span style="color:var(--text-muted);">품명</span><br><strong>${_esc(issue.partName || '-')}</strong></div>
+                <div><span style="color:var(--text-muted);">컬러</span><br><strong>${_esc(issue.color || '-')}</strong></div>
+                <div><span style="color:var(--text-muted);">라인</span><br><strong>${_esc(issue.line || '-')}</strong></div>
+                <div><span style="color:var(--text-muted);">LOT</span><br><strong>${_esc(issue.lotNo || '-')}</strong></div>
+            </div>
+            ${items.length ? `
+                <div class="data-table-wrapper" style="max-height:56vh;overflow:auto;">
+                    <table class="data-table" style="font-size:0.82rem;">
+                        <thead>
+                            <tr>
+                                <th style="width:78px;">구분</th>
+                                <th style="min-width:170px;">관리항목</th>
+                                <th>기준</th>
+                                <th style="width:70px;">단위</th>
+                                <th style="width:110px;">초물</th>
+                                <th style="width:110px;">중물</th>
+                                <th style="width:110px;">종물</th>
+                                <th style="min-width:150px;">비고</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+            ` : `<div style="padding:28px;text-align:center;color:var(--text-muted);border:1px dashed var(--border-color);border-radius:8px;">색차, 광택, 도막두께 관리항목이 없습니다.</div>`}
+        `;
+    }
+
+    function openDataModal(issueId) {
+        const issue = Storage.getById(STORE, issueId);
+        if (!issue) return;
+        const record = _measureRecordForIssue(issueId) || {};
+        UIUtils.showModal('초중종물 DATA 입력', _measureRecordForm(issue, record), `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="ProdQualityModule.saveMeasureRecord('${_js(issueId)}','${_js(record.id || '')}')">저장</button>
+        `, 'xl');
+    }
+
+    async function saveMeasureRecord(issueId, recordId = '') {
+        const issue = Storage.getById(STORE, issueId);
+        if (!issue) return;
+        const rows = [...document.querySelectorAll('.pq-data-row')];
+        if (!rows.length) {
+            UIUtils.toast('입력할 수치 관리항목이 없습니다.', 'warning');
+            return;
+        }
+        const recordDate = document.getElementById('pqDataDate')?.value || issue.date || UIUtils.today();
+        const recordTime = document.getElementById('pqDataTime')?.value || '';
+        const inspector = document.getElementById('pqDataInspector')?.value.trim() || '';
+        let hasValue = false;
+        const items = rows.map(row => {
+            const values = {};
+            row.querySelectorAll('.pq-data-val').forEach(input => {
+                const raw = input.value.trim();
+                if (raw !== '') {
+                    hasValue = true;
+                    const n = Number(raw);
+                    values[input.dataset.type || ''] = Number.isFinite(n) ? n : raw;
+                }
+            });
+            return {
+                key: row.dataset.key || Storage.generateId(),
+                label: row.dataset.label || '',
+                group: row.dataset.group || '',
+                groupLabel: _measureGroupLabel(row.dataset.group || ''),
+                unit: row.dataset.unit || '',
+                method: row.dataset.method || '',
+                spec: row.dataset.spec || '',
+                values,
+                note: row.querySelector('.pq-data-note')?.value.trim() || ''
+            };
+        });
+        if (!hasValue) {
+            UIUtils.toast('측정 DATA를 1개 이상 입력하세요.', 'warning');
+            return;
+        }
+
+        const now = UIUtils.now();
+        const existing = recordId ? (Storage.getById(STORE, recordId) || {}) : {};
+        const payload = {
+            ...existing,
+            _docKind: MEASURE_RECORD_KIND,
+            issueId,
+            recordDate,
+            recordTime,
+            yearMonth: recordDate.slice(0, 7),
+            date: issue.date || recordDate,
+            line: issue.line || '',
+            carModel: issue.carModel || '',
+            partName: issue.partName || '',
+            color: issue.color || '',
+            lotNo: issue.lotNo || '',
+            productionQty: Number(issue.productionQty) || 0,
+            inspector,
+            items,
+            updatedAt: now
+        };
+
+        let savedId = recordId;
+        if (recordId) {
+            await Storage.update(STORE, recordId, payload);
+        } else {
+            const saved = await Storage.add(STORE, { ...payload, createdAt: now });
+            savedId = saved?.id || '';
+        }
+        const latestIssue = Storage.getById(STORE, issueId) || issue;
+        await Storage.update(STORE, issueId, {
+            ...latestIssue,
+            dataRecordId: savedId,
+            dataRecordedAt: now
+        });
+        UIUtils.closeModal();
+        UIUtils.toast('초중종물 측정 DATA가 저장되었습니다.', 'success');
+        if (document.getElementById('pqTableBody')) search();
+        const historyKind = document.getElementById('pqMeasureHistoryKind')?.value || '';
+        if (historyKind) renderMeasureHistoryTable(historyKind);
+    }
+
+    function openMeasureHistory(kind = 'colorGloss') {
+        const container = _rootContainer || document.getElementById('contentArea');
+        if (!container) return;
+        _rootContainer = container;
+        const title = kind === 'film' ? '도막 이력' : '색차/광택 이력';
+        container.innerHTML = `
+            <div class="fade-in-up">
+                <div class="page-header">
+                    <div class="page-actions" style="width:100%;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                            <button class="btn btn-outline" onclick="ProdQualityModule.backToMain()">
+                                <span class="material-symbols-outlined">arrow_back</span> 초중종물 관리
+                            </button>
+                            <button class="btn ${kind === 'colorGloss' ? 'btn-primary' : 'btn-outline'}" onclick="ProdQualityModule.openMeasureHistory('colorGloss')">
+                                <span class="material-symbols-outlined">monitoring</span> 색차/광택 이력
+                            </button>
+                            <button class="btn ${kind === 'film' ? 'btn-primary' : 'btn-outline'}" onclick="ProdQualityModule.openMeasureHistory('film')">
+                                <span class="material-symbols-outlined">layers</span> 도막 이력
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <input type="hidden" id="pqMeasureHistoryKind" value="${_esc(kind)}">
+                <div style="margin-bottom:12px;">
+                    <h3 style="margin:0 0 4px;font-size:1.15rem;">${_esc(title)}</h3>
+                    <p style="margin:0;color:var(--text-muted);font-size:0.86rem;">초중종물 DATA 입력에서 저장한 수치 기록을 월/일, 차종, 품목 기준으로 확인합니다.</p>
+                </div>
+                <div class="filter-bar" style="flex-wrap:wrap;gap:10px;">
+                    <div class="form-group">
+                        <label class="form-label">월</label>
+                        <input type="month" class="form-input" id="pqMeasureMonth" value="${UIUtils.today().slice(0, 7)}">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">차종</label>
+                        <select class="form-select" id="pqMeasureCar">
+                            <option value="">전체</option>
+                            ${_carOptions('')}
+                        </select>
+                    </div>
+                    <div class="form-group" style="align-self:flex-end;">
+                        <button class="btn btn-outline" onclick="ProdQualityModule.renderMeasureHistoryTable('${_js(kind)}')">
+                            <span class="material-symbols-outlined">search</span> 조회
+                        </button>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-body" style="padding:0;">
+                        <div class="data-table-wrapper">
+                            <table class="data-table" style="font-size:0.82rem;">
+                                <thead>
+                                    <tr>
+                                        <th>월</th><th>일</th><th>차종</th><th>품명</th><th>컬러</th><th>LOT</th><th>항목</th><th>기준</th><th>초물</th><th>중물</th><th>종물</th><th>단위</th><th>기록</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pqMeasureHistoryBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+        renderMeasureHistoryTable(kind);
+    }
+
+    function renderMeasureHistoryTable(kind = 'colorGloss') {
+        const tbody = document.getElementById('pqMeasureHistoryBody');
+        if (!tbody) return;
+        const month = document.getElementById('pqMeasureMonth')?.value || '';
+        const car = document.getElementById('pqMeasureCar')?.value || '';
+        const wanted = group => kind === 'film' ? group === 'film' : (group === 'color' || group === 'gloss');
+        const rows = [];
+        _measureRecords()
+            .filter(r => !month || (r.recordDate || r.date || '').slice(0, 7) === month)
+            .filter(r => !car || r.carModel === car)
+            .sort((a, b) => String(b.recordDate || b.date || '').localeCompare(String(a.recordDate || a.date || '')))
+            .forEach(record => {
+                (record.items || []).filter(item => wanted(item.group)).forEach(item => {
+                    rows.push({ record, item });
+                });
+            });
+
+        if (!rows.length) {
+            tbody.innerHTML = `<tr><td colspan="13" style="text-align:center;padding:30px;color:var(--text-muted);">기록이 없습니다.</td></tr>`;
+            return;
+        }
+        tbody.innerHTML = rows.map(({ record, item }) => {
+            const date = record.recordDate || record.date || '';
+            const values = item.values || {};
+            return `
+                <tr>
+                    <td>${_esc(date.slice(0, 7) || '-')}</td>
+                    <td>${_esc(date.slice(8, 10) || '-')}</td>
+                    <td><strong>${_esc(record.carModel || '-')}</strong></td>
+                    <td>${_esc(record.partName || '-')}</td>
+                    <td>${_esc(record.color || '-')}</td>
+                    <td style="font-family:monospace;font-size:0.78rem;">${_esc(record.lotNo || '-')}</td>
+                    <td><span class="badge badge-info">${_esc(item.groupLabel || _measureGroupLabel(item.group))}</span> ${_esc(item.label || '-')}</td>
+                    <td>${_esc(item.spec || '-')}</td>
+                    <td style="text-align:right;font-weight:700;">${_esc(_formatMeasureValue(values['초물']) || '-')}</td>
+                    <td style="text-align:right;font-weight:700;">${_esc(_formatMeasureValue(values['중물']) || '-')}</td>
+                    <td style="text-align:right;font-weight:700;">${_esc(_formatMeasureValue(values['종물']) || '-')}</td>
+                    <td style="text-align:center;">${_esc(item.unit || '-')}</td>
+                    <td style="font-size:0.76rem;color:var(--text-muted);">${_esc(_formatPrintDateTime(record.updatedAt || record.createdAt))}</td>
+                </tr>`;
+        }).join('');
     }
 
     function _templates() {
@@ -11999,9 +12623,33 @@ var ProdQualityModule = (function() {
         const car = _normText(carModel), part = _normText(partName), clr = _normText(color);
         const tmpls = _templates();
         return tmpls.find(t => _normText(t.carModel)===car && _normText(t.partName||'')===part && _normText(t.color||'')===clr)
+            || tmpls.find(t => _normText(t.carModel)===car && _normText(t.partName||'')===part && !_normText(t.color||''))
             || tmpls.find(t => _normText(t.carModel)===car && !t.partName && _normText(t.color||'')===clr)
             || tmpls.find(t => _normText(t.carModel)===car && !t.partName && !_normText(t.color||''))
             || null;
+    }
+
+    function _findProductForQuality(carModel = '', partName = '', color = '') {
+        const car = _normText(carModel);
+        const part = _normText(partName);
+        const clr = _normText(color);
+        if (!car || !part) return null;
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        return products.find(p =>
+            _normText(p.carModel) === car &&
+            _normText(p.partName) === part &&
+            (!clr || _normText(p.color || p.paintColor || p.paint || p.drawingColor || '') === clr)
+        ) || products.find(p =>
+            _normText(p.carModel) === car &&
+            _normText(p.partName) === part
+        ) || null;
+    }
+
+    function _resolveIssueColor(carModel = '', partName = '', color = '') {
+        const explicit = _normText(color);
+        if (explicit) return explicit;
+        const product = _findProductForQuality(carModel, partName, color);
+        return _normText(product?.color || product?.paintColor || product?.paint || product?.drawingColor || '');
     }
 
     function _productSpecItems(carModel, partName, color, { fallbackToMaster = true } = {}) {
@@ -12009,8 +12657,10 @@ var ProdQualityModule = (function() {
         const items = tmpl && Array.isArray(tmpl.items) && tmpl.items.length
             ? _normalizeQualityItems(tmpl.items.map(item => ({ ...item })))
             : [];
-        if (items.length) return items;
-        return fallbackToMaster ? _masterItems().map(item => ({ ...item, selected: true })) : [];
+        if (items.length) return items.map(item => _normalizeItemForEdit({ ...item }));
+        return fallbackToMaster
+            ? _masterItems().map(item => _normalizeItemForEdit({ ...item, selected: true }))
+            : [];
     }
 
     function _masterItemRecord() {
@@ -12101,12 +12751,16 @@ var ProdQualityModule = (function() {
 
     function _partOptions(carModel, selected) {
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        if (!carModel) return `<option value="">품명 선택</option>`;
         const workParts = (Storage.getAll(PAINT_WORK_STORE) || [])
             .filter(w => !carModel || w.carModel === carModel)
             .map(w => w.partName);
         const parts = [...new Set([...products.filter(p => !carModel || p.carModel === carModel).map(p => p.partName), ...workParts].filter(Boolean))]
             .sort((a, b) => a.localeCompare(b, 'ko'));
-        return parts.map(p => `<option value="${_esc(p)}" ${p === selected ? 'selected' : ''}>${_esc(p)}</option>`).join('');
+        const selectedOption = selected && !parts.includes(selected)
+            ? `<option value="${_esc(selected)}" selected>${_esc(selected)}</option>`
+            : '';
+        return `<option value="">품명 선택</option>${selectedOption}${parts.map(p => `<option value="${_esc(p)}" ${p === selected ? 'selected' : ''}>${_esc(p)}</option>`).join('')}`;
     }
 
     function _typeRowsHtml(values = {}) {
@@ -12117,22 +12771,97 @@ var ProdQualityModule = (function() {
             </label>`).join('');
     }
 
-    function _sortItemsByMaster(items = []) {
-        const masterOrder = _masterItems().map(m => m.key);
-        const masterIdx = key => {
-            const i = masterOrder.indexOf(key);
-            return i === -1 ? 9999 : i;
+    function _operatorOptions(selected = '') {
+        const operators = Storage.getAll(DB.STORES.OPERATORS) || [];
+        const names = [...new Set(operators.map(o => _normText(o.name || o.id)).filter(Boolean))]
+            .sort((a, b) => a.localeCompare(b, 'ko'));
+        const selectedOption = selected && !names.includes(selected)
+            ? `<option value="${_esc(selected)}" selected>${_esc(selected)} (기존)</option>`
+            : '';
+        return `<option value="">작업자 선택</option>${selectedOption}${names.map(name =>
+            `<option value="${_esc(name)}" ${name === selected ? 'selected' : ''}>${_esc(name)}</option>`
+        ).join('')}`;
+    }
+
+    function _timeToMinutes(time = '') {
+        const m = String(time || '').match(/^(\d{1,2}):(\d{2})/);
+        if (!m) return null;
+        return Number(m[1]) * 60 + Number(m[2]);
+    }
+
+    function _issueTimeParts(d = {}) {
+        let startTime = d.startTime || d.workStartTime || '';
+        let endTime = d.endTime || d.workEndTime || '';
+        const raw = String(d.time || '').trim();
+        if ((!startTime || !endTime) && raw) {
+            const range = raw.match(/(\d{1,2}:\d{2})\s*(?:~|-|–|—)\s*(\d{1,2}:\d{2})/);
+            if (range) {
+                startTime = startTime || range[1];
+                endTime = endTime || range[2];
+            } else if (!startTime) {
+                const single = raw.match(/(\d{1,2}:\d{2})/);
+                if (single) startTime = single[1];
+            }
+        }
+        return { startTime, endTime };
+    }
+
+    function _durationHours(startTime = '', endTime = '') {
+        const s = _timeToMinutes(startTime);
+        const e0 = _timeToMinutes(endTime);
+        if (s == null || e0 == null) return '';
+        let e = e0;
+        if (e < s) e += 24 * 60;
+        const hours = (e - s) / 60;
+        if (!Number.isFinite(hours) || hours < 0) return '';
+        return hours % 1 === 0 ? String(hours) : String(Math.round(hours * 10) / 10);
+    }
+
+    function _formatIssueTime(startTime = '', endTime = '', hours = '') {
+        const h = hours || _durationHours(startTime, endTime);
+        if (startTime && endTime) return `${startTime} ~ ${endTime}${h ? ` (${h}HR)` : ''}`;
+        if (startTime) return startTime;
+        return '';
+    }
+
+    function onIssueTimeChange() {
+        const start = document.getElementById('pqStartTime')?.value || '';
+        const end = document.getElementById('pqEndTime')?.value || '';
+        const hours = _durationHours(start, end);
+        const el = document.getElementById('pqWorkHours');
+        if (el) el.value = hours ? `${hours}HR` : '00HR';
+    }
+
+    function _sortItemsByMaster(items = [], masterItems = null) {
+        const masters = masterItems || _masterItems();
+        const order = new Map();
+        masters.forEach((m, idx) => {
+            if (m.key) order.set(`key:${m.key}`, idx);
+            if (m.label) order.set(`label:${_normText(m.label)}`, idx);
+        });
+        const masterIdx = item => {
+            if (!item) return 9999;
+            if (item.key && order.has(`key:${item.key}`)) return order.get(`key:${item.key}`);
+            const labelKey = `label:${_normText(item.label || '')}`;
+            return order.has(labelKey) ? order.get(labelKey) : 9999;
         };
-        return [...items].sort((a, b) => masterIdx(a.key) - masterIdx(b.key));
+        return [...items]
+            .map((item, idx) => ({ item, idx }))
+            .sort((a, b) => masterIdx(a.item) - masterIdx(b.item) || a.idx - b.idx)
+            .map(entry => entry.item);
     }
 
     function fillForm(d = {}) {
-        const items = d.items && d.items.length
+        const resolvedColor = _resolveIssueColor(d.carModel || '', d.partName || '', d.color || '');
+        const timeParts = _issueTimeParts(d);
+        const duration = d.workHours || _durationHours(timeParts.startTime, timeParts.endTime);
+        const shouldLoadItems = !!(d.items && d.items.length) || !!(d.carModel && d.partName);
+        const items = shouldLoadItems ? _sortItemsByMaster((d.items && d.items.length
             ? d.items
-            : _issueItemsForProduct(d.carModel || '', d.partName || '', d.color || '', []);
+            : _issueItemsForProduct(d.carModel || '', d.partName || '', resolvedColor, []))
+            .map(item => _normalizeItemForEdit({ ...item }))) : [];
         const compactGridTop = 'display:grid;grid-template-columns:0.9fr 1fr 1.6fr;gap:8px 12px;margin-bottom:8px;';
         const compactGrid = 'display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 12px;margin-bottom:8px;';
-        const compactGrid4 = 'display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px 12px;margin-bottom:8px;';
         const compactField = 'display:flex;align-items:center;gap:7px;min-width:0;';
         const compactLabel = 'font-size:0.82rem;font-weight:700;color:var(--text-secondary);white-space:nowrap;min-width:64px;';
         const compactInput = 'height:34px;font-size:0.8rem;min-width:0;flex:1;padding:4px 10px;line-height:1.2;';
@@ -12156,36 +12885,44 @@ var ProdQualityModule = (function() {
             </div>
             <div style="${compactGrid}">
                 <div style="${compactField}">
-                    <label style="${compactLabel}">구분</label>
-                    <div style="display:flex;gap:9px;align-items:center;min-width:0;flex:1;font-size:0.8rem;">${_typeRowsHtml(d)}</div>
-                </div>
-                <div style="${compactField}">
-                    <label style="${compactLabel}">라인</label>
-                    <input type="text" class="form-input" id="pqLine" value="${_esc(d.line || '')}" placeholder="예: A라인" style="${compactInput}">
-                </div>
-                <div style="${compactField}">
-                    <label style="${compactLabel}">생산 LOT</label>
-                    <input type="text" class="form-input" id="pqLotNo" value="${_esc(d.lotNo || '')}" style="${compactInput}">
-                </div>
-            </div>
-            <div style="${compactGrid4}">
-                <div style="${compactField}">
-                    <label style="${compactLabel}">검사자</label>
-                    <input type="text" class="form-input" id="pqInspector" value="${_esc(d.inspector || '')}" style="${compactInput}">
-                </div>
-                <div style="${compactField}">
                     <label style="${compactLabel}">컬러</label>
-                    <input type="text" class="form-input" id="pqColor" value="${_esc(d.color || '')}" onchange="ProdQualityModule.onIssueCarChange()" style="${compactInput}">
+                    <input type="text" class="form-input" id="pqColor" value="${_esc(resolvedColor)}" onchange="ProdQualityModule.onIssuePartChange()" style="${compactInput}">
                 </div>
                 <div style="${compactField}">
                     <label style="${compactLabel}">생산수량</label>
                     <input type="number" class="form-input" id="pqProductionQty" value="${d.productionQty || ''}" style="${compactInput}text-align:right;">
                 </div>
                 <div style="${compactField}">
-                    <label style="${compactLabel}">시간</label>
-                    <input type="text" class="form-input" id="pqTime" value="${_esc(d.time || '')}" placeholder="예: 09:30" style="${compactInput}">
+                    <label style="${compactLabel}">라인</label>
+                    <select class="form-select" id="pqLine" style="${compactSelect}">
+                        <option value="">라인 선택</option>
+                        <option value="도장-A" ${(d.line || '') === '도장-A' ? 'selected' : ''}>도장-A</option>
+                        <option value="도장-B" ${(d.line || '') === '도장-B' ? 'selected' : ''}>도장-B</option>
+                    </select>
                 </div>
             </div>
+            <div style="${compactGrid}">
+                <div style="${compactField}">
+                    <label style="${compactLabel}">작업시간</label>
+                    <div style="display:flex;align-items:center;gap:5px;min-width:0;flex:1;">
+                        <input type="time" class="form-input" id="pqStartTime" value="${_esc(timeParts.startTime || '')}" onchange="ProdQualityModule.onIssueTimeChange()" style="height:34px;font-size:0.8rem;min-width:0;flex:1;padding:4px 7px;">
+                        <span style="color:var(--text-muted);font-weight:700;">~</span>
+                        <input type="time" class="form-input" id="pqEndTime" value="${_esc(timeParts.endTime || '')}" onchange="ProdQualityModule.onIssueTimeChange()" style="height:34px;font-size:0.8rem;min-width:0;flex:1;padding:4px 7px;">
+                        <input type="text" class="form-input" id="pqWorkHours" value="${_esc(duration ? `${duration}HR` : '00HR')}" readonly style="height:34px;font-size:0.78rem;font-weight:800;width:64px;flex:0 0 64px;text-align:center;background:var(--bg-secondary);padding:4px 6px;">
+                    </div>
+                </div>
+                <div style="${compactField}">
+                    <label style="${compactLabel}">구분</label>
+                    <div style="display:flex;gap:9px;align-items:center;min-width:0;flex:1;font-size:0.8rem;">${_typeRowsHtml(d)}</div>
+                </div>
+                <div style="${compactField}">
+                    <label style="${compactLabel}">작성자</label>
+                    <select class="form-select" id="pqInspector" style="${compactSelect}">
+                        ${_operatorOptions(d.inspector || d.writer || '')}
+                    </select>
+                </div>
+            </div>
+            <input type="hidden" id="pqLotNo" value="${_esc(d.lotNo || '')}">
             <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;margin:8px 0;">
                 <div style="padding:7px 10px;background:var(--bg-secondary);font-weight:700;display:flex;align-items:center;justify-content:space-between;gap:8px;">
                     <span>발행 관리항목</span>
@@ -12213,6 +12950,11 @@ var ProdQualityModule = (function() {
     }
 
     function _issueItemRows(items) {
+        const bodyRows = items.length
+            ? items.map((item, idx) => _issueItemRowHtml(item, idx + 1)).join('')
+            : `<tr class="pq-empty-row"><td colspan="9" style="padding:20px;text-align:center;color:var(--text-muted);background:#fff;">
+                    차종과 품명을 선택하면 저장된 초중종 관리 항목이 표시됩니다.
+               </td></tr>`;
         return `
             <table class="data-table pq-issue-table" style="font-size:0.72rem;">
                 <thead>
@@ -12229,13 +12971,13 @@ var ProdQualityModule = (function() {
                     </tr>
                 </thead>
                 <tbody id="pqIssueItemsBody">
-                    ${items.map((item, idx) => _issueItemRowHtml(item, idx + 1)).join('')}
+                    ${bodyRows}
                 </tbody>
             </table>`;
     }
 
     function _collectIssueItems() {
-        return [...document.querySelectorAll('.pq-issue-item-row')].map(row => {
+        const items = _sortItemsByMaster([...document.querySelectorAll('.pq-issue-item-row')].map(row => {
             const isNum = row.querySelector('.pq-item-numeric')?.value === '1';
             const obj = {
                 key:    row.querySelector('.pq-item-key')?.value    || Storage.generateId(),
@@ -12270,7 +13012,8 @@ var ProdQualityModule = (function() {
             });
             if (Object.keys(vals).length) obj.vals = vals;
             return obj;
-        }).filter(i => i.label);
+        }).filter(i => i.label));
+        return items;
     }
 
     function _mergeIssueItems(baseItems = [], currentItems = []) {
@@ -12293,17 +13036,20 @@ var ProdQualityModule = (function() {
             };
             if (prev.upperSpec || item.upperSpec) merged.upperSpec = prev.upperSpec || item.upperSpec || '';
             if (prev.lowerSpec || item.lowerSpec) merged.lowerSpec = prev.lowerSpec || item.lowerSpec || '';
+            if (prev.targetSpec || item.targetSpec) merged.targetSpec = prev.targetSpec || item.targetSpec || '';
+            if (prev.toleranceSpec || item.toleranceSpec) merged.toleranceSpec = prev.toleranceSpec || item.toleranceSpec || '';
             if (prev.vals || item.vals) merged.vals = { ...(item.vals || {}), ...(prev.vals || {}) };
-            return merged;
+            return _normalizeItemForEdit(merged);
         });
     }
 
     function _issueItemsForProduct(carModel = '', partName = '', color = '', currentItems = []) {
-        const presetItems = _productSpecItems(carModel, partName, color, { fallbackToMaster: false });
+        const resolvedColor = _resolveIssueColor(carModel, partName, color);
+        const presetItems = _productSpecItems(carModel, partName, resolvedColor, { fallbackToMaster: false });
         const baseItems = presetItems.length
             ? presetItems
-            : _itemsForCar(carModel, color);
-        return _mergeIssueItems(baseItems, currentItems);
+            : _itemsForCar(carModel, resolvedColor).map(item => _normalizeItemForEdit({ ...item }));
+        return _sortItemsByMaster(_mergeIssueItems(baseItems, currentItems).map(item => _normalizeItemForEdit({ ...item })));
     }
 
     function _issueItemRowHtml(item = {}, no = '') {
@@ -12359,6 +13105,7 @@ var ProdQualityModule = (function() {
     function addIssueItemRow() {
         const body = document.getElementById('pqIssueItemsBody');
         if (!body) return;
+        body.querySelector('.pq-empty-row')?.remove();
         body.insertAdjacentHTML('beforeend', _issueItemRowHtml({
             key: Storage.generateId(),
             label: '',
@@ -12394,7 +13141,7 @@ var ProdQualityModule = (function() {
 
     function collectData() {
         const types = [...document.querySelectorAll('.pq-type-check:checked')].map(el => el.value);
-        const items = [...document.querySelectorAll('.pq-issue-item-row')].map(row => {
+        const items = _sortItemsByMaster([...document.querySelectorAll('.pq-issue-item-row')].map(row => {
             const isNum = row.querySelector('.pq-item-numeric')?.value === '1';
             const obj = {
                 key:    row.querySelector('.pq-item-key')?.value    || Storage.generateId(),
@@ -12429,7 +13176,11 @@ var ProdQualityModule = (function() {
             });
             if (Object.keys(vals).length) obj.vals = vals;
             return obj;
-        }).filter(i => i.label);
+        }).filter(i => i.label));
+        const startTime = document.getElementById('pqStartTime')?.value || '';
+        const endTime = document.getElementById('pqEndTime')?.value || '';
+        const workHours = _durationHours(startTime, endTime);
+        const writer = document.getElementById('pqInspector').value.trim();
         return {
             _docKind: ISSUE_KIND,
             date: document.getElementById('pqDate').value,
@@ -12441,25 +13192,29 @@ var ProdQualityModule = (function() {
             lotNo: document.getElementById('pqLotNo').value.trim(),
             color: document.getElementById('pqColor')?.value.trim() || '',
             productionQty: Number(document.getElementById('pqProductionQty')?.value) || 0,
-            time: document.getElementById('pqTime')?.value.trim() || '',
+            startTime,
+            endTime,
+            workHours,
+            time: _formatIssueTime(startTime, endTime, workHours),
             items,
-            status: '발행',
-            inspector: document.getElementById('pqInspector').value.trim(),
+            status: '발행대기',
+            inspector: writer,
+            writer,
             note: document.getElementById('pqNote').value.trim()
         };
     }
 
     function openAddModal() {
-        UIUtils.showModal('초중종물 C/S 수기 작성', fillForm(), `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="ProdQualityModule.saveNew()">발행</button>`, 'xl');
+        UIUtils.showModal('초중종물 기준 양식 발행', fillForm(), `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="ProdQualityModule.saveNew()">기준 양식 발행</button>`, 'xl');
     }
 
     async function saveNew() {
         const data = collectData();
-            if (!data.date || !data.carModel) { UIUtils.toast('발행일자와 차종을 입력하세요.', 'warning'); return; }
+            if (!data.date || !data.carModel || !data.partName || !data.line) { UIUtils.toast('발행일자, 차종, 품명, 라인을 입력하세요.', 'warning'); return; }
             if (!data.items.length) { UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning'); return; }
         const saved = await Storage.add(STORE, data);
         UIUtils.closeModal();
-        UIUtils.toast('초중종물 C/S가 발행되었습니다.', 'success');
+        UIUtils.toast('초중종물 기준 양식이 발행되었습니다. 인쇄 완료 후 발행 이력이 남습니다.', 'success');
         search();
         printIssue(saved.id);
     }
@@ -12469,6 +13224,7 @@ var ProdQualityModule = (function() {
         if (!d) return;
         UIUtils.showModal('초중종물 C/S 보기', fillForm(d), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+            <button class="btn btn-outline" onclick="ProdQualityModule.openDataModal('${_js(id)}')">DATA 입력</button>
             <button class="btn btn-primary" onclick="UIUtils.closeModal(); setTimeout(()=>ProdQualityModule.edit('${_js(id)}'),50)">
                 <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">edit</span> 편집
             </button>
@@ -12488,16 +13244,20 @@ var ProdQualityModule = (function() {
 
     async function saveEdit(id) {
         const data = collectData();
-        if (!data.date || !data.carModel) { UIUtils.toast('발행일자와 차종을 입력하세요.', 'warning'); return; }
+        if (!data.date || !data.carModel || !data.partName || !data.line) { UIUtils.toast('발행일자, 차종, 품명, 라인을 입력하세요.', 'warning'); return; }
         if (!data.items.length) { UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning'); return; }
         const existing = Storage.getById(STORE, id) || {};
-        await Storage.update(STORE, id, { ...existing, ...data });
+        await Storage.update(STORE, id, { ...existing, ...data, status: existing.status || data.status });
         UIUtils.closeModal();
         UIUtils.toast('저장되었습니다.', 'success');
         search();
     }
 
     function remove(id) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('삭제 권한은 관리자에게만 있습니다.', 'warning');
+            return;
+        }
         UIUtils.confirm('삭제하시겠습니까?', async () => {
             await Storage.remove(STORE, id);
             search();
@@ -12506,8 +13266,8 @@ var ProdQualityModule = (function() {
 
     function exportData() {
         const data = _issues();
-        const headers = ['발행일', '구분', '라인', '차종', '품명', '생산 LOT', '항목수', '상태', '검사자', '비고'];
-        const rows = data.map(d => [d.date, d.type, d.line, d.carModel, d.partName, d.lotNo, (d.items || []).length, d.status, d.inspector, d.note]);
+        const headers = ['발행일', '구분', '라인', '차종', '품명', '생산 LOT', '작업시간', '항목수', '상태', '작성자', '비고'];
+        const rows = data.map(d => [d.date, d.type, d.line, d.carModel, d.partName, d.lotNo, d.time || _formatIssueTime(d.startTime, d.endTime, d.workHours), (d.items || []).length, d.status, d.writer || d.inspector, d.note]);
         Storage.exportToCSV(headers, rows, '초중종물관리');
     }
 
@@ -12527,10 +13287,14 @@ var ProdQualityModule = (function() {
             color: work.color || '',
             lotNo: work.lotNo || ((work.lots || []).map(l => l.lotNo).filter(Boolean).join(', ')),
             productionQty: Number(work.productionQty) || 0,
-            time: '',
+            startTime: work.startTime || '',
+            endTime: work.endTime || '',
+            workHours: _durationHours(work.startTime || '', work.endTime || ''),
+            time: _formatIssueTime(work.startTime || '', work.endTime || ''),
             items: _issueItemsForProduct(work.carModel, work.partName, work.color, []).filter(item => item.selected !== false).map(item => ({ ...item })),
-            status: '작성',
+            status: '발행대기',
             inspector: '',
+            writer: '',
             note: ''
         };
         if (!base.items.length) {
@@ -12538,16 +13302,16 @@ var ProdQualityModule = (function() {
             openTemplateModal(work.carModel || '', work.color || '');
             return;
         }
-        UIUtils.showModal('초중종물 C/S 작성', fillForm(base), `
+        UIUtils.showModal('초중종물 기준 양식 발행', fillForm(base), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" onclick="ProdQualityModule.saveWriteAndPrint('${_js(workId)}','${_js(existing ? existing.id : '')}')">발행</button>
+            <button class="btn btn-primary" onclick="ProdQualityModule.saveWriteAndPrint('${_js(workId)}','${_js(existing ? existing.id : '')}')">기준 양식 발행</button>
         `, 'xl');
     }
 
     async function saveWriteAndPrint(workId, issueId = '') {
         const data = collectData();
         data.workId = workId || data.workId || '';
-        data.status = '발행';
+        data.status = '발행대기';
         if (!data.date || !data.carModel) { UIUtils.toast('발행일자와 차종을 입력하세요.', 'warning'); return; }
         if (!data.items.length) { UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning'); return; }
         let saved;
@@ -12583,20 +13347,25 @@ var ProdQualityModule = (function() {
             color: work.color || '',
             lotNo: work.lotNo || ((work.lots || []).map(l => l.lotNo).filter(Boolean).join(', ')),
             productionQty: Number(work.productionQty) || 0,
+            startTime: work.startTime || '',
+            endTime: work.endTime || '',
+            workHours: _durationHours(work.startTime || '', work.endTime || ''),
+            time: _formatIssueTime(work.startTime || '', work.endTime || ''),
             items: items.map(item => ({ ...item })),
-            status: '발행',
+            status: '발행대기',
             inspector: '',
+            writer: '',
             note: ''
         };
         const existing = _issues().find(i => i.workId === workId);
         if (existing) await Storage.update(STORE, existing.id, data);
         else await Storage.add(STORE, data);
-        UIUtils.toast('초중종물 C/S가 발행되었습니다.', 'success');
+        UIUtils.toast('초중종물 기준 양식이 발행되었습니다.', 'success');
         search();
     }
 
     function openItemListModal() {
-        UIUtils.showModal('관리항목 편집', _itemMasterFormHtml(_masterItems()), `
+        UIUtils.showModal('초중종 관리 항목', _itemMasterFormHtml(_masterItems()), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="ProdQualityModule.saveItemMaster()">저장</button>
         `, 'xl');
@@ -12667,14 +13436,14 @@ var ProdQualityModule = (function() {
                     <span class="material-symbols-outlined">delete</span> 선택 삭제
                 </button>
                 <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.addMasterItemRow()">
-                    <span class="material-symbols-outlined">add</span> 관리항목 추가
+                    <span class="material-symbols-outlined">add</span> 초중종 관리 항목 추가
                 </button>
             </div>
             <div class="data-table-wrapper" style="max-height:60vh;overflow:auto;">
                 <table class="data-table" style="font-size:0.82rem;">
                     <thead>
                         <tr>
-                            <th style="width:36px;"></th><th style="width:44px;">삭제</th><th>관리항목</th><th>기본 기준</th><th>측정방법</th>
+                            <th style="width:36px;"></th><th style="width:44px;">삭제</th><th>초중종 관리 항목</th><th>기본 기준</th><th>측정방법</th>
                             <th style="width:90px;">단위</th><th style="width:110px;">입력유형</th>
                         </tr>
                     </thead>
@@ -12772,12 +13541,12 @@ var ProdQualityModule = (function() {
         const allDocs = Storage.getAll(STORE) || [];
 
         const syncItems = (items = []) =>
-            items
+            _sortItemsByMaster(items
                 .filter(i => masterKeySet.has(i.key))
                 .map(i => {
                     const m = masterByKey[i.key];
                     return { ...i, label: m.label, unit: m.unit, method: m.method, inputType: m.inputType };
-                });
+                }), newMasterItems);
 
         const presets   = allDocs.filter(d => d._docKind === PRESET_KIND);
         const templates = allDocs.filter(d => d._docKind === TEMPLATE_KIND);
@@ -12797,9 +13566,9 @@ var ProdQualityModule = (function() {
         const selectedColor = color || '';
         const tmpl      = _templateFor(selectedCar, selectedColor);
         const hasTemplate = !!(tmpl && Array.isArray(tmpl.items) && tmpl.items.length > 0);
-        const items = hasTemplate
+        const items = _sortItemsByMaster(hasTemplate
             ? _normalizeQualityItems(tmpl.items)
-            : _masterItems().map(item => ({ ...item, selected: true }));
+            : _masterItems().map(item => ({ ...item, selected: true })));
         UIUtils.showModal('차종/컬러별 초중종물 기준설정',
             _templateFormHtml(selectedCar, selectedColor, items, hasTemplate), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
@@ -12987,7 +13756,7 @@ var ProdQualityModule = (function() {
                     <thead>
                         <tr>
                             <th>프리셋명</th>
-                            <th style="text-align:center;">관리항목 수</th>
+                            <th style="text-align:center;">초중종 관리 항목 수</th>
                             <th style="width:220px;">작업</th>
                         </tr>
                     </thead>
@@ -13038,6 +13807,7 @@ var ProdQualityModule = (function() {
             ? preset.items
             : _masterItems().map(i => ({ ...i, selected: true }));
         const items = _sortItemsByMaster(rawPresetItems);
+        const pickerOptions = _presetPickerOptions(items);
         const modalTitle = viewOnly
             ? `프리셋 보기 — ${preset ? preset.name : ''}`
             : (preset ? `프리셋 수정 — ${preset.name}` : '새 프리셋 추가');
@@ -13050,15 +13820,18 @@ var ProdQualityModule = (function() {
             </div>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
                 <span style="font-size:0.85rem;font-weight:700;color:var(--text-primary);">
-                    관리항목 <span id="pqPresetEditCount" style="color:var(--accent-blue);">(${items.length}개)</span>
+                    초중종 관리 항목 <span id="pqPresetEditCount" style="color:var(--accent-blue);">(${items.length}개)</span>
                 </span>
                 ${viewOnly ? '' : `
-                    <div style="display:flex;gap:6px;">
+                    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
+                        <select class="form-select" id="pqPresetItemPicker" style="min-width:220px;height:34px;" ${pickerOptions.count ? '' : 'disabled'}>
+                            ${pickerOptions.html}
+                        </select>
+                        <button class="btn btn-outline btn-sm" id="pqPresetItemAddBtn" onclick="ProdQualityModule.addPresetItemFromPicker()" ${pickerOptions.count ? '' : 'disabled'}>
+                            <span class="material-symbols-outlined">playlist_add</span> 항목 선택
+                        </button>
                         <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.deleteCheckedPresetItems()">
                             <span class="material-symbols-outlined">delete</span> 선택 삭제
-                        </button>
-                        <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.addPresetItemRow()">
-                            <span class="material-symbols-outlined">add</span> 항목 추가
                         </button>
                     </div>`}
             </div>
@@ -13066,7 +13839,7 @@ var ProdQualityModule = (function() {
                 <table class="data-table" style="font-size:0.82rem;">
                     <thead><tr>
                         <th style="width:36px;text-align:center;">삭제</th>
-                        <th>관리항목명 <span style="font-weight:400;color:var(--text-muted);font-size:0.75rem;">(C/S 표시용)</span></th>
+                        <th>초중종 관리 항목 <span style="font-weight:400;color:var(--text-muted);font-size:0.75rem;">(C/S 표시용)</span></th>
                         <th>기준(Spec)</th>
                         <th>측정방법</th>
                         <th style="width:76px;">단위</th>
@@ -13118,11 +13891,56 @@ var ProdQualityModule = (function() {
                     placeholder="단위" style="width:74px;" ${readOnly ? 'disabled' : ''}></td>
             </tr>`;
     }
-    function addPresetItemRow() {
+
+    function _presetPickerOptions(existingItems = []) {
+        const usedKeys = new Set((existingItems || []).map(item => String(item?.key || '').trim()).filter(Boolean));
+        const available = _sortItemsByMaster(_masterItems())
+            .filter(item => !usedKeys.has(String(item.key || '').trim()));
+        const html = available.length
+            ? `<option value="">초중종 관리 항목 선택</option>${available.map(item =>
+                `<option value="${_esc(item.key || '')}">${_esc(item.label || '-')} ${item.method ? `| ${_esc(item.method)}` : ''}</option>`
+            ).join('')}`
+            : `<option value="">추가 가능한 항목이 없습니다</option>`;
+        return { html, count: available.length };
+    }
+
+    function _refreshPresetEditTools() {
+        const rows = [...document.querySelectorAll('.pq-preset-item-row')];
+        const countEl = document.getElementById('pqPresetEditCount');
+        if (countEl) countEl.textContent = `(${rows.length}개)`;
+        const picker = document.getElementById('pqPresetItemPicker');
+        if (picker) {
+            const items = rows.map(row => ({
+                key: row.querySelector('.pq-preset-key')?.value || '',
+                label: row.querySelector('.pq-preset-label')?.value || ''
+            }));
+            const options = _presetPickerOptions(items);
+            picker.innerHTML = options.html;
+            picker.disabled = !options.count;
+            const addBtn = document.getElementById('pqPresetItemAddBtn');
+            if (addBtn) addBtn.disabled = !options.count;
+        }
+    }
+
+    function addPresetItemFromPicker() {
+        const picker = document.getElementById('pqPresetItemPicker');
         const body = document.getElementById('pqPresetEditBody');
-        if (!body) return;
-        body.insertAdjacentHTML('beforeend', _presetItemRowHtml({}));
-        body.querySelector('tr:last-child .pq-preset-label')?.focus();
+        const key = picker?.value || '';
+        if (!body || !key) {
+            UIUtils.toast('추가할 초중종 관리 항목을 선택하세요.', 'warning');
+            return;
+        }
+        const item = _masterItems().find(master => String(master.key || '') === key);
+        if (!item) {
+            UIUtils.toast('선택한 관리 항목을 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        body.insertAdjacentHTML('beforeend', _presetItemRowHtml({ ...item, selected: true }));
+        _refreshPresetEditTools();
+    }
+
+    function addPresetItemRow() {
+        addPresetItemFromPicker();
     }
 
     function deleteCheckedPresetItems() {
@@ -13130,6 +13948,7 @@ var ProdQualityModule = (function() {
         const targets = rows.filter(r => r.querySelector('.pq-preset-delete')?.checked);
         if (!targets.length) { UIUtils.toast('삭제할 항목을 체크하세요.', 'warning'); return; }
         targets.forEach(r => r.remove());
+        _refreshPresetEditTools();
     }
 
     async function savePresetEdit(presetId) {
@@ -13261,7 +14080,7 @@ var ProdQualityModule = (function() {
         const carModel = document.getElementById('pqTplCarModel')?.value || '';
         if (!carModel) { UIUtils.toast('차종을 선택하세요.', 'warning'); return; }
         const color = document.getElementById('pqTplColor')?.value || '';
-        const items = [...document.querySelectorAll('.pq-template-item-row')].map(row => ({
+        const items = _sortItemsByMaster([...document.querySelectorAll('.pq-template-item-row')].map(row => ({
             key: row.querySelector('.pq-tpl-key')?.value || Storage.generateId(),
             label: row.querySelector('.pq-tpl-label')?.value.trim() || '',
             spec: row.querySelector('.pq-tpl-spec')?.value.trim() || '',
@@ -13270,7 +14089,7 @@ var ProdQualityModule = (function() {
             upperSpec: row.querySelector('.pq-tpl-upper')?.value.trim() || '',
             lowerSpec: row.querySelector('.pq-tpl-lower')?.value.trim() || '',
             selected: !!row.querySelector('.pq-tpl-selected')?.checked
-        })).map(item => _isRangeSpecItem(item) ? { ...item, spec: _composeRangeSpec(item) } : item).filter(item => item.label);
+        })).map(item => _isRangeSpecItem(item) ? { ...item, spec: _composeRangeSpec(item) } : item).filter(item => item.label));
         const existing = _exactTemplateFor(carModel, color);
         const payload = { _docKind: TEMPLATE_KIND, carModel, color, items, updatedAt: UIUtils.now() };
         if (existing) await Storage.update(STORE, existing.id, payload);
@@ -13383,7 +14202,7 @@ var ProdQualityModule = (function() {
             UIUtils.toast('일괄 등록할 차종/컬러를 선택하세요.', 'warning');
             return;
         }
-        const items = [...document.querySelectorAll('.pq-bulk-item-row')].map(row => ({
+        const items = _sortItemsByMaster([...document.querySelectorAll('.pq-bulk-item-row')].map(row => ({
             key: row.querySelector('.pq-bulk-key')?.value || Storage.generateId(),
             label: row.querySelector('.pq-bulk-label')?.value.trim() || '',
             spec: row.querySelector('.pq-bulk-spec')?.value.trim() || '',
@@ -13392,7 +14211,7 @@ var ProdQualityModule = (function() {
             upperSpec: row.querySelector('.pq-bulk-upper')?.value.trim() || '',
             lowerSpec: row.querySelector('.pq-bulk-lower')?.value.trim() || '',
             selected: !!row.querySelector('.pq-bulk-selected')?.checked
-        })).map(item => _isRangeSpecItem(item) ? { ...item, spec: _composeRangeSpec(item) } : item).filter(item => item.label);
+        })).map(item => _isRangeSpecItem(item) ? { ...item, spec: _composeRangeSpec(item) } : item).filter(item => item.label));
         if (!items.length) {
             UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning');
             return;
@@ -13416,116 +14235,254 @@ var ProdQualityModule = (function() {
 
     function onIssueCarChange() {
         const car = document.getElementById('pqCarModel')?.value || '';
-        const color = document.getElementById('pqColor')?.value || '';
         const partSel = document.getElementById('pqPartName');
-        const selectedPart = partSel?.value || '';
-        if (partSel) partSel.innerHTML = _partOptions(car, selectedPart);
+        if (partSel) partSel.innerHTML = _partOptions(car, '');
+        const part = partSel?.value || '';
+        const colorInput = document.getElementById('pqColor');
+        const color = _resolveIssueColor(car, part, colorInput?.value || '');
+        if (colorInput) colorInput.value = color;
         const itemsEl = document.getElementById('pqIssueItems');
         if (itemsEl) {
             const currentItems = _collectIssueItems();
-            itemsEl.innerHTML = _issueItemRows(_issueItemsForProduct(car, partSel?.value || '', color, currentItems));
+            itemsEl.innerHTML = car && part
+                ? _issueItemRows(_issueItemsForProduct(car, part, color, currentItems))
+                : _issueItemRows([]);
         }
     }
 
     function onIssuePartChange() {
         const car = document.getElementById('pqCarModel')?.value || '';
         const part = document.getElementById('pqPartName')?.value || '';
-        const color = document.getElementById('pqColor')?.value || '';
+        const colorInput = document.getElementById('pqColor');
+        const color = _resolveIssueColor(car, part, colorInput?.value || '');
+        if (colorInput) colorInput.value = color;
         const itemsEl = document.getElementById('pqIssueItems');
         if (itemsEl) {
             const currentItems = _collectIssueItems();
-            itemsEl.innerHTML = _issueItemRows(_issueItemsForProduct(car, part, color, currentItems));
+            itemsEl.innerHTML = car && part
+                ? _issueItemRows(_issueItemsForProduct(car, part, color, currentItems))
+                : _issueItemRows([]);
         }
     }
 
     function printIssue(id) {
         const d = Storage.getById(STORE, id);
         if (!d) return;
-        const items = _normalizeQualityItems(d.items || []);
+        const items = _sortItemsByMaster(_normalizeQualityItems(d.items || []));
         const typeHeaders = (d.types && d.types.length ? d.types : ['초물', '중물', '종물']);
-        const measurePlaceholder = item => {
+        const selectedTypes = new Set(typeHeaders);
+        const measureCellMode = item => {
             const label = `${item.label || ''} ${item.method || ''}`;
-            if (/도막|두께|film/i.test(label)) return 'Film';
-            if (/색차|△L|△a|△b/i.test(label)) return item.unit || item.label || '△';
-            if (/부착|cross|cut|tape/i.test(label)) return 'Tape';
-            return 'OK , NG';
+            if (_isFilmSpecItem(item) || /도막|두께|film/i.test(label)) return { type: 'box', text: 'Film' };
+            if (/부착|cross|cut|tape/i.test(label)) return { type: 'box', text: 'Tape' };
+            if (_isColorSpecItem(item) || _isGlossSpecItem(item) || /색차|광택|△L|△a|△b/i.test(label)) {
+                return { type: 'blank', text: '' };
+            }
+            return { type: 'blank', text: '' };
+        };
+        const itemDisplayInfo = item => {
+            const key = String(item.key || '');
+            if (key === 'color_l') return { groupKey: 'color', groupLabel: '색차', detailHtml: '△L<br><span class="item-sub-en">(Luminosity)</span>' };
+            if (key === 'color_a') return { groupKey: 'color', groupLabel: '색차', detailHtml: '△a<br><span class="item-sub-en">(-a Green, +a Red)</span>' };
+            if (key === 'color_b') return { groupKey: 'color', groupLabel: '색차', detailHtml: '△b<br><span class="item-sub-en">(-b Blue, +b Yellow)</span>' };
+            if (key === 'gloss')   return { groupKey: 'gloss', groupLabel: '광택', detailHtml: 'G' };
+            if (key === 'film_under') return { groupKey: 'film', groupLabel: '도막두께', detailHtml: '하도' };
+            if (key === 'film_top')   return { groupKey: 'film', groupLabel: '도막두께', detailHtml: '상도' };
+            if (key === 'adhesion') return { groupKey: 'adhesion', groupLabel: '부착력<br><span class="item-group-sub">(Cross Cutting)</span>', detailHtml: '' };
+            if (key === 'surface_tension') return { groupKey: 'surface_tension', groupLabel: '표면장력', detailHtml: '' };
+            if (key === 'injection_color') return { groupKey: 'injection_color', groupLabel: '사출품 color', detailHtml: '' };
+            if (key === 'touch') return { groupKey: 'touch', groupLabel: '촉감', detailHtml: '' };
+            if (key === 'fit_check') return { groupKey: 'fit_check', groupLabel: '형합 검사', detailHtml: '' };
+            return { groupKey: key || `single:${item.label || ''}`, groupLabel: item.label || '', detailHtml: '' };
         };
         const specCells = item => {
             const spec = item.spec || '';
             const { upperSpec, lowerSpec } = _rangeSpecValues(item);
+            const colorSigned = (value, sign) => {
+                const raw = String(value || '').trim();
+                if (!raw) return '';
+                const normalized = raw.replace(/^[+\-−]\s*/, '');
+                return `${sign}${normalized}`;
+            };
             if (_isColorSpecItem(item)) {
-                return `<td class="spec-upper">${_esc(upperSpec || '')}</td><td class="spec-lower">${_esc(lowerSpec || '')}</td>`;
+                return `<td class="spec-upper">${_esc(colorSigned(upperSpec, '+'))}</td><td class="spec-lower">${_esc(colorSigned(lowerSpec, '-'))}</td>`;
             }
             if (_isFilmSpecItem(item)) {
-                const subLabel = (item.label || '').replace(/도막두께|\(|\)/g, '').trim() || '상';
                 const rangeText = (upperSpec || lowerSpec)
-                    ? `(${lowerSpec || ''} ~ ${upperSpec || ''}) ${item.unit || ''}`.trim()
-                    : (spec || '(      ~      ) ' + (item.unit || ''));
-                return `<td class="spec-upper">${_esc(subLabel)}</td><td class="spec-lower">${_esc(rangeText)}</td>`;
+                    ? `${lowerSpec || ''} ~ ${upperSpec || ''} ${item.unit || ''}`.trim()
+                    : (spec || `      ~       ${item.unit || ''}`.trim());
+                return `<td class="spec-upper">&nbsp;</td><td class="spec-lower film-range-spec">${_esc(rangeText)}</td>`;
             }
             return `<td class="spec-text" colspan="2">${_esc(spec || '기준에 준할 것')}</td>`;
         };
-        const rows = items.map(item => {
-            const ph = measurePlaceholder(item);
-            const muted = ph === 'OK , NG' ? ' muted' : '';
+        const renderMeasureCell = item => {
+            const mode = measureCellMode(item);
+            if (mode.type === 'box') {
+                return `<td class="measure-cell"><span>${_esc(mode.text)}</span></td>`;
+            }
+            return `<td class="measure-cell blank"></td>`;
+        };
+        const displayInfos = items.map(itemDisplayInfo);
+        const groupRowspans = displayInfos.map((info, idx) => {
+            if (idx > 0 && displayInfos[idx - 1].groupKey === info.groupKey) return 0;
+            let span = 1;
+            for (let i = idx + 1; i < displayInfos.length; i += 1) {
+                if (displayInfos[i].groupKey !== info.groupKey) break;
+                span += 1;
+            }
+            return span;
+        });
+        const lotHead = (type, suffix) => {
+            const checked = selectedTypes.has(type) && type !== '중물';
             return `
-                <tr>
+                <th class="lot-head">
+                    <div class="measure-type">
+                        <span class="type-check ${checked ? 'checked' : ''}">${checked ? '✓' : ''}</span>
+                        <span>${_esc(type)}</span>
+                    </div>
+                    <div class="lot-sub">LOT NO. - ${suffix}</div>
+                </th>
+            `;
+        };
+        const rows = items.map((item, idx) => {
+            const info = displayInfos[idx];
+            const groupCellHtml = groupRowspans[idx] > 0
+                ? `<td class="item-group" rowspan="${groupRowspans[idx]}">${info.groupLabel}</td>`
+                : '';
+            const rowClass = [
+                _isColorSpecItem(item) ? 'color-row' : '',
+                _isGlossSpecItem(item) ? 'gloss-row' : '',
+                _isFilmSpecItem(item) ? 'film-row' : ''
+            ].filter(Boolean).join(' ');
+            return `
+                <tr class="${rowClass}">
                     <td class="check-cell"><span class="check-box"></span></td>
-                    <td class="item-name">${_esc(item.label || '')}</td>
+                    ${groupCellHtml}
+                    <td class="item-detail">${info.detailHtml || '&nbsp;'}</td>
                     ${specCells(item)}
-                    <td class="cycle-cell">2회/LOT<br>초중:4hr 이내</td>
                     <td class="method-cell">${_esc(item.method || '')}</td>
-                    <td class="measure-cell${muted}"><span>${_esc(ph)}</span></td>
-                    <td class="measure-cell${muted}"><span>${_esc(ph)}</span></td>
-                    <td class="measure-cell${muted}"><span>${_esc(ph)}</span></td>
+                    ${renderMeasureCell(item)}
+                    ${renderMeasureCell(item)}
+                    ${renderMeasureCell(item)}
                     <td class="judge-cell">OK , NG</td>
                 </tr>`;
         }).join('');
         const dateLot = `${_esc(d.date || '')}${d.lotNo ? `<br><span>${_esc(d.lotNo)}</span>` : ''}`;
+        const logoSrc = new URL('assets/kc-logo.png', window.location.href).href;
         const html = `
 <!doctype html><html><head><meta charset="utf-8"><title>초중종물 C/S</title>
 <style>
 *{box-sizing:border-box}
-body{font-family:Arial,'Malgun Gothic',sans-serif;margin:10px;color:#000;background:#fff}
-.print-btn{position:fixed;right:18px;top:12px;padding:8px 14px;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:6px;cursor:pointer}
-.sheet{width:1220px;margin:0 auto}
-.title-row{position:relative;margin-bottom:8px}
-h1{font-size:42px;letter-spacing:3px;text-align:center;margin:0 0 12px;font-weight:800}
-.notes{position:absolute;right:0;top:6px;color:red;font-size:13px;line-height:1.35;font-weight:700}
-.top-grid{display:grid;grid-template-columns:720px 380px;justify-content:space-between;align-items:start;margin-bottom:8px}
+body{font-family:Arial,'Malgun Gothic',sans-serif;margin:0;padding:20px 0;color:#111827;background:#eef2f7}
+.print-toolbar{position:fixed;right:18px;top:12px;z-index:10;display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;box-shadow:0 10px 24px rgba(15,23,42,.16);font-size:12px;color:#475569}
+.print-btn{padding:8px 14px;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:6px;cursor:pointer;font-weight:700}
+[contenteditable="true"]:focus{outline:2px solid #2563eb;outline-offset:-2px;background:#fff7d6}
+.print-page{width:100%;margin:0 auto}
+.sheet{width:1180px;max-width:calc(100% - 32px);margin:20px auto;page-break-inside:avoid;background:#fff;border:2px solid #111827;padding:12px;box-shadow:0 18px 44px rgba(15,23,42,.18),0 3px 10px rgba(15,23,42,.12)}
+.title-row{position:relative;display:flex;align-items:center;justify-content:center;min-height:62px;margin-bottom:8px;border:2px solid #111827;background:#fff}
+.title-logo{position:absolute;left:14px;top:50%;transform:translateY(-50%);width:190px;height:48px;display:flex;align-items:center;justify-content:flex-start;background:#fff}
+.title-logo img{display:block;max-width:100%;max-height:44px;object-fit:contain}
+.title-row:after{content:'PAINT PROCESS';position:absolute;right:14px;bottom:10px;font-size:10px;font-weight:800;letter-spacing:.8px;color:#64748b}
+h1{font-size:34px;letter-spacing:1px;text-align:center;margin:0;font-weight:900;color:#0f172a}
+.top-grid{display:grid;grid-template-columns:1fr 340px;justify-content:space-between;align-items:start;margin-bottom:8px;gap:8px}
 table{border-collapse:collapse;width:100%}
-.meta th,.meta td,.sign th,.sign td{border:2px solid #000;text-align:center;padding:8px 7px;font-size:14px;height:44px}
-.meta th,.sign th{background:#d9d9d9;font-weight:800}
-.meta .ko{display:block;font-size:14px}.meta .en{display:block;font-size:12px}
-.sign td{height:46px;background:#fff}
-.main{table-layout:fixed;border:2px solid #000}
-.main th,.main td{border:1.7px solid #000;text-align:center;vertical-align:middle;padding:5px 4px;font-size:14px}
-.main th{background:#d9d9d9;font-weight:800}
-.subhead th{background:#fff;font-weight:800}
-.check-cell{width:44px}.check-box{display:inline-block;width:30px;height:30px;border:3px solid #bcbcbc;background:#f8f8f8}
-.item-name{font-size:21px;font-weight:700;line-height:1.25}
-.spec-upper{font-size:18px;font-weight:700}.spec-lower,.spec-text{font-size:16px;line-height:1.35}
-.cycle-cell{font-size:15px;line-height:1.35;font-weight:700}.method-cell{font-size:15px;line-height:1.25}
-.measure-head{background:#f2f2f2!important}.lot-head{background:#fff!important;font-size:15px!important;font-weight:500!important}
-.measure-type{display:flex;align-items:center;justify-content:center;gap:8px;font-size:17px;font-weight:800}
-.tiny-box{width:24px;height:24px;border:3px solid #bcbcbc;background:#eee;display:inline-flex;align-items:center;justify-content:center;color:#999}
-.measure-cell{height:110px}.measure-cell span{display:inline-flex;width:112px;height:100px;border:1.5px dashed #1f4e79;align-items:center;justify-content:center;color:#8ab342;font-size:31px}
-.measure-cell.muted span{border:0;color:#b6b6b6;font-size:16px}
-.judge-cell{font-size:18px;color:#5f6b75}
+.meta,.sign,.main{background:#fff}
+.meta th,.meta td,.sign th,.sign td{border:1.5px solid #111827;text-align:center;padding:5px 4px;font-size:12px;height:32px}
+.meta th,.sign th{background:#e8eef6;font-weight:900;color:#0f172a}
+.meta td,.sign td{font-weight:700;color:#111827}
+.meta .ko{display:block;font-size:12px}.meta .en{display:block;font-size:9px;color:#475569}
+.sign td{height:38px;background:#fff}
+.main{table-layout:fixed;border:2px solid #111827}
+.main th,.main td{border:1.2px solid #111827;text-align:center;vertical-align:middle;padding:4px 3px;font-size:12px}
+.main th{background:#e8eef6;font-weight:900;color:#0f172a}
+.subhead th{background:#f8fafc;font-weight:900}
+.spec-head-upper,.spec-upper{border-right:none !important}
+.spec-head-lower,.spec-lower{border-left:none !important}
+.check-cell{width:38px}.check-box{display:inline-block;width:22px;height:22px;border:1.5px solid #9ca3af;background:#f8fafc}
+.check-head{line-height:1.15;word-break:keep-all}
+.item-group{font-size:16px;font-weight:800;line-height:1.15;white-space:normal;word-break:keep-all}
+.item-group-sub{display:block;font-size:10px;font-weight:700;line-height:1.05}
+.item-detail{font-size:14px;font-weight:700;line-height:1.15}
+.item-sub-en{display:block;font-size:10px;font-weight:700;line-height:1.1}
+.spec-upper{font-size:16px;font-weight:900}.spec-lower,.spec-text{font-size:14px;line-height:1.25;font-weight:900}
+.film-range-spec{text-align:center!important;vertical-align:middle!important;font-weight:900}
+.cycle-note{display:flex;align-items:center;gap:10px;min-height:34px;margin:0 0 8px;border:1.5px solid #111827;background:#f8fafc;padding:6px 10px;font-size:12px;font-weight:800;color:#0f172a}
+.cycle-note strong{display:inline-flex;align-items:center;align-self:stretch;padding:0 10px;margin:-6px 2px -6px -10px;background:#e8eef6;border-right:1.5px solid #111827;white-space:nowrap}
+.cycle-note span{display:inline-flex;align-items:center;padding:3px 8px;border:1px solid #cbd5e1;background:#fff;border-radius:4px;white-space:nowrap}
+.method-cell{font-size:12px;line-height:1.2}
+.measure-head{background:#dbeafe!important}.lot-head{background:#f8fafc!important;font-size:12px!important;font-weight:700!important}
+.measure-type{display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;font-weight:800;line-height:1}
+.lot-sub{margin-top:4px;font-size:11px;font-weight:700;letter-spacing:.2px}
+.type-check{width:18px;height:18px;border:1.5px solid #9ca3af;background:#fff;display:inline-flex;align-items:center;justify-content:center;color:#64748b;font-size:12px;line-height:1}
+.type-check.checked{color:#334155}
+.measure-cell{height:78px}
+.measure-cell span{display:inline-flex;width:92px;height:64px;border:1.2px dashed #64748b;background:#fdfefe;align-items:center;justify-content:center;color:#7aa332;font-size:24px}
+.measure-cell.blank{background:#fff}
+.judge-cell{font-size:15px;color:#5f6b75}
+.main tr.color-row td{padding-top:2px;padding-bottom:2px}
+.main tr.color-row .item-group{font-size:15px}
+.main tr.color-row .item-detail{font-size:12px;line-height:1.02}
+.main tr.color-row .item-sub-en{font-size:9px}
+.main tr.color-row .spec-upper,.main tr.color-row .spec-lower{font-size:13px;line-height:1.05;font-weight:900}
+.main tr.color-row .method-cell,.main tr.color-row .judge-cell{font-size:11px}
+.main tr.color-row .measure-cell{height:44px}
+.main tr.color-row .measure-cell span{width:72px;height:30px;font-size:0}
+.main tr.gloss-row .measure-cell{height:52px}
 @media print{
-  @page{size:A4 landscape;margin:5mm}
-  body{margin:0}.print-btn{display:none}.sheet{width:100%}
-  h1{font-size:34px}.notes{font-size:11px}.main th,.main td{font-size:12px}.item-name{font-size:18px}
+  @page{size:A4 landscape;margin:3mm}
+  html,body{width:291mm;height:204mm;overflow:hidden}
+  body{margin:0;padding:0;background:#fff;color:#000}
+  .print-toolbar{display:none}
+  .print-page{width:291mm;height:204mm;margin:0;overflow:hidden;position:relative;break-before:avoid;break-after:avoid;break-inside:avoid;page-break-after:avoid;page-break-before:avoid;page-break-inside:avoid}
+  .sheet{width:291mm;height:204mm;max-width:none;overflow:hidden;margin:0;padding:2mm;border:1.4px solid #111827;box-shadow:none;transform:none;transform-origin:top left;break-before:avoid;break-after:avoid;break-inside:avoid;page-break-after:avoid;page-break-before:avoid;page-break-inside:avoid}
+  .title-row{min-height:15mm;margin-bottom:1.5mm;border-width:1.4px}
+  .title-logo{left:3mm;width:46mm;height:12mm}
+  .title-logo img{max-height:11mm}
+  .title-row:after{font-size:8px}
+  h1{font-size:30px;margin:0;letter-spacing:.8px}
+  .top-grid{grid-template-columns:1fr 86mm;gap:2mm;margin-bottom:1.5mm}
+  .meta th,.meta td,.sign th,.sign td{font-size:11px;height:28px;padding:3px 2px;border-width:1.1px}
+  .meta .ko{font-size:11px}.meta .en{font-size:9px}
+  .sign td{height:30px}
+  .main{border-width:1.4px}
+  .main th,.main td{font-size:11px;padding:2px 2px;border-width:1px}
+  .item-group{font-size:14px}
+  .item-group-sub{font-size:9px}
+  .item-detail{font-size:12px}
+  .item-sub-en{font-size:8px}
+  .spec-upper{font-size:15px}.spec-lower,.spec-text{font-size:13px;font-weight:900}
+  .cycle-note{min-height:8mm;margin-bottom:1.5mm;padding:1mm 2mm;font-size:10.5px;border-width:1.1px}
+  .cycle-note strong{padding:0 2mm;margin:-1mm 1mm -1mm -2mm;border-right-width:1.1px}
+  .cycle-note span{padding:1px 5px;border-radius:2px}
+  .method-cell,.lot-head,.measure-type,.judge-cell{font-size:11px}
+  .lot-sub{font-size:10px}
+  .type-check{width:15px;height:15px;font-size:10px}
+  .measure-cell{height:68px}
+  .measure-cell span{width:84px;height:56px;font-size:21px}
+  .check-box{width:20px;height:20px}
+  .main tr.color-row td{padding-top:1px;padding-bottom:1px}
+  .main tr.color-row .item-group{font-size:13px}
+  .main tr.color-row .item-detail{font-size:11px}
+  .main tr.color-row .item-sub-en{font-size:7px}
+  .main tr.color-row .spec-upper,.main tr.color-row .spec-lower{font-size:12px;font-weight:900}
+  .main tr.color-row .method-cell,.main tr.color-row .judge-cell{font-size:10px}
+  .main tr.color-row .measure-cell{height:34px}
+  .main tr.color-row .measure-cell span{width:68px;height:22px}
+  .main tr.gloss-row .measure-cell{height:42px}
 }
 </style></head><body>
-<button class="print-btn" onclick="window.print()">인쇄</button>
-<div class="sheet">
-  <div class="title-row">
-    <h1>도장 (초 · 중 · 종물) CHECK SHEET</h1>
-    <div class="notes">※ 크리어(Clear) 제품은 색차 및 광택 제외<br>※ 비계획 재가동 시 종물검사 제외<br><span style="color:#111">(비계획 정지 직전 검사로 대체)</span></div>
-  </div>
-  <div class="top-grid">
-    <table class="meta">
+<div class="print-toolbar">
+  <span>클릭해서 수정 후 인쇄물 발행</span>
+  <button class="print-btn" onclick="window.print()">인쇄물 발행</button>
+</div>
+<div class="print-page">
+  <div class="sheet">
+    <div class="title-row">
+      <div class="title-logo"><img src="${_esc(logoSrc)}" alt="KC 케미칼"></div>
+      <h1>도장 (초 · 중 · 종물) CHECK SHEET</h1>
+    </div>
+    <div class="top-grid">
+      <table class="meta">
       <tr>
         <th><span class="ko">차종</span><span class="en">model</span></th>
         <th><span class="ko">부품</span><span class="en">Item</span></th>
@@ -13542,42 +14499,116 @@ table{border-collapse:collapse;width:100%}
         <td><strong>${dateLot}</strong></td>
         <td><strong>${_esc(d.time || ':')}</strong></td>
       </tr>
-    </table>
-    <table class="sign">
-      <tr><th>작&nbsp;&nbsp;&nbsp;성</th><th>검&nbsp;&nbsp;&nbsp;토</th><th>승&nbsp;&nbsp;&nbsp;인</th></tr>
-      <tr><td></td><td></td><td></td></tr>
-    </table>
-  </div>
-  <table class="main">
+      </table>
+      <table class="sign">
+        <tr><th>작&nbsp;&nbsp;&nbsp;성</th><th>검&nbsp;&nbsp;&nbsp;토</th><th>승&nbsp;&nbsp;&nbsp;인</th></tr>
+        <tr><td></td><td></td><td></td></tr>
+      </table>
+    </div>
+    <div class="cycle-note">
+      <strong>주기 / 샘플 수량</strong>
+      <span>생산계획 시간 기준으로 생산 LOT가 4시간 이내: 초, 종 - 2회 실시</span>
+      <span>생산 LOT가 4hr 초과: 초, 중, 종 - 3회 실시</span>
+    </div>
+    <table class="main">
     <colgroup>
-      <col style="width:45px"><col style="width:194px"><col style="width:95px"><col style="width:136px"><col style="width:114px"><col style="width:136px"><col style="width:125px"><col style="width:125px"><col style="width:125px"><col style="width:125px">
+      <col style="width:42px"><col style="width:86px"><col style="width:138px"><col style="width:90px"><col style="width:122px"><col style="width:112px"><col style="width:100px"><col style="width:100px"><col style="width:100px"><col style="width:82px">
     </colgroup>
     <thead>
       <tr>
-        <th rowspan="2">검사여부</th>
-        <th rowspan="2">관리 항목</th>
+        <th rowspan="2" class="check-head">검사<br>여부</th>
+        <th rowspan="2" colspan="2">관리 항목</th>
         <th colspan="2">관리 규격</th>
-        <th>주기</th>
         <th rowspan="2">점검 방법</th>
         <th colspan="3" class="measure-head">측정 ( 측정값 / 결과 작성)</th>
         <th rowspan="2">판&nbsp;&nbsp;정</th>
       </tr>
       <tr class="subhead">
-        <th>상</th><th>하</th><th>샘플 수량</th>
-        <th class="lot-head"><div class="measure-type"><span class="tiny-box">✓</span>${_esc(typeHeaders[0] || '초물')}</div>LOT NO. - IP</th>
-        <th class="lot-head"><div class="measure-type"><span class="tiny-box"></span>${_esc(typeHeaders[1] || '중물')}</div>LOT NO. - MP</th>
-        <th class="lot-head"><div class="measure-type"><span class="tiny-box">✓</span>${_esc(typeHeaders[2] || '종물')}</div>LOT NO. - FP</th>
+        <th class="spec-head-upper">상</th><th class="spec-head-lower">하</th>
+        ${lotHead(typeHeaders[0] || '초물', 'IP')}
+        ${lotHead(typeHeaders[1] || '중물', 'MP')}
+        ${lotHead(typeHeaders[2] || '종물', 'FP')}
       </tr>
     </thead>
     <tbody>${rows}</tbody>
-  </table>
+    </table>
+  </div>
 </div>
+<script>
+document.querySelectorAll('.sheet h1,.sheet th,.sheet td,.sheet .cycle-note,.sheet .cycle-note *,.sheet .measure-cell span').forEach(el => {
+  if (el.querySelector('.check-box')) return;
+  el.setAttribute('contenteditable', 'true');
+  el.setAttribute('spellcheck', 'false');
+});
+document.querySelectorAll('.check-box,.type-check').forEach(el => {
+  el.addEventListener('click', () => {
+    el.textContent = el.textContent.trim() ? '' : '\\u2713';
+  });
+});
+function fitOnePage() {
+  const page = document.querySelector('.print-page');
+  const sheet = document.querySelector('.sheet');
+  if (!page || !sheet) return;
+  const main = document.querySelector('.main');
+  const rows = main ? Array.from(main.tBodies[0]?.rows || []) : [];
+  sheet.style.transform = '';
+  if (main) main.style.height = '';
+  rows.forEach(row => {
+    row.style.height = '';
+    Array.from(row.cells || []).forEach(cell => { cell.style.height = ''; });
+  });
+
+  if (main && rows.length) {
+    const sheetRect = sheet.getBoundingClientRect();
+    const mainRect = main.getBoundingClientRect();
+    const sheetStyle = getComputedStyle(sheet);
+    const paddingBottom = parseFloat(sheetStyle.paddingBottom) || 0;
+    const availableMainH = Math.max(0, sheet.clientHeight - (mainRect.top - sheetRect.top) - paddingBottom - 2);
+    const headH = Array.from(main.tHead?.rows || []).reduce((sum, row) => sum + row.getBoundingClientRect().height, 0);
+    const rowHeights = rows.map(row => row.getBoundingClientRect().height);
+    const bodyH = rowHeights.reduce((sum, height) => sum + height, 0);
+    const targetBodyH = Math.max(bodyH, availableMainH - headH);
+
+    if (availableMainH > 0) main.style.height = Math.floor(availableMainH) + 'px';
+    if (targetBodyH > bodyH + 1 && bodyH > 0) {
+      const extra = targetBodyH - bodyH;
+      rows.forEach((row, idx) => {
+        const weight = rowHeights[idx] / bodyH;
+        const height = Math.floor(rowHeights[idx] + (extra * weight));
+        row.style.height = height + 'px';
+        Array.from(row.cells || []).forEach(cell => { cell.style.height = height + 'px'; });
+      });
+    }
+  }
+
+  const pageW = page.clientWidth || 1100;
+  const pageH = page.clientHeight || 770;
+  const sheetW = sheet.scrollWidth || pageW;
+  const sheetH = sheet.scrollHeight || pageH;
+  const scale = Math.min(1, pageW / sheetW, pageH / sheetH);
+  sheet.style.transform = scale < 0.999 ? 'scale(' + Math.max(0.86, scale - 0.006).toFixed(3) + ')' : 'none';
+}
+window.addEventListener('beforeprint', fitOnePage);
+window.addEventListener('afterprint', () => {
+  const sheet = document.querySelector('.sheet');
+  const main = document.querySelector('.main');
+  const rows = main ? Array.from(main.tBodies[0]?.rows || []) : [];
+  if (sheet) sheet.style.transform = '';
+  if (main) main.style.height = '';
+  rows.forEach(row => {
+    row.style.height = '';
+    Array.from(row.cells || []).forEach(cell => { cell.style.height = ''; });
+  });
+  if (window.opener && window.opener.ProdQualityModule && window.opener.ProdQualityModule.markIssuePrinted) {
+    window.opener.ProdQualityModule.markIssuePrinted('${_js(id)}');
+  }
+});
+</script>
 </body></html>`;
         const win = window.open('', '_blank');
         if (!win) { UIUtils.toast('팝업 차단을 해제하세요.', 'warning'); return; }
         win.document.write(html);
         win.document.close();
-        setTimeout(() => win.print(), 250);
     }
 
     return {
@@ -13611,7 +14642,13 @@ table{border-collapse:collapse;width:100%}
         ,reloadTemplateForCar
         ,onIssueCarChange
         ,onIssuePartChange
+        ,onIssueTimeChange
         ,printIssue
+        ,markIssuePrinted
+        ,openDataModal
+        ,saveMeasureRecord
+        ,openMeasureHistory
+        ,renderMeasureHistoryTable
         ,applyPreset
         ,applyPresetFromSelect
         ,saveCurrentAsPreset

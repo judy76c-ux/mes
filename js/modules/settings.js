@@ -1008,6 +1008,8 @@ const SettingsModule = (function() {
         const initialPaintRows = (p.paintMaterials && p.paintMaterials.length > 0)
             ? p.paintMaterials.map(row => ({
                 paintSpec:  row.paintSpec || row.typeFilter || '',
+                rowManufacturer: row.rowManufacturer || row.paintMaker || row.manufacturer || '',
+                rowSupplier: row.rowSupplier || '',
                 mainId:     row.mainId    || row.paintMaterialId || '',
                 hardId:     row.hardId    || '',
                 thinnerId:  row.thinnerId || ''
@@ -1502,20 +1504,30 @@ const SettingsModule = (function() {
         const mainId      = rowData.mainId      || '';
         const hardId      = rowData.hardId      || '';
         const thinnerId   = rowData.thinnerId   || '';
-        const rowSupplier = rowData.rowSupplier || '';
+        const legacySupplier = rowData.rowSupplier || '';
+        const paintById = id => id ? allPaints.find(p => p.id === id) : null;
+        const mainPm = paintById(mainId);
+        const selectedManufacturer = [mainPm, paintById(hardId), paintById(thinnerId)]
+            .map(p => (p && p.manufacturer) || '')
+            .find(Boolean) || '';
+        const manufacturerSet = new Set(allPaints.map(p => p.manufacturer).filter(Boolean));
+        const rowManufacturer = rowData.rowManufacturer
+            || selectedManufacturer
+            || (manufacturerSet.has(legacySupplier) ? legacySupplier : '');
 
         // 고유 도료사 목록 (행별 필터링용)
-        const uniqueSuppliers = [...new Set(allPaints.map(p => p.supplier).filter(Boolean))].sort((a,b) => a.localeCompare(b,'ko'));
-
         // 행별 도료사 필터 우선, 없으면 전역 구매처 필터 사용
-        const effectiveSupplier = rowSupplier || supplierFilter;
-        const basePaints = effectiveSupplier
-            ? allPaints.filter(p => p.supplier === effectiveSupplier)
+        const supplierPaints = supplierFilter
+            ? allPaints.filter(p => p.supplier === supplierFilter)
             : allPaints;
+        const uniqueManufacturers = [...new Set(supplierPaints.map(p => p.manufacturer).filter(Boolean))]
+            .sort((a,b) => a.localeCompare(b,'ko'));
+        const basePaints = rowManufacturer
+            ? supplierPaints.filter(p => p.manufacturer === rowManufacturer)
+            : supplierPaints;
 
         // 선택된 주제 도료의 공급처 파악 (경화제/신너 자동 매칭용)
-        const mainPm = mainId ? allPaints.find(p => p.id === mainId) : null;
-        const mainSupplier = mainPm ? (mainPm.supplier || '') : '';
+        const mainManufacturer = mainPm ? (mainPm.manufacturer || '') : '';
 
         // 주제 목록: 구매처 필터 후 도료 사양(Primer/Color/Clear/공용)으로 필터링
         const mainPaints = basePaints.filter(p =>
@@ -1523,16 +1535,16 @@ const SettingsModule = (function() {
 
         // 경화제: 구매처 필터 후 동일 공급처 우선 → 없으면 폴백
         const allHard    = basePaints.filter(p => p.paintType === '경화제');
-        const hardBySup  = mainSupplier ? allHard.filter(p => p.supplier === mainSupplier) : [];
-        const hardPaints = hardBySup.length ? hardBySup : allHard;
+        const hardByManufacturer  = mainManufacturer ? allHard.filter(p => p.manufacturer === mainManufacturer) : [];
+        const hardPaints = hardByManufacturer.length ? hardByManufacturer : allHard;
 
         // 신너(희석제): 구매처 필터 후 동일 공급처 우선 → 없으면 폴백
         const allThinner     = basePaints.filter(p => p.paintType === '희석제');
-        const thinnerBySup   = mainSupplier ? allThinner.filter(p => p.supplier === mainSupplier) : [];
-        const thinnerPaints  = thinnerBySup.length ? thinnerBySup : allThinner;
+        const thinnerByManufacturer   = mainManufacturer ? allThinner.filter(p => p.manufacturer === mainManufacturer) : [];
+        const thinnerPaints  = thinnerByManufacturer.length ? thinnerByManufacturer : allThinner;
 
         const mkOpts = (list, selectedId) => list.map(pm =>
-            `<option value="${pm.id}" ${pm.id === selectedId ? 'selected' : ''}>${pm.name || ''}${pm.supplier ? ' · ' + pm.supplier : ''}</option>`
+            `<option value="${pm.id}" ${pm.id === selectedId ? 'selected' : ''}>${pm.name || ''}${[pm.manufacturer, pm.supplier].filter(Boolean).length ? ' · ' + [pm.manufacturer, pm.supplier].filter(Boolean).join(' / ') : ''}</option>`
         ).join('');
 
         const tdStyle  = 'padding:5px 6px;vertical-align:middle;';
@@ -1556,8 +1568,8 @@ const SettingsModule = (function() {
                 <select id="${idPrefix}PaintSupplier_${rowIdx}"
                     style="${selStyle}"
                     onchange="SettingsModule.onProductPaintSupplierChange('${idPrefix}', ${rowIdx})">
-                    <option value="">-- 전체 --</option>
-                    ${uniqueSuppliers.map(s => `<option value="${s}" ${rowSupplier === s ? 'selected' : ''}>${s}</option>`).join('')}
+                    <option value="">-- 제조사 전체 --</option>
+                    ${uniqueManufacturers.map(s => `<option value="${s}" ${rowManufacturer === s ? 'selected' : ''}>${s}</option>`).join('')}
                 </select>
             </td>
             <td style="${tdStyle}">
@@ -1602,7 +1614,7 @@ const SettingsModule = (function() {
             const g = id => (document.getElementById(id) || {}).value || '';
             return {
                 paintSpec:   g(`${idPrefix}PaintSpec_${ri}`),
-                rowSupplier: g(`${idPrefix}PaintSupplier_${ri}`),
+                rowManufacturer: g(`${idPrefix}PaintSupplier_${ri}`),
                 mainId:      g(`${idPrefix}PaintMain_${ri}`),
                 hardId:      g(`${idPrefix}PaintHard_${ri}`),
                 thinnerId:   g(`${idPrefix}PaintThinner_${ri}`)
@@ -1671,6 +1683,9 @@ const SettingsModule = (function() {
     function onProductPaintMainSelect(idPrefix, rowIdx) {
         const rows = _getCurrentPaintRows(idPrefix);
         if (rows[rowIdx]) {
+            const mainId = rows[rowIdx].mainId || '';
+            const mainPaint = mainId ? (Storage.getAll(PAINT_STORE) || []).find(p => p.id === mainId) : null;
+            if (mainPaint && mainPaint.manufacturer) rows[rowIdx].rowManufacturer = mainPaint.manufacturer;
             // 주제가 바뀌면 경화제/신너 선택 초기화 (도료사가 달라지므로)
             rows[rowIdx].hardId    = '';
             rows[rowIdx].thinnerId = '';
@@ -5647,7 +5662,6 @@ const SettingsModule = (function() {
                                         <th>포장 용량</th>
                                         <th>매입 단가</th>
                                         <th>유효기한</th>
-                                        <th>납품처</th>
                                         <th>작업</th>
                                     </tr>
                                 </thead>
@@ -5664,7 +5678,6 @@ const SettingsModule = (function() {
                                             <td>${p.packUnit ? p.packUnit + ' KG' : '-'}</td>
                                             <td style="text-align:right;">${p.purchasePrice ? (Number(String(p.purchasePrice).replace(/,/g, '')) || 0).toLocaleString() : '-'}</td>
                                             <td>${p.shelfLife || '-'}</td>
-                                            <td>${p.customer ? '<span style="font-size:0.8rem;padding:2px 7px;border-radius:10px;background:rgba(37,99,235,0.08);color:#2563eb;border:1px solid rgba(37,99,235,0.3);">' + p.customer + '</span>' : '<span style="color:var(--text-muted);font-size:0.8rem;">공용</span>'}</td>
                                             <td>
                                                 <button class="btn btn-sm btn-outline" onclick="SettingsModule.editPaint('${p.id}')">수정</button>
                                                 <button class="btn btn-sm btn-danger" onclick="SettingsModule.removePaint('${p.id}')">삭제</button>
@@ -5996,12 +6009,6 @@ const SettingsModule = (function() {
                         ${_paintShelfLifeOptions('')}
                     </select>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">납품처 <span style="color:var(--text-muted);font-size:0.78rem;">(비워두면 공용)</span></label>
-                    <select class="form-select" id="addPaintCustomer">
-                        ${_customerPaintOptions('')}
-                    </select>
-                </div>
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
@@ -6017,8 +6024,6 @@ const SettingsModule = (function() {
         const shelfLife = document.getElementById('addPaintShelfLife').value.trim();
         const paintType = document.getElementById('addPaintType').value;
         const paintSpec = document.getElementById('addPaintSpec').value;
-        const customer = (document.getElementById('addPaintCustomer') || {}).value || '';
-
         if (!name) {
             UIUtils.toast('도료명을 입력하세요.', 'warning');
             return;
@@ -6032,8 +6037,7 @@ const SettingsModule = (function() {
             purchasePrice: document.getElementById('addPaintPurchasePrice').value.trim(),
             shelfLife,
             paintType,
-            paintSpec,
-            customer
+            paintSpec
         });
         UIUtils.closeModal();
         UIUtils.toast('도료 정보가 추가되었습니다.', 'success');
@@ -6109,12 +6113,6 @@ const SettingsModule = (function() {
                         ${_paintShelfLifeOptions(p.shelfLife || '')}
                     </select>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">납품처 <span style="color:var(--text-muted);font-size:0.78rem;">(비워두면 공용)</span></label>
-                    <select class="form-select" id="editPaintCustomer">
-                        ${_customerPaintOptions(p.customer || '')}
-                    </select>
-                </div>
             </div>
         `, `
             <button class="btn btn-secondary" onclick="${returnToValidation ? 'SettingsModule.openPaintValidationModal()' : 'UIUtils.closeModal()'}">취소</button>
@@ -6130,8 +6128,6 @@ const SettingsModule = (function() {
         const shelfLife = document.getElementById('editPaintShelfLife').value.trim();
         const paintType = document.getElementById('editPaintType').value;
         const paintSpec = document.getElementById('editPaintSpec').value;
-        const customer = (document.getElementById('editPaintCustomer') || {}).value || '';
-
         if (!name) {
             UIUtils.toast('도료명을 입력하세요.', 'warning');
             return;
@@ -6145,8 +6141,7 @@ const SettingsModule = (function() {
             purchasePrice: document.getElementById('editPaintPurchasePrice').value.trim(),
             shelfLife,
             paintType,
-            paintSpec,
-            customer
+            paintSpec
         });
         UIUtils.closeModal();
         UIUtils.toast('도료 정보가 수정되었습니다.', 'success');
