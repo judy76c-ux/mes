@@ -12614,7 +12614,7 @@ var ProdQualityModule = (function() {
                 </div>
 
                 <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
-                    <select class="form-select" id="pqStdFilterCar" style="height:36px;min-width:140px;max-width:200px;" onchange="ProdQualityModule.renderStandardsCard()">
+                    <select class="form-select" id="pqStdFilterCar" style="height:42px;min-width:160px;max-width:220px;font-size:0.95rem;" onchange="ProdQualityModule.renderStandardsCard()">
                         <option value="">전체 차종</option>
                         ${_carOptions('')}
                     </select>
