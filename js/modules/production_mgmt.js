@@ -358,7 +358,9 @@ var ProdStandardsModule = (function() {
     const COMMON_PROCESSES = new Set(['수입검사', '보관', '출하검사', '출하']);
 
     const DOC_CONTROL_PLAN = 'control-plan';
+    const DOC_CP_STATUS    = 'cp-status';
     const STANDARD_DOC_KIND = 'linked_standard';
+    const CP_FLOW_DOC_KIND = 'cp_flow_config';
     const STANDARD_DOC_TYPES = {
         'film-thickness': {
             label: '도막두께 기준서',
@@ -429,9 +431,17 @@ var ProdStandardsModule = (function() {
     let _curLine     = 'A라인';
     let _curCarModel = '';
     let _curPartName = '';
-    // CP 공정 흐름 선택 (파싱 기준) — 초기값: 모든 공정 포함
-    let _cpSelectedFlow = [...CANONICAL_PROCESS_ORDER];
+    // CP 공정 흐름 선택 (파싱 기준) — [{ process, station }] 형식.
+    // 기존 이력의 문자열 배열(['수입검사', '도장(A)'...])도 읽을 수 있게 정규화한다.
+    let _cpSelectedFlow = [];
     let _cpUploadLine   = 'A라인'; // _cpSelectedFlow에서 파생 (하위호환용)
+    let _cpFlowActiveProcess = '';
+    let _cpFlowActiveStepKey = '';
+    let _cpFlowDragKey = '';
+    let _cpFlowProcDragName = '';
+    let _cpFlowStationDragKey = '';
+    let _settingsProcessTypes = null;
+    let _settingsSubProcessTypes = null;
     let _curDocType  = DOC_CONTROL_PLAN;
     let _stdView     = 'summary';
     let _standardMergeView = true;
@@ -459,6 +469,424 @@ var ProdStandardsModule = (function() {
             }
         }
         return found || null;
+    }
+
+    function _isCpParamRecord(r) {
+        return r && r._docKind !== STANDARD_DOC_KIND && r._docKind !== CP_FLOW_DOC_KIND;
+    }
+
+    function _findCpFlowRecord(carModel, partName) {
+        return (Storage.getAll(STORE) || []).find(r =>
+            r._docKind === CP_FLOW_DOC_KIND &&
+            r.carModel === carModel &&
+            r.partName === partName
+        ) || null;
+    }
+
+    function _cpFlowParamSelectionKey(step) {
+        return _cpStepKey(step);
+    }
+
+    function _cpStepKey(step) {
+        if (typeof step === 'string') return step + '||';
+        return [step && step.process || '', step && step.station || ''].join('||');
+    }
+
+    function _cpStepProcess(step) {
+        return typeof step === 'string' ? step : (step && step.process || '');
+    }
+
+    function _cpStepStation(step) {
+        return typeof step === 'string' ? '' : (step && step.station || '');
+    }
+
+    function _isCpSelfStation(proc, station) {
+        const p = String(proc || '').replace(/\s+/g, '').toLowerCase();
+        const s = String(station || '').replace(/\s+/g, '').toLowerCase();
+        return !s || (!!p && p === s);
+    }
+
+    function _cpFlowLabel(step) {
+        const proc = _cpStepProcess(step);
+        const st = _cpStepStation(step);
+        return st ? `${proc} · ${st}` : proc;
+    }
+
+    function _cpProcessNameFromSettings(name) {
+        const s = String(name || '').trim();
+        if (s === '도장-A') return '도장(A)';
+        if (s === '도장-B') return '도장(B)';
+        if (s === '레이저') return '레이져';
+        return s;
+    }
+
+    function _settingsProcessKeyFromCp(name) {
+        const s = String(name || '').trim();
+        if (s === '도장(A)') return '도장-A';
+        if (s === '도장(B)') return '도장-B';
+        if (s === '레이져') return '레이저';
+        return s;
+    }
+
+    async function _loadSettingsProcessConfig() {
+        if (_settingsProcessTypes !== null && _settingsSubProcessTypes !== null) return;
+        try {
+            const procs = await Storage.getConfigValue('processTypes');
+            _settingsProcessTypes = Array.isArray(procs) ? procs.map(_cpProcessNameFromSettings).filter(Boolean) : [];
+        } catch(e) {
+            _settingsProcessTypes = [];
+        }
+        try {
+            const subs = await Storage.getConfigValue('subProcessTypes');
+            _settingsSubProcessTypes = {};
+            if (subs && typeof subs === 'object' && !Array.isArray(subs)) {
+                Object.entries(subs).forEach(([proc, list]) => {
+                    const mappedProc = _cpProcessNameFromSettings(proc);
+                    _settingsSubProcessTypes[mappedProc] = Array.isArray(list)
+                        ? list.filter(st => st && !_isCpSelfStation(mappedProc, st))
+                        : [];
+                });
+            }
+        } catch(e) {
+            _settingsSubProcessTypes = {};
+        }
+        _carConfigCache = {};
+    }
+
+    function _cpAllFlowSteps() {
+        const cfg = _getCarConfig('');
+        const procOrder = (typeof _smGetOrderedProcs === 'function') ? _smGetOrderedProcs('') : CANONICAL_PROCESS_ORDER;
+        const steps = [];
+        procOrder.forEach(proc => {
+            const pcfg = cfg[proc];
+            if (!pcfg) return;
+            const stations = ((typeof _smGetOrderedStations === 'function') ? _smGetOrderedStations('', proc) : Object.keys(pcfg.stations || {}))
+                .filter(st => pcfg.stations && pcfg.stations[st] && !_isCpSelfStation(proc, st));
+            if (stations.length) stations.forEach(st => steps.push({ process: proc, station: st }));
+        });
+        if (_settingsProcessTypes && _settingsSubProcessTypes) {
+            _settingsProcessTypes.forEach(proc => {
+                const subs = (_settingsSubProcessTypes[proc] || []).filter(st => !_isCpSelfStation(proc, st));
+                if (subs.length) subs.forEach(st => steps.push({ process: proc, station: st }));
+            });
+        }
+        const seen = new Set();
+        return steps.filter(step => {
+            const key = _cpStepKey(step);
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+    }
+
+    function _normalizeCpFlow(flow) {
+        const all = _cpAllFlowSteps();
+        const byProc = {};
+        all.forEach(step => {
+            if (!byProc[step.process]) byProc[step.process] = [];
+            byProc[step.process].push(step);
+        });
+        const out = [];
+        const seen = new Set();
+        const add = step => {
+            if (!step) return;
+            const raw = typeof step === 'string' ? { process: step, station: '' } : step;
+            if (!raw.process) return;
+            if (_isCpSelfStation(raw.process, raw.station)) {
+                (byProc[raw.process] || []).forEach(add);
+                return;
+            }
+            const exact = all.find(s => s.process === raw.process && s.station === (raw.station || ''))
+                || all.find(s => s.process === raw.process && !raw.station);
+            const finalStep = exact || { process: raw.process, station: raw.station || '' };
+            const key = _cpStepKey(finalStep);
+            if (seen.has(key)) return;
+            seen.add(key);
+            out.push(finalStep);
+        };
+        (Array.isArray(flow) ? flow : []).forEach(step => {
+            if (typeof step === 'string') (byProc[step] || [{ process: step, station: '' }]).forEach(add);
+            else add(step);
+        });
+        return out;
+    }
+
+    function _defaultCpFlow() {
+        return _normalizeCpFlow(CANONICAL_PROCESS_ORDER);
+    }
+
+    function _cpSelectedProcessNames() {
+        const names = [];
+        (_cpSelectedFlow || []).forEach(step => {
+            const proc = _cpStepProcess(step);
+            if (proc && !names.includes(proc)) names.push(proc);
+        });
+        return names;
+    }
+
+    function _cpFlowProcessOptions() {
+        const names = [];
+        _cpAllFlowSteps().forEach(step => {
+            const proc = _cpStepProcess(step);
+            if (proc && !names.includes(proc)) names.push(proc);
+        });
+        return names;
+    }
+
+    function _cpFlowOrderedProcessOptions() {
+        const all = _cpFlowProcessOptions();
+        const selected = _cpSelectedProcessNames().filter(proc => all.includes(proc));
+        return [
+            ...selected,
+            ...all.filter(proc => !selected.includes(proc))
+        ];
+    }
+
+    function _cpFlowStepsForProcess(procName) {
+        return _cpAllFlowSteps().filter(step =>
+            _cpStepProcess(step) === procName &&
+            !_isCpSelfStation(procName, _cpStepStation(step))
+        );
+    }
+
+    function _cpFlowOrderedStepsForProcess(procName) {
+        const all = _cpFlowStepsForProcess(procName);
+        const allKeys = new Set(all.map(_cpStepKey));
+        const selected = (_cpSelectedFlow || []).filter(step =>
+            _cpStepProcess(step) === procName && allKeys.has(_cpStepKey(step))
+        );
+        const selectedKeys = new Set(selected.map(_cpStepKey));
+        return [
+            ...selected,
+            ...all.filter(step => !selectedKeys.has(_cpStepKey(step)))
+        ];
+    }
+
+    function _cpFlowSelectedProcessOrder() {
+        const order = [];
+        (_cpSelectedFlow || []).forEach(step => {
+            const proc = _cpStepProcess(step);
+            if (proc && !order.includes(proc)) order.push(proc);
+        });
+        return order;
+    }
+
+    function _cpFlowSelectedCount(procName) {
+        return (_cpSelectedFlow || []).filter(step => _cpStepProcess(step) === procName).length;
+    }
+
+    function _ensureCpFlowActiveProcess() {
+        const options = _cpFlowProcessOptions();
+        if (!_cpFlowActiveProcess || !options.includes(_cpFlowActiveProcess)) {
+            const selected = _cpSelectedProcessNames().find(p => options.includes(p));
+            _cpFlowActiveProcess = selected || options[0] || '';
+        }
+        return _cpFlowActiveProcess;
+    }
+
+    function _cpFlowHasProcess(procName) {
+        return (_cpSelectedFlow || []).some(step => _cpStepProcess(step) === procName);
+    }
+
+    function _cpFlowHasStation(procName, stationName) {
+        return (_cpSelectedFlow || []).some(step =>
+            _cpStepProcess(step) === procName &&
+            (!_cpStepStation(step) || !stationName || _cpStepStation(step) === stationName)
+        );
+    }
+
+    function _cpProductInfo() {
+        return (Storage.getAll(DB.STORES.PRODUCTS) || []).find(p =>
+            p.carModel === _curCarModel && p.partName === _curPartName
+        ) || null;
+    }
+
+    function _cpProductInfoHtml() {
+        const prod = _cpProductInfo();
+        const processText = prod
+            ? [prod.process1, prod.process2, prod.process3, prod.process4].filter(Boolean).join(' · ')
+            : '';
+        const color = prod && prod.color ? prod.color : '';
+        const code = prod && (prod.code || prod.productCode || prod.partNo || prod.partNumber)
+            ? (prod.code || prod.productCode || prod.partNo || prod.partNumber)
+            : '';
+        return `<div style="border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary);
+                    padding:10px 12px;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <span class="material-symbols-outlined" style="font-size:17px;color:var(--accent-blue);">inventory_2</span>
+            <span style="font-weight:900;font-size:13px;">${_esc(_curCarModel || '-')}</span>
+            <span style="color:var(--text-muted);font-size:12px;">/</span>
+            <span style="font-weight:900;font-size:13px;color:var(--accent-blue);">${_esc(_curPartName || '-')}</span>
+            ${color ? `<span style="font-size:11px;padding:2px 7px;border-radius:999px;background:#ecfeff;color:#0e7490;border:1px solid #67e8f9;">${_esc(color)}</span>` : ''}
+            ${code ? `<span style="font-size:11px;color:var(--text-muted);">코드 ${_esc(code)}</span>` : ''}
+            ${processText ? `<span style="font-size:11px;color:var(--text-muted);margin-left:auto;">제품공정: ${_esc(processText)}</span>` : ''}
+        </div>`;
+    }
+
+    function _cpFlowActiveStep() {
+        const steps = _cpFlowStepsForProcess(_cpFlowActiveProcess);
+        const selectedKeys = new Set((_cpSelectedFlow || []).map(_cpStepKey));
+        let step = steps.find(s => _cpStepKey(s) === _cpFlowActiveStepKey);
+        if (!step) step = steps.find(s => selectedKeys.has(_cpStepKey(s))) || steps[0] || null;
+        _cpFlowActiveStepKey = step ? _cpStepKey(step) : '';
+        return step;
+    }
+
+    function _cpFlowParamRowsForStep(step) {
+        if (!step) return { rows: [], source: '' };
+        const proc = _cpStepProcess(step);
+        const station = _cpStepStation(step);
+        const rec = (Storage.getAll(STORE) || []).find(r =>
+            _isCpParamRecord(r) &&
+            r.carModel === _curCarModel &&
+            r.partName === _curPartName &&
+            r.process === proc &&
+            (r.station || '') === (station || '')
+        );
+        const saved = rec ? (rec.params || {}) : {};
+        let params = [];
+        let source = '';
+        if (rec && rec.customParams && rec.customParams.length) {
+            params = rec.customParams;
+            source = '품목별 저장 관리항목';
+        } else {
+            const cfg = _getCarConfig('')[proc];
+            params = cfg && cfg.stations ? (cfg.stations[station] || []) : [];
+            if (rec && rec.customParams) {
+                rec.customParams.forEach(p => {
+                    if (!params.some(base => base.key === p.key)) params.push(p);
+                });
+            }
+            source = rec ? '품목별 저장값 + 기본 관리항목' : '기본 관리항목';
+        }
+        const rows = (params || []).map((p, idx) => {
+            const sv = saved[p.key] || {};
+            return {
+                no: idx + 1,
+                key: p.key || String(idx),
+                label: p.label || sv.itemProd || sv.itemProc || p.key || '',
+                itemProd: sv.itemProd || p.itemProd || '',
+                itemProc: sv.itemProc || p.itemProc || '',
+                unit: p.unit || sv.unit || '',
+                method: sv.method || p.method || '',
+                cycle: sv.cycle || p.cycle || '',
+                control: sv.control || p.controlPlan || ''
+            };
+        }).filter(r => r.label || r.itemProd || r.itemProc);
+        return { rows, source };
+    }
+
+    function _cpFlowSelectedParamKeys(step, rows) {
+        const allKeys = (rows || []).map(r => r.key).filter(Boolean);
+        const record = _findCpFlowRecord(_curCarModel, _curPartName);
+        const map = record && record.paramSelections ? record.paramSelections : {};
+        const saved = map[_cpFlowParamSelectionKey(step)];
+        if (!Array.isArray(saved)) return allKeys;
+        const valid = saved.filter(k => allKeys.includes(k));
+        return valid.length || saved.length === 0 ? valid : allKeys;
+    }
+
+    async function _saveCpFlowParamSelection(step, selectedKeys) {
+        if (!_curCarModel || !_curPartName || !step) return;
+        const normalized = _normalizeCpFlow(_cpSelectedFlow);
+        const existing = _findCpFlowRecord(_curCarModel, _curPartName);
+        const processNames = [];
+        normalized.forEach(s => {
+            const proc = _cpStepProcess(s);
+            if (proc && !processNames.includes(proc)) processNames.push(proc);
+        });
+        const paramSelections = { ...((existing && existing.paramSelections) || {}) };
+        paramSelections[_cpFlowParamSelectionKey(step)] = selectedKeys;
+        const payload = {
+            _docKind: CP_FLOW_DOC_KIND,
+            carModel: _curCarModel,
+            partName: _curPartName,
+            flowSteps: normalized,
+            flow: processNames,
+            paramSelections,
+            updatedAt: UIUtils.now()
+        };
+        if (existing && existing.id) {
+            await Storage.update(STORE, existing.id, { ...existing, ...payload, id: existing.id });
+        } else {
+            await Storage.add(STORE, payload);
+        }
+        const cacheKey = _cpFlowCacheKey(_curCarModel, _curPartName);
+        _cpFlowCache[cacheKey] = normalized;
+    }
+
+    async function _toggleCpFlowParam(stepKey, paramKey) {
+        const step = _cpAllFlowSteps().find(s => _cpStepKey(s) === stepKey) ||
+            (_cpSelectedFlow || []).find(s => _cpStepKey(s) === stepKey);
+        if (!step) return;
+        const { rows } = _cpFlowParamRowsForStep(step);
+        const allKeys = rows.map(r => r.key).filter(Boolean);
+        const selected = new Set(_cpFlowSelectedParamKeys(step, rows));
+        if (selected.has(paramKey)) selected.delete(paramKey);
+        else selected.add(paramKey);
+        const finalKeys = allKeys.filter(k => selected.has(k));
+        await _saveCpFlowParamSelection(step, finalKeys);
+        _refreshCpFlowUI();
+    }
+
+    async function _toggleAllCpFlowParams(stepKey) {
+        const step = _cpAllFlowSteps().find(s => _cpStepKey(s) === stepKey) ||
+            (_cpSelectedFlow || []).find(s => _cpStepKey(s) === stepKey);
+        if (!step) return;
+        const { rows } = _cpFlowParamRowsForStep(step);
+        const allKeys = rows.map(r => r.key).filter(Boolean);
+        const selected = _cpFlowSelectedParamKeys(step, rows);
+        const finalKeys = selected.length === allKeys.length ? [] : allKeys;
+        await _saveCpFlowParamSelection(step, finalKeys);
+        _refreshCpFlowUI();
+    }
+
+    function _cpFlowParamPanelHtml(step) {
+        const { rows, source } = _cpFlowParamRowsForStep(step);
+        const title = step ? `${_cpStepProcess(step)} · ${_cpStepStation(step) || _cpStepProcess(step)}` : '관리항목';
+        const selectedKeys = new Set(_cpFlowSelectedParamKeys(step, rows));
+        const stepKey = step ? _cpStepKey(step) : '';
+        const body = rows.length ? rows.map(r => `
+            <tr>
+                <td style="padding:5px 7px;text-align:center;color:var(--text-muted);">${r.no}</td>
+                <td style="padding:5px 7px;text-align:center;">
+                    <input type="checkbox" ${selectedKeys.has(r.key) ? 'checked' : ''}
+                        onchange="ProdStandardsModule._toggleCpFlowParam('${_esc(stepKey)}','${_esc(r.key)}')"
+                        style="width:14px;height:14px;cursor:pointer;">
+                </td>
+                <td style="padding:5px 7px;font-weight:700;">${_esc(r.label)}</td>
+                <td style="padding:5px 7px;color:var(--accent-blue);">${_esc(r.itemProd || '-')}</td>
+                <td style="padding:5px 7px;color:var(--accent-orange,#ea580c);">${_esc(r.itemProc || '-')}</td>
+                <td style="padding:5px 7px;color:var(--text-muted);">${_esc(r.unit || '-')}</td>
+                <td style="padding:5px 7px;color:var(--text-secondary);">${_esc(r.method || '-')}</td>
+                <td style="padding:5px 7px;color:var(--text-secondary);">${_esc(r.cycle || '-')}</td>
+            </tr>`).join('') : `<tr><td colspan="8" style="padding:22px;text-align:center;color:var(--text-muted);">표시할 하위 관리항목이 없습니다.</td></tr>`;
+        return `<div style="margin-top:10px;border:1px solid var(--border-color);border-radius:10px;overflow:hidden;background:var(--bg-primary);">
+            <div style="display:flex;align-items:center;gap:8px;padding:9px 11px;border-bottom:1px solid var(--border-color);background:var(--bg-secondary);">
+                <span class="material-symbols-outlined" style="font-size:16px;color:var(--accent-blue);">checklist</span>
+                <div style="font-weight:900;font-size:12px;flex:1;">${_esc(title)} 하위 관리항목</div>
+                ${step ? `<button type="button" class="btn btn-sm btn-outline"
+                    onclick="ProdStandardsModule._toggleAllCpFlowParams('${_esc(stepKey)}')"
+                    style="font-size:10px;padding:3px 8px;">${selectedKeys.size === rows.length ? '전체 해제' : '전체 선택'}</button>` : ''}
+                <span style="font-size:10px;color:var(--text-muted);">${_esc(source)} · ${selectedKeys.size}/${rows.length}개</span>
+            </div>
+            <div style="overflow:auto;max-height:220px;">
+                <table style="width:100%;border-collapse:collapse;font-size:11px;min-width:720px;">
+                    <thead style="background:var(--bg-secondary);">
+                        <tr>
+                            <th style="padding:5px 7px;width:38px;">No</th>
+                            <th style="padding:5px 7px;width:36px;">선택</th>
+                            <th style="padding:5px 7px;text-align:left;">관리항목</th>
+                            <th style="padding:5px 7px;text-align:left;">제품특성</th>
+                            <th style="padding:5px 7px;text-align:left;">공정특성</th>
+                            <th style="padding:5px 7px;text-align:left;">단위</th>
+                            <th style="padding:5px 7px;text-align:left;">확인방법</th>
+                            <th style="padding:5px 7px;text-align:left;">주기</th>
+                        </tr>
+                    </thead>
+                    <tbody>${body}</tbody>
+                </table>
+            </div>
+        </div>`;
     }
 
     function _productOptions(selectedCar, selectedPart) {
@@ -499,7 +927,7 @@ var ProdStandardsModule = (function() {
         }
 
         const allStandards = Storage.getAll(STORE) || [];
-        const cpRows = allStandards.filter(r => r._docKind !== STANDARD_DOC_KIND);
+        const cpRows = allStandards.filter(_isCpParamRecord);
         const cpProductCount = _countUnique(cpRows, r => `${r.carModel || ''}||${r.partName || ''}`);
         const workStandardCount = (Storage.getAll(DB.STORES.WORK_STANDARDS) || []).length;
         const standardCards = Object.entries(STANDARD_DOC_TYPES).map(([key, cfg]) => ({
@@ -536,9 +964,14 @@ var ProdStandardsModule = (function() {
                         </div>
                         <div style="font-size:2rem;font-weight:900;color:var(--text-primary);">${cpProductCount.toLocaleString()}</div>
                         <div style="font-size:.82rem;color:var(--text-muted);">등록 품목 수 · 관리항목 ${cpRows.length.toLocaleString()}건</div>
-                        <button style="${actionBtn}" onclick="ProdStandardsModule.selectDocType('${DOC_CONTROL_PLAN}')">
-                            관리계획서 열기
-                        </button>
+                        <div style="display:flex;gap:8px;margin-top:auto;">
+                            <button style="${actionBtn}flex:1;" onclick="ProdStandardsModule.selectDocType('${DOC_CONTROL_PLAN}')">
+                                관리계획서
+                            </button>
+                            <button style="${actionBtn}flex:1;" onclick="ProdStandardsModule.selectDocType('${DOC_CP_STATUS}')">
+                                등록 현황
+                            </button>
+                        </div>
                     </div>
 
                     <div style="${cardBase}border-top:4px solid #7c3aed;">
@@ -683,17 +1116,210 @@ var ProdStandardsModule = (function() {
                         </div>
                     </div>
                 </div>
+
             </div>
         `;
     }
 
+    function _renderCpStatusTable() {
+        const allProducts = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const allStds     = Storage.getAll(STORE) || [];
+        const flowRecs    = allStds.filter(r => r._docKind === CP_FLOW_DOC_KIND);
+        const paramRecs   = allStds.filter(_isCpParamRecord);
+
+        if (allProducts.length === 0) {
+            return `<div style="padding:32px;text-align:center;color:var(--text-muted);">등록된 제품이 없습니다.</div>`;
+        }
+
+        const rows = allProducts.map(p => {
+            const car  = p.carModel || '';
+            const part = p.partName || '';
+            const code = p.partNo   || '';
+            const flowRec  = flowRecs.find(r => r.carModel === car && r.partName === part);
+            const flowSteps = flowRec ? (flowRec.flowSteps || flowRec.flow || []) : [];
+            const flowProcs = Array.isArray(flowSteps) ? [...new Set(flowSteps.map(s => typeof s === 'string' ? s : (s.process || '')))] : [];
+            const hasFlow  = flowProcs.length > 0;
+            const params   = paramRecs.filter(r => r.carModel === car && r.partName === part);
+            const hasParam = params.length > 0;
+            const updatedAt = flowRec ? (flowRec.updatedAt || '') : (params[0] ? params[0].updatedAt || '' : '');
+            const dateStr  = updatedAt ? updatedAt.slice(0,10) : '-';
+
+            const flowBadge = hasFlow
+                ? `<span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:#f0fdf4;border:1px solid #86efac;color:#15803d;">
+                    <span class="material-symbols-outlined" style="font-size:12px;">check_circle</span>${flowProcs.length}개 주공정
+                   </span>`
+                : `<span style="font-size:11px;padding:2px 8px;border-radius:99px;background:#f9fafb;border:1px solid #e5e7eb;color:#9ca3af;">미저장</span>`;
+
+            const paramBadge = hasParam
+                ? `<span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;">
+                    <span class="material-symbols-outlined" style="font-size:12px;">check_circle</span>${params.length}건
+                   </span>`
+                : `<span style="font-size:11px;padding:2px 8px;border-radius:99px;background:#f9fafb;border:1px solid #e5e7eb;color:#9ca3af;">미등록</span>`;
+
+            const flowPreview = hasFlow
+                ? flowProcs.slice(0,5).join(' → ') + (flowProcs.length > 5 ? ' …' : '')
+                : '';
+
+            return `<tr class="cp-status-row" data-search="${_esc((car+' '+part+' '+code).toLowerCase())}">
+                <td style="padding:9px 12px;font-weight:700;white-space:nowrap;width:90px;">${_esc(car)}</td>
+                <td style="padding:9px 12px;width:220px;">${_esc(part)}</td>
+                <td style="padding:9px 12px;">${flowBadge}
+                    ${flowPreview ? `<div style="font-size:.7rem;color:var(--text-muted);margin-top:3px;">${_esc(flowPreview)}</div>` : ''}
+                </td>
+                <td style="padding:9px 12px;width:100px;">${paramBadge}</td>
+                <td style="padding:9px 12px;font-size:.78rem;color:var(--text-muted);white-space:nowrap;width:90px;">${dateStr}</td>
+                <td style="padding:9px 12px;white-space:nowrap;width:60px;">
+                    <button class="btn btn-sm btn-outline" style="font-size:11px;padding:3px 10px;"
+                        onclick="ProdStandardsModule.openCpForProduct('${_jsArg(car)}','${_jsArg(part)}')">
+                        ${hasParam ? '열기' : '등록'}
+                    </button>
+                </td>
+            </tr>`;
+        }).join('');
+
+        return `<table style="width:100%;border-collapse:collapse;font-size:.83rem;">
+            <thead>
+                <tr style="background:var(--bg-secondary);border-bottom:2px solid var(--border-color);">
+                    <th style="padding:9px 12px;text-align:left;font-weight:700;white-space:nowrap;width:90px;">차종</th>
+                    <th style="padding:9px 12px;text-align:left;font-weight:700;width:220px;">품명</th>
+                    <th style="padding:9px 12px;text-align:left;font-weight:700;">공정 흐름</th>
+                    <th style="padding:9px 12px;text-align:left;font-weight:700;width:100px;">파라메터</th>
+                    <th style="padding:9px 12px;text-align:left;font-weight:700;color:var(--text-muted);width:90px;">최종 수정</th>
+                    <th style="padding:9px 12px;width:60px;"></th>
+                </tr>
+            </thead>
+            <tbody id="cpStatusTbody">
+                ${rows}
+            </tbody>
+        </table>`;
+    }
+
+    function _filterCpStatusTable(q) {
+        const kw = (q || '').toLowerCase().trim();
+        document.querySelectorAll('.cp-status-row').forEach(tr => {
+            const txt = (tr.dataset.search || '');
+            tr.style.display = (!kw || txt.includes(kw)) ? '' : 'none';
+        });
+    }
+
+    async function openCpForProduct(carModel, partName) {
+        // 동일 차종에서 파라메터가 등록된 다른 품목 확인
+        const allStds = Storage.getAll(STORE) || [];
+        const paramRecs = allStds.filter(_isCpParamRecord);
+        const myParams  = paramRecs.filter(r => r.carModel === carModel && r.partName === partName);
+
+        // 대상 품목에 파라메터 없고, 동일 차종에 다른 품목이 있는 경우 → 복사 제안
+        if (myParams.length === 0) {
+            const sameCarParts = [...new Set(
+                paramRecs.filter(r => r.carModel === carModel && r.partName !== partName).map(r => r.partName)
+            )];
+            if (sameCarParts.length > 0) {
+                _openCpCopyModal(carModel, partName, sameCarParts);
+                return;
+            }
+        }
+        _jumpToCpDetail(carModel, partName);
+    }
+
+    function _openCpCopyModal(carModel, toPartName, sameCarParts) {
+        const allStds  = Storage.getAll(STORE) || [];
+        const flowRecs = allStds.filter(r => r._docKind === CP_FLOW_DOC_KIND);
+        const paramRecs = allStds.filter(_isCpParamRecord);
+
+        const partRows = sameCarParts.map(fromPart => {
+            const pFlow   = flowRecs.find(r => r.carModel === carModel && r.partName === fromPart);
+            const pParams = paramRecs.filter(r => r.carModel === carModel && r.partName === fromPart);
+            const flowProcs = pFlow ? [...new Set((pFlow.flowSteps || pFlow.flow || []).map(s => typeof s === 'string' ? s : (s.process || '')))] : [];
+            return `<label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:8px;
+                                  border:1px solid var(--border-color);background:var(--bg-primary);cursor:pointer;margin-bottom:6px;">
+                <input type="radio" name="cpCopyFrom" value="${_esc(fromPart)}"
+                    style="margin-top:2px;width:15px;height:15px;cursor:pointer;">
+                <div>
+                    <div style="font-weight:700;font-size:.88rem;">${_esc(fromPart)}</div>
+                    <div style="font-size:.75rem;color:var(--text-muted);margin-top:2px;">
+                        공정 흐름 ${flowProcs.length}개 · 파라메터 ${pParams.length}건
+                        ${flowProcs.length ? ` (${flowProcs.slice(0,4).join(' → ')}${flowProcs.length>4?' …':''})` : ''}
+                    </div>
+                </div>
+            </label>`;
+        }).join('');
+
+        UIUtils.showModal(
+            `관리계획서 등록 — ${carModel} / ${toPartName}`,
+            `<div style="margin-bottom:12px;padding:10px 12px;background:rgba(59,130,246,.06);border-radius:8px;font-size:.82rem;color:var(--text-secondary);">
+                <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">info</span>
+                동일 차종(<b>${_esc(carModel)}</b>)에 관리계획서가 등록된 품목이 있습니다.<br>
+                공정 흐름과 파라메터를 복사하여 빠르게 시작하거나, 새로 등록할 수 있습니다.
+            </div>
+            <div style="font-weight:700;font-size:.82rem;margin-bottom:8px;color:var(--text-muted);">복사 원본 선택</div>
+            <div id="cpCopyFromList">${partRows}</div>
+            <div style="margin-top:10px;display:flex;align-items:center;gap:8px;">
+                <input type="checkbox" id="cpCopyFlow" checked style="width:14px;height:14px;">
+                <label for="cpCopyFlow" style="font-size:.82rem;cursor:pointer;">공정 흐름 복사</label>
+                <input type="checkbox" id="cpCopyParams" checked style="width:14px;height:14px;margin-left:12px;">
+                <label for="cpCopyParams" style="font-size:.82rem;cursor:pointer;">파라메터 복사</label>
+            </div>`,
+            `<button class="btn btn-secondary" onclick="ProdStandardsModule._jumpToCpDetail('${_jsArg(carModel)}','${_jsArg(toPartName)}')">새로 등록</button>
+             <button class="btn btn-primary" onclick="ProdStandardsModule._execCpCopy('${_jsArg(carModel)}','${_jsArg(toPartName)}')">복사 후 열기</button>`,
+            'md'
+        );
+    }
+
+    async function _execCpCopy(carModel, toPartName) {
+        const fromPart = document.querySelector('input[name="cpCopyFrom"]:checked')?.value;
+        if (!fromPart) { UIUtils.toast('복사 원본 품목을 선택하세요.', 'warning'); return; }
+        const copyFlow   = document.getElementById('cpCopyFlow')?.checked !== false;
+        const copyParams = document.getElementById('cpCopyParams')?.checked !== false;
+
+        const allStds   = Storage.getAll(STORE) || [];
+        const flowRecs  = allStds.filter(r => r._docKind === CP_FLOW_DOC_KIND);
+        const paramRecs = allStds.filter(_isCpParamRecord);
+
+        let copied = 0;
+        if (copyFlow) {
+            const srcFlow = flowRecs.find(r => r.carModel === carModel && r.partName === fromPart);
+            if (srcFlow) {
+                await _saveCpFlow(carModel, toPartName, srcFlow.flowSteps || srcFlow.flow || []);
+                copied++;
+            }
+        }
+        if (copyParams) {
+            const srcParams = paramRecs.filter(r => r.carModel === carModel && r.partName === fromPart);
+            const existingKeys = new Set(
+                paramRecs.filter(r => r.carModel === carModel && r.partName === toPartName).map(r => r.stationKey || r.id)
+            );
+            for (const src of srcParams) {
+                const { id: _id, updatedAt: _u, ...rest } = src;
+                const newRec = { ...rest, carModel, partName: toPartName, updatedAt: UIUtils.now() };
+                if (!existingKeys.has(newRec.stationKey)) {
+                    await Storage.add(STORE, newRec);
+                    copied++;
+                }
+            }
+        }
+
+        UIUtils.closeModal();
+        UIUtils.toast(`${copied}건 복사 완료`, 'success');
+        _jumpToCpDetail(carModel, toPartName);
+    }
+
+    function _jumpToCpDetail(carModel, partName) {
+        UIUtils.closeModal();
+        _curCarModel = carModel;
+        _curPartName = partName;
+        _curDocType  = DOC_CONTROL_PLAN;
+        selectDocType(DOC_CONTROL_PLAN);
+    }
+
     function render(container) {
         _stdView = 'summary';
+        if (!_cpSelectedFlow || _cpSelectedFlow.length === 0) _cpSelectedFlow = _defaultCpFlow();
         _renderStandardsSummary(container);
     }
 
     function _renderStandardsDetail(container) {
         _stdView = 'detail';
+        if (!_cpSelectedFlow || _cpSelectedFlow.length === 0) _cpSelectedFlow = _defaultCpFlow();
         if (window.Router && typeof Router.setPageTitle === 'function') {
             Router.setPageTitle(`<button class="topbar-back-link" onclick="ProdStandardsModule.render(document.getElementById('contentArea'))"><span class="material-symbols-outlined">arrow_back</span> 제조 관리 표준 돌아가기</button>`);
         }
@@ -707,45 +1333,49 @@ var ProdStandardsModule = (function() {
                 ${_curDocType === DOC_CONTROL_PLAN ? `
                 ${_renderCpHistorySection()}
 
-                <!-- 차종/품명 선택 + 관리계획서 업로드 -->
+                <!-- 차종/품명 선택 | CP 공정 흐름 | 파라메터 등록 여부 -->
                 <div class="card" style="margin-bottom:16px;">
                     <div class="card-body" style="padding:16px;">
-                        <div style="display:flex; gap:16px; align-items:flex-end; flex-wrap:wrap;">
-                            <div class="form-group" style="margin:0; min-width:160px;">
-                                <label class="form-label" style="font-weight:700;">차종 선택</label>
-                                <select class="form-select" id="psCarModelSel" onchange="ProdStandardsModule.onCarChange()">
-                                    <option value="">-- 차종 선택 --</option>
-                                    ${carOpts}
-                                </select>
-                            </div>
-                            <div class="form-group" style="margin:0; min-width:160px;">
-                                <label class="form-label" style="font-weight:700;">품명 선택</label>
-                                <select class="form-select" id="psPartNameSel" onchange="ProdStandardsModule.onPartChange()">
-                                    <option value="">-- 품명 선택 --</option>
-                                </select>
+                        <div style="display:grid; grid-template-columns:minmax(220px,260px) minmax(360px,1fr) minmax(260px,340px);
+                                    gap:16px; align-items:stretch;">
+                            <div style="display:flex; flex-direction:column; gap:10px; padding-right:16px;
+                                        border-right:1px solid var(--border-color);">
+                                <div class="form-group" style="margin:0;">
+                                    <label class="form-label" style="font-weight:700;">차종</label>
+                                    <select class="form-select" id="psCarModelSel" onchange="ProdStandardsModule.onCarChange()">
+                                        <option value="">-- 차종 선택 --</option>
+                                        ${carOpts}
+                                    </select>
+                                </div>
+                                <div class="form-group" style="margin:0;">
+                                    <label class="form-label" style="font-weight:700;">품명 선택</label>
+                                    <select class="form-select" id="psPartNameSel" onchange="ProdStandardsModule.onPartChange()">
+                                        <option value="">-- 품명 선택 --</option>
+                                    </select>
+                                </div>
                             </div>
 
-                            <!-- 구분선 -->
-                            <div style="width:1px; height:38px; background:var(--border-color); flex-shrink:0;"></div>
-
-                            <!-- CP 공정 흐름 선택 -->
-                            <div class="form-group" style="margin:0; flex:1; min-width:280px;">
+                            <div style="min-width:0; padding-right:16px; border-right:1px solid var(--border-color);">
                                 <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;">
                                     <label class="form-label" style="font-weight:700; white-space:nowrap; margin:0;">
                                         <span class="material-symbols-outlined" style="font-size:13px; vertical-align:middle;">route</span>
-                                        CP 공정 흐름 선택
+                                        CP 공정 흐름
                                     </label>
                                     <button class="btn btn-secondary btn-sm" onclick="ProdStandardsModule.openStationManager()"
                                         style="display:flex; align-items:center; gap:5px; font-size:12px; white-space:nowrap;">
                                         <span class="material-symbols-outlined" style="font-size:15px;">tune</span>
-                                        세부공정 관리
+                                        관리항목 관리
                                     </button>
                                 </div>
                                 <div id="cpFlowSelectorContainer">${_cpFlowSelectorHtml()}</div>
                             </div>
 
-                            <!-- 관리계획서 업로드 상태 + 버튼 -->
-                            <div id="psCpStatusBadge" style="display:none;"></div>
+                            <div style="min-width:0;">
+                                <label class="form-label" style="font-weight:700; white-space:nowrap; margin:0 0 6px 0; display:block;">
+                                    파라메터 등록 여부
+                                </label>
+                                <div id="psCpStatusBadge" style="display:none;"></div>
+                            </div>
 
                             <input type="file" id="cpUploadInput" accept=".xlsx,.xls"
                                 style="display:none;" onchange="ProdStandardsModule.onControlPlanUpload(this)">
@@ -754,6 +1384,22 @@ var ProdStandardsModule = (function() {
                 </div>
                 ` : ''}
 
+                ${_curDocType === DOC_CP_STATUS ? `
+                <div class="card">
+                    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                        <h3 style="display:flex;align-items:center;gap:8px;margin:0;">
+                            <span class="material-symbols-outlined">fact_check</span>
+                            관리계획서 등록 현황
+                        </h3>
+                        <input id="cpStatusSearch" type="text" placeholder="차종/품명 검색..."
+                            class="form-input" style="height:32px;font-size:.82rem;min-width:180px;"
+                            oninput="ProdStandardsModule._filterCpStatusTable(this.value)">
+                    </div>
+                    <div class="card-body" style="padding:0;overflow:auto;">
+                        ${_renderCpStatusTable()}
+                    </div>
+                </div>
+                ` : `
                 <!-- CP 형식 통합 파라미터 테이블 / 기준서 테이블 -->
                 <div class="card" id="psParamCard">
                     <div class="card-body" style="padding:0;">
@@ -762,6 +1408,7 @@ var ProdStandardsModule = (function() {
                         </div>
                     </div>
                 </div>
+                `}
             </div>
         `;
 
@@ -785,6 +1432,10 @@ var ProdStandardsModule = (function() {
         _ensureCarConfig(_curLine || 'A라인');
         // CP 이력 캐시가 없으면 DB에서 비동기 로드 (완료 시 배지 자동 갱신)
         if (_cpHistCache === null) _initCpHistCache();
+        _loadSettingsProcessConfig().then(() => {
+            _cpSelectedFlow = _normalizeCpFlow(_cpSelectedFlow);
+            _refreshCpFlowUI();
+        }).catch(() => {});
 
         _updateBadge();
         if (_curDocType === DOC_CONTROL_PLAN) {
@@ -808,6 +1459,12 @@ var ProdStandardsModule = (function() {
                     style="display:flex; align-items:center; gap:5px;">
                     <span class="material-symbols-outlined" style="font-size:16px;">description</span>
                     관리계획서
+                </button>
+                <button class="btn ${_curDocType === DOC_CP_STATUS ? 'btn-primary' : 'btn-outline'} btn-sm"
+                    onclick="ProdStandardsModule.selectDocType('${DOC_CP_STATUS}')"
+                    style="display:flex; align-items:center; gap:5px;">
+                    <span class="material-symbols-outlined" style="font-size:16px;">fact_check</span>
+                    CP 등록 현황
                 </button>
                 <button class="btn btn-outline btn-sm"
                     onclick="Router.navigate('work-standard')"
@@ -883,7 +1540,7 @@ var ProdStandardsModule = (function() {
         // CP 등록 여부 확인 — 저장 데이터가 하나도 없으면 안내 메시지만 표시
         const allStds = Storage.getAll(DB.STORES.PROD_STANDARDS);
         const hasData = allStds.some(s =>
-            s.carModel === _curCarModel && s.partName === _curPartName && s._docKind !== STANDARD_DOC_KIND);
+            s.carModel === _curCarModel && s.partName === _curPartName && _isCpParamRecord(s));
         if (!hasData) {
             el.innerHTML = `
                 <div style="text-align:center; padding:48px 20px; color:var(--text-muted);">
@@ -896,7 +1553,7 @@ var ProdStandardsModule = (function() {
 
         // ★ CP 저장 레코드 전체 미리 로드 (숨김 스테이션 포함 표시에 활용)
         const _allSavedStds = Storage.getAll(DB.STORES.PROD_STANDARDS)
-            .filter(s => s.carModel === _curCarModel && s.partName === _curPartName && s._docKind !== STANDARD_DOC_KIND);
+            .filter(s => s.carModel === _curCarModel && s.partName === _curPartName && _isCpParamRecord(s));
 
         // CP 임포트 여부 판별: _fromCpImport 레코드가 하나라도 있으면 "CP 모드"
         // CP 모드에서는 레코드 없는 PROCESS_CONFIG 고정 스테이션 행을 숨김
@@ -1166,7 +1823,7 @@ var ProdStandardsModule = (function() {
 
         // 저장 여부
         const anyRec = Storage.getAll(STORE).some(r =>
-            r.carModel === _curCarModel && r.partName === _curPartName && r._docKind !== STANDARD_DOC_KIND);
+            r.carModel === _curCarModel && r.partName === _curPartName && _isCpParamRecord(r));
         const statusBadge = anyRec
             ? `<span style="font-size:12px; color:var(--accent-green);">● 저장 데이터 있음</span>`
             : `<span style="font-size:12px; color:var(--text-muted);">● 미입력</span>`;
@@ -1257,7 +1914,7 @@ var ProdStandardsModule = (function() {
     function _getCpParamOptions(carModel = _curCarModel, partName = _curPartName, type = _curDocType) {
         const targetProcesses = _standardTargetProcesses(type);
         const records = Storage.getAll(STORE)
-            .filter(r => r.carModel === carModel && r.partName === partName && r._docKind !== STANDARD_DOC_KIND)
+            .filter(r => r.carModel === carModel && r.partName === partName && _isCpParamRecord(r))
             .filter(r => targetProcesses.length === 0 || targetProcesses.includes(r.station) || targetProcesses.includes(r.process));
         const opts = [];
         records.forEach(r => {
@@ -2241,7 +2898,7 @@ window.addEventListener('load', function() {
         _pendingDrawing = null;
         _extraRows = [];
         // 차종 변경 시 품명 미선택 → 흐름 초기화
-        _cpSelectedFlow = [...CANONICAL_PROCESS_ORDER];
+        _cpSelectedFlow = _defaultCpFlow();
         _syncCpLineFromFlow();
         _refreshCpFlowUI();
 
@@ -2262,15 +2919,19 @@ window.addEventListener('load', function() {
         else _renderLinkedStandardTable();
     }
 
-    function onPartChange() {
+    async function onPartChange() {
         const sel = document.getElementById('psPartNameSel');
         _curPartName = sel ? sel.value : '';
         _pendingDrawing = null;   // 품명 변경 시 도면 초기화
         _extraRows = [];
 
-        // 공정 흐름 자동 결정: 제품 공정사양 → 저장 파라미터 → CP 이력 → 기본값(전체) 순 우선
+        // 공정 흐름 자동 결정: 저장 흐름 → 제품 공정사양 → 저장 파라미터 → CP 이력 → 기본값(전체) 순 우선
         if (_curCarModel && _curPartName) {
-            // ① 제품 정보의 공정별 사양(process1~4)에서 흐름 추출 — 최우선 기준
+            const savedFlow = await _loadCpFlow(_curCarModel, _curPartName);
+            if (savedFlow.length > 0) {
+                _cpSelectedFlow = savedFlow;
+            } else {
+            // ① 제품 정보의 공정별 사양(process1~4)에서 흐름 추출
             // 제품 공정명(도장-A/도장-B/레이저) → CP 흐름명(도장(A)/도장(B)/레이져) 매핑
             const PROD_PROC_MAP = { '도장-A': '도장(A)', '도장-B': '도장(B)', '레이저': '레이져' };
             const prodInfo = (Storage.getAll(DB.STORES.PRODUCTS) || []).find(
@@ -2284,23 +2945,26 @@ window.addEventListener('load', function() {
                 : [];
 
             if (prodMappedProcs.length > 0) {
-                // 제품 공정사양 기준으로 canonical 순서에서 해당 공정만 포함
-                _cpSelectedFlow = CANONICAL_PROCESS_ORDER.filter(p =>
+                // 제품 공정사양 기준으로 해당 공정의 세부공정까지 포함
+                _cpSelectedFlow = _normalizeCpFlow(CANONICAL_PROCESS_ORDER.filter(p =>
                     COMMON_PROCESSES.has(p) || prodMappedProcs.includes(p)
-                );
+                ));
             } else {
                 // ② 제품 정보 없거나 매핑 불가 → 저장된 파라미터 레코드에서 추출
                 const savedRecs = Storage.getAll(STORE).filter(
                     s => s.carModel === _curCarModel && s.partName === _curPartName
-                         && s._docKind !== STANDARD_DOC_KIND
+                         && _isCpParamRecord(s)
                 );
                 if (savedRecs.length > 0) {
-                    const usedProcs = new Set(savedRecs.map(r => r.process));
-                    const flowFromData = CANONICAL_PROCESS_ORDER.filter(p =>
+                    const usedSteps = savedRecs.map(r => ({ process: r.process, station: r.station || '' }));
+                    const usedProcs = new Set(usedSteps.map(r => r.process));
+                    const flowFromData = _normalizeCpFlow(CANONICAL_PROCESS_ORDER.filter(p =>
                         COMMON_PROCESSES.has(p) || usedProcs.has(p)
-                    );
+                    ));
                     savedRecs.forEach(r => {
-                        if (!flowFromData.includes(r.process)) flowFromData.push(r.process);
+                        if (!flowFromData.some(step => _cpStepProcess(step) === r.process && _cpStepStation(step) === (r.station || ''))) {
+                            flowFromData.push({ process: r.process, station: r.station || '' });
+                        }
                     });
                     _cpSelectedFlow = flowFromData;
                 } else {
@@ -2308,13 +2972,15 @@ window.addEventListener('load', function() {
                     const hist = _loadCpHistory().find(
                         h => h.carModel === _curCarModel && h.partName === _curPartName
                     );
-                    if (hist && Array.isArray(hist.flow) && hist.flow.length > 0) {
-                        _cpSelectedFlow = hist.flow;
+                    const histFlow = hist && (hist.flowSteps || hist.flow);
+                    if (histFlow && Array.isArray(histFlow) && histFlow.length > 0) {
+                        _cpSelectedFlow = _normalizeCpFlow(histFlow);
                     } else {
                         // ④ 이력도 없음 → 전체 기본 흐름(도장(A)→레이져→도장(B) 포함)
-                        _cpSelectedFlow = [...CANONICAL_PROCESS_ORDER];
+                        _cpSelectedFlow = _defaultCpFlow();
                     }
                 }
+            }
             }
             _syncCpLineFromFlow();
             _refreshCpFlowUI();
@@ -2326,7 +2992,7 @@ window.addEventListener('load', function() {
     }
 
     function selectDocType(type) {
-        _curDocType = STANDARD_DOC_TYPES[type] ? type : DOC_CONTROL_PLAN;
+        _curDocType = (STANDARD_DOC_TYPES[type] || type === DOC_CP_STATUS) ? type : DOC_CONTROL_PLAN;
         _pendingDrawing = null;
         _extraRows = [];
         _renderStandardsDetail(document.getElementById('contentArea'));
@@ -2356,15 +3022,16 @@ window.addEventListener('load', function() {
         const histFound = history.find(h => h.carModel === _curCarModel && h.partName === _curPartName);
         const allStds   = Storage.getAll(DB.STORES.PROD_STANDARDS);
         const cpStds    = allStds.filter(s =>
-            s.carModel === _curCarModel && s.partName === _curPartName && s._docKind !== STANDARD_DOC_KIND);
+            s.carModel === _curCarModel && s.partName === _curPartName && _isCpParamRecord(s));
         const hasSaved  = cpStds.length > 0;
         // importId: 이력에서 먼저 찾고 없으면 실제 레코드에서 추출
         const importId  = (histFound && histFound.importId) ||
                           (cpStds.find(Boolean) || {}).importId || '';
 
-        cpBadge.style.display    = 'flex';
-        cpBadge.style.alignItems = 'center';
-        cpBadge.style.gap        = '10px';
+        cpBadge.style.display       = 'flex';
+        cpBadge.style.flexDirection = 'column';
+        cpBadge.style.alignItems    = 'stretch';
+        cpBadge.style.gap           = '8px';
 
         if (hasSaved) {
             // ── 파라미터 데이터 있음 ──────────────────────────────
@@ -2377,23 +3044,25 @@ window.addEventListener('load', function() {
                             background:#dcfce7; border:1.5px solid #16a34a; color:#15803d;">
                     <span class="material-symbols-outlined" style="font-size:20px; color:#16a34a;">task_alt</span>
                     <div>
-                        <div style="font-weight:700; font-size:13px;">파라미터 등록됨</div>
+                        <div style="font-weight:700; font-size:13px;">파라메터 등록됨</div>
                         <div style="font-size:11px; opacity:.85;">${subLabel}</div>
                     </div>
                 </div>
-                <button class="btn btn-sm btn-outline" onclick="document.getElementById('cpUploadInput').click()"
-                    style="display:flex; align-items:center; gap:4px; font-size:12px; white-space:nowrap;
-                           border-color:#16a34a; color:#15803d;">
-                    <span class="material-symbols-outlined" style="font-size:14px;">upload_file</span>
-                    ${histFound ? '재업로드' : '관리계획서 업로드'}
-                </button>
-                <button class="btn btn-sm btn-outline" title="파라미터 값 초기화 (이력·매핑 유지)"
-                    onclick="ProdStandardsModule.resetCpParams('${importId}','${_esc(_curCarModel)}','${_esc(_curPartName)}')"
-                    style="display:flex; align-items:center; gap:4px; font-size:12px; white-space:nowrap;
-                           border-color:var(--accent-orange); color:var(--accent-orange);">
-                    <span class="material-symbols-outlined" style="font-size:14px;">restart_alt</span>
-                    파라미터 초기화
-                </button>`;
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <button class="btn btn-sm btn-outline" onclick="document.getElementById('cpUploadInput').click()"
+                        style="display:flex; align-items:center; gap:4px; font-size:12px; white-space:nowrap;
+                               border-color:#16a34a; color:#15803d; flex:1; justify-content:center;">
+                        <span class="material-symbols-outlined" style="font-size:14px;">upload_file</span>
+                        관리계획서 업로드
+                    </button>
+                    <button class="btn btn-sm btn-outline" title="파라미터 값 초기화 (이력·매핑 유지)"
+                        onclick="ProdStandardsModule.resetCpParams('${importId}','${_esc(_curCarModel)}','${_esc(_curPartName)}')"
+                        style="display:flex; align-items:center; gap:4px; font-size:12px; white-space:nowrap;
+                               border-color:var(--accent-orange); color:var(--accent-orange); flex:1; justify-content:center;">
+                        <span class="material-symbols-outlined" style="font-size:14px;">restart_alt</span>
+                        파라메터 초기화
+                    </button>
+                </div>`;
         } else {
             // ── 파라미터 데이터 없음 ──────────────────────────────
             cpBadge.innerHTML = `
@@ -2406,11 +3075,18 @@ window.addEventListener('load', function() {
                         <div style="font-size:11px; opacity:.85;">${_curCarModel} / ${_curPartName}</div>
                     </div>
                 </div>
-                <button class="btn btn-sm btn-primary" onclick="document.getElementById('cpUploadInput').click()"
-                    style="display:flex; align-items:center; gap:4px; font-size:12px; white-space:nowrap;">
-                    <span class="material-symbols-outlined" style="font-size:14px;">upload_file</span>
-                    관리계획서 업로드
-                </button>`;
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <button class="btn btn-sm btn-primary" onclick="document.getElementById('cpUploadInput').click()"
+                        style="display:flex; align-items:center; gap:4px; font-size:12px; white-space:nowrap; flex:1; justify-content:center;">
+                        <span class="material-symbols-outlined" style="font-size:14px;">upload_file</span>
+                        관리계획서 업로드
+                    </button>
+                    <button class="btn btn-sm btn-outline" disabled
+                        style="display:flex; align-items:center; gap:4px; font-size:12px; white-space:nowrap; flex:1; justify-content:center; opacity:.45; cursor:not-allowed;">
+                        <span class="material-symbols-outlined" style="font-size:14px;">restart_alt</span>
+                        파라메터 초기화
+                    </button>
+                </div>`;
         }
     }
 
@@ -2732,7 +3408,7 @@ window.addEventListener('load', function() {
             if (entry.keys.some(k => s.includes(k.replace(/\s+/g,'').toLowerCase()))) {
                 if (entry.sys === '__도장__') {
                     // ── 일반 '도장' 텍스트: flow 또는 원문 힌트로 라인 결정 ──
-                    const paintInFlow = (_cpSelectedFlow || []).filter(p => p.startsWith('도장'));
+                    const paintInFlow = _cpSelectedProcessNames().filter(p => p.startsWith('도장'));
                     if (paintInFlow.length === 1) return paintInFlow[0];
                     if (paintInFlow.length > 1) {
                         // 원문에 A/B 힌트 포함 여부 재확인 (key 매칭보다 넓은 범위)
@@ -2750,6 +3426,10 @@ window.addEventListener('load', function() {
                 return entry.sys;
             }
         }
+        if (_settingsProcessTypes && _settingsProcessTypes.length) {
+            const hit = _settingsProcessTypes.find(p => s.includes(p.replace(/\s+/g,'').toLowerCase()));
+            if (hit) return hit;
+        }
         return null;
     }
 
@@ -2760,7 +3440,10 @@ window.addEventListener('load', function() {
 
         // 해당 공정(process)의 실제 station 키 목록 (커스텀 포함, 공백 무시 정규화)
         const procCfg     = sysProcess ? _getCarConfig('')[sysProcess] : null;
-        const stationKeys = procCfg ? Object.keys(procCfg.stations) : [];
+        const stationKeys = [
+            ...(procCfg ? Object.keys(procCfg.stations) : []),
+            ...((_settingsSubProcessTypes && sysProcess && _settingsSubProcessTypes[sysProcess]) || [])
+        ].filter((v, i, arr) => v && arr.indexOf(v) === i);
 
         // ① 공정 내 station 키와 정규화 완전일치 (공백 차이 해소)
         const exactInProc = stationKeys.find(k => norm(k) === sNorm);
@@ -3182,6 +3865,26 @@ window.addEventListener('load', function() {
             });
         });
 
+        if (_settingsProcessTypes && _settingsSubProcessTypes) {
+            _settingsProcessTypes.forEach(proc => {
+                if (!cfg[proc]) {
+                    cfg[proc] = {
+                        icon: 'settings_applications',
+                        color: 'var(--accent-blue)',
+                        procNo: 0,
+                        stationNos: {},
+                        stations: {}
+                    };
+                }
+                (_settingsSubProcessTypes[proc] || [])
+                    .filter(st => !_isCpSelfStation(proc, st))
+                    .forEach(st => {
+                    if (!cfg[proc].stations[st]) cfg[proc].stations[st] = [];
+                    if (cfg[proc].stationNos && cfg[proc].stationNos[st] == null) cfg[proc].stationNos[st] = cfg[proc].procNo || 0;
+                });
+            });
+        }
+
         _carConfigCache[cacheKey] = cfg;
         return cfg;
     }
@@ -3211,7 +3914,7 @@ window.addEventListener('load', function() {
         _smProcFormMode = false;
         // showModal 은 1회만 호출 — 이후 탭/폼 전환은 DOM 직접 업데이트
         UIUtils.showModal(
-            '세부공정 관리',
+            '관리항목 관리',
             '<div id="smBody" style="min-height:200px;">로딩 중...</div>',
             '<button class="btn btn-secondary" id="smFooterBtn" onclick="UIUtils.closeModal()">닫기</button>',
             'md'
@@ -3393,8 +4096,8 @@ window.addEventListener('load', function() {
                     <thead style="background:var(--bg-secondary);">
                         <tr>
                             <th style="padding:7px 6px; width:22px;"></th>
-                            <th style="padding:7px 12px; text-align:left;">세부공정명</th>
-                            <th style="padding:7px 12px; text-align:center;">파라미터수</th>
+                            <th style="padding:7px 12px; text-align:left;">관리항목명</th>
+                            <th style="padding:7px 12px; text-align:center;">관리항목 파라메터수</th>
                             <th style="padding:7px 12px; text-align:center; width:90px;">편집/삭제</th>
                         </tr>
                     </thead>
@@ -3404,7 +4107,7 @@ window.addEventListener('load', function() {
             <button class="btn btn-primary" style="font-size:12px;"
                 onclick="ProdStandardsModule._smShowForm('${_esc(proc)}', null)">
                 <span class="material-symbols-outlined" style="font-size:14px;">add</span>
-                세부공정 추가
+                관리항목 추가
             </button>`;
     }
 
@@ -3466,7 +4169,7 @@ window.addEventListener('load', function() {
         return [...vals].sort((a, b) => a.localeCompare(b, 'ko'));
     }
 
-    // ── 파라미터 복사 패널 ───────────────────────────────────────────
+    // ── 관리항목 파라메터 복사 패널 ─────────────────────────────────
     function _smToggleCopyPanel() {
         _smCopyState.visible = !_smCopyState.visible;
         if (!_smCopyState.visible) {
@@ -3517,7 +4220,7 @@ window.addEventListener('load', function() {
         const srcStation = carCfg[proc] && carCfg[proc].stations && carCfg[proc].stations[station];
         const srcParams  = Array.isArray(srcStation) ? srcStation : (srcStation ? Object.values(srcStation) : []);
         if (!srcParams.length) {
-            UIUtils.toast('복사할 파라미터가 없습니다.', 'warning');
+            UIUtils.toast('복사할 관리항목 파라메터가 없습니다.', 'warning');
             return;
         }
         const copied = srcParams.map((p, i) => ({
@@ -3529,7 +4232,7 @@ window.addEventListener('load', function() {
         _smCopyState.srcLine    = '';
         _smCopyState.srcProc    = '';
         _smCopyState.srcStation = '';
-        UIUtils.toast(`파라미터 ${copied.length}개 복사 완료`, 'success');
+        UIUtils.toast(`관리항목 파라메터 ${copied.length}개 복사 완료`, 'success');
         _smRefresh();
     }
 
@@ -3614,17 +4317,17 @@ window.addEventListener('load', function() {
                 <option value="변경시">
             </datalist>
             <div style="font-weight:700; font-size:15px; margin-bottom:14px;">
-                ${isNew ? '+ 세부공정 추가' : '세부공정 편집'} —
+                ${isNew ? '+ 관리항목 추가' : '관리항목 편집'} —
                 <span style="color:var(--accent-blue);">${st.process}</span>
             </div>
             <div style="margin-bottom:14px;">
                 <div class="form-group" style="margin:0; max-width:280px;">
-                    <label class="form-label" style="font-size:12px;">세부공정명</label>
+                    <label class="form-label" style="font-size:12px;">관리항목명</label>
                     <input type="text" id="smStName" class="form-input" value="${_esc(st.station)}"
                         placeholder="예) 하도 공급" style="font-size:13px;">
                 </div>
             </div>
-            <div style="font-weight:600; font-size:13px; margin-bottom:6px;">파라미터 목록</div>
+            <div style="font-weight:600; font-size:13px; margin-bottom:6px;">관리항목 파라메터 목록</div>
             <div style="overflow-x:auto; border:1px solid var(--border-color); border-radius:8px; margin-bottom:10px;">
                 <table style="width:100%; font-size:12px; border-collapse:collapse; min-width:500px;">
                     <thead style="background:var(--bg-secondary);">
@@ -3644,7 +4347,7 @@ window.addEventListener('load', function() {
             </div>
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                 <button class="btn btn-secondary" style="font-size:12px;" onclick="ProdStandardsModule._smAddParam()">
-                    <span class="material-symbols-outlined" style="font-size:13px;">add</span> 파라미터 추가
+                    <span class="material-symbols-outlined" style="font-size:13px;">add</span> 관리항목 파라메터 추가
                 </button>
                 <button class="btn btn-secondary" style="font-size:12px;" onclick="ProdStandardsModule._smToggleCopyPanel()">
                     <span class="material-symbols-outlined" style="font-size:13px;">content_copy</span>
@@ -3673,7 +4376,7 @@ window.addEventListener('load', function() {
             border:1px solid var(--border-color); border-radius:8px;">
             <div style="font-weight:600; font-size:12px; margin-bottom:10px; color:var(--accent-blue);">
                 <span class="material-symbols-outlined" style="font-size:14px; vertical-align:middle;">content_copy</span>
-                &nbsp;다른 공정에서 파라미터 복사해 오기
+                &nbsp;다른 공정에서 관리항목 파라메터 복사해 오기
             </div>
             <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;">
                 <div>
@@ -3696,7 +4399,7 @@ window.addEventListener('load', function() {
                 </div>
                 <div style="display:flex; gap:6px;">
                     <button class="btn btn-primary" style="font-size:12px; padding:4px 12px;"
-                        onclick="if(confirm('현재 파라미터를 선택한 세부공정의 파라미터로 교체할까요?')) ProdStandardsModule._smApplyCopy('replace')">
+                        onclick="if(confirm('현재 관리항목 파라메터를 선택한 세부공정의 관리항목 파라메터로 교체할까요?')) ProdStandardsModule._smApplyCopy('replace')">
                         <span class="material-symbols-outlined" style="font-size:13px;">content_copy</span> 복사해 오기
                     </button>
                     <button class="btn btn-secondary" style="font-size:12px; padding:4px 10px;"
@@ -3704,7 +4407,7 @@ window.addEventListener('load', function() {
                 </div>
             </div>
             <div style="font-size:11px; color:var(--text-muted); margin-top:8px;">
-                ※ 선택한 세부공정의 파라미터로 현재 파라미터 목록을 교체합니다.
+                ※ 선택한 세부공정의 관리항목 파라메터로 현재 목록을 교체합니다.
             </div>
         </div>`;
     }
@@ -3750,7 +4453,7 @@ window.addEventListener('load', function() {
                 </div>
             </div>
             <p style="font-size:12px; color:var(--text-muted); margin:0;">
-                공정을 추가한 뒤 세부공정 추가 버튼으로 세부공정을 등록하세요.
+                공정을 추가한 뒤 관리항목 추가 버튼으로 관리항목을 등록하세요.
             </p>`;
     }
 
@@ -3792,7 +4495,7 @@ window.addEventListener('load', function() {
         _smRefresh();
     }
 
-    // ── 파라미터 행 드래그&드롭 순서 변경 ──────────────────────────
+    // ── 관리항목 파라메터 행 드래그&드롭 순서 변경 ─────────────────
 
     function _smParamDragStart(e, idx) {
         _smDragSrcIdx = idx;
@@ -3924,9 +4627,9 @@ window.addEventListener('load', function() {
         if (!st) return;
         const stName = (document.getElementById('smStName') || {}).value || st.station;
 
-        if (!stName.trim()) { UIUtils.toast('세부공정명을 입력하세요.', 'warning'); return; }
+        if (!stName.trim()) { UIUtils.toast('관리항목명을 입력하세요.', 'warning'); return; }
 
-        // 파라미터 key 정리 (빈 항목 제거, key 자동 생성)
+        // 관리항목 파라메터 key 정리 (빈 항목 제거, key 자동 생성)
         const params = st.params
             .filter(p => p.label && p.label.trim())
             .map((p, i) => ({
@@ -3949,14 +4652,14 @@ window.addEventListener('load', function() {
         customs.push({ process: st.process, station: stName, params });
         await _saveCustomStationsToDB(line, customs);
 
-        UIUtils.toast(`[${st.process}] ${stName} 세부공정 저장 완료`, 'success');
+        UIUtils.toast(`[${st.process}] ${stName} 관리항목 저장 완료`, 'success');
         _smEditState = null;
         _smActiveProc = st.process;
         _smRefresh();
     }
 
     async function _smDeleteStation(proc, stName) {
-        if (!window.confirm(`[${proc}] '${stName}' 세부공정을 삭제할까요?`)) return;
+        if (!window.confirm(`[${proc}] '${stName}' 관리항목을 삭제할까요?`)) return;
 
         const line = _getStorageLine(proc);
 
@@ -3981,7 +4684,30 @@ window.addEventListener('load', function() {
             await _saveHiddenStationsToDB(line, hidden);
         }
 
-        // ③ 세부공정 순서 캐시에서도 제거
+        // ③ 관리/설정 > 관리항목 관리(subProcessTypes)에서 온 항목이면 설정값에서도 제거
+        try {
+            const savedSub = await Storage.getConfigValue('subProcessTypes');
+            if (savedSub && typeof savedSub === 'object' && !Array.isArray(savedSub)) {
+                const keys = [proc, _settingsProcessKeyFromCp(proc)].filter((v, i, arr) => v && arr.indexOf(v) === i);
+                let changed = false;
+                keys.forEach(k => {
+                    if (!Array.isArray(savedSub[k])) return;
+                    const next = savedSub[k].filter(st => st !== stName);
+                    if (next.length !== savedSub[k].length) {
+                        savedSub[k] = next;
+                        changed = true;
+                    }
+                });
+                if (changed) {
+                    await Storage.setConfigValue('subProcessTypes', savedSub);
+                    _settingsProcessTypes = null;
+                    _settingsSubProcessTypes = null;
+                    await _loadSettingsProcessConfig();
+                }
+            }
+        } catch(e) {}
+
+        // ④ 세부공정 순서 캐시에서도 제거
         await _saveStationOrderToDB('A라인', proc,
             _getStationOrder('A라인', proc).filter(s => s !== stName)
         );
@@ -4118,9 +4844,11 @@ window.addEventListener('load', function() {
 
     // ── 업로드 이력 CRUD (DB.setConfig / DB.getConfig 직접 사용) ──
     const CP_HISTORY_KEY    = 'cp_history';
+    const CP_FLOW_CONFIG_PREFIX = 'cp_flow__';       // + carModel + '__' + partName
     const CP_USER_MAP_PREFIX = 'cp_user_map__';   // + carModel + '__' + partName
     let _cpHistCache    = null;  // null = DB에서 아직 로드 안 됨
     let _cpUserMapCache = {};    // { 'carModel||partName': entry[] }
+    let _cpFlowCache    = {};    // { 'carModel||partName': [{process,station}] }
 
     // 첫 렌더 시 비동기로 DB에서 이력 로드 → 완료 후 배지 갱신
     async function _initCpHistCache() {
@@ -4137,10 +4865,67 @@ window.addEventListener('load', function() {
         return _cpHistCache || [];
     }
 
+    function _cpFlowCacheKey(carModel, partName) {
+        return `${carModel || ''}||${partName || ''}`;
+    }
+
+    async function _loadCpFlow(carModel, partName) {
+        if (!carModel || !partName) return [];
+        const cacheKey = _cpFlowCacheKey(carModel, partName);
+        if (_cpFlowCache[cacheKey] !== undefined) return _cpFlowCache[cacheKey];
+        const savedRecord = _findCpFlowRecord(carModel, partName);
+        if (savedRecord) {
+            const savedFlow = Array.isArray(savedRecord.flowSteps) ? savedRecord.flowSteps : savedRecord.flow;
+            _cpFlowCache[cacheKey] = _normalizeCpFlow(savedFlow);
+            return _cpFlowCache[cacheKey];
+        }
+        try {
+            const val = await DB.getConfig(CP_FLOW_CONFIG_PREFIX + carModel + '__' + partName);
+            _cpFlowCache[cacheKey] = _normalizeCpFlow(val);
+            if (_cpFlowCache[cacheKey].length > 0) {
+                _saveCpFlow(carModel, partName, _cpFlowCache[cacheKey]).catch(() => {});
+            }
+        } catch(e) {
+            _cpFlowCache[cacheKey] = [];
+        }
+        return _cpFlowCache[cacheKey];
+    }
+
+    async function _saveCpFlow(carModel, partName, flow) {
+        if (!carModel || !partName) return;
+        const normalized = _normalizeCpFlow(flow);
+        const cacheKey = _cpFlowCacheKey(carModel, partName);
+        _cpFlowCache[cacheKey] = normalized;
+        const processNames = [];
+        normalized.forEach(step => {
+            const proc = _cpStepProcess(step);
+            if (proc && !processNames.includes(proc)) processNames.push(proc);
+        });
+        const existing = _findCpFlowRecord(carModel, partName);
+        const payload = {
+            _docKind: CP_FLOW_DOC_KIND,
+            carModel,
+            partName,
+            flowSteps: normalized,
+            flow: processNames,
+            paramSelections: (existing && existing.paramSelections) || {},
+            updatedAt: UIUtils.now()
+        };
+        if (existing && existing.id) {
+            await Storage.update(STORE, existing.id, { ...existing, ...payload, id: existing.id });
+        } else {
+            await Storage.add(STORE, payload);
+        }
+        try {
+            await DB.setConfig(CP_FLOW_CONFIG_PREFIX + carModel + '__' + partName, normalized);
+        } catch(e) {}
+    }
+
     async function _saveCpHistory(entry) {
         if (_cpHistCache === null) _cpHistCache = [];
         // 현재 선택된 공정 흐름을 이력에 포함
-        entry.flow = _cpSelectedFlow ? [..._cpSelectedFlow] : [...CANONICAL_PROCESS_ORDER];
+        entry.flowSteps = _normalizeCpFlow(_cpSelectedFlow);
+        entry.flow = _cpSelectedProcessNames(); // legacy display/restore
         // 동일 차종/품명 중복 제거 후 최신순 삽입
         _cpHistCache = _cpHistCache.filter(
             h => !(h.carModel === entry.carModel && h.partName === entry.partName)
@@ -4188,7 +4973,7 @@ window.addEventListener('load', function() {
                     ${(() => {
                         const stds = Storage.getAll(DB.STORES.PROD_STANDARDS);
                         const hasSaved = stds.some(s =>
-                            s.carModel === e.carModel && s.partName === e.partName && s._docKind !== STANDARD_DOC_KIND);
+                            s.carModel === e.carModel && s.partName === e.partName && _isCpParamRecord(s));
                         return hasSaved
                             ? `<button class="btn btn-sm" title="파라미터 값 초기화 (이력·매핑 유지)"
                                 style="border:1px solid var(--accent-orange); color:var(--accent-orange);
@@ -4243,52 +5028,50 @@ window.addEventListener('load', function() {
 
     /** _cpSelectedFlow → _cpUploadLine 동기화 (하위호환) */
     function _syncCpLineFromFlow() {
-        const paints = (_cpSelectedFlow || []).filter(p => p.startsWith('도장'));
+        _cpSelectedFlow = _normalizeCpFlow(_cpSelectedFlow);
+        const paints = _cpSelectedProcessNames().filter(p => p.startsWith('도장'));
         _cpUploadLine = (paints.length === 1 && paints[0] === '도장(B)') ? 'B라인' : 'A라인';
     }
 
     /** 공정 흐름 선택 UI 내용 HTML (container 안에 주입) */
     function _cpFlowSelectorHtml() {
-        const chips = [];
-        const sel   = _cpSelectedFlow || [];
-        const unsel = CANONICAL_PROCESS_ORDER.filter(
-            p => !COMMON_PROCESSES.has(p) && !sel.includes(p)
-        );
+        _cpSelectedFlow = _normalizeCpFlow(_cpSelectedFlow);
+        const procs = _cpSelectedProcessNames();
+        const paramCountForProc = proc => (_cpSelectedFlow || [])
+            .filter(step => _cpStepProcess(step) === proc)
+            .reduce((sum, step) => {
+                const rows = _cpFlowParamRowsForStep(step).rows;
+                return sum + _cpFlowSelectedParamKeys(step, rows).length;
+            }, 0);
+        const preview = procs.slice(0, 8).map((proc, idx) => {
+            const arrow  = idx === 0 ? '' : '<span style="color:var(--text-muted);font-size:10px;">→</span>';
+            const stepNo = String(idx + 1).padStart(2, '0');
+            return `${arrow}<span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;padding:2px 7px;
+                border-radius:999px;background:rgba(234,88,12,.08);color:var(--accent-orange,#ea580c);
+                border:1px solid rgba(234,88,12,.45);white-space:nowrap;">
+                <span style="font-size:9px;font-weight:700;opacity:0.65;letter-spacing:.03em;">${stepNo}</span>${_esc(proc)}</span>`;
+        }).join('');
+        const paramSummary = procs.map((proc, idx) => {
+            const stepNo = String(idx + 1).padStart(2, '0');
+            return `<span style="font-size:10px;padding:1px 7px;border-radius:999px;background:var(--bg-secondary);
+                          border:1px solid var(--border-color);color:var(--text-secondary);white-space:nowrap;">
+                <span style="font-weight:700;opacity:0.65;">${stepNo}</span> (${paramCountForProc(proc)})
+            </span>`;
+        }).join('');
 
-        sel.forEach((p, idx) => {
-            const isCommon = COMMON_PROCESSES.has(p);
-            const arrow = idx === 0 ? '' : '<span style="color:var(--text-muted);font-size:10px;margin:0 1px;">→</span>';
-            if (isCommon) {
-                chips.push(`${arrow}<span style="font-size:11px;padding:2px 8px;border-radius:10px;
-                    background:var(--bg-secondary);color:var(--text-primary);
-                    border:1px solid var(--border-color);white-space:nowrap;">${p}</span>`);
-            } else {
-                // 선택 공정: 이동 버튼 + 제거 버튼
-                const prevIsOpt = idx > 0 && !COMMON_PROCESSES.has(sel[idx - 1]);
-                const nextIsOpt = idx < sel.length - 1 && !COMMON_PROCESSES.has(sel[idx + 1]);
-                const btnStyle  = 'padding:0 2px;font-size:10px;border:none;background:transparent;cursor:pointer;color:var(--accent-orange);line-height:1;';
-                const moveLeft  = prevIsOpt ? `<button onclick="ProdStandardsModule._moveCpFlowProc('${_esc(p)}',-1)" title="앞으로" style="${btnStyle}">◀</button>` : '';
-                const moveRight = nextIsOpt ? `<button onclick="ProdStandardsModule._moveCpFlowProc('${_esc(p)}',1)"  title="뒤로" style="${btnStyle}">▶</button>` : '';
-                const remove    = `<button onclick="ProdStandardsModule._toggleCpFlowProc('${_esc(p)}')" title="제거" style="${btnStyle}font-size:12px;">×</button>`;
-                chips.push(`${arrow}<span style="display:inline-flex;align-items:center;gap:1px;
-                    font-size:11px;padding:1px 3px 1px 8px;border-radius:10px;
-                    background:var(--accent-orange,#ea580c)22;color:var(--accent-orange,#ea580c);
-                    border:1px solid var(--accent-orange,#ea580c);white-space:nowrap;">
-                    ${moveLeft}${p}${moveRight}${remove}</span>`);
-            }
-        });
-
-        // 미선택 optional 공정: [+ 추가] 버튼
-        const addBtns = unsel.map(p =>
-            `<button onclick="ProdStandardsModule._toggleCpFlowProc('${_esc(p)}')"
-                style="font-size:11px;padding:2px 8px;border-radius:10px;cursor:pointer;
-                       background:transparent;color:var(--text-muted);
-                       border:1px dashed var(--border-color);">+ ${p}</button>`
-        ).join('');
-
-        return `<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
-            ${chips.join('')}
-            ${unsel.length ? `<span style="color:var(--text-muted);font-size:10px;margin-left:4px;">│</span>${addBtns}` : ''}
+        return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0;">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="ProdStandardsModule.openCpFlowModal()"
+                style="display:flex;align-items:center;gap:5px;font-size:12px;white-space:nowrap;">
+                <span class="material-symbols-outlined" style="font-size:15px;">route</span>
+                공정 순서 선택
+            </button>
+            <div style="display:flex;flex-direction:column;gap:4px;min-width:240px;flex:1;">
+                <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+                    ${preview || '<span style="font-size:11px;color:var(--text-muted);">선택된 주공정 없음</span>'}
+                    ${procs.length > 8 ? `<span style="font-size:11px;color:var(--text-muted);">+${procs.length - 8}</span>` : ''}
+                </div>
+                ${paramSummary ? `<div style="display:flex;gap:4px;flex-wrap:wrap;">${paramSummary}</div>` : ''}
+            </div>
         </div>`;
     }
 
@@ -4299,26 +5082,11 @@ window.addEventListener('load', function() {
         // 프리뷰 모달의 흐름 표시도 갱신
         const el2 = document.getElementById('cpPreviewFlowContainer');
         if (el2) el2.innerHTML = _cpPreviewFlowHtml();
+        const modalEl = document.getElementById('cpFlowModalBody');
+        if (modalEl) modalEl.innerHTML = _cpFlowModalHtml();
     }
 
-    /** 선택 공정 토글 (optional만) */
-    function _toggleCpFlowProc(procName) {
-        if (COMMON_PROCESSES.has(procName)) return;
-        const idx = _cpSelectedFlow.indexOf(procName);
-        if (idx >= 0) {
-            _cpSelectedFlow = _cpSelectedFlow.filter(p => p !== procName);
-        } else {
-            // canonical 순서에 맞는 위치에 삽입
-            const ci = CANONICAL_PROCESS_ORDER.indexOf(procName);
-            let ins  = _cpSelectedFlow.length;
-            for (let i = 0; i < _cpSelectedFlow.length; i++) {
-                if (CANONICAL_PROCESS_ORDER.indexOf(_cpSelectedFlow[i]) > ci) { ins = i; break; }
-            }
-            _cpSelectedFlow = [..._cpSelectedFlow.slice(0, ins), procName, ..._cpSelectedFlow.slice(ins)];
-        }
-        _syncCpLineFromFlow();
-        _refreshCpFlowUI();
-        // 미리보기 모달이 열려 있으면 즉시 재검증
+    function _rerunCpFlowValidation() {
         if (_cpParsedGroups) {
             _rerenderValidationTbody();
             const diagEl = document.getElementById('cpDiagSummary');
@@ -4327,9 +5095,290 @@ window.addEventListener('load', function() {
         }
     }
 
-    /** 선택 공정 순서 변경 (optional만, dir: -1 앞으로 / +1 뒤로) */
-    function _moveCpFlowProc(procName, dir) {
-        const idx = _cpSelectedFlow.indexOf(procName);
+    function _selectCpFlowProcess(procName) {
+        _cpFlowActiveProcess = procName;
+        _cpFlowActiveStepKey = '';
+        _refreshCpFlowUI();
+    }
+
+    function _selectCpFlowStation(stepKey) {
+        _cpFlowActiveStepKey = stepKey;
+        _refreshCpFlowUI();
+    }
+
+    function openCpFlowModal() {
+        _ensureCpFlowActiveProcess();
+        closeCpFlowModal();
+        const overlay = document.createElement('div');
+        overlay.id = 'cpFlowModalOverlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.42);z-index:10050;display:flex;align-items:center;justify-content:center;padding:24px;';
+        overlay.innerHTML = `
+            <div style="width:min(1180px,96vw);max-height:96vh;background:var(--bg-primary);border-radius:12px;
+                        box-shadow:0 20px 60px rgba(15,23,42,.35);display:flex;flex-direction:column;overflow:hidden;">
+                <div style="display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--border-color);">
+                    <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-blue);">route</span>
+                    <div style="font-weight:900;font-size:15px;flex:1;">CP 공정 순서 선택</div>
+                    <button type="button" onclick="ProdStandardsModule.closeCpFlowModal()"
+                        style="border:none;background:transparent;cursor:pointer;color:var(--text-muted);padding:4px;">
+                        <span class="material-symbols-outlined" style="font-size:20px;">close</span>
+                    </button>
+                </div>
+                <div id="cpFlowModalBody" style="padding:14px;overflow:auto;">${_cpFlowModalHtml()}</div>
+                <div style="padding:12px 16px;border-top:1px solid var(--border-color);display:flex;justify-content:space-between;align-items:center;">
+                    <span id="cpFlowSaveBadge" style="font-size:11px;color:var(--text-muted);"></span>
+                    <div style="display:flex;gap:8px;">
+                        <button class="btn btn-primary" onclick="ProdStandardsModule._saveCpFlowManual()"
+                            style="display:flex;align-items:center;gap:5px;">
+                            <span class="material-symbols-outlined" style="font-size:15px;">save</span>공정 흐름 저장
+                        </button>
+                        <button class="btn btn-secondary" onclick="ProdStandardsModule.closeCpFlowModal()">닫기</button>
+                    </div>
+                </div>
+            </div>`;
+        overlay.addEventListener('click', function(e) {
+            if (e.target === overlay) closeCpFlowModal();
+        });
+        document.body.appendChild(overlay);
+    }
+
+    function closeCpFlowModal() {
+        const existing = document.getElementById('cpFlowModalOverlay');
+        if (existing) existing.remove();
+    }
+
+    async function _saveCpFlowManual() {
+        if (!_curCarModel || !_curPartName) {
+            UIUtils.toast('차종/품명을 먼저 선택하세요.', 'warning');
+            return;
+        }
+        await _saveCpFlow(_curCarModel, _curPartName, _cpSelectedFlow);
+        const procs = _cpSelectedProcessNames();
+        const badge = document.getElementById('cpFlowSaveBadge');
+        if (badge) {
+            badge.textContent = `저장 완료 — ${procs.length}개 주공정 (${UIUtils.now().slice(11,16)})`;
+            badge.style.color = 'var(--accent-green, #16a34a)';
+        }
+        UIUtils.toast(`[${_curCarModel} / ${_curPartName}] 공정 흐름 저장 완료 (${procs.length}개 주공정)`, 'success');
+        _refreshCpFlowUI();
+    }
+
+
+    function _cpFlowModalHtml() {
+        _cpSelectedFlow = _normalizeCpFlow(_cpSelectedFlow);
+        const activeProc = _ensureCpFlowActiveProcess();
+        const selectedProcs = new Set(_cpSelectedProcessNames());
+        const procOptions = _cpFlowOrderedProcessOptions();
+        const selectedKeys = new Set((_cpSelectedFlow || []).map(_cpStepKey));
+        const activeStep = _cpFlowActiveStep();
+        const activeStepKey = activeStep ? _cpStepKey(activeStep) : '';
+        const selectedProcOrder = _cpFlowSelectedProcessOrder();
+
+        const procRows = procOptions.map(proc => {
+            const checked = selectedProcs.has(proc);
+            const active = proc === activeProc;
+            const count = _cpFlowSelectedCount(proc);
+            const total = _cpFlowStepsForProcess(proc).length;
+            const orderIdx = selectedProcOrder.indexOf(proc);
+            return `<div draggable="true"
+                    ondragstart="ProdStandardsModule._cpFlowProcDragStart('${_esc(proc)}',event)"
+                    ondragover="ProdStandardsModule._cpFlowProcDragOver('${_esc(proc)}',event)"
+                    ondrop="ProdStandardsModule._cpFlowProcDrop('${_esc(proc)}',event)"
+                    ondragend="ProdStandardsModule._cpFlowDragEnd(event)"
+                    style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;
+                           border:1px solid ${active ? 'var(--accent-blue)' : 'var(--border-color)'};
+                           background:${active ? 'rgba(37,99,235,.08)' : 'var(--bg-primary)'};
+                           cursor:grab;">
+                <span class="material-symbols-outlined" style="font-size:17px;color:var(--text-muted);">drag_indicator</span>
+                <input type="checkbox" ${checked ? 'checked' : ''}
+                    onchange="ProdStandardsModule._toggleCpFlowProcessAll('${_esc(proc)}')"
+                    style="width:15px;height:15px;margin:0;cursor:pointer;">
+                <button type="button" onclick="ProdStandardsModule._selectCpFlowProcess('${_esc(proc)}')"
+                    style="flex:1;text-align:left;border:none;background:transparent;cursor:pointer;padding:0;
+                           color:${active ? 'var(--accent-blue)' : 'var(--text-primary)'};
+                           font-weight:800;font-size:12px;">
+                    ${_esc(proc)}
+                </button>
+                <button type="button" title="위로" ${orderIdx <= 0 ? 'disabled' : ''}
+                    onclick="event.stopPropagation();ProdStandardsModule._moveCpFlowProcessGroup('${_esc(proc)}',-1)"
+                    style="border:1px solid var(--border-color);background:var(--bg-secondary);border-radius:5px;
+                           width:24px;height:24px;cursor:${orderIdx <= 0 ? 'not-allowed' : 'pointer'};opacity:${orderIdx <= 0 ? '.35' : '1'};">
+                    <span class="material-symbols-outlined" style="font-size:14px;">keyboard_arrow_up</span>
+                </button>
+                <button type="button" title="아래로" ${orderIdx < 0 || orderIdx >= selectedProcOrder.length - 1 ? 'disabled' : ''}
+                    onclick="event.stopPropagation();ProdStandardsModule._moveCpFlowProcessGroup('${_esc(proc)}',1)"
+                    style="border:1px solid var(--border-color);background:var(--bg-secondary);border-radius:5px;
+                           width:24px;height:24px;cursor:${orderIdx < 0 || orderIdx >= selectedProcOrder.length - 1 ? 'not-allowed' : 'pointer'};opacity:${orderIdx < 0 || orderIdx >= selectedProcOrder.length - 1 ? '.35' : '1'};">
+                    <span class="material-symbols-outlined" style="font-size:14px;">keyboard_arrow_down</span>
+                </button>
+                <span style="font-size:10px;font-weight:800;padding:2px 7px;border-radius:999px;
+                             background:${checked ? 'var(--accent-blue)' : 'var(--bg-secondary)'};
+                             color:${checked ? '#fff' : 'var(--text-muted)'};">${count}/${total}</span>
+            </div>`;
+        }).join('');
+
+        const selectedStationKeys = (_cpSelectedFlow || [])
+            .filter(step => _cpStepProcess(step) === activeProc)
+            .map(_cpStepKey);
+        const stationRows = _cpFlowOrderedStepsForProcess(activeProc).map(step => {
+            const key = _cpStepKey(step);
+            const checked = selectedKeys.has(key);
+            const active = key === activeStepKey;
+            const paramRows = _cpFlowParamRowsForStep(step).rows;
+            const selectedParamCount = _cpFlowSelectedParamKeys(step, paramRows).length;
+            const orderIdx = selectedStationKeys.indexOf(key);
+            return `<div draggable="${checked ? 'true' : 'false'}"
+                    ondragstart="ProdStandardsModule._cpFlowStationDragStart('${_esc(key)}',event)"
+                    ondragover="ProdStandardsModule._cpFlowStationDragOver('${_esc(key)}',event)"
+                    ondrop="ProdStandardsModule._cpFlowStationDrop('${_esc(key)}',event)"
+                    ondragend="ProdStandardsModule._cpFlowDragEnd(event)"
+                    onclick="ProdStandardsModule._selectCpFlowStation('${_esc(key)}')"
+                    style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;
+                           border:1px solid ${active ? 'var(--accent-blue)' : (checked ? 'rgba(234,88,12,.55)' : 'var(--border-color)')};
+                           background:${active ? 'rgba(37,99,235,.08)' : (checked ? 'rgba(234,88,12,.08)' : 'var(--bg-primary)')};
+                           cursor:${checked ? 'grab' : 'default'};">
+                <span class="material-symbols-outlined" style="font-size:17px;color:var(--text-muted);">drag_indicator</span>
+                <input type="checkbox" ${checked ? 'checked' : ''}
+                    onclick="event.stopPropagation()"
+                    onchange="ProdStandardsModule._toggleCpFlowProc('${_esc(key)}')"
+                    style="width:15px;height:15px;margin:0;cursor:pointer;">
+                <span style="flex:1;font-weight:800;font-size:12px;color:${checked ? 'var(--accent-orange,#ea580c)' : 'var(--text-secondary)'};">
+                    ${_esc(_cpStepStation(step) || _cpStepProcess(step))}
+                </span>
+                <button type="button" title="위로" ${orderIdx <= 0 ? 'disabled' : ''}
+                    onclick="event.stopPropagation();ProdStandardsModule._moveCpFlowStationInProcess('${_esc(key)}',-1)"
+                    style="border:1px solid var(--border-color);background:var(--bg-secondary);border-radius:5px;
+                           width:24px;height:24px;cursor:${orderIdx <= 0 ? 'not-allowed' : 'pointer'};opacity:${orderIdx <= 0 ? '.35' : '1'};">
+                    <span class="material-symbols-outlined" style="font-size:14px;">keyboard_arrow_up</span>
+                </button>
+                <button type="button" title="아래로" ${orderIdx < 0 || orderIdx >= selectedStationKeys.length - 1 ? 'disabled' : ''}
+                    onclick="event.stopPropagation();ProdStandardsModule._moveCpFlowStationInProcess('${_esc(key)}',1)"
+                    style="border:1px solid var(--border-color);background:var(--bg-secondary);border-radius:5px;
+                           width:24px;height:24px;cursor:${orderIdx < 0 || orderIdx >= selectedStationKeys.length - 1 ? 'not-allowed' : 'pointer'};opacity:${orderIdx < 0 || orderIdx >= selectedStationKeys.length - 1 ? '.35' : '1'};">
+                    <span class="material-symbols-outlined" style="font-size:14px;">keyboard_arrow_down</span>
+                </button>
+                <span style="font-size:10px;padding:2px 7px;border-radius:999px;background:var(--bg-secondary);
+                             border:1px solid var(--border-color);color:var(--text-muted);">${selectedParamCount}/${paramRows.length}</span>
+            </div>`;
+        }).join('');
+
+        return `${_cpProductInfoHtml()}
+        <div style="display:grid;grid-template-columns:minmax(220px,.75fr) minmax(360px,1.25fr);gap:14px;align-items:start;">
+            <div style="border:1px solid var(--border-color);border-radius:10px;overflow:hidden;background:var(--bg-secondary);">
+                <div style="padding:10px 12px;border-bottom:1px solid var(--border-color);font-weight:900;font-size:13px;">
+                    주공정 선택 및 순서
+                </div>
+                <div style="display:flex;flex-direction:column;gap:6px;padding:10px;max-height:676px;overflow:auto;">
+                    ${procRows || '<div style="padding:18px;text-align:center;color:var(--text-muted);font-size:12px;">등록된 주공정이 없습니다.</div>'}
+                </div>
+            </div>
+            <div style="border:1px solid var(--border-color);border-radius:10px;overflow:hidden;background:var(--bg-secondary);">
+                <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border-color);">
+                    <div style="font-weight:900;font-size:13px;flex:1;">${_esc(activeProc || '주공정')} 세부공정 선택 및 순서</div>
+                    ${activeProc ? `<button type="button" class="btn btn-sm btn-outline" onclick="ProdStandardsModule._toggleCpFlowProcessAll('${_esc(activeProc)}')" style="font-size:11px;padding:4px 10px;">
+                        ${_cpFlowStepsForProcess(activeProc).every(step => selectedKeys.has(_cpStepKey(step))) ? '전체 해제' : '전체 선택'}
+                    </button>` : ''}
+                </div>
+                <div style="display:flex;flex-direction:column;gap:6px;padding:10px;max-height:390px;overflow:auto;">
+                    ${stationRows || '<div style="padding:18px;text-align:center;color:var(--text-muted);font-size:12px;">선택할 세부공정이 없습니다.</div>'}
+                </div>
+                <div style="padding:0 10px 10px;">${_cpFlowParamPanelHtml(activeStep)}</div>
+            </div>
+        </div>`;
+    }
+
+    async function _toggleCpFlowProcessAll(procName) {
+        const steps = _cpFlowStepsForProcess(procName);
+        if (!steps.length) return;
+        const selectedKeys = new Set((_cpSelectedFlow || []).map(_cpStepKey));
+        // 하나라도 선택된 상태면 체크박스가 checked → 클릭 시 전체 해제
+        const anyChecked = steps.some(step => selectedKeys.has(_cpStepKey(step)));
+        if (anyChecked) {
+            const removeKeys = new Set(steps.map(_cpStepKey));
+            _cpSelectedFlow = (_cpSelectedFlow || []).filter(step => !removeKeys.has(_cpStepKey(step)));
+        } else {
+            const merged = [...(_cpSelectedFlow || [])];
+            steps.forEach(step => {
+                if (!merged.some(s => _cpStepKey(s) === _cpStepKey(step))) merged.push(step);
+            });
+            _cpSelectedFlow = _normalizeCpFlow(merged);
+        }
+        _syncCpLineFromFlow();
+        if (_curCarModel && _curPartName) await _saveCpFlow(_curCarModel, _curPartName, _cpSelectedFlow);
+        _refreshCpFlowUI();
+        _rerunCpFlowValidation();
+    }
+
+    /** 선택 공정/세부공정 토글 */
+    async function _toggleCpFlowProc(stepKey) {
+        const all = _cpAllFlowSteps();
+        const step = all.find(s => _cpStepKey(s) === stepKey) || { process: String(stepKey || '').split('||')[0], station: String(stepKey || '').split('||')[1] || '' };
+        const idx = (_cpSelectedFlow || []).findIndex(s => _cpStepKey(s) === _cpStepKey(step));
+        if (idx >= 0) {
+            _cpSelectedFlow = _cpSelectedFlow.filter((_, i) => i !== idx);
+        } else {
+            const allIdx = all.findIndex(s => _cpStepKey(s) === _cpStepKey(step));
+            let ins  = _cpSelectedFlow.length;
+            for (let i = 0; i < _cpSelectedFlow.length; i++) {
+                const curIdx = all.findIndex(s => _cpStepKey(s) === _cpStepKey(_cpSelectedFlow[i]));
+                if (curIdx > allIdx) { ins = i; break; }
+            }
+            _cpSelectedFlow = [..._cpSelectedFlow.slice(0, ins), step, ..._cpSelectedFlow.slice(ins)];
+        }
+        _syncCpLineFromFlow();
+        if (_curCarModel && _curPartName) await _saveCpFlow(_curCarModel, _curPartName, _cpSelectedFlow);
+        _refreshCpFlowUI();
+        _rerunCpFlowValidation();
+    }
+
+    /** 선택 공정/세부공정 순서 변경 (dir: -1 앞으로 / +1 뒤로) */
+    async function _moveCpFlowProcessGroup(procName, dir) {
+        const order = _cpFlowSelectedProcessOrder();
+        const idx = order.indexOf(procName);
+        const newIdx = idx + dir;
+        if (idx < 0 || newIdx < 0 || newIdx >= order.length) return;
+        [order[idx], order[newIdx]] = [order[newIdx], order[idx]];
+
+        const groups = {};
+        (_cpSelectedFlow || []).forEach(step => {
+            const proc = _cpStepProcess(step);
+            if (!groups[proc]) groups[proc] = [];
+            groups[proc].push(step);
+        });
+        _cpSelectedFlow = order.flatMap(proc => groups[proc] || []);
+        _cpFlowActiveProcess = procName;
+        await _saveAndRefreshCpFlowOrder();
+    }
+
+    async function _moveCpFlowStationInProcess(stepKey, dir) {
+        const current = (_cpSelectedFlow || []).find(step => _cpStepKey(step) === stepKey);
+        if (!current) return;
+        const proc = _cpStepProcess(current);
+        const procSteps = (_cpSelectedFlow || []).filter(step => _cpStepProcess(step) === proc);
+        const idx = procSteps.findIndex(step => _cpStepKey(step) === stepKey);
+        const newIdx = idx + dir;
+        if (idx < 0 || newIdx < 0 || newIdx >= procSteps.length) return;
+        [procSteps[idx], procSteps[newIdx]] = [procSteps[newIdx], procSteps[idx]];
+
+        let inserted = false;
+        const rebuilt = [];
+        (_cpSelectedFlow || []).forEach(step => {
+            if (_cpStepProcess(step) !== proc) {
+                rebuilt.push(step);
+                return;
+            }
+            if (!inserted) {
+                rebuilt.push(...procSteps);
+                inserted = true;
+            }
+        });
+        _cpSelectedFlow = rebuilt;
+        _cpFlowActiveProcess = proc;
+        _cpFlowActiveStepKey = stepKey;
+        await _saveAndRefreshCpFlowOrder();
+    }
+
+    async function _moveCpFlowProc(stepKey, dir) {
+        const idx = (_cpSelectedFlow || []).findIndex(s => _cpStepKey(s) === stepKey);
         if (idx < 0) return;
         const newIdx = idx + dir;
         if (newIdx < 0 || newIdx >= _cpSelectedFlow.length) return;
@@ -4337,52 +5386,104 @@ window.addEventListener('load', function() {
         [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
         _cpSelectedFlow = arr;
         _syncCpLineFromFlow();
+        if (_curCarModel && _curPartName) await _saveCpFlow(_curCarModel, _curPartName, _cpSelectedFlow);
         _refreshCpFlowUI();
-        if (_cpParsedGroups) {
-            _rerenderValidationTbody();
-            const diagEl = document.getElementById('cpDiagSummary');
-            if (diagEl) diagEl.innerHTML = _cpDiagnosticSummaryHtml(_cpParsedGroups);
-            _refreshGroupsPreview();
+        _rerunCpFlowValidation();
+    }
+
+    async function _saveAndRefreshCpFlowOrder() {
+        _syncCpLineFromFlow();
+        if (_curCarModel && _curPartName) await _saveCpFlow(_curCarModel, _curPartName, _cpSelectedFlow);
+        _refreshCpFlowUI();
+        _rerunCpFlowValidation();
+    }
+
+    function _cpFlowProcDragStart(procName, event) {
+        if (!_cpFlowHasProcess(procName)) {
+            event.preventDefault();
+            return;
         }
+        _cpFlowProcDragName = procName;
+        event.dataTransfer.effectAllowed = 'move';
+        event.currentTarget.style.opacity = '.45';
+    }
+
+    function _cpFlowProcDragOver(procName, event) {
+        if (!_cpFlowProcDragName || !_cpFlowHasProcess(procName)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        event.currentTarget.style.outline = '2px solid var(--accent-blue)';
+        event.currentTarget.style.outlineOffset = '-2px';
+    }
+
+    async function _cpFlowProcDrop(targetProc, event) {
+        event.preventDefault();
+        const sourceProc = _cpFlowProcDragName;
+        _cpFlowProcDragName = '';
+        if (!sourceProc || sourceProc === targetProc || !_cpFlowHasProcess(targetProc)) return;
+        const sourceSteps = (_cpSelectedFlow || []).filter(step => _cpStepProcess(step) === sourceProc);
+        const rest = (_cpSelectedFlow || []).filter(step => _cpStepProcess(step) !== sourceProc);
+        const targetIdx = rest.findIndex(step => _cpStepProcess(step) === targetProc);
+        if (targetIdx < 0) return;
+        rest.splice(targetIdx, 0, ...sourceSteps);
+        _cpSelectedFlow = rest;
+        await _saveAndRefreshCpFlowOrder();
+    }
+
+    function _cpFlowStationDragStart(stepKey, event) {
+        if (!(_cpSelectedFlow || []).some(step => _cpStepKey(step) === stepKey)) {
+            event.preventDefault();
+            return;
+        }
+        _cpFlowStationDragKey = stepKey;
+        event.dataTransfer.effectAllowed = 'move';
+        event.currentTarget.style.opacity = '.45';
+    }
+
+    function _cpFlowStationDragOver(stepKey, event) {
+        if (!_cpFlowStationDragKey) return;
+        const src = (_cpSelectedFlow || []).find(step => _cpStepKey(step) === _cpFlowStationDragKey);
+        const dst = (_cpSelectedFlow || []).find(step => _cpStepKey(step) === stepKey);
+        if (!src || !dst || _cpStepProcess(src) !== _cpStepProcess(dst)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        event.currentTarget.style.outline = '2px solid var(--accent-orange,#ea580c)';
+        event.currentTarget.style.outlineOffset = '-2px';
+    }
+
+    async function _cpFlowStationDrop(targetKey, event) {
+        event.preventDefault();
+        const sourceKey = _cpFlowStationDragKey;
+        _cpFlowStationDragKey = '';
+        if (!sourceKey || sourceKey === targetKey) return;
+        const arr = [...(_cpSelectedFlow || [])];
+        const sourceIdx = arr.findIndex(step => _cpStepKey(step) === sourceKey);
+        const targetIdx = arr.findIndex(step => _cpStepKey(step) === targetKey);
+        if (sourceIdx < 0 || targetIdx < 0) return;
+        if (_cpStepProcess(arr[sourceIdx]) !== _cpStepProcess(arr[targetIdx])) return;
+        const [moved] = arr.splice(sourceIdx, 1);
+        const insertIdx = arr.findIndex(step => _cpStepKey(step) === targetKey);
+        arr.splice(insertIdx < 0 ? targetIdx : insertIdx, 0, moved);
+        _cpSelectedFlow = arr;
+        await _saveAndRefreshCpFlowOrder();
+    }
+
+    function _cpFlowDragEnd(event) {
+        if (event && event.currentTarget) {
+            event.currentTarget.style.opacity = '';
+            event.currentTarget.style.outline = '';
+        }
+        document.querySelectorAll('#cpFlowModalBody [draggable="true"]').forEach(el => {
+            el.style.opacity = '';
+            el.style.outline = '';
+        });
+        _cpFlowProcDragName = '';
+        _cpFlowStationDragKey = '';
     }
 
     /** 미리보기 모달의 공정 흐름 표시 HTML (메인 툴바와 동일하게 ×·이동 버튼 포함) */
     function _cpPreviewFlowHtml() {
-        const sel   = _cpSelectedFlow || [];
-        const unsel = CANONICAL_PROCESS_ORDER.filter(p => !COMMON_PROCESSES.has(p) && !sel.includes(p));
-        const btnS  = 'padding:0 2px;font-size:10px;border:none;background:transparent;cursor:pointer;color:var(--accent-orange,#ea580c);line-height:1;';
-
-        const chips = sel.map((p, idx) => {
-            const isCommon = COMMON_PROCESSES.has(p);
-            const arrow = idx === 0 ? '' : '<span style="color:var(--text-muted);font-size:10px;margin:0 1px;">→</span>';
-            if (isCommon) {
-                return `${arrow}<span style="font-size:11px;padding:2px 8px;border-radius:10px;
-                    background:var(--bg-secondary);color:var(--text-primary);
-                    border:1px solid var(--border-color);white-space:nowrap;">${p}</span>`;
-            }
-            // 선택 공정: 이전·다음이 optional일 때만 이동 버튼 표시
-            const prevIsOpt = idx > 0 && !COMMON_PROCESSES.has(sel[idx - 1]);
-            const nextIsOpt = idx < sel.length - 1 && !COMMON_PROCESSES.has(sel[idx + 1]);
-            const ml = prevIsOpt ? `<button onclick="ProdStandardsModule._moveCpFlowProc('${_esc(p)}',-1)" title="앞으로" style="${btnS}">◀</button>` : '';
-            const mr = nextIsOpt ? `<button onclick="ProdStandardsModule._moveCpFlowProc('${_esc(p)}',1)"  title="뒤로"  style="${btnS}">▶</button>` : '';
-            const mx = `<button onclick="ProdStandardsModule._toggleCpFlowProc('${_esc(p)}')" title="제거" style="${btnS}font-size:12px;">×</button>`;
-            return `${arrow}<span style="display:inline-flex;align-items:center;gap:1px;
-                font-size:11px;padding:1px 3px 1px 8px;border-radius:10px;
-                background:var(--accent-orange,#ea580c)22;color:var(--accent-orange,#ea580c);
-                border:1px solid var(--accent-orange,#ea580c);white-space:nowrap;">
-                ${ml}${p}${mr}${mx}</span>`;
-        }).join('');
-
-        const addBtns = unsel.map(p =>
-            `<button onclick="ProdStandardsModule._toggleCpFlowProc('${_esc(p)}')"
-                style="font-size:11px;padding:2px 8px;border-radius:10px;cursor:pointer;
-                       background:transparent;color:var(--text-muted);border:1px dashed var(--border-color);">+ ${p}</button>`
-        ).join('');
-
-        return `<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
-            ${chips}
-            ${unsel.length ? `<span style="color:var(--text-muted);font-size:10px;margin-left:2px;">│</span>${addBtns}` : ''}
-        </div>`;
+        return _cpFlowSelectorHtml();
     }
 
     /** @deprecated - 하위호환용 (A/B 라인 변경 → 이제 flow로 처리) */
@@ -4391,11 +5492,11 @@ window.addEventListener('load', function() {
         const targetProc = line === 'B라인' ? '도장(B)' : '도장(A)';
         const otherProc  = line === 'B라인' ? '도장(A)' : '도장(B)';
         // 다른 라인 도장이 있으면 교체, 없으면 추가
-        if (_cpSelectedFlow.includes(otherProc) && !_cpSelectedFlow.includes(targetProc)) {
-            _cpSelectedFlow = _cpSelectedFlow.map(p => p === otherProc ? targetProc : p);
-        } else if (!_cpSelectedFlow.includes(targetProc)) {
-            _toggleCpFlowProc(targetProc);
-            return;
+        const targetSteps = _cpAllFlowSteps().filter(s => s.process === targetProc);
+        if (_cpFlowHasProcess(otherProc) && !_cpFlowHasProcess(targetProc)) {
+            _cpSelectedFlow = _cpSelectedFlow.filter(s => _cpStepProcess(s) !== otherProc).concat(targetSteps);
+        } else if (!_cpFlowHasProcess(targetProc)) {
+            _cpSelectedFlow = _normalizeCpFlow([...( _cpSelectedFlow || []), ...targetSteps]);
         }
         _syncCpLineFromFlow();
         _refreshCpFlowUI();
@@ -4982,7 +6083,7 @@ window.addEventListener('load', function() {
         _cpParsedLine     = _cpUploadLine || _curLine || 'A라인'; // 하위호환용
         // 선택된 흐름에 포함된 모든 라인 설정 로드
         await Promise.all(
-            (_cpSelectedFlow || []).filter(p => p.startsWith('도장')).map(p => {
+            _cpSelectedProcessNames().filter(p => p.startsWith('도장')).map(p => {
                 const sl = (PROCESS_CONFIG[p] || {}).storeLine || 'A라인';
                 return _ensureCarConfig(sl);
             })
@@ -5453,7 +6554,7 @@ window.addEventListener('load', function() {
                 const standards = Storage.getAll(DB.STORES.PROD_STANDARDS);
                 let cnt = 0;
                 for (const s of standards) {
-                    if (s.carModel === carModel && s.partName === partName && s._docKind !== STANDARD_DOC_KIND) {
+                    if (s.carModel === carModel && s.partName === partName && _isCpParamRecord(s)) {
                         await Storage.remove(DB.STORES.PROD_STANDARDS, s.id);
                         cnt++;
                     }
@@ -5473,10 +6574,10 @@ window.addEventListener('load', function() {
         const rawProc  = g.rawProcess || '';   // CP 파일의 원본 주공정 텍스트
         const rawSt    = g.rawStation || '';   // CP 파일의 원본 세부공정 텍스트
         // 선택된 공정 흐름 기준 MES 등록 공정 목록
-        const flowProcs = (_cpSelectedFlow || []);
+        const flowProcs = _cpSelectedProcessNames();
         const allProcs  = Object.keys(carCfg).filter(p => flowProcs.includes(p));
         // 흐름에 없는 공정: 별도 경고
-        const notInFlow = cfg && !flowProcs.includes(g.process);
+        const notInFlow = cfg && !_cpFlowHasStation(g.process, g.station);
 
         // ── ⚠️ 흐름 밖 공정 ──────────────────────────────────────
         if (notInFlow) {
@@ -5512,15 +6613,19 @@ window.addEventListener('load', function() {
         // ── ⚠️ 세부공정 미등록 ─────────────────────────────────────
         // 공백 무시 정규화 후 재비교 (키 표기 차이 허용)
         const _normSt = s => (s || '').replace(/\s+/g, '').toLowerCase();
-        const stationExact = cfg.stations[g.station];
+        const stationDefs = [
+            ...Object.keys(cfg.stations),
+            ...((_settingsSubProcessTypes && _settingsSubProcessTypes[g.process]) || [])
+        ].filter((v, i, arr) => v && arr.indexOf(v) === i);
+        const stationExact = stationDefs.includes(g.station);
         const stationFuzzy = !stationExact
-            ? Object.keys(cfg.stations).find(k => _normSt(k) === _normSt(g.station))
+            ? stationDefs.find(k => _normSt(k) === _normSt(g.station))
             : null;
         // g.station을 실제 키로 보정 (공백 차이 해소)
         if (!stationExact && stationFuzzy) g.station = stationFuzzy;
 
         if (!stationExact && !stationFuzzy) {
-            const defined = Object.keys(cfg.stations);
+            const defined = stationDefs;
             const hint = rawSt && rawSt !== g.station
                 ? `CP 원본: <b style="color:#e67e22;">"${rawSt}"</b> → 자동매칭: <b>"${g.station}"</b>`
                 : `CP 세부공정명: <b style="color:#e67e22;">"${g.station}"</b>`;
@@ -5542,8 +6647,10 @@ window.addEventListener('load', function() {
         // 원본 텍스트와 MES명이 다르면 업로드된 CP의 수정/확인이 필요한 상태로 표시
         // (줄바꿈·연속공백 정규화 후 비교 — 줄바꿈만 다른 경우는 완전일치로 처리)
         const _normRawLocal = s => (s || '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
-        const procChanged = rawProc && _normRawLocal(rawProc) !== g.process;
-        const stChanged   = rawSt   && _normRawLocal(rawSt)   !== g.station;
+        const _sameNoSpacing = (a, b) => String(a || '').replace(/[\s\u00a0\u3000]+/g, '').toLowerCase()
+            === String(b || '').replace(/[\s\u00a0\u3000]+/g, '').toLowerCase();
+        const procChanged = rawProc && !_sameNoSpacing(rawProc, g.process);
+        const stChanged   = rawSt   && !_sameNoSpacing(rawSt, g.station);
         if (procChanged || stChanged) {
             const lines = [];
             if (procChanged) lines.push(`공정: "${_normRawLocal(rawProc)}" → <b>${g.process}</b>`);
@@ -5569,8 +6676,12 @@ window.addEventListener('load', function() {
         _cpUploadLine = line;
         // 대응하는 도장 공정이 flow에 없으면 추가
         const targetProc = line === 'B라인' ? '도장(B)' : '도장(A)';
-        if (!_cpSelectedFlow.includes(targetProc)) {
-            _toggleCpFlowProc(targetProc);
+        if (!_cpFlowHasProcess(targetProc)) {
+            _cpSelectedFlow = _normalizeCpFlow([
+                ...(_cpSelectedFlow || []),
+                ..._cpAllFlowSteps().filter(s => s.process === targetProc)
+            ]);
+            if (_curCarModel && _curPartName) await _saveCpFlow(_curCarModel, _curPartName, _cpSelectedFlow);
         }
         _rerenderValidationTbody();
         const diagEl = document.getElementById('cpDiagSummary');
@@ -5645,6 +6756,8 @@ window.addEventListener('load', function() {
 
         // 줄바꿈·앞뒤공백 제거 후 비교용 정규화 (Excel 셀 내 Alt+Enter 등 무시)
         const _normRaw = s => (s || '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+        const _sameNoSpacing = (a, b) => String(a || '').replace(/[\s\u00a0\u3000]+/g, '').toLowerCase()
+            === String(b || '').replace(/[\s\u00a0\u3000]+/g, '').toLowerCase();
 
         groups.forEach((g, i) => {
             const cfg     = carCfg[g.process];
@@ -5655,15 +6768,20 @@ window.addEventListener('load', function() {
             const normSt   = _normRaw(rawSt);
             if (!cfg) {
                 badProc.push({ i, rawProc: normProc, matched: g.process });
-            } else if (!cfg.stations[g.station] &&
-                       !Object.keys(cfg.stations).some(k => _normSt(k) === _normSt(g.station))) {
-                const defined = Object.keys(cfg.stations);
+            } else {
+                const defined = [
+                    ...Object.keys(cfg.stations),
+                    ...((_settingsSubProcessTypes && _settingsSubProcessTypes[g.process]) || [])
+                ].filter((v, idx, arr) => v && arr.indexOf(v) === idx);
+                if (!defined.includes(g.station) &&
+                    !defined.some(k => _normSt(k) === _normSt(g.station))) {
                 badSt.push({ i, rawSt: normSt, matched: g.station, proc: g.process, defined });
-            } else if ((normProc && normProc !== g.process) || (normSt && normSt !== g.station)) {
-                const definedSts = cfg ? Object.keys(cfg.stations) : [];
+                } else if ((normProc && !_sameNoSpacing(normProc, g.process)) || (normSt && !_sameNoSpacing(normSt, g.station))) {
+                const definedSts = defined;
                 autoConv.push({ i, rawProc: normProc, rawSt: normSt, proc: g.process, st: g.station, defined: definedSts });
             } else {
                 perfect.push(i);
+            }
             }
         });
 
@@ -5844,7 +6962,10 @@ window.addEventListener('load', function() {
     /** 세부공정 select HTML 반환 (idx: 그룹 인덱스) */
     function _cpStationSelectHtml(idx, processName, selectedStation, carModel) {
         const cfg = _getCarConfig('')[processName];
-        const defined = cfg ? Object.keys(cfg.stations) : [];
+        const defined = [
+            ...(cfg ? Object.keys(cfg.stations) : []),
+            ...((_settingsSubProcessTypes && _settingsSubProcessTypes[processName]) || [])
+        ].filter((v, i, arr) => v && arr.indexOf(v) === i);
         // 기존값이 목록에 없으면 커스텀으로 포함
         const all = [...defined];
         if (selectedStation && !defined.includes(selectedStation)) all.push(selectedStation);
@@ -5901,7 +7022,7 @@ window.addEventListener('load', function() {
 
         const allStandards = Storage.getAll(DB.STORES.PROD_STANDARDS);
         for (const s of allStandards) {
-            if (s.carModel === carModel && s.partName === partName && s._docKind !== STANDARD_DOC_KIND) {
+            if (s.carModel === carModel && s.partName === partName && _isCpParamRecord(s)) {
                 await Storage.remove(DB.STORES.PROD_STANDARDS, s.id);
             }
         }
@@ -6009,6 +7130,7 @@ window.addEventListener('load', function() {
         }
 
         // ── 이력 저장 ─────────────────────────────────────────────
+        await _saveCpFlow(carModel, partName, _cpSelectedFlow);
         await _saveCpHistory({
             importId,
             fileName,
@@ -6053,10 +7175,31 @@ window.addEventListener('load', function() {
         removeDrawing,
         openDrawingViewer,
         onControlPlanUpload,
+        openCpFlowModal,
+        closeCpFlowModal,
+        _saveCpFlowManual,
+        _filterCpStatusTable,
+        openCpForProduct,
+        _execCpCopy,
+        _jumpToCpDetail,
         _setCpUploadLine,
         _cpChangeParsedLine,
+        _selectCpFlowProcess,
+        _selectCpFlowStation,
+        _toggleCpFlowProcessAll,
         _toggleCpFlowProc,
+        _toggleCpFlowParam,
+        _toggleAllCpFlowParams,
+        _moveCpFlowProcessGroup,
+        _moveCpFlowStationInProcess,
         _moveCpFlowProc,
+        _cpFlowProcDragStart,
+        _cpFlowProcDragOver,
+        _cpFlowProcDrop,
+        _cpFlowStationDragStart,
+        _cpFlowStationDragOver,
+        _cpFlowStationDrop,
+        _cpFlowDragEnd,
         _showSheetSelector,
         _selectSheet,
         _cpImportCarChange,
@@ -11117,6 +12260,10 @@ var ProdQualityModule = (function() {
     let _qualityStandardImage = null;
 
     const DEFAULT_ITEMS = [
+        { key: 'color_l', label: '색차 △L', unit: '△L', spec: '', method: '색차계', inputType: 'number' },
+        { key: 'color_a', label: '색차 △a', unit: '△a', spec: '', method: '색차계', inputType: 'number' },
+        { key: 'color_b', label: '색차 △b', unit: '△b', spec: '', method: '색차계', inputType: 'number' },
+        { key: 'gloss', label: '광택', unit: 'GU', spec: '', method: '광택계', inputType: 'number' },
         { key: 'film_under', label: '도막두께(하도)', unit: 'μm', spec: '', method: '도막 두께계', inputType: 'number' },
         { key: 'film_top', label: '도막두께(상도)', unit: 'μm', spec: '', method: '도막 두께계', inputType: 'number' },
         { key: 'adhesion', label: '부착력', unit: '등급', spec: '박리 없을 것', method: '크로스컷', inputType: 'select' },
@@ -11124,10 +12271,6 @@ var ProdQualityModule = (function() {
         { key: 'touch', label: '촉감', unit: '-', spec: '끈적임, 거칠음 없을 것', method: '촉감', inputType: 'select' },
         { key: 'fit_check', label: '형합 검사', unit: '-', spec: '간섭, 유격 없을 것', method: '조립 확인', inputType: 'select' },
         { key: 'appearance', label: '외관', unit: '-', spec: '흠, 이물, 흐름, 핀홀 없을 것', method: '육안', inputType: 'select' },
-        { key: 'gloss', label: '광택', unit: 'GU', spec: '', method: '광택계', inputType: 'number' },
-        { key: 'color_l', label: '색차 △L', unit: '△L', spec: '', method: '색차계', inputType: 'number' },
-        { key: 'color_a', label: '색차 △a', unit: '△a', spec: '', method: '색차계', inputType: 'number' },
-        { key: 'color_b', label: '색차 △b', unit: '△b', spec: '', method: '색차계', inputType: 'number' },
         { key: 'contamination', label: '이물/오염', unit: '-', spec: '이물 및 오염 없을 것', method: '육안', inputType: 'select' }
     ];
 
@@ -11788,21 +12931,43 @@ var ProdQualityModule = (function() {
     // ── 품목별 기준값 편집 모달 ────────────────────────────────────────────────
     function _specItemRowHtml(item = {}, opts = {}) {
         const readOnly = !!opts.readOnly;
+        const showDelete = !!opts.showDelete;
         const specEditor = _isGlossSpecItem(item)
             ? _glossSpecEditor('pqs', item, { readOnly })
             : _isRangeSpecItem(item)
             ? _rangeSpecEditor('pqs', item, '상한', '하한', { readOnly })
             : `<input type="text" class="form-input pqs-spec" value="${_esc(item.spec||'')}" placeholder="기준값 입력" ${readOnly ? 'disabled' : ''} style="height:30px;font-size:0.82rem;">`;
-        return `<tr class="pq-spec-item-row" data-key="${_esc(item.key||'')}">
+        const delBtn = showDelete
+            ? `<button type="button" onclick="ProdQualityModule._pqRemoveSpecItem('${_esc(item.key||'')}')"
+                style="background:none;border:none;cursor:pointer;color:var(--text-muted);padding:2px 4px;flex-shrink:0;line-height:1;" title="항목 삭제">
+                <span class="material-symbols-outlined" style="font-size:15px;">close</span></button>` : '';
+        const dragAttrs = showDelete
+            ? `draggable="true"
+               ondragstart="ProdQualityModule._pqSpecDragStart(event)"
+               ondragover="ProdQualityModule._pqSpecDragOver(event)"
+               ondragleave="ProdQualityModule._pqSpecDragLeave(event)"
+               ondrop="ProdQualityModule._pqSpecDrop(event)"
+               ondragend="ProdQualityModule._pqSpecDragEnd(event)"` : '';
+        const dragHandle = showDelete
+            ? `<span class="material-symbols-outlined" style="font-size:16px;color:var(--text-muted);cursor:grab;flex-shrink:0;margin-right:2px;vertical-align:middle;">drag_indicator</span>` : '';
+        return `<tr class="pq-spec-item-row" data-key="${_esc(item.key||'')}" ${dragAttrs} style="transition:opacity .15s;">
             <td>
                 <input type="hidden" class="pqs-key" value="${_esc(item.key||'')}">
                 <input type="hidden" class="pqs-label-val" value="${_esc(item.label||'')}">
                 <input type="hidden" class="pqs-unit-val" value="${_esc(item.unit||'')}">
                 <input type="hidden" class="pqs-method-val" value="${_esc(item.method||'')}">
                 <input type="hidden" class="pqs-input-type" value="${_esc(item.inputType||'text')}">
-                <strong style="font-size:0.85rem;">${_esc(item.label||'')}</strong>
-                ${_isFilmSpecItem(item) ? '<span style="font-size:0.68rem;background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;border-radius:3px;padding:0 5px;margin-left:3px;">Range</span>' : _isColorSpecItem(item) ? '<span style="font-size:0.68rem;background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;border-radius:3px;padding:0 5px;margin-left:3px;">Deviation</span>' : _isGlossSpecItem(item) ? '<span style="font-size:0.68rem;background:#fefce8;color:#a16207;border:1px solid #fde68a;border-radius:3px;padding:0 5px;margin-left:3px;">Tolerance</span>' : ''}
-                <div style="font-size:0.75rem;color:var(--text-muted);">${_esc(item.method||'')}</div>
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:4px;">
+                    <div style="display:flex;align-items:flex-start;gap:2px;flex:1;min-width:0;">
+                        ${dragHandle}
+                        <div>
+                            <strong style="font-size:0.85rem;">${_esc(item.label||'')}</strong>
+                            ${_isFilmSpecItem(item) ? '<span style="font-size:0.68rem;background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;border-radius:3px;padding:0 5px;margin-left:3px;">Range</span>' : _isColorSpecItem(item) ? '<span style="font-size:0.68rem;background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;border-radius:3px;padding:0 5px;margin-left:3px;">Deviation</span>' : _isGlossSpecItem(item) ? '<span style="font-size:0.68rem;background:#fefce8;color:#a16207;border:1px solid #fde68a;border-radius:3px;padding:0 5px;margin-left:3px;">Tolerance</span>' : ''}
+                            <div style="font-size:0.75rem;color:var(--text-muted);">${_esc(item.method||'')}</div>
+                        </div>
+                    </div>
+                    ${delBtn}
+                </div>
             </td>
             <td style="text-align:center;font-size:0.82rem;color:var(--text-muted);">${_esc(item.unit||'-')}</td>
             <td>${specEditor}</td>
@@ -11913,7 +13078,7 @@ var ProdQualityModule = (function() {
                 && pc === color;
         });
 
-        const items = _productSpecItems(carModel, partName, color).map(item => _normalizeItemForEdit({ ...item }));
+        const items = _sortItemsByMaster(_productSpecItems(carModel, partName, color).map(item => _normalizeItemForEdit({ ...item })));
 
         const status = _specStatus(items);
         const filledCount = items.filter(_hasSpecValue).length;
@@ -12018,12 +13183,17 @@ var ProdQualityModule = (function() {
                 ${sameColorPanel}
                 ${presetRow}
 
+                ${!viewOnly ? `<div id="pqPresetDetectionPanel" style="margin-bottom:10px;"></div>` : ''}
+
                 <div class="card">
-                    <div class="card-header" style="padding:10px 16px;">
+                    <div class="card-header" style="padding:10px 16px;display:flex;align-items:center;justify-content:space-between;">
                         <h4 style="margin:0;font-size:0.9rem;">
                             <span class="material-symbols-outlined" style="font-size:1rem;vertical-align:middle;">rule</span>
                             ${viewOnly ? '관리 기준값 보기' : '관리 기준값 입력'}
                         </h4>
+                        ${!viewOnly ? `<button type="button" class="btn btn-outline btn-sm" onclick="ProdQualityModule._pqShowAddItemPanel()" style="display:flex;align-items:center;gap:4px;">
+                            <span class="material-symbols-outlined" style="font-size:14px;">add</span>관리항목 추가
+                        </button>` : ''}
                     </div>
                     <div class="card-body" style="padding:0;">
                         <div style="overflow:auto;">
@@ -12033,7 +13203,7 @@ var ProdQualityModule = (function() {
                                     <th style="text-align:center;min-width:60px;">단위</th>
                                     <th style="min-width:180px;">기준값 / 범위</th>
                                 </tr></thead>
-                                <tbody id="pqSpecItemsBody">${items.map(i => _specItemRowHtml(i, { readOnly: viewOnly })).join('')}</tbody>
+                                <tbody id="pqSpecItemsBody">${items.map(i => _specItemRowHtml(i, { readOnly: viewOnly, showDelete: !viewOnly })).join('')}</tbody>
                             </table>
                         </div>
                     </div>
@@ -12049,6 +13219,7 @@ var ProdQualityModule = (function() {
                 `}
             </div>
         `;
+        if (!viewOnly) _pqUpdatePresetDetection();
     }
 
     function _checkAllSameColor(checked) {
@@ -12136,8 +13307,143 @@ var ProdQualityModule = (function() {
             ...mi, ...(current.get(mi.key)||{})
         }));
 
-        document.getElementById('pqSpecItemsBody').innerHTML = items.map(i=>_specItemRowHtml(i)).join('');
+        const isEditMode = document.getElementById('pqSpecMode')?.value === 'edit';
+        document.getElementById('pqSpecItemsBody').innerHTML = items.map(i=>_specItemRowHtml(i, { showDelete: isEditMode })).join('');
+        _pqUpdatePresetDetection();
         UIUtils.toast(`"${_esc(preset.name)}" 프레셋이 적용됐습니다.`, 'success');
+    }
+
+    function _pqRemoveSpecItem(key) {
+        const row = document.querySelector(`.pq-spec-item-row[data-key="${CSS.escape(key)}"]`);
+        if (row) row.remove();
+        _pqUpdatePresetDetection();
+    }
+
+    let _pqSpecDragSrc = null;
+
+    function _pqSpecDragStart(e) {
+        _pqSpecDragSrc = e.currentTarget;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', '');
+        setTimeout(() => { if (_pqSpecDragSrc) _pqSpecDragSrc.style.opacity = '0.35'; }, 0);
+    }
+
+    function _pqSpecDragOver(e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        const row = e.currentTarget;
+        if (row !== _pqSpecDragSrc) row.style.outline = '2px solid var(--accent-blue)';
+        return false;
+    }
+
+    function _pqSpecDragLeave(e) {
+        e.currentTarget.style.outline = '';
+    }
+
+    function _pqSpecDrop(e) {
+        e.preventDefault();
+        const target = e.currentTarget;
+        if (_pqSpecDragSrc && target !== _pqSpecDragSrc) {
+            const tbody = target.parentNode;
+            const rows = [...tbody.children];
+            const srcIdx = rows.indexOf(_pqSpecDragSrc);
+            const tgtIdx = rows.indexOf(target);
+            if (srcIdx < tgtIdx) tbody.insertBefore(_pqSpecDragSrc, target.nextSibling);
+            else tbody.insertBefore(_pqSpecDragSrc, target);
+        }
+        target.style.outline = '';
+        return false;
+    }
+
+    function _pqSpecDragEnd(e) {
+        if (_pqSpecDragSrc) _pqSpecDragSrc.style.opacity = '';
+        document.querySelectorAll('.pq-spec-item-row').forEach(r => r.style.outline = '');
+        _pqSpecDragSrc = null;
+    }
+
+    function _pqShowAddItemPanel() {
+        const currentKeys = new Set([...document.querySelectorAll('.pq-spec-item-row')].map(r => r.dataset.key));
+        const available = _masterItems().filter(m => !currentKeys.has(m.key));
+        if (!available.length) { UIUtils.toast('추가할 수 있는 항목이 없습니다.', 'info'); return; }
+        UIUtils.showModal('관리항목 추가', `
+            <div style="max-height:50vh;overflow:auto;">
+                ${available.map(m => `
+                    <label style="display:flex;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px solid var(--border-color);cursor:pointer;">
+                        <input type="checkbox" class="pq-add-item-chk" value="${_esc(m.key)}" style="width:15px;height:15px;">
+                        <div>
+                            <strong style="font-size:0.87rem;">${_esc(m.label||m.key)}</strong>
+                            ${m.unit ? `<span style="font-size:0.75rem;color:var(--text-muted);margin-left:6px;">${_esc(m.unit)}</span>` : ''}
+                            ${m.method ? `<div style="font-size:0.75rem;color:var(--text-muted);">${_esc(m.method)}</div>` : ''}
+                        </div>
+                    </label>`).join('')}
+            </div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+             <button class="btn btn-primary" onclick="ProdQualityModule._pqConfirmAddItems()">추가</button>`,
+            'sm'
+        );
+    }
+
+    function _pqConfirmAddItems() {
+        const checked = [...document.querySelectorAll('.pq-add-item-chk:checked')].map(el => el.value);
+        if (!checked.length) { UIUtils.toast('추가할 항목을 선택하세요.', 'warning'); return; }
+        const masterItems = _masterItems();
+        const tbody = document.getElementById('pqSpecItemsBody');
+        if (!tbody) return;
+        checked.forEach(key => {
+            const item = masterItems.find(m => m.key === key);
+            if (!item) return;
+            const normalized = _normalizeItemForEdit({ ...item });
+            const tmp = document.createElement('tbody');
+            tmp.innerHTML = _specItemRowHtml(normalized, { showDelete: true });
+            [...tmp.children].forEach(tr => tbody.appendChild(tr));
+        });
+        UIUtils.closeModal();
+        _pqUpdatePresetDetection();
+        UIUtils.toast(`${checked.length}개 항목이 추가됐습니다.`, 'success');
+    }
+
+    function _pqUpdatePresetDetection() {
+        const panel = document.getElementById('pqPresetDetectionPanel');
+        if (!panel) return;
+        const currentKeys = [...document.querySelectorAll('.pq-spec-item-row')].map(r => r.dataset.key).sort().join(',');
+        if (!currentKeys) { panel.innerHTML = ''; return; }
+        const presets = (Storage.getAll(STORE)||[]).filter(d => d._docKind === PRESET_KIND);
+        const matched = presets.find(p => (p.items||[]).map(i=>i.key).sort().join(',') === currentKeys);
+        if (matched) {
+            panel.innerHTML = `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;margin-bottom:10px;background:rgba(22,163,74,.06);border:1px solid rgba(22,163,74,.25);border-radius:8px;">
+                <span class="material-symbols-outlined" style="font-size:1rem;color:#16a34a;">check_circle</span>
+                <span style="font-size:0.85rem;">현재 항목이 <strong>"${_esc(matched.name)}"</strong> 프리셋과 일치합니다.</span>
+            </div>`;
+        } else {
+            panel.innerHTML = `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;margin-bottom:10px;background:rgba(234,88,12,.06);border:1px solid rgba(234,88,12,.25);border-radius:8px;">
+                <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-orange,#ea580c);">new_label</span>
+                <span style="font-size:0.85rem;flex:1;">현재 항목 구성이 저장된 프리셋과 다릅니다.</span>
+                <button class="btn btn-outline btn-sm" onclick="ProdQualityModule._pqSaveCurrentAsPreset()" style="white-space:nowrap;flex-shrink:0;">
+                    새 프리셋으로 저장
+                </button>
+            </div>`;
+        }
+    }
+
+    function _pqSaveCurrentAsPreset() {
+        const name = prompt('새 프리셋 이름을 입력하세요:', '');
+        if (!name || !name.trim()) return;
+        const trimmed = name.trim();
+        const currentItems = [...document.querySelectorAll('.pq-spec-item-row')].map(row => ({
+            key:       row.querySelector('.pqs-key')?.value || '',
+            label:     row.querySelector('.pqs-label-val')?.value || '',
+            unit:      row.querySelector('.pqs-unit-val')?.value || '',
+            method:    row.querySelector('.pqs-method-val')?.value || '',
+            inputType: row.querySelector('.pqs-input-type')?.value || 'text',
+        })).filter(i => i.key);
+        const existing = (Storage.getAll(STORE)||[]).find(d => d._docKind === PRESET_KIND && d.name.trim() === trimmed);
+        if (existing) {
+            Storage.update(STORE, existing.id, { _docKind: PRESET_KIND, name: trimmed, items: currentItems, updatedAt: UIUtils.now() })
+                .then(() => { UIUtils.toast(`프리셋 "${trimmed}"이 업데이트됐습니다.`, 'success'); _pqUpdatePresetDetection(); });
+        } else {
+            Storage.add(STORE, { _docKind: PRESET_KIND, name: trimmed, items: currentItems, createdAt: UIUtils.now() })
+                .then(() => { UIUtils.toast(`프리셋 "${trimmed}"이 저장됐습니다.`, 'success'); _pqUpdatePresetDetection(); });
+        }
     }
 
     function search() {
@@ -13824,20 +15130,18 @@ var ProdQualityModule = (function() {
                 </span>
                 ${viewOnly ? '' : `
                     <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
-                        <select class="form-select" id="pqPresetItemPicker" style="min-width:220px;height:34px;" ${pickerOptions.count ? '' : 'disabled'}>
-                            ${pickerOptions.html}
-                        </select>
-                        <button class="btn btn-outline btn-sm" id="pqPresetItemAddBtn" onclick="ProdQualityModule.addPresetItemFromPicker()" ${pickerOptions.count ? '' : 'disabled'}>
-                            <span class="material-symbols-outlined">playlist_add</span> 항목 선택
+                        <button class="btn btn-outline btn-sm" onclick="ProdQualityModule._pqShowPresetAddPanel()" style="display:flex;align-items:center;gap:4px;">
+                            <span class="material-symbols-outlined" style="font-size:14px;">add</span> 관리항목 추가
                         </button>
                         <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.deleteCheckedPresetItems()">
-                            <span class="material-symbols-outlined">delete</span> 선택 삭제
+                            <span class="material-symbols-outlined" style="font-size:14px;">delete</span> 선택 삭제
                         </button>
                     </div>`}
             </div>
             <div class="data-table-wrapper" style="max-height:48vh;overflow:auto;">
                 <table class="data-table" style="font-size:0.82rem;">
                     <thead><tr>
+                        ${viewOnly ? '' : `<th style="width:28px;"></th>`}
                         <th style="width:36px;text-align:center;">삭제</th>
                         <th>초중종 관리 항목 <span style="font-weight:400;color:var(--text-muted);font-size:0.75rem;">(C/S 표시용)</span></th>
                         <th>기준(Spec)</th>
@@ -13874,8 +15178,17 @@ var ProdQualityModule = (function() {
             ? _rangeSpecEditor('pq-preset', item, '상한', '하한', { readOnly })
             : `<input type="text" class="form-input pq-preset-spec" value="${_esc(item.spec || '')}"
                     placeholder="예: 15~20" ${readOnly ? 'disabled' : ''}>`;
+        const dragAttrs = readOnly ? '' : `draggable="true"
+            ondragstart="ProdQualityModule._pqPresetDragStart(event)"
+            ondragover="ProdQualityModule._pqPresetDragOver(event)"
+            ondragleave="ProdQualityModule._pqPresetDragLeave(event)"
+            ondrop="ProdQualityModule._pqPresetDrop(event)"
+            ondragend="ProdQualityModule._pqPresetDragEnd(event)"`;
         return `
-            <tr class="pq-preset-item-row">
+            <tr class="pq-preset-item-row" ${dragAttrs} style="transition:opacity .15s;">
+                ${readOnly ? '' : `<td style="text-align:center;cursor:grab;color:var(--text-muted);padding:4px 6px;">
+                    <span class="material-symbols-outlined" style="font-size:18px;vertical-align:middle;">drag_indicator</span>
+                </td>`}
                 <td style="text-align:center;">
                     <input type="checkbox" class="pq-preset-delete" ${readOnly ? 'disabled' : ''}>
                 </td>
@@ -13941,6 +15254,113 @@ var ProdQualityModule = (function() {
 
     function addPresetItemRow() {
         addPresetItemFromPicker();
+    }
+
+    function _pqShowPresetAddPanel() {
+        // 기존 패널이 있으면 닫기
+        const existing = document.getElementById('pqPresetAddInlinePanel');
+        if (existing) { existing.remove(); return; }
+
+        const rows = [...document.querySelectorAll('.pq-preset-item-row')];
+        const usedKeys = new Set(rows.map(r => r.querySelector('.pq-preset-key')?.value || '').filter(Boolean));
+        const available = _sortItemsByMaster(_masterItems()).filter(m => m.key && !usedKeys.has(m.key));
+        if (!available.length) { UIUtils.toast('추가할 수 있는 항목이 없습니다.', 'info'); return; }
+
+        // 모달 바디 안에 인라인 패널 삽입
+        const modalBody = document.getElementById('modalBody');
+        if (!modalBody) return;
+
+        const panel = document.createElement('div');
+        panel.id = 'pqPresetAddInlinePanel';
+        panel.style.cssText = 'margin-bottom:12px;border:1px solid var(--accent-blue);border-radius:10px;background:var(--bg-secondary);padding:12px;';
+        panel.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                <strong style="font-size:0.87rem;color:var(--accent-blue);">추가할 항목 선택</strong>
+                <button type="button" onclick="document.getElementById('pqPresetAddInlinePanel').remove()"
+                    style="background:none;border:none;cursor:pointer;color:var(--text-muted);padding:2px;">
+                    <span class="material-symbols-outlined" style="font-size:16px;">close</span>
+                </button>
+            </div>
+            <div style="max-height:200px;overflow:auto;margin-bottom:10px;">
+                ${available.map(m => `
+                    <label style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--border-color);cursor:pointer;">
+                        <input type="checkbox" class="pq-preset-add-chk" value="${_esc(m.key)}" style="width:14px;height:14px;">
+                        <div>
+                            <strong style="font-size:0.84rem;">${_esc(m.label||m.key)}</strong>
+                            ${m.unit ? `<span style="font-size:0.72rem;color:var(--text-muted);margin-left:5px;">${_esc(m.unit)}</span>` : ''}
+                            ${m.method ? `<span style="font-size:0.72rem;color:var(--text-muted);margin-left:5px;">${_esc(m.method)}</span>` : ''}
+                        </div>
+                    </label>`).join('')}
+            </div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;">
+                <button class="btn btn-secondary btn-sm" onclick="document.getElementById('pqPresetAddInlinePanel').remove()">취소</button>
+                <button class="btn btn-primary btn-sm" onclick="ProdQualityModule._pqConfirmPresetAddItems()">추가</button>
+            </div>`;
+
+        // 테이블 wrapper 앞에 삽입
+        const wrapper = modalBody.querySelector('.data-table-wrapper');
+        if (wrapper) modalBody.insertBefore(panel, wrapper);
+        else modalBody.prepend(panel);
+    }
+
+    function _pqConfirmPresetAddItems() {
+        const checked = [...document.querySelectorAll('.pq-preset-add-chk:checked')].map(el => el.value);
+        if (!checked.length) { UIUtils.toast('추가할 항목을 선택하세요.', 'warning'); return; }
+        const masterItems = _masterItems();
+        const body = document.getElementById('pqPresetEditBody');
+        if (!body) return;
+        checked.forEach(key => {
+            const item = masterItems.find(m => m.key === key);
+            if (!item) return;
+            body.insertAdjacentHTML('beforeend', _presetItemRowHtml({ ...item, selected: true }));
+        });
+        document.getElementById('pqPresetAddInlinePanel')?.remove();
+        _refreshPresetEditTools();
+        UIUtils.toast(`${checked.length}개 항목이 추가됐습니다.`, 'success');
+    }
+
+    let _pqDragSrcRow = null;
+
+    function _pqPresetDragStart(e) {
+        _pqDragSrcRow = e.currentTarget;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', '');
+        setTimeout(() => { if (_pqDragSrcRow) _pqDragSrcRow.style.opacity = '0.35'; }, 0);
+    }
+
+    function _pqPresetDragOver(e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        const row = e.currentTarget;
+        if (row !== _pqDragSrcRow) {
+            row.style.outline = '2px solid var(--accent-blue)';
+        }
+        return false;
+    }
+
+    function _pqPresetDragLeave(e) {
+        e.currentTarget.style.outline = '';
+    }
+
+    function _pqPresetDrop(e) {
+        e.preventDefault();
+        const target = e.currentTarget;
+        if (_pqDragSrcRow && target !== _pqDragSrcRow) {
+            const tbody = target.parentNode;
+            const rows = [...tbody.children];
+            const srcIdx = rows.indexOf(_pqDragSrcRow);
+            const tgtIdx = rows.indexOf(target);
+            if (srcIdx < tgtIdx) tbody.insertBefore(_pqDragSrcRow, target.nextSibling);
+            else tbody.insertBefore(_pqDragSrcRow, target);
+        }
+        target.style.outline = '';
+        return false;
+    }
+
+    function _pqPresetDragEnd(e) {
+        if (_pqDragSrcRow) _pqDragSrcRow.style.opacity = '';
+        document.querySelectorAll('.pq-preset-item-row').forEach(r => r.style.outline = '');
+        _pqDragSrcRow = null;
     }
 
     function deleteCheckedPresetItems() {
@@ -14667,9 +16087,27 @@ window.addEventListener('afterprint', () => {
         ,saveSpecPage
         ,_checkAllSameColor
         ,applyPresetToSpec
+        ,_pqRemoveSpecItem
+        ,_pqSpecDragStart
+        ,_pqSpecDragOver
+        ,_pqSpecDragLeave
+        ,_pqSpecDrop
+        ,_pqSpecDragEnd
+        ,_pqShowAddItemPanel
+        ,_pqConfirmAddItems
+        ,_pqUpdatePresetDetection
+        ,_pqSaveCurrentAsPreset
         ,openPresetMgmtModal
         ,openPresetEditModal
         ,addPresetItemRow
+        ,addPresetItemFromPicker
+        ,_pqShowPresetAddPanel
+        ,_pqConfirmPresetAddItems
+        ,_pqPresetDragStart
+        ,_pqPresetDragOver
+        ,_pqPresetDragLeave
+        ,_pqPresetDrop
+        ,_pqPresetDragEnd
         ,deleteCheckedPresetItems
         ,savePresetEdit
     };
@@ -14696,7 +16134,51 @@ var ProdEquipmentModule = (function() {
     const ST_SUPPLY_FILTER = DB.STORES.EQUIP_SUPPLY_FILTER_LOG;
     const ST_DRYER_CLEAN = DB.STORES.EQUIP_DRYER_CLEAN_LOG;
 
-    const LINES = ['도장A라인', '도장B라인'];
+    const LINES = ['도장A라인', '도장B라인', '레이져', '사출기', '공용설비'];
+    const LINE_ICONS = {
+        '도장A라인': 'format_paint',
+        '도장B라인': 'format_paint',
+        '레이져':    'bolt',
+        '사출기':    'polymer',
+        '공용설비':  'handyman'
+    };
+
+    // 레이져 공정 목록
+    const LASER_PROC_STATIONS = [
+        { name:'레이져 가공기',  icon:'bolt',                   no:10 },
+        { name:'로딩/언로딩',   icon:'upload',                  no:20 },
+        { name:'지그/픽스쳐',   icon:'build',                   no:30 },
+        { name:'마킹/각인',     icon:'draw',                    no:40 },
+        { name:'검사 설비',     icon:'search',                   no:50 },
+        { name:'공용',         icon:'handyman',                 no:0, common:true },
+    ];
+    // 사출기 공정 목록
+    const INJECTION_PROC_STATIONS = [
+        { name:'사출기',        icon:'polymer',                  no:10 },
+        { name:'금형',          icon:'category',                 no:20 },
+        { name:'취출 로봇',     icon:'precision_manufacturing',  no:30 },
+        { name:'냉각 설비',     icon:'ac_unit',                  no:40 },
+        { name:'계량/건조기',   icon:'scale',                    no:50 },
+        { name:'컨베이어',      icon:'speed',                    no:60 },
+        { name:'공용',         icon:'handyman',                 no:0, common:true },
+    ];
+    // 공용설비 공정 목록
+    const COMMON_EQUIP_STATIONS = [
+        { name:'압축에어',       icon:'air',                     no:10 },
+        { name:'공조/항온항습',  icon:'ac_unit',                 no:20 },
+        { name:'소방',           icon:'fire_extinguisher',       no:30 },
+        { name:'전기/수배전',    icon:'power',                   no:40 },
+        { name:'환경/폐수',      icon:'eco',                     no:50 },
+        { name:'기타',           icon:'more_horiz',              no:60 },
+    ];
+
+    function _getProcStations(line) {
+        if (line === '레이져')   return LASER_PROC_STATIONS;
+        if (line === '사출기')   return INJECTION_PROC_STATIONS;
+        if (line === '공용설비') return COMMON_EQUIP_STATIONS;
+        return PROC_STATIONS;
+    }
+
     let _line    = '도장A라인';
     let _equipId = null;
     let _subTab  = 'spare';
@@ -14716,16 +16198,10 @@ var ProdEquipmentModule = (function() {
         { name:'언로딩',      icon:'download',              no:110 },
         { name:'포장',        icon:'inventory_2',           no:110 },
         { name:'도장 검사',   icon:'search',                no:120 },
-        // ── 공통 관리 설비 ─────────────────────────────
-        { name:'압축에어',    icon:'air',                   no:0, common:true },
-        { name:'공조',        icon:'ac_unit',               no:0, common:true },
-        { name:'소방',        icon:'fire_extinguisher',     no:0, common:true },
-        { name:'전기',        icon:'power',                 no:0, common:true },
-        { name:'환경',        icon:'eco',                   no:0, common:true },
     ];
 
     // 화면 모드
-    let _mode   = 'general'; // 'general' | 'temperature' | 'illumination' | 'conveyor' | 'maintenance' | 'fproof' | 'airfilter' | 'supplyfilter' | 'dryerclean'
+    let _mode   = 'dashboard'; // 'dashboard' | 'general' | 'temperature' | 'illumination' | 'conveyor' | 'maintenance' | 'fproof' | 'airfilter' | 'supplyfilter' | 'dryerclean'
     let _sqTab  = 'oven';   // SQ 카테고리
     let _maintLine = '도장A라인';
     let _convLine = '도장A라인';
@@ -14917,8 +16393,15 @@ var ProdEquipmentModule = (function() {
             <!-- 메인 모드 탭 -->
             <div style="display:flex;gap:0;margin-bottom:16px;border:1px solid var(--border-color);
                         border-radius:8px;overflow:hidden;width:fit-content;">
-                <button id="modeTabGeneral" onclick="ProdEquipmentModule.switchMode('general')"
+                <button id="modeTabDashboard" onclick="ProdEquipmentModule.switchMode('dashboard')"
                     style="padding:9px 20px;border:none;cursor:pointer;font-size:0.875rem;
+                           display:flex;align-items:center;gap:6px;transition:all .15s;
+                           background:${_mode==='dashboard'?'var(--accent-blue)':'var(--bg-secondary)'};
+                           color:${_mode==='dashboard'?'#fff':'var(--text-secondary)'};font-weight:${_mode==='dashboard'?'600':'400'};">
+                    <span class="material-symbols-outlined" style="font-size:16px;">home</span> 현황 요약
+                </button>
+                <button id="modeTabGeneral" onclick="ProdEquipmentModule.switchMode('general')"
+                    style="padding:9px 20px;border:none;border-left:1px solid var(--border-color);cursor:pointer;font-size:0.875rem;
                            display:flex;align-items:center;gap:6px;transition:all .15s;
                            background:${_mode==='general'?'var(--accent-blue)':'var(--bg-secondary)'};
                            color:${_mode==='general'?'#fff':'var(--text-secondary)'};font-weight:${_mode==='general'?'600':'400'};">
@@ -15007,6 +16490,7 @@ var ProdEquipmentModule = (function() {
     function switchMode(mode) {
         _mode = mode;
         [
+            ['modeTabDashboard', 'dashboard'],
             ['modeTabGeneral', 'general'],
             ['modeTabIllumination', 'illumination'],
             ['modeTabTemperature', 'temperature'],
@@ -15029,10 +16513,195 @@ var ProdEquipmentModule = (function() {
         _renderMainContent();
     }
 
+    function _renderEquipDashboard() {
+        const el = document.getElementById('equipMainContent');
+        if (!el) return;
+        const today = new Date();
+        const ym = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0');
+        const monthLabel = today.getFullYear() + '년 ' + (today.getMonth()+1) + '월';
+
+        const equips    = Storage.getAll(ST_EQUIP)         || [];
+        const spares    = Storage.getAll(ST_SPARE)         || [];
+        const crecs     = Storage.getAll(ST_CREC)          || [];
+        const issues    = Storage.getAll(ST_ISSUE)         || [];
+        const dts       = Storage.getAll(ST_DT)            || [];
+        const luxLogs   = Storage.getAll(ST_LUX)           || [];
+        const fproofs   = Storage.getAll(ST_FPROOF)        || [];
+        const airLogs   = Storage.getAll(ST_AIR_FILTER)    || [];
+        const supLogs   = Storage.getAll(ST_SUPPLY_FILTER) || [];
+        const dryerLogs = Storage.getAll(ST_DRYER_CLEAN)   || [];
+
+        // 설비 현황
+        const equipTotal = equips.length;
+        const equipErr   = equips.filter(e => e.status === '이상').length;
+        const equipCheck = equips.filter(e => e.status === '점검중').length;
+        const equipOk    = equipTotal - equipErr - equipCheck;
+        const lineCounts = LINES.map(l => ({ l, cnt: equips.filter(e => e.line === l).length }))
+                                .filter(x => x.cnt > 0);
+
+        // 스페어 재고
+        const spareLow   = spares.filter(s => s.currentStock != null && s.minStock != null && Number(s.currentStock) <= Number(s.minStock)).length;
+
+        // 이번 달 점검
+        const thisCrecs  = crecs.filter(r => (r.date||'').startsWith(ym));
+        const crecNg     = thisCrecs.filter(r => r.result === 'NG').length;
+
+        // 이번 달 이상 발생
+        const thisIssues = issues.filter(r => (r.date||'').startsWith(ym));
+        const issueOpen  = thisIssues.filter(r => r.status !== '완료' && r.status !== '처리완료').length;
+
+        // 이번 달 비가동
+        const thisDts    = dts.filter(r => (r.date||'').startsWith(ym));
+        const dtMin      = thisDts.reduce((s,d) => s + (Number(d.duration)||0), 0);
+
+        // 이번 달 조도/F-PROOF/에어필터/급기필터/건조로
+        const thisLux    = luxLogs.filter(l => (l.date||'').startsWith(ym));
+        const thisFp     = fproofs.filter(r => (r.date||'').startsWith(ym));
+        const thisAir    = airLogs.filter(r => (r.date||'').startsWith(ym));
+        const thisSup    = supLogs.filter(r => (r.date||'').startsWith(ym));
+        const thisDryer  = dryerLogs.filter(r => (r.date||'').startsWith(ym));
+
+        const tile = (icon, accent, title, mainVal, mainUnit, sub, targetMode) => `
+            <div onclick="ProdEquipmentModule.switchMode('${targetMode}')"
+                 style="background:var(--bg-card,var(--bg-secondary));border:1px solid var(--border-color);
+                        border-radius:12px;padding:18px 20px;cursor:pointer;transition:all .18s;
+                        box-shadow:0 2px 6px rgba(0,0,0,.04);"
+                 onmouseenter="this.style.boxShadow='0 6px 18px rgba(0,0,0,.12)';this.style.transform='translateY(-2px)'"
+                 onmouseleave="this.style.boxShadow='0 2px 6px rgba(0,0,0,.04)';this.style.transform=''">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                    <div style="width:36px;height:36px;border-radius:9px;background:${accent}1a;
+                                display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                        <span class="material-symbols-outlined" style="font-size:20px;color:${accent};">${icon}</span>
+                    </div>
+                    <span style="font-weight:700;font-size:0.85rem;color:var(--text-primary);flex:1;">${title}</span>
+                    <span class="material-symbols-outlined" style="font-size:13px;color:var(--text-muted);">arrow_forward_ios</span>
+                </div>
+                <div style="display:flex;align-items:baseline;gap:6px;">
+                    <span style="font-size:1.9rem;font-weight:800;color:var(--text-primary);line-height:1;">${mainVal}</span>
+                    <span style="font-size:0.78rem;color:var(--text-muted);">${mainUnit}</span>
+                </div>
+                ${sub ? `<div style="margin-top:6px;font-size:0.76rem;color:var(--text-muted);">${sub}</div>` : ''}
+            </div>`;
+
+        el.innerHTML = `
+            <div style="margin-bottom:14px;font-size:0.82rem;color:var(--text-muted);">
+                <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">calendar_month</span>
+                ${monthLabel} 기준
+            </div>
+
+            <!-- 설비 현황 요약 헤더 카드 -->
+            <div onclick="ProdEquipmentModule.switchMode('general')"
+                 style="cursor:pointer;background:linear-gradient(135deg,#1d4ed8,#3b82f6);border-radius:14px;
+                        padding:20px 26px;margin-bottom:20px;color:#fff;
+                        display:flex;align-items:center;gap:28px;flex-wrap:wrap;
+                        box-shadow:0 4px 14px rgba(59,130,246,.35);transition:all .18s;"
+                 onmouseenter="this.style.boxShadow='0 8px 24px rgba(59,130,246,.45)';this.style.transform='translateY(-1px)'"
+                 onmouseleave="this.style.boxShadow='0 4px 14px rgba(59,130,246,.35)';this.style.transform=''">
+                <div>
+                    <div style="font-size:0.75rem;opacity:.8;margin-bottom:2px;">총 등록 설비</div>
+                    <div style="font-size:2.4rem;font-weight:800;line-height:1.1;">${equipTotal}</div>
+                    <div style="font-size:0.74rem;opacity:.7;margin-top:4px;">${lineCounts.map(x=>x.l+' '+x.cnt+'대').join(' · ') || '등록 없음'}</div>
+                </div>
+                <div style="width:1px;height:50px;background:rgba(255,255,255,.22);"></div>
+                <div style="display:flex;gap:22px;flex-wrap:wrap;">
+                    <div style="text-align:center;">
+                        <div style="font-size:1.6rem;font-weight:700;color:#86efac;">${equipOk}</div>
+                        <div style="font-size:0.72rem;opacity:.8;margin-top:2px;">정상</div>
+                    </div>
+                    <div style="text-align:center;">
+                        <div style="font-size:1.6rem;font-weight:700;color:#fde68a;">${equipCheck}</div>
+                        <div style="font-size:0.72rem;opacity:.8;margin-top:2px;">점검중</div>
+                    </div>
+                    <div style="text-align:center;">
+                        <div style="font-size:1.6rem;font-weight:700;color:#fca5a5;">${equipErr}</div>
+                        <div style="font-size:0.72rem;opacity:.8;margin-top:2px;">이상</div>
+                    </div>
+                </div>
+                <div style="margin-left:auto;font-size:0.78rem;opacity:.7;display:flex;align-items:center;gap:4px;">
+                    설비 일반관리 <span class="material-symbols-outlined" style="font-size:14px;">arrow_forward</span>
+                </div>
+            </div>
+
+            <!-- 스페어 · 점검 · 이상 · 비가동 -->
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:12px;">
+                <div onclick="ProdEquipmentModule.switchMode('general')"
+                     style="background:var(--bg-card,var(--bg-secondary));border:1px solid var(--border-color);
+                            border-radius:12px;padding:18px 20px;cursor:pointer;transition:all .18s;
+                            box-shadow:0 2px 6px rgba(0,0,0,.04);"
+                     onmouseenter="this.style.boxShadow='0 6px 18px rgba(0,0,0,.12)';this.style.transform='translateY(-2px)'"
+                     onmouseleave="this.style.boxShadow='0 2px 6px rgba(0,0,0,.04)';this.style.transform=''">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                        <div style="width:36px;height:36px;border-radius:9px;background:#2563eb1a;
+                                    display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                            <span class="material-symbols-outlined" style="font-size:20px;color:#2563eb;">inventory</span>
+                        </div>
+                        <span style="font-weight:700;font-size:0.85rem;color:var(--text-primary);flex:1;">스페어 관리</span>
+                        <span class="material-symbols-outlined" style="font-size:13px;color:var(--text-muted);">arrow_forward_ios</span>
+                    </div>
+                    <div style="display:flex;align-items:baseline;gap:6px;">
+                        <span style="font-size:1.9rem;font-weight:800;color:var(--text-primary);line-height:1;">${spares.length}</span>
+                        <span style="font-size:0.78rem;color:var(--text-muted);">종 등록</span>
+                        ${spareLow > 0
+                            ? `<span style="margin-left:4px;background:#fef2f2;border:1px solid #fca5a5;color:#dc2626;border-radius:20px;padding:2px 7px;font-size:0.72rem;font-weight:700;">⚠ 부족 ${spareLow}건</span>`
+                            : `<span style="margin-left:4px;background:#f0fdf4;border:1px solid #86efac;color:#16a34a;border-radius:20px;padding:2px 7px;font-size:0.72rem;">재고 양호</span>`}
+                    </div>
+                    <div style="margin-top:6px;font-size:0.76rem;color:var(--text-muted);">스페어 파트 재고 현황</div>
+                </div>
+
+                ${tile('checklist','#7c3aed','정기 점검',thisCrecs.length,'건 완료',
+                    crecNg > 0
+                        ? `${monthLabel} · <span style="color:#dc2626;">NG ${crecNg}건</span>`
+                        : monthLabel + ' 점검 기록',
+                    'general')}
+
+                <div onclick="ProdEquipmentModule.switchMode('general')"
+                     style="background:var(--bg-card,var(--bg-secondary));border:1px solid var(--border-color);
+                            border-radius:12px;padding:18px 20px;cursor:pointer;transition:all .18s;
+                            box-shadow:0 2px 6px rgba(0,0,0,.04);"
+                     onmouseenter="this.style.boxShadow='0 6px 18px rgba(0,0,0,.12)';this.style.transform='translateY(-2px)'"
+                     onmouseleave="this.style.boxShadow='0 2px 6px rgba(0,0,0,.04)';this.style.transform=''">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                        <div style="width:36px;height:36px;border-radius:9px;background:#dc26261a;
+                                    display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                            <span class="material-symbols-outlined" style="font-size:20px;color:#dc2626;">warning</span>
+                        </div>
+                        <span style="font-weight:700;font-size:0.85rem;color:var(--text-primary);flex:1;">이상 발생</span>
+                        <span class="material-symbols-outlined" style="font-size:13px;color:var(--text-muted);">arrow_forward_ios</span>
+                    </div>
+                    <div style="display:flex;align-items:baseline;gap:6px;">
+                        <span style="font-size:1.9rem;font-weight:800;line-height:1;color:${thisIssues.length>0?'#dc2626':'var(--text-primary)'};">${thisIssues.length}</span>
+                        <span style="font-size:0.78rem;color:var(--text-muted);">건 발생</span>
+                        ${issueOpen > 0
+                            ? `<span style="margin-left:4px;background:#fef2f2;border:1px solid #fca5a5;color:#dc2626;border-radius:20px;padding:2px 7px;font-size:0.72rem;font-weight:700;">미처리 ${issueOpen}건</span>`
+                            : (thisIssues.length > 0 ? `<span style="margin-left:4px;background:#f0fdf4;border:1px solid #86efac;color:#16a34a;border-radius:20px;padding:2px 7px;font-size:0.72rem;">전건 완료</span>` : '')}
+                    </div>
+                    <div style="margin-top:6px;font-size:0.76rem;color:var(--text-muted);">${monthLabel} 이상 발생 현황</div>
+                </div>
+
+                ${tile('pause_circle','#f59e0b','비가동 이력', dtMin ,'분 · ' + (dtMin/60).toFixed(1) + 'h',
+                    monthLabel + ' 비가동 ' + thisDts.length + '건',
+                    'general')}
+            </div>
+
+            <!-- 세부 관리 타일 -->
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;">
+                ${tile('lightbulb','#0891b2','조도 점검', thisLux.length, '건 측정', monthLabel + ' 조도 측정 현황', 'illumination')}
+                ${tile('device_thermostat','#0d9488','온도 프로파일', '–', '', monthLabel + ' 온도 측정', 'temperature')}
+                ${tile('cleaning_services','#be185d','정비 / 청소', thisDryer.length + thisAir.length + thisSup.length, '건 완료', monthLabel + ' 청소·정비 이력', 'maintenance')}
+                ${tile('fact_check','#7c3aed','F / PROOF', thisFp.length, '건 점검', monthLabel + ' F/PROOF 점검', 'fproof')}
+                ${tile('filter_alt','#0369a1','압축에어 필터', thisAir.length, '건 교체', monthLabel + ' 필터 교체', 'airfilter')}
+                ${tile('air','#0891b2','급기 필터', thisSup.length, '건 교체', monthLabel + ' 급기필터 교체', 'supplyfilter')}
+                ${tile('local_fire_department','#b45309','건조로 청소', thisDryer.length, '건 완료', monthLabel + ' 건조로 청소', 'dryerclean')}
+                ${tile('speed','#4f46e5','컨베이어', '–', '', '컨베이어 속도 계산', 'conveyor')}
+            </div>`;
+    }
+
     function _renderMainContent() {
         const el = document.getElementById('equipMainContent');
         if (!el) return;
-        if (_mode === 'general') {
+        if (_mode === 'dashboard') {
+            _renderEquipDashboard();
+        } else if (_mode === 'general') {
             el.innerHTML = `
             <div style="display:flex;gap:16px;align-items:flex-start;">
                 <div style="width:280px;flex-shrink:0;">
@@ -15085,6 +16754,7 @@ var ProdEquipmentModule = (function() {
     }
 
     function _renderPlantLayout() {
+        if (_line !== '도장A라인' && _line !== '도장B라인') return '';
         const aActive = _line === '도장A라인';
         const bActive = _line === '도장B라인';
         const lineOverlay = (line, active, left, top, width, height) => `
@@ -15291,16 +16961,17 @@ var ProdEquipmentModule = (function() {
     function _renderLineTabs() {
         const el = document.getElementById('equipLineTabs');
         if (!el) return;
-        if (_mode === 'temperature' || _mode === 'illumination' || _mode === 'conveyor' || _mode === 'maintenance' || _mode === 'fproof' || _mode === 'airfilter' || _mode === 'supplyfilter' || _mode === 'dryerclean' || _mode === 'wastewater') {
+        if (_mode === 'dashboard' || _mode === 'temperature' || _mode === 'illumination' || _mode === 'conveyor' || _mode === 'maintenance' || _mode === 'fproof' || _mode === 'airfilter' || _mode === 'supplyfilter' || _mode === 'dryerclean' || _mode === 'wastewater') {
             el.style.display = 'none';
             el.innerHTML = '';
             return;
         }
         el.style.display = 'flex';
+        el.style.flexWrap = 'wrap';
         el.innerHTML = LINES.map(l => `
             <button class="btn ${l === _line ? 'btn-primary' : 'btn-outline'}"
                     onclick="ProdEquipmentModule.switchLine('${l}')">
-                <span class="material-symbols-outlined">precision_manufacturing</span> ${l}
+                <span class="material-symbols-outlined">${LINE_ICONS[l] || 'precision_manufacturing'}</span> ${l}
             </button>`).join('');
     }
 
@@ -15310,9 +16981,30 @@ var ProdEquipmentModule = (function() {
         const allEquips = (Storage.getAll(ST_EQUIP) || []).filter(e => e.line === _line);
 
         // 공정 그룹별 렌더링
+        const _hiddenSet   = new Set(_loadHiddenProcs()[_line] || []);
+        const _allStations = _getProcStations(_line);
+        const _hiddenCount = _allStations.filter(p => _hiddenSet.has(p.name)).length;
         let html = '';
+
+        // 숨긴 분류 복원 안내 (관리자만)
+        if (_hiddenCount > 0 && _isAdmin()) {
+            html += `
+            <div style="padding:5px 12px;background:#fef9c3;border-bottom:1px solid #fde047;
+                        display:flex;align-items:center;justify-content:space-between;gap:6px;">
+                <span style="font-size:0.76rem;color:#854d0e;">
+                    <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">visibility_off</span>
+                    숨긴 분류 ${_hiddenCount}개
+                </span>
+                <button onclick="ProdEquipmentModule.restoreProcs()"
+                    style="padding:2px 8px;font-size:0.72rem;border:1px solid #ca8a04;
+                           border-radius:4px;background:transparent;color:#854d0e;cursor:pointer;">
+                    전체 복원
+                </button>
+            </div>`;
+        }
+
         let _commonDividerShown = false;
-        PROC_STATIONS.forEach(proc => {
+        _allStations.filter(p => !_hiddenSet.has(p.name)).forEach(proc => {
             // 공통 설비 구역 구분선 (처음 한 번만)
             if (proc.common && !_commonDividerShown) {
                 _commonDividerShown = true;
@@ -15332,6 +17024,7 @@ var ProdEquipmentModule = (function() {
             // 공정 헤더
             const hdrBg   = proc.common ? 'var(--bg-tertiary,#f1f5f9)' : 'var(--bg-secondary)';
             const hdrColor = proc.common ? 'var(--accent-teal,#0d9488)' : 'var(--text-secondary)';
+            const js_name  = proc.name.replace(/'/g, "\\'");
             html += `
             <div id="${_procAnchor(proc.name)}" style="padding:6px 12px 4px;background:${hdrBg};
                         border-bottom:1px solid var(--border-color);border-top:1px solid var(--border-color);
@@ -15342,12 +17035,22 @@ var ProdEquipmentModule = (function() {
                     ${proc.no ? `<span style="color:var(--text-muted);font-weight:400;font-size:.72rem;">${proc.no} </span>` : ''}
                     ${_esc(proc.name)}
                 </span>
-                <button onclick="ProdEquipmentModule.openEquipAddModal('${_esc(proc.name)}')"
-                    style="padding:2px 8px;font-size:0.72rem;border:1px solid var(--accent-blue);
-                           border-radius:4px;background:transparent;color:var(--accent-blue);
-                           cursor:pointer;display:flex;align-items:center;gap:2px;">
-                    <span class="material-symbols-outlined" style="font-size:13px;">add</span>추가
-                </button>
+                <div style="display:flex;align-items:center;gap:4px;">
+                    ${_isAdmin() ? `
+                    <button onclick="ProdEquipmentModule.hideProc('${js_name}')"
+                        title="이 분류 숨기기 (관리자)"
+                        style="padding:2px 5px;font-size:0.72rem;border:1px solid #fca5a5;
+                               border-radius:4px;background:transparent;color:#dc2626;
+                               cursor:pointer;display:flex;align-items:center;gap:1px;">
+                        <span class="material-symbols-outlined" style="font-size:13px;">delete</span>
+                    </button>` : ''}
+                    <button onclick="ProdEquipmentModule.openEquipAddModal('${js_name}')"
+                        style="padding:2px 8px;font-size:0.72rem;border:1px solid var(--accent-blue);
+                               border-radius:4px;background:transparent;color:var(--accent-blue);
+                               cursor:pointer;display:flex;align-items:center;gap:2px;">
+                        <span class="material-symbols-outlined" style="font-size:13px;">add</span>추가
+                    </button>
+                </div>
             </div>`;
 
             if (equips.length === 0) {
@@ -15400,7 +17103,7 @@ var ProdEquipmentModule = (function() {
         });
 
         // 미분류 (process 없는 기존 데이터)
-        const uncat = allEquips.filter(e => !e.process || !PROC_STATIONS.find(p => p.name === e.process));
+        const uncat = allEquips.filter(e => !e.process || !_getProcStations(_line).find(p => p.name === e.process));
         if (uncat.length > 0) {
             html += `
             <div style="padding:6px 12px 4px;background:var(--bg-secondary);
@@ -15438,6 +17141,35 @@ var ProdEquipmentModule = (function() {
         el.innerHTML = html;
     }
 
+    // ── 관리자 체크 ──────────────────────────────────────────────
+    const _isAdmin = () => {
+        const u = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
+            ? AuthModule.getCurrentUser() : null;
+        return !!(u && u.role === 'admin');
+    };
+
+    // ── 공정 분류 숨김 관리 (localStorage) ───────────────────────
+    const _HIDDEN_KEY = 'equipHiddenProcs';
+    function _loadHiddenProcs() {
+        try { return JSON.parse(localStorage.getItem(_HIDDEN_KEY) || '{}'); } catch (e) { return {}; }
+    }
+    function _saveHiddenProcs(obj) {
+        localStorage.setItem(_HIDDEN_KEY, JSON.stringify(obj));
+    }
+    function hideProc(procName) {
+        const obj = _loadHiddenProcs();
+        if (!obj[_line]) obj[_line] = [];
+        if (!obj[_line].includes(procName)) obj[_line].push(procName);
+        _saveHiddenProcs(obj);
+        _renderEquipList();
+    }
+    function restoreProcs() {
+        const obj = _loadHiddenProcs();
+        delete obj[_line];
+        _saveHiddenProcs(obj);
+        _renderEquipList();
+    }
+
     // ── 라인 전환 ────────────────────────────────────────────────
     function switchLine(line) {
         _line    = line;
@@ -15471,7 +17203,7 @@ var ProdEquipmentModule = (function() {
     // ── 설비 선택 ────────────────────────────────────────────────
     function selectEquip(id) {
         _equipId = id;
-        _subTab  = 'spare';
+        _subTab  = 'ledger';
         _renderEquipList();
         _renderDetail();
     }
@@ -15504,7 +17236,8 @@ var ProdEquipmentModule = (function() {
 
             <!-- 서브 탭 -->
             <div style="display:flex;background:var(--bg-secondary);border-bottom:1px solid var(--border-color);">
-                ${[{k:'spare',icon:'inventory',label:'스페어 관리'},
+                ${[{k:'ledger',icon:'article',label:'관리대장'},
+                   {k:'spare',icon:'inventory',label:'스페어 관리'},
                    {k:'check',icon:'checklist',label:'점검 항목'},
                    {k:'issue',icon:'warning',label:'이상 발생'},
                    {k:'downtime',icon:'pause_circle',label:'비가동 이력'}].map(t => `
@@ -15525,7 +17258,7 @@ var ProdEquipmentModule = (function() {
 
     function switchSubTab(tab) {
         _subTab = tab;
-        ['spare','check','issue','downtime'].forEach(k => {
+        ['ledger','spare','check','issue','downtime'].forEach(k => {
             const el = document.getElementById('subTab_' + k);
             if (!el) return;
             const active = k === tab;
@@ -15541,6 +17274,7 @@ var ProdEquipmentModule = (function() {
         const el = document.getElementById('subTabContent');
         if (!el) return;
         switch (_subTab) {
+            case 'ledger':   _renderLedgerTab(el);   break;
             case 'spare':    _renderSpareTab(el);    break;
             case 'check':    _renderCheckTab(el);    break;
             case 'issue':    _renderIssueTab(el);    break;
@@ -16142,22 +17876,34 @@ var ProdEquipmentModule = (function() {
     // ════════════════════════════════════════════════════════════
     // 설비 마스터 CRUD
     // ════════════════════════════════════════════════════════════
+    function _equipProcOptions(line, selProc) {
+        return '<option value="">-- 공정 선택 --</option>' +
+            _getProcStations(line).map(p =>
+                `<option value="${_esc(p.name)}" ${selProc===p.name?'selected':''}>${p.name}</option>`
+            ).join('');
+    }
+    function _onEquipLineChange() {
+        const line = document.getElementById('efLine')?.value || _line;
+        const sel  = document.getElementById('efProcess');
+        if (sel) sel.innerHTML = _equipProcOptions(line, '');
+    }
     function _equipForm(e, defaultProcess) {
         e = e || {};
+        const selLine = e.line || _line;
         const selProc = e.process || defaultProcess || '';
         return `
         <div class="form-row">
             <div class="form-group">
                 <label class="form-label">공정 라인 <span style="color:var(--accent-red)">*</span></label>
-                <select class="form-select" id="efLine">
-                    ${LINES.map(l=>`<option value="${l}" ${(e.line||_line)===l?'selected':''}>${l}</option>`).join('')}
+                <select class="form-select" id="efLine"
+                        onchange="ProdEquipmentModule._onEquipLineChange()">
+                    ${LINES.map(l=>`<option value="${l}" ${selLine===l?'selected':''}>${l}</option>`).join('')}
                 </select>
             </div>
             <div class="form-group">
                 <label class="form-label">공정 <span style="color:var(--accent-red)">*</span></label>
                 <select class="form-select" id="efProcess">
-                    <option value="">-- 공정 선택 --</option>
-                    ${PROC_STATIONS.map(p=>`<option value="${_esc(p.name)}" ${selProc===p.name?'selected':''}>${p.name}</option>`).join('')}
+                    ${_equipProcOptions(selLine, selProc)}
                 </select>
             </div>
         </div>
@@ -16243,6 +17989,403 @@ var ProdEquipmentModule = (function() {
                     좌측 설비 목록에서 설비를 선택하세요
                 </div>`;
         });
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 관리대장 탭 (사진 · 제원 · 수리이력)
+    // ════════════════════════════════════════════════════════════
+    function _renderLedgerTab(el) {
+        const equip = Storage.getById(ST_EQUIP, _equipId);
+        if (!equip) { el.innerHTML = '<p>설비 정보를 불러올 수 없습니다.</p>'; return; }
+        const photos  = equip.photos  || [];
+        const specs   = equip.specs   || {};
+        const repairs = (equip.repairs || []).slice().sort((a,b) => (b.date||'').localeCompare(a.date||''));
+        const sCol    = equip.status === '정상' ? '#16a34a' :
+                        equip.status === '점검중' ? '#d97706' :
+                        equip.status === '수리중' ? '#dc2626' : 'var(--text-muted)';
+        el.innerHTML = `
+        <div>
+            <!-- ① 기본정보 + 사진 -->
+            <div style="display:grid;grid-template-columns:1fr 260px;gap:16px;margin-bottom:20px;">
+                <!-- 기본정보 -->
+                <div>
+                    <div style="font-weight:700;font-size:0.88rem;margin-bottom:8px;color:var(--text-secondary);
+                                display:flex;align-items:center;gap:6px;">
+                        <span class="material-symbols-outlined" style="font-size:16px;">info</span>기본 정보
+                        <button class="btn btn-outline btn-sm" style="margin-left:auto;"
+                                onclick="ProdEquipmentModule.editEquip('${equip.id}')">수정</button>
+                    </div>
+                    <table style="width:100%;border-collapse:collapse;font-size:0.84rem;">
+                        ${[['설비명',equip.name],['공정 라인',equip.line],['공정',equip.process],
+                           ['모델/형식',equip.model||'-'],['설치일',equip.installDate||'-'],
+                           ['상태','<span style="font-weight:600;color:'+sCol+';">'+(equip.status||'정상')+'</span>'],
+                           ['비고',equip.note||'-']
+                          ].map(([k,v]) => `
+                          <tr>
+                              <td style="padding:6px 10px;background:var(--bg-secondary);font-weight:600;width:32%;
+                                         border:1px solid var(--border-color);font-size:.82rem;">${k}</td>
+                              <td style="padding:6px 10px;border:1px solid var(--border-color);">${typeof v==='string'&&!v.startsWith('<')?_esc(v):v}</td>
+                          </tr>`).join('')}
+                    </table>
+                </div>
+                <!-- 사진 -->
+                <div>
+                    <div style="font-weight:700;font-size:0.88rem;margin-bottom:8px;color:var(--text-secondary);
+                                display:flex;align-items:center;gap:6px;">
+                        <span class="material-symbols-outlined" style="font-size:16px;">photo_camera</span>설비 사진
+                        <label style="margin-left:auto;cursor:pointer;padding:4px 10px;font-size:0.78rem;font-weight:600;
+                                      border:1px solid var(--accent-blue);border-radius:6px;color:var(--accent-blue);
+                                      display:flex;align-items:center;gap:3px;">
+                            <span class="material-symbols-outlined" style="font-size:14px;">add_photo_alternate</span>추가
+                            <input type="file" accept="image/*" multiple style="display:none;"
+                                   onchange="ProdEquipmentModule.uploadEquipPhotos(this.files)">
+                        </label>
+                    </div>
+                    ${photos.length === 0
+                        ? `<label style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+                                         border:2px dashed var(--border-color);border-radius:10px;height:170px;
+                                         color:var(--text-muted);font-size:0.82rem;cursor:pointer;">
+                               <span class="material-symbols-outlined" style="font-size:36px;margin-bottom:6px;opacity:.4;">add_photo_alternate</span>
+                               사진 없음 · 클릭하여 추가
+                               <input type="file" accept="image/*" multiple style="display:none;"
+                                      onchange="ProdEquipmentModule.uploadEquipPhotos(this.files)">
+                           </label>`
+                        : `<div style="display:grid;grid-template-columns:repeat(${photos.length===1?'1':'2'},1fr);gap:5px;">
+                               ${photos.map((p,i) => `
+                               <div style="position:relative;aspect-ratio:4/3;overflow:hidden;
+                                           border-radius:7px;border:1px solid var(--border-color);cursor:pointer;"
+                                    onclick="ProdEquipmentModule.openPhotoViewer(${i})">
+                                   <img src="${p}" style="width:100%;height:100%;object-fit:cover;">
+                                   <button onclick="event.stopPropagation();ProdEquipmentModule.deleteEquipPhoto(${i})"
+                                       style="position:absolute;top:3px;right:3px;background:rgba(0,0,0,.55);border:none;
+                                              border-radius:50%;width:22px;height:22px;color:#fff;cursor:pointer;
+                                              font-size:14px;line-height:22px;text-align:center;padding:0;">×</button>
+                               </div>`).join('')}
+                           </div>`}
+                </div>
+            </div>
+
+            <!-- ② 제원 -->
+            <div style="margin-bottom:20px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                    <div style="font-weight:700;font-size:0.88rem;color:var(--text-secondary);
+                                display:flex;align-items:center;gap:6px;">
+                        <span class="material-symbols-outlined" style="font-size:16px;">engineering</span>제원 (사양)
+                    </div>
+                    <button class="btn btn-outline btn-sm" onclick="ProdEquipmentModule.openSpecModal()">제원 수정</button>
+                </div>
+                <table style="width:100%;border-collapse:collapse;font-size:0.83rem;">
+                    <thead>
+                        <tr style="background:var(--bg-secondary);">
+                            <th style="padding:6px 10px;border:1px solid var(--border-color);text-align:left;">제조사</th>
+                            <th style="padding:6px 10px;border:1px solid var(--border-color);text-align:left;">제조년도</th>
+                            <th style="padding:6px 10px;border:1px solid var(--border-color);text-align:left;">시리얼(S/N)</th>
+                            <th style="padding:6px 10px;border:1px solid var(--border-color);text-align:left;">용량/출력</th>
+                            <th style="padding:6px 10px;border:1px solid var(--border-color);text-align:left;">전원 사양</th>
+                            <th style="padding:6px 10px;border:1px solid var(--border-color);text-align:left;">크기 (mm)</th>
+                            <th style="padding:6px 10px;border:1px solid var(--border-color);text-align:left;">중량(kg)</th>
+                            <th style="padding:6px 10px;border:1px solid var(--border-color);text-align:left;">구매처</th>
+                            <th style="padding:6px 10px;border:1px solid var(--border-color);text-align:left;">담당자</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td style="padding:6px 10px;border:1px solid var(--border-color);">${_esc(specs.manufacturer||'-')}</td>
+                            <td style="padding:6px 10px;border:1px solid var(--border-color);">${_esc(specs.mfgYear||'-')}</td>
+                            <td style="padding:6px 10px;border:1px solid var(--border-color);font-family:monospace;font-size:.8rem;">${_esc(specs.serialNo||'-')}</td>
+                            <td style="padding:6px 10px;border:1px solid var(--border-color);">${_esc(specs.capacity||'-')}</td>
+                            <td style="padding:6px 10px;border:1px solid var(--border-color);">${_esc(specs.power||'-')}</td>
+                            <td style="padding:6px 10px;border:1px solid var(--border-color);">${_esc(specs.dimensions||'-')}</td>
+                            <td style="padding:6px 10px;border:1px solid var(--border-color);">${_esc(specs.weight||'-')}</td>
+                            <td style="padding:6px 10px;border:1px solid var(--border-color);">${_esc(specs.supplier||'-')}</td>
+                            <td style="padding:6px 10px;border:1px solid var(--border-color);">${_esc(specs.manager||'-')}</td>
+                        </tr>
+                    </tbody>
+                </table>
+                ${specs.special ? `<div style="margin-top:5px;padding:7px 10px;background:var(--bg-secondary);
+                    border-radius:6px;font-size:.81rem;color:var(--text-secondary);">
+                    <strong>특기사항:</strong> ${_esc(specs.special)}</div>` : ''}
+            </div>
+
+            <!-- ③ 수리 이력 -->
+            <div>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                    <div style="font-weight:700;font-size:0.88rem;color:var(--text-secondary);
+                                display:flex;align-items:center;gap:6px;">
+                        <span class="material-symbols-outlined" style="font-size:16px;">build_circle</span>
+                        수리 이력 <span style="font-size:.8rem;color:var(--text-muted);font-weight:400;">(${repairs.length}건)</span>
+                    </div>
+                    <button class="btn btn-primary btn-sm" onclick="ProdEquipmentModule.openRepairModal('')">
+                        <span class="material-symbols-outlined" style="font-size:15px;">add</span> 수리 기록
+                    </button>
+                </div>
+                <div class="data-table-wrapper">
+                    <table class="data-table" style="table-layout:fixed;">
+                        <colgroup>
+                            <col style="width:4%"><col style="width:9%"><col style="width:18%">
+                            <col style="width:22%"><col style="width:7%"><col style="width:16%">
+                            <col style="width:10%"><col style="width:8%"><col style="width:6%">
+                        </colgroup>
+                        <thead><tr>
+                            <th>No</th><th>수리일</th><th>증상/불량</th><th>수리 내용</th>
+                            <th>유형</th><th>교체 부품</th><th>비용(원)</th><th>작업자</th><th>작업</th>
+                        </tr></thead>
+                        <tbody>
+                        ${repairs.length === 0
+                            ? `<tr><td colspan="9" style="text-align:center;padding:28px;color:var(--text-muted);">수리 이력이 없습니다.</td></tr>`
+                            : repairs.map((r,i) => `
+                                <tr>
+                                    <td>${i+1}</td>
+                                    <td>${r.date||'-'}</td>
+                                    <td style="font-size:.81rem;white-space:pre-wrap;">${_esc(r.symptom||'-')}</td>
+                                    <td style="font-size:.81rem;white-space:pre-wrap;">${_esc(r.content||'-')}</td>
+                                    <td><span style="font-size:.74rem;padding:2px 6px;border-radius:10px;white-space:nowrap;
+                                                  background:${r.type==='외주'?'#fef3c7':'#e0f2fe'};
+                                                  color:${r.type==='외주'?'#b45309':'#0369a1'};">${r.type||'자체'}</span></td>
+                                    <td style="font-size:.81rem;">${_esc(r.parts||'-')}</td>
+                                    <td style="text-align:right;">${r.cost ? Number(r.cost).toLocaleString() : '-'}</td>
+                                    <td style="font-size:.81rem;">${_esc(r.worker||'-')}</td>
+                                    <td style="white-space:nowrap;">
+                                        <button class="btn btn-xs btn-outline"
+                                                onclick="ProdEquipmentModule.openRepairModal('${r.id}')">수정</button>
+                                        <button class="btn btn-xs btn-danger"
+                                                onclick="ProdEquipmentModule.deleteRepair('${r.id}')">삭제</button>
+                                    </td>
+                                </tr>`).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    function openSpecModal() {
+        const equip = Storage.getById(ST_EQUIP, _equipId);
+        if (!equip) return;
+        const s = equip.specs || {};
+        UIUtils.showModal('제원 수정', `
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">제조사</label>
+                <input type="text" class="form-input" id="spMfg" value="${_esc(s.manufacturer||'')}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">제조년도</label>
+                <input type="text" class="form-input" id="spMfgYear" value="${_esc(s.mfgYear||'')}" placeholder="예: 2019">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">시리얼 번호 (S/N)</label>
+                <input type="text" class="form-input" id="spSn" value="${_esc(s.serialNo||'')}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">용량 / 출력</label>
+                <input type="text" class="form-input" id="spCap" value="${_esc(s.capacity||'')}" placeholder="예: 3kW, 200L/min">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">전원 사양</label>
+                <input type="text" class="form-input" id="spPwr" value="${_esc(s.power||'')}" placeholder="예: AC220V 60Hz">
+            </div>
+            <div class="form-group">
+                <label class="form-label">크기 (mm)</label>
+                <input type="text" class="form-input" id="spDim" value="${_esc(s.dimensions||'')}" placeholder="예: 1200×800×1500">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">중량 (kg)</label>
+                <input type="text" class="form-input" id="spWt" value="${_esc(s.weight||'')}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">구매처</label>
+                <input type="text" class="form-input" id="spSupp" value="${_esc(s.supplier||'')}">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">담당자</label>
+                <input type="text" class="form-input" id="spMgr" value="${_esc(s.manager||'')}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">구매가 (원)</label>
+                <input type="number" class="form-input" id="spPrice" value="${s.purchasePrice||''}">
+            </div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">특기사항</label>
+            <textarea class="form-textarea" id="spSpecial" rows="2">${_esc(s.special||'')}</textarea>
+        </div>
+        `, `
+        <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+        <button class="btn btn-primary"   onclick="ProdEquipmentModule.saveSpec()">저장</button>
+        `, 'md');
+    }
+
+    async function saveSpec() {
+        const equip = Storage.getById(ST_EQUIP, _equipId);
+        if (!equip) return;
+        const specs = {
+            manufacturer: document.getElementById('spMfg').value.trim(),
+            mfgYear:      document.getElementById('spMfgYear').value.trim(),
+            serialNo:     document.getElementById('spSn').value.trim(),
+            capacity:     document.getElementById('spCap').value.trim(),
+            power:        document.getElementById('spPwr').value.trim(),
+            dimensions:   document.getElementById('spDim').value.trim(),
+            weight:       document.getElementById('spWt').value.trim(),
+            supplier:     document.getElementById('spSupp').value.trim(),
+            manager:      document.getElementById('spMgr').value.trim(),
+            purchasePrice:document.getElementById('spPrice').value.trim(),
+            special:      document.getElementById('spSpecial').value.trim()
+        };
+        await Storage.update(ST_EQUIP, _equipId, { ...equip, specs });
+        UIUtils.closeModal();
+        UIUtils.toast('제원이 저장되었습니다.', 'success');
+        _subTab = 'ledger';
+        _renderDetail();
+    }
+
+    function openRepairModal(repairId) {
+        const equip = Storage.getById(ST_EQUIP, _equipId);
+        if (!equip) return;
+        const r = repairId ? (equip.repairs||[]).find(x => x.id === repairId) || {} : {};
+        UIUtils.showModal(repairId ? '수리 이력 수정' : '수리 기록 추가', `
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">수리일 <span style="color:var(--accent-red)">*</span></label>
+                <input type="date" class="form-input" id="rpDate" value="${r.date||UIUtils.today()}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">수리 유형</label>
+                <select class="form-select" id="rpType">
+                    ${['자체','외주'].map(t=>`<option ${(r.type||'자체')===t?'selected':''}>${t}</option>`).join('')}
+                </select>
+            </div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">증상 / 불량 내용 <span style="color:var(--accent-red)">*</span></label>
+            <textarea class="form-textarea" id="rpSymptom" rows="2">${_esc(r.symptom||'')}</textarea>
+        </div>
+        <div class="form-group">
+            <label class="form-label">수리 내용 <span style="color:var(--accent-red)">*</span></label>
+            <textarea class="form-textarea" id="rpContent" rows="3">${_esc(r.content||'')}</textarea>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">교체 부품</label>
+                <input type="text" class="form-input" id="rpParts" value="${_esc(r.parts||'')}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">비용 (원)</label>
+                <input type="number" class="form-input" id="rpCost" value="${r.cost||''}">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">작업자</label>
+                <input type="text" class="form-input" id="rpWorker" value="${_esc(r.worker||'')}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">비고</label>
+                <input type="text" class="form-input" id="rpNote" value="${_esc(r.note||'')}">
+            </div>
+        </div>
+        `, `
+        <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+        <button class="btn btn-primary"   onclick="ProdEquipmentModule.saveRepair('${repairId||''}')">저장</button>
+        `, 'md');
+    }
+
+    async function saveRepair(repairId) {
+        const date    = (document.getElementById('rpDate')?.value   || '').trim();
+        const symptom = (document.getElementById('rpSymptom')?.value|| '').trim();
+        const content = (document.getElementById('rpContent')?.value|| '').trim();
+        if (!date)    { UIUtils.toast('수리일을 입력하세요.', 'warning'); return; }
+        if (!symptom) { UIUtils.toast('증상/불량 내용을 입력하세요.', 'warning'); return; }
+        if (!content) { UIUtils.toast('수리 내용을 입력하세요.', 'warning'); return; }
+
+        const equip   = Storage.getById(ST_EQUIP, _equipId);
+        if (!equip) return;
+        const repairs = (equip.repairs || []).slice();
+        const rec = {
+            id:      repairId || ('rp_' + Date.now()),
+            date,
+            symptom,
+            content,
+            type:    document.getElementById('rpType').value,
+            parts:   (document.getElementById('rpParts')?.value  || '').trim(),
+            cost:    (document.getElementById('rpCost')?.value   || '').trim(),
+            worker:  (document.getElementById('rpWorker')?.value || '').trim(),
+            note:    (document.getElementById('rpNote')?.value   || '').trim()
+        };
+        if (repairId) {
+            const idx = repairs.findIndex(x => x.id === repairId);
+            if (idx >= 0) repairs[idx] = rec; else repairs.push(rec);
+        } else {
+            repairs.push(rec);
+        }
+        await Storage.update(ST_EQUIP, _equipId, { ...equip, repairs });
+        UIUtils.closeModal();
+        UIUtils.toast('수리 기록이 저장되었습니다.', 'success');
+        _subTab = 'ledger';
+        _renderDetail();
+    }
+
+    function deleteRepair(repairId) {
+        UIUtils.confirm('이 수리 기록을 삭제하시겠습니까?', async () => {
+            const equip = Storage.getById(ST_EQUIP, _equipId);
+            if (!equip) return;
+            const repairs = (equip.repairs || []).filter(r => r.id !== repairId);
+            await Storage.update(ST_EQUIP, _equipId, { ...equip, repairs });
+            UIUtils.toast('삭제되었습니다.', 'success');
+            _subTab = 'ledger';
+            _renderDetail();
+        });
+    }
+
+    async function uploadEquipPhotos(files) {
+        const equip = Storage.getById(ST_EQUIP, _equipId);
+        if (!equip) return;
+        const photos = (equip.photos || []).slice();
+        for (const file of Array.from(files)) {
+            if (!file.type.startsWith('image/')) continue;
+            const b64 = await new Promise((res, rej) => {
+                const reader = new FileReader();
+                reader.onload  = e => res(e.target.result);
+                reader.onerror = rej;
+                reader.readAsDataURL(file);
+            });
+            photos.push(b64);
+        }
+        await Storage.update(ST_EQUIP, _equipId, { ...equip, photos });
+        UIUtils.toast('사진이 저장되었습니다.', 'success');
+        _subTab = 'ledger';
+        _renderDetail();
+    }
+
+    function deleteEquipPhoto(idx) {
+        UIUtils.confirm('이 사진을 삭제하시겠습니까?', async () => {
+            const equip = Storage.getById(ST_EQUIP, _equipId);
+            if (!equip) return;
+            const photos = (equip.photos || []).slice();
+            photos.splice(idx, 1);
+            await Storage.update(ST_EQUIP, _equipId, { ...equip, photos });
+            UIUtils.toast('삭제되었습니다.', 'success');
+            _subTab = 'ledger';
+            _renderDetail();
+        });
+    }
+
+    function openPhotoViewer(idx) {
+        const equip = Storage.getById(ST_EQUIP, _equipId);
+        if (!equip || !equip.photos || !equip.photos[idx]) return;
+        UIUtils.showModal('설비 사진', `
+            <div style="text-align:center;">
+                <img src="${equip.photos[idx]}" style="max-width:100%;max-height:520px;border-radius:8px;display:inline-block;">
+            </div>`, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'lg');
     }
 
     // ════════════════════════════════════════════════════════════
@@ -18755,6 +20898,20 @@ var ProdEquipmentModule = (function() {
         saveDowntime,
         removeDowntime,
         _calcDt,
+        // 공정 분류 숨김
+        hideProc,
+        restoreProcs,
+        // 설비 폼 헬퍼
+        _onEquipLineChange,
+        // 관리대장
+        openSpecModal,
+        saveSpec,
+        openRepairModal,
+        saveRepair,
+        deleteRepair,
+        uploadEquipPhotos,
+        deleteEquipPhoto,
+        openPhotoViewer,
         // 온도 프로파일
         switchSQTab,
         openSQStdModal,
