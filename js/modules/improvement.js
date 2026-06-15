@@ -24,7 +24,8 @@ var ImprovementActivityModule = (function() {
         closed: '완료'
     };
     let state = { status: '', stage: '', q: '', month: (new Date()).toISOString().slice(0, 7) };
-    let _iaPastedFiles = [];  // 클립보드 붙여넣기 이미지 임시 저장
+    let _iaPastedFiles = [];   // 제안 등록 클립보드 이미지
+    let _doIaPastedFiles = []; // D단계 실시사항 클립보드 이미지
 
     function _esc(v) {
         return String(v || '').replace(/[&<>"']/g, m => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[m]));
@@ -325,6 +326,56 @@ var ImprovementActivityModule = (function() {
         if (!zone) { document.removeEventListener('paste', _iaDocPasteHandler); return; }
         _iaPasteHandler(e);
     }
+
+    // D단계 사진 붙여넣기
+    function _doIaPasteHandler(e) {
+        const items = e.clipboardData && e.clipboardData.items;
+        if (!items) return;
+        let added = 0;
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].type.startsWith('image/')) {
+                const blob = items[i].getAsFile();
+                if (!blob) continue;
+                const file = new File([blob], `do_clipboard_${Date.now() + added}.png`, { type: blob.type || 'image/png' });
+                _doIaPastedFiles.push(file);
+                added++;
+                const reader = new FileReader();
+                reader.onload = function(ev) {
+                    const zone = document.getElementById('iaDoPhotoZone');
+                    if (!zone) return;
+                    const hint = document.getElementById('iaDoPhotoHint');
+                    if (hint) hint.style.display = 'none';
+                    const thumb = document.createElement('div');
+                    thumb.style.cssText = 'position:relative;display:inline-block;';
+                    const img = document.createElement('img');
+                    img.src = ev.target.result;
+                    img.style.cssText = 'height:64px;width:auto;border-radius:4px;border:1px solid var(--border-color);object-fit:cover;';
+                    const rmBtn = document.createElement('button');
+                    rmBtn.type = 'button'; rmBtn.textContent = '×';
+                    rmBtn.style.cssText = 'position:absolute;top:-4px;right:-4px;width:18px;height:18px;border-radius:50%;background:#ef4444;color:#fff;border:none;cursor:pointer;font-size:12px;line-height:18px;padding:0;text-align:center;';
+                    const fileRef = file;
+                    rmBtn.onclick = function() {
+                        const idx = _doIaPastedFiles.indexOf(fileRef);
+                        if (idx !== -1) _doIaPastedFiles.splice(idx, 1);
+                        thumb.remove();
+                        if (!document.querySelectorAll('#iaDoPhotoZone img').length) {
+                            const h = document.getElementById('iaDoPhotoHint');
+                            if (h) h.style.display = '';
+                        }
+                    };
+                    thumb.appendChild(img); thumb.appendChild(rmBtn);
+                    zone.appendChild(thumb);
+                };
+                reader.readAsDataURL(blob);
+            }
+        }
+        if (added) e.preventDefault();
+    }
+    function _doIaDocPasteHandler(e) {
+        const zone = document.getElementById('iaDoPhotoZone');
+        if (!zone) { document.removeEventListener('paste', _doIaDocPasteHandler); return; }
+        _doIaPasteHandler(e);
+    }
     async function _readPhotos(input) {
         const files = Array.from(input?.files || []);
         if (!files.length) return [];
@@ -423,6 +474,10 @@ var ImprovementActivityModule = (function() {
                 </div></div>` : ''}
                 ${isApproved ? _pdcaForm(r) : ''}
             </div>`, footerBtns, 'xxl');
+        if (r.pdcaStage === 'do') {
+            _doIaPastedFiles = [];
+            setTimeout(() => { document.addEventListener('paste', _doIaDocPasteHandler); }, 50);
+        }
     }
 
     function _photosHtml(photos = []) {
@@ -482,18 +537,29 @@ var ImprovementActivityModule = (function() {
             const prevItems = [];
             if (stepIdx > 0) {
                 const planParts = [
-                    r.goal      && `<b>개선 목표:</b> ${_esc(r.goal)}`,
-                    r.rootCause && `<b>원인분석:</b> ${_esc(r.rootCause)}`,
-                    r.actionPlan && `<b>실행계획:</b> ${_esc(r.actionPlan)}`
+                    r.owner      && `<b>실행 업무자:</b> ${_esc(r.owner)}`,
+                    r.participants?.length && `<b>참여자:</b> ${r.participants.map(_esc).join(', ')}`,
+                    r.goal       && `<b>개선 목표:</b> ${_esc(r.goal)}`,
+                    r.rootCause  && `<b>원인분석:</b> ${_esc(r.rootCause)}`,
+                    r.actionPlan && `<b>실행계획:</b> ${_esc(r.actionPlan)}`,
+                    r.dueDate    && `<b>완료 예정일:</b> ${_esc(r.dueDate)}`
                 ].filter(Boolean);
                 prevItems.push({ label: 'P 계획', color: '#3b82f6', html: planParts.length ? planParts.join('<br>') : empty });
             }
             if (stepIdx > 1) {
                 const doParts = [
                     r.actionPlan && `<b>실행 내용:</b> ${_esc(r.actionPlan)}`,
+                    r.doActions  && `<b>실행/개선 실시:</b> ${_esc(r.doActions)}`,
                     r.result     && `<b>수집 데이터:</b> ${_esc(r.result)}`
                 ].filter(Boolean);
-                prevItems.push({ label: 'D 실행', color: '#8b5cf6', html: doParts.length ? doParts.join('<br>') : empty });
+                let doHtml = doParts.length ? doParts.join('<br>') : empty;
+                if (r.doPhotos?.length) {
+                    doHtml += `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">${r.doPhotos.map(p => {
+                        const src = p.url ? ApiClient.photoUrl(p.url) : '';
+                        return src ? `<img src="${src}" style="height:48px;width:auto;border-radius:4px;border:1px solid var(--border-color);object-fit:cover;">` : '';
+                    }).join('')}</div>`;
+                }
+                prevItems.push({ label: 'D 실행', color: '#8b5cf6', html: doHtml });
             }
             if (stepIdx > 2) {
                 const checkParts = [
@@ -569,12 +635,33 @@ var ImprovementActivityModule = (function() {
                 </div>`;
             }
         } else if (stage === 'do') {
+            const existDoPhotos = (r.doPhotos||[]).map(p => {
+                const src = p.url ? ApiClient.photoUrl(p.url) : '';
+                return src ? `<div style="position:relative;display:inline-block;">
+                    <img src="${src}" style="height:64px;width:auto;border-radius:4px;border:1px solid var(--border-color);object-fit:cover;">
+                </div>` : '';
+            }).join('');
             fields += `
                 <div class="form-group"><label class="form-label">실행 내용</label>
-                    <textarea class="form-textarea" id="iaPlan" rows="4" placeholder="계획에 따라 수행한 실행 활동을 기록">${_esc(r.actionPlan||'')}</textarea>
+                    <textarea class="form-textarea" id="iaPlan" rows="3" placeholder="계획에 따라 수행한 실행 활동을 기록">${_esc(r.actionPlan||'')}</textarea>
+                </div>
+                <div class="form-group"><label class="form-label">실행/개선 실시 사항</label>
+                    <textarea class="form-textarea" id="iaDoActions" rows="3" placeholder="실제 실행하거나 개선한 내용을 구체적으로 기록">${_esc(r.doActions||'')}</textarea>
                 </div>
                 <div class="form-group"><label class="form-label">수집 데이터 / 관찰 사항</label>
-                    <textarea class="form-textarea" id="iaResult" rows="4" placeholder="실행 중 수집한 데이터, 관찰된 변화 사항 기록">${_esc(r.result||'')}</textarea>
+                    <textarea class="form-textarea" id="iaResult" rows="3" placeholder="실행 중 수집한 데이터, 관찰된 변화 사항 기록">${_esc(r.result||'')}</textarea>
+                </div>
+                <div class="form-group"><label class="form-label">실시 사진 첨부</label>
+                    <input type="file" class="form-input" id="iaDoPhotos" accept="image/*" multiple>
+                    <div style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;">기존 ${(r.doPhotos||[]).length}장. 파일 선택 또는 아래 영역에 Ctrl+V 붙여넣기</div>
+                    <div id="iaDoPhotoZone" tabindex="0"
+                         style="min-height:60px;border:2px dashed var(--border-color);border-radius:8px;margin-top:8px;padding:10px 14px;color:var(--text-muted);font-size:0.85rem;cursor:pointer;outline:none;display:flex;flex-wrap:wrap;gap:8px;align-items:center;"
+                         onclick="document.getElementById('iaDoPhotoZone').focus()"
+                         onfocus="this.style.borderColor='var(--accent-blue)'"
+                         onblur="this.style.borderColor='var(--border-color)'">
+                        ${existDoPhotos}
+                        <span id="iaDoPhotoHint" style="pointer-events:none;${existDoPhotos?'display:none':''}">여기를 클릭 후 Ctrl+V로 스크린샷 붙여넣기</span>
+                    </div>
                 </div>`;
         } else if (stage === 'check') {
             fields += `
@@ -663,6 +750,7 @@ var ImprovementActivityModule = (function() {
         if (trim('iaGoal') !== null) patch.goal = trim('iaGoal');
         if (trim('iaPlan') !== null) patch.actionPlan = trim('iaPlan');
         if (trim('iaRootCause') !== null) patch.rootCause = trim('iaRootCause');
+        if (trim('iaDoActions') !== null) patch.doActions = trim('iaDoActions');
         if (trim('iaResult') !== null) patch.result = trim('iaResult');
         if (trim('iaEffect') !== null) patch.effect = trim('iaEffect');
         if (trim('iaCost') !== null) patch.cost = trim('iaCost');
@@ -672,9 +760,50 @@ var ImprovementActivityModule = (function() {
         return { patch, newOwner };
     }
 
+    async function _uploadDoPhotos(old) {
+        document.removeEventListener('paste', _doIaDocPasteHandler);
+        const fileInput = document.getElementById('iaDoPhotos');
+        const files = Array.from(fileInput?.files || []);
+        const newPhotos = [];
+        for (const file of [...files, ..._doIaPastedFiles]) {
+            try {
+                const url = await ApiClient.uploadPhoto(file, 'improvement');
+                newPhotos.push({ name: file.name, url });
+            } catch (e) {
+                UIUtils.toast(`사진 업로드 실패: ${e.message}`, 'error');
+            }
+        }
+        _doIaPastedFiles = [];
+        return [...(old?.doPhotos || []), ...newPhotos];
+    }
+
+    async function _notifyProposer(r) {
+        try {
+            const users = typeof AuthModule !== 'undefined' ? (AuthModule.getUsers() || []) : [];
+            const proposerUser = users.find(u => u.displayName === r.proposer);
+            if (!proposerUser) return;
+            const currentUser = typeof AuthModule !== 'undefined' ? AuthModule.getCurrentUser() : null;
+            const post = {
+                id: Storage.generateId ? Storage.generateId() : `notif_${Date.now()}`,
+                category: '업무알림',
+                title: `[개선활동] C 점검 단계 시작 — ${_esc(r.title)}`,
+                content: `${r.proposer}님이 제안하신 개선활동의 점검(C) 단계가 시작되었습니다.\n\n제목: ${r.title}\n실행자: ${r.owner || '-'}`,
+                author: currentUser?.name || '관리자',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                replies: []
+            };
+            await Storage.add(DB.STORES.BOARD_POSTS, post);
+            UIUtils.toast(`${r.proposer}님께 점검 단계 알림이 등록되었습니다.`, 'info');
+        } catch (e) {
+            console.warn('알림 등록 실패:', e);
+        }
+    }
+
     async function savePdca(id) {
         const old = Storage.getById(STORE, id);
         const { patch, newOwner } = _getPdcaPatch(old);
+        if (old?.pdcaStage === 'do') patch.doPhotos = await _uploadDoPhotos(old);
         await Storage.update(STORE, id, patch);
         if (newOwner && newOwner !== (old?.owner || '')) await _notifyOwner(old || {}, newOwner);
         UIUtils.toast('저장되었습니다.', 'success');
@@ -685,6 +814,7 @@ var ImprovementActivityModule = (function() {
     async function nextPdcaStage(id) {
         const old = Storage.getById(STORE, id);
         const { patch, newOwner } = _getPdcaPatch(old);
+        if (old?.pdcaStage === 'do') patch.doPhotos = await _uploadDoPhotos(old);
         const curIdx = PDCA_STEPS.findIndex(s => s.key === (old?.pdcaStage || 'plan'));
         const next = PDCA_STEPS[curIdx + 1];
         if (next) {
@@ -693,6 +823,7 @@ var ImprovementActivityModule = (function() {
         }
         await Storage.update(STORE, id, patch);
         if (newOwner && newOwner !== (old?.owner || '')) await _notifyOwner(old || {}, newOwner);
+        if (old?.pdcaStage === 'do' && next?.key === 'check') await _notifyProposer({ ...old, ...patch });
         render(document.getElementById('contentArea'));
         openDetail(id);
     }

@@ -5047,13 +5047,8 @@ window.addEventListener('load', function() {
             return `${arrow}<span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;padding:2px 7px;
                 border-radius:999px;background:rgba(234,88,12,.08);color:var(--accent-orange,#ea580c);
                 border:1px solid rgba(234,88,12,.45);white-space:nowrap;">
-                <span style="font-size:9px;font-weight:700;opacity:0.65;letter-spacing:.03em;">${stepNo}</span>${_esc(proc)}</span>`;
-        }).join('');
-        const paramSummary = procs.map((proc, idx) => {
-            const stepNo = String(idx + 1).padStart(2, '0');
-            return `<span style="font-size:10px;padding:1px 7px;border-radius:999px;background:var(--bg-secondary);
-                          border:1px solid var(--border-color);color:var(--text-secondary);white-space:nowrap;">
-                <span style="font-weight:700;opacity:0.65;">${stepNo}</span> (${paramCountForProc(proc)})
+                <span style="font-size:9px;font-weight:700;opacity:0.65;letter-spacing:.03em;">${stepNo}</span>
+                ${_esc(proc)} <span style="font-weight:900;">(${paramCountForProc(proc)})</span>
             </span>`;
         }).join('');
 
@@ -5067,7 +5062,6 @@ window.addEventListener('load', function() {
                 <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
                     ${preview || '<span style="font-size:11px;color:var(--text-muted);">선택된 주공정 없음</span>'}
                 </div>
-                ${paramSummary ? `<div style="display:flex;gap:4px;flex-wrap:wrap;">${paramSummary}</div>` : ''}
             </div>
         </div>`;
     }
@@ -5108,9 +5102,9 @@ window.addEventListener('load', function() {
         closeCpFlowModal();
         const overlay = document.createElement('div');
         overlay.id = 'cpFlowModalOverlay';
-        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.42);z-index:10050;display:flex;align-items:center;justify-content:center;padding:24px;';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.42);z-index:10050;display:flex;align-items:center;justify-content:center;padding:12px;';
         overlay.innerHTML = `
-            <div style="width:min(1180px,96vw);max-height:96vh;background:var(--bg-primary);border-radius:12px;
+            <div style="width:min(1240px,98vw);height:min(98vh,980px);max-height:98vh;background:var(--bg-primary);border-radius:12px;
                         box-shadow:0 20px 60px rgba(15,23,42,.35);display:flex;flex-direction:column;overflow:hidden;">
                 <div style="display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--border-color);">
                     <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-blue);">route</span>
@@ -5120,7 +5114,7 @@ window.addEventListener('load', function() {
                         <span class="material-symbols-outlined" style="font-size:20px;">close</span>
                     </button>
                 </div>
-                <div id="cpFlowModalBody" style="padding:14px;overflow:auto;">${_cpFlowModalHtml()}</div>
+                <div id="cpFlowModalBody" style="padding:16px;overflow:auto;flex:1;min-height:0;">${_cpFlowModalHtml()}</div>
                 <div style="padding:12px 16px;border-top:1px solid var(--border-color);display:flex;justify-content:space-between;align-items:center;">
                     <span id="cpFlowSaveBadge" style="font-size:11px;color:var(--text-muted);"></span>
                     <div style="display:flex;gap:8px;">
@@ -5176,61 +5170,48 @@ window.addEventListener('load', function() {
             const count = _cpFlowSelectedCount(proc);
             const total = _cpFlowStepsForProcess(proc).length;
             const orderIdx = selectedProcOrder.indexOf(proc);
+            const displayNo = orderIdx >= 0 ? String(orderIdx + 1).padStart(2, '0') : '--';
             return `<div draggable="true"
                     ondragstart="ProdStandardsModule._cpFlowProcDragStart('${_esc(proc)}',event)"
                     ondragover="ProdStandardsModule._cpFlowProcDragOver('${_esc(proc)}',event)"
                     ondrop="ProdStandardsModule._cpFlowProcDrop('${_esc(proc)}',event)"
                     ondragend="ProdStandardsModule._cpFlowDragEnd(event)"
-                    style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;
+                    style="display:flex;align-items:center;gap:10px;padding:12px 12px;border-radius:8px;
                            border:1px solid ${active ? 'var(--accent-blue)' : 'var(--border-color)'};
                            background:${active ? 'rgba(37,99,235,.08)' : 'var(--bg-primary)'};
                            cursor:grab;">
                 <span class="material-symbols-outlined" style="font-size:17px;color:var(--text-muted);">drag_indicator</span>
+                <span style="width:22px;text-align:center;font-size:11px;font-weight:900;color:${checked ? 'var(--accent-blue)' : 'var(--text-muted)'};">${displayNo}</span>
                 <input type="checkbox" ${checked ? 'checked' : ''}
+                    onmousedown="event.stopPropagation();"
                     ondragstart="event.preventDefault();event.stopPropagation();"
-                    onclick="event.stopPropagation();ProdStandardsModule._toggleCpFlowProcessAll('${_esc(proc)}');event.preventDefault();"
-                    style="width:15px;height:15px;margin:0;cursor:pointer;">
+                    onclick="event.stopPropagation();ProdStandardsModule._setCpFlowProcessChecked('${_esc(proc)}', this.checked)"
+                    style="width:22px;height:22px;margin:0;cursor:pointer;accent-color:var(--accent-blue);">
                 <button type="button" onclick="ProdStandardsModule._selectCpFlowProcess('${_esc(proc)}')"
                     style="flex:1;text-align:left;border:none;background:transparent;cursor:pointer;padding:0;
                            color:${active ? 'var(--accent-blue)' : 'var(--text-primary)'};
                            font-weight:800;font-size:12px;">
                     ${_esc(proc)}
                 </button>
-                <button type="button" title="위로" ${orderIdx <= 0 ? 'disabled' : ''}
-                    onclick="event.stopPropagation();ProdStandardsModule._moveCpFlowProcessGroup('${_esc(proc)}',-1)"
-                    style="border:1px solid var(--border-color);background:var(--bg-secondary);border-radius:5px;
-                           width:24px;height:24px;cursor:${orderIdx <= 0 ? 'not-allowed' : 'pointer'};opacity:${orderIdx <= 0 ? '.35' : '1'};">
-                    <span class="material-symbols-outlined" style="font-size:14px;">keyboard_arrow_up</span>
-                </button>
-                <button type="button" title="아래로" ${orderIdx < 0 || orderIdx >= selectedProcOrder.length - 1 ? 'disabled' : ''}
-                    onclick="event.stopPropagation();ProdStandardsModule._moveCpFlowProcessGroup('${_esc(proc)}',1)"
-                    style="border:1px solid var(--border-color);background:var(--bg-secondary);border-radius:5px;
-                           width:24px;height:24px;cursor:${orderIdx < 0 || orderIdx >= selectedProcOrder.length - 1 ? 'not-allowed' : 'pointer'};opacity:${orderIdx < 0 || orderIdx >= selectedProcOrder.length - 1 ? '.35' : '1'};">
-                    <span class="material-symbols-outlined" style="font-size:14px;">keyboard_arrow_down</span>
-                </button>
                 <span style="font-size:10px;font-weight:800;padding:2px 7px;border-radius:999px;
                              background:${checked ? 'var(--accent-blue)' : 'var(--bg-secondary)'};
-                             color:${checked ? '#fff' : 'var(--text-muted)'};">${count}/${total}</span>
+                             color:${checked ? '#fff' : 'var(--text-muted)'};">선택 ${count} · 전체 ${total}</span>
             </div>`;
         }).join('');
 
-        const selectedStationKeys = (_cpSelectedFlow || [])
-            .filter(step => _cpStepProcess(step) === activeProc)
-            .map(_cpStepKey);
         const stationRows = _cpFlowOrderedStepsForProcess(activeProc).map(step => {
             const key = _cpStepKey(step);
             const checked = selectedKeys.has(key);
             const active = key === activeStepKey;
             const paramRows = _cpFlowParamRowsForStep(step).rows;
             const selectedParamCount = _cpFlowSelectedParamKeys(step, paramRows).length;
-            const orderIdx = selectedStationKeys.indexOf(key);
             return `<div draggable="${checked ? 'true' : 'false'}"
                     ondragstart="ProdStandardsModule._cpFlowStationDragStart('${_esc(key)}',event)"
                     ondragover="ProdStandardsModule._cpFlowStationDragOver('${_esc(key)}',event)"
                     ondrop="ProdStandardsModule._cpFlowStationDrop('${_esc(key)}',event)"
                     ondragend="ProdStandardsModule._cpFlowDragEnd(event)"
                     onclick="ProdStandardsModule._selectCpFlowStation('${_esc(key)}')"
-                    style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;
+                    style="display:flex;align-items:center;gap:10px;padding:12px 12px;border-radius:8px;
                            border:1px solid ${active ? 'var(--accent-blue)' : (checked ? 'rgba(234,88,12,.55)' : 'var(--border-color)')};
                            background:${active ? 'rgba(37,99,235,.08)' : (checked ? 'rgba(234,88,12,.08)' : 'var(--bg-primary)')};
                            cursor:${checked ? 'grab' : 'default'};">
@@ -5238,24 +5219,12 @@ window.addEventListener('load', function() {
                 <input type="checkbox" ${checked ? 'checked' : ''}
                     onclick="event.stopPropagation()"
                     onchange="ProdStandardsModule._toggleCpFlowProc('${_esc(key)}')"
-                    style="width:15px;height:15px;margin:0;cursor:pointer;">
+                    style="width:22px;height:22px;margin:0;cursor:pointer;accent-color:var(--accent-blue);">
                 <span style="flex:1;font-weight:800;font-size:12px;color:${checked ? 'var(--accent-orange,#ea580c)' : 'var(--text-secondary)'};">
                     ${_esc(_cpStepStation(step) || _cpStepProcess(step))}
                 </span>
-                <button type="button" title="위로" ${orderIdx <= 0 ? 'disabled' : ''}
-                    onclick="event.stopPropagation();ProdStandardsModule._moveCpFlowStationInProcess('${_esc(key)}',-1)"
-                    style="border:1px solid var(--border-color);background:var(--bg-secondary);border-radius:5px;
-                           width:24px;height:24px;cursor:${orderIdx <= 0 ? 'not-allowed' : 'pointer'};opacity:${orderIdx <= 0 ? '.35' : '1'};">
-                    <span class="material-symbols-outlined" style="font-size:14px;">keyboard_arrow_up</span>
-                </button>
-                <button type="button" title="아래로" ${orderIdx < 0 || orderIdx >= selectedStationKeys.length - 1 ? 'disabled' : ''}
-                    onclick="event.stopPropagation();ProdStandardsModule._moveCpFlowStationInProcess('${_esc(key)}',1)"
-                    style="border:1px solid var(--border-color);background:var(--bg-secondary);border-radius:5px;
-                           width:24px;height:24px;cursor:${orderIdx < 0 || orderIdx >= selectedStationKeys.length - 1 ? 'not-allowed' : 'pointer'};opacity:${orderIdx < 0 || orderIdx >= selectedStationKeys.length - 1 ? '.35' : '1'};">
-                    <span class="material-symbols-outlined" style="font-size:14px;">keyboard_arrow_down</span>
-                </button>
                 <span style="font-size:10px;padding:2px 7px;border-radius:999px;background:var(--bg-secondary);
-                             border:1px solid var(--border-color);color:var(--text-muted);">${selectedParamCount}/${paramRows.length}</span>
+                             border:1px solid var(--border-color);color:var(--text-muted);">항목 ${selectedParamCount} · 전체 ${paramRows.length}</span>
             </div>`;
         }).join('');
 
@@ -5265,7 +5234,7 @@ window.addEventListener('load', function() {
                 <div style="padding:10px 12px;border-bottom:1px solid var(--border-color);font-weight:900;font-size:13px;">
                     주공정 선택 및 순서
                 </div>
-                <div style="display:flex;flex-direction:column;gap:6px;padding:10px;max-height:676px;overflow:auto;">
+                <div style="display:flex;flex-direction:column;gap:10px;padding:12px;max-height:880px;overflow:auto;">
                     ${procRows || '<div style="padding:18px;text-align:center;color:var(--text-muted);font-size:12px;">등록된 주공정이 없습니다.</div>'}
                 </div>
             </div>
@@ -5276,7 +5245,7 @@ window.addEventListener('load', function() {
                         ${_cpFlowStepsForProcess(activeProc).every(step => selectedKeys.has(_cpStepKey(step))) ? '전체 해제' : '전체 선택'}
                     </button>` : ''}
                 </div>
-                <div style="display:flex;flex-direction:column;gap:6px;padding:10px;max-height:390px;overflow:auto;">
+                <div style="display:flex;flex-direction:column;gap:10px;padding:12px;max-height:520px;overflow:auto;">
                     ${stationRows || '<div style="padding:18px;text-align:center;color:var(--text-muted);font-size:12px;">선택할 세부공정이 없습니다.</div>'}
                 </div>
                 <div style="padding:0 10px 10px;">${_cpFlowParamPanelHtml(activeStep)}</div>
@@ -5284,15 +5253,44 @@ window.addEventListener('load', function() {
         </div>`;
     }
 
-    async function _toggleCpFlowProcessAll(procName) {
+    function _setCpFlowProcessChecked(procName, checked) {
+        const steps = _cpFlowStepsForProcess(procName);
+        if (!steps.length) return;
+        if (checked) {
+            const selectedKeys = new Set((_cpSelectedFlow || []).map(_cpStepKey));
+            _cpSelectedFlow = [
+                ...(_cpSelectedFlow || []),
+                ...steps.filter(step => !selectedKeys.has(_cpStepKey(step)))
+            ];
+        } else {
+            _cpSelectedFlow = (_cpSelectedFlow || []).filter(step => _cpStepProcess(step) !== procName);
+            if (_cpFlowActiveProcess === procName) {
+                _cpFlowActiveProcess = _cpFlowSelectedProcessOrder()[0] || _cpFlowProcessOptions()[0] || '';
+            }
+        }
+        _syncCpLineFromFlow();
+        _refreshCpFlowUI();
+        _rerunCpFlowValidation();
+        if (_curCarModel && _curPartName) {
+            _saveCpFlow(_curCarModel, _curPartName, _cpSelectedFlow).catch(err => {
+                console.error('CP flow save failed:', err);
+                UIUtils.toast('공정 흐름 저장 실패', 'error');
+            });
+        }
+    }
+
+    async function _toggleCpFlowProcessAll(procName, forceChecked) {
         const steps = _cpFlowStepsForProcess(procName);
         if (!steps.length) return;
         const selectedKeys = new Set((_cpSelectedFlow || []).map(_cpStepKey));
-        // 하나라도 선택된 상태면 체크박스가 checked → 클릭 시 전체 해제
-        const anyChecked = steps.some(step => selectedKeys.has(_cpStepKey(step)));
-        if (anyChecked) {
-            const removeKeys = new Set(steps.map(_cpStepKey));
-            _cpSelectedFlow = (_cpSelectedFlow || []).filter(step => !removeKeys.has(_cpStepKey(step)));
+        const shouldSelectAll = typeof forceChecked === 'boolean'
+            ? forceChecked
+            : !steps.every(step => selectedKeys.has(_cpStepKey(step)));
+        if (!shouldSelectAll) {
+            _cpSelectedFlow = (_cpSelectedFlow || []).filter(step => _cpStepProcess(step) !== procName);
+            if (_cpFlowActiveProcess === procName) {
+                _cpFlowActiveProcess = _cpFlowSelectedProcessOrder()[0] || _cpFlowProcessOptions()[0] || '';
+            }
         } else {
             const merged = [...(_cpSelectedFlow || [])];
             steps.forEach(step => {
@@ -7180,6 +7178,7 @@ window.addEventListener('load', function() {
         openCpFlowModal,
         closeCpFlowModal,
         _saveCpFlowManual,
+        _setCpFlowProcessChecked,
         _filterCpStatusTable,
         openCpForProduct,
         _execCpCopy,

@@ -5102,9 +5102,9 @@ window.addEventListener('load', function() {
         closeCpFlowModal();
         const overlay = document.createElement('div');
         overlay.id = 'cpFlowModalOverlay';
-        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.42);z-index:10050;display:flex;align-items:center;justify-content:center;padding:24px;';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.42);z-index:10050;display:flex;align-items:center;justify-content:center;padding:12px;';
         overlay.innerHTML = `
-            <div style="width:min(1180px,96vw);max-height:96vh;background:var(--bg-primary);border-radius:12px;
+            <div style="width:min(1240px,98vw);height:min(98vh,980px);max-height:98vh;background:var(--bg-primary);border-radius:12px;
                         box-shadow:0 20px 60px rgba(15,23,42,.35);display:flex;flex-direction:column;overflow:hidden;">
                 <div style="display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--border-color);">
                     <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-blue);">route</span>
@@ -5114,7 +5114,7 @@ window.addEventListener('load', function() {
                         <span class="material-symbols-outlined" style="font-size:20px;">close</span>
                     </button>
                 </div>
-                <div id="cpFlowModalBody" style="padding:14px;overflow:auto;">${_cpFlowModalHtml()}</div>
+                <div id="cpFlowModalBody" style="padding:16px;overflow:auto;flex:1;min-height:0;">${_cpFlowModalHtml()}</div>
                 <div style="padding:12px 16px;border-top:1px solid var(--border-color);display:flex;justify-content:space-between;align-items:center;">
                     <span id="cpFlowSaveBadge" style="font-size:11px;color:var(--text-muted);"></span>
                     <div style="display:flex;gap:8px;">
@@ -5176,7 +5176,7 @@ window.addEventListener('load', function() {
                     ondragover="ProdStandardsModule._cpFlowProcDragOver('${_esc(proc)}',event)"
                     ondrop="ProdStandardsModule._cpFlowProcDrop('${_esc(proc)}',event)"
                     ondragend="ProdStandardsModule._cpFlowDragEnd(event)"
-                    style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;
+                    style="display:flex;align-items:center;gap:10px;padding:12px 12px;border-radius:8px;
                            border:1px solid ${active ? 'var(--accent-blue)' : 'var(--border-color)'};
                            background:${active ? 'rgba(37,99,235,.08)' : 'var(--bg-primary)'};
                            cursor:grab;">
@@ -5186,7 +5186,7 @@ window.addEventListener('load', function() {
                     onmousedown="event.stopPropagation();"
                     ondragstart="event.preventDefault();event.stopPropagation();"
                     onclick="event.stopPropagation();ProdStandardsModule._setCpFlowProcessChecked('${_esc(proc)}', this.checked)"
-                    style="width:15px;height:15px;margin:0;cursor:pointer;">
+                    style="width:22px;height:22px;margin:0;cursor:pointer;accent-color:var(--accent-blue);">
                 <button type="button" onclick="ProdStandardsModule._selectCpFlowProcess('${_esc(proc)}')"
                     style="flex:1;text-align:left;border:none;background:transparent;cursor:pointer;padding:0;
                            color:${active ? 'var(--accent-blue)' : 'var(--text-primary)'};
@@ -5211,7 +5211,7 @@ window.addEventListener('load', function() {
                     ondrop="ProdStandardsModule._cpFlowStationDrop('${_esc(key)}',event)"
                     ondragend="ProdStandardsModule._cpFlowDragEnd(event)"
                     onclick="ProdStandardsModule._selectCpFlowStation('${_esc(key)}')"
-                    style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;
+                    style="display:flex;align-items:center;gap:10px;padding:12px 12px;border-radius:8px;
                            border:1px solid ${active ? 'var(--accent-blue)' : (checked ? 'rgba(234,88,12,.55)' : 'var(--border-color)')};
                            background:${active ? 'rgba(37,99,235,.08)' : (checked ? 'rgba(234,88,12,.08)' : 'var(--bg-primary)')};
                            cursor:${checked ? 'grab' : 'default'};">
@@ -5219,7 +5219,7 @@ window.addEventListener('load', function() {
                 <input type="checkbox" ${checked ? 'checked' : ''}
                     onclick="event.stopPropagation()"
                     onchange="ProdStandardsModule._toggleCpFlowProc('${_esc(key)}')"
-                    style="width:15px;height:15px;margin:0;cursor:pointer;">
+                    style="width:22px;height:22px;margin:0;cursor:pointer;accent-color:var(--accent-blue);">
                 <span style="flex:1;font-weight:800;font-size:12px;color:${checked ? 'var(--accent-orange,#ea580c)' : 'var(--text-secondary)'};">
                     ${_esc(_cpStepStation(step) || _cpStepProcess(step))}
                 </span>
@@ -5234,7 +5234,7 @@ window.addEventListener('load', function() {
                 <div style="padding:10px 12px;border-bottom:1px solid var(--border-color);font-weight:900;font-size:13px;">
                     주공정 선택 및 순서
                 </div>
-                <div style="display:flex;flex-direction:column;gap:6px;padding:10px;max-height:676px;overflow:auto;">
+                <div style="display:flex;flex-direction:column;gap:10px;padding:12px;max-height:880px;overflow:auto;">
                     ${procRows || '<div style="padding:18px;text-align:center;color:var(--text-muted);font-size:12px;">등록된 주공정이 없습니다.</div>'}
                 </div>
             </div>
@@ -5245,7 +5245,7 @@ window.addEventListener('load', function() {
                         ${_cpFlowStepsForProcess(activeProc).every(step => selectedKeys.has(_cpStepKey(step))) ? '전체 해제' : '전체 선택'}
                     </button>` : ''}
                 </div>
-                <div style="display:flex;flex-direction:column;gap:6px;padding:10px;max-height:390px;overflow:auto;">
+                <div style="display:flex;flex-direction:column;gap:10px;padding:12px;max-height:520px;overflow:auto;">
                     ${stationRows || '<div style="padding:18px;text-align:center;color:var(--text-muted);font-size:12px;">선택할 세부공정이 없습니다.</div>'}
                 </div>
                 <div style="padding:0 10px 10px;">${_cpFlowParamPanelHtml(activeStep)}</div>
