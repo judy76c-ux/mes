@@ -875,8 +875,10 @@ app.post('/api/photos', async (req, res) => {
   if (!filename || !data) return res.status(400).json({ error: 'filename怨?data ?꾨뱶 ?꾩슂' });
   const allowed = /^[a-zA-Z0-9_\-\.]+$/;
   if (!allowed.test(filename)) return res.status(400).json({ error: '?뚯씪紐낆뿉 ?덉슜?섏? ?딅뒗 臾몄옄' });
-  const safeSub = String(subdir).replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 40) || 'misc';
+  const safeSub = String(subdir).split('/').map(s => s.replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 40)).filter(Boolean).join('/') || 'misc';
   const dir = path.join(getPhotoDir(), safeSub);
+  const baseDir = getPhotoDir();
+  if (!dir.startsWith(baseDir)) return res.status(400).json({ error: '유효하지 않은 경로' });
   try {
     await fs.mkdir(dir, { recursive: true });
     const buf = Buffer.from(data, 'base64');
@@ -894,7 +896,7 @@ app.post('/api/photos/mkdirs', async (req, res) => {
   const baseDir = getPhotoDir();
   const results = [];
   for (const subdir of subdirs) {
-    const safeSub = String(subdir).replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 60);
+    const safeSub = String(subdir).split('/').map(s => s.replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 40)).filter(Boolean).join('/');
     if (!safeSub) continue;
     const dir = path.join(baseDir, safeSub);
     try {

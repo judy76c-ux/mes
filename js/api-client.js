@@ -181,8 +181,10 @@ const ApiClient = (function() {
           const contentType = dataUrl.slice(5, commaIdx).split(';')[0];
           const ext = file.name.split('.').pop().toLowerCase();
           const safeName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+          const ym = new Date().toISOString().slice(0, 7); // YYYY-MM
+          const fullSubdir = `${subdir || 'misc'}/${ym}`;
           const result = await request('POST', '/api/photos', {
-            subdir: subdir || 'misc',
+            subdir: fullSubdir,
             filename: safeName,
             data: base64,
             contentType
