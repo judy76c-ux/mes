@@ -642,7 +642,7 @@ var ImprovementActivityModule = (function() {
                 </div>` : '';
             }).join('');
             fields += `
-                <div class="form-group"><label class="form-label">실행/개선 실시 사항</label>
+                <div class="form-group"><label class="form-label">실행/개선 실시 사항 <span style="color:var(--accent-red)">*</span></label>
                     <textarea class="form-textarea" id="iaDoActions" rows="3" placeholder="실제 실행하거나 개선한 내용을 구체적으로 기록">${_esc(r.doActions||'')}</textarea>
                 </div>
                 <div class="form-group"><label class="form-label">수집 데이터 / 관찰 사항</label>
@@ -799,6 +799,10 @@ var ImprovementActivityModule = (function() {
 
     async function savePdca(id) {
         const old = Storage.getById(STORE, id);
+        if (old?.pdcaStage === 'do') {
+            const doActions = document.getElementById('iaDoActions')?.value?.trim();
+            if (!doActions) { UIUtils.toast('실행/개선 실시 사항을 입력하세요.', 'warning'); return; }
+        }
         const { patch, newOwner } = _getPdcaPatch(old);
         if (old?.pdcaStage === 'do') patch.doPhotos = await _uploadDoPhotos(old);
         await Storage.update(STORE, id, patch);
@@ -810,6 +814,10 @@ var ImprovementActivityModule = (function() {
 
     async function nextPdcaStage(id) {
         const old = Storage.getById(STORE, id);
+        if (old?.pdcaStage === 'do') {
+            const doActions = document.getElementById('iaDoActions')?.value?.trim();
+            if (!doActions) { UIUtils.toast('실행/개선 실시 사항을 입력하세요.', 'warning'); return; }
+        }
         const { patch, newOwner } = _getPdcaPatch(old);
         if (old?.pdcaStage === 'do') patch.doPhotos = await _uploadDoPhotos(old);
         const curIdx = PDCA_STEPS.findIndex(s => s.key === (old?.pdcaStage || 'plan'));
