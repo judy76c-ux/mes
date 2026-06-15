@@ -503,18 +503,19 @@ var ImprovementActivityModule = (function() {
         // 단계별 입력 필드
         const currentUser = typeof AuthModule !== 'undefined' ? AuthModule.getCurrentUser() : null;
         const currentUserKey = currentUser ? `user:${currentUser.id}` : '';
+        const isAdmin = currentUser?.role === 'admin';
         const isRecipient = r.recipientRef && currentUserKey && r.recipientRef === currentUserKey;
-        const planReadOnly = (stage === 'plan') && r.recipientRef && !isRecipient;
+        const planReadOnly = (stage === 'plan') && r.recipientRef && !isRecipient && !isAdmin;
 
         let fields = prevHtml;
         if (stage === 'plan') {
-            if (r.recipient && !isRecipient) {
+            if (r.recipient && !isRecipient && !isAdmin) {
                 fields += `<div style="padding:10px 14px;border-radius:8px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);color:#92400e;font-size:.85rem;margin-bottom:12px;display:flex;align-items:center;gap:8px;">
                     <span class="material-symbols-outlined" style="font-size:18px;color:#f59e0b;">lock</span>
                     계획 단계는 수신 관리자 <strong>${_esc(r.recipient)}</strong>님만 작성할 수 있습니다.
                 </div>`;
             }
-            if (!r.recipientRef || isRecipient) {
+            if (!r.recipientRef || isRecipient || isAdmin) {
                 fields += `
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
                     <div class="form-group">
@@ -590,7 +591,7 @@ var ImprovementActivityModule = (function() {
             ? `<button class="btn btn-primary" style="background:#10b981;border-color:#10b981;" onclick="ImprovementActivityModule.completePdca('${_js(r.id||'')}')">완료 처리</button>`
             : `<button class="btn btn-primary" onclick="ImprovementActivityModule.nextPdcaStage('${_js(r.id||'')}')">다음 단계 →</button>`;
 
-        const canEdit = stage !== 'plan' || !r.recipientRef || isRecipient;
+        const canEdit = stage !== 'plan' || !r.recipientRef || isRecipient || isAdmin;
 
         return `<div class="card" style="border-left:3px solid ${step.color};"><div class="card-body">
             <h4 style="margin-top:0;">PDCA 진행${r.recipient && stage === 'plan' ? `<span style="font-size:.78rem;font-weight:400;color:var(--text-muted);margin-left:10px;">계획 담당: ${_esc(r.recipient)}</span>` : ''}</h4>

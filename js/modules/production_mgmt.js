@@ -5291,8 +5291,7 @@ window.addEventListener('load', function() {
                 ...steps.filter(step => !selectedKeys.has(_cpStepKey(step)))
             ];
         } else {
-            const removeKeys = new Set(steps.map(_cpStepKey));
-            _cpSelectedFlow = (_cpSelectedFlow || []).filter(step => !removeKeys.has(_cpStepKey(step)));
+            _cpSelectedFlow = (_cpSelectedFlow || []).filter(step => _cpStepProcess(step) !== procName);
             if (_cpFlowActiveProcess === procName) {
                 _cpFlowActiveProcess = _cpFlowSelectedProcessOrder()[0] || _cpFlowProcessOptions()[0] || '';
             }
@@ -5316,8 +5315,7 @@ window.addEventListener('load', function() {
             ? forceChecked
             : !steps.every(step => selectedKeys.has(_cpStepKey(step)));
         if (!shouldSelectAll) {
-            const removeKeys = new Set(steps.map(_cpStepKey));
-            _cpSelectedFlow = (_cpSelectedFlow || []).filter(step => !removeKeys.has(_cpStepKey(step)));
+            _cpSelectedFlow = (_cpSelectedFlow || []).filter(step => _cpStepProcess(step) !== procName);
             if (_cpFlowActiveProcess === procName) {
                 _cpFlowActiveProcess = _cpFlowSelectedProcessOrder()[0] || _cpFlowProcessOptions()[0] || '';
             }
