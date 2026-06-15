@@ -5183,9 +5183,9 @@ window.addEventListener('load', function() {
                 <span class="material-symbols-outlined" style="font-size:17px;color:var(--text-muted);">drag_indicator</span>
                 <span style="width:22px;text-align:center;font-size:11px;font-weight:900;color:${checked ? 'var(--accent-blue)' : 'var(--text-muted)'};">${displayNo}</span>
                 <input type="checkbox" ${checked ? 'checked' : ''}
+                    onmousedown="event.stopPropagation();"
                     ondragstart="event.preventDefault();event.stopPropagation();"
-                    onclick="event.stopPropagation();"
-                    onchange="ProdStandardsModule._toggleCpFlowProcessAll('${_esc(proc)}')"
+                    onclick="event.stopPropagation();ProdStandardsModule._setCpFlowProcessChecked('${_esc(proc)}', this.checked)"
                     style="width:15px;height:15px;margin:0;cursor:pointer;">
                 <button type="button" onclick="ProdStandardsModule._selectCpFlowProcess('${_esc(proc)}')"
                     style="flex:1;text-align:left;border:none;background:transparent;cursor:pointer;padding:0;
@@ -5281,15 +5281,46 @@ window.addEventListener('load', function() {
         </div>`;
     }
 
-    async function _toggleCpFlowProcessAll(procName) {
+    function _setCpFlowProcessChecked(procName, checked) {
+        const steps = _cpFlowStepsForProcess(procName);
+        if (!steps.length) return;
+        if (checked) {
+            const selectedKeys = new Set((_cpSelectedFlow || []).map(_cpStepKey));
+            _cpSelectedFlow = [
+                ...(_cpSelectedFlow || []),
+                ...steps.filter(step => !selectedKeys.has(_cpStepKey(step)))
+            ];
+        } else {
+            const removeKeys = new Set(steps.map(_cpStepKey));
+            _cpSelectedFlow = (_cpSelectedFlow || []).filter(step => !removeKeys.has(_cpStepKey(step)));
+            if (_cpFlowActiveProcess === procName) {
+                _cpFlowActiveProcess = _cpFlowSelectedProcessOrder()[0] || _cpFlowProcessOptions()[0] || '';
+            }
+        }
+        _syncCpLineFromFlow();
+        _refreshCpFlowUI();
+        _rerunCpFlowValidation();
+        if (_curCarModel && _curPartName) {
+            _saveCpFlow(_curCarModel, _curPartName, _cpSelectedFlow).catch(err => {
+                console.error('CP flow save failed:', err);
+                UIUtils.toast('공정 흐름 저장 실패', 'error');
+            });
+        }
+    }
+
+    async function _toggleCpFlowProcessAll(procName, forceChecked) {
         const steps = _cpFlowStepsForProcess(procName);
         if (!steps.length) return;
         const selectedKeys = new Set((_cpSelectedFlow || []).map(_cpStepKey));
-        // 하나라도 선택된 상태면 체크박스가 checked → 클릭 시 전체 해제
-        const anyChecked = steps.some(step => selectedKeys.has(_cpStepKey(step)));
-        if (anyChecked) {
+        const shouldSelectAll = typeof forceChecked === 'boolean'
+            ? forceChecked
+            : !steps.every(step => selectedKeys.has(_cpStepKey(step)));
+        if (!shouldSelectAll) {
             const removeKeys = new Set(steps.map(_cpStepKey));
             _cpSelectedFlow = (_cpSelectedFlow || []).filter(step => !removeKeys.has(_cpStepKey(step)));
+            if (_cpFlowActiveProcess === procName) {
+                _cpFlowActiveProcess = _cpFlowSelectedProcessOrder()[0] || _cpFlowProcessOptions()[0] || '';
+            }
         } else {
             const merged = [...(_cpSelectedFlow || [])];
             steps.forEach(step => {
@@ -7177,6 +7208,7 @@ window.addEventListener('load', function() {
         openCpFlowModal,
         closeCpFlowModal,
         _saveCpFlowManual,
+        _setCpFlowProcessChecked,
         _filterCpStatusTable,
         openCpForProduct,
         _execCpCopy,

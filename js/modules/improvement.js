@@ -24,6 +24,7 @@ var ImprovementActivityModule = (function() {
         closed: '완료'
     };
     let state = { status: '', stage: '', q: '', month: (new Date()).toISOString().slice(0, 7) };
+    let _iaPastedFiles = [];  // 클립보드 붙여넣기 이미지 임시 저장
 
     function _esc(v) {
         return String(v || '').replace(/[&<>"']/g, m => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[m]));
@@ -222,14 +223,83 @@ var ImprovementActivityModule = (function() {
             </div>
             <div class="form-group"><label class="form-label">문제점</label><textarea class="form-textarea" id="iaProblem" rows="4" placeholder="현장 문제, 낭비, 불편, 품질 위험 등을 입력">${_esc(r.problem||'')}</textarea></div>
             <div class="form-group"><label class="form-label">개선 제안/아이디어</label><textarea class="form-textarea" id="iaProposal" rows="4" placeholder="개선 아이디어, 기대효과를 입력">${_esc(r.proposal||'')}</textarea></div>
-            <div class="form-group"><label class="form-label">사진 첨부</label><input type="file" class="form-input" id="iaPhotos" accept="image/*" multiple><div style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;">기존 사진 ${r.photos ? r.photos.length : 0}개. 새 사진을 선택하면 추가 저장됩니다.</div></div>
+            <div class="form-group"><label class="form-label">사진 첨부</label>
+                <input type="file" class="form-input" id="iaPhotos" accept="image/*" multiple>
+                <div style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;">기존 사진 ${r.photos ? r.photos.length : 0}개. 새 사진을 선택하거나 아래 영역에 Ctrl+V로 붙여넣으면 추가됩니다.</div>
+                <div id="iaPasteZone" tabindex="0"
+                     style="min-height:60px;border:2px dashed var(--border-color);border-radius:8px;margin-top:8px;padding:12px 16px;color:var(--text-muted);font-size:0.85rem;cursor:pointer;outline:none;display:flex;flex-wrap:wrap;gap:8px;align-items:center;"
+                     onclick="document.getElementById('iaPasteZone').focus()"
+                     onfocus="this.style.borderColor='var(--accent-blue)'"
+                     onblur="this.style.borderColor='var(--border-color)'">
+                    <span id="iaPasteHint" style="pointer-events:none;">여기를 클릭 후 Ctrl+V로 스크린샷 붙여넣기</span>
+                </div>
+            </div>
         </div>`;
     }
+    function _iaPasteHandler(e) {
+        const items = e.clipboardData && e.clipboardData.items;
+        if (!items) return;
+        let added = 0;
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].type.startsWith('image/')) {
+                const blob = items[i].getAsFile();
+                if (!blob) continue;
+                const ts = Date.now() + added;
+                const file = new File([blob], `clipboard_${ts}.png`, { type: blob.type || 'image/png' });
+                _iaPastedFiles.push(file);
+                added++;
+                const reader = new FileReader();
+                reader.onload = function(ev) {
+                    const zone = document.getElementById('iaPasteZone');
+                    if (!zone) return;
+                    const hint = document.getElementById('iaPasteHint');
+                    if (hint) hint.style.display = 'none';
+                    const thumb = document.createElement('div');
+                    thumb.style.cssText = 'position:relative;display:inline-block;';
+                    const img = document.createElement('img');
+                    img.src = ev.target.result;
+                    img.style.cssText = 'height:64px;width:auto;border-radius:4px;border:1px solid var(--border-color);object-fit:cover;';
+                    const rmBtn = document.createElement('button');
+                    rmBtn.type = 'button';
+                    rmBtn.textContent = '×';
+                    rmBtn.style.cssText = 'position:absolute;top:-4px;right:-4px;width:18px;height:18px;border-radius:50%;background:#ef4444;color:#fff;border:none;cursor:pointer;font-size:12px;line-height:18px;padding:0;text-align:center;';
+                    const fileRef = file;
+                    rmBtn.onclick = function() {
+                        const idx = _iaPastedFiles.indexOf(fileRef);
+                        if (idx !== -1) _iaPastedFiles.splice(idx, 1);
+                        thumb.remove();
+                        if (!document.querySelectorAll('#iaPasteZone img').length) {
+                            const h = document.getElementById('iaPasteHint');
+                            if (h) h.style.display = '';
+                        }
+                    };
+                    thumb.appendChild(img);
+                    thumb.appendChild(rmBtn);
+                    zone.appendChild(thumb);
+                };
+                reader.readAsDataURL(blob);
+            }
+        }
+        if (added) e.preventDefault();
+    }
+
     function openProposalModal(id = '') {
+        _iaPastedFiles = [];
         const r = id ? Storage.getById(STORE, id) : {};
         UIUtils.showModal(id ? '개선활동 수정' : '개선활동 제안 등록', _form(r || {}), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="ImprovementActivityModule.saveProposal('${_js(id)}')">저장</button>`, 'xl');
+        setTimeout(() => {
+            const zone = document.getElementById('iaPasteZone');
+            if (zone) zone.addEventListener('paste', _iaPasteHandler);
+            document.addEventListener('paste', _iaDocPasteHandler);
+        }, 50);
+    }
+
+    function _iaDocPasteHandler(e) {
+        const zone = document.getElementById('iaPasteZone');
+        if (!zone) { document.removeEventListener('paste', _iaDocPasteHandler); return; }
+        _iaPasteHandler(e);
     }
     async function _readPhotos(input) {
         const files = Array.from(input?.files || []);
@@ -246,8 +316,19 @@ var ImprovementActivityModule = (function() {
         return results;
     }
     async function saveProposal(id = '') {
+        document.removeEventListener('paste', _iaDocPasteHandler);
         const old = id ? Storage.getById(STORE, id) : {};
         const photos = await _readPhotos(document.getElementById('iaPhotos'));
+        const pastedPhotos = [];
+        for (const file of _iaPastedFiles) {
+            try {
+                const url = await ApiClient.uploadPhoto(file, 'improvement');
+                pastedPhotos.push({ name: file.name, url });
+            } catch (e) {
+                UIUtils.toast(`붙여넣기 사진 업로드 실패: ${e.message}`, 'error');
+            }
+        }
+        _iaPastedFiles = [];
         const personKey = document.getElementById('iaProposer').value;
         const person = _peopleList().find(p => p.personKey === personKey);
         const legacyName = personKey.startsWith('legacy:') ? personKey.replace(/^legacy:/, '') : '';
@@ -262,7 +343,7 @@ var ImprovementActivityModule = (function() {
             title: document.getElementById('iaTitle').value.trim(),
             problem: document.getElementById('iaProblem').value.trim(),
             proposal: document.getElementById('iaProposal').value.trim(),
-            photos: [...(old.photos || []), ...photos],
+            photos: [...(old.photos || []), ...photos, ...pastedPhotos],
             status: old.status || 'reviewing',
             approval: old.approval || 'pending',
             pdcaStage: old.pdcaStage || 'proposal',
