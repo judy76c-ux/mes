@@ -517,7 +517,9 @@ var ImprovementActivityModule = (function() {
             if (!r.recipientRef || isRecipient) {
                 fields += `
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
-                    <div class="form-group"><label class="form-label">담당자 <span style="color:var(--accent-red)">*</span></label>
+                    <div class="form-group">
+                        <label class="form-label">실행 업무자 <span style="color:var(--accent-red)">*</span></label>
+                        <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:4px;">계획을 실행할 담당자를 지정합니다.</div>
                         <select class="form-select" id="iaOwner">${_ownerOptions(r.owner||'')}</select>
                     </div>
                     <div class="form-group"><label class="form-label">완료 예정일</label>
@@ -542,7 +544,7 @@ var ImprovementActivityModule = (function() {
                 // 읽기 전용: 이미 작성된 내용이 있으면 표시
                 fields += `
                 <div style="display:grid;gap:10px;">
-                    ${r.owner ? `<div class="form-group"><label class="form-label">담당자</label><div class="form-input" style="background:var(--bg-secondary);color:var(--text-secondary);">${_esc(r.owner)}</div></div>` : ''}
+                    ${r.owner ? `<div class="form-group"><label class="form-label">실행 업무자</label><div class="form-input" style="background:var(--bg-secondary);color:var(--text-secondary);">${_esc(r.owner)}</div></div>` : ''}
                     ${r.dueDate ? `<div class="form-group"><label class="form-label">완료 예정일</label><div class="form-input" style="background:var(--bg-secondary);color:var(--text-secondary);">${_esc(r.dueDate)}</div></div>` : ''}
                     ${r.goal ? `<div class="form-group"><label class="form-label">개선 목표</label><div style="padding:8px 12px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);white-space:pre-wrap;">${_esc(r.goal)}</div></div>` : ''}
                     ${r.rootCause ? `<div class="form-group"><label class="form-label">원인분석</label><div style="padding:8px 12px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);white-space:pre-wrap;">${_esc(r.rootCause)}</div></div>` : ''}
@@ -608,7 +610,7 @@ var ImprovementActivityModule = (function() {
                 id: Storage.generateId ? Storage.generateId() : `notif_${Date.now()}`,
                 category: '업무알림',
                 title: `[개선활동] PDCA 담당자 지정 — ${_esc(r.title)}`,
-                content: `${ownerName}님이 개선활동 PDCA 담당자로 지정되었습니다.\n\n제안자: ${r.proposer}\n제목: ${r.title}\n문제점: ${r.problem || ''}`,
+                content: `${ownerName}님이 개선활동 실행 업무자로 지정되었습니다.\n\n제안자: ${r.proposer}\n제목: ${r.title}\n문제점: ${r.problem || ''}`,
                 author: currentUser?.name || '관리자',
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
@@ -697,7 +699,7 @@ var ImprovementActivityModule = (function() {
     }
     function exportData() {
         const rows = _filtered().map(r => [r.date, r.proposer, r.category === 'proposal' ? '개선제안' : '문제점', r.process, r.title, _stageLabel(r.pdcaStage), _statusLabel(r.status), r.approval, r.owner || '', r.dueDate || '', r.goal || '', r.effect || '', r.cost || '']);
-        Storage.exportToCSV(['등록일','제안자','구분','공정','제목','PDCA','상태','승인','담당자','예정일','목표','효과','비용'], rows, '개선활동');
+        Storage.exportToCSV(['등록일','제안자','구분','공정','제목','PDCA','상태','승인','실행업무자','예정일','목표','효과','비용'], rows, '개선활동');
     }
 
     return { render, setFilter, setMonth, selectPerson, openProposalModal, saveProposal, openDetail, vote, setApproval, savePdca, nextPdcaStage, completePdca, remove, exportData };
