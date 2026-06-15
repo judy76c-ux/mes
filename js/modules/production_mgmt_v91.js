@@ -448,6 +448,10 @@ var ProdStandardsModule = (function() {
     let _stdEditContext = null;
     let _extraRows   = [];   // 추가 파라미터 행 [{ key, label, unit }]
     let _pendingDrawing = null; // 업로드 대기 중인 도면 { name, data(base64) }
+    const PROCESS_STANDARD_MENU_LAYOUT_KEY = 'processStandardMenuLayout';
+    let _processStandardMenuLayout = null;
+    let _processStandardMenuLayoutLoaded = false;
+    let _processStandardDragId = '';
 
     // ── 유틸 ─────────────────────────────────────────────────────
     function _recordKey(carModel, partName, process, station, line) {
@@ -963,7 +967,7 @@ var ProdStandardsModule = (function() {
             { station: '외관 검사', standards: [color] },
         ];
 
-        return [
+        const groups = [
             { process: '수입검사', icon: 'inventory_2', stations: [
                 { station: '도료 입고', standards: [color, mesh] },
                 { station: '사출소재 입고', standards: [injectColor] },
@@ -978,15 +982,180 @@ var ProdStandardsModule = (function() {
                 { station: '출하검사', standards: [film, color] },
             ] },
         ];
+        return _applyProcessStandardMenuLayout(groups);
+    }
+
+    function _processStandardStationKey(process, station) {
+        return `${process || ''}||${station || ''}`;
+    }
+
+    function _withProcessStandardMenuIds(groups) {
+        let seq = 0;
+        return groups.map(group => ({
+            ...group,
+            stations: (group.stations || []).map(st => ({
+                ...st,
+                standards: (st.standards || []).map(std => {
+                    const originalOrder = seq++;
+                    return {
+                        ...std,
+                        id: std.id || `std-menu-${originalOrder}`,
+                        homeProcess: group.process,
+                        homeStation: st.station,
+                        _originalOrder: originalOrder
+                    };
+                })
+            }))
+        }));
+    }
+
+    function _applyProcessStandardMenuLayout(groups) {
+        const withIds = _withProcessStandardMenuIds(groups);
+        const saved = Array.isArray(_processStandardMenuLayout) ? _processStandardMenuLayout : [];
+        if (!saved.length) return withIds;
+
+        const posById = new Map(saved.map(pos => [pos.id, pos]));
+        const stationMap = new Map();
+        withIds.forEach(group => {
+            (group.stations || []).forEach(st => {
+                st.standards = [];
+                stationMap.set(_processStandardStationKey(group.process, st.station), st);
+            });
+        });
+
+        _withProcessStandardMenuIds(groups).forEach(group => {
+            (group.stations || []).forEach(st => {
+                (st.standards || []).forEach(std => {
+                    const pos = posById.get(std.id);
+                    const targetKey = pos && stationMap.has(_processStandardStationKey(pos.process, pos.station))
+                        ? _processStandardStationKey(pos.process, pos.station)
+                        : _processStandardStationKey(group.process, st.station);
+                    const target = stationMap.get(targetKey);
+                    if (target) target.standards.push({ ...std, _menuOrder: pos ? Number(pos.order) : std._originalOrder });
+                });
+            });
+        });
+
+        withIds.forEach(group => {
+            (group.stations || []).forEach(st => {
+                st.standards.sort((a, b) => {
+                    const ao = Number.isFinite(a._menuOrder) ? a._menuOrder : 9999;
+                    const bo = Number.isFinite(b._menuOrder) ? b._menuOrder : 9999;
+                    return ao - bo || (a._originalOrder || 0) - (b._originalOrder || 0);
+                });
+            });
+        });
+        return withIds;
+    }
+
+    function _flattenProcessStandardLayout(groups) {
+        const rows = [];
+        (groups || []).forEach(group => {
+            (group.stations || []).forEach(st => {
+                (st.standards || []).forEach((std, idx) => {
+                    rows.push({ id: std.id, process: group.process, station: st.station, order: idx });
+                });
+            });
+        });
+        return rows;
+    }
+
+    function _refreshProcessStandardStatus() {
+        const el = document.getElementById('processStandardStatusBody');
+        if (el) el.innerHTML = _renderProcessStandardStatus();
+    }
+
+    function _ensureProcessStandardMenuLayout() {
+        if (_processStandardMenuLayoutLoaded) return;
+        _processStandardMenuLayoutLoaded = true;
+        Storage.getConfigValue(PROCESS_STANDARD_MENU_LAYOUT_KEY).then(saved => {
+            if (Array.isArray(saved)) _processStandardMenuLayout = saved;
+            _refreshProcessStandardStatus();
+        }).catch(() => {});
+    }
+
+    function _saveProcessStandardMenuLayout(nextLayout) {
+        _processStandardMenuLayout = nextLayout;
+        Storage.setConfigValue(PROCESS_STANDARD_MENU_LAYOUT_KEY, nextLayout).catch(err => {
+            console.error('Process standard menu layout save failed:', err);
+            UIUtils.toast('메뉴 배치 저장 실패', 'error');
+        });
+    }
+
+    function _stdMenuDragStart(id, event) {
+        _processStandardDragId = id;
+        if (event && event.dataTransfer) {
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', id);
+        }
+    }
+
+    function _stdMenuDragOver(event) {
+        if (!event) return;
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    }
+
+    function _stdMenuDrop(process, station, beforeId, event) {
+        if (event) {
+            event.preventDefault();
+            event.stopPropagation();
+        }
+        const dragId = (event && event.dataTransfer && event.dataTransfer.getData('text/plain')) || _processStandardDragId;
+        _processStandardDragId = '';
+        if (!dragId) return;
+
+        const current = _processStandardLayout();
+        const rows = _flattenProcessStandardLayout(current).filter(row => row.id !== dragId);
+        const targetRows = rows.filter(row => row.process === process && row.station === station);
+        const moving = { id: dragId, process, station, order: 0 };
+        let insertAt = targetRows.length;
+        if (beforeId) {
+            const idx = targetRows.findIndex(row => row.id === beforeId);
+            if (idx >= 0) insertAt = idx;
+        }
+        const nextTargetIds = targetRows.map(row => row.id);
+        nextTargetIds.splice(insertAt, 0, dragId);
+
+        const next = [];
+        const seen = new Set();
+        rows.forEach(row => {
+            if (row.process === process && row.station === station) return;
+            next.push(row);
+            seen.add(row.id);
+        });
+        nextTargetIds.forEach((id, idx) => {
+            const prev = rows.find(row => row.id === id) || moving;
+            next.push({ ...prev, process, station, order: idx });
+            seen.add(id);
+        });
+        _flattenProcessStandardLayout(current).forEach(row => {
+            if (!seen.has(row.id) && row.id !== dragId) next.push(row);
+        });
+
+        _saveProcessStandardMenuLayout(next);
+        _refreshProcessStandardStatus();
+    }
+
+    function _resetProcessStandardMenuLayout() {
+        _processStandardMenuLayout = [];
+        Storage.setConfigValue(PROCESS_STANDARD_MENU_LAYOUT_KEY, []).catch(() => {});
+        _refreshProcessStandardStatus();
+        UIUtils.toast('기준서 메뉴 배치를 초기화했습니다.', 'success');
     }
 
     function _renderProcessStandardStatus() {
-        const renderStd = std => `
-            <button onclick="${std.action}"
+        const renderStd = (std, process, station) => `
+            <button draggable="true"
+                ondragstart="ProdStandardsModule._stdMenuDragStart('${_jsArg(std.id)}',event)"
+                ondragover="ProdStandardsModule._stdMenuDragOver(event)"
+                ondrop="ProdStandardsModule._stdMenuDrop('${_jsArg(process)}','${_jsArg(station)}','${_jsArg(std.id)}',event)"
+                onclick="${std.action}"
                 style="text-align:left;border:1px solid var(--border-color);border-left:4px solid ${std.accent};
-                       border-radius:8px;background:var(--bg-primary);padding:10px 11px;cursor:pointer;min-height:76px;">
+                       border-radius:8px;background:var(--bg-primary);padding:10px 11px;cursor:grab;min-height:76px;">
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
                     <span style="display:flex;align-items:center;gap:7px;font-weight:850;color:var(--text-primary);font-size:.82rem;">
+                        <span class="material-symbols-outlined" style="font-size:15px;color:var(--text-muted);">drag_indicator</span>
                         <span class="material-symbols-outlined" style="font-size:19px;color:${std.accent};">${std.icon}</span>
                         ${std.label}
                     </span>
@@ -1010,8 +1179,10 @@ var ProdStandardsModule = (function() {
                                         border-radius:8px;background:var(--bg-primary);border:1px solid var(--border-color);">
                                 ${st.station}
                             </div>
-                            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;">
-                                ${st.standards.map(renderStd).join('')}
+                            <div ondragover="ProdStandardsModule._stdMenuDragOver(event)"
+                                ondrop="ProdStandardsModule._stdMenuDrop('${_jsArg(group.process)}','${_jsArg(st.station)}','',event)"
+                                style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;min-height:84px;">
+                                ${st.standards.map(std => renderStd(std, group.process, st.station)).join('')}
                             </div>
                         </div>
                     `).join('')}
@@ -1089,9 +1260,14 @@ var ProdStandardsModule = (function() {
                             <span class="material-symbols-outlined">folder_managed</span>
                             기준서 현황
                         </h3>
+                        <button class="btn btn-sm btn-outline" onclick="ProdStandardsModule._resetProcessStandardMenuLayout()"
+                            style="display:flex;align-items:center;gap:4px;font-size:11px;">
+                            <span class="material-symbols-outlined" style="font-size:14px;">restart_alt</span>
+                            배치 초기화
+                        </button>
                     </div>
                     <div class="card-body">
-                        <div style="display:flex;flex-direction:column;gap:12px;">
+                        <div id="processStandardStatusBody" style="display:flex;flex-direction:column;gap:12px;">
                             ${_renderProcessStandardStatus()}
                         </div>
                         <div style="display:none;">
@@ -1218,6 +1394,7 @@ var ProdStandardsModule = (function() {
 
             </div>
         `;
+        _ensureProcessStandardMenuLayout();
     }
 
     function _renderCpStatusTable() {
@@ -7284,6 +7461,10 @@ window.addEventListener('load', function() {
         closeCpFlowModal,
         _saveCpFlowManual,
         _setCpFlowProcessChecked,
+        _stdMenuDragStart,
+        _stdMenuDragOver,
+        _stdMenuDrop,
+        _resetProcessStandardMenuLayout,
         _filterCpStatusTable,
         openCpForProduct,
         _execCpCopy,

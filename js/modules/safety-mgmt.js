@@ -51,7 +51,10 @@ var SafetyProcessUI = (function () {
         { id: 'safety-msds',      label: 'MSDS 등록대장',   icon: 'science',        accent: '#7c3aed' },
         { id: 'safety-checklist', label: '안전관리 점검표', icon: 'checklist',      accent: '#059669' },
         { id: 'safety-ppe',       label: '보호구 적용기준', icon: 'security',       accent: '#d97706' },
-        { id: 'safety-rules',     label: '안전수칙 기준서', icon: 'gavel',          accent: '#0891b2' }
+        { id: 'safety-rules',     label: '안전수칙 기준서', icon: 'gavel',          accent: '#0891b2' },
+        { id: 'fire-safety-reg',  label: '소방 안전 등록',  icon: 'fire_truck',     accent: '#ea580c' },
+        { id: 'fire-ext-check',   label: '소화기 점검',     icon: 'extinguisher',   accent: '#b91c1c' },
+        { id: 'fire-edu',         label: '소화 안전 교육',  icon: 'local_fire_department', accent: '#c2410c' }
     ];
 
     function renderSection(activePage, title, desc) {
