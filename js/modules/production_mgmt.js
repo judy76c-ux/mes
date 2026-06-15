@@ -12941,17 +12941,19 @@ var ProdQualityModule = (function() {
             : `<input type="text" class="form-input pqs-spec" value="${_esc(item.spec||'')}" placeholder="기준값 입력" ${readOnly ? 'disabled' : ''} style="height:30px;font-size:0.82rem;">`;
         const delBtn = showDelete
             ? `<button type="button" onclick="ProdQualityModule._pqRemoveSpecItem('${_esc(item.key||'')}')"
-                style="background:none;border:none;cursor:pointer;color:var(--text-muted);padding:2px 4px;flex-shrink:0;line-height:1;" title="항목 삭제">
-                <span class="material-symbols-outlined" style="font-size:15px;">close</span></button>` : '';
+                style="background:none;border:none;cursor:pointer;color:#ef4444;padding:4px 8px;line-height:1;border-radius:4px;" title="항목 삭제">
+                <span class="material-symbols-outlined" style="font-size:18px;">delete</span></button>` : '';
         const dragAttrs = showDelete
-            ? `draggable="true"
-               ondragstart="ProdQualityModule._pqSpecDragStart(event)"
+            ? `ondragstart="ProdQualityModule._pqSpecDragStart(event)"
                ondragover="ProdQualityModule._pqSpecDragOver(event)"
                ondragleave="ProdQualityModule._pqSpecDragLeave(event)"
                ondrop="ProdQualityModule._pqSpecDrop(event)"
                ondragend="ProdQualityModule._pqSpecDragEnd(event)"` : '';
         const dragHandle = showDelete
-            ? `<span class="material-symbols-outlined" style="font-size:16px;color:var(--text-muted);cursor:grab;flex-shrink:0;margin-right:2px;vertical-align:middle;">drag_indicator</span>` : '';
+            ? `<span class="material-symbols-outlined" style="font-size:16px;color:var(--text-muted);cursor:grab;flex-shrink:0;margin-right:2px;vertical-align:middle;"
+                 onmousedown="this.closest('tr').draggable=true;"
+                 onmouseup="this.closest('tr').draggable=false;"
+               >drag_indicator</span>` : '';
         return `<tr class="pq-spec-item-row" data-key="${_esc(item.key||'')}" ${dragAttrs} style="transition:opacity .15s;">
             <td>
                 <input type="hidden" class="pqs-key" value="${_esc(item.key||'')}">
@@ -12959,20 +12961,18 @@ var ProdQualityModule = (function() {
                 <input type="hidden" class="pqs-unit-val" value="${_esc(item.unit||'')}">
                 <input type="hidden" class="pqs-method-val" value="${_esc(item.method||'')}">
                 <input type="hidden" class="pqs-input-type" value="${_esc(item.inputType||'text')}">
-                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:4px;">
-                    <div style="display:flex;align-items:flex-start;gap:2px;flex:1;min-width:0;">
-                        ${dragHandle}
-                        <div>
-                            <strong style="font-size:0.85rem;">${_esc(item.label||'')}</strong>
-                            ${_isFilmSpecItem(item) ? '<span style="font-size:0.68rem;background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;border-radius:3px;padding:0 5px;margin-left:3px;">Range</span>' : _isColorSpecItem(item) ? '<span style="font-size:0.68rem;background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;border-radius:3px;padding:0 5px;margin-left:3px;">Deviation</span>' : _isGlossSpecItem(item) ? '<span style="font-size:0.68rem;background:#fefce8;color:#a16207;border:1px solid #fde68a;border-radius:3px;padding:0 5px;margin-left:3px;">Tolerance</span>' : ''}
-                            <div style="font-size:0.75rem;color:var(--text-muted);">${_esc(item.method||'')}</div>
-                        </div>
+                <div style="display:flex;align-items:flex-start;gap:2px;">
+                    ${dragHandle}
+                    <div>
+                        <strong style="font-size:0.85rem;">${_esc(item.label||'')}</strong>
+                        ${_isFilmSpecItem(item) ? '<span style="font-size:0.68rem;background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;border-radius:3px;padding:0 5px;margin-left:3px;">Range</span>' : _isColorSpecItem(item) ? '<span style="font-size:0.68rem;background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;border-radius:3px;padding:0 5px;margin-left:3px;">Deviation</span>' : _isGlossSpecItem(item) ? '<span style="font-size:0.68rem;background:#fefce8;color:#a16207;border:1px solid #fde68a;border-radius:3px;padding:0 5px;margin-left:3px;">Tolerance</span>' : ''}
+                        <div style="font-size:0.75rem;color:var(--text-muted);">${_esc(item.method||'')}</div>
                     </div>
-                    ${delBtn}
                 </div>
             </td>
             <td style="text-align:center;font-size:0.82rem;color:var(--text-muted);">${_esc(item.unit||'-')}</td>
             <td>${specEditor}</td>
+            ${showDelete ? `<td style="text-align:center;vertical-align:middle;">${delBtn}</td>` : ''}
         </tr>`;
     }
 
@@ -13204,6 +13204,7 @@ var ProdQualityModule = (function() {
                                     <th style="min-width:140px;">관리항목</th>
                                     <th style="text-align:center;min-width:60px;">단위</th>
                                     <th style="min-width:180px;">기준값 / 범위</th>
+                                    ${!viewOnly ? `<th style="text-align:center;min-width:70px;width:70px;">관리항목 삭제</th>` : ''}
                                 </tr></thead>
                                 <tbody id="pqSpecItemsBody">${items.map(i => _specItemRowHtml(i, { readOnly: viewOnly, showDelete: !viewOnly })).join('')}</tbody>
                             </table>
@@ -13362,7 +13363,7 @@ var ProdQualityModule = (function() {
     }
 
     function _pqSpecDragEnd(e) {
-        if (_pqSpecDragSrc) _pqSpecDragSrc.style.opacity = '';
+        if (_pqSpecDragSrc) { _pqSpecDragSrc.style.opacity = ''; _pqSpecDragSrc.draggable = false; }
         document.querySelectorAll('.pq-spec-item-row').forEach(r => r.style.outline = '');
         _pqSpecDragSrc = null;
     }
