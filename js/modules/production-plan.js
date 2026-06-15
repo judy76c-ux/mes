@@ -2298,7 +2298,7 @@ const ProductionPlanModule = (function() {
         const remainingMinutes = totalMinutes % 60;
         const timeStr = totalHours > 0 ? `${totalHours}시간 ${remainingMinutes}분` : `${remainingMinutes}분`;
 
-        const printWindow = window.open('', '_blank', 'width=1000,height=800,scrollbars=yes,resizable=yes');
+        const printWindow = window.open('', '_blank', 'width=1000,height=880,scrollbars=yes,resizable=yes');
         printWindow.document.write(`
             <html>
             <head>
