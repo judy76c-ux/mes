@@ -501,9 +501,21 @@ var ImprovementActivityModule = (function() {
         const prevHtml = _prevSummary();
 
         // 단계별 입력 필드
+        const currentUser = typeof AuthModule !== 'undefined' ? AuthModule.getCurrentUser() : null;
+        const currentUserKey = currentUser ? `user:${currentUser.id}` : '';
+        const isRecipient = r.recipientRef && currentUserKey && r.recipientRef === currentUserKey;
+        const planReadOnly = (stage === 'plan') && r.recipientRef && !isRecipient;
+
         let fields = prevHtml;
         if (stage === 'plan') {
-            fields += `
+            if (r.recipient && !isRecipient) {
+                fields += `<div style="padding:10px 14px;border-radius:8px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);color:#92400e;font-size:.85rem;margin-bottom:12px;display:flex;align-items:center;gap:8px;">
+                    <span class="material-symbols-outlined" style="font-size:18px;color:#f59e0b;">lock</span>
+                    계획 단계는 수신 관리자 <strong>${_esc(r.recipient)}</strong>님만 작성할 수 있습니다.
+                </div>`;
+            }
+            if (!r.recipientRef || isRecipient) {
+                fields += `
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
                     <div class="form-group"><label class="form-label">담당자 <span style="color:var(--accent-red)">*</span></label>
                         <select class="form-select" id="iaOwner">${_ownerOptions(r.owner||'')}</select>
@@ -526,6 +538,18 @@ var ImprovementActivityModule = (function() {
                 <div class="form-group"><label class="form-label">실행 계획 / 추진 일정</label>
                     <textarea class="form-textarea" id="iaPlan" rows="3" placeholder="원인 제거를 위한 구체적인 실행 방법과 일정">${_esc(r.actionPlan||'')}</textarea>
                 </div>`;
+            } else {
+                // 읽기 전용: 이미 작성된 내용이 있으면 표시
+                fields += `
+                <div style="display:grid;gap:10px;">
+                    ${r.owner ? `<div class="form-group"><label class="form-label">담당자</label><div class="form-input" style="background:var(--bg-secondary);color:var(--text-secondary);">${_esc(r.owner)}</div></div>` : ''}
+                    ${r.dueDate ? `<div class="form-group"><label class="form-label">완료 예정일</label><div class="form-input" style="background:var(--bg-secondary);color:var(--text-secondary);">${_esc(r.dueDate)}</div></div>` : ''}
+                    ${r.goal ? `<div class="form-group"><label class="form-label">개선 목표</label><div style="padding:8px 12px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);white-space:pre-wrap;">${_esc(r.goal)}</div></div>` : ''}
+                    ${r.rootCause ? `<div class="form-group"><label class="form-label">원인분석</label><div style="padding:8px 12px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);white-space:pre-wrap;">${_esc(r.rootCause)}</div></div>` : ''}
+                    ${r.actionPlan ? `<div class="form-group"><label class="form-label">실행 계획</label><div style="padding:8px 12px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);white-space:pre-wrap;">${_esc(r.actionPlan)}</div></div>` : ''}
+                    ${!r.goal && !r.rootCause && !r.actionPlan ? '<div style="font-size:.85rem;color:var(--text-muted);padding:8px 0;">아직 작성된 계획 내용이 없습니다.</div>' : ''}
+                </div>`;
+            }
         } else if (stage === 'do') {
             fields += `
                 <div class="form-group"><label class="form-label">실행 내용</label>
@@ -564,14 +588,16 @@ var ImprovementActivityModule = (function() {
             ? `<button class="btn btn-primary" style="background:#10b981;border-color:#10b981;" onclick="ImprovementActivityModule.completePdca('${_js(r.id||'')}')">완료 처리</button>`
             : `<button class="btn btn-primary" onclick="ImprovementActivityModule.nextPdcaStage('${_js(r.id||'')}')">다음 단계 →</button>`;
 
+        const canEdit = stage !== 'plan' || !r.recipientRef || isRecipient;
+
         return `<div class="card" style="border-left:3px solid ${step.color};"><div class="card-body">
-            <h4 style="margin-top:0;">PDCA 진행</h4>
+            <h4 style="margin-top:0;">PDCA 진행${r.recipient && stage === 'plan' ? `<span style="font-size:.78rem;font-weight:400;color:var(--text-muted);margin-left:10px;">계획 담당: ${_esc(r.recipient)}</span>` : ''}</h4>
             ${progressBar}
             ${fields}
-            <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+            ${canEdit ? `<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
                 <button class="btn btn-secondary" onclick="ImprovementActivityModule.savePdca('${_js(r.id||'')}')">저장</button>
                 ${actionBtns}
-            </div>
+            </div>` : ''}
         </div></div>`;
     }
 
