@@ -13652,7 +13652,7 @@ var ProdQualityModule = (function() {
                     data-unit="${_esc(item.unit || '')}"
                     data-method="${_esc(item.method || '')}"
                     data-spec="${_esc(_composeRangeSpec(item) || item.spec || '')}">
-                    <td><span class="badge badge-info">${_esc(_measureGroupLabel(group))}</span></td>
+                    <td style="text-align:center;font-weight:700;color:var(--text-secondary);">${idx + 1}</td>
                     <td><strong>${_esc(item.label || '-')}</strong><br><span style="font-size:0.72rem;color:var(--text-muted);">${_esc(item.method || '-')}</span></td>
                     <td style="font-size:0.82rem;">${_esc(_composeRangeSpec(item) || item.spec || '-')}</td>
                     <td style="text-align:center;">${_esc(item.unit || '-')}</td>
@@ -13694,7 +13694,7 @@ var ProdQualityModule = (function() {
                     <table class="data-table" style="font-size:0.82rem;">
                         <thead>
                             <tr>
-                                <th style="width:78px;">구분</th>
+                                <th style="width:44px;text-align:center;">No</th>
                                 <th style="min-width:170px;">관리항목</th>
                                 <th>기준</th>
                                 <th style="width:70px;">단위</th>
