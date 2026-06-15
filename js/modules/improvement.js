@@ -642,9 +642,6 @@ var ImprovementActivityModule = (function() {
                 </div>` : '';
             }).join('');
             fields += `
-                <div class="form-group"><label class="form-label">실행 내용</label>
-                    <textarea class="form-textarea" id="iaPlan" rows="3" placeholder="계획에 따라 수행한 실행 활동을 기록">${_esc(r.actionPlan||'')}</textarea>
-                </div>
                 <div class="form-group"><label class="form-label">실행/개선 실시 사항</label>
                     <textarea class="form-textarea" id="iaDoActions" rows="3" placeholder="실제 실행하거나 개선한 내용을 구체적으로 기록">${_esc(r.doActions||'')}</textarea>
                 </div>
