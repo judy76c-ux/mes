@@ -152,7 +152,7 @@ var ImprovementActivityModule = (function() {
         const votes = r.votes || { agree: 0, disagree: 0 };
         return `<tr>
             <td>${_fmtDate(r.date)}</td>
-            <td><strong>${_esc(r.proposer || '-')}</strong></td>
+            <td><strong>${_esc(r.proposer || '-')}</strong>${r.recipient ? `<div style="font-size:0.75rem;color:var(--text-muted);">→ ${_esc(r.recipient)}</div>` : ''}</td>
             <td>${r.category === 'proposal' ? _badge('개선제안','rgba(16,185,129,.12)','#047857') : _badge('문제점','rgba(239,68,68,.12)','#b91c1c')}</td>
             <td><strong>${_esc(r.title || '-')}</strong><div style="font-size:0.78rem;color:var(--text-muted);">${_esc(r.process || '-')}</div></td>
             <td>${_pdcaMini(r.pdcaStage)}</td>
@@ -212,12 +212,21 @@ var ImprovementActivityModule = (function() {
         // Selection is kept as the registered proposer only.
     }
 
+    function _recipientOptions(selectedKey = '') {
+        const people = _peopleList();
+        return `<option value="">수신자 선택 (선택사항)</option>` + people.map(p => `
+            <option value="${_esc(p.personKey)}" ${selectedKey === p.personKey ? 'selected' : ''}>
+                ${_esc(p.name)} (${_esc(p.roleLabel)}${p.deptText ? ' · ' + _esc(p.deptText) : ''})
+            </option>`).join('');
+    }
+
     function _form(r = {}) {
         return `<div style="display:grid;gap:12px;">
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
                 <div class="form-group"><label class="form-label">등록일</label><input type="date" class="form-input" id="iaDate" value="${r.date || UIUtils.today()}"></div>
                 <div class="form-group"><label class="form-label">구분</label><select class="form-select" id="iaCategory"><option value="problem" ${r.category==='problem'?'selected':''}>문제점</option><option value="proposal" ${r.category==='proposal'?'selected':''}>개선제안</option></select></div>
                 <div class="form-group"><label class="form-label">제안자 <span style="color:var(--accent-red)">*</span></label><select class="form-select" id="iaProposer" onchange="ImprovementActivityModule.selectPerson(this.value)">${_personOptions(r.proposer || '', r.proposerRole || '')}</select></div>
+                <div class="form-group"><label class="form-label">수신자 (관리자)</label><select class="form-select" id="iaRecipient">${_recipientOptions(r.recipientRef || '')}</select></div>
                 <div class="form-group"><label class="form-label">공정/위치</label><input class="form-input" id="iaProcess" value="${_esc(r.process||'')}" placeholder="문제 발생 공정 또는 위치"></div>
                 <div class="form-group"><label class="form-label">제목</label><input class="form-input" id="iaTitle" value="${_esc(r.title||'')}" placeholder="개선활동 제목"></div>
             </div>
@@ -330,12 +339,17 @@ var ImprovementActivityModule = (function() {
         const personKey = document.getElementById('iaProposer').value;
         const person = _peopleList().find(p => p.personKey === personKey);
         const legacyName = personKey.startsWith('legacy:') ? personKey.replace(/^legacy:/, '') : '';
+        const recipientKey = document.getElementById('iaRecipient')?.value || '';
+        const recipient = _peopleList().find(p => p.personKey === recipientKey);
         const data = {
             date: document.getElementById('iaDate').value || UIUtils.today(),
             category: document.getElementById('iaCategory').value,
             proposer: person?.name || legacyName,
             proposerRole: person?.roleLabel || (legacyName ? old.proposerRole || '' : ''),
             proposerRef: personKey,
+            recipientRef: recipientKey,
+            recipient: recipient?.name || '',
+            recipientRole: recipient?.roleLabel || '',
             department: '',
             process: document.getElementById('iaProcess').value.trim(),
             title: document.getElementById('iaTitle').value.trim(),
@@ -374,7 +388,7 @@ var ImprovementActivityModule = (function() {
             <div style="display:grid;gap:14px;">
                 <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
                     <div><h3 style="margin:0 0 6px;">${_esc(r.title)}</h3>
-                        <div style="color:var(--text-muted);font-size:0.85rem;">${_esc(r.proposer)} · ${_esc(r.process||'-')} · ${_fmtDate(r.date)}</div>
+                        <div style="color:var(--text-muted);font-size:0.85rem;">${_esc(r.proposer)} · ${_esc(r.process||'-')} · ${_fmtDate(r.date)}${r.recipient ? ` · 수신: ${_esc(r.recipient)}` : ''}</div>
                     </div>
                     <div>${_statusBadge(r)}</div>
                 </div>
