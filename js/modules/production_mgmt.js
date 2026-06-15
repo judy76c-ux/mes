@@ -1156,9 +1156,7 @@ var ProdStandardsModule = (function() {
                    </span>`
                 : `<span style="font-size:11px;padding:2px 8px;border-radius:99px;background:#f9fafb;border:1px solid #e5e7eb;color:#9ca3af;">미등록</span>`;
 
-            const flowPreview = hasFlow
-                ? flowProcs.slice(0,5).join(' → ') + (flowProcs.length > 5 ? ' …' : '')
-                : '';
+            const flowPreview = hasFlow ? flowProcs.join(' → ') : '';
 
             return `<tr class="cp-status-row" data-search="${_esc((car+' '+part+' '+code).toLowerCase())}">
                 <td style="padding:9px 12px;font-weight:700;white-space:nowrap;width:90px;">${_esc(car)}</td>
@@ -5043,7 +5041,7 @@ window.addEventListener('load', function() {
                 const rows = _cpFlowParamRowsForStep(step).rows;
                 return sum + _cpFlowSelectedParamKeys(step, rows).length;
             }, 0);
-        const preview = procs.slice(0, 8).map((proc, idx) => {
+        const preview = procs.map((proc, idx) => {
             const arrow  = idx === 0 ? '' : '<span style="color:var(--text-muted);font-size:10px;">→</span>';
             const stepNo = String(idx + 1).padStart(2, '0');
             return `${arrow}<span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;padding:2px 7px;
@@ -5065,10 +5063,9 @@ window.addEventListener('load', function() {
                 <span class="material-symbols-outlined" style="font-size:15px;">route</span>
                 공정 순서 선택
             </button>
-            <div style="display:flex;flex-direction:column;gap:4px;min-width:240px;flex:1;">
+            <div style="display:flex;flex-direction:column;gap:4px;min-width:0;flex:1;">
                 <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
                     ${preview || '<span style="font-size:11px;color:var(--text-muted);">선택된 주공정 없음</span>'}
-                    ${procs.length > 8 ? `<span style="font-size:11px;color:var(--text-muted);">+${procs.length - 8}</span>` : ''}
                 </div>
                 ${paramSummary ? `<div style="display:flex;gap:4px;flex-wrap:wrap;">${paramSummary}</div>` : ''}
             </div>
