@@ -5190,7 +5190,8 @@ window.addEventListener('load', function() {
                            cursor:grab;">
                 <span class="material-symbols-outlined" style="font-size:17px;color:var(--text-muted);">drag_indicator</span>
                 <input type="checkbox" ${checked ? 'checked' : ''}
-                    onchange="ProdStandardsModule._toggleCpFlowProcessAll('${_esc(proc)}')"
+                    ondragstart="event.preventDefault();event.stopPropagation();"
+                    onclick="event.stopPropagation();ProdStandardsModule._toggleCpFlowProcessAll('${_esc(proc)}');event.preventDefault();"
                     style="width:15px;height:15px;margin:0;cursor:pointer;">
                 <button type="button" onclick="ProdStandardsModule._selectCpFlowProcess('${_esc(proc)}')"
                     style="flex:1;text-align:left;border:none;background:transparent;cursor:pointer;padding:0;
@@ -5399,6 +5400,10 @@ window.addEventListener('load', function() {
     }
 
     function _cpFlowProcDragStart(procName, event) {
+        if (event.target && (event.target.tagName === 'INPUT' || event.target.tagName === 'BUTTON')) {
+            event.preventDefault();
+            return;
+        }
         if (!_cpFlowHasProcess(procName)) {
             event.preventDefault();
             return;
