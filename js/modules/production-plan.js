@@ -650,10 +650,30 @@ const ProductionPlanModule = (function() {
             const m = totalMinutes % 60;
             const timeStr = h > 0 ? `${h}시간 ${m}분` : `${m}분`;
 
+            // 주간 가용 작업 시간: 08:00 ~ 17:30 (총 570분) - 점심 12:30~13:30 (60분) = 510분
+            const DAY_AVAILABLE = 510;
+            const remainMinutes = Math.max(0, DAY_AVAILABLE - totalMinutes);
+            const rh = Math.floor(remainMinutes / 60);
+            const rm = remainMinutes % 60;
+            const remainStr = rh > 0 ? `${rh}시간 ${rm}분` : `${rm}분`;
+            const effPct = DAY_AVAILABLE > 0 ? Math.round(totalMinutes / DAY_AVAILABLE * 100) : 0;
+            const effColor = effPct >= 90 ? '#10b981' : effPct >= 70 ? '#f59e0b' : '#ef4444';
+
             foot.innerHTML = `
                 <tr class="total-row">
-                    <td class="sticky-col font-bold" colspan="2" style="text-align: left; padding-left: 15px; color: var(--accent-blue);">총 시간: ${totalMinutes > 0 ? timeStr : '-'}</td>
-                    <td class="font-bold" colspan="2" style="text-align: right; padding-right: 20px;">총 합계</td>
+                    <td class="sticky-col font-bold" colspan="2" style="text-align:left;padding-left:15px;">
+                        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:14px;">
+                            <span style="color:var(--accent-blue);">계획: <strong>${totalMinutes > 0 ? timeStr : '-'}</strong></span>
+                            <span style="color:#64748b;">│</span>
+                            <span style="color:#ef4444;">잔여: <strong>${remainMinutes > 0 ? remainStr : '없음'}</strong></span>
+                            <span style="color:#64748b;">│</span>
+                            <span style="padding:2px 8px;border-radius:999px;font-size:.75rem;font-weight:800;
+                                         background:${effColor}1a;color:${effColor};">
+                                효율 ${effPct}%
+                            </span>
+                        </div>
+                    </td>
+                    <td class="font-bold" colspan="2" style="text-align:right;padding-right:20px;">총 합계</td>
                     <td class="total-cell font-bold text-right">${UIUtils.formatNumber(totalQty)}</td>
                     <td colspan="2"></td>
                 </tr>
@@ -2348,9 +2368,11 @@ const ProductionPlanModule = (function() {
                     <tfoot>
                         <tr>
                             <td colspan="2" class="total-label">총 작업 시간</td>
-                            <td colspan="3" class="total-value" style="text-align:center;">${totalMinutes > 0 ? timeStr : '-'}</td>
+                            <td class="total-value" style="text-align:center;">${totalMinutes > 0 ? timeStr : '-'}</td>
+                            <td class="total-label" style="text-align:center;">잔여 시간<br><span style="font-size:9px;font-weight:400;">(~17:30 기준)</span></td>
+                            <td class="total-value" style="text-align:center;color:${(510 - totalMinutes) > 60 ? '#c00' : '#090'};">${(function(){ const r=Math.max(0,510-totalMinutes); const rh=Math.floor(r/60); const rm=r%60; return r>0?(rh>0?rh+'시간 '+rm+'분':rm+'분'):'없음'; })()}</td>
                             <td class="total-value">${UIUtils.formatNumber(totalQty)}</td>
-                            <td colspan="3" style="background:#f9f9f9; text-align:left; font-size:10px; padding-left:10px;">* 작업 시간은 자동 계산된 추정치입니다.</td>
+                            <td colspan="3" style="background:#f9f9f9;text-align:left;font-size:10px;padding-left:10px;">효율: ${Math.round(totalMinutes/510*100)}% (주간가용 8h30m 기준)</td>
                         </tr>
                     </tfoot>
                 </table>
