@@ -927,15 +927,15 @@ var ProdStandardsModule = (function() {
             .reduce((sum, r) => sum + Math.max(1, r.rows.length), 0);
     }
 
-    function _processStandardLayout() {
+    function _buildProcessStandardBaseLayout() {
         const linked = (key, label, icon, desc, accent) => ({
-            label, icon, desc, accent,
+            templateId: `linked:${key}`, label, icon, desc, accent,
             count: _standardRecordCount(key),
             action: `ProdStandardsModule.selectDocType('${key}')`,
             badge: '등록형'
         });
         const page = (pageId, label, icon, desc, accent) => ({
-            label, icon, desc, accent,
+            templateId: `page:${pageId}`, label, icon, desc, accent,
             count: null,
             action: `Router.navigate('${pageId}')`,
             badge: '편집가능'
@@ -982,7 +982,23 @@ var ProdStandardsModule = (function() {
                 { station: '출하검사', standards: [film, color] },
             ] },
         ];
-        return _applyProcessStandardMenuLayout(groups);
+        return groups;
+    }
+
+    function _processStandardLayout() {
+        return _applyProcessStandardMenuLayout(_buildProcessStandardBaseLayout());
+    }
+
+    function _processStandardCatalog() {
+        const byTemplate = new Map();
+        _withProcessStandardMenuIds(_buildProcessStandardBaseLayout()).forEach(group => {
+            (group.stations || []).forEach(st => {
+                (st.standards || []).forEach(std => {
+                    if (std.templateId && !byTemplate.has(std.templateId)) byTemplate.set(std.templateId, std);
+                });
+            });
+        });
+        return [...byTemplate.values()];
     }
 
     function _processStandardStationKey(process, station) {
@@ -1023,16 +1039,31 @@ var ProdStandardsModule = (function() {
             });
         });
 
+        const catalog = new Map();
         _withProcessStandardMenuIds(groups).forEach(group => {
             (group.stations || []).forEach(st => {
                 (st.standards || []).forEach(std => {
+                    if (std.templateId && !catalog.has(std.templateId)) catalog.set(std.templateId, std);
                     const pos = posById.get(std.id);
+                    if (pos && pos.hidden) return;
                     const targetKey = pos && stationMap.has(_processStandardStationKey(pos.process, pos.station))
                         ? _processStandardStationKey(pos.process, pos.station)
                         : _processStandardStationKey(group.process, st.station);
                     const target = stationMap.get(targetKey);
                     if (target) target.standards.push({ ...std, _menuOrder: pos ? Number(pos.order) : std._originalOrder });
                 });
+            });
+        });
+
+        saved.filter(pos => pos && pos.custom && !pos.hidden).forEach(pos => {
+            const tmpl = catalog.get(pos.templateId);
+            const target = stationMap.get(_processStandardStationKey(pos.process, pos.station));
+            if (!tmpl || !target) return;
+            target.standards.push({
+                ...tmpl,
+                id: pos.id,
+                custom: true,
+                _menuOrder: Number(pos.order)
             });
         });
 
@@ -1053,7 +1084,14 @@ var ProdStandardsModule = (function() {
         (groups || []).forEach(group => {
             (group.stations || []).forEach(st => {
                 (st.standards || []).forEach((std, idx) => {
-                    rows.push({ id: std.id, process: group.process, station: st.station, order: idx });
+                    rows.push({
+                        id: std.id,
+                        templateId: std.templateId,
+                        custom: !!std.custom,
+                        process: group.process,
+                        station: st.station,
+                        order: idx
+                    });
                 });
             });
         });
@@ -1137,6 +1175,64 @@ var ProdStandardsModule = (function() {
         _refreshProcessStandardStatus();
     }
 
+    function _openProcessStandardAddMenu(process, station) {
+        const current = _processStandardLayout();
+        const inStation = new Set();
+        current.forEach(group => {
+            if (group.process !== process) return;
+            (group.stations || []).forEach(st => {
+                if (st.station !== station) return;
+                (st.standards || []).forEach(std => {
+                    if (std.templateId) inStation.add(std.templateId);
+                });
+            });
+        });
+        const items = _processStandardCatalog().filter(std => std.templateId && !inStation.has(std.templateId));
+        const body = items.length ? `
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">
+                ${items.map(std => `
+                    <button type="button" onclick="ProdStandardsModule._addProcessStandardMenuItem('${_jsArg(process)}','${_jsArg(station)}','${_jsArg(std.templateId)}')"
+                        style="text-align:left;border:1px solid var(--border-color);border-left:4px solid ${std.accent};
+                               border-radius:8px;background:var(--bg-primary);padding:10px 11px;cursor:pointer;">
+                        <div style="display:flex;align-items:center;gap:7px;font-weight:850;font-size:.84rem;margin-bottom:5px;">
+                            <span class="material-symbols-outlined" style="font-size:18px;color:${std.accent};">${std.icon}</span>
+                            ${_esc(std.label)}
+                        </div>
+                        <div style="font-size:.72rem;color:var(--text-muted);line-height:1.35;">${_esc(std.desc)}</div>
+                    </button>
+                `).join('')}
+            </div>` : `<div style="padding:20px;text-align:center;color:var(--text-muted);">추가할 기준서가 없습니다.</div>`;
+        UIUtils.showModal(
+            `기준서 추가 — ${process} / ${station}`,
+            body,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`,
+            'lg'
+        );
+    }
+
+    function _addProcessStandardMenuItem(process, station, templateId) {
+        const current = _flattenProcessStandardLayout(_processStandardLayout());
+        const order = current.filter(row => row.process === process && row.station === station).length;
+        const id = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const next = [
+            ...current,
+            { id, templateId, custom: true, process, station, order }
+        ];
+        _saveProcessStandardMenuLayout(next);
+        UIUtils.closeModal();
+        _refreshProcessStandardStatus();
+    }
+
+    function _removeProcessStandardMenuItem(id) {
+        const current = _flattenProcessStandardLayout(_processStandardLayout()).filter(row => row.id !== id);
+        const next = [...current];
+        if (!String(id || '').startsWith('custom-')) {
+            next.push({ id, hidden: true });
+        }
+        _saveProcessStandardMenuLayout(next);
+        _refreshProcessStandardStatus();
+    }
+
     function _resetProcessStandardMenuLayout() {
         _processStandardMenuLayout = [];
         Storage.setConfigValue(PROCESS_STANDARD_MENU_LAYOUT_KEY, []).catch(() => {});
@@ -1146,7 +1242,7 @@ var ProdStandardsModule = (function() {
 
     function _renderProcessStandardStatus() {
         const renderStd = (std, process, station) => `
-            <button draggable="true"
+            <div draggable="true"
                 ondragstart="ProdStandardsModule._stdMenuDragStart('${_jsArg(std.id)}',event)"
                 ondragover="ProdStandardsModule._stdMenuDragOver(event)"
                 ondrop="ProdStandardsModule._stdMenuDrop('${_jsArg(process)}','${_jsArg(station)}','${_jsArg(std.id)}',event)"
@@ -1159,14 +1255,75 @@ var ProdStandardsModule = (function() {
                         <span class="material-symbols-outlined" style="font-size:19px;color:${std.accent};">${std.icon}</span>
                         ${std.label}
                     </span>
-                    <span style="font-size:.66rem;background:${std.accent};color:#fff;border-radius:4px;padding:2px 6px;font-weight:800;white-space:nowrap;">
-                        ${std.count == null ? std.badge : `${std.count.toLocaleString()}건`}
+                    <span style="display:flex;align-items:center;gap:5px;">
+                        <span style="font-size:.66rem;background:${std.accent};color:#fff;border-radius:4px;padding:2px 6px;font-weight:800;white-space:nowrap;">
+                            ${std.count == null ? std.badge : `${std.count.toLocaleString()}건`}
+                        </span>
+                        <button type="button" title="삭제" onclick="event.stopPropagation();ProdStandardsModule._removeProcessStandardMenuItem('${_jsArg(std.id)}')"
+                            style="border:1px solid rgba(239,68,68,.35);background:#fff;color:#dc2626;border-radius:5px;
+                                   width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;">
+                            <span class="material-symbols-outlined" style="font-size:13px;">close</span>
+                        </button>
                     </span>
                 </div>
                 <div style="font-size:.72rem;color:var(--text-muted);line-height:1.38;">${std.desc}</div>
-            </button>`;
+            </div>`;
 
-        return _processStandardLayout().map(group => `
+        const groups = _processStandardLayout();
+        const paintA = groups.find(group => group.process === '도장(A)');
+        const paintB = groups.find(group => group.process === '도장(B)');
+        const stationNames = [];
+        [paintA, paintB].forEach(group => {
+            (group && group.stations || []).forEach(st => {
+                if (!stationNames.includes(st.station)) stationNames.push(st.station);
+            });
+        });
+        const findStation = (group, station) => (group && group.stations || []).find(st => st.station === station) || { station, standards: [] };
+        const renderDropZone = (process, station, standards) => `
+            <div style="display:flex;flex-direction:column;gap:7px;min-width:0;">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                    <span style="font-size:.75rem;font-weight:900;color:var(--text-muted);">${process}</span>
+                    <button type="button" onclick="ProdStandardsModule._openProcessStandardAddMenu('${_jsArg(process)}','${_jsArg(station)}')"
+                        style="border:1px dashed var(--accent-blue);background:rgba(37,99,235,.06);color:var(--accent-blue);
+                               border-radius:6px;padding:3px 7px;font-size:11px;font-weight:850;cursor:pointer;">
+                        + 추가
+                    </button>
+                </div>
+                <div ondragover="ProdStandardsModule._stdMenuDragOver(event)"
+                    ondrop="ProdStandardsModule._stdMenuDrop('${_jsArg(process)}','${_jsArg(station)}','',event)"
+                    style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;min-height:84px;">
+                    ${(standards || []).map(std => renderStd(std, process, station)).join('')}
+                </div>
+            </div>`;
+        const paintSection = (paintA || paintB) ? `
+            <section style="border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary);overflow:hidden;">
+                <div style="display:flex;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid var(--border-color);">
+                    <span class="material-symbols-outlined" style="font-size:20px;color:var(--accent-blue);">format_paint</span>
+                    <div style="font-weight:900;color:var(--text-primary);">도장(A) / 도장(B)</div>
+                    <div style="font-size:.73rem;color:var(--text-muted);">같은 세부공정을 한 행에서 비교·배치</div>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:10px;padding:12px;">
+                    ${stationNames.map(station => {
+                        const a = findStation(paintA, station);
+                        const b = findStation(paintB, station);
+                        return `
+                        <div style="display:grid;grid-template-columns:140px minmax(0,1fr) 24px minmax(0,1fr);gap:10px;align-items:start;">
+                            <div style="font-size:.8rem;font-weight:900;color:var(--text-secondary);padding:9px 10px;
+                                        border-radius:8px;background:var(--bg-primary);border:1px solid var(--border-color);">
+                                ${station}
+                            </div>
+                            ${renderDropZone('도장(A)', station, a.standards)}
+                            <div style="min-height:84px;border-left:1px dashed var(--border-color);opacity:.9;"></div>
+                            ${renderDropZone('도장(B)', station, b.standards)}
+                        </div>`;
+                    }).join('')}
+                </div>
+            </section>` : '';
+
+        return groups.map(group => {
+            if (group.process === '도장(A)') return paintSection;
+            if (group.process === '도장(B)') return '';
+            return `
             <section style="border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary);overflow:hidden;">
                 <div style="display:flex;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid var(--border-color);">
                     <span class="material-symbols-outlined" style="font-size:20px;color:var(--accent-blue);">${group.icon}</span>
@@ -1175,9 +1332,14 @@ var ProdStandardsModule = (function() {
                 <div style="display:flex;flex-direction:column;gap:10px;padding:12px;">
                     ${group.stations.map(st => `
                         <div style="display:grid;grid-template-columns:140px minmax(0,1fr);gap:10px;align-items:start;">
-                            <div style="font-size:.8rem;font-weight:900;color:var(--text-secondary);padding:9px 10px;
-                                        border-radius:8px;background:var(--bg-primary);border:1px solid var(--border-color);">
-                                ${st.station}
+                            <div style="display:flex;flex-direction:column;gap:7px;font-size:.8rem;font-weight:900;color:var(--text-secondary);
+                                        padding:9px 10px;border-radius:8px;background:var(--bg-primary);border:1px solid var(--border-color);">
+                                <span>${st.station}</span>
+                                <button type="button" onclick="ProdStandardsModule._openProcessStandardAddMenu('${_jsArg(group.process)}','${_jsArg(st.station)}')"
+                                    style="border:1px dashed var(--accent-blue);background:rgba(37,99,235,.06);color:var(--accent-blue);
+                                           border-radius:6px;padding:4px 6px;font-size:11px;font-weight:850;cursor:pointer;">
+                                    + 기준서 추가
+                                </button>
                             </div>
                             <div ondragover="ProdStandardsModule._stdMenuDragOver(event)"
                                 ondrop="ProdStandardsModule._stdMenuDrop('${_jsArg(group.process)}','${_jsArg(st.station)}','',event)"
@@ -1188,7 +1350,8 @@ var ProdStandardsModule = (function() {
                     `).join('')}
                 </div>
             </section>
-        `).join('');
+        `;
+        }).filter(Boolean).join('');
     }
 
     function _renderStandardsSummary(container) {
@@ -7464,6 +7627,9 @@ window.addEventListener('load', function() {
         _stdMenuDragStart,
         _stdMenuDragOver,
         _stdMenuDrop,
+        _openProcessStandardAddMenu,
+        _addProcessStandardMenuItem,
+        _removeProcessStandardMenuItem,
         _resetProcessStandardMenuLayout,
         _filterCpStatusTable,
         openCpForProduct,

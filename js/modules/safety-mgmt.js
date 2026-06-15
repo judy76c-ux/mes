@@ -53,7 +53,7 @@ var SafetyProcessUI = (function () {
         { id: 'safety-ppe',       label: '보호구 적용기준', icon: 'security',       accent: '#d97706' },
         { id: 'safety-rules',     label: '안전수칙 기준서', icon: 'gavel',          accent: '#0891b2' },
         { id: 'fire-safety-reg',  label: '소방 안전 등록',  icon: 'fire_truck',     accent: '#ea580c' },
-        { id: 'fire-ext-check',   label: '소화기 점검',     icon: 'extinguisher',   accent: '#b91c1c' },
+        { id: 'fire-ext-check',   label: '소화기 점검',     icon: 'fire_extinguisher', accent: '#b91c1c' },
         { id: 'fire-edu',         label: '소화 안전 교육',  icon: 'local_fire_department', accent: '#c2410c' }
     ];
 
