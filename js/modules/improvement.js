@@ -155,7 +155,7 @@ var ImprovementActivityModule = (function() {
             <td><strong>${_esc(r.proposer || '-')}</strong>${r.recipient ? `<div style="font-size:0.75rem;color:var(--text-muted);">→ ${_esc(r.recipient)}</div>` : ''}</td>
             <td>${r.category === 'proposal' ? _badge('개선제안','rgba(16,185,129,.12)','#047857') : _badge('문제점','rgba(239,68,68,.12)','#b91c1c')}</td>
             <td><strong>${_esc(r.title || '-')}</strong><div style="font-size:0.78rem;color:var(--text-muted);">${_esc(r.process || '-')}</div></td>
-            <td>${_pdcaMini(r.pdcaStage)}</td>
+            <td>${_pdcaMini(r.pdcaStage, r)}</td>
             <td><span style="color:var(--accent-green);font-weight:800;">${votes.agree||0}</span> / <span style="color:var(--accent-red);font-weight:800;">${votes.disagree||0}</span></td>
             <td>${_statusBadge(r)}</td>
             <td style="white-space:nowrap;">
@@ -178,10 +178,27 @@ var ImprovementActivityModule = (function() {
         { key: 'act',   label: 'A 조치', status: 'maintaining', color: '#10b981' }
     ];
 
-    function _pdcaMini(stage) {
+    function _pdcaMini(stage, r) {
         const idx = PDCA_STEPS.findIndex(s => s.key === stage);
-        return `<div style="display:flex;gap:3px;align-items:center;">${
-            PDCA_STEPS.map((s, i) => `<span title="${s.label}" style="width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:0.68rem;font-weight:800;background:${i<=idx&&idx>=0?s.color:'#e5e7eb'};color:${i<=idx&&idx>=0?'white':'#64748b'};">${s.label[0]}</span>`).join('')
+        // 단계별 담당자: P→수신관리자, D→실행업무자, C→수신관리자, A→제안자
+        const persons = r ? [
+            r.recipient || '',
+            r.owner || '',
+            r.recipient || '',
+            r.proposer || ''
+        ] : ['','','',''];
+        return `<div style="display:flex;gap:4px;align-items:flex-end;">${
+            PDCA_STEPS.map((s, i) => {
+                const done = i < idx && idx >= 0;
+                const active = i === idx && idx >= 0;
+                const bg = done ? s.color : active ? s.color : '#e5e7eb';
+                const color = (done || active) ? 'white' : '#64748b';
+                const name = persons[i];
+                return `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
+                    <span style="font-size:0.6rem;color:${(done||active)?s.color:'var(--text-muted)'};white-space:nowrap;max-width:44px;overflow:hidden;text-overflow:ellipsis;" title="${_esc(name)}">${_esc(name)}</span>
+                    <span title="${s.label}${name?' — '+name:''}" style="width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:0.68rem;font-weight:800;background:${bg};color:${color};">${s.label[0]}</span>
+                </div>`;
+            }).join('')
         }</div>`;
     }
 
