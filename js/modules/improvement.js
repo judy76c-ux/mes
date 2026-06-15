@@ -534,15 +534,10 @@ var ImprovementActivityModule = (function() {
             }
             if (!r.recipientRef || isRecipient || isAdmin) {
                 fields += `
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
-                    <div class="form-group">
-                        <label class="form-label">실행 업무자 <span style="color:var(--accent-red)">*</span></label>
-                        <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:4px;">계획을 실행할 담당자를 지정합니다.</div>
-                        <select class="form-select" id="iaOwner">${_ownerOptions(r.owner||'')}</select>
-                    </div>
-                    <div class="form-group"><label class="form-label">완료 예정일</label>
-                        <input type="date" class="form-input" id="iaDue" value="${r.dueDate||''}">
-                    </div>
+                <div class="form-group">
+                    <label class="form-label">실행 업무자 <span style="color:var(--accent-red)">*</span></label>
+                    <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:4px;">계획을 실행할 담당자를 지정합니다.</div>
+                    <select class="form-select" id="iaOwner">${_ownerOptions(r.owner||'')}</select>
                 </div>
                 <div class="form-group"><label class="form-label">참여자</label>
                     <div id="iaParticipantsBox" style="display:flex;flex-wrap:wrap;gap:6px;padding:8px;border:1px solid var(--border-color);border-radius:8px;min-height:42px;background:var(--bg-secondary);">
@@ -557,6 +552,9 @@ var ImprovementActivityModule = (function() {
                 </div>
                 <div class="form-group"><label class="form-label">실행 계획 / 추진 일정</label>
                     <textarea class="form-textarea" id="iaPlan" rows="3" placeholder="원인 제거를 위한 구체적인 실행 방법과 일정">${_esc(r.actionPlan||'')}</textarea>
+                </div>
+                <div class="form-group"><label class="form-label">완료 예정일</label>
+                    <input type="date" class="form-input" id="iaDue" value="${r.dueDate||''}">
                 </div>`;
             } else {
                 // 읽기 전용: 이미 작성된 내용이 있으면 표시

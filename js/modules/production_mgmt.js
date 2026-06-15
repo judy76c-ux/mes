@@ -5193,34 +5193,18 @@ window.addEventListener('load', function() {
                            font-weight:800;font-size:12px;">
                     ${_esc(proc)}
                 </button>
-                <button type="button" title="위로" ${orderIdx <= 0 ? 'disabled' : ''}
-                    onclick="event.stopPropagation();ProdStandardsModule._moveCpFlowProcessGroup('${_esc(proc)}',-1)"
-                    style="border:1px solid var(--border-color);background:var(--bg-secondary);border-radius:5px;
-                           width:24px;height:24px;cursor:${orderIdx <= 0 ? 'not-allowed' : 'pointer'};opacity:${orderIdx <= 0 ? '.35' : '1'};">
-                    <span class="material-symbols-outlined" style="font-size:14px;">keyboard_arrow_up</span>
-                </button>
-                <button type="button" title="아래로" ${orderIdx < 0 || orderIdx >= selectedProcOrder.length - 1 ? 'disabled' : ''}
-                    onclick="event.stopPropagation();ProdStandardsModule._moveCpFlowProcessGroup('${_esc(proc)}',1)"
-                    style="border:1px solid var(--border-color);background:var(--bg-secondary);border-radius:5px;
-                           width:24px;height:24px;cursor:${orderIdx < 0 || orderIdx >= selectedProcOrder.length - 1 ? 'not-allowed' : 'pointer'};opacity:${orderIdx < 0 || orderIdx >= selectedProcOrder.length - 1 ? '.35' : '1'};">
-                    <span class="material-symbols-outlined" style="font-size:14px;">keyboard_arrow_down</span>
-                </button>
                 <span style="font-size:10px;font-weight:800;padding:2px 7px;border-radius:999px;
                              background:${checked ? 'var(--accent-blue)' : 'var(--bg-secondary)'};
-                             color:${checked ? '#fff' : 'var(--text-muted)'};">${count}/${total}</span>
+                             color:${checked ? '#fff' : 'var(--text-muted)'};">선택 ${count} · 전체 ${total}</span>
             </div>`;
         }).join('');
 
-        const selectedStationKeys = (_cpSelectedFlow || [])
-            .filter(step => _cpStepProcess(step) === activeProc)
-            .map(_cpStepKey);
         const stationRows = _cpFlowOrderedStepsForProcess(activeProc).map(step => {
             const key = _cpStepKey(step);
             const checked = selectedKeys.has(key);
             const active = key === activeStepKey;
             const paramRows = _cpFlowParamRowsForStep(step).rows;
             const selectedParamCount = _cpFlowSelectedParamKeys(step, paramRows).length;
-            const orderIdx = selectedStationKeys.indexOf(key);
             return `<div draggable="${checked ? 'true' : 'false'}"
                     ondragstart="ProdStandardsModule._cpFlowStationDragStart('${_esc(key)}',event)"
                     ondragover="ProdStandardsModule._cpFlowStationDragOver('${_esc(key)}',event)"
@@ -5239,20 +5223,8 @@ window.addEventListener('load', function() {
                 <span style="flex:1;font-weight:800;font-size:12px;color:${checked ? 'var(--accent-orange,#ea580c)' : 'var(--text-secondary)'};">
                     ${_esc(_cpStepStation(step) || _cpStepProcess(step))}
                 </span>
-                <button type="button" title="위로" ${orderIdx <= 0 ? 'disabled' : ''}
-                    onclick="event.stopPropagation();ProdStandardsModule._moveCpFlowStationInProcess('${_esc(key)}',-1)"
-                    style="border:1px solid var(--border-color);background:var(--bg-secondary);border-radius:5px;
-                           width:24px;height:24px;cursor:${orderIdx <= 0 ? 'not-allowed' : 'pointer'};opacity:${orderIdx <= 0 ? '.35' : '1'};">
-                    <span class="material-symbols-outlined" style="font-size:14px;">keyboard_arrow_up</span>
-                </button>
-                <button type="button" title="아래로" ${orderIdx < 0 || orderIdx >= selectedStationKeys.length - 1 ? 'disabled' : ''}
-                    onclick="event.stopPropagation();ProdStandardsModule._moveCpFlowStationInProcess('${_esc(key)}',1)"
-                    style="border:1px solid var(--border-color);background:var(--bg-secondary);border-radius:5px;
-                           width:24px;height:24px;cursor:${orderIdx < 0 || orderIdx >= selectedStationKeys.length - 1 ? 'not-allowed' : 'pointer'};opacity:${orderIdx < 0 || orderIdx >= selectedStationKeys.length - 1 ? '.35' : '1'};">
-                    <span class="material-symbols-outlined" style="font-size:14px;">keyboard_arrow_down</span>
-                </button>
                 <span style="font-size:10px;padding:2px 7px;border-radius:999px;background:var(--bg-secondary);
-                             border:1px solid var(--border-color);color:var(--text-muted);">${selectedParamCount}/${paramRows.length}</span>
+                             border:1px solid var(--border-color);color:var(--text-muted);">항목 ${selectedParamCount} · 전체 ${paramRows.length}</span>
             </div>`;
         }).join('');
 
