@@ -5,7 +5,7 @@
 
 const DB = (function() {
     const DB_NAME = 'ProductionMES_DB';
-    const DB_VERSION = 50;
+    const DB_VERSION = 51;
     let db = null;
 
     // 스토어 이름 - 전체 공정에 대응
@@ -96,6 +96,7 @@ const DB = (function() {
         EQUIP_AIR_FILTER_LOG: 'equip_air_filter_log', // 압축에어필터 교체 실적
         EQUIP_SUPPLY_FILTER_LOG: 'equip_supply_filter_log', // 급기필터 교체 실적
         EQUIP_DRYER_CLEAN_LOG: 'equip_dryer_clean_log', // 건조로 청소 실적
+        EQUIP_ACTIVATED_CARBON_LOG: 'equip_activated_carbon_log', // 활성탄 교체 실적
 
         // SPC 관리 (v23)
         PROD_SPC_DATA:      'prod_spc_data',  // 도막두께/공정품질 SPC 측정 데이터
@@ -1164,6 +1165,13 @@ const DB = (function() {
                     store.createIndex('year', 'year', { unique: false });
                     store.createIndex('month', 'month', { unique: false });
                     store.createIndex('cleanKey', 'cleanKey', { unique: false });
+                    store.createIndex('date', 'date', { unique: false });
+                }
+                if (!database.objectStoreNames.contains(STORES.EQUIP_ACTIVATED_CARBON_LOG)) {
+                    const store = database.createObjectStore(STORES.EQUIP_ACTIVATED_CARBON_LOG, { keyPath: 'id' });
+                    store.createIndex('year', 'year', { unique: false });
+                    store.createIndex('month', 'month', { unique: false });
+                    store.createIndex('carbonKey', 'carbonKey', { unique: false });
                     store.createIndex('date', 'date', { unique: false });
                 }
 

@@ -16604,6 +16604,7 @@ var ProdEquipmentModule = (function() {
     const ST_AIR_FILTER = DB.STORES.EQUIP_AIR_FILTER_LOG;
     const ST_SUPPLY_FILTER = DB.STORES.EQUIP_SUPPLY_FILTER_LOG;
     const ST_DRYER_CLEAN = DB.STORES.EQUIP_DRYER_CLEAN_LOG;
+    const ST_ACTIVATED_CARBON = DB.STORES.EQUIP_ACTIVATED_CARBON_LOG;
 
     const LINES = ['도장A라인', '도장B라인', '레이져', '사출기', '공용설비'];
     const LINE_ICONS = {
@@ -16699,6 +16700,11 @@ var ProdEquipmentModule = (function() {
         '도장A라인': { rpm: 370, jigInterval: 150 },
         '도장B라인': { rpm: 320, jigInterval: 900 }
     };
+    const CONVEYOR_LINES = Object.keys(CONVEYOR_LINE_DEFAULTS);
+
+    function _normalizeConveyorLine(line) {
+        return CONVEYOR_LINES.includes(line) ? line : CONVEYOR_LINES[0];
+    }
 
     const CONVEYOR_SPEED_CONST = {
         wheelDiameterMm: 97,
@@ -16818,6 +16824,18 @@ var ProdEquipmentModule = (function() {
         { key:'dc_b_03', line:'B\nLINE', section:'#3', cycle:'2개월', planMonths:[1,3,5,7,9,11] },
         { key:'dc_b_uv', line:'B\nLINE', section:'UV실', cycle:'3개월', planMonths:[2,5,8,11] },
         { key:'dc_b_main', line:'B\nLINE', section:'MAIN', cycle:'3개월', planMonths:[2,5,8,11] }
+    ];
+
+    const ACTIVATED_CARBON_ROWS = [
+        { key:'ac_a_1', line:'A\nLINE', section:'#1 부스', cycle:'6개월', planMonths:[6,12] },
+        { key:'ac_a_2', line:'A\nLINE', section:'#2 부스', cycle:'6개월', planMonths:[6,12] },
+        { key:'ac_a_3', line:'A\nLINE', section:'#3 부스', cycle:'6개월', planMonths:[6,12] },
+        { key:'ac_a_4', line:'A\nLINE', section:'#4 부스', cycle:'6개월', planMonths:[6,12] },
+        { key:'ac_a_5', line:'A\nLINE', section:'#5 부스', cycle:'6개월', planMonths:[6,12] },
+        { key:'ac_b_1', line:'B\nLINE', section:'#1 부스', cycle:'6개월', planMonths:[6,12] },
+        { key:'ac_b_2', line:'B\nLINE', section:'#2 부스', cycle:'6개월', planMonths:[6,12] },
+        { key:'ac_b_3', line:'B\nLINE', section:'#3 부스', cycle:'6개월', planMonths:[6,12] },
+        { key:'ac_b_4', line:'B\nLINE', section:'#4 부스', cycle:'6개월', planMonths:[6,12] }
     ];
 
     const MAINTENANCE_PLAN_ROWS = [
@@ -16941,6 +16959,13 @@ var ProdEquipmentModule = (function() {
                            color:${_mode==='wastewater'?'#fff':'var(--text-secondary)'};font-weight:${_mode==='wastewater'?'600':'400'};">
                     <span class="material-symbols-outlined" style="font-size:16px;">water_drop</span> 폐수처리
                 </button>
+                <button id="modeTabActivatedCarbon" onclick="ProdEquipmentModule.switchMode('activated-carbon')"
+                    style="padding:9px 20px;border:none;border-left:1px solid var(--border-color);cursor:pointer;font-size:0.875rem;
+                           display:flex;align-items:center;gap:6px;transition:all .15s;
+                           background:${_mode==='activated-carbon'?'var(--accent-blue)':'var(--bg-secondary)'};
+                           color:${_mode==='activated-carbon'?'#fff':'var(--text-secondary)'};font-weight:${_mode==='activated-carbon'?'600':'400'};">
+                    <span class="material-symbols-outlined" style="font-size:16px;">recycling</span> 활성탄 교체
+                </button>
             </div>
 
             <div id="equipLineTabs" style="display:flex;gap:8px;margin-bottom:16px;"></div>
@@ -16971,7 +16996,8 @@ var ProdEquipmentModule = (function() {
             ['modeTabAirFilter', 'airfilter'],
             ['modeTabSupplyFilter', 'supplyfilter'],
             ['modeTabDryerClean', 'dryerclean'],
-            ['modeTabWastewater', 'wastewater']
+            ['modeTabWastewater', 'wastewater'],
+            ['modeTabActivatedCarbon', 'activated-carbon']
         ].forEach(([id, key]) => {
             const btn = document.getElementById(id);
             if (!btn) return;
@@ -17219,6 +17245,8 @@ var ProdEquipmentModule = (function() {
             _renderDryerClean();
         } else if (_mode === 'wastewater') {
             WastewaterModule._renderInTab(el);
+        } else if (_mode === 'activated-carbon') {
+            _renderActivatedCarbon();
         } else {
             _renderConveyor();
         }
@@ -17432,7 +17460,7 @@ var ProdEquipmentModule = (function() {
     function _renderLineTabs() {
         const el = document.getElementById('equipLineTabs');
         if (!el) return;
-        if (_mode === 'dashboard' || _mode === 'temperature' || _mode === 'illumination' || _mode === 'conveyor' || _mode === 'maintenance' || _mode === 'fproof' || _mode === 'airfilter' || _mode === 'supplyfilter' || _mode === 'dryerclean' || _mode === 'wastewater') {
+        if (_mode === 'dashboard' || _mode === 'temperature' || _mode === 'illumination' || _mode === 'conveyor' || _mode === 'maintenance' || _mode === 'fproof' || _mode === 'airfilter' || _mode === 'supplyfilter' || _mode === 'dryerclean' || _mode === 'wastewater' || _mode === 'activated-carbon') {
             el.style.display = 'none';
             el.innerHTML = '';
             return;
@@ -19247,6 +19275,7 @@ var ProdEquipmentModule = (function() {
     function _renderConveyor() {
         const el = document.getElementById('equipMainContent');
         if (!el) return;
+        _convLine = _normalizeConveyorLine(_convLine);
         const setting = _conveyorSetting(_convLine);
         const hasSections = _conveyorSections(_convLine).length > 0;
         el.innerHTML = `
@@ -19263,7 +19292,7 @@ var ProdEquipmentModule = (function() {
                     </p>
                 </div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
-                    ${LINES.map(line => `
+                    ${CONVEYOR_LINES.map(line => `
                         <button class="btn ${line === _convLine ? 'btn-primary' : 'btn-outline'}"
                             onclick="ProdEquipmentModule.switchConveyorLine('${line}')">
                             <span class="material-symbols-outlined">precision_manufacturing</span>${line.replace('도장','도장 ')}
@@ -19322,10 +19351,12 @@ var ProdEquipmentModule = (function() {
     }
 
     function _conveyorSections(line) {
+        line = _normalizeConveyorLine(line);
         return CONVEYOR_SECTIONS[line] || [];
     }
 
     function _conveyorSetting(line) {
+        line = _normalizeConveyorLine(line);
         const saved = (Storage.getAll(ST_CONVEYOR) || []).find(r => r._docKind === 'standard' && r.line === line);
         const merged = { ...CONVEYOR_DEFAULTS, ...(CONVEYOR_LINE_DEFAULTS[line] || {}), ...(saved || {}), line };
         merged.jigInterval = Number(merged.jigInterval ?? merged.pitch) || CONVEYOR_DEFAULTS.jigInterval;
@@ -19404,7 +19435,7 @@ var ProdEquipmentModule = (function() {
     }
 
     function switchConveyorLine(line) {
-        _convLine = line;
+        _convLine = _normalizeConveyorLine(line);
         _renderConveyor();
     }
 
@@ -20479,6 +20510,164 @@ var ProdEquipmentModule = (function() {
     }
 
     // ════════════════════════════════════════════════════════════
+    // 활성탄 교체 관리
+    // ════════════════════════════════════════════════════════════
+    function _renderActivatedCarbon() {
+        const el = document.getElementById('equipMainContent');
+        if (!el) return;
+        const year = Number(document.getElementById('acYear')?.value) || new Date().getFullYear();
+        el.innerHTML = `
+        <div class="card" style="overflow:hidden;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:16px;border-bottom:2px solid #111827;background:#fff;">
+                <div>
+                    <h4 style="margin:0;font-size:1.55rem;font-weight:900;letter-spacing:.04em;text-decoration:underline;text-underline-offset:4px;">
+                        ${year}년도 활성탄 교체 계획/실적
+                    </h4>
+                    <p style="margin:6px 0 0;font-size:.78rem;color:var(--text-muted);">범례: 계획 ○, 실적 V, 날짜기록</p>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <input type="number" class="form-input" id="acYear" value="${year}" min="2020" max="2100"
+                        onchange="ProdEquipmentModule.renderActivatedCarbon()" style="width:98px;">
+                    <button class="btn btn-outline" onclick="ProdEquipmentModule.exportActivatedCarbon()">
+                        <span class="material-symbols-outlined">download</span>CSV
+                    </button>
+                </div>
+            </div>
+            <div style="padding:12px 14px;">
+                ${_activatedCarbonTable(year)}
+                <div style="display:grid;grid-template-columns:180px 1fr;border:2px solid #111827;border-top:none;background:#fff;">
+                    <div style="padding:14px;border-right:1px solid #111827;text-align:center;font-weight:900;">관리자확인</div>
+                    <div style="padding:14px;color:var(--text-muted);font-size:.82rem;">계획월에는 ○가 표시되며, 실적 입력 시 V와 교체일자가 함께 기록됩니다.</div>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    function _activatedCarbonTable(year) {
+        const logs = (Storage.getAll(ST_ACTIVATED_CARBON) || []).filter(r => Number(r.year) === Number(year));
+        const byKey = {};
+        logs.forEach(r => { byKey[`${r.carbonKey}_${r.month}`] = r; });
+        const months = Array.from({length:12}, (_,i)=>i+1);
+        const lineCounts = {};
+        ACTIVATED_CARBON_ROWS.forEach(r => { lineCounts[r.line] = (lineCounts[r.line] || 0) + 1; });
+        const seenLine = new Set();
+        return `
+        <div class="data-table-wrapper" style="overflow:auto;border:2px solid #111827;">
+            <table class="data-table" style="min-width:1260px;border-collapse:collapse;table-layout:fixed;font-size:.78rem;">
+                <thead>
+                    <tr>
+                        <th colspan="2" style="width:150px;border:1px solid #111827;background:#d9d9d9;">구 분</th>
+                        <th style="width:64px;border:1px solid #111827;background:#d9d9d9;">교체<br>주기</th>
+                        ${months.map(m=>`<th style="width:78px;border:1px solid #111827;background:#d9d9d9;">${m}월</th>`).join('')}
+                    </tr>
+                </thead>
+                <tbody>
+                    ${ACTIVATED_CARBON_ROWS.map(r => {
+                        const firstLine = !seenLine.has(r.line);
+                        seenLine.add(r.line);
+                        return `
+                        <tr>
+                            ${firstLine ? `<td rowspan="${lineCounts[r.line]}" style="border:1px solid #111827;text-align:center;font-weight:900;white-space:pre-line;">${_esc(r.line)}</td>` : ''}
+                            <td style="border:1px solid #111827;text-align:center;white-space:pre-line;font-weight:700;">${_esc(r.section)}</td>
+                            <td style="border:1px solid #111827;text-align:center;font-weight:800;">${_esc(r.cycle)}</td>
+                            ${months.map(m => {
+                                const rec = byKey[`${r.key}_${m}`];
+                                const planned = r.planMonths.includes(m);
+                                return `<td onclick="ProdEquipmentModule.openActivatedCarbonModal('${r.key}', ${m})"
+                                    style="border:1px solid #111827;text-align:center;cursor:pointer;background:${rec ? '#f0fdf4' : '#fff'};height:48px;">
+                                    <div style="font-size:1rem;line-height:1;color:${rec ? 'var(--accent-green)' : '#111827'};">${rec ? 'V' : planned ? '○' : ''}</div>
+                                    ${rec ? `<div style="font-size:.62rem;color:var(--text-muted);line-height:1.15;margin-top:3px;">${_esc((rec.date||'').slice(5))}</div>` : ''}
+                                </td>`;
+                            }).join('')}
+                        </tr>`;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>`;
+    }
+
+    function openActivatedCarbonModal(carbonKey, month) {
+        const year = Number(document.getElementById('acYear')?.value) || new Date().getFullYear();
+        const item = ACTIVATED_CARBON_ROWS.find(r => r.key === carbonKey) || ACTIVATED_CARBON_ROWS[0];
+        const existing = (Storage.getAll(ST_ACTIVATED_CARBON) || []).find(r => Number(r.year) === year && Number(r.month) === Number(month) && r.carbonKey === carbonKey);
+        UIUtils.showModal('활성탄 교체 실적', _activatedCarbonForm(existing, item, year, month), `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            ${existing ? `<button class="btn btn-danger" onclick="ProdEquipmentModule.removeActivatedCarbon('${existing.id}')">삭제</button>` : ''}
+            <button class="btn btn-primary" onclick="ProdEquipmentModule.saveActivatedCarbon('${existing ? existing.id : ''}')">저장</button>
+        `, 'md');
+    }
+
+    function _activatedCarbonForm(r, item, year, month) {
+        r = r || {};
+        return `
+        <input type="hidden" id="acCarbonKey" value="${item.key}">
+        <input type="hidden" id="acYearHidden" value="${year}">
+        <input type="hidden" id="acMonthHidden" value="${month}">
+        <div style="padding:10px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);margin-bottom:12px;">
+            <div style="font-weight:900;white-space:pre-line;">${_esc(item.line)} / ${_esc(item.section)}</div>
+            <div style="font-size:.78rem;color:var(--text-muted);margin-top:3px;">교체주기 ${_esc(item.cycle)} · 계획월 ${item.planMonths.map(m=>`${m}월`).join(', ') || '-'}</div>
+        </div>
+        <div class="form-row">
+            <div class="form-group"><label class="form-label">교체일</label>
+                <input type="date" class="form-input" id="acDate" value="${r.date || `${year}-${String(month).padStart(2,'0')}-01`}"></div>
+            <div class="form-group"><label class="form-label">작업자</label>
+                <input class="form-input" id="acWorker" value="${_esc(r.worker || '')}"></div>
+        </div>
+        <div class="form-row">
+            <div class="form-group"><label class="form-label">결과</label>
+                <select class="form-select" id="acResult">
+                    ${['교체완료','점검완료','보류','이상'].map(v=>`<option ${(r.result||'교체완료')===v?'selected':''}>${v}</option>`).join('')}
+                </select></div>
+            <div class="form-group"><label class="form-label">차기 교체 예정월</label>
+                <input type="month" class="form-input" id="acNextMonth" value="${_esc(r.nextMonth || '')}"></div>
+        </div>
+        <div class="form-group"><label class="form-label">비고</label>
+            <textarea class="form-textarea" id="acNote" rows="3">${_esc(r.note || '')}</textarea></div>`;
+    }
+
+    async function saveActivatedCarbon(id) {
+        const key = document.getElementById('acCarbonKey').value;
+        const item = ACTIVATED_CARBON_ROWS.find(r => r.key === key) || ACTIVATED_CARBON_ROWS[0];
+        const data = {
+            year: Number(document.getElementById('acYearHidden').value),
+            month: Number(document.getElementById('acMonthHidden').value),
+            carbonKey: key,
+            line: item.line,
+            section: item.section,
+            cycle: item.cycle,
+            date: document.getElementById('acDate').value,
+            worker: document.getElementById('acWorker').value.trim(),
+            result: document.getElementById('acResult').value,
+            nextMonth: document.getElementById('acNextMonth').value,
+            note: document.getElementById('acNote').value.trim()
+        };
+        if (id) await Storage.update(ST_ACTIVATED_CARBON, id, data);
+        else await Storage.add(ST_ACTIVATED_CARBON, data);
+        UIUtils.closeModal();
+        UIUtils.toast('활성탄 교체 실적이 저장되었습니다.', 'success');
+        _renderActivatedCarbon();
+    }
+
+    function removeActivatedCarbon(id) {
+        UIUtils.confirm('활성탄 교체 실적을 삭제하시겠습니까?', async () => {
+            await Storage.remove(ST_ACTIVATED_CARBON, id);
+            UIUtils.closeModal();
+            _renderActivatedCarbon();
+        });
+    }
+
+    function exportActivatedCarbon() {
+        const year = Number(document.getElementById('acYear')?.value) || new Date().getFullYear();
+        const rows = (Storage.getAll(ST_ACTIVATED_CARBON) || []).filter(r => Number(r.year) === year)
+            .map(r => [r.year, r.month, r.line, r.section, r.cycle, r.date, r.worker || '', r.result || '', r.nextMonth || '', r.note || '']);
+        Storage.exportToCSV(['년도','월','라인','구분','교체주기','교체일','작업자','결과','차기교체예정월','비고'], rows, `ACTIVATED_CARBON_${year}`);
+    }
+
+    function renderActivatedCarbon() {
+        _renderActivatedCarbon();
+    }
+
+    // ════════════════════════════════════════════════════════════
     // SQ 점검관리 — 메인 렌더
     // ════════════════════════════════════════════════════════════
     function _renderSQ() {
@@ -21337,6 +21526,11 @@ var ProdEquipmentModule = (function() {
         removeDryerClean,
         exportDryerClean,
         renderDryerClean,
+        openActivatedCarbonModal,
+        saveActivatedCarbon,
+        removeActivatedCarbon,
+        exportActivatedCarbon,
+        renderActivatedCarbon,
         renderTemperatureProfile: _renderTemperatureProfile,
         openTempProfileModal,
         saveTempProfile,

@@ -16693,6 +16693,11 @@ var ProdEquipmentModule = (function() {
         '도장A라인': { rpm: 370, jigInterval: 150 },
         '도장B라인': { rpm: 320, jigInterval: 900 }
     };
+    const CONVEYOR_LINES = Object.keys(CONVEYOR_LINE_DEFAULTS);
+
+    function _normalizeConveyorLine(line) {
+        return CONVEYOR_LINES.includes(line) ? line : CONVEYOR_LINES[0];
+    }
 
     const CONVEYOR_SPEED_CONST = {
         wheelDiameterMm: 97,
@@ -19241,6 +19246,7 @@ var ProdEquipmentModule = (function() {
     function _renderConveyor() {
         const el = document.getElementById('equipMainContent');
         if (!el) return;
+        _convLine = _normalizeConveyorLine(_convLine);
         const setting = _conveyorSetting(_convLine);
         const hasSections = _conveyorSections(_convLine).length > 0;
         el.innerHTML = `
@@ -19257,7 +19263,7 @@ var ProdEquipmentModule = (function() {
                     </p>
                 </div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
-                    ${LINES.map(line => `
+                    ${CONVEYOR_LINES.map(line => `
                         <button class="btn ${line === _convLine ? 'btn-primary' : 'btn-outline'}"
                             onclick="ProdEquipmentModule.switchConveyorLine('${line}')">
                             <span class="material-symbols-outlined">precision_manufacturing</span>${line.replace('도장','도장 ')}
@@ -19316,10 +19322,12 @@ var ProdEquipmentModule = (function() {
     }
 
     function _conveyorSections(line) {
+        line = _normalizeConveyorLine(line);
         return CONVEYOR_SECTIONS[line] || [];
     }
 
     function _conveyorSetting(line) {
+        line = _normalizeConveyorLine(line);
         const saved = (Storage.getAll(ST_CONVEYOR) || []).find(r => r._docKind === 'standard' && r.line === line);
         const merged = { ...CONVEYOR_DEFAULTS, ...(CONVEYOR_LINE_DEFAULTS[line] || {}), ...(saved || {}), line };
         merged.jigInterval = Number(merged.jigInterval ?? merged.pitch) || CONVEYOR_DEFAULTS.jigInterval;
@@ -19398,7 +19406,7 @@ var ProdEquipmentModule = (function() {
     }
 
     function switchConveyorLine(line) {
-        _convLine = line;
+        _convLine = _normalizeConveyorLine(line);
         _renderConveyor();
     }
 
