@@ -690,16 +690,23 @@ var ImprovementActivityModule = (function() {
             ? `<button class="btn btn-primary" style="background:#10b981;border-color:#10b981;" onclick="ImprovementActivityModule.completePdca('${_js(r.id||'')}')">완료 처리</button>`
             : `<button class="btn btn-primary" onclick="ImprovementActivityModule.nextPdcaStage('${_js(r.id||'')}')">다음 단계 →</button>`;
 
+        const prevBtn = stepIdx > 0
+            ? `<button class="btn btn-outline" onclick="ImprovementActivityModule.prevPdcaStage('${_js(r.id||'')}')">← 이전 단계</button>`
+            : '';
+
         const canEdit = stage !== 'plan' || !r.recipientRef || isRecipient || isAdmin;
 
         return `<div class="card" style="border-left:3px solid ${step.color};"><div class="card-body">
             <h4 style="margin-top:0;">PDCA 진행${r.recipient && stage === 'plan' ? `<span style="font-size:.78rem;font-weight:400;color:var(--text-muted);margin-left:10px;">계획 담당: ${_esc(r.recipient)}</span>` : ''}</h4>
             ${progressBar}
             ${fields}
-            ${canEdit ? `<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
-                <button class="btn btn-secondary" onclick="ImprovementActivityModule.savePdca('${_js(r.id||'')}')">저장</button>
-                ${actionBtns}
-            </div>` : ''}
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;">
+                <div>${prevBtn}</div>
+                ${canEdit ? `<div style="display:flex;gap:8px;">
+                    <button class="btn btn-secondary" onclick="ImprovementActivityModule.savePdca('${_js(r.id||'')}')">저장</button>
+                    ${actionBtns}
+                </div>` : '<div></div>'}
+            </div>
         </div></div>`;
     }
 
@@ -833,6 +840,20 @@ var ImprovementActivityModule = (function() {
         openDetail(id);
     }
 
+    async function prevPdcaStage(id) {
+        const old = Storage.getById(STORE, id);
+        const curIdx = PDCA_STEPS.findIndex(s => s.key === (old?.pdcaStage || 'plan'));
+        if (curIdx <= 0) return;
+        const prev = PDCA_STEPS[curIdx - 1];
+        await Storage.update(STORE, id, {
+            pdcaStage: prev.key,
+            status: prev.status,
+            updatedAt: new Date().toISOString()
+        });
+        render(document.getElementById('contentArea'));
+        openDetail(id);
+    }
+
     async function completePdca(id) {
         const old = Storage.getById(STORE, id);
         const { patch } = _getPdcaPatch(old);
@@ -854,5 +875,5 @@ var ImprovementActivityModule = (function() {
         Storage.exportToCSV(['등록일','제안자','구분','공정','제목','PDCA','상태','승인','실행업무자','예정일','목표','효과','비용'], rows, '개선활동');
     }
 
-    return { render, setFilter, setMonth, selectPerson, openProposalModal, saveProposal, openDetail, vote, setApproval, savePdca, nextPdcaStage, completePdca, remove, exportData };
+    return { render, setFilter, setMonth, selectPerson, openProposalModal, saveProposal, openDetail, vote, setApproval, savePdca, nextPdcaStage, prevPdcaStage, completePdca, remove, exportData };
 })();
