@@ -3806,7 +3806,7 @@ window.addEventListener('load', function() {
         { keys: ['건조','oven','ir존','uv존','열풍','경화'],                                       sys: '건조'          },
         { keys: ['언로딩','unloading','unload'],                                                   sys: '언로딩'        },
         { keys: ['포장','packing','packaging','pack'],                                             sys: '포장'          },
-        { keys: ['도장검사','외관검사','finish검사'],                                             sys: '도장 검사'     },
+        { keys: ['도장검사','외관검사','finish검사'],                                             sys: '외관 검사'     },
         // ── 레이져 하위 ──────────────────────────────────────────────
         { keys: ['레이져','레이저','laser','lase','마킹','marking'],                               sys: '레이져'        },
         { keys: ['공정검사','공정 검사','레이져검사','laser검사','lasercheck'],                    sys: '공정 검사'     },

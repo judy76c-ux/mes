@@ -112,7 +112,7 @@ var ProdStandardsModule = (function() {
                 '건조':      100,
                 '언로딩':    110,
                 '포장':      110,
-                '도장 검사': 120,
+                '외관 검사': 120,
             },
             stations: {
                 '로딩': [
@@ -177,7 +177,7 @@ var ProdStandardsModule = (function() {
                     { key:'ul_speed',  label:'컨베이어 속도', itemType:'proc', unit:'Hz',  special:'',  spec:'',  method:'육안',   cycle:'' },
                     { key:'ul_cool',   label:'냉각 시간',     itemType:'proc', unit:'min', special:'',  spec:'',  method:'타이머', cycle:'' },
                 ],
-                '도장 검사': [
+                '외관 검사': [
                     { key:'ins_app',   label:'외관',      itemType:'prod', unit:'-',   special:'',  spec:'',  method:'육안',     cycle:'' },
                     { key:'ins_thick', label:'도막 두께', itemType:'prod', unit:'μm',  special:'',  spec:'',  method:'도막 두께계', cycle:'' },
                     { key:'ins_adh',   label:'밀착력',    itemType:'prod', unit:'등급',special:'',  spec:'',  method:'크로스컷', cycle:'' },
@@ -208,7 +208,7 @@ var ProdStandardsModule = (function() {
                 '건조':      100,
                 '언로딩':    110,
                 '포장':      110,
-                '도장 검사': 120,
+                '외관 검사': 120,
             },
             stations: {
                 '로딩': [
@@ -273,7 +273,7 @@ var ProdStandardsModule = (function() {
                     { key:'ul_speed',  label:'컨베이어 속도', itemType:'proc', unit:'Hz',  special:'',  spec:'',  method:'육안',   cycle:'' },
                     { key:'ul_cool',   label:'냉각 시간',     itemType:'proc', unit:'min', special:'',  spec:'',  method:'타이머', cycle:'' },
                 ],
-                '도장 검사': [
+                '외관 검사': [
                     { key:'ins_app',   label:'외관',      itemType:'prod', unit:'-',   special:'',  spec:'',  method:'육안',     cycle:'' },
                     { key:'ins_thick', label:'도막 두께', itemType:'prod', unit:'μm',  special:'',  spec:'',  method:'도막 두께계', cycle:'' },
                     { key:'ins_adh',   label:'밀착력',    itemType:'prod', unit:'등급',special:'',  spec:'',  method:'크로스컷', cycle:'' },
@@ -367,7 +367,7 @@ var ProdStandardsModule = (function() {
             icon: 'layers',
             desc: '하도/상도 스프레이 공정의 도막두께 기준을 관리계획서 항목과 연결합니다.',
             columns: [
-                { key:'process', label:'연결 공정', type:'select', options:['하도 스프레이','상도 스프레이','스프레이1','스프레이2','도장 검사','출하검사'] },
+                { key:'process', label:'연결 공정', type:'select', options:['하도 스프레이','상도 스프레이','스프레이1','스프레이2','외관 검사','출하검사'] },
                 { key:'layer', label:'구분', type:'select', options:['하도','상도','전체'] },
                 { key:'target', label:'목표 두께' },
                 { key:'min', label:'하한' },
@@ -384,7 +384,7 @@ var ProdStandardsModule = (function() {
             icon: 'palette',
             desc: '차종별 색차와 광택 판정 기준을 관리계획서 색상/검사 항목과 연결합니다.',
             columns: [
-                { key:'process', label:'연결 공정', type:'select', options:['도장 검사','출하검사','도료 입고','상도 스프레이'] },
+                { key:'process', label:'연결 공정', type:'select', options:['외관 검사','출하검사','도료 입고','상도 스프레이'] },
                 { key:'standardColor', label:'표준색/시편' },
                 { key:'deltaE', label:'ΔE 기준' },
                 { key:'lRange', label:'L* 범위' },
@@ -963,8 +963,7 @@ var ProdStandardsModule = (function() {
             { station: '하도 스프레이', standards: [film, drying] },
             { station: '상도 스프레이', standards: [film, drying] },
             { station: '건조', standards: [drying] },
-            { station: '도장 검사', standards: [film, color] },
-            { station: '외관 검사', standards: [color] },
+            { station: '외관 검사', standards: [film, color] },
         ];
 
         const groups = [
@@ -1002,7 +1001,8 @@ var ProdStandardsModule = (function() {
     }
 
     function _processStandardStationKey(process, station) {
-        return `${process || ''}||${station || ''}`;
+        const normalizedStation = station === '도장 검사' ? '외관 검사' : station;
+        return `${process || ''}||${normalizedStation || ''}`;
     }
 
     function _withProcessStandardMenuIds(groups) {
@@ -3806,7 +3806,7 @@ window.addEventListener('load', function() {
         { keys: ['건조','oven','ir존','uv존','열풍','경화'],                                       sys: '건조'          },
         { keys: ['언로딩','unloading','unload'],                                                   sys: '언로딩'        },
         { keys: ['포장','packing','packaging','pack'],                                             sys: '포장'          },
-        { keys: ['도장검사','외관검사','finish검사'],                                             sys: '도장 검사'     },
+        { keys: ['도장검사','외관검사','finish검사'],                                             sys: '외관 검사'     },
         // ── 레이져 하위 ──────────────────────────────────────────────
         { keys: ['레이져','레이저','laser','lase','마킹','marking'],                               sys: '레이져'        },
         { keys: ['공정검사','공정 검사','레이져검사','laser검사','lasercheck'],                    sys: '공정 검사'     },
