@@ -923,6 +923,103 @@ var ProdStandardsModule = (function() {
             .reduce((sum, r) => sum + Math.max(1, r.rows.length), 0);
     }
 
+    function _processStandardLayout() {
+        const linked = (key, label, icon, desc, accent) => ({
+            label, icon, desc, accent,
+            count: _standardRecordCount(key),
+            action: `ProdStandardsModule.selectDocType('${key}')`,
+            badge: '등록형'
+        });
+        const page = (pageId, label, icon, desc, accent) => ({
+            label, icon, desc, accent,
+            count: null,
+            action: `Router.navigate('${pageId}')`,
+            badge: '편집가능'
+        });
+        const mix = page('paint-mix', '배합 기준서', 'science', '제품별 도료 배합비, 도료 사용량 기준, 배합 이력 관리', '#2563eb');
+        const usage = linked('paint-usage', '사용량 기준표', 'straighten', '제품별 도료 사용량 기준표', '#0d9488');
+        const film = linked('film-thickness', '도막두께 기준서', 'layers', '하도/상도 스프레이 및 검사 공정 도막두께 기준', '#2563eb');
+        const color = linked('color-gloss', '색차/광택 기준서', 'palette', '색차, 광택 판정 기준과 측정 방법', '#7c3aed');
+        const mesh = linked('filter-mesh', '여과망 기준서', 'filter_alt', '도료 여과망 사양, 적용 위치, 교체주기', '#0e7490');
+        const paji = page('paji-std', '제품 파지 기준서', 'back_hand', '로딩 공정 파지 위치와 도장면 접촉 방지 기준', '#16a34a');
+        const wash = page('wash-consumable', '세척 소모품 관리 기준서', 'cleaning_services', '세척 소모품 교체 주기, 사용 방법, 폐기 기준', '#0e7490');
+        const drying = page('drying-std', '건조 및 셋팅룸 온도 기준서', 'local_fire_department', 'Flash Off / Main Oven 온도와 컨베이어 속도 기준', '#b45309');
+        const robot = page('robot-pg-std', '레이져 프로그램 기준서', 'precision_manufacturing', '레이져 각인 프로그램명, 컨트롤러 번호, 스핀들 속도 기준', '#7c3aed');
+        const agit = page('agit-std', '교반시간 작업기준서', 'blender', '도료 종류별 교반 시간, RPM, 교반 순서 기준', '#d97706');
+        const remain = page('remain-paint', '잔여도료 작업기준서', 'format_color_fill', '잔여 도료 라벨, 사용기한, 포장 방법 기준', '#7c3aed');
+        const viscosity = page('viscosity-std', '점도 측정 작업기준서', 'speed', '점도계 사용법, 측정 절차, 점도 조정 기준', '#0891b2');
+        const injectColor = page('inject-color-std', '사출컬러 기준서', 'palette', '사출품 COLOR 기준과 실사 사진 관리', '#0ea5e9');
+
+        const paintStations = [
+            { station: '로딩', standards: [paji] },
+            { station: '세척', standards: [wash] },
+            { station: '배합', standards: [mix, usage, agit, viscosity, mesh, remain] },
+            { station: '하도 공급', standards: [mesh] },
+            { station: '상도 공급', standards: [mesh] },
+            { station: '하도 스프레이', standards: [film, drying] },
+            { station: '상도 스프레이', standards: [film, drying] },
+            { station: '건조', standards: [drying] },
+            { station: '도장 검사', standards: [film, color] },
+            { station: '외관 검사', standards: [color] },
+        ];
+
+        return [
+            { process: '수입검사', icon: 'inventory_2', stations: [
+                { station: '도료 입고', standards: [color, mesh] },
+                { station: '사출소재 입고', standards: [injectColor] },
+            ] },
+            { process: '도장(A)', icon: 'format_paint', stations: paintStations },
+            { process: '도장(B)', icon: 'format_paint', stations: paintStations },
+            { process: '레이져', icon: 'bolt', stations: [
+                { station: '각인', standards: [robot] },
+                { station: '레이져 검사', standards: [color] },
+            ] },
+            { process: '출하검사', icon: 'fact_check', stations: [
+                { station: '출하검사', standards: [film, color] },
+            ] },
+        ];
+    }
+
+    function _renderProcessStandardStatus() {
+        const renderStd = std => `
+            <button onclick="${std.action}"
+                style="text-align:left;border:1px solid var(--border-color);border-left:4px solid ${std.accent};
+                       border-radius:8px;background:var(--bg-primary);padding:10px 11px;cursor:pointer;min-height:76px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
+                    <span style="display:flex;align-items:center;gap:7px;font-weight:850;color:var(--text-primary);font-size:.82rem;">
+                        <span class="material-symbols-outlined" style="font-size:19px;color:${std.accent};">${std.icon}</span>
+                        ${std.label}
+                    </span>
+                    <span style="font-size:.66rem;background:${std.accent};color:#fff;border-radius:4px;padding:2px 6px;font-weight:800;white-space:nowrap;">
+                        ${std.count == null ? std.badge : `${std.count.toLocaleString()}건`}
+                    </span>
+                </div>
+                <div style="font-size:.72rem;color:var(--text-muted);line-height:1.38;">${std.desc}</div>
+            </button>`;
+
+        return _processStandardLayout().map(group => `
+            <section style="border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary);overflow:hidden;">
+                <div style="display:flex;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid var(--border-color);">
+                    <span class="material-symbols-outlined" style="font-size:20px;color:var(--accent-blue);">${group.icon}</span>
+                    <div style="font-weight:900;color:var(--text-primary);">${group.process}</div>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:10px;padding:12px;">
+                    ${group.stations.map(st => `
+                        <div style="display:grid;grid-template-columns:140px minmax(0,1fr);gap:10px;align-items:start;">
+                            <div style="font-size:.8rem;font-weight:900;color:var(--text-secondary);padding:9px 10px;
+                                        border-radius:8px;background:var(--bg-primary);border:1px solid var(--border-color);">
+                                ${st.station}
+                            </div>
+                            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;">
+                                ${st.standards.map(renderStd).join('')}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </section>
+        `).join('');
+    }
+
     function _renderStandardsSummary(container) {
         if (window.Router && typeof Router.setPageTitle === 'function') {
             Router.setPageTitle('제조 관리 표준');
@@ -967,11 +1064,8 @@ var ProdStandardsModule = (function() {
                         <div style="font-size:2rem;font-weight:900;color:var(--text-primary);">${cpProductCount.toLocaleString()}</div>
                         <div style="font-size:.82rem;color:var(--text-muted);">등록 품목 수 · 관리항목 ${cpRows.length.toLocaleString()}건</div>
                         <div style="display:flex;gap:8px;margin-top:auto;">
-                            <button style="${actionBtn}flex:1;" onclick="ProdStandardsModule.selectDocType('${DOC_CONTROL_PLAN}')">
-                                관리계획서
-                            </button>
                             <button style="${actionBtn}flex:1;" onclick="ProdStandardsModule.selectDocType('${DOC_CP_STATUS}')">
-                                등록 현황
+                                관리계획서현황
                             </button>
                         </div>
                     </div>
@@ -997,7 +1091,10 @@ var ProdStandardsModule = (function() {
                         </h3>
                     </div>
                     <div class="card-body">
-                        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
+                        <div style="display:flex;flex-direction:column;gap:12px;">
+                            ${_renderProcessStandardStatus()}
+                        </div>
+                        <div style="display:none;">
                             ${standardCards.map(card => `
                                 <button onclick="ProdStandardsModule.selectDocType('${card.key}')"
                                     style="text-align:left;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);padding:15px;cursor:pointer;">
@@ -1464,17 +1561,11 @@ var ProdStandardsModule = (function() {
         }));
         return `
             <div style="display:flex; gap:8px; flex-wrap:wrap; margin:0 0 14px;">
-                <button class="btn ${_curDocType === DOC_CONTROL_PLAN ? 'btn-primary' : 'btn-outline'} btn-sm"
-                    onclick="ProdStandardsModule.selectDocType('${DOC_CONTROL_PLAN}')"
-                    style="display:flex; align-items:center; gap:5px;">
-                    <span class="material-symbols-outlined" style="font-size:16px;">description</span>
-                    관리계획서
-                </button>
                 <button class="btn ${_curDocType === DOC_CP_STATUS ? 'btn-primary' : 'btn-outline'} btn-sm"
                     onclick="ProdStandardsModule.selectDocType('${DOC_CP_STATUS}')"
                     style="display:flex; align-items:center; gap:5px;">
                     <span class="material-symbols-outlined" style="font-size:16px;">fact_check</span>
-                    CP 등록 현황
+                    관리계획서현황
                 </button>
                 <button class="btn btn-outline btn-sm"
                     onclick="Router.navigate('work-standard')"
