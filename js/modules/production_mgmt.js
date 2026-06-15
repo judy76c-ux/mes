@@ -13327,6 +13327,10 @@ var ProdQualityModule = (function() {
     let _pqSpecDragSrc = null;
 
     function _pqSpecDragStart(e) {
+        if (e.target && (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.closest('button'))) {
+            e.preventDefault();
+            return;
+        }
         _pqSpecDragSrc = e.currentTarget;
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', '');
@@ -15327,6 +15331,10 @@ var ProdQualityModule = (function() {
     let _pqDragSrcRow = null;
 
     function _pqPresetDragStart(e) {
+        if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON' || e.target.closest('button'))) {
+            e.preventDefault();
+            return;
+        }
         _pqDragSrcRow = e.currentTarget;
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', '');
