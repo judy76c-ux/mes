@@ -185,8 +185,8 @@ var ImprovementActivityModule = (function() {
         }</div>`;
     }
 
-    function setFilter(key, value) { state[key] = value; render(document.getElementById('pageContent')); }
-    function setMonth(value) { state.month = value || state.month; render(document.getElementById('pageContent')); }
+    function setFilter(key, value) { state[key] = value; render(document.getElementById('contentArea')); }
+    function setMonth(value) { state.month = value || state.month; render(document.getElementById('contentArea')); }
 
     function _peopleList() {
         const users = typeof AuthModule !== 'undefined' ? (AuthModule.getUsers() || []) : [];
@@ -353,7 +353,7 @@ var ImprovementActivityModule = (function() {
         if (id) await Storage.update(STORE, id, data); else await Storage.add(STORE, data);
         UIUtils.closeModal();
         UIUtils.toast('개선활동 제안이 저장되었습니다.', 'success');
-        render(document.getElementById('pageContent'));
+        render(document.getElementById('contentArea'));
     }
 
     function _ownerOptions(selected) {
@@ -620,7 +620,7 @@ var ImprovementActivityModule = (function() {
         await Storage.update(STORE, id, patch);
         if (newOwner && newOwner !== (old?.owner || '')) await _notifyOwner(old || {}, newOwner);
         UIUtils.toast('저장되었습니다.', 'success');
-        render(document.getElementById('pageContent'));
+        render(document.getElementById('contentArea'));
         openDetail(id);
     }
 
@@ -635,7 +635,7 @@ var ImprovementActivityModule = (function() {
         }
         await Storage.update(STORE, id, patch);
         if (newOwner && newOwner !== (old?.owner || '')) await _notifyOwner(old || {}, newOwner);
-        render(document.getElementById('pageContent'));
+        render(document.getElementById('contentArea'));
         openDetail(id);
     }
 
@@ -647,12 +647,12 @@ var ImprovementActivityModule = (function() {
         await Storage.update(STORE, id, patch);
         UIUtils.closeModal();
         UIUtils.toast('개선활동이 완료 처리되었습니다.', 'success');
-        render(document.getElementById('pageContent'));
+        render(document.getElementById('contentArea'));
     }
     function remove(id) {
         UIUtils.confirm('개선활동 기록을 삭제하시겠습니까?', async () => {
             await Storage.remove(STORE, id);
-            render(document.getElementById('pageContent'));
+            render(document.getElementById('contentArea'));
         });
     }
     function exportData() {
