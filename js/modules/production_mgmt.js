@@ -14170,11 +14170,14 @@ var ProdQualityModule = (function() {
         const resolvedColor = _resolveIssueColor(d.carModel || '', d.partName || '', d.color || '');
         const timeParts = _issueTimeParts(d);
         const duration = d.workHours || _durationHours(timeParts.startTime, timeParts.endTime);
-        const shouldLoadItems = !!(d.items && d.items.length) || !!(d.carModel && d.partName);
-        const items = shouldLoadItems ? _sortItemsByMaster((d.items && d.items.length
-            ? d.items
-            : _issueItemsForProduct(d.carModel || '', d.partName || '', resolvedColor, []))
-            .map(item => _normalizeItemForEdit({ ...item }))) : [];
+        const shouldLoadItems = !!(d.carModel && d.partName);
+        // 항상 현재 템플릿 기반으로 항목을 가져오고, 저장된 측정값(d.items)은 병합만 함
+        const templateItems = shouldLoadItems
+            ? _issueItemsForProduct(d.carModel || '', d.partName || '', resolvedColor, [])
+            : (d.items || []);
+        const items = templateItems.length
+            ? _sortItemsByMaster(_mergeIssueItems(templateItems, d.items || []).map(item => _normalizeItemForEdit({ ...item })))
+            : [];
         const compactGridTop = 'display:grid;grid-template-columns:0.9fr 1fr 1.6fr;gap:8px 12px;margin-bottom:8px;';
         const compactGrid = 'display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 12px;margin-bottom:8px;';
         const compactField = 'display:flex;align-items:center;gap:7px;min-width:0;';
