@@ -489,7 +489,7 @@ var ImprovementActivityModule = (function() {
         return `<div class="card"><div class="card-body"><h4 style="margin-top:0;">첨부 사진</h4><div style="display:flex;gap:10px;flex-wrap:wrap;">${imgs}</div></div></div>`;
     }
 
-    function _participantCheckboxes(selected) {
+    function _participantCheckboxes(selected, prefix = '') {
         const sel = Array.isArray(selected) ? selected : [];
         const people = _peopleList();
         if (!people.length) return '<span style="font-size:.8rem;color:var(--text-muted);">등록된 사용자 없음</span>';
@@ -506,6 +506,12 @@ var ImprovementActivityModule = (function() {
     function _collectParticipants() {
         const box = document.getElementById('iaParticipantsBox');
         if (!box) return [];
+        return Array.from(box.querySelectorAll('input[type=checkbox]:checked')).map(cb => cb.value);
+    }
+
+    function _collectDoParticipants() {
+        const box = document.getElementById('iaDoParticipantsBox');
+        if (!box) return null;
         return Array.from(box.querySelectorAll('input[type=checkbox]:checked')).map(cb => cb.value);
     }
 
@@ -548,7 +554,7 @@ var ImprovementActivityModule = (function() {
             }
             if (stepIdx > 1) {
                 const doParts = [
-                    r.actionPlan && `<b>실행 내용:</b> ${_esc(r.actionPlan)}`,
+                    r.doParticipants?.length && `<b>실제 참여자:</b> ${r.doParticipants.map(_esc).join(', ')}`,
                     r.doActions  && `<b>실행/개선 실시:</b> ${_esc(r.doActions)}`,
                     r.result     && `<b>수집 데이터:</b> ${_esc(r.result)}`
                 ].filter(Boolean);
@@ -642,6 +648,12 @@ var ImprovementActivityModule = (function() {
                 </div>` : '';
             }).join('');
             fields += `
+                <div class="form-group"><label class="form-label">실제 참여자</label>
+                    <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:6px;">계획과 다를 수 있습니다. 실제 참여한 인원을 선택하세요.</div>
+                    <div id="iaDoParticipantsBox" style="display:flex;flex-wrap:wrap;gap:6px;padding:8px;border:1px solid var(--border-color);border-radius:8px;min-height:42px;background:var(--bg-secondary);">
+                        ${_participantCheckboxes(r.doParticipants || r.participants || [], 'do')}
+                    </div>
+                </div>
                 <div class="form-group"><label class="form-label">실행/개선 실시 사항 <span style="color:var(--accent-red)">*</span></label>
                     <textarea class="form-textarea" id="iaDoActions" rows="3" placeholder="실제 실행하거나 개선한 내용을 구체적으로 기록">${_esc(r.doActions||'')}</textarea>
                 </div>
@@ -761,6 +773,8 @@ var ImprovementActivityModule = (function() {
         if (trim('iaSustain') !== null) patch.sustainCheck = trim('iaSustain');
         const participants = _collectParticipants();
         if (participants.length || document.getElementById('iaParticipantsBox')) patch.participants = participants;
+        const doParticipants = _collectDoParticipants();
+        if (doParticipants !== null) patch.doParticipants = doParticipants;
         return { patch, newOwner };
     }
 

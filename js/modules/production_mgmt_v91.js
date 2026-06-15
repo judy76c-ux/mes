@@ -476,11 +476,13 @@ var ProdStandardsModule = (function() {
     }
 
     function _findCpFlowRecord(carModel, partName) {
-        return (Storage.getAll(STORE) || []).find(r =>
+        const records = (Storage.getAll(STORE) || []).filter(r =>
             r._docKind === CP_FLOW_DOC_KIND &&
             r.carModel === carModel &&
             r.partName === partName
-        ) || null;
+        );
+        records.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+        return records[0] || null;
     }
 
     function _cpFlowParamSelectionKey(step) {
@@ -1124,7 +1126,6 @@ var ProdStandardsModule = (function() {
     function _renderCpStatusTable() {
         const allProducts = Storage.getAll(DB.STORES.PRODUCTS) || [];
         const allStds     = Storage.getAll(STORE) || [];
-        const flowRecs    = allStds.filter(r => r._docKind === CP_FLOW_DOC_KIND);
         const paramRecs   = allStds.filter(_isCpParamRecord);
 
         if (allProducts.length === 0) {
@@ -1135,7 +1136,7 @@ var ProdStandardsModule = (function() {
             const car  = p.carModel || '';
             const part = p.partName || '';
             const code = p.partNo   || '';
-            const flowRec  = flowRecs.find(r => r.carModel === car && r.partName === part);
+            const flowRec  = _findCpFlowRecord(car, part);
             const flowSteps = flowRec ? (flowRec.flowSteps || flowRec.flow || []) : [];
             const flowProcs = Array.isArray(flowSteps) ? [...new Set(flowSteps.map(s => typeof s === 'string' ? s : (s.process || '')))] : [];
             const hasFlow  = flowProcs.length > 0;
@@ -1198,6 +1199,17 @@ var ProdStandardsModule = (function() {
             const txt = (tr.dataset.search || '');
             tr.style.display = (!kw || txt.includes(kw)) ? '' : 'none';
         });
+    }
+
+    function _refreshCpStatusTableIfVisible() {
+        const tbody = document.getElementById('cpStatusTbody');
+        if (!tbody) return;
+        const wrapper = tbody.closest('table');
+        if (wrapper) {
+            const next = document.createElement('div');
+            next.innerHTML = _renderCpStatusTable();
+            wrapper.replaceWith(next.firstElementChild);
+        }
     }
 
     async function openCpForProduct(carModel, partName) {
@@ -4917,6 +4929,7 @@ window.addEventListener('load', function() {
         try {
             await DB.setConfig(CP_FLOW_CONFIG_PREFIX + carModel + '__' + partName, normalized);
         } catch(e) {}
+        _refreshCpStatusTableIfVisible();
     }
 
     async function _saveCpHistory(entry) {
@@ -5151,6 +5164,7 @@ window.addEventListener('load', function() {
         }
         UIUtils.toast(`[${_curCarModel} / ${_curPartName}] 공정 흐름 저장 완료 (${procs.length}개 주공정)`, 'success');
         _refreshCpFlowUI();
+        _refreshCpStatusTableIfVisible();
     }
 
 
@@ -5275,7 +5289,7 @@ window.addEventListener('load', function() {
             _saveCpFlow(_curCarModel, _curPartName, _cpSelectedFlow).catch(err => {
                 console.error('CP flow save failed:', err);
                 UIUtils.toast('공정 흐름 저장 실패', 'error');
-            });
+            }).then(() => _refreshCpStatusTableIfVisible());
         }
     }
 
