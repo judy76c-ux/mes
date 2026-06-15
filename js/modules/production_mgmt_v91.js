@@ -13264,18 +13264,24 @@ var ProdQualityModule = (function() {
         // 저장할 제품 목록 (기본: 현재 제품 + 체크된 품목)
         const saveTargets = [product, ...checkedIds.map(id => allProducts.find(p=>p.id===id)).filter(Boolean)];
 
-        for (const p of saveTargets) {
-            const cm  = _normText(p.carModel);
-            const pn  = _normText(p.partName||'');
-            const col = _normText(p.color||p.paintColor||p.paint||p.drawingColor||'');
-            const existing = _templates().find(t =>
-                _normText(t.carModel)===cm &&
-                _normText(t.partName||'')===pn &&
-                _normText(t.color||'')===col
-            );
-            const payload = { _docKind: TEMPLATE_KIND, carModel: cm, partName: pn, color: col, productId: p.id, items, updatedAt: UIUtils.now() };
-            if (existing) await Storage.update(STORE, existing.id, payload);
-            else await Storage.add(STORE, payload);
+        try {
+            for (const p of saveTargets) {
+                const cm  = _normText(p.carModel);
+                const pn  = _normText(p.partName||'');
+                const col = _normText(p.color||p.paintColor||p.paint||p.drawingColor||'');
+                const existing = _templates().find(t =>
+                    _normText(t.carModel)===cm &&
+                    _normText(t.partName||'')===pn &&
+                    _normText(t.color||'')===col
+                );
+                const payload = { _docKind: TEMPLATE_KIND, carModel: cm, partName: pn, color: col, productId: p.id, items, updatedAt: UIUtils.now() };
+                if (existing) await Storage.update(STORE, existing.id, payload);
+                else await Storage.add(STORE, payload);
+            }
+        } catch (err) {
+            console.error('[saveSpecPage] 저장 실패:', err);
+            UIUtils.toast(`저장 실패: ${err && err.message ? err.message : String(err)}`, 'error');
+            return;
         }
 
         const extraCount = saveTargets.length - 1;

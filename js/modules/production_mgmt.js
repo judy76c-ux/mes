@@ -5047,13 +5047,8 @@ window.addEventListener('load', function() {
             return `${arrow}<span style="display:inline-flex;align-items:center;gap:3px;font-size:11px;padding:2px 7px;
                 border-radius:999px;background:rgba(234,88,12,.08);color:var(--accent-orange,#ea580c);
                 border:1px solid rgba(234,88,12,.45);white-space:nowrap;">
-                <span style="font-size:9px;font-weight:700;opacity:0.65;letter-spacing:.03em;">${stepNo}</span>${_esc(proc)}</span>`;
-        }).join('');
-        const paramSummary = procs.map((proc, idx) => {
-            const stepNo = String(idx + 1).padStart(2, '0');
-            return `<span style="font-size:10px;padding:1px 7px;border-radius:999px;background:var(--bg-secondary);
-                          border:1px solid var(--border-color);color:var(--text-secondary);white-space:nowrap;">
-                <span style="font-weight:700;opacity:0.65;">${stepNo}</span> (${paramCountForProc(proc)})
+                <span style="font-size:9px;font-weight:700;opacity:0.65;letter-spacing:.03em;">${stepNo}</span>
+                ${_esc(proc)} <span style="font-weight:900;">(${paramCountForProc(proc)})</span>
             </span>`;
         }).join('');
 
@@ -5067,7 +5062,6 @@ window.addEventListener('load', function() {
                 <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
                     ${preview || '<span style="font-size:11px;color:var(--text-muted);">선택된 주공정 없음</span>'}
                 </div>
-                ${paramSummary ? `<div style="display:flex;gap:4px;flex-wrap:wrap;">${paramSummary}</div>` : ''}
             </div>
         </div>`;
     }
@@ -5176,6 +5170,7 @@ window.addEventListener('load', function() {
             const count = _cpFlowSelectedCount(proc);
             const total = _cpFlowStepsForProcess(proc).length;
             const orderIdx = selectedProcOrder.indexOf(proc);
+            const displayNo = orderIdx >= 0 ? String(orderIdx + 1).padStart(2, '0') : '--';
             return `<div draggable="true"
                     ondragstart="ProdStandardsModule._cpFlowProcDragStart('${_esc(proc)}',event)"
                     ondragover="ProdStandardsModule._cpFlowProcDragOver('${_esc(proc)}',event)"
@@ -5186,9 +5181,11 @@ window.addEventListener('load', function() {
                            background:${active ? 'rgba(37,99,235,.08)' : 'var(--bg-primary)'};
                            cursor:grab;">
                 <span class="material-symbols-outlined" style="font-size:17px;color:var(--text-muted);">drag_indicator</span>
+                <span style="width:22px;text-align:center;font-size:11px;font-weight:900;color:${checked ? 'var(--accent-blue)' : 'var(--text-muted)'};">${displayNo}</span>
                 <input type="checkbox" ${checked ? 'checked' : ''}
                     ondragstart="event.preventDefault();event.stopPropagation();"
-                    onclick="event.stopPropagation();ProdStandardsModule._toggleCpFlowProcessAll('${_esc(proc)}');event.preventDefault();"
+                    onclick="event.stopPropagation();"
+                    onchange="ProdStandardsModule._toggleCpFlowProcessAll('${_esc(proc)}')"
                     style="width:15px;height:15px;margin:0;cursor:pointer;">
                 <button type="button" onclick="ProdStandardsModule._selectCpFlowProcess('${_esc(proc)}')"
                     style="flex:1;text-align:left;border:none;background:transparent;cursor:pointer;padding:0;
