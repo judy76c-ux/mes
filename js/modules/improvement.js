@@ -290,8 +290,6 @@ var ImprovementActivityModule = (function() {
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="ImprovementActivityModule.saveProposal('${_js(id)}')">저장</button>`, 'xl');
         setTimeout(() => {
-            const zone = document.getElementById('iaPasteZone');
-            if (zone) zone.addEventListener('paste', _iaPasteHandler);
             document.addEventListener('paste', _iaDocPasteHandler);
         }, 50);
     }
