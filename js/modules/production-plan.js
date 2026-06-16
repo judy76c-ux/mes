@@ -36,6 +36,46 @@ const ProductionPlanModule = (function() {
         return '';
     }
 
+    // 시간 문자열 → 분 변환
+    function _parseMin(t) {
+        if (!t) return -1;
+        const [h, m] = t.split(':').map(Number);
+        return h * 60 + m;
+    }
+
+    // 슬롯 내 실제 작업 시간 막대 HTML
+    // 슬롯(30분)에서 실제 작업이 차지하는 구간을 파란 막대로 표시
+    function _slotBar(slot, hasData, item, curActive, curActiveEnd) {
+        const slotMin = _parseMin(slot);
+        if (slotMin < 0) return '';
+        const slotEnd = slotMin + 30;
+
+        let workStart, workEnd;
+        if (hasData && item.startTime && item.endTime) {
+            workStart = _parseMin(item.startTime);
+            workEnd   = _parseMin(item.endTime);
+        } else if (curActive && curActiveEnd) {
+            workStart = _parseMin(curActive.startTime || curActive.slot);
+            workEnd   = _parseMin(curActiveEnd);
+        } else {
+            return '';
+        }
+
+        const os = Math.max(slotMin, workStart);
+        const oe = Math.min(slotEnd, workEnd);
+        if (oe <= os) return '';
+
+        const leftPct  = ((os - slotMin) / 30 * 100).toFixed(1);
+        const widthPct = ((oe - os)      / 30 * 100).toFixed(1);
+        const isFull   = widthPct >= 99.9;
+
+        return `<div style="position:absolute;bottom:0;left:0;right:0;height:4px;background:rgba(0,0,0,0.07);border-radius:0 0 2px 0;">
+            <div style="position:absolute;top:0;left:${leftPct}%;width:${widthPct}%;height:100%;
+                        background:${isFull ? 'var(--accent-blue)' : 'var(--accent-green,#10b981)'};
+                        opacity:0.75;border-radius:1px;transition:width .2s;"></div>
+        </div>`;
+    }
+
     // 차종별 고유 색상 생성 (파스텔 톤)
     function getCarModelColor(carModel, partName, color) {
         const key = (carModel || '') + '|' + (partName || '') + '|' + (color || '');
@@ -429,17 +469,26 @@ const ProductionPlanModule = (function() {
             <div class="card grid-card" style="margin-bottom:8px;border:1.5px solid ${color};border-top:4px solid ${color};box-shadow:0 4px 18px ${shadowColor};">
                 <div class="card-header" style="padding:6px 14px;background:${bgTint};border-bottom:1px solid ${color}33;display:flex;justify-content:space-between;align-items:center;">
                     <h4 style="margin:0;color:${color};font-weight:800;"><span class="material-symbols-outlined" style="vertical-align:middle;margin-right:4px;">factory</span>${line}</h4>
-                    <button class="btn btn-outline btn-sm" onclick="ProductionPlanModule.printWorkOrder('${line}')">
-                        <span class="material-symbols-outlined" style="font-size:16px;">print</span> 인쇄
-                    </button>
+                    <div style="display:flex;align-items:center;gap:12px;">
+                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.82rem;color:#64748b;user-select:none;">
+                            <input type="checkbox" id="overtimeToggle${suffix}"
+                                onchange="document.getElementById('planGridWrap${suffix}').classList.toggle('show-overtime',this.checked); ProductionPlanModule.updateFooterOT('${suffix}',this.checked)"
+                                style="width:15px;height:15px;cursor:pointer;">
+                            <span class="material-symbols-outlined" style="font-size:15px;color:#f59e0b;">nights_stay</span>
+                            잔업 계획
+                        </label>
+                        <button class="btn btn-outline btn-sm" onclick="ProductionPlanModule.printWorkOrder('${line}')">
+                            <span class="material-symbols-outlined" style="font-size:16px;">print</span> 인쇄
+                        </button>
+                    </div>
                 </div>
                 <div class="card-body p-0">
-                    <div class="mes-grid-container pivoted-grid">
+                    <div class="mes-grid-container pivoted-grid" id="planGridWrap${suffix}">
                         <table class="mes-grid" id="planGrid${suffix}">
                             <thead>
                                 <tr>
                                     <th class="sticky-col time-col-header" style="width:140px;">시간 (시작~종료)</th>
-                                    <th>차종</th><th>제품명</th><th>도장 컬러</th>
+                                    <th style="width:80px;">차종</th><th>제품명</th><th>도장 컬러</th>
                                     <th style="text-align:center;">품목구분</th><th>수량</th><th>상태</th><th style="width:60px;">작업</th>
                                 </tr>
                             </thead>
@@ -503,6 +552,7 @@ const ProductionPlanModule = (function() {
 
         let activeItem = null;
         let activeEndTime = '';
+        let _nextSuggestTime = ''; // 다음 작업 권장 시작 시간 (마지막 종료+5분)
 
         tbody.innerHTML = allSlots.map(slot => {
             let rowClass = getSlotClass(slot);
@@ -554,6 +604,12 @@ const ProductionPlanModule = (function() {
                     isHighlight = true;
                 } else if (checkSlot >= activeEndTime) {
                     if (!hasData) {
+                        // 작업 종료 직후 첫 빈 슬롯: 다음 시작 권장 시간 계산 (종료+5분)
+                        if (activeEndTime && !_nextSuggestTime) {
+                            const [_h, _m] = activeEndTime.split(':').map(Number);
+                            const _sm = _h * 60 + _m + 5;
+                            _nextSuggestTime = `${String(Math.floor(_sm/60)).padStart(2,'0')}:${String(_sm%60).padStart(2,'0')}`;
+                        }
                         activeItem = null;
                         activeEndTime = '';
                     }
@@ -617,6 +673,7 @@ const ProductionPlanModule = (function() {
                     const colorChange = prevPlan.color    && item.color    && prevPlan.color    !== item.color;
                     if (jigChange || colorChange) {
                         const totalMin = colorChange ? 15 : 5;
+                        totalMinutes += totalMin; // 교체 시간 작업 시간에 포함
                         const chips = [];
                         if (colorChange) chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;background:rgba(239,68,68,0.1);color:#dc2626;border:1px solid rgba(239,68,68,0.3);border-radius:12px;padding:2px 10px;font-size:0.75rem;font-weight:700;">🎨 도료교체</span>`);
                         if (jigChange)   chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;background:rgba(59,130,246,0.1);color:#2563eb;border:1px solid rgba(59,130,246,0.3);border-radius:12px;padding:2px 10px;font-size:0.75rem;font-weight:700;">🔧 JIG교체</span>`);
@@ -629,12 +686,45 @@ const ProductionPlanModule = (function() {
                 }
             }
 
+            const barHTML = ''; // 시간 막대 제거
+
+            // 시간 셀 표시 결정
+            // ① 첫 행(hasData): 단일 슬롯이면 "HH:MM ~ HH:MM", 여러 슬롯이면 "HH:MM ~"
+            // ② continuation 행: 작업이 이 슬롯 안에서 끝나면 "~ HH:MM", 이어지면 공백
+            // ③ 빈 슬롯: 슬롯 시간 그대로
+            let timeCellText;
+            if (hasData) {
+                const slotEndMin = _parseMin(slot) + 30;
+                const workEndMin = item.endTime ? _parseMin(item.endTime) : 0;
+                const isMultiSlot = item.endTime && workEndMin > slotEndMin;
+                timeCellText = isMultiSlot
+                    ? (item.startTime || slot)
+                    : `${item.startTime || slot}${item.endTime ? ' ~ ' + item.endTime : ''}`;
+            } else if (isHighlight && activeItem && activeEndTime) {
+                const slotStartMin = _parseMin(slot);
+                const slotEndMin   = slotStartMin + 30;
+                const workEndMin   = _parseMin(activeEndTime);
+                timeCellText = (workEndMin > slotStartMin && workEndMin <= slotEndMin)
+                    ? activeEndTime
+                    : '';
+            } else {
+                // 마지막 작업 종료 직후 첫 번째 빈 슬롯: 권장 시작 시간 표시
+                if (_nextSuggestTime && !isMealTime) {
+                    timeCellText = `<span style="color:var(--accent-green);font-weight:800;">${_nextSuggestTime}</span><span style="font-size:0.65rem;color:var(--text-muted);margin-left:3px;">권장</span>`;
+                    _nextSuggestTime = ''; // 첫 슬롯에만 표시
+                } else {
+                    timeCellText = slot;
+                }
+            }
+
+            const isOvertimeSlot = slot >= '18:00';
+
             return exchangeRow + `
-                <tr class="${rowClass} hover-row ${isOvertimeStart ? 'overtime-start' : ''}" style="cursor: ${trCursor}; ${bgColorStyle}">
-                    <td class="sticky-col time-cell" ${trClick}>${item.startTime || slot}${item.endTime ? ' ~ ' + item.endTime : ''}</td>
-                    <td class="editable-cell" ${trClick}>${item.carModel || (clickable ? '<span style="color:#ccc;">(클릭하여 입력)</span>' : `<span style="color:#aaa;">(${activeItem?.status === '완료' ? '작업 완료' : (activeItem?.status === '대기' ? '작업 대기' : '진행 중')})</span>`)}</td>
-                    <td class="editable-cell" ${trClick}>${item.partName || ''}</td>
-                    <td class="editable-cell" ${trClick}>${item.color || ''}</td>
+                <tr class="${rowClass} hover-row ${isOvertimeStart ? 'overtime-start' : ''} ${isOvertimeSlot ? 'overtime-slot' : ''}" style="cursor: ${trCursor}; ${bgColorStyle}">
+                    <td class="sticky-col time-cell" style="position:relative;padding-bottom:7px;" ${trClick}>${timeCellText}${barHTML}</td>
+                    <td class="editable-cell" ${trClick}>${item.carModel || (clickable ? '<span style="color:#ccc;">(클릭하여 입력)</span>' : `<span style="color:#aaa;">${activeItem?.carModel || ''}</span>`)}</td>
+                    <td class="editable-cell" ${trClick}>${item.partName || (!hasData && activeItem ? `<span style="color:#aaa;">${activeItem.partName || ''}</span>` : '')}</td>
+                    <td class="editable-cell" ${trClick}>${item.color || (!hasData && activeItem ? `<span style="color:#aaa;">${activeItem.color || ''}</span>` : '')}</td>
                     <td class="editable-cell text-center" ${trClick}>${item.carModel ? UIUtils.itemTypeBadge(item.carModel, item.partName, item.color) : ''}</td>
                     <td class="editable-cell text-right" ${trClick}>${q > 0 ? UIUtils.formatNumber(q) : ''}</td>
                     <td class="editable-cell text-center" ${trClick}>${item.status ? UIUtils.badge(item.status, item.status === '완료' ? 'success' : (item.status === '진행' ? 'info' : 'warning')) : ''}</td>
@@ -650,54 +740,115 @@ const ProductionPlanModule = (function() {
             const m = totalMinutes % 60;
             const timeStr = h > 0 ? `${h}시간 ${m}분` : `${m}분`;
 
-            // 주간 가용 작업 시간: 08:00 ~ 17:30 (총 570분) - 점심 12:30~13:30 (60분) = 510분
-            const DAY_AVAILABLE = 510;
+            // 정규 가용: 08:30 ~ 17:30 (540분) - 점심 60분 = 480분
+            // 잔업: 17:30 ~ 20:00 = 2시간 = 120분
+            const DAY_AVAILABLE = 480;
+            const OVERTIME_AVAIL = 120;
             const remainMinutes = Math.max(0, DAY_AVAILABLE - totalMinutes);
+            const overtimeUsed = Math.max(0, totalMinutes - DAY_AVAILABLE);
             const rh = Math.floor(remainMinutes / 60);
             const rm = remainMinutes % 60;
             const remainStr = rh > 0 ? `${rh}시간 ${rm}분` : `${rm}분`;
             const effPct = DAY_AVAILABLE > 0 ? Math.round(totalMinutes / DAY_AVAILABLE * 100) : 0;
             const effColor = effPct >= 90 ? '#10b981' : effPct >= 70 ? '#f59e0b' : '#ef4444';
+            const otH = Math.floor(overtimeUsed / 60);
+            const otM = overtimeUsed % 60;
+            const otStr = otH > 0 ? `${otH}시간 ${otM}분` : `${otM}분`;
+
+            // 정규 효율
+            const effLabel = effPct >= 90 ? '최적' : effPct >= 70 ? '양호' : effPct >= 50 ? '보통' : '부족';
+            const barFill  = Math.min(effPct, 100);
+
+            // 잔업 포함(600분) 효율
+            const OT_TOTAL      = DAY_AVAILABLE + OVERTIME_AVAIL; // 600분
+            const remainMinOT   = Math.max(0, OT_TOTAL - totalMinutes);
+            const rhOT = Math.floor(remainMinOT / 60), rmOT = remainMinOT % 60;
+            const remainStrOT   = rhOT > 0 ? `${rhOT}시간 ${rmOT}분` : `${rmOT}분`;
+            const effPctOT      = Math.round(totalMinutes / OT_TOTAL * 100);
+            const effColorOT    = effPctOT >= 90 ? '#10b981' : effPctOT >= 70 ? '#f59e0b' : '#ef4444';
+            const effLabelOT    = effPctOT >= 90 ? '최적' : effPctOT >= 70 ? '양호' : effPctOT >= 50 ? '보통' : '부족';
+            const barFillOT     = Math.min(effPctOT, 100);
 
             foot.innerHTML = `
                 <tr class="total-row">
-                    <td class="sticky-col font-bold" colspan="2" style="text-align:left;padding-left:15px;">
-                        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:14px;">
-                            <span style="color:var(--accent-blue);">계획: <strong>${totalMinutes > 0 ? timeStr : '-'}</strong></span>
-                            <span style="color:#64748b;">│</span>
-                            <span style="color:#ef4444;">잔여: <strong>${remainMinutes > 0 ? remainStr : '없음'}</strong></span>
-                            <span style="color:#64748b;">│</span>
-                            <span style="padding:2px 8px;border-radius:999px;font-size:.75rem;font-weight:800;
-                                         background:${effColor}1a;color:${effColor};">
-                                효율 ${effPct}%
+                    <td class="sticky-col font-bold" colspan="5" style="text-align:left;padding:8px 15px;"
+                        id="planFootCell${tbodyId.replace('planGridBody','')}">
+                        <div style="display:flex;align-items:center;gap:16px;margin-bottom:5px;">
+                            <span id="planFootPlan${tbodyId}" style="font-size:0.78rem;color:#64748b;white-space:nowrap;"
+                                data-reg="계획 <strong>${totalMinutes > 0 ? timeStr : '-'}</strong> / 8h"
+                                data-ot="계획 <strong>${totalMinutes > 0 ? timeStr : '-'}</strong> / 10h">
+                                계획 <strong>${totalMinutes > 0 ? timeStr : '-'}</strong> / 8h
+                            </span>
+                            <span id="planFootRemain${tbodyId}" style="font-size:0.78rem;color:#94a3b8;white-space:nowrap;"
+                                data-reg="${remainMinutes > 0 ? remainStr : '없음'}"
+                                data-ot="${remainMinOT > 0 ? remainStrOT : '없음'}">
+                                잔여 <strong>${remainMinutes > 0 ? remainStr : '없음'}</strong>
+                            </span>
+                            <span id="planFootEff${tbodyId}" style="padding:2px 10px;border-radius:999px;font-size:0.75rem;font-weight:800;white-space:nowrap;
+                                         background:${effColor}1a;color:${effColor};"
+                                data-reg-label="${effLabel}" data-reg-pct="${effPct}" data-reg-color="${effColor}"
+                                data-ot-label="${effLabelOT}" data-ot-pct="${effPctOT}" data-ot-color="${effColorOT}">
+                                ${effLabel} ${effPct}%
                             </span>
                         </div>
+                        <div style="width:100%;height:8px;background:#e2e8f0;border-radius:4px;overflow:hidden;">
+                            <div id="planFootBar${tbodyId}" style="width:${barFill}%;height:100%;background:${effColor};border-radius:4px;transition:width .4s;"
+                                data-reg-fill="${barFill}" data-reg-color="${effColor}"
+                                data-ot-fill="${barFillOT}" data-ot-color="${effColorOT}"></div>
+                        </div>
+                        <div style="display:flex;font-size:0.65rem;color:#cbd5e1;margin-top:2px;">
+                            <span>0%</span><span style="margin-left:auto;">100%</span>
+                        </div>
                     </td>
-                    <td class="font-bold" colspan="2" style="text-align:right;padding-right:20px;">총 합계</td>
+                    <td class="font-bold" style="text-align:right;padding-right:10px;white-space:nowrap;">총 합계</td>
                     <td class="total-cell font-bold text-right">${UIUtils.formatNumber(totalQty)}</td>
-                    <td colspan="2"></td>
+                    <td colspan="1"></td>
                 </tr>
             `;
         }
     }
 
+    function updateFooterOT(suffix, checked) {
+        const tbodyId = 'planGridBody' + suffix;
+        const planEl  = document.getElementById('planFootPlan'   + tbodyId);
+        const remEl   = document.getElementById('planFootRemain' + tbodyId);
+        const effEl   = document.getElementById('planFootEff'    + tbodyId);
+        const barEl   = document.getElementById('planFootBar'    + tbodyId);
+        if (!planEl || !remEl || !effEl || !barEl) return;
+
+        if (checked) {
+            planEl.innerHTML = planEl.dataset.ot;
+            remEl.innerHTML  = '잔여 <strong>' + remEl.dataset.ot + '</strong>';
+            const lbl = effEl.dataset.otLabel, pct = effEl.dataset.otPct, col = effEl.dataset.otColor;
+            effEl.textContent = lbl + ' ' + pct + '%';
+            effEl.style.background = col + '1a'; effEl.style.color = col;
+            barEl.style.width = barEl.dataset.otFill + '%'; barEl.style.background = barEl.dataset.otColor;
+        } else {
+            planEl.innerHTML = planEl.dataset.reg;
+            remEl.innerHTML  = '잔여 <strong>' + remEl.dataset.reg + '</strong>';
+            const lbl = effEl.dataset.regLabel, pct = effEl.dataset.regPct, col = effEl.dataset.regColor;
+            effEl.textContent = lbl + ' ' + pct + '%';
+            effEl.style.background = col + '1a'; effEl.style.color = col;
+            barEl.style.width = barEl.dataset.regFill + '%'; barEl.style.background = barEl.dataset.regColor;
+        }
+    }
+
     function updateDropdowns(target, line) {
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const _linkedTargetIds = new Set(products.map(p => p.linkedProductId).filter(Boolean));
         // 라인명이 "도장-A" 또는 "도장-B" 형식이므로 라인명 자체를 사용
         let lineProducts = line
             ? products.filter(p => {
-                // 라인에 맞는 제조공정 정보가 있는지 확인
-                // 정확히 해당 라인명을 포함하는 process만 선택
+                if (_linkedTargetIds.has(p.id)) return false;
                 const hasLineProcess =
                     (p.process1 === line) ||
                     (p.process2 === line) ||
                     (p.process3 === line) ||
                     (p.process4 === line);
-
                 return hasLineProcess;
             })
-            : products;
-        if (lineProducts.length === 0) lineProducts = products;
+            : products.filter(p => !_linkedTargetIds.has(p.id));
+        if (lineProducts.length === 0) lineProducts = products.filter(p => !_linkedTargetIds.has(p.id));
 
         const modelSel = document.getElementById('sModel');
         const partSel = document.getElementById('sPart');
@@ -731,7 +882,28 @@ const ProductionPlanModule = (function() {
             ProductionPlanModule.updatePaintStockPanel();
             ProductionPlanModule.calcEndTime();
             ProductionPlanModule._autoFillItemType();
+            ProductionPlanModule._updateLinkedProductBanner();
         }, 0);
+    }
+
+    function _updateLinkedProductBanner() {
+        const banner = document.getElementById('linkedProductBanner');
+        if (!banner) return;
+        const car  = (document.getElementById('sModel') || {}).value || '';
+        const part = (document.getElementById('sPart')  || {}).value || '';
+        if (!part) { banner.innerHTML = ''; return; }
+        const allProds = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const selProd = allProds.find(p => p.carModel === car && p.partName === part);
+        if (!selProd || !selProd.linkedProductId) { banner.innerHTML = ''; return; }
+        const lp = allProds.find(p => p.id === selProd.linkedProductId);
+        if (!lp) { banner.innerHTML = ''; return; }
+        banner.innerHTML = `<div style="padding:8px 12px;background:rgba(109,40,217,0.07);border:1px solid rgba(109,40,217,0.25);border-radius:8px;display:flex;align-items:center;gap:8px;font-size:0.82rem;">
+            <span class="material-symbols-outlined" style="font-size:16px;color:#7c3aed;flex-shrink:0;">call_split</span>
+            <span style="color:#7c3aed;font-weight:600;">레이져 단계에서 납품처별 분리</span>
+            <span style="color:var(--text-secondary);">→</span>
+            <span style="color:var(--text-primary);">${lp.partName}</span>
+            <span style="color:var(--text-muted);font-size:0.75rem;">(${lp.customer || '납품처 미설정'})</span>
+        </div>`;
     }
 
     // ── 품목구분 자동 입력 ────────────────────────────────────────────
@@ -743,10 +915,7 @@ const ProductionPlanModule = (function() {
         const badgeEl  = document.getElementById('sItemTypeBadge');
         if (!hiddenEl || !badgeEl) return;
 
-        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-        const matched = products.find(p =>
-            p.carModel === car && p.partName === part && (!color || p.color === color)
-        );
+        const matched = _findProductForPlan(car, part, color);
         const itemType = matched ? (matched.itemType || '') : '';
         hiddenEl.value = itemType;
 
@@ -1465,9 +1634,9 @@ const ProductionPlanModule = (function() {
             return hasLineProcess;
         });
         if (lineProducts.length === 0) lineProducts = products;
-        // color 선택 전이면 carModel + partName 만으로 fallback 조회
-        const p = lineProducts.find(x => x.carModel === model && x.partName === part && x.color === color)
-                || (!color && lineProducts.find(x => x.carModel === model && x.partName === part));
+        // 색상 매칭: 정확일치 → 공용색상(color 없는 제품) 순으로 fallback
+        const p = lineProducts.find(x => x.carModel === model && x.partName === part && (x.color === color || !color || !x.color))
+                || lineProducts.find(x => x.carModel === model && x.partName === part);
 
         let ctPerPiece = 0;
         let processInfo = '-';
@@ -1598,6 +1767,31 @@ const ProductionPlanModule = (function() {
         }
     }
 
+    // 해당 날짜/라인의 마지막 작업 종료 시간을 기반으로 다음 시작 시간 추천
+    function _getSuggestedStart(date, line) {
+        const allData = Storage.getAll(STORE);
+        let lastEnd = '';
+        let lastPlan = null;
+        allData.forEach(item => {
+            if (item.date === date && item.line === line && item.endTime) {
+                if (!lastEnd || item.endTime > lastEnd) {
+                    lastEnd = item.endTime;
+                    lastPlan = item;
+                }
+            }
+        });
+        console.log('[sugStart] date:', date, 'line:', line, 'lastEnd:', lastEnd, 'plans:', allData.filter(i=>i.date===date&&i.line===line).length);
+        if (!lastEnd || !lastPlan) return null;
+
+        // 기본 교체 시간: JIG교체 5분
+        const [h, m] = lastEnd.split(':').map(Number);
+        const sugMin = h * 60 + m + 5;
+        const sH = Math.floor(sugMin / 60);
+        const sM = sugMin % 60;
+        const suggestedStart = `${String(sH).padStart(2,'0')}:${String(sM).padStart(2,'0')}`;
+        return { prevEnd: lastEnd, suggestedStart, lastPlan, exchangeMin: 5 };
+    }
+
     function editSlot(slot, line) {
         const date = document.getElementById('planDateFilter').value;
         const allData = Storage.getAll(STORE);
@@ -1626,22 +1820,33 @@ const ProductionPlanModule = (function() {
         const partValue = (currentItem && currentItem.partName) || '';
         const colorValue = (currentItem && currentItem.color) || '';
         const qtyValue = (currentItem && currentItem.planQty) || 0;
-        const startTimeValue = (currentItem && currentItem.startTime) || slot;
+
+        // 새 작업 등록 시: 이전 작업 종료 + 교체 시간 기반 시작 시간 자동 추천
+        const _sugStart = (!currentItem) ? _getSuggestedStart(date, line) : null;
+        const startTimeValue = (currentItem && currentItem.startTime) || (_sugStart ? _sugStart.suggestedStart : slot);
         const endTimeValue = (currentItem && currentItem.endTime) || '';
         const statusValue = (currentItem && currentItem.status) || '대기';
+
+        // 추천 시작 시간 힌트 메시지
+        const startTimeHint = _sugStart
+            ? `<div style="margin-top:4px;padding:6px 10px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);border-radius:6px;font-size:0.78rem;color:#065f46;">
+                   <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;color:#10b981;">auto_fix_high</span>
+                   이전 작업 종료 <strong>${_sugStart.prevEnd}</strong> + JIG교체 5분 → 권장 시작 <strong>${_sugStart.suggestedStart}</strong>
+               </div>`
+            : '';
         const mealTimeWorkValue = !!(currentItem && currentItem.mealTimeWork);
 
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        // 다른 제품의 linkedProductId로 지정된 제품(=레이져 분리 대상)은 도장 계획에서 숨김
+        const _linkedTargetIds = new Set(products.map(p => p.linkedProductId).filter(Boolean));
         // 라인명이 "도장-A" 또는 "도장-B" 형식이므로 라인명 자체를 사용
         let lineProducts = products.filter(p => {
-            // 라인에 맞는 제조공정 정보가 있는지 확인
-            // 정확히 해당 라인명을 포함하는 process만 선택
+            if (_linkedTargetIds.has(p.id)) return false; // 연결 대상 제품 제외
             const hasLineProcess =
                 (p.process1 === line) ||
                 (p.process2 === line) ||
                 (p.process3 === line) ||
                 (p.process4 === line);
-
             return hasLineProcess;
         });
         if (lineProducts.length === 0) lineProducts = products;
@@ -1834,6 +2039,20 @@ const ProductionPlanModule = (function() {
                     })()}">
                 </div>
             </div>
+            <div id="linkedProductBanner" style="margin-bottom:8px;">${(function(){
+                const allProds = Storage.getAll(DB.STORES.PRODUCTS) || [];
+                const selProd = partValue ? allProds.find(p => p.carModel === modelValue && p.partName === partValue) : null;
+                if (!selProd || !selProd.linkedProductId) return '';
+                const lp = allProds.find(p => p.id === selProd.linkedProductId);
+                if (!lp) return '';
+                return `<div style="padding:8px 12px;background:rgba(109,40,217,0.07);border:1px solid rgba(109,40,217,0.25);border-radius:8px;display:flex;align-items:center;gap:8px;font-size:0.82rem;">
+                    <span class="material-symbols-outlined" style="font-size:16px;color:#7c3aed;flex-shrink:0;">call_split</span>
+                    <span style="color:#7c3aed;font-weight:600;">레이져 단계에서 납품처별 분리</span>
+                    <span style="color:var(--text-secondary);">→</span>
+                    <span style="color:var(--text-primary);">${lp.partName}</span>
+                    <span style="color:var(--text-muted);font-size:0.75rem;">(${lp.customer||'납품처 미설정'})</span>
+                </div>`;
+            })()}</div>
             <div id="injStockPanel" data-current-plan-id="${_planId}"
                  style="display:${_injDisplay}; margin-bottom:8px; padding:10px 14px; background:var(--bg-secondary); border-radius:8px; border:1px solid var(--border-color);">
                 <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
@@ -1875,6 +2094,7 @@ const ProductionPlanModule = (function() {
                 <div class="form-group">
                     <label class="form-label">시작 시간</label>
                     <input type="time" class="form-input" id="sStartTime" value="${startTimeValue}" oninput="ProductionPlanModule.calcEndTime()">
+                    ${startTimeHint}
                 </div>
                 <div class="form-group">
                     <label class="form-label">종료 시간 <span id="nextSlotInfo"></span></label>
@@ -2215,10 +2435,21 @@ const ProductionPlanModule = (function() {
         });
 
         const allSlots = Array.from(new Set([...TIME_SLOTS, ...Object.keys(slotData)])).sort();
+        const slotRangeText = (slot, capEnd = '') => {
+            const idx = TIME_SLOTS.indexOf(slot);
+            if (idx >= 0 && TIME_SLOTS[idx + 1]) {
+                const next = TIME_SLOTS[idx + 1];
+                const end = capEnd && capEnd > slot && capEnd < next ? capEnd : next;
+                return `${slot} ~ ${end}`;
+            }
+            return slot;
+        };
         let totalQty = 0;
         let totalMinutes = 0;
         let rowIdx = 1;
         let renderedRowCount = 0;
+        let activeItem = null;
+        let activeEndTime = '';
 
         let tableRows = allSlots.map(slot => {
             const item = slotData[slot] || {};
@@ -2227,8 +2458,27 @@ const ProductionPlanModule = (function() {
             const isLunch = (slot === '12:30' || slot === '13:00');
             const isDinner = (slot === '17:30');
             const isMealTime = isLunch || isDinner;
+            const hasData = item.carModel || item.partName || q > 0;
 
-            if (item.carModel || item.partName || q > 0) {
+            if (hasData) {
+                activeItem = item;
+                activeEndTime = item.endTime || '';
+            }
+
+            let isHighlight = false;
+            if (activeItem && activeEndTime) {
+                const activeStart = activeItem.startTime || activeItem.slot;
+                if (slot >= activeStart && slot < activeEndTime) {
+                    isHighlight = true;
+                } else if (slot >= activeEndTime) {
+                    if (!hasData) {
+                        activeItem = null;
+                        activeEndTime = '';
+                    }
+                }
+            }
+
+            if (hasData) {
                 totalQty += q;
 
                 // 식사 시간(점심 12:30~13:30, 석식 17:30~18:00) 중첩 확인 및 차감
@@ -2239,23 +2489,25 @@ const ProductionPlanModule = (function() {
                     let eTotal = eH * 60 + eM;
                     let diff = eTotal - sTotal;
 
-                    const breaks = [{
-                            s: 12 * 60 + 30,
-                            e: 13 * 60 + 30
-                        }, // 점심
-                        {
-                            s: 17 * 60 + 30,
-                            e: 18 * 60
-                        } // 석식
-                    ];
+                    if (!item.mealTimeWork) {
+                        const breaks = [{
+                                s: 12 * 60 + 30,
+                                e: 13 * 60 + 30
+                            }, // 점심
+                            {
+                                s: 17 * 60 + 30,
+                                e: 18 * 60
+                            } // 석식
+                        ];
 
-                    breaks.forEach(b => {
-                        const overlapStart = Math.max(sTotal, b.s);
-                        const overlapEnd = Math.min(eTotal, b.e);
-                        if (overlapStart < overlapEnd) {
-                            diff -= (overlapEnd - overlapStart);
-                        }
-                    });
+                        breaks.forEach(b => {
+                            const overlapStart = Math.max(sTotal, b.s);
+                            const overlapEnd = Math.min(eTotal, b.e);
+                            if (overlapStart < overlapEnd) {
+                                diff -= (overlapEnd - overlapStart);
+                            }
+                        });
+                    }
                     if (diff > 0) totalMinutes += diff;
                 }
 
@@ -2265,7 +2517,7 @@ const ProductionPlanModule = (function() {
                 return `
                     <tr class="${isOvertimeStart ? 'overtime-row' : ''}">
                         <td style="text-align:center;">${rowIdx++}</td>
-                        <td style="text-align:center;">${item.startTime || slot}${item.endTime ? ' ~ ' + item.endTime : ''}</td>
+                        <td style="text-align:center;">${slotRangeText(slot, item.endTime || '')}</td>
                         <td style="text-align:center;">${item.carModel || ''}</td>
                         <td>${item.partName || ''}</td>
                         <td style="text-align:center;">${item.color || ''}</td>
@@ -2276,21 +2528,42 @@ const ProductionPlanModule = (function() {
                     </tr>
                 `;
             } else if (isMealTime) {
+                if (slot === '13:00') return '';
                 let mealText = '';
                 let timeRange = '';
                 if (isLunch) {
                     mealText = '점심 시간 (LUNCH TIME)';
-                    timeRange = slot === '12:30' ? '12:30 ~ 13:00' : '13:00 ~ 13:30';
+                    timeRange = '12:30 ~ 13:30';
                 } else {
                     mealText = '저녁 식사 (DINNER TIME)';
                     timeRange = '17:30 ~ 18:00';
                 }
+                const isMealRunning = activeItem && activeItem.mealTimeWork && activeEndTime > slot;
+                const mealRunText = isMealRunning
+                    ? ` <span style="margin-left:10px;color:#ea580c;font-weight:bold;">교대 가동 중 - ${activeItem.carModel || ''} ${activeItem.partName || ''}</span>`
+                    : '';
                 renderedRowCount += 1;
                 return `
                     <tr class="${isLunch ? 'lunch-time' : 'dinner-time'}" style="background-color: #f1f5f9;">
                         <td style="text-align:center;">-</td>
                         <td style="text-align:center;">${timeRange}</td>
-                        <td colspan="7" style="text-align:center; font-weight:bold; color:#94a3b8;">${mealText}</td>
+                        <td colspan="7" style="text-align:center; font-weight:bold; color:#94a3b8;">${mealText}${mealRunText}</td>
+                    </tr>
+                `;
+            } else if (isHighlight && activeItem) {
+                const isOvertimeStart = (slot === '18:00');
+                renderedRowCount += 1;
+                return `
+                    <tr class="${isOvertimeStart ? 'overtime-row' : ''}" style="background-color:${getCarModelColor(activeItem.carModel, activeItem.partName, activeItem.color)};">
+                        <td style="text-align:center;">-</td>
+                        <td style="text-align:center;">${slotRangeText(slot, activeEndTime)}</td>
+                        <td style="text-align:center;color:#777;">${activeItem.carModel || ''}</td>
+                        <td style="color:#777;">${activeItem.partName || ''}</td>
+                        <td style="text-align:center;color:#777;">${activeItem.color || ''}</td>
+                        <td style="text-align:right;"></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
                     </tr>
                 `;
             }
@@ -2318,7 +2591,7 @@ const ProductionPlanModule = (function() {
         const remainingMinutes = totalMinutes % 60;
         const timeStr = totalHours > 0 ? `${totalHours}시간 ${remainingMinutes}분` : `${remainingMinutes}분`;
 
-        const printWindow = window.open('', '_blank', 'width=1000,height=1000,scrollbars=yes,resizable=yes');
+        const printWindow = window.open('', '_blank', 'width=1100,height=800,scrollbars=yes,resizable=yes');
         printWindow.document.write(`
             <html>
             <head>
@@ -2336,6 +2609,7 @@ const ProductionPlanModule = (function() {
                     .total-label { text-align:right; font-weight:bold; background:#f9f9f9; }
                     .total-value { text-align:right; font-weight:bold; background:#f9f9f9; color: #0056b3; }
                     .footer { margin-top: 30px; text-align: right; font-size: 12px; color: #666; }
+                    @page { size: A4 landscape; margin: 10mm 12mm; }
                     @media print {
                         .no-print { display: none; }
                         body { padding: 0; }
@@ -2369,10 +2643,10 @@ const ProductionPlanModule = (function() {
                         <tr>
                             <td colspan="2" class="total-label">총 작업 시간</td>
                             <td class="total-value" style="text-align:center;">${totalMinutes > 0 ? timeStr : '-'}</td>
-                            <td class="total-label" style="text-align:center;">잔여 시간<br><span style="font-size:9px;font-weight:400;">(~17:30 기준)</span></td>
-                            <td class="total-value" style="text-align:center;color:${(510 - totalMinutes) > 60 ? '#c00' : '#090'};">${(function(){ const r=Math.max(0,510-totalMinutes); const rh=Math.floor(r/60); const rm=r%60; return r>0?(rh>0?rh+'시간 '+rm+'분':rm+'분'):'없음'; })()}</td>
+                            <td class="total-label" style="text-align:center;">정규 잔여<br><span style="font-size:9px;font-weight:400;">(~17:30)</span></td>
+                            <td class="total-value" style="text-align:center;color:${(480 - totalMinutes) > 60 ? '#c00' : '#090'};">${(function(){ const r=Math.max(0,480-totalMinutes); const rh=Math.floor(r/60); const rm=r%60; return r>0?(rh>0?rh+'시간 '+rm+'분':rm+'분'):'없음'; })()}</td>
                             <td class="total-value">${UIUtils.formatNumber(totalQty)}</td>
-                            <td colspan="3" style="background:#f9f9f9;text-align:left;font-size:10px;padding-left:10px;">효율: ${Math.round(totalMinutes/510*100)}% (주간가용 8h30m 기준)</td>
+                            <td colspan="3" style="background:#f9f9f9;text-align:left;font-size:10px;padding-left:10px;">설비효율: ${Math.round(totalMinutes/480*100)}% (정규 8h 기준) | 잔업 2h 가능 (~20:00)</td>
                         </tr>
                     </tfoot>
                 </table>
@@ -2613,12 +2887,14 @@ const ProductionPlanModule = (function() {
         saveSlot,
         removeSlot,
         printWorkOrder,
+        updateFooterOT,
         updateDropdowns,
         calcEndTime,
         updateInjStockPanel,
         updateLaserWipPanel,
         updatePaintStockPanel,
         _autoFillItemType,
+        _updateLinkedProductBanner,
         autoUpdateStatus,
         _showInjLotPopup,
         _calcInjPlanReserved,

@@ -552,6 +552,13 @@ const PaintingWorkModule = (function() {
 
         container.innerHTML = `
             <div class="fade-in-up">
+                <!-- 페이지 목적 안내 -->
+                <div style="margin-bottom:0.75rem;padding:8px 14px;background:rgba(37,99,235,0.05);border-left:3px solid var(--accent-blue);border-radius:0 6px 6px 0;">
+                    <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;color:var(--accent-blue);margin-right:4px;">info</span>
+                    <span style="font-size:0.82rem;color:var(--text-secondary);">
+                        도장 완료 작업의 실적을 계획 대비 기록하고 공정 효율을 추적합니다.
+                    </span>
+                </div>
                 <!-- 섹션 1: 생산계획 현황 (A/B 라인 동시 표시) -->
                 <div class="card" style="margin-bottom:1rem;">
                     <div class="card-header" style="padding:8px 16px; background:var(--bg-secondary);
@@ -2018,7 +2025,26 @@ const PaintingWorkModule = (function() {
     // ──────────────────────────────────────────────
     // 작업 등록 모달 (lg 크기, 계획 연동)
     // ──────────────────────────────────────────────
+    // 실적 입력 가능 역할
+    var WORK_INPUT_ROLES = ['admin', 'prod_manager', 'line_manager'];
+
+    function _checkWorkAuth() {
+        var user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
+            ? AuthModule.getCurrentUser() : null;
+        if (!user) {
+            UIUtils.toast('로그인 후 실적을 입력할 수 있습니다.', 'warning');
+            return false;
+        }
+        if (!WORK_INPUT_ROLES.includes(String(user.role || ''))) {
+            UIUtils.toast('실적 입력 권한이 없습니다. (도장라인운영자·생산관리자만 가능)', 'warning');
+            return false;
+        }
+        return user;
+    }
+
     function openAddModal(prefill) {
+        var _modalAuthUser = _checkWorkAuth();
+        if (!_modalAuthUser) return;
         var p = prefill || {};
         var carModel = p.carModel || '';
         var partName = p.partName || '';
@@ -2339,9 +2365,17 @@ const PaintingWorkModule = (function() {
              _buildNotifySelectorHtml('qtyDiff', '투입/산출 차이 통보를 받을 담당자를 여러 명 선택하세요.') +
              '</div>' +
              // 비고
-            '<div class="form-group" style="margin-bottom:0;">' +
+            '<div class="form-group" style="margin-bottom:8px;">' +
             '<label class="form-label" style="font-size:0.84rem;">비고 <span id="addPwNoteRequired" style="display:none;color:var(--accent-red);">*</span></label>' +
-            '<input type="text" class="form-input" id="addPwNote" placeholder="특이사항 / 변동 사항"></div>';
+            '<input type="text" class="form-input" id="addPwNote" placeholder="특이사항 / 변동 사항"></div>' +
+            // 작성자
+            '<div class="form-group" style="margin-bottom:0;">' +
+            '<label class="form-label" style="font-size:0.84rem;">작성자</label>' +
+            '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:6px;font-size:0.9rem;">' +
+            '<span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-blue);">person</span>' +
+            '<span style="font-weight:600;color:var(--text-primary);">' + (function() { var roleMap = (AuthModule.ROLES || []).reduce(function(m,r){m[r.key]=r;return m;},{}); var r = roleMap[_modalAuthUser.role]; return r ? r.label : (_modalAuthUser.role || _modalAuthUser.name || ''); })() + '</span>' +
+            '</div>' +
+            '</div>';
 
         // ⑦ 숨김 필드
         var hiddenHtml =
@@ -2412,6 +2446,9 @@ const PaintingWorkModule = (function() {
 
     // 신규 저장
     async function saveNew() {
+        var _authUser = _checkWorkAuth();
+        if (!_authUser) return;
+
         // 투입수량 / 산출수량 / 투입인원 필수 검증
         var _inputQtyEl  = document.getElementById('addPwInputQty');
         var _prodQtyEl   = document.getElementById('addPwProdQty');
@@ -2651,7 +2688,8 @@ const PaintingWorkModule = (function() {
             qtyDiffManagerNotified: hasQtyDiff ? true : false,
             qtyDiffManagerRecipients: qtyDiffNotifyUsers,
             note: ((document.getElementById('addPwNote') || {}).value || '').trim(),
-            registeredAt: new Date().toISOString()
+            registeredAt: new Date().toISOString(),
+            createdBy: _authUser ? { id: _authUser.id, name: _authUser.name, role: _authUser.role } : null
         };
 
         if (!data.date) {

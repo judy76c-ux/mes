@@ -57,17 +57,12 @@ const Router = (function() {
         'jig-repair-history': '지그수리/개선 이력',
         'jig-layout': '지그창고 레이아웃',
         'prod-standards': '제조 관리 표준',
-        'work-standard': '관리계획서',
-        'inject-color-std': '도막두께 기준서',
-        'paji-std': '색차/광택 기준서',
-        'wash-consumable': '세척 소모품 기준서',
-        'agit-std': '여과망 기준서',
-        'remain-paint': '배합 기준서',
-        'viscosity-std': '사용량 기준표',
-        'robot-pg-std': '로봇 프로그램 기준서',
+        'work-standard': '작업표준서',
+        'robot-pg-std': '레이져 프로그램 기준서',
         'drying-std':   '건조 및 셋팅룸 온도 기준서',
+        'customer-return-nc-std': '고객 반송품 부적합품 처리 기준서',
         'prod-conditions': '작업조건 관리',
-        'paint-mix': '도료사용이력',
+        'paint-mix': '배합 기준서',
         'prod-sub-materials': '부자재 관리',
         'prod-equipment': '설비관리',
         'five-s': '3정5S 관리',
@@ -137,15 +132,12 @@ const Router = (function() {
         'jig-repair-history': { target: 'painting-jig', label: '도장지그로 돌아가기' },
         'jig-layout': { target: 'painting-jig', label: '도장지그로 돌아가기' },
 
+        'prod-standards': { target: 'dashboard', label: '메인 페이지' },
         'work-standard': { target: 'prod-standards', label: '제조 관리 표준 돌아가기' },
-        'inject-color-std': { target: 'prod-standards', label: '제조 관리 표준 돌아가기' },
-        'paji-std': { target: 'prod-standards', label: '제조 관리 표준 돌아가기' },
-        'wash-consumable': { target: 'prod-standards', label: '제조 관리 표준 돌아가기' },
-        'agit-std': { target: 'prod-standards', label: '제조 관리 표준 돌아가기' },
-        'remain-paint': { target: 'prod-standards', label: '제조 관리 표준 돌아가기' },
-        'viscosity-std': { target: 'prod-standards', label: '제조 관리 표준 돌아가기' },
         'robot-pg-std': { target: 'prod-standards', label: '제조 관리 표준 돌아가기' },
         'drying-std':   { target: 'prod-standards', label: '제조 관리 표준 돌아가기' },
+        'customer-return-nc-std': { target: 'prod-standards', label: '제조 관리 표준 돌아가기' },
+        'paint-mix': { target: 'prod-standards', label: '제조 관리 표준 돌아가기' },
 
         'cert-standard': { target: 'certifications-mgmt', label: '자격인증 관리로 돌아가기' },
         'cert-eval': { target: 'certifications-mgmt', label: '자격인증 관리로 돌아가기' },
@@ -227,6 +219,11 @@ const Router = (function() {
         if (sidebar) sidebar.classList.remove('mobile-open');
 
         renderModule(pageName);
+
+        // 페이지 변경 시 topbar 권한 배지 갱신
+        if (typeof AuthModule !== 'undefined' && AuthModule.updateTopbar) {
+            AuthModule.updateTopbar();
+        }
     }
 
     function renderModule(pageName) {
@@ -307,11 +304,26 @@ const Router = (function() {
         return currentPage;
     }
 
+    function hasModule(pageName) {
+        return !!modules[pageName];
+    }
+
+    function setPageTitle(html) {
+        const pageTitleEl = document.getElementById('pageTitle');
+        if (pageTitleEl) pageTitleEl.innerHTML = html || '';
+    }
+
     return {
         init: init,
         registerModule: registerModule,
         navigate: navigate,
         renderModule: renderModule,
-        getCurrentPage: getCurrentPage
+        getCurrentPage: getCurrentPage,
+        hasModule: hasModule,
+        setPageTitle: setPageTitle
     };
 })();
+
+if (typeof window !== 'undefined') {
+    window.Router = Router;
+}

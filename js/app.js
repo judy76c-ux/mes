@@ -264,14 +264,26 @@ const App = (function() {
                 }
             };
         Router.registerModule('prod-conditions', safeProdConditionsModule);
-        Router.registerModule('inject-color-std', InjectColorStdModule);
-        Router.registerModule('paji-std', PajiStdModule);
-        Router.registerModule('wash-consumable', WashConsumableModule);
-        Router.registerModule('agit-std', AgitStdModule);
-        Router.registerModule('remain-paint', RemainPaintModule);
-        Router.registerModule('viscosity-std', ViscosityStdModule);
+        const missingStandardModule = function(name) {
+            return {
+                render(container) {
+                    container.innerHTML = `
+                        <div class="empty-state" style="margin-top:40px;">
+                            <span class="material-symbols-outlined" style="font-size:42px;color:var(--accent-red);">error</span>
+                            <h4 style="margin-top:10px;">${name} 모듈 로드 실패</h4>
+                            <p style="color:var(--text-secondary);">브라우저 캐시를 새로고침한 뒤 다시 시도해 주세요.</p>
+                        </div>
+                    `;
+                }
+            };
+        };
         Router.registerModule('robot-pg-std', RobotPgStdModule);
         Router.registerModule('drying-std', DryingStdModule);
+        Router.registerModule('customer-return-nc-std',
+            (typeof CustomerReturnNcStdModule !== 'undefined' && CustomerReturnNcStdModule)
+                ? CustomerReturnNcStdModule
+                : missingStandardModule('고객 반송품 부적합품 처리 기준서')
+        );
         Router.registerModule('paint-mix', PaintMixModule);
         Router.registerModule('prod-sub-materials', ProdSubMaterialsModule);
         Router.registerModule('prod-quality', ProdQualityModule);

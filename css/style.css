@@ -1171,7 +1171,7 @@ input[type="time"] {
 
 .modal-container.modal-xl {
     max-width: 1248px !important;
-    max-height: 100vh;
+    max-height: 110vh;
 }
 
 /* 매칭 검토 등 초광폭 모달 (JS 드래그 핸들로 크기 조절) */
@@ -2271,6 +2271,15 @@ input[type="time"] {
     overflow: auto;
     border-radius: var(--border-radius);
     border: 1px solid var(--border-color);
+}
+
+/* 잔업 슬롯(18:00~) 기본 숨김 — 저녁식사(17:30) 행은 항상 표시 */
+.pivoted-grid tr.overtime-slot {
+    display: none;
+}
+/* 잔업 계획 체크 시 노출 */
+.pivoted-grid.show-overtime tr.overtime-slot {
+    display: table-row;
 }
 
 .mes-grid {

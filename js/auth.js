@@ -734,56 +734,35 @@ const AuthModule = (function () {
         const user = getCurrentUser();
         const role = ROLES.find(r => r.key === (user ? user.role : ''));
         if (user) {
-            const fullUser2 = _getUsers().find(u => u.id === user.id);
-            const photo2 = fullUser2 && fullUser2.photo ? fullUser2.photo : null;
-            const avatarHtml2 = photo2
-                ? `<img src="${photo2}" style="width:32px;height:32px;border-radius:50%;object-fit:cover;flex-shrink:0;border:2px solid var(--border-color);">`
-                : `<div class="topbar-user-icon"><span class="material-symbols-outlined" style="font-size:20px;">person</span></div>`;
-            badge.innerHTML = `
-                ${avatarHtml2}
-                <div style="line-height:1.3;margin:0 6px;white-space:nowrap;">
-                    <div style="font-size:12px;font-weight:700;color:var(--text-primary);">${user.displayName}</div>
-                    <div style="font-size:10px;color:${role ? role.color : 'var(--text-muted)'};">${role ? role.label : ''}</div>
-                </div>
-                <button onclick="AuthModule.logout()" title="로그아웃"
-                    style="background:none;border:none;cursor:pointer;padding:3px;color:var(--text-muted);display:flex;align-items:center;flex-shrink:0;">
-                    <span class="material-symbols-outlined" style="font-size:18px;">logout</span>
-                </button>`;
-        } else {
-            badge.innerHTML = `
-                <button onclick="AuthModule.showLoginModal()" title="로그인"
-                    style="background:none;border:1px solid var(--border-color);border-radius:6px;cursor:pointer;padding:4px 10px;display:flex;align-items:center;gap:4px;color:var(--text-secondary);font-size:12px;">
-                    <span class="material-symbols-outlined" style="font-size:16px;">login</span> 로그인
-                </button>`;
-        }
-    }
-
-    /* ── 초기화 (DOM 준비 후 호출) ───────────────────────────── */
-    function init() {
-        _setupInterceptor();
-        _applyWriteMode();
-        _updateTopbar();
-    }
-
-    function _updateTopbar() {
-        const badge = document.getElementById('topbarUserBadge');
-        if (!badge) return;
-        const user = getCurrentUser();
-        const role = ROLES.find(r => r.key === (user ? user.role : ''));
-        if (user) {
             const unreadCount = getUnreadInboxCount(user);
-            // 사용자 사진: 저장된 사용자 목록에서 photo 필드 조회
             const fullUser = _getUsers().find(u => u.id === user.id);
             const photo = fullUser && fullUser.photo ? fullUser.photo : null;
             const avatarHtml = photo
                 ? `<img src="${photo}" style="width:32px;height:32px;border-radius:50%;object-fit:cover;flex-shrink:0;border:2px solid var(--border-color);">`
                 : `<div class="topbar-user-icon"><span class="material-symbols-outlined" style="font-size:20px;">person</span></div>`;
+
+            // 현재 페이지 권한 배지
+            const pageId = (typeof Router !== 'undefined' && Router.getCurrentPage) ? Router.getCurrentPage() : '';
+            const canAccess = !pageId || isPageAccessGranted(user.role, pageId);
+            const canWrite  = !pageId || isPageWriteGranted(user.role, pageId);
+            const _permBadge = (ok, label) => `
+                <span title="${label}: ${ok ? '허용' : '제한'}" style="display:inline-flex;align-items:center;gap:2px;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;
+                    background:${ok ? 'rgba(22,163,74,0.1)' : 'rgba(220,38,38,0.1)'};
+                    color:${ok ? '#16a34a' : '#dc2626'};border:1px solid ${ok ? 'rgba(22,163,74,0.25)' : 'rgba(220,38,38,0.25)'};">
+                    <span class="material-symbols-outlined" style="font-size:12px;">${ok ? 'check_circle' : 'cancel'}</span>${label}
+                </span>`;
+            const permHtml = `
+                <div style="display:flex;gap:3px;margin:0 8px;align-items:center;flex-shrink:0;">
+                    ${_permBadge(canAccess, '접근')}${_permBadge(canWrite, '입력')}
+                </div>`;
+
             badge.innerHTML = `
                 ${avatarHtml}
                 <div style="line-height:1.3;margin:0 6px;white-space:nowrap;">
                     <div style="font-size:12px;font-weight:700;color:var(--text-primary);">${user.displayName}</div>
                     <div style="font-size:10px;color:${role ? role.color : 'var(--text-muted)'};">${role ? role.label : ''}</div>
                 </div>
+                ${permHtml}
                 <button onclick="AuthModule.openInboxModal()" title="수신함"
                     style="position:relative;background:none;border:none;cursor:pointer;padding:3px;color:var(--text-muted);display:flex;align-items:center;flex-shrink:0;">
                     <span class="material-symbols-outlined" style="font-size:18px;">mail</span>
@@ -1048,6 +1027,7 @@ const AuthModule = (function () {
         _submitComposeMessage,
         _doLoginModal,
         _updateTopbar,
+        updateTopbar: _updateTopbar,
         _applyWriteMode,
         init,
     };

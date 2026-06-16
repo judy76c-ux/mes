@@ -18,12 +18,6 @@ const Storage = (function() {
   const LOCAL_ONLY_STORES = new Set([
     STORES.INJ_INSP_STANDARDS,        // 수입검사 기준 사진 (base64 이미지)
     STORES.INJECT_COLOR_STD,          // 사출컬러 기준서 파일 (Blob — NAS 전송 불가)
-    STORES.INJECT_COLOR_STD_DATA,     // 사출컬러 기준서 편집 데이터 (base64 사진 포함)
-    STORES.PAJI_STD_DATA,             // 파지 기준서 편집 데이터 (base64 사진 포함)
-    STORES.WASH_CONSUMABLE_DATA,      // 세척 소모품 기준서 편집 데이터 (base64 사진 포함)
-    STORES.AGIT_STD_DATA,             // 교반시간 기준서 편집 데이터 (base64 사진 포함)
-    STORES.REMAIN_PAINT_DATA,         // 잔여도료 기준서 편집 데이터 (base64 사진 포함)
-    STORES.VISCOSITY_STD_DATA,        // 점도 측정 기준서 편집 데이터 (base64 사진 포함)
     STORES.ROBOT_PG_STD_DATA,         // 로봇 프로그램 기준서 (v45)
     STORES.DRYING_STD_DATA,           // 건조 및 셋팅룸 온도 기준서 (v46)
   ]);

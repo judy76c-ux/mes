@@ -823,7 +823,10 @@ const SettingsModule = (function() {
                                     <tr>
                                         <td style="text-align:center;">${i + 1}</td>
                                         <td style="white-space:nowrap;font-size:.78rem;max-width:56px;overflow:hidden;text-overflow:ellipsis;" title="${p.carModel || ''}">${p.carModel || '-'}</td>
-                                        <td style="min-width:260px;"><strong style="font-size:.86rem;">${p.partName || '-'}</strong></td>
+                                        <td style="min-width:260px;">
+                                            <strong style="font-size:.86rem;">${p.partName || '-'}</strong>
+                                            ${p.linkedProductId ? (() => { const lp = products.find(x => x.id === p.linkedProductId); return lp ? `<span title="레이져 분리 연결: ${lp.partName} (${lp.customer||''})" style="display:inline-flex;align-items:center;gap:2px;margin-left:4px;padding:1px 5px;background:rgba(109,40,217,0.1);border:1px solid rgba(109,40,217,0.3);border-radius:4px;font-size:0.68rem;color:#7c3aed;white-space:nowrap;vertical-align:middle;"><span class="material-symbols-outlined" style="font-size:11px;">call_split</span>${lp.customer||lp.partName}</span>` : ''; })() : ''}
+                                        </td>
                                         <td style="font-size:.8rem;white-space:nowrap;">${p.color || '-'}</td>
                                         <td style="text-align:center;">${itBadge}</td>
                                         <td style="text-align:center;font-size:.8rem;white-space:nowrap;">${p.packUnit || '-'}</td>
@@ -1082,7 +1085,8 @@ const SettingsModule = (function() {
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">차종</label>
-                    <input type="text" class="form-input" id="${idPrefix}CarModel" placeholder="예: HMG-A" value="${v('carModel')}">
+                    <input type="text" class="form-input" id="${idPrefix}CarModel" placeholder="예: HMG-A" value="${v('carModel')}"
+                        oninput="SettingsModule.updateLinkedProductOptions('${idPrefix}')">
                 </div>
                 <div class="form-group">
                     <label class="form-label">품명 <span style="color:var(--accent-red)">*</span></label>
@@ -1133,6 +1137,62 @@ const SettingsModule = (function() {
                     <input type="text" class="form-input" id="${idPrefix}Customer" placeholder="예: 현대모비스" value="${v('customer')}">
                 </div>
             </div>
+
+            <!-- 레이져 분리 연결 제품 -->
+            ${(function() {
+                const allProds = Storage.getAll(PRODUCTS_STORE) || [];
+                // 이미 다른 제품의 연결 대상(target)인 제품 ID 맵: targetId → sourceProd
+                const targetMap = {};
+                allProds.forEach(prod => { if (prod.linkedProductId) targetMap[prod.linkedProductId] = prod; });
+
+                // 현재 제품이 다른 제품의 연결 대상인지 확인 (수정 모드일 때)
+                const linkedByProd = isEdit && p.id ? targetMap[p.id] : null;
+
+                if (linkedByProd) {
+                    // 읽기 전용: 반대쪽에서 연결한 경우
+                    return `<div style="margin:10px 0 8px;padding:10px 14px;background:rgba(109,40,217,0.05);border:1px solid rgba(109,40,217,0.2);border-radius:8px;">
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span class="material-symbols-outlined" style="font-size:16px;color:#7c3aed;">call_split</span>
+                            <span style="font-weight:600;font-size:0.82rem;color:#7c3aed;">레이져 단계 납품처 분리 연결</span>
+                        </div>
+                        <div style="margin-top:6px;padding:6px 10px;background:rgba(109,40,217,0.08);border-radius:6px;font-size:0.82rem;display:flex;align-items:center;gap:6px;">
+                            <span class="material-symbols-outlined" style="font-size:14px;color:#7c3aed;">link</span>
+                            <span style="color:#7c3aed;font-weight:600;">${linkedByProd.partName}</span>
+                            <span style="color:var(--text-muted);">제품과 연결되어 있습니다 (반대쪽에서 설정됨)</span>
+                        </div>
+                        <input type="hidden" id="${idPrefix}LinkedProductId" value="">
+                    </div>`;
+                }
+
+                // 연결 가능한 제품 목록: 같은 차종, 자신 제외, 이미 다른 소스의 대상이 아닌 것, 자신의 현재 선택값은 허용
+                const curLinkedId = v('linkedProductId');
+                const carModelVal = v('carModel');
+                const availableProds = allProds
+                    .filter(prod => {
+                        if (isEdit && prod.id === p.id) return false;       // 자기 자신 제외
+                        if (carModelVal && prod.carModel !== carModelVal) return false; // 다른 차종 제외
+                        if (targetMap[prod.id] && prod.id !== curLinkedId) return false; // 이미 다른 제품의 대상인 경우 제외 (현재 선택값은 유지)
+                        return true;
+                    })
+                    .sort((a, b) => (a.partName||'').localeCompare(b.partName||'','ko'));
+
+                return `<div style="margin:10px 0 8px;padding:10px 14px;background:rgba(109,40,217,0.05);border:1px solid rgba(109,40,217,0.2);border-radius:8px;">
+                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+                        <span class="material-symbols-outlined" style="font-size:16px;color:#7c3aed;">call_split</span>
+                        <span style="font-weight:600;font-size:0.82rem;color:#7c3aed;">레이져 단계 납품처 분리 연결</span>
+                        <span style="font-size:0.72rem;color:var(--text-muted);">— 도장까지 같은 제품, 레이져 작업 시 납품처별로 분리</span>
+                    </div>
+                    <div class="form-row" style="margin:0;">
+                        <div class="form-group" style="flex:2;">
+                            <label class="form-label">연결 제품 (레이져 분리 대상)</label>
+                            <select class="form-select" id="${idPrefix}LinkedProductId" style="font-size:0.82rem;">
+                                <option value="">-- 연결 안 함 --</option>
+                                ${availableProds.map(prod => `<option value="${prod.id}" ${curLinkedId === prod.id ? 'selected' : ''}>${prod.partName || ''} (${prod.customer || '납품처 없음'})</option>`).join('')}
+                            </select>
+                        </div>
+                    </div>
+                </div>`;
+            })()}
 
             <div style="font-weight:600;color:var(--text-primary);margin:16px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--accent-blue);">
                 <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;">payments</span>
@@ -1711,6 +1771,27 @@ const SettingsModule = (function() {
 
     // ──────────────────────────────────────────────────────────────
 
+    function updateLinkedProductOptions(idPrefix) {
+        const sel = document.getElementById(`${idPrefix}LinkedProductId`);
+        if (!sel || sel.type === 'hidden') return; // 읽기 전용(hidden) 상태면 갱신 안 함
+        const carModel = (document.getElementById(`${idPrefix}CarModel`) || {}).value || '';
+        const currentId = sel.value;
+        const editId = idPrefix === 'editProd' ? (document.getElementById(`${idPrefix}Id`) || {}).value || '' : '';
+        const allProds = Storage.getAll(PRODUCTS_STORE) || [];
+        const targetMap = {};
+        allProds.forEach(prod => { if (prod.linkedProductId) targetMap[prod.linkedProductId] = true; });
+        const prods = allProds
+            .filter(prod => {
+                if (editId && prod.id === editId) return false;
+                if (carModel && prod.carModel !== carModel) return false;
+                if (targetMap[prod.id] && prod.id !== currentId) return false; // 이미 대상인 제품 제외
+                return true;
+            })
+            .sort((a, b) => (a.partName||'').localeCompare(b.partName||'','ko'));
+        sel.innerHTML = '<option value="">-- 연결 안 함 --</option>'
+            + prods.map(prod => `<option value="${prod.id}" ${prod.id === currentId ? 'selected' : ''}>${prod.partName || ''} (${prod.customer || '납품처 없음'})</option>`).join('');
+    }
+
     // 사출 자재 정보 테이블 렌더링 (자동매칭 + 필터 결합)
     function updateProductInjInfo(idPrefix) {
         const partNameEl  = document.getElementById(`${idPrefix}PartName`);
@@ -1941,6 +2022,7 @@ const SettingsModule = (function() {
             ct4: g(`${prefix}Ct4`).trim(),
             cvt4: g(`${prefix}Cvt4`).trim(),
             code: g(`${prefix}Code`).trim(),
+            linkedProductId: g(`${prefix}LinkedProductId`).trim() || null,
             paintMaterials: _getCurrentPaintRows(prefix).filter(r => r.paintSpec || r.mainId || r.hardId || r.thinnerId)
         };
     }
@@ -10734,6 +10816,7 @@ const SettingsModule = (function() {
         _onInjectMatPriceHint,
         _syncInjMatPriceFromProduct,
         updateProductInjInfo,
+        updateLinkedProductOptions,
         onProdInjFiltCarChange,
         onProdInjFiltPartChange,
         onProdInjFiltChange,

@@ -119,22 +119,8 @@ const DB = (function() {
         INJECT_COLOR_STD: 'inject_color_standards', // 사출품 COLOR 기준서 파일 이력
 
         // 사출컬러 기준서 편집 데이터 (v37)
-        INJECT_COLOR_STD_DATA: 'inject_color_std_data', // 기준서 편집 내용
 
         // 파지 기준서 편집 데이터 (v38)
-        PAJI_STD_DATA: 'paji_std_data', // 제품 파지 기준서 편집 내용
-
-        // 세척 소모품 교체관리 기준서 데이터 (v39)
-        WASH_CONSUMABLE_DATA: 'wash_consumable_data',
-
-        // 교반시간 작업기준서 데이터 (v40)
-        AGIT_STD_DATA: 'agit_std_data',
-
-        // 잔여도료 포장방법 작업기준서 데이터 (v41)
-        REMAIN_PAINT_DATA: 'remain_paint_data',
-
-        // 점도 측정 작업기준서 데이터 (v42)
-        VISCOSITY_STD_DATA: 'viscosity_std_data',
 
         // 사출 재공품 (v44)
         INJECTION_WIP: 'injection_wip',
@@ -1270,36 +1256,6 @@ const DB = (function() {
                 if (!database.objectStoreNames.contains(STORES.INJECT_COLOR_STD)) {
                     const store = database.createObjectStore(STORES.INJECT_COLOR_STD, { keyPath: 'id' });
                     store.createIndex('uploadDate', 'uploadDate', { unique: false });
-                }
-
-                // ── 사출컬러 기준서 편집 데이터 (v37) ─────────────────
-                if (!database.objectStoreNames.contains(STORES.INJECT_COLOR_STD_DATA)) {
-                    database.createObjectStore(STORES.INJECT_COLOR_STD_DATA, { keyPath: 'id' });
-                }
-
-                // ── 파지 기준서 편집 데이터 (v38) ──────────────────────
-                if (!database.objectStoreNames.contains(STORES.PAJI_STD_DATA)) {
-                    database.createObjectStore(STORES.PAJI_STD_DATA, { keyPath: 'id' });
-                }
-
-                // ── 세척 소모품 교체관리 기준서 (v39) ──────────────────
-                if (!database.objectStoreNames.contains(STORES.WASH_CONSUMABLE_DATA)) {
-                    database.createObjectStore(STORES.WASH_CONSUMABLE_DATA, { keyPath: 'id' });
-                }
-
-                // ── 교반시간 작업기준서 (v40) ───────────────────────────
-                if (!database.objectStoreNames.contains(STORES.AGIT_STD_DATA)) {
-                    database.createObjectStore(STORES.AGIT_STD_DATA, { keyPath: 'id' });
-                }
-
-                // ── 잔여도료 포장방법 작업기준서 (v41) ──────────────────
-                if (!database.objectStoreNames.contains(STORES.REMAIN_PAINT_DATA)) {
-                    database.createObjectStore(STORES.REMAIN_PAINT_DATA, { keyPath: 'id' });
-                }
-
-                // ── 점도 측정 작업기준서 (v42) ───────────────────────────
-                if (!database.objectStoreNames.contains(STORES.VISCOSITY_STD_DATA)) {
-                    database.createObjectStore(STORES.VISCOSITY_STD_DATA, { keyPath: 'id' });
                 }
 
                 // ── 사출 재공품 (v44) ──────────────────────────────────────

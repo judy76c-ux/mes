@@ -15,14 +15,29 @@ var LaserWipModule = (function() {
         { id: 'after-laser', label: '레이져 후 재공품 현황', icon: 'bolt' }
     ];
 
+    function _actionBtn(label, icon, onclick, color) {
+        const col = color || 'var(--text-primary)';
+        return `<button type="button" onclick="${onclick}"
+            style="display:flex;align-items:center;gap:5px;padding:6px 13px;border:1px solid var(--border-color);
+                   border-radius:7px;background:#fff;cursor:pointer;font-size:0.84rem;color:${col};
+                   font-family:inherit;white-space:nowrap;transition:background 0.15s;"
+            onmouseover="this.style.background='var(--bg-secondary)'"
+            onmouseout="this.style.background='#fff'">
+            <span class="material-symbols-outlined" style="font-size:16px;color:${col};">${icon}</span>${label}
+        </button>`;
+    }
+
     function _tabNav() {
+        const standbyActions = `
+            ${_actionBtn('입고', 'arrow_downward', "LaserWipModule.openManualInput()", 'var(--accent-green)')}
+            ${_actionBtn('출고', 'arrow_upward',   "LaserStandbyModule.openStandbyOutModal()", 'var(--accent-red)')}
+            ${_actionBtn('일괄 등록', 'table_rows', "LaserStandbyModule.openBulkModal()", 'var(--accent-blue)')}`;
+        const afterActions = `
+            ${_actionBtn('입고', 'arrow_downward', "LaserWipModule.openAfterLaserInput()", 'var(--accent-green)')}
+            ${_actionBtn('출고', 'arrow_upward',   "LaserWipModule.openAfterLaserOut()", 'var(--accent-red)')}`;
         return `
         <div style="margin-bottom:18px;">
-            <div style="margin-bottom:14px;">
-                <h3 style="margin:0 0 6px;font-size:1.15rem;">${TABS.find(t => t.id === _activeTab)?.label || '재공품 현황'}</h3>
-                <p style="margin:0;color:var(--text-muted);font-size:.9rem;">도장 공정 전·후 재공품 재고를 한 곳에서 확인합니다.</p>
-            </div>
-            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+            <div style="display:flex;gap:8px;margin-bottom:10px;">
                 ${TABS.map(t => `
                     <button type="button" id="wipTab-${t.id}"
                         onclick="LaserWipModule.switchTab('${t.id}')"
@@ -31,22 +46,9 @@ var LaserWipModule = (function() {
                         <span class="material-symbols-outlined" style="font-size:18px;">${t.icon}</span>
                         ${t.label}
                     </button>`).join('')}
-                <button type="button" onclick="LaserWipModule.openManualInput()"
-                    class="btn btn-outline"
-                    style="display:flex;align-items:center;gap:6px;background:#fff;">
-                    <span class="material-symbols-outlined" style="font-size:18px;">edit_square</span>
-                    수기 등록
-                </button>
-                <button class="btn btn-secondary" style="display:flex;align-items:center;gap:4px;font-size:0.85rem;"
-                    onclick="LaserWipModule.refresh()">
-                    <span class="material-symbols-outlined" style="font-size:1rem;">refresh</span> 새로고침
-                </button>
-                <button type="button" onclick="Router.navigate('laser-layout')"
-                    class="btn btn-outline"
-                    style="display:flex;align-items:center;gap:6px;background:#fff;margin-left:auto;">
-                    <span class="material-symbols-outlined" style="font-size:18px;">map</span>
-                    재공품 현황 레이아웃
-                </button>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                ${_activeTab === 'standby' ? standbyActions : afterActions}
             </div>
         </div>`;
     }
@@ -92,9 +94,17 @@ var LaserWipModule = (function() {
     }
 
     // ── 탭 1: 레이져 대기품 현황 ─────────────────────────────────────────
-    // LaserStandbyModule.renderContentOnly()에 위임
     function _renderStandbyTab(el) {
-        el.innerHTML = `<div id="lsbContentWrapper"></div>`;
+        el.innerHTML = `
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding:10px 14px;
+                        background:rgba(245,158,11,0.07);border-left:3px solid var(--accent-orange);border-radius:0 8px 8px 0;">
+                <span class="material-symbols-outlined" style="font-size:1.2rem;color:var(--accent-orange);">hourglass_top</span>
+                <div>
+                    <div style="font-size:0.92rem;font-weight:700;color:var(--accent-orange);">레이져 대기품 현황</div>
+                    <div style="font-size:0.76rem;color:var(--text-muted);">도장 완료 후 레이져 공정 대기 재공품</div>
+                </div>
+            </div>
+            <div id="lsbContentWrapper"></div>`;
 
         const wrapper = document.getElementById('lsbContentWrapper');
         if (wrapper && typeof LaserStandbyModule !== 'undefined') {
@@ -105,9 +115,19 @@ var LaserWipModule = (function() {
     // ── 탭 2: 레이져 후 재공품 현황 ──────────────────────────────────────
     function _renderAfterLaserTab(el) {
         const rows    = _calcWip();
+        // 섹션 헤더를 포함해 렌더
+        const _sectionHeader = `
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding:10px 14px;
+                        background:rgba(139,92,246,0.07);border-left:3px solid var(--accent-purple);border-radius:0 8px 8px 0;">
+                <span class="material-symbols-outlined" style="font-size:1.2rem;color:var(--accent-purple);">bolt</span>
+                <div>
+                    <div style="font-size:0.92rem;font-weight:700;color:var(--accent-purple);">레이져 후 재공품 현황</div>
+                    <div style="font-size:0.76rem;color:var(--text-muted);">레이져 완료 후 도장(A/B) 투입 대기 재공품</div>
+                </div>
+            </div>`;
         const hasStock = rows.some(r => r.wip > 0);
 
-        el.innerHTML = `
+        el.innerHTML = _sectionHeader + `
             <!-- 요약 카드 -->
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;margin-bottom:20px;">
                 ${_summaryCard('레이져 완료',  rows.reduce((s,r)=>s+r.laserQty,0),              'bolt',      'var(--accent-purple)')}
@@ -118,7 +138,7 @@ var LaserWipModule = (function() {
 
             <p style="margin:0 0 10px;font-size:0.8rem;color:var(--text-muted);">
                 <span class="material-symbols-outlined" style="font-size:0.85rem;vertical-align:middle;">info</span>
-                도장-A → 레이져 → <strong>도장-B</strong> 공정 제품만 표시됩니다. 레이져 후 출하검사 진행 제품은 제외.
+                제조공정에서 레이져 직후 다시 <strong>도장(A/B)</strong>으로 이어지는 제품만 표시됩니다.
             </p>
 
             <!-- 재공품 테이블 -->
@@ -201,36 +221,62 @@ var LaserWipModule = (function() {
         </tr>`;
     }
 
-    // ── 도장-B 공정 제품 Set 구성 ─────────────────────────────────────────
-    function _buildPaintBProductSet() {
+    // ── 공정명 정규화 ────────────────────────────────────────────────────
+    function _normProc(v) {
+        const s = (v || '').trim();
+        if (/^도장.?A$/i.test(s)) return '도장-A';
+        if (/^도장.?B$/i.test(s)) return '도장-B';
+        if (/^레이[져저]$/i.test(s)) return '레이져';
+        return s;
+    }
+
+    // ── 레이져 직후 공정이 도장(A/B)인 제품 맵 구성 ─────────────────────
+    // 반환: { 'carModel||partName': '도장-A' | '도장-B' }
+    function _buildAfterLaserDrainMap() {
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-        const set = new Set();
+        const map = {};
         products.forEach(p => {
-            const hasPaintB = ['process1','process2','process3','process4']
-                .some(k => (p[k]||'').trim() === '도장-B');
-            if (hasPaintB) set.add(`${p.carModel||''}||${p.partName||''}`);
+            const seq = ['process1','process2','process3','process4']
+                .map(k => _normProc(p[k] || '')).filter(Boolean);
+            const idxLaser = seq.findIndex(v => v === '레이져');
+            if (idxLaser < 0 || idxLaser === seq.length - 1) return;
+            const next = seq[idxLaser + 1];
+            if (next === '도장-A' || next === '도장-B') {
+                map[`${p.carModel||''}||${p.partName||''}`] = next;
+            }
         });
-        return set;
+        return map;
     }
 
     // ── 레이져 후 WIP 계산 ────────────────────────────────────────────────
     function _calcWip() {
-        const laserWorks = Storage.getAll(STORE_LASER) || [];
-        const paintWorks = Storage.getAll(STORE_PAINT) || [];
-        const paintBSet  = _buildPaintBProductSet();
-        const laserMap   = {};
+        const laserWorks   = Storage.getAll(STORE_LASER) || [];
+        const paintWorks   = Storage.getAll(STORE_PAINT) || [];
+        const drainMap     = _buildAfterLaserDrainMap();
+        const laserMap     = {};
 
         laserWorks.forEach(w => {
             const prodKey = `${w.carModel||''}||${w.partName||''}`;
-            if (!paintBSet.has(prodKey)) return; // 도장-B 없는 제품 제외
+            if (!drainMap[prodKey]) return; // 레이져→도장 구조 아닌 제품 제외
             const key = `${w.carModel||''}||${w.partName||''}||${w.color||''}`;
-            if (!laserMap[key]) laserMap[key] = { carModel: w.carModel||'', partName: w.partName||'', color: w.color||'', laserQty: 0, paintBQty: 0 };
-            laserMap[key].laserQty += Number(w.quantity) || 0;
+            if (!laserMap[key]) laserMap[key] = {
+                carModel: w.carModel||'', partName: w.partName||'', color: w.color||'',
+                laserQty: 0, paintBQty: 0, drainLine: drainMap[prodKey]
+            };
+            if (w.isManualOut) {
+                laserMap[key].paintBQty += Number(w.quantity) || 0;
+            } else {
+                laserMap[key].laserQty  += Number(w.quantity) || 0;
+            }
         });
 
-        paintWorks.filter(w => (w.line||'').trim() === '도장-B').forEach(w => {
+        paintWorks.forEach(w => {
+            const prodKey   = `${w.carModel||''}||${w.partName||''}`;
+            const drainLine = drainMap[prodKey];
+            if (!drainLine) return;
+            if ((w.line||'').trim() !== drainLine) return; // 해당 제품의 drain 공정과 일치하는 것만
             const key = `${w.carModel||''}||${w.partName||''}||${w.color||''}`;
-            if (!laserMap[key]) laserMap[key] = { carModel: w.carModel||'', partName: w.partName||'', color: w.color||'', laserQty: 0, paintBQty: 0 };
+            if (!laserMap[key]) return;
             laserMap[key].paintBQty += Number(w.productionQty) || 0;
         });
 
@@ -250,6 +296,8 @@ var LaserWipModule = (function() {
      * production-plan.js 도장-B 모달에서 호출용
      */
     function getWipStock(carModel, partName, color) {
+        const drainMap  = _buildAfterLaserDrainMap();
+        const drainLine = drainMap[`${carModel||''}||${partName||''}`] || '도장-B';
         const laserWorks = Storage.getAll(STORE_LASER) || [];
         const paintWorks = Storage.getAll(STORE_PAINT) || [];
         const _match = w => {
@@ -258,10 +306,11 @@ var LaserWipModule = (function() {
             const clOk = !color    || !w.color || (w.color||'') === color;
             return cmOk && pnOk && clOk;
         };
-        const laserQty  = laserWorks.filter(_match).reduce((s,w) => s + (Number(w.quantity)||0), 0);
-        const paintBQty = paintWorks.filter(w => (w.line||'').trim()==='도장-B' && _match(w))
+        const laserQty  = laserWorks.filter(w => !w.isManualOut && _match(w)).reduce((s,w) => s + (Number(w.quantity)||0), 0);
+        const manualOut = laserWorks.filter(w =>  w.isManualOut && _match(w)).reduce((s,w) => s + (Number(w.quantity)||0), 0);
+        const drainQty  = paintWorks.filter(w => (w.line||'').trim() === drainLine && _match(w))
                                     .reduce((s,w) => s + (Number(w.productionQty)||0), 0);
-        return Math.max(0, laserQty - paintBQty);
+        return Math.max(0, laserQty - drainQty - manualOut);
     }
 
     function refresh() {
@@ -277,9 +326,223 @@ var LaserWipModule = (function() {
         LaserStandbyModule.openAdjustModal('', true);
     }
 
+    // ── 레이져 후 재공품 수기 등록 ──────────────────────────────────────
+
+    function _getPaintBProducts() {
+        return (Storage.getAll(DB.STORES.PRODUCTS) || []).filter(p => {
+            const seq = ['process1','process2','process3','process4']
+                .map(k => _normProc(p[k]||'')).filter(Boolean);
+            const idx = seq.findIndex(v => v === '레이져');
+            if (idx < 0 || idx === seq.length - 1) return false;
+            const next = seq[idx + 1];
+            return next === '도장-A' || next === '도장-B';
+        });
+    }
+
+    function openAfterLaserInput() {
+        const products  = _getPaintBProducts();
+        const carModels = [...new Set(products.map(p => p.carModel).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'ko'));
+        const today     = new Date().toISOString().slice(0, 10);
+
+        UIUtils.showModal('레이져 후 재공품 수기 등록', `
+            <div style="background:rgba(139,92,246,0.06);border:1px solid rgba(139,92,246,0.15);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.82rem;color:var(--text-secondary);">
+                <span class="material-symbols-outlined" style="font-size:0.85rem;vertical-align:middle;">info</span>
+                레이져 완료 수량을 수기로 등록합니다. 도장-B 공정이 있는 제품만 선택 가능합니다.
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">날짜</label>
+                    <input type="date" class="form-input" id="lwAfterDate" value="${today}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">차종</label>
+                    <select class="form-select" id="lwAfterCarModel" onchange="LaserWipModule.onAfterCarChange()">
+                        <option value="">-- 차종 선택 --</option>
+                        ${carModels.map(m => `<option value="${m}">${m}</option>`).join('')}
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">품명</label>
+                    <select class="form-select" id="lwAfterPartName" onchange="LaserWipModule.onAfterPartChange()">
+                        <option value="">-- 품명 선택 --</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">컬러</label>
+                    <select class="form-select" id="lwAfterColor">
+                        <option value="">-- 컬러 선택 --</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">수량 (EA)</label>
+                    <input type="number" class="form-input" id="lwAfterQty" min="1" placeholder="0">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">비고</label>
+                    <input type="text" class="form-input" id="lwAfterNote" placeholder="수기등록">
+                </div>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="LaserWipModule.saveAfterLaserInput()">등록</button>
+        `, 'lg');
+    }
+
+    function onAfterCarChange() {
+        const carModel  = (document.getElementById('lwAfterCarModel')  || {}).value || '';
+        const products  = _getPaintBProducts().filter(p => !carModel || p.carModel === carModel);
+        const partNames = [...new Set(products.map(p => p.partName).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'ko'));
+        const sel = document.getElementById('lwAfterPartName');
+        if (sel) sel.innerHTML = '<option value="">-- 품명 선택 --</option>' + partNames.map(n => `<option value="${n}">${n}</option>`).join('');
+        const colSel = document.getElementById('lwAfterColor');
+        if (colSel) colSel.innerHTML = '<option value="">-- 컬러 선택 --</option>';
+    }
+
+    function onAfterPartChange() {
+        const carModel = (document.getElementById('lwAfterCarModel')  || {}).value || '';
+        const partName = (document.getElementById('lwAfterPartName') || {}).value || '';
+        const products = _getPaintBProducts().filter(p =>
+            (!carModel || p.carModel === carModel) && (!partName || p.partName === partName)
+        );
+        const colors = [...new Set(products.map(p => p.color).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'ko'));
+        const sel = document.getElementById('lwAfterColor');
+        if (sel) sel.innerHTML = '<option value="">-- 컬러 선택 --</option>' + colors.map(c => `<option value="${c}">${c}</option>`).join('');
+    }
+
+    async function saveAfterLaserInput() {
+        const date     = (document.getElementById('lwAfterDate')     || {}).value || '';
+        const carModel = (document.getElementById('lwAfterCarModel') || {}).value || '';
+        const partName = (document.getElementById('lwAfterPartName') || {}).value || '';
+        const color    = (document.getElementById('lwAfterColor')    || {}).value || '';
+        const quantity = parseInt((document.getElementById('lwAfterQty')  || {}).value || '0', 10);
+        const note     = (document.getElementById('lwAfterNote')     || {}).value.trim() || '수기등록';
+
+        if (!date || !carModel || !partName || !quantity || quantity <= 0) {
+            UIUtils.toast('날짜, 차종, 품명, 수량(1 이상)은 필수입니다.', 'warning');
+            return;
+        }
+
+        await Storage.add(STORE_LASER, { date, carModel, partName, color, quantity, machine: '', note, isManual: true });
+        UIUtils.closeModal();
+        UIUtils.toast(`레이져 후 재공품 수기 등록 완료 — ${partName} ${quantity}EA`, 'success');
+        refresh();
+    }
+
+    // ── 레이져 후 재공품 출고 ───────────────────────────────────────────
+
+    function openAfterLaserOut() {
+        const rows      = _calcWip().filter(r => r.wip > 0);
+        const carModels = [...new Set(rows.map(r => r.carModel).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'ko'));
+        const today     = new Date().toISOString().slice(0, 10);
+
+        UIUtils.showModal('레이져 후 재공품 출고', `
+            <div style="background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.18);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.82rem;color:var(--accent-red);display:flex;gap:6px;">
+                <span class="material-symbols-outlined" style="font-size:1rem;flex-shrink:0;">arrow_upward</span>
+                레이져 완료 재공품을 도장-B 투입 전에 수동으로 출고 처리합니다.
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">날짜</label>
+                    <input type="date" class="form-input" id="lwOutDate" value="${today}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">차종</label>
+                    <select class="form-select" id="lwOutCarModel" onchange="LaserWipModule.onOutCarChange()">
+                        <option value="">-- 차종 선택 --</option>
+                        ${carModels.map(m => `<option value="${m}">${m}</option>`).join('')}
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">품명</label>
+                    <select class="form-select" id="lwOutPartName" onchange="LaserWipModule.onOutPartChange()">
+                        <option value="">-- 품명 선택 --</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">컬러</label>
+                    <select class="form-select" id="lwOutColor">
+                        <option value="">-- 컬러 선택 --</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">출고 수량 (EA)</label>
+                    <input type="number" class="form-input" id="lwOutQty" min="1" placeholder="0">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">비고</label>
+                    <input type="text" class="form-input" id="lwOutNote" placeholder="수기 출고">
+                </div>
+            </div>
+            <div id="lwOutStockInfo" style="font-size:0.82rem;color:var(--text-muted);margin-top:4px;"></div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" style="background:var(--accent-red);border-color:var(--accent-red);"
+                onclick="LaserWipModule.saveAfterLaserOut()">출고 등록</button>
+        `, 'lg');
+    }
+
+    function onOutCarChange() {
+        const carModel = (document.getElementById('lwOutCarModel') || {}).value || '';
+        const rows     = _calcWip().filter(r => r.wip > 0 && (!carModel || r.carModel === carModel));
+        const partNames = [...new Set(rows.map(r => r.partName).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'ko'));
+        const sel = document.getElementById('lwOutPartName');
+        if (sel) sel.innerHTML = '<option value="">-- 품명 선택 --</option>' + partNames.map(n => `<option value="${n}">${n}</option>`).join('');
+        const colSel = document.getElementById('lwOutColor');
+        if (colSel) colSel.innerHTML = '<option value="">-- 컬러 선택 --</option>';
+        const info = document.getElementById('lwOutStockInfo');
+        if (info) info.textContent = '';
+    }
+
+    function onOutPartChange() {
+        const carModel = (document.getElementById('lwOutCarModel') || {}).value || '';
+        const partName = (document.getElementById('lwOutPartName') || {}).value || '';
+        const rows     = _calcWip().filter(r => r.wip > 0 && (!carModel || r.carModel === carModel) && (!partName || r.partName === partName));
+        const colors   = [...new Set(rows.map(r => r.color).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'ko'));
+        const sel = document.getElementById('lwOutColor');
+        if (sel) sel.innerHTML = '<option value="">-- 컬러 선택 --</option>' + colors.map(c => `<option value="${c}">${c}</option>`).join('');
+        const match = rows.find(r => r.partName === partName);
+        const info  = document.getElementById('lwOutStockInfo');
+        if (info && match) info.innerHTML = `현재 재공품: <strong style="color:var(--accent-purple);">${UIUtils.formatNumber(match.wip)} EA</strong>`;
+    }
+
+    async function saveAfterLaserOut() {
+        const date     = (document.getElementById('lwOutDate')     || {}).value || '';
+        const carModel = (document.getElementById('lwOutCarModel') || {}).value || '';
+        const partName = (document.getElementById('lwOutPartName') || {}).value || '';
+        const color    = (document.getElementById('lwOutColor')    || {}).value || '';
+        const quantity = parseInt((document.getElementById('lwOutQty')  || {}).value || '0', 10);
+        const note     = (document.getElementById('lwOutNote')     || {}).value.trim() || '수기 출고';
+
+        if (!date || !carModel || !partName || !quantity || quantity <= 0) {
+            UIUtils.toast('날짜, 차종, 품명, 수량(1 이상)은 필수입니다.', 'warning');
+            return;
+        }
+        const wip = _calcWip().find(r => r.carModel === carModel && r.partName === partName && (!color || r.color === color));
+        if (wip && quantity > wip.wip) {
+            UIUtils.toast(`출고 수량(${quantity})이 현재 재공품(${wip.wip})을 초과합니다.`, 'warning');
+            return;
+        }
+
+        await Storage.add(STORE_LASER, { date, carModel, partName, color, quantity, machine: '', note, isManual: true, isManualOut: true });
+        UIUtils.closeModal();
+        UIUtils.toast(`레이져 후 재공품 출고 완료 — ${partName} ${quantity}EA`, 'success');
+        refresh();
+    }
+
     function init(container) {
         render(container);
     }
 
-    return { init, render, refresh, switchTab, openTab, openManualInput, getWipStock, _calcWip };
+    return { init, render, refresh, switchTab, openTab, openManualInput,
+             openAfterLaserInput, onAfterCarChange, onAfterPartChange, saveAfterLaserInput,
+             openAfterLaserOut, onOutCarChange, onOutPartChange, saveAfterLaserOut,
+             getWipStock, _calcWip };
 })();

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 생산 관리 모듈 (작업조건 관리, 초중종물 관리, 설비관리)
  */
 
@@ -411,6 +411,13 @@ var ProdStandardsModule = (function() {
                 { key:'note', label:'비고' },
             ]
         },
+        'paint-tds': {
+            label: '도장 사양서(TDS)',
+            icon: 'description',
+            desc: '도료사가 배포한 도장 사양서(TDS)를 주제 도료별로 업로드하고 관리합니다.',
+            columns: [],
+            customRenderer: 'paint-tds'
+        },
         'mixing': {
             label: '배합 기준서',
             icon: 'science',
@@ -452,6 +459,14 @@ var ProdStandardsModule = (function() {
     let _processStandardMenuLayout = null;
     let _processStandardMenuLayoutLoaded = false;
     let _processStandardDragId = '';
+    let _processStandardMoveEdit = false;
+    const CUSTOM_STD_DEFS_KEY = 'custom_proc_std_defs_v1';
+    let _customStdDefs = [];
+    let _customStdPasteArmed = false;
+    let _customStdPasteTargetId = '';
+    let _customStdPasteListenerReady = false;
+    let _webStdEditorId = '';
+    let _webStdEditorSections = [];
 
     // ── 유틸 ─────────────────────────────────────────────────────
     function _recordKey(carModel, partName, process, station, line) {
@@ -922,6 +937,11 @@ var ProdStandardsModule = (function() {
     }
 
     function _standardRecordCount(type) {
+        if (type === 'paint-tds') {
+            return (Storage.getAll(STORE) || [])
+                .filter(r => r._docKind === STANDARD_DOC_KIND && r.standardType === type && r.fileData)
+                .length;
+        }
         return (Storage.getAll(STORE) || [])
             .filter(r => r._docKind === STANDARD_DOC_KIND && r.standardType === type && Array.isArray(r.rows))
             .reduce((sum, r) => sum + Math.max(1, r.rows.length), 0);
@@ -931,45 +951,47 @@ var ProdStandardsModule = (function() {
         const linked = (key, label, icon, desc, accent) => ({
             templateId: `linked:${key}`, label, icon, desc, accent,
             count: _standardRecordCount(key),
-            action: `ProdStandardsModule.selectDocType('${key}')`,
+            action: `ProdStandardsModule._openProcessStandardItem('doc','${key}')`,
+            linkKind: 'doc',
+            linkTarget: key,
             badge: '등록형'
         });
         const page = (pageId, label, icon, desc, accent) => ({
             templateId: `page:${pageId}`, label, icon, desc, accent,
             count: null,
-            action: `Router.navigate('${pageId}')`,
-            badge: '편집가능'
+            action: `ProdStandardsModule._openProcessStandardItem('page','${pageId}')`,
+            linkKind: 'page',
+            linkTarget: pageId,
+            badge: 'WEB'
         });
         const mix = page('paint-mix', '배합 기준서', 'science', '제품별 도료 배합비, 도료 사용량 기준, 배합 이력 관리', '#2563eb');
         const usage = linked('paint-usage', '사용량 기준표', 'straighten', '제품별 도료 사용량 기준표', '#0d9488');
         const film = linked('film-thickness', '도막두께 기준서', 'layers', '하도/상도 스프레이 및 검사 공정 도막두께 기준', '#2563eb');
         const color = linked('color-gloss', '색차/광택 기준서', 'palette', '색차, 광택 판정 기준과 측정 방법', '#7c3aed');
         const mesh = linked('filter-mesh', '여과망 기준서', 'filter_alt', '도료 여과망 사양, 적용 위치, 교체주기', '#0e7490');
-        const paji = page('paji-std', '제품 파지 기준서', 'back_hand', '로딩 공정 파지 위치와 도장면 접촉 방지 기준', '#16a34a');
-        const wash = page('wash-consumable', '세척 소모품 관리 기준서', 'cleaning_services', '세척 소모품 교체 주기, 사용 방법, 폐기 기준', '#0e7490');
+        const tds = linked('paint-tds', '도장 사양서(TDS)', 'description', '도료사 배포 TDS 파일 및 주제 도료별 적용 사양 관리', '#334155');
         const drying = page('drying-std', '건조 및 셋팅룸 온도 기준서', 'local_fire_department', 'Flash Off / Main Oven 온도와 컨베이어 속도 기준', '#b45309');
         const robot = page('robot-pg-std', '레이져 프로그램 기준서', 'precision_manufacturing', '레이져 각인 프로그램명, 컨트롤러 번호, 스핀들 속도 기준', '#7c3aed');
-        const agit = page('agit-std', '교반시간 작업기준서', 'blender', '도료 종류별 교반 시간, RPM, 교반 순서 기준', '#d97706');
-        const remain = page('remain-paint', '잔여도료 작업기준서', 'format_color_fill', '잔여 도료 라벨, 사용기한, 포장 방법 기준', '#7c3aed');
-        const viscosity = page('viscosity-std', '점도 측정 작업기준서', 'speed', '점도계 사용법, 측정 절차, 점도 조정 기준', '#0891b2');
-        const injectColor = page('inject-color-std', '사출컬러 기준서', 'palette', '사출품 COLOR 기준과 실사 사진 관리', '#0ea5e9');
+        const customerReturn = page('customer-return-nc-std', '고객 반송품 부적합품 처리 기준서', 'assignment_return', '고객 반송품 및 부적합품 처리 기준 이미지 문서', '#dc2626');
 
         const paintStations = [
-            { station: '로딩', standards: [paji] },
-            { station: '세척', standards: [wash] },
-            { station: '배합', standards: [mix, usage, agit, viscosity, mesh, remain] },
+            { station: '배합', standards: [tds, mix, usage, mesh] },
             { station: '하도 공급', standards: [mesh] },
             { station: '상도 공급', standards: [mesh] },
             { station: '하도 스프레이', standards: [film, drying] },
             { station: '상도 스프레이', standards: [film, drying] },
             { station: '건조', standards: [drying] },
             { station: '외관 검사', standards: [film, color] },
+            { station: '포장', standards: [] },
         ];
 
         const groups = [
             { process: '수입검사', icon: 'inventory_2', stations: [
-                { station: '도료 입고', standards: [color, mesh] },
-                { station: '사출소재 입고', standards: [injectColor] },
+                { station: '도료 입고', standards: [tds, color, mesh] },
+            ] },
+            { process: '보관', icon: 'warehouse', stations: [
+                { station: '도료창고 (위험물)', standards: [] },
+                { station: '사출 창고', standards: [] },
             ] },
             { process: '도장(A)', icon: 'format_paint', stations: paintStations },
             { process: '도장(B)', icon: 'format_paint', stations: paintStations },
@@ -978,7 +1000,7 @@ var ProdStandardsModule = (function() {
                 { station: '레이져 검사', standards: [color] },
             ] },
             { process: '출하검사', icon: 'fact_check', stations: [
-                { station: '출하검사', standards: [film, color] },
+                { station: '출하검사', standards: [film, color, customerReturn] },
             ] },
         ];
         return groups;
@@ -997,6 +1019,10 @@ var ProdStandardsModule = (function() {
                 });
             });
         });
+        _customStdDefs.forEach(def => {
+            const tile = _customStdToTile(def);
+            if (!byTemplate.has(tile.templateId)) byTemplate.set(tile.templateId, tile);
+        });
         return [...byTemplate.values()];
     }
 
@@ -1007,10 +1033,12 @@ var ProdStandardsModule = (function() {
 
     function _withProcessStandardMenuIds(groups) {
         let seq = 0;
-        return groups.map(group => ({
+        return groups.map((group, processOrder) => ({
             ...group,
-            stations: (group.stations || []).map(st => ({
+            _originalProcessOrder: processOrder,
+            stations: (group.stations || []).map((st, stationOrder) => ({
                 ...st,
+                _originalStationOrder: stationOrder,
                 standards: (st.standards || []).map(std => {
                     const originalOrder = seq++;
                     return {
@@ -1030,9 +1058,58 @@ var ProdStandardsModule = (function() {
         const saved = Array.isArray(_processStandardMenuLayout) ? _processStandardMenuLayout : [];
         if (!saved.length) return withIds;
 
+        const hiddenProcesses = new Set(saved.filter(pos => pos && pos.type === 'process' && pos.hidden).map(pos => pos.process));
+        const hiddenStations = new Set(saved.filter(pos => pos && pos.type === 'station' && pos.hidden).map(pos => _processStandardStationKey(pos.process, pos.station)));
+        const processOrder = new Map(saved
+            .filter(pos => pos && pos.type === 'process' && !pos.hidden)
+            .map(pos => [pos.process, Number(pos.order)]));
+        const stationOrder = new Map(saved
+            .filter(pos => pos && pos.type === 'station' && !pos.hidden)
+            .map(pos => [_processStandardStationKey(pos.process, pos.station), Number(pos.order)]));
+        saved.filter(pos => pos && pos.type === 'process' && pos.custom && !pos.hidden).forEach(pos => {
+            if (!pos.process || hiddenProcesses.has(pos.process)) return;
+            if (!withIds.some(group => group.process === pos.process)) {
+                withIds.push({
+                    process: pos.process,
+                    icon: pos.icon || 'account_tree',
+                    customProcess: true,
+                    stations: []
+                });
+            }
+        });
+        withIds.forEach(group => {
+            saved.filter(pos => pos && pos.type === 'station' && pos.custom && !pos.hidden && pos.process === group.process).forEach(pos => {
+                if (!pos.station || hiddenStations.has(_processStandardStationKey(pos.process, pos.station))) return;
+                if (!(group.stations || []).some(st => st.station === pos.station)) {
+                    group.stations = group.stations || [];
+                    group.stations.push({ station: pos.station, customStation: true, standards: [] });
+                }
+            });
+        });
+
         const posById = new Map(saved.map(pos => [pos.id, pos]));
         const stationMap = new Map();
-        withIds.forEach(group => {
+        const visibleGroups = withIds
+            .filter(group => !hiddenProcesses.has(group.process))
+            .map(group => ({
+                ...group,
+                stations: (group.stations || []).filter(st => !hiddenStations.has(_processStandardStationKey(group.process, st.station)))
+            }));
+        visibleGroups.sort((a, b) => {
+            const ao = Number.isFinite(processOrder.get(a.process)) ? processOrder.get(a.process) : a._originalProcessOrder;
+            const bo = Number.isFinite(processOrder.get(b.process)) ? processOrder.get(b.process) : b._originalProcessOrder;
+            return ao - bo || String(a.process || '').localeCompare(String(b.process || ''), 'ko');
+        });
+        visibleGroups.forEach(group => {
+            group.stations.sort((a, b) => {
+                const ak = _processStandardStationKey(group.process, a.station);
+                const bk = _processStandardStationKey(group.process, b.station);
+                const ao = Number.isFinite(stationOrder.get(ak)) ? stationOrder.get(ak) : a._originalStationOrder;
+                const bo = Number.isFinite(stationOrder.get(bk)) ? stationOrder.get(bk) : b._originalStationOrder;
+                return ao - bo || String(a.station || '').localeCompare(String(b.station || ''), 'ko');
+            });
+        });
+        visibleGroups.forEach(group => {
             (group.stations || []).forEach(st => {
                 st.standards = [];
                 stationMap.set(_processStandardStationKey(group.process, st.station), st);
@@ -1055,6 +1132,11 @@ var ProdStandardsModule = (function() {
             });
         });
 
+        _customStdDefs.forEach(def => {
+            const tile = _customStdToTile(def);
+            if (!catalog.has(tile.templateId)) catalog.set(tile.templateId, tile);
+        });
+
         saved.filter(pos => pos && pos.custom && !pos.hidden).forEach(pos => {
             const tmpl = catalog.get(pos.templateId);
             const target = stationMap.get(_processStandardStationKey(pos.process, pos.station));
@@ -1067,7 +1149,7 @@ var ProdStandardsModule = (function() {
             });
         });
 
-        withIds.forEach(group => {
+        visibleGroups.forEach(group => {
             (group.stations || []).forEach(st => {
                 st.standards.sort((a, b) => {
                     const ao = Number.isFinite(a._menuOrder) ? a._menuOrder : 9999;
@@ -1076,7 +1158,7 @@ var ProdStandardsModule = (function() {
                 });
             });
         });
-        return withIds;
+        return visibleGroups;
     }
 
     function _flattenProcessStandardLayout(groups) {
@@ -1098,16 +1180,67 @@ var ProdStandardsModule = (function() {
         return rows;
     }
 
+    function _processStandardStructureRows(groups) {
+        const rows = [];
+        (groups || []).forEach((group, processOrder) => {
+            rows.push({
+                type: 'process',
+                process: group.process,
+                icon: group.icon || 'account_tree',
+                custom: !!group.customProcess,
+                order: processOrder
+            });
+            (group.stations || []).forEach((st, stationOrder) => {
+                rows.push({
+                    type: 'station',
+                    process: group.process,
+                    station: st.station,
+                    custom: !!st.customStation,
+                    order: stationOrder
+                });
+            });
+        });
+        return rows;
+    }
+
+    function _saveProcessStandardLayoutState(tileRows, groups) {
+        _saveProcessStandardMenuLayout([
+            ..._processStandardStructureRows(groups || _processStandardLayout()),
+            ...(tileRows || [])
+        ]);
+    }
+
     function _refreshProcessStandardStatus() {
         const el = document.getElementById('processStandardStatusBody');
-        if (el) el.innerHTML = _renderProcessStandardStatus();
+        if (el) {
+            el.innerHTML = _renderProcessStandardStatus();
+            _bindProcessStandardTiles(el);
+        }
+    }
+
+    function _bindProcessStandardTiles(root) {
+        if (!root || root.dataset.boundStandardTiles === '1') return;
+        root.dataset.boundStandardTiles = '1';
+        root.addEventListener('click', event => {
+            if (_processStandardMoveEdit) return;
+            const tile = event.target && event.target.closest ? event.target.closest('[data-std-link-kind]') : null;
+            if (!tile || !root.contains(tile)) return;
+            if (event.target.closest && event.target.closest('[data-std-delete]')) return;
+            event.preventDefault();
+            event.stopPropagation();
+            _openProcessStandardItem(tile.dataset.stdLinkKind, tile.dataset.stdLinkTarget, tile.dataset.stdLinkLine || '');
+        });
     }
 
     function _ensureProcessStandardMenuLayout() {
         if (_processStandardMenuLayoutLoaded) return;
         _processStandardMenuLayoutLoaded = true;
-        Storage.getConfigValue(PROCESS_STANDARD_MENU_LAYOUT_KEY).then(saved => {
+        Promise.all([
+            Storage.getConfigValue(PROCESS_STANDARD_MENU_LAYOUT_KEY),
+            Storage.getConfigValue(CUSTOM_STD_DEFS_KEY)
+        ]).then(([saved, customDefs]) => {
             if (Array.isArray(saved)) _processStandardMenuLayout = saved;
+            if (Array.isArray(customDefs)) _customStdDefs = customDefs;
             _refreshProcessStandardStatus();
         }).catch(() => {});
     }
@@ -1121,6 +1254,10 @@ var ProdStandardsModule = (function() {
     }
 
     function _stdMenuDragStart(id, event) {
+        if (!_processStandardMoveEdit) {
+            if (event) event.preventDefault();
+            return false;
+        }
         _processStandardDragId = id;
         if (event && event.dataTransfer) {
             event.dataTransfer.effectAllowed = 'move';
@@ -1129,12 +1266,14 @@ var ProdStandardsModule = (function() {
     }
 
     function _stdMenuDragOver(event) {
+        if (!_processStandardMoveEdit) return;
         if (!event) return;
         event.preventDefault();
         if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
     }
 
     function _stdMenuDrop(process, station, beforeId, event) {
+        if (!_processStandardMoveEdit) return;
         if (event) {
             event.preventDefault();
             event.stopPropagation();
@@ -1171,11 +1310,175 @@ var ProdStandardsModule = (function() {
             if (!seen.has(row.id) && row.id !== dragId) next.push(row);
         });
 
-        _saveProcessStandardMenuLayout(next);
+        _saveProcessStandardLayoutState(next, current);
+        _refreshProcessStandardStatus();
+    }
+
+    function _toggleProcessStandardMoveEdit() {
+        _processStandardMoveEdit = !_processStandardMoveEdit;
+        _processStandardDragId = '';
+        const container = document.getElementById('contentArea');
+        if (_stdView === 'summary' && container) _renderStandardsSummary(container);
+        else _refreshProcessStandardStatus();
+    }
+
+    function _openProcessStandardItem(kind, target, line) {
+        if (kind === 'doc') {
+            selectDocType(target);
+            return;
+        }
+        if (kind === 'line') {
+            // line-type navigation — no local storage needed
+        }
+        if (kind === 'custom-upload') {
+            _openCustomUploadStdViewer(target);
+            return;
+        }
+        if (kind === 'custom-web') {
+            _openCustomWebStdViewer(target);
+            return;
+        }
+        const router = (typeof Router !== 'undefined' && Router) || (window && window.Router);
+        if (router && typeof router.navigate === 'function') {
+            if (typeof router.hasModule === 'function' && !router.hasModule(target)) {
+                const lazyModules = {
+                    'customer-return-nc-std': window.CustomerReturnNcStdModule
+                };
+                if (lazyModules[target] && typeof router.registerModule === 'function') {
+                    router.registerModule(target, lazyModules[target]);
+                }
+            }
+            if (typeof router.hasModule === 'function' && !router.hasModule(target)) {
+                UIUtils.toast(`연결된 페이지를 찾을 수 없습니다: ${target}`, 'error');
+                console.warn('[ProdStandards] missing linked page:', { kind, target, line });
+                return;
+            }
+            router.navigate(target);
+        }
+    }
+
+    function _addProcessStandardProcess() {
+        if (!_processStandardMoveEdit) return;
+        const name = window.prompt('추가할 주공정명을 입력하세요.');
+        const process = String(name || '').trim();
+        if (!process) return;
+        const groups = _processStandardLayout();
+        if (groups.some(group => group.process === process)) {
+            UIUtils.toast('이미 등록된 주공정입니다.', 'warning');
+            return;
+        }
+        const rows = _flattenProcessStandardLayout(groups);
+        const structure = _processStandardStructureRows(groups);
+        _saveProcessStandardMenuLayout([
+            ...structure,
+            { type: 'process', process, icon: 'account_tree', custom: true, order: groups.length },
+            ...rows
+        ]);
+        _refreshProcessStandardStatus();
+    }
+
+    function _removeProcessStandardProcess(process) {
+        if (!_processStandardMoveEdit || !process) return;
+        if (!window.confirm(`${process} 주공정을 삭제하시겠습니까?`)) return;
+        const groups = _processStandardLayout();
+        const rows = _flattenProcessStandardLayout(groups).filter(row => row.process !== process);
+        const structure = _processStandardStructureRows(groups).filter(row => row.process !== process);
+        const group = groups.find(g => g.process === process);
+        const hidden = group && group.customProcess ? [] : [{ type: 'process', process, hidden: true }];
+        _saveProcessStandardMenuLayout([...structure, ...hidden, ...rows]);
+        _refreshProcessStandardStatus();
+    }
+
+    function _addProcessStandardStation(process) {
+        if (!_processStandardMoveEdit || !process) return;
+        const name = window.prompt(`${process}에 추가할 세부공정명을 입력하세요.`);
+        const station = String(name || '').trim();
+        if (!station) return;
+        const groups = _processStandardLayout();
+        const group = groups.find(g => g.process === process);
+        if (!group) return;
+        if ((group.stations || []).some(st => st.station === station)) {
+            UIUtils.toast('이미 등록된 세부공정입니다.', 'warning');
+            return;
+        }
+        const rows = _flattenProcessStandardLayout(groups);
+        const structure = _processStandardStructureRows(groups);
+        _saveProcessStandardMenuLayout([
+            ...structure,
+            { type: 'station', process, station, custom: true, order: (group.stations || []).length },
+            ...rows
+        ]);
+        _refreshProcessStandardStatus();
+    }
+
+    function _removeProcessStandardStation(process, station) {
+        if (!_processStandardMoveEdit || !process || !station) return;
+        if (!window.confirm(`${process} / ${station} 세부공정을 삭제하시겠습니까?`)) return;
+        const groups = _processStandardLayout();
+        const group = groups.find(g => g.process === process);
+        const st = group && (group.stations || []).find(s => s.station === station);
+        const rows = _flattenProcessStandardLayout(groups).filter(row => !(row.process === process && row.station === station));
+        const structure = _processStandardStructureRows(groups).filter(row => !(row.type === 'station' && row.process === process && row.station === station));
+        const hidden = st && st.customStation ? [] : [{ type: 'station', process, station, hidden: true }];
+        _saveProcessStandardMenuLayout([...structure, ...hidden, ...rows]);
+        _refreshProcessStandardStatus();
+    }
+
+    function _moveProcessStandardProcess(process, delta) {
+        if (!_processStandardMoveEdit || !process || !delta) return;
+        const groups = _processStandardLayout();
+        const idx = groups.findIndex(group => group.process === process);
+        const targetIdx = idx + Number(delta);
+        if (idx < 0 || targetIdx < 0 || targetIdx >= groups.length) return;
+        const nextGroups = [...groups];
+        [nextGroups[idx], nextGroups[targetIdx]] = [nextGroups[targetIdx], nextGroups[idx]];
+        _saveProcessStandardMenuLayout([
+            ..._processStandardStructureRows(nextGroups),
+            ..._flattenProcessStandardLayout(nextGroups)
+        ]);
+        _refreshProcessStandardStatus();
+    }
+
+    function _moveProcessStandardStation(process, station, delta) {
+        if (!_processStandardMoveEdit || !process || !station || !delta) return;
+        const groups = _processStandardLayout();
+        const group = groups.find(g => g.process === process);
+        if (!group) return;
+        const idx = (group.stations || []).findIndex(st => st.station === station);
+        const targetIdx = idx + Number(delta);
+        if (idx < 0 || targetIdx < 0 || targetIdx >= group.stations.length) return;
+        const nextGroups = groups.map(g => g.process === process ? { ...g, stations: [...g.stations] } : g);
+        const nextGroup = nextGroups.find(g => g.process === process);
+        [nextGroup.stations[idx], nextGroup.stations[targetIdx]] = [nextGroup.stations[targetIdx], nextGroup.stations[idx]];
+        _saveProcessStandardMenuLayout([
+            ..._processStandardStructureRows(nextGroups),
+            ..._flattenProcessStandardLayout(nextGroups)
+        ]);
+        _refreshProcessStandardStatus();
+    }
+
+    function _movePaintProcessGroup(delta) {
+        if (!_processStandardMoveEdit || !delta) return;
+        const groups = _processStandardLayout();
+        const paintSet = new Set(['도장(A)', '도장(B)']);
+        const paintGroups = groups.filter(group => paintSet.has(group.process));
+        if (!paintGroups.length) return;
+        const others = groups.filter(group => !paintSet.has(group.process));
+        const firstPaintIdx = groups.findIndex(group => paintSet.has(group.process));
+        const blockIdx = others.filter((group, idx) => idx < firstPaintIdx).length;
+        const targetBlockIdx = blockIdx + Number(delta);
+        if (targetBlockIdx < 0 || targetBlockIdx > others.length) return;
+        const nextGroups = [...others];
+        nextGroups.splice(targetBlockIdx, 0, ...paintGroups);
+        _saveProcessStandardMenuLayout([
+            ..._processStandardStructureRows(nextGroups),
+            ..._flattenProcessStandardLayout(nextGroups)
+        ]);
         _refreshProcessStandardStatus();
     }
 
     function _openProcessStandardAddMenu(process, station) {
+        if (!_processStandardMoveEdit) return;
         const current = _processStandardLayout();
         const inStation = new Set();
         current.forEach(group => {
@@ -1188,7 +1491,28 @@ var ProdStandardsModule = (function() {
             });
         });
         const items = _processStandardCatalog().filter(std => std.templateId && !inStation.has(std.templateId));
-        const body = items.length ? `
+        const newRegSection = `
+            <div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--border-color);">
+                <div style="font-size:.72rem;font-weight:800;color:var(--text-muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px;">신규 등록</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <button type="button"
+                        onclick="UIUtils.closeModal();ProdStandardsModule._openNewCustomStdForm('${_jsArg(process)}','${_jsArg(station)}')"
+                        style="display:flex;align-items:center;gap:8px;padding:10px 16px;border:2px dashed #2563eb;border-radius:8px;
+                               background:#eff6ff;color:#1d4ed8;font-size:.84rem;font-weight:800;cursor:pointer;">
+                        <span class="material-symbols-outlined" style="font-size:18px;">upload_file</span>
+                        IMG 이미지 업로드형
+                    </button>
+                    <button type="button"
+                        onclick="UIUtils.closeModal();ProdStandardsModule._openNewCustomStdForm('${_jsArg(process)}','${_jsArg(station)}','web')"
+                        style="display:flex;align-items:center;gap:8px;padding:10px 16px;border:2px dashed #0d9488;border-radius:8px;
+                               background:#f0fdfa;color:#0f766e;font-size:.84rem;font-weight:800;cursor:pointer;">
+                        <span class="material-symbols-outlined" style="font-size:18px;">edit_note</span>
+                        WEB 편집형
+                    </button>
+                </div>
+            </div>`;
+        const catalogSection = items.length ? `
+            <div style="font-size:.72rem;font-weight:800;color:var(--text-muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:8px;">기존 기준서 연결</div>
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">
                 ${items.map(std => `
                     <button type="button" onclick="ProdStandardsModule._addProcessStandardMenuItem('${_jsArg(process)}','${_jsArg(station)}','${_jsArg(std.templateId)}')"
@@ -1201,7 +1525,8 @@ var ProdStandardsModule = (function() {
                         <div style="font-size:.72rem;color:var(--text-muted);line-height:1.35;">${_esc(std.desc)}</div>
                     </button>
                 `).join('')}
-            </div>` : `<div style="padding:20px;text-align:center;color:var(--text-muted);">추가할 기준서가 없습니다.</div>`;
+            </div>` : `<div style="font-size:.72rem;color:var(--text-muted);padding:8px 0;">연결 가능한 기존 기준서가 없습니다.</div>`;
+        const body = newRegSection + catalogSection;
         UIUtils.showModal(
             `기준서 추가 — ${process} / ${station}`,
             body,
@@ -1211,6 +1536,7 @@ var ProdStandardsModule = (function() {
     }
 
     function _addProcessStandardMenuItem(process, station, templateId) {
+        if (!_processStandardMoveEdit) return;
         const current = _flattenProcessStandardLayout(_processStandardLayout());
         const order = current.filter(row => row.process === process && row.station === station).length;
         const id = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -1218,18 +1544,22 @@ var ProdStandardsModule = (function() {
             ...current,
             { id, templateId, custom: true, process, station, order }
         ];
-        _saveProcessStandardMenuLayout(next);
+        _saveProcessStandardLayoutState(next, _processStandardLayout());
         UIUtils.closeModal();
         _refreshProcessStandardStatus();
     }
 
     function _removeProcessStandardMenuItem(id) {
-        const current = _flattenProcessStandardLayout(_processStandardLayout()).filter(row => row.id !== id);
-        const next = [...current];
+        if (!_processStandardMoveEdit) return;
+        const groups = _processStandardLayout();
+        const current = _flattenProcessStandardLayout(groups).filter(row => row.id !== id);
+        const prevHidden = (Array.isArray(_processStandardMenuLayout) ? _processStandardMenuLayout : [])
+            .filter(pos => pos && pos.hidden && !pos.type && pos.id !== id);
+        const next = [...current, ...prevHidden];
         if (!String(id || '').startsWith('custom-')) {
             next.push({ id, hidden: true });
         }
-        _saveProcessStandardMenuLayout(next);
+        _saveProcessStandardLayoutState(next, groups);
         _refreshProcessStandardStatus();
     }
 
@@ -1240,18 +1570,498 @@ var ProdStandardsModule = (function() {
         UIUtils.toast('기준서 메뉴 배치를 초기화했습니다.', 'success');
     }
 
+    // ── 커스텀 기준서 (업로드 방식) ──────────────────────────────────
+
+    function _customStdToTile(def) {
+        const isWeb = def.kind === 'web';
+        return {
+            templateId: (isWeb ? 'custom-web:' : 'custom-upload:') + def.id,
+            label: def.title,
+            icon: def.icon || 'description',
+            desc: def.desc || '',
+            accent: def.accent || '#2563eb',
+            count: null,
+            linkKind: isWeb ? 'custom-web' : 'custom-upload',
+            linkTarget: def.id,
+            badge: isWeb ? 'WEB편집' : 'IMG'
+        };
+    }
+
+    async function _saveCustomStdDefs() {
+        await Storage.setConfigValue(CUSTOM_STD_DEFS_KEY, _customStdDefs);
+    }
+
+    function _imgFileFromPaste(event) {
+        const files = Array.from(event.clipboardData?.files || []);
+        const f = files.find(f => f.type && f.type.startsWith('image/'));
+        if (f) return f;
+        const items = Array.from(event.clipboardData?.items || []);
+        for (const item of items) {
+            if (item.type && item.type.startsWith('image/')) return item.getAsFile();
+        }
+        return null;
+    }
+
+    function _imgSrcFromPasteHtml(event) {
+        const html = event.clipboardData?.getData?.('text/html') || '';
+        if (!html) return '';
+        const match = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+        if (!match) return '';
+        const src = match[1] || '';
+        return src.startsWith('data:image/') ? src : '';
+    }
+
+    function _blobToDataUrl(blob) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ''));
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
+    }
+
+    function _ensureCustomStdPasteListener() {
+        if (_customStdPasteListenerReady) return;
+        _customStdPasteListenerReady = true;
+        document.addEventListener('paste', async function(event) {
+            if (!_customStdPasteArmed || !_customStdPasteTargetId) return;
+            const id = _customStdPasteTargetId;
+            _customStdPasteArmed = false;
+            _customStdPasteTargetId = '';
+            event.preventDefault();
+
+            let blob = _imgFileFromPaste(event);
+            if (!blob) {
+                const src = _imgSrcFromPasteHtml(event);
+                if (!src) { UIUtils.toast('클립보드 이미지가 없습니다. 이미지를 복사 후 다시 시도해주세요.', 'warning'); return; }
+                try { blob = await (await fetch(src)).blob(); } catch(e) {
+                    UIUtils.toast('이미지 변환에 실패했습니다.', 'error'); return;
+                }
+            }
+            try {
+                const dataUrl = await _blobToDataUrl(blob);
+                await Storage.setConfigValue('custom_std_img_' + id, dataUrl);
+                UIUtils.toast('기준서 이미지가 저장되었습니다.', 'success');
+                UIUtils.closeModal();
+                _openCustomUploadStdViewer(id);
+            } catch(e) {
+                UIUtils.toast('기준서 저장 중 오류가 발생했습니다.', 'error');
+            }
+        });
+    }
+
+    function _canManageCustomStd() {
+        const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
+            ? AuthModule.getCurrentUser() : null;
+        return !!(user && ['admin', 'prod_manager', 'quality_manager'].includes(String(user.role || '')));
+    }
+
+    async function _openCustomUploadStdViewer(id) {
+        const def = _customStdDefs.find(d => d.id === id);
+        if (!def) { UIUtils.toast('기준서를 찾을 수 없습니다.', 'error'); return; }
+        const imgData = await Storage.getConfigValue('custom_std_img_' + id);
+        const zoneId = 'cstdPasteZone_' + id;
+        const uploadBtn = _processStandardMoveEdit
+            ? `<button class="btn btn-primary btn-sm" onclick="ProdStandardsModule._armCustomStdPaste('${_jsArg(id)}','${_jsArg(zoneId)}')"
+                style="display:inline-flex;align-items:center;gap:6px;">
+                <span class="material-symbols-outlined" style="font-size:15px;">upload_file</span> 이미지 업로드 (Ctrl+V)
+               </button>`
+            : '';
+        const body = `
+            <div>
+                <div id="${zoneId}" tabindex="0" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;opacity:0;" aria-hidden="true"></div>
+                ${imgData
+                    ? `<div style="text-align:center;">
+                           <img src="${imgData}" alt="${_esc(def.title)}"
+                               style="max-width:100%;height:auto;display:inline-block;border:1px solid #e2e8f0;border-radius:4px;">
+                       </div>`
+                    : `<div style="min-height:260px;display:flex;align-items:center;justify-content:center;color:#94a3b8;
+                               border:2px dashed #e2e8f0;border-radius:8px;">
+                           <div style="text-align:center;">
+                               <span class="material-symbols-outlined" style="font-size:40px;display:block;margin-bottom:8px;">image</span>
+                               등록된 이미지가 없습니다.
+                           </div>
+                       </div>`}
+            </div>`;
+        UIUtils.showModal(
+            def.title,
+            body,
+            `${uploadBtn}<button class="btn btn-secondary btn-sm" onclick="UIUtils.closeModal()">닫기</button>`,
+            'xl'
+        );
+    }
+
+    function _armCustomStdPaste(id, zoneId) {
+        _ensureCustomStdPasteListener();
+        _customStdPasteArmed = true;
+        _customStdPasteTargetId = id;
+        const z = document.getElementById(zoneId);
+        if (z) z.focus();
+        UIUtils.toast('이미지를 복사한 후 Ctrl+V를 눌러주세요.', 'info');
+    }
+
+    // ── WEB 편집형 기준서 ─────────────────────────────────────────────
+
+    function _openCustomWebStdViewer(id) {
+        const def = _customStdDefs.find(d => d.id === id);
+        if (!def) { UIUtils.toast('기준서를 찾을 수 없습니다.', 'error'); return; }
+        Storage.getConfigValue('custom_std_content_' + id).then(content => {
+            const sections = Array.isArray(content) ? content : [];
+            const editBtn = _processStandardMoveEdit
+                ? `<button class="btn btn-primary btn-sm" onclick="ProdStandardsModule._openCustomWebStdEditor('${_jsArg(id)}')" style="display:inline-flex;align-items:center;gap:6px;">
+                    <span class="material-symbols-outlined" style="font-size:15px;">edit</span>내용 편집
+                   </button>`
+                : '';
+            const body = sections.length
+                ? `<div style="padding:4px 0;">${_buildWebStdViewerHtml(sections)}</div>`
+                : `<div style="min-height:200px;display:flex;align-items:center;justify-content:center;color:#94a3b8;
+                              border:2px dashed #e2e8f0;border-radius:8px;">
+                       <div style="text-align:center;">
+                           <span class="material-symbols-outlined" style="font-size:40px;display:block;margin-bottom:8px;">edit_note</span>
+                           아직 내용이 없습니다.
+                       </div>
+                   </div>`;
+            UIUtils.showModal(def.title, body,
+                `${editBtn}<button class="btn btn-secondary btn-sm" onclick="UIUtils.closeModal()">닫기</button>`, 'xl');
+        });
+    }
+
+    async function _openCustomWebStdEditor(id) {
+        const def = _customStdDefs.find(d => d.id === id);
+        if (!def) { UIUtils.toast('기준서를 찾을 수 없습니다.', 'error'); return; }
+        const content = await Storage.getConfigValue('custom_std_content_' + id);
+        _webStdEditorId = id;
+        _webStdEditorSections = Array.isArray(content) ? JSON.parse(JSON.stringify(content)) : [];
+        const body = `
+            <div>
+                <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
+                    <button class="btn btn-sm btn-outline" onclick="ProdStandardsModule._webStdAddSection('heading')" style="display:inline-flex;align-items:center;gap:4px;font-size:.78rem;">
+                        <span class="material-symbols-outlined" style="font-size:14px;">title</span>제목
+                    </button>
+                    <button class="btn btn-sm btn-outline" onclick="ProdStandardsModule._webStdAddSection('text')" style="display:inline-flex;align-items:center;gap:4px;font-size:.78rem;">
+                        <span class="material-symbols-outlined" style="font-size:14px;">article</span>본문
+                    </button>
+                    <button class="btn btn-sm btn-outline" onclick="ProdStandardsModule._webStdAddSection('table')" style="display:inline-flex;align-items:center;gap:4px;font-size:.78rem;">
+                        <span class="material-symbols-outlined" style="font-size:14px;">table</span>표
+                    </button>
+                </div>
+                <div id="webStdSectionsBody" style="display:flex;flex-direction:column;gap:8px;">
+                    ${_buildWebStdSectionsHtml(_webStdEditorSections)}
+                </div>
+            </div>`;
+        UIUtils.showModal(
+            `${def.title} — 내용 편집`,
+            body,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+             <button class="btn btn-primary" onclick="ProdStandardsModule._saveCurrentWebStdContent()">저장</button>`,
+            'xl'
+        );
+    }
+
+    function _buildWebStdSectionsHtml(sections) {
+        if (!sections.length) {
+            return '<div style="color:#94a3b8;font-size:.85rem;text-align:center;padding:28px;border:2px dashed #e2e8f0;border-radius:8px;">위 버튼으로 항목을 추가하세요.</div>';
+        }
+        const mini = (c) => `type="button" style="border:1px solid ${c}55;background:#fff;color:${c};border-radius:4px;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;flex-shrink:0;"`;
+        return sections.map((sec, idx) => {
+            const moveUp = idx > 0
+                ? `<button ${mini('#64748b')} onclick="ProdStandardsModule._webStdMoveSection(${idx},-1)"><span class="material-symbols-outlined" style="font-size:12px;">arrow_upward</span></button>`
+                : '';
+            const moveDown = idx < sections.length - 1
+                ? `<button ${mini('#64748b')} onclick="ProdStandardsModule._webStdMoveSection(${idx},1)"><span class="material-symbols-outlined" style="font-size:12px;">arrow_downward</span></button>`
+                : '';
+            const del = `<button ${mini('#dc2626')} onclick="ProdStandardsModule._webStdRemoveSection(${idx})"><span class="material-symbols-outlined" style="font-size:12px;">close</span></button>`;
+            const controls = `<div style="display:flex;gap:3px;align-items:center;flex-shrink:0;">${moveUp}${moveDown}${del}</div>`;
+            if (sec.type === 'heading') {
+                return `<div style="display:flex;align-items:center;gap:7px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;">
+                    <span class="material-symbols-outlined" style="font-size:16px;color:#64748b;flex-shrink:0;">title</span>
+                    <input data-sec-idx="${idx}" data-sec-type="heading" value="${_esc(sec.text)}" placeholder="제목을 입력하세요"
+                        style="flex:1;border:none;background:transparent;font-size:.95rem;font-weight:700;outline:none;min-width:0;">
+                    ${controls}
+                </div>`;
+            }
+            if (sec.type === 'text') {
+                return `<div style="display:flex;align-items:flex-start;gap:7px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;">
+                    <span class="material-symbols-outlined" style="font-size:16px;color:#64748b;flex-shrink:0;margin-top:3px;">article</span>
+                    <textarea data-sec-idx="${idx}" data-sec-type="text" placeholder="본문을 입력하세요" rows="3"
+                        style="flex:1;border:none;background:transparent;font-size:.84rem;resize:vertical;outline:none;line-height:1.65;min-width:0;">${_esc(sec.text)}</textarea>
+                    <div style="display:flex;flex-direction:column;gap:3px;">${moveUp}${moveDown}${del}</div>
+                </div>`;
+            }
+            if (sec.type === 'table') {
+                const cols = (sec.headers || []).length || 2;
+                const headerCells = (sec.headers || Array(cols).fill('')).map((h, ci) =>
+                    `<th style="border:1px solid #cbd5e1;padding:0;background:#f1f5f9;"><input data-sec-idx="${idx}" data-row="-1" data-col="${ci}" value="${_esc(h)}" placeholder="헤더${ci+1}" style="width:100%;border:none;background:transparent;padding:5px 7px;font-size:.78rem;font-weight:700;text-align:center;outline:none;box-sizing:border-box;"></th>`
+                ).join('');
+                const bodyRows = (sec.rows || [Array(cols).fill('')]).map((row, ri) =>
+                    `<tr>${(row || Array(cols).fill('')).map((cell, ci) =>
+                        `<td style="border:1px solid #e2e8f0;padding:0;"><input data-sec-idx="${idx}" data-row="${ri}" data-col="${ci}" value="${_esc(cell||'')}" style="width:100%;border:none;background:transparent;padding:5px 7px;font-size:.78rem;outline:none;box-sizing:border-box;"></td>`
+                    ).join('')}</tr>`
+                ).join('');
+                return `<div style="border:1px solid #e2e8f0;border-radius:6px;overflow:hidden;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 8px;background:#f1f5f9;border-bottom:1px solid #e2e8f0;">
+                        <span style="font-size:.75rem;font-weight:700;color:#64748b;display:flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:13px;">table</span>표 (${cols}열)</span>
+                        <div style="display:flex;align-items:center;gap:4px;">
+                            <button type="button" onclick="ProdStandardsModule._webStdTableAddRow(${idx})" style="font-size:.7rem;padding:2px 7px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;cursor:pointer;line-height:1.4;">+ 행</button>
+                            <button type="button" onclick="ProdStandardsModule._webStdTableRemoveRow(${idx})" style="font-size:.7rem;padding:2px 7px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;cursor:pointer;line-height:1.4;">- 행</button>
+                            <div style="width:1px;height:14px;background:#e2e8f0;"></div>
+                            ${controls}
+                        </div>
+                    </div>
+                    <div style="overflow-x:auto;padding:8px;">
+                        <table style="border-collapse:collapse;width:100%;"><thead><tr>${headerCells}</tr></thead><tbody>${bodyRows}</tbody></table>
+                    </div>
+                </div>`;
+            }
+            return '';
+        }).join('');
+    }
+
+    function _buildWebStdViewerHtml(sections) {
+        return sections.map(sec => {
+            if (sec.type === 'heading') {
+                return `<h3 style="font-size:1rem;font-weight:800;border-bottom:2px solid #2563eb;padding-bottom:6px;margin:16px 0 10px;">${_esc(sec.text)}</h3>`;
+            }
+            if (sec.type === 'text') {
+                return `<p style="white-space:pre-wrap;font-size:.84rem;line-height:1.72;color:var(--text-primary);margin-bottom:12px;">${_esc(sec.text)}</p>`;
+            }
+            if (sec.type === 'table') {
+                const headers = (sec.headers || []).map(h =>
+                    `<th style="border:1px solid #cbd5e1;padding:7px 10px;background:#f1f5f9;font-size:.8rem;font-weight:700;text-align:center;white-space:nowrap;">${_esc(h)}</th>`
+                ).join('');
+                const rows = (sec.rows || []).map(row =>
+                    `<tr>${(row || []).map(cell => `<td style="border:1px solid #e2e8f0;padding:6px 10px;font-size:.8rem;">${_esc(cell)}</td>`).join('')}</tr>`
+                ).join('');
+                return `<div style="overflow-x:auto;margin-bottom:14px;"><table style="border-collapse:collapse;width:100%;"><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table></div>`;
+            }
+            return '';
+        }).join('');
+    }
+
+    function _webStdSyncEditorState() {
+        const container = document.getElementById('webStdSectionsBody');
+        if (!container) return;
+        _webStdEditorSections.forEach((sec, idx) => {
+            if (sec.type === 'heading' || sec.type === 'text') {
+                const el = container.querySelector(`[data-sec-idx="${idx}"][data-sec-type="${sec.type}"]`);
+                if (el) sec.text = el.value !== undefined ? el.value : '';
+            } else if (sec.type === 'table') {
+                const cols = (sec.headers || []).length || 2;
+                sec.headers = Array.from({ length: cols }, (_, ci) => {
+                    const el = container.querySelector(`[data-sec-idx="${idx}"][data-row="-1"][data-col="${ci}"]`);
+                    return el ? (el.value || '') : '';
+                });
+                const newRows = [];
+                let ri = 0;
+                while (container.querySelector(`[data-sec-idx="${idx}"][data-row="${ri}"][data-col="0"]`)) {
+                    newRows.push(Array.from({ length: cols }, (_, ci) => {
+                        const el = container.querySelector(`[data-sec-idx="${idx}"][data-row="${ri}"][data-col="${ci}"]`);
+                        return el ? (el.value || '') : '';
+                    }));
+                    ri++;
+                }
+                if (newRows.length) sec.rows = newRows;
+            }
+        });
+    }
+
+    function _webStdRenderSections() {
+        const el = document.getElementById('webStdSectionsBody');
+        if (el) el.innerHTML = _buildWebStdSectionsHtml(_webStdEditorSections);
+    }
+
+    function _webStdAddSection(type) {
+        _webStdSyncEditorState();
+        if (type === 'heading') {
+            _webStdEditorSections.push({ type: 'heading', text: '' });
+        } else if (type === 'text') {
+            _webStdEditorSections.push({ type: 'text', text: '' });
+        } else if (type === 'table') {
+            const colsInput = prompt('열(컬럼) 수를 입력하세요 (2~6):', '3');
+            if (colsInput === null) return;
+            const cols = Math.min(6, Math.max(2, parseInt(colsInput) || 3));
+            _webStdEditorSections.push({
+                type: 'table',
+                headers: Array.from({ length: cols }, (_, i) => `항목${i + 1}`),
+                rows: [Array(cols).fill('')]
+            });
+        }
+        _webStdRenderSections();
+    }
+
+    function _webStdRemoveSection(idx) {
+        _webStdSyncEditorState();
+        _webStdEditorSections.splice(idx, 1);
+        _webStdRenderSections();
+    }
+
+    function _webStdMoveSection(idx, dir) {
+        _webStdSyncEditorState();
+        const target = idx + dir;
+        if (target < 0 || target >= _webStdEditorSections.length) return;
+        const tmp = _webStdEditorSections[idx];
+        _webStdEditorSections[idx] = _webStdEditorSections[target];
+        _webStdEditorSections[target] = tmp;
+        _webStdRenderSections();
+    }
+
+    function _webStdTableAddRow(secIdx) {
+        _webStdSyncEditorState();
+        const sec = _webStdEditorSections[secIdx];
+        if (!sec || sec.type !== 'table') return;
+        sec.rows.push(Array((sec.headers || []).length || 2).fill(''));
+        _webStdRenderSections();
+    }
+
+    function _webStdTableRemoveRow(secIdx) {
+        _webStdSyncEditorState();
+        const sec = _webStdEditorSections[secIdx];
+        if (!sec || sec.type !== 'table' || (sec.rows || []).length <= 1) return;
+        sec.rows.pop();
+        _webStdRenderSections();
+    }
+
+    async function _saveCurrentWebStdContent() {
+        _webStdSyncEditorState();
+        await Storage.setConfigValue('custom_std_content_' + _webStdEditorId, _webStdEditorSections);
+        UIUtils.closeModal();
+        UIUtils.toast('기준서 내용이 저장되었습니다.', 'success');
+    }
+
+    function _openNewCustomStdForm(process, station, defaultKind) {
+        defaultKind = defaultKind || 'upload';
+        const ICON_PRESETS = [
+            { icon: 'description', label: '문서' },
+            { icon: 'inventory_2', label: '보관' },
+            { icon: 'warehouse', label: '창고' },
+            { icon: 'rule', label: '기준' },
+            { icon: 'fact_check', label: '검사' },
+            { icon: 'engineering', label: '설비' },
+            { icon: 'safety_check', label: '안전' },
+            { icon: 'recycling', label: '환경' },
+        ];
+        const COLOR_PRESETS = ['#2563eb', '#7c3aed', '#0d9488', '#b45309', '#dc2626', '#64748b', '#0e7490', '#16a34a'];
+        const body = `
+            <div style="display:flex;flex-direction:column;gap:14px;">
+                <div>
+                    <label class="form-label" style="font-weight:700;">기준서 이름 <span style="color:#ef4444;">*</span></label>
+                    <input class="form-input" id="newStdTitle" placeholder="예: 도료 보관 온도 기준서">
+                </div>
+                <div>
+                    <label class="form-label" style="font-weight:700;">설명</label>
+                    <input class="form-input" id="newStdDesc" placeholder="기준서 내용 요약 (선택)">
+                </div>
+                <div>
+                    <label class="form-label" style="font-weight:700;">등록 방식</label>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px;">
+                        <label style="display:flex;align-items:center;gap:8px;border:${defaultKind==='upload'?'2px solid #2563eb':'1px solid #e2e8f0'};border-radius:8px;padding:10px 12px;cursor:pointer;background:${defaultKind==='upload'?'#eff6ff':'var(--bg-primary)'};"
+                            onclick="this.style.border='2px solid #2563eb';this.style.background='#eff6ff';this.nextElementSibling.style.border='1px solid #e2e8f0';this.nextElementSibling.style.background='var(--bg-primary)';">
+                            <input type="radio" name="newStdKind" value="upload" ${defaultKind==='upload'?'checked':''} style="accent-color:#2563eb;" onclick="event.stopPropagation();">
+                            <div><div style="font-size:.84rem;font-weight:700;color:#1d4ed8;">IMG 이미지 업로드형</div>
+                            <div style="font-size:.68rem;color:#3b82f6;">엑셀/캡처 이미지를 Ctrl+V로 붙여넣기</div></div>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:8px;border:${defaultKind==='web'?'2px solid #0d9488':'1px solid #e2e8f0'};border-radius:8px;padding:10px 12px;cursor:pointer;background:${defaultKind==='web'?'#f0fdfa':'var(--bg-primary)'};"
+                            onclick="this.style.border='2px solid #0d9488';this.style.background='#f0fdfa';this.previousElementSibling.style.border='1px solid #e2e8f0';this.previousElementSibling.style.background='var(--bg-primary)';">
+                            <input type="radio" name="newStdKind" value="web" ${defaultKind==='web'?'checked':''} style="accent-color:#0d9488;" onclick="event.stopPropagation();">
+                            <div><div style="font-size:.84rem;font-weight:700;color:#0f766e;">WEB 편집형</div>
+                            <div style="font-size:.68rem;color:#14b8a6;">블록 에디터로 직접 작성</div></div>
+                        </label>
+                    </div>
+                </div>
+                <div>
+                    <label class="form-label" style="font-weight:700;">아이콘</label>
+                    <div id="newStdIconGrid" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;">
+                        ${ICON_PRESETS.map((p, i) => `
+                        <button type="button" data-icon="${p.icon}"
+                            onclick="document.querySelectorAll('#newStdIconGrid button').forEach(b=>b.style.cssText=b.style.cssText.replace(/outline:[^;]+;/g,''));this.style.outline='2px solid #2563eb';"
+                            style="display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;cursor:pointer;font-size:.68rem;color:#64748b;${i===0?'outline:2px solid #2563eb;':''}">
+                            <span class="material-symbols-outlined" style="font-size:20px;color:#334155;">${p.icon}</span>${p.label}
+                        </button>`).join('')}
+                    </div>
+                </div>
+                <div>
+                    <label class="form-label" style="font-weight:700;">색상</label>
+                    <div id="newStdColorGrid" style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap;">
+                        ${COLOR_PRESETS.map((c, i) => `
+                        <button type="button" data-color="${c}"
+                            onclick="document.querySelectorAll('#newStdColorGrid button').forEach(b=>b.style.cssText=b.style.cssText.replace(/outline:[^;]+;/g,''));this.style.outline='3px solid #1e293b';"
+                            style="width:28px;height:28px;border-radius:50%;background:${c};border:none;cursor:pointer;${i===0?'outline:3px solid #1e293b;':''}">
+                        </button>`).join('')}
+                    </div>
+                </div>
+            </div>`;
+        UIUtils.showModal(
+            '신규 기준서 등록',
+            body,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+             <button class="btn btn-primary" onclick="ProdStandardsModule._confirmNewCustomStd('${_jsArg(process)}','${_jsArg(station)}')">등록</button>`,
+            'md'
+        );
+    }
+
+    async function _confirmNewCustomStd(process, station) {
+        const title = (document.getElementById('newStdTitle')?.value || '').trim();
+        if (!title) { UIUtils.toast('기준서 이름을 입력해주세요.', 'warning'); return; }
+
+        const kindRadio = document.querySelector('input[name="newStdKind"]:checked');
+        const kind = (kindRadio && kindRadio.value) || 'upload';
+        const iconBtn = document.querySelector('#newStdIconGrid button[style*="outline:2px"]');
+        const colorBtn = document.querySelector('#newStdColorGrid button[style*="outline:3px"]');
+        const icon = iconBtn?.dataset.icon || 'description';
+        const accent = colorBtn?.dataset.color || '#2563eb';
+        const desc = (document.getElementById('newStdDesc')?.value || '').trim();
+
+        const id = 'cstd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+        const templateId = (kind === 'web' ? 'custom-web:' : 'custom-upload:') + id;
+        _customStdDefs.push({ id, title, icon, accent, desc, kind });
+        await _saveCustomStdDefs();
+
+        const groups = _processStandardLayout();
+        const current = _flattenProcessStandardLayout(groups);
+        const prevHidden = (Array.isArray(_processStandardMenuLayout) ? _processStandardMenuLayout : [])
+            .filter(pos => pos && pos.hidden && !pos.type);
+        const order = current.filter(r => r.process === process && r.station === station).length;
+        _saveProcessStandardLayoutState([...current, ...prevHidden, {
+            id: 'custom-' + id, templateId, custom: true, process, station, order
+        }], groups);
+        UIUtils.closeModal();
+        _refreshProcessStandardStatus();
+
+        if (kind === 'web') {
+            UIUtils.toast(`"${title}" 기준서가 등록되었습니다. 내용을 작성하세요.`, 'success');
+            _openCustomWebStdEditor(id);
+        } else {
+            UIUtils.toast(`"${title}" 기준서가 등록되었습니다.`, 'success');
+            _openCustomUploadStdViewer(id);
+        }
+    }
+
     function _renderProcessStandardStatus() {
-        const renderStd = (std, process, station) => `
-            <div draggable="true"
-                ondragstart="ProdStandardsModule._stdMenuDragStart('${_jsArg(std.id)}',event)"
-                ondragover="ProdStandardsModule._stdMenuDragOver(event)"
-                ondrop="ProdStandardsModule._stdMenuDrop('${_jsArg(process)}','${_jsArg(station)}','${_jsArg(std.id)}',event)"
+        const dragHint = _processStandardMoveEdit
+            ? '드래그해서 기준서 메뉴 위치를 변경할 수 있습니다.'
+            : '편집을 켜면 기준서 메뉴 위치를 변경할 수 있습니다.';
+        const dropAttrs = (process, station, beforeId = '') => _processStandardMoveEdit
+            ? `ondragover="ProdStandardsModule._stdMenuDragOver(event)"
+                ondrop="ProdStandardsModule._stdMenuDrop('${_jsArg(process)}','${_jsArg(station)}','${_jsArg(beforeId)}',event)"`
+            : '';
+        const renderStd = (std, process, station) => {
+            const tagStart = _processStandardMoveEdit ? 'div' : 'button type="button"';
+            const tagEnd = _processStandardMoveEdit ? 'div' : 'button';
+            const buttonReset = _processStandardMoveEdit ? '' : 'appearance:none;width:100%;font:inherit;';
+            const kind = std.linkKind || (std.templateId || '').split(':')[0] || 'page';
+            const target = std.linkTarget || (std.templateId || '').split(':').slice(1).join(':');
+            return `
+            <${tagStart} ${_processStandardMoveEdit ? `draggable="true" ondragstart="ProdStandardsModule._stdMenuDragStart('${_jsArg(std.id)}',event)" ${dropAttrs(process, station, std.id)}` : ''}
+                data-std-link-kind="${_esc(kind)}"
+                data-std-link-target="${_esc(target)}"
+                data-std-link-line="${_esc(std.linkLine || '')}"
                 onclick="${std.action}"
+                title="${_esc(dragHint)}"
                 style="text-align:left;border:1px solid var(--border-color);border-left:4px solid ${std.accent};
-                       border-radius:8px;background:var(--bg-primary);padding:10px 11px;cursor:grab;min-height:76px;">
+                       border-radius:8px;background:var(--bg-primary);padding:10px 11px;cursor:${_processStandardMoveEdit ? 'grab' : 'pointer'};min-height:76px;${buttonReset}">
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
                     <span style="display:flex;align-items:center;gap:7px;font-weight:850;color:var(--text-primary);font-size:.82rem;">
-                        <span class="material-symbols-outlined" style="font-size:15px;color:var(--text-muted);">drag_indicator</span>
+                        ${_processStandardMoveEdit ? `<span class="material-symbols-outlined" style="font-size:15px;color:var(--text-muted);">drag_indicator</span>` : ''}
                         <span class="material-symbols-outlined" style="font-size:19px;color:${std.accent};">${std.icon}</span>
                         ${std.label}
                     </span>
@@ -1259,19 +2069,31 @@ var ProdStandardsModule = (function() {
                         <span style="font-size:.66rem;background:${std.accent};color:#fff;border-radius:4px;padding:2px 6px;font-weight:800;white-space:nowrap;">
                             ${std.count == null ? std.badge : `${std.count.toLocaleString()}건`}
                         </span>
-                        <button type="button" title="삭제" onclick="event.stopPropagation();ProdStandardsModule._removeProcessStandardMenuItem('${_jsArg(std.id)}')"
+                        ${_processStandardMoveEdit && std.linkKind === 'custom-upload' ? `<button type="button" title="이미지 업로드" onclick="event.stopPropagation();ProdStandardsModule._openCustomUploadStdViewer('${_jsArg(std.linkTarget)}')"
+                            style="border:1px solid rgba(37,99,235,.35);background:#fff;color:#2563eb;border-radius:5px;
+                                   width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;">
+                            <span class="material-symbols-outlined" style="font-size:13px;">upload_file</span>
+                        </button>` : ''}
+                        ${_processStandardMoveEdit && std.linkKind === 'custom-web' ? `<button type="button" title="내용 편집" onclick="event.stopPropagation();ProdStandardsModule._openCustomWebStdEditor('${_jsArg(std.linkTarget)}')"
+                            style="border:1px solid rgba(13,148,136,.35);background:#fff;color:#0d9488;border-radius:5px;
+                                   width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;">
+                            <span class="material-symbols-outlined" style="font-size:13px;">edit</span>
+                        </button>` : ''}
+                        ${_processStandardMoveEdit ? `<button type="button" data-std-delete="1" title="삭제" onclick="event.stopPropagation();ProdStandardsModule._removeProcessStandardMenuItem('${_jsArg(std.id)}')"
                             style="border:1px solid rgba(239,68,68,.35);background:#fff;color:#dc2626;border-radius:5px;
                                    width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;">
                             <span class="material-symbols-outlined" style="font-size:13px;">close</span>
-                        </button>
+                        </button>` : ''}
                     </span>
                 </div>
                 <div style="font-size:.72rem;color:var(--text-muted);line-height:1.38;">${std.desc}</div>
-            </div>`;
+            </${tagEnd}>`;
+        };
 
         const groups = _processStandardLayout();
         const paintA = groups.find(group => group.process === '도장(A)');
         const paintB = groups.find(group => group.process === '도장(B)');
+        const paintAnchor = (groups.find(group => group.process === '도장(A)' || group.process === '도장(B)') || {}).process;
         const stationNames = [];
         [paintA, paintB].forEach(group => {
             (group && group.stations || []).forEach(st => {
@@ -1283,15 +2105,25 @@ var ProdStandardsModule = (function() {
             <div style="display:flex;flex-direction:column;gap:7px;min-width:0;">
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
                     <span style="font-size:.75rem;font-weight:900;color:var(--text-muted);">${process}</span>
-                    <button type="button" onclick="ProdStandardsModule._openProcessStandardAddMenu('${_jsArg(process)}','${_jsArg(station)}')"
-                        style="border:1px dashed var(--accent-blue);background:rgba(37,99,235,.06);color:var(--accent-blue);
-                               border-radius:6px;padding:3px 7px;font-size:11px;font-weight:850;cursor:pointer;">
-                        + 추가
-                    </button>
+                    ${_processStandardMoveEdit ? `<span style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;justify-content:flex-end;">
+                        <button type="button" title="세부공정 위로" onclick="ProdStandardsModule._moveProcessStandardStation('${_jsArg(process)}','${_jsArg(station)}',-1)"
+                            style="border:1px solid var(--border-color);background:#fff;color:var(--text-secondary);border-radius:6px;padding:3px 6px;font-size:11px;font-weight:850;cursor:pointer;">↑</button>
+                        <button type="button" title="세부공정 아래로" onclick="ProdStandardsModule._moveProcessStandardStation('${_jsArg(process)}','${_jsArg(station)}',1)"
+                            style="border:1px solid var(--border-color);background:#fff;color:var(--text-secondary);border-radius:6px;padding:3px 6px;font-size:11px;font-weight:850;cursor:pointer;">↓</button>
+                        <button type="button" onclick="ProdStandardsModule._openProcessStandardAddMenu('${_jsArg(process)}','${_jsArg(station)}')"
+                            style="border:1px dashed var(--accent-blue);background:rgba(37,99,235,.06);color:var(--accent-blue);
+                                   border-radius:6px;padding:3px 7px;font-size:11px;font-weight:850;cursor:pointer;">
+                            + 기준서
+                        </button>
+                        <button type="button" title="세부공정 삭제" onclick="ProdStandardsModule._removeProcessStandardStation('${_jsArg(process)}','${_jsArg(station)}')"
+                            style="border:1px solid rgba(239,68,68,.35);background:#fff;color:#dc2626;border-radius:6px;padding:3px 6px;font-size:11px;font-weight:850;cursor:pointer;">
+                            삭제
+                        </button>
+                    </span>` : ''}
                 </div>
-                <div ondragover="ProdStandardsModule._stdMenuDragOver(event)"
-                    ondrop="ProdStandardsModule._stdMenuDrop('${_jsArg(process)}','${_jsArg(station)}','',event)"
-                    style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;min-height:84px;">
+                <div ${dropAttrs(process, station)}
+                    style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;min-height:84px;
+                           ${_processStandardMoveEdit ? 'outline:1px dashed rgba(37,99,235,.22);outline-offset:3px;border-radius:8px;' : ''}">
                     ${(standards || []).map(std => renderStd(std, process, station)).join('')}
                 </div>
             </div>`;
@@ -1301,6 +2133,14 @@ var ProdStandardsModule = (function() {
                     <span class="material-symbols-outlined" style="font-size:20px;color:var(--accent-blue);">format_paint</span>
                     <div style="font-weight:900;color:var(--text-primary);">도장(A) / 도장(B)</div>
                     <div style="font-size:.73rem;color:var(--text-muted);">같은 세부공정을 한 행에서 비교·배치</div>
+                    ${_processStandardMoveEdit ? `<div style="margin-left:auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                        <button type="button" onclick="ProdStandardsModule._movePaintProcessGroup(-1)" class="btn btn-sm btn-outline">↑</button>
+                        <button type="button" onclick="ProdStandardsModule._movePaintProcessGroup(1)" class="btn btn-sm btn-outline">↓</button>
+                        <button type="button" onclick="ProdStandardsModule._addProcessStandardStation('도장(A)')" class="btn btn-sm btn-outline">도장(A) 세부공정 +</button>
+                        <button type="button" onclick="ProdStandardsModule._addProcessStandardStation('도장(B)')" class="btn btn-sm btn-outline">도장(B) 세부공정 +</button>
+                        <button type="button" onclick="ProdStandardsModule._removeProcessStandardProcess('도장(A)')" class="btn btn-sm btn-outline" style="color:#dc2626;border-color:rgba(239,68,68,.45);">도장(A) 삭제</button>
+                        <button type="button" onclick="ProdStandardsModule._removeProcessStandardProcess('도장(B)')" class="btn btn-sm btn-outline" style="color:#dc2626;border-color:rgba(239,68,68,.45);">도장(B) 삭제</button>
+                    </div>` : ''}
                 </div>
                 <div style="display:flex;flex-direction:column;gap:10px;padding:12px;">
                     ${stationNames.map(station => {
@@ -1321,13 +2161,18 @@ var ProdStandardsModule = (function() {
             </section>` : '';
 
         return groups.map(group => {
-            if (group.process === '도장(A)') return paintSection;
-            if (group.process === '도장(B)') return '';
+            if (group.process === '도장(A)' || group.process === '도장(B)') return group.process === paintAnchor ? paintSection : '';
             return `
             <section style="border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary);overflow:hidden;">
                 <div style="display:flex;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid var(--border-color);">
                     <span class="material-symbols-outlined" style="font-size:20px;color:var(--accent-blue);">${group.icon}</span>
                     <div style="font-weight:900;color:var(--text-primary);">${group.process}</div>
+                    ${_processStandardMoveEdit ? `<div style="margin-left:auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                        <button type="button" onclick="ProdStandardsModule._moveProcessStandardProcess('${_jsArg(group.process)}',-1)" class="btn btn-sm btn-outline">↑</button>
+                        <button type="button" onclick="ProdStandardsModule._moveProcessStandardProcess('${_jsArg(group.process)}',1)" class="btn btn-sm btn-outline">↓</button>
+                        <button type="button" onclick="ProdStandardsModule._addProcessStandardStation('${_jsArg(group.process)}')" class="btn btn-sm btn-outline">+ 세부공정</button>
+                        <button type="button" onclick="ProdStandardsModule._removeProcessStandardProcess('${_jsArg(group.process)}')" class="btn btn-sm btn-outline" style="color:#dc2626;border-color:rgba(239,68,68,.45);">주공정 삭제</button>
+                    </div>` : ''}
                 </div>
                 <div style="display:flex;flex-direction:column;gap:10px;padding:12px;">
                     ${group.stations.map(st => `
@@ -1335,15 +2180,28 @@ var ProdStandardsModule = (function() {
                             <div style="display:flex;flex-direction:column;gap:7px;font-size:.8rem;font-weight:900;color:var(--text-secondary);
                                         padding:9px 10px;border-radius:8px;background:var(--bg-primary);border:1px solid var(--border-color);">
                                 <span>${st.station}</span>
+                                ${_processStandardMoveEdit ? `<div style="display:flex;gap:4px;flex-wrap:wrap;">
+                                <button type="button" onclick="ProdStandardsModule._moveProcessStandardStation('${_jsArg(group.process)}','${_jsArg(st.station)}',-1)"
+                                    style="border:1px solid var(--border-color);background:#fff;color:var(--text-secondary);
+                                           border-radius:6px;padding:4px 6px;font-size:11px;font-weight:850;cursor:pointer;">↑</button>
+                                <button type="button" onclick="ProdStandardsModule._moveProcessStandardStation('${_jsArg(group.process)}','${_jsArg(st.station)}',1)"
+                                    style="border:1px solid var(--border-color);background:#fff;color:var(--text-secondary);
+                                           border-radius:6px;padding:4px 6px;font-size:11px;font-weight:850;cursor:pointer;">↓</button>
+                                </div>
                                 <button type="button" onclick="ProdStandardsModule._openProcessStandardAddMenu('${_jsArg(group.process)}','${_jsArg(st.station)}')"
                                     style="border:1px dashed var(--accent-blue);background:rgba(37,99,235,.06);color:var(--accent-blue);
                                            border-radius:6px;padding:4px 6px;font-size:11px;font-weight:850;cursor:pointer;">
                                     + 기준서 추가
                                 </button>
+                                <button type="button" onclick="ProdStandardsModule._removeProcessStandardStation('${_jsArg(group.process)}','${_jsArg(st.station)}')"
+                                    style="border:1px solid rgba(239,68,68,.35);background:#fff;color:#dc2626;
+                                           border-radius:6px;padding:4px 6px;font-size:11px;font-weight:850;cursor:pointer;">
+                                    세부공정 삭제
+                                </button>` : ''}
                             </div>
-                            <div ondragover="ProdStandardsModule._stdMenuDragOver(event)"
-                                ondrop="ProdStandardsModule._stdMenuDrop('${_jsArg(group.process)}','${_jsArg(st.station)}','',event)"
-                                style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;min-height:84px;">
+                            <div ${dropAttrs(group.process, st.station)}
+                                style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;min-height:84px;
+                                       ${_processStandardMoveEdit ? 'outline:1px dashed rgba(37,99,235,.22);outline-offset:3px;border-radius:8px;' : ''}">
                                 ${st.standards.map(std => renderStd(std, group.process, st.station)).join('')}
                             </div>
                         </div>
@@ -1356,7 +2214,7 @@ var ProdStandardsModule = (function() {
 
     function _renderStandardsSummary(container) {
         if (window.Router && typeof Router.setPageTitle === 'function') {
-            Router.setPageTitle('제조 관리 표준');
+            Router.setPageTitle(`<button class="topbar-back-link" onclick="Router.navigate('dashboard')"><span class="material-symbols-outlined">arrow_back</span> 메인 페이지</button>`);
         }
 
         const allStandards = Storage.getAll(STORE) || [];
@@ -1423,11 +2281,18 @@ var ProdStandardsModule = (function() {
                             <span class="material-symbols-outlined">folder_managed</span>
                             기준서 현황
                         </h3>
-                        <button class="btn btn-sm btn-outline" onclick="ProdStandardsModule._resetProcessStandardMenuLayout()"
-                            style="display:flex;align-items:center;gap:4px;font-size:11px;">
-                            <span class="material-symbols-outlined" style="font-size:14px;">restart_alt</span>
-                            배치 초기화
-                        </button>
+                        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                            ${_processStandardMoveEdit ? `<button class="btn btn-sm btn-outline" onclick="ProdStandardsModule._addProcessStandardProcess()"
+                                style="display:flex;align-items:center;gap:4px;font-size:11px;">
+                                <span class="material-symbols-outlined" style="font-size:14px;">add</span>
+                                주공정 추가
+                            </button>` : ''}
+                            <button class="btn btn-sm ${_processStandardMoveEdit ? 'btn-primary' : 'btn-outline'}" onclick="ProdStandardsModule._toggleProcessStandardMoveEdit()"
+                                style="display:flex;align-items:center;gap:4px;font-size:11px;">
+                                <span class="material-symbols-outlined" style="font-size:14px;">${_processStandardMoveEdit ? 'done' : 'edit'}</span>
+                                ${_processStandardMoveEdit ? '편집 완료' : '편집'}
+                            </button>
+                        </div>
                     </div>
                     <div class="card-body">
                         <div id="processStandardStatusBody" style="display:flex;flex-direction:column;gap:12px;">
@@ -1448,44 +2313,8 @@ var ProdStandardsModule = (function() {
                                 </button>
                             `).join('')}
 
-                            <!-- 사출컬러 기준서 카드 -->
-                            <button onclick="Router.navigate('inject-color-std')"
-                                style="text-align:left;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);padding:15px;cursor:pointer;border-left:4px solid #0ea5e9;">
-                                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
-                                    <span style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--text-primary);">
-                                        <span class="material-symbols-outlined" style="font-size:22px;color:#0ea5e9;">palette</span>
-                                        사출컬러 기준서
-                                    </span>
-                                    <span style="font-size:0.68rem;background:#0ea5e9;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;white-space:nowrap;">편집가능</span>
-                                </div>
-                                <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">사출품 COLOR 기준서 — A/B라인별 도장컬러·사출컬러 기준 및 실사 사진 관리</div>
-                            </button>
 
-                            <!-- 제품 파지 기준서 카드 -->
-                            <button onclick="Router.navigate('paji-std')"
-                                style="text-align:left;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);padding:15px;cursor:pointer;border-left:4px solid #16a34a;">
-                                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
-                                    <span style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--text-primary);">
-                                        <span class="material-symbols-outlined" style="font-size:22px;color:#16a34a;">back_hand</span>
-                                        제품 파지 기준서
-                                    </span>
-                                    <span style="font-size:0.68rem;background:#16a34a;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;white-space:nowrap;">편집가능</span>
-                                </div>
-                                <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">로딩 공정 파지 위치 기준서 — A/B라인별 제품 파지 구역 기준 및 실사 사진 관리</div>
-                            </button>
 
-                            <!-- 세척 소모품 관리 기준서 카드 -->
-                            <button onclick="Router.navigate('wash-consumable')"
-                                style="text-align:left;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);padding:15px;cursor:pointer;border-left:4px solid #0e7490;">
-                                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
-                                    <span style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--text-primary);">
-                                        <span class="material-symbols-outlined" style="font-size:22px;color:#0e7490;">cleaning_services</span>
-                                        세척 소모품 관리 기준서
-                                    </span>
-                                    <span style="font-size:0.68rem;background:#0e7490;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;white-space:nowrap;">편집가능</span>
-                                </div>
-                                <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">세척 소모품 교체관리 기준서 — A/B라인별 소모품 교체 주기·사용 방법·폐기 방법 관리</div>
-                            </button>
 
                             <!-- 건조 및 셋팅룸 온도 기준서 카드 -->
                             <button onclick="Router.navigate('drying-std')"
@@ -1495,7 +2324,7 @@ var ProdStandardsModule = (function() {
                                         <span class="material-symbols-outlined" style="font-size:22px;color:#b45309;">local_fire_department</span>
                                         건조 및 셋팅룸 온도 기준서
                                     </span>
-                                    <span style="font-size:0.68rem;background:#b45309;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;white-space:nowrap;">편집가능</span>
+                                    <span style="font-size:0.68rem;background:#b45309;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;white-space:nowrap;">WEB</span>
                                 </div>
                                 <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">A/B라인 차종·품명별 컨베이어 속도 및 Flash Off OVEN(#1-1·#2·#3) / MAIN OVEN(#4~#8) 온도 설정 기준 — ±5℃ 허용</div>
                             </button>
@@ -1508,48 +2337,9 @@ var ProdStandardsModule = (function() {
                                         <span class="material-symbols-outlined" style="font-size:22px;color:#7c3aed;">precision_manufacturing</span>
                                         로봇 프로그램 기준서
                                     </span>
-                                    <span style="font-size:0.68rem;background:#7c3aed;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;white-space:nowrap;">편집가능</span>
+                                    <span style="font-size:0.68rem;background:#7c3aed;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;white-space:nowrap;">WEB</span>
                                 </div>
                                 <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">A라인(Robot 1~6) / B라인(Robot 1~4) 레이저 프로그램명·컨트롤러번호·스핀들 속도 기준표 — 행 추가/삭제/수정 가능</div>
-                            </button>
-
-                            <!-- 교반시간 작업기준서 카드 -->
-                            <button onclick="Router.navigate('agit-std')"
-                                style="text-align:left;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);padding:15px;cursor:pointer;border-left:4px solid #d97706;">
-                                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
-                                    <span style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--text-primary);">
-                                        <span class="material-symbols-outlined" style="font-size:22px;color:#d97706;">blender</span>
-                                        교반시간 작업기준서
-                                    </span>
-                                    <span style="font-size:0.68rem;background:#d97706;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;white-space:nowrap;">편집가능</span>
-                                </div>
-                                <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">배합공정 교반시간 기준서 — 도료 종류별 교반 시간·RPM 기준 및 교반 순서·방법 관리</div>
-                            </button>
-
-                            <!-- 잔여도료 작업기준서 카드 -->
-                            <button onclick="Router.navigate('remain-paint')"
-                                style="text-align:left;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);padding:15px;cursor:pointer;border-left:4px solid #7c3aed;">
-                                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
-                                    <span style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--text-primary);">
-                                        <span class="material-symbols-outlined" style="font-size:22px;color:#7c3aed;">format_color_fill</span>
-                                        잔여도료 작업기준서
-                                    </span>
-                                    <span style="font-size:0.68rem;background:#7c3aed;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;white-space:nowrap;">편집가능</span>
-                                </div>
-                                <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">잔여 도료 포장 방법 기준서 — 라벨 표기·사용기한 작성·포장 방법(랩핑/커버) 관리</div>
-                            </button>
-
-                            <!-- 점도 측정 작업기준서 카드 -->
-                            <button onclick="Router.navigate('viscosity-std')"
-                                style="text-align:left;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);padding:15px;cursor:pointer;border-left:4px solid #0891b2;">
-                                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
-                                    <span style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--text-primary);">
-                                        <span class="material-symbols-outlined" style="font-size:22px;color:#0891b2;">speed</span>
-                                        점도 측정 작업기준서
-                                    </span>
-                                    <span style="font-size:0.68rem;background:#0891b2;color:#fff;border-radius:4px;padding:2px 7px;font-weight:700;white-space:nowrap;">편집가능</span>
-                                </div>
-                                <div style="font-size:.78rem;color:var(--text-muted);line-height:1.45;">배합공정 도료 점도 측정 기준서 — 점도계 사용법·측정 절차·조정 방법 관리</div>
                             </button>
                         </div>
                     </div>
@@ -1558,6 +2348,7 @@ var ProdStandardsModule = (function() {
             </div>
         `;
         _ensureProcessStandardMenuLayout();
+        _bindProcessStandardTiles(document.getElementById('processStandardStatusBody'));
     }
 
     function _renderCpStatusTable() {
@@ -2397,6 +3188,7 @@ var ProdStandardsModule = (function() {
         /* 배합/사용 기준표 — PaintMixModule 전용 렌더러 위임 */
         if (_curDocType === 'mixing') { PaintMixModule.renderFormulaAsStandard(el); return; }
         if (_curDocType === 'paint-usage') { PaintMixModule.renderUsageAsStandard(el); return; }
+        if (_curDocType === 'paint-tds') { _renderPaintTdsTable(el); return; }
 
         const cfg = STANDARD_DOC_TYPES[_curDocType];
         if (!cfg) return;
@@ -2473,6 +3265,234 @@ var ProdStandardsModule = (function() {
                 </div>
             `}
         `;
+    }
+
+    function _paintMainMaterials() {
+        return (Storage.getAll(DB.STORES.PAINT_MATERIALS) || [])
+            .filter(p => String(p.paintType || '').trim() === '주제')
+            .sort((a, b) =>
+                String(a.supplier || '').localeCompare(String(b.supplier || ''), 'ko') ||
+                String(a.paintSpec || '').localeCompare(String(b.paintSpec || ''), 'ko') ||
+                String(a.name || '').localeCompare(String(b.name || ''), 'ko')
+            );
+    }
+
+    function _paintTdsRecords() {
+        return (Storage.getAll(STORE) || [])
+            .filter(r => r._docKind === STANDARD_DOC_KIND && r.standardType === 'paint-tds')
+            .sort((a, b) => String(b.uploadedAt || b.updatedAt || '').localeCompare(String(a.uploadedAt || a.updatedAt || '')));
+    }
+
+    function _paintTdsDocsForMaterial(material) {
+        const materialId = material && material.id;
+        const name = String(material && material.name || '').trim();
+        const supplier = String(material && material.supplier || '').trim();
+        return _paintTdsRecords().filter(r => {
+            if (materialId && r.materialId === materialId) return true;
+            return !r.materialId && String(r.paintName || '').trim() === name && String(r.supplier || '').trim() === supplier;
+        });
+    }
+
+    function _fileSizeText(bytes) {
+        const n = Number(bytes) || 0;
+        if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+        if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+        return n ? `${n} B` : '-';
+    }
+
+    function _paintTdsDocListHtml(docs) {
+        if (!docs.length) {
+            return `<span style="color:var(--text-muted);">업로드된 TDS 없음</span>`;
+        }
+        return docs.map(doc => `
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border:1px solid var(--border-color);border-radius:7px;background:#fff;margin-bottom:5px;">
+                <div style="min-width:0;">
+                    <button type="button" onclick="ProdStandardsModule.openPaintTdsFile('${_jsArg(doc.id)}')"
+                        style="border:0;background:transparent;padding:0;color:var(--accent-blue);font-weight:800;cursor:pointer;text-align:left;max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                        ${_esc(doc.fileName || 'TDS 파일')}
+                    </button>
+                    <div style="font-size:.72rem;color:var(--text-muted);margin-top:2px;">
+                        ${_esc(_fileSizeText(doc.fileSize))} · ${_esc(doc.uploadedAt || doc.updatedAt || '-')}
+                    </div>
+                </div>
+                <button class="btn btn-sm" style="border:1px solid var(--accent-red);color:var(--accent-red);background:transparent;"
+                    onclick="ProdStandardsModule.deletePaintTds('${_jsArg(doc.id)}')">삭제</button>
+            </div>
+        `).join('');
+    }
+
+    function _renderPaintTdsTable(container = document.getElementById('psParamContent')) {
+        const el = container || document.getElementById('psParamContent');
+        if (!el) return;
+        const cfg = STANDARD_DOC_TYPES['paint-tds'];
+        const materials = _paintMainMaterials();
+        const docs = _paintTdsRecords();
+        const linkedMaterialIds = new Set(docs.map(d => d.materialId).filter(Boolean));
+
+        el.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+                <div>
+                    <div style="display:flex;align-items:center;gap:8px;font-weight:850;font-size:16px;">
+                        <span class="material-symbols-outlined" style="font-size:20px;color:#334155;">${cfg.icon}</span>
+                        ${cfg.label}
+                    </div>
+                    <div style="font-size:13px;color:var(--text-muted);margin-top:4px;">
+                        도료 기초 정보의 <strong>주제</strong> 도료만 표시합니다. 도료사가 배포한 TDS 원본 파일을 도료별로 업로드하세요.
+                    </div>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <span style="display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid var(--border-color);border-radius:999px;background:var(--bg-secondary);font-size:.78rem;font-weight:800;">
+                        주제 ${materials.length}개
+                    </span>
+                    <span style="display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid var(--border-color);border-radius:999px;background:var(--bg-secondary);font-size:.78rem;font-weight:800;color:var(--accent-blue);">
+                        TDS ${docs.length}건
+                    </span>
+                </div>
+            </div>
+            <div style="margin-bottom:14px;padding:12px 14px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);color:var(--text-muted);font-size:13px;">
+                ${cfg.desc}
+            </div>
+            ${materials.length ? `
+                <div class="data-table-wrapper" style="overflow-x:auto;">
+                    <table class="data-table" style="width:100%;font-size:12px;min-width:980px;">
+                        <thead>
+                            <tr>
+                                <th style="width:48px;text-align:center;">No</th>
+                                <th style="min-width:150px;">도료사</th>
+                                <th style="min-width:220px;">주제 도료명</th>
+                                <th style="width:90px;text-align:center;">사양</th>
+                                <th style="min-width:340px;">업로드 TDS</th>
+                                <th style="width:110px;text-align:center;">상태</th>
+                                <th style="width:120px;text-align:center;">작업</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${materials.map((mat, idx) => {
+                                const matDocs = _paintTdsDocsForMaterial(mat);
+                                const registered = mat.id && linkedMaterialIds.has(mat.id);
+                                return `
+                                    <tr>
+                                        <td style="text-align:center;font-weight:800;">${idx + 1}</td>
+                                        <td>${_esc(mat.supplier || '-')}</td>
+                                        <td>
+                                            <strong>${_esc(mat.name || '-')}</strong>
+                                            <div style="font-size:.74rem;color:var(--text-muted);margin-top:2px;">주제</div>
+                                        </td>
+                                        <td style="text-align:center;">${mat.paintSpec ? UIUtils.badge(mat.paintSpec, 'info') : '-'}</td>
+                                        <td>${_paintTdsDocListHtml(matDocs)}</td>
+                                        <td style="text-align:center;">
+                                            ${registered || matDocs.length
+                                                ? UIUtils.badge(`등록 ${matDocs.length}`, 'success')
+                                                : UIUtils.badge('미등록', 'secondary')}
+                                        </td>
+                                        <td style="text-align:center;">
+                                            <button class="btn btn-sm btn-primary" onclick="ProdStandardsModule.openPaintTdsUpload('${_jsArg(mat.id)}')">
+                                                업로드
+                                            </button>
+                                        </td>
+                                    </tr>`;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            ` : `
+                <div style="text-align:center;padding:44px 20px;color:var(--text-muted);">
+                    <span class="material-symbols-outlined" style="font-size:44px;display:block;margin-bottom:10px;opacity:.35;">palette</span>
+                    <div style="font-weight:800;margin-bottom:6px;">도료 기초 정보에 등록된 주제 도료가 없습니다</div>
+                    <div style="font-size:13px;">관리/설정 &gt; 도료 관리에서 도료 구분을 <strong>주제</strong>로 등록하면 이 목록에 표시됩니다.</div>
+                </div>
+            `}
+        `;
+    }
+
+    function _readFileAsDataUrl(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(file);
+        });
+    }
+
+    function openPaintTdsUpload(materialId) {
+        const material = _paintMainMaterials().find(m => m.id === materialId);
+        if (!material) {
+            UIUtils.toast('주제 도료 정보를 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.pdf,.jpg,.jpeg,.png,.webp,.xlsx,.xls,.doc,.docx';
+        input.onchange = async () => {
+            const file = input.files && input.files[0];
+            if (!file) return;
+            await _savePaintTdsFile(material, file);
+        };
+        input.click();
+    }
+
+    async function _savePaintTdsFile(material, file) {
+        try {
+            const fileData = await _readFileAsDataUrl(file);
+            await Storage.add(STORE, {
+                _docKind: STANDARD_DOC_KIND,
+                standardType: 'paint-tds',
+                standardLabel: STANDARD_DOC_TYPES['paint-tds'].label,
+                materialId: material.id || '',
+                paintName: material.name || '',
+                supplier: material.supplier || '',
+                paintSpec: material.paintSpec || '',
+                paintType: material.paintType || '주제',
+                fileName: file.name || '',
+                fileType: file.type || '',
+                fileSize: file.size || 0,
+                fileData,
+                uploadedAt: UIUtils.now(),
+                updatedAt: UIUtils.now()
+            });
+            UIUtils.toast('도장 사양서(TDS)가 업로드되었습니다.', 'success');
+            _renderPaintTdsTable();
+        } catch (err) {
+            console.error('TDS upload failed:', err);
+            UIUtils.toast('TDS 업로드 중 오류가 발생했습니다.', 'error');
+        }
+    }
+
+    function openPaintTdsFile(id) {
+        const doc = _paintTdsRecords().find(r => r.id === id);
+        if (!doc || !doc.fileData) {
+            UIUtils.toast('열람할 TDS 파일을 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const win = window.open('', '_blank');
+        if (!win) {
+            UIUtils.toast('팝업 차단을 해제한 뒤 다시 시도하세요.', 'warning');
+            return;
+        }
+        const isImage = String(doc.fileType || '').startsWith('image/');
+        const isPdf = String(doc.fileType || '').includes('pdf') || /\.pdf$/i.test(doc.fileName || '');
+        win.document.write(`
+            <html><head><title>${_esc(doc.fileName || 'TDS')}</title>
+            <style>body{margin:0;font-family:'Malgun Gothic',sans-serif;background:#f8fafc;color:#111827}.bar{height:46px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;background:#fff;border-bottom:1px solid #e5e7eb;font-size:13px}.bar strong{max-width:70vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.body{height:calc(100vh - 47px);display:flex;align-items:center;justify-content:center}.body img{max-width:100%;max-height:100%;object-fit:contain}.body iframe{width:100%;height:100%;border:0}.download{color:#2563eb;font-weight:800;text-decoration:none}</style>
+            </head><body>
+                <div class="bar"><strong>${_esc(doc.paintName || '')} · ${_esc(doc.fileName || 'TDS')}</strong><a class="download" download="${_esc(doc.fileName || 'TDS')}" href="${doc.fileData}">다운로드</a></div>
+                <div class="body">
+                    ${isImage ? `<img src="${doc.fileData}" alt="TDS">`
+                              : isPdf ? `<iframe src="${doc.fileData}"></iframe>`
+                                      : `<div style="text-align:center;"><div style="font-size:15px;font-weight:800;margin-bottom:12px;">브라우저 미리보기를 지원하지 않는 파일입니다.</div><a class="download" download="${_esc(doc.fileName || 'TDS')}" href="${doc.fileData}">파일 다운로드</a></div>`}
+                </div>
+            </body></html>
+        `);
+        win.document.close();
+    }
+
+    async function deletePaintTds(id) {
+        const doc = _paintTdsRecords().find(r => r.id === id);
+        if (!doc) return;
+        if (!confirm('선택한 도장 사양서(TDS)를 삭제하시겠습니까?')) return;
+        await Storage.remove(STORE, id);
+        UIUtils.toast('TDS 파일이 삭제되었습니다.', 'success');
+        _renderPaintTdsTable();
     }
 
     function _isMergeableStandard(type = _curDocType) {
@@ -7627,10 +8647,31 @@ window.addEventListener('load', function() {
         _stdMenuDragStart,
         _stdMenuDragOver,
         _stdMenuDrop,
+        _openProcessStandardItem,
         _openProcessStandardAddMenu,
         _addProcessStandardMenuItem,
         _removeProcessStandardMenuItem,
         _resetProcessStandardMenuLayout,
+        _toggleProcessStandardMoveEdit,
+        _addProcessStandardProcess,
+        _removeProcessStandardProcess,
+        _addProcessStandardStation,
+        _removeProcessStandardStation,
+        _moveProcessStandardProcess,
+        _moveProcessStandardStation,
+        _movePaintProcessGroup,
+        _openCustomUploadStdViewer,
+        _armCustomStdPaste,
+        _openCustomWebStdViewer,
+        _openCustomWebStdEditor,
+        _webStdAddSection,
+        _webStdRemoveSection,
+        _webStdMoveSection,
+        _webStdTableAddRow,
+        _webStdTableRemoveRow,
+        _saveCurrentWebStdContent,
+        _openNewCustomStdForm,
+        _confirmNewCustomStd,
         _filterCpStatusTable,
         openCpForProduct,
         _execCpCopy,
@@ -7706,6 +8747,9 @@ window.addEventListener('load', function() {
         exportStandardDoc,
         openStandardPrintPage,
         toggleStandardMergeView,
+        openPaintTdsUpload,
+        openPaintTdsFile,
+        deletePaintTds,
     };
 })();
 
@@ -8539,11 +9583,6 @@ var ProdConditionsModule = (function() {
                     <span style="font-size:0.75rem;color:var(--text-muted);">사출품 COLOR 기준서 파일 이력 관리</span>
                 </div>
                 <div style="display:flex;gap:8px;align-items:center;">
-                    <button class="btn btn-success"
-                            onclick="ProdConditionsModule.openColorStdViewer()"
-                            style="display:flex;align-items:center;gap:5px;">
-                        <span class="material-symbols-outlined" style="font-size:16px;">visibility</span> 기준서 보기
-                    </button>
                     <input type="file" id="colorStdFileInput"
                            accept=".xlsx,.xls"
                            style="display:none"
@@ -8622,360 +9661,6 @@ var ProdConditionsModule = (function() {
         });
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // 사출컬러 기준서 뷰어
-    // ──────────────────────────────────────────────────────────────────────
-    const _IMG = p => `assets/inject-color-std/${p}`;
-
-    // 이미지-제품 매핑 (Excel xl/media/ → 제품 그룹)
-    // A라인 섹션1: 차종별 사출품 COLOR 기준
-    const _A1 = [
-        {
-            car:'GOLF7', part:'KNOB류',
-            colors:[
-                { paint:'WHI',      inject:'DYS QAW', img:_IMG('image4.png') },
-                { paint:'WHITE',    inject:'GRAY',    img:_IMG('image6.png') }
-            ]
-        },
-        {
-            car:'XFD', part:'1,3 SPOT',
-            colors:[
-                { paint:'BLACK',    inject:'GRAY',    img:_IMG('image7.png') },
-                { paint:'WHITE',    inject:'GRAY',    img:_IMG('image8.png') }
-            ]
-        },
-        {
-            car:'A3 / A3 PA', part:'Knob류',
-            colors:[
-                { paint:'6PS',      inject:'AZ3',     img:_IMG('image3.png') },
-                { paint:'WHITE',    inject:'WHITE',   img:null }
-            ]
-        },
-        {
-            car:'Q2', part:'KNOB류',
-            colors:[
-                { paint:'BC5',      inject:'ET1',     img:_IMG('image5.png') },
-                { paint:'S/M GRAY', inject:'S/M GRAY',img:null }
-            ]
-        },
-        {
-            car:'A3 / A3 PA', part:'PAO COVER',
-            colors:[
-                { paint:'6PS',      inject:'AZ3',     img:_IMG('image10.png') },
-                { paint:'WHITE',    inject:'WHITE',   img:null }
-            ]
-        },
-        {
-            car:'Q2', part:'PAO COVER',
-            colors:[
-                { paint:'BC5',      inject:'ET1',     img:_IMG('image11.png') },
-                { paint:'S/M GRAY', inject:'S/M GRAY',img:null }
-            ]
-        }
-    ];
-
-    // A라인 섹션2
-    const _A2 = [
-        {
-            car:'T1XX', part:'Lens',
-            colors:[
-                { paint:'BLACK',    inject:'-', img:_IMG('image13.png') },
-                { paint:'CLEAR/BK', inject:'-', img:null }
-            ]
-        },
-        {
-            car:'T1XX', part:'P-BUTTON',
-            colors:[
-                { paint:'BLACK',    inject:'-', img:_IMG('image12.png') },
-                { paint:'WHITE',    inject:'-', img:null }
-            ]
-        },
-        {
-            car:'P702', part:'M-BUTTON',
-            colors:[
-                { paint:'BLACK',    inject:'-', img:_IMG('image15.png') },
-                { paint:'white',    inject:'-', img:null }
-            ]
-        },
-        {
-            car:'P702', part:'LENS',
-            colors:[
-                { paint:'BLACK',    inject:'-', img:_IMG('image14.png') },
-                { paint:'WHITE',    inject:'-', img:null }
-            ]
-        },
-        {
-            car:'J34A', part:'LH, RH',
-            colors:[
-                { paint:'02 WHITE', inject:'-', img:_IMG('image18.png') },
-                { paint:'750 GRAY', inject:'-', img:_IMG('image9.png')  },
-                { paint:'WHITE',    inject:'-', img:null },
-                { paint:'S/M GRAY', inject:'-', img:null }
-            ]
-        }
-    ];
-
-    // B라인 섹션1: A8 / A3 / Q2
-    const _B1 = [
-        {
-            car:'A8', part:'HOUSING',
-            colors:[
-                { paint:'1PH', inject:'GRAY',  img:_IMG('image24.png') },
-                { paint:'6PS', inject:'BLACK', img:_IMG('image25.png') },
-                { paint:'1KF', inject:'BEIGE', img:_IMG('image28.png') }
-            ]
-        },
-        {
-            car:'A8', part:'UPPER CASE',
-            colors:[
-                { paint:'1PH', inject:'GRAY',  img:_IMG('image22.png') },
-                { paint:'6PS', inject:'BLACK', img:_IMG('image27.png') },
-                { paint:'1KF', inject:'BEIGE', img:_IMG('image29.png') }
-            ]
-        },
-        {
-            car:'A8', part:'LOWER CASE',
-            colors:[
-                { paint:'1PH', inject:'GRAY',  img:_IMG('image23.png') },
-                { paint:'6PS', inject:'BLACK', img:_IMG('image26.png') },
-                { paint:'1KF', inject:'BEIGE', img:_IMG('image30.png') }
-            ]
-        },
-        {
-            car:'A3', part:'E-CALL COVER',
-            colors:[
-                { paint:'6PS',  inject:'RED', img:_IMG('image32.png') },
-                { paint:'AZ3',  inject:'RED', img:null },
-                { paint:'BC5',  inject:'RED', img:null },
-                { paint:'ET1',  inject:'RED', img:null }
-            ]
-        },
-        {
-            car:'A3', part:'PA E-CALL COVER',
-            colors:[
-                { paint:'BC5',  inject:'RED', img:_IMG('image21.png') },
-                { paint:'ET1',  inject:'RED', img:null }
-            ]
-        },
-        {
-            car:'Q2', part:'E-CALL COVER',
-            colors:[
-                { paint:'BC5',  inject:'RED', img:null },
-                { paint:'ET1',  inject:'RED', img:null }
-            ]
-        }
-    ];
-
-    // B라인 섹션2
-    const _B2 = [
-        {
-            car:'A3, Q2', part:'LENS',
-            colors:[{ paint:'투명(CLEAR)', inject:'-', img:_IMG('image20.png') }]
-        },
-        {
-            car:'T1XX', part:'IL-BUTTON',
-            colors:[{ paint:'BLACK', inject:'-', img:_IMG('image19.png') }]
-        },
-        {
-            car:'CHEVY / GMC', part:'EMBLEM',
-            colors:[{ paint:'BLACK', inject:'-', img:_IMG('image31.png') }]
-        }
-    ];
-
-    const _ACTION = {
-        ko: '계획과 상이한 사출 컬러시 라인 정지 후 관리자 통보 후 조치 기준에 맞는 컬러로 사출물을 투입한다.',
-        ru: 'При несоответствии цвета литья плану линия останавливается, уведомляется руководитель, затем вводится материал нужного цвета.',
-        en: 'If the injection color differs from the plan, the line stops, the manager is notified, and the correct color is used.'
-    };
-
-    function _colorTag(paint, inject) {
-        const pStyle = 'display:inline-block;padding:2px 8px;border-radius:3px;font-size:0.75rem;font-weight:600;margin:2px;';
-        const pColor = _paintTagColor(paint);
-        const iColor = _injectTagColor(inject);
-        let html = `<span style="${pStyle}background:${pColor.bg};color:${pColor.fg};">도장 ${paint}</span>`;
-        if (inject && inject !== '-') {
-            html += `<br><span style="${pStyle}background:${iColor.bg};color:${iColor.fg};margin-top:3px;">사출 ${inject}</span>`;
-        }
-        return html;
-    }
-
-    function _paintTagColor(c) {
-        const s = (c || '').toUpperCase();
-        if (s.includes('WHITE') || s.includes('WHI') || s.includes('02 WHITE'))
-            return { bg:'#e8f0fe', fg:'#1a56db' };
-        if (s.includes('BLACK') || s.includes('BK') || s.includes('CLEAR/BK'))
-            return { bg:'#1f2937', fg:'#f9fafb' };
-        if (s.includes('GRAY') || s.includes('GREY') || s.includes('S/M'))
-            return { bg:'#e5e7eb', fg:'#374151' };
-        if (s.includes('RED'))  return { bg:'#fee2e2', fg:'#dc2626' };
-        if (s.includes('6PS') || s.includes('BC5') || s.includes('1PH') || s.includes('1KF'))
-            return { bg:'#dbeafe', fg:'#1e40af' };
-        if (s.includes('투명') || s.includes('CLEAR'))
-            return { bg:'#f0fdf4', fg:'#166534' };
-        return { bg:'#f3f4f6', fg:'#374151' };
-    }
-
-    function _injectTagColor(c) {
-        const s = (c || '').toUpperCase();
-        if (s.includes('GRAY') || s.includes('DYS') || s.includes('AZ3'))
-            return { bg:'#f3f4f6', fg:'#6b7280' };
-        if (s.includes('BLACK') || s.includes('ET1'))
-            return { bg:'#111827', fg:'#e5e7eb' };
-        if (s.includes('WHITE'))    return { bg:'#eff6ff', fg:'#2563eb' };
-        if (s.includes('BEIGE'))    return { bg:'#fef3c7', fg:'#92400e' };
-        if (s.includes('RED'))      return { bg:'#fee2e2', fg:'#dc2626' };
-        return { bg:'#f9fafb', fg:'#374151' };
-    }
-
-    function _productCard(group) {
-        const colors = group.colors;
-        const colsHtml = colors.map(c => {
-            const imgHtml = c.img
-                ? `<div style="text-align:center;margin-bottom:8px;">
-                     <img src="${c.img}" alt="${c.paint}"
-                          style="max-width:100%;max-height:130px;object-fit:contain;border-radius:6px;border:1px solid #e5e7eb;background:#fff;cursor:pointer;"
-                          onclick="this.requestFullscreen&&this.requestFullscreen()"
-                          onerror="this.style.display='none';this.nextSibling.style.display='block'">
-                     <div style="display:none;height:80px;line-height:80px;background:#f9fafb;border-radius:6px;border:1px dashed #d1d5db;color:#9ca3af;font-size:0.75rem;">이미지 없음</div>
-                   </div>`
-                : `<div style="height:80px;line-height:80px;text-align:center;background:#f9fafb;border-radius:6px;border:1px dashed #d1d5db;color:#9ca3af;font-size:0.75rem;margin-bottom:8px;">사진</div>`;
-            return `<div style="flex:1;min-width:90px;text-align:center;">
-                ${imgHtml}
-                <div style="margin-top:4px;">${_colorTag(c.paint, c.inject)}</div>
-            </div>`;
-        }).join('');
-
-        return `
-        <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;margin-bottom:10px;">
-            <div style="background:linear-gradient(135deg,#1e40af,#2563eb);color:#fff;padding:8px 12px;display:flex;align-items:center;gap:8px;">
-                <span class="material-symbols-outlined" style="font-size:15px;">directions_car</span>
-                <strong style="font-size:0.85rem;">${group.car}</strong>
-                <span style="opacity:0.7;font-size:0.75rem;">│</span>
-                <span style="font-size:0.8rem;opacity:0.9;">${group.part}</span>
-            </div>
-            <div style="padding:10px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;">
-                ${colsHtml}
-            </div>
-        </div>`;
-    }
-
-    function _actionSection() {
-        return `
-        <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:14px 16px;margin-top:4px;">
-            <div style="font-weight:700;color:#92400e;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
-                <span class="material-symbols-outlined" style="font-size:18px;">warning</span>
-                부적합시 조치사항
-            </div>
-            <div style="display:grid;gap:6px;">
-                <div style="display:flex;gap:8px;align-items:baseline;">
-                    <span style="font-size:0.68rem;background:#92400e;color:#fff;border-radius:3px;padding:1px 5px;white-space:nowrap;flex-shrink:0;">KOR</span>
-                    <span style="font-size:0.82rem;color:#78350f;">${_ACTION.ko}</span>
-                </div>
-                <div style="display:flex;gap:8px;align-items:baseline;">
-                    <span style="font-size:0.68rem;background:#6b7280;color:#fff;border-radius:3px;padding:1px 5px;white-space:nowrap;flex-shrink:0;">RUS</span>
-                    <span style="font-size:0.82rem;color:#4b5563;">${_ACTION.ru}</span>
-                </div>
-                <div style="display:flex;gap:8px;align-items:baseline;">
-                    <span style="font-size:0.68rem;background:#1e40af;color:#fff;border-radius:3px;padding:1px 5px;white-space:nowrap;flex-shrink:0;">ENG</span>
-                    <span style="font-size:0.82rem;color:#1e3a8a;">${_ACTION.en}</span>
-                </div>
-            </div>
-        </div>`;
-    }
-
-    function openColorStdViewer() {
-        const aLineHtml = `
-            <div>
-                <div style="font-size:0.7rem;color:#6b7280;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e5e7eb;">
-                    📌 섹션 1 — GOLF7 / XFD / A3 PA / Q2 계열
-                </div>
-                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;">
-                    ${_A1.map(_productCard).join('')}
-                </div>
-                <div style="font-size:0.7rem;color:#6b7280;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;margin:14px 0 10px;padding-bottom:6px;border-bottom:1px solid #e5e7eb;">
-                    📌 섹션 2 — T1XX / P702 / J34A 계열
-                </div>
-                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;">
-                    ${_A2.map(_productCard).join('')}
-                </div>
-                ${_actionSection()}
-            </div>`;
-
-        const bLineHtml = `
-            <div>
-                <div style="font-size:0.7rem;color:#6b7280;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #e5e7eb;">
-                    📌 섹션 1 — A8 / A3 / Q2 계열
-                </div>
-                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;">
-                    ${_B1.map(_productCard).join('')}
-                </div>
-                <div style="font-size:0.7rem;color:#6b7280;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;margin:14px 0 10px;padding-bottom:6px;border-bottom:1px solid #e5e7eb;">
-                    📌 섹션 2 — A3,Q2 / T1XX / CHEVY,GMC 계열
-                </div>
-                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;">
-                    ${_B2.map(_productCard).join('')}
-                </div>
-                ${_actionSection()}
-            </div>`;
-
-        const bodyHtml = `
-        <style>
-            #csViewer { font-family:'Inter',sans-serif; }
-            #csViewer .cs-tab-btn { cursor:pointer;padding:7px 18px;border:none;border-radius:20px;font-size:0.82rem;font-weight:600;transition:all 0.2s; }
-            #csViewer .cs-tab-btn.active { background:var(--accent-blue,#2563eb);color:#fff; }
-            #csViewer .cs-tab-btn:not(.active) { background:#f3f4f6;color:#374151; }
-        </style>
-        <div id="csViewer">
-            <div style="background:linear-gradient(135deg,#1e3a8a,#2563eb);padding:16px 20px;border-radius:8px;margin-bottom:14px;color:#fff;">
-                <div style="font-size:0.7rem;opacity:0.7;margin-bottom:4px;">공정 : 로딩 | 제조라인 선택</div>
-                <div style="font-size:1.1rem;font-weight:700;margin-bottom:2px;">사출품 COLOR 기준서</div>
-                <div style="font-size:0.75rem;opacity:0.8;">도장 컬러별 도장 적합성인 은폐력 및 색차 기준을 맞추기 위함</div>
-            </div>
-            <div style="display:flex;gap:8px;margin-bottom:14px;">
-                <button class="cs-tab-btn active" id="csTabA" onclick="ProdConditionsModule._csSwitch('A')">🅰 A라인</button>
-                <button class="cs-tab-btn" id="csTabB" onclick="ProdConditionsModule._csSwitch('B')">🅱 B라인</button>
-            </div>
-            <div id="csContentA">${aLineHtml}</div>
-            <div id="csContentB" style="display:none;">${bLineHtml}</div>
-        </div>`;
-
-        UIUtils.openModal({
-            title: '<span class="material-symbols-outlined" style="vertical-align:middle;margin-right:6px;color:#2563eb;">palette</span>사출컬러 기준서',
-            body: bodyHtml,
-            size: 'xxl',
-            footer: `<button class="btn btn-outline" onclick="UIUtils.closeModal()">닫기</button>`
-        });
-
-        setTimeout(() => {
-            const c = document.querySelector('#modal .modal-container');
-            if (c) {
-                c.style.setProperty('width',      '90vw', 'important');
-                c.style.setProperty('max-height', '88vh', 'important');
-            }
-            const body = document.querySelector('#modal .modal-body');
-            if (body) {
-                body.style.setProperty('overflow-y', 'auto', 'important');
-                body.style.setProperty('max-height', '76vh', 'important');
-            }
-        }, 0);
-    }
-
-    function _csSwitch(line) {
-        const a = document.getElementById('csContentA');
-        const b = document.getElementById('csContentB');
-        const tabA = document.getElementById('csTabA');
-        const tabB = document.getElementById('csTabB');
-        if (!a || !b) return;
-        if (line === 'A') {
-            a.style.display = ''; b.style.display = 'none';
-            tabA.classList.add('active'); tabB.classList.remove('active');
-        } else {
-            b.style.display = ''; a.style.display = 'none';
-            tabB.classList.add('active'); tabA.classList.remove('active');
-        }
-    }
-
-    // ── 탭 공통 렌더 ──────────────────────────────────────────────────
     let _pcContainer = null; // render()에 넘어온 container 저장
 
     function _renderTabShell(container) {
@@ -9317,6 +10002,7 @@ var ProdConditionsModule = (function() {
         });
     }
 
+
         return {
         async render(container) {
             await _loadPresets();
@@ -9345,8 +10031,6 @@ var ProdConditionsModule = (function() {
         uploadColorStd,
         downloadColorStd,
         removeColorStd,
-        openColorStdViewer,
-        _csSwitch,
         applyPreset,
         applyPresetProduct,
         // 프리셋 CRUD
