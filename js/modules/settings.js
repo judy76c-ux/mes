@@ -372,7 +372,7 @@ const SettingsModule = (function() {
         // [9] 도료 등록됐는데 경화제/신너 미선택 (사용불필요 제외)
         const incompletePaint = products.filter(p =>
             (p.paintMaterials || []).some(r =>
-                r.mainId && (!r.hardId || !r.thinnerId)
+                _isPaintRowIncomplete(r)
             )
         );
 
@@ -625,16 +625,67 @@ const SettingsModule = (function() {
                     style="padding:2px 8px;font-size:0.72rem;background:var(--accent-blue);color:#fff;border:none;border-radius:4px;cursor:pointer;">수정</button>
             </div>`;
 
-        const rowIncompletePaint = p => {
-            const bad = (p.paintMaterials||[]).filter(r => r.mainId && (!r.hardId || !r.thinnerId));
-            const detail = bad.map(r => `${r.paintSpec||'?'}${!r.hardId?' (경화제없음)':''}${!r.thinnerId?' (신너없음)':''}`).join(', ');
-            return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid var(--border-color);">
-                <span style="flex:1;"><strong>${p.carModel||'-'}</strong> / ${p.partName||'-'} / ${p.color||'-'}
-                    <span style="color:#d97706;font-size:0.75rem;margin-left:4px;">→ ${detail}</span></span>
-                <button onclick="UIUtils.closeModal();SettingsModule.editProduct('${p.id}')"
-                    style="padding:2px 8px;font-size:0.72rem;background:var(--accent-blue);color:#fff;border:none;border-radius:4px;cursor:pointer;">수정</button>
+        // 그룹화: { 'carModel||color': [product, ...] }
+        const incompletePaintGroups = {};
+        incompletePaint.forEach(p => {
+            const key = `${p.carModel||''}||${p.color||''}`;
+            if (!incompletePaintGroups[key]) incompletePaintGroups[key] = [];
+            incompletePaintGroups[key].push(p);
+        });
+
+        function renderIncompletePaintSection() {
+            if (incompletePaint.length === 0) {
+                return `<div style="display:flex;align-items:center;gap:8px;padding:5px 10px;font-size:0.82rem;">
+                    <span style="color:var(--accent-green);font-size:1rem;">✅</span>
+                    <span style="color:var(--text-muted);">도료 경화제/신너 미선택 — 이상 없음</span>
+                </div>`;
+            }
+            const id = 'pvDetail_도료경화제신너미선택';
+            const groupHtml = Object.entries(incompletePaintGroups).map(([key, group]) => {
+                const carModel = group[0].carModel || '-';
+                const color = group[0].color || '-';
+                const ids = group.map(p => p.id).join(',');
+                const groupBtn = group.length > 1
+                    ? `<button onclick="SettingsModule.openBulkPaintModal('${encodeURIComponent(carModel)}','${encodeURIComponent(color)}')"
+                           style="padding:2px 10px;font-size:0.72rem;background:#d97706;color:#fff;border:none;border-radius:4px;cursor:pointer;white-space:nowrap;">
+                           일괄 적용 (${group.length}건)
+                       </button>`
+                    : '';
+                const rows = group.map(p => {
+                    const bad = (p.paintMaterials||[]).filter(_isPaintRowIncomplete);
+                    const detail = bad.map(r => `${r.paintSpec||'?'}${!r.hardId?' (경화제없음)':''}${!r.thinnerId?' (신너없음)':''}`).join(', ');
+                    return `<div style="display:flex;align-items:center;gap:8px;padding:2px 0 2px 12px;">
+                        <span style="flex:1;font-size:0.78rem;color:var(--text-secondary);">${p.partName||'-'}
+                            <span style="color:#d97706;margin-left:4px;">→ ${detail}</span></span>
+                        <button onclick="UIUtils.closeModal();SettingsModule.editProduct('${p.id}')"
+                            style="padding:1px 7px;font-size:0.7rem;background:var(--accent-blue);color:#fff;border:none;border-radius:4px;cursor:pointer;">수정</button>
+                    </div>`;
+                }).join('');
+                return `<div style="border-bottom:1px solid var(--border-color);padding:5px 0;">
+                    <div style="display:flex;align-items:center;gap:8px;padding:2px 0;">
+                        <span style="flex:1;font-weight:700;font-size:0.82rem;"><strong>${carModel}</strong> / <span style="color:var(--accent-blue);">${color}</span>
+                            <span style="font-size:0.72rem;font-weight:400;color:var(--text-muted);margin-left:4px;">${group.length}개 품목</span></span>
+                        ${groupBtn}
+                    </div>
+                    ${rows}
+                </div>`;
+            }).join('');
+            return `
+            <div style="border:1px solid #d9770633;border-radius:6px;overflow:hidden;margin-bottom:6px;">
+                <div onclick="(function(el){el.style.display=el.style.display==='none'?'':'none';})(document.getElementById('${id}'))"
+                     style="display:flex;align-items:center;justify-content:space-between;
+                            padding:6px 12px;background:rgba(217,119,6,0.05);cursor:pointer;user-select:none;">
+                    <span style="font-size:0.83rem;font-weight:600;color:#d97706;">
+                        ⚠ 도료 경화제/신너 미선택
+                        <span style="background:#d97706;color:#fff;border-radius:10px;padding:1px 7px;font-size:0.72rem;margin-left:4px;">${incompletePaint.length}</span>
+                    </span>
+                    <span style="font-size:0.72rem;color:var(--text-muted);">클릭하여 상세보기 ▾</span>
+                </div>
+                <div id="${id}" style="display:none;padding:8px 12px;background:var(--bg-primary);font-size:0.80rem;max-height:280px;overflow-y:auto;">
+                    ${groupHtml}
+                </div>
             </div>`;
-        };
+        }
 
         return `
         <div class="card" style="margin-bottom:16px;border:1px solid ${headerBdr};background:${headerBg};">
@@ -657,7 +708,7 @@ const SettingsModule = (function() {
                 ${issueRow('error',   '사출자재 제작품목 품명 불일치',                  orphanMfg,        rowOrphanMfg)}
                 ${issueRow('warning', '사출 단가 불일치 (자재 단가 ≠ 제품 사출매입가)',  priceMismatch,    rowPriceMismatch)}
                 ${issueRow('warning', '도장 공정 있으나 도료 미등록',                  noPaintMat,       rowNoPaintMat)}
-                ${issueRow('warning', '도료 경화제/신너 미선택',                       incompletePaint,  rowIncompletePaint)}
+                ${renderIncompletePaintSection()}
                 ${issueRow('warning', '공정 미설정 (공정1~4 모두 없음)',               noProcess,        rowNoProcess)}
                 ${issueRow('warning', '사출자재 미연결 (이 품명 참조 자재 없음)',       noInjMat,         rowNoInjMat)}
                 ${issueRow('warning', '사출자재 제작품목 미설정',                      noMfgMap,         rowNoMfgMap)}
@@ -764,7 +815,9 @@ const SettingsModule = (function() {
                             const spec = row.paintSpec || (mainId && paintMap[mainId] ? paintMap[mainId].paintSpec : '');
                             const specColor = spec === 'Primer' ? '#6366f1' : spec === 'Color' ? '#ec4899' : '#6b7280';
                             const missing = [mainId, hardId, thinnerId].some(id => id && !paintMap[id]);
+                            const processTag = row.processTag || '';
                             return `<div style="display:flex;align-items:center;gap:3px;flex-wrap:nowrap;font-size:.62rem;line-height:1.35;margin:1px 0;white-space:nowrap;">
+                                ${processTag ? `<span style="font-weight:800;color:#2563eb;background:rgba(37,99,235,0.10);border:1px solid rgba(37,99,235,0.35);border-radius:3px;padding:0 4px;min-width:44px;text-align:center;">${processTag}</span>` : ''}
                                 <span style="font-weight:800;color:${specColor};background:${specColor}15;border:1px solid ${specColor}55;border-radius:3px;padding:0 4px;min-width:42px;text-align:center;">${labelForSpec(spec)}</span>
                                 <span title="${paintTitle(mainId)}" style="font-weight:700;color:${missing && mainId && !paintMap[mainId] ? '#ef4444' : 'var(--text-primary)'};">${paintName(mainId)}</span>
                                 <span style="color:var(--text-muted);">/</span>
@@ -840,7 +893,8 @@ const SettingsModule = (function() {
                             p.process1 ? `<div style="display:flex; align-items:center; gap:4px;"><span class="badge badge-info">${p.process1}</span> <span style="color:var(--text-muted);">${p.cvt1 || '-'}|${p.ct1 || '-'}</span></div>` : '',
                             p.process2 ? `<div style="display:flex; align-items:center; gap:4px;"><span class="badge badge-info">${p.process2}</span> <span style="color:var(--text-muted);">${p.cvt2 || '-'}|${p.ct2 || '-'}</span></div>` : '',
                             p.process3 ? `<div style="display:flex; align-items:center; gap:4px;"><span class="badge badge-info">${p.process3}</span> <span style="color:var(--text-muted);">${p.cvt3 || '-'}|${p.ct3 || '-'}</span></div>` : '',
-                            p.process4 ? `<div style="display:flex; align-items:center; gap:4px;"><span class="badge badge-info">${p.process4}</span> <span style="color:var(--text-muted);">${p.cvt4 || '-'}|${p.ct4 || '-'}</span></div>` : ''
+                            p.process4 ? `<div style="display:flex; align-items:center; gap:4px;"><span class="badge badge-info">${p.process4}</span> <span style="color:var(--text-muted);">${p.cvt4 || '-'}|${p.ct4 || '-'}</span></div>` : '',
+                            (p.appearanceCvt || p.appearanceCt) ? `<div style="display:flex; align-items:center; gap:4px;"><span class="badge badge-success">외관검사</span> <span style="color:var(--text-muted);">${p.appearanceCvt || '-'}|${p.appearanceCt || '-'}</span></div>` : ''
                         ].filter(Boolean).join('<span class="material-symbols-outlined" style="font-size:14px; color:var(--text-muted);">arrow_forward</span>')}
                                                 ${!p.process1 && !p.process2 && !p.process3 && !p.process4 ? '-' : ''}
                                             </div>
@@ -1008,8 +1062,10 @@ const SettingsModule = (function() {
 
         // 도료 다중 선택 초기 렌더링
         const allPaints = Storage.getAll(PAINT_STORE) || [];
+        const _paintProcessTags = _getPaintProcessTagsFromValues(_procVals);
         const initialPaintRows = (p.paintMaterials && p.paintMaterials.length > 0)
-            ? p.paintMaterials.map(row => ({
+            ? p.paintMaterials.map((row, idx, arr) => ({
+                processTag: _resolvePaintProcessTag(row.processTag || row.paintProcess || row.process || '', _paintProcessTags, idx, arr.length),
                 paintSpec:  row.paintSpec || row.typeFilter || '',
                 rowManufacturer: row.rowManufacturer || row.paintMaker || row.manufacturer || '',
                 rowSupplier: row.rowSupplier || '',
@@ -1017,9 +1073,9 @@ const SettingsModule = (function() {
                 hardId:     row.hardId    || '',
                 thinnerId:  row.thinnerId || ''
             }))
-            : [{}];
+            : [{ processTag: _paintProcessTags[0] || '도장-A' }];
         const uniquePaintSuppliers = [...new Set(allPaints.map(p => p.supplier).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
-        const initialPaintTableHtml = _paintTableHtml(idPrefix, initialPaintRows, allPaints, '');
+        const initialPaintTableHtml = _paintTableHtml(idPrefix, initialPaintRows, allPaints, '', _paintProcessTags);
 
         return `
             <style>
@@ -1252,9 +1308,14 @@ const SettingsModule = (function() {
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:65px;">C.TIME</label>
                         <input type="text" class="form-input" id="${idPrefix}Ct2" placeholder="예: 60" value="${v('ct2')}" style="margin-top:0;">
                     </div>
-                    <button type="button" class="btn btn-sm btn-outline" id="${idPrefix}AddBtn3" style="height:38px; padding:0 10px; ${v('process3') ? 'display:none !important;' : ''}" onclick="this.style.setProperty('display', 'none', 'important'); document.getElementById('${idPrefix}Row3').style.setProperty('display', 'flex', 'important');">
-                        <span class="material-symbols-outlined" style="font-size:18px;">add</span>
-                    </button>
+                    <div style="display:flex;gap:4px;">
+                        <button type="button" class="btn btn-sm btn-outline" id="${idPrefix}AddBtn3" style="height:38px; padding:0 10px; ${v('process3') ? 'display:none !important;' : ''}" onclick="this.style.setProperty('display', 'none', 'important'); document.getElementById('${idPrefix}Row3').style.setProperty('display', 'flex', 'important');">
+                            <span class="material-symbols-outlined" style="font-size:18px;">add</span>
+                        </button>
+                        <button type="button" class="btn btn-sm btn-danger" style="height:38px; padding:0 10px;" onclick="SettingsModule.removeProcessRow('${idPrefix}', 2)">
+                            <span class="material-symbols-outlined" style="font-size:18px;">remove</span>
+                        </button>
+                    </div>
                 </div>
 
                 <!-- 제조공정 Row 3 (동적 노출 - 데이터가 있을 때만 flex) -->
@@ -1271,9 +1332,14 @@ const SettingsModule = (function() {
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:65px;">C.TIME</label>
                         <input type="text" class="form-input" id="${idPrefix}Ct3" placeholder="예: 60" value="${v('ct3')}" style="margin-top:0;">
                     </div>
-                    <button type="button" class="btn btn-sm btn-outline" id="${idPrefix}AddBtn4" style="height:38px; padding:0 10px; ${v('process4') ? 'display:none !important;' : ''}" onclick="this.style.setProperty('display', 'none', 'important'); document.getElementById('${idPrefix}Row4').style.setProperty('display', 'flex', 'important');">
-                        <span class="material-symbols-outlined" style="font-size:18px;">add</span>
-                    </button>
+                    <div style="display:flex;gap:4px;">
+                        <button type="button" class="btn btn-sm btn-outline" id="${idPrefix}AddBtn4" style="height:38px; padding:0 10px; ${v('process4') ? 'display:none !important;' : ''}" onclick="this.style.setProperty('display', 'none', 'important'); document.getElementById('${idPrefix}Row4').style.setProperty('display', 'flex', 'important');">
+                            <span class="material-symbols-outlined" style="font-size:18px;">add</span>
+                        </button>
+                        <button type="button" class="btn btn-sm btn-danger" style="height:38px; padding:0 10px;" onclick="SettingsModule.removeProcessRow('${idPrefix}', 3)">
+                            <span class="material-symbols-outlined" style="font-size:18px;">remove</span>
+                        </button>
+                    </div>
                 </div>
 
                 <!-- 제조공정 Row 4 (동적 노출 - 데이터가 있을 때만 flex) -->
@@ -1290,27 +1356,37 @@ const SettingsModule = (function() {
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:65px;">C.TIME</label>
                         <input type="text" class="form-input" id="${idPrefix}Ct4" placeholder="예: 60" value="${v('ct4')}" style="margin-top:0;">
                     </div>
-                    <div style="width:38px;"></div>
+                    <button type="button" class="btn btn-sm btn-danger" style="height:38px; padding:0 10px;" onclick="SettingsModule.removeProcessRow('${idPrefix}', 4)">
+                        <span class="material-symbols-outlined" style="font-size:18px;">remove</span>
+                    </button>
+                </div>
+            </div>
+
+            <div style="background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.22);border-radius:8px;padding:10px;margin:8px 0 12px;">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;color:var(--text-primary);font-weight:700;font-size:0.86rem;">
+                    <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-green);">visibility</span>
+                    외관 검사 기초 정보
+                    <span style="font-size:0.74rem;font-weight:400;color:var(--text-muted);">수동 검사 공정의 작업 효율 판단용</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;flex-wrap:nowrap;">
+                    <div style="display:flex;align-items:center;gap:8px;flex:0 0 220px;">
+                        <label class="form-label" style="white-space:nowrap;margin-bottom:0;width:50px;">CVT</label>
+                        <input type="text" class="form-input" id="${idPrefix}AppearanceCvt" placeholder="예: 1" value="${v('appearanceCvt')}" style="margin-top:0;">
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;flex:0 0 240px;">
+                        <label class="form-label" style="white-space:nowrap;margin-bottom:0;width:70px;">C.TIME</label>
+                        <input type="text" class="form-input" id="${idPrefix}AppearanceCt" placeholder="예: 60" value="${v('appearanceCt')}" style="margin-top:0;">
+                    </div>
                 </div>
             </div>
 
             <input type="hidden" id="${idPrefix}Code" value="${v('code')}">
 
             <!-- 도료 정보 섹션 -->
-            <div style="font-weight:600;color:var(--text-primary);margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--accent-blue);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-                <div>
-                    <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;">water_drop</span>
-                    도료 정보
-                    <span style="font-size:0.75rem;font-weight:400;color:var(--text-muted);margin-left:8px;">도료 유형 먼저 선택 후 도료를 선택하세요 (복수 추가 가능)</span>
-                </div>
-                <div style="display:flex;align-items:center;gap:6px;">
-                    <span style="font-size:0.78rem;color:var(--text-muted);font-weight:400;">구매처:</span>
-                    <select id="${idPrefix}PaintSupplierFilter" style="font-size:0.82rem;padding:3px 8px;border:1.5px solid var(--border-color);border-radius:6px;background:var(--bg-secondary);color:var(--text-primary);font-family:inherit;"
-                        onchange="SettingsModule.onProductPaintSupplierFilter('${idPrefix}')">
-                        <option value="">전체</option>
-                        ${uniquePaintSuppliers.map(s => '<option value="' + s + '">' + s + '</option>').join('')}
-                    </select>
-                </div>
+            <div style="font-weight:600;color:var(--text-primary);margin:20px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--accent-blue);display:flex;align-items:center;">
+                <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;">water_drop</span>
+                <span style="margin-left:4px;">도료 정보</span>
+                <span style="font-size:0.75rem;font-weight:400;color:var(--text-muted);margin-left:8px;">도료 유형 먼저 선택 후 도료를 선택하세요 (복수 추가 가능)</span>
             </div>
             <div id="${idPrefix}PaintList">
                 ${initialPaintTableHtml}
@@ -1557,9 +1633,74 @@ const SettingsModule = (function() {
 
     // ─── 도료 다중 선택 헬퍼 ───────────────────────────────────────
 
+    function _normalizePaintProcessTag(value) {
+        const text = String(value || '').trim().replace(/\s+/g, '');
+        if (!text) return '';
+        if (/도장-?B/i.test(text)) return '도장-B';
+        if (/도장-?A/i.test(text)) return '도장-A';
+        return '';
+    }
+
+    function _getPaintProcessTagsFromValues(values) {
+        const tags = [];
+        (values || []).forEach(value => {
+            const tag = _normalizePaintProcessTag(value);
+            if (tag && !tags.includes(tag)) tags.push(tag);
+        });
+        return tags;
+    }
+
+    function _resolvePaintProcessTag(value, options, rowIdx = 0, rowCount = 0) {
+        const validOptions = (options && options.length) ? options : ['도장-A', '도장-B'];
+        const tag = _normalizePaintProcessTag(value);
+        if (tag && validOptions.includes(tag)) return tag;
+        if (validOptions.length === 1) return validOptions[0];
+        if (rowCount > 1 && rowIdx >= Math.ceil(rowCount / 2) && validOptions.includes('도장-B')) return '도장-B';
+        return validOptions[0];
+    }
+
+    function _normalizePaintMaterialType(value) {
+        const text = String(value || '').trim().replace(/\s+/g, '').toLowerCase();
+        if (!text) return '';
+        if (text.includes('주제') || text.includes('base') || text.includes('main')) return 'main';
+        if (text.includes('경화') || text.includes('hardener') || text.includes('catalyst')) return 'hardener';
+        if (text.includes('희석') || text.includes('신너') || text.includes('시너') || text.includes('thinner')) return 'thinner';
+        return text;
+    }
+
+    function _normalizePaintSpec(value) {
+        const text = String(value || '').trim().toLowerCase();
+        if (!text) return '';
+        if (text.includes('primer')) return 'primer';
+        if (text.includes('color') || text.includes('colour')) return 'color';
+        if (text.includes('clear')) return 'clear';
+        if (text.includes('공용')) return 'common';
+        return text;
+    }
+
+    function _isPaintType(mat, type) {
+        return _normalizePaintMaterialType(mat && mat.paintType) === type;
+    }
+
+    function _isNoNeedPaintSelection(value) {
+        const text = String(value || '').trim().replace(/\s+/g, '');
+        return text === '사용불필요';
+    }
+
+    function _isPaintRowIncomplete(row) {
+        if (!row || !row.mainId) return false;
+        const hasHardener = !!row.hardId || _isNoNeedPaintSelection(row.hardId);
+        const hasThinner = !!row.thinnerId || _isNoNeedPaintSelection(row.thinnerId);
+        return !hasHardener || !hasThinner;
+    }
+
+    function _samePaintMaker(a, b) {
+        return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+    }
+
     // 도료 행 1개 HTML 생성
     // 도료 행 1개 → <tr> 반환
-    function _paintRowHtml(idPrefix, rowIdx, rowData, allPaints, supplierFilter) {
+    function _paintRowHtml(idPrefix, rowIdx, rowData, allPaints, supplierFilter, paintProcessTags) {
         const paintSpec   = rowData.paintSpec   || '';
         const mainId      = rowData.mainId      || '';
         const hardId      = rowData.hardId      || '';
@@ -1578,29 +1719,34 @@ const SettingsModule = (function() {
         // 고유 도료사 목록 (행별 필터링용)
         // 행별 도료사 필터 우선, 없으면 전역 구매처 필터 사용
         const supplierPaints = supplierFilter
-            ? allPaints.filter(p => p.supplier === supplierFilter)
+            ? allPaints.filter(p => _samePaintMaker(p.supplier, supplierFilter))
             : allPaints;
         const uniqueManufacturers = [...new Set(supplierPaints.map(p => p.manufacturer).filter(Boolean))]
             .sort((a,b) => a.localeCompare(b,'ko'));
         const basePaints = rowManufacturer
-            ? supplierPaints.filter(p => p.manufacturer === rowManufacturer)
+            ? supplierPaints.filter(p => _samePaintMaker(p.manufacturer, rowManufacturer))
             : supplierPaints;
 
         // 선택된 주제 도료의 공급처 파악 (경화제/신너 자동 매칭용)
         const mainManufacturer = mainPm ? (mainPm.manufacturer || '') : '';
 
         // 주제 목록: 구매처 필터 후 도료 사양(Primer/Color/Clear/공용)으로 필터링
-        const mainPaints = basePaints.filter(p =>
-            p.paintType === '주제' && (!paintSpec || p.paintSpec === paintSpec || p.paintSpec === '공용'));
+        const selectedSpec = _normalizePaintSpec(paintSpec);
+        const mainPaints = basePaints.filter(p => {
+            const spec = _normalizePaintSpec(p.paintSpec);
+            return _isPaintType(p, 'main') && (!selectedSpec || spec === selectedSpec || spec === 'common');
+        });
 
         // 경화제: 구매처 필터 후 동일 공급처 우선 → 없으면 폴백
-        const allHard    = basePaints.filter(p => p.paintType === '경화제');
-        const hardByManufacturer  = mainManufacturer ? allHard.filter(p => p.manufacturer === mainManufacturer) : [];
+        const scopedHard = basePaints.filter(p => _isPaintType(p, 'hardener'));
+        const allHard    = scopedHard.length ? scopedHard : supplierPaints.filter(p => _isPaintType(p, 'hardener'));
+        const hardByManufacturer  = mainManufacturer ? allHard.filter(p => _samePaintMaker(p.manufacturer, mainManufacturer)) : [];
         const hardPaints = hardByManufacturer.length ? hardByManufacturer : allHard;
 
         // 신너(희석제): 구매처 필터 후 동일 공급처 우선 → 없으면 폴백
-        const allThinner     = basePaints.filter(p => p.paintType === '희석제');
-        const thinnerByManufacturer   = mainManufacturer ? allThinner.filter(p => p.manufacturer === mainManufacturer) : [];
+        const scopedThinner  = basePaints.filter(p => _isPaintType(p, 'thinner'));
+        const allThinner     = scopedThinner.length ? scopedThinner : supplierPaints.filter(p => _isPaintType(p, 'thinner'));
+        const thinnerByManufacturer   = mainManufacturer ? allThinner.filter(p => _samePaintMaker(p.manufacturer, mainManufacturer)) : [];
         const thinnerPaints  = thinnerByManufacturer.length ? thinnerByManufacturer : allThinner;
 
         const mkOpts = (list, selectedId) => list.map(pm =>
@@ -1611,8 +1757,19 @@ const SettingsModule = (function() {
         const selStyle = 'width:100%;font-size:0.82rem;padding:5px 8px;box-sizing:border-box;border:1.5px solid var(--border-color);border-radius:var(--border-radius);background:var(--bg-secondary);color:var(--text-primary);font-family:inherit;';
         const noSel    = '-- 선택 --';
 
+        const formProcs = [1, 2, 3, 4].map(n => (document.getElementById(`${idPrefix}Process${n}`) || {}).value || '').filter(Boolean);
+        const processOptions = (paintProcessTags && paintProcessTags.length)
+            ? paintProcessTags
+            : (_getPaintProcessTagsFromValues(formProcs).length ? _getPaintProcessTagsFromValues(formProcs) : ['도장-A', '도장-B']);
+        const processTag = _resolvePaintProcessTag(rowData.processTag, processOptions, rowIdx, 0);
+
         return `
         <tr data-paint-row="${rowIdx}" style="border-bottom:1px solid var(--border-color);">
+            <td style="${tdStyle}width:95px;">
+                <select id="${idPrefix}PaintProcess_${rowIdx}" style="${selStyle}">
+                    ${processOptions.map(tag => `<option value="${tag}" ${processTag === tag ? 'selected' : ''}>${tag}</option>`).join('')}
+                </select>
+            </td>
             <td style="${tdStyle}width:110px;">
                 <select id="${idPrefix}PaintSpec_${rowIdx}"
                     style="${selStyle}"
@@ -1673,6 +1830,7 @@ const SettingsModule = (function() {
             const ri = row.dataset.paintRow;
             const g = id => (document.getElementById(id) || {}).value || '';
             return {
+                processTag:  g(`${idPrefix}PaintProcess_${ri}`),
                 paintSpec:   g(`${idPrefix}PaintSpec_${ri}`),
                 rowManufacturer: g(`${idPrefix}PaintSupplier_${ri}`),
                 mainId:      g(`${idPrefix}PaintMain_${ri}`),
@@ -1683,13 +1841,14 @@ const SettingsModule = (function() {
     }
 
     // 헤더 포함 테이블 HTML 문자열 생성 (초기 렌더 + 재렌더 공용)
-    function _paintTableHtml(idPrefix, paintRows, allPaints, supplierFilter) {
+    function _paintTableHtml(idPrefix, paintRows, allPaints, supplierFilter, paintProcessTags) {
         if (!paintRows || paintRows.length === 0) paintRows = [{}];
         const thStyle = 'padding:6px 8px;font-size:0.78rem;font-weight:600;color:var(--text-secondary);background:var(--bg-primary);border-bottom:2px solid var(--border-color);white-space:nowrap;text-align:left;';
         return `
         <table style="width:100%;border-collapse:collapse;border:1px solid var(--border-color);border-radius:8px;overflow:hidden;margin-bottom:4px;">
             <thead>
                 <tr>
+                    <th style="${thStyle}width:95px;">연결 공정</th>
                     <th style="${thStyle}width:110px;">도료 사양</th>
                     <th style="${thStyle}width:120px;">도료사</th>
                     <th style="${thStyle}">주제</th>
@@ -1699,7 +1858,7 @@ const SettingsModule = (function() {
                 </tr>
             </thead>
             <tbody>
-                ${paintRows.map((row, i) => _paintRowHtml(idPrefix, i, row, allPaints, supplierFilter)).join('')}
+                ${paintRows.map((row, i) => _paintRowHtml(idPrefix, i, row, allPaints, supplierFilter, paintProcessTags)).join('')}
             </tbody>
         </table>`;
     }
@@ -1711,7 +1870,12 @@ const SettingsModule = (function() {
         const ap = Storage.getAll(PAINT_STORE) || [];
         // 구매처 필터 값 읽기 (도료 섹션 위의 필터 셀렉트)
         const supplierFilter = (document.getElementById(`${idPrefix}PaintSupplierFilter`) || {}).value || '';
-        container.innerHTML = _paintTableHtml(idPrefix, paintRows, ap, supplierFilter);
+        const processTags = _getPaintProcessTagsFromValues([1, 2, 3, 4].map(n => (document.getElementById(`${idPrefix}Process${n}`) || {}).value || ''));
+        const normalizedRows = (paintRows || []).map(row => ({
+            ...row,
+            processTag: _resolvePaintProcessTag(row.processTag, processTags)
+        }));
+        container.innerHTML = _paintTableHtml(idPrefix, normalizedRows, ap, supplierFilter, processTags);
     }
 
     // 현재 폼의 도장 공정 감지 (추가 버튼 기본값용)
@@ -1993,6 +2157,26 @@ const SettingsModule = (function() {
         const hasB = procs.includes('도장-B');
         const row = document.getElementById(`${prefix}PaintColorRow`);
         if (row) row.style.display = (hasA && hasB) ? '' : 'none';
+        if (document.getElementById(`${prefix}PaintList`)) {
+            _renderPaintList(prefix, _getCurrentPaintRows(prefix));
+        }
+    }
+
+    /* 제조공정 행 삭제: rowNum(2~4) 이후 행 모두 초기화·숨김, 이전 행의 + 버튼 복원 */
+    function removeProcessRow(prefix, rowNum) {
+        for (let i = rowNum; i <= 4; i++) {
+            const sel = document.getElementById(`${prefix}Process${i}`);
+            const cvt = document.getElementById(`${prefix}Cvt${i}`);
+            const ct  = document.getElementById(`${prefix}Ct${i}`);
+            if (sel) sel.value = '';
+            if (cvt) cvt.value = '';
+            if (ct)  ct.value = '';
+            const row = document.getElementById(`${prefix}Row${i}`);
+            if (row) row.style.setProperty('display', 'none', 'important');
+        }
+        const addBtn = document.getElementById(`${prefix}AddBtn${rowNum}`);
+        if (addBtn) addBtn.style.removeProperty('display');
+        onProductProcessChange(prefix);
     }
 
     function _collectProductForm(prefix) {
@@ -2021,6 +2205,8 @@ const SettingsModule = (function() {
             process4: g(`${prefix}Process4`).trim(),
             ct4: g(`${prefix}Ct4`).trim(),
             cvt4: g(`${prefix}Cvt4`).trim(),
+            appearanceCvt: g(`${prefix}AppearanceCvt`).trim(),
+            appearanceCt: g(`${prefix}AppearanceCt`).trim(),
             code: g(`${prefix}Code`).trim(),
             linkedProductId: g(`${prefix}LinkedProductId`).trim() || null,
             paintMaterials: _getCurrentPaintRows(prefix).filter(r => r.paintSpec || r.mainId || r.hardId || r.thinnerId)
@@ -2083,6 +2269,151 @@ const SettingsModule = (function() {
             count++;
         }
         UIUtils.toast(`${count}개 제품의 도료 공정 태그가 변환되었습니다.`, 'success');
+        switchTab('products');
+    }
+
+    // 도료 경화제/신너 일괄 적용 모달
+    function openBulkPaintModal(carModelEncoded, colorEncoded) {
+        const carModel = decodeURIComponent(carModelEncoded);
+        const color    = decodeURIComponent(colorEncoded);
+        const products = Storage.getAll(PRODUCTS_STORE) || [];
+        const paintMaterials = Storage.getAll(DB.STORES.PAINT_MATERIALS) || [];
+
+        // 해당 차종+컬러의 미완성 제품
+        const targets = products.filter(p =>
+            p.carModel === carModel && p.color === color &&
+            (p.paintMaterials || []).some(_isPaintRowIncomplete)
+        );
+        if (!targets.length) { UIUtils.toast('해당 그룹에 미선택 항목이 없습니다.', 'info'); return; }
+
+        // 그룹 내 사용 중인 mainId 목록 (중복 제거)
+        const mainIds = [...new Set(targets.flatMap(p =>
+            (p.paintMaterials||[]).filter(_isPaintRowIncomplete).map(r => r.mainId)
+        ))];
+
+        // 도료 마스터 전체
+        const allHardeners = paintMaterials.filter(m => _isPaintType(m, 'hardener'));
+        const allThinners  = paintMaterials.filter(m => _isPaintType(m, 'thinner'));
+
+        // mainId별 도료사 기반 필터링 (개별 수정과 동일 로직)
+        function getFilteredHard(mid) {
+            const mat = paintMaterials.find(m => m.id === mid);
+            const mfr = mat ? (mat.manufacturer || '') : '';
+            const byMfr = mfr ? allHardeners.filter(m => _samePaintMaker(m.manufacturer, mfr)) : [];
+            return byMfr.length ? byMfr : allHardeners;
+        }
+        function getFilteredThin(mid) {
+            const mat = paintMaterials.find(m => m.id === mid);
+            const mfr = mat ? (mat.manufacturer || '') : '';
+            const byMfr = mfr ? allThinners.filter(m => _samePaintMaker(m.manufacturer, mfr)) : [];
+            return byMfr.length ? byMfr : allThinners;
+        }
+
+        function optHtml(list, placeholder, includeNotNeeded = false) {
+            const notNeeded = includeNotNeeded
+                ? `<option value="사용불필요" style="color:#6b7280;font-style:italic;">사용불필요</option>` : '';
+            return `<option value="">${placeholder}</option>${notNeeded}` +
+                list.map(m => {
+                    const sub = [m.manufacturer, m.supplier].filter(Boolean).join(' / ');
+                    return `<option value="${m.id}">${m.name||m.id}${sub ? ' · ' + sub : ''}</option>`;
+                }).join('');
+        }
+
+        const specRows = mainIds.map(mid => {
+            const mat = paintMaterials.find(m => m.id === mid);
+            const matName = mat ? (mat.name || mid) : mid;
+            const matMfr  = mat ? (mat.manufacturer || '') : '';
+            const hards   = getFilteredHard(mid);
+            const thins   = getFilteredThin(mid);
+            return `
+            <div style="padding:8px 0;border-bottom:1px solid var(--border-color);">
+                <div style="font-size:0.8rem;font-weight:600;color:var(--text-primary);margin-bottom:6px;">
+                    <span class="material-symbols-outlined" style="font-size:0.9rem;vertical-align:middle;color:var(--accent-blue);">format_paint</span>
+                    도료: ${matName}${matMfr ? ` <span style="font-weight:400;color:var(--text-muted);font-size:0.75rem;">(${matMfr})</span>` : ''}
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <div class="form-group" style="flex:1;min-width:140px;">
+                        <label class="form-label">경화제</label>
+                        <select class="form-select" id="bpHard_${mid}">
+                            ${optHtml(hards, '-- 경화제 선택 --', true)}
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex:1;min-width:140px;">
+                        <label class="form-label">신너</label>
+                        <select class="form-select" id="bpThin_${mid}">
+                            ${optHtml(thins, '-- 신너 선택 --', true)}
+                        </select>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+
+        const productList = targets.map(p => {
+            const bad = (p.paintMaterials||[]).filter(_isPaintRowIncomplete);
+            const detail = bad.map(r => {
+                const m = paintMaterials.find(x => x.id === r.mainId);
+                return m ? m.name || m.id : r.mainId;
+            }).join(', ');
+            return `<div style="font-size:0.78rem;padding:2px 0;color:var(--text-secondary);">
+                <span style="font-weight:600;">${p.partName||'-'}</span>
+                <span style="color:var(--text-muted);margin-left:4px;">(${detail})</span>
+            </div>`;
+        }).join('');
+
+        const body = `
+            <div style="margin-bottom:12px;padding:10px 12px;background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.18);border-radius:8px;">
+                <div style="font-weight:700;font-size:0.9rem;margin-bottom:6px;">
+                    <strong>${carModel}</strong> / <span style="color:var(--accent-blue);">${color}</span>
+                    <span style="font-size:0.75rem;font-weight:400;color:var(--text-muted);margin-left:6px;">${targets.length}개 품목에 일괄 적용</span>
+                </div>
+                ${productList}
+            </div>
+            <p style="font-size:0.78rem;color:var(--text-muted);margin:0 0 10px;">각 도료별로 경화제·신너를 선택하면 위 ${targets.length}개 품목 전체에 적용됩니다.</p>
+            ${specRows}`;
+
+        const footer = `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="SettingsModule.confirmBulkPaintApply('${carModelEncoded}','${colorEncoded}')">
+                <span class="material-symbols-outlined" style="font-size:1rem;">done_all</span> 전체 적용
+            </button>`;
+
+        UIUtils.showModal(`도료 경화제/신너 일괄 적용 — ${carModel} / ${color}`, body, footer, 'md');
+    }
+
+    async function confirmBulkPaintApply(carModelEncoded, colorEncoded) {
+        const carModel = decodeURIComponent(carModelEncoded);
+        const color    = decodeURIComponent(colorEncoded);
+        const products = Storage.getAll(PRODUCTS_STORE) || [];
+        const paintMaterials = Storage.getAll(DB.STORES.PAINT_MATERIALS) || [];
+
+        const targets = products.filter(p =>
+            p.carModel === carModel && p.color === color &&
+            (p.paintMaterials || []).some(_isPaintRowIncomplete)
+        );
+
+        let applied = 0;
+        for (const p of targets) {
+            const updated = (p.paintMaterials || []).map(r => {
+                if (!r.mainId || !_isPaintRowIncomplete(r)) return r;
+                const selHard = (document.getElementById(`bpHard_${r.mainId}`) || {}).value || '';
+                const selThin = (document.getElementById(`bpThin_${r.mainId}`) || {}).value || '';
+                if (!selHard && !selThin) return r;
+                const hardMat   = (selHard && selHard !== '사용불필요')  ? paintMaterials.find(m => m.id === selHard)  : null;
+                const thinMat   = (selThin && selThin !== '사용불필요')  ? paintMaterials.find(m => m.id === selThin)  : null;
+                return {
+                    ...r,
+                    hardId:      selHard  || r.hardId    || '',
+                    thinnerId:   selThin  || r.thinnerId  || '',
+                    hardName:    selHard === '사용불필요' ? '사용불필요' : (hardMat  ? (hardMat.name  || selHard)  : (r.hardName   || '')),
+                    thinnerName: selThin === '사용불필요' ? '사용불필요' : (thinMat  ? (thinMat.name || selThin)  : (r.thinnerName || ''))
+                };
+            });
+            await Storage.update(PRODUCTS_STORE, p.id, { paintMaterials: updated });
+            applied++;
+        }
+
+        UIUtils.closeModal();
+        UIUtils.toast(`${applied}개 품목에 경화제/신너가 적용되었습니다.`, 'success');
         switchTab('products');
     }
 
@@ -5812,6 +6143,7 @@ const SettingsModule = (function() {
                     ['희석제', row.thinnerId || '']
                 ].forEach(([slot, id]) => {
                     if (!id) return;
+                    if (_isNoNeedPaintSelection(id)) return;
                     if (paintMap[id]) usedIds.add(id);
                     else missingRefs.push({ product, rowIdx, slot, id });
                 });
@@ -10872,6 +11204,7 @@ const SettingsModule = (function() {
         editProduct,
         updateProduct,
         onProductProcessChange,
+        removeProcessRow,
         removeProduct,
         addProductPaintRow,
         removeProductPaintRow,
@@ -10881,6 +11214,8 @@ const SettingsModule = (function() {
         onProductPaintSupplierChange,
         migrateOnePaintTag,
         migrateAllPaintTags,
+        openBulkPaintModal,
+        confirmBulkPaintApply,
         migrateInjPriceToUnitPrice,
         _applyProdPriceToMat,
         _onInjectMatPriceHint,

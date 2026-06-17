@@ -149,6 +149,9 @@ var LaserWipModule = (function() {
                             <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">차종</th>
                             <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">품명</th>
                             <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">도장 컬러</th>
+                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">레이져작업일</th>
+                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">도장작업일</th>
+                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">사출LOT</th>
                             <th style="padding:10px 14px;text-align:right;font-weight:600;color:var(--accent-purple);white-space:nowrap;">
                                 <span class="material-symbols-outlined" style="font-size:0.9rem;vertical-align:middle;">bolt</span>레이져 완료
                             </th>
@@ -163,7 +166,7 @@ var LaserWipModule = (function() {
                     </thead>
                     <tbody>
                         ${rows.length === 0
-                            ? `<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted);">
+                            ? `<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text-muted);">
                                 <span class="material-symbols-outlined" style="font-size:2rem;display:block;margin-bottom:8px;opacity:0.4;">inbox</span>
                                 도장-B 공정이 있는 제품의 레이져 작업 이력이 없습니다.
                                 <div style="font-size:0.78rem;margin-top:6px;">제품 설정에서 process에 '도장-B'가 등록된 제품의 레이져 작업 등록 시 표시됩니다.</div>
@@ -185,6 +188,37 @@ var LaserWipModule = (function() {
             <div style="font-size:1.4rem;font-weight:700;color:${color};">${UIUtils.formatNumber(value)}
                 <span style="font-size:0.8rem;font-weight:400;color:var(--text-muted);">EA</span>
             </div>
+        </div>`;
+    }
+
+    function _esc(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function _dateTime(dateValue, timeValue) {
+        const date = String(dateValue || '').trim();
+        const time = String(timeValue || '').trim();
+        if (!date && !time) return '';
+        const dateMatch = date.match(/\d{4}-\d{2}-\d{2}/);
+        const timeMatch = (date.match(/[ T](\d{2}:\d{2})/) || time.match(/(\d{2}:\d{2})/));
+        return [dateMatch ? dateMatch[0] : date, timeMatch ? timeMatch[1] : ''].filter(Boolean).join(' ');
+    }
+
+    function _uniqueList(values) {
+        return [...new Set((values || []).map(v => String(v || '').trim()).filter(Boolean))];
+    }
+
+    function _listCell(values) {
+        const list = _uniqueList(values);
+        if (!list.length) return '<span style="color:var(--text-muted);">-</span>';
+        return `<div style="display:flex;flex-direction:column;gap:3px;align-items:flex-start;">
+            ${list.slice(0, 3).map(v => `<span style="font-size:0.74rem;color:var(--text-secondary);white-space:nowrap;">${_esc(v)}</span>`).join('')}
+            ${list.length > 3 ? `<span style="font-size:0.7rem;color:var(--text-muted);">+${list.length - 3}</span>` : ''}
         </div>`;
     }
 
@@ -214,6 +248,9 @@ var LaserWipModule = (function() {
             <td style="padding:10px 14px;">
                 ${r.color ? `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;background:var(--bg-secondary);font-size:0.82rem;">${r.color}</span>` : '-'}
             </td>
+            <td style="padding:10px 14px;">${_listCell(r.laserDates)}</td>
+            <td style="padding:10px 14px;">${_listCell(r.paintDates)}</td>
+            <td style="padding:10px 14px;">${_listCell(r.injectionLots)}</td>
             <td style="padding:10px 14px;text-align:right;font-weight:600;color:var(--accent-purple);">${UIUtils.formatNumber(r.laserQty)}</td>
             <td style="padding:10px 14px;text-align:right;font-weight:600;color:var(--accent-blue);">${UIUtils.formatNumber(r.paintBQty)}</td>
             <td style="padding:10px 14px;text-align:right;font-size:1rem;font-weight:700;color:${wipColor};">${UIUtils.formatNumber(wip)}</td>
@@ -261,12 +298,23 @@ var LaserWipModule = (function() {
             const key = `${w.carModel||''}||${w.partName||''}||${w.color||''}`;
             if (!laserMap[key]) laserMap[key] = {
                 carModel: w.carModel||'', partName: w.partName||'', color: w.color||'',
-                laserQty: 0, paintBQty: 0, drainLine: drainMap[prodKey]
+                laserQty: 0, paintBQty: 0, drainLine: drainMap[prodKey],
+                laserDates: [], paintDates: [], injectionLots: []
             };
             if (w.isManualOut) {
                 laserMap[key].paintBQty += Number(w.quantity) || 0;
             } else {
                 laserMap[key].laserQty  += Number(w.quantity) || 0;
+                laserMap[key].laserDates.push(_dateTime(w.date || '', w.startTime || w.endTime || ''));
+                if (Array.isArray(w.paintLots) && w.paintLots.length > 0) {
+                    w.paintLots.forEach(lot => {
+                        laserMap[key].paintDates.push(lot && lot.paintDate ? lot.paintDate : '');
+                        laserMap[key].injectionLots.push(lot && lot.lotNo ? lot.lotNo : '');
+                    });
+                } else {
+                    laserMap[key].paintDates.push(w.paintDate || '');
+                    laserMap[key].injectionLots.push(w.paintLot || w.lotNo || '');
+                }
             }
         });
 

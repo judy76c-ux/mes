@@ -5222,6 +5222,7 @@ const PaintingInspectionModule = (function() {
                                 ? work.lots.map(l => l.lotNo).join(', ')
                                 : (work.lotNo || ''),
                 inspectionQty: goodQty,
+                goodQty      : goodQty,
                 customer     : _prod ? (_prod.customer || '') : '',
                 status       : '대기'
             });

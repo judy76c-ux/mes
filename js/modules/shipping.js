@@ -14,6 +14,49 @@ const ShippingStandbyModule = (function() {
     const SI_STORE = DB.STORES.SHIPPING_INSPECTIONS;
     let _historyRows = [];
 
+    function _esc(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function _inspectionDateCell(dateValue, timeValue) {
+        const rawDate = String(dateValue || '').trim();
+        const rawTime = String(timeValue || '').trim();
+        if (!rawDate && !rawTime) return '<span style="color:var(--text-muted);">-</span>';
+        const dateMatch = rawDate.match(/(\d{4})-(\d{2})-(\d{2})/);
+        const timeMatch = (rawDate.match(/[ T](\d{2}:\d{2})/) || rawTime.match(/(\d{2}:\d{2})/));
+        if (!dateMatch) return _esc([rawDate, timeMatch ? timeMatch[1] : ''].filter(Boolean).join(' '));
+        return `
+            <div style="display:inline-flex;flex-direction:column;align-items:flex-start;line-height:1.08;min-width:56px;">
+                <span style="font-size:0.68rem;color:var(--text-muted);font-weight:600;">${dateMatch[1]}</span>
+                <strong style="font-size:0.92rem;color:var(--text-primary);">${dateMatch[2]}-${dateMatch[3]}</strong>
+                ${timeMatch ? `<span style="font-size:0.68rem;color:var(--text-secondary);margin-top:2px;">${timeMatch[1]}</span>` : ''}
+            </div>`;
+    }
+
+    function _uniqText(value) {
+        const text = String(value || '').trim();
+        if (!text) return '';
+        return [...new Set(text.split(',').map(v => v.trim()).filter(Boolean))].join(', ');
+    }
+
+    function _lotFields(row) {
+        return {
+            paintLot: _uniqText(row.paintLot || row.paintingDate || ''),
+            injectionLot: _uniqText(row.injectionLot || row.lotNo || ''),
+            laserLot: _uniqText(row.laserLot || row.laserWorkDate || '')
+        };
+    }
+
+    function _lotCell(value) {
+        const text = _uniqText(value);
+        return text ? `<span style="font-family:monospace;font-size:0.78rem;">${_esc(text)}</span>` : '<span style="color:var(--text-muted);">-</span>';
+    }
+
     // ── 페이지 렌더 ───────────────────────────────────────────────────
     function render(container) {
         container.innerHTML = `
@@ -98,7 +141,9 @@ const ShippingStandbyModule = (function() {
                                         <th>차종</th>
                                         <th>품명</th>
                                         <th>컬러</th>
-                                        <th>도장 LOT</th>
+                                        <th>도장LOT</th>
+                                        <th>사출LOT</th>
+                                        <th>레이져 LOT</th>
                                         <th style="text-align:right">LOT 수량</th>
                                         <th style="text-align:center">샘플/코드</th>
                                         <th style="text-align:center">불량</th>
@@ -176,7 +221,7 @@ const ShippingStandbyModule = (function() {
                 <td>${d.color || '-'}</td>
                 <td style="font-family:monospace;font-size:0.8rem;">${d.paintingDate || '-'}</td>
                 <td style="font-family:monospace;font-size:0.8rem;">${d.lotNo || '-'}</td>
-                <td style="text-align:right;font-weight:600;">${UIUtils.formatNumber(d.inspectionQty || 0)}</td>
+                <td style="text-align:right;font-weight:600;">${UIUtils.formatNumber(d.goodQty || d.inspectionQty || 0)}</td>
                 <td style="font-size:0.85rem;">${d.customer || '-'}</td>
                 <td style="white-space:nowrap;" onclick="event.stopPropagation()">
                     <button class="btn btn-sm btn-primary"
@@ -242,20 +287,23 @@ const ShippingStandbyModule = (function() {
         if (exportBtn) exportBtn.style.display = data.length ? 'inline-flex' : 'none';
 
         if (!data.length) {
-            tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:32px;color:var(--text-muted);">해당 기간의 검사 이력이 없습니다.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="14" style="text-align:center;padding:32px;color:var(--text-muted);">해당 기간의 검사 이력이 없습니다.</td></tr>`;
             return;
         }
 
         tbody.innerHTML = data.map(d => {
             const badge = d.result === '합격' ? 'success' : d.result === '불합격' ? 'danger' : 'warning';
+            const lots = _lotFields(d);
             return `
             <tr style="cursor:pointer;" onclick="ShippingStandbyModule._showDetail('${d.id}', event)">
-                <td style="white-space:nowrap;">${d.date || '-'}</td>
+                <td style="white-space:nowrap;">${_inspectionDateCell(d.date, d.startTime || d.endTime || '')}</td>
                 <td style="font-size:0.85rem;">${d.customer || '-'}</td>
                 <td>${d.carModel || '-'}</td>
                 <td><strong>${d.partName || '-'}</strong></td>
                 <td>${d.color || '-'}</td>
-                <td style="font-family:monospace;font-size:0.8rem;">${d.paintingDate || '-'}</td>
+                <td>${_lotCell(lots.paintLot)}</td>
+                <td>${_lotCell(lots.injectionLot)}</td>
+                <td>${_lotCell(lots.laserLot)}</td>
                 <td style="text-align:right;font-weight:600;">${UIUtils.formatNumber(d.lotSize || 0)}</td>
                 <td style="text-align:center;font-size:0.82rem;">
                     ${UIUtils.formatNumber(d.sampleQty || 0)}
@@ -724,6 +772,49 @@ const ShippingInspectionModule = (function() {
     const STORE    = DB.STORES.SHIPPING_INSPECTIONS;
     const SB_STORE = DB.STORES.SHIPPING_STANDBY;
 
+    function _esc(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function _inspectionDateCell(dateValue, timeValue) {
+        const rawDate = String(dateValue || '').trim();
+        const rawTime = String(timeValue || '').trim();
+        if (!rawDate && !rawTime) return '<span style="color:var(--text-muted);">-</span>';
+        const dateMatch = rawDate.match(/(\d{4})-(\d{2})-(\d{2})/);
+        const timeMatch = (rawDate.match(/[ T](\d{2}:\d{2})/) || rawTime.match(/(\d{2}:\d{2})/));
+        if (!dateMatch) return _esc([rawDate, timeMatch ? timeMatch[1] : ''].filter(Boolean).join(' '));
+        return `
+            <div style="display:inline-flex;flex-direction:column;align-items:flex-start;line-height:1.08;min-width:56px;">
+                <span style="font-size:0.68rem;color:var(--text-muted);font-weight:600;">${dateMatch[1]}</span>
+                <strong style="font-size:0.92rem;color:var(--text-primary);">${dateMatch[2]}-${dateMatch[3]}</strong>
+                ${timeMatch ? `<span style="font-size:0.68rem;color:var(--text-secondary);margin-top:2px;">${timeMatch[1]}</span>` : ''}
+            </div>`;
+    }
+
+    function _uniqText(value) {
+        const text = String(value || '').trim();
+        if (!text) return '';
+        return [...new Set(text.split(',').map(v => v.trim()).filter(Boolean))].join(', ');
+    }
+
+    function _lotFields(row) {
+        return {
+            paintLot: _uniqText(row.paintLot || row.paintingDate || ''),
+            injectionLot: _uniqText(row.injectionLot || row.lotNo || ''),
+            laserLot: _uniqText(row.laserLot || row.laserWorkDate || '')
+        };
+    }
+
+    function _lotCell(value) {
+        const text = _uniqText(value);
+        return text ? `<span style="font-family:monospace;font-size:0.78rem;">${_esc(text)}</span>` : '<span style="color:var(--text-muted);">-</span>';
+    }
+
     // ── 모달 헬퍼 ─────────────────────────────────────────────────────
     function _openModal(title, content) {
         const existing = document.getElementById('siModal');
@@ -781,11 +872,15 @@ const ShippingInspectionModule = (function() {
                     </div>
                     <div>
                         <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:2px;">도장 LOT</div>
-                        <div style="font-family:monospace;font-size:0.82rem;">${sb.paintingDate || '-'}</div>
+                        <div style="font-family:monospace;font-size:0.82rem;">${sb.paintLot || sb.paintingDate || '-'}</div>
                     </div>
                     <div>
                         <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:2px;">사출 LOT</div>
-                        <div style="font-family:monospace;font-size:0.82rem;">${sb.lotNo || '-'}</div>
+                        <div style="font-family:monospace;font-size:0.82rem;">${sb.injectionLot || sb.lotNo || '-'}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:2px;">레이져 LOT</div>
+                        <div style="font-family:monospace;font-size:0.82rem;">${sb.laserLot || sb.laserWorkDate || '-'}</div>
                     </div>
                 </div>
                 <input type="hidden" id="siStandbyId"  value="${sb.id    || ''}">
@@ -794,6 +889,10 @@ const ShippingInspectionModule = (function() {
                 <input type="hidden" id="siColor"      value="${sb.color      || ''}">
                 <input type="hidden" id="siPaintingDate" value="${sb.paintingDate || ''}">
                 <input type="hidden" id="siLotNoHidden"  value="${sb.lotNo    || ''}">
+                <input type="hidden" id="siPaintLotHidden" value="${sb.paintLot || sb.paintingDate || ''}">
+                <input type="hidden" id="siInjectionLotHidden" value="${sb.injectionLot || sb.lotNo || ''}">
+                <input type="hidden" id="siLaserLotHidden" value="${sb.laserLot || sb.laserWorkDate || ''}">
+                <input type="hidden" id="siSourceHidden" value="${sb.source || ''}">
                 <input type="hidden" id="siCustomer"   value="${sb.customer   || ''}">
             </div></div>
 
@@ -824,7 +923,7 @@ const ShippingInspectionModule = (function() {
                     </div>
                     <div class="form-group" style="margin:0;">
                         <label class="form-label">검사 수량 <span style="color:var(--accent-red);">*</span></label>
-                        <input type="number" class="form-input" id="siLotSize" value="${sb.inspectionQty || 0}"
+                        <input type="number" class="form-input" id="siLotSize" value="${sb.goodQty || sb.inspectionQty || 0}"
                             min="1">
                     </div>
                 </div>
@@ -908,6 +1007,10 @@ const ShippingInspectionModule = (function() {
             color            : document.getElementById('siColor')?.value     || '',
             paintingDate     : document.getElementById('siPaintingDate')?.value || '',
             lotNo            : document.getElementById('siLotNoHidden')?.value  || '',
+            paintLot         : document.getElementById('siPaintLotHidden')?.value || document.getElementById('siPaintingDate')?.value || '',
+            injectionLot     : document.getElementById('siInjectionLotHidden')?.value || document.getElementById('siLotNoHidden')?.value || '',
+            laserLot         : document.getElementById('siLaserLotHidden')?.value || '',
+            source           : document.getElementById('siSourceHidden')?.value || '',
             lotSize,
             sampleQty,
             defectQty,
@@ -986,7 +1089,9 @@ const ShippingInspectionModule = (function() {
                                         <th>차종</th>
                                         <th>제품명</th>
                                         <th>컬러</th>
-                                        <th>도장 LOT</th>
+                                        <th>도장LOT</th>
+                                        <th>사출LOT</th>
+                                        <th>레이져 LOT</th>
                                         <th style="text-align:right">LOT 수량</th>
                                         <th style="text-align:center">샘플</th>
                                         <th style="text-align:center">불량</th>
@@ -1036,20 +1141,23 @@ const ShippingInspectionModule = (function() {
 
         const tbody = document.getElementById('siTableBody');
         if (data.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-muted);">검사 실적이 없습니다.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="14" style="text-align:center;padding:40px;color:var(--text-muted);">검사 실적이 없습니다.</td></tr>`;
             return;
         }
 
         tbody.innerHTML = data.map(d => {
             const badge = d.result === '합격' ? 'success' : d.result === '불합격' ? 'danger' : 'warning';
+            const lots = _lotFields(d);
             return `
                 <tr>
-                    <td style="white-space:nowrap;">${d.date || '-'}</td>
+                    <td style="white-space:nowrap;">${_inspectionDateCell(d.date, d.startTime || d.endTime || '')}</td>
                     <td style="font-size:0.85rem;">${d.customer || '-'}</td>
                     <td>${d.carModel || '-'}</td>
                     <td><strong>${d.partName || '-'}</strong></td>
                     <td>${d.color || '-'}</td>
-                    <td style="font-family:monospace;font-size:0.8rem;">${d.paintingDate || '-'}</td>
+                    <td>${_lotCell(lots.paintLot)}</td>
+                    <td>${_lotCell(lots.injectionLot)}</td>
+                    <td>${_lotCell(lots.laserLot)}</td>
                     <td style="text-align:right;font-weight:600;">${UIUtils.formatNumber(d.lotSize || d.quantity || 0)}</td>
                     <td style="text-align:center;font-size:0.85rem;">${UIUtils.formatNumber(d.sampleQty || 0)}</td>
                     <td style="text-align:center;color:${d.defectQty > 0 ? 'var(--accent-red)' : 'var(--text-muted)'};font-weight:${d.defectQty > 0 ? '700' : '400'};">${d.defectQty || 0}</td>

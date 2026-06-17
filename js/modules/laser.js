@@ -11,6 +11,7 @@ var LaserWorkModule = (function() {
     let _selectedPartName = '';
     let _selectedColor = '';
     let _externalWorkers = [];
+    let _qcPhotos = { First: null, Middle: null, Last: null }; // { name, url }
 
     function _esc(value) {
         return String(value == null ? '' : value)
@@ -116,15 +117,135 @@ var LaserWorkModule = (function() {
         return _selectedLots.reduce((sum, lot) => sum + (Number(lot.qty) || 0), 0);
     }
 
+    function _mergeLots(lots) {
+        const map = {};
+        (lots || []).forEach(lot => {
+            const paintDate = lot && lot.paintDate ? lot.paintDate : '';
+            const lotNo = lot && lot.lotNo ? lot.lotNo : '';
+            const key = `${paintDate}||${lotNo}`;
+            if (!map[key]) map[key] = { paintDate, lotNo, qty: 0 };
+            map[key].qty += Number(lot && lot.qty) || 0;
+        });
+        return Object.values(map).filter(lot => lot.paintDate || lot.lotNo || lot.qty > 0);
+    }
+
+    function _isAdminUser() {
+        try {
+            const user = (typeof AuthModule !== 'undefined' && typeof AuthModule.getCurrentUser === 'function')
+                ? AuthModule.getCurrentUser()
+                : null;
+            const roles = Array.isArray(user && user.roles) ? user.roles : [user && user.role];
+            return roles.some(role => String(role || '') === 'admin');
+        } catch (e) {
+            return false;
+        }
+    }
+
     function _normalizeFlowKey(value) {
         return String(value || '').trim().replace(/\s+/g, '').replace(/[-_]/g, '');
+    }
+
+    function _normalizeLookupText(value) {
+        return String(value || '')
+            .trim()
+            .toLowerCase()
+            .replace(/\s+/g, '')
+            .replace(/[\[\]\(\)\{\}_-]/g, '');
+    }
+
+    function _isLaserProcessName(value) {
+        const key = _normalizeFlowKey(value);
+        const lower = String(value || '').trim().toLowerCase();
+        return key === '레이저' || key === '레이져' || lower.includes('laser');
+    }
+
+    function _firstFilled(obj, keys) {
+        for (const key of keys) {
+            const value = obj && obj[key];
+            if (value !== undefined && value !== null && String(value).trim() !== '') return value;
+        }
+        return '';
+    }
+
+    function _productCarName(prod) {
+        return _firstFilled(prod, ['carModel', 'model', 'vehicleModel', 'car']);
+    }
+
+    function _productPartName(prod) {
+        return _firstFilled(prod, ['partName', 'productName', 'itemName', 'name']);
+    }
+
+    function _productColorName(prod) {
+        return _firstFilled(prod, ['color', 'colorName', 'paintColor']);
     }
 
     function _hasLaserProcess(prod) {
         if (!prod) return false;
         return [prod.process1, prod.process2, prod.process3, prod.process4]
-            .map(_normalizeFlowKey)
-            .some(v => v === '레이저' || v === '레이져');
+            .some(_isLaserProcessName);
+    }
+
+    function _findProductForWork(carModel, partName, color) {
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const carKey = _normalizeLookupText(carModel);
+        const partKey = _normalizeLookupText(partName);
+        const colorKey = _normalizeLookupText(color);
+
+        const exact = products.find(p =>
+            _productCarName(p) === carModel &&
+            _productPartName(p) === partName &&
+            (!color || _productColorName(p) === color)
+        );
+        if (exact) return exact;
+
+        const normalized = products.find(p =>
+            _normalizeLookupText(_productCarName(p)) === carKey &&
+            _normalizeLookupText(_productPartName(p)) === partKey &&
+            (!colorKey || _normalizeLookupText(_productColorName(p)) === colorKey)
+        );
+        if (normalized) return normalized;
+
+        const withoutColor = products.find(p =>
+            _normalizeLookupText(_productCarName(p)) === carKey &&
+            _normalizeLookupText(_productPartName(p)) === partKey
+        );
+        if (withoutColor) return withoutColor;
+
+        return products.find(p => {
+            const prodCar = _normalizeLookupText(_productCarName(p));
+            const prodPart = _normalizeLookupText(_productPartName(p));
+            return prodCar === carKey && prodPart && partKey &&
+                (prodPart.includes(partKey) || partKey.includes(prodPart));
+        }) || null;
+    }
+
+    function _getLaserCycleSpec(carModel, partName, color) {
+        const prod = _findProductForWork(carModel, partName, color);
+        if (!prod) return { ct: '', cvt: '', cycleSec: '', foundProduct: false, foundProcess: false };
+        for (let i = 1; i <= 4; i++) {
+            const proc = _firstFilled(prod, [`process${i}`, `proc${i}`]);
+            if (_isLaserProcessName(proc)) {
+                const ct = _firstFilled(prod, [`ct${i}`, `cTime${i}`, `ctime${i}`, `cycleTime${i}`, `cycle${i}`, `C_TIME${i}`]);
+                const cvt = _firstFilled(prod, [`cvt${i}`, `CVT${i}`, `Cvt${i}`]);
+                return { ct, cvt, cycleSec: ct || cvt || '', foundProduct: true, foundProcess: true };
+            }
+        }
+        return { ct: '', cvt: '', cycleSec: '', foundProduct: true, foundProcess: false };
+    }
+
+    function _refreshLaserCycleSpec(forceValue = false) {
+        const spec = _getLaserCycleSpec(_selectedCarModel, _selectedPartName, _selectedColor);
+        const label = document.getElementById('lwEngravingCycleLabel');
+        const input = document.getElementById('lwEngravingTime');
+        const detail = document.getElementById('lwLaserCycleDetail');
+        const sec = spec.cycleSec || '';
+        if (label) label.textContent = `1cycle = ${sec || '00'} sec`;
+        if (detail) {
+            detail.textContent = spec.ct || spec.cvt
+                ? `제품기초 레이져공정 C.TIME ${spec.ct || '-'} / CVT ${spec.cvt || '-'}`
+                : (spec.foundProduct ? '제품기초 레이져공정 CT/CVT 미등록' : '제품기초 제품 매칭 실패');
+        }
+        if (input && (forceValue || !input.value) && sec) input.value = sec;
     }
 
     function _getLaserRelatedProducts() {
@@ -139,9 +260,8 @@ var LaserWorkModule = (function() {
         const products      = Storage.getAll(DB.STORES.PRODUCTS) || [];
 
         const laserPaintWorks = paintingWorks.filter(w => {
-            const prod = products.find(p => p.carModel === w.carModel && p.partName === w.partName && p.color === w.color)
-                      || products.find(p => p.carModel === w.carModel && p.partName === w.partName);
-            return prod && (prod.process2 || '').trim() === '레이저';
+            const prod = _findProductForWork(w.carModel, w.partName, w.color);
+            return prod && _hasLaserProcess(prod);
         });
 
         // 도장 작업일 + 사출 LOT 단위로 레이저 처리 수량 집계
@@ -320,6 +440,7 @@ var LaserWorkModule = (function() {
 
     function renderTable(data) {
         const tbody = document.getElementById('lwTableBody');
+        const isAdmin = _isAdminUser();
         if (data.length === 0) {
             tbody.innerHTML = `<tr><td colspan="14" style="text-align:center;padding:40px;color:var(--text-muted);">기록이 없습니다.</td></tr>`;
             return;
@@ -352,7 +473,7 @@ var LaserWorkModule = (function() {
                 <td style="white-space:nowrap;">
                     <div style="display:flex;gap:4px;align-items:center;justify-content:flex-start;white-space:nowrap;">
                         <button class="btn btn-sm btn-outline" onclick="LaserWorkModule.edit('${d.id}')">수정</button>
-                        <button class="btn btn-sm btn-danger" onclick="LaserWorkModule.remove('${d.id}')">삭제</button>
+                        ${isAdmin ? `<button class="btn btn-sm btn-danger" onclick="LaserWorkModule.remove('${d.id}')">삭제</button>` : ''}
                     </div>
                 </td>
             </tr>
@@ -372,92 +493,68 @@ var LaserWorkModule = (function() {
             ? [...new Set(_selectedLots.map(l => l.paintDate).filter(Boolean))].join(', ')
             : (d.paintDate || (d.paintLots && d.paintLots[0] ? d.paintLots[0].paintDate : '') || '-');
         const injLotSummary = _selectedLots.length > 0
-            ? _selectedLots.map(l => l.lotNo).filter(Boolean).join(', ')
-            : (d.paintLot || (d.paintLots ? d.paintLots.map(l => l.lotNo).join(', ') : '') || '-');
+            ? [...new Set(_selectedLots.map(l => l.lotNo).filter(Boolean))].join(', ')
+            : (d.paintLot || (d.paintLots ? [...new Set(d.paintLots.map(l => l.lotNo).filter(Boolean))].join(', ') : '') || '-');
         const manualChecked = !isEditMode && !!(d.manualInput || d.manualEntry || d.manualMode);
 
         return `
             ${isEditMode ? `
-            <!-- 수정 모드: 저장된 정보 표시 -->
-            <div style="background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:8px; padding:12px 14px; margin-bottom:16px;">
-                <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
-                    <span class="material-symbols-outlined" style="font-size:1rem; color:var(--accent-blue);">info</span>
-                    <span style="font-weight:600; font-size:0.9rem;">도장 제품 정보</span>
-                </div>
-                <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; font-size:0.85rem;">
-                    <div><span style="color:var(--text-muted);">차종</span><div style="font-weight:600; margin-top:2px;">${d.carModel || '-'}</div></div>
-                    <div><span style="color:var(--text-muted);">품명</span><div style="font-weight:600; margin-top:2px;">${d.partName || '-'}</div></div>
-                    <div><span style="color:var(--text-muted);">컬러</span><div style="font-weight:600; margin-top:2px;">${d.color || '-'}</div></div>
-                </div>
-                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; font-size:0.85rem;">
-                    <div>
-                        <span style="color:var(--text-muted);">도장 LOT (도장 작업일)</span>
-                        <div style="font-weight:600; margin-top:2px; font-family:monospace; font-size:0.82rem;">${paintDateSummary}</div>
-                    </div>
-                    <div>
-                        <span style="color:var(--text-muted);">사출 LOT</span>
-                        <div style="font-weight:600; margin-top:2px; font-family:monospace; font-size:0.82rem;">${injLotSummary}</div>
-                    </div>
+            <div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:8px;padding:8px 12px;margin-bottom:8px;font-size:0.82rem;">
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:8px;">
+                    <div><span style="color:var(--text-muted);font-size:0.72rem;">차종</span><div style="font-weight:700;">${d.carModel || '-'}</div></div>
+                    <div><span style="color:var(--text-muted);font-size:0.72rem;">품명</span><div style="font-weight:700;">${d.partName || '-'}</div></div>
+                    <div><span style="color:var(--text-muted);font-size:0.72rem;">컬러</span><div style="font-weight:700;">${d.color || '-'}</div></div>
+                    <div><span style="color:var(--text-muted);font-size:0.72rem;">도장LOT</span><div style="font-weight:600;font-family:monospace;">${paintDateSummary}</div></div>
+                    <div><span style="color:var(--text-muted);font-size:0.72rem;">사출LOT</span><div style="font-weight:600;font-family:monospace;">${injLotSummary}</div></div>
                 </div>
             </div>
             ` : `
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;padding:10px 12px;border:1px solid rgba(59,130,246,0.18);border-radius:8px;background:rgba(59,130,246,0.04);">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;padding:7px 12px;border:1px solid rgba(59,130,246,0.18);border-radius:8px;background:rgba(59,130,246,0.04);">
                 <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700;color:var(--text-primary);">
                     <input type="checkbox" id="lwManualToggle" ${manualChecked ? 'checked' : ''} onchange="LaserWorkModule.toggleManualSection()">
-                    <span class="material-symbols-outlined" style="font-size:1.1rem;color:var(--accent-blue);">edit_square</span>
+                    <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);">edit_square</span>
                     수기 등록
                 </label>
-                <span style="font-size:0.78rem;color:var(--text-muted);">일반 작업은 아래 레이저 대기품에서 불러와 등록하세요.</span>
+                <span style="font-size:0.75rem;color:var(--text-muted);">대기품에서 불러오거나 직접 입력</span>
             </div>
-            <!-- 등록 모드: 수기 입력 -->
-            <div id="lwManualSection" style="display:${manualChecked ? 'block' : 'none'};background:rgba(59,130,246,0.06); border:1px solid rgba(59,130,246,0.18); border-radius:8px; padding:12px 14px; margin-bottom:16px;">
-                <div style="display:flex; align-items:center; gap:6px; margin-bottom:10px;">
-                    <span style="font-size:0.78rem; color:var(--text-muted);">도장공정 연계 없이 직접 입력할 수 있습니다.</span>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">차종</label>
+            <div id="lwManualSection" style="display:${manualChecked ? 'block' : 'none'};background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.18);border-radius:8px;padding:8px 12px;margin-bottom:8px;">
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:6px;">
+                    <div class="form-group" style="margin:0;"><label class="form-label">차종</label>
                         <select class="form-select" id="lwCarModel" onchange="LaserWorkModule.onCarModelChange()">
                             <option value="">-- 차종 선택 --</option>
-                            ${[...new Set(_getLaserRelatedProducts().map(p => p.carModel).filter(Boolean))].sort().map(car => `<option value="${car}" ${d.carModel === car ? 'selected' : ''}>${car}</option>`).join('')}
+                            ${[...new Set(_getLaserRelatedProducts().map(_productCarName).filter(Boolean))].sort().map(car => `<option value="${car}" ${d.carModel === car ? 'selected' : ''}>${car}</option>`).join('')}
                         </select>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">품명</label>
+                    <div class="form-group" style="margin:0;"><label class="form-label">품명</label>
                         <select class="form-select" id="lwPartName" onchange="LaserWorkModule.onPartChange()">
                             <option value="">-- 품명 선택 --</option>
                         </select>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">컬러</label>
-                        <select class="form-select" id="lwColor">
+                    <div class="form-group" style="margin:0;"><label class="form-label">컬러</label>
+                        <select class="form-select" id="lwColor" onchange="LaserWorkModule.refreshLaserCycleSpec(true)">
                             <option value="">-- 컬러 선택 --</option>
                         </select>
                     </div>
+                    <div class="form-group" style="margin:0;"><label class="form-label">수량</label>
+                        <input type="number" class="form-input" id="lwQuantity" value="${d.quantity || ''}" placeholder="0" oninput="LaserWorkModule.calcCompletedQty()">
+                    </div>
                 </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">수량</label>
-                        <input type="number" class="form-input" id="lwQuantity" value="${d.quantity || ''}" placeholder="0">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                    <div class="form-group" style="margin:0;"><label class="form-label">도장LOT</label>
+                        <input type="text" class="form-input" id="lwManualPaintLot" value="${d.paintDate || ''}" placeholder="도장 LOT">
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">도장 LOT - 임의입력</label>
-                        <input type="text" class="form-input" id="lwManualPaintLot" value="${d.paintDate || ''}" placeholder="도장 LOT 입력">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">사출 LOT - 임의입력</label>
-                        <input type="text" class="form-input" id="lwManualInjLot" value="${d.paintLot || ''}" placeholder="사출 LOT 입력">
+                    <div class="form-group" style="margin:0;"><label class="form-label">사출LOT</label>
+                        <input type="text" class="form-input" id="lwManualInjLot" value="${d.paintLot || ''}" placeholder="사출 LOT">
                     </div>
                 </div>
             </div>
-            <!-- 등록 모드: 레이저 대기품 불러오기 -->
-            <div style="background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:8px; padding:12px 14px; margin-bottom:16px;">
-                <div style="display:flex; align-items:center; gap:6px; margin-bottom:10px;">
-                    <span class="material-symbols-outlined" style="font-size:1.1rem; color:var(--accent-blue);">list_alt</span>
-                    <span class="form-label" style="margin:0; font-weight:600;">레이저 대기품에서 불러오기</span>
-                    ${_standbyItems.length === 0 ? `<span style="font-size:0.78rem; color:var(--accent-red);">대기 중인 품목 없음</span>` : `<span style="font-size:0.78rem; color:var(--text-muted);">(차종/품명 선택 후 항목을 클릭하세요)</span>`}
+            <div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:8px;padding:8px 12px;margin-bottom:8px;">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+                    <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);">list_alt</span>
+                    <span style="font-weight:600;font-size:0.85rem;">레이저 대기품</span>
+                    ${_standbyItems.length === 0 ? `<span style="font-size:0.75rem;color:var(--accent-red);">대기 품목 없음</span>` : `<span style="font-size:0.75rem;color:var(--text-muted);">차종 선택 후 클릭</span>`}
                 </div>
-                <div style="display:flex; gap:8px; margin-bottom:8px;">
+                <div style="display:flex;gap:8px;margin-bottom:6px;">
                     <select class="form-select" id="lwSbCar" onchange="LaserWorkModule.onSbCarChange()" style="flex:1;" ${_standbyItems.length === 0 ? 'disabled' : ''}>
                         <option value="">-- 차종 --</option>
                         ${sbCarModels.map(c => `<option value="${c}">${c}</option>`).join('')}
@@ -466,107 +563,155 @@ var LaserWorkModule = (function() {
                         <option value="">-- 품명 --</option>
                     </select>
                 </div>
-                <div id="lwStandbyResults" style="font-size:0.82rem; color:var(--text-muted); min-height:28px;">
+                <div id="lwStandbyResults" style="font-size:0.82rem;color:var(--text-muted);min-height:22px;">
                     ${_standbyItems.length > 0 ? '차종을 선택하세요.' : ''}
                 </div>
             </div>
-            <div style="background:#fff; border:1px solid var(--border-color); border-radius:8px; padding:12px 14px; margin-bottom:16px;">
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <span class="material-symbols-outlined" style="font-size:1.05rem;color:var(--accent-blue);">checklist</span>
-                        <span style="font-weight:700;font-size:0.88rem;">선택된 작업 LOT</span>
+            <div style="border:1px solid var(--border-color);border-radius:8px;padding:8px 12px;margin-bottom:8px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
+                    <div style="display:flex;align-items:center;gap:5px;">
+                        <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);">checklist</span>
+                        <span style="font-weight:700;font-size:0.85rem;">선택된 작업 LOT</span>
                     </div>
                     <button type="button" class="btn btn-outline btn-sm" onclick="LaserWorkModule.addLotRow('', '', 0)">
-                        <span class="material-symbols-outlined" style="font-size:15px;">add</span> 직접 추가
+                        <span class="material-symbols-outlined" style="font-size:14px;">add</span> 직접 추가
                     </button>
                 </div>
                 <div id="lwLotContainer"></div>
-                <div style="margin-top:6px;font-size:0.76rem;color:var(--text-muted);">선택한 LOT의 작업수량 합계가 레이져 작업수량으로 저장됩니다.</div>
             </div>
-            <!-- 납품처별 분리 등록 패널 (연결 제품이 있을 때만 표시) -->
-            <div id="lwSplitPanel" style="display:none;margin-bottom:16px;padding:12px 14px;background:rgba(109,40,217,0.06);border:1px solid rgba(109,40,217,0.25);border-radius:8px;">
-                <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">
-                    <span class="material-symbols-outlined" style="font-size:1.1rem;color:#7c3aed;">call_split</span>
-                    <span style="font-weight:600;font-size:0.9rem;color:#7c3aed;">납품처별 분리 등록</span>
-                    <span style="font-size:0.75rem;color:var(--text-muted);">— 레이져 작업부터 납품처별 제품으로 분리합니다</span>
+            <div id="lwSplitPanel" style="display:none;margin-bottom:8px;padding:8px 12px;background:rgba(109,40,217,0.06);border:1px solid rgba(109,40,217,0.25);border-radius:8px;">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+                    <span class="material-symbols-outlined" style="font-size:1rem;color:#7c3aed;">call_split</span>
+                    <span style="font-weight:600;font-size:0.85rem;color:#7c3aed;">납품처별 분리 등록</span>
                 </div>
-                <div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:10px;margin-bottom:8px;">
+                <div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:10px;margin-bottom:6px;">
                     <div>
-                        <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:3px;">납품처 A</div>
-                        <div id="lwSplitLabelA" style="font-size:0.85rem;font-weight:600;color:var(--text-primary);padding:4px 0;"></div>
-                        <input type="number" class="form-input" id="lwSplitQtyA" placeholder="0" min="0"
-                            oninput="LaserWorkModule.onSplitQtyChange()"
-                            style="margin-top:4px;">
+                        <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:2px;">납품처 A</div>
+                        <div id="lwSplitLabelA" style="font-size:0.82rem;font-weight:600;"></div>
+                        <input type="number" class="form-input" id="lwSplitQtyA" placeholder="0" min="0" oninput="LaserWorkModule.onSplitQtyChange()" style="margin-top:3px;">
                     </div>
-                    <div style="text-align:center;color:var(--text-muted);font-size:1.2rem;">+</div>
+                    <div style="text-align:center;color:var(--text-muted);">+</div>
                     <div>
-                        <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:3px;">납품처 B</div>
-                        <div id="lwSplitLabelB" style="font-size:0.85rem;font-weight:600;color:var(--text-primary);padding:4px 0;"></div>
-                        <input type="number" class="form-input" id="lwSplitQtyB" placeholder="0" min="0"
-                            oninput="LaserWorkModule.onSplitQtyChange()"
-                            style="margin-top:4px;">
+                        <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:2px;">납품처 B</div>
+                        <div id="lwSplitLabelB" style="font-size:0.82rem;font-weight:600;"></div>
+                        <input type="number" class="form-input" id="lwSplitQtyB" placeholder="0" min="0" oninput="LaserWorkModule.onSplitQtyChange()" style="margin-top:3px;">
                     </div>
                 </div>
-                <div id="lwSplitTotal" style="font-size:0.82rem;padding:6px 10px;background:var(--bg-secondary);border-radius:6px;border:1px solid var(--border-color);text-align:right;">
+                <div id="lwSplitTotal" style="font-size:0.82rem;padding:4px 10px;background:var(--bg-secondary);border-radius:6px;border:1px solid var(--border-color);text-align:right;">
                     합계: <strong>0</strong> / 대기 <strong id="lwSplitStock">0</strong> EA
                 </div>
                 <input type="hidden" id="lwSplitLinkedProductId">
             </div>
             `}
-            <div class="form-row">
-                <div class="form-group">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr${isEditMode ? ' 1fr' : ''};gap:8px;margin-bottom:8px;">
+                <div class="form-group" style="margin:0;">
                     <label class="form-label">작업일자 <span style="color:var(--accent-red)">*</span></label>
                     <input type="date" class="form-input" id="lwDate" value="${d.date || UIUtils.today()}">
                 </div>
-                <div class="form-group">
+                <div class="form-group" style="margin:0;">
                     <label class="form-label">레이져 장비 <span style="color:var(--accent-red)">*</span></label>
                     <select class="form-select" id="lwMachine">
                         <option value="">-- 장비 선택 --</option>
                         ${MACHINES.map(m => `<option value="${m}" ${d.machine === m ? 'selected' : ''}>${m}</option>`).join('')}
                     </select>
                 </div>
-            </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">시작 시간 <span style="color:var(--accent-red)">*</span></label>
+                <div class="form-group" style="margin:0;">
+                    <label class="form-label">시작 시간</label>
                     <input type="time" class="form-input" id="lwStartTime" value="${d.startTime || ''}">
                 </div>
-                <div class="form-group">
-                    <label class="form-label">완료 시간 <span style="color:var(--accent-red)">*</span></label>
+                <div class="form-group" style="margin:0;">
+                    <label class="form-label">완료 시간</label>
                     <input type="time" class="form-input" id="lwEndTime" value="${d.endTime || ''}">
                 </div>
-            </div>
-            ${isEditMode ? `
-            <div class="form-row">
-                <div class="form-group">
+                ${isEditMode ? `<div class="form-group" style="margin:0;">
                     <label class="form-label">수량 <span style="color:var(--accent-red)">*</span></label>
-                    <input type="number" class="form-input" id="lwQuantity" value="${d.quantity || ''}" placeholder="0">
-                </div>
-            </div>` : ``}
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">각인 시간 (sec)</label>
+                    <input type="number" class="form-input" id="lwQuantity" value="${d.quantity || ''}" placeholder="0" oninput="LaserWorkModule.calcCompletedQty()">
+                </div>` : ''}
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;">
+                <div class="form-group" style="margin:0;">
+                    <label class="form-label">각인 시간은 프로그램의 시간을 기록(sec)</label>
                     <input type="number" class="form-input" id="lwEngravingTime" value="${d.engravingTime || ''}" placeholder="0.0">
+                    <div id="lwLaserCycleDetail" style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;"></div>
                 </div>
-                <div class="form-group">
+                <div class="form-group" style="margin:0;">
                     <label class="form-label">Program File Name</label>
                     <input type="text" class="form-input" id="lwProgramName" value="${d.programName || ''}" placeholder="프로그램 파일명">
                 </div>
-                <div class="form-group">
+                <div class="form-group" style="margin:0;">
                     <label class="form-label">렌즈 높이</label>
                     <input type="text" class="form-input" id="lwLensHeight" value="${d.lensHeight || ''}" placeholder="예: 120mm">
                 </div>
             </div>
-            <div style="background:var(--bg-secondary); padding:15px; border-radius:8px; margin-bottom:20px; display:flex; gap:30px; justify-content:center;">
-                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-                    <input type="checkbox" id="lwQcFirst" ${d.qcFirst ? 'checked' : ''}> <span style="font-weight:600;">초품 확인</span>
-                </label>
-                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-                    <input type="checkbox" id="lwQcMiddle" ${d.qcMiddle ? 'checked' : ''}> <span style="font-weight:600;">중품 확인</span>
-                </label>
-                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-                    <input type="checkbox" id="lwQcLast" ${d.qcLast ? 'checked' : ''}> <span style="font-weight:600;">종품 확인</span>
-                </label>
+            <div style="background:var(--bg-secondary); padding:10px 12px; border-radius:8px; margin-bottom:8px;">
+                <div style="font-size:0.78rem;font-weight:600;color:var(--text-secondary);margin-bottom:10px;display:flex;align-items:center;gap:6px;">
+                    <span class="material-symbols-outlined" style="font-size:1rem;">checklist</span> 초중종물 확인 및 LOSS
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px;">
+                    ${(function(){
+                        const firstDone  = !!(d.qcFirstQuality  && d.qcFirstPosition  && d.qcFirstPhoto);
+                        const middleDone = !!(d.qcMiddleQuality && d.qcMiddlePosition && d.qcMiddlePhoto);
+                        return [
+                        ['lwQcFirst',  'lwQcFirstLoss',  '초품', 'First',  d.qcFirstLoss  || '', d.qcFirstQuality,  d.qcFirstPosition,  d.qcFirstPhoto,  d.qcFirstPhotoUrl  || '', true       ],
+                        ['lwQcMiddle', 'lwQcMiddleLoss', '중품', 'Middle', d.qcMiddleLoss || '', d.qcMiddleQuality, d.qcMiddlePosition, d.qcMiddlePhoto, d.qcMiddlePhotoUrl || '', firstDone  ],
+                        ['lwQcLast',   'lwQcLastLoss',   '종품', 'Last',   d.qcLastLoss   || '', d.qcLastQuality,   d.qcLastPosition,   d.qcLastPhoto,   d.qcLastPhotoUrl   || '', middleDone ]
+                        ];
+                    })().map(([cbId, inId, label, type, lossVal, ckQual, ckPos, ckPhoto, photoUrl, enabled]) => {
+                        const previewSrc = photoUrl ? (typeof ApiClient !== 'undefined' ? ApiClient.photoUrl(photoUrl) : photoUrl) : '';
+                        return `
+                        <div id="${cbId}Card" style="background:var(--bg-primary);border:1px solid var(--border-color);border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;${enabled ? '' : 'opacity:0.4;pointer-events:none;'}">
+                            <div style="display:flex;align-items:center;gap:6px;padding-bottom:6px;border-bottom:1px solid var(--border-color);">
+                                <span class="material-symbols-outlined" style="font-size:1rem;color:${enabled ? 'var(--accent-blue)' : 'var(--text-muted)'};">✓</span>
+                                <span style="font-weight:700;font-size:0.88rem;">${label} 확인</span>
+                            </div>
+                            <div id="${cbId}SubItems" style="display:flex;flex-direction:column;gap:5px;">
+                                <label style="display:flex;align-items:center;gap:5px;font-size:0.78rem;cursor:pointer;margin:0;">
+                                    <input type="checkbox" id="${cbId}Quality" ${ckQual ? 'checked' : ''} onchange="LaserWorkModule.checkQcProgress()">
+                                    <span>품질 확인</span>
+                                </label>
+                                <label style="display:flex;align-items:center;gap:5px;font-size:0.78rem;cursor:pointer;margin:0;">
+                                    <input type="checkbox" id="${cbId}Position" ${ckPos ? 'checked' : ''} onchange="LaserWorkModule.checkQcProgress()">
+                                    <span>위치도면 확인</span>
+                                </label>
+                                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                                    <label style="display:flex;align-items:center;gap:5px;font-size:0.78rem;margin:0;">
+                                        <input type="checkbox" id="${cbId}Photo" ${ckPhoto ? 'checked' : ''} disabled style="pointer-events:none;">
+                                        <span>사진 등록</span>
+                                    </label>
+                                    <label style="display:inline-flex;align-items:center;gap:3px;cursor:pointer;padding:2px 8px;border:1px dashed var(--accent-blue);border-radius:4px;font-size:0.73rem;color:var(--accent-blue);white-space:nowrap;">
+                                        <span class="material-symbols-outlined" style="font-size:13px;">add_photo_alternate</span>
+                                        사진 선택
+                                        <input type="file" id="${cbId}PhotoFile" accept="image/*" style="display:none;"
+                                            onchange="LaserWorkModule.uploadQcPhoto('${type}', '${cbId}')">
+                                    </label>
+                                </div>
+                                <div id="${cbId}PhotoPreviewWrap" style="display:${previewSrc ? 'block' : 'none'};">
+                                    <img id="${cbId}PhotoPreview" src="${previewSrc}"
+                                        style="max-width:100%;max-height:72px;border-radius:4px;border:1px solid var(--border-color);object-fit:cover;cursor:pointer;"
+                                        onclick="LaserWorkModule.viewQcPhoto('${type}')">
+                                </div>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:6px;border-top:1px solid var(--border-color);padding-top:7px;margin-top:auto;">
+                                <label style="font-size:0.75rem;color:var(--text-muted);white-space:nowrap;">LOSS</label>
+                                <input type="number" class="form-input" id="${inId}" value="${lossVal}" min="0" placeholder="0"
+                                    style="text-align:right;"
+                                    oninput="LaserWorkModule.calcCompletedQty()">
+                                <span style="font-size:0.75rem;color:var(--text-muted);">EA</span>
+                            </div>
+                        </div>`;
+                    }).join('')}
+                </div>
+                <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:8px 12px;background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.18);border-radius:6px;font-size:0.85rem;">
+                    <span style="color:var(--text-muted);">작업수량</span>
+                    <span id="lwQtyDisplay" style="font-weight:700;">-</span>
+                    <span style="color:var(--text-muted);">−</span>
+                    <span style="color:var(--text-muted);">샘플LOSS</span>
+                    <span id="lwLossDisplay" style="font-weight:700;color:#d97706;">-</span>
+                    <span style="color:var(--text-muted);">=</span>
+                    <span style="color:var(--text-muted);">작업완료수량</span>
+                    <span id="lwCompletedDisplay" style="font-weight:800;font-size:1rem;color:var(--accent-blue);">-</span>
+                    <span style="color:var(--text-muted);">EA</span>
+                </div>
             </div>
             <div class="form-row">
                 ${_workerSelect('lwWorker1', '작업자 1', d.worker1 || '')}
@@ -577,6 +722,17 @@ var LaserWorkModule = (function() {
                 <button type="button" class="btn btn-outline btn-sm" onclick="LaserWorkModule.addExternalWorker()">
                     <span class="material-symbols-outlined" style="font-size:16px;">person_add</span> 외부 작업자 추가
                 </button>
+            </div>
+            <div id="lwExternalWorkerRow" style="display:none;margin-top:8px;padding:10px 12px;background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.2);border-radius:8px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);">person_add</span>
+                    <span style="font-size:0.85rem;font-weight:600;color:var(--text-primary);white-space:nowrap;">외부 작업자 이름</span>
+                    <input type="text" class="form-input" id="lwExternalWorkerName" placeholder="이름 입력 후 추가"
+                        style="flex:1;"
+                        onkeydown="if(event.key==='Enter'){LaserWorkModule.confirmAddExternalWorker();}if(event.key==='Escape'){LaserWorkModule.cancelAddExternalWorker();}">
+                    <button type="button" class="btn btn-primary btn-sm" onclick="LaserWorkModule.confirmAddExternalWorker()">추가</button>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="LaserWorkModule.cancelAddExternalWorker()">취소</button>
+                </div>
             </div>
         `;
     }
@@ -778,6 +934,7 @@ var LaserWorkModule = (function() {
             _selectedPartName = w.partName || '';
             _selectedColor    = w.color    || '';
         }
+        _refreshLaserCycleSpec();
 
         // 도장 LOT 내부 배열에 추가
         _selectedLots.push({ paintDate: w.date || '', lotNo: lot.lotNo || w.lotNo || '', qty: pickQty });
@@ -791,7 +948,7 @@ var LaserWorkModule = (function() {
         const splitPanel = document.getElementById('lwSplitPanel');
         if (splitPanel) {
             const allProds = Storage.getAll(DB.STORES.PRODUCTS) || [];
-            const selProd = allProds.find(p => p.carModel === w.carModel && p.partName === w.partName);
+            const selProd = _findProductForWork(w.carModel, w.partName, w.color);
             const linkedProdId = selProd ? selProd.linkedProductId : null;
             const linkedProd = linkedProdId ? allProds.find(p => p.id === linkedProdId) : null;
             if (linkedProd) {
@@ -830,7 +987,7 @@ var LaserWorkModule = (function() {
         colorSelect.innerHTML = '<option value="">-- 컬러 선택 --</option>';
 
         if (!car) return;
-        const parts = [...new Set(products.filter(p => p.carModel === car).map(p => p.partName).filter(Boolean))].sort();
+        const parts = [...new Set(products.filter(p => _productCarName(p) === car).map(_productPartName).filter(Boolean))].sort();
         partSelect.innerHTML = '<option value="">-- 품명 선택 --</option>' +
             parts.map(p => `<option value="${p}" ${p === prevPart ? 'selected' : ''}>${p}</option>`).join('');
 
@@ -846,9 +1003,23 @@ var LaserWorkModule = (function() {
         colorSelect.innerHTML = '<option value="">-- 컬러 선택 --</option>';
         if (!car || !part) return;
 
-        const colors = [...new Set(products.filter(p => p.carModel === car && p.partName === part).map(p => p.color).filter(Boolean))].sort();
+        const colors = [...new Set(products.filter(p => _productCarName(p) === car && _productPartName(p) === part).map(_productColorName).filter(Boolean))].sort();
         colorSelect.innerHTML = '<option value="">-- 컬러 선택 --</option>' +
             colors.map(c => `<option value="${c}" ${c === prevColor ? 'selected' : ''}>${c}</option>`).join('');
+        _selectedCarModel = car;
+        _selectedPartName = part;
+        _selectedColor = prevColor || colorSelect.value || '';
+        _refreshLaserCycleSpec(true);
+    }
+
+    function refreshLaserCycleSpec(forceValue = false) {
+        const carEl = document.getElementById('lwCarModel');
+        const partEl = document.getElementById('lwPartName');
+        const colorEl = document.getElementById('lwColor');
+        if (carEl) _selectedCarModel = carEl.value || '';
+        if (partEl) _selectedPartName = partEl.value || '';
+        if (colorEl) _selectedColor = colorEl.value || '';
+        _refreshLaserCycleSpec(forceValue);
     }
 
     function toggleManualSection() {
@@ -857,28 +1028,136 @@ var LaserWorkModule = (function() {
         if (section) section.style.display = checked ? 'block' : 'none';
     }
 
+    function onQcToggle(cbId) {
+        const cb = document.getElementById(cbId);
+        const sub = document.getElementById(cbId + 'SubItems');
+        if (!cb || !sub) return;
+        sub.style.display = cb.checked ? 'flex' : 'none';
+        checkQcProgress();
+    }
+
+    function _qcStageComplete(prefix) {
+        const g = id => !!(document.getElementById(id) || {}).checked;
+        return g(prefix) && g(prefix + 'Quality') && g(prefix + 'Position') && g(prefix + 'Photo');
+    }
+
+    function checkQcProgress() {
+        const firstDone  = _qcStageComplete('lwQcFirst');
+        const middleDone = _qcStageComplete('lwQcMiddle');
+
+        function setCardEnabled(prefix, enabled) {
+            const card = document.getElementById(prefix + 'Card');
+            if (!card) return;
+            card.style.opacity = enabled ? '' : '0.4';
+            card.style.pointerEvents = enabled ? '' : 'none';
+            const cb = document.getElementById(prefix);
+            if (cb) cb.disabled = !enabled;
+        }
+
+        setCardEnabled('lwQcMiddle', firstDone);
+        setCardEnabled('lwQcLast',   middleDone);
+
+        if (!firstDone) {
+            ['lwQcMiddle', 'lwQcMiddleQuality', 'lwQcMiddlePosition', 'lwQcMiddlePhoto'].forEach(id => {
+                const el = document.getElementById(id); if (el) el.checked = false;
+            });
+            const sub = document.getElementById('lwQcMiddleSubItems');
+            if (sub) sub.style.display = 'none';
+        }
+        if (!middleDone) {
+            ['lwQcLast', 'lwQcLastQuality', 'lwQcLastPosition', 'lwQcLastPhoto'].forEach(id => {
+                const el = document.getElementById(id); if (el) el.checked = false;
+            });
+            const sub = document.getElementById('lwQcLastSubItems');
+            if (sub) sub.style.display = 'none';
+        }
+    }
+
+    async function uploadQcPhoto(type, cbId) {
+        const input = document.getElementById(cbId + 'PhotoFile');
+        if (!input || !input.files[0]) return;
+        const file = input.files[0];
+        const toast = UIUtils.toast('사진 업로드 중...', 'info');
+        try {
+            const url = await ApiClient.uploadPhoto(file, 'laser');
+            _qcPhotos[type] = { name: file.name, url };
+            const wrap = document.getElementById(cbId + 'PhotoPreviewWrap');
+            const img  = document.getElementById(cbId + 'PhotoPreview');
+            if (img)  img.src = ApiClient.photoUrl(url);
+            if (wrap) wrap.style.display = 'block';
+            const photoCb = document.getElementById(cbId + 'Photo');
+            if (photoCb) photoCb.checked = true;
+            checkQcProgress();
+            UIUtils.toast('사진 업로드 완료', 'success');
+        } catch (e) {
+            UIUtils.toast('사진 업로드 실패: ' + e.message, 'error');
+        }
+    }
+
+    function viewQcPhoto(type) {
+        const p = _qcPhotos[type];
+        if (!p || !p.url) return;
+        const src = ApiClient.photoUrl(p.url);
+        UIUtils.showModal('사진 확인', `<img src="${src}" style="max-width:100%;border-radius:8px;">`, '', 'md');
+    }
+
+    function calcCompletedQty() {
+        const qty   = Number((document.getElementById('lwQuantity') || {}).value) || _selectedLotQtyTotal();
+        const loss1 = Number((document.getElementById('lwQcFirstLoss')  || {}).value) || 0;
+        const loss2 = Number((document.getElementById('lwQcMiddleLoss') || {}).value) || 0;
+        const loss3 = Number((document.getElementById('lwQcLastLoss')   || {}).value) || 0;
+        const total = loss1 + loss2 + loss3;
+        const completed = Math.max(0, qty - total);
+        const fmt = UIUtils.formatNumber;
+        const qd = document.getElementById('lwQtyDisplay');
+        const ld = document.getElementById('lwLossDisplay');
+        const cd = document.getElementById('lwCompletedDisplay');
+        if (qd) qd.textContent = fmt(qty);
+        if (ld) ld.textContent = fmt(total);
+        if (cd) cd.textContent = fmt(completed);
+    }
+
     function addExternalWorker() {
-        const name = window.prompt('외부 작업자 이름을 입력하세요.');
-        const cleanName = String(name || '').trim();
-        if (!cleanName) return;
+        const row = document.getElementById('lwExternalWorkerRow');
+        if (!row) return;
+        const isVisible = row.style.display !== 'none';
+        row.style.display = isVisible ? 'none' : 'flex';
+        if (!isVisible) {
+            const input = document.getElementById('lwExternalWorkerName');
+            if (input) { input.value = ''; setTimeout(() => input.focus(), 0); }
+        }
+    }
+
+    function confirmAddExternalWorker() {
+        const input = document.getElementById('lwExternalWorkerName');
+        const cleanName = String((input || {}).value || '').trim();
+        if (!cleanName) { if (input) input.focus(); return; }
         if (!_externalWorkers.includes(cleanName)) _externalWorkers.push(cleanName);
 
         ['lwWorker1', 'lwWorker2', 'lwWorker3'].forEach(id => {
             const select = document.getElementById(id);
             if (!select) return;
-            const exists = Array.from(select.options).some(option => option.value === cleanName);
+            const exists = Array.from(select.options).some(opt => opt.value === cleanName);
             if (!exists) {
-                const option = document.createElement('option');
-                option.value = cleanName;
-                option.textContent = cleanName;
-                select.appendChild(option);
+                const opt = document.createElement('option');
+                opt.value = cleanName;
+                opt.textContent = cleanName;
+                select.appendChild(opt);
             }
         });
 
         const firstEmpty = ['lwWorker1', 'lwWorker2', 'lwWorker3']
             .map(id => document.getElementById(id))
-            .find(select => select && !select.value);
+            .find(sel => sel && !sel.value);
         if (firstEmpty) firstEmpty.value = cleanName;
+
+        const row = document.getElementById('lwExternalWorkerRow');
+        if (row) row.style.display = 'none';
+    }
+
+    function cancelAddExternalWorker() {
+        const row = document.getElementById('lwExternalWorkerRow');
+        if (row) row.style.display = 'none';
     }
 
     function collectData() {
@@ -891,7 +1170,13 @@ var LaserWorkModule = (function() {
         const effectiveLots = _selectedLots.length > 0
             ? _selectedLots
             : (manualEnabled && (manualPaintLot || manualInjLot) ? [{ paintDate: manualPaintLot, lotNo: manualInjLot }] : []);
-        const selectedLotQty = effectiveLots.reduce((sum, lot) => sum + (Number(lot.qty) || 0), 0);
+        const mergedLots = _mergeLots(effectiveLots);
+        const selectedLotQty = mergedLots.reduce((sum, lot) => sum + (Number(lot.qty) || 0), 0);
+        const _qcFirstLoss  = Number((document.getElementById('lwQcFirstLoss')  || {}).value) || 0;
+        const _qcMiddleLoss = Number((document.getElementById('lwQcMiddleLoss') || {}).value) || 0;
+        const _qcLastLoss   = Number((document.getElementById('lwQcLastLoss')   || {}).value) || 0;
+        const _totalLoss    = _qcFirstLoss + _qcMiddleLoss + _qcLastLoss;
+        const _workQty      = selectedLotQty > 0 ? selectedLotQty : (Number((document.getElementById('lwQuantity') || {}).value) || 0);
         return {
             date: document.getElementById('lwDate').value,
             machine: document.getElementById('lwMachine').value,
@@ -900,17 +1185,33 @@ var LaserWorkModule = (function() {
             carModel: _selectedCarModel || (manualEnabled ? manualCarModel : ''),
             partName: _selectedPartName || (manualEnabled ? manualPartName : ''),
             color: _selectedColor || (manualEnabled ? manualColor : ''),
-            paintDate: effectiveLots.length > 0 ? (effectiveLots[0].paintDate || '') : '',
-            paintLots: effectiveLots.map(l => ({ paintDate: l.paintDate, lotNo: l.lotNo, qty: Number(l.qty) || 0 })),
+            paintDate: mergedLots.length > 0 ? (mergedLots[0].paintDate || '') : '',
+            paintLots: mergedLots.map(l => ({ paintDate: l.paintDate, lotNo: l.lotNo, qty: Number(l.qty) || 0 })),
             manualInput: manualEnabled && _selectedLots.length === 0,
             engravingTime: Number(document.getElementById('lwEngravingTime').value) || 0,
             quantity: selectedLotQty > 0 ? selectedLotQty : (Number(document.getElementById('lwQuantity').value) || 0),
-            paintLot: effectiveLots.map(l => l.lotNo).filter(Boolean).join(', '),
+            paintLot: [...new Set(mergedLots.map(l => l.lotNo).filter(Boolean))].join(', '),
             programName: document.getElementById('lwProgramName').value.trim(),
             lensHeight: document.getElementById('lwLensHeight').value.trim(),
             qcFirst: document.getElementById('lwQcFirst').checked,
             qcMiddle: document.getElementById('lwQcMiddle').checked,
             qcLast: document.getElementById('lwQcLast').checked,
+            qcFirstQuality:  (document.getElementById('lwQcFirstQuality')  || {}).checked || false,
+            qcFirstPosition: (document.getElementById('lwQcFirstPosition') || {}).checked || false,
+            qcFirstPhoto:    (document.getElementById('lwQcFirstPhoto')    || {}).checked || false,
+            qcMiddleQuality:  (document.getElementById('lwQcMiddleQuality')  || {}).checked || false,
+            qcMiddlePosition: (document.getElementById('lwQcMiddlePosition') || {}).checked || false,
+            qcMiddlePhoto:    (document.getElementById('lwQcMiddlePhoto')    || {}).checked || false,
+            qcLastQuality:  (document.getElementById('lwQcLastQuality')  || {}).checked || false,
+            qcLastPosition: (document.getElementById('lwQcLastPosition') || {}).checked || false,
+            qcLastPhoto:    (document.getElementById('lwQcLastPhoto')    || {}).checked || false,
+            qcFirstPhotoUrl:  (_qcPhotos.First  && _qcPhotos.First.url)  || '',
+            qcMiddlePhotoUrl: (_qcPhotos.Middle && _qcPhotos.Middle.url) || '',
+            qcLastPhotoUrl:   (_qcPhotos.Last   && _qcPhotos.Last.url)   || '',
+            qcFirstLoss:  _qcFirstLoss,
+            qcMiddleLoss: _qcMiddleLoss,
+            qcLastLoss:   _qcLastLoss,
+            completedQty: Math.max(0, _workQty - _totalLoss),
             worker1: document.getElementById('lwWorker1').value.trim(),
             worker2: document.getElementById('lwWorker2').value.trim(),
             worker3: document.getElementById('lwWorker3').value.trim()
@@ -958,11 +1259,15 @@ var LaserWorkModule = (function() {
             };
         }
 
+        _qcPhotos = { First: null, Middle: null, Last: null };
         UIUtils.showModal('레이져 작업 등록', buildFormHTML(formData), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="LaserWorkModule.saveNew()">등록</button>
         `, 'lg');
         setTimeout(renderLotRows, 0);
+        setTimeout(() => _refreshLaserCycleSpec(false), 0);
+        setTimeout(calcCompletedQty, 0);
+        setTimeout(checkQcProgress, 0);
         if (!p) {
             setTimeout(function() {
                 const carEl = document.getElementById('lwCarModel');
@@ -979,6 +1284,18 @@ var LaserWorkModule = (function() {
         if (!data.date || !data.machine || !data.quantity || !data.carModel || !data.partName) {
             UIUtils.toast('대기품을 선택하거나 수기등록을 체크한 뒤 필수 항목을 입력하세요.', 'warning');
             return;
+        }
+        // 초·중·종품 확인 시 서브 체크박스 3가지 모두 필수
+        const qcChecks = [
+            { label: '초품', checked: data.qcFirst,  qual: data.qcFirstQuality,  pos: data.qcFirstPosition,  photo: data.qcFirstPhoto  },
+            { label: '중품', checked: data.qcMiddle, qual: data.qcMiddleQuality, pos: data.qcMiddlePosition, photo: data.qcMiddlePhoto },
+            { label: '종품', checked: data.qcLast,   qual: data.qcLastQuality,   pos: data.qcLastPosition,   photo: data.qcLastPhoto   }
+        ];
+        for (const q of qcChecks) {
+            if (q.checked && (!q.qual || !q.pos || !q.photo)) {
+                UIUtils.toast(`${q.label} 확인: 품질 확인 · 위치도면 확인 · 사진 등록을 모두 체크하세요.`, 'warning');
+                return;
+            }
         }
         if (_selectedLots.length > 0) {
             const lotQty = _selectedLotQtyTotal();
@@ -1082,7 +1399,15 @@ var LaserWorkModule = (function() {
         selectStandbyItem,
         onSplitQtyChange,
         toggleManualSection,
+        refreshLaserCycleSpec,
+        calcCompletedQty,
+        onQcToggle,
+        checkQcProgress,
+        uploadQcPhoto,
+        viewQcPhoto,
         addExternalWorker,
+        confirmAddExternalWorker,
+        cancelAddExternalWorker,
         addLotRow,
         removeLotRow,
         updateLot,
@@ -1261,23 +1586,24 @@ var LaserInspectionModule = (function() {
                     </div>
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
-                            <table class="data-table" style="min-width:1380px;table-layout:fixed;">
+                            <table class="data-table" style="min-width:1420px;table-layout:fixed;">
                                 <thead>
                                     <tr>
                                         <th style="width:90px;">검사일</th>
-                                        <th style="width:100px;">레이져 작업일</th>
-                                        <th style="width:230px;">차종/품명</th>
-                                        <th style="width:110px;">도장LOT</th>
-                                        <th style="width:150px;">사출LOT</th>
-                                        <th style="width:90px;text-align:right;">검사수량</th>
-                                        <th style="width:80px;">양품</th>
-                                        <th style="width:80px;">불량<br><small style="font-weight:400;">(계)</small></th>
-                                        <th style="width:76px;">불량률</th>
-                                        <th style="width:82px;text-align:center;">사출불량</th>
-                                        <th style="width:82px;text-align:center;">도장불량</th>
-                                        <th style="width:86px;text-align:center;">레이져불량</th>
-                                        <th style="width:110px;">비고</th>
-                                        <th style="width:112px;">작업</th>
+                                        <th style="width:90px;">레이져 작업일</th>
+                                        <th style="width:80px;">차종</th>
+                                        <th style="width:150px;">품명</th>
+                                        <th style="width:100px;">도장LOT</th>
+                                        <th style="width:140px;">사출LOT</th>
+                                        <th style="width:80px;text-align:right;">검사수량</th>
+                                        <th style="width:70px;">양품</th>
+                                        <th style="width:70px;">불량<br><small style="font-weight:400;">(계)</small></th>
+                                        <th style="width:70px;">불량률</th>
+                                        <th style="width:76px;text-align:center;">사출불량</th>
+                                        <th style="width:76px;text-align:center;">도장불량</th>
+                                        <th style="width:80px;text-align:center;">레이져불량</th>
+                                        <th style="width:100px;">비고</th>
+                                        <th style="width:108px;">작업</th>
                                     </tr>
                                 </thead>
                                 <tbody id="liTableBody"></tbody>
@@ -1316,7 +1642,8 @@ var LaserInspectionModule = (function() {
                         <tr>
                             <th style="width:100px;">레이져 작업일</th>
                             <th style="width:92px;">장비</th>
-                            <th style="width:240px;">차종/품명</th>
+                            <th style="width:90px;">차종</th>
+                            <th style="width:160px;">품명</th>
                             <th style="width:72px;">컬러</th>
                             <th style="width:96px;text-align:right;">작업수량</th>
                             <th style="width:120px;">도장LOT</th>
@@ -1331,11 +1658,8 @@ var LaserInspectionModule = (function() {
                             <tr>
                                 <td>${_dateStack(w.date, w.startTime)}</td>
                                 <td style="white-space:nowrap;"><span class="badge badge-info">${w.machine || '-'}</span></td>
-                                <td>
-                                    <div style="font-weight:600;">${w.partName || '-'}</div>
-                                    <div style="font-size:0.75rem; color:var(--text-muted);">${w.carModel || '-'}</div>
-                                    <div style="margin-top:3px;">${UIUtils.itemTypeBadge(w.carModel, w.partName, w.color)}</div>
-                                </td>
+                                <td style="white-space:nowrap;font-size:0.82rem;">${w.carModel || '-'}</td>
+                                <td style="font-weight:600;">${w.partName || '-'}</td>
                                 <td style="white-space:nowrap;">${w.color || '-'}</td>
                                 <td style="text-align:right; font-weight:700; color:var(--accent-blue);">${UIUtils.formatNumber(w.quantity || 0)}</td>
                                 <td>${_dateListHtml(info.paintDates)}</td>
@@ -1502,18 +1826,16 @@ var LaserInspectionModule = (function() {
     function renderTable(data) {
         const tbody = document.getElementById('liTableBody');
         if (data.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="14" style="text-align:center;padding:30px;color:var(--text-muted);">검사 기록이 없습니다.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="15" style="text-align:center;padding:30px;color:var(--text-muted);">검사 기록이 없습니다.</td></tr>`;
             return;
         }
+        const allDefectTypes = Storage.getAll(DB.STORES.DEFECT_TYPES) || [];
+        const defectTypeMap  = {};
+        allDefectTypes.forEach(dt => { if (dt && dt.name) defectTypeMap[dt.name] = dt.type || 'injection'; });
+
         tbody.innerHTML = data.map(d => {
             const lotInfo = _lotInfo(d);
             const dd = d.defectDetails || {};
-            // 불량 합계: defectDetails 전체 값 합산
-            const totalDefect = Object.values(dd).reduce((s, v) => s + (Number(v) || 0), 0);
-            // 사출/도장/레이져 분류
-            const allDefectTypes = Storage.getAll(DB.STORES.DEFECT_TYPES) || [];
-            const defectTypeMap  = {};
-            allDefectTypes.forEach(dt => { if (dt && dt.name) defectTypeMap[dt.name] = dt.type || 'injection'; });
             let injBad = 0, paintBad = 0, laserBad = 0;
             Object.entries(dd).forEach(([name, cnt]) => {
                 const t = defectTypeMap[name] || 'injection';
@@ -1521,15 +1843,14 @@ var LaserInspectionModule = (function() {
                 else if (t === 'laser') laserBad += Number(cnt) || 0;
                 else injBad += Number(cnt) || 0;
             });
+            // 검사일과 레이져 작업일이 동일한 경우 레이져 작업일 표시 억제
+            const sameDate = lotInfo.laserDate && d.date && lotInfo.laserDate.slice(0,10) === d.date.slice(0,10);
             return `
                 <tr style="cursor:pointer;" onclick="LaserInspectionModule._showDetail('${d.id}', event)">
                     <td>${_dateStack(d.date, d.inspectionStartTime)}</td>
-                    <td>${_dateStack(lotInfo.laserDate, lotInfo.laserTime)}</td>
-                    <td>
-                        <div style="font-weight:600;">${d.partName || '-'}</div>
-                        <div style="font-size:0.75rem; color:var(--text-muted);">${d.carModel || '-'}</div>
-                        <div style="margin-top:3px;">${UIUtils.itemTypeBadge(d.carModel, d.partName, d.color)}</div>
-                    </td>
+                    <td>${sameDate ? '<span style="color:var(--text-muted);font-size:0.75rem;">동일</span>' : _dateStack(lotInfo.laserDate, lotInfo.laserTime)}</td>
+                    <td style="white-space:nowrap;font-size:0.82rem;">${d.carModel || '-'}</td>
+                    <td style="font-weight:600;">${d.partName || '-'}</td>
                     <td>${_dateListHtml(lotInfo.paintDates)}</td>
                     <td>${_lotListHtml(lotInfo.injectionLots)}</td>
                     <td style="text-align:right;">${UIUtils.formatNumber(d.inspQty)}</td>
@@ -1991,6 +2312,7 @@ var LaserInspectionModule = (function() {
             const _lotInfo = _lotInfo(_workRef || data);
             const _paintingDate = _lotInfo.paintDates.join(', ');
             const _lotNo = _lotInfo.injectionLots.join(', ');
+            const _laserLot = _lotInfo.laserDate || data.date || '';
 
             await Storage.add(DB.STORES.SHIPPING_STANDBY, {
                 date         : data.date || UIUtils.today(),
@@ -2002,7 +2324,10 @@ var LaserInspectionModule = (function() {
                 paintLot     : _paintingDate,
                 lotNo        : _lotNo,
                 injectionLot : _lotNo,
-                inspectionQty: data.inspQty      || 0,
+                laserLot     : _laserLot,
+                laserWorkDate: _lotInfo.laserDate || '',
+                inspectionQty: data.goodQty || data.inspQty || 0,
+                goodQty      : data.goodQty || 0,
                 customer     : _prod ? (_prod.customer || '') : '',
                 status       : '대기'
             });
@@ -2434,7 +2759,7 @@ var LaserStandbyModule = (function() {
                 date: _recordedDateTime(w, w.date || '', w.endTime || w.startTime || ''),
                 paintingDate: _paintingWorkDateTime(w),
                 qty,
-                lotNo: w.lotNo || (w.lots && w.lots.length > 0 ? w.lots.map(l => l.lotNo).join(', ') : ''),
+                lotNo: w.lotNo || (w.lots && w.lots.length > 0 ? [...new Set(w.lots.map(l => l.lotNo).filter(Boolean))].join(', ') : ''),
                 note: w.note || w.line || ''
             });
         });
@@ -2448,7 +2773,7 @@ var LaserStandbyModule = (function() {
                 ? [...new Set(w.paintLots.map(l => l.paintDate).filter(Boolean))].join(', ')
                 : (w.paintDate || '');
             const injLots = w.paintLots && w.paintLots.length > 0
-                ? w.paintLots.map(l => l.lotNo).filter(Boolean).join(', ')
+                ? [...new Set(w.paintLots.map(l => l.lotNo).filter(Boolean))].join(', ')
                 : (w.paintLot || w.lotNo || '');
             inventoryMap[key].outRecords.push({
                 sourceType: DB.STORES.LASER_WORK_LOG,
@@ -2834,7 +3159,7 @@ var LaserStandbyModule = (function() {
             const qty = Number(w.productionQty) || 0;
             if (qty <= 0) return;
             const injLots = w.lots && w.lots.length > 0
-                ? w.lots.map(l => l.lotNo).filter(Boolean).join(', ')
+                ? [...new Set(w.lots.map(l => l.lotNo).filter(Boolean))].join(', ')
                 : (w.lotNo || '');
             inRecords.push({
                 date: w.date || '',
@@ -2851,7 +3176,7 @@ var LaserStandbyModule = (function() {
             const qty = Number(w.quantity) || 0;
             if (qty <= 0) return;
             const injLots = w.paintLots && w.paintLots.length > 0
-                ? w.paintLots.map(l => l.lotNo).filter(Boolean).join(', ')
+                ? [...new Set(w.paintLots.map(l => l.lotNo).filter(Boolean))].join(', ')
                 : (w.paintLot || '');
             const paintDates = w.paintLots && w.paintLots.length > 0
                 ? [...new Set(w.paintLots.map(l => l.paintDate).filter(Boolean))].join(', ')
@@ -3565,5 +3890,3 @@ var LaserStandbyModule = (function() {
         _showItemDetail
     };
 })();
-
-
