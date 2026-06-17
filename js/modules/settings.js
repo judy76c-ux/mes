@@ -5749,6 +5749,7 @@ const SettingsModule = (function() {
                                         <th>No</th>
                                         <th>구매처</th>
                                         <th>도료명</th>
+                                        <th>도료특징</th>
                                         <th>제조사</th>
                                         <th>도료종류</th>
                                         <th>도료 사양</th>
@@ -5765,6 +5766,7 @@ const SettingsModule = (function() {
                                             <td>${i + 1}</td>
                                             <td>${p.supplier || '-'}</td>
                                             <td><strong>${p.name || '-'}</strong></td>
+                                            <td>${p.feature || '-'}</td>
                                             <td>${p.manufacturer || '-'}</td>
                                             <td>${p.paintType ? UIUtils.badge(p.paintType, paintTypeBadge(p.paintType)) : '-'}</td>
                                             <td>${p.paintSpec ? UIUtils.badge(p.paintSpec, paintSpecBadge(p.paintSpec)) : '-'}</td>
@@ -6056,6 +6058,10 @@ const SettingsModule = (function() {
                     <label class="form-label">도료명 <span style="color:var(--accent-red)">*</span></label>
                     <input type="text" class="form-input" id="addPaintName" placeholder="예: PRIMER BLACK, TOP WHITE">
                 </div>
+                <div class="form-group">
+                    <label class="form-label">도료특징</label>
+                    <input type="text" class="form-input" id="addPaintFeature" placeholder="예: 1액형, 고내후성, 속건">
+                </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
@@ -6125,6 +6131,7 @@ const SettingsModule = (function() {
         await Storage.add(PAINT_STORE, {
             supplier,
             name,
+            feature: document.getElementById('addPaintFeature').value.trim(),
             manufacturer,
             packUnit,
             purchasePrice: document.getElementById('addPaintPurchasePrice').value.trim(),
@@ -6152,6 +6159,10 @@ const SettingsModule = (function() {
                 <div class="form-group">
                     <label class="form-label">도료명 <span style="color:var(--accent-red)">*</span></label>
                     <input type="text" class="form-input" id="editPaintName" value="${p.name || ''}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">도료특징</label>
+                    <input type="text" class="form-input" id="editPaintFeature" value="${p.feature || ''}" placeholder="예: 1액형, 고내후성, 속건">
                 </div>
             </div>
             <div class="form-row">
@@ -6229,6 +6240,7 @@ const SettingsModule = (function() {
         await Storage.update(PAINT_STORE, id, {
             supplier,
             name,
+            feature: document.getElementById('editPaintFeature').value.trim(),
             manufacturer,
             packUnit,
             purchasePrice: document.getElementById('editPaintPurchasePrice').value.trim(),
@@ -10505,11 +10517,19 @@ const SettingsModule = (function() {
         const pages = AuthModule.ALL_PAGES;
 
         /* 역할 뱃지 */
-        const roleBadge = r => {
-            const role = roles.find(x => x.key === r);
-            return role
-                ? `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;background:${role.bg};color:${role.color};">${role.label}</span>`
-                : `<span style="color:var(--text-muted);">${r}</span>`;
+        const roleBadge = userOrRole => {
+            const keys = Array.isArray(userOrRole?.roles)
+                ? userOrRole.roles
+                : (userOrRole && typeof userOrRole === 'object'
+                    ? [userOrRole.role]
+                    : [userOrRole]);
+            const uniqueKeys = [...new Set(keys.map(String).filter(Boolean))];
+            return `<div style="display:flex;gap:4px;flex-wrap:wrap;">${uniqueKeys.map(r => {
+                const role = roles.find(x => x.key === r);
+                return role
+                    ? `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;background:${role.bg};color:${role.color};">${role.label}</span>`
+                    : `<span style="color:var(--text-muted);">${_esc(r)}</span>`;
+            }).join('') || '<span style="color:var(--text-muted);">-</span>'}</div>`;
         };
 
         /* 페이지 그룹별 권한 매트릭스 */
@@ -10578,7 +10598,7 @@ const SettingsModule = (function() {
                                 <td style="padding:6px 10px;">${_avatarHtml(u, 38)}</td>
                                 <td>${_esc(u.displayName)}</td>
                                 <td style="font-family:monospace;color:var(--text-muted);">${passwordMask(u)}</td>
-                                <td>${roleBadge(u.role)}</td>
+                                <td>${roleBadge(u)}</td>
                                 <td>
                                     <span style="color:${u.active !== false ? '#16a34a' : '#dc2626'};font-size:12px;font-weight:600;">
                                         ${u.active !== false ? '● 활성' : '○ 비활성'}
@@ -10645,6 +10665,20 @@ const SettingsModule = (function() {
         const users = AuthModule.getUsers();
         const u = userId ? users.find(x => x.id === userId) : null;
         const roles = AuthModule.ROLES;
+        const selectedRoles = [...new Set((Array.isArray(u?.roles) ? u.roles : [u?.role || 'admin']).map(String).filter(Boolean))];
+        const roleOptions = selected => roles.map(r => `<option value="${r.key}" ${selected === r.key ? 'selected' : ''}>${r.label}</option>`).join('');
+        const roleRow = (selected, canRemove) => `
+            <div class="um-role-row" style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+                <select class="form-select um-role-select" style="flex:1;">
+                    ${roleOptions(selected)}
+                </select>
+                <button type="button" class="btn btn-sm btn-outline" onclick="SettingsModule.addUserRoleRow()" title="역할 추가">
+                    <span class="material-symbols-outlined" style="font-size:16px;">add</span>
+                </button>
+                ${canRemove ? `<button type="button" class="btn btn-sm" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;" onclick="SettingsModule.removeUserRoleRow(this)" title="역할 삭제">
+                    <span class="material-symbols-outlined" style="font-size:16px;">close</span>
+                </button>` : ''}
+            </div>`;
         _pendingPhoto = u ? undefined : null;
         _pendingSeal = u ? undefined : null;
         UIUtils.showModal(
@@ -10664,9 +10698,9 @@ const SettingsModule = (function() {
                 <input type="text" class="form-input" id="umPhone" value="${_esc(u ? (u.phone || '') : '')}" placeholder="010-0000-0000">
             </div>
             <div class="form-group"><label class="form-label">역할</label>
-                <select class="form-select" id="umRole">
-                    ${roles.map(r => `<option value="${r.key}" ${u && u.role === r.key ? 'selected' : ''}>${r.label}</option>`).join('')}
-                </select>
+                <div id="umRoleRows">
+                    ${selectedRoles.map((role, index) => roleRow(role, index > 0)).join('')}
+                </div>
             </div>
             <div class="form-group"><label class="form-label">상태</label>
                 <select class="form-select" id="umActive">
@@ -10679,13 +10713,48 @@ const SettingsModule = (function() {
         );
     }
 
+    function addUserRoleRow() {
+        const wrap = document.getElementById('umRoleRows');
+        if (!wrap) return;
+        const roles = AuthModule.ROLES || [];
+        const row = document.createElement('div');
+        row.className = 'um-role-row';
+        row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:8px;';
+        row.innerHTML = `
+            <select class="form-select um-role-select" style="flex:1;">
+                ${roles.map(r => `<option value="${r.key}">${r.label}</option>`).join('')}
+            </select>
+            <button type="button" class="btn btn-sm btn-outline" onclick="SettingsModule.addUserRoleRow()" title="역할 추가">
+                <span class="material-symbols-outlined" style="font-size:16px;">add</span>
+            </button>
+            <button type="button" class="btn btn-sm" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;" onclick="SettingsModule.removeUserRoleRow(this)" title="역할 삭제">
+                <span class="material-symbols-outlined" style="font-size:16px;">close</span>
+            </button>`;
+        wrap.appendChild(row);
+    }
+
+    function removeUserRoleRow(button) {
+        const wrap = document.getElementById('umRoleRows');
+        const rows = wrap ? Array.from(wrap.querySelectorAll('.um-role-row')) : [];
+        if (rows.length <= 1) {
+            UIUtils.toast('역할은 최소 1개 이상 필요합니다.', 'warning');
+            return;
+        }
+        const row = button ? button.closest('.um-role-row') : null;
+        if (row) row.remove();
+    }
+
     function saveUser(userId) {
         const username    = (document.getElementById('umUsername')    || {}).value || '';
         const displayName = (document.getElementById('umDisplayName') || {}).value || '';
         const password    = (document.getElementById('umPassword')    || {}).value || '';
         const phone       = (document.getElementById('umPhone')       || {}).value || '';
         const sealFont    = (document.getElementById('umSealFont')    || {}).value || 'gothic';
-        const role        = (document.getElementById('umRole')        || {}).value || 'operator';
+        const selectedRoles = Array.from(document.querySelectorAll('.um-role-select'))
+            .map(select => String(select.value || '').trim())
+            .filter(Boolean);
+        const roles = [...new Set(selectedRoles)];
+        const role = roles[0] || 'operator';
         const active      = (document.getElementById('umActive')      || {}).value !== 'false';
 
         if (!username.trim()) { UIUtils.toast('사용자 ID를 입력하세요.', 'warning'); return; }
@@ -10698,7 +10767,7 @@ const SettingsModule = (function() {
             if (idx < 0) return;
             const photo = _pendingPhoto !== undefined ? (_pendingPhoto || null) : (users[idx].photo || null);
             const seal = _pendingSeal !== undefined ? (_pendingSeal || null) : (users[idx].seal || null);
-            users[idx] = { ...users[idx], displayName: displayName.trim(), phone: phone.trim(), photo, seal, sealFont, role, active,
+            users[idx] = { ...users[idx], displayName: displayName.trim(), phone: phone.trim(), photo, seal, sealFont, role, roles, active,
                            ...(password ? { password } : {}) };
         } else {
             /* 추가 */
@@ -10707,7 +10776,7 @@ const SettingsModule = (function() {
                 UIUtils.toast('이미 존재하는 사용자 ID입니다.', 'warning'); return;
             }
             users.push({ id: 'user_' + Date.now(), username: username.trim(),
-                         displayName: displayName.trim(), password, phone: phone.trim(), photo: _pendingPhoto || null, seal: _pendingSeal || null, sealFont, role, active, createdAt: new Date().toISOString() });
+                         displayName: displayName.trim(), password, phone: phone.trim(), photo: _pendingPhoto || null, seal: _pendingSeal || null, sealFont, role, roles, active, createdAt: new Date().toISOString() });
         }
         _pendingPhoto = null;
         _pendingSeal = null;
@@ -10721,8 +10790,9 @@ const SettingsModule = (function() {
         const users = AuthModule.getUsers();
         const target = users.find(u => u.id === userId);
         if (!target) return;
-        const admins = users.filter(u => u.role === 'admin' && u.active !== false);
-        if (target.role === 'admin' && admins.length <= 1) {
+        const hasAdminRole = user => (Array.isArray(user?.roles) ? user.roles : [user?.role]).some(role => String(role || '') === 'admin');
+        const admins = users.filter(u => hasAdminRole(u) && u.active !== false);
+        if (hasAdminRole(target) && admins.length <= 1) {
             UIUtils.toast('마지막 관리자 계정은 삭제할 수 없습니다.', 'warning'); return;
         }
         if (!confirm(`'${target.displayName}' 사용자를 삭제하시겠습니까?`)) return;
@@ -10795,7 +10865,7 @@ const SettingsModule = (function() {
 
     return {
         render,
-        openUserModal, saveUser, deleteUser, onPermChange, toggleAllPerm,
+        openUserModal, addUserRoleRow, removeUserRoleRow, saveUser, deleteUser, onPermChange, toggleAllPerm,
         switchTab,
         openAddProductModal,
         saveProduct,

@@ -270,6 +270,7 @@ const AuthModule = (function () {
 
     /* 역할 × 페이지 접근 허용 여부 */
     function isPageAccessGranted(roleKey, pageId) {
+        if (Array.isArray(roleKey)) return roleKey.some(key => isPageAccessGranted(key, pageId));
         if (roleKey === 'admin') return true;
         const perms = _getPermissions();
         const rp = perms[roleKey];
@@ -281,6 +282,7 @@ const AuthModule = (function () {
 
     /* 역할 × 페이지 입력/등록 허용 여부 */
     function isPageWriteGranted(roleKey, pageId) {
+        if (Array.isArray(roleKey)) return roleKey.some(key => isPageWriteGranted(key, pageId));
         if (roleKey === 'admin') return true;
         const perms = _getPermissions();
         const rp = perms[roleKey];
@@ -307,6 +309,20 @@ const AuthModule = (function () {
         const role = ROLES.find(r => r.key === roleKey);
         return role ? role.label : roleKey;
     }
+    function _roleKeys(userOrRole) {
+        if (Array.isArray(userOrRole)) return [...new Set(userOrRole.map(String).filter(Boolean))];
+        if (userOrRole && typeof userOrRole === 'object') {
+            const rows = Array.isArray(userOrRole.roles) ? userOrRole.roles : [];
+            return [...new Set([...rows, userOrRole.role].map(String).filter(Boolean))];
+        }
+        return userOrRole ? [String(userOrRole)] : [];
+    }
+    function _hasRole(userOrRole, roleKey) {
+        return _roleKeys(userOrRole).includes(String(roleKey || ''));
+    }
+    function _roleLabels(userOrRole) {
+        return _roleKeys(userOrRole).map(_roleLabel).filter(Boolean).join(', ');
+    }
     function _esc(value) {
         return String(value ?? '')
             .replace(/&/g, '&amp;')
@@ -329,7 +345,7 @@ const AuthModule = (function () {
         return (message.recipients || []).some(rec => {
             if (!rec) return false;
             if (rec.type === 'all') return true;
-            if (rec.type === 'role') return rec.id === user.role;
+            if (rec.type === 'role') return _hasRole(user, rec.id);
             return String(rec.id) === String(user.id) || String(rec.id) === String(user.username);
         });
     }
@@ -580,7 +596,7 @@ const AuthModule = (function () {
     function canWritePage(pageId) {
         const user = getCurrentUser();
         if (!user) return false;
-        return isPageWriteGranted(user.role, pageId);
+        return isPageWriteGranted(_roleKeys(user), pageId);
     }
 
     /* ── 기본 관리자 계정 보장 ───────────────────────────────── */
@@ -603,7 +619,8 @@ const AuthModule = (function () {
         const users = _getUsers();
         const user  = users.find(u => u.username === username && u.password === password && u.active !== false);
         if (user) {
-            const session = { id: user.id, username: user.username, displayName: user.displayName, role: user.role };
+            const roles = _roleKeys(user);
+            const session = { id: user.id, username: user.username, displayName: user.displayName, role: roles[0] || user.role, roles };
             sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
             return { ok: true, user: session };
         }
@@ -710,10 +727,10 @@ const AuthModule = (function () {
     /* 관리/설정 페이지만 관리자 로그인 필요 (나머지 전체 허용) */
     function checkSettingsAuth(onPass) {
         const user = getCurrentUser();
-        if (user && user.role === 'admin') { onPass(); return; }
+        if (user && _hasRole(user, 'admin')) { onPass(); return; }
         showLoginModal(function() {
             const u = getCurrentUser();
-            if (u && u.role === 'admin') { onPass(); }
+            if (u && _hasRole(u, 'admin')) { onPass(); }
             else { UIUtils.toast('관리자 계정으로 로그인해야 합니다.', 'warning'); }
         });
     }
@@ -732,7 +749,8 @@ const AuthModule = (function () {
         const badge = document.getElementById('topbarUserBadge');
         if (!badge) return;
         const user = getCurrentUser();
-        const role = ROLES.find(r => r.key === (user ? user.role : ''));
+        const roleKeys = _roleKeys(user);
+        const role = ROLES.find(r => r.key === (roleKeys[0] || ''));
         if (user) {
             const unreadCount = getUnreadInboxCount(user);
             const fullUser = _getUsers().find(u => u.id === user.id);
@@ -743,8 +761,8 @@ const AuthModule = (function () {
 
             // 현재 페이지 권한 배지
             const pageId = (typeof Router !== 'undefined' && Router.getCurrentPage) ? Router.getCurrentPage() : '';
-            const canAccess = !pageId || isPageAccessGranted(user.role, pageId);
-            const canWrite  = !pageId || isPageWriteGranted(user.role, pageId);
+            const canAccess = !pageId || isPageAccessGranted(roleKeys, pageId);
+            const canWrite  = !pageId || isPageWriteGranted(roleKeys, pageId);
             const _permBadge = (ok, label) => `
                 <span title="${label}: ${ok ? '허용' : '제한'}" style="display:inline-flex;align-items:center;gap:2px;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;
                     background:${ok ? 'rgba(22,163,74,0.1)' : 'rgba(220,38,38,0.1)'};
@@ -760,7 +778,7 @@ const AuthModule = (function () {
                 ${avatarHtml}
                 <div style="line-height:1.3;margin:0 6px;white-space:nowrap;">
                     <div style="font-size:12px;font-weight:700;color:var(--text-primary);">${user.displayName}</div>
-                    <div style="font-size:10px;color:${role ? role.color : 'var(--text-muted)'};">${role ? role.label : ''}</div>
+                    <div style="font-size:10px;color:${role ? role.color : 'var(--text-muted)'};">${_esc(_roleLabels(user))}</div>
                 </div>
                 ${permHtml}
                 <button onclick="AuthModule.openInboxModal()" title="수신함"
@@ -813,7 +831,8 @@ const AuthModule = (function () {
                 type: 'user',
                 id: String(user.id),
                 label: String(user.displayName || user.username || user.id || ''),
-                role: String(user.role || '')
+                role: String(user.role || ''),
+                roles: _roleKeys(user)
             };
         }).filter(Boolean);
         return recipients;
@@ -878,12 +897,12 @@ const AuthModule = (function () {
             <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border-color);border-radius:8px;background:#fff;cursor:pointer;">
                 <input type="checkbox" class="mes-msg-target-check" value="${_esc(user.id)}" style="width:16px;height:16px;">
                 <span style="font-size:.9rem;color:var(--text-primary);">${_esc(user.displayName || user.username || user.id)}</span>
-                <span style="margin-left:auto;font-size:.72rem;color:var(--text-muted);">${_esc(_roleLabel(user.role))}</span>
+                <span style="margin-left:auto;font-size:.72rem;color:var(--text-muted);">${_esc(_roleLabels(user))}</span>
             </label>
         `;
         if (type === 'role') {
             const roleGroups = ROLES.map(role => {
-                const members = users.filter(user => String(user.role || '') === String(role.key));
+                const members = users.filter(user => _hasRole(user, role.key));
                 if (!members.length) return '';
                 return `
                     <div style="display:flex;flex-direction:column;gap:8px;">

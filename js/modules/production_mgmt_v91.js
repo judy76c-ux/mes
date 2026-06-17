@@ -964,10 +964,9 @@ var ProdStandardsModule = (function() {
             linkTarget: pageId,
             badge: 'WEB'
         });
-        const mix = page('paint-mix', '배합 기준서', 'science', '제품별 도료 배합비, 도료 사용량 기준, 배합 이력 관리', '#2563eb');
         const usage = linked('paint-usage', '사용량 기준표', 'straighten', '제품별 도료 사용량 기준표', '#0d9488');
         const film = linked('film-thickness', '도막두께 기준서', 'layers', '하도/상도 스프레이 및 검사 공정 도막두께 기준', '#2563eb');
-        const color = linked('color-gloss', '색차/광택 기준서', 'palette', '색차, 광택 판정 기준과 측정 방법', '#7c3aed');
+        const color = { templateId: 'linked:color-gloss', label: '색차/광택 기준서', icon: 'palette', desc: '색차, 광택 판정 기준과 측정 방법', accent: '#7c3aed', count: null, action: `ProdStandardsModule._openProcessStandardItem('doc','color-gloss')`, linkKind: 'doc', linkTarget: 'color-gloss', badge: 'DB', badgeColor: '#0e7490' };
         const mesh = linked('filter-mesh', '여과망 기준서', 'filter_alt', '도료 여과망 사양, 적용 위치, 교체주기', '#0e7490');
         const tds = linked('paint-tds', '도장 사양서(TDS)', 'description', '도료사 배포 TDS 파일 및 주제 도료별 적용 사양 관리', '#334155');
         const drying = page('drying-std', '건조 및 셋팅룸 온도 기준서', 'local_fire_department', 'Flash Off / Main Oven 온도와 컨베이어 속도 기준', '#b45309');
@@ -975,7 +974,7 @@ var ProdStandardsModule = (function() {
         const customerReturn = page('customer-return-nc-std', '고객 반송품 부적합품 처리 기준서', 'assignment_return', '고객 반송품 및 부적합품 처리 기준 이미지 문서', '#dc2626');
 
         const paintStations = [
-            { station: '배합', standards: [tds, mix, usage, mesh] },
+            { station: '배합', standards: [tds, usage, mesh] },
             { station: '하도 공급', standards: [mesh] },
             { station: '상도 공급', standards: [mesh] },
             { station: '하도 스프레이', standards: [film, drying] },
@@ -1322,6 +1321,162 @@ var ProdStandardsModule = (function() {
         else _refreshProcessStandardStatus();
     }
 
+    async function _openColorGlossStdViewer() {
+        const TEMPLATE_KIND = 'quality_template';
+        const all = Storage.getAll(DB.STORES.PROD_QUALITY_CHECK) || [];
+        const templates = all.filter(d => d._docKind === TEMPLATE_KIND);
+        const history = (await Storage.getConfigValue('color_gloss_std_history')) || [];
+
+        const noteHtml = `<div style="margin-bottom:14px;padding:8px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;font-size:.8rem;color:#0369a1;display:flex;align-items:center;gap:6px;">
+            <span class="material-symbols-outlined" style="font-size:15px;flex-shrink:0;">link</span>
+            <span>상위 문서: <strong>초중종물 관리 &gt; 품목별 항목 기준</strong> — 이 표의 기준값은 품목별 항목 기준에서 관리됩니다.</span>
+        </div>`;
+
+        const footer = `
+            <button class="btn btn-primary" onclick="ProdStandardsModule._confirmColorGlossStdUpdate()" style="display:inline-flex;align-items:center;gap:6px;">
+                <span class="material-symbols-outlined" style="font-size:16px;">sync</span>값 업데이트
+            </button>
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`;
+
+        if (!templates.length) {
+            const body = noteHtml + `<div style="text-align:center;padding:40px 20px;color:#94a3b8;border:2px dashed #e2e8f0;border-radius:8px;">
+                <span class="material-symbols-outlined" style="font-size:36px;display:block;margin-bottom:8px;">inventory_2</span>
+                <div style="font-size:.85rem;">초중종물 관리 &gt; 품목별 항목 기준에 등록된 데이터가 없습니다.</div>
+            </div>`;
+            UIUtils.showModal('색차/광택 기준서', body, footer, 'xl');
+            return;
+        }
+
+        const colorRangeStr = (item) => {
+            if (!item) return '';
+            const u = String(item.upperSpec ?? '').trim();
+            const l = String(item.lowerSpec ?? '').trim();
+            if (u !== '' && l !== '') return `+${u} / −${l}`;
+            return String(item.spec || '').trim();
+        };
+
+        const glossStr = (item) => {
+            if (!item) return '';
+            const t = String(item.targetSpec ?? '').trim();
+            const tol = String(item.toleranceSpec ?? '').trim();
+            if (t !== '' && tol !== '') return `${t} ± ${tol} GU`;
+            const u = parseFloat(item.upperSpec ?? '');
+            const l = parseFloat(item.lowerSpec ?? '');
+            if (!isNaN(u) && !isNaN(l)) {
+                const fmt = v => v % 1 === 0 ? String(v) : String(Math.round(v * 10) / 10);
+                return `${fmt((u + l) / 2)} ± ${fmt((u - l) / 2)} GU`;
+            }
+            return String(item.spec || '').trim();
+        };
+
+        const findItem = (items, key) => (items || []).find(i => String(i.key || '') === key);
+
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const productById = {};
+        products.forEach(p => { if (p.id) productById[p.id] = p; });
+
+        const itemTypeBadge = (itemType) => {
+            if (itemType === '양산품') return `<span style="margin-left:6px;font-size:.7rem;font-weight:700;padding:1px 6px;border-radius:9px;background:rgba(52,211,153,0.15);color:#059669;border:1px solid #6ee7b7;">양산</span>`;
+            if (itemType === '개발품') return `<span style="margin-left:6px;font-size:.7rem;font-weight:700;padding:1px 6px;border-radius:9px;background:rgba(59,130,246,0.15);color:#2563eb;border:1px solid #93c5fd;">개발</span>`;
+            if (itemType && itemType.startsWith('A')) return `<span style="margin-left:6px;font-size:.7rem;font-weight:700;padding:1px 6px;border-radius:9px;background:rgba(251,191,36,0.15);color:#b45309;border:1px solid #fcd34d;">A/S</span>`;
+            return '';
+        };
+
+        const carGroups = {};
+        templates.forEach(t => {
+            const car = String(t.carModel || '').trim();
+            if (!car) return;
+            if (!carGroups[car]) carGroups[car] = [];
+            carGroups[car].push(t);
+        });
+
+        const th = (txt, align = 'center') => `<th style="padding:7px 10px;border:1px solid #e2e8f0;font-size:.76rem;font-weight:700;text-align:${align};background:#f8fafc;white-space:nowrap;">${txt}</th>`;
+        const tdStyle = (align) => `padding:6px 10px;border:1px solid #e2e8f0;font-size:.79rem;text-align:${align};white-space:nowrap;`;
+        const td = (val, align = 'center') => {
+            const display = val || `<span style="color:#cbd5e1;">/ </span>`;
+            return `<td style="${tdStyle(align)}">${val ? _esc(val) : display}</td>`;
+        };
+
+        const tableBlocks = Object.entries(carGroups)
+            .sort(([a], [b]) => a.localeCompare(b, 'ko'))
+            .map(([car, tmpls]) => {
+                const firstProd = productById[(tmpls[0] || {}).productId] || {};
+                const typeBadge = itemTypeBadge(firstProd.itemType);
+                const seen = new Set();
+                const rows = tmpls
+                    .sort((a, b) => (a.color || '').localeCompare(b.color || '', 'ko'))
+                    .filter(t => { const k = (t.color || '').trim(); if (seen.has(k)) return false; seen.add(k); return true; })
+                    .map(t => {
+                        const items = t.items || [];
+                        const cL = findItem(items, 'color_l');
+                        const cA = findItem(items, 'color_a');
+                        const cB = findItem(items, 'color_b');
+                        const gl = findItem(items, 'gloss');
+                        return `<tr>
+                            ${td(t.color || '', 'left')}
+                            ${td(colorRangeStr(cL))}
+                            ${td(colorRangeStr(cA))}
+                            ${td(colorRangeStr(cB))}
+                            ${td(glossStr(gl))}
+                        </tr>`;
+                    }).join('');
+
+                return `<div style="margin-bottom:18px;">
+                    <div style="font-size:.82rem;font-weight:800;color:#1e293b;padding:6px 12px;background:#f1f5f9;border-radius:6px 6px 0 0;border:1px solid #e2e8f0;border-bottom:none;display:flex;align-items:center;">${_esc(car)}${typeBadge}</div>
+                    <table style="width:100%;border-collapse:collapse;">
+                        <thead><tr>
+                            ${th('컬러', 'left')}
+                            ${th('색차 △L')}${th('색차 △a')}${th('색차 △b')}${th('광택 G')}
+                        </tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>`;
+            }).join('');
+
+        const fmtDate = (iso) => {
+            const d = new Date(iso);
+            const pad = n => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+        };
+        const fmtTime = (iso) => {
+            const d = new Date(iso);
+            const pad = n => String(n).padStart(2, '0');
+            return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        };
+
+        const historyHtml = `<div style="margin-top:24px;border-top:1px solid #e2e8f0;padding-top:16px;">
+            <div style="font-size:.78rem;font-weight:700;color:#64748b;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                <span class="material-symbols-outlined" style="font-size:15px;">history</span>업데이트 이력
+            </div>
+            ${history.length ? `<table style="width:100%;border-collapse:collapse;max-width:400px;">
+                <thead><tr>
+                    <th style="padding:5px 10px;border:1px solid #e2e8f0;font-size:.73rem;font-weight:700;background:#f8fafc;text-align:center;width:48px;">No</th>
+                    <th style="padding:5px 10px;border:1px solid #e2e8f0;font-size:.73rem;font-weight:700;background:#f8fafc;text-align:center;">날짜</th>
+                    <th style="padding:5px 10px;border:1px solid #e2e8f0;font-size:.73rem;font-weight:700;background:#f8fafc;text-align:center;">시간</th>
+                </tr></thead>
+                <tbody>${history.map((h, i) => `<tr>
+                    <td style="padding:5px 10px;border:1px solid #e2e8f0;font-size:.78rem;text-align:center;color:#94a3b8;">${i + 1}</td>
+                    <td style="padding:5px 10px;border:1px solid #e2e8f0;font-size:.78rem;text-align:center;">${_esc(fmtDate(h.date))}</td>
+                    <td style="padding:5px 10px;border:1px solid #e2e8f0;font-size:.78rem;text-align:center;">${_esc(fmtTime(h.date))}</td>
+                </tr>`).join('')}</tbody>
+            </table>`
+            : `<div style="font-size:.78rem;color:#94a3b8;">이력 없음</div>`}
+        </div>`;
+
+        const body = noteHtml + historyHtml + tableBlocks;
+        UIUtils.showModal('색차/광택 기준서', body, footer, 'xl');
+    }
+
+    async function _confirmColorGlossStdUpdate() {
+        const history = (await Storage.getConfigValue('color_gloss_std_history')) || [];
+        history.unshift({ date: new Date().toISOString() });
+        if (history.length > 30) history.splice(30);
+        await Storage.setConfigValue('color_gloss_std_history', history);
+        UIUtils.toast('업데이트 이력이 기록되었습니다.', 'success');
+        UIUtils.closeModal();
+        _openColorGlossStdViewer();
+    }
+
     function _openProcessStandardItem(kind, target, line) {
         if (kind === 'doc') {
             selectDocType(target);
@@ -1389,26 +1544,73 @@ var ProdStandardsModule = (function() {
         _refreshProcessStandardStatus();
     }
 
-    function _addProcessStandardStation(process) {
+    async function _addProcessStandardStation(process) {
         if (!_processStandardMoveEdit || !process) return;
-        const name = window.prompt(`${process}에 추가할 세부공정명을 입력하세요.`);
-        const station = String(name || '').trim();
-        if (!station) return;
+        const subs = (await Storage.getConfigValue('subProcessTypes')) || {};
         const groups = _processStandardLayout();
         const group = groups.find(g => g.process === process);
-        if (!group) return;
-        if ((group.stations || []).some(st => st.station === station)) {
-            UIUtils.toast('이미 등록된 세부공정입니다.', 'warning');
-            return;
-        }
+        const addedSet = new Set((group?.stations || []).map(s => s.station));
+
+        // 설정에 등록된 전체 세부공정을 공정별로 묶어서 표시
+        const allEntries = Object.entries(subs)
+            .map(([proc, list]) => ({ proc, list: (Array.isArray(list) ? list : []).filter(Boolean) }))
+            .filter(e => e.list.length);
+
+        const availableHtml = allEntries.length
+            ? `<div id="stationPickList" style="border:1px solid #e2e8f0;border-radius:8px;max-height:260px;overflow-y:auto;">
+                ${allEntries.map(({ proc, list }) => `
+                    <div style="padding:6px 10px 2px;font-size:.72rem;font-weight:700;color:#64748b;background:#f8fafc;border-bottom:1px solid #f1f5f9;position:sticky;top:0;">${_esc(proc)}</div>
+                    ${list.map(st => {
+                        const added = addedSet.has(st);
+                        return `<label style="display:flex;align-items:center;gap:8px;padding:5px 12px;cursor:${added ? 'default' : 'pointer'};">
+                            <input type="checkbox" value="${_esc(st)}" ${added ? 'checked disabled' : ''} style="width:15px;height:15px;accent-color:var(--accent-blue);flex-shrink:0;">
+                            <span style="font-size:.84rem;${added ? 'color:#94a3b8;' : ''}">${_esc(st)}${added ? ' <span style="font-size:.7rem;color:#94a3b8;">(추가됨)</span>' : ''}</span>
+                        </label>`;
+                    }).join('')}
+                `).join('')}
+               </div>`
+            : `<div style="font-size:.8rem;color:#94a3b8;padding:6px 4px;">설정 &gt; 공정 관리에 등록된 세부공정이 없습니다.</div>`;
+
+        const body = `
+            <div style="margin-bottom:14px;">
+                <div style="font-size:.75rem;font-weight:700;color:#64748b;margin-bottom:6px;display:flex;align-items:center;gap:5px;">
+                    <span class="material-symbols-outlined" style="font-size:14px;">settings_applications</span>
+                    공정 관리 등록 세부공정
+                </div>
+                ${availableHtml}
+            </div>
+            <div style="border-top:1px solid #e2e8f0;padding-top:12px;">
+                <div style="font-size:.75rem;font-weight:700;color:#64748b;margin-bottom:6px;">직접 입력 (신규)</div>
+                <input type="text" id="addStationCustomInput" class="form-input" placeholder="세부공정명 직접 입력..."
+                    style="width:100%;" onkeydown="if(event.key==='Enter')ProdStandardsModule._confirmAddProcessStandardStations('${_jsArg(process)}')">
+            </div>`;
+
+        const footer = `
+            <button class="btn btn-primary" onclick="ProdStandardsModule._confirmAddProcessStandardStations('${_jsArg(process)}')">추가</button>
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>`;
+
+        UIUtils.showModal(`${process} — 세부공정 추가`, body, footer);
+    }
+
+    function _confirmAddProcessStandardStations(process) {
+        const groups = _processStandardLayout();
+        const group = groups.find(g => g.process === process);
+        if (!group) { UIUtils.closeModal(); return; }
+        const addedSet = new Set((group.stations || []).map(s => s.station));
+        const checked = [...document.querySelectorAll('#stationPickList input[type=checkbox]:not(:disabled):checked')]
+            .map(cb => cb.value);
+        const custom = (document.getElementById('addStationCustomInput')?.value || '').trim();
+        if (custom) checked.push(custom);
+        const toAdd = [...new Set(checked)].filter(s => s && !addedSet.has(s));
+        if (!toAdd.length) { UIUtils.toast('추가할 세부공정을 선택하거나 입력하세요.', 'warning'); return; }
         const rows = _flattenProcessStandardLayout(groups);
         const structure = _processStandardStructureRows(groups);
-        _saveProcessStandardMenuLayout([
-            ...structure,
-            { type: 'station', process, station, custom: true, order: (group.stations || []).length },
-            ...rows
-        ]);
+        const baseOrder = (group.stations || []).length;
+        const newEntries = toAdd.map((st, i) => ({ type: 'station', process, station: st, custom: true, order: baseOrder + i }));
+        _saveProcessStandardMenuLayout([...structure, ...newEntries, ...rows]);
+        UIUtils.closeModal();
         _refreshProcessStandardStatus();
+        UIUtils.toast(`${toAdd.length}개 세부공정이 추가되었습니다.`, 'success');
     }
 
     function _removeProcessStandardStation(process, station) {
@@ -1583,7 +1785,8 @@ var ProdStandardsModule = (function() {
             count: null,
             linkKind: isWeb ? 'custom-web' : 'custom-upload',
             linkTarget: def.id,
-            badge: isWeb ? 'WEB편집' : 'IMG'
+            badge: isWeb ? 'WEB편집' : 'IMG',
+            badgeColor: isWeb ? '#0d9488' : '#2563eb'
         };
     }
 
@@ -2066,7 +2269,7 @@ var ProdStandardsModule = (function() {
                         ${std.label}
                     </span>
                     <span style="display:flex;align-items:center;gap:5px;">
-                        <span style="font-size:.66rem;background:${std.accent};color:#fff;border-radius:4px;padding:2px 6px;font-weight:800;white-space:nowrap;">
+                        <span style="font-size:.66rem;background:${std.badgeColor || std.accent};color:#fff;border-radius:4px;padding:2px 6px;font-weight:800;white-space:nowrap;">
                             ${std.count == null ? std.badge : `${std.count.toLocaleString()}건`}
                         </span>
                         ${_processStandardMoveEdit && std.linkKind === 'custom-upload' ? `<button type="button" title="이미지 업로드" onclick="event.stopPropagation();ProdStandardsModule._openCustomUploadStdViewer('${_jsArg(std.linkTarget)}')"
@@ -2167,12 +2370,13 @@ var ProdStandardsModule = (function() {
                 <div style="display:flex;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid var(--border-color);">
                     <span class="material-symbols-outlined" style="font-size:20px;color:var(--accent-blue);">${group.icon}</span>
                     <div style="font-weight:900;color:var(--text-primary);">${group.process}</div>
-                    ${_processStandardMoveEdit ? `<div style="margin-left:auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                    ${_processStandardMoveEdit ? `
                         <button type="button" onclick="ProdStandardsModule._moveProcessStandardProcess('${_jsArg(group.process)}',-1)" class="btn btn-sm btn-outline">↑</button>
                         <button type="button" onclick="ProdStandardsModule._moveProcessStandardProcess('${_jsArg(group.process)}',1)" class="btn btn-sm btn-outline">↓</button>
-                        <button type="button" onclick="ProdStandardsModule._addProcessStandardStation('${_jsArg(group.process)}')" class="btn btn-sm btn-outline">+ 세부공정</button>
                         <button type="button" onclick="ProdStandardsModule._removeProcessStandardProcess('${_jsArg(group.process)}')" class="btn btn-sm btn-outline" style="color:#dc2626;border-color:rgba(239,68,68,.45);">주공정 삭제</button>
-                    </div>` : ''}
+                        <div style="margin-left:auto;">
+                            <button type="button" onclick="ProdStandardsModule._addProcessStandardStation('${_jsArg(group.process)}')" class="btn btn-sm btn-outline">+ 세부공정</button>
+                        </div>` : ''}
                 </div>
                 <div style="display:flex;flex-direction:column;gap:10px;padding:12px;">
                     ${group.stations.map(st => `
@@ -3181,6 +3385,132 @@ var ProdStandardsModule = (function() {
                             String(a.partName).localeCompare(String(b.partName), 'ko'));
     }
 
+    async function _renderColorGlossPage(el) {
+        const TEMPLATE_KIND = 'quality_template';
+        const all = Storage.getAll(DB.STORES.PROD_QUALITY_CHECK) || [];
+        const templates = all.filter(d => d._docKind === TEMPLATE_KIND);
+        const history = (await Storage.getConfigValue('color_gloss_std_history')) || [];
+
+        const colorRangeStr = (item) => {
+            if (!item) return '';
+            const u = String(item.upperSpec ?? '').trim();
+            const l = String(item.lowerSpec ?? '').trim();
+            if (u !== '' && l !== '') return `+${u} / −${l}`;
+            return String(item.spec || '').trim();
+        };
+        const glossStr = (item) => {
+            if (!item) return '';
+            const t = String(item.targetSpec ?? '').trim();
+            const tol = String(item.toleranceSpec ?? '').trim();
+            if (t !== '' && tol !== '') return `${t} ± ${tol} GU`;
+            const u = parseFloat(item.upperSpec ?? ''), l = parseFloat(item.lowerSpec ?? '');
+            if (!isNaN(u) && !isNaN(l)) {
+                const fmt = v => v % 1 === 0 ? String(v) : String(Math.round(v * 10) / 10);
+                return `${fmt((u + l) / 2)} ± ${fmt((u - l) / 2)} GU`;
+            }
+            return String(item.spec || '').trim();
+        };
+        const findItem = (items, key) => (items || []).find(i => String(i.key || '') === key);
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const productById = {};
+        products.forEach(p => { if (p.id) productById[p.id] = p; });
+
+        const itemTypeBadge = (itemType) => {
+            if (itemType === '양산품') return `<span style="margin-left:6px;font-size:.7rem;font-weight:700;padding:1px 6px;border-radius:9px;background:rgba(52,211,153,0.15);color:#059669;border:1px solid #6ee7b7;">양산</span>`;
+            if (itemType === '개발품') return `<span style="margin-left:6px;font-size:.7rem;font-weight:700;padding:1px 6px;border-radius:9px;background:rgba(59,130,246,0.15);color:#2563eb;border:1px solid #93c5fd;">개발</span>`;
+            if (itemType && itemType.startsWith('A')) return `<span style="margin-left:6px;font-size:.7rem;font-weight:700;padding:1px 6px;border-radius:9px;background:rgba(251,191,36,0.15);color:#b45309;border:1px solid #fcd34d;">A/S</span>`;
+            return '';
+        };
+
+        const carGroups = {};
+        templates.forEach(t => {
+            const car = String(t.carModel || '').trim();
+            if (!car) return;
+            if (!carGroups[car]) carGroups[car] = [];
+            carGroups[car].push(t);
+        });
+
+        const th = (txt, align = 'center') => `<th style="padding:7px 12px;border:1px solid #e2e8f0;font-size:.76rem;font-weight:700;text-align:${align};background:#f8fafc;white-space:nowrap;">${txt}</th>`;
+        const td = (val, align = 'center') => {
+            const s = `padding:7px 12px;border:1px solid #e2e8f0;font-size:.8rem;text-align:${align};white-space:nowrap;`;
+            return val ? `<td style="${s}">${_esc(val)}</td>` : `<td style="${s}color:#cbd5e1;">/ </td>`;
+        };
+
+        const tableBlocks = Object.entries(carGroups).length ? Object.entries(carGroups)
+            .sort(([a], [b]) => a.localeCompare(b, 'ko'))
+            .map(([car, tmpls]) => {
+                const firstProd = productById[(tmpls[0] || {}).productId] || {};
+                const typeBadge = itemTypeBadge(firstProd.itemType);
+                const seen = new Set();
+                const rows = tmpls
+                    .sort((a, b) => (a.color || '').localeCompare(b.color || '', 'ko'))
+                    .filter(t => { const k = (t.color || '').trim(); if (seen.has(k)) return false; seen.add(k); return true; })
+                    .map(t => {
+                        const items = t.items || [];
+                        return `<tr>
+                            ${td(t.color || '', 'left')}
+                            ${td(colorRangeStr(findItem(items, 'color_l')))}
+                            ${td(colorRangeStr(findItem(items, 'color_a')))}
+                            ${td(colorRangeStr(findItem(items, 'color_b')))}
+                            ${td(glossStr(findItem(items, 'gloss')))}
+                        </tr>`;
+                    }).join('');
+                return `<div style="margin-bottom:20px;">
+                    <div style="font-size:.83rem;font-weight:800;color:#1e293b;padding:7px 12px;background:#f1f5f9;border-radius:6px 6px 0 0;border:1px solid #e2e8f0;border-bottom:none;display:flex;align-items:center;">${_esc(car)}${typeBadge}</div>
+                    <table style="width:100%;border-collapse:collapse;">
+                        <thead><tr>${th('컬러','left')}${th('색차 △L')}${th('색차 △a')}${th('색차 △b')}${th('광택 G')}</tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>`;
+            }).join('')
+            : `<div style="text-align:center;padding:48px 20px;color:#94a3b8;border:2px dashed #e2e8f0;border-radius:8px;">
+                <span class="material-symbols-outlined" style="font-size:36px;display:block;margin-bottom:8px;">inventory_2</span>
+                <div style="font-size:.85rem;">초중종물 관리 &gt; 품목별 항목 기준에 등록된 데이터가 없습니다.</div>
+               </div>`;
+
+        const fmtDt = (iso) => { const d = new Date(iso), p = n => String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+
+        const historyHtml = `<div style="margin-top:28px;border-top:1px solid #e2e8f0;padding-top:16px;">
+            <div style="font-size:.78rem;font-weight:700;color:#64748b;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                <span class="material-symbols-outlined" style="font-size:15px;">history</span>업데이트 이력
+            </div>
+            ${history.length
+                ? `<table style="border-collapse:collapse;min-width:260px;">
+                    <thead><tr>
+                        <th style="padding:5px 12px;border:1px solid #e2e8f0;font-size:.73rem;font-weight:700;background:#f8fafc;width:44px;">No</th>
+                        <th style="padding:5px 12px;border:1px solid #e2e8f0;font-size:.73rem;font-weight:700;background:#f8fafc;">일시</th>
+                    </tr></thead>
+                    <tbody>${history.map((h, i) => `<tr>
+                        <td style="padding:5px 12px;border:1px solid #e2e8f0;font-size:.78rem;text-align:center;color:#94a3b8;">${i+1}</td>
+                        <td style="padding:5px 12px;border:1px solid #e2e8f0;font-size:.78rem;">${_esc(fmtDt(h.date))}</td>
+                    </tr>`).join('')}</tbody>
+                   </table>`
+                : `<div style="font-size:.78rem;color:#94a3b8;">이력 없음</div>`}
+        </div>`;
+
+        el.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+                <div style="font-size:.8rem;color:#0369a1;display:flex;align-items:center;gap:5px;">
+                    <span class="material-symbols-outlined" style="font-size:14px;">link</span>
+                    상위 문서: <strong>초중종물 관리 &gt; 품목별 항목 기준</strong>
+                </div>
+                <button class="btn btn-primary btn-sm" onclick="ProdStandardsModule._confirmColorGlossStdUpdate()" style="display:inline-flex;align-items:center;gap:6px;">
+                    <span class="material-symbols-outlined" style="font-size:15px;">sync</span>값 업데이트
+                </button>
+            </div>
+            ${tableBlocks}
+            ${historyHtml}`;
+    }
+
+    async function _confirmColorGlossStdUpdate() {
+        const history = (await Storage.getConfigValue('color_gloss_std_history')) || [];
+        history.unshift({ date: new Date().toISOString() });
+        if (history.length > 30) history.splice(30);
+        await Storage.setConfigValue('color_gloss_std_history', history);
+        UIUtils.toast('업데이트 이력이 기록되었습니다.', 'success');
+        _renderLinkedStandardTable();
+    }
+
     function _renderLinkedStandardTable() {
         const el = document.getElementById('psParamContent');
         if (!el) return;
@@ -3189,6 +3519,7 @@ var ProdStandardsModule = (function() {
         if (_curDocType === 'mixing') { PaintMixModule.renderFormulaAsStandard(el); return; }
         if (_curDocType === 'paint-usage') { PaintMixModule.renderUsageAsStandard(el); return; }
         if (_curDocType === 'paint-tds') { _renderPaintTdsTable(el); return; }
+        if (_curDocType === 'color-gloss') { _renderColorGlossPage(el); return; }
 
         const cfg = STANDARD_DOC_TYPES[_curDocType];
         if (!cfg) return;
@@ -8656,6 +8987,7 @@ window.addEventListener('load', function() {
         _addProcessStandardProcess,
         _removeProcessStandardProcess,
         _addProcessStandardStation,
+        _confirmAddProcessStandardStations,
         _removeProcessStandardStation,
         _moveProcessStandardProcess,
         _moveProcessStandardStation,
@@ -8664,6 +8996,7 @@ window.addEventListener('load', function() {
         _armCustomStdPaste,
         _openCustomWebStdViewer,
         _openCustomWebStdEditor,
+        _confirmColorGlossStdUpdate,
         _webStdAddSection,
         _webStdRemoveSection,
         _webStdMoveSection,
