@@ -4448,6 +4448,14 @@ const PaintingInspectionModule = (function() {
         setTimeout(() => {
             document.addEventListener('click', _numpadOutsideClick);
         }, 100);
+        // Enter 키로 완료
+        document.addEventListener('keydown', _numpadKeyHandler);
+    }
+
+    function _numpadKeyHandler(e) {
+        if (e.key === 'Enter') { e.preventDefault(); _numpadConfirm(); }
+        else if (e.key === 'Backspace') { e.preventDefault(); _numpadDelete(); }
+        else if (/^[0-9]$/.test(e.key)) { e.preventDefault(); _numpadInput(e.key); }
     }
 
     function _numpadOutsideClick(e) {
@@ -4471,6 +4479,7 @@ const PaintingInspectionModule = (function() {
         }
         pad.remove();
         document.removeEventListener('click', _numpadOutsideClick);
+        document.removeEventListener('keydown', _numpadKeyHandler);
     }
 
     function _numpadInput(digit) {
