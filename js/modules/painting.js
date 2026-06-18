@@ -4389,6 +4389,8 @@ const PaintingInspectionModule = (function() {
     function _showNumericPad(inputEl) {
         // 기존 키패드 정리 (이벤트 리스너 포함)
         _closeNumericPad();
+        // 태블릿 소프트 키보드 억제
+        inputEl.blur();
 
         // 현재 값 표시용
         let currentVal = inputEl.value || '0';
@@ -5960,7 +5962,7 @@ const PaintingInspectionModule = (function() {
                     return `<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
                         <div style="font-size:0.78rem;font-weight:600;color:${color};margin-bottom:6px;">${dt.name}</div>
                         <input type="number" class="form-input defect-count-input" data-defect-id="${dt.id}"
-                            value="${val}" min="0"
+                            value="${val}" min="0" inputmode="none"
                             style="text-align:right;font-weight:700;font-size:1rem;padding:4px 8px;">
                     </div>`;
                 }).join('') + `</div>`;
@@ -6469,8 +6471,12 @@ const PaintingInspectionModule = (function() {
         return stats;
     }
 
+    var _paintCharts = { defectType: null, carModel: null };
+
     // 통계 차트 그리기
     function _renderStatisticsCharts(stats) {
+        if (_paintCharts.defectType) { try { _paintCharts.defectType.destroy(); } catch (e) {} _paintCharts.defectType = null; }
+        if (_paintCharts.carModel)   { try { _paintCharts.carModel.destroy();   } catch (e) {} _paintCharts.carModel   = null; }
         // 불량 유형별 막대 차트
         const defectTypeCtx = document.getElementById('defectTypeChart');
         if (defectTypeCtx && window.Chart) {
@@ -6479,7 +6485,7 @@ const PaintingInspectionModule = (function() {
             );
             const defectData = defectLabels.map(name => stats.byDefectType[name].count);
 
-            new Chart(defectTypeCtx, {
+            _paintCharts.defectType = new Chart(defectTypeCtx, {
                 type: 'bar',
                 data: {
                     labels: defectLabels,
@@ -6510,7 +6516,7 @@ const PaintingInspectionModule = (function() {
                 return data.inspectionQty > 0 ? ((data.defectQty / data.inspectionQty) * 100).toFixed(1) : 0;
             });
 
-            new Chart(carModelCtx, {
+            _paintCharts.carModel = new Chart(carModelCtx, {
                 type: 'doughnut',
                 data: {
                     labels: carModelLabels,

@@ -659,8 +659,17 @@ const DashboardModule = (function() {
     /* ══════════════════════════════════════════════════════════
        차트
     ══════════════════════════════════════════════════════════ */
+    var _charts = { process: null, trend: null, defectPie: null, defectRate: null };
+
+    function _destroyCharts() {
+        Object.keys(_charts).forEach(k => {
+            if (_charts[k]) { try { _charts[k].destroy(); } catch (e) {} _charts[k] = null; }
+        });
+    }
+
     function renderCharts() {
         if (typeof Chart === 'undefined') return;
+        _destroyCharts();
         const s = UIUtils.monthAgo();
         const e = UIUtils.today();
         renderProcessChart(s, e);
@@ -681,7 +690,7 @@ const DashboardModule = (function() {
             { label:'출하검사', count: Storage.getByDateRange(STORE.SHIPPING_INSPECTIONS, start, end).length, color:'#f59e0b' },
             { label:'제품출고', count: Storage.getByDateRange(STORE.PRODUCT_OUTGOING, start, end).length,     color:'#10b981' }
         ];
-        new Chart(ctx, {
+        _charts.process = new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: data.map(d => d.label),
@@ -703,7 +712,7 @@ const DashboardModule = (function() {
             byDate[w.date] += Number(w.productionQty) || 0;
         });
         const dates = Object.keys(byDate).sort();
-        new Chart(ctx, {
+        _charts.trend = new Chart(ctx, {
             type: 'line',
             data: { labels: dates, datasets: [{
                 label:'생산량', data: dates.map(d => byDate[d]),
@@ -732,7 +741,7 @@ const DashboardModule = (function() {
             ctx.parentElement.innerHTML += '<div class="empty-state"><p>데이터가 없습니다.</p></div>';
             ctx.style.display = 'none'; return;
         }
-        new Chart(ctx, {
+        _charts.defectPie = new Chart(ctx, {
             type: 'doughnut',
             data: { labels, datasets: [{
                 data: values, backgroundColor: colors.slice(0, labels.length),
@@ -757,7 +766,7 @@ const DashboardModule = (function() {
         });
         const dates = [...new Set([...Object.keys(prodByDate), ...Object.keys(defByDate)])].sort();
         const rates = dates.map(d => ((defByDate[d] || 0) / Math.max(prodByDate[d] || 1, 1) * 100).toFixed(1));
-        new Chart(ctx, {
+        _charts.defectRate = new Chart(ctx, {
             type: 'line',
             data: { labels: dates, datasets: [{
                 label:'불량률 (%)', data: rates,

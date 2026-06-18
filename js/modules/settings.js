@@ -790,6 +790,15 @@ const SettingsModule = (function() {
         const uniqueCustomers = [...new Set(products.map(p => p.customer).filter(Boolean))].sort();
         const colspan = 10;
 
+        // 루프 밖에서 한 번만 정의 (133번 생성 방지)
+        const labelForSpec = spec => spec === 'Primer' ? '프라이머' : spec === 'Color' ? '컬러' : (spec || '도료');
+        const paintName = id => _isNoNeedPaintSelection(id) ? '사용불필요' : (id && paintMap[id] ? (paintMap[id].name || '-') : (id ? '미등록' : '-'));
+        const paintTitle = id => {
+            if (_isNoNeedPaintSelection(id)) return '경화제 사용불필요';
+            const pm = id ? paintMap[id] : null;
+            return pm ? `${pm.supplier || '-'} / ${pm.manufacturer || '-'} / ${pm.name || '-'}` : (id ? `미등록 ID: ${id}` : '');
+        };
+
         el.innerHTML = `
             <div id="productValidationPlaceholder" style="margin-bottom:16px;padding:12px 16px;background:var(--bg-secondary);border-radius:8px;color:var(--text-muted);font-size:0.85rem;">
                 <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;animation:spin 1s linear infinite;">refresh</span>
@@ -820,6 +829,11 @@ const SettingsModule = (function() {
                             title="동일 품명 제품 현황 진단">
                             <span class="material-symbols-outlined">manage_search</span> 품명 중복 진단
                         </button>
+                        <button class="btn btn-secondary" onclick="SettingsModule.cleanupEmptyProcessRows()"
+                            style="border-color:#6b7280;color:#6b7280;"
+                            title="'선택 안함' 공정 행 및 고아 CVT/CT 데이터 일괄 정리">
+                            <span class="material-symbols-outlined">auto_fix_high</span> 공정 행 정리
+                        </button>
                         <button class="btn btn-primary" onclick="SettingsModule.openAddProductModal()">
                             <span class="material-symbols-outlined">add</span> 제품 추가
                         </button>
@@ -846,15 +860,7 @@ const SettingsModule = (function() {
                                 ${products.length === 0 ?
                 `<tr><td colspan="${colspan}" style="text-align:center;padding:40px;color:var(--text-muted);">등록된 제품이 없습니다.</td></tr>` :
                 products.map((p, i) => {
-                    // 도료 자재: 제품 정보에 등록된 프라이머/경화제/희석제, 컬러/경화제/희석제 조합 전체 표시
                     const paintRows = Array.isArray(p.paintMaterials) ? p.paintMaterials : [];
-                    const labelForSpec = spec => spec === 'Primer' ? '프라이머' : spec === 'Color' ? '컬러' : (spec || '도료');
-                    const paintName = id => _isNoNeedPaintSelection(id) ? '사용불필요' : (id && paintMap[id] ? (paintMap[id].name || '-') : (id ? '미등록' : '-'));
-                    const paintTitle = id => {
-                        if (_isNoNeedPaintSelection(id)) return '경화제 사용불필요';
-                        const pm = id ? paintMap[id] : null;
-                        return pm ? `${pm.supplier || '-'} / ${pm.manufacturer || '-'} / ${pm.name || '-'}` : (id ? `미등록 ID: ${id}` : '');
-                    };
                     const paintBadges = paintRows.length > 0
                         ? paintRows.map(row => {
                             const mainId = row.mainId || row.paintMaterialId || '';
@@ -1340,6 +1346,7 @@ const SettingsModule = (function() {
                     <div style="display:flex; align-items:center; gap:8px; flex: 0 0 220px;">
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:65px;">C.TIME</label>
                         <input type="text" class="form-input" id="${idPrefix}Ct1" placeholder="예: 60" value="${v('ct1')}" style="margin-top:0;">
+                        <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">sec</span>
                     </div>
                     <button type="button" class="btn btn-sm btn-outline" id="${idPrefix}AddBtn2" style="height:38px; padding:0 10px; ${v('process2') || v('process3') ? 'display:none !important;' : ''}" onclick="this.style.setProperty('display', 'none', 'important'); document.getElementById('${idPrefix}Row2').style.setProperty('display', 'flex', 'important');">
                         <span class="material-symbols-outlined" style="font-size:18px;">add</span>
@@ -1359,6 +1366,7 @@ const SettingsModule = (function() {
                     <div style="display:flex; align-items:center; gap:8px; flex: 0 0 220px;">
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:65px;">C.TIME</label>
                         <input type="text" class="form-input" id="${idPrefix}Ct2" placeholder="예: 60" value="${v('ct2')}" style="margin-top:0;">
+                        <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">sec</span>
                     </div>
                     <div style="display:flex;gap:4px;">
                         <button type="button" class="btn btn-sm btn-outline" id="${idPrefix}AddBtn3" style="height:38px; padding:0 10px; ${v('process3') ? 'display:none !important;' : ''}" onclick="this.style.setProperty('display', 'none', 'important'); document.getElementById('${idPrefix}Row3').style.setProperty('display', 'flex', 'important');">
@@ -1383,6 +1391,7 @@ const SettingsModule = (function() {
                     <div style="display:flex; align-items:center; gap:8px; flex: 0 0 220px;">
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:65px;">C.TIME</label>
                         <input type="text" class="form-input" id="${idPrefix}Ct3" placeholder="예: 60" value="${v('ct3')}" style="margin-top:0;">
+                        <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">sec</span>
                     </div>
                     <div style="display:flex;gap:4px;">
                         <button type="button" class="btn btn-sm btn-outline" id="${idPrefix}AddBtn4" style="height:38px; padding:0 10px; ${v('process4') ? 'display:none !important;' : ''}" onclick="this.style.setProperty('display', 'none', 'important'); document.getElementById('${idPrefix}Row4').style.setProperty('display', 'flex', 'important');">
@@ -1407,6 +1416,7 @@ const SettingsModule = (function() {
                     <div style="display:flex; align-items:center; gap:8px; flex: 0 0 220px;">
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:65px;">C.TIME</label>
                         <input type="text" class="form-input" id="${idPrefix}Ct4" placeholder="예: 60" value="${v('ct4')}" style="margin-top:0;">
+                        <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">sec</span>
                     </div>
                     <button type="button" class="btn btn-sm btn-danger" style="height:38px; padding:0 10px;" onclick="SettingsModule.removeProcessRow('${idPrefix}', 4)">
                         <span class="material-symbols-outlined" style="font-size:18px;">remove</span>
@@ -1428,6 +1438,7 @@ const SettingsModule = (function() {
                     <div style="display:flex;align-items:center;gap:8px;flex:0 0 240px;">
                         <label class="form-label" style="white-space:nowrap;margin-bottom:0;width:70px;">C.TIME</label>
                         <input type="text" class="form-input" id="${idPrefix}AppearanceCt" placeholder="예: 60" value="${v('appearanceCt')}" style="margin-top:0;">
+                        <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">sec</span>
                     </div>
                 </div>
             </div>
@@ -2250,6 +2261,32 @@ const SettingsModule = (function() {
         }
     }
 
+    /* '선택 안함' 또는 빈 공정값 정규화 — 저장 시 빈 문자열로 통일 */
+    function _normalizeProcess(val) {
+        return (val === '선택 안함' || val === undefined || val === null) ? '' : val;
+    }
+
+    /* 모든 제품의 빈/잘못된 공정 행 일괄 정리 */
+    async function cleanupEmptyProcessRows() {
+        const products = Storage.getAll(PRODUCTS_STORE);
+        let fixedCount = 0;
+        for (const p of products) {
+            let changed = false;
+            const updated = { ...p };
+            for (const n of [2, 3, 4]) {
+                const proc = _normalizeProcess(updated[`process${n}`]);
+                if (proc !== updated[`process${n}`] || (!proc && (updated[`cvt${n}`] || updated[`ct${n}`]))) {
+                    updated[`process${n}`] = proc;
+                    if (!proc) { updated[`cvt${n}`] = ''; updated[`ct${n}`] = ''; }
+                    changed = true;
+                }
+            }
+            if (changed) { await Storage.update(PRODUCTS_STORE, p.id, updated); fixedCount++; }
+        }
+        UIUtils.toast(`공정 행 정리 완료: ${fixedCount}개 제품 수정됨`, fixedCount > 0 ? 'success' : 'info');
+        if (fixedCount > 0) SettingsModule.switchTab('products');
+    }
+
     /* 제조공정 행 삭제: rowNum(2~4) 이후 행 모두 초기화·숨김, 이전 행의 + 버튼 복원 */
     function removeProcessRow(prefix, rowNum) {
         for (let i = rowNum; i <= 4; i++) {
@@ -2284,15 +2321,15 @@ const SettingsModule = (function() {
             process1: g(`${prefix}Process1`).trim(),
             ct1: g(`${prefix}Ct1`).trim(),
             cvt1: g(`${prefix}Cvt1`).trim(),
-            process2: g(`${prefix}Process2`).trim(),
-            ct2: g(`${prefix}Ct2`).trim(),
-            cvt2: g(`${prefix}Cvt2`).trim(),
-            process3: g(`${prefix}Process3`).trim(),
-            ct3: g(`${prefix}Ct3`).trim(),
-            cvt3: g(`${prefix}Cvt3`).trim(),
-            process4: g(`${prefix}Process4`).trim(),
-            ct4: g(`${prefix}Ct4`).trim(),
-            cvt4: g(`${prefix}Cvt4`).trim(),
+            process2: _normalizeProcess(g(`${prefix}Process2`).trim()),
+            ct2: _normalizeProcess(g(`${prefix}Process2`).trim()) ? g(`${prefix}Ct2`).trim() : '',
+            cvt2: _normalizeProcess(g(`${prefix}Process2`).trim()) ? g(`${prefix}Cvt2`).trim() : '',
+            process3: _normalizeProcess(g(`${prefix}Process3`).trim()),
+            ct3: _normalizeProcess(g(`${prefix}Process3`).trim()) ? g(`${prefix}Ct3`).trim() : '',
+            cvt3: _normalizeProcess(g(`${prefix}Process3`).trim()) ? g(`${prefix}Cvt3`).trim() : '',
+            process4: _normalizeProcess(g(`${prefix}Process4`).trim()),
+            ct4: _normalizeProcess(g(`${prefix}Process4`).trim()) ? g(`${prefix}Ct4`).trim() : '',
+            cvt4: _normalizeProcess(g(`${prefix}Process4`).trim()) ? g(`${prefix}Cvt4`).trim() : '',
             appearanceCvt: g(`${prefix}AppearanceCvt`).trim(),
             appearanceCt: g(`${prefix}AppearanceCt`).trim(),
             code: g(`${prefix}Code`).trim(),
@@ -11701,6 +11738,7 @@ const SettingsModule = (function() {
         updateProduct,
         onProductProcessChange,
         removeProcessRow,
+        cleanupEmptyProcessRows,
         removeProduct,
         addProductPaintRow,
         removeProductPaintRow,

@@ -41,6 +41,28 @@ const App = (function() {
 
             // 3. 모듈 등록
             registerModules();
+
+            // 3-1. 대형 모듈 lazy 등록 (production_mgmt_v91.js — 1.47MB)
+            Router.registerLazy(
+                ['prod-standards', 'prod-conditions', 'paint-mix', 'prod-sub-materials',
+                 'prod-quality', 'quality-performance', 'limit-samples', 'prod-spc', 'prod-equipment'],
+                'js/modules/production_mgmt_v91.js?v=103',
+                function() {
+                    Router.registerModule('prod-standards',
+                        (typeof ProdStandardsModule !== 'undefined') ? ProdStandardsModule
+                        : { render: function(c) { c.innerHTML = '<div class="empty-state"><h4>제조 관리 표준 모듈 로드 실패</h4></div>'; } });
+                    Router.registerModule('prod-conditions',
+                        (typeof ProdConditionsModule !== 'undefined') ? ProdConditionsModule
+                        : { render: function(c) { c.innerHTML = '<div class="empty-state"><h4>작업조건 관리 모듈 로드 실패</h4></div>'; } });
+                    Router.registerModule('paint-mix', PaintMixModule);
+                    Router.registerModule('prod-sub-materials', ProdSubMaterialsModule);
+                    Router.registerModule('prod-quality', ProdQualityModule);
+                    Router.registerModule('quality-performance', QualityPerformanceModule);
+                    Router.registerModule('limit-samples', LimitSamplesModule);
+                    Router.registerModule('prod-spc', ProdSpcModule);
+                    Router.registerModule('prod-equipment', ProdEquipmentModule);
+                }
+            );
             console.log('✅ 모듈 등록 완료');
 
             // 4. 라우터 초기화
@@ -236,62 +258,14 @@ const App = (function() {
         });
         Router.registerModule('jig-layout', JigLayoutModule);
         Router.registerModule('five-s', FiveSModule);
-        const safeProdStandardsModule = (typeof ProdStandardsModule !== 'undefined' && ProdStandardsModule)
-            ? ProdStandardsModule
-            : {
-                render(container) {
-                    container.innerHTML = `
-                        <div class="empty-state" style="margin-top:40px;">
-                            <span class="material-symbols-outlined" style="font-size:42px;color:var(--accent-red);">error</span>
-                            <h4 style="margin-top:10px;">제조 관리 표준 모듈 로드 실패</h4>
-                            <p style="color:var(--text-secondary);">브라우저를 새로고침한 뒤 다시 시도해 주세요.</p>
-                        </div>
-                    `;
-                }
-            };
-        Router.registerModule('prod-standards', safeProdStandardsModule);
-        const safeProdConditionsModule = (typeof ProdConditionsModule !== 'undefined' && ProdConditionsModule)
-            ? ProdConditionsModule
-            : {
-                render(container) {
-                    container.innerHTML = `
-                        <div class="empty-state" style="margin-top:40px;">
-                            <span class="material-symbols-outlined" style="font-size:42px;color:var(--accent-red);">error</span>
-                            <h4 style="margin-top:10px;">작업조건 관리 모듈 로드 실패</h4>
-                            <p style="color:var(--text-secondary);">브라우저를 새로고침한 뒤 다시 시도해 주세요.</p>
-                        </div>
-                    `;
-                }
-            };
-        Router.registerModule('prod-conditions', safeProdConditionsModule);
-        const missingStandardModule = function(name) {
-            return {
-                render(container) {
-                    container.innerHTML = `
-                        <div class="empty-state" style="margin-top:40px;">
-                            <span class="material-symbols-outlined" style="font-size:42px;color:var(--accent-red);">error</span>
-                            <h4 style="margin-top:10px;">${name} 모듈 로드 실패</h4>
-                            <p style="color:var(--text-secondary);">브라우저 캐시를 새로고침한 뒤 다시 시도해 주세요.</p>
-                        </div>
-                    `;
-                }
-            };
-        };
         Router.registerModule('robot-pg-std', RobotPgStdModule);
         Router.registerModule('drying-std', DryingStdModule);
         Router.registerModule('customer-return-nc-std',
             (typeof CustomerReturnNcStdModule !== 'undefined' && CustomerReturnNcStdModule)
                 ? CustomerReturnNcStdModule
-                : missingStandardModule('고객 반송품 부적합품 처리 기준서')
+                : { render: function(c) { c.innerHTML = '<div class="empty-state"><h4>고객 반송품 부적합품 처리 기준서 모듈 로드 실패</h4></div>'; } }
         );
-        Router.registerModule('paint-mix', PaintMixModule);
-        Router.registerModule('prod-sub-materials', ProdSubMaterialsModule);
-        Router.registerModule('prod-quality', ProdQualityModule);
-        Router.registerModule('quality-performance', QualityPerformanceModule);
         Router.registerModule('improvement-activity', ImprovementActivityModule);
-        Router.registerModule('limit-samples', LimitSamplesModule);
-        Router.registerModule('prod-spc', ProdSpcModule);
-        Router.registerModule('prod-equipment', ProdEquipmentModule);
         Router.registerModule('settings', SettingsModule);
         Router.registerModule('incoming-overview', IncomingOverviewModule);
         Router.registerModule('incoming-delete-log', IncomingDeleteLogModule);
