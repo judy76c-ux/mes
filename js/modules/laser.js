@@ -2296,7 +2296,6 @@ var LaserInspectionModule = (function() {
     function _closeModal() {
         const el = document.getElementById('liCustomModal');
         if (el) el.remove();
-        _closeNumericPad();
     }
 
     function _buildWorkInfoCard(work) {
