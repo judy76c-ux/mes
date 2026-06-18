@@ -4234,7 +4234,7 @@ const PaintingInspectionModule = (function() {
                                     ${injectionDefects.map(d => `
                                         <div style="display:flex; flex-direction:column; gap:4px;">
                                             <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary);">${d.name}</label>
-                                            <input type="text" inputmode="none" readonly id="inj-${d.id}" value="0" min="0" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem; cursor:pointer; background:white;" onclick="PaintingInspectionModule._showNumericPad(this)">
+                                            <input type="number" inputmode="numeric" id="inj-${d.id}" value="0" min="0" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem;" oninput="PaintingInspectionModule._updateDefectTotal()">
                                         </div>
                                     `).join('')}
                                 </div>
@@ -4250,7 +4250,7 @@ const PaintingInspectionModule = (function() {
                                     ${paintingDefects.map(d => `
                                         <div style="display:flex; flex-direction:column; gap:4px;">
                                             <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary);">${d.name}</label>
-                                            <input type="text" inputmode="none" readonly id="paint-${d.id}" value="0" min="0" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem; cursor:pointer; background:white;" onclick="PaintingInspectionModule._showNumericPad(this)">
+                                            <input type="number" inputmode="numeric" id="paint-${d.id}" value="0" min="0" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem;" oninput="PaintingInspectionModule._updateDefectTotal()">
                                         </div>
                                     `).join('')}
                                 </div>
@@ -4383,134 +4383,6 @@ const PaintingInspectionModule = (function() {
         Router.navigate('painting-inspection');
     }
 
-    // 숫자 키패드 표시
-    function _showNumericPad(inputEl) {
-        // 기존 키패드 정리 (이벤트 리스너 포함)
-        _closeNumericPad();
-        // 태블릿 소프트 키보드 억제
-        inputEl.blur();
-
-        // 현재 값 표시용
-        let currentVal = inputEl.value || '0';
-
-        const pad = document.createElement('div');
-        pad.id = 'numericPad';
-        pad.style.cssText = `
-            position:fixed; z-index:99999;
-            background:white; border-radius:16px;
-            padding:16px; box-shadow:0 8px 32px rgba(0,0,0,0.25);
-            width:220px;
-        `;
-
-        pad.innerHTML = `
-            <div style="text-align:center; margin-bottom:10px; font-size:0.85rem; color:var(--text-muted); font-weight:600;">${inputEl.previousElementSibling ? inputEl.previousElementSibling.textContent : '입력'}</div>
-            <div id="numpadDisplay" style="text-align:center; font-size:2rem; font-weight:700; color:var(--accent-blue); background:var(--bg-secondary); border-radius:8px; padding:10px; margin-bottom:12px; min-height:56px;">${currentVal}</div>
-            <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px;">
-                ${[7, 8, 9, 4, 5, 6, 1, 2, 3].map(n => `
-                    <button onclick="PaintingInspectionModule._numpadInput('${n}')" style="padding:14px; font-size:1.2rem; font-weight:600; border:1px solid var(--border); border-radius:8px; background:white; cursor:pointer;">${n}</button>
-                `).join('')}
-                <button onclick="PaintingInspectionModule._numpadDelete()" style="padding:14px; font-size:1.2rem; border:1px solid var(--border); border-radius:8px; background:#fff3f3; cursor:pointer;">⌫</button>
-                <button onclick="PaintingInspectionModule._numpadInput('0')" style="padding:14px; font-size:1.2rem; font-weight:600; border:1px solid var(--border); border-radius:8px; background:white; cursor:pointer;">0</button>
-                <button onclick="PaintingInspectionModule._numpadConfirm()" style="padding:14px; font-size:1rem; font-weight:700; border:none; border-radius:8px; background:var(--accent-blue); color:white; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:4px;"><span style="font-size:1.1rem;">↵</span>확인</button>
-            </div>
-        `;
-
-        // 위치: 입력 필드 기준
-        const rect = inputEl.getBoundingClientRect();
-        let top = rect.bottom + 8;
-        let left = rect.left;
-
-        // 화면 밖으로 나가지 않도록 조정
-        if (left + 220 > window.innerWidth) left = window.innerWidth - 228;
-        if (top + 340 > window.innerHeight) top = rect.top - 348;
-
-        pad.style.top = top + 'px';
-        pad.style.left = left + 'px';
-
-        document.body.appendChild(pad);
-
-        // 타겟 input 저장
-        pad._targetInput = inputEl;
-
-        // 키보드 입력 시: 숫자만 허용 + 키패드 디스플레이 동기화
-        inputEl._numpadInputHandler = function() {
-            // 숫자 외 문자 제거
-            let raw = inputEl.value.replace(/[^0-9]/g, '');
-            if (raw.length > 5) raw = raw.substring(0, 5);
-            if (inputEl.value !== raw) inputEl.value = raw;
-            const display = document.getElementById('numpadDisplay');
-            if (display) display.textContent = raw || '0';
-            _updateDefectTotal();
-        };
-        inputEl.addEventListener('input', inputEl._numpadInputHandler);
-
-        // 외부 클릭 시 닫기
-        setTimeout(() => {
-            document.addEventListener('click', _numpadOutsideClick);
-        }, 100);
-        // Enter 키로 완료
-        document.addEventListener('keydown', _numpadKeyHandler);
-    }
-
-    function _numpadKeyHandler(e) {
-        if (e.key === 'Enter') { e.preventDefault(); _numpadConfirm(); }
-        else if (e.key === 'Backspace') { e.preventDefault(); _numpadDelete(); }
-        else if (/^[0-9]$/.test(e.key)) { e.preventDefault(); _numpadInput(e.key); }
-    }
-
-    function _numpadOutsideClick(e) {
-        const pad = document.getElementById('numericPad');
-        if (!pad) {
-            document.removeEventListener('click', _numpadOutsideClick);
-            return;
-        }
-        // 키패드 내부 클릭이면 무시
-        if (pad.contains(e.target)) return;
-        // 다른 불량 input 클릭이면: 키패드 닫고 새 키패드는 _showNumericPad가 열어줌
-        _closeNumericPad();
-    }
-
-    function _closeNumericPad() {
-        const pad = document.getElementById('numericPad');
-        if (!pad) return;
-        if (pad._targetInput && pad._targetInput._numpadInputHandler) {
-            pad._targetInput.removeEventListener('input', pad._targetInput._numpadInputHandler);
-            delete pad._targetInput._numpadInputHandler;
-        }
-        pad.remove();
-        document.removeEventListener('click', _numpadOutsideClick);
-        document.removeEventListener('keydown', _numpadKeyHandler);
-    }
-
-    function _numpadInput(digit) {
-        const pad = document.getElementById('numericPad');
-        if (!pad) return;
-        const display = document.getElementById('numpadDisplay');
-        let val = display.textContent === '0' ? digit : display.textContent + digit;
-        if (val.length > 5) return; // 최대 5자리
-        display.textContent = val;
-    }
-
-    function _numpadDelete() {
-        const display = document.getElementById('numpadDisplay');
-        if (!display) return;
-        const val = display.textContent;
-        display.textContent = val.length <= 1 ? '0' : val.slice(0, -1);
-    }
-
-    function _numpadConfirm() {
-        const pad = document.getElementById('numericPad');
-        if (!pad) return;
-        const display = document.getElementById('numpadDisplay');
-        const val = display.textContent || '0';
-
-        if (pad._targetInput) {
-            pad._targetInput.value = parseInt(val) || 0;
-            _updateDefectTotal();
-        }
-
-        _closeNumericPad();
-    }
 
     // 제품 선택 목록
     function renderProductSelector() {
@@ -5968,10 +5840,9 @@ const PaintingInspectionModule = (function() {
                     const val = defectMap[dt.id] || defectMap[dt.name] || 0;
                     return `<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
                         <div style="font-size:0.78rem;font-weight:600;color:${color};margin-bottom:6px;">${dt.name}</div>
-                        <input type="text" class="form-input defect-count-input" data-defect-id="${dt.id}"
-                            value="${val}" inputmode="none" readonly
-                            style="text-align:right;font-weight:700;font-size:1rem;padding:4px 8px;cursor:pointer;"
-                            onclick="PaintingInspectionModule._showNumericPad(this)">
+                        <input type="number" class="form-input defect-count-input" data-defect-id="${dt.id}"
+                            value="${val}" min="0" inputmode="numeric"
+                            style="text-align:right;font-weight:700;font-size:1rem;padding:4px 8px;">
                     </div>`;
                 }).join('') + `</div>`;
         }
@@ -6741,10 +6612,6 @@ const PaintingInspectionModule = (function() {
         _syncInspectorOptions,
         showInspectionDetail,
         _closeInspectionModal,
-        _showNumericPad,
-        _numpadInput,
-        _numpadDelete,
-        _numpadConfirm,
         focusNonconformStandardPasteZone,
         handleNonconformStandardPaste,
         printNonconformStandardPage

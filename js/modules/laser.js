@@ -2405,12 +2405,9 @@ var LaserInspectionModule = (function() {
                     ${defects.map(d => `
                         <div style="display:flex;flex-direction:column;gap:8px;">
                             <label style="font-size:0.9rem;font-weight:600;margin:0;">${d.name}</label>
-                            <input type="text" inputmode="numeric" id="${prefix}${d.id}" data-defect-name="${d.name}"
+                            <input type="number" inputmode="numeric" id="${prefix}${d.id}" data-defect-name="${d.name}"
                                 value="${dd[d.name]||0}" min="0"
-                                style="padding:8px;border:1px solid var(--border-color);border-radius:4px;text-align:center;font-weight:600;font-size:0.95rem;cursor:pointer;background:white;"
-                                onfocus="if(this.value==='0')this.value=''"
-                                onclick="LaserInspectionModule._showNumericPad(this)"
-                                onkeydown="if(!/[0-9]|Backspace|Delete|ArrowLeft|ArrowRight|Tab/.test(event.key)){event.preventDefault();}"
+                                style="padding:8px;border:1px solid var(--border-color);border-radius:4px;text-align:center;font-weight:600;font-size:0.95rem;"
                                 oninput="LaserInspectionModule._updateDefectTotal()">
                         </div>`).join('')}
                 </div>
@@ -2670,85 +2667,6 @@ var LaserInspectionModule = (function() {
     }
 
     // ─ 숫자 키패드 ───────────────────────────────────────────────────
-    function _showNumericPad(inputEl) {
-        _closeNumericPad();
-        const pad = document.createElement('div');
-        pad.id = 'liNumericPad';
-        pad.style.cssText = 'position:fixed;z-index:99999;background:white;border-radius:16px;padding:16px;box-shadow:0 8px 32px rgba(0,0,0,0.25);width:220px;';
-        pad.innerHTML = `
-            <div style="text-align:center;margin-bottom:10px;font-size:0.85rem;color:var(--text-muted);font-weight:600;">
-                ${inputEl.previousElementSibling?.textContent||'입력'}
-            </div>
-            <div id="liNumpadDisplay" style="text-align:center;font-size:2rem;font-weight:700;color:var(--accent-blue);background:var(--bg-secondary);border-radius:8px;padding:10px;margin-bottom:12px;min-height:56px;">${inputEl.value||'0'}</div>
-            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">
-                ${[7,8,9,4,5,6,1,2,3].map(n=>`<button onclick="LaserInspectionModule._numpadInput('${n}')" style="padding:14px;font-size:1.2rem;font-weight:600;border:1px solid var(--border-color);border-radius:8px;background:white;cursor:pointer;">${n}</button>`).join('')}
-                <button onclick="LaserInspectionModule._numpadDelete()" style="padding:14px;font-size:1.2rem;border:1px solid var(--border-color);border-radius:8px;background:#fff3f3;cursor:pointer;">⌫</button>
-                <button onclick="LaserInspectionModule._numpadInput('0')" style="padding:14px;font-size:1.2rem;font-weight:600;border:1px solid var(--border-color);border-radius:8px;background:white;cursor:pointer;">0</button>
-                <button onclick="LaserInspectionModule._numpadConfirm()" style="padding:14px;font-size:1rem;font-weight:700;border:none;border-radius:8px;background:var(--accent-blue);color:white;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;"><span style="font-size:1.1rem;">↵</span>확인</button>
-            </div>`;
-        const rect = inputEl.getBoundingClientRect();
-        let top = rect.bottom + 8, left = rect.left;
-        if (left + 220 > window.innerWidth)  left = window.innerWidth - 228;
-        if (top  + 340 > window.innerHeight) top  = rect.top - 348;
-        pad.style.top = top + 'px'; pad.style.left = left + 'px';
-        document.body.appendChild(pad);
-        pad._targetInput = inputEl;
-        inputEl._liPadHandler = () => {
-            let raw = inputEl.value.replace(/[^0-9]/g,'').substring(0,5);
-            if (inputEl.value !== raw) inputEl.value = raw;
-            const dp = document.getElementById('liNumpadDisplay');
-            if (dp) dp.textContent = raw||'0';
-            _updateDefectTotal();
-        };
-        inputEl.addEventListener('input', inputEl._liPadHandler);
-        setTimeout(() => document.addEventListener('click', _numpadOutsideClick), 100);
-        document.addEventListener('keydown', _numpadKeyHandler);
-    }
-
-    function _numpadKeyHandler(e) {
-        if (e.key === 'Enter')          { e.preventDefault(); _numpadConfirm(); }
-        else if (e.key === 'Backspace') { e.preventDefault(); _numpadDelete(); }
-        else if (/^[0-9]$/.test(e.key)){ e.preventDefault(); _numpadInput(e.key); }
-    }
-
-    function _numpadOutsideClick(e) {
-        const pad = document.getElementById('liNumericPad');
-        if (!pad) { document.removeEventListener('click',_numpadOutsideClick); return; }
-        if (pad.contains(e.target)) return;
-        _closeNumericPad();
-    }
-
-    function _closeNumericPad() {
-        const pad = document.getElementById('liNumericPad');
-        if (!pad) return;
-        if (pad._targetInput?._liPadHandler) {
-            pad._targetInput.removeEventListener('input', pad._targetInput._liPadHandler);
-            delete pad._targetInput._liPadHandler;
-        }
-        pad.remove();
-        document.removeEventListener('click', _numpadOutsideClick);
-        document.removeEventListener('keydown', _numpadKeyHandler);
-    }
-
-    function _numpadInput(d) {
-        const dp = document.getElementById('liNumpadDisplay');
-        if (!dp) return;
-        let v = dp.textContent === '0' ? d : dp.textContent + d;
-        if (v.length <= 5) dp.textContent = v;
-    }
-
-    function _numpadDelete() {
-        const dp = document.getElementById('liNumpadDisplay');
-        if (dp) dp.textContent = dp.textContent.length <= 1 ? '0' : dp.textContent.slice(0,-1);
-    }
-
-    function _numpadConfirm() {
-        const pad = document.getElementById('liNumericPad');
-        if (!pad) return;
-        const val = document.getElementById('liNumpadDisplay')?.textContent || '0';
-        if (pad._targetInput) { pad._targetInput.value = parseInt(val)||0; _updateDefectTotal(); }
-        _closeNumericPad();
-    }
 
     function remove(id) {
         UIUtils.confirm('해당 검사 기록을 삭제하시겠습니까?', async () => {
@@ -2765,7 +2683,6 @@ var LaserInspectionModule = (function() {
         showNonconformStandardPage, showInspectionPage,
         focusNonconformStandardPasteZone, handleNonconformStandardPaste, printNonconformStandardPage,
         _updateDefectTotal, _updateDefectQty, _updateGoodQty, _calculateInspectionTime,
-        _showNumericPad, _numpadInput, _numpadDelete, _numpadConfirm
     };
 })();
 
