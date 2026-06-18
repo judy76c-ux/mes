@@ -4411,7 +4411,7 @@ const PaintingInspectionModule = (function() {
                 `).join('')}
                 <button onclick="PaintingInspectionModule._numpadDelete()" style="padding:14px; font-size:1.2rem; border:1px solid var(--border); border-radius:8px; background:#fff3f3; cursor:pointer;">⌫</button>
                 <button onclick="PaintingInspectionModule._numpadInput('0')" style="padding:14px; font-size:1.2rem; font-weight:600; border:1px solid var(--border); border-radius:8px; background:white; cursor:pointer;">0</button>
-                <button onclick="PaintingInspectionModule._numpadConfirm()" style="padding:14px; font-size:1rem; font-weight:700; border:none; border-radius:8px; background:var(--accent-blue); color:white; cursor:pointer;">완료</button>
+                <button onclick="PaintingInspectionModule._numpadConfirm()" style="padding:14px; font-size:1rem; font-weight:700; border:none; border-radius:8px; background:var(--accent-blue); color:white; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:4px;"><span style="font-size:1.1rem;">↵</span>확인</button>
             </div>
         `;
 
