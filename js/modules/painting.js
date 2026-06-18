@@ -4236,7 +4236,7 @@ const PaintingInspectionModule = (function() {
                                     ${injectionDefects.map(d => `
                                         <div style="display:flex; flex-direction:column; gap:4px;">
                                             <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary);">${d.name}</label>
-                                            <input type="text" inputmode="numeric" id="inj-${d.id}" value="0" min="0" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem; cursor:pointer; background:white;" onfocus="if(this.value==='0') this.value=''" onclick="PaintingInspectionModule._showNumericPad(this)" onkeydown="if(!/[0-9]|Backspace|Delete|ArrowLeft|ArrowRight|Tab/.test(event.key)){event.preventDefault();}" oninput="PaintingInspectionModule._updateDefectTotal()">
+                                            <input type="text" inputmode="none" readonly id="inj-${d.id}" value="0" min="0" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem; cursor:pointer; background:white;" onclick="PaintingInspectionModule._showNumericPad(this)">
                                         </div>
                                     `).join('')}
                                 </div>
@@ -4252,7 +4252,7 @@ const PaintingInspectionModule = (function() {
                                     ${paintingDefects.map(d => `
                                         <div style="display:flex; flex-direction:column; gap:4px;">
                                             <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary);">${d.name}</label>
-                                            <input type="text" inputmode="numeric" id="paint-${d.id}" value="0" min="0" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem; cursor:pointer; background:white;" onfocus="if(this.value==='0') this.value=''" onclick="PaintingInspectionModule._showNumericPad(this)" onkeydown="if(!/[0-9]|Backspace|Delete|ArrowLeft|ArrowRight|Tab/.test(event.key)){event.preventDefault();}" oninput="PaintingInspectionModule._updateDefectTotal()">
+                                            <input type="text" inputmode="none" readonly id="paint-${d.id}" value="0" min="0" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem; cursor:pointer; background:white;" onclick="PaintingInspectionModule._showNumericPad(this)">
                                         </div>
                                     `).join('')}
                                 </div>
@@ -5961,9 +5961,10 @@ const PaintingInspectionModule = (function() {
                     const val = defectMap[dt.id] || defectMap[dt.name] || 0;
                     return `<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
                         <div style="font-size:0.78rem;font-weight:600;color:${color};margin-bottom:6px;">${dt.name}</div>
-                        <input type="number" class="form-input defect-count-input" data-defect-id="${dt.id}"
-                            value="${val}" min="0" inputmode="none"
-                            style="text-align:right;font-weight:700;font-size:1rem;padding:4px 8px;">
+                        <input type="text" class="form-input defect-count-input" data-defect-id="${dt.id}"
+                            value="${val}" inputmode="none" readonly
+                            style="text-align:right;font-weight:700;font-size:1rem;padding:4px 8px;cursor:pointer;"
+                            onclick="PaintingInspectionModule._showNumericPad(this)">
                     </div>`;
                 }).join('') + `</div>`;
         }
