@@ -2405,10 +2405,10 @@ var LaserInspectionModule = (function() {
                     ${defects.map(d => `
                         <div style="display:flex;flex-direction:column;gap:8px;">
                             <label style="font-size:0.9rem;font-weight:600;margin:0;">${d.name}</label>
-                            <input type="number" inputmode="numeric" id="${prefix}${d.id}" data-defect-name="${d.name}"
-                                value="${dd[d.name]||0}" min="0"
+                            <input type="text" inputmode="numeric" enterkeyhint="done" id="${prefix}${d.id}" data-defect-name="${d.name}"
+                                value="${dd[d.name]||0}"
                                 style="padding:8px;border:1px solid var(--border-color);border-radius:4px;text-align:center;font-weight:600;font-size:0.95rem;"
-                                oninput="LaserInspectionModule._updateDefectTotal()">
+                                oninput="this.value=this.value.replace(/[^0-9]/g,'');LaserInspectionModule._updateDefectTotal()">
                         </div>`).join('')}
                 </div>
             </div>`;

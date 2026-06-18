@@ -4234,7 +4234,7 @@ const PaintingInspectionModule = (function() {
                                     ${injectionDefects.map(d => `
                                         <div style="display:flex; flex-direction:column; gap:4px;">
                                             <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary);">${d.name}</label>
-                                            <input type="number" inputmode="numeric" id="inj-${d.id}" value="0" min="0" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem;" oninput="PaintingInspectionModule._updateDefectTotal()">
+                                            <input type="text" inputmode="numeric" enterkeyhint="done" id="inj-${d.id}" value="0" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem;" oninput="this.value=this.value.replace(/[^0-9]/g,'');PaintingInspectionModule._updateDefectTotal()">
                                         </div>
                                     `).join('')}
                                 </div>
@@ -4250,7 +4250,7 @@ const PaintingInspectionModule = (function() {
                                     ${paintingDefects.map(d => `
                                         <div style="display:flex; flex-direction:column; gap:4px;">
                                             <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary);">${d.name}</label>
-                                            <input type="number" inputmode="numeric" id="paint-${d.id}" value="0" min="0" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem;" oninput="PaintingInspectionModule._updateDefectTotal()">
+                                            <input type="text" inputmode="numeric" enterkeyhint="done" id="paint-${d.id}" value="0" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem;" oninput="this.value=this.value.replace(/[^0-9]/g,'');PaintingInspectionModule._updateDefectTotal()">
                                         </div>
                                     `).join('')}
                                 </div>
@@ -5840,9 +5840,10 @@ const PaintingInspectionModule = (function() {
                     const val = defectMap[dt.id] || defectMap[dt.name] || 0;
                     return `<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
                         <div style="font-size:0.78rem;font-weight:600;color:${color};margin-bottom:6px;">${dt.name}</div>
-                        <input type="number" class="form-input defect-count-input" data-defect-id="${dt.id}"
-                            value="${val}" min="0" inputmode="numeric"
-                            style="text-align:right;font-weight:700;font-size:1rem;padding:4px 8px;">
+                        <input type="text" class="form-input defect-count-input" data-defect-id="${dt.id}"
+                            value="${val}" inputmode="numeric" enterkeyhint="done"
+                            style="text-align:right;font-weight:700;font-size:1rem;padding:4px 8px;"
+                            oninput="this.value=this.value.replace(/[^0-9]/g,'')">
                     </div>`;
                 }).join('') + `</div>`;
         }
