@@ -4000,7 +4000,6 @@ const PaintingInspectionModule = (function() {
                             <th>차종</th>
                             <th>품명</th>
                             <th>컬러</th>
-                            <th style="text-align:center;">품목구분</th>
                             <th>사출 LOT</th>
                             <th style="text-align:right;">도장 완료(검사대기) 수량</th>
                             <th style="width:120px;">외관 검사</th>
@@ -4026,7 +4025,6 @@ const PaintingInspectionModule = (function() {
                                     <td>${w.carModel || '-'}</td>
                                     <td><strong>${w.partName || '-'}</strong></td>
                                     <td>${w.color || '-'}</td>
-                                    <td style="text-align:center;">${UIUtils.itemTypeBadge(w.carModel, w.partName, w.color)}</td>
                                     <td style="font-family:monospace;font-size:0.85rem;">${lotDisplay}</td>
                                     <td style="text-align:right;font-weight:600;">${UIUtils.formatNumber(w.productionQty || 0)}</td>
                                     <td style="text-align:center;">
