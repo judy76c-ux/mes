@@ -170,7 +170,56 @@ const ApiClient = (function() {
   }
 
   // 사진 업로드: base64 data URL → NAS 서버 저장, URL 반환
+  function dataUrlToFile(dataUrl, filename) {
+    const parts = String(dataUrl || '').split(',');
+    const meta = parts[0] || '';
+    const base64 = parts[1] || '';
+    const mime = (meta.match(/data:([^;]+)/) || [])[1] || 'image/jpeg';
+    const bin = atob(base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new File([bytes], filename, { type: mime, lastModified: Date.now() });
+  }
+
+  function compressImageFile(file, options = {}) {
+    const maxSize = options.maxSize || 1280;
+    const quality = options.quality || 0.72;
+    if (!file || !String(file.type || '').startsWith('image/')) return Promise.resolve(file);
+    if (/image\/gif/i.test(file.type || '')) return Promise.resolve(file);
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const img = new Image();
+        img.onload = function() {
+          try {
+            const ratio = Math.min(1, maxSize / Math.max(img.width || 1, img.height || 1));
+            const w = Math.max(1, Math.round((img.width || 1) * ratio));
+            const h = Math.max(1, Math.round((img.height || 1) * ratio));
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d', { alpha: false });
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(img, 0, 0, w, h);
+            const dataUrl = canvas.toDataURL('image/jpeg', quality);
+            const baseName = String(file.name || 'photo').replace(/\.[^.]+$/, '');
+            const compressed = dataUrlToFile(dataUrl, `${baseName}_compressed.jpg`);
+            resolve(compressed.size < file.size ? compressed : file);
+          } catch (err) {
+            resolve(file);
+          }
+        };
+        img.onerror = () => resolve(file);
+        img.src = e.target.result;
+      };
+      reader.onerror = () => resolve(file);
+      reader.readAsDataURL(file);
+    });
+  }
+
   async function uploadPhoto(file, subdir) {
+    const uploadFile = await compressImageFile(file);
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = async function(e) {
@@ -179,7 +228,7 @@ const ApiClient = (function() {
           const commaIdx = dataUrl.indexOf(',');
           const base64 = dataUrl.slice(commaIdx + 1);
           const contentType = dataUrl.slice(5, commaIdx).split(';')[0];
-          const ext = file.name.split('.').pop().toLowerCase();
+          const ext = String(uploadFile.name || file.name || 'jpg').split('.').pop().toLowerCase();
           const safeName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
           const ym = new Date().toISOString().slice(0, 7); // YYYY-MM
           const fullSubdir = `${subdir || 'misc'}/${ym}`;
@@ -195,7 +244,7 @@ const ApiClient = (function() {
         }
       };
       reader.onerror = () => reject(new Error('파일 읽기 실패'));
-      reader.readAsDataURL(file);
+      reader.readAsDataURL(uploadFile);
     });
   }
 

@@ -361,6 +361,8 @@ var ProdStandardsModule = (function() {
     const DOC_CP_STATUS    = 'cp-status';
     const STANDARD_DOC_KIND = 'linked_standard';
     const CP_FLOW_DOC_KIND = 'cp_flow_config';
+    const PROCESS_FLOW_TEMPLATE_KIND = 'process_flow_template';
+    const PFMEA_TEMPLATE_KIND = 'pfmea_template';
     const STANDARD_DOC_TYPES = {
         'film-thickness': {
             label: '도막두께 기준서',
@@ -977,6 +979,12 @@ var ProdStandardsModule = (function() {
             return (Storage.getAll(STORE) || [])
                 .filter(r => r._docKind === STANDARD_DOC_KIND && r.standardType === type && r.fileData)
                 .length;
+        }
+        if (type === 'process-flow-chart') {
+            return _processFlowTemplates().length;
+        }
+        if (type === 'pfmea') {
+            return _pfmeaTemplates().length;
         }
         return (Storage.getAll(STORE) || [])
             .filter(r => r._docKind === STANDARD_DOC_KIND && r.standardType === type && Array.isArray(r.rows))
@@ -3596,7 +3604,9 @@ var ProdStandardsModule = (function() {
         if (_curDocType === 'mixing') { PaintMixModule.renderFormulaAsStandard(el); return; }
         if (_curDocType === 'paint-usage') { PaintMixModule.renderUsageAsStandard(el); return; }
         if (_curDocType === 'paint-tds') { _renderPaintTdsTable(el); return; }
+        if (_curDocType === 'process-flow-chart') { _renderProcessFlowPresetPage(el); return; }
         if (_curDocType === 'color-gloss') { _renderColorGlossPage(el); return; }
+        if (_curDocType === 'pfmea') { _renderPfmeaPage(el); return; }
 
         const cfg = STANDARD_DOC_TYPES[_curDocType];
         if (!cfg) return;
@@ -3901,6 +3911,863 @@ var ProdStandardsModule = (function() {
         await Storage.remove(STORE, id);
         UIUtils.toast('TDS 파일이 삭제되었습니다.', 'success');
         _renderPaintTdsTable();
+    }
+
+    function _processFlowTemplates() {
+        return (Storage.getAll(STORE) || [])
+            .filter(r => r._docKind === PROCESS_FLOW_TEMPLATE_KIND)
+            .sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')));
+    }
+
+    function _processFlowStepsForProcesses(processes) {
+        const set = new Set(processes || []);
+        const steps = [];
+        CANONICAL_PROCESS_ORDER.forEach(proc => {
+            if (!set.has(proc)) return;
+            const cfg = PROCESS_CONFIG[proc];
+            const stations = cfg && cfg.stations ? Object.keys(cfg.stations) : [proc];
+            stations.forEach(station => {
+                steps.push({
+                    orderNo: steps.length + 1,
+                    process: proc,
+                    station,
+                    input: '',
+                    output: '',
+                    equipment: '',
+                    controlPoint: '',
+                    note: ''
+                });
+            });
+        });
+        return steps;
+    }
+
+    function _processFlowAnalyzeSteps(steps) {
+        const processes = [];
+        (steps || []).forEach(step => {
+            const proc = step && step.process;
+            if (proc && !processes.includes(proc)) processes.push(proc);
+        });
+        return {
+            processes,
+            hasA: processes.includes('도장(A)') || processes.includes('도장-A'),
+            hasB: processes.includes('도장(B)') || processes.includes('도장-B'),
+            hasLaser: processes.includes('레이져') || processes.includes('레이저'),
+            processText: processes.join(' → ') || '-',
+            stationCount: (steps || []).length
+        };
+    }
+
+    function _processFlowDefaultPresets() {
+        const preset = (key, name, desc, processes) => {
+            const steps = _processFlowStepsForProcesses(processes);
+            const meta = _processFlowAnalyzeSteps(steps);
+            return {
+                _docKind: PROCESS_FLOW_TEMPLATE_KIND,
+                standardType: 'process-flow-chart',
+                standardLabel: STANDARD_DOC_TYPES['process-flow-chart'].label,
+                presetKey: key,
+                presetName: name,
+                desc,
+                steps,
+                meta,
+                createdAt: UIUtils.now(),
+                updatedAt: UIUtils.now()
+            };
+        };
+        return [
+            preset('paint-a-2coat', '도장-A 2도 도장', '도장-A 단독 공정 흐름', ['수입검사', '보관', '도장(A)', '출하검사', '출하']),
+            preset('paint-b-2coat', '도장-B 2도 도장', '도장-B 단독 공정 흐름', ['수입검사', '보관', '도장(B)', '출하검사', '출하']),
+            preset('paint-a-laser', '도장-A → 레이져', '도장-A 이후 레이져 공정 흐름', ['수입검사', '보관', '도장(A)', '레이져', '출하검사', '출하']),
+            preset('paint-a-laser-paint-b', '도장-A → 레이져 → 도장-B', '레이져 후 도장-B까지 이어지는 대표 공정 흐름', ['수입검사', '보관', '도장(A)', '레이져', '도장(B)', '출하검사', '출하']),
+            preset('paint-a-paint-b', '도장-A → 도장-B', '레이져 없이 도장-A/B를 연속 적용하는 흐름', ['수입검사', '보관', '도장(A)', '도장(B)', '출하검사', '출하']),
+        ];
+    }
+
+    async function seedProcessFlowPresets() {
+        const existing = _processFlowTemplates();
+        const keys = new Set(existing.map(t => t.presetKey));
+        let count = 0;
+        for (const p of _processFlowDefaultPresets()) {
+            if (keys.has(p.presetKey)) continue;
+            await Storage.add(STORE, p);
+            count++;
+        }
+        UIUtils.toast(count ? `공정 흐름 기본 프리셋 ${count}개를 생성했습니다.` : '이미 기본 프리셋이 등록되어 있습니다.', count ? 'success' : 'info');
+        _renderProcessFlowPresetPage();
+    }
+
+    function _processFlowProductSignature(product) {
+        const sig = _pfmeaProductSignature(product);
+        return {
+            ...sig,
+            flowProcesses: sig.processes.map(p => p === '도장-A' ? '도장(A)' : p === '도장-B' ? '도장(B)' : p)
+        };
+    }
+
+    function _processFlowPresetScore(template, sig) {
+        const meta = template && template.meta ? template.meta : _processFlowAnalyzeSteps(template && template.steps);
+        let score = 0;
+        if (sig.hasA === !!meta.hasA) score += 2; else score -= 3;
+        if (sig.hasB === !!meta.hasB) score += 2; else score -= 3;
+        if (sig.hasLaser === !!meta.hasLaser) score += 2; else score -= 3;
+        if (sig.hasA || sig.hasB || sig.hasLaser) score += 1;
+        return score;
+    }
+
+    function _processFlowRecommendedTemplate(product, templates = _processFlowTemplates()) {
+        if (!templates.length) return null;
+        const sig = _processFlowProductSignature(product);
+        const best = templates
+            .map(t => ({ t, score: _processFlowPresetScore(t, sig) }))
+            .sort((a, b) => b.score - a.score || String(b.t.updatedAt || '').localeCompare(String(a.t.updatedAt || '')))[0];
+        return best && best.score >= 4 ? best.t : null;
+    }
+
+    function _renderProcessFlowPresetPage(container = document.getElementById('psParamContent')) {
+        const el = container || document.getElementById('psParamContent');
+        if (!el) return;
+        const cfg = STANDARD_DOC_TYPES['process-flow-chart'];
+        const templates = _processFlowTemplates();
+        const products = _allProductRows();
+        const matched = products.filter(p => _processFlowRecommendedTemplate(p, templates)).length;
+        const templateRows = templates.length ? templates.map((t, idx) => {
+            const meta = t.meta || _processFlowAnalyzeSteps(t.steps);
+            return `
+                <tr>
+                    <td style="text-align:center;font-weight:800;">${idx + 1}</td>
+                    <td>
+                        <strong>${_esc(t.presetName || '공정 흐름 프리셋')}</strong>
+                        <div style="font-size:.74rem;color:var(--text-muted);margin-top:3px;">${_esc(t.desc || '')}</div>
+                    </td>
+                    <td>${_esc(meta.processText)}</td>
+                    <td style="text-align:center;">${UIUtils.formatNumber(meta.processes.length)}</td>
+                    <td style="text-align:center;">${UIUtils.formatNumber(meta.stationCount)}</td>
+                    <td>${_esc(t.updatedAt || t.createdAt || '-')}</td>
+                    <td style="text-align:center;white-space:nowrap;">
+                        <button class="btn btn-sm btn-outline" onclick="ProdStandardsModule.openProcessFlowPresetDetail('${_jsArg(t.id)}')">보기</button>
+                        <button class="btn btn-sm btn-outline" onclick="ProdStandardsModule.openProcessFlowPresetModal('${_jsArg(t.id)}')">수정</button>
+                        <button class="btn btn-sm" style="border:1px solid var(--accent-red);color:var(--accent-red);background:#fff;" onclick="ProdStandardsModule.deleteProcessFlowPreset('${_jsArg(t.id)}')">삭제</button>
+                    </td>
+                </tr>`;
+        }).join('') : `
+            <tr><td colspan="7" style="text-align:center;padding:34px;color:var(--text-muted);">
+                등록된 공정 흐름 프리셋이 없습니다. 기본 프리셋을 생성하거나 직접 추가하세요.
+            </td></tr>`;
+        const productRows = products.length ? products.map((p, idx) => {
+            const sig = _processFlowProductSignature(p);
+            const rec = _processFlowRecommendedTemplate(p, templates);
+            return `
+                <tr>
+                    <td style="text-align:center;font-weight:800;">${idx + 1}</td>
+                    <td style="font-weight:800;">${_esc(p.carModel)}</td>
+                    <td>
+                        <strong>${_esc(p.partName)}</strong>
+                        ${p.color ? `<div style="font-size:.74rem;color:var(--text-muted);margin-top:2px;">${_esc(p.color)}</div>` : ''}
+                    </td>
+                    <td>${_esc(sig.flowProcesses.length ? sig.flowProcesses.join(' → ') : '-')}</td>
+                    <td>${_esc(sig.signature)}</td>
+                    <td>
+                        ${rec ? `<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:999px;background:#dcfce7;color:#15803d;font-weight:850;font-size:.75rem;">매칭</span>
+                                <div style="font-size:.75rem;color:var(--text-muted);margin-top:4px;">${_esc(rec.presetName || '공정 흐름 프리셋')}</div>`
+                              : `<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:999px;background:#fee2e2;color:#b91c1c;font-weight:850;font-size:.75rem;">미매칭</span>`}
+                    </td>
+                </tr>`;
+        }).join('') : `
+            <tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text-muted);">제품 기본 정보가 없습니다.</td></tr>`;
+        el.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+                <div>
+                    <div style="display:flex;align-items:center;gap:8px;font-weight:850;font-size:16px;">
+                        <span class="material-symbols-outlined" style="font-size:20px;color:#2563eb;">${cfg.icon}</span>
+                        ${cfg.label}
+                    </div>
+                    <div style="font-size:13px;color:var(--text-muted);margin-top:4px;">
+                        제품별 반복 입력 대신 같은 공법/공정순서를 프리셋으로 관리하고 제품 기본정보와 매칭합니다.
+                    </div>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <button class="btn btn-outline btn-sm" onclick="ProdStandardsModule.seedProcessFlowPresets()">
+                        <span class="material-symbols-outlined" style="font-size:15px;">auto_awesome</span> 기본 프리셋 생성
+                    </button>
+                    <button class="btn btn-primary btn-sm" onclick="ProdStandardsModule.openProcessFlowPresetModal('')">
+                        <span class="material-symbols-outlined" style="font-size:15px;">add</span> 프리셋 추가
+                    </button>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(3,minmax(160px,1fr));gap:10px;margin-bottom:14px;">
+                <div style="border:1px solid var(--border-color);border-radius:8px;background:#fff;padding:12px;">
+                    <div style="font-size:.75rem;color:var(--text-muted);font-weight:800;">공정 흐름 프리셋</div>
+                    <div style="font-size:22px;font-weight:900;color:#2563eb;margin-top:5px;">${UIUtils.formatNumber(templates.length)}</div>
+                </div>
+                <div style="border:1px solid var(--border-color);border-radius:8px;background:#fff;padding:12px;">
+                    <div style="font-size:.75rem;color:var(--text-muted);font-weight:800;">제품 추천 매칭</div>
+                    <div style="font-size:22px;font-weight:900;color:#16a34a;margin-top:5px;">${UIUtils.formatNumber(matched)} / ${UIUtils.formatNumber(products.length)}</div>
+                </div>
+                <div style="border:1px solid var(--border-color);border-radius:8px;background:#fff;padding:12px;">
+                    <div style="font-size:.75rem;color:var(--text-muted);font-weight:800;">관리 방식</div>
+                    <div style="font-size:13px;font-weight:900;margin-top:7px;">프리셋 기준 적용</div>
+                </div>
+            </div>
+            <div class="card" style="margin-bottom:14px;">
+                <div class="card-header"><h3 style="margin:0;font-size:15px;">공정 흐름 프리셋</h3></div>
+                <div class="card-body" style="padding:0;">
+                    <div class="data-table-wrapper" style="overflow-x:auto;">
+                        <table class="data-table" style="min-width:1000px;font-size:12px;">
+                            <thead>
+                                <tr>
+                                    <th style="width:48px;text-align:center;">No</th>
+                                    <th style="min-width:230px;">프리셋</th>
+                                    <th style="min-width:260px;">공정 흐름</th>
+                                    <th style="width:90px;text-align:center;">주공정</th>
+                                    <th style="width:90px;text-align:center;">세부공정</th>
+                                    <th style="width:150px;">수정일</th>
+                                    <th style="width:170px;text-align:center;">작업</th>
+                                </tr>
+                            </thead>
+                            <tbody>${templateRows}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header"><h3 style="margin:0;font-size:15px;">제품 적용 현황</h3></div>
+                <div class="card-body" style="padding:0;">
+                    <div class="data-table-wrapper" style="overflow-x:auto;">
+                        <table class="data-table" style="min-width:980px;font-size:12px;">
+                            <thead>
+                                <tr>
+                                    <th style="width:48px;text-align:center;">No</th>
+                                    <th style="width:100px;">차종</th>
+                                    <th style="min-width:220px;">품명</th>
+                                    <th style="min-width:210px;">제품 제조공정</th>
+                                    <th style="min-width:210px;">공법 시그니처</th>
+                                    <th style="width:180px;">추천 프리셋</th>
+                                </tr>
+                            </thead>
+                            <tbody>${productRows}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    function _processFlowPresetFormHtml(template) {
+        const selected = new Set((template && template.steps || []).map(s => `${s.process}||${s.station}`));
+        const selectedProcesses = new Set((template && template.steps || []).map(s => s.process));
+        const processBlocks = CANONICAL_PROCESS_ORDER.map((proc, pIdx) => {
+            const cfg = PROCESS_CONFIG[proc];
+            const stations = cfg && cfg.stations ? Object.keys(cfg.stations) : [proc];
+            const procChecked = selectedProcesses.has(proc);
+            return `
+                <div style="border:1px solid var(--border-color);border-radius:8px;background:#fff;margin-bottom:8px;overflow:hidden;">
+                    <label style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg-secondary);font-weight:900;cursor:pointer;">
+                        <input id="pfp_proc_${pIdx}" type="checkbox" ${procChecked ? 'checked' : ''} style="width:18px;height:18px;">
+                        <span>${String(pIdx + 1).padStart(2, '0')}</span>
+                        <span>${_esc(proc)}</span>
+                    </label>
+                    <div style="padding:10px 12px;display:flex;flex-wrap:wrap;gap:8px;">
+                        ${stations.map((station, sIdx) => {
+                            const checked = selected.has(`${proc}||${station}`);
+                            return `<label style="display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border:1px solid var(--border-color);border-radius:999px;background:${checked ? '#eff6ff' : '#fff'};font-size:.78rem;font-weight:800;cursor:pointer;">
+                                <input id="pfp_st_${pIdx}_${sIdx}" data-proc="${_esc(proc)}" data-station="${_esc(station)}" type="checkbox" ${checked ? 'checked' : ''} style="width:16px;height:16px;">
+                                ${_esc(station)}
+                            </label>`;
+                        }).join('')}
+                    </div>
+                </div>`;
+        }).join('');
+        return `
+            <div style="display:flex;flex-direction:column;gap:12px;">
+                <div>
+                    <label style="display:block;font-size:.78rem;font-weight:850;margin-bottom:5px;">프리셋명</label>
+                    <input id="pfpName" class="form-input" value="${_esc(template && template.presetName || '')}" placeholder="예: 도장-A → 레이져 → 도장-B">
+                </div>
+                <div>
+                    <label style="display:block;font-size:.78rem;font-weight:850;margin-bottom:5px;">설명</label>
+                    <input id="pfpDesc" class="form-input" value="${_esc(template && template.desc || '')}" placeholder="적용 공법이나 구분 메모">
+                </div>
+                <div style="font-size:.78rem;color:var(--text-muted);">주공정과 하위 세부공정을 선택하면 저장 시 현재 표시 순서대로 공정 흐름이 생성됩니다.</div>
+                <div style="max-height:56vh;overflow:auto;padding-right:4px;">${processBlocks}</div>
+            </div>`;
+    }
+
+    function openProcessFlowPresetModal(id = '') {
+        const template = id ? _processFlowTemplates().find(t => t.id === id) : null;
+        UIUtils.showModal(
+            template ? '공정 흐름 프리셋 수정' : '공정 흐름 프리셋 추가',
+            _processFlowPresetFormHtml(template),
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+             <button class="btn btn-primary" onclick="ProdStandardsModule.saveProcessFlowPreset('${_jsArg(id)}')">저장</button>`,
+            'xl'
+        );
+    }
+
+    async function saveProcessFlowPreset(id = '') {
+        const name = (document.getElementById('pfpName') || {}).value || '';
+        const desc = (document.getElementById('pfpDesc') || {}).value || '';
+        if (!name.trim()) {
+            UIUtils.toast('프리셋명을 입력하세요.', 'warning');
+            return;
+        }
+        const steps = [];
+        CANONICAL_PROCESS_ORDER.forEach((proc, pIdx) => {
+            const procEl = document.getElementById(`pfp_proc_${pIdx}`);
+            if (!procEl || !procEl.checked) return;
+            const cfg = PROCESS_CONFIG[proc];
+            const stations = cfg && cfg.stations ? Object.keys(cfg.stations) : [proc];
+            stations.forEach((station, sIdx) => {
+                const stEl = document.getElementById(`pfp_st_${pIdx}_${sIdx}`);
+                if (!stEl || !stEl.checked) return;
+                steps.push({ orderNo: steps.length + 1, process: proc, station, input: '', output: '', equipment: '', controlPoint: '', note: '' });
+            });
+        });
+        if (!steps.length) {
+            UIUtils.toast('하나 이상의 세부공정을 선택하세요.', 'warning');
+            return;
+        }
+        const existing = id ? _processFlowTemplates().find(t => t.id === id) : null;
+        const payload = {
+            ...(existing || {}),
+            _docKind: PROCESS_FLOW_TEMPLATE_KIND,
+            standardType: 'process-flow-chart',
+            standardLabel: STANDARD_DOC_TYPES['process-flow-chart'].label,
+            presetKey: existing && existing.presetKey ? existing.presetKey : `flow-${Date.now()}`,
+            presetName: name.trim(),
+            desc: desc.trim(),
+            steps,
+            meta: _processFlowAnalyzeSteps(steps),
+            createdAt: existing && existing.createdAt ? existing.createdAt : UIUtils.now(),
+            updatedAt: UIUtils.now()
+        };
+        if (existing) await Storage.update(STORE, id, payload);
+        else await Storage.add(STORE, payload);
+        UIUtils.closeModal();
+        UIUtils.toast('공정 흐름 프리셋이 저장되었습니다.', 'success');
+        _renderProcessFlowPresetPage();
+    }
+
+    function openProcessFlowPresetDetail(id) {
+        const t = _processFlowTemplates().find(x => x.id === id);
+        if (!t) return;
+        const rows = (t.steps || []).map((s, idx) => `
+            <tr>
+                <td style="text-align:center;font-weight:800;">${idx + 1}</td>
+                <td>${_esc(s.process)}</td>
+                <td><strong>${_esc(s.station)}</strong></td>
+                <td>${_esc(s.input || '-')}</td>
+                <td>${_esc(s.output || '-')}</td>
+                <td>${_esc(s.controlPoint || '-')}</td>
+            </tr>`).join('');
+        UIUtils.showModal(
+            `공정 흐름 - ${_esc(t.presetName || '')}`,
+            `<div>
+                <div style="margin-bottom:12px;padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);font-size:.82rem;color:var(--text-muted);">
+                    ${_esc(t.desc || '설명 없음')}
+                </div>
+                <div class="data-table-wrapper" style="max-height:60vh;overflow:auto;">
+                    <table class="data-table" style="font-size:12px;min-width:820px;">
+                        <thead><tr><th style="width:54px;text-align:center;">순서</th><th>주공정</th><th>세부공정</th><th>투입</th><th>산출</th><th>관리점</th></tr></thead>
+                        <tbody>${rows || `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-muted);">등록된 공정이 없습니다.</td></tr>`}</tbody>
+                    </table>
+                </div>
+            </div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+             <button class="btn btn-primary" onclick="UIUtils.closeModal();ProdStandardsModule.openProcessFlowPresetModal('${_jsArg(id)}')">수정</button>`,
+            'xl'
+        );
+    }
+
+    async function deleteProcessFlowPreset(id) {
+        const t = _processFlowTemplates().find(x => x.id === id);
+        if (!t) return;
+        if (!confirm('선택한 공정 흐름 프리셋을 삭제하시겠습니까?')) return;
+        await Storage.remove(STORE, id);
+        UIUtils.toast('공정 흐름 프리셋이 삭제되었습니다.', 'success');
+        _renderProcessFlowPresetPage();
+    }
+
+    function _pfmeaTemplates() {
+        return (Storage.getAll(STORE) || [])
+            .filter(r => r._docKind === PFMEA_TEMPLATE_KIND)
+            .sort((a, b) => String(b.updatedAt || b.uploadedAt || '').localeCompare(String(a.updatedAt || a.uploadedAt || '')));
+    }
+
+    function _pfmeaNormalizeText(v) {
+        return String(v ?? '').replace(/\s+/g, ' ').trim();
+    }
+
+    function _pfmeaNormalizeProcess(v) {
+        const s = _pfmeaNormalizeText(v).replace(/\s+/g, '');
+        if (!s) return '';
+        if (/도장[-(]?A\)?|A라인/i.test(s)) return '도장-A';
+        if (/도장[-(]?B\)?|B라인/i.test(s)) return '도장-B';
+        if (/레이[저져]/.test(s)) return '레이져';
+        if (/출하검사/.test(s)) return '출하검사';
+        if (/수입검사/.test(s)) return '수입검사';
+        if (/보관/.test(s)) return '보관';
+        return _pfmeaNormalizeText(v);
+    }
+
+    function _pfmeaProductProcesses(product) {
+        return [product && product.process1, product && product.process2, product && product.process3, product && product.process4]
+            .map(_pfmeaNormalizeProcess)
+            .filter(Boolean);
+    }
+
+    function _pfmeaPaintLineFromRow(row, index) {
+        const raw = [
+            row && row.linkedProcess,
+            row && row.process,
+            row && row.processName,
+            row && row.paintProcess,
+            row && row.paintLine,
+            row && row.line,
+            row && row.connectedProcess
+        ].map(_pfmeaNormalizeProcess).find(Boolean);
+        if (raw) return raw;
+        return index < 2 ? '도장-A' : '도장-B';
+    }
+
+    function _pfmeaPaintSpecFromRow(row) {
+        const spec = String(row && (row.paintSpec || row.spec || row.coat || row.paintType || row.type) || '').trim();
+        if (/primer|프라이머/i.test(spec)) return 'Primer';
+        if (/color|컬러/i.test(spec)) return 'Color';
+        if (/clear|클리어/i.test(spec)) return 'Clear';
+        return spec || '도료';
+    }
+
+    function _pfmeaProductSignature(product) {
+        const processes = _pfmeaProductProcesses(product);
+        const hasA = processes.includes('도장-A');
+        const hasB = processes.includes('도장-B');
+        const hasLaser = processes.includes('레이져');
+        const paintRows = Array.isArray(product && product.paintMaterials) ? product.paintMaterials : [];
+        const layers = { '도장-A': [], '도장-B': [] };
+        paintRows.forEach((row, index) => {
+            const line = _pfmeaPaintLineFromRow(row, index);
+            const spec = _pfmeaPaintSpecFromRow(row);
+            if (!layers[line]) layers[line] = [];
+            if (spec && !layers[line].includes(spec)) layers[line].push(spec);
+        });
+        const aLayers = layers['도장-A'] || [];
+        const bLayers = layers['도장-B'] || [];
+        const parts = [];
+        if (hasA) parts.push(`도장-A ${Math.max(aLayers.length, 1)}도`);
+        if (hasLaser) parts.push('레이져');
+        if (hasB) parts.push(`도장-B ${Math.max(bLayers.length, 1)}도`);
+        return {
+            processes,
+            hasA,
+            hasB,
+            hasLaser,
+            layers,
+            layerTextA: aLayers.length ? aLayers.join(', ') : '-',
+            layerTextB: bLayers.length ? bLayers.join(', ') : '-',
+            signature: parts.length ? parts.join(' → ') : '공정 미등록'
+        };
+    }
+
+    function _pfmeaPresetScore(template, sig) {
+        const hay = [
+            template && template.templateName,
+            template && template.presetName,
+            template && template.presetKey,
+            template && template.sheetName
+        ].join(' ').toLowerCase();
+        let score = 0;
+        if (sig.hasA && /a라인|도장-a|도장\(a\)|a /.test(hay)) score += 3;
+        if (sig.hasB && /b라인|도장-b|도장\(b\)|b /.test(hay)) score += 3;
+        if (sig.hasLaser && /레이[저져]|laser/.test(hay)) score += 2;
+        if (/우레탄/.test(hay)) score += 1;
+        if (sig.hasA && !sig.hasB && !sig.hasLaser && /a라인|도장-a|도장\(a\)/.test(hay)) score += 1;
+        return score;
+    }
+
+    function _pfmeaRecommendedTemplate(product, templates = _pfmeaTemplates()) {
+        if (!templates.length) return null;
+        const sig = _pfmeaProductSignature(product);
+        const best = templates
+            .map(t => ({ t, score: _pfmeaPresetScore(t, sig) }))
+            .sort((a, b) => b.score - a.score || String(b.t.updatedAt || '').localeCompare(String(a.t.updatedAt || '')))[0].t;
+        return best && _pfmeaPresetScore(best, sig) >= 2 ? best : null;
+    }
+
+    function _pfmeaRpnMax(rows) {
+        return (rows || []).reduce((max, r) => Math.max(max, Number(r.rpn) || 0), 0);
+    }
+
+    function _pfmeaGuessPresetName(fileName, sheetName, cover) {
+        const base = _pfmeaNormalizeText(sheetName || '').replace(/\s+/g, ' ');
+        if (base && !/^sheet/i.test(base)) return base;
+        const name = String(fileName || '').replace(/\.(xlsx|xls|xlsm)$/i, '');
+        return cover && cover.carModel && cover.carModel !== '전차종' ? `${cover.carModel} PFMEA` : (name || 'PFMEA 프리셋');
+    }
+
+    function _pfmeaPickSheetName(workbook) {
+        const names = workbook && workbook.SheetNames ? workbook.SheetNames : [];
+        return names.find(n => /우레탄|FMEA|라인/i.test(n) && !/등급|특별|표지|발생/.test(n))
+            || names.find(n => !/등급|특별|표지|발생/.test(n))
+            || names[0];
+    }
+
+    function _pfmeaCell(row, idx) {
+        return _pfmeaNormalizeText(row && row[idx]);
+    }
+
+    function _pfmeaParseCover(workbook) {
+        const sheetName = (workbook.SheetNames || []).find(n => /표지/.test(n));
+        if (!sheetName) return {};
+        const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '', raw: false });
+        const flat = [];
+        rows.forEach(row => row.forEach((cell, col) => {
+            const text = _pfmeaNormalizeText(cell);
+            if (text) flat.push({ text, row, col });
+        }));
+        const findAfter = (patterns) => {
+            const hit = flat.find(c => patterns.some(p => p.test(c.text)));
+            if (!hit) return '';
+            const sameRow = hit.row || [];
+            for (let i = hit.col + 1; i < Math.min((sameRow || []).length, hit.col + 8); i++) {
+                const v = _pfmeaNormalizeText(sameRow[i]);
+                if (v && !patterns.some(p => p.test(v))) return v;
+            }
+            return '';
+        };
+        return {
+            docNo: findAfter([/문\s*서\s*번\s*호|문서번호/i]),
+            carModel: findAfter([/차\s*종|차종/i]),
+            partName: findAfter([/부품명|품명/i]),
+            partNo: findAfter([/부품번호|품번|부번/i])
+        };
+    }
+
+    function _pfmeaParseRowsFromSheet(workbook, sheetName) {
+        const ws = workbook.Sheets[sheetName];
+        const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+        const rows = [];
+        let processNo = '';
+        let functionText = '';
+        rawRows.forEach((row, index) => {
+            if (index < 2) return;
+            const pNo = _pfmeaCell(row, 0);
+            const fn = _pfmeaCell(row, 1);
+            if (pNo) processNo = pNo;
+            if (fn) functionText = fn;
+            const failureMode = _pfmeaCell(row, 2);
+            const effect = _pfmeaCell(row, 3);
+            const cause = _pfmeaCell(row, 7);
+            const preventionControl = _pfmeaCell(row, 8);
+            const detectionControl = _pfmeaCell(row, 12);
+            const recommendedAction = _pfmeaCell(row, 15);
+            const hasFmeaBody = failureMode && (effect || cause || preventionControl || detectionControl || recommendedAction);
+            if (!hasFmeaBody) return;
+            rows.push({
+                no: rows.length + 1,
+                processNo,
+                process: functionText,
+                subProcess: functionText,
+                failureMode,
+                effect,
+                severity: _pfmeaCell(row, 4),
+                special: _pfmeaCell(row, 5),
+                causeClass: _pfmeaCell(row, 6),
+                cause,
+                preventionControl,
+                defectRate: _pfmeaCell(row, 9),
+                causeGrade: _pfmeaCell(row, 10),
+                occurrence: _pfmeaCell(row, 11),
+                detectionControl,
+                currentControl: [preventionControl, detectionControl].filter(Boolean).join(' / '),
+                detection: _pfmeaCell(row, 13),
+                rpn: _pfmeaCell(row, 14),
+                recommendedAction,
+                dueDate: _pfmeaCell(row, 17),
+                actionResult: _pfmeaCell(row, 18),
+                resultSeverity: _pfmeaCell(row, 19),
+                resultOccurrence: _pfmeaCell(row, 20),
+                resultDetection: _pfmeaCell(row, 21),
+                resultRpn: _pfmeaCell(row, 22),
+                linkedItem: '',
+                note: ''
+            });
+        });
+        const blockMap = {};
+        rows.forEach(r => {
+            const key = `${r.processNo || '-'}||${r.process || '-'}`;
+            if (!blockMap[key]) {
+                blockMap[key] = { processNo: r.processNo || '-', process: r.process || '-', rowCount: 0, maxRpn: 0, failureModes: [] };
+            }
+            blockMap[key].rowCount += 1;
+            blockMap[key].maxRpn = Math.max(blockMap[key].maxRpn, Number(r.rpn) || 0);
+            if (r.failureMode && !blockMap[key].failureModes.includes(r.failureMode)) blockMap[key].failureModes.push(r.failureMode);
+        });
+        return { rows, blocks: Object.values(blockMap) };
+    }
+
+    function _pfmeaTopRiskRows(template, limit = 8) {
+        return (template && Array.isArray(template.rows) ? template.rows : [])
+            .slice()
+            .sort((a, b) => (Number(b.rpn) || 0) - (Number(a.rpn) || 0))
+            .slice(0, limit);
+    }
+
+    function _renderPfmeaPage(container = document.getElementById('psParamContent')) {
+        const el = container || document.getElementById('psParamContent');
+        if (!el) return;
+        const cfg = STANDARD_DOC_TYPES['pfmea'];
+        const templates = _pfmeaTemplates();
+        const products = _allProductRows();
+        const matched = products.filter(p => _pfmeaRecommendedTemplate(p, templates)).length;
+        const totalRows = templates.reduce((sum, t) => sum + (Array.isArray(t.rows) ? t.rows.length : 0), 0);
+        const latest = templates[0];
+        const templateRows = templates.length ? templates.map((t, idx) => `
+            <tr>
+                <td style="text-align:center;font-weight:800;">${idx + 1}</td>
+                <td>
+                    <strong>${_esc(t.presetName || t.templateName || 'PFMEA 프리셋')}</strong>
+                    <div style="font-size:.74rem;color:var(--text-muted);margin-top:3px;">${_esc(t.sourceFileName || '-')} · ${_esc(t.sheetName || '-')}</div>
+                </td>
+                <td>${_esc(t.cover && t.cover.docNo || '-')}</td>
+                <td style="text-align:center;">${UIUtils.formatNumber((t.rows || []).length)}</td>
+                <td style="text-align:center;">${UIUtils.formatNumber((t.blocks || []).length)}</td>
+                <td style="text-align:center;font-weight:900;color:${_pfmeaRpnMax(t.rows) >= 100 ? '#dc2626' : '#2563eb'};">${_pfmeaRpnMax(t.rows) || '-'}</td>
+                <td>${_esc(t.uploadedAt || t.updatedAt || '-')}</td>
+                <td style="text-align:center;white-space:nowrap;">
+                    <button class="btn btn-sm btn-outline" onclick="ProdStandardsModule.openPfmeaTemplateDetail('${_jsArg(t.id)}')">보기</button>
+                    <button class="btn btn-sm" style="border:1px solid var(--accent-red);color:var(--accent-red);background:#fff;" onclick="ProdStandardsModule.deletePfmeaTemplate('${_jsArg(t.id)}')">삭제</button>
+                </td>
+            </tr>
+        `).join('') : `
+            <tr><td colspan="8" style="text-align:center;padding:34px;color:var(--text-muted);">
+                업로드된 PFMEA 프리셋이 없습니다. 사용 중인 공정FMEA 엑셀 파일을 업로드하세요.
+            </td></tr>`;
+        const productRows = products.length ? products.map((p, idx) => {
+            const sig = _pfmeaProductSignature(p);
+            const rec = _pfmeaRecommendedTemplate(p, templates);
+            const processes = sig.processes.length ? sig.processes.join(' → ') : '-';
+            return `
+                <tr>
+                    <td style="text-align:center;font-weight:800;">${idx + 1}</td>
+                    <td style="font-weight:800;">${_esc(p.carModel)}</td>
+                    <td>
+                        <strong>${_esc(p.partName)}</strong>
+                        ${p.color ? `<div style="font-size:.74rem;color:var(--text-muted);margin-top:2px;">${_esc(p.color)}</div>` : ''}
+                    </td>
+                    <td>${_esc(processes)}</td>
+                    <td>
+                        <div style="font-size:.78rem;">A: ${_esc(sig.layerTextA)}</div>
+                        <div style="font-size:.78rem;color:var(--text-muted);margin-top:2px;">B: ${_esc(sig.layerTextB)}</div>
+                    </td>
+                    <td>${_esc(sig.signature)}</td>
+                    <td>
+                        ${rec ? `<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:999px;background:#dcfce7;color:#15803d;font-weight:850;font-size:.75rem;">매칭</span>
+                                <div style="font-size:.75rem;color:var(--text-muted);margin-top:4px;">${_esc(rec.presetName || rec.templateName || 'PFMEA')}</div>`
+                              : `<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:999px;background:#fee2e2;color:#b91c1c;font-weight:850;font-size:.75rem;">미매칭</span>`}
+                    </td>
+                </tr>`;
+        }).join('') : `
+            <tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text-muted);">제품 기본 정보가 없습니다.</td></tr>`;
+        el.innerHTML = `
+            <input id="pfmeaUploadInput" type="file" accept=".xlsx,.xls,.xlsm" style="display:none;" onchange="ProdStandardsModule.importPfmeaFile(this.files && this.files[0]); this.value='';">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+                <div>
+                    <div style="display:flex;align-items:center;gap:8px;font-weight:850;font-size:16px;">
+                        <span class="material-symbols-outlined" style="font-size:20px;color:#dc2626;">${cfg.icon}</span>
+                        ${cfg.label}
+                    </div>
+                    <div style="font-size:13px;color:var(--text-muted);margin-top:4px;">
+                        공정FMEA 엑셀 원본을 프리셋으로 저장하고, 제품 기본정보의 공정/도료 구성으로 적용 대상을 추천합니다.
+                    </div>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <button class="btn btn-primary btn-sm" onclick="ProdStandardsModule.openPfmeaUpload()">
+                        <span class="material-symbols-outlined" style="font-size:15px;">upload_file</span> 엑셀 업로드
+                    </button>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(4,minmax(160px,1fr));gap:10px;margin-bottom:14px;">
+                <div style="border:1px solid var(--border-color);border-radius:8px;background:#fff;padding:12px;">
+                    <div style="font-size:.75rem;color:var(--text-muted);font-weight:800;">PFMEA 프리셋</div>
+                    <div style="font-size:22px;font-weight:900;color:#dc2626;margin-top:5px;">${UIUtils.formatNumber(templates.length)}</div>
+                </div>
+                <div style="border:1px solid var(--border-color);border-radius:8px;background:#fff;padding:12px;">
+                    <div style="font-size:.75rem;color:var(--text-muted);font-weight:800;">불량모드 행</div>
+                    <div style="font-size:22px;font-weight:900;color:#2563eb;margin-top:5px;">${UIUtils.formatNumber(totalRows)}</div>
+                </div>
+                <div style="border:1px solid var(--border-color);border-radius:8px;background:#fff;padding:12px;">
+                    <div style="font-size:.75rem;color:var(--text-muted);font-weight:800;">제품 추천 매칭</div>
+                    <div style="font-size:22px;font-weight:900;color:#16a34a;margin-top:5px;">${UIUtils.formatNumber(matched)} / ${UIUtils.formatNumber(products.length)}</div>
+                </div>
+                <div style="border:1px solid var(--border-color);border-radius:8px;background:#fff;padding:12px;">
+                    <div style="font-size:.75rem;color:var(--text-muted);font-weight:800;">최근 프리셋</div>
+                    <div style="font-size:13px;font-weight:900;margin-top:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_esc(latest && (latest.presetName || latest.templateName) || '-')}</div>
+                </div>
+            </div>
+            <div style="margin-bottom:16px;padding:12px 14px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);color:var(--text-muted);font-size:13px;">
+                같은 공정순서와 같은 공법은 하나의 PFMEA 프리셋으로 관리합니다. 예: 도장-A 2도, 도장-A → 레이져 → 도장-B, 도장-B 단독.
+            </div>
+            <div class="card" style="margin-bottom:14px;">
+                <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
+                    <h3 style="margin:0;font-size:15px;">PFMEA 원본 / 프리셋</h3>
+                    <button class="btn btn-sm btn-outline" onclick="ProdStandardsModule.openPfmeaUpload()">업로드</button>
+                </div>
+                <div class="card-body" style="padding:0;">
+                    <div class="data-table-wrapper" style="overflow-x:auto;">
+                        <table class="data-table" style="min-width:980px;font-size:12px;">
+                            <thead>
+                                <tr>
+                                    <th style="width:48px;text-align:center;">No</th>
+                                    <th style="min-width:240px;">프리셋</th>
+                                    <th style="width:150px;">문서번호</th>
+                                    <th style="width:90px;text-align:center;">행</th>
+                                    <th style="width:90px;text-align:center;">공정블록</th>
+                                    <th style="width:90px;text-align:center;">Max RPN</th>
+                                    <th style="width:150px;">등록일</th>
+                                    <th style="width:130px;text-align:center;">작업</th>
+                                </tr>
+                            </thead>
+                            <tbody>${templateRows}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header"><h3 style="margin:0;font-size:15px;">제품 적용 현황</h3></div>
+                <div class="card-body" style="padding:0;">
+                    <div class="data-table-wrapper" style="overflow-x:auto;">
+                        <table class="data-table" style="min-width:1120px;font-size:12px;">
+                            <thead>
+                                <tr>
+                                    <th style="width:48px;text-align:center;">No</th>
+                                    <th style="width:100px;">차종</th>
+                                    <th style="min-width:220px;">품명</th>
+                                    <th style="min-width:180px;">제조공정</th>
+                                    <th style="min-width:150px;">도료 구성</th>
+                                    <th style="min-width:220px;">공법 시그니처</th>
+                                    <th style="width:170px;">추천 PFMEA</th>
+                                </tr>
+                            </thead>
+                            <tbody>${productRows}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    function openPfmeaUpload() {
+        const input = document.getElementById('pfmeaUploadInput');
+        if (input) input.click();
+    }
+
+    async function importPfmeaFile(file) {
+        if (!file) return;
+        if (!window.XLSX) {
+            UIUtils.toast('엑셀 파서가 로드되지 않았습니다. 새로고침 후 다시 시도하세요.', 'error');
+            return;
+        }
+        try {
+            const buffer = await file.arrayBuffer();
+            const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array', cellDates: true });
+            const sheetName = _pfmeaPickSheetName(workbook);
+            if (!sheetName) {
+                UIUtils.toast('PFMEA 본문 시트를 찾을 수 없습니다.', 'warning');
+                return;
+            }
+            const cover = _pfmeaParseCover(workbook);
+            const parsed = _pfmeaParseRowsFromSheet(workbook, sheetName);
+            if (!parsed.rows.length) {
+                UIUtils.toast('PFMEA 행을 찾지 못했습니다. 엑셀 양식을 확인하세요.', 'warning');
+                return;
+            }
+            const fileData = await _readFileAsDataUrl(file);
+            const presetName = _pfmeaGuessPresetName(file.name, sheetName, cover);
+            await Storage.add(STORE, {
+                _docKind: PFMEA_TEMPLATE_KIND,
+                templateName: file.name.replace(/\.(xlsx|xls|xlsm)$/i, ''),
+                presetName,
+                presetKey: presetName.replace(/\s+/g, '-').toLowerCase(),
+                standardType: 'pfmea',
+                standardLabel: STANDARD_DOC_TYPES.pfmea.label,
+                sourceFileName: file.name || '',
+                sourceFileType: file.type || '',
+                sourceFileSize: file.size || 0,
+                sourceFileData: fileData,
+                sheetName,
+                cover,
+                rows: parsed.rows,
+                blocks: parsed.blocks,
+                uploadedAt: UIUtils.now(),
+                updatedAt: UIUtils.now()
+            });
+            UIUtils.toast(`PFMEA 프리셋 저장 완료: ${parsed.rows.length}행 / ${parsed.blocks.length}공정`, 'success');
+            _renderPfmeaPage();
+        } catch (err) {
+            console.error('PFMEA import failed:', err);
+            UIUtils.toast('PFMEA 엑셀 업로드 중 오류가 발생했습니다.', 'error');
+        }
+    }
+
+    function openPfmeaTemplateDetail(id) {
+        const t = _pfmeaTemplates().find(x => x.id === id);
+        if (!t) return;
+        const blockRows = (t.blocks || []).map(b => `
+            <tr>
+                <td style="text-align:center;">${_esc(b.processNo)}</td>
+                <td><strong>${_esc(b.process)}</strong></td>
+                <td style="text-align:center;">${UIUtils.formatNumber(b.rowCount)}</td>
+                <td style="text-align:center;font-weight:900;color:${Number(b.maxRpn) >= 100 ? '#dc2626' : '#2563eb'};">${b.maxRpn || '-'}</td>
+                <td>${_esc((b.failureModes || []).slice(0, 5).join(', '))}${(b.failureModes || []).length > 5 ? ' ...' : ''}</td>
+            </tr>`).join('');
+        const riskRows = _pfmeaTopRiskRows(t, 10).map(r => `
+            <tr>
+                <td style="text-align:center;">${_esc(r.processNo)}</td>
+                <td>${_esc(r.process)}</td>
+                <td><strong>${_esc(r.failureMode)}</strong></td>
+                <td>${_esc(r.cause)}</td>
+                <td style="text-align:center;font-weight:900;color:${Number(r.rpn) >= 100 ? '#dc2626' : '#2563eb'};">${_esc(r.rpn || '-')}</td>
+                <td>${_esc(r.recommendedAction || '-')}</td>
+            </tr>`).join('');
+        UIUtils.showModal(
+            `PFMEA 프리셋 - ${_esc(t.presetName || t.templateName || '')}`,
+            `<div style="display:flex;flex-direction:column;gap:14px;">
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">
+                    <div style="padding:10px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);"><div style="font-size:.74rem;color:var(--text-muted);">원본</div><strong>${_esc(t.sourceFileName || '-')}</strong></div>
+                    <div style="padding:10px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);"><div style="font-size:.74rem;color:var(--text-muted);">시트</div><strong>${_esc(t.sheetName || '-')}</strong></div>
+                    <div style="padding:10px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);"><div style="font-size:.74rem;color:var(--text-muted);">행</div><strong>${UIUtils.formatNumber((t.rows || []).length)}</strong></div>
+                    <div style="padding:10px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);"><div style="font-size:.74rem;color:var(--text-muted);">Max RPN</div><strong>${_pfmeaRpnMax(t.rows) || '-'}</strong></div>
+                </div>
+                <div>
+                    <h4 style="margin:0 0 8px;font-size:14px;">공정 블록</h4>
+                    <div class="data-table-wrapper" style="max-height:260px;overflow:auto;">
+                        <table class="data-table" style="font-size:12px;min-width:760px;">
+                            <thead><tr><th style="width:70px;text-align:center;">공정번호</th><th>공정</th><th style="width:70px;text-align:center;">행</th><th style="width:90px;text-align:center;">Max RPN</th><th>불량모드</th></tr></thead>
+                            <tbody>${blockRows || `<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted);">공정 블록 없음</td></tr>`}</tbody>
+                        </table>
+                    </div>
+                </div>
+                <div>
+                    <h4 style="margin:0 0 8px;font-size:14px;">상위 RPN</h4>
+                    <div class="data-table-wrapper" style="max-height:300px;overflow:auto;">
+                        <table class="data-table" style="font-size:12px;min-width:900px;">
+                            <thead><tr><th style="width:70px;text-align:center;">공정번호</th><th>공정</th><th>불량모드</th><th>원인</th><th style="width:80px;text-align:center;">RPN</th><th>개선조치</th></tr></thead>
+                            <tbody>${riskRows || `<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted);">위험도 행 없음</td></tr>`}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`,
+            'xl'
+        );
+    }
+
+    async function deletePfmeaTemplate(id) {
+        const t = _pfmeaTemplates().find(x => x.id === id);
+        if (!t) return;
+        if (!confirm('선택한 PFMEA 프리셋을 삭제하시겠습니까?')) return;
+        await Storage.remove(STORE, id);
+        UIUtils.toast('PFMEA 프리셋이 삭제되었습니다.', 'success');
+        _renderPfmeaPage();
     }
 
     function _isMergeableStandard(type = _curDocType) {
@@ -9160,6 +10027,15 @@ window.addEventListener('load', function() {
         openPaintTdsUpload,
         openPaintTdsFile,
         deletePaintTds,
+        seedProcessFlowPresets,
+        openProcessFlowPresetModal,
+        saveProcessFlowPreset,
+        openProcessFlowPresetDetail,
+        deleteProcessFlowPreset,
+        openPfmeaUpload,
+        importPfmeaFile,
+        openPfmeaTemplateDetail,
+        deletePfmeaTemplate,
     };
 })();
 

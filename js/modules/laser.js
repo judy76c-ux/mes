@@ -43,7 +43,7 @@ var LaserWorkModule = (function() {
             .sort((a, b) => a.localeCompare(b, 'ko'));
         return `
             <div class="form-group">
-                <label class="form-label">${label}</label>
+                <label class="form-label">${label} <span style="color:var(--accent-red)">*</span></label>
                 <select class="form-select" id="${id}">
                     <option value="">-- 작업자 선택 --</option>
                     ${options.map(name => `<option value="${_esc(name)}" ${name === selectedValue ? 'selected' : ''}>${_esc(name)}</option>`).join('')}
@@ -153,6 +153,15 @@ var LaserWorkModule = (function() {
             .replace(/[\[\]\(\)\{\}_-]/g, '');
     }
 
+    function _lookupTokens(value) {
+        return String(value || '')
+            .toLowerCase()
+            .replace(/[\[\]\(\)\{\}_\-\/]/g, ' ')
+            .split(/\s+/)
+            .map(t => t.trim())
+            .filter(t => t.length >= 2);
+    }
+
     function _isLaserProcessName(value) {
         const key = _normalizeFlowKey(value);
         const lower = String(value || '').trim().toLowerCase();
@@ -185,66 +194,190 @@ var LaserWorkModule = (function() {
             .some(_isLaserProcessName);
     }
 
-    function _findProductForWork(carModel, partName, color) {
-        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-        const carKey = _normalizeLookupText(carModel);
-        const partKey = _normalizeLookupText(partName);
-        const colorKey = _normalizeLookupText(color);
-
-        const exact = products.find(p =>
-            _productCarName(p) === carModel &&
-            _productPartName(p) === partName &&
-            (!color || _productColorName(p) === color)
-        );
-        if (exact) return exact;
-
-        const normalized = products.find(p =>
-            _normalizeLookupText(_productCarName(p)) === carKey &&
-            _normalizeLookupText(_productPartName(p)) === partKey &&
-            (!colorKey || _normalizeLookupText(_productColorName(p)) === colorKey)
-        );
-        if (normalized) return normalized;
-
-        const withoutColor = products.find(p =>
-            _normalizeLookupText(_productCarName(p)) === carKey &&
-            _normalizeLookupText(_productPartName(p)) === partKey
-        );
-        if (withoutColor) return withoutColor;
-
-        return products.find(p => {
-            const prodCar = _normalizeLookupText(_productCarName(p));
-            const prodPart = _normalizeLookupText(_productPartName(p));
-            return prodCar === carKey && prodPart && partKey &&
-                (prodPart.includes(partKey) || partKey.includes(prodPart));
-        }) || null;
-    }
-
-    function _getLaserCycleSpec(carModel, partName, color) {
-        const prod = _findProductForWork(carModel, partName, color);
-        if (!prod) return { ct: '', cvt: '', cycleSec: '', foundProduct: false, foundProcess: false };
+    function _getLaserProcessSpec(prod) {
+        if (!prod) return null;
         for (let i = 1; i <= 4; i++) {
             const proc = _firstFilled(prod, [`process${i}`, `proc${i}`]);
             if (_isLaserProcessName(proc)) {
                 const ct = _firstFilled(prod, [`ct${i}`, `cTime${i}`, `ctime${i}`, `cycleTime${i}`, `cycle${i}`, `C_TIME${i}`]);
                 const cvt = _firstFilled(prod, [`cvt${i}`, `CVT${i}`, `Cvt${i}`]);
-                return { ct, cvt, cycleSec: ct || cvt || '', foundProduct: true, foundProcess: true };
+                return { ct, cvt, cycleSec: ct || cvt || '', processIndex: i };
             }
         }
-        return { ct: '', cvt: '', cycleSec: '', foundProduct: true, foundProcess: false };
+        return null;
+    }
+
+    function _productNameValues(prod) {
+        return [
+            _productPartName(prod),
+            prod && prod.displayName,
+            prod && prod.code
+        ].filter(Boolean);
+    }
+
+    function _nameMatchScore(inputName, prod) {
+        const inputKey = _normalizeLookupText(inputName);
+        if (!inputKey) return 0;
+        const inputTokens = _lookupTokens(inputName);
+        let best = 0;
+        _productNameValues(prod).forEach(name => {
+            const nameKey = _normalizeLookupText(name);
+            if (!nameKey) return;
+            if (nameKey === inputKey) best = Math.max(best, 100);
+            if (nameKey.includes(inputKey) || inputKey.includes(nameKey)) best = Math.max(best, 70);
+            const nameTokens = _lookupTokens(name);
+            const matched = nameTokens.reduce((sum, token) => {
+                return sum + (inputTokens.some(t => t === token || t.includes(token) || token.includes(t)) ? 1 : 0);
+            }, 0);
+            if (matched > 0) best = Math.max(best, Math.min(65, matched * 18));
+        });
+        return best;
+    }
+
+    function _colorMatchScore(inputColor, prod) {
+        const colorKey = _normalizeLookupText(inputColor);
+        if (!colorKey) return 0;
+        const prodKey = _normalizeLookupText(_productColorName(prod));
+        if (!prodKey) return 0;
+        if (prodKey === colorKey) return 30;
+        if (prodKey.includes(colorKey) || colorKey.includes(prodKey)) return 18;
+        const colorTokens = _lookupTokens(inputColor);
+        const prodTokens = _lookupTokens(_productColorName(prod));
+        return prodTokens.some(token => colorTokens.some(t => t === token || t.includes(token) || token.includes(t))) ? 10 : -8;
+    }
+
+    function _findProductForWork(carModel, partName, color) {
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const carKey = _normalizeLookupText(carModel);
+        const scored = new Map();
+
+        function addCandidate(prod, baseScore) {
+            if (!prod) return;
+            const candidateKey = prod.id || `${_productCarName(prod)}||${_productPartName(prod)}||${_productColorName(prod)}`;
+            const spec = _getLaserProcessSpec(prod);
+            let score = baseScore;
+            if (_hasLaserProcess(prod)) score += 35;
+            if (spec && (spec.ct || spec.cvt)) score += 45;
+            const current = scored.get(candidateKey);
+            if (!current || score > current.score) scored.set(candidateKey, { product: prod, score });
+        }
+
+        products.forEach(prod => {
+            if (carKey && _normalizeLookupText(_productCarName(prod)) !== carKey) return;
+            const nameScore = _nameMatchScore(partName, prod);
+            if (partName && nameScore <= 0) return;
+            const baseScore = 100 + nameScore + _colorMatchScore(color, prod);
+            addCandidate(prod, baseScore);
+
+            const linked = products.filter(other =>
+                other && prod && (
+                    (prod.linkedProductId && other.id === prod.linkedProductId) ||
+                    (other.linkedProductId && prod.id && other.linkedProductId === prod.id)
+                ) &&
+                (!carKey || _normalizeLookupText(_productCarName(other)) === carKey)
+            );
+            linked.forEach(other => addCandidate(other, baseScore - 20));
+        });
+
+        const candidates = [...scored.values()].sort((a, b) => b.score - a.score);
+        return candidates[0] && candidates[0].score >= 120 ? candidates[0].product : null;
+    }
+
+    function _getLaserCycleSpec(carModel, partName, color) {
+        const prod = _findProductForWork(carModel, partName, color);
+        if (!prod) return { ct: '', cvt: '', cycleSec: '', packUnit: '', foundProduct: false, foundProcess: false };
+        const packUnit = _firstFilled(prod, ['packUnit', 'packingUnit', 'packageUnit', 'packQty', 'packingQty']);
+        const spec = _getLaserProcessSpec(prod);
+        if (spec) return { ...spec, packUnit, foundProduct: true, foundProcess: true };
+        return { ct: '', cvt: '', cycleSec: '', packUnit, foundProduct: true, foundProcess: false };
+    }
+
+    function _fmtLaserMinutes(min) {
+        const n = Number(min) || 0;
+        if (n <= 0) return '00 min';
+        if (n < 10) return `${n.toFixed(1)} min`;
+        return `${Math.round(n)} min`;
+    }
+
+    function _laserEstimateMinutes(spec) {
+        const ct = Number(spec && spec.ct) || 0;
+        const cvt = Number(spec && spec.cvt) || 0;
+        const qtyInput = document.getElementById('lwQuantity');
+        const qtyValue = qtyInput && String(qtyInput.value || '').trim() !== '' ? Number(qtyInput.value) : 0;
+        const qty = qtyValue || _selectedLotQtyTotal();
+        if (ct <= 0 || cvt <= 0 || qty <= 0) return 0;
+        return (qty / cvt) * ct / 60;
+    }
+
+    function _timeToMinutes(value) {
+        const m = String(value || '').match(/^(\d{1,2}):(\d{2})$/);
+        if (!m) return null;
+        return Number(m[1]) * 60 + Number(m[2]);
+    }
+
+    function _minutesToTime(total) {
+        const mins = ((Math.round(Number(total) || 0) % 1440) + 1440) % 1440;
+        const h = String(Math.floor(mins / 60)).padStart(2, '0');
+        const m = String(mins % 60).padStart(2, '0');
+        return `${h}:${m}`;
+    }
+
+    function updateStandardEndTime(forceFill = false) {
+        const startEl = document.getElementById('lwStartTime');
+        const endEl = document.getElementById('lwEndTime');
+        const hintEl = document.getElementById('lwStandardEndHint');
+        if (!startEl || !endEl) return;
+        const startMin = _timeToMinutes(startEl.value);
+        const spec = _getLaserCycleSpec(_selectedCarModel, _selectedPartName, _selectedColor);
+        const estimateMin = _laserEstimateMinutes(spec);
+        if (startMin === null || estimateMin <= 0) {
+            if (hintEl) hintEl.textContent = '';
+            return;
+        }
+        const standardEnd = _minutesToTime(startMin + estimateMin);
+        const autoManaged = endEl.dataset.standardAuto === '1';
+        if (forceFill || !endEl.value || autoManaged) {
+            endEl.value = standardEnd;
+            endEl.dataset.standardAuto = '1';
+        }
+        if (hintEl) hintEl.textContent = `표준 완료시간은 ${standardEnd} 입니다`;
+    }
+
+    function markEndTimeManual() {
+        const endEl = document.getElementById('lwEndTime');
+        if (endEl) endEl.dataset.standardAuto = '0';
+    }
+
+    function _updateLaserCycleEstimate(spec) {
+        const detail = document.getElementById('lwLaserCycleDetail');
+        if (!detail || !spec) return;
+        const ct = Number(spec.ct) || 0;
+        const cvt = Number(spec.cvt) || 0;
+        const qtyInput = document.getElementById('lwQuantity');
+        const qtyValue = qtyInput && String(qtyInput.value || '').trim() !== '' ? Number(qtyInput.value) : 0;
+        const qty = qtyValue || _selectedLotQtyTotal();
+        const packText = spec.packUnit ? ` / 포장단위 <strong>${_esc(spec.packUnit)}</strong>` : '';
+        if (ct > 0 && cvt > 0) {
+            const totalSec = (qty / cvt) * ct;
+            detail.innerHTML = `제품 기초 레이져 공정 C.TIME <strong>${UIUtils.formatNumber(ct)} sec</strong> / CVT <strong>${UIUtils.formatNumber(cvt)}개</strong>${packText}<br>
+                예상 작업 소요시간 <strong style="color:var(--accent-blue);">${_fmtLaserMinutes(totalSec / 60)}</strong>
+                <span style="color:var(--text-muted);">(${UIUtils.formatNumber(qty)} / ${UIUtils.formatNumber(cvt)} × ${UIUtils.formatNumber(ct)} sec)</span>`;
+            updateStandardEndTime(false);
+            return;
+        }
+        detail.textContent = spec.ct || spec.cvt
+            ? `제품 기초 레이져 공정 C.TIME ${spec.ct || '-'} sec / CVT ${spec.cvt || '-'}개${spec.packUnit ? ` / 포장단위 ${spec.packUnit}` : ''}`
+            : (spec.foundProduct ? '제품기초 레이져공정 CT/CVT 미등록' : '제품기초 제품 매칭 실패');
+        updateStandardEndTime(false);
     }
 
     function _refreshLaserCycleSpec(forceValue = false) {
         const spec = _getLaserCycleSpec(_selectedCarModel, _selectedPartName, _selectedColor);
         const label = document.getElementById('lwEngravingCycleLabel');
         const input = document.getElementById('lwEngravingTime');
-        const detail = document.getElementById('lwLaserCycleDetail');
         const sec = spec.cycleSec || '';
         if (label) label.textContent = `1cycle = ${sec || '00'} sec`;
-        if (detail) {
-            detail.textContent = spec.ct || spec.cvt
-                ? `제품기초 레이져공정 C.TIME ${spec.ct || '-'} / CVT ${spec.cvt || '-'}`
-                : (spec.foundProduct ? '제품기초 레이져공정 CT/CVT 미등록' : '제품기초 제품 매칭 실패');
-        }
+        _updateLaserCycleEstimate(spec);
         if (input && (forceValue || !input.value) && sec) input.value = sec;
     }
 
@@ -519,31 +652,31 @@ var LaserWorkModule = (function() {
             </div>
             <div id="lwManualSection" style="display:${manualChecked ? 'block' : 'none'};background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.18);border-radius:8px;padding:8px 12px;margin-bottom:8px;">
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:6px;">
-                    <div class="form-group" style="margin:0;"><label class="form-label">차종</label>
+                    <div class="form-group" style="margin:0;"><label class="form-label">차종 <span style="color:var(--accent-red)">*</span></label>
                         <select class="form-select" id="lwCarModel" onchange="LaserWorkModule.onCarModelChange()">
                             <option value="">-- 차종 선택 --</option>
                             ${[...new Set(_getLaserRelatedProducts().map(_productCarName).filter(Boolean))].sort().map(car => `<option value="${car}" ${d.carModel === car ? 'selected' : ''}>${car}</option>`).join('')}
                         </select>
                     </div>
-                    <div class="form-group" style="margin:0;"><label class="form-label">품명</label>
+                    <div class="form-group" style="margin:0;"><label class="form-label">품명 <span style="color:var(--accent-red)">*</span></label>
                         <select class="form-select" id="lwPartName" onchange="LaserWorkModule.onPartChange()">
                             <option value="">-- 품명 선택 --</option>
                         </select>
                     </div>
-                    <div class="form-group" style="margin:0;"><label class="form-label">컬러</label>
+                    <div class="form-group" style="margin:0;"><label class="form-label">컬러 <span style="color:var(--accent-red)">*</span></label>
                         <select class="form-select" id="lwColor" onchange="LaserWorkModule.refreshLaserCycleSpec(true)">
                             <option value="">-- 컬러 선택 --</option>
                         </select>
                     </div>
-                    <div class="form-group" style="margin:0;"><label class="form-label">수량</label>
+                    <div class="form-group" style="margin:0;"><label class="form-label">수량 <span style="color:var(--accent-red)">*</span></label>
                         <input type="number" class="form-input" id="lwQuantity" value="${d.quantity || ''}" placeholder="0" oninput="LaserWorkModule.calcCompletedQty()">
                     </div>
                 </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-                    <div class="form-group" style="margin:0;"><label class="form-label">도장LOT</label>
+                    <div class="form-group" style="margin:0;"><label class="form-label">도장LOT <span style="color:var(--accent-red)">*</span></label>
                         <input type="text" class="form-input" id="lwManualPaintLot" value="${d.paintDate || ''}" placeholder="도장 LOT">
                     </div>
-                    <div class="form-group" style="margin:0;"><label class="form-label">사출LOT</label>
+                    <div class="form-group" style="margin:0;"><label class="form-label">사출LOT <span style="color:var(--accent-red)">*</span></label>
                         <input type="text" class="form-input" id="lwManualInjLot" value="${d.paintLot || ''}" placeholder="사출 LOT">
                     </div>
                 </div>
@@ -616,12 +749,13 @@ var LaserWorkModule = (function() {
                     </select>
                 </div>
                 <div class="form-group" style="margin:0;">
-                    <label class="form-label">시작 시간</label>
-                    <input type="time" class="form-input" id="lwStartTime" value="${d.startTime || ''}">
+                    <label class="form-label">시작 시간 <span style="color:var(--accent-red)">*</span></label>
+                    <input type="time" class="form-input" id="lwStartTime" value="${d.startTime || ''}" oninput="LaserWorkModule.updateStandardEndTime(true)">
                 </div>
                 <div class="form-group" style="margin:0;">
-                    <label class="form-label">완료 시간</label>
-                    <input type="time" class="form-input" id="lwEndTime" value="${d.endTime || ''}">
+                    <label class="form-label">완료 시간 <span style="color:var(--accent-red)">*</span></label>
+                    <input type="time" class="form-input" id="lwEndTime" value="${d.endTime || ''}" oninput="LaserWorkModule.markEndTimeManual()">
+                    <div id="lwStandardEndHint" style="font-size:0.72rem;color:var(--text-muted);margin-top:3px;line-height:1.25;"></div>
                 </div>
                 ${isEditMode ? `<div class="form-group" style="margin:0;">
                     <label class="form-label">수량 <span style="color:var(--accent-red)">*</span></label>
@@ -630,16 +764,16 @@ var LaserWorkModule = (function() {
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;">
                 <div class="form-group" style="margin:0;">
-                    <label class="form-label">각인 시간은 프로그램의 시간을 기록(sec)</label>
+                    <label class="form-label">각인 시간은 프로그램의 시간을 기록(sec) <span style="color:var(--accent-red)">*</span></label>
                     <input type="number" class="form-input" id="lwEngravingTime" value="${d.engravingTime || ''}" placeholder="0.0">
-                    <div id="lwLaserCycleDetail" style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;"></div>
+                    <div id="lwLaserCycleDetail" style="font-size:0.86rem;line-height:1.45;color:var(--text-muted);margin-top:5px;"></div>
                 </div>
                 <div class="form-group" style="margin:0;">
-                    <label class="form-label">Program File Name</label>
+                    <label class="form-label">Program File Name <span style="color:var(--accent-red)">*</span></label>
                     <input type="text" class="form-input" id="lwProgramName" value="${d.programName || ''}" placeholder="프로그램 파일명">
                 </div>
                 <div class="form-group" style="margin:0;">
-                    <label class="form-label">렌즈 높이</label>
+                    <label class="form-label">렌즈 높이 <span style="color:var(--accent-red)">*</span></label>
                     <input type="text" class="form-input" id="lwLensHeight" value="${d.lensHeight || ''}" placeholder="예: 120mm">
                 </div>
             </div>
@@ -652,30 +786,31 @@ var LaserWorkModule = (function() {
                         const firstDone  = !!(d.qcFirstQuality  && d.qcFirstPosition  && d.qcFirstPhoto);
                         const middleDone = !!(d.qcMiddleQuality && d.qcMiddlePosition && d.qcMiddlePhoto);
                         return [
-                        ['lwQcFirst',  'lwQcFirstLoss',  '초품', 'First',  d.qcFirstLoss  || '', d.qcFirstQuality,  d.qcFirstPosition,  d.qcFirstPhoto,  d.qcFirstPhotoUrl  || '', true       ],
-                        ['lwQcMiddle', 'lwQcMiddleLoss', '중품', 'Middle', d.qcMiddleLoss || '', d.qcMiddleQuality, d.qcMiddlePosition, d.qcMiddlePhoto, d.qcMiddlePhotoUrl || '', firstDone  ],
-                        ['lwQcLast',   'lwQcLastLoss',   '종품', 'Last',   d.qcLastLoss   || '', d.qcLastQuality,   d.qcLastPosition,   d.qcLastPhoto,   d.qcLastPhotoUrl   || '', middleDone ]
+                        ['lwQcFirst',  'lwQcFirstLoss',  '초품', 'First',  d.qcFirstLoss  ?? 0, d.qcFirstQuality,  d.qcFirstPosition,  d.qcFirstPhoto,  d.qcFirstPhotoUrl  || '', true       ],
+                        ['lwQcMiddle', 'lwQcMiddleLoss', '중품', 'Middle', d.qcMiddleLoss ?? 0, d.qcMiddleQuality, d.qcMiddlePosition, d.qcMiddlePhoto, d.qcMiddlePhotoUrl || '', firstDone  ],
+                        ['lwQcLast',   'lwQcLastLoss',   '종품', 'Last',   d.qcLastLoss   ?? 0, d.qcLastQuality,   d.qcLastPosition,   d.qcLastPhoto,   d.qcLastPhotoUrl   || '', middleDone ]
                         ];
                     })().map(([cbId, inId, label, type, lossVal, ckQual, ckPos, ckPhoto, photoUrl, enabled]) => {
                         const previewSrc = photoUrl ? (typeof ApiClient !== 'undefined' ? ApiClient.photoUrl(photoUrl) : photoUrl) : '';
+                        const done = !!(ckQual && ckPos && ckPhoto);
                         return `
                         <div id="${cbId}Card" style="background:var(--bg-primary);border:1px solid var(--border-color);border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;${enabled ? '' : 'opacity:0.4;pointer-events:none;'}">
                             <div style="display:flex;align-items:center;gap:6px;padding-bottom:6px;border-bottom:1px solid var(--border-color);">
-                                <span class="material-symbols-outlined" style="font-size:1rem;color:${enabled ? 'var(--accent-blue)' : 'var(--text-muted)'};">✓</span>
+                                <span id="${cbId}DoneIcon" class="material-symbols-outlined" style="font-size:1rem;color:${done ? 'var(--accent-blue)' : 'var(--text-muted)'};">check</span>
                                 <span style="font-weight:700;font-size:0.88rem;">${label} 확인</span>
                             </div>
                             <div id="${cbId}SubItems" style="display:flex;flex-direction:column;gap:5px;">
                                 <label style="display:flex;align-items:center;gap:5px;font-size:0.78rem;cursor:pointer;margin:0;">
                                     <input type="checkbox" id="${cbId}Quality" ${ckQual ? 'checked' : ''} onchange="LaserWorkModule.checkQcProgress()">
-                                    <span>품질 확인</span>
+                                    <span>각인품질 확인</span>
                                 </label>
                                 <label style="display:flex;align-items:center;gap:5px;font-size:0.78rem;cursor:pointer;margin:0;">
                                     <input type="checkbox" id="${cbId}Position" ${ckPos ? 'checked' : ''} onchange="LaserWorkModule.checkQcProgress()">
-                                    <span>위치도면 확인</span>
+                                    <span>위치 도면확인</span>
                                 </label>
                                 <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                                     <label style="display:flex;align-items:center;gap:5px;font-size:0.78rem;margin:0;">
-                                        <input type="checkbox" id="${cbId}Photo" ${ckPhoto ? 'checked' : ''} disabled style="pointer-events:none;">
+                                        <input type="checkbox" id="${cbId}Photo" ${ckPhoto ? 'checked' : ''} onclick="return false;" style="pointer-events:none;accent-color:var(--accent-blue);">
                                         <span>사진 등록</span>
                                     </label>
                                     <label style="display:inline-flex;align-items:center;gap:3px;cursor:pointer;padding:2px 8px;border:1px dashed var(--accent-blue);border-radius:4px;font-size:0.73rem;color:var(--accent-blue);white-space:nowrap;">
@@ -757,10 +892,22 @@ var LaserWorkModule = (function() {
         if (field === 'qty') _syncSelectedLotQty();
     }
 
+    function previewStandbyQty(idx, lotIdx, value) {
+        const w = _standbyItems[idx];
+        if (!w) return;
+        _selectedCarModel = w.carModel || '';
+        _selectedPartName = w.partName || '';
+        _selectedColor = w.color || '';
+        const qtyEl = document.getElementById('lwQuantity');
+        if (qtyEl) qtyEl.value = Number(value) || '';
+        calcCompletedQty();
+    }
+
     function _syncSelectedLotQty() {
         const qtyEl = document.getElementById('lwQuantity');
         const total = _selectedLotQtyTotal();
-        if (qtyEl && total > 0) qtyEl.value = total;
+        if (qtyEl) qtyEl.value = total > 0 ? total : '';
+        _refreshLaserCycleSpec(false);
     }
 
     function renderLotRows() {
@@ -880,7 +1027,8 @@ var LaserWorkModule = (function() {
                                 <td style="padding:5px 8px; text-align:right; font-weight:700; color:var(--accent-blue);">${UIUtils.formatNumber(lot.qty || 0)}</td>
                                 <td style="padding:5px 8px; font-family:monospace; font-size:0.8rem;">${lot.lotNo || '-'}</td>
                                 <td style="padding:5px 8px;">
-                                    <input id="${inputId}" type="number" class="form-input" min="1" max="${Number(lot.qty) || 0}" value="${Number(lot.qty) || 0}" style="height:30px;text-align:right;padding:4px 8px;">
+                                    <input id="${inputId}" type="number" class="form-input" min="1" max="${Number(lot.qty) || 0}" value="" placeholder="입력" style="height:30px;text-align:right;padding:4px 8px;"
+                                           oninput="LaserWorkModule.previewStandbyQty(${globalIdx}, ${lotIdx}, this.value)">
                                 </td>
                                 <td style="padding:5px 8px;">
                                     <button class="btn btn-sm btn-primary" onclick="LaserWorkModule.selectStandbyItem(${globalIdx}, ${lotIdx}, '${inputId}')">LOT 선택</button>
@@ -928,21 +1076,21 @@ var LaserWorkModule = (function() {
             );
         }
 
-        // 차종/품명/컬러 모듈 변수에 저장 (처음 선택 시)
-        if (!_selectedCarModel) {
-            _selectedCarModel = w.carModel || '';
-            _selectedPartName = w.partName || '';
-            _selectedColor    = w.color    || '';
-        }
-        _refreshLaserCycleSpec();
+        // 차종/품명/컬러 모듈 변수에 저장
+        _selectedCarModel = w.carModel || '';
+        _selectedPartName = w.partName || '';
+        _selectedColor    = w.color    || '';
 
         // 도장 LOT 내부 배열에 추가
         _selectedLots.push({ paintDate: w.date || '', lotNo: lot.lotNo || w.lotNo || '', qty: pickQty });
         renderLotRows();
 
-        // 수량 (처음 선택할 때만 자동 입력)
+        // 선택한 LOT 작업수량만 총 작업수량에 반영
         const qtyEl = document.getElementById('lwQuantity');
-        if (qtyEl) qtyEl.value = _selectedLotQtyTotal() || pickQty;
+        if (qtyEl) qtyEl.value = _selectedLotQtyTotal() || '';
+        _refreshLaserCycleSpec(true);
+        calcCompletedQty();
+        updateStandardEndTime(false);
 
         // 연결 제품 감지 → 분할 패널 표시
         const splitPanel = document.getElementById('lwSplitPanel');
@@ -1038,38 +1186,51 @@ var LaserWorkModule = (function() {
 
     function _qcStageComplete(prefix) {
         const g = id => !!(document.getElementById(id) || {}).checked;
-        return g(prefix) && g(prefix + 'Quality') && g(prefix + 'Position') && g(prefix + 'Photo');
+        return g(prefix + 'Quality') && g(prefix + 'Position') && g(prefix + 'Photo');
+    }
+
+    function _qcStageTouched(prefix) {
+        const g = id => !!(document.getElementById(id) || {}).checked;
+        return g(prefix + 'Quality') || g(prefix + 'Position') || g(prefix + 'Photo');
     }
 
     function checkQcProgress() {
         const firstDone  = _qcStageComplete('lwQcFirst');
         const middleDone = _qcStageComplete('lwQcMiddle');
 
+        function setStageDoneVisual(prefix, done) {
+            const icon = document.getElementById(prefix + 'DoneIcon');
+            if (icon) icon.style.color = done ? 'var(--accent-blue)' : 'var(--text-muted)';
+        }
+
         function setCardEnabled(prefix, enabled) {
             const card = document.getElementById(prefix + 'Card');
             if (!card) return;
             card.style.opacity = enabled ? '' : '0.4';
             card.style.pointerEvents = enabled ? '' : 'none';
+            const sub = document.getElementById(prefix + 'SubItems');
+            if (sub) sub.style.display = 'flex';
             const cb = document.getElementById(prefix);
             if (cb) cb.disabled = !enabled;
         }
 
         setCardEnabled('lwQcMiddle', firstDone);
         setCardEnabled('lwQcLast',   middleDone);
+        setStageDoneVisual('lwQcFirst', firstDone);
+        setStageDoneVisual('lwQcMiddle', middleDone);
+        setStageDoneVisual('lwQcLast', _qcStageComplete('lwQcLast'));
 
         if (!firstDone) {
             ['lwQcMiddle', 'lwQcMiddleQuality', 'lwQcMiddlePosition', 'lwQcMiddlePhoto'].forEach(id => {
                 const el = document.getElementById(id); if (el) el.checked = false;
             });
-            const sub = document.getElementById('lwQcMiddleSubItems');
-            if (sub) sub.style.display = 'none';
+            setStageDoneVisual('lwQcMiddle', false);
         }
         if (!middleDone) {
             ['lwQcLast', 'lwQcLastQuality', 'lwQcLastPosition', 'lwQcLastPhoto'].forEach(id => {
                 const el = document.getElementById(id); if (el) el.checked = false;
             });
-            const sub = document.getElementById('lwQcLastSubItems');
-            if (sub) sub.style.display = 'none';
+            setStageDoneVisual('lwQcLast', false);
         }
     }
 
@@ -1115,6 +1276,7 @@ var LaserWorkModule = (function() {
         if (qd) qd.textContent = fmt(qty);
         if (ld) ld.textContent = fmt(total);
         if (cd) cd.textContent = fmt(completed);
+        _refreshLaserCycleSpec(false);
     }
 
     function addExternalWorker() {
@@ -1160,6 +1322,16 @@ var LaserWorkModule = (function() {
         if (row) row.style.display = 'none';
     }
 
+    function _inputValue(id) {
+        const el = document.getElementById(id);
+        return el ? String(el.value || '').trim() : '';
+    }
+
+    function _focusInput(id) {
+        const el = document.getElementById(id);
+        if (el && typeof el.focus === 'function') el.focus();
+    }
+
     function collectData() {
         const manualEnabled = !!((document.getElementById('lwManualToggle') || {}).checked);
         const manualCarModel = (document.getElementById('lwCarModel') || {}).value || '';
@@ -1193,9 +1365,9 @@ var LaserWorkModule = (function() {
             paintLot: [...new Set(mergedLots.map(l => l.lotNo).filter(Boolean))].join(', '),
             programName: document.getElementById('lwProgramName').value.trim(),
             lensHeight: document.getElementById('lwLensHeight').value.trim(),
-            qcFirst: document.getElementById('lwQcFirst').checked,
-            qcMiddle: document.getElementById('lwQcMiddle').checked,
-            qcLast: document.getElementById('lwQcLast').checked,
+            qcFirst: _qcStageTouched('lwQcFirst'),
+            qcMiddle: _qcStageTouched('lwQcMiddle'),
+            qcLast: _qcStageTouched('lwQcLast'),
             qcFirstQuality:  (document.getElementById('lwQcFirstQuality')  || {}).checked || false,
             qcFirstPosition: (document.getElementById('lwQcFirstPosition') || {}).checked || false,
             qcFirstPhoto:    (document.getElementById('lwQcFirstPhoto')    || {}).checked || false,
@@ -1216,6 +1388,66 @@ var LaserWorkModule = (function() {
             worker2: document.getElementById('lwWorker2').value.trim(),
             worker3: document.getElementById('lwWorker3').value.trim()
         };
+    }
+
+    function validateWorkRequired(data) {
+        const manualEnabled = !!((document.getElementById('lwManualToggle') || {}).checked);
+        const missing = [];
+        let focusId = '';
+        const add = (label, id) => {
+            if (!missing.includes(label)) missing.push(label);
+            if (!focusId && id) focusId = id;
+        };
+
+        if (!data.carModel) add('차종', manualEnabled ? 'lwCarModel' : 'lwSbCar');
+        if (!data.partName) add('품명', manualEnabled ? 'lwPartName' : 'lwSbPart');
+        if (!data.color) add('컬러', 'lwColor');
+        if (!data.quantity || Number(data.quantity) <= 0) add('작업수량', 'lwQuantity');
+
+        if (manualEnabled && _selectedLots.length === 0) {
+            if (!_inputValue('lwManualPaintLot')) add('도장 LOT', 'lwManualPaintLot');
+            if (!_inputValue('lwManualInjLot')) add('사출 LOT', 'lwManualInjLot');
+        } else {
+            if (!_selectedLots.length) add('작업 LOT 선택', 'lwSbCar');
+            _selectedLots.forEach((lot, idx) => {
+                if (!String(lot.paintDate || '').trim()) add(`LOT ${idx + 1} 도장작업일`, '');
+                if (!String(lot.lotNo || '').trim()) add(`LOT ${idx + 1} 사출 LOT`, '');
+                if (!(Number(lot.qty) > 0)) add(`LOT ${idx + 1} 작업수량`, '');
+            });
+        }
+
+        if (!data.date) add('작업일자', 'lwDate');
+        if (!data.machine) add('레이져 장비', 'lwMachine');
+        if (!data.startTime) add('시작 시간', 'lwStartTime');
+        if (!data.endTime) add('완료 시간', 'lwEndTime');
+        if (!(Number(data.engravingTime) > 0)) add('각인 시간', 'lwEngravingTime');
+        if (!data.programName) add('Program File Name', 'lwProgramName');
+        if (!data.lensHeight) add('렌즈 높이', 'lwLensHeight');
+
+        [
+            ['초품', 'lwQcFirst', data.qcFirstQuality, data.qcFirstPosition, data.qcFirstPhoto],
+            ['중품', 'lwQcMiddle', data.qcMiddleQuality, data.qcMiddlePosition, data.qcMiddlePhoto],
+            ['종품', 'lwQcLast', data.qcLastQuality, data.qcLastPosition, data.qcLastPhoto],
+        ].forEach(([label, prefix, qual, pos, photo]) => {
+            if (!qual) add(`${label} 각인품질 확인`, `${prefix}Quality`);
+            if (!pos) add(`${label} 위치 도면확인`, `${prefix}Position`);
+            if (!photo) add(`${label} 사진 등록`, `${prefix}PhotoFile`);
+        });
+
+        if (_inputValue('lwQcFirstLoss') === '') add('초품 LOSS', 'lwQcFirstLoss');
+        if (_inputValue('lwQcMiddleLoss') === '') add('중품 LOSS', 'lwQcMiddleLoss');
+        if (_inputValue('lwQcLastLoss') === '') add('종품 LOSS', 'lwQcLastLoss');
+
+        if (!data.worker1) add('작업자 1', 'lwWorker1');
+        if (!data.worker2) add('작업자 2', 'lwWorker2');
+        if (!data.worker3) add('작업자 3', 'lwWorker3');
+
+        if (missing.length) {
+            UIUtils.toast(`필수 입력 항목을 확인하세요: ${missing.slice(0, 6).join(', ')}${missing.length > 6 ? ` 외 ${missing.length - 6}개` : ''}`, 'warning');
+            _focusInput(focusId);
+            return false;
+        }
+        return true;
     }
 
     function openAddModal(prefill) {
@@ -1281,22 +1513,7 @@ var LaserWorkModule = (function() {
 
     async function saveNew() {
         const data = collectData();
-        if (!data.date || !data.machine || !data.quantity || !data.carModel || !data.partName) {
-            UIUtils.toast('대기품을 선택하거나 수기등록을 체크한 뒤 필수 항목을 입력하세요.', 'warning');
-            return;
-        }
-        // 초·중·종품 확인 시 서브 체크박스 3가지 모두 필수
-        const qcChecks = [
-            { label: '초품', checked: data.qcFirst,  qual: data.qcFirstQuality,  pos: data.qcFirstPosition,  photo: data.qcFirstPhoto  },
-            { label: '중품', checked: data.qcMiddle, qual: data.qcMiddleQuality, pos: data.qcMiddlePosition, photo: data.qcMiddlePhoto },
-            { label: '종품', checked: data.qcLast,   qual: data.qcLastQuality,   pos: data.qcLastPosition,   photo: data.qcLastPhoto   }
-        ];
-        for (const q of qcChecks) {
-            if (q.checked && (!q.qual || !q.pos || !q.photo)) {
-                UIUtils.toast(`${q.label} 확인: 품질 확인 · 위치도면 확인 · 사진 등록을 모두 체크하세요.`, 'warning');
-                return;
-            }
-        }
+        if (!validateWorkRequired(data)) return;
         if (_selectedLots.length > 0) {
             const lotQty = _selectedLotQtyTotal();
             if (lotQty <= 0) {
@@ -1313,8 +1530,15 @@ var LaserWorkModule = (function() {
         const splitPanel = document.getElementById('lwSplitPanel');
         const linkedProductId = (document.getElementById('lwSplitLinkedProductId') || {}).value || '';
         if (splitPanel && splitPanel.style.display !== 'none' && linkedProductId) {
-            const qA = Number((document.getElementById('lwSplitQtyA') || {}).value) || 0;
-            const qB = Number((document.getElementById('lwSplitQtyB') || {}).value) || 0;
+            const qAVal = _inputValue('lwSplitQtyA');
+            const qBVal = _inputValue('lwSplitQtyB');
+            if (qAVal === '' || qBVal === '') {
+                UIUtils.toast('분할 수량도 모두 입력하세요.', 'warning');
+                _focusInput(qAVal === '' ? 'lwSplitQtyA' : 'lwSplitQtyB');
+                return;
+            }
+            const qA = Number(qAVal) || 0;
+            const qB = Number(qBVal) || 0;
             if (qA + qB !== data.quantity) {
                 UIUtils.toast(`분할 수량 합계(${qA + qB})가 대기 수량(${data.quantity})과 다릅니다.`, 'warning');
                 return;
@@ -1363,6 +1587,7 @@ var LaserWorkModule = (function() {
 
     async function saveEdit(id) {
         const data = collectData();
+        if (!validateWorkRequired(data)) return;
         await Storage.update(STORE, id, data);
         UIUtils.closeModal();
         UIUtils.toast('수정되었습니다.', 'success');
@@ -1397,9 +1622,12 @@ var LaserWorkModule = (function() {
         onSbCarChange,
         onSbPartChange,
         selectStandbyItem,
+        previewStandbyQty,
         onSplitQtyChange,
         toggleManualSection,
         refreshLaserCycleSpec,
+        updateStandardEndTime,
+        markEndTimeManual,
         calcCompletedQty,
         onQcToggle,
         checkQcProgress,

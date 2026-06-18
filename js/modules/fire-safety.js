@@ -100,9 +100,15 @@ var FireSafetyNavUI = (function () {
 
         return `
             <div style="margin-bottom:20px;">
-                <div style="margin-bottom:12px;">
-                    <h3 style="margin:0 0 4px;font-size:1.15rem;">${SafetyCommon.esc(title)}</h3>
-                    <p style="margin:0;color:var(--text-muted);font-size:.88rem;">${SafetyCommon.esc(desc || '')}</p>
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                    <button onclick="Router.navigate('fire-safety-hub')"
+                        style="display:flex;align-items:center;gap:4px;padding:4px 10px;font-size:0.78rem;background:transparent;border:1px solid var(--border-color);border-radius:6px;cursor:pointer;color:var(--text-muted);white-space:nowrap;">
+                        <span class="material-symbols-outlined" style="font-size:14px;">arrow_back</span> 소방관리
+                    </button>
+                    <div>
+                        <h3 style="margin:0 0 2px;font-size:1.15rem;">${SafetyCommon.esc(title)}</h3>
+                        <p style="margin:0;color:var(--text-muted);font-size:.88rem;">${SafetyCommon.esc(desc || '')}</p>
+                    </div>
                 </div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;">${tiles}</div>
             </div>`;
