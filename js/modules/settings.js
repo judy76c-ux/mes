@@ -308,6 +308,9 @@ const SettingsModule = (function() {
         const injMats   = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
         const injInv    = Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [];
         const pNameSet  = new Set(products.map(p => (p.partName || '').trim()).filter(Boolean));
+        const paintMaterials = Storage.getAll(DB.STORES.PAINT_MATERIALS) || [];
+        const paintMap = {};
+        paintMaterials.forEach(pm => { if (pm.id) paintMap[pm.id] = pm; });
 
         // ── 검사 항목 ──────────────────────────────────────────────────
         // [1] 필수정보 누락 (carModel / partName / color 없음)
@@ -372,9 +375,18 @@ const SettingsModule = (function() {
         // [9] 도료 등록됐는데 경화제/신너 미선택 (사용불필요 제외)
         const incompletePaint = products.filter(p =>
             (p.paintMaterials || []).some(r =>
-                _isPaintRowIncomplete(r)
+                _isPaintRowIncomplete(r, paintMap)
             )
         );
+
+        // [9-1] 도료 ID는 입력되어 있으나 도료 마스터에 없는 경우
+        const invalidPaintRefs = [];
+        products.forEach(p => {
+            (p.paintMaterials || []).forEach((r, rowIdx) => {
+                const refs = _getInvalidPaintRefs(r, paintMap);
+                if (refs.length) invalidPaintRefs.push({ product: p, row: r, rowIdx, refs });
+            });
+        });
 
         // [10] 사출 단가 불일치: 자재 unitPrice ≠ 연결 제품 injectionPrice
         const priceMismatch = [];
@@ -428,7 +440,7 @@ const SettingsModule = (function() {
         const errors   = missingBasic.length + orphanMfg.length;
         const warnings = noProcess.length + noInjMat.length + noMfgMap.length +
                          noColorMats.length + orphanInv.length + dupNames.length +
-                         textOnlyMats.length + noPaintMat.length + incompletePaint.length +
+                         textOnlyMats.length + noPaintMat.length + incompletePaint.length + invalidPaintRefs.length +
                          priceMismatch.length;
         const allOk    = errors === 0 && warnings === 0;
 
@@ -444,12 +456,8 @@ const SettingsModule = (function() {
 
         // ── 행 렌더 헬퍼 ───────────────────────────────────────────────
         function issueRow(level, title, items, renderItem) {
-            if (items.length === 0) {
-                return `<div style="display:flex;align-items:center;gap:8px;padding:5px 10px;font-size:0.82rem;">
-                    <span style="color:var(--accent-green);font-size:1rem;">✅</span>
-                    <span style="color:var(--text-muted);">${title} — 이상 없음</span>
-                </div>`;
-            }
+            if (items.length === 0) return '';  // 이상 없음 항목은 표시 안 함
+
             const color = level === 'error' ? 'var(--accent-red)' : '#d97706';
             const icon  = level === 'error' ? '⛔' : '⚠';
             const bg    = level === 'error' ? 'rgba(220,38,38,0.05)' : 'rgba(217,119,6,0.05)';
@@ -634,12 +642,7 @@ const SettingsModule = (function() {
         });
 
         function renderIncompletePaintSection() {
-            if (incompletePaint.length === 0) {
-                return `<div style="display:flex;align-items:center;gap:8px;padding:5px 10px;font-size:0.82rem;">
-                    <span style="color:var(--accent-green);font-size:1rem;">✅</span>
-                    <span style="color:var(--text-muted);">도료 경화제/신너 미선택 — 이상 없음</span>
-                </div>`;
-            }
+            if (incompletePaint.length === 0) return '';
             const id = 'pvDetail_도료경화제신너미선택';
             const groupHtml = Object.entries(incompletePaintGroups).map(([key, group]) => {
                 const carModel = group[0].carModel || '-';
@@ -652,7 +655,7 @@ const SettingsModule = (function() {
                        </button>`
                     : '';
                 const rows = group.map(p => {
-                    const bad = (p.paintMaterials||[]).filter(_isPaintRowIncomplete);
+                    const bad = (p.paintMaterials||[]).filter(r => _isPaintRowIncomplete(r, paintMap));
                     const detail = bad.map(r => `${r.paintSpec||'?'}${!r.hardId?' (경화제없음)':''}${!r.thinnerId?' (신너없음)':''}`).join(', ');
                     return `<div style="display:flex;align-items:center;gap:8px;padding:2px 0 2px 12px;">
                         <span style="flex:1;font-size:0.78rem;color:var(--text-secondary);">${p.partName||'-'}
@@ -687,6 +690,37 @@ const SettingsModule = (function() {
             </div>`;
         }
 
+        // 차종별 미등록 ID 그룹 집계 (차종 → slot::id → count)
+        const _carModelInvalidCount = {};
+        invalidPaintRefs.forEach(item => {
+            const model = item.product && item.product.carModel ? item.product.carModel : '-';
+            if (!_carModelInvalidCount[model]) _carModelInvalidCount[model] = {};
+            (item.refs || []).forEach(([slot, id]) => {
+                const key = slot + '::' + id;
+                _carModelInvalidCount[model][key] = (_carModelInvalidCount[model][key] || 0) + 1;
+            });
+        });
+
+        const rowInvalidPaintRef = item => {
+            const p = item.product || {};
+            const model = p.carModel || '-';
+            const spec = item.row && item.row.paintSpec ? item.row.paintSpec : `도료행 ${Number(item.rowIdx || 0) + 1}`;
+            const refs = item.refs.map(([slot, id]) => `${slot}: ${id}`).join(', ');
+            const hasBulk = (item.refs || []).some(([slot, id]) => {
+                const key = slot + '::' + id;
+                return (_carModelInvalidCount[model] && (_carModelInvalidCount[model][key] || 0) > 1);
+            });
+            const bulkBtn = hasBulk ? `<button onclick="SettingsModule.openBulkFixPaintRefModal('${model.replace(/'/g,'\\\'')}')"
+                style="padding:2px 8px;font-size:0.72rem;background:#d97706;color:#fff;border:none;border-radius:4px;cursor:pointer;white-space:nowrap;">차종 일괄수정</button>` : '';
+            return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid var(--border-color);">
+                <span style="flex:1;"><strong>${model}</strong> / ${p.partName||'-'} / ${p.color||'-'}
+                    <span style="color:#dc2626;font-size:0.75rem;margin-left:4px;">${spec} → 도료 마스터 미등록 ID (${refs})</span></span>
+                ${bulkBtn}
+                <button onclick="UIUtils.closeModal();SettingsModule.editProduct('${p.id}')"
+                    style="padding:2px 8px;font-size:0.72rem;background:var(--accent-blue);color:#fff;border:none;border-radius:4px;cursor:pointer;">수정</button>
+            </div>`;
+        };
+
         return `
         <div class="card" style="margin-bottom:16px;border:1px solid ${headerBdr};background:${headerBg};">
             <div class="card-header" style="padding:10px 16px;cursor:pointer;user-select:none;border-bottom:1px solid ${headerBdr};"
@@ -708,6 +742,7 @@ const SettingsModule = (function() {
                 ${issueRow('error',   '사출자재 제작품목 품명 불일치',                  orphanMfg,        rowOrphanMfg)}
                 ${issueRow('warning', '사출 단가 불일치 (자재 단가 ≠ 제품 사출매입가)',  priceMismatch,    rowPriceMismatch)}
                 ${issueRow('warning', '도장 공정 있으나 도료 미등록',                  noPaintMat,       rowNoPaintMat)}
+                ${issueRow('warning', '도료 마스터 미등록 ID 참조',                    invalidPaintRefs, rowInvalidPaintRef)}
                 ${renderIncompletePaintSection()}
                 ${issueRow('warning', '공정 미설정 (공정1~4 모두 없음)',               noProcess,        rowNoProcess)}
                 ${issueRow('warning', '사출자재 미연결 (이 품명 참조 자재 없음)',       noInjMat,         rowNoInjMat)}
@@ -716,11 +751,7 @@ const SettingsModule = (function() {
                 ${issueRow('warning', '사출자재 컬러 미설정 (동명 자재 여러 개)',        noColorMats,      rowNoColor)}
                 ${issueRow('warning', '사출창고 재고 — 자재마스터 불일치',              orphanInv,        rowOrphanInv)}
                 ${issueRow('warning', '동일 차종·품명 (컬러 다름, 품명 분리 검토)',     dupNames,       rowDupName)}
-                <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
-                    <button onclick="SettingsModule.migrateInjPriceToUnitPrice()"
-                        style="padding:3px 12px;font-size:0.78rem;background:transparent;
-                               color:var(--accent-blue);border:1px solid var(--accent-blue);
-                               border-radius:4px;cursor:pointer;">💰 사출 단가 일괄 적용</button>
+                <div style="margin-top:8px;display:flex;justify-content:flex-end;">
                     <button onclick="SettingsModule.switchTab('products')"
                         style="padding:3px 12px;font-size:0.78rem;background:transparent;
                                color:var(--text-muted);border:1px solid var(--border-color);
@@ -736,12 +767,34 @@ const SettingsModule = (function() {
         );
         const injMaterials  = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
         const paintMaterials = Storage.getAll(DB.STORES.PAINT_MATERIALS) || [];
+        const paintMap = {};
+        paintMaterials.forEach(pm => { if (pm.id) paintMap[pm.id] = pm; });
+        const productsById = {};
+        products.forEach(p => { if (p.id) productsById[p.id] = p; });
+        const injByProductId = {};
+        const injByPartName = {};
+        injMaterials.forEach(m => {
+            (m.productIds || []).forEach(pid => {
+                if (!pid) return;
+                if (!injByProductId[pid]) injByProductId[pid] = [];
+                injByProductId[pid].push(m);
+            });
+            [m.mfgProductName, m.mfgProductName2].forEach(name => {
+                const key = String(name || '').trim();
+                if (!key) return;
+                if (!injByPartName[key]) injByPartName[key] = [];
+                injByPartName[key].push(m);
+            });
+        });
         const uniqueCarModels = UIUtils.sortCarModels(products.map(p => p.carModel), products);
         const uniqueCustomers = [...new Set(products.map(p => p.customer).filter(Boolean))].sort();
-        const colspan = 14;
+        const colspan = 10;
 
         el.innerHTML = `
-            ${buildProductValidationPanel()}
+            <div id="productValidationPlaceholder" style="margin-bottom:16px;padding:12px 16px;background:var(--bg-secondary);border-radius:8px;color:var(--text-muted);font-size:0.85rem;">
+                <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;animation:spin 1s linear infinite;">refresh</span>
+                등록 검증 중...
+            </div>
             <div class="card">
                 <div class="card-header" style="flex-wrap: wrap; gap: 10px;">
                     <div style="display:flex; align-items:center; gap: 12px; flex-wrap:wrap;">
@@ -783,10 +836,6 @@ const SettingsModule = (function() {
                                     <th style="width:70px;white-space:nowrap;">도장컬러</th>
                                     <th style="width:48px;white-space:nowrap;text-align:center;">구분</th>
                                     <th style="width:64px;white-space:nowrap;text-align:center;">포장</th>
-                                    <th style="width:56px;white-space:nowrap;">납품처</th>
-                                    <th style="width:62px;white-space:nowrap;text-align:right;">판매가</th>
-                                    <th style="width:62px;white-space:nowrap;text-align:right;">사출매입</th>
-                                    <th style="width:62px;white-space:nowrap;text-align:right;">제조가</th>
                                     <th style="white-space:nowrap;">공정별 사양</th>
                                     <th style="white-space:nowrap;">사용 사출 자재</th>
                                     <th style="white-space:nowrap;min-width:360px;">도료 자재</th>
@@ -798,32 +847,30 @@ const SettingsModule = (function() {
                 `<tr><td colspan="${colspan}" style="text-align:center;padding:40px;color:var(--text-muted);">등록된 제품이 없습니다.</td></tr>` :
                 products.map((p, i) => {
                     // 도료 자재: 제품 정보에 등록된 프라이머/경화제/희석제, 컬러/경화제/희석제 조합 전체 표시
-                    const paintMap = {};
-                    paintMaterials.forEach(pm => { if (pm.id) paintMap[pm.id] = pm; });
                     const paintRows = Array.isArray(p.paintMaterials) ? p.paintMaterials : [];
                     const labelForSpec = spec => spec === 'Primer' ? '프라이머' : spec === 'Color' ? '컬러' : (spec || '도료');
-                    const paintName = id => id && paintMap[id] ? (paintMap[id].name || '-') : (id ? '미등록' : '-');
+                    const paintName = id => _isNoNeedPaintSelection(id) ? '사용불필요' : (id && paintMap[id] ? (paintMap[id].name || '-') : (id ? '미등록' : '-'));
                     const paintTitle = id => {
+                        if (_isNoNeedPaintSelection(id)) return '경화제 사용불필요';
                         const pm = id ? paintMap[id] : null;
                         return pm ? `${pm.supplier || '-'} / ${pm.manufacturer || '-'} / ${pm.name || '-'}` : (id ? `미등록 ID: ${id}` : '');
                     };
                     const paintBadges = paintRows.length > 0
                         ? paintRows.map(row => {
                             const mainId = row.mainId || row.paintMaterialId || '';
-                            const hardId = row.hardId || '';
+                            const hardId = row.hardId || (_isHardenerNotRequired({ ...row, mainId }, paintMap) ? '사용불필요' : '');
                             const thinnerId = row.thinnerId || '';
                             const spec = row.paintSpec || (mainId && paintMap[mainId] ? paintMap[mainId].paintSpec : '');
                             const specColor = spec === 'Primer' ? '#6366f1' : spec === 'Color' ? '#ec4899' : '#6b7280';
-                            const missing = [mainId, hardId, thinnerId].some(id => id && !paintMap[id]);
                             const processTag = row.processTag || '';
                             return `<div style="display:flex;align-items:center;gap:3px;flex-wrap:nowrap;font-size:.62rem;line-height:1.35;margin:1px 0;white-space:nowrap;">
                                 ${processTag ? `<span style="font-weight:800;color:#2563eb;background:rgba(37,99,235,0.10);border:1px solid rgba(37,99,235,0.35);border-radius:3px;padding:0 4px;min-width:44px;text-align:center;">${processTag}</span>` : ''}
                                 <span style="font-weight:800;color:${specColor};background:${specColor}15;border:1px solid ${specColor}55;border-radius:3px;padding:0 4px;min-width:42px;text-align:center;">${labelForSpec(spec)}</span>
-                                <span title="${paintTitle(mainId)}" style="font-weight:700;color:${missing && mainId && !paintMap[mainId] ? '#ef4444' : 'var(--text-primary)'};">${paintName(mainId)}</span>
+                                <span title="${paintTitle(mainId)}" style="font-weight:700;color:${_isPaintIdMissing(mainId, paintMap) ? '#ef4444' : 'var(--text-primary)'};">${paintName(mainId)}</span>
                                 <span style="color:var(--text-muted);">/</span>
-                                <span title="${paintTitle(hardId)}" style="color:${hardId && !paintMap[hardId] ? '#ef4444' : '#92400e'};">${paintName(hardId)}</span>
+                                <span title="${paintTitle(hardId)}" style="color:${_isPaintIdMissing(hardId, paintMap) ? '#ef4444' : '#92400e'};">${paintName(hardId)}</span>
                                 <span style="color:var(--text-muted);">/</span>
-                                <span title="${paintTitle(thinnerId)}" style="color:${thinnerId && !paintMap[thinnerId] ? '#ef4444' : '#0369a1'};">${paintName(thinnerId)}</span>
+                                <span title="${paintTitle(thinnerId)}" style="color:${_isPaintIdMissing(thinnerId, paintMap) ? '#ef4444' : '#0369a1'};">${paintName(thinnerId)}</span>
                             </div>`;
                           }).join('')
                         : '<span style="color:var(--text-muted);font-size:0.75rem;">-</span>';
@@ -831,15 +878,14 @@ const SettingsModule = (function() {
                     // 사용 사출 자재 매칭: productIds(우선) 또는 mfgProductName 텍스트(fallback)
                     const pName  = (p.partName || '').trim();
                     const pColor = (p.color    || '').trim().toLowerCase();
-                    const usedMats = injMaterials.filter(m => {
-                        // ID 기반 연결 (productIds 설정된 경우 우선)
-                        if (m.productIds && m.productIds.length > 0)
-                            return m.productIds.includes(p.id);
-                        // 텍스트 기반 fallback (productIds 미설정 시)
-                        return pName && (
-                            (m.mfgProductName  || '').trim() === pName ||
-                            (m.mfgProductName2 || '').trim() === pName
-                        );
+                    const usedById = p.id ? (injByProductId[p.id] || []) : [];
+                    const usedByName = pName ? (injByPartName[pName] || []) : [];
+                    const seenMatIds = new Set();
+                    const usedMats = [...usedById, ...usedByName].filter(m => {
+                        const key = m.id || `${m.carModel || ''}|${m.supplier || ''}|${m.injPartName || ''}|${m.injColor || ''}`;
+                        if (seenMatIds.has(key)) return false;
+                        seenMatIds.add(key);
+                        return true;
                     });
 
                     // 컬러 일치 여부: 제품 컬러 ↔ 사출 자재 injColor (포함 비교)
@@ -878,15 +924,11 @@ const SettingsModule = (function() {
                                         <td style="white-space:nowrap;font-size:.78rem;max-width:56px;overflow:hidden;text-overflow:ellipsis;" title="${p.carModel || ''}">${p.carModel || '-'}</td>
                                         <td style="min-width:260px;">
                                             <strong style="font-size:.86rem;">${p.partName || '-'}</strong>
-                                            ${p.linkedProductId ? (() => { const lp = products.find(x => x.id === p.linkedProductId); return lp ? `<span title="레이져 분리 연결: ${lp.partName} (${lp.customer||''})" style="display:inline-flex;align-items:center;gap:2px;margin-left:4px;padding:1px 5px;background:rgba(109,40,217,0.1);border:1px solid rgba(109,40,217,0.3);border-radius:4px;font-size:0.68rem;color:#7c3aed;white-space:nowrap;vertical-align:middle;"><span class="material-symbols-outlined" style="font-size:11px;">call_split</span>${lp.customer||lp.partName}</span>` : ''; })() : ''}
+                                            ${p.linkedProductId ? (() => { const lp = productsById[p.linkedProductId]; return lp ? `<span title="레이져 분리 연결: ${lp.partName} (${lp.customer||''})" style="display:inline-flex;align-items:center;gap:2px;margin-left:4px;padding:1px 5px;background:rgba(109,40,217,0.1);border:1px solid rgba(109,40,217,0.3);border-radius:4px;font-size:0.68rem;color:#7c3aed;white-space:nowrap;vertical-align:middle;"><span class="material-symbols-outlined" style="font-size:11px;">call_split</span>${lp.customer||lp.partName}</span>` : ''; })() : ''}
                                         </td>
                                         <td style="font-size:.8rem;white-space:nowrap;">${p.color || '-'}</td>
                                         <td style="text-align:center;">${itBadge}</td>
                                         <td style="text-align:center;font-size:.8rem;white-space:nowrap;">${p.packUnit || '-'}</td>
-                                        <td style="font-size:.76rem;white-space:nowrap;max-width:56px;overflow:hidden;text-overflow:ellipsis;" title="${p.customer||''}">${p.customer || '-'}</td>
-                                        <td style="text-align:right;font-size:.76rem;white-space:nowrap;">${p.salePrice ? Number(p.salePrice).toLocaleString() : '-'}</td>
-                                        <td style="text-align:right;font-size:.76rem;white-space:nowrap;">${p.injectionPrice ? Number(p.injectionPrice).toLocaleString() : '-'}</td>
-                                        <td style="text-align:right;font-size:.76rem;white-space:nowrap;">${p.manufacturePrice ? Number(p.manufacturePrice).toLocaleString() : '-'}</td>
                                         <td>
                                             <div style="display:flex; align-items:center; gap:6px; font-size:0.75rem; flex-wrap:wrap;">
                                                 ${[
@@ -914,6 +956,11 @@ const SettingsModule = (function() {
                 </div>
             </div>
         `;
+        // 검증 패널은 비동기로 교체 — 탭 진입 시 블로킹 방지
+        setTimeout(() => {
+            const ph = document.getElementById('productValidationPlaceholder');
+            if (ph) ph.outerHTML = buildProductValidationPanel();
+        }, 0);
     }
 
     // 관리 코드 자동 생성 함수 (차종-품명-컬러-NO)
@@ -1062,17 +1109,22 @@ const SettingsModule = (function() {
 
         // 도료 다중 선택 초기 렌더링
         const allPaints = Storage.getAll(PAINT_STORE) || [];
+        const formPaintMap = {};
+        allPaints.forEach(pm => { if (pm.id) formPaintMap[pm.id] = pm; });
         const _paintProcessTags = _getPaintProcessTagsFromValues(_procVals);
         const initialPaintRows = (p.paintMaterials && p.paintMaterials.length > 0)
-            ? p.paintMaterials.map((row, idx, arr) => ({
-                processTag: _resolvePaintProcessTag(row.processTag || row.paintProcess || row.process || '', _paintProcessTags, idx, arr.length),
-                paintSpec:  row.paintSpec || row.typeFilter || '',
-                rowManufacturer: row.rowManufacturer || row.paintMaker || row.manufacturer || '',
-                rowSupplier: row.rowSupplier || '',
-                mainId:     row.mainId    || row.paintMaterialId || '',
-                hardId:     row.hardId    || '',
-                thinnerId:  row.thinnerId || ''
-            }))
+            ? p.paintMaterials.map((row, idx, arr) => {
+                const mainId = row.mainId || row.paintMaterialId || '';
+                return {
+                    processTag: _resolvePaintProcessTag(row.processTag || row.paintProcess || row.process || '', _paintProcessTags, idx, arr.length),
+                    paintSpec:  row.paintSpec || row.typeFilter || '',
+                    rowManufacturer: row.rowManufacturer || row.paintMaker || row.manufacturer || '',
+                    rowSupplier: row.rowSupplier || '',
+                    mainId,
+                    hardId:     row.hardId || (_isHardenerNotRequired({ ...row, mainId }, formPaintMap) ? '사용불필요' : ''),
+                    thinnerId:  row.thinnerId || ''
+                };
+            })
             : [{ processTag: _paintProcessTags[0] || '도장-A' }];
         const uniquePaintSuppliers = [...new Set(allPaints.map(p => p.supplier).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
         const initialPaintTableHtml = _paintTableHtml(idPrefix, initialPaintRows, allPaints, '', _paintProcessTags);
@@ -1687,11 +1739,44 @@ const SettingsModule = (function() {
         return text === '사용불필요';
     }
 
-    function _isPaintRowIncomplete(row) {
+    function _isNal100Paint(mat) {
+        const text = [
+            mat && mat.name,
+            mat && mat.matName,
+            mat && mat.paintName,
+            mat && mat.feature
+        ].filter(Boolean).join(' ').replace(/\s+/g, '').toLowerCase();
+        return text.includes('nal#100') || text.includes('nal100');
+    }
+
+    function _isHardenerNotRequired(row, paintMap) {
+        if (!row) return false;
+        if (_isNoNeedPaintSelection(row.hardId)) return true;
+        const mainId = row.mainId || row.paintMaterialId || '';
+        const mainPaint = paintMap && mainId ? paintMap[mainId] : null;
+        const spec = _normalizePaintSpec(row.paintSpec || (mainPaint && mainPaint.paintSpec));
+        return spec === 'primer' && _isNal100Paint(mainPaint);
+    }
+
+    function _isPaintIdMissing(id, paintMap) {
+        if (!id || _isNoNeedPaintSelection(id)) return false;
+        return !(paintMap && paintMap[id]);
+    }
+
+    function _isPaintRowIncomplete(row, paintMap) {
         if (!row || !row.mainId) return false;
-        const hasHardener = !!row.hardId || _isNoNeedPaintSelection(row.hardId);
+        const hasHardener = !!row.hardId || _isHardenerNotRequired(row, paintMap);
         const hasThinner = !!row.thinnerId || _isNoNeedPaintSelection(row.thinnerId);
         return !hasHardener || !hasThinner;
+    }
+
+    function _getInvalidPaintRefs(row, paintMap) {
+        if (!row) return [];
+        return [
+            ['주제', row.mainId || row.paintMaterialId || ''],
+            ['경화제', row.hardId || ''],
+            ['신너', row.thinnerId || '']
+        ].filter(([, id]) => _isPaintIdMissing(id, paintMap));
     }
 
     function _samePaintMaker(a, b) {
@@ -1908,10 +1993,13 @@ const SettingsModule = (function() {
         const rows = _getCurrentPaintRows(idPrefix);
         if (rows[rowIdx]) {
             const mainId = rows[rowIdx].mainId || '';
-            const mainPaint = mainId ? (Storage.getAll(PAINT_STORE) || []).find(p => p.id === mainId) : null;
+            const paints = Storage.getAll(PAINT_STORE) || [];
+            const paintMap = {};
+            paints.forEach(pm => { if (pm.id) paintMap[pm.id] = pm; });
+            const mainPaint = mainId ? paintMap[mainId] : null;
             if (mainPaint && mainPaint.manufacturer) rows[rowIdx].rowManufacturer = mainPaint.manufacturer;
             // 주제가 바뀌면 경화제/신너 선택 초기화 (도료사가 달라지므로)
-            rows[rowIdx].hardId    = '';
+            rows[rowIdx].hardId    = _isHardenerNotRequired(rows[rowIdx], paintMap) ? '사용불필요' : '';
             rows[rowIdx].thinnerId = '';
         }
         _renderPaintList(idPrefix, rows);
@@ -2278,17 +2366,19 @@ const SettingsModule = (function() {
         const color    = decodeURIComponent(colorEncoded);
         const products = Storage.getAll(PRODUCTS_STORE) || [];
         const paintMaterials = Storage.getAll(DB.STORES.PAINT_MATERIALS) || [];
+        const paintMap = {};
+        paintMaterials.forEach(pm => { if (pm.id) paintMap[pm.id] = pm; });
 
         // 해당 차종+컬러의 미완성 제품
         const targets = products.filter(p =>
             p.carModel === carModel && p.color === color &&
-            (p.paintMaterials || []).some(_isPaintRowIncomplete)
+            (p.paintMaterials || []).some(r => _isPaintRowIncomplete(r, paintMap))
         );
         if (!targets.length) { UIUtils.toast('해당 그룹에 미선택 항목이 없습니다.', 'info'); return; }
 
         // 그룹 내 사용 중인 mainId 목록 (중복 제거)
         const mainIds = [...new Set(targets.flatMap(p =>
-            (p.paintMaterials||[]).filter(_isPaintRowIncomplete).map(r => r.mainId)
+            (p.paintMaterials||[]).filter(r => _isPaintRowIncomplete(r, paintMap)).map(r => r.mainId)
         ))];
 
         // 도료 마스터 전체
@@ -2349,7 +2439,7 @@ const SettingsModule = (function() {
         }).join('');
 
         const productList = targets.map(p => {
-            const bad = (p.paintMaterials||[]).filter(_isPaintRowIncomplete);
+            const bad = (p.paintMaterials||[]).filter(r => _isPaintRowIncomplete(r, paintMap));
             const detail = bad.map(r => {
                 const m = paintMaterials.find(x => x.id === r.mainId);
                 return m ? m.name || m.id : r.mainId;
@@ -2385,16 +2475,18 @@ const SettingsModule = (function() {
         const color    = decodeURIComponent(colorEncoded);
         const products = Storage.getAll(PRODUCTS_STORE) || [];
         const paintMaterials = Storage.getAll(DB.STORES.PAINT_MATERIALS) || [];
+        const paintMap = {};
+        paintMaterials.forEach(pm => { if (pm.id) paintMap[pm.id] = pm; });
 
         const targets = products.filter(p =>
             p.carModel === carModel && p.color === color &&
-            (p.paintMaterials || []).some(_isPaintRowIncomplete)
+            (p.paintMaterials || []).some(r => _isPaintRowIncomplete(r, paintMap))
         );
 
         let applied = 0;
         for (const p of targets) {
             const updated = (p.paintMaterials || []).map(r => {
-                if (!r.mainId || !_isPaintRowIncomplete(r)) return r;
+                if (!r.mainId || !_isPaintRowIncomplete(r, paintMap)) return r;
                 const selHard = (document.getElementById(`bpHard_${r.mainId}`) || {}).value || '';
                 const selThin = (document.getElementById(`bpThin_${r.mainId}`) || {}).value || '';
                 if (!selHard && !selThin) return r;
@@ -4074,7 +4166,11 @@ const SettingsModule = (function() {
             });
         } catch (migErr) {}
 
-        const defects = Storage.getAll(DEFECTS_STORE) || [];
+        const defects = (Storage.getAll(DEFECTS_STORE) || []).slice().sort((a, b) => {
+            const ao = (a && a.sortOrder != null) ? a.sortOrder : 9999;
+            const bo = (b && b.sortOrder != null) ? b.sortOrder : 9999;
+            return ao - bo;
+        });
 
         // 공정별 데이터 분류
         const categories = [{
@@ -4084,6 +4180,14 @@ const SettingsModule = (function() {
                 color: '#ea580c',
                 bg: 'rgba(234,88,12,0.05)',
                 desc: '사출 수입검사 사용'
+            },
+            {
+                id: 'plating',
+                title: '도금 불량',
+                icon: 'diamond',
+                color: '#d97706',
+                bg: 'rgba(217,119,6,0.05)',
+                desc: '도금 공정 불량'
             },
             {
                 id: 'painting',
@@ -4158,28 +4262,42 @@ const SettingsModule = (function() {
                                         </button>
                                     </div>
                                 </div>
-                                <div class="card-body" style="padding:12px; max-height:400px; overflow-y:auto; background:var(--bg-primary);">
+                                <div class="card-body" style="padding:12px; background:var(--bg-primary);">
                                     ${list.length === 0 ? `
                                         <div style="text-align:center; padding:30px; border:1px dashed var(--border-color); border-radius:8px; color:var(--text-muted); font-size:0.85rem;">
                                             등록된 데이터가 없습니다.
                                         </div>
                                     ` : `
-                                        <div style="display:grid; gap:8px;">
-                                            ${list.map((d, i) => `
-                                                <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 12px; background:#fff; border:1px solid var(--border-color); border-radius:8px; transition:all 0.1s;">
+                                        <div style="display:grid; gap:8px;" id="defect-list-${cat.id}">
+                                            ${list.map((d, i) => {
+                                                const hasCauses = d.causes && Object.values(d.causes).some(v => v);
+                                                const hasImages = (d.exampleImages && d.exampleImages.length > 0) || d.exampleImage;
+                                                return `
+                                                <div draggable="true" data-defect-id="${d.id}"
+                                                    ondragstart="SettingsModule._defectDragStart(event,'${d.id}')"
+                                                    ondragover="SettingsModule._defectDragOver(event)"
+                                                    ondragleave="SettingsModule._defectDragLeave(event)"
+                                                    ondragend="SettingsModule._defectDragEnd(event)"
+                                                    ondrop="SettingsModule._defectDrop(event,'${d.id}')"
+                                                    style="display:flex; align-items:center; justify-content:space-between; padding:8px 12px; background:#fff; border:1px solid var(--border-color); border-radius:8px; transition:border-color 0.1s, opacity 0.1s;">
                                                     <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+                                                        <span class="material-symbols-outlined" style="font-size:18px; color:var(--text-muted); cursor:grab; flex-shrink:0;">drag_indicator</span>
                                                         <span style="font-size:0.75rem; font-weight:700; color:var(--text-muted); width:18px;">${i + 1}</span>
                                                         <div style="min-width:0;">
-                                                            <div style="font-weight:600; font-size:0.85rem; color:var(--text-primary); text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">${(d.name || '').replace(/</g, '&lt;')}</div>
-                                                            ${d.description ? `<div style="font-size:0.75rem; color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${(d.description || '').replace(/</g, '&lt;')}</div>` : ''}
+                                                            <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;">
+                                                                <span style="font-weight:600; font-size:0.85rem; color:var(--text-primary);">${(d.name || '').replace(/</g, '&lt;')}</span>
+                                                                ${hasCauses ? `<span style="font-size:0.68rem;font-weight:700;color:#2563eb;background:rgba(37,99,235,0.08);padding:1px 5px;border-radius:4px;">4M</span>` : ''}
+                                                                ${hasImages ? `<span style="font-size:0.68rem;font-weight:700;color:#16a34a;background:rgba(22,163,74,0.08);padding:1px 5px;border-radius:4px;">사진</span>` : ''}
+                                                            </div>
+                                                            ${d.description ? `<div style="font-size:0.75rem; color:var(--text-muted); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${(d.description || '').replace(/</g, '&lt;')}</div>` : ''}
                                                         </div>
                                                     </div>
                                                     <div style="display:flex; gap:4px; flex-shrink:0;">
                                                         <button class="btn btn-sm btn-outline" style="padding:2px 6px; font-size:0.7rem;" onclick="SettingsModule.editDefect('${d.id}')">수정</button>
                                                         <button class="btn btn-sm btn-danger" style="padding:2px 6px; font-size:0.7rem;" onclick="SettingsModule.removeDefect('${d.id}')">삭제</button>
                                                     </div>
-                                                </div>
-                                            `).join('')}
+                                                </div>`;
+                                            }).join('')}
                                         </div>
                                     `}
                                 </div>
@@ -4204,6 +4322,12 @@ const SettingsModule = (function() {
                         <span class="material-symbols-outlined" style="font-size:16px;color:#ea580c;">precision_manufacturing</span>
                         <span style="font-weight:600; font-size:0.85rem; color:#ea580c;">사출</span>
                     </label>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px 10px;border-radius:6px;border:2px solid ${defaultType === 'plating' ? '#d97706' : 'var(--border-color)'};background:${defaultType === 'plating' ? 'rgba(217,119,6,0.06)' : 'transparent'}" id="defectTypeLabel_plating">
+                        <input type="radio" name="defectType" value="plating" ${defaultType === 'plating' ? 'checked' : ''}
+                            onchange="updateDefectModalStyles('plating')">
+                        <span class="material-symbols-outlined" style="font-size:16px;color:#d97706;">diamond</span>
+                        <span style="font-weight:600; font-size:0.85rem; color:#d97706;">도금</span>
+                    </label>
                     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px 10px;border-radius:6px;border:2px solid ${defaultType === 'painting' ? '#16a34a' : 'var(--border-color)'};background:${defaultType === 'painting' ? 'rgba(22,163,74,0.06)' : 'transparent'}" id="defectTypeLabel_painting">
                         <input type="radio" name="defectType" value="painting" ${defaultType === 'painting' ? 'checked' : ''}
                             onchange="updateDefectModalStyles('painting')">
@@ -4227,9 +4351,10 @@ const SettingsModule = (function() {
                     function updateDefectModalStyles(type) {
                         const types = {
                             injection: { color: '#ea580c', bg: 'rgba(234,88,12,0.06)' },
-                            painting: { color: '#16a34a', bg: 'rgba(22,163,74,0.06)' },
-                            laser: { color: '#7c3aed', bg: 'rgba(124,58,237,0.06)' },
-                            printing: { color: '#0891b2', bg: 'rgba(8,145,178,0.06)' }
+                            plating:   { color: '#d97706', bg: 'rgba(217,119,6,0.06)' },
+                            painting:  { color: '#16a34a', bg: 'rgba(22,163,74,0.06)' },
+                            laser:     { color: '#7c3aed', bg: 'rgba(124,58,237,0.06)' },
+                            printing:  { color: '#0891b2', bg: 'rgba(8,145,178,0.06)' }
                         };
                         Object.keys(types).forEach(k => {
                             const el = document.getElementById('defectTypeLabel_' + k) || document.getElementById('editDefectTypeLabel_' + k);
@@ -4254,6 +4379,31 @@ const SettingsModule = (function() {
                 <label class="form-label">설명 <span style="color:var(--text-muted);font-weight:400;">(선택)</span></label>
                 <input type="text" class="form-input" id="addDefectDesc" placeholder="간단한 설명">
             </div>
+            <div class="form-group">
+                <label class="form-label">4M 불량 원인 <span style="color:var(--text-muted);font-weight:400;">(선택)</span></label>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                    <div>
+                        <label style="font-size:0.72rem;font-weight:700;color:#2563eb;margin-bottom:3px;display:block;">Machine (기계/설비)</label>
+                        <textarea class="form-input" id="addCauseMachine" rows="2" placeholder="예: 사출 압력 부족, 금형 온도 낮음" style="resize:vertical;font-size:0.82rem;"></textarea>
+                    </div>
+                    <div>
+                        <label style="font-size:0.72rem;font-weight:700;color:#d97706;margin-bottom:3px;display:block;">Material (재료)</label>
+                        <textarea class="form-input" id="addCauseMaterial" rows="2" placeholder="예: MFI 낮음, 건조 부족" style="resize:vertical;font-size:0.82rem;"></textarea>
+                    </div>
+                    <div>
+                        <label style="font-size:0.72rem;font-weight:700;color:#7c3aed;margin-bottom:3px;display:block;">Method (방법)</label>
+                        <textarea class="form-input" id="addCauseMethod" rows="2" placeholder="예: 에어 벤트 막힘, 게이트 작음" style="resize:vertical;font-size:0.82rem;"></textarea>
+                    </div>
+                    <div>
+                        <label style="font-size:0.72rem;font-weight:700;color:#16a34a;margin-bottom:3px;display:block;">Man (작업자)</label>
+                        <textarea class="form-input" id="addCauseMan" rows="2" placeholder="예: 조건 설정 미숙, 이물 혼입" style="resize:vertical;font-size:0.82rem;"></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">조치 방법 <span style="color:var(--text-muted);font-weight:400;">(선택)</span></label>
+                <textarea class="form-input" id="addCountermeasure" rows="3" placeholder="예: 사출 압력 10% 상향, 금형 온도 5°C 상승, 에어 벤트 청소" style="resize:vertical;font-size:0.85rem;"></textarea>
+            </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="SettingsModule.saveDefect()">추가</button>
@@ -4269,9 +4419,10 @@ const SettingsModule = (function() {
         const type = typeRadios.length > 0 ? typeRadios[0].value : 'injection';
         const typeNames = {
             injection: '사출',
-            painting: '도장',
-            laser: '레이져',
-            printing: '인쇄'
+            plating:   '도금',
+            painting:  '도장',
+            laser:     '레이져',
+            printing:  '인쇄'
         };
         const typeName = typeNames[type] || '기타';
 
@@ -4290,11 +4441,21 @@ const SettingsModule = (function() {
             return;
         }
 
+        const causes = {
+            machine:  (document.getElementById('addCauseMachine')  || {}).value?.trim() || '',
+            material: (document.getElementById('addCauseMaterial')  || {}).value?.trim() || '',
+            method:   (document.getElementById('addCauseMethod')    || {}).value?.trim() || '',
+            man:      (document.getElementById('addCauseMan')       || {}).value?.trim() || ''
+        };
+        const countermeasure = (document.getElementById('addCountermeasure') || {}).value?.trim() || '';
+
         try {
             await Storage.add(DEFECTS_STORE, {
                 name,
                 description,
-                type
+                type,
+                causes,
+                countermeasure
             });
             UIUtils.closeModal();
             UIUtils.toast(`${typeName} 불량 유형 "${name}"이 추가되었습니다.`, 'success');
@@ -4311,66 +4472,15 @@ const SettingsModule = (function() {
             UIUtils.toast('해당 불량 유형을 찾을 수 없습니다.', 'error');
             return;
         }
-        const safeType = d.type === 'painting' ? 'painting' : 'injection';
+        const safeType = ['painting','plating','laser','printing'].includes(d.type) ? d.type : 'injection';
         const safeName = (d.name || '').replace(/"/g, '&quot;');
         const safeDesc = (d.description || '').replace(/"/g, '&quot;');
+        const safeImage = d.exampleImage || '';
+        const c = d.causes || {};
+        const safeCountermeasure = (d.countermeasure || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const esc = v => (v || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
         UIUtils.showModal('불량 유형 수정', `
-            <div class="form-group">
-                <label class="form-label">구분 <span style="color:var(--accent-red)">*</span></label>
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:8px;">
-                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px 10px;border-radius:6px;border:2px solid ${safeType === 'injection' ? '#ea580c' : 'var(--border-color)'};background:${safeType === 'injection' ? 'rgba(234,88,12,0.06)' : 'transparent'}" id="editDefectTypeLabel_injection">
-                        <input type="radio" name="editDefectType" value="injection" ${safeType === 'injection' ? 'checked' : ''}
-                            onchange="updateDefectModalStyles('injection')">
-                        <span class="material-symbols-outlined" style="font-size:16px;color:#ea580c;">precision_manufacturing</span>
-                        <span style="font-weight:600; font-size:0.85rem; color:#ea580c;">사출</span>
-                    </label>
-                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px 10px;border-radius:6px;border:2px solid ${safeType === 'painting' ? '#16a34a' : 'var(--border-color)'};background:${safeType === 'painting' ? 'rgba(22,163,74,0.06)' : 'transparent'}" id="editDefectTypeLabel_painting">
-                        <input type="radio" name="editDefectType" value="painting" ${safeType === 'painting' ? 'checked' : ''}
-                            onchange="updateDefectModalStyles('painting')">
-                        <span class="material-symbols-outlined" style="font-size:16px;color:#16a34a;">format_paint</span>
-                        <span style="font-weight:600; font-size:0.85rem; color:#16a34a;">도장</span>
-                    </label>
-                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px 10px;border-radius:6px;border:2px solid ${safeType === 'laser' ? '#7c3aed' : 'var(--border-color)'};background:${safeType === 'laser' ? 'rgba(124,58,237,0.06)' : 'transparent'}" id="editDefectTypeLabel_laser">
-                        <input type="radio" name="editDefectType" value="laser" ${safeType === 'laser' ? 'checked' : ''}
-                            onchange="updateDefectModalStyles('laser')">
-                        <span class="material-symbols-outlined" style="font-size:16px;color:#7c3aed;">flare</span>
-                        <span style="font-weight:600; font-size:0.85rem; color:#7c3aed;">레이져</span>
-                    </label>
-                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px 10px;border-radius:6px;border:2px solid ${safeType === 'printing' ? '#0891b2' : 'var(--border-color)'};background:${safeType === 'printing' ? 'rgba(8,145,178,0.06)' : 'transparent'}" id="editDefectTypeLabel_printing">
-                        <input type="radio" name="editDefectType" value="printing" ${safeType === 'printing' ? 'checked' : ''}
-                            onchange="updateDefectModalStyles('printing')">
-                        <span class="material-symbols-outlined" style="font-size:16px;color:#0891b2;">print</span>
-                        <span style="font-weight:600; font-size:0.85rem; color:#0891b2;">인쇄</span>
-                    </label>
-                </div>
-                <script>
-                    if(typeof updateDefectModalStyles === 'undefined') {
-                        function updateDefectModalStyles(type) {
-                            const types = {
-                                injection: { color: '#ea580c', bg: 'rgba(234,88,12,0.06)' },
-                                painting: { color: '#16a34a', bg: 'rgba(22,163,74,0.06)' },
-                                laser: { color: '#7c3aed', bg: 'rgba(124,58,237,0.06)' },
-                                printing: { color: '#0891b2', bg: 'rgba(8,145,178,0.06)' }
-                            };
-                            Object.keys(types).forEach(k => {
-                                ['defectTypeLabel_', 'editDefectTypeLabel_'].forEach(prefix => {
-                                    const el = document.getElementById(prefix + k);
-                                    if (el) {
-                                        if (k === type) {
-                                            el.style.borderColor = types[k].color;
-                                            el.style.background = types[k].bg;
-                                        } else {
-                                            el.style.borderColor = 'var(--border-color)';
-                                            el.style.background = 'transparent';
-                                        }
-                                    }
-                                });
-                            });
-                        }
-                    }
-                </script>
-            </div>
             <div class="form-group">
                 <label class="form-label">불량 유형명 <span style="color:var(--accent-red)">*</span></label>
                 <input type="text" class="form-input" id="editDefectName" value="${safeName}">
@@ -4379,10 +4489,52 @@ const SettingsModule = (function() {
                 <label class="form-label">설명 <span style="color:var(--text-muted);font-weight:400;">(선택)</span></label>
                 <input type="text" class="form-input" id="editDefectDesc" value="${safeDesc}">
             </div>
+            <div class="form-group">
+                <label class="form-label">4M 불량 원인 <span style="color:var(--text-muted);font-weight:400;">(선택)</span></label>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                    <div>
+                        <label style="font-size:0.72rem;font-weight:700;color:#2563eb;margin-bottom:3px;display:block;">Machine (기계/설비)</label>
+                        <textarea class="form-input" id="editCauseMachine" rows="2" style="resize:vertical;font-size:0.82rem;">${esc(c.machine)}</textarea>
+                    </div>
+                    <div>
+                        <label style="font-size:0.72rem;font-weight:700;color:#d97706;margin-bottom:3px;display:block;">Material (재료)</label>
+                        <textarea class="form-input" id="editCauseMaterial" rows="2" style="resize:vertical;font-size:0.82rem;">${esc(c.material)}</textarea>
+                    </div>
+                    <div>
+                        <label style="font-size:0.72rem;font-weight:700;color:#7c3aed;margin-bottom:3px;display:block;">Method (방법)</label>
+                        <textarea class="form-input" id="editCauseMethod" rows="2" style="resize:vertical;font-size:0.82rem;">${esc(c.method)}</textarea>
+                    </div>
+                    <div>
+                        <label style="font-size:0.72rem;font-weight:700;color:#16a34a;margin-bottom:3px;display:block;">Man (작업자)</label>
+                        <textarea class="form-input" id="editCauseMan" rows="2" style="resize:vertical;font-size:0.82rem;">${esc(c.man)}</textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">조치 방법 <span style="color:var(--text-muted);font-weight:400;">(선택)</span></label>
+                <textarea class="form-input" id="editCountermeasure" rows="3" placeholder="예: 사출 압력 10% 상향, 금형 온도 5°C 상승, 에어 벤트 청소" style="resize:vertical;font-size:0.85rem;">${safeCountermeasure}</textarea>
+            </div>
+            <div class="form-group">
+                <label class="form-label">예시 사진 <span style="color:var(--text-muted);font-weight:400;">(선택 · 여러 장)</span></label>
+                <div id="defectImageGrid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px;"></div>
+                <div id="defectImageZone"
+                     tabindex="0"
+                     style="border:2px dashed var(--border-color);border-radius:8px;padding:14px;text-align:center;cursor:pointer;transition:border-color .2s;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px;outline:none;"
+                     onclick="document.getElementById('defectImageFile').click()"
+                     ondragover="event.preventDefault();this.style.borderColor='#2563eb'"
+                     ondragleave="this.style.borderColor='var(--border-color)'"
+                     ondrop="SettingsModule._handleDefectImageDrop(event)">
+                    <span class="material-symbols-outlined" style="font-size:26px;color:var(--text-muted);">add_photo_alternate</span>
+                    <span style="font-size:0.8rem;color:var(--text-muted);">클릭 또는 <b>Ctrl+V</b> 붙여넣기 · 드래그 드롭</span>
+                    <input type="file" id="defectImageFile" accept="image/*" multiple style="display:none;" onchange="SettingsModule._handleDefectImageFile(event)">
+                </div>
+            </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="SettingsModule.updateDefect('${id}')">저장</button>
         `);
+        const initialImages = d.exampleImages || (d.exampleImage ? [d.exampleImage] : []);
+        setTimeout(() => SettingsModule._initDefectImagePaste(initialImages), 80);
     }
 
     async function updateDefect(id) {
@@ -4390,13 +4542,14 @@ const SettingsModule = (function() {
         const descEl = document.getElementById('editDefectDesc');
         const name = nameEl ? nameEl.value.trim() : '';
         const description = descEl ? descEl.value.trim() : '';
-        const typeRadios = document.querySelectorAll('input[name="editDefectType"]:checked');
-        const type = typeRadios.length > 0 ? typeRadios[0].value : 'injection';
+        const existing = Storage.getById(DEFECTS_STORE, id);
+        const type = (existing && existing.type) || 'injection';
         const typeNames = {
             injection: '사출',
-            painting: '도장',
-            laser: '레이져',
-            printing: '인쇄'
+            plating:   '도금',
+            painting:  '도장',
+            laser:     '레이져',
+            printing:  '인쇄'
         };
         const typeName = typeNames[type] || '기타';
 
@@ -4407,19 +4560,32 @@ const SettingsModule = (function() {
         }
 
         // ── 동일 구분 내 중복 이름 검사 (자신 제외)
-        const existing = Storage.getAll(DEFECTS_STORE) || [];
-        const isDuplicate = existing.some(d => d && d.id !== id && d.type === type && (d.name || '').trim() === name);
+        const allDefects = Storage.getAll(DEFECTS_STORE) || [];
+        const isDuplicate = allDefects.some(d => d && d.id !== id && d.type === type && (d.name || '').trim() === name);
         if (isDuplicate) {
             UIUtils.toast(`"${name}"은 이미 등록된 ${typeName} 불량 유형입니다.`, 'warning');
             if (nameEl) nameEl.focus();
             return;
         }
 
+        const exampleImages = Array.isArray(_defectImages) ? [..._defectImages] : [];
+        const causes = {
+            machine:  (document.getElementById('editCauseMachine')  || {}).value?.trim() || '',
+            material: (document.getElementById('editCauseMaterial')  || {}).value?.trim() || '',
+            method:   (document.getElementById('editCauseMethod')    || {}).value?.trim() || '',
+            man:      (document.getElementById('editCauseMan')       || {}).value?.trim() || ''
+        };
+        const countermeasure = (document.getElementById('editCountermeasure') || {}).value?.trim() || '';
+
         try {
             await Storage.update(DEFECTS_STORE, id, {
                 name,
                 description,
-                type
+                type,
+                causes,
+                countermeasure,
+                exampleImages,
+                exampleImage: exampleImages[0] || ''
             });
             UIUtils.closeModal();
             UIUtils.toast(`"${name}" 불량 유형이 수정되었습니다.`, 'success');
@@ -4430,6 +4596,290 @@ const SettingsModule = (function() {
         }
     }
 
+    var _dragSrcDefectId = null;
+
+    function _defectDragStart(e, id) {
+        _dragSrcDefectId = id;
+        e.dataTransfer.effectAllowed = 'move';
+        setTimeout(() => { if (e.currentTarget) e.currentTarget.style.opacity = '0.4'; }, 0);
+    }
+
+    function _defectDragOver(e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        const el = e.currentTarget;
+        if (el && el.dataset.defectId !== _dragSrcDefectId) {
+            el.style.borderColor = '#2563eb';
+            el.style.background = 'rgba(37,99,235,0.05)';
+        }
+    }
+
+    function _defectDragLeave(e) {
+        const el = e.currentTarget;
+        if (el) {
+            el.style.borderColor = 'var(--border-color)';
+            el.style.background = '#fff';
+        }
+    }
+
+    function _defectDragEnd(e) {
+        if (e.currentTarget) {
+            e.currentTarget.style.opacity = '1';
+            e.currentTarget.style.borderColor = 'var(--border-color)';
+            e.currentTarget.style.background = '#fff';
+        }
+        _dragSrcDefectId = null;
+    }
+
+    async function _defectDrop(e, targetId) {
+        e.preventDefault();
+        const el = e.currentTarget;
+        if (el) { el.style.borderColor = 'var(--border-color)'; el.style.background = '#fff'; }
+        if (!_dragSrcDefectId || _dragSrcDefectId === targetId) return;
+
+        const allDefects = Storage.getAll(DEFECTS_STORE) || [];
+        const source = allDefects.find(d => d && d.id === _dragSrcDefectId);
+        const target = allDefects.find(d => d && d.id === targetId);
+        if (!source || !target || source.type !== target.type) return;
+
+        const list = allDefects
+            .filter(d => d && d.type === source.type)
+            .sort((a, b) => (a.sortOrder != null ? a.sortOrder : 9999) - (b.sortOrder != null ? b.sortOrder : 9999));
+
+        list.forEach((d, i) => { if (d.sortOrder == null) d.sortOrder = i; });
+
+        const srcIdx = list.findIndex(d => d.id === _dragSrcDefectId);
+        const tgtIdx = list.findIndex(d => d.id === targetId);
+        const [moved] = list.splice(srcIdx, 1);
+        list.splice(tgtIdx, 0, moved);
+
+        await Promise.all(list.map((d, i) => Storage.update(DEFECTS_STORE, d.id, { sortOrder: i })));
+        renderTabContent();
+    }
+
+    // ── 도료 미등록 ID 차종 일괄수정 ─────────────────────────────────
+    var _bulkFixPaintRefData = null;
+
+    function openBulkFixPaintRefModal(carModel) {
+        const products = Storage.getAll(PRODUCTS_STORE) || [];
+        const paintMaterials = Storage.getAll(DB.STORES.PAINT_MATERIALS) || [];
+        const paintMap = {};
+        paintMaterials.forEach(pm => { if (pm.id) paintMap[pm.id] = pm; });
+
+        const affected = [];
+        products.filter(p => p && (p.carModel || '-') === carModel).forEach(p => {
+            (p.paintMaterials || []).forEach((r, rowIdx) => {
+                const refs = _getInvalidPaintRefs(r, paintMap);
+                if (refs.length) affected.push({ product: p, rowIdx, row: r, refs });
+            });
+        });
+
+        if (affected.length === 0) { UIUtils.toast('해당 차종의 미등록 ID가 없습니다.', 'info'); return; }
+
+        // 고유 (slot, invalidId) 집계 + 연관 주제 도료 수집
+        const uniqueMap = {};
+        affected.forEach(item => {
+            const mainId = item.row.mainId || item.row.paintMaterialId || '';
+            const mainName = mainId && paintMap[mainId] ? (paintMap[mainId].name || mainId) : (mainId || '');
+            item.refs.forEach(([slot, invalidId]) => {
+                const key = slot + '::' + invalidId;
+                if (!uniqueMap[key]) uniqueMap[key] = { slot, invalidId, count: 0, mainNames: new Set() };
+                uniqueMap[key].count++;
+                // 경화제/신너는 같은 행의 주제 도료명을 수집
+                if (slot !== '주제' && mainName) uniqueMap[key].mainNames.add(mainName);
+            });
+        });
+        const uniqueInvalids = Object.values(uniqueMap).map(v => ({
+            ...v, mainNames: Array.from(v.mainNames)
+        }));
+
+        _bulkFixPaintRefData = { carModel, uniqueInvalids };
+
+        const slotColors = { '주제': '#1e40af', '경화제': '#92400e', '신너': '#0369a1' };
+        const paintOptions = paintMaterials
+            .slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'))
+            .map(pm => `<option value="${pm.id}">${(pm.name || pm.id)}${pm.paintSpec ? ' [' + pm.paintSpec + ']' : ''}</option>`)
+            .join('');
+
+        const body = `
+            <div style="margin-bottom:12px;font-size:0.85rem;color:var(--text-muted);">
+                <strong style="color:var(--text-primary);">${carModel}</strong> 차종 내 미등록 도료 ID를 참조하는 제품을 일괄 수정합니다.
+            </div>
+            <div style="display:grid;gap:10px;margin-bottom:14px;">
+                ${uniqueInvalids.map((inv, i) => `
+                <div style="padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-primary);">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+                        <span style="font-size:0.75rem;font-weight:700;color:${slotColors[inv.slot]||'#555'};background:rgba(0,0,0,0.06);padding:1px 7px;border-radius:4px;">${inv.slot}</span>
+                        <span style="font-size:0.78rem;color:#dc2626;font-family:monospace;">${inv.invalidId}</span>
+                        <span style="font-size:0.72rem;color:var(--text-muted);">(${inv.count}개 제품)</span>
+                    </div>
+                    ${inv.mainNames.length > 0 ? `
+                    <div style="font-size:0.76rem;color:var(--text-muted);margin-bottom:8px;padding:4px 8px;background:rgba(0,0,0,0.03);border-radius:4px;">
+                        주제 도료: ${inv.mainNames.map(n => `<strong style="color:var(--text-primary);">${n}</strong>`).join(', ')}
+                    </div>` : ''}
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:0.78rem;white-space:nowrap;color:var(--text-muted);">→ 교체:</span>
+                        <select id="bulkFixSel_${i}" style="flex:1;padding:4px 8px;border:1px solid var(--border-color);border-radius:4px;font-size:0.8rem;">
+                            <option value="">-- 선택 안 함 (변경 없음) --</option>
+                            ${paintOptions}
+                        </select>
+                    </div>
+                </div>`).join('')}
+            </div>
+            <div style="padding:8px 12px;background:rgba(234,88,12,0.05);border:1px solid rgba(234,88,12,0.2);border-radius:8px;font-size:0.78rem;color:var(--text-muted);">
+                교체 도료를 선택한 슬롯만 변경됩니다. 비워두면 해당 슬롯은 건드리지 않습니다.
+            </div>`;
+
+        const footer = `
+            <button class="btn btn-outline" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="SettingsModule._confirmBulkFixPaintRef()">일괄 저장</button>`;
+
+        UIUtils.showModal(`${carModel} 도료 일괄수정`, body, footer, 'md');
+    }
+
+    async function _confirmBulkFixPaintRef() {
+        if (!_bulkFixPaintRefData) return;
+        const { carModel, uniqueInvalids } = _bulkFixPaintRefData;
+
+        // 선택된 교체 ID 수집
+        const replacements = {}; // slot::invalidId → newId
+        uniqueInvalids.forEach((inv, i) => {
+            const sel = document.getElementById('bulkFixSel_' + i);
+            const newId = sel ? sel.value.trim() : '';
+            if (newId) replacements[inv.slot + '::' + inv.invalidId] = newId;
+        });
+
+        if (Object.keys(replacements).length === 0) {
+            UIUtils.toast('교체할 도료를 하나 이상 선택하세요.', 'warning');
+            return;
+        }
+
+        const slotToField = { '주제': ['mainId', 'paintMaterialId'], '경화제': ['hardId'], '신너': ['thinnerId'] };
+        const products = Storage.getAll(PRODUCTS_STORE) || [];
+        const paintMap = {};
+        (Storage.getAll(DB.STORES.PAINT_MATERIALS) || []).forEach(pm => { if (pm.id) paintMap[pm.id] = pm; });
+
+        const toUpdate = [];
+        products.filter(p => p && (p.carModel || '-') === carModel).forEach(p => {
+            let changed = false;
+            const newRows = (p.paintMaterials || []).map(r => {
+                const row = Object.assign({}, r);
+                [['주제', row.mainId || row.paintMaterialId || ''],
+                 ['경화제', row.hardId || ''],
+                 ['신너', row.thinnerId || '']].forEach(([slot, curId]) => {
+                    if (!curId) return;
+                    const key = slot + '::' + curId;
+                    if (replacements[key]) {
+                        const newId = replacements[key];
+                        (slotToField[slot] || []).forEach(f => { if (row[f] === curId || (f === 'paintMaterialId' && row.mainId === curId)) { row[f] = newId; changed = true; } });
+                        if (slot === '주제' && row.mainId === curId) { row.mainId = newId; changed = true; }
+                    }
+                });
+                return row;
+            });
+            if (changed) toUpdate.push({ id: p.id, paintMaterials: newRows });
+        });
+
+        if (toUpdate.length === 0) { UIUtils.toast('변경된 항목이 없습니다.', 'info'); return; }
+
+        try {
+            await Promise.all(toUpdate.map(u => Storage.update(PRODUCTS_STORE, u.id, { paintMaterials: u.paintMaterials })));
+            UIUtils.closeModal();
+            UIUtils.toast(`${carModel} · ${toUpdate.length}개 제품 일괄 수정 완료`, 'success');
+            renderTabContent();
+        } catch (err) {
+            console.error('[일괄수정] 오류:', err);
+            UIUtils.toast('저장 중 오류가 발생했습니다.', 'error');
+        }
+    }
+
+    // ── 예시 사진 (다중) 헬퍼 ─────────────────────────────────────────
+    var _defectImages = [];
+    var _defectPasteSession = 0;      // 세션 ID: 오래된 리스너 즉시 무효화
+    var _defectPasteListener = null;
+
+    function _renderDefectImageGrid() {
+        const grid = document.getElementById('defectImageGrid');
+        if (!grid) return;
+        if (_defectImages.length === 0) { grid.innerHTML = ''; return; }
+        grid.innerHTML = _defectImages.map((src, i) => `
+            <div style="position:relative;border-radius:6px;overflow:hidden;border:1px solid var(--border-color);aspect-ratio:4/3;background:#f0f0f0;">
+                <img src="${src}" style="width:100%;height:100%;object-fit:cover;display:block;">
+                <button onclick="SettingsModule._removeDefectImage(${i})" title="삭제"
+                        style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,0.55);color:#fff;border:none;border-radius:50%;width:22px;height:22px;cursor:pointer;font-size:13px;line-height:1;display:flex;align-items:center;justify-content:center;">✕</button>
+                <span style="position:absolute;bottom:4px;left:5px;font-size:0.7rem;color:#fff;background:rgba(0,0,0,0.45);padding:1px 5px;border-radius:4px;">${i + 1}</span>
+            </div>
+        `).join('');
+    }
+
+    function _addDefectImages(dataUrls) {
+        for (const url of dataUrls) _defectImages.push(url);
+        _renderDefectImageGrid();
+    }
+
+    function _removeDefectImage(index) {
+        _defectImages.splice(index, 1);
+        _renderDefectImageGrid();
+    }
+
+    function _readFilesAsDataUrl(files, callback) {
+        const urls = [];
+        let done = 0;
+        if (!files || files.length === 0) return;
+        Array.from(files).forEach((file, i) => {
+            if (!file.type.startsWith('image/')) { done++; if (done === files.length) callback(urls); return; }
+            const reader = new FileReader();
+            reader.onload = ev => { urls[i] = ev.target.result; done++; if (done === files.length) callback(urls.filter(Boolean)); };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    function _handleDefectImageFile(e) {
+        const files = e.target.files;
+        _readFilesAsDataUrl(files, urls => _addDefectImages(urls));
+        e.target.value = '';
+    }
+
+    function _handleDefectImageDrop(e) {
+        e.preventDefault();
+        const zone = document.getElementById('defectImageZone');
+        if (zone) zone.style.borderColor = 'var(--border-color)';
+        _readFilesAsDataUrl(e.dataTransfer && e.dataTransfer.files, urls => _addDefectImages(urls));
+    }
+
+    function _initDefectImagePaste(initialImages) {
+        // 세션 번호 증가 → 이전 리스너들은 paste 시 자동 자기 해제
+        _defectPasteSession++;
+        const mySession = _defectPasteSession;
+
+        // 직전 리스너도 즉시 제거
+        if (_defectPasteListener) {
+            document.removeEventListener('paste', _defectPasteListener);
+            _defectPasteListener = null;
+        }
+
+        _defectImages = Array.isArray(initialImages) ? [...initialImages] : (initialImages ? [initialImages] : []);
+        _renderDefectImageGrid();
+
+        function onPaste(e) {
+            // 세션이 바뀌었거나 모달이 닫혔으면 즉시 해제
+            if (mySession !== _defectPasteSession || !document.getElementById('defectImageZone')) {
+                document.removeEventListener('paste', onPaste);
+                if (_defectPasteListener === onPaste) _defectPasteListener = null;
+                return;
+            }
+            const items = e.clipboardData && e.clipboardData.items;
+            if (!items) return;
+            const imageItems = Array.from(items).filter(it => it.type.startsWith('image/'));
+            if (imageItems.length === 0) return;
+            e.preventDefault();
+            _readFilesAsDataUrl(imageItems.map(it => it.getAsFile()), urls => _addDefectImages(urls));
+        }
+        _defectPasteListener = onPaste;
+        document.addEventListener('paste', onPaste);
+    }
+    // ────────────────────────────────────────────────────────────────
+
     function removeDefect(id) {
         const d = Storage.getById(DEFECTS_STORE, id);
         if (!d) {
@@ -4439,9 +4889,10 @@ const SettingsModule = (function() {
         const safeName = d.name || '(이름 없음)';
         const typeNames = {
             injection: '사출',
-            painting: '도장',
-            laser: '레이져',
-            printing: '인쇄'
+            plating:   '도금',
+            painting:  '도장',
+            laser:     '레이져',
+            printing:  '인쇄'
         };
         const typeName = typeNames[d.type] || '기타';
 
@@ -6377,13 +6828,55 @@ const SettingsModule = (function() {
         });
     }
 
+    function _paintInlineAdd(selectId) {
+        const sel = document.getElementById(selectId);
+        const zoneId = selectId + '_addZone';
+        const existing = document.getElementById(zoneId);
+        if (existing) { existing.remove(); return; }
+        const zone = document.createElement('div');
+        zone.id = zoneId;
+        zone.style.cssText = 'display:flex;gap:4px;margin-top:4px;';
+        zone.innerHTML = `
+            <input id="${selectId}_newVal" type="text" class="form-input" style="flex:1;font-size:0.82rem;padding:4px 8px;"
+                placeholder="새 항목 입력 후 Enter"
+                onkeydown="if(event.key==='Enter'){event.preventDefault();SettingsModule._paintInlineConfirm('${selectId}');}
+                           if(event.key==='Escape'){document.getElementById('${zoneId}').remove();}">
+            <button type="button" onclick="SettingsModule._paintInlineConfirm('${selectId}')"
+                style="padding:3px 10px;font-size:0.78rem;background:var(--accent-blue);color:#fff;border:none;border-radius:4px;cursor:pointer;white-space:nowrap;">추가</button>
+            <button type="button" onclick="document.getElementById('${zoneId}').remove()"
+                style="padding:3px 8px;font-size:0.78rem;background:transparent;border:1px solid var(--border-color);border-radius:4px;cursor:pointer;">✕</button>`;
+        sel.parentNode.insertBefore(zone, sel.nextSibling);
+        requestAnimationFrame(() => { const inp = document.getElementById(selectId + '_newVal'); if (inp) inp.focus(); });
+    }
+
+    function _paintInlineConfirm(selectId) {
+        const inp = document.getElementById(selectId + '_newVal');
+        const val = inp ? inp.value.trim() : '';
+        if (!val) { UIUtils.toast('값을 입력하세요.', 'warning'); return; }
+        const sel = document.getElementById(selectId);
+        if (!sel) return;
+        // 중복 체크
+        const exists = Array.from(sel.options).some(o => o.value === val);
+        if (!exists) {
+            const opt = document.createElement('option');
+            opt.value = val; opt.textContent = val;
+            sel.appendChild(opt);
+        }
+        sel.value = val;
+        const zone = document.getElementById(selectId + '_addZone');
+        if (zone) zone.remove();
+    }
+
     function openAddPaintModal() {
         UIUtils.showModal('도료 정보 추가', `
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">구매처</label>
+                    <label class="form-label" style="display:flex;justify-content:space-between;align-items:center;">구매처
+                        <button type="button" onclick="SettingsModule._paintInlineAdd('addPaintSupplier')"
+                            style="font-size:0.72rem;padding:1px 7px;background:transparent;border:1px solid var(--border-color);border-radius:4px;cursor:pointer;color:var(--accent-blue);font-weight:600;">+ 추가</button>
+                    </label>
                     <select class="form-select" id="addPaintSupplier">
-                        ${_paintSelectOptions('supplier', '', ['페인트마당', '로얄페인트', 'KCC', '노루페인트'])}
+                        ${_paintSelectOptions('supplier', '', ['페인트마당', '로얄페인트', '노루페인트'])}
                     </select>
                 </div>
                 <div class="form-group">
@@ -6397,7 +6890,10 @@ const SettingsModule = (function() {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">제조사</label>
+                    <label class="form-label" style="display:flex;justify-content:space-between;align-items:center;">제조사
+                        <button type="button" onclick="SettingsModule._paintInlineAdd('addPaintManufacturer')"
+                            style="font-size:0.72rem;padding:1px 7px;background:transparent;border:1px solid var(--border-color);border-radius:4px;cursor:pointer;color:var(--accent-blue);font-weight:600;">+ 추가</button>
+                    </label>
                     <select class="form-select" id="addPaintManufacturer">
                         ${_paintSelectOptions('manufacturer', '', ['NOROO', 'KCC', 'PPG', 'YULIM', 'REDSOPT', 'ORIGIN'])}
                     </select>
@@ -6485,7 +6981,7 @@ const SettingsModule = (function() {
                 <div class="form-group">
                     <label class="form-label">구매처</label>
                     <select class="form-select" id="editPaintSupplier">
-                        ${_paintSelectOptions('supplier', p.supplier || '', ['페인트마당', '로얄페인트', 'KCC', '노루페인트'])}
+                        ${_paintSelectOptions('supplier', p.supplier || '', ['페인트마당', '로얄페인트', '노루페인트'])}
                     </select>
                 </div>
                 <div class="form-group">
@@ -11252,6 +11748,19 @@ const SettingsModule = (function() {
         editDefect,
         updateDefect,
         removeDefect,
+        _defectDragStart,
+        _defectDragOver,
+        _defectDragLeave,
+        _defectDragEnd,
+        _defectDrop,
+        openBulkFixPaintRefModal,
+        _paintInlineAdd,
+        _paintInlineConfirm,
+        _confirmBulkFixPaintRef,
+        _removeDefectImage,
+        _handleDefectImageFile,
+        _handleDefectImageDrop,
+        _initDefectImagePaste,
         openAddPaintModal,
         savePaint,
         editPaint,

@@ -418,6 +418,42 @@ var ProdStandardsModule = (function() {
             columns: [],
             customRenderer: 'paint-tds'
         },
+        'process-flow-chart': {
+            label: '공정 흐름도',
+            icon: 'account_tree',
+            desc: '제품별 주공정과 세부공정의 흐름, 투입/산출, 설비 정보를 관리합니다.',
+            columns: [
+                { key:'orderNo', label:'순서' },
+                { key:'process', label:'주공정', type:'select', options:['수입검사','보관','도장(A)','레이져','도장(B)','출하검사','출하'] },
+                { key:'subProcess', label:'세부공정' },
+                { key:'input', label:'투입/전공정' },
+                { key:'output', label:'산출/후공정' },
+                { key:'equipment', label:'설비/라인' },
+                { key:'controlPoint', label:'주요 관리점' },
+                { key:'linkedItem', label:'관리계획서 항목', type:'cp-select' },
+                { key:'note', label:'비고' },
+            ]
+        },
+        'pfmea': {
+            label: 'PFMEA',
+            icon: 'report_problem',
+            desc: '공정별 잠재 불량 모드, 영향, 원인, 현재 관리와 개선조치를 관리합니다.',
+            columns: [
+                { key:'process', label:'주공정', type:'select', options:['수입검사','보관','도장(A)','레이져','도장(B)','출하검사','출하'] },
+                { key:'subProcess', label:'세부공정' },
+                { key:'failureMode', label:'잠재 불량 모드' },
+                { key:'effect', label:'영향' },
+                { key:'cause', label:'원인' },
+                { key:'severity', label:'심각도' },
+                { key:'occurrence', label:'발생도' },
+                { key:'currentControl', label:'현재 관리' },
+                { key:'detection', label:'검출도' },
+                { key:'recommendedAction', label:'개선조치' },
+                { key:'owner', label:'담당' },
+                { key:'linkedItem', label:'관리계획서 항목', type:'cp-select' },
+                { key:'note', label:'비고' },
+            ]
+        },
         'mixing': {
             label: '배합 기준서',
             icon: 'science',
@@ -969,6 +1005,8 @@ var ProdStandardsModule = (function() {
         const color = { templateId: 'linked:color-gloss', label: '색차/광택 기준서', icon: 'palette', desc: '색차, 광택 판정 기준과 측정 방법', accent: '#7c3aed', count: null, action: `ProdStandardsModule._openProcessStandardItem('doc','color-gloss')`, linkKind: 'doc', linkTarget: 'color-gloss', badge: 'DB', badgeColor: '#0e7490' };
         const mesh = linked('filter-mesh', '여과망 기준서', 'filter_alt', '도료 여과망 사양, 적용 위치, 교체주기', '#0e7490');
         const tds = linked('paint-tds', '도장 사양서(TDS)', 'description', '도료사 배포 TDS 파일 및 주제 도료별 적용 사양 관리', '#334155');
+        const flowChart = linked('process-flow-chart', '공정 흐름도', 'account_tree', '제품별 주공정/세부공정 흐름과 입출력 관계 관리', '#2563eb');
+        const pfmea = linked('pfmea', 'PFMEA', 'report_problem', '공정별 잠재 불량 모드, 영향, 원인, 관리/개선조치 관리', '#dc2626');
         const drying = page('drying-std', '건조 및 셋팅룸 온도 기준서', 'local_fire_department', 'Flash Off / Main Oven 온도와 컨베이어 속도 기준', '#b45309');
         const robot = page('robot-pg-std', '레이져 프로그램 기준서', 'precision_manufacturing', '레이져 각인 프로그램명, 컨트롤러 번호, 스핀들 속도 기준', '#7c3aed');
         const customerReturn = page('customer-return-nc-std', '고객 반송품 부적합품 처리 기준서', 'assignment_return', '고객 반송품 및 부적합품 처리 기준 이미지 문서', '#dc2626');
@@ -985,6 +1023,9 @@ var ProdStandardsModule = (function() {
         ];
 
         const groups = [
+            { process: '공정 설계', icon: 'account_tree', stations: [
+                { station: '전체 공정', standards: [flowChart, pfmea] },
+            ] },
             { process: '수입검사', icon: 'inventory_2', stations: [
                 { station: '도료 입고', standards: [tds, color, mesh] },
             ] },
@@ -1030,6 +1071,16 @@ var ProdStandardsModule = (function() {
         return `${process || ''}||${normalizedStation || ''}`;
     }
 
+    function _processStandardMenuStableId(std, process, station) {
+        const template = String((std && std.templateId) || (std && std.linkTarget) || (std && std.label) || 'std');
+        const raw = `${template}||${process || ''}||${station || ''}`;
+        return 'std-menu-' + raw
+            .replace(/\s+/g, '')
+            .replace(/[^\w가-힣()-]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .slice(0, 120);
+    }
+
     function _withProcessStandardMenuIds(groups) {
         let seq = 0;
         return groups.map((group, processOrder) => ({
@@ -1042,7 +1093,7 @@ var ProdStandardsModule = (function() {
                     const originalOrder = seq++;
                     return {
                         ...std,
-                        id: std.id || `std-menu-${originalOrder}`,
+                        id: std.id || _processStandardMenuStableId(std, group.process, st.station),
                         homeProcess: group.process,
                         homeStation: st.station,
                         _originalOrder: originalOrder
@@ -2425,6 +2476,8 @@ var ProdStandardsModule = (function() {
         const cpRows = allStandards.filter(_isCpParamRecord);
         const cpProductCount = _countUnique(cpRows, r => `${r.carModel || ''}||${r.partName || ''}`);
         const workStandardCount = (Storage.getAll(DB.STORES.WORK_STANDARDS) || []).length;
+        const flowChartCount = _standardRecordCount('process-flow-chart');
+        const pfmeaCount = _standardRecordCount('pfmea');
         const standardCards = Object.entries(STANDARD_DOC_TYPES).map(([key, cfg]) => ({
             key,
             label: cfg.label,
@@ -2447,7 +2500,7 @@ var ProdStandardsModule = (function() {
             <div class="fade-in-up">
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px;flex-wrap:wrap;">
                     <div style="color:var(--text-muted);font-size:.92rem;">
-                        관리계획서, 작업표준서, 기준서 등록 현황을 한 화면에서 확인합니다.
+                        관리계획서, 공정 흐름도, PFMEA, 작업표준서와 기준서 등록 현황을 한 화면에서 확인합니다.
                     </div>
                 </div>
 
@@ -2475,6 +2528,30 @@ var ProdStandardsModule = (function() {
                         <div style="font-size:.82rem;color:var(--text-muted);">공정별 작업 표준서 등록 수</div>
                         <button style="${actionBtn}border-color:#7c3aed;color:#7c3aed;background:rgba(124,58,237,.08);" onclick="Router.navigate('work-standard')">
                             작업 표준서 열기
+                        </button>
+                    </div>
+
+                    <div style="${cardBase}border-top:4px solid #2563eb;">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <span class="material-symbols-outlined" style="font-size:26px;color:#2563eb;">account_tree</span>
+                            <div style="font-weight:800;">공정 흐름도</div>
+                        </div>
+                        <div style="font-size:2rem;font-weight:900;color:var(--text-primary);">${flowChartCount.toLocaleString()}</div>
+                        <div style="font-size:.82rem;color:var(--text-muted);">제품별 주공정/세부공정 흐름 등록 수</div>
+                        <button style="${actionBtn}border-color:#2563eb;color:#2563eb;background:rgba(37,99,235,.08);" onclick="ProdStandardsModule.selectDocType('process-flow-chart')">
+                            공정 흐름도 열기
+                        </button>
+                    </div>
+
+                    <div style="${cardBase}border-top:4px solid #dc2626;">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <span class="material-symbols-outlined" style="font-size:26px;color:#dc2626;">report_problem</span>
+                            <div style="font-weight:800;">PFMEA</div>
+                        </div>
+                        <div style="font-size:2rem;font-weight:900;color:var(--text-primary);">${pfmeaCount.toLocaleString()}</div>
+                        <div style="font-size:.82rem;color:var(--text-muted);">잠재 불량 모드/영향 분석 등록 수</div>
+                        <button style="${actionBtn}border-color:#dc2626;color:#dc2626;background:rgba(220,38,38,.08);" onclick="ProdStandardsModule.selectDocType('pfmea')">
+                            PFMEA 열기
                         </button>
                     </div>
                 </div>

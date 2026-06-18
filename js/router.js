@@ -78,6 +78,9 @@ const Router = (function() {
         'safety-checklist': '안전관리 점검표',
         'safety-ppe': '보호구 적용기준',
         'safety-rules': '안전수칙 기준서',
+        'fire-facility-check': '소방시설 점검',
+        'fire-ext-check': '소화기 점검',
+        'fire-edu': '소방 안전 교육',
         'cert-standard': '자격인증 및 다기능 평가 기준서',
         'cert-eval': '자격인증 평가서',
         'cert-ledger': '자격인증 평가 관리대장',
@@ -153,7 +156,10 @@ const Router = (function() {
         'safety-msds': { target: 'safety-hub', label: '안전관리로 돌아가기' },
         'safety-checklist': { target: 'safety-hub', label: '안전관리로 돌아가기' },
         'safety-ppe': { target: 'safety-hub', label: '안전관리로 돌아가기' },
-        'safety-rules': { target: 'safety-hub', label: '안전관리로 돌아가기' }
+        'safety-rules': { target: 'safety-hub', label: '안전관리로 돌아가기' },
+        'fire-facility-check': { target: 'safety-hub', label: '안전관리로 돌아가기' },
+        'fire-ext-check': { target: 'safety-hub', label: '안전관리로 돌아가기' },
+        'fire-edu': { target: 'safety-hub', label: '안전관리로 돌아가기' }
     };
 
     const PAGE_TITLE_HTML = Object.fromEntries(

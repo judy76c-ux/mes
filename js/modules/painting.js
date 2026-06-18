@@ -4117,160 +4117,149 @@ const PaintingInspectionModule = (function() {
 
         // 모달 HTML 작성
         let modalContent = `
-            <div style="display:grid; gap:16px;">
-                <!-- 기본 정보 섹션 (자동 채우기) -->
-                <div class="card">
-                    <div class="card-body">
-                        <h4 style="margin:0 0 10px 0; color:var(--text-primary);">도장 정보</h4>
-                        <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(130px, 1fr)); gap:10px 16px; background:var(--bg-secondary); border-radius:8px; padding:14px;">
-                            <div>
-                                <div style="font-size:0.72rem; color:var(--text-muted); margin-bottom:3px;">도장작업일</div>
-                                <div style="font-weight:600; font-size:0.9rem;">${work.date || '-'}</div>
-                            </div>
-                            <div>
-                                <div style="font-size:0.72rem; color:var(--text-muted); margin-bottom:3px;">작업 시간</div>
-                                <div style="font-size:0.9rem;">${work.startTime ? (work.startTime + (work.endTime ? ' ~ ' + work.endTime : '')) : '-'}</div>
-                            </div>
-                            <div>
-                                <div style="font-size:0.72rem; color:var(--text-muted); margin-bottom:3px;">차종</div>
-                                <div style="font-weight:600; font-size:0.9rem;">${work.carModel || '-'}</div>
-                            </div>
-                            <div>
-                                <div style="font-size:0.72rem; color:var(--text-muted); margin-bottom:3px;">품명</div>
-                                <div style="font-weight:600; font-size:0.9rem;">${work.partName || '-'}</div>
-                            </div>
-                            <div>
-                                <div style="font-size:0.72rem; color:var(--text-muted); margin-bottom:3px;">컬러</div>
-                                <div style="font-size:0.9rem;">${work.color || '-'}</div>
-                            </div>
-                            <div>
-                                <div style="font-size:0.72rem; color:var(--text-muted); margin-bottom:3px;">사출 LOT</div>
-                                <div style="font-size:0.82rem; font-family:monospace;">${lotDisplay}</div>
-                            </div>
-                            <div>
-                                <div style="font-size:0.72rem; color:var(--text-muted); margin-bottom:3px;">도장 작업 수량</div>
-                                <div style="font-weight:700; font-size:1rem; color:var(--accent-blue);">
-                                    ${UIUtils.formatNumber(work.productionQty || 0)} EA
-                                    <input type="hidden" id="inpInspectionQty" value="${work.productionQty || 0}">
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <!-- 도장 정보 컴팩트 배너 -->
+                <div style="background:var(--bg-secondary); border-radius:8px; padding:8px 14px; display:flex; flex-wrap:wrap; gap:6px 20px; align-items:center; border-left:4px solid var(--accent-blue);">
+                    <span style="font-size:0.75rem; color:var(--text-muted);">작업일&nbsp;<strong style="color:var(--text-primary);">${work.date || '-'}</strong></span>
+                    <span style="color:var(--border);">|</span>
+                    <span style="font-size:0.75rem; color:var(--text-muted);">시간&nbsp;<strong style="color:var(--text-primary);">${work.startTime ? (work.startTime + (work.endTime ? ' ~ ' + work.endTime : '')) : '-'}</strong></span>
+                    <span style="color:var(--border);">|</span>
+                    <span style="font-size:0.75rem; color:var(--text-muted);">차종&nbsp;<strong style="color:var(--text-primary);">${work.carModel || '-'}</strong></span>
+                    <span style="color:var(--border);">|</span>
+                    <span style="font-size:0.75rem; color:var(--text-muted);">품명&nbsp;<strong style="color:var(--text-primary);">${work.partName || '-'}</strong></span>
+                    <span style="color:var(--border);">|</span>
+                    <span style="font-size:0.75rem; color:var(--text-muted);">컬러&nbsp;<strong style="color:var(--text-primary);">${work.color || '-'}</strong></span>
+                    <span style="color:var(--border);">|</span>
+                    <span style="font-size:0.75rem; color:var(--text-muted);">LOT&nbsp;<strong style="color:var(--text-primary); font-family:monospace;">${lotDisplay}</strong></span>
+                    <span style="color:var(--border);">|</span>
+                    <span style="font-size:0.75rem; color:var(--text-muted);">작업수량&nbsp;<strong style="color:var(--accent-blue); font-size:0.95rem;">${UIUtils.formatNumber(work.productionQty || 0)} EA</strong>
+                        <input type="hidden" id="inpInspectionQty" value="${work.productionQty || 0}">
+                    </span>
+                </div>
+
+                <!-- 2-컬럼 메인 레이아웃 -->
+                <div style="display:grid; grid-template-columns:260px 1fr; gap:10px; align-items:start;">
+
+                    <!-- 좌측: 검사 정보 + 수량 + 검사자 -->
+                    <div style="display:flex; flex-direction:column; gap:10px;">
+
+                        <!-- 검사 시간 -->
+                        <div class="card">
+                            <div class="card-body" style="padding:12px;">
+                                <h5 style="margin:0 0 10px 0; font-size:0.85rem; color:var(--text-primary);">검사 정보</h5>
+                                <div style="display:flex; flex-direction:column; gap:8px;">
+                                    <div class="form-group" style="margin:0;">
+                                        <label class="form-label" style="font-size:0.72rem;">검사일자</label>
+                                        <input type="date" class="form-input" id="inpInspectionDate" value="${UIUtils.today()}" style="font-weight:600; font-size:0.85rem; padding:6px 8px;">
+                                    </div>
+                                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                                        <div class="form-group" style="margin:0;">
+                                            <label class="form-label" style="font-size:0.72rem;">시작시간</label>
+                                            <input type="time" class="form-input" id="inpInspectionStartTime" style="font-weight:600; font-size:0.82rem; padding:6px 4px;" oninput="PaintingInspectionModule._calculateInspectionTime()" onchange="PaintingInspectionModule._calculateInspectionTime()">
+                                        </div>
+                                        <div class="form-group" style="margin:0;">
+                                            <label class="form-label" style="font-size:0.72rem;">완료시간</label>
+                                            <input type="time" class="form-input" id="inpInspectionEndTime" style="font-weight:600; font-size:0.82rem; padding:6px 4px;" oninput="PaintingInspectionModule._calculateInspectionTime()" onchange="PaintingInspectionModule._calculateInspectionTime()">
+                                        </div>
+                                    </div>
+                                    <div class="form-group" style="margin:0;">
+                                        <label class="form-label" style="font-size:0.72rem;">소요시간</label>
+                                        <input type="text" class="form-input" id="inpInspectionDuration" placeholder="자동계산" readonly style="background:var(--bg-secondary); font-weight:600; font-size:0.85rem; padding:6px 8px;">
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
-                </div>
 
-                <!-- 검사 정보 입력 섹션 -->
-                <div class="card">
-                    <div class="card-body">
-                        <h4 style="margin:0 0 12px 0; color:var(--text-primary);">검사 정보</h4>
-                        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px;">
-                            <div class="form-group">
-                                <label class="form-label">검사일자</label>
-                                <input type="date" class="form-input" id="inpInspectionDate" value="${UIUtils.today()}" style="font-weight:600;">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label">검사 시작시간</label>
-                                <input type="time" class="form-input" id="inpInspectionStartTime" style="font-weight:600;" oninput="PaintingInspectionModule._calculateInspectionTime()" onchange="PaintingInspectionModule._calculateInspectionTime()">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label">검사 완료시간</label>
-                                <input type="time" class="form-input" id="inpInspectionEndTime" style="font-weight:600;" oninput="PaintingInspectionModule._calculateInspectionTime()" onchange="PaintingInspectionModule._calculateInspectionTime()">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label">소요시간</label>
-                                <input type="text" class="form-input" id="inpInspectionDuration" placeholder="자동계산" readonly style="background:var(--bg-secondary); font-weight:600;">
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 불량 유형 섹션 (사출/도장 분리) -->
-                <div class="card">
-                    <div class="card-body">
-                        <h4 style="margin:0 0 12px 0; color:var(--text-primary);">불량 유형 입력</h4>
-
-                        ${injectionDefects.length > 0 ? `
-                        <div style="margin-bottom:20px;">
-                            <h5 style="margin:0 0 10px 0;color:#ea580c;border-bottom:2px solid #ea580c;padding-bottom:5px;">
-                                <span class="material-symbols-outlined" style="vertical-align:middle;font-size:16px;">precision_manufacturing</span> 사출 불량
-                            </h5>
-                            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:12px;">
-                                ${injectionDefects.map(d => `
-                                    <div style="display:flex; flex-direction:column; gap:8px;">
-                                        <label style="font-size:0.9rem; font-weight:600; margin:0;">${d.name}</label>
-                                        <input type="text" inputmode="numeric" id="inj-${d.id}" value="0" min="0" style="padding:8px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:600; font-size:0.95rem; cursor:pointer; background:white;" onfocus="if(this.value==='0') this.value=''" onclick="PaintingInspectionModule._showNumericPad(this)" onkeydown="if(!/[0-9]|Backspace|Delete|ArrowLeft|ArrowRight|Tab/.test(event.key)){event.preventDefault();}" oninput="PaintingInspectionModule._updateDefectTotal()">
+                        <!-- 검사 수량 -->
+                        <div class="card">
+                            <div class="card-body" style="padding:12px;">
+                                <h5 style="margin:0 0 10px 0; font-size:0.85rem; color:var(--text-primary);">검사 수량</h5>
+                                <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px;">
+                                    <div class="form-group" style="margin:0;">
+                                        <label class="form-label" style="font-size:0.72rem;">양품수</label>
+                                        <input type="number" class="form-input" id="inpGoodQty" value="${work.productionQty || 0}" min="0" style="text-align:right; font-weight:600; font-size:0.9rem; padding:5px 6px;" onchange="PaintingInspectionModule._updateDefectQty()">
                                     </div>
-                                `).join('')}
-                            </div>
-                        </div>
-                        ` : ''}
-
-                        ${paintingDefects.length > 0 ? `
-                        <div>
-                            <h5 style="margin:0 0 10px 0;color:#16a34a;border-bottom:2px solid #16a34a;padding-bottom:5px;">
-                                <span class="material-symbols-outlined" style="vertical-align:middle;font-size:16px;">format_paint</span> 도장 불량
-                            </h5>
-                            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:12px;">
-                                ${paintingDefects.map(d => `
-                                    <div style="display:flex; flex-direction:column; gap:8px;">
-                                        <label style="font-size:0.9rem; font-weight:600; margin:0;">${d.name}</label>
-                                        <input type="text" inputmode="numeric" id="paint-${d.id}" value="0" min="0" style="padding:8px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:600; font-size:0.95rem; cursor:pointer; background:white;" onfocus="if(this.value==='0') this.value=''" onclick="PaintingInspectionModule._showNumericPad(this)" onkeydown="if(!/[0-9]|Backspace|Delete|ArrowLeft|ArrowRight|Tab/.test(event.key)){event.preventDefault();}" oninput="PaintingInspectionModule._updateDefectTotal()">
+                                    <div class="form-group" style="margin:0;">
+                                        <label class="form-label" style="font-size:0.72rem;">불량수</label>
+                                        <input type="number" class="form-input" id="inpDefectQty" value="0" min="0" style="text-align:right; font-weight:600; font-size:0.9rem; padding:5px 6px;" onchange="PaintingInspectionModule._updateGoodQty()">
                                     </div>
-                                `).join('')}
+                                    <div class="form-group" style="margin:0;">
+                                        <label class="form-label" style="font-size:0.72rem;">합계 (자동)</label>
+                                        <input type="text" class="form-input" id="inpTotalQty" value="${UIUtils.formatNumber(work.productionQty || 0)}" readonly style="background:var(--bg-secondary); text-align:right; font-weight:700; font-size:0.9rem; padding:5px 6px; color:var(--accent-blue);">
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                        ` : ''}
-                    </div>
-                </div>
 
-                <!-- 검사 정보 입력 섹션 -->
-                <div class="card">
-                    <div class="card-body">
-                        <h4 style="margin:0 0 12px 0; color:var(--text-primary);">검사 정보</h4>
-                        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;">
-                            <div class="form-group">
-                                <label class="form-label">양품수</label>
-                                <input type="number" class="form-input" id="inpGoodQty" value="${work.productionQty || 0}" min="0" style="text-align:right; font-weight:600;"
-                                    onchange="PaintingInspectionModule._updateDefectQty()">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label">불량수</label>
-                                <input type="number" class="form-input" id="inpDefectQty" value="0" min="0" style="text-align:right; font-weight:600;"
-                                    onchange="PaintingInspectionModule._updateGoodQty()">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label">합계 (자동)</label>
-                                <input type="text" class="form-input" id="inpTotalQty" value="${UIUtils.formatNumber(work.productionQty || 0)}" readonly style="background:var(--bg-secondary); text-align:right; font-weight:600;">
+                        <!-- 검사자 -->
+                        <div class="card">
+                            <div class="card-body" style="padding:12px;">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                                    <h5 style="margin:0; font-size:0.85rem; color:var(--text-primary);">검사자</h5>
+                                    <button class="btn btn-sm btn-primary" onclick="PaintingInspectionModule._addInspectorField()" id="addInspectorBtn" style="gap:4px; padding:4px 8px; font-size:0.78rem;">
+                                        <span class="material-symbols-outlined" style="font-size:14px;">add</span> 추가
+                                    </button>
+                                </div>
+                                <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;" id="inspectorContainer">
+                                    <!-- 동적으로 생성됨 -->
+                                </div>
                             </div>
                         </div>
-                    </div>
-                </div>
 
-                <!-- 검사자 선택 섹션 -->
-                <div class="card">
-                    <div class="card-body">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                            <h4 style="margin:0; color:var(--text-primary);">검사자</h4>
-                            <button class="btn btn-sm btn-primary" onclick="PaintingInspectionModule._addInspectorField()" id="addInspectorBtn" style="gap:4px;">
-                                <span class="material-symbols-outlined" style="font-size:16px;">add</span> 추가
+                        <!-- 버튼 -->
+                        <div style="display:flex; flex-direction:column; gap:6px;">
+                            <button class="btn btn-primary" onclick="PaintingInspectionModule._saveInspection('${workId}')" style="width:100%; justify-content:center;">
+                                <span class="material-symbols-outlined">save</span> 저장
                             </button>
-                        </div>
-                        <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px;" id="inspectorContainer">
-                            <!-- 동적으로 생성됨 -->
+                            <div style="display:flex; gap:6px;">
+                                <button class="btn btn-secondary" onclick="window.print()" style="flex:1; justify-content:center; font-size:0.85rem;">
+                                    <span class="material-symbols-outlined" style="font-size:16px;">print</span> 인쇄
+                                </button>
+                                <button class="btn btn-outline" onclick="PaintingInspectionModule._closeInspectionModal()" style="flex:1; justify-content:center; font-size:0.85rem;">
+                                    <span class="material-symbols-outlined" style="font-size:16px;">close</span> 취소
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                <!-- 버튼 섹션 -->
-                <div style="display:flex; gap:8px; padding-top:16px; border-top:1px solid var(--border);">
-                    <button class="btn btn-primary" onclick="PaintingInspectionModule._saveInspection('${workId}')">
-                        <span class="material-symbols-outlined">save</span> 저장
-                    </button>
-                    <button class="btn btn-secondary" onclick="window.print()">
-                        <span class="material-symbols-outlined">print</span> 인쇄
-                    </button>
-                    <button class="btn btn-outline" onclick="PaintingInspectionModule._closeInspectionModal()">
-                        <span class="material-symbols-outlined">close</span> 취소
-                    </button>
+                    <!-- 우측: 불량 유형 입력 -->
+                    <div class="card" style="height:100%;">
+                        <div class="card-body" style="padding:14px;">
+                            <h5 style="margin:0 0 12px 0; font-size:0.85rem; color:var(--text-primary);">불량 유형 입력</h5>
+
+                            ${injectionDefects.length > 0 ? `
+                            <div style="margin-bottom:14px;">
+                                <div style="font-size:0.78rem; font-weight:700; color:#ea580c; border-bottom:2px solid #ea580c; padding-bottom:4px; margin-bottom:10px; display:flex; align-items:center; gap:4px;">
+                                    <span class="material-symbols-outlined" style="font-size:14px;">precision_manufacturing</span> 사출 불량
+                                </div>
+                                <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:8px;">
+                                    ${injectionDefects.map(d => `
+                                        <div style="display:flex; flex-direction:column; gap:4px;">
+                                            <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary);">${d.name}</label>
+                                            <input type="text" inputmode="numeric" id="inj-${d.id}" value="0" min="0" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem; cursor:pointer; background:white;" onfocus="if(this.value==='0') this.value=''" onclick="PaintingInspectionModule._showNumericPad(this)" onkeydown="if(!/[0-9]|Backspace|Delete|ArrowLeft|ArrowRight|Tab/.test(event.key)){event.preventDefault();}" oninput="PaintingInspectionModule._updateDefectTotal()">
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                            ` : ''}
+
+                            ${paintingDefects.length > 0 ? `
+                            <div>
+                                <div style="font-size:0.78rem; font-weight:700; color:#16a34a; border-bottom:2px solid #16a34a; padding-bottom:4px; margin-bottom:10px; display:flex; align-items:center; gap:4px;">
+                                    <span class="material-symbols-outlined" style="font-size:14px;">format_paint</span> 도장 불량
+                                </div>
+                                <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:8px;">
+                                    ${paintingDefects.map(d => `
+                                        <div style="display:flex; flex-direction:column; gap:4px;">
+                                            <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary);">${d.name}</label>
+                                            <input type="text" inputmode="numeric" id="paint-${d.id}" value="0" min="0" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem; cursor:pointer; background:white;" onfocus="if(this.value==='0') this.value=''" onclick="PaintingInspectionModule._showNumericPad(this)" onkeydown="if(!/[0-9]|Backspace|Delete|ArrowLeft|ArrowRight|Tab/.test(event.key)){event.preventDefault();}" oninput="PaintingInspectionModule._updateDefectTotal()">
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                            ` : ''}
+                        </div>
+                    </div>
                 </div>
             </div>
         `;
@@ -4295,9 +4284,9 @@ const PaintingInspectionModule = (function() {
                 }
             </style>
             <div style="position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:1000;">
-                <div style="background:white; border-radius:12px; max-width:63vw; max-height:90vh; width:63vw; overflow:auto; padding:24px; box-shadow:0 10px 40px rgba(0,0,0,0.2);">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-                        <h2 style="margin:0; font-size:1.25rem;">도장 검사 입력</h2>
+                <div style="background:white; border-radius:12px; max-width:78vw; max-height:92vh; width:78vw; overflow:auto; padding:16px 20px; box-shadow:0 10px 40px rgba(0,0,0,0.2);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                        <h2 style="margin:0; font-size:1.1rem;">도장 검사 입력</h2>
                         <button onclick="PaintingInspectionModule._closeInspectionModal()" style="background:none; border:none; font-size:24px; cursor:pointer; color:var(--text-muted);">✕</button>
                     </div>
                     ${modalContent}
@@ -4350,9 +4339,9 @@ const PaintingInspectionModule = (function() {
         const idx = container.inspectorCount;
 
         const fieldHTML = `
-            <div class="form-group" id="inspectorGroup${idx}">
-                <label class="form-label">검사자${idx}</label>
-                <select id="inspector${idx}" class="form-select" style="padding:6px; border:1px solid var(--border);">
+            <div class="form-group" id="inspectorGroup${idx}" style="margin:0;">
+                <label class="form-label" style="font-size:0.72rem;">검사자${idx}</label>
+                <select id="inspector${idx}" class="form-select" style="padding:5px 6px; border:1px solid var(--border); font-size:0.85rem;" onchange="PaintingInspectionModule._syncInspectorOptions()">
                     <option value="">선택 안함</option>
                     ${inspectors.map(insp => `<option value="${insp.id}">${insp.name || insp.id}</option>`).join('')}
                 </select>
@@ -4360,12 +4349,30 @@ const PaintingInspectionModule = (function() {
         `;
 
         container.insertAdjacentHTML('beforeend', fieldHTML);
+        PaintingInspectionModule._syncInspectorOptions();
 
         // + 버튼 상태 업데이트
         const addBtn = document.getElementById('addInspectorBtn');
         if (addBtn) {
             addBtn.disabled = container.inspectorCount >= 5;
         }
+    }
+
+    // 검사자 드롭다운 간 중복 선택 방지
+    function _syncInspectorOptions() {
+        const container = document.getElementById('inspectorContainer');
+        if (!container) return;
+        const selects = Array.from(container.querySelectorAll('select[id^="inspector"]'));
+        const selectedValues = selects.map(s => s.value).filter(v => v !== '');
+        selects.forEach(sel => {
+            Array.from(sel.options).forEach(opt => {
+                if (opt.value === '' || opt.value === sel.value) {
+                    opt.disabled = false;
+                } else {
+                    opt.disabled = selectedValues.includes(opt.value);
+                }
+            });
+        });
     }
 
     // 검사 모달 닫기 및 도장 검사 페이지로 복귀
@@ -6717,6 +6724,7 @@ const PaintingInspectionModule = (function() {
         _calculateInspectionTime,
         _saveInspection,
         _addInspectorField,
+        _syncInspectorOptions,
         showInspectionDetail,
         _closeInspectionModal,
         _showNumericPad,

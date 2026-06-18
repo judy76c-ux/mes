@@ -1,10 +1,63 @@
 /**
  * 소방 안전 관리
  *  - FireSafetyNavUI         : 소방 안전 공통 네비게이션
+ *  - FireSafetyHubModule     : 소방관리 허브
  *  - FireFacilityCheckModule : 소방시설 점검
  *  - FireExtCheckModule      : 소화기 점검
  *  - FireEduModule           : 소방 안전 교육 일지
  */
+
+/* ──────────────────────────────────────────────
+   소방관리 허브
+────────────────────────────────────────────── */
+var FireSafetyHubModule = (function () {
+    const MENUS = [
+        { id: 'fire-facility-check', label: '소방시설 점검',  desc: '소방 시설 정기 점검 결과 기록', icon: 'fire_truck',            accent: '#ea580c', key: 'fire_facility_check' },
+        { id: 'fire-ext-check',      label: '소화기 점검',    desc: '소화기 배치 및 점검 현황 관리', icon: 'fire_extinguisher',     accent: '#b91c1c', key: 'fire_ext_check'      },
+        { id: 'fire-edu',            label: '소방안전 교육',  desc: '소방 안전 교육 일지 관리',      icon: 'co2',                   accent: '#c2410c', key: 'fire_edu'            }
+    ];
+
+    function _esc(v) { return SafetyCommon ? SafetyCommon.esc(v) : (v || '').replace(/[<>&"]/g, function(c){ return {'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]; }); }
+
+    async function render(container) {
+        const counts = {};
+        for (const m of MENUS) {
+            try { counts[m.id] = ((await SafetyCommon.load(m.key)) || []).length; } catch(e) { counts[m.id] = 0; }
+        }
+        container.innerHTML = `<div class="fade-in-up">
+            <div style="margin-bottom:20px;">
+                <h3 style="margin:0 0 4px;font-size:1.15rem;">소방관리</h3>
+                <p style="margin:0;color:var(--text-muted);font-size:.88rem;">소방 시설 점검, 소화기 점검, 소방 안전 교육을 관리합니다.</p>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;">
+                ${MENUS.map(function(m) {
+                    return `<div onclick="Router.navigate('${m.id}')"
+                                 style="cursor:pointer;border-radius:12px;border:1px solid var(--border-color);
+                                        background:var(--bg-primary);padding:20px;
+                                        border-top:4px solid ${m.accent};
+                                        transition:box-shadow .15s;"
+                                 onmouseover="this.style.boxShadow='0 4px 16px rgba(0,0,0,.10)'"
+                                 onmouseout="this.style.boxShadow='none'">
+                        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
+                            <div style="width:40px;height:40px;border-radius:10px;background:${m.accent};
+                                        display:flex;align-items:center;justify-content:center;">
+                                <span class="material-symbols-outlined" style="font-size:22px;color:#fff;">${m.icon}</span>
+                            </div>
+                            <div>
+                                <div style="font-weight:700;font-size:.95rem;">${_esc(m.label)}</div>
+                                <div style="font-size:.78rem;color:var(--text-muted);">${_esc(m.desc)}</div>
+                            </div>
+                        </div>
+                        <div style="font-size:1.6rem;font-weight:800;color:${m.accent};">${counts[m.id] || 0}</div>
+                        <div style="font-size:.75rem;color:var(--text-muted);">등록 건수</div>
+                    </div>`;
+                }).join('')}
+            </div>
+        </div>`;
+    }
+
+    return { render, init: function(container) { render(container); } };
+})();
 
 /* ──────────────────────────────────────────────
    공통 네비게이션

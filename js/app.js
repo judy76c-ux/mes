@@ -309,6 +309,7 @@ const App = (function() {
         Router.registerModule('safety-checklist', SafetyChecklistModule);
         Router.registerModule('safety-ppe', PPEStandardModule);
         Router.registerModule('safety-rules', SafetyRulesModule);
+        Router.registerModule('fire-safety-hub', FireSafetyHubModule);
         Router.registerModule('fire-facility-check', FireFacilityCheckModule);
         Router.registerModule('fire-ext-check', FireExtCheckModule);
         Router.registerModule('fire-edu', FireEduModule);
