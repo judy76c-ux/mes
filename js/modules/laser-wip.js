@@ -8,11 +8,12 @@ var LaserWipModule = (function() {
     const STORE_LASER = DB.STORES.LASER_WORK_LOG;
     const STORE_PAINT = DB.STORES.PAINTING_WORK;
 
-    let _activeTab = 'standby'; // 'standby' | 'after-laser'
+    let _activeTab = 'standby'; // 'standby' | 'after-laser' | 'after-laser-residual'
 
     const TABS = [
         { id: 'standby',     label: '레이져 대기품 현황',    icon: 'hourglass_top' },
-        { id: 'after-laser', label: '레이져 후 재공품 현황', icon: 'bolt' }
+        { id: 'after-laser', label: '레이져 후 재공품 현황', icon: 'bolt' },
+        { id: 'after-laser-residual', label: '레이져 후 잔량 현황', icon: 'inventory_2' }
     ];
 
     function _actionBtn(label, icon, onclick, color) {
@@ -48,7 +49,7 @@ var LaserWipModule = (function() {
                     </button>`).join('')}
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-                ${_activeTab === 'standby' ? standbyActions : afterActions}
+                ${_activeTab === 'standby' ? standbyActions : (_activeTab === 'after-laser' ? afterActions : '')}
             </div>
         </div>`;
     }
@@ -72,7 +73,7 @@ var LaserWipModule = (function() {
     }
 
     function openTab(tab) {
-        _activeTab = tab === 'after-laser' ? 'after-laser' : 'standby';
+        _activeTab = TABS.some(t => t.id === tab) ? tab : 'standby';
         if (typeof Router !== 'undefined' && Router.navigate) {
             Router.navigate('laser-wip');
             return;
@@ -88,8 +89,10 @@ var LaserWipModule = (function() {
         if (!el) return;
         if (_activeTab === 'standby') {
             _renderStandbyTab(el);
-        } else {
+        } else if (_activeTab === 'after-laser') {
             _renderAfterLaserTab(el);
+        } else {
+            _renderAfterLaserResidualTab(el);
         }
     }
 
@@ -189,6 +192,107 @@ var LaserWipModule = (function() {
                 <span style="font-size:0.8rem;font-weight:400;color:var(--text-muted);">EA</span>
             </div>
         </div>`;
+    }
+
+    function _renderAfterLaserResidualTab(el) {
+        const rows = _calcLaserResidualWip();
+        const totalResidual = rows.reduce((sum, row) => sum + row.residualQty, 0);
+        el.innerHTML = `
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding:10px 14px;
+                        background:rgba(245,158,11,0.08);border-left:3px solid var(--accent-orange);border-radius:0 8px 8px 0;">
+                <span class="material-symbols-outlined" style="font-size:1.2rem;color:var(--accent-orange);">inventory_2</span>
+                <div>
+                    <div style="font-size:0.92rem;font-weight:700;color:var(--accent-orange);">레이져 후 잔량 현황</div>
+                    <div style="font-size:0.76rem;color:var(--text-muted);">포장단위 완박스가 되지 않아 출하검사 대기에서 제외된 잔량</div>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:20px;">
+                ${_summaryCard('잔량 입고', totalResidual, 'inventory_2', 'var(--accent-orange)')}
+                ${_summaryCard('잔량 품목', rows.length, 'category', 'var(--accent-blue)')}
+            </div>
+            <div style="border-radius:10px;overflow:hidden;border:1px solid var(--border-color);">
+                <table style="width:100%;border-collapse:collapse;font-size:0.88rem;">
+                    <thead>
+                        <tr style="background:linear-gradient(180deg,#f1f5f9,#e8ecf1);">
+                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">차종</th>
+                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">품명</th>
+                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">컬러</th>
+                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">레이져작업일</th>
+                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">도장작업일</th>
+                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">사출LOT</th>
+                            <th style="padding:10px 14px;text-align:right;font-weight:600;color:var(--text-secondary);white-space:nowrap;">양품</th>
+                            <th style="padding:10px 14px;text-align:right;font-weight:600;color:var(--accent-green);white-space:nowrap;">출하가능</th>
+                            <th style="padding:10px 14px;text-align:right;font-weight:600;color:var(--text-secondary);white-space:nowrap;">포장단위</th>
+                            <th style="padding:10px 14px;text-align:right;font-weight:600;color:var(--accent-orange);white-space:nowrap;">잔량</th>
+                            <th style="padding:10px 14px;text-align:center;font-weight:600;color:var(--text-secondary);white-space:nowrap;">상태</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows.length === 0
+                            ? `<tr><td colspan="11" style="text-align:center;padding:40px;color:var(--text-muted);">
+                                <span class="material-symbols-outlined" style="font-size:2rem;display:block;margin-bottom:8px;opacity:0.4;">check_circle</span>
+                                레이져 후 잔량 입고 대상이 없습니다.
+                               </td></tr>`
+                            : rows.map(r => _laserResidualRow(r)).join('')}
+                    </tbody>
+                </table>
+            </div>`;
+    }
+
+    function _calcLaserResidualWip() {
+        const laserWorks = Storage.getAll(STORE_LASER) || [];
+        return laserWorks
+            .filter(w => !w.isManualOut)
+            .map(w => {
+                const packUnit = _num(w.packUnit);
+                const goodQty = _num(w.inspectionGoodQty) || _num(w.completedQty) || _num(w.quantity);
+                const fullBoxQty = _num(w.shippingEligibleQty) || (packUnit > 0 ? Math.floor(goodQty / packUnit) * packUnit : goodQty);
+                const residualQty = _num(w.laserResidualQty) || (packUnit > 0 ? Math.max(0, goodQty - fullBoxQty) : 0);
+                const paintLots = Array.isArray(w.paintLots) ? w.paintLots : [];
+                return {
+                    carModel: w.carModel || '',
+                    partName: w.partName || '',
+                    color: w.color || '',
+                    laserDates: [_dateTime(w.date || '', w.startTime || w.endTime || '')],
+                    paintDates: paintLots.length ? paintLots.map(l => l && l.paintDate) : [w.paintDate || ''],
+                    injectionLots: paintLots.length ? paintLots.map(l => l && l.lotNo) : [w.paintLot || w.lotNo || ''],
+                    goodQty,
+                    fullBoxQty,
+                    packUnit,
+                    residualQty
+                };
+            })
+            .filter(r => r.residualQty > 0)
+            .sort((a, b) => {
+                const d = String(b.laserDates[0] || '').localeCompare(String(a.laserDates[0] || ''));
+                if (d !== 0) return d;
+                const cm = (a.carModel || '').localeCompare(b.carModel || '');
+                return cm !== 0 ? cm : (a.partName || '').localeCompare(b.partName || '');
+            });
+    }
+
+    function _num(value) {
+        return Number(String(value == null ? '' : value).replace(/,/g, '')) || 0;
+    }
+
+    function _laserResidualRow(r) {
+        return `<tr style="border-bottom:1px solid var(--border-color);">
+            <td style="padding:10px 14px;font-weight:600;">${_esc(r.carModel || '-')}</td>
+            <td style="padding:10px 14px;">${_esc(r.partName || '-')}</td>
+            <td style="padding:10px 14px;">${r.color ? `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;background:var(--bg-secondary);font-size:0.82rem;">${_esc(r.color)}</span>` : '-'}</td>
+            <td style="padding:10px 14px;">${_listCell(r.laserDates)}</td>
+            <td style="padding:10px 14px;">${_listCell(r.paintDates)}</td>
+            <td style="padding:10px 14px;">${_listCell(r.injectionLots)}</td>
+            <td style="padding:10px 14px;text-align:right;font-weight:600;">${UIUtils.formatNumber(r.goodQty)}</td>
+            <td style="padding:10px 14px;text-align:right;font-weight:600;color:var(--accent-green);">${UIUtils.formatNumber(r.fullBoxQty)}</td>
+            <td style="padding:10px 14px;text-align:right;">${r.packUnit ? UIUtils.formatNumber(r.packUnit) : '-'}</td>
+            <td style="padding:10px 14px;text-align:right;font-size:1rem;font-weight:800;color:var(--accent-orange);">${UIUtils.formatNumber(r.residualQty)}</td>
+            <td style="padding:10px 14px;text-align:center;">
+                <span style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:12px;font-size:0.75rem;font-weight:700;background:rgba(245,158,11,0.12);color:var(--accent-orange);">
+                    <span class="material-symbols-outlined" style="font-size:0.85rem;">move_to_inbox</span> 잔량입고
+                </span>
+            </td>
+        </tr>`;
     }
 
     function _esc(value) {

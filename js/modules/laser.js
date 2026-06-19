@@ -293,6 +293,19 @@ var LaserWorkModule = (function() {
         return { ct: '', cvt: '', cycleSec: '', packUnit, foundProduct: true, foundProcess: false };
     }
 
+    function _toNumber(value) {
+        return Number(String(value == null ? '' : value).replace(/,/g, '')) || 0;
+    }
+
+    function _splitFullBoxQty(qty, packUnit) {
+        const total = Math.max(0, _toNumber(qty));
+        const unit = _toNumber(packUnit);
+        if (unit <= 0) return { packUnit: 0, fullBoxQty: total, residualQty: 0, boxCount: 0 };
+        const boxCount = Math.floor(total / unit);
+        const fullBoxQty = boxCount * unit;
+        return { packUnit: unit, fullBoxQty, residualQty: total - fullBoxQty, boxCount };
+    }
+
     function _fmtLaserMinutes(min) {
         const n = Number(min) || 0;
         if (n <= 0) return '00 min';
@@ -1486,6 +1499,13 @@ var LaserWorkModule = (function() {
         const _qcLastLoss   = Number((document.getElementById('lwQcLastLoss')   || {}).value) || 0;
         const _totalLoss    = _qcFirstLoss + _qcMiddleLoss + _qcLastLoss;
         const _workQty      = selectedLotQty > 0 ? selectedLotQty : (Number((document.getElementById('lwQuantity') || {}).value) || 0);
+        const _completedQty = Math.max(0, _workQty - _totalLoss);
+        const _cycleSpec = _getLaserCycleSpec(
+            _selectedCarModel || (manualEnabled ? manualCarModel : ''),
+            _selectedPartName || (manualEnabled ? manualPartName : ''),
+            _selectedColor || (manualEnabled ? manualColor : '')
+        );
+        const _boxSplit = _splitFullBoxQty(_completedQty, _cycleSpec.packUnit);
         return {
             date: document.getElementById('lwDate').value,
             machine: document.getElementById('lwMachine').value,
@@ -1522,7 +1542,11 @@ var LaserWorkModule = (function() {
             qcFirstLoss:  _qcFirstLoss,
             qcMiddleLoss: _qcMiddleLoss,
             qcLastLoss:   _qcLastLoss,
-            completedQty: Math.max(0, _workQty - _totalLoss),
+            completedQty: _completedQty,
+            packUnit: _boxSplit.packUnit,
+            shippingEligibleQty: _boxSplit.fullBoxQty,
+            laserResidualQty: _boxSplit.residualQty,
+            laserResidualStatus: _boxSplit.residualQty > 0 ? '잔량입고' : '',
             worker1: document.getElementById('lwWorker1').value.trim(),
             worker2: document.getElementById('lwWorker2').value.trim(),
             worker3: document.getElementById('lwWorker3').value.trim()
@@ -2685,28 +2709,47 @@ var LaserInspectionModule = (function() {
                 p.carModel === data.carModel && p.partName === data.partName && p.color === data.color)
                 || _products.find(p => p.carModel === data.carModel && p.partName === data.partName);
 
-            const _lotInfo = _lotInfo(_workRef || data);
-            const _paintingDate = _lotInfo.paintDates.join(', ');
-            const _lotNo = _lotInfo.injectionLots.join(', ');
-            const _laserLot = _lotInfo.laserDate || data.date || '';
+            const _lot = _lotInfo(_workRef || data);
+            const _paintingDate = _lot.paintDates.join(', ');
+            const _lotNo = _lot.injectionLots.join(', ');
+            const _laserLot = _lot.laserDate || data.date || '';
+            const _packUnit = _workRef && _workRef.packUnit
+                ? _workRef.packUnit
+                : (_getLaserCycleSpec(data.carModel, data.partName, data.color).packUnit || 0);
+            const _boxSplit = _splitFullBoxQty(data.goodQty || data.inspQty || 0, _packUnit);
+            if (_workRef && data.workLogId) {
+                await Storage.update(DB.STORES.LASER_WORK_LOG, data.workLogId, {
+                    ..._workRef,
+                    packUnit: _boxSplit.packUnit,
+                    inspectionGoodQty: data.goodQty || 0,
+                    shippingEligibleQty: _boxSplit.fullBoxQty,
+                    laserResidualQty: _boxSplit.residualQty,
+                    laserResidualStatus: _boxSplit.residualQty > 0 ? '잔량입고' : ''
+                });
+            }
 
-            await Storage.add(DB.STORES.SHIPPING_STANDBY, {
-                date         : data.date || UIUtils.today(),
-                source       : 'laser_inspection',
-                carModel     : data.carModel     || '',
-                partName     : data.partName     || '',
-                color        : data.color        || '',
-                paintingDate : _paintingDate,
-                paintLot     : _paintingDate,
-                lotNo        : _lotNo,
-                injectionLot : _lotNo,
-                laserLot     : _laserLot,
-                laserWorkDate: _lotInfo.laserDate || '',
-                inspectionQty: data.goodQty || data.inspQty || 0,
-                goodQty      : data.goodQty || 0,
-                customer     : _prod ? (_prod.customer || '') : '',
-                status       : '대기'
-            });
+            if (_boxSplit.fullBoxQty > 0) {
+                await Storage.add(DB.STORES.SHIPPING_STANDBY, {
+                    date         : data.date || UIUtils.today(),
+                    source       : 'laser_inspection',
+                    carModel     : data.carModel     || '',
+                    partName     : data.partName     || '',
+                    color        : data.color        || '',
+                    paintingDate : _paintingDate,
+                    paintLot     : _paintingDate,
+                    lotNo        : _lotNo,
+                    injectionLot : _lotNo,
+                    laserLot     : _laserLot,
+                    laserWorkDate: _lot.laserDate || '',
+                    inspectionQty: _boxSplit.fullBoxQty,
+                    goodQty      : _boxSplit.fullBoxQty,
+                    packUnit     : _boxSplit.packUnit,
+                    boxCount     : _boxSplit.boxCount,
+                    laserResidualQty: _boxSplit.residualQty,
+                    customer     : _prod ? (_prod.customer || '') : '',
+                    status       : '대기'
+                });
+            }
         }
         _closeModal();
         renderStandby();
