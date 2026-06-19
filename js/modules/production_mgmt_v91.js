@@ -19583,134 +19583,149 @@ var ProdEquipmentModule = (function() {
         if (!el) return;
         const allEquips    = (Storage.getAll(ST_EQUIP) || []).filter(e => e.line === _line);
         const loggedIn     = _isLoggedIn();
+        const admin        = _isAdmin();
         const _hiddenSet   = new Set(_loadHiddenProcs()[_line] || []);
         const _allStations = _getProcStations(_line);
         const _hiddenCount = _allStations.filter(p => _hiddenSet.has(p.name)).length;
+        const visibleProcs = _allStations.filter(p => !_hiddenSet.has(p.name));
 
-        // 공정 순서대로 행 생성
-        const rows = [];
-        _allStations.filter(p => !_hiddenSet.has(p.name)).forEach(proc => {
-            const equips = allEquips
-                .filter(e => e.process === proc.name)
-                .sort((a,b) => (a.sortOrder||0)-(b.sortOrder||0) || (a.name||'').localeCompare(b.name||'','ko'));
-            equips.forEach((e, idx) => rows.push({ e, proc, firstInProc: idx === 0, procCount: equips.length }));
-        });
-        // 미분류
-        const uncat = allEquips.filter(e => !e.process || !_allStations.find(p => p.name === e.process));
-        uncat.forEach((e, idx) => rows.push({ e, proc: null, firstInProc: idx === 0, procCount: uncat.length }));
+        // 처음 로드 시 모든 공정 열기
+        if (_openProcs.size === 0) {
+            visibleProcs.forEach(p => _openProcs.add(p.name));
+            _openProcs.add('미분류');
+        }
 
         let html = '';
 
-        if (_hiddenCount > 0 && _isAdmin()) {
+        // 숨긴 공정 복원 배너
+        if (_hiddenCount > 0 && admin) {
             html += `
-            <div style="margin-bottom:10px;padding:7px 12px;background:#fef9c3;border:1px solid #fde047;
-                        border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
-                <span style="font-size:0.8rem;color:#854d0e;display:flex;align-items:center;gap:5px;">
-                    <span class="material-symbols-outlined" style="font-size:14px;">visibility_off</span>
+            <div style="padding:7px 14px;background:#fef9c3;border-bottom:1px solid #fde047;
+                        display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                <span style="font-size:0.78rem;color:#854d0e;display:flex;align-items:center;gap:4px;">
+                    <span class="material-symbols-outlined" style="font-size:13px;">visibility_off</span>
                     숨긴 분류 ${_hiddenCount}개
                 </span>
                 <button onclick="ProdEquipmentModule.restoreProcs()"
-                    style="padding:3px 10px;font-size:0.76rem;border:1px solid #ca8a04;
-                           border-radius:6px;background:transparent;color:#854d0e;cursor:pointer;">전체 복원</button>
+                    style="padding:2px 8px;font-size:0.73rem;border:1px solid #ca8a04;
+                           border-radius:5px;background:transparent;color:#854d0e;cursor:pointer;">전체 복원</button>
             </div>`;
         }
 
-        if (rows.length === 0) {
-            html += `<div style="padding:28px;text-align:center;color:var(--text-muted);">
-                <span class="material-symbols-outlined" style="font-size:36px;display:block;margin-bottom:6px;opacity:.4;">build</span>
-                등록된 설비가 없습니다
+        // 빈 상태
+        if (allEquips.length === 0) {
+            html += `<div style="padding:32px 20px;text-align:center;color:var(--text-muted);">
+                <span class="material-symbols-outlined" style="font-size:36px;display:block;margin-bottom:8px;opacity:.35;">build</span>
+                <span style="font-size:0.85rem;">등록된 설비가 없습니다</span>
             </div>`;
             el.innerHTML = html;
             return;
         }
 
-        html += `<div style="overflow-x:auto;">
-        <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
-            <thead>
-                <tr style="background:var(--bg-secondary);border-bottom:2px solid var(--border-color);">
-                    <th style="padding:9px 12px;text-align:left;font-weight:600;font-size:0.78rem;
-                               color:var(--text-secondary);white-space:nowrap;width:120px;">공정</th>
-                    <th style="padding:9px 12px;text-align:left;font-weight:600;font-size:0.78rem;color:var(--text-secondary);">설비명</th>
-                    <th style="padding:9px 12px;text-align:left;font-weight:600;font-size:0.78rem;
-                               color:var(--text-secondary);white-space:nowrap;">모델</th>
-                    <th style="padding:9px 12px;text-align:center;font-weight:600;font-size:0.78rem;
-                               color:var(--text-secondary);white-space:nowrap;width:72px;">상태</th>
-                    ${loggedIn ? `<th style="padding:9px 12px;text-align:center;font-weight:600;font-size:0.78rem;
-                               color:var(--text-secondary);width:80px;">작업</th>` : ''}
-                </tr>
-            </thead>
-            <tbody>`;
+        // 공정별 아코디언
+        const renderEquipRow = (e) => {
+            const sel  = e.id === _equipId;
+            const sCol = e.status==='정상' ? '#16a34a' : e.status==='점검중' ? '#d97706' : e.status==='수리중' ? '#dc2626' : '#64748b';
+            const sBg  = e.status==='정상' ? '#f0fdf4' : e.status==='점검중' ? '#fefce8' : e.status==='수리중' ? '#fef2f2' : '#f8fafc';
+            return `
+            <div onclick="ProdEquipmentModule.selectEquip('${e.id}')"
+                style="display:flex;align-items:center;gap:7px;padding:7px 12px 7px 34px;
+                       cursor:pointer;background:${sel?'#eff6ff':'transparent'};
+                       border-left:3px solid ${sel?'var(--accent-blue)':'transparent'};
+                       border-bottom:1px solid var(--border-color);transition:background .1s;"
+                onmouseenter="if(!${sel})this.style.background='#f5f8ff';"
+                onmouseleave="this.style.background='${sel?'#eff6ff':'transparent'}';">
+                <span style="flex:1;font-size:0.83rem;font-weight:${sel?'700':'500'};
+                             color:${sel?'var(--accent-blue)':'var(--text-primary)'};
+                             overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(e.name)}</span>
+                <span style="flex-shrink:0;font-size:0.7rem;font-weight:600;color:${sCol};
+                             background:${sBg};border:1px solid ${sCol}44;
+                             padding:1px 6px;border-radius:8px;white-space:nowrap;">${e.status||'정상'}</span>
+                ${loggedIn ? `
+                <div style="flex-shrink:0;display:flex;gap:3px;" onclick="event.stopPropagation();">
+                    <button onclick="ProdEquipmentModule.editEquip('${e.id}')"
+                        style="padding:2px 6px;border:1px solid var(--border-color);border-radius:4px;
+                               background:transparent;cursor:pointer;font-size:0.7rem;color:var(--accent-blue);">수정</button>
+                    <button onclick="ProdEquipmentModule.deleteEquip('${e.id}')"
+                        style="padding:2px 6px;border:1px solid #fca5a5;border-radius:4px;
+                               background:transparent;cursor:pointer;font-size:0.7rem;color:#dc2626;">삭제</button>
+                </div>` : ''}
+            </div>`;
+        };
 
-        let prevProcName = null;
-        rows.forEach(({ e, proc, firstInProc, procCount }) => {
-            const sel      = e.id === _equipId;
-            const procName = proc ? proc.name : '미분류';
-            const isCommon = proc && proc.common;
-            const procChanged = procName !== prevProcName;
-            prevProcName = procName;
-
-            const sCol = e.status === '정상'  ? '#16a34a' :
-                         e.status === '점검중' ? '#d97706' :
-                         e.status === '수리중' ? '#dc2626' : '#64748b';
-            const sBg  = e.status === '정상'  ? '#f0fdf4' :
-                         e.status === '점검중' ? '#fefce8' :
-                         e.status === '수리중' ? '#fef2f2' : '#f8fafc';
-            const rowBg = sel ? '#eff6ff' : 'transparent';
-
-            // 공정 그룹 구분선
-            if (procChanged && prevProcName !== null && procName !== prevProcName) {
-                /* 이미 위에서 prevProcName 업데이트했으므로 따로 처리 없음 */
-            }
+        visibleProcs.forEach(proc => {
+            const equips = allEquips
+                .filter(e => e.process === proc.name)
+                .sort((a,b) => (a.sortOrder||0)-(b.sortOrder||0) || (a.name||'').localeCompare(b.name||'','ko'));
+            const isOpen    = _openProcs.has(proc.name);
+            const isCommon  = proc.common;
+            const hasIssue  = equips.some(e => e.status === '수리중' || e.status === '점검중');
+            const issueCount = equips.filter(e => e.status === '수리중' || e.status === '점검중').length;
 
             html += `
-            <tr onclick="ProdEquipmentModule.selectEquip('${e.id}')"
-                style="background:${rowBg};cursor:pointer;border-bottom:1px solid var(--border-color);
-                       border-left:${sel ? '3px solid var(--accent-blue)' : '3px solid transparent'};
-                       transition:background .1s;"
-                onmouseenter="if(!${sel})this.style.background='#f5f8ff';"
-                onmouseleave="this.style.background='${rowBg}';">
-                <td style="padding:9px 12px;vertical-align:middle;">
-                    ${firstInProc ? `
-                    <div style="display:flex;align-items:center;gap:5px;">
-                        <span class="material-symbols-outlined"
-                              style="font-size:13px;color:${isCommon ? 'var(--accent-teal,#0d9488)' : 'var(--text-muted)'};"
-                        >${proc ? proc.icon : 'inbox'}</span>
-                        <span style="font-size:0.78rem;font-weight:600;
-                                     color:${isCommon ? 'var(--accent-teal,#0d9488)' : 'var(--text-secondary)'};
-                                     white-space:nowrap;">
-                            ${proc ? (proc.no ? `<span style="font-weight:400;color:var(--text-muted);">${proc.no} </span>` : '') + _esc(proc.name) : '미분류'}
-                        </span>
-                        ${procCount > 1 ? `<span style="font-size:0.68rem;color:var(--text-muted);">(${procCount})</span>` : ''}
-                    </div>` : ''}
-                </td>
-                <td style="padding:9px 12px;vertical-align:middle;">
-                    <span style="font-weight:${sel?'700':'500'};color:${sel?'var(--accent-blue)':'var(--text-primary)'};">
-                        ${_esc(e.name)}
+            <div>
+                <div onclick="ProdEquipmentModule.toggleProc('${proc.name}')"
+                    style="display:flex;align-items:center;gap:7px;padding:9px 12px;
+                           cursor:pointer;background:${isOpen?'var(--bg-secondary)':'transparent'};
+                           border-bottom:1px solid var(--border-color);transition:background .12s;
+                           user-select:none;"
+                    onmouseenter="this.style.background='var(--bg-secondary)';"
+                    onmouseleave="this.style.background='${isOpen?'var(--bg-secondary)':'transparent'}';">
+                    <span class="material-symbols-outlined"
+                        style="font-size:15px;flex-shrink:0;color:${isCommon?'#0d9488':'var(--text-muted)'};">${proc.icon}</span>
+                    <span style="flex:1;font-size:0.84rem;font-weight:600;
+                                 color:${isCommon?'#0d9488':'var(--text-primary)'};
+                                 overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                        ${proc.no?`<span style="font-size:0.72rem;font-weight:400;color:var(--text-muted);">${proc.no} </span>`:''}${_esc(proc.name)}
                     </span>
-                </td>
-                <td style="padding:9px 12px;vertical-align:middle;color:var(--text-muted);font-size:0.82rem;">
-                    ${e.model ? _esc(e.model) : '<span style="opacity:.4;">—</span>'}
-                </td>
-                <td style="padding:9px 12px;vertical-align:middle;text-align:center;">
-                    <span style="font-size:0.72rem;font-weight:600;color:${sCol};
-                                 background:${sBg};border:1px solid ${sCol}44;
-                                 padding:2px 8px;border-radius:10px;white-space:nowrap;">${e.status||'정상'}</span>
-                </td>
-                ${loggedIn ? `
-                <td style="padding:6px 10px;vertical-align:middle;text-align:center;">
-                    <div style="display:flex;gap:4px;justify-content:center;">
-                        <button onclick="event.stopPropagation();ProdEquipmentModule.editEquip('${e.id}')"
-                            style="padding:3px 8px;border:1px solid var(--border-color);border-radius:5px;
-                                   background:var(--bg-secondary);cursor:pointer;font-size:0.74rem;color:var(--accent-blue);">수정</button>
-                        <button onclick="event.stopPropagation();ProdEquipmentModule.deleteEquip('${e.id}')"
-                            style="padding:3px 8px;border:1px solid #fca5a5;border-radius:5px;
-                                   background:var(--bg-secondary);cursor:pointer;font-size:0.74rem;color:#dc2626;">삭제</button>
-                    </div>
-                </td>` : ''}
-            </tr>`;
+                    ${equips.length > 0 ? `<span style="flex-shrink:0;font-size:0.7rem;color:var(--text-muted);
+                        background:var(--bg-tertiary,#f1f5f9);border:1px solid var(--border-color);
+                        border-radius:10px;padding:1px 7px;">${equips.length}</span>` : ''}
+                    ${hasIssue ? `<span style="flex-shrink:0;font-size:0.7rem;font-weight:700;color:#dc2626;
+                        background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:1px 6px;">⚠ ${issueCount}</span>` : ''}
+                    ${admin ? `
+                    <button onclick="event.stopPropagation();ProdEquipmentModule.hideProc('${proc.name}')"
+                        title="이 공정 숨기기"
+                        style="flex-shrink:0;padding:2px 3px;border:none;background:transparent;
+                               cursor:pointer;opacity:.35;line-height:1;"
+                        onmouseenter="this.style.opacity='.9';"
+                        onmouseleave="this.style.opacity='.35';">
+                        <span class="material-symbols-outlined" style="font-size:14px;color:var(--text-muted);">visibility_off</span>
+                    </button>` : ''}
+                    <span class="material-symbols-outlined"
+                        style="flex-shrink:0;font-size:17px;color:var(--text-muted);
+                               transition:transform .2s;transform:${isOpen?'rotate(180deg)':'rotate(0deg)'};">expand_more</span>
+                </div>
+                ${isOpen ? equips.length > 0 ? equips.map(renderEquipRow).join('') :
+                    `<div style="padding:10px 14px 10px 34px;font-size:0.8rem;color:var(--text-muted);
+                                 border-bottom:1px solid var(--border-color);">설비 없음</div>` : ''}
+            </div>`;
         });
 
-        html += `</tbody></table></div>`;
+        // 미분류
+        const uncat = allEquips.filter(e => !e.process || !_allStations.find(p => p.name === e.process));
+        if (uncat.length > 0) {
+            const isOpen = _openProcs.has('미분류');
+            html += `
+            <div>
+                <div onclick="ProdEquipmentModule.toggleProc('미분류')"
+                    style="display:flex;align-items:center;gap:7px;padding:9px 12px;
+                           cursor:pointer;background:${isOpen?'var(--bg-secondary)':'transparent'};
+                           border-bottom:1px solid var(--border-color);user-select:none;"
+                    onmouseenter="this.style.background='var(--bg-secondary)';"
+                    onmouseleave="this.style.background='${isOpen?'var(--bg-secondary)':'transparent'}';">
+                    <span class="material-symbols-outlined" style="font-size:15px;color:var(--text-muted);">inbox</span>
+                    <span style="flex:1;font-size:0.84rem;font-weight:600;color:var(--text-secondary);">미분류</span>
+                    <span style="font-size:0.7rem;color:var(--text-muted);background:var(--bg-tertiary,#f1f5f9);
+                        border:1px solid var(--border-color);border-radius:10px;padding:1px 7px;">${uncat.length}</span>
+                    <span class="material-symbols-outlined"
+                        style="font-size:17px;color:var(--text-muted);transition:transform .2s;
+                               transform:${isOpen?'rotate(180deg)':'rotate(0deg)'};">expand_more</span>
+                </div>
+                ${isOpen ? uncat.map(renderEquipRow).join('') : ''}
+            </div>`;
+        }
+
         el.innerHTML = html;
     }
 
