@@ -17890,30 +17890,33 @@ var ProdEquipmentModule = (function() {
         if (_mode === 'dashboard') {
             _renderEquipDashboard();
         } else if (_mode === 'general') {
+            const _li = _isLoggedIn();
             el.innerHTML = `
-            <div style="display:flex;gap:16px;align-items:flex-start;">
-                <div style="width:280px;flex-shrink:0;">
-                    <div class="card" style="overflow:hidden;">
-                        <div style="display:flex;justify-content:space-between;align-items:center;
-                                    padding:12px 14px;border-bottom:1px solid var(--border-color);background:var(--bg-secondary);">
-                            <span style="font-weight:600;font-size:0.88rem;display:flex;align-items:center;gap:6px;">
-                                <span class="material-symbols-outlined" style="font-size:18px;">build</span>설비 목록
-                            </span>
-                            <button class="btn btn-primary" style="padding:4px 10px;font-size:0.8rem;"
-                                onclick="ProdEquipmentModule.openEquipAddModal()">
-                                <span class="material-symbols-outlined" style="font-size:15px;">add</span> 추가
-                            </button>
-                        </div>
-                        <div id="equipListBody"></div>
+            <div>
+                <div class="card" style="overflow:hidden;margin-bottom:16px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;
+                                padding:14px 18px;border-bottom:1px solid var(--border-color);background:var(--bg-secondary);">
+                        <span style="font-weight:700;font-size:0.95rem;display:flex;align-items:center;gap:8px;">
+                            <span class="material-symbols-outlined" style="font-size:20px;color:var(--accent-blue);">build</span>
+                            설비 목록
+                        </span>
+                        ${_li ? `
+                        <button class="btn btn-primary" style="padding:6px 16px;font-size:0.85rem;display:flex;align-items:center;gap:6px;"
+                            onclick="ProdEquipmentModule.openEquipAddModal()">
+                            <span class="material-symbols-outlined" style="font-size:16px;">add</span> 설비 추가
+                        </button>` : `
+                        <div style="display:flex;align-items:center;gap:5px;font-size:0.78rem;color:var(--text-muted);
+                                    background:var(--bg-tertiary,#f1f5f9);padding:5px 10px;border-radius:6px;">
+                            <span class="material-symbols-outlined" style="font-size:15px;">lock</span>추가·수정·삭제는 로그인 후 가능
+                        </div>`}
                     </div>
+                    <div id="equipListBody" style="padding:16px;"></div>
                 </div>
-                <div style="flex:1;min-width:0;">
-                    ${_renderPlantLayout()}
-                    <div id="equipDetailPanel">
-                        <div class="card" style="padding:60px 0;text-align:center;color:var(--text-muted);">
-                            <span class="material-symbols-outlined" style="font-size:48px;display:block;margin-bottom:8px;opacity:.4;">touch_app</span>
-                            좌측 설비 목록에서 설비를 선택하세요
-                        </div>
+                ${_renderPlantLayout()}
+                <div id="equipDetailPanel">
+                    <div class="card" style="padding:60px 0;text-align:center;color:var(--text-muted);">
+                        <span class="material-symbols-outlined" style="font-size:48px;display:block;margin-bottom:8px;opacity:.4;">touch_app</span>
+                        위 목록에서 설비를 선택하세요
                     </div>
                 </div>
             </div>`;
@@ -18167,25 +18170,24 @@ var ProdEquipmentModule = (function() {
         const el = document.getElementById('equipListBody');
         if (!el) return;
         const allEquips = (Storage.getAll(ST_EQUIP) || []).filter(e => e.line === _line);
+        const loggedIn  = _isLoggedIn();
 
-        // 공정 그룹별 렌더링
         const _hiddenSet   = new Set(_loadHiddenProcs()[_line] || []);
         const _allStations = _getProcStations(_line);
         const _hiddenCount = _allStations.filter(p => _hiddenSet.has(p.name)).length;
         let html = '';
 
-        // 숨긴 분류 복원 안내 (관리자만)
         if (_hiddenCount > 0 && _isAdmin()) {
             html += `
-            <div style="padding:5px 12px;background:#fef9c3;border-bottom:1px solid #fde047;
-                        display:flex;align-items:center;justify-content:space-between;gap:6px;">
-                <span style="font-size:0.76rem;color:#854d0e;">
-                    <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">visibility_off</span>
+            <div style="margin-bottom:12px;padding:7px 12px;background:#fef9c3;border:1px solid #fde047;
+                        border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                <span style="font-size:0.8rem;color:#854d0e;display:flex;align-items:center;gap:5px;">
+                    <span class="material-symbols-outlined" style="font-size:14px;">visibility_off</span>
                     숨긴 분류 ${_hiddenCount}개
                 </span>
                 <button onclick="ProdEquipmentModule.restoreProcs()"
-                    style="padding:2px 8px;font-size:0.72rem;border:1px solid #ca8a04;
-                           border-radius:4px;background:transparent;color:#854d0e;cursor:pointer;">
+                    style="padding:3px 10px;font-size:0.76rem;border:1px solid #ca8a04;
+                           border-radius:6px;background:transparent;color:#854d0e;cursor:pointer;">
                     전체 복원
                 </button>
             </div>`;
@@ -18193,15 +18195,13 @@ var ProdEquipmentModule = (function() {
 
         let _commonDividerShown = false;
         _allStations.filter(p => !_hiddenSet.has(p.name)).forEach(proc => {
-            // 공통 설비 구역 구분선 (처음 한 번만)
             if (proc.common && !_commonDividerShown) {
                 _commonDividerShown = true;
                 html += `
-                <div style="padding:6px 12px;background:linear-gradient(90deg,var(--accent-teal,#0d9488)18,transparent);
-                            border-top:2px solid var(--accent-teal,#0d9488);border-bottom:1px solid var(--border-color);
-                            display:flex;align-items:center;gap:6px;margin-top:4px;">
-                    <span class="material-symbols-outlined" style="font-size:14px;color:var(--accent-teal,#0d9488);">handyman</span>
-                    <span style="font-size:0.75rem;font-weight:700;color:var(--accent-teal,#0d9488);letter-spacing:.04em;">공통 관리 설비</span>
+                <div style="display:flex;align-items:center;gap:8px;margin:16px 0 10px;padding-bottom:6px;
+                            border-bottom:2px solid var(--accent-teal,#0d9488);">
+                    <span class="material-symbols-outlined" style="font-size:16px;color:var(--accent-teal,#0d9488);">handyman</span>
+                    <span style="font-size:0.8rem;font-weight:700;color:var(--accent-teal,#0d9488);letter-spacing:.04em;">공통 관리 설비</span>
                 </div>`;
             }
 
@@ -18209,131 +18209,162 @@ var ProdEquipmentModule = (function() {
                 .filter(e => e.process === proc.name)
                 .sort((a,b) => (a.sortOrder||0)-(b.sortOrder||0) || (a.name||'').localeCompare(b.name||'','ko'));
 
-            // 공정 헤더
-            const hdrBg   = proc.common ? 'var(--bg-tertiary,#f1f5f9)' : 'var(--bg-secondary)';
             const hdrColor = proc.common ? 'var(--accent-teal,#0d9488)' : 'var(--text-secondary)';
             const js_name  = proc.name.replace(/'/g, "\\'");
+
             html += `
-            <div id="${_procAnchor(proc.name)}" style="padding:6px 12px 4px;background:${hdrBg};
-                        border-bottom:1px solid var(--border-color);border-top:1px solid var(--border-color);
-                        display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:1;">
-                <span style="font-size:0.78rem;font-weight:700;color:${hdrColor};
-                             display:flex;align-items:center;gap:4px;">
-                    <span class="material-symbols-outlined" style="font-size:14px;">${proc.icon}</span>
-                    ${proc.no ? `<span style="color:var(--text-muted);font-weight:400;font-size:.72rem;">${proc.no} </span>` : ''}
-                    ${_esc(proc.name)}
-                </span>
-                <div style="display:flex;align-items:center;gap:4px;">
-                    ${_isAdmin() ? `
-                    <button onclick="ProdEquipmentModule.hideProc('${js_name}')"
-                        title="이 분류 숨기기 (관리자)"
-                        style="padding:2px 5px;font-size:0.72rem;border:1px solid #fca5a5;
-                               border-radius:4px;background:transparent;color:#dc2626;
-                               cursor:pointer;display:flex;align-items:center;gap:1px;">
-                        <span class="material-symbols-outlined" style="font-size:13px;">delete</span>
-                    </button>` : ''}
-                    <button onclick="ProdEquipmentModule.openEquipAddModal('${js_name}')"
-                        style="padding:2px 8px;font-size:0.72rem;border:1px solid var(--accent-blue);
-                               border-radius:4px;background:transparent;color:var(--accent-blue);
-                               cursor:pointer;display:flex;align-items:center;gap:2px;">
-                        <span class="material-symbols-outlined" style="font-size:13px;">add</span>추가
-                    </button>
-                </div>
-            </div>`;
+            <div id="${_procAnchor(proc.name)}" style="margin-bottom:16px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;
+                            margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border-color);">
+                    <span style="font-size:0.85rem;font-weight:700;color:${hdrColor};
+                                 display:flex;align-items:center;gap:6px;">
+                        <span class="material-symbols-outlined" style="font-size:16px;">${proc.icon}</span>
+                        ${proc.no ? `<span style="color:var(--text-muted);font-weight:400;font-size:.78rem;">${proc.no}</span>` : ''}
+                        ${_esc(proc.name)}
+                        <span style="font-size:0.76rem;font-weight:500;color:var(--text-muted);">(${equips.length})</span>
+                    </span>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        ${loggedIn && _isAdmin() ? `
+                        <button onclick="ProdEquipmentModule.hideProc('${js_name}')"
+                            title="이 분류 숨기기"
+                            style="padding:3px 8px;font-size:0.76rem;border:1px solid #fca5a5;
+                                   border-radius:6px;background:transparent;color:#dc2626;
+                                   cursor:pointer;display:flex;align-items:center;gap:2px;">
+                            <span class="material-symbols-outlined" style="font-size:13px;">hide</span>숨기기
+                        </button>` : ''}
+                        ${loggedIn ? `
+                        <button onclick="ProdEquipmentModule.openEquipAddModal('${js_name}')"
+                            style="padding:3px 10px;font-size:0.78rem;border:1px solid var(--accent-blue);
+                                   border-radius:6px;background:transparent;color:var(--accent-blue);
+                                   cursor:pointer;display:flex;align-items:center;gap:3px;">
+                            <span class="material-symbols-outlined" style="font-size:14px;">add</span>추가
+                        </button>` : ''}
+                    </div>
+                </div>`;
 
             if (equips.length === 0) {
-                html += `<div style="padding:7px 14px 8px 20px;font-size:0.76rem;color:var(--text-muted);
-                                     border-bottom:1px solid var(--border-color);">설비 미등록</div>`;
+                html += `
+                <div style="padding:14px 16px;background:var(--bg-secondary);border:1px dashed var(--border-color);
+                            border-radius:8px;font-size:0.82rem;color:var(--text-muted);text-align:center;">
+                    등록된 설비가 없습니다
+                </div>`;
             } else {
+                html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;">`;
                 equips.forEach(e => {
                     const sel  = e.id === _equipId;
-                    const sCol = e.status === '정상' ? 'var(--accent-green)' :
-                                 e.status === '점검중' ? '#f59e0b' :
-                                 e.status === '수리중' ? 'var(--accent-red)' : 'var(--text-muted)';
+                    const sCol = e.status === '정상'   ? '#16a34a' :
+                                 e.status === '점검중'  ? '#d97706' :
+                                 e.status === '수리중'  ? '#dc2626' : '#64748b';
+                    const sBg  = e.status === '정상'   ? '#f0fdf4' :
+                                 e.status === '점검중'  ? '#fefce8' :
+                                 e.status === '수리중'  ? '#fef2f2' : '#f8fafc';
                     html += `
-                    <div style="padding:7px 10px 7px 18px;
-                                border-bottom:1px solid var(--border-color);
-                                background:${sel ? '#eff6ff' : 'transparent'};
-                                border-left:3px solid ${sel ? 'var(--accent-blue)' : 'transparent'};
-                                transition:background .15s;">
-                        <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
-                            <div onclick="ProdEquipmentModule.selectEquip('${e.id}')"
-                                 style="flex:1;min-width:0;cursor:pointer;">
-                                <div style="display:flex;align-items:center;gap:4px;">
-                                    <span style="font-weight:${sel?'700':'500'};font-size:0.85rem;
-                                                 white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-                                        <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;
-                                            color:var(--text-muted);margin-right:2px;">settings</span>${_esc(e.name)}
-                                    </span>
-                                    <span style="font-size:.68rem;font-weight:600;flex-shrink:0;color:${sCol};
-                                                 background:${sCol}22;padding:1px 5px;border-radius:8px;">${e.status||'정상'}</span>
-                                </div>
-                                ${e.model ? `<div style="font-size:.72rem;color:var(--text-muted);margin-top:1px;padding-left:15px;">${_esc(e.model)}</div>` : ''}
+                    <div style="border:${sel ? '2px solid var(--accent-blue)' : '1px solid var(--border-color)'};
+                                border-radius:10px;padding:13px 14px;cursor:pointer;transition:all .15s;
+                                background:${sel ? '#eff6ff' : 'var(--bg-card,var(--bg-primary))'};
+                                box-shadow:${sel ? '0 0 0 3px rgba(59,130,246,.12)' : '0 1px 3px rgba(0,0,0,.05)'};"
+                         onclick="ProdEquipmentModule.selectEquip('${e.id}')"
+                         onmouseenter="if(!this.dataset.sel){this.style.boxShadow='0 4px 12px rgba(0,0,0,.1)';this.style.borderColor='var(--accent-blue)';}"
+                         onmouseleave="if(!this.dataset.sel){this.style.boxShadow='0 1px 3px rgba(0,0,0,.05)';this.style.borderColor='var(--border-color)';}"
+                         ${sel ? 'data-sel="1"' : ''}>
+                        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:6px;margin-bottom:6px;">
+                            <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0;">
+                                <span class="material-symbols-outlined"
+                                      style="font-size:17px;color:${sel ? 'var(--accent-blue)' : 'var(--text-muted)'};flex-shrink:0;">settings</span>
+                                <span style="font-weight:${sel?'700':'600'};font-size:0.92rem;
+                                             overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+                                             color:${sel ? 'var(--accent-blue)' : 'var(--text-primary)'};"
+                                      title="${_esc(e.name)}">${_esc(e.name)}</span>
                             </div>
-                            <div style="display:flex;gap:2px;flex-shrink:0;">
-                                <button onclick="event.stopPropagation();ProdEquipmentModule.editEquip('${e.id}')"
-                                    title="수정"
-                                    style="padding:3px 5px;border:1px solid var(--border-color);border-radius:4px;
-                                           background:var(--bg-primary);cursor:pointer;line-height:1;">
-                                    <span class="material-symbols-outlined" style="font-size:13px;color:var(--accent-blue);vertical-align:middle;">edit</span>
-                                </button>
-                                <button onclick="event.stopPropagation();ProdEquipmentModule.deleteEquip('${e.id}')"
-                                    title="삭제"
-                                    style="padding:3px 5px;border:1px solid var(--border-color);border-radius:4px;
-                                           background:var(--bg-primary);cursor:pointer;line-height:1;">
-                                    <span class="material-symbols-outlined" style="font-size:13px;color:var(--accent-red);vertical-align:middle;">delete</span>
-                                </button>
-                            </div>
+                            <span style="font-size:0.72rem;font-weight:600;flex-shrink:0;color:${sCol};
+                                         background:${sBg};border:1px solid ${sCol}44;
+                                         padding:2px 7px;border-radius:20px;white-space:nowrap;">${e.status||'정상'}</span>
                         </div>
+                        ${e.model ? `
+                        <div style="font-size:0.78rem;color:var(--text-muted);padding-left:23px;
+                                    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+                             title="${_esc(e.model)}">${_esc(e.model)}</div>` : ''}
+                        ${loggedIn ? `
+                        <div style="display:flex;gap:4px;margin-top:10px;padding-top:8px;
+                                    border-top:1px solid var(--border-color);justify-content:flex-end;">
+                            <button onclick="event.stopPropagation();ProdEquipmentModule.editEquip('${e.id}')"
+                                title="수정"
+                                style="padding:4px 10px;border:1px solid var(--border-color);border-radius:6px;
+                                       background:var(--bg-secondary);cursor:pointer;font-size:0.76rem;
+                                       display:flex;align-items:center;gap:3px;color:var(--accent-blue);">
+                                <span class="material-symbols-outlined" style="font-size:13px;">edit</span>수정
+                            </button>
+                            <button onclick="event.stopPropagation();ProdEquipmentModule.deleteEquip('${e.id}')"
+                                title="삭제"
+                                style="padding:4px 10px;border:1px solid #fca5a5;border-radius:6px;
+                                       background:var(--bg-secondary);cursor:pointer;font-size:0.76rem;
+                                       display:flex;align-items:center;gap:3px;color:#dc2626;">
+                                <span class="material-symbols-outlined" style="font-size:13px;">delete</span>삭제
+                            </button>
+                        </div>` : ''}
                     </div>`;
                 });
+                html += `</div>`;
             }
+            html += `</div>`;
         });
 
         // 미분류 (process 없는 기존 데이터)
         const uncat = allEquips.filter(e => !e.process || !_getProcStations(_line).find(p => p.name === e.process));
         if (uncat.length > 0) {
             html += `
-            <div style="padding:6px 12px 4px;background:var(--bg-secondary);
-                        border-bottom:1px solid var(--border-color);border-top:1px solid var(--border-color);">
-                <span style="font-size:0.78rem;font-weight:700;color:var(--text-muted);">📦 미분류</span>
-            </div>`;
+            <div style="margin-bottom:16px;">
+                <div style="font-size:0.85rem;font-weight:700;color:var(--text-muted);
+                            margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border-color);">
+                    📦 미분류 (${uncat.length})
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;">`;
             uncat.forEach(e => {
                 const sel = e.id === _equipId;
                 html += `
-                <div style="padding:7px 10px 7px 18px;border-bottom:1px solid var(--border-color);
-                            background:${sel?'#eff6ff':'transparent'};
-                            border-left:3px solid ${sel?'var(--accent-blue)':'transparent'};transition:background .15s;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
-                        <span onclick="ProdEquipmentModule.selectEquip('${e.id}')"
-                              style="font-size:0.85rem;font-weight:${sel?'700':'500'};flex:1;cursor:pointer;">${_esc(e.name)}</span>
-                        <div style="display:flex;gap:2px;flex-shrink:0;">
-                            <button onclick="event.stopPropagation();ProdEquipmentModule.editEquip('${e.id}')"
-                                title="수정"
-                                style="padding:3px 5px;border:1px solid var(--border-color);border-radius:4px;
-                                       background:var(--bg-primary);cursor:pointer;line-height:1;">
-                                <span class="material-symbols-outlined" style="font-size:13px;color:var(--accent-blue);vertical-align:middle;">edit</span>
-                            </button>
-                            <button onclick="event.stopPropagation();ProdEquipmentModule.deleteEquip('${e.id}')"
-                                title="삭제"
-                                style="padding:3px 5px;border:1px solid var(--border-color);border-radius:4px;
-                                       background:var(--bg-primary);cursor:pointer;line-height:1;">
-                                <span class="material-symbols-outlined" style="font-size:13px;color:var(--accent-red);vertical-align:middle;">delete</span>
-                            </button>
-                        </div>
-                    </div>
+                <div style="border:${sel ? '2px solid var(--accent-blue)' : '1px solid var(--border-color)'};
+                            border-radius:10px;padding:13px 14px;cursor:pointer;transition:all .15s;
+                            background:${sel ? '#eff6ff' : 'var(--bg-card,var(--bg-primary))'};"
+                     onclick="ProdEquipmentModule.selectEquip('${e.id}')">
+                    <div style="font-weight:600;font-size:0.92rem;color:var(--text-primary);margin-bottom:6px;">${_esc(e.name)}</div>
+                    ${loggedIn ? `
+                    <div style="display:flex;gap:4px;margin-top:8px;padding-top:8px;
+                                border-top:1px solid var(--border-color);justify-content:flex-end;">
+                        <button onclick="event.stopPropagation();ProdEquipmentModule.editEquip('${e.id}')"
+                            style="padding:4px 10px;border:1px solid var(--border-color);border-radius:6px;
+                                   background:var(--bg-secondary);cursor:pointer;font-size:0.76rem;
+                                   display:flex;align-items:center;gap:3px;color:var(--accent-blue);">
+                            <span class="material-symbols-outlined" style="font-size:13px;">edit</span>수정
+                        </button>
+                        <button onclick="event.stopPropagation();ProdEquipmentModule.deleteEquip('${e.id}')"
+                            style="padding:4px 10px;border:1px solid #fca5a5;border-radius:6px;
+                                   background:var(--bg-secondary);cursor:pointer;font-size:0.76rem;
+                                   display:flex;align-items:center;gap:3px;color:#dc2626;">
+                            <span class="material-symbols-outlined" style="font-size:13px;">delete</span>삭제
+                        </button>
+                    </div>` : ''}
                 </div>`;
             });
+            html += `</div></div>`;
         }
 
-        el.innerHTML = html;
+        el.innerHTML = html || `
+        <div style="padding:32px;text-align:center;color:var(--text-muted);">
+            <span class="material-symbols-outlined" style="font-size:40px;display:block;margin-bottom:8px;opacity:.4;">build</span>
+            등록된 설비가 없습니다
+        </div>`;
     }
 
-    // ── 관리자 체크 ──────────────────────────────────────────────
+    // ── 관리자 / 로그인 체크 ─────────────────────────────────────
     const _isAdmin = () => {
         const u = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
             ? AuthModule.getCurrentUser() : null;
         return !!(u && u.role === 'admin');
+    };
+    const _isLoggedIn = () => {
+        const u = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
+            ? AuthModule.getCurrentUser() : null;
+        return !!u;
     };
 
     // ── 공정 분류 숨김 관리 (localStorage) ───────────────────────
@@ -18416,8 +18447,12 @@ var ProdEquipmentModule = (function() {
                                  background:${sCol}22;padding:2px 9px;border-radius:10px;">${equip.status || '정상'}</span>
                 </div>
                 <div style="display:flex;gap:6px;">
+                    ${_isLoggedIn() ? `
                     <button class="btn btn-outline btn-sm" onclick="ProdEquipmentModule.editEquip('${equip.id}')">수정</button>
-                    <button class="btn btn-danger btn-sm"  onclick="ProdEquipmentModule.deleteEquip('${equip.id}')">삭제</button>
+                    <button class="btn btn-danger btn-sm"  onclick="ProdEquipmentModule.deleteEquip('${equip.id}')">삭제</button>` : `
+                    <span style="font-size:0.78rem;color:var(--text-muted);display:flex;align-items:center;gap:4px;">
+                        <span class="material-symbols-outlined" style="font-size:14px;">lock</span>수정·삭제 로그인 필요
+                    </span>`}
                 </div>
             </div>
             ${equip.note ? `<div style="padding:6px 16px;font-size:0.8rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">${_esc(equip.note)}</div>` : ''}
@@ -19140,11 +19175,13 @@ var ProdEquipmentModule = (function() {
             note:document.getElementById('efNote').value.trim() };
     }
     function openEquipAddModal(defaultProcess) {
+        if (!_isLoggedIn()) { UIUtils.toast('설비 추가는 로그인 후 가능합니다.', 'warning'); return; }
         UIUtils.showModal('설비 추가', _equipForm(null, defaultProcess), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary"   onclick="ProdEquipmentModule.saveEquip('')">추가</button>`, 'md');
     }
     function editEquip(id) {
+        if (!_isLoggedIn()) { UIUtils.toast('설비 수정은 로그인 후 가능합니다.', 'warning'); return; }
         const e = Storage.getById(ST_EQUIP, id);
         UIUtils.showModal('설비 수정', _equipForm(e, e && e.process), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
@@ -19162,6 +19199,7 @@ var ProdEquipmentModule = (function() {
         if (_equipId) _renderDetail();
     }
     function deleteEquip(id) {
+        if (!_isLoggedIn()) { UIUtils.toast('설비 삭제는 로그인 후 가능합니다.', 'warning'); return; }
         UIUtils.confirm('이 설비와 관련된 모든 스페어/점검/이상/비가동 데이터도 함께 삭제됩니다.\n계속하시겠습니까?', async () => {
             for (const st of [ST_SPARE, ST_CITEM, ST_CREC, ST_ISSUE, ST_DT]) {
                 const items = (Storage.getAll(st)||[]).filter(x => x.equipId === id);
