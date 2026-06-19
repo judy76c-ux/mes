@@ -322,6 +322,33 @@ var LaserWorkModule = (function() {
         return `${h}:${m}`;
     }
 
+    function _fmtProgramDateYYMMDD(dateValue) {
+        const match = String(dateValue || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (!match) return '';
+        return `${match[1].slice(2)}${match[2]}${match[3]}`;
+    }
+
+    function _laserProgramGuideName(partName, dateValue) {
+        const name = String(partName || '').trim();
+        const ymd = _fmtProgramDateYYMMDD(dateValue);
+        if (!name && !ymd) return '품명+작업일날짜(YYMMDD)';
+        return `${name || '품명'}${ymd || 'YYMMDD'}`;
+    }
+
+    function updateLaserGuideChecks() {
+        const partName = _selectedPartName || _inputValue('lwPartName') || _inputValue('lwSbPart') || '';
+        const dateValue = _inputValue('lwDate');
+        const programGuide = _laserProgramGuideName(partName, dateValue);
+        const guideEl = document.getElementById('lwProgramGuideName');
+        const hiddenProgramEl = document.getElementById('lwProgramName');
+        const hiddenLensEl = document.getElementById('lwLensHeight');
+        const programCheck = document.getElementById('lwProgramNameChecked');
+        const lensCheck = document.getElementById('lwLensHeightChecked');
+        if (guideEl) guideEl.textContent = programGuide;
+        if (hiddenProgramEl) hiddenProgramEl.value = programCheck && programCheck.checked ? programGuide : '';
+        if (hiddenLensEl) hiddenLensEl.value = lensCheck && lensCheck.checked ? '375mm 확인' : '';
+    }
+
     function updateStandardEndTime(forceFill = false) {
         const startEl = document.getElementById('lwStartTime');
         const endEl = document.getElementById('lwEndTime');
@@ -739,7 +766,7 @@ var LaserWorkModule = (function() {
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr${isEditMode ? ' 1fr' : ''};gap:8px;margin-bottom:8px;">
                 <div class="form-group" style="margin:0;">
                     <label class="form-label">작업일자 <span style="color:var(--accent-red)">*</span></label>
-                    <input type="date" class="form-input" id="lwDate" value="${d.date || UIUtils.today()}">
+                    <input type="date" class="form-input" id="lwDate" value="${d.date || UIUtils.today()}" oninput="LaserWorkModule.updateLaserGuideChecks(); LaserWorkModule.updateStandardEndTime(true)">
                 </div>
                 <div class="form-group" style="margin:0;">
                     <label class="form-label">레이져 장비 <span style="color:var(--accent-red)">*</span></label>
@@ -769,12 +796,21 @@ var LaserWorkModule = (function() {
                     <div id="lwLaserCycleDetail" style="font-size:0.86rem;line-height:1.45;color:var(--text-muted);margin-top:5px;"></div>
                 </div>
                 <div class="form-group" style="margin:0;">
-                    <label class="form-label">Program File Name <span style="color:var(--accent-red)">*</span></label>
-                    <input type="text" class="form-input" id="lwProgramName" value="${d.programName || ''}" placeholder="프로그램 파일명">
+                    <label class="form-label">작성 가이드 이름 <span style="color:var(--accent-red)">*</span></label>
+                    <label style="min-height:38px;display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-primary);cursor:pointer;">
+                        <input type="checkbox" id="lwProgramNameChecked" ${d.programName ? 'checked' : ''} onchange="LaserWorkModule.updateLaserGuideChecks()">
+                        <span style="font-size:0.86rem;color:var(--text-primary);">파일명을 <strong id="lwProgramGuideName">${_laserProgramGuideName(d.partName || _selectedPartName, d.date || UIUtils.today())}</strong> 으로 저장했냐?</span>
+                    </label>
+                    <input type="hidden" id="lwProgramName" value="${d.programName || ''}">
+                    <div style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;">파일명: 품명+작업일날짜(YYMMDD)</div>
                 </div>
                 <div class="form-group" style="margin:0;">
-                    <label class="form-label">렌즈 높이 <span style="color:var(--accent-red)">*</span></label>
-                    <input type="text" class="form-input" id="lwLensHeight" value="${d.lensHeight || ''}" placeholder="예: 120mm">
+                    <label class="form-label">렌즈 높이 확인 <span style="color:var(--accent-red)">*</span></label>
+                    <label style="min-height:38px;display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-primary);cursor:pointer;">
+                        <input type="checkbox" id="lwLensHeightChecked" ${d.lensHeight ? 'checked' : ''} onchange="LaserWorkModule.updateLaserGuideChecks()">
+                        <span style="font-size:0.86rem;color:var(--text-primary);">렌즈높이 <strong>375mm</strong> 확인했냐?</span>
+                    </label>
+                    <input type="hidden" id="lwLensHeight" value="${d.lensHeight || ''}">
                 </div>
             </div>
             <div style="background:var(--bg-secondary); padding:10px 12px; border-radius:8px; margin-bottom:8px;">
@@ -898,6 +934,7 @@ var LaserWorkModule = (function() {
         _selectedCarModel = w.carModel || '';
         _selectedPartName = w.partName || '';
         _selectedColor = w.color || '';
+        updateLaserGuideChecks();
         const qtyEl = document.getElementById('lwQuantity');
         if (qtyEl) qtyEl.value = Number(value) || '';
         calcCompletedQty();
@@ -1080,6 +1117,7 @@ var LaserWorkModule = (function() {
         _selectedCarModel = w.carModel || '';
         _selectedPartName = w.partName || '';
         _selectedColor    = w.color    || '';
+        updateLaserGuideChecks();
 
         // 도장 LOT 내부 배열에 추가
         _selectedLots.push({ paintDate: w.date || '', lotNo: lot.lotNo || w.lotNo || '', qty: pickQty });
@@ -1157,6 +1195,7 @@ var LaserWorkModule = (function() {
         _selectedCarModel = car;
         _selectedPartName = part;
         _selectedColor = prevColor || colorSelect.value || '';
+        updateLaserGuideChecks();
         _refreshLaserCycleSpec(true);
     }
 
@@ -1167,6 +1206,7 @@ var LaserWorkModule = (function() {
         if (carEl) _selectedCarModel = carEl.value || '';
         if (partEl) _selectedPartName = partEl.value || '';
         if (colorEl) _selectedColor = colorEl.value || '';
+        updateLaserGuideChecks();
         _refreshLaserCycleSpec(forceValue);
     }
 
@@ -1333,6 +1373,7 @@ var LaserWorkModule = (function() {
     }
 
     function collectData() {
+        updateLaserGuideChecks();
         const manualEnabled = !!((document.getElementById('lwManualToggle') || {}).checked);
         const manualCarModel = (document.getElementById('lwCarModel') || {}).value || '';
         const manualPartName = (document.getElementById('lwPartName') || {}).value || '';
@@ -1421,8 +1462,8 @@ var LaserWorkModule = (function() {
         if (!data.startTime) add('시작 시간', 'lwStartTime');
         if (!data.endTime) add('완료 시간', 'lwEndTime');
         if (!(Number(data.engravingTime) > 0)) add('각인 시간', 'lwEngravingTime');
-        if (!data.programName) add('Program File Name', 'lwProgramName');
-        if (!data.lensHeight) add('렌즈 높이', 'lwLensHeight');
+        if (!data.programName) add('작성 가이드 이름 저장 확인', 'lwProgramNameChecked');
+        if (!data.lensHeight) add('렌즈높이 375mm 확인', 'lwLensHeightChecked');
 
         [
             ['초품', 'lwQcFirst', data.qcFirstQuality, data.qcFirstPosition, data.qcFirstPhoto],
@@ -1497,6 +1538,7 @@ var LaserWorkModule = (function() {
             <button class="btn btn-primary" onclick="LaserWorkModule.saveNew()">등록</button>
         `, 'lg');
         setTimeout(renderLotRows, 0);
+        setTimeout(updateLaserGuideChecks, 0);
         setTimeout(() => _refreshLaserCycleSpec(false), 0);
         setTimeout(calcCompletedQty, 0);
         setTimeout(checkQcProgress, 0);
@@ -1583,6 +1625,7 @@ var LaserWorkModule = (function() {
             <button class="btn btn-primary" onclick="LaserWorkModule.saveEdit('${id}')">저장</button>
         `, 'lg');
         setTimeout(renderLotRows, 0);
+        setTimeout(updateLaserGuideChecks, 0);
     }
 
     async function saveEdit(id) {
@@ -1626,6 +1669,7 @@ var LaserWorkModule = (function() {
         onSplitQtyChange,
         toggleManualSection,
         refreshLaserCycleSpec,
+        updateLaserGuideChecks,
         updateStandardEndTime,
         markEndTimeManual,
         calcCompletedQty,
