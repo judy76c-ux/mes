@@ -1091,6 +1091,33 @@ const SettingsModule = (function() {
         const _stageTotal = _filledProcs.length + 1; // +1 = 외관검사
         const _stageBg = _stageTotal >= 4 ? '#7c3aed' : _stageTotal === 3 ? 'var(--accent-blue)' : 'var(--accent-green)';
 
+        // 외관 검사 CVT/CTime 기본값 계산 (저장된 값 없을 때만)
+        const _calcAppearanceDefaults = () => {
+            if (v('appearanceCvt') || v('appearanceCt')) return { cvt: v('appearanceCvt'), ct: v('appearanceCt') };
+            // 마지막 공정부터 역순으로 탐색
+            for (let n = 4; n >= 1; n--) {
+                const proc = v(`process${n}`);
+                if (!proc) continue;
+                const lcvt = parseFloat(v(`cvt${n}`)) || 0;
+                const lct = parseFloat(v(`ct${n}`)) || 0;
+                if (proc.includes('레이저') || proc.includes('레이져')) {
+                    return {
+                        cvt: lcvt ? String(Math.round(lcvt / 2 * 10) / 10) : '',
+                        ct: lct ? String(Math.round(lct / 2)) : ''
+                    };
+                }
+                if (proc === '도장-B') {
+                    return {
+                        cvt: '1',
+                        ct: (lct && lcvt) ? String(Math.round(lct / lcvt / 4)) : ''
+                    };
+                }
+                break; // 다른 공정이면 기본값 없음
+            }
+            return { cvt: v('appearanceCvt'), ct: v('appearanceCt') };
+        };
+        const _appDefaults = _calcAppearanceDefaults();
+
         // 수정 모드: 이 제품에 연결된 사출 자재 조회
         const linkedInjMats = isEdit
             ? (Storage.getAll(INJECT_MAT_STORE) || []).filter(m => {
@@ -1431,11 +1458,11 @@ const SettingsModule = (function() {
                 <div style="display:flex;align-items:center;gap:12px;flex-wrap:nowrap;">
                     <div style="display:flex;align-items:center;gap:8px;flex:0 0 220px;">
                         <label class="form-label" style="white-space:nowrap;margin-bottom:0;width:50px;">CVT</label>
-                        <input type="text" class="form-input" id="${idPrefix}AppearanceCvt" placeholder="예: 1" value="${v('appearanceCvt')}" style="margin-top:0;">
+                        <input type="text" class="form-input" id="${idPrefix}AppearanceCvt" placeholder="예: 1" value="${_appDefaults.cvt}" style="margin-top:0;">
                     </div>
                     <div style="display:flex;align-items:center;gap:8px;flex:0 0 240px;">
                         <label class="form-label" style="white-space:nowrap;margin-bottom:0;width:70px;">C.TIME</label>
-                        <input type="text" class="form-input" id="${idPrefix}AppearanceCt" placeholder="예: 60" value="${v('appearanceCt')}" style="margin-top:0;">
+                        <input type="text" class="form-input" id="${idPrefix}AppearanceCt" placeholder="예: 60" value="${_appDefaults.ct}" style="margin-top:0;">
                         <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">sec</span>
                     </div>
                 </div>
