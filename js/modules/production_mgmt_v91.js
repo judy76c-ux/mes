@@ -19283,17 +19283,17 @@ var ProdEquipmentModule = (function() {
     }
 
     const _LAYOUT_TILE_DEFAULTS = [
-        {key:'B_언로딩',  line:'도장B라인', proc:'언로딩',   left:661, top:69,  w:64,  h:28, color:'#2563eb'},
-        {key:'B_도장검사', line:'도장B라인', proc:'도장 검사',left:746, top:69,  w:80,  h:28, color:'#2563eb'},
-        {key:'B_세척',    line:'도장B라인', proc:'세척',     left:713, top:95,  w:64,  h:28, color:'#0891b2'},
-        {key:'B_로딩',    line:'도장B라인', proc:'로딩',     left:669, top:120, w:60,  h:28, color:'#2563eb'},
-        {key:'B_건조',    line:'도장B라인', proc:'건조',     left:127, top:53,  w:472, h:52, color:'#ec4899'},
-        {key:'A_세척',    line:'도장A라인', proc:'세척',     left:787, top:228, w:62,  h:28, color:'#0891b2'},
-        {key:'A_로딩',    line:'도장A라인', proc:'로딩',     left:795, top:262, w:62,  h:28, color:'#2563eb'},
-        {key:'A_언로딩',  line:'도장A라인', proc:'언로딩',   left:739, top:283, w:64,  h:28, color:'#2563eb'},
-        {key:'A_도장검사', line:'도장A라인', proc:'도장 검사',left:826, top:283, w:80,  h:28, color:'#2563eb'},
-        {key:'A_건조',    line:'도장A라인', proc:'건조',     left:267, top:274, w:416, h:38, color:'#ec4899'},
-        {key:'_배합',     line:'',          proc:'배합',     left:8,   top:161, w:88,  h:175,color:'#334155'},
+        {key:'B_언로딩',  line:'도장B라인', proc:'언로딩',   left:529, top:55,  w:51,  h:22, color:'#2563eb'},
+        {key:'B_도장검사', line:'도장B라인', proc:'도장 검사',left:597, top:55,  w:64,  h:22, color:'#2563eb'},
+        {key:'B_세척',    line:'도장B라인', proc:'세척',     left:570, top:76,  w:51,  h:22, color:'#0891b2'},
+        {key:'B_로딩',    line:'도장B라인', proc:'로딩',     left:535, top:96,  w:48,  h:22, color:'#2563eb'},
+        {key:'B_건조',    line:'도장B라인', proc:'건조',     left:102, top:42,  w:378, h:42, color:'#ec4899'},
+        {key:'A_세척',    line:'도장A라인', proc:'세척',     left:630, top:182, w:50,  h:22, color:'#0891b2'},
+        {key:'A_로딩',    line:'도장A라인', proc:'로딩',     left:636, top:210, w:50,  h:22, color:'#2563eb'},
+        {key:'A_언로딩',  line:'도장A라인', proc:'언로딩',   left:591, top:226, w:51,  h:22, color:'#2563eb'},
+        {key:'A_도장검사', line:'도장A라인', proc:'도장 검사',left:661, top:226, w:64,  h:22, color:'#2563eb'},
+        {key:'A_건조',    line:'도장A라인', proc:'건조',     left:214, top:219, w:333, h:30, color:'#ec4899'},
+        {key:'_배합',     line:'',          proc:'배합',     left:6,   top:129, w:70,  h:140,color:'#334155'},
     ];
     const _LAYOUT_TILES_KEY = 'equipLayoutTilePos_v2';
     function _loadTilePos() {
@@ -19411,8 +19411,8 @@ var ProdEquipmentModule = (function() {
                     </div>
                 </div>
                 <div style="padding:14px 16px;background:#f8fafc;overflow-x:auto;">
-                    <div style="position:relative;width:1050px;height:392px;margin:0;background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.6);">
-                        <svg viewBox="0 0 1500 560" width="1050" height="392" role="img" aria-label="KC 케미칼 생산 현장 레이아웃" style="display:block;">
+                    <div style="position:relative;width:840px;height:314px;margin:0;background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.6);">
+                        <svg viewBox="0 0 1500 560" width="840" height="314" role="img" aria-label="KC 케미칼 생산 현장 레이아웃" style="display:block;">
                             <defs>
                                 <filter id="equipShadow" x="-20%" y="-20%" width="140%" height="140%">
                                     <feDropShadow dx="2" dy="2" stdDeviation="1.2" flood-color="#000" flood-opacity=".18"/>
@@ -19553,8 +19553,8 @@ var ProdEquipmentModule = (function() {
                             <path d="M110 180 V96 H895 V136 H1020 V194 H930" fill="none" stroke="#ef2d2d" stroke-width="3"/>
                         </svg>
 
-                        ${lineOverlay('도장B라인', bActive, 63, 46, 609, 129)}
-                        ${lineOverlay('도장A라인', aActive, 67, 204, 655, 113)}
+                        ${lineOverlay('도장B라인', bActive, 50, 37, 487, 103)}
+                        ${lineOverlay('도장A라인', aActive, 54, 163, 524, 90)}
                         ${tileHtml}
                     </div>
                 </div>
