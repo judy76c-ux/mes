@@ -3708,6 +3708,21 @@ const PaintingInspectionModule = (function() {
     };
     let _nonconformStandardImage = null;
 
+    // 지정된 도장 라인 완료 후 레이저 공정이 남아있는지 판단
+    // paintLineName: '도장-A' 또는 '도장-B'
+    // true  → 레이저 아직 남음 (레이저 대기품으로 이동)
+    // false → 레이저 없거나 이미 지남 (도장 검사 → 출하대기로 이동)
+    function _laserAfterPaintLine(product, paintLineName) {
+        if (!product || !paintLineName) return false;
+        const procs = [product.process1, product.process2, product.process3, product.process4]
+            .map(p => (p || '').trim());
+        const paintIdx = procs.findIndex(p => p === paintLineName);
+        const laserIdx = procs.findIndex(p => p.includes('레이저') || p.includes('레이져'));
+        if (laserIdx < 0) return false; // 레이저 공정 없음
+        if (paintIdx < 0) return false; // 해당 도장 라인이 공정표에 없음
+        return laserIdx > paintIdx;     // 레이저가 이 도장 이후에 위치
+    }
+
     function _currentUser() {
         try {
             return (typeof AuthModule !== 'undefined' && typeof AuthModule.getCurrentUser === 'function')
@@ -3970,19 +3985,11 @@ const PaintingInspectionModule = (function() {
             const allProcs = [product.process1, product.process2, product.process3, product.process4]
                 .map(p => (p || '').trim());
 
-            // 레이져 공정이 포함된 제품은 외관 검사 대기 제외 (레이져 대기품으로 처리)
-            const hasLaserProcess = allProcs.some(p => p === '레이져' || p === '레이저'
-                || p.includes('레이져') || p.includes('레이저'));
-            if (hasLaserProcess) return false;
+            // 현재 완료된 도장 라인 이후에 레이저가 남아있으면 레이저 대기품으로 처리
+            const paintLineName = (w.line || '').trim();
+            if (_laserAfterPaintLine(product, paintLineName)) return false;
 
-            const p2 = (product.process2 || '').trim();
-            const p4 = (product.process4 || '').trim();
-            const hasInspectionProcess = p2.includes('검사') || p4.includes('검사')
-                || p2 === '외관 검사' || p2 === '외관검사'
-                || p4 === '외관 검사' || p4 === '외관검사';
-
-            // process 미설정이거나 검사 공정이 있으면 표시
-            return !p2 && !p4 || hasInspectionProcess;
+            return true;
         });
 
         if (inspectionWorks.length === 0) {
@@ -5096,7 +5103,9 @@ const PaintingInspectionModule = (function() {
         const _products = Storage.getAll(DB.STORES.PRODUCTS) || [];
         const _prod = _products.find(p => p.carModel === work.carModel && p.partName === work.partName && p.color === work.color)
                    || _products.find(p => p.carModel === work.carModel && p.partName === work.partName);
-        const _isLaser = _prod && ((_prod.process2 || '') + (_prod.process3 || '') + (_prod.process4 || '')).includes('레이저');
+        // 이 도장 라인 완료 후 레이저가 남아있으면 출하대기 미등록 (레이저 → 도장 → 검사 순서인 제품은 등록)
+        const _paintLineName = (work.line || '').trim();
+        const _isLaser = _laserAfterPaintLine(_prod, _paintLineName);
         if (!_isLaser) {
             await Storage.add(DB.STORES.SHIPPING_STANDBY, {
                 date         : inspectionDate,

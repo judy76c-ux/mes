@@ -536,24 +536,13 @@ const SettingsModule = (function() {
         const rowOrphanMfg = m => {
             const bad = [(m.mfgProductName||'').trim(), (m.mfgProductName2||'').trim()]
                 .filter(n => n && !pNameSet.has(n));
-            // 각 불일치 품명마다 제품 추가 버튼 생성
-            const addBtns = bad.map(pn => {
-                const enc = encodeURIComponent(JSON.stringify({
-                    carModel:    m.carModel    || '',
-                    partName:    pn,
-                    color:       m.injColor    || '',
-                    injPartName: m.injPartName || '',
-                    injColor:    m.injColor    || ''
-                }));
-                return `<button onclick="UIUtils.closeModal();SettingsModule.openAddProductModal(JSON.parse(decodeURIComponent('${enc}')))"
-                    style="padding:2px 8px;font-size:0.72rem;background:var(--accent-blue);color:#fff;
-                           border:none;border-radius:4px;cursor:pointer;white-space:nowrap;">
-                    + "${pn}" 제품 추가</button>`;
-            }).join('');
             return `<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--border-color);flex-wrap:wrap;">
                 <span style="flex:1;min-width:0;"><strong>${m.carModel||'-'}</strong> / ${m.injPartName||'-'}
                     → 제작품목 "<span style="color:var(--accent-red);">${bad.join(', ')}</span>" 이 제품마스터에 없음</span>
-                ${addBtns}
+                <button onclick="UIUtils.closeModal();SettingsModule.editInjectMat('${m.id}')"
+                    style="padding:2px 8px;font-size:0.72rem;background:#d97706;color:#fff;
+                           border:none;border-radius:4px;cursor:pointer;white-space:nowrap;">
+                    사출자재 제작품목 수정</button>
             </div>`;
         };
 
@@ -818,12 +807,6 @@ const SettingsModule = (function() {
                         </select>
                     </div>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                        <button class="btn btn-outline" onclick="SettingsModule.downloadProductCSV()">
-                            <span class="material-symbols-outlined">download</span> CSV 다운로드
-                        </button>
-                        <button class="btn btn-secondary" onclick="SettingsModule.openProductUploadModal()">
-                            <span class="material-symbols-outlined">upload_file</span> 일괄 업로드
-                        </button>
                         <button class="btn btn-secondary" onclick="SettingsModule.showDuplicatePartNameReport()"
                             style="border-color:#d97706;color:#d97706;"
                             title="동일 품명 제품 현황 진단">
@@ -1090,7 +1073,12 @@ const SettingsModule = (function() {
     }
 
     function _productFormHTML(p = {}, idPrefix = 'addProd') {
-        const v = k => p[k] !== undefined ? p[k] : '';
+        const _validProcSet = new Set(_processTypes);
+        const v = k => {
+            const val = p[k] !== undefined ? p[k] : '';
+            if (/^process[1-4]$/.test(k)) return _validProcSet.has(val) ? val : '';
+            return val;
+        };
         const isEdit = idPrefix === 'editProd';
         const processes = ['', ..._processTypes];
         const processOptions = val => processes.map(proc => `<option value="${proc}" ${val === proc ? 'selected' : ''}>${proc || '선택 안함'}</option>`).join('');
@@ -1121,10 +1109,12 @@ const SettingsModule = (function() {
         const initialPaintRows = (p.paintMaterials && p.paintMaterials.length > 0)
             ? p.paintMaterials.map((row, idx, arr) => {
                 const mainId = row.mainId || row.paintMaterialId || '';
+                const mainPm = mainId ? formPaintMap[mainId] : null;
+                const mainPaintSpec = mainPm ? (mainPm.paintSpec || '') : '';
                 return {
                     processTag: _resolvePaintProcessTag(row.processTag || row.paintProcess || row.process || '', _paintProcessTags, idx, arr.length),
-                    paintSpec:  row.paintSpec || row.typeFilter || '',
-                    rowManufacturer: row.rowManufacturer || row.paintMaker || row.manufacturer || '',
+                    paintSpec:  row.paintSpec || row.typeFilter || mainPaintSpec || '',
+                    rowManufacturer: row.rowManufacturer || row.paintMaker || row.manufacturer || (mainPm && mainPm.manufacturer) || '',
                     rowSupplier: row.rowSupplier || '',
                     mainId,
                     hardId:     row.hardId || (_isHardenerNotRequired({ ...row, mainId }, formPaintMap) ? '사용불필요' : ''),
@@ -1820,17 +1810,18 @@ const SettingsModule = (function() {
         const uniqueManufacturers = [...new Set(supplierPaints.map(p => p.manufacturer).filter(Boolean))]
             .sort((a,b) => a.localeCompare(b,'ko'));
         const basePaints = rowManufacturer
-            ? supplierPaints.filter(p => _samePaintMaker(p.manufacturer, rowManufacturer))
+            ? supplierPaints.filter(p => _samePaintMaker(p.manufacturer, rowManufacturer) || p.id === mainId || p.id === hardId || p.id === thinnerId)
             : supplierPaints;
 
         // 선택된 주제 도료의 공급처 파악 (경화제/신너 자동 매칭용)
         const mainManufacturer = mainPm ? (mainPm.manufacturer || '') : '';
 
         // 주제 목록: 구매처 필터 후 도료 사양(Primer/Color/Clear/공용)으로 필터링
+        // 이미 저장된 mainId는 사양 필터와 무관하게 항상 목록에 포함
         const selectedSpec = _normalizePaintSpec(paintSpec);
         const mainPaints = basePaints.filter(p => {
             const spec = _normalizePaintSpec(p.paintSpec);
-            return _isPaintType(p, 'main') && (!selectedSpec || spec === selectedSpec || spec === 'common');
+            return _isPaintType(p, 'main') && (!selectedSpec || spec === selectedSpec || spec === 'common' || p.id === mainId);
         });
 
         // 경화제: 구매처 필터 후 동일 공급처 우선 → 없으면 폴백
@@ -2269,13 +2260,15 @@ const SettingsModule = (function() {
     /* 모든 제품의 빈/잘못된 공정 행 일괄 정리 */
     async function cleanupEmptyProcessRows() {
         const products = Storage.getAll(PRODUCTS_STORE);
+        const validProcs = new Set(_processTypes);
         let fixedCount = 0;
         for (const p of products) {
             let changed = false;
             const updated = { ...p };
-            for (const n of [2, 3, 4]) {
-                const proc = _normalizeProcess(updated[`process${n}`]);
-                if (proc !== updated[`process${n}`] || (!proc && (updated[`cvt${n}`] || updated[`ct${n}`]))) {
+            for (const n of [1, 2, 3, 4]) {
+                const raw = updated[`process${n}`];
+                const proc = (raw && validProcs.has(raw)) ? raw : '';
+                if (proc !== (raw || '') || (!proc && (updated[`cvt${n}`] || updated[`ct${n}`]))) {
                     updated[`process${n}`] = proc;
                     if (!proc) { updated[`cvt${n}`] = ''; updated[`ct${n}`] = ''; }
                     changed = true;

@@ -361,7 +361,13 @@ var LaserWorkModule = (function() {
         const lensRulerCheck = document.getElementById('lwLensRulerChecked');
         if (guideEl) guideEl.textContent = programGuide;
         if (hiddenProgramEl) hiddenProgramEl.value = programCheck && programCheck.checked ? programGuide : '';
-        if (hiddenLensEl) hiddenLensEl.value = lensPointerCheck && lensPointerCheck.checked && lensRulerCheck && lensRulerCheck.checked ? '포인터/자 375mm 확인' : '';
+        if (hiddenLensEl) {
+            const checkedMethods = [
+                lensPointerCheck && lensPointerCheck.checked ? '포인터' : '',
+                lensRulerCheck && lensRulerCheck.checked ? '자' : ''
+            ].filter(Boolean);
+            hiddenLensEl.value = checkedMethods.length ? `${checkedMethods.join('/')} 375mm 확인` : '';
+        }
     }
 
     function updatePackUnitDisplay() {
@@ -586,21 +592,19 @@ var LaserWorkModule = (function() {
                     </div>
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
-                            <table class="data-table" style="min-width:1380px;table-layout:fixed;">
+                            <table class="data-table" style="min-width:1160px;table-layout:fixed;">
                                 <thead>
                                     <tr>
-                                        <th style="width:54px;">No</th>
                                         <th style="width:86px;">레이져작업일</th>
                                         <th style="width:110px;">장비</th>
                                         <th style="width:112px;">시간</th>
                                         <th style="width:96px;">차종</th>
                                         <th style="width:230px;">품명</th>
-                                        <th style="width:82px;">컬러</th>
                                         <th style="width:132px;">프로그램</th>
                                         <th style="width:92px;">수량</th>
                                         <th style="width:96px;">도장작업일</th>
                                         <th style="width:120px;">사출LOT</th>
-                                        <th style="width:132px;">품질확인</th>
+                                        <th style="width:96px;">품질확인</th>
                                         <th style="width:150px;">작업자</th>
                                         <th style="width:132px;">작업</th>
                                     </tr>
@@ -662,13 +666,12 @@ var LaserWorkModule = (function() {
         const tbody = document.getElementById('lwTableBody');
         const isAdmin = _isAdminUser();
         if (data.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="14" style="text-align:center;padding:40px;color:var(--text-muted);">기록이 없습니다.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:40px;color:var(--text-muted);">기록이 없습니다.</td></tr>`;
             return;
         }
 
-        tbody.innerHTML = data.map((d, i) => `
+        tbody.innerHTML = data.map(d => `
             <tr>
-                <td style="text-align:center;">${data.length - i}</td>
                 <td style="white-space:nowrap;">${_workDateCell(d.date, d.startTime)}</td>
                 <td style="white-space:nowrap;"><span class="badge badge-info" style="display:inline-flex;align-items:center;justify-content:center;min-width:72px;white-space:nowrap;">${d.machine || '-'}</span></td>
                 <td style="font-size:0.8rem;white-space:nowrap;">${d.startTime || '-'} ~ ${d.endTime || '-'}</td>
@@ -676,7 +679,6 @@ var LaserWorkModule = (function() {
                 <td style="min-width:0;">
                     <div style="font-weight:600;">${d.partName || '-'}</div>
                 </td>
-                <td style="white-space:nowrap;">${d.color || '-'}</td>
                 <td style="font-size:0.8rem; color:var(--accent-blue);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${d.programName || '-'}</td>
                 <td style="text-align:right; font-weight:700;">${UIUtils.formatNumber(d.quantity)}</td>
                 <td style="white-space:nowrap;">${_paintDateCell(d)}</td>
@@ -686,7 +688,6 @@ var LaserWorkModule = (function() {
                         ${d.qcFirst ? '<span class="badge badge-success">초</span>' : ''}
                         ${d.qcMiddle ? '<span class="badge badge-success">중</span>' : ''}
                         ${d.qcLast ? '<span class="badge badge-success">종</span>' : ''}
-                        <span class="badge badge-outline" title="렌즈높이">${d.lensHeight || '-'}</span>
                     </div>
                 </td>
                 <td style="font-size:0.8rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${[d.worker1, d.worker2, d.worker3].filter(Boolean).join(', ') || '-'}</td>
@@ -1779,10 +1780,10 @@ var LaserWorkModule = (function() {
 
     function exportData() {
         const data = Storage.getAll(STORE);
-        const headers = ['레이져작업일', '장비', '시작', '종료', '차종', '품명', '컬러', '도장작업일', '각인시간', '수량', '사출LOT', '프로그램', '렌즈높이', '초품', '중품', '종품', '작업자1', '작업자2', '작업자3'];
+        const headers = ['레이져작업일', '장비', '시작', '종료', '차종', '품명', '도장작업일', '각인시간', '수량', '사출LOT', '프로그램', '초품', '중품', '종품', '작업자1', '작업자2', '작업자3'];
         const rows = data.map(d => [
-            d.date, d.machine, d.startTime, d.endTime, d.carModel, d.partName, d.color, d.paintDate || '',
-            d.engravingTime, d.quantity, d.paintLot, d.programName, d.lensHeight,
+            d.date, d.machine, d.startTime, d.endTime, d.carModel, d.partName, d.paintDate || '',
+            d.engravingTime, d.quantity, d.paintLot, d.programName,
             d.qcFirst ? 'O' : 'X', d.qcMiddle ? 'O' : 'X', d.qcLast ? 'O' : 'X', d.worker1, d.worker2, d.worker3
         ]);
         Storage.exportToCSV(headers, rows, '레이져_작업일지');
@@ -2618,7 +2619,14 @@ var LaserInspectionModule = (function() {
                 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;">
                     ${defects.map(d => `
                         <div style="display:flex;flex-direction:column;gap:8px;">
-                            <label style="font-size:0.9rem;font-weight:600;margin:0;">${d.name}</label>
+                            <label style="font-size:0.9rem;font-weight:600;margin:0;display:flex;align-items:center;gap:4px;min-width:0;">
+                                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${d.name}</span>
+                                <button type="button" title="불량유형 보기"
+                                    onclick="LaserInspectionModule.showDefectTypeView('${d.id}')"
+                                    style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid var(--border-color);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex-shrink:0;padding:0;">
+                                    <span class="material-symbols-outlined" style="font-size:15px;">search</span>
+                                </button>
+                            </label>
                             <input type="text" inputmode="numeric" enterkeyhint="done" id="${prefix}${d.id}" data-defect-name="${d.name}"
                                 value="${dd[d.name]||0}"
                                 style="padding:8px;border:1px solid var(--border-color);border-radius:4px;text-align:center;font-weight:600;font-size:0.95rem;"
@@ -2899,6 +2907,105 @@ var LaserInspectionModule = (function() {
         d.value = `${dur}분`;
     }
 
+    function _viewText(value) {
+        const text = String(value == null ? '' : value).trim();
+        if (!text) return '<span style="color:var(--text-muted);">-</span>';
+        return text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+            .replace(/\n/g, '<br>');
+    }
+
+    function _viewImages(defect) {
+        const images = Array.isArray(defect.exampleImages)
+            ? defect.exampleImages
+            : (defect.exampleImage ? [defect.exampleImage] : []);
+        if (!images.length) return '<div style="color:var(--text-muted);font-size:0.86rem;">등록된 예시 사진이 없습니다.</div>';
+        return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;">
+            ${images.map((src, i) => `
+                <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;background:var(--bg-secondary);">
+                    <img src="${src}" alt="불량 예시 ${i + 1}" style="width:100%;height:130px;object-fit:contain;background:#fff;display:block;">
+                    <div style="padding:4px 8px;font-size:0.76rem;color:var(--text-muted);">예시 ${i + 1}</div>
+                </div>`).join('')}
+        </div>`;
+    }
+
+    function _showDefectViewOverlay(bodyHtml) {
+        document.getElementById('liDefectViewOverlay')?.remove();
+        const overlay = document.createElement('div');
+        overlay.id = 'liDefectViewOverlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.38);z-index:99999;display:flex;align-items:center;justify-content:center;padding:24px;';
+        overlay.innerHTML = `
+            <div style="width:min(820px,96vw);max-height:88vh;display:flex;flex-direction:column;background:#fff;border-radius:12px;box-shadow:0 24px 80px rgba(15,23,42,0.35);overflow:hidden;">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border-color);">
+                    <h3 style="margin:0;font-size:1.05rem;font-weight:800;">불량 유형 보기</h3>
+                    <button type="button" onclick="LaserInspectionModule.closeDefectTypeView()" style="border:none;background:transparent;cursor:pointer;color:var(--text-muted);padding:4px;">
+                        <span class="material-symbols-outlined">close</span>
+                    </button>
+                </div>
+                <div style="padding:16px 18px;overflow:auto;">${bodyHtml}</div>
+                <div style="padding:12px 18px;border-top:1px solid var(--border-color);display:flex;justify-content:flex-end;">
+                    <button class="btn btn-secondary" onclick="LaserInspectionModule.closeDefectTypeView()">닫기</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+    }
+
+    function closeDefectTypeView() {
+        document.getElementById('liDefectViewOverlay')?.remove();
+    }
+
+    function showDefectTypeView(id) {
+        const defect = (Storage.getAll(DB.STORES.DEFECT_TYPES) || []).find(d => d && d.id === id);
+        if (!defect) {
+            UIUtils.toast('불량유형 정보를 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const typeLabel = {
+            injection: '사출 불량',
+            painting: '도장 불량',
+            laser: '레이져 불량',
+            printing: '인쇄 불량',
+            plating: '도금 불량'
+        }[defect.type || 'injection'] || '불량 유형';
+        const causes = defect.causes || {};
+        _showDefectViewOverlay(`
+            <div style="display:flex;flex-direction:column;gap:14px;">
+                <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);">
+                    <span class="material-symbols-outlined" style="font-size:20px;color:var(--accent-blue);">search</span>
+                    <div>
+                        <div style="font-size:0.78rem;color:var(--text-muted);">${typeLabel}</div>
+                        <div style="font-size:1.05rem;font-weight:800;color:var(--text-primary);">${_viewText(defect.name)}</div>
+                    </div>
+                </div>
+                <div>
+                    <div class="form-label">설명</div>
+                    <div style="padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;background:#fff;line-height:1.45;">${_viewText(defect.description)}</div>
+                </div>
+                <div>
+                    <div class="form-label">4M 불량 원인</div>
+                    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;">
+                        <div style="padding:10px;border:1px solid var(--border-color);border-radius:8px;"><strong style="color:#2563eb;">Machine (기계/설비)</strong><div style="margin-top:6px;line-height:1.45;">${_viewText(causes.machine || defect.machineCause)}</div></div>
+                        <div style="padding:10px;border:1px solid var(--border-color);border-radius:8px;"><strong style="color:#d97706;">Material (재료)</strong><div style="margin-top:6px;line-height:1.45;">${_viewText(causes.material || defect.materialCause)}</div></div>
+                        <div style="padding:10px;border:1px solid var(--border-color);border-radius:8px;"><strong style="color:#7c3aed;">Method (방법)</strong><div style="margin-top:6px;line-height:1.45;">${_viewText(causes.method || defect.methodCause)}</div></div>
+                        <div style="padding:10px;border:1px solid var(--border-color);border-radius:8px;"><strong style="color:#16a34a;">Man (작업자)</strong><div style="margin-top:6px;line-height:1.45;">${_viewText(causes.man || defect.manCause)}</div></div>
+                    </div>
+                </div>
+                <div>
+                    <div class="form-label">조치 방법</div>
+                    <div style="padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;background:#fff;line-height:1.45;">${_viewText(defect.countermeasure || defect.actionMethod)}</div>
+                </div>
+                <div>
+                    <div class="form-label">예시 사진</div>
+                    ${_viewImages(defect)}
+                </div>
+            </div>
+        `);
+    }
+
     // ─ 숫자 키패드 ───────────────────────────────────────────────────
 
     function remove(id) {
@@ -2913,6 +3020,7 @@ var LaserInspectionModule = (function() {
     return {
         render, openAddModal, openInspFromWork, search, renderStandby, onCarModelChange, edit, remove,
         _closeModal, _saveInspection, _showDetail,
+        showDefectTypeView, closeDefectTypeView,
         showNonconformStandardPage, showInspectionPage,
         focusNonconformStandardPasteZone, handleNonconformStandardPaste, printNonconformStandardPage,
         _updateDefectTotal, _updateDefectQty, _updateGoodQty, _calculateInspectionTime,
