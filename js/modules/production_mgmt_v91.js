@@ -18652,10 +18652,11 @@ var ProdEquipmentModule = (function() {
         return PROC_STATIONS;
     }
 
-    let _line    = '도장A라인';
-    let _equipId = null;
-    let _subTab  = 'spare';
-    let _openProcs = new Set();
+    let _line     = '도장A라인';
+    let _equipId  = null;
+    let _subTab   = 'spare';
+    let _openProcs  = new Set();
+    let _rightTab   = 'map';   // 'map' | 'detail'
 
     // 도장(A/B) 세부공정 순서 — 제조관리 표준 기준
     const PROC_STATIONS = [
@@ -19203,36 +19204,59 @@ var ProdEquipmentModule = (function() {
         } else if (_mode === 'general') {
             const _li = _isLoggedIn();
             el.innerHTML = `
-            <div>
-                ${_renderPlantLayout()}
-                <div class="card" style="overflow:hidden;margin-bottom:16px;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;
-                                padding:14px 18px;border-bottom:1px solid var(--border-color);background:var(--bg-secondary);">
-                        <span style="font-weight:700;font-size:0.95rem;display:flex;align-items:center;gap:8px;">
-                            <span class="material-symbols-outlined" style="font-size:20px;color:var(--accent-blue);">build</span>
-                            설비 목록
-                        </span>
-                        ${_li ? `
-                        <button class="btn btn-primary" style="padding:6px 16px;font-size:0.85rem;display:flex;align-items:center;gap:6px;"
-                            onclick="ProdEquipmentModule.openEquipAddModal()">
-                            <span class="material-symbols-outlined" style="font-size:16px;">add</span> 설비 추가
-                        </button>` : `
-                        <div style="display:flex;align-items:center;gap:5px;font-size:0.78rem;color:var(--text-muted);
-                                    background:var(--bg-tertiary,#f1f5f9);padding:5px 10px;border-radius:6px;">
-                            <span class="material-symbols-outlined" style="font-size:15px;">lock</span>추가·수정·삭제는 로그인 후 가능
-                        </div>`}
+            <div style="display:flex;gap:14px;align-items:flex-start;">
+                <!-- 왼쪽: 설비 목록 테이블 -->
+                <div style="flex:1;min-width:0;">
+                    <div class="card" style="overflow:hidden;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;
+                                    padding:12px 16px;border-bottom:1px solid var(--border-color);background:var(--bg-secondary);">
+                            <span style="font-weight:700;font-size:0.92rem;display:flex;align-items:center;gap:7px;">
+                                <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-blue);">build</span>
+                                설비 목록
+                            </span>
+                            ${_li ? `
+                            <button class="btn btn-primary" style="padding:5px 13px;font-size:0.82rem;display:flex;align-items:center;gap:5px;"
+                                onclick="ProdEquipmentModule.openEquipAddModal()">
+                                <span class="material-symbols-outlined" style="font-size:15px;">add</span>설비 추가
+                            </button>` : `
+                            <div style="display:flex;align-items:center;gap:4px;font-size:0.76rem;color:var(--text-muted);
+                                        background:var(--bg-tertiary,#f1f5f9);padding:4px 9px;border-radius:6px;">
+                                <span class="material-symbols-outlined" style="font-size:14px;">lock</span>로그인 후 편집 가능
+                            </div>`}
+                        </div>
+                        <div id="equipListBody"></div>
                     </div>
-                    <div id="equipListBody" style="padding:16px;"></div>
                 </div>
-                <div id="equipDetailPanel">
-                    <div class="card" style="padding:48px 0;text-align:center;color:var(--text-muted);">
-                        <span class="material-symbols-outlined" style="font-size:40px;display:block;margin-bottom:8px;opacity:.4;">touch_app</span>
-                        위 목록에서 설비를 선택하세요
+                <!-- 오른쪽: 지도 뷰 / 설비 상세 탭 -->
+                <div style="width:460px;flex-shrink:0;">
+                    <div class="card" style="overflow:hidden;">
+                        <!-- 탭 헤더 -->
+                        <div style="display:flex;border-bottom:1px solid var(--border-color);background:var(--bg-secondary);">
+                            <button id="rtabMap"
+                                onclick="ProdEquipmentModule.switchRightTab('map')"
+                                style="flex:1;padding:10px 0;border:none;cursor:pointer;font-size:0.83rem;font-weight:600;
+                                       display:flex;align-items:center;justify-content:center;gap:5px;
+                                       border-bottom:2px solid ${_rightTab==='map' ? 'var(--accent-blue)' : 'transparent'};
+                                       color:${_rightTab==='map' ? 'var(--accent-blue)' : 'var(--text-muted)'};
+                                       background:transparent;transition:all .15s;">
+                                <span class="material-symbols-outlined" style="font-size:16px;">map</span>현장 레이아웃
+                            </button>
+                            <button id="rtabDetail"
+                                onclick="ProdEquipmentModule.switchRightTab('detail')"
+                                style="flex:1;padding:10px 0;border:none;cursor:pointer;font-size:0.83rem;font-weight:600;
+                                       display:flex;align-items:center;justify-content:center;gap:5px;
+                                       border-bottom:2px solid ${_rightTab==='detail' ? 'var(--accent-blue)' : 'transparent'};
+                                       color:${_rightTab==='detail' ? 'var(--accent-blue)' : 'var(--text-muted)'};
+                                       background:transparent;transition:all .15s;">
+                                <span class="material-symbols-outlined" style="font-size:16px;">info</span>설비 상세
+                            </button>
+                        </div>
+                        <div id="equipRightPanel"></div>
                     </div>
                 </div>
             </div>`;
             _renderEquipList();
-            if (_equipId) _renderDetail();
+            _renderRightPanel();
         } else if (_mode === 'temperature') {
             _sqTab = 'ovenprofile';
             _renderTemperatureProfile();
@@ -19687,37 +19711,74 @@ var ProdEquipmentModule = (function() {
 
     // ── 설비 선택 ────────────────────────────────────────────────
     function selectEquip(id) {
-        _equipId = id;
-        _subTab  = 'ledger';
+        _equipId  = id;
+        _subTab   = 'ledger';
+        _rightTab = 'detail';
         _renderEquipList();
-        _renderDetail();
+        _renderRightPanel();
+    }
+
+    function switchRightTab(tab) {
+        _rightTab = tab;
+        // 탭 버튼 스타일 토글
+        ['map','detail'].forEach(t => {
+            const btn = document.getElementById('rtab' + (t === 'map' ? 'Map' : 'Detail'));
+            if (!btn) return;
+            const active = t === tab;
+            btn.style.borderBottom = active ? '2px solid var(--accent-blue)' : '2px solid transparent';
+            btn.style.color = active ? 'var(--accent-blue)' : 'var(--text-muted)';
+        });
+        _renderRightPanel();
+    }
+
+    function _renderRightPanel() {
+        const rp = document.getElementById('equipRightPanel');
+        if (!rp) return;
+        if (_rightTab === 'map') {
+            const mapHtml = _renderPlantLayout();
+            rp.innerHTML = mapHtml || `
+            <div style="padding:48px 0;text-align:center;color:var(--text-muted);">
+                <span class="material-symbols-outlined" style="font-size:40px;display:block;margin-bottom:8px;opacity:.4;">map</span>
+                도장 A/B 라인 선택 시 레이아웃이 표시됩니다
+            </div>`;
+        } else {
+            if (!_equipId) {
+                rp.innerHTML = `
+                <div style="padding:48px 0;text-align:center;color:var(--text-muted);">
+                    <span class="material-symbols-outlined" style="font-size:40px;display:block;margin-bottom:8px;opacity:.4;">touch_app</span>
+                    왼쪽 목록에서 설비를 선택하세요
+                </div>`;
+            } else {
+                _renderDetail();
+            }
+        }
     }
 
     function _renderDetail() {
         const equip = Storage.getById(ST_EQUIP, _equipId);
         if (!equip) return;
-        const dp = document.getElementById('equipDetailPanel');
+        const dp = document.getElementById('equipRightPanel') || document.getElementById('equipDetailPanel');
         if (!dp) return;
         const sCol = equip.status === '정상' ? 'var(--accent-green)' :
                      equip.status === '점검중' ? '#f59e0b' :
                      equip.status === '수리중' ? 'var(--accent-red)' : 'var(--text-muted)';
         dp.innerHTML = `
-        <div class="card" style="overflow:hidden;">
+        <div style="overflow:hidden;">
             <div style="padding:12px 16px;border-bottom:1px solid var(--border-color);
                         display:flex;justify-content:space-between;align-items:center;">
-                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                    <span style="font-weight:700;font-size:1rem;">${_esc(equip.name)}</span>
-                    <span style="font-size:0.78rem;color:var(--text-muted);">${equip.line}</span>
-                    ${equip.model ? `<span style="font-size:0.78rem;color:var(--text-muted);">${_esc(equip.model)}</span>` : ''}
-                    <span style="font-size:0.76rem;font-weight:600;color:${sCol};
-                                 background:${sCol}22;padding:2px 9px;border-radius:10px;">${equip.status || '정상'}</span>
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <span style="font-weight:700;font-size:0.95rem;">${_esc(equip.name)}</span>
+                    <span style="font-size:0.76rem;color:var(--text-muted);">${equip.line}</span>
+                    ${equip.model ? `<span style="font-size:0.76rem;color:var(--text-muted);">${_esc(equip.model)}</span>` : ''}
+                    <span style="font-size:0.73rem;font-weight:600;color:${sCol};
+                                 background:${sCol}22;padding:2px 8px;border-radius:10px;">${equip.status || '정상'}</span>
                 </div>
                 <div style="display:flex;gap:6px;">
                     ${_isLoggedIn() ? `
                     <button class="btn btn-outline btn-sm" onclick="ProdEquipmentModule.editEquip('${equip.id}')">수정</button>
                     <button class="btn btn-danger btn-sm"  onclick="ProdEquipmentModule.deleteEquip('${equip.id}')">삭제</button>` : `
-                    <span style="font-size:0.78rem;color:var(--text-muted);display:flex;align-items:center;gap:4px;">
-                        <span class="material-symbols-outlined" style="font-size:14px;">lock</span>로그인 필요
+                    <span style="font-size:0.76rem;color:var(--text-muted);display:flex;align-items:center;gap:4px;">
+                        <span class="material-symbols-outlined" style="font-size:13px;">lock</span>로그인 필요
                     </span>`}
                 </div>
             </div>
@@ -20472,14 +20533,10 @@ var ProdEquipmentModule = (function() {
                 for (const item of items) await Storage.remove(st, item.id);
             }
             await Storage.remove(ST_EQUIP, id);
-            _equipId = null;
+            _equipId  = null;
+            _rightTab = 'map';
             _renderEquipList();
-            const dp = document.getElementById('equipDetailPanel');
-            if (dp) dp.innerHTML = `
-                <div class="card" style="padding:60px 0;text-align:center;color:var(--text-muted);">
-                    <span class="material-symbols-outlined" style="font-size:48px;display:block;margin-bottom:8px;opacity:.4;">touch_app</span>
-                    좌측 설비 목록에서 설비를 선택하세요
-                </div>`;
+            _renderRightPanel();
         });
     }
 
@@ -23535,6 +23592,7 @@ var ProdEquipmentModule = (function() {
         // 설비 일반관리
         selectEquip,
         toggleProc,
+        switchRightTab,
         switchSubTab,
         openEquipAddModal,
         editEquip,
