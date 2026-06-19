@@ -19206,7 +19206,7 @@ var ProdEquipmentModule = (function() {
             el.innerHTML = `
             <div style="display:flex;gap:14px;align-items:flex-start;">
                 <!-- 왼쪽: 설비 목록 테이블 -->
-                <div style="flex:1;min-width:0;">
+                <div style="width:360px;flex-shrink:0;">
                     <div class="card" style="overflow:hidden;">
                         <div style="display:flex;justify-content:space-between;align-items:center;
                                     padding:12px 16px;border-bottom:1px solid var(--border-color);background:var(--bg-secondary);">
@@ -19228,7 +19228,7 @@ var ProdEquipmentModule = (function() {
                     </div>
                 </div>
                 <!-- 오른쪽: 지도 뷰 / 설비 상세 탭 -->
-                <div style="width:460px;flex-shrink:0;">
+                <div style="flex:1;min-width:0;">
                     <div class="card" style="overflow:hidden;">
                         <!-- 탭 헤더 -->
                         <div style="display:flex;border-bottom:1px solid var(--border-color);background:var(--bg-secondary);">
@@ -24854,3 +24854,4 @@ var WastewaterModule = (function () {
         _onYearChange
     };
 })();
+
