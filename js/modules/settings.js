@@ -929,7 +929,25 @@ const SettingsModule = (function() {
                             (() => {
                                 const _inspLabel = p.appearanceInspType === '외관+각인 검사' ? '외관+각인 검사' : '외관검사';
                                 const _hasAppear = p.process1 || p.process2 || p.process3 || p.process4;
-                                return _hasAppear ? `<div style="display:flex; align-items:center; gap:4px;"><span class="badge badge-success">${_inspLabel}</span> <span style="color:var(--text-muted);">${p.appearanceCvt || '-'}|${p.appearanceCt || '-'}</span></div>` : '';
+                                if (!_hasAppear) return '';
+                                // 저장된 값 없으면 마지막 공정 기준 계산
+                                let _aCvt = p.appearanceCvt, _aCt = p.appearanceCt;
+                                if (!_aCvt || !_aCt) {
+                                    for (let _n = 4; _n >= 1; _n--) {
+                                        const _lp = p[`process${_n}`]; if (!_lp) continue;
+                                        const _lv = parseFloat(p[`cvt${_n}`]) || 0;
+                                        const _lt = parseFloat(p[`ct${_n}`]) || 0;
+                                        if (_lp.includes('레이저') || _lp.includes('레이져')) {
+                                            _aCvt = _aCvt || (_lv ? String(Math.round(_lv/2*10)/10) : '');
+                                            _aCt  = _aCt  || (_lt ? String(Math.round(_lt/2)) : '');
+                                        } else if (_lp === '도장-B') {
+                                            _aCvt = _aCvt || '1';
+                                            _aCt  = _aCt  || ((_lt && _lv) ? String(Math.round((_lt/_lv)*4)) : '');
+                                        }
+                                        break;
+                                    }
+                                }
+                                return `<div style="display:flex; align-items:center; gap:4px;"><span class="badge badge-success">${_inspLabel}</span> <span style="color:var(--text-muted);">${_aCvt || '-'}|${_aCt || '-'}</span></div>`;
                             })()
                         ].filter(Boolean).join('<span class="material-symbols-outlined" style="font-size:14px; color:var(--text-muted);">arrow_forward</span>')}
                                                 ${!p.process1 && !p.process2 && !p.process3 && !p.process4 ? '-' : ''}
