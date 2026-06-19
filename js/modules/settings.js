@@ -364,12 +364,13 @@ const SettingsModule = (function() {
         const injMatPartNames = new Set(injMats.map(m => (m.injPartName || '').trim()).filter(Boolean));
         const orphanInv = invPartNames.filter(n => !injMatPartNames.has(n));
 
-        // [8] 도장 공정 있는데 도료 미등록
+        // [8] 도장 공정 있는데 도료 미등록 (배열 자체 없거나, 있어도 주제 도료 선택된 행이 하나도 없는 경우 포함)
         const paintProcessSet = new Set(['도장-A', '도장-B']);
         const noPaintMat = products.filter(p => {
             const procs = [p.process1, p.process2, p.process3, p.process4].filter(Boolean);
-            return procs.some(pr => paintProcessSet.has(pr)) &&
-                   (!p.paintMaterials || p.paintMaterials.length === 0);
+            if (!procs.some(pr => paintProcessSet.has(pr))) return false;
+            const mats = p.paintMaterials || [];
+            return mats.length === 0 || !mats.some(r => r.mainId);
         });
 
         // [9] 도료 등록됐는데 경화제/신너 미선택 (사용불필요 제외)

@@ -487,7 +487,17 @@ var LaserWorkModule = (function() {
 
         const laserPaintWorks = paintingWorks.filter(w => {
             const prod = _findProductForWork(w.carModel, w.partName, w.color);
-            return prod && _hasLaserProcess(prod);
+            if (!prod || !_hasLaserProcess(prod)) return false;
+            // 이 작업의 도장 라인 이후에 레이저가 있을 때만 레이저 대기에 포함
+            // (도장-B가 레이저 뒤에 있으면 도장-B 완료품은 레이저 대기 대상 아님)
+            const procs = [prod.process1, prod.process2, prod.process3, prod.process4]
+                .map(p => (p || '').trim());
+            const paintLine = (w.line || '').trim();
+            const paintIdx  = procs.indexOf(paintLine);
+            const laserIdx  = procs.findIndex(p => p.includes('레이저') || p.includes('레이져'));
+            if (laserIdx < 0) return false;
+            if (paintIdx < 0) return true;   // 라인 정보 없으면 안전하게 포함
+            return laserIdx > paintIdx;       // 레이저가 이 도장 이후에 위치할 때만
         });
 
         // 도장 작업일 + 사출 LOT 단위로 레이저 처리 수량 집계
