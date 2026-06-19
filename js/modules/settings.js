@@ -1465,6 +1465,11 @@ const SettingsModule = (function() {
                         <input type="text" class="form-input" id="${idPrefix}AppearanceCt" placeholder="예: 60" value="${_appDefaults.ct}" style="margin-top:0;">
                         <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">sec</span>
                     </div>
+                    <div style="display:flex;align-items:center;gap:8px;flex:0 0 200px;">
+                        <label class="form-label" style="white-space:nowrap;margin-bottom:0;width:70px;">검사 인원</label>
+                        <input type="text" class="form-input" id="${idPrefix}AppearanceWorkers" placeholder="0" value="${v('appearanceWorkers')}" style="margin-top:0;">
+                        <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">명</span>
+                    </div>
                 </div>
             </div>
 
@@ -2367,6 +2372,7 @@ const SettingsModule = (function() {
             cvt4: _normalizeProcess(g(`${prefix}Process4`).trim()) ? g(`${prefix}Cvt4`).trim() : '',
             appearanceCvt: g(`${prefix}AppearanceCvt`).trim(),
             appearanceCt: g(`${prefix}AppearanceCt`).trim(),
+            appearanceWorkers: g(`${prefix}AppearanceWorkers`).trim(),
             code: g(`${prefix}Code`).trim(),
             linkedProductId: g(`${prefix}LinkedProductId`).trim() || null,
             paintMaterials: _getCurrentPaintRows(prefix).filter(r => r.paintSpec || r.mainId || r.hardId || r.thinnerId)
