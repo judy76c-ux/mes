@@ -18657,6 +18657,7 @@ var ProdEquipmentModule = (function() {
     let _subTab   = 'spare';
     let _openProcs  = new Set();
     let _rightTab   = 'map';   // 'map' | 'detail'
+    let _layoutEditMode = false;
 
     // 도장(A/B) 세부공정 순서 — 제조관리 표준 기준
     const PROC_STATIONS = [
@@ -19281,10 +19282,93 @@ var ProdEquipmentModule = (function() {
         }
     }
 
+    const _LAYOUT_TILE_DEFAULTS = [
+        {key:'B_언로딩',  line:'도장B라인', proc:'언로딩',   left:661, top:69,  w:64,  h:28, color:'#2563eb'},
+        {key:'B_도장검사', line:'도장B라인', proc:'도장 검사',left:746, top:69,  w:80,  h:28, color:'#2563eb'},
+        {key:'B_세척',    line:'도장B라인', proc:'세척',     left:713, top:95,  w:64,  h:28, color:'#0891b2'},
+        {key:'B_로딩',    line:'도장B라인', proc:'로딩',     left:669, top:120, w:60,  h:28, color:'#2563eb'},
+        {key:'B_건조',    line:'도장B라인', proc:'건조',     left:127, top:53,  w:472, h:52, color:'#ec4899'},
+        {key:'A_세척',    line:'도장A라인', proc:'세척',     left:787, top:228, w:62,  h:28, color:'#0891b2'},
+        {key:'A_로딩',    line:'도장A라인', proc:'로딩',     left:795, top:262, w:62,  h:28, color:'#2563eb'},
+        {key:'A_언로딩',  line:'도장A라인', proc:'언로딩',   left:739, top:283, w:64,  h:28, color:'#2563eb'},
+        {key:'A_도장검사', line:'도장A라인', proc:'도장 검사',left:826, top:283, w:80,  h:28, color:'#2563eb'},
+        {key:'A_건조',    line:'도장A라인', proc:'건조',     left:267, top:274, w:416, h:38, color:'#ec4899'},
+        {key:'_배합',     line:'',          proc:'배합',     left:8,   top:161, w:88,  h:175,color:'#334155'},
+    ];
+    const _LAYOUT_TILES_KEY = 'equipLayoutTilePos_v2';
+    function _loadTilePos() {
+        try { return JSON.parse(localStorage.getItem(_LAYOUT_TILES_KEY) || '{}'); } catch(e) { return {}; }
+    }
+    function _saveTilePos(obj) { localStorage.setItem(_LAYOUT_TILES_KEY, JSON.stringify(obj)); }
+    function toggleLayoutEdit() { _layoutEditMode = !_layoutEditMode; _renderRightPanel(); }
+    function saveLayoutTiles() {
+        const pos = {};
+        document.querySelectorAll('[data-ltile]').forEach(el => {
+            pos[el.dataset.ltile] = { left:parseInt(el.style.left)||0, top:parseInt(el.style.top)||0,
+                w:parseInt(el.style.width)||60, h:parseInt(el.style.height)||28 };
+        });
+        _saveTilePos(pos);
+        _layoutEditMode = false;
+        _renderRightPanel();
+    }
+    function cancelLayoutEdit() { _layoutEditMode = false; _renderRightPanel(); }
+    function resetLayoutTiles() {
+        if (!confirm('타일 위치를 기본값으로 초기화할까요?')) return;
+        localStorage.removeItem(_LAYOUT_TILES_KEY);
+        _layoutEditMode = false;
+        _renderRightPanel();
+    }
+    function _startDragTile(e, tileKey) {
+        e.preventDefault(); e.stopPropagation();
+        const tile = document.querySelector('[data-ltile="' + tileKey + '"]');
+        const container = tile && tile.parentElement;
+        if (!tile || !container) return;
+        tile.style.zIndex = '20';
+        const cr = container.getBoundingClientRect();
+        const sx = e.clientX, sy = e.clientY;
+        const sl = parseInt(tile.style.left)||0, st2 = parseInt(tile.style.top)||0;
+        const tw = parseInt(tile.style.width)||60, th = parseInt(tile.style.height)||28;
+        const onMove = (me) => {
+            tile.style.left = Math.max(0, Math.min(cr.width-tw,  sl + me.clientX - sx)) + 'px';
+            tile.style.top  = Math.max(0, Math.min(cr.height-th, st2 + me.clientY - sy)) + 'px';
+        };
+        const onUp = () => { tile.style.zIndex='5'; document.removeEventListener('mousemove',onMove); document.removeEventListener('mouseup',onUp); };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    }
+
     function _renderPlantLayout() {
         if (_line !== '도장A라인' && _line !== '도장B라인') return '';
         const aActive = _line === '도장A라인';
         const bActive = _line === '도장B라인';
+        const isAdmin = _isAdmin();
+        const savedPos = _loadTilePos();
+        const tileHtml = _LAYOUT_TILE_DEFAULTS.map(t => {
+            const p = savedPos[t.key] || {};
+            const l = p.left ?? t.left;
+            const tp = p.top ?? t.top;
+            const w = p.w ?? t.w;
+            const h = p.h ?? t.h;
+            const lineName = t.key === '_배합' ? _line : t.line;
+            if (_layoutEditMode) {
+                return `<div data-ltile="${t.key}"
+                    onmousedown="ProdEquipmentModule._startDragTile(event,'${t.key}')"
+                    style="position:absolute;left:${l}px;top:${tp}px;width:${w}px;height:${h}px;
+                           border:2px dashed ${t.color};border-radius:6px;background:${t.color}44;
+                           color:#0f172a;font-size:.7rem;font-weight:800;z-index:5;
+                           cursor:move;display:flex;align-items:center;justify-content:center;
+                           text-align:center;user-select:none;padding:2px;">${t.proc}</div>`;
+            } else {
+                return `<button type="button" data-ltile="${t.key}"
+                    onclick="ProdEquipmentModule.focusProcess('${lineName}','${t.proc}')"
+                    title="${lineName} - ${t.proc}"
+                    style="position:absolute;left:${l}px;top:${tp}px;width:${w}px;height:${h}px;
+                           border:1px solid ${t.color};border-radius:6px;background:${t.color}22;
+                           color:#0f172a;font-size:.72rem;font-weight:800;z-index:4;cursor:pointer;
+                           display:flex;align-items:center;justify-content:center;text-align:center;
+                           backdrop-filter:blur(1px);">${t.proc}</button>`;
+            }
+        }).join('');
         const lineOverlay = (line, active, left, top, width, height) => `
             <button type="button" onclick="ProdEquipmentModule.switchLine('${line}')"
                 title="${line}"
@@ -19298,17 +19382,6 @@ var ProdEquipmentModule = (function() {
                     ${active ? '선택됨' : '라인 선택'}
                 </span>
             </button>`;
-        const procOverlay = (line, proc, left, top, width, height, color) => `
-            <button type="button" onclick="ProdEquipmentModule.focusProcess('${line}', '${proc}')"
-                title="${line} - ${proc}"
-                style="position:absolute;left:${left}px;top:${top}px;width:${width}px;height:${height}px;
-                       border:1px solid ${color};border-radius:6px;background:${color}22;
-                       color:#0f172a;font-size:.72rem;font-weight:800;z-index:4;cursor:pointer;
-                       display:flex;align-items:center;justify-content:center;text-align:center;
-                       backdrop-filter:blur(1px);">
-                ${proc}
-            </button>`;
-
         return `
             <div class="card" style="margin-bottom:16px;overflow:hidden;">
                 <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border-color);background:var(--bg-primary);">
@@ -19318,11 +19391,23 @@ var ProdEquipmentModule = (function() {
                             <h4 style="margin:0;font-size:0.98rem;color:var(--text-primary);">현장 레이아웃</h4>
                             <p style="margin:3px 0 0;font-size:0.75rem;color:var(--text-muted);">도장 라인, 검사실, 레이저룸, 공용 설비 배치</p>
                         </div>
+                        ${_layoutEditMode ? '<span style="font-size:0.75rem;background:#fef9c3;color:#854d0e;padding:2px 8px;border-radius:10px;border:1px solid #fde047;margin-left:4px;white-space:nowrap;">편집 중 — 드래그로 이동</span>' : ''}
                     </div>
-                    <div style="display:flex;gap:10px;align-items:center;font-size:0.74rem;color:var(--text-muted);">
-                        <span style="display:flex;align-items:center;gap:5px;"><i style="width:12px;height:8px;background:#93c5fd;border-radius:2px;display:inline-block;"></i>Booth</span>
-                        <span style="display:flex;align-items:center;gap:5px;"><i style="width:12px;height:8px;background:#f9a8d4;border-radius:2px;display:inline-block;"></i>IR</span>
-                        <span style="display:flex;align-items:center;gap:5px;"><i style="width:12px;height:8px;background:#e879f9;border-radius:2px;display:inline-block;"></i>Ion</span>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <span style="display:flex;gap:8px;align-items:center;font-size:0.74rem;color:var(--text-muted);">
+                            <span style="display:flex;align-items:center;gap:4px;"><i style="width:12px;height:8px;background:#93c5fd;border-radius:2px;display:inline-block;"></i>Booth</span>
+                            <span style="display:flex;align-items:center;gap:4px;"><i style="width:12px;height:8px;background:#f9a8d4;border-radius:2px;display:inline-block;"></i>IR</span>
+                            <span style="display:flex;align-items:center;gap:4px;"><i style="width:12px;height:8px;background:#e879f9;border-radius:2px;display:inline-block;"></i>Ion</span>
+                        </span>
+                        ${isAdmin ? (_layoutEditMode ? `
+                            <button onclick="ProdEquipmentModule.saveLayoutTiles()" class="btn btn-primary" style="padding:3px 10px;font-size:0.76rem;">저장</button>
+                            <button onclick="ProdEquipmentModule.cancelLayoutEdit()" class="btn btn-secondary" style="padding:3px 10px;font-size:0.76rem;">취소</button>
+                            <button onclick="ProdEquipmentModule.resetLayoutTiles()" style="padding:3px 10px;font-size:0.76rem;border:1px solid #fca5a5;border-radius:6px;background:transparent;color:#dc2626;cursor:pointer;">초기화</button>
+                        ` : `
+                            <button onclick="ProdEquipmentModule.toggleLayoutEdit()" style="padding:3px 10px;font-size:0.76rem;border:1px solid var(--border-color);border-radius:6px;background:transparent;cursor:pointer;display:flex;align-items:center;gap:4px;">
+                                <span class="material-symbols-outlined" style="font-size:14px;">edit</span>타일 편집
+                            </button>
+                        `) : ''}
                     </div>
                 </div>
                 <div style="padding:14px 16px;background:#f8fafc;overflow-x:auto;">
@@ -19468,19 +19553,9 @@ var ProdEquipmentModule = (function() {
                             <path d="M110 180 V96 H895 V136 H1020 V194 H930" fill="none" stroke="#ef2d2d" stroke-width="3"/>
                         </svg>
 
-                        ${lineOverlay('도장B라인', bActive, 90, 66, 870, 184)}
-                        ${lineOverlay('도장A라인', aActive, 96, 292, 936, 162)}
-                        ${procOverlay('도장B라인', '세척', 1018, 136, 94, 42, '#0891b2')}
-                        ${procOverlay('도장B라인', '로딩', 956, 172, 86, 42, '#2563eb')}
-                        ${procOverlay('도장B라인', '언로딩', 944, 98, 92, 42, '#2563eb')}
-                        ${procOverlay('도장B라인', '도장 검사', 1066, 98, 88, 42, '#2563eb')}
-                        ${procOverlay('도장A라인', '세척', 1124, 326, 88, 42, '#0891b2')}
-                        ${procOverlay('도장A라인', '로딩', 1136, 374, 88, 42, '#2563eb')}
-                        ${procOverlay('도장A라인', '언로딩', 1056, 404, 92, 42, '#2563eb')}
-                        ${procOverlay('도장A라인', '도장 검사', 1180, 404, 88, 42, '#2563eb')}
-                        ${procOverlay('도장A라인', '건조', 382, 392, 594, 54, '#ec4899')}
-                        ${procOverlay('도장B라인', '건조', 182, 76, 674, 74, '#ec4899')}
-                        ${procOverlay(_line, '배합', 12, 230, 126, 250, '#334155')}
+                        ${lineOverlay('도장B라인', bActive, 63, 46, 609, 129)}
+                        ${lineOverlay('도장A라인', aActive, 67, 204, 655, 113)}
+                        ${tileHtml}
                     </div>
                 </div>
             </div>`;
@@ -23593,6 +23668,12 @@ var ProdEquipmentModule = (function() {
         selectEquip,
         toggleProc,
         switchRightTab,
+        // 레이아웃 타일 편집
+        toggleLayoutEdit,
+        saveLayoutTiles,
+        cancelLayoutEdit,
+        resetLayoutTiles,
+        _startDragTile,
         switchSubTab,
         openEquipAddModal,
         editEquip,

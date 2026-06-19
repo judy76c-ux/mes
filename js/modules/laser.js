@@ -445,7 +445,7 @@ var LaserWorkModule = (function() {
         updatePackUnitDisplay();
         if (ct > 0 && cvt > 0) {
             const totalSec = (qty / cvt) * ct;
-            detail.innerHTML = `제품 기초 레이져 공정 C.TIME <strong>${UIUtils.formatNumber(ct)} sec</strong> / CVT <strong>${UIUtils.formatNumber(cvt)}개</strong><br>
+            detail.innerHTML = `제품 기초 레이져 공정 C.TIME <strong>${UIUtils.formatNumber(ct)} sec</strong> / CVT <strong>${UIUtils.formatNumber(cvt)}개</strong> / 
                 예상 작업 소요시간 <strong style="color:var(--accent-blue);">${_fmtLaserMinutes(totalSec / 60)}</strong>
                 <span style="color:var(--text-muted);">(${UIUtils.formatNumber(qty)} / ${UIUtils.formatNumber(cvt)} × ${UIUtils.formatNumber(ct)} sec)</span>`;
             updateStandardEndTime(false);
@@ -858,11 +858,6 @@ var LaserWorkModule = (function() {
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
                 <div class="form-group" style="margin:0;">
-                    <label class="form-label">각인 시간은 프로그램의 시간을 기록(sec) <span style="color:var(--accent-red)">*</span></label>
-                    <input type="number" class="form-input" id="lwEngravingTime" value="${d.engravingTime || ''}" placeholder="0.0">
-                    <div id="lwLaserCycleDetail" style="font-size:0.86rem;line-height:1.45;color:var(--text-muted);margin-top:5px;"></div>
-                </div>
-                <div class="form-group" style="margin:0;">
                     <label class="form-label">렌즈 높이 확인 방법 <span style="color:var(--accent-red)">*</span></label>
                     <div style="min-height:38px;display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-primary);">
                         <span style="font-size:0.86rem;color:var(--text-secondary);white-space:nowrap;">렌즈 높이 확인 방법 :</span>
@@ -875,6 +870,11 @@ var LaserWorkModule = (function() {
                     </div>
                     <div style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;">기준 높이: 375mm</div>
                     <input type="hidden" id="lwLensHeight" value="${d.lensHeight || ''}">
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label class="form-label">각인 시간은 프로그램의 시간을 기록(sec) <span style="color:var(--accent-red)">*</span></label>
+                    <input type="number" class="form-input" id="lwEngravingTime" value="${d.engravingTime || ''}" placeholder="0.0">
+                    <div id="lwLaserCycleDetail" style="font-size:0.86rem;line-height:1.45;color:var(--text-muted);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
                 </div>
                 <div class="form-group" style="margin:0;grid-column:1 / -1;">
                     <div style="min-height:40px;display:flex;align-items:center;gap:12px;padding:8px 10px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-primary);">
