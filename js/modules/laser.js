@@ -1926,6 +1926,44 @@ var LaserInspectionModule = (function() {
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     }
 
+    function _num(value) {
+        return Number(String(value == null ? '' : value).replace(/,/g, '')) || 0;
+    }
+
+    function _splitFullBoxQty(qty, packUnit) {
+        const total = Math.max(0, _num(qty));
+        const unit = _num(packUnit);
+        if (unit <= 0) return { packUnit: 0, fullBoxQty: total, residualQty: 0, boxCount: 0 };
+        const boxCount = Math.floor(total / unit);
+        const fullBoxQty = boxCount * unit;
+        return { packUnit: unit, fullBoxQty, residualQty: total - fullBoxQty, boxCount };
+    }
+
+    function _findProductPackUnit(carModel, partName, color) {
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const packKeys = ['packUnit', 'packingUnit', 'packageUnit', 'packQty', 'packingQty'];
+        const getPack = prod => {
+            for (const key of packKeys) {
+                const value = prod && prod[key];
+                if (value !== undefined && value !== null && String(value).trim() !== '') return value;
+            }
+            return 0;
+        };
+        const exact = products.find(p =>
+            (p.carModel || '') === (carModel || '') &&
+            (p.partName || '') === (partName || '') &&
+            (p.color || '') === (color || '') &&
+            _num(getPack(p)) > 0
+        );
+        if (exact) return getPack(exact);
+        const byPart = products.find(p =>
+            (p.carModel || '') === (carModel || '') &&
+            (p.partName || '') === (partName || '') &&
+            _num(getPack(p)) > 0
+        );
+        return byPart ? getPack(byPart) : 0;
+    }
+
     function render(container) {
         if (_currentView === 'standard') {
             renderNonconformStandardPage(container);
@@ -2715,7 +2753,7 @@ var LaserInspectionModule = (function() {
             const _laserLot = _lot.laserDate || data.date || '';
             const _packUnit = _workRef && _workRef.packUnit
                 ? _workRef.packUnit
-                : (_getLaserCycleSpec(data.carModel, data.partName, data.color).packUnit || 0);
+                : _findProductPackUnit(data.carModel, data.partName, data.color);
             const _boxSplit = _splitFullBoxQty(data.goodQty || data.inspQty || 0, _packUnit);
             if (_workRef && data.workLogId) {
                 await Storage.update(DB.STORES.LASER_WORK_LOG, data.workLogId, {
