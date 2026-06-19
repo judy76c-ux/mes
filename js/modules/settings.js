@@ -1087,6 +1087,9 @@ const SettingsModule = (function() {
         // 도장-A / 도장-B 컬러 행 초기 표시 여부 (둘 다 있을 때만)
         const _procVals = [v('process1'), v('process2'), v('process3'), v('process4')];
         const _showPaintColorRow = _procVals.includes('도장-A') && _procVals.includes('도장-B');
+        const _filledProcs = _procVals.filter(Boolean);
+        const _stageTotal = _filledProcs.length + 1; // +1 = 외관검사
+        const _stageBg = _stageTotal >= 4 ? '#7c3aed' : _stageTotal === 3 ? 'var(--accent-blue)' : 'var(--accent-green)';
 
         // 수정 모드: 이 제품에 연결된 사출 자재 조회
         const linkedInjMats = isEdit
@@ -1321,9 +1324,10 @@ const SettingsModule = (function() {
                 </div>
             </div>
 
-            <div style="font-weight:600;color:var(--text-primary);margin:16px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--accent-blue);">
+            <div style="font-weight:600;color:var(--text-primary);margin:16px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--accent-blue);display:flex;align-items:center;gap:10px;">
                 <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;">account_tree</span>
                 제조 공정 및 사양 (C/T, CVT)
+                <span id="${idPrefix}StageCount" style="font-size:0.75rem;font-weight:700;padding:2px 10px;border-radius:20px;background:${_stageBg};color:#fff;">${_stageTotal}단계 제품</span>
             </div>
             
             <div id="${idPrefix}ProcessContainer">
@@ -2243,16 +2247,23 @@ const SettingsModule = (function() {
         updateProductInjInfo(idPrefix);
     }
 
-    /* 제조공정 셀렉트 변경 시 도장-A/B 컬러 행 표시/숨김 */
+    /* 제조공정 셀렉트 변경 시 도장-A/B 컬러 행 표시/숨김 + 단계 수 업데이트 */
     function onProductProcessChange(prefix) {
         const g = id => (document.getElementById(id) || {}).value || '';
-        const procs = [1,2,3,4].map(i => g(`${prefix}Process${i}`));
+        const procs = [1,2,3,4].map(i => g(`${prefix}Process${i}`)).filter(Boolean);
         const hasA = procs.includes('도장-A');
         const hasB = procs.includes('도장-B');
         const row = document.getElementById(`${prefix}PaintColorRow`);
         if (row) row.style.display = (hasA && hasB) ? '' : 'none';
         if (document.getElementById(`${prefix}PaintList`)) {
             _renderPaintList(prefix, _getCurrentPaintRows(prefix));
+        }
+        // 단계 수 배지 업데이트 (공정 수 + 외관검사 1단계)
+        const badge = document.getElementById(`${prefix}StageCount`);
+        if (badge) {
+            const total = procs.length + 1; // +1 = 외관검사
+            badge.textContent = `${total}단계 제품`;
+            badge.style.background = total >= 4 ? '#7c3aed' : total === 3 ? 'var(--accent-blue)' : 'var(--accent-green)';
         }
     }
 

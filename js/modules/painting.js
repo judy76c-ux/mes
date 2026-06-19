@@ -3708,19 +3708,17 @@ const PaintingInspectionModule = (function() {
     };
     let _nonconformStandardImage = null;
 
-    // 지정된 도장 라인 완료 후 레이저 공정이 남아있는지 판단
-    // paintLineName: '도장-A' 또는 '도장-B'
-    // true  → 레이저 아직 남음 (레이저 대기품으로 이동)
-    // false → 레이저 없거나 이미 지남 (도장 검사 → 출하대기로 이동)
+    // 지정된 도장 라인 완료 후 바로 다음 공정이 레이저인지 판단
+    // true  → 다음 공정이 레이저 (레이저 대기품으로 이동)
+    // false → 다음 공정이 레이저가 아님 (도장 검사 → 출하대기로 이동)
     function _laserAfterPaintLine(product, paintLineName) {
         if (!product || !paintLineName) return false;
         const procs = [product.process1, product.process2, product.process3, product.process4]
-            .map(p => (p || '').trim());
+            .map(p => (p || '').trim()).filter(Boolean);
         const paintIdx = procs.findIndex(p => p === paintLineName);
-        const laserIdx = procs.findIndex(p => p.includes('레이저') || p.includes('레이져'));
-        if (laserIdx < 0) return false; // 레이저 공정 없음
-        if (paintIdx < 0) return false; // 해당 도장 라인이 공정표에 없음
-        return laserIdx > paintIdx;     // 레이저가 이 도장 이후에 위치
+        if (paintIdx < 0 || paintIdx >= procs.length - 1) return false; // 못 찾거나 마지막 공정
+        const nextProc = procs[paintIdx + 1];
+        return nextProc.includes('레이저') || nextProc.includes('레이져');
     }
 
     function _currentUser() {

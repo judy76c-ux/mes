@@ -3236,16 +3236,15 @@ var LaserStandbyModule = (function() {
         const laserPaintWorks = paintingWorks.filter(w => {
             const prod = findProduct(products, w);
             if (!prod || !_hasLaserProcess(prod)) return false;
-            // 이 작업에 사용된 도장 라인이 레이저 공정보다 앞에 있을 때만 포함
-            // 도장-B가 레이저 뒤에 있는 제품의 도장-B 작업은 레이저 대기 대상이 아님
+            // 완료된 도장 라인 바로 다음 공정이 레이저일 때만 레이저 대기에 포함
             const procs = [prod.process1, prod.process2, prod.process3, prod.process4]
                 .map(_normalizeFlowKey).filter(Boolean);
             const paintLine = _normalizeFlowKey(w.line || '');
-            const paintIdx  = paintLine ? procs.indexOf(paintLine) : -1;
-            const laserIdx  = procs.findIndex(v => v === '레이저' || v === '레이져');
-            if (laserIdx < 0) return false;
-            if (paintIdx < 0) return _hasLaserAfterPaintFlow(prod); // 라인 정보 없으면 기존 로직
-            return laserIdx > paintIdx;
+            if (!paintLine) return false; // 라인 정보 없으면 제외
+            const paintIdx = procs.indexOf(paintLine);
+            if (paintIdx < 0 || paintIdx >= procs.length - 1) return false; // 못 찾거나 마지막 공정이면 제외
+            const nextProc = procs[paintIdx + 1];
+            return nextProc === '레이저' || nextProc === '레이져';
         });
 
         laserPaintWorks.forEach(w => {
