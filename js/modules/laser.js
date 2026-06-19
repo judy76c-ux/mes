@@ -332,7 +332,7 @@ var LaserWorkModule = (function() {
         const name = String(partName || '').trim();
         const ymd = _fmtProgramDateYYMMDD(dateValue);
         if (!name && !ymd) return '품명+작업일날짜(YYMMDD)';
-        return `${name || '품명'}${ymd || 'YYMMDD'}`;
+        return `${name || '품명'}-${ymd || 'YYMMDD'}`;
     }
 
     function updateLaserGuideChecks() {
@@ -343,10 +343,19 @@ var LaserWorkModule = (function() {
         const hiddenProgramEl = document.getElementById('lwProgramName');
         const hiddenLensEl = document.getElementById('lwLensHeight');
         const programCheck = document.getElementById('lwProgramNameChecked');
-        const lensCheck = document.getElementById('lwLensHeightChecked');
+        const lensPointerCheck = document.getElementById('lwLensPointerChecked');
+        const lensRulerCheck = document.getElementById('lwLensRulerChecked');
         if (guideEl) guideEl.textContent = programGuide;
         if (hiddenProgramEl) hiddenProgramEl.value = programCheck && programCheck.checked ? programGuide : '';
-        if (hiddenLensEl) hiddenLensEl.value = lensCheck && lensCheck.checked ? '375mm 확인' : '';
+        if (hiddenLensEl) hiddenLensEl.value = lensPointerCheck && lensPointerCheck.checked && lensRulerCheck && lensRulerCheck.checked ? '포인터/자 375mm 확인' : '';
+    }
+
+    function updatePackUnitDisplay() {
+        const el = document.getElementById('lwPackUnitDisplay');
+        if (!el) return;
+        const spec = _getLaserCycleSpec(_selectedCarModel, _selectedPartName, _selectedColor);
+        const packUnit = spec && spec.packUnit ? UIUtils.formatNumber(spec.packUnit) : '-';
+        el.innerHTML = `박스당 포장 수량은 : <strong style="font-size:1.18rem;color:var(--accent-blue);">${packUnit}</strong> 개`;
     }
 
     function updateStandardEndTime(forceFill = false) {
@@ -383,17 +392,17 @@ var LaserWorkModule = (function() {
         const qtyInput = document.getElementById('lwQuantity');
         const qtyValue = qtyInput && String(qtyInput.value || '').trim() !== '' ? Number(qtyInput.value) : 0;
         const qty = qtyValue || _selectedLotQtyTotal();
-        const packText = spec.packUnit ? ` / 포장단위 <strong>${_esc(spec.packUnit)}</strong>` : '';
+        updatePackUnitDisplay();
         if (ct > 0 && cvt > 0) {
             const totalSec = (qty / cvt) * ct;
-            detail.innerHTML = `제품 기초 레이져 공정 C.TIME <strong>${UIUtils.formatNumber(ct)} sec</strong> / CVT <strong>${UIUtils.formatNumber(cvt)}개</strong>${packText}<br>
+            detail.innerHTML = `제품 기초 레이져 공정 C.TIME <strong>${UIUtils.formatNumber(ct)} sec</strong> / CVT <strong>${UIUtils.formatNumber(cvt)}개</strong><br>
                 예상 작업 소요시간 <strong style="color:var(--accent-blue);">${_fmtLaserMinutes(totalSec / 60)}</strong>
                 <span style="color:var(--text-muted);">(${UIUtils.formatNumber(qty)} / ${UIUtils.formatNumber(cvt)} × ${UIUtils.formatNumber(ct)} sec)</span>`;
             updateStandardEndTime(false);
             return;
         }
         detail.textContent = spec.ct || spec.cvt
-            ? `제품 기초 레이져 공정 C.TIME ${spec.ct || '-'} sec / CVT ${spec.cvt || '-'}개${spec.packUnit ? ` / 포장단위 ${spec.packUnit}` : ''}`
+            ? `제품 기초 레이져 공정 C.TIME ${spec.ct || '-'} sec / CVT ${spec.cvt || '-'}개`
             : (spec.foundProduct ? '제품기초 레이져공정 CT/CVT 미등록' : '제품기초 제품 매칭 실패');
         updateStandardEndTime(false);
     }
@@ -738,6 +747,9 @@ var LaserWorkModule = (function() {
                     </button>
                 </div>
                 <div id="lwLotContainer"></div>
+                <div id="lwPackUnitDisplay" style="margin-top:8px;padding:9px 12px;border:1px solid rgba(37,99,235,0.25);border-radius:8px;background:rgba(37,99,235,0.06);font-size:1rem;font-weight:800;color:var(--text-primary);text-align:right;">
+                    박스당 포장 수량은 : <strong style="font-size:1.18rem;color:var(--accent-blue);">-</strong> 개
+                </div>
             </div>
             <div id="lwSplitPanel" style="display:none;margin-bottom:8px;padding:8px 12px;background:rgba(109,40,217,0.06);border:1px solid rgba(109,40,217,0.25);border-radius:8px;">
                 <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
@@ -796,20 +808,30 @@ var LaserWorkModule = (function() {
                     <div id="lwLaserCycleDetail" style="font-size:0.86rem;line-height:1.45;color:var(--text-muted);margin-top:5px;"></div>
                 </div>
                 <div class="form-group" style="margin:0;">
-                    <label class="form-label">작성 가이드 이름 <span style="color:var(--accent-red)">*</span></label>
-                    <label style="min-height:38px;display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-primary);cursor:pointer;">
-                        <input type="checkbox" id="lwProgramNameChecked" ${d.programName ? 'checked' : ''} onchange="LaserWorkModule.updateLaserGuideChecks()">
-                        <span style="font-size:0.86rem;color:var(--text-primary);">파일명을 <strong id="lwProgramGuideName">${_laserProgramGuideName(d.partName || _selectedPartName, d.date || UIUtils.today())}</strong> 으로 저장했냐?</span>
+                    <label class="form-label">프로그램 저장 이름 <span style="color:var(--accent-red)">*</span></label>
+                    <div style="min-height:38px;display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-primary);">
+                        <span style="font-size:0.86rem;color:var(--text-secondary);white-space:nowrap;">프로그램 저장 이름 :</span>
+                        <span style="flex:1;font-size:0.95rem;font-weight:800;color:var(--text-primary);">[ <span id="lwProgramGuideName">${_laserProgramGuideName(d.partName || _selectedPartName, d.date || UIUtils.today())}</span> ]</span>
+                    </div>
+                    <label style="margin-top:6px;min-height:34px;display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-secondary);cursor:pointer;">
+                        <input type="checkbox" id="lwProgramNameChecked" ${d.programName ? 'checked' : ''} onchange="LaserWorkModule.updateLaserGuideChecks()" style="width:18px;height:18px;">
+                        <span style="font-size:0.9rem;font-weight:700;color:var(--text-primary);">저장이름 확인</span>
                     </label>
                     <input type="hidden" id="lwProgramName" value="${d.programName || ''}">
-                    <div style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;">파일명: 품명+작업일날짜(YYMMDD)</div>
+                    <div style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;">파일명: 품명-yymmdd</div>
                 </div>
                 <div class="form-group" style="margin:0;">
-                    <label class="form-label">렌즈 높이 확인 <span style="color:var(--accent-red)">*</span></label>
-                    <label style="min-height:38px;display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-primary);cursor:pointer;">
-                        <input type="checkbox" id="lwLensHeightChecked" ${d.lensHeight ? 'checked' : ''} onchange="LaserWorkModule.updateLaserGuideChecks()">
-                        <span style="font-size:0.86rem;color:var(--text-primary);">렌즈높이 <strong>375mm</strong> 확인했냐?</span>
-                    </label>
+                    <label class="form-label">렌즈 높이 확인 방법 <span style="color:var(--accent-red)">*</span></label>
+                    <div style="min-height:38px;display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-primary);">
+                        <span style="font-size:0.86rem;color:var(--text-secondary);white-space:nowrap;">렌즈 높이 확인 방법 :</span>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.9rem;font-weight:700;cursor:pointer;">
+                            <input type="checkbox" id="lwLensPointerChecked" ${d.lensHeight ? 'checked' : ''} onchange="LaserWorkModule.updateLaserGuideChecks()" style="width:18px;height:18px;"> 포인터
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:0.9rem;font-weight:700;cursor:pointer;">
+                            <input type="checkbox" id="lwLensRulerChecked" ${d.lensHeight ? 'checked' : ''} onchange="LaserWorkModule.updateLaserGuideChecks()" style="width:18px;height:18px;"> 자
+                        </label>
+                    </div>
+                    <div style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;">기준 높이: 375mm</div>
                     <input type="hidden" id="lwLensHeight" value="${d.lensHeight || ''}">
                 </div>
             </div>
@@ -1462,8 +1484,8 @@ var LaserWorkModule = (function() {
         if (!data.startTime) add('시작 시간', 'lwStartTime');
         if (!data.endTime) add('완료 시간', 'lwEndTime');
         if (!(Number(data.engravingTime) > 0)) add('각인 시간', 'lwEngravingTime');
-        if (!data.programName) add('작성 가이드 이름 저장 확인', 'lwProgramNameChecked');
-        if (!data.lensHeight) add('렌즈높이 375mm 확인', 'lwLensHeightChecked');
+        if (!data.programName) add('저장이름 확인', 'lwProgramNameChecked');
+        if (!data.lensHeight) add('렌즈 높이 포인터/자 확인', 'lwLensPointerChecked');
 
         [
             ['초품', 'lwQcFirst', data.qcFirstQuality, data.qcFirstPosition, data.qcFirstPhoto],
