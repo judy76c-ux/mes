@@ -117,67 +117,132 @@ var LaserWipModule = (function() {
 
     // ── 탭 2: 레이져 후 재공품 현황 ──────────────────────────────────────
     function _renderAfterLaserTab(el) {
-        const rows    = _calcWip();
-        // 섹션 헤더를 포함해 렌더
-        const _sectionHeader = `
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding:10px 14px;
-                        background:rgba(139,92,246,0.07);border-left:3px solid var(--accent-purple);border-radius:0 8px 8px 0;">
-                <span class="material-symbols-outlined" style="font-size:1.2rem;color:var(--accent-purple);">bolt</span>
-                <div>
-                    <div style="font-size:0.92rem;font-weight:700;color:var(--accent-purple);">레이져 후 재공품 현황</div>
-                    <div style="font-size:0.76rem;color:var(--text-muted);">레이져 완료 후 도장(A/B) 투입 대기 재공품</div>
+        const rows       = _calcWip();
+        const totalLaser = rows.reduce((s,r) => s + r.laserQty, 0);
+        const totalPaint = rows.reduce((s,r) => s + r.paintBQty, 0);
+        const totalWip   = rows.reduce((s,r) => s + (r.wip > 0 ? r.wip : 0), 0);
+        const waitCount  = rows.filter(r => r.wip > 0).length;
+
+        // 차종별 그룹핑
+        const carGroups = {};
+        rows.forEach(r => {
+            const car = r.carModel || '차종 미지정';
+            if (!carGroups[car]) carGroups[car] = [];
+            carGroups[car].push(r);
+        });
+
+        const carCards = Object.entries(carGroups)
+            .sort(([a],[b]) => a.localeCompare(b, 'ko'))
+            .map(([carModel, items]) => {
+                const carWip = items.reduce((s,r) => s + (r.wip > 0 ? r.wip : 0), 0);
+                const itemRows = items
+                    .sort((a,b) => (a.partName||'').localeCompare(b.partName||'', 'ko'))
+                    .map(r => {
+                        const wipColor   = r.wip > 0 ? 'var(--accent-green)' : (r.wip < 0 ? 'var(--accent-red)' : 'var(--text-muted)');
+                        const statusText = r.wip > 0 ? '대기중' : (r.wip < 0 ? '오류' : '소진');
+                        return `<tr style="border-bottom:1px solid var(--border-color);"
+                                    onmouseover="this.style.background='var(--bg-secondary)'"
+                                    onmouseout="this.style.background=''">
+                            <td style="padding:5px 8px;font-size:0.8rem;font-weight:600;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(r.partName)}</td>
+                            <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);">${r.color && r.color !== '-' ? _esc(r.color) : ''}</td>
+                            <td style="padding:5px 8px;text-align:right;white-space:nowrap;">
+                                <span style="font-size:0.9rem;font-weight:800;color:${wipColor};">${UIUtils.formatNumber(Math.abs(r.wip))}</span>
+                                <span style="font-size:0.68rem;color:var(--text-muted);margin-left:1px;">EA</span>
+                            </td>
+                            <td style="padding:5px 8px;font-size:0.7rem;color:${wipColor};white-space:nowrap;">${statusText}</td>
+                        </tr>`;
+                    }).join('');
+                return `
+                <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
+                    <div style="background:var(--accent-purple,#7c3aed);color:#fff;padding:7px 10px;
+                                display:flex;align-items:center;justify-content:space-between;">
+                        <span style="font-weight:700;font-size:0.85rem;display:flex;align-items:center;gap:5px;">
+                            <span class="material-symbols-outlined" style="font-size:0.95rem;">directions_car</span>
+                            ${_esc(carModel)}
+                            <span style="font-size:0.7rem;font-weight:400;opacity:0.85;">${items.length}종</span>
+                        </span>
+                        <div style="font-size:0.75rem;">재공 <strong>${UIUtils.formatNumber(carWip)}</strong> EA</div>
+                    </div>
+                    <table style="width:100%;border-collapse:collapse;background:var(--bg-primary);">
+                        <thead>
+                            <tr style="background:var(--bg-secondary);">
+                                <th style="padding:4px 8px;text-align:left;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">품명</th>
+                                <th style="padding:4px 8px;text-align:left;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">컬러</th>
+                                <th style="padding:4px 8px;text-align:right;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">재공품</th>
+                                <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">상태</th>
+                            </tr>
+                        </thead>
+                        <tbody>${itemRows || '<tr><td colspan="4" style="padding:12px 8px;text-align:center;font-size:0.8rem;color:var(--text-muted);">내역 없음</td></tr>'}</tbody>
+                    </table>
+                </div>`;
+            }).join('');
+
+        const inventoryHtml = carCards
+            ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;">${carCards}</div>`
+            : `<div style="text-align:center;padding:40px;color:var(--text-muted);">
+                <span class="material-symbols-outlined" style="font-size:2.5rem;display:block;opacity:0.3;margin-bottom:8px;">check_circle</span>
+                현재 레이져 후 재공품이 없습니다.
+               </div>`;
+
+        el.innerHTML = `
+            <div class="stat-cards" style="margin-bottom:16px;">
+                <div class="stat-card purple">
+                    <div class="stat-card-value">${UIUtils.formatNumber(totalLaser)}</div>
+                    <div class="stat-card-label">레이져 완료 (EA)</div>
                 </div>
-            </div>`;
-        const hasStock = rows.some(r => r.wip > 0);
-
-        el.innerHTML = _sectionHeader + `
-            <!-- 요약 카드 -->
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;margin-bottom:20px;">
-                ${_summaryCard('레이져 완료',  rows.reduce((s,r)=>s+r.laserQty,0),              'bolt',      'var(--accent-purple)')}
-                ${_summaryCard('도장-B 투입',  rows.reduce((s,r)=>s+r.paintBQty,0),             'format_paint','var(--accent-blue)')}
-                ${_summaryCard('현재 재공품',  rows.reduce((s,r)=>s+(r.wip>0?r.wip:0),0),      'inventory', hasStock ? 'var(--accent-green)' : 'var(--text-muted)')}
-                ${_summaryCard('대기 품종 수', rows.filter(r=>r.wip>0).length,                  'category',  'var(--accent-orange)')}
+                <div class="stat-card blue">
+                    <div class="stat-card-value">${UIUtils.formatNumber(totalPaint)}</div>
+                    <div class="stat-card-label">도장 투입 (EA)</div>
+                </div>
+                <div class="stat-card green">
+                    <div class="stat-card-value">${UIUtils.formatNumber(totalWip)}</div>
+                    <div class="stat-card-label">현재 재공품 (EA)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-value">${waitCount}</div>
+                    <div class="stat-card-label">대기 품종 수</div>
+                </div>
             </div>
-
-            <p style="margin:0 0 10px;font-size:0.8rem;color:var(--text-muted);">
-                <span class="material-symbols-outlined" style="font-size:0.85rem;vertical-align:middle;">info</span>
-                제조공정에서 레이져 직후 다시 <strong>도장(A/B)</strong>으로 이어지는 제품만 표시됩니다.
-            </p>
-
-            <!-- 재공품 테이블 -->
-            <div style="border-radius:10px;overflow:hidden;border:1px solid var(--border-color);">
-                <table style="width:100%;border-collapse:collapse;font-size:0.88rem;">
-                    <thead>
-                        <tr style="background:linear-gradient(180deg,#f1f5f9,#e8ecf1);">
-                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">차종</th>
-                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">품명</th>
-                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">도장 컬러</th>
-                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">레이져작업일</th>
-                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">도장작업일</th>
-                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">사출LOT</th>
-                            <th style="padding:10px 14px;text-align:right;font-weight:600;color:var(--accent-purple);white-space:nowrap;">
-                                <span class="material-symbols-outlined" style="font-size:0.9rem;vertical-align:middle;">bolt</span>레이져 완료
-                            </th>
-                            <th style="padding:10px 14px;text-align:right;font-weight:600;color:var(--accent-blue);white-space:nowrap;">
-                                <span class="material-symbols-outlined" style="font-size:0.9rem;vertical-align:middle;">format_paint</span>도장-B 투입
-                            </th>
-                            <th style="padding:10px 14px;text-align:right;font-weight:600;color:var(--accent-green);white-space:nowrap;">
-                                <span class="material-symbols-outlined" style="font-size:0.9rem;vertical-align:middle;">inventory</span>재공품 현재고
-                            </th>
-                            <th style="padding:10px 14px;text-align:center;font-weight:600;color:var(--text-secondary);white-space:nowrap;">상태</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${rows.length === 0
-                            ? `<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text-muted);">
-                                <span class="material-symbols-outlined" style="font-size:2rem;display:block;margin-bottom:8px;opacity:0.4;">inbox</span>
-                                도장-B 공정이 있는 제품의 레이져 작업 이력이 없습니다.
-                                <div style="font-size:0.78rem;margin-top:6px;">제품 설정에서 process에 '도장-B'가 등록된 제품의 레이져 작업 등록 시 표시됩니다.</div>
-                               </td></tr>`
-                            : rows.map(r => _afterLaserRow(r)).join('')
-                        }
-                    </tbody>
-                </table>
+            <div class="card" style="margin-bottom:20px;">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">inventory_2</span> 재공 재고 현황</h4>
+                    <span style="font-size:0.75rem;color:var(--text-muted);">레이져 완료 − 도장 투입 = 재공품 (레이져→도장 공정 제품만)</span>
+                </div>
+                <div class="card-body" style="padding:16px;display:flex;flex-direction:column;gap:14px;">
+                    ${inventoryHtml}
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">table_rows</span> 분출 현황 <span style="font-size:0.78rem;color:var(--text-muted);font-weight:600;">(입출고 현황)</span></h4>
+                    <span style="font-size:0.75rem;color:var(--text-muted);">레이져 완료 / 도장 투입 내역</span>
+                </div>
+                <div class="card-body" style="padding:0;">
+                    <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+                        <thead>
+                            <tr style="background:var(--bg-secondary);border-bottom:2px solid var(--border-color);">
+                                <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">차종</th>
+                                <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">품명</th>
+                                <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">컬러</th>
+                                <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">레이져작업일</th>
+                                <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">도장작업일</th>
+                                <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">사출LOT</th>
+                                <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--accent-purple);white-space:nowrap;">레이져 완료</th>
+                                <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--accent-blue);white-space:nowrap;">도장 투입</th>
+                                <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--accent-green);white-space:nowrap;">재공품</th>
+                                <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--text-secondary);white-space:nowrap;">상태</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows.length === 0
+                                ? `<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text-muted);">
+                                    <span class="material-symbols-outlined" style="font-size:2rem;display:block;margin-bottom:8px;opacity:0.4;">inbox</span>
+                                    레이져 후 도장 공정이 있는 제품의 작업 이력이 없습니다.
+                                   </td></tr>`
+                                : rows.map(r => _afterLaserRow(r)).join('')}
+                        </tbody>
+                    </table>
+                </div>
             </div>`;
     }
 
@@ -195,47 +260,129 @@ var LaserWipModule = (function() {
     }
 
     function _renderAfterLaserResidualTab(el) {
-        const rows = _calcLaserResidualWip();
-        const totalResidual = rows.reduce((sum, row) => sum + row.residualQty, 0);
+        const rows          = _calcLaserResidualWip();
+        const totalResidual = rows.reduce((s,r) => s + r.residualQty, 0);
+        const totalGood     = rows.reduce((s,r) => s + r.goodQty, 0);
+        const totalShip     = rows.reduce((s,r) => s + r.fullBoxQty, 0);
+
+        // 차종별 그룹핑
+        const carGroups = {};
+        rows.forEach(r => {
+            const car = r.carModel || '차종 미지정';
+            if (!carGroups[car]) carGroups[car] = [];
+            carGroups[car].push(r);
+        });
+
+        const carCards = Object.entries(carGroups)
+            .sort(([a],[b]) => a.localeCompare(b, 'ko'))
+            .map(([carModel, items]) => {
+                const carResidual = items.reduce((s,r) => s + r.residualQty, 0);
+                const itemRows = items
+                    .sort((a,b) => (a.partName||'').localeCompare(b.partName||'', 'ko'))
+                    .map(r => `
+                    <tr style="border-bottom:1px solid var(--border-color);"
+                        onmouseover="this.style.background='var(--bg-secondary)'"
+                        onmouseout="this.style.background=''">
+                        <td style="padding:5px 8px;font-size:0.8rem;font-weight:600;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(r.partName)}</td>
+                        <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);">${r.color && r.color !== '-' ? _esc(r.color) : ''}</td>
+                        <td style="padding:5px 8px;text-align:right;white-space:nowrap;">
+                            <span style="font-size:0.9rem;font-weight:800;color:var(--accent-orange,#f59e0b);">${UIUtils.formatNumber(r.residualQty)}</span>
+                            <span style="font-size:0.68rem;color:var(--text-muted);margin-left:1px;">EA</span>
+                        </td>
+                        <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);">${r.packUnit ? UIUtils.formatNumber(r.packUnit) : '-'}</td>
+                    </tr>`).join('');
+                return `
+                <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
+                    <div style="background:var(--accent-orange,#f59e0b);color:#fff;padding:7px 10px;
+                                display:flex;align-items:center;justify-content:space-between;">
+                        <span style="font-weight:700;font-size:0.85rem;display:flex;align-items:center;gap:5px;">
+                            <span class="material-symbols-outlined" style="font-size:0.95rem;">directions_car</span>
+                            ${_esc(carModel)}
+                            <span style="font-size:0.7rem;font-weight:400;opacity:0.85;">${items.length}종</span>
+                        </span>
+                        <div style="font-size:0.75rem;">잔량 <strong>${UIUtils.formatNumber(carResidual)}</strong> EA</div>
+                    </div>
+                    <table style="width:100%;border-collapse:collapse;background:var(--bg-primary);">
+                        <thead>
+                            <tr style="background:var(--bg-secondary);">
+                                <th style="padding:4px 8px;text-align:left;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">품명</th>
+                                <th style="padding:4px 8px;text-align:left;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">컬러</th>
+                                <th style="padding:4px 8px;text-align:right;font-size:0.68rem;color:var(--accent-orange,#f59e0b);font-weight:600;border-bottom:1px solid var(--border-color);">잔량</th>
+                                <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">포장단위</th>
+                            </tr>
+                        </thead>
+                        <tbody>${itemRows || '<tr><td colspan="4" style="padding:12px 8px;text-align:center;font-size:0.8rem;color:var(--text-muted);">내역 없음</td></tr>'}</tbody>
+                    </table>
+                </div>`;
+            }).join('');
+
+        const inventoryHtml = carCards
+            ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;">${carCards}</div>`
+            : `<div style="text-align:center;padding:40px;color:var(--text-muted);">
+                <span class="material-symbols-outlined" style="font-size:2.5rem;display:block;opacity:0.3;margin-bottom:8px;">check_circle</span>
+                현재 잔량이 없습니다.
+               </div>`;
+
         el.innerHTML = `
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding:10px 14px;
-                        background:rgba(245,158,11,0.08);border-left:3px solid var(--accent-orange);border-radius:0 8px 8px 0;">
-                <span class="material-symbols-outlined" style="font-size:1.2rem;color:var(--accent-orange);">inventory_2</span>
-                <div>
-                    <div style="font-size:0.92rem;font-weight:700;color:var(--accent-orange);">레이져 후 잔량 현황</div>
-                    <div style="font-size:0.76rem;color:var(--text-muted);">포장단위 완박스가 되지 않아 출하검사 대기에서 제외된 잔량</div>
+            <div class="stat-cards" style="margin-bottom:16px;">
+                <div class="stat-card orange">
+                    <div class="stat-card-value">${UIUtils.formatNumber(totalResidual)}</div>
+                    <div class="stat-card-label">총 잔량 (EA)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-value">${rows.length}</div>
+                    <div class="stat-card-label">잔량 품목 수</div>
+                </div>
+                <div class="stat-card green">
+                    <div class="stat-card-value">${UIUtils.formatNumber(totalShip)}</div>
+                    <div class="stat-card-label">출하가능 (EA)</div>
+                </div>
+                <div class="stat-card blue">
+                    <div class="stat-card-value">${UIUtils.formatNumber(totalGood)}</div>
+                    <div class="stat-card-label">총 양품 (EA)</div>
                 </div>
             </div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:20px;">
-                ${_summaryCard('잔량 입고', totalResidual, 'inventory_2', 'var(--accent-orange)')}
-                ${_summaryCard('잔량 품목', rows.length, 'category', 'var(--accent-blue)')}
+            <div class="card" style="margin-bottom:20px;">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">inventory_2</span> 잔량 재고 현황</h4>
+                    <span style="font-size:0.75rem;color:var(--text-muted);">포장단위 미달로 출하 제외된 잔량</span>
+                </div>
+                <div class="card-body" style="padding:16px;display:flex;flex-direction:column;gap:14px;">
+                    ${inventoryHtml}
+                </div>
             </div>
-            <div style="border-radius:10px;overflow:hidden;border:1px solid var(--border-color);">
-                <table style="width:100%;border-collapse:collapse;font-size:0.88rem;">
-                    <thead>
-                        <tr style="background:linear-gradient(180deg,#f1f5f9,#e8ecf1);">
-                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">차종</th>
-                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">품명</th>
-                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">컬러</th>
-                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">레이져작업일</th>
-                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">도장작업일</th>
-                            <th style="padding:10px 14px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">사출LOT</th>
-                            <th style="padding:10px 14px;text-align:right;font-weight:600;color:var(--text-secondary);white-space:nowrap;">양품</th>
-                            <th style="padding:10px 14px;text-align:right;font-weight:600;color:var(--accent-green);white-space:nowrap;">출하가능</th>
-                            <th style="padding:10px 14px;text-align:right;font-weight:600;color:var(--text-secondary);white-space:nowrap;">포장단위</th>
-                            <th style="padding:10px 14px;text-align:right;font-weight:600;color:var(--accent-orange);white-space:nowrap;">잔량</th>
-                            <th style="padding:10px 14px;text-align:center;font-weight:600;color:var(--text-secondary);white-space:nowrap;">상태</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${rows.length === 0
-                            ? `<tr><td colspan="11" style="text-align:center;padding:40px;color:var(--text-muted);">
-                                <span class="material-symbols-outlined" style="font-size:2rem;display:block;margin-bottom:8px;opacity:0.4;">check_circle</span>
-                                레이져 후 잔량 입고 대상이 없습니다.
-                               </td></tr>`
-                            : rows.map(r => _laserResidualRow(r)).join('')}
-                    </tbody>
-                </table>
+            <div class="card">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">table_rows</span> 잔량 상세 내역 <span style="font-size:0.78rem;color:var(--text-muted);font-weight:600;">(입출고 현황)</span></h4>
+                    <span style="font-size:0.75rem;color:var(--text-muted);">레이져 작업 기준 잔량 발생 내역</span>
+                </div>
+                <div class="card-body" style="padding:0;">
+                    <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
+                        <thead>
+                            <tr style="background:var(--bg-secondary);border-bottom:2px solid var(--border-color);">
+                                <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">차종</th>
+                                <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">품명</th>
+                                <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">컬러</th>
+                                <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">레이져작업일</th>
+                                <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">도장작업일</th>
+                                <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">사출LOT</th>
+                                <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--text-secondary);white-space:nowrap;">양품</th>
+                                <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--accent-green);white-space:nowrap;">출하가능</th>
+                                <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--text-secondary);white-space:nowrap;">포장단위</th>
+                                <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--accent-orange,#f59e0b);white-space:nowrap;">잔량</th>
+                                <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--text-secondary);white-space:nowrap;">상태</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows.length === 0
+                                ? `<tr><td colspan="11" style="text-align:center;padding:40px;color:var(--text-muted);">
+                                    <span class="material-symbols-outlined" style="font-size:2rem;display:block;margin-bottom:8px;opacity:0.4;">check_circle</span>
+                                    레이져 후 잔량 입고 대상이 없습니다.
+                                   </td></tr>`
+                                : rows.map(r => _laserResidualRow(r)).join('')}
+                        </tbody>
+                    </table>
+                </div>
             </div>`;
     }
 

@@ -372,15 +372,16 @@ var LaserWorkModule = (function() {
         const qtyInput = document.getElementById('lwQuantity');
         const qtyValue = qtyInput && String(qtyInput.value || '').trim() !== '' ? Number(qtyInput.value) : 0;
         const workQty = qtyValue || _selectedLotQtyTotal();
-        const boxCount = packQty > 0 && workQty > 0 ? (workQty / packQty) : 0;
-        const boxText = boxCount > 0
-            ? (Number.isInteger(boxCount) ? UIUtils.formatNumber(boxCount) : UIUtils.formatNumber(Number(boxCount.toFixed(1))))
-            : '00';
+        const fullBoxCount = packQty > 0 && workQty > 0 ? Math.floor(workQty / packQty) : 0;
+        const residualQty = packQty > 0 && workQty > 0 ? workQty - (fullBoxCount * packQty) : 0;
         el.innerHTML = `
-            <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap;">
-                <span>박스당 포장 수량 : <strong style="font-size:1.18rem;color:var(--accent-blue);">${packQty ? UIUtils.formatNumber(packQty) : '0000'}</strong>개</span>
-                <span style="color:var(--text-muted);">/</span>
-                <span style="font-size:0.95rem;color:var(--text-secondary);">( 작업수량 / 포장 수량 = <strong style="font-size:1.08rem;color:var(--accent-blue);">${boxText}</strong> BOX )</span>
+            <div style="display:flex;align-items:center;justify-content:flex-end;gap:12px;flex-wrap:wrap;font-weight:800;">
+                <span>박스 당 포장 수량 : <strong style="font-size:1.18rem;color:var(--accent-blue);">${packQty ? UIUtils.formatNumber(packQty) : '000'}</strong>개</span>
+                <span style="color:var(--text-muted);">|</span>
+                <span>박스 <strong style="font-size:1.18rem;color:var(--accent-blue);">${UIUtils.formatNumber(fullBoxCount || 0)}</strong> BOX</span>
+                <span style="color:var(--text-muted);">|</span>
+                <span>포장 후 잔량 : <strong style="font-size:1.18rem;color:${residualQty > 0 ? 'var(--accent-orange)' : 'var(--accent-blue)'};">${UIUtils.formatNumber(residualQty || 0)}</strong>개</span>
+                ${residualQty > 0 ? `<span style="padding:2px 8px;border-radius:12px;background:rgba(245,158,11,0.12);color:var(--accent-orange);font-size:0.86rem;">[ 레이져 잔량 처리 ]</span>` : ''}
             </div>`;
     }
 
