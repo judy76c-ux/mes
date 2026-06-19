@@ -1109,7 +1109,7 @@ const SettingsModule = (function() {
                 if (proc === '도장-B') {
                     return {
                         cvt: '1',
-                        ct: (lct && lcvt) ? String(Math.round(lct / lcvt / 4)) : ''
+                        ct: (lct && lcvt) ? String(Math.round((lct / lcvt) * 4)) : ''
                     };
                 }
                 break; // 다른 공정이면 기본값 없음
