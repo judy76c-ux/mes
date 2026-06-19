@@ -926,7 +926,11 @@ const SettingsModule = (function() {
                             p.process2 ? `<div style="display:flex; align-items:center; gap:4px;"><span class="badge badge-info">${p.process2}</span> <span style="color:var(--text-muted);">${p.cvt2 || '-'}|${p.ct2 || '-'}</span></div>` : '',
                             p.process3 ? `<div style="display:flex; align-items:center; gap:4px;"><span class="badge badge-info">${p.process3}</span> <span style="color:var(--text-muted);">${p.cvt3 || '-'}|${p.ct3 || '-'}</span></div>` : '',
                             p.process4 ? `<div style="display:flex; align-items:center; gap:4px;"><span class="badge badge-info">${p.process4}</span> <span style="color:var(--text-muted);">${p.cvt4 || '-'}|${p.ct4 || '-'}</span></div>` : '',
-                            (p.appearanceCvt || p.appearanceCt) ? `<div style="display:flex; align-items:center; gap:4px;"><span class="badge badge-success">외관검사</span> <span style="color:var(--text-muted);">${p.appearanceCvt || '-'}|${p.appearanceCt || '-'}</span></div>` : ''
+                            (() => {
+                                const _inspLabel = p.appearanceInspType === '외관+각인 검사' ? '외관+각인 검사' : '외관검사';
+                                const _hasAppear = p.process1 || p.process2 || p.process3 || p.process4;
+                                return _hasAppear ? `<div style="display:flex; align-items:center; gap:4px;"><span class="badge badge-success">${_inspLabel}</span> <span style="color:var(--text-muted);">${p.appearanceCvt || '-'}|${p.appearanceCt || '-'}</span></div>` : '';
+                            })()
                         ].filter(Boolean).join('<span class="material-symbols-outlined" style="font-size:14px; color:var(--text-muted);">arrow_forward</span>')}
                                                 ${!p.process1 && !p.process2 && !p.process3 && !p.process4 ? '-' : ''}
                                             </div>
@@ -1450,10 +1454,28 @@ const SettingsModule = (function() {
             </div>
 
             <div style="background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.22);border-radius:8px;padding:10px;margin:8px 0 12px;">
-                <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;color:var(--text-primary);font-weight:700;font-size:0.86rem;">
-                    <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-green);">visibility</span>
-                    외관 검사 기초 정보
-                    <span style="font-size:0.74rem;font-weight:400;color:var(--text-muted);">수동 검사 공정의 작업 효율 판단용</span>
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;">
+                    <div style="display:flex;align-items:center;gap:6px;color:var(--text-primary);font-weight:700;font-size:0.86rem;">
+                        <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-green);">visibility</span>
+                        외관 검사 기초 정보
+                        <span style="font-size:0.74rem;font-weight:400;color:var(--text-muted);">수동 검사 공정의 작업 효율 판단용</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:14px;margin-left:8px;">
+                        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.84rem;font-weight:600;">
+                            <input type="radio" name="${idPrefix}AppearanceInspType" value="외관 검사"
+                                ${(v('appearanceInspType')||'외관 검사')==='외관 검사' ? 'checked' : ''}
+                                style="accent-color:var(--accent-green);width:15px;height:15px;cursor:pointer;">
+                            <span class="material-symbols-outlined" style="font-size:15px;color:var(--accent-green);">check_circle</span>
+                            외관 검사
+                        </label>
+                        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.84rem;font-weight:600;">
+                            <input type="radio" name="${idPrefix}AppearanceInspType" value="외관+각인 검사"
+                                ${v('appearanceInspType')==='외관+각인 검사' ? 'checked' : ''}
+                                style="accent-color:#7c3aed;width:15px;height:15px;cursor:pointer;">
+                            <span class="material-symbols-outlined" style="font-size:15px;color:#7c3aed;">checklist</span>
+                            외관+각인 검사
+                        </label>
+                    </div>
                 </div>
                 <div style="display:flex;align-items:center;gap:12px;flex-wrap:nowrap;">
                     <div style="display:flex;align-items:center;gap:8px;flex:0 0 220px;">
@@ -2373,6 +2395,7 @@ const SettingsModule = (function() {
             appearanceCvt: g(`${prefix}AppearanceCvt`).trim(),
             appearanceCt: g(`${prefix}AppearanceCt`).trim(),
             appearanceWorkers: g(`${prefix}AppearanceWorkers`).trim(),
+            appearanceInspType: (() => { const r = document.querySelector(`input[name="${prefix}AppearanceInspType"]:checked`); return r ? r.value : '외관 검사'; })(),
             code: g(`${prefix}Code`).trim(),
             linkedProductId: g(`${prefix}LinkedProductId`).trim() || null,
             paintMaterials: _getCurrentPaintRows(prefix).filter(r => r.paintSpec || r.mainId || r.hardId || r.thinnerId)
