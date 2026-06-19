@@ -818,6 +818,11 @@ const SettingsModule = (function() {
                             title="'선택 안함' 공정 행 및 고아 CVT/CT 데이터 일괄 정리">
                             <span class="material-symbols-outlined">auto_fix_high</span> 공정 행 정리
                         </button>
+                        <button class="btn btn-secondary" onclick="SettingsModule.migrateInspectionTypes()"
+                            style="border-color:#7c3aed;color:#7c3aed;"
+                            title="레이저 마지막 공정 → 외관+각인검사, 도장-B → 외관검사 일괄 적용">
+                            <span class="material-symbols-outlined">checklist</span> 검사유형 일괄적용
+                        </button>
                         <button class="btn btn-primary" onclick="SettingsModule.openAddProductModal()">
                             <span class="material-symbols-outlined">add</span> 제품 추가
                         </button>
@@ -2394,6 +2399,53 @@ const SettingsModule = (function() {
             if (changed) { await Storage.update(PRODUCTS_STORE, p.id, updated); fixedCount++; }
         }
         UIUtils.toast(`공정 행 정리 완료: ${fixedCount}개 제품 수정됨`, fixedCount > 0 ? 'success' : 'info');
+        if (fixedCount > 0) SettingsModule.switchTab('products');
+    }
+
+    /* 모든 제품 검사 유형 일괄 적용:
+       - process 슬롯에서 '외관 검사' / '외관+각인 검사' 제거 (암묵적 공정으로 분리)
+       - 마지막 공정 기준 appearanceInspType 자동 결정
+       - 외관 CVT/CT 미입력 시 계산값 저장                          */
+    async function migrateInspectionTypes() {
+        const products = Storage.getAll(PRODUCTS_STORE) || [];
+        const inspSet = new Set(['외관 검사', '외관+각인 검사']);
+        let fixedCount = 0;
+        for (const p of products) {
+            let changed = false;
+            const u = { ...p };
+            // process 슬롯에서 검사 공정 제거
+            for (const n of [1, 2, 3, 4]) {
+                if (u[`process${n}`] && inspSet.has(u[`process${n}`])) {
+                    u[`process${n}`] = ''; u[`cvt${n}`] = ''; u[`ct${n}`] = ''; u[`worker${n}`] = '';
+                    changed = true;
+                }
+            }
+            // 마지막 공정 파악
+            let lastProc = '';
+            for (let n = 4; n >= 1; n--) { if (u[`process${n}`]) { lastProc = u[`process${n}`]; break; } }
+            // appearanceInspType 설정
+            const newType = (lastProc.includes('레이저') || lastProc.includes('레이져'))
+                ? '외관+각인 검사' : '외관 검사';
+            if (u.appearanceInspType !== newType) { u.appearanceInspType = newType; changed = true; }
+            // 외관 CVT/CT 미입력 시 계산
+            if (!u.appearanceCvt || !u.appearanceCt) {
+                for (let n = 4; n >= 1; n--) {
+                    const lp = u[`process${n}`]; if (!lp) continue;
+                    const lv = parseFloat(u[`cvt${n}`]) || 0;
+                    const lt = parseFloat(u[`ct${n}`]) || 0;
+                    if (lp.includes('레이저') || lp.includes('레이져')) {
+                        if (!u.appearanceCvt && lv) { u.appearanceCvt = String(Math.round(lv/2*10)/10); changed = true; }
+                        if (!u.appearanceCt && lt)  { u.appearanceCt  = String(Math.round(lt/2));       changed = true; }
+                    } else if (lp === '도장-B') {
+                        if (!u.appearanceCvt) { u.appearanceCvt = '1'; changed = true; }
+                        if (!u.appearanceCt && lt && lv) { u.appearanceCt = String(Math.round((lt/lv)*4)); changed = true; }
+                    }
+                    break;
+                }
+            }
+            if (changed) { await Storage.update(PRODUCTS_STORE, p.id, u); fixedCount++; }
+        }
+        UIUtils.toast(`검사 유형 일괄 적용 완료: ${fixedCount}개 제품 수정됨`, fixedCount > 0 ? 'success' : 'info');
         if (fixedCount > 0) SettingsModule.switchTab('products');
     }
 
@@ -11855,6 +11907,7 @@ const SettingsModule = (function() {
         onProductProcessChange,
         removeProcessRow,
         cleanupEmptyProcessRows,
+        migrateInspectionTypes,
         removeProduct,
         addProductPaintRow,
         removeProductPaintRow,
