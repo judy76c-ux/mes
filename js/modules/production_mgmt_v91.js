@@ -19326,8 +19326,8 @@ var ProdEquipmentModule = (function() {
                     </div>
                 </div>
                 <div style="padding:14px 16px;background:#f8fafc;overflow-x:auto;">
-                    <div style="position:relative;width:1500px;height:560px;margin:0;background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.6);">
-                        <svg viewBox="0 0 1500 560" width="1500" height="560" role="img" aria-label="KC 케미칼 생산 현장 레이아웃" style="display:block;">
+                    <div style="position:relative;width:1050px;height:392px;margin:0;background:#fff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.6);">
+                        <svg viewBox="0 0 1500 560" width="1050" height="392" role="img" aria-label="KC 케미칼 생산 현장 레이아웃" style="display:block;">
                             <defs>
                                 <filter id="equipShadow" x="-20%" y="-20%" width="140%" height="140%">
                                     <feDropShadow dx="2" dy="2" stdDeviation="1.2" flood-color="#000" flood-opacity=".18"/>
