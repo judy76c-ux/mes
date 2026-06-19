@@ -123,7 +123,8 @@ var LaserWorkModule = (function() {
             const paintDate = lot && lot.paintDate ? lot.paintDate : '';
             const lotNo = lot && lot.lotNo ? lot.lotNo : '';
             const key = `${paintDate}||${lotNo}`;
-            if (!map[key]) map[key] = { paintDate, lotNo, qty: 0 };
+            if (!map[key]) map[key] = { paintDate, lotNo, qty: 0, manual: !!(lot && lot.manual) };
+            if (lot && lot.manual) map[key].manual = true;
             map[key].qty += Number(lot && lot.qty) || 0;
         });
         return Object.values(map).filter(lot => lot.paintDate || lot.lotNo || lot.qty > 0);
@@ -354,8 +355,20 @@ var LaserWorkModule = (function() {
         const el = document.getElementById('lwPackUnitDisplay');
         if (!el) return;
         const spec = _getLaserCycleSpec(_selectedCarModel, _selectedPartName, _selectedColor);
-        const packUnit = spec && spec.packUnit ? UIUtils.formatNumber(spec.packUnit) : '-';
-        el.innerHTML = `박스당 포장 수량은 : <strong style="font-size:1.18rem;color:var(--accent-blue);">${packUnit}</strong> 개`;
+        const packQty = Number(String((spec && spec.packUnit) || '').replace(/,/g, '')) || 0;
+        const qtyInput = document.getElementById('lwQuantity');
+        const qtyValue = qtyInput && String(qtyInput.value || '').trim() !== '' ? Number(qtyInput.value) : 0;
+        const workQty = qtyValue || _selectedLotQtyTotal();
+        const boxCount = packQty > 0 && workQty > 0 ? (workQty / packQty) : 0;
+        const boxText = boxCount > 0
+            ? (Number.isInteger(boxCount) ? UIUtils.formatNumber(boxCount) : UIUtils.formatNumber(Number(boxCount.toFixed(1))))
+            : '00';
+        el.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap;">
+                <span>박스당 포장 수량 : <strong style="font-size:1.18rem;color:var(--accent-blue);">${packQty ? UIUtils.formatNumber(packQty) : '0000'}</strong>개</span>
+                <span style="color:var(--text-muted);">/</span>
+                <span style="font-size:0.95rem;color:var(--text-secondary);">( 작업수량 / 포장 수량 = <strong style="font-size:1.08rem;color:var(--accent-blue);">${boxText}</strong> BOX )</span>
+            </div>`;
     }
 
     function updateStandardEndTime(forceFill = false) {
@@ -371,17 +384,41 @@ var LaserWorkModule = (function() {
             return;
         }
         const standardEnd = _minutesToTime(startMin + estimateMin);
+        endEl.dataset.standardEnd = standardEnd;
         const autoManaged = endEl.dataset.standardAuto === '1';
         if (forceFill || !endEl.value || autoManaged) {
             endEl.value = standardEnd;
             endEl.dataset.standardAuto = '1';
         }
         if (hintEl) hintEl.textContent = `표준 완료시간은 ${standardEnd} 입니다`;
+        updateOvertimeReasonVisibility();
     }
 
     function markEndTimeManual() {
         const endEl = document.getElementById('lwEndTime');
         if (endEl) endEl.dataset.standardAuto = '0';
+        updateOvertimeReasonVisibility();
+    }
+
+    function _isEndOverStandard() {
+        const startEl = document.getElementById('lwStartTime');
+        const endEl = document.getElementById('lwEndTime');
+        if (!startEl || !endEl || !startEl.value || !endEl.value || !endEl.dataset.standardEnd) return false;
+        const startMin = _timeToMinutes(startEl.value);
+        const endMinRaw = _timeToMinutes(endEl.value);
+        const stdMinRaw = _timeToMinutes(endEl.dataset.standardEnd);
+        if (startMin === null || endMinRaw === null || stdMinRaw === null) return false;
+        const normalizeAfterStart = value => value < startMin ? value + 1440 : value;
+        return normalizeAfterStart(endMinRaw) > normalizeAfterStart(stdMinRaw);
+    }
+
+    function updateOvertimeReasonVisibility() {
+        const wrap = document.getElementById('lwOvertimeReasonWrap');
+        const stdEl = document.getElementById('lwOvertimeStandardTime');
+        const endEl = document.getElementById('lwEndTime');
+        const show = _isEndOverStandard();
+        if (wrap) wrap.style.display = show ? 'block' : 'none';
+        if (stdEl) stdEl.textContent = (endEl && endEl.dataset.standardEnd) || '-';
     }
 
     function _updateLaserCycleEstimate(spec) {
@@ -404,7 +441,7 @@ var LaserWorkModule = (function() {
         detail.textContent = spec.ct || spec.cvt
             ? `제품 기초 레이져 공정 C.TIME ${spec.ct || '-'} sec / CVT ${spec.cvt || '-'}개`
             : (spec.foundProduct ? '제품기초 레이져공정 CT/CVT 미등록' : '제품기초 제품 매칭 실패');
-        updateStandardEndTime(false);
+        updateStandardEndTime(true);
     }
 
     function _refreshLaserCycleSpec(forceValue = false) {
@@ -801,24 +838,16 @@ var LaserWorkModule = (function() {
                     <input type="number" class="form-input" id="lwQuantity" value="${d.quantity || ''}" placeholder="0" oninput="LaserWorkModule.calcCompletedQty()">
                 </div>` : ''}
             </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;">
+            <div id="lwOvertimeReasonWrap" style="display:none;margin:-2px 0 8px 0;padding:10px 12px;border:1px solid rgba(239,68,68,0.28);border-radius:8px;background:rgba(239,68,68,0.06);">
+                <label class="form-label" style="color:var(--accent-red);">완료 지연 사유 <span style="color:var(--accent-red)">*</span></label>
+                <textarea class="form-input" id="lwOvertimeReason" rows="2" placeholder="표준 완료시간을 초과한 사유를 입력하세요." style="resize:vertical;">${d.overtimeReason || ''}</textarea>
+                <div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">표준 완료시간 <strong id="lwOvertimeStandardTime">-</strong> 이후 완료 시 사유 입력 필수</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
                 <div class="form-group" style="margin:0;">
                     <label class="form-label">각인 시간은 프로그램의 시간을 기록(sec) <span style="color:var(--accent-red)">*</span></label>
                     <input type="number" class="form-input" id="lwEngravingTime" value="${d.engravingTime || ''}" placeholder="0.0">
                     <div id="lwLaserCycleDetail" style="font-size:0.86rem;line-height:1.45;color:var(--text-muted);margin-top:5px;"></div>
-                </div>
-                <div class="form-group" style="margin:0;">
-                    <label class="form-label">프로그램 저장 이름 <span style="color:var(--accent-red)">*</span></label>
-                    <div style="min-height:38px;display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-primary);">
-                        <span style="font-size:0.86rem;color:var(--text-secondary);white-space:nowrap;">프로그램 저장 이름 :</span>
-                        <span style="flex:1;font-size:0.95rem;font-weight:800;color:var(--text-primary);">[ <span id="lwProgramGuideName">${_laserProgramGuideName(d.partName || _selectedPartName, d.date || UIUtils.today())}</span> ]</span>
-                    </div>
-                    <label style="margin-top:6px;min-height:34px;display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-secondary);cursor:pointer;">
-                        <input type="checkbox" id="lwProgramNameChecked" ${d.programName ? 'checked' : ''} onchange="LaserWorkModule.updateLaserGuideChecks()" style="width:18px;height:18px;">
-                        <span style="font-size:0.9rem;font-weight:700;color:var(--text-primary);">저장이름 확인</span>
-                    </label>
-                    <input type="hidden" id="lwProgramName" value="${d.programName || ''}">
-                    <div style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;">파일명: 품명-yymmdd</div>
                 </div>
                 <div class="form-group" style="margin:0;">
                     <label class="form-label">렌즈 높이 확인 방법 <span style="color:var(--accent-red)">*</span></label>
@@ -834,10 +863,23 @@ var LaserWorkModule = (function() {
                     <div style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;">기준 높이: 375mm</div>
                     <input type="hidden" id="lwLensHeight" value="${d.lensHeight || ''}">
                 </div>
+                <div class="form-group" style="margin:0;grid-column:1 / -1;">
+                    <div style="min-height:40px;display:flex;align-items:center;gap:12px;padding:8px 10px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-primary);">
+                        <span style="font-size:0.86rem;color:var(--text-secondary);font-weight:700;white-space:nowrap;">프로그램 저장 이름 <span style="color:var(--accent-red)">*</span> :</span>
+                        <span style="flex:1;min-width:0;font-size:1rem;font-weight:800;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">[ <span id="lwProgramGuideName">${_laserProgramGuideName(d.partName || _selectedPartName, d.date || UIUtils.today())}</span> ]</span>
+                        <span style="font-size:0.76rem;color:var(--text-muted);white-space:nowrap;">품명-yymmdd</span>
+                        <label style="display:flex;align-items:center;gap:7px;margin:0;white-space:nowrap;cursor:pointer;">
+                            <input type="checkbox" id="lwProgramNameChecked" ${d.programName ? 'checked' : ''} onchange="LaserWorkModule.updateLaserGuideChecks()" style="width:18px;height:18px;">
+                            <span style="font-size:0.9rem;font-weight:700;color:var(--text-primary);">저장이름 확인</span>
+                        </label>
+                    </div>
+                    <input type="hidden" id="lwProgramName" value="${d.programName || ''}">
+                </div>
             </div>
             <div style="background:var(--bg-secondary); padding:10px 12px; border-radius:8px; margin-bottom:8px;">
                 <div style="font-size:0.78rem;font-weight:600;color:var(--text-secondary);margin-bottom:10px;display:flex;align-items:center;gap:6px;">
                     <span class="material-symbols-outlined" style="font-size:1rem;">checklist</span> 초중종물 확인 및 LOSS
+                    <span id="lwQcRuleText" style="margin-left:auto;font-size:0.78rem;color:var(--accent-blue);font-weight:800;">작업수량 기준 자동 적용</span>
                 </div>
                 <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px;">
                     ${(function(){
@@ -932,7 +974,7 @@ var LaserWorkModule = (function() {
 
     // ── 도장 LOT 다중 선택 관리 ───────────────────────────────────────
     function addLotRow(paintDate, lotNo, qty) {
-        _selectedLots.push({ paintDate: paintDate || '', lotNo: lotNo || '', qty: Number(qty) || 0 });
+        _selectedLots.push({ paintDate: paintDate || '', lotNo: lotNo || '', qty: Number(qty) || 0, manual: true });
         _syncSelectedLotQty();
         renderLotRows();
     }
@@ -947,7 +989,10 @@ var LaserWorkModule = (function() {
         if (_selectedLots[idx]) {
             _selectedLots[idx][field] = field === 'qty' ? (Number(value) || 0) : value;
         }
-        if (field === 'qty') _syncSelectedLotQty();
+        if (field === 'qty') {
+            _syncSelectedLotQty();
+            calcCompletedQty();
+        }
     }
 
     function previewStandbyQty(idx, lotIdx, value) {
@@ -976,7 +1021,7 @@ var LaserWorkModule = (function() {
             container.innerHTML = '<div style="color:var(--text-muted);font-size:0.82rem;padding:4px 0;">대기품 선택 또는 + 버튼으로 도장 LOT를 추가하세요.</div>';
             return;
         }
-        container.innerHTML = _selectedLots.map((l, i) => `
+        container.innerHTML = _selectedLots.map((l, i) => l.manual ? `
             <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
                 <span style="font-size:0.75rem; color:var(--text-muted); min-width:18px; text-align:center; font-weight:600;">${i + 1}</span>
                 <input type="date" class="form-input" value="${l.paintDate}"
@@ -993,6 +1038,17 @@ var LaserWorkModule = (function() {
                        oninput="LaserWorkModule.updateLot(${i}, 'qty', this.value)">
                 <button type="button" class="btn btn-sm btn-danger" onclick="LaserWorkModule.removeLotRow(${i})"
                         style="padding:4px 8px; flex-shrink:0;">
+                    <span class="material-symbols-outlined" style="font-size:0.9rem;">close</span>
+                </button>
+            </div>
+        ` : `
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;padding:8px 10px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);">
+                <span style="font-size:0.75rem;color:var(--text-muted);min-width:18px;text-align:center;font-weight:700;">${i + 1}</span>
+                <span style="flex:0 0 132px;font-size:0.86rem;font-weight:700;color:var(--text-primary);">${l.paintDate || '-'}</span>
+                <span style="flex:1;font-size:0.86rem;font-weight:700;color:var(--text-primary);">${l.lotNo || '-'}</span>
+                <span style="flex:0 0 112px;text-align:right;font-size:0.9rem;font-weight:800;color:var(--accent-blue);">${UIUtils.formatNumber(Number(l.qty) || 0)} EA</span>
+                <button type="button" class="btn btn-sm btn-danger" onclick="LaserWorkModule.removeLotRow(${i})"
+                        style="padding:4px 8px;flex-shrink:0;">
                     <span class="material-symbols-outlined" style="font-size:0.9rem;">close</span>
                 </button>
             </div>
@@ -1142,7 +1198,7 @@ var LaserWorkModule = (function() {
         updateLaserGuideChecks();
 
         // 도장 LOT 내부 배열에 추가
-        _selectedLots.push({ paintDate: w.date || '', lotNo: lot.lotNo || w.lotNo || '', qty: pickQty });
+        _selectedLots.push({ paintDate: w.date || '', lotNo: lot.lotNo || w.lotNo || '', qty: pickQty, manual: false });
         renderLotRows();
 
         // 선택한 LOT 작업수량만 총 작업수량에 반영
@@ -1256,44 +1312,59 @@ var LaserWorkModule = (function() {
         return g(prefix + 'Quality') || g(prefix + 'Position') || g(prefix + 'Photo');
     }
 
+    function _currentWorkQtyForQc() {
+        return Number((document.getElementById('lwQuantity') || {}).value) || _selectedLotQtyTotal() || 0;
+    }
+
+    function _qcRequiredStages(qty = _currentWorkQtyForQc()) {
+        const n = Number(qty) || 0;
+        if (n > 0 && n <= 4000) return { first: true, middle: false, last: false, label: '4,000개 이하: 초품' };
+        if (n > 0 && n <= 8000) return { first: true, middle: false, last: true, label: '4,001~8,000개: 초품 + 종품' };
+        return { first: true, middle: true, last: true, label: '8,000개 초과: 초품 + 중품 + 종품' };
+    }
+
     function checkQcProgress() {
+        const required = _qcRequiredStages();
         const firstDone  = _qcStageComplete('lwQcFirst');
-        const middleDone = _qcStageComplete('lwQcMiddle');
 
         function setStageDoneVisual(prefix, done) {
             const icon = document.getElementById(prefix + 'DoneIcon');
             if (icon) icon.style.color = done ? 'var(--accent-blue)' : 'var(--text-muted)';
         }
 
-        function setCardEnabled(prefix, enabled) {
+        function clearStage(prefix) {
+            [prefix, `${prefix}Quality`, `${prefix}Position`, `${prefix}Photo`].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.checked = false;
+            });
+            const loss = document.getElementById(`${prefix}Loss`);
+            if (loss) loss.value = 0;
+        }
+
+        function setCardEnabled(prefix, enabled, isRequired = true) {
             const card = document.getElementById(prefix + 'Card');
             if (!card) return;
             card.style.opacity = enabled ? '' : '0.4';
             card.style.pointerEvents = enabled ? '' : 'none';
+            card.dataset.required = isRequired ? '1' : '0';
             const sub = document.getElementById(prefix + 'SubItems');
             if (sub) sub.style.display = 'flex';
             const cb = document.getElementById(prefix);
             if (cb) cb.disabled = !enabled;
         }
 
-        setCardEnabled('lwQcMiddle', firstDone);
-        setCardEnabled('lwQcLast',   middleDone);
+        setCardEnabled('lwQcFirst', true, true);
+        setCardEnabled('lwQcMiddle', required.middle, required.middle);
+        setCardEnabled('lwQcLast', required.last, required.last);
         setStageDoneVisual('lwQcFirst', firstDone);
-        setStageDoneVisual('lwQcMiddle', middleDone);
-        setStageDoneVisual('lwQcLast', _qcStageComplete('lwQcLast'));
+        setStageDoneVisual('lwQcMiddle', required.middle && _qcStageComplete('lwQcMiddle'));
+        setStageDoneVisual('lwQcLast', required.last && _qcStageComplete('lwQcLast'));
 
-        if (!firstDone) {
-            ['lwQcMiddle', 'lwQcMiddleQuality', 'lwQcMiddlePosition', 'lwQcMiddlePhoto'].forEach(id => {
-                const el = document.getElementById(id); if (el) el.checked = false;
-            });
-            setStageDoneVisual('lwQcMiddle', false);
-        }
-        if (!middleDone) {
-            ['lwQcLast', 'lwQcLastQuality', 'lwQcLastPosition', 'lwQcLastPhoto'].forEach(id => {
-                const el = document.getElementById(id); if (el) el.checked = false;
-            });
-            setStageDoneVisual('lwQcLast', false);
-        }
+        const ruleEl = document.getElementById('lwQcRuleText');
+        if (ruleEl) ruleEl.textContent = required.label;
+
+        if (!required.middle) clearStage('lwQcMiddle');
+        if (!required.last) clearStage('lwQcLast');
     }
 
     async function uploadQcPhoto(type, cbId) {
@@ -1326,6 +1397,7 @@ var LaserWorkModule = (function() {
 
     function calcCompletedQty() {
         const qty   = Number((document.getElementById('lwQuantity') || {}).value) || _selectedLotQtyTotal();
+        checkQcProgress();
         const loss1 = Number((document.getElementById('lwQcFirstLoss')  || {}).value) || 0;
         const loss2 = Number((document.getElementById('lwQcMiddleLoss') || {}).value) || 0;
         const loss3 = Number((document.getElementById('lwQcLastLoss')   || {}).value) || 0;
@@ -1339,6 +1411,7 @@ var LaserWorkModule = (function() {
         if (ld) ld.textContent = fmt(total);
         if (cd) cd.textContent = fmt(completed);
         _refreshLaserCycleSpec(false);
+        updateStandardEndTime(true);
     }
 
     function addExternalWorker() {
@@ -1396,6 +1469,7 @@ var LaserWorkModule = (function() {
 
     function collectData() {
         updateLaserGuideChecks();
+        checkQcProgress();
         const manualEnabled = !!((document.getElementById('lwManualToggle') || {}).checked);
         const manualCarModel = (document.getElementById('lwCarModel') || {}).value || '';
         const manualPartName = (document.getElementById('lwPartName') || {}).value || '';
@@ -1417,11 +1491,13 @@ var LaserWorkModule = (function() {
             machine: document.getElementById('lwMachine').value,
             startTime: document.getElementById('lwStartTime').value,
             endTime: document.getElementById('lwEndTime').value,
+            standardEndTime: (document.getElementById('lwEndTime') || {}).dataset?.standardEnd || '',
+            overtimeReason: (document.getElementById('lwOvertimeReason') || {}).value?.trim() || '',
             carModel: _selectedCarModel || (manualEnabled ? manualCarModel : ''),
             partName: _selectedPartName || (manualEnabled ? manualPartName : ''),
             color: _selectedColor || (manualEnabled ? manualColor : ''),
             paintDate: mergedLots.length > 0 ? (mergedLots[0].paintDate || '') : '',
-            paintLots: mergedLots.map(l => ({ paintDate: l.paintDate, lotNo: l.lotNo, qty: Number(l.qty) || 0 })),
+            paintLots: mergedLots.map(l => ({ paintDate: l.paintDate, lotNo: l.lotNo, qty: Number(l.qty) || 0, manual: !!l.manual })),
             manualInput: manualEnabled && _selectedLots.length === 0,
             engravingTime: Number(document.getElementById('lwEngravingTime').value) || 0,
             quantity: selectedLotQty > 0 ? selectedLotQty : (Number(document.getElementById('lwQuantity').value) || 0),
@@ -1483,23 +1559,25 @@ var LaserWorkModule = (function() {
         if (!data.machine) add('레이져 장비', 'lwMachine');
         if (!data.startTime) add('시작 시간', 'lwStartTime');
         if (!data.endTime) add('완료 시간', 'lwEndTime');
+        if (_isEndOverStandard() && !data.overtimeReason) add('완료 지연 사유', 'lwOvertimeReason');
         if (!(Number(data.engravingTime) > 0)) add('각인 시간', 'lwEngravingTime');
         if (!data.programName) add('저장이름 확인', 'lwProgramNameChecked');
         if (!data.lensHeight) add('렌즈 높이 포인터/자 확인', 'lwLensPointerChecked');
 
+        const requiredQc = _qcRequiredStages(data.quantity);
         [
-            ['초품', 'lwQcFirst', data.qcFirstQuality, data.qcFirstPosition, data.qcFirstPhoto],
-            ['중품', 'lwQcMiddle', data.qcMiddleQuality, data.qcMiddlePosition, data.qcMiddlePhoto],
-            ['종품', 'lwQcLast', data.qcLastQuality, data.qcLastPosition, data.qcLastPhoto],
-        ].forEach(([label, prefix, qual, pos, photo]) => {
+            ['초품', 'lwQcFirst', data.qcFirstQuality, data.qcFirstPosition, data.qcFirstPhoto, requiredQc.first],
+            ['중품', 'lwQcMiddle', data.qcMiddleQuality, data.qcMiddlePosition, data.qcMiddlePhoto, requiredQc.middle],
+            ['종품', 'lwQcLast', data.qcLastQuality, data.qcLastPosition, data.qcLastPhoto, requiredQc.last],
+        ].filter(row => row[5]).forEach(([label, prefix, qual, pos, photo]) => {
             if (!qual) add(`${label} 각인품질 확인`, `${prefix}Quality`);
             if (!pos) add(`${label} 위치 도면확인`, `${prefix}Position`);
             if (!photo) add(`${label} 사진 등록`, `${prefix}PhotoFile`);
         });
 
         if (_inputValue('lwQcFirstLoss') === '') add('초품 LOSS', 'lwQcFirstLoss');
-        if (_inputValue('lwQcMiddleLoss') === '') add('중품 LOSS', 'lwQcMiddleLoss');
-        if (_inputValue('lwQcLastLoss') === '') add('종품 LOSS', 'lwQcLastLoss');
+        if (requiredQc.middle && _inputValue('lwQcMiddleLoss') === '') add('중품 LOSS', 'lwQcMiddleLoss');
+        if (requiredQc.last && _inputValue('lwQcLastLoss') === '') add('종품 LOSS', 'lwQcLastLoss');
 
         if (!data.worker1) add('작업자 1', 'lwWorker1');
         if (!data.worker2) add('작업자 2', 'lwWorker2');
@@ -1530,14 +1608,16 @@ var LaserWorkModule = (function() {
                     return {
                         paintDate: lot.paintDate || '',
                         lotNo: lot.lotNo || '',
-                        qty: Number(lot.qty) || 0
+                        qty: Number(lot.qty) || 0,
+                        manual: !!lot.manual
                     };
                 });
             } else if (p.paintDate || p.paintLot || p.lotNo) {
                 _selectedLots = [{
                     paintDate: p.paintDate || p.date || '',
                     lotNo: p.paintLot || p.lotNo || '',
-                    qty: Number(p.quantity) || Number(p.productionQty) || 0
+                    qty: Number(p.quantity) || Number(p.productionQty) || 0,
+                    manual: false
                 }];
             }
             formData = {
@@ -1564,6 +1644,7 @@ var LaserWorkModule = (function() {
         setTimeout(() => _refreshLaserCycleSpec(false), 0);
         setTimeout(calcCompletedQty, 0);
         setTimeout(checkQcProgress, 0);
+        setTimeout(updateOvertimeReasonVisibility, 0);
         if (!p) {
             setTimeout(function() {
                 const carEl = document.getElementById('lwCarModel');
@@ -1636,9 +1717,9 @@ var LaserWorkModule = (function() {
         _selectedColor    = d.color    || '';
         // _selectedLots 초기화: 기존 데이터에서 복원
         if (d.paintLots && d.paintLots.length > 0) {
-            _selectedLots = d.paintLots.map(l => ({ paintDate: l.paintDate || '', lotNo: l.lotNo || '', qty: Number(l.qty) || 0 }));
+            _selectedLots = d.paintLots.map(l => ({ paintDate: l.paintDate || '', lotNo: l.lotNo || '', qty: Number(l.qty) || 0, manual: !!l.manual }));
         } else if (d.paintDate || d.paintLot) {
-            _selectedLots = [{ paintDate: d.paintDate || '', lotNo: d.paintLot || '', qty: Number(d.quantity) || 0 }];
+            _selectedLots = [{ paintDate: d.paintDate || '', lotNo: d.paintLot || '', qty: Number(d.quantity) || 0, manual: false }];
         } else {
             _selectedLots = [];
         }
@@ -1648,6 +1729,10 @@ var LaserWorkModule = (function() {
         `, 'lg');
         setTimeout(renderLotRows, 0);
         setTimeout(updateLaserGuideChecks, 0);
+        setTimeout(() => _refreshLaserCycleSpec(false), 0);
+        setTimeout(calcCompletedQty, 0);
+        setTimeout(checkQcProgress, 0);
+        setTimeout(updateOvertimeReasonVisibility, 0);
     }
 
     async function saveEdit(id) {
@@ -1694,6 +1779,7 @@ var LaserWorkModule = (function() {
         updateLaserGuideChecks,
         updateStandardEndTime,
         markEndTimeManual,
+        updateOvertimeReasonVisibility,
         calcCompletedQty,
         onQcToggle,
         checkQcProgress,

@@ -19203,6 +19203,7 @@ var ProdEquipmentModule = (function() {
             const _li = _isLoggedIn();
             el.innerHTML = `
             <div>
+                ${_renderPlantLayout()}
                 <div class="card" style="overflow:hidden;margin-bottom:16px;">
                     <div style="display:flex;justify-content:space-between;align-items:center;
                                 padding:14px 18px;border-bottom:1px solid var(--border-color);background:var(--bg-secondary);">
