@@ -3235,8 +3235,17 @@ var LaserStandbyModule = (function() {
 
         const laserPaintWorks = paintingWorks.filter(w => {
             const prod = findProduct(products, w);
-            if (!prod) return false;
-            return _hasLaserAfterPaintFlow(prod);
+            if (!prod || !_hasLaserProcess(prod)) return false;
+            // 이 작업에 사용된 도장 라인이 레이저 공정보다 앞에 있을 때만 포함
+            // 도장-B가 레이저 뒤에 있는 제품의 도장-B 작업은 레이저 대기 대상이 아님
+            const procs = [prod.process1, prod.process2, prod.process3, prod.process4]
+                .map(_normalizeFlowKey).filter(Boolean);
+            const paintLine = _normalizeFlowKey(w.line || '');
+            const paintIdx  = paintLine ? procs.indexOf(paintLine) : -1;
+            const laserIdx  = procs.findIndex(v => v === '레이저' || v === '레이져');
+            if (laserIdx < 0) return false;
+            if (paintIdx < 0) return _hasLaserAfterPaintFlow(prod); // 라인 정보 없으면 기존 로직
+            return laserIdx > paintIdx;
         });
 
         laserPaintWorks.forEach(w => {

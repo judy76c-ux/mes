@@ -1281,20 +1281,23 @@ const SettingsModule = (function() {
                     })
                     .sort((a, b) => (a.partName||'').localeCompare(b.partName||'','ko'));
 
+                const hasLink = !!curLinkedId;
                 return `<div style="margin:10px 0 8px;padding:10px 14px;background:rgba(109,40,217,0.05);border:1px solid rgba(109,40,217,0.2);border-radius:8px;">
-                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;">
+                        <input type="checkbox" id="${idPrefix}LinkedEnable"
+                            ${hasLink ? 'checked' : ''}
+                            onchange="(function(cb){var row=document.getElementById('${idPrefix}LinkedRow');if(row)row.style.display=cb.checked?'':'none';if(!cb.checked){var sel=document.getElementById('${idPrefix}LinkedProductId');if(sel)sel.value='';};})(this)"
+                            style="width:15px;height:15px;cursor:pointer;accent-color:#7c3aed;">
                         <span class="material-symbols-outlined" style="font-size:16px;color:#7c3aed;">call_split</span>
                         <span style="font-weight:600;font-size:0.82rem;color:#7c3aed;">레이져 단계 납품처 분리 연결</span>
-                        <span style="font-size:0.72rem;color:var(--text-muted);">— 도장까지 같은 제품, 레이져 작업 시 납품처별로 분리</span>
-                    </div>
-                    <div class="form-row" style="margin:0;">
-                        <div class="form-group" style="flex:2;">
-                            <label class="form-label">연결 제품 (레이져 분리 대상)</label>
-                            <select class="form-select" id="${idPrefix}LinkedProductId" style="font-size:0.82rem;">
-                                <option value="">-- 연결 안 함 --</option>
-                                ${availableProds.map(prod => `<option value="${prod.id}" ${curLinkedId === prod.id ? 'selected' : ''}>${prod.partName || ''} (${prod.customer || '납품처 없음'})</option>`).join('')}
-                            </select>
-                        </div>
+                        <span style="font-size:0.72rem;color:var(--text-muted);">— 도장까지 같은 제품, 레이져 작업 시 납품처별로 분리 (XFD 1spot 같은 경우)</span>
+                    </label>
+                    <div id="${idPrefix}LinkedRow" style="margin-top:8px;display:${hasLink ? '' : 'none'};">
+                        <label class="form-label">연결 제품 (레이져 분리 대상)</label>
+                        <select class="form-select" id="${idPrefix}LinkedProductId" style="font-size:0.82rem;">
+                            <option value="">-- 연결 안 함 --</option>
+                            ${availableProds.map(prod => `<option value="${prod.id}" ${curLinkedId === prod.id ? 'selected' : ''}>${prod.partName || ''} (${prod.customer || '납품처 없음'})</option>`).join('')}
+                        </select>
                     </div>
                 </div>`;
             })()}
