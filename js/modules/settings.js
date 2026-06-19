@@ -1377,6 +1377,11 @@ const SettingsModule = (function() {
                         <input type="text" class="form-input" id="${idPrefix}Ct1" placeholder="예: 60" value="${v('ct1')}" style="margin-top:0;">
                         <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">sec</span>
                     </div>
+                    <div style="display:flex; align-items:center; gap:6px; flex: 0 0 160px;">
+                        <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:65px;">작업 인원</label>
+                        <input type="text" class="form-input" id="${idPrefix}Worker1" placeholder="0" value="${v('worker1') || ({'도장-A':'6','도장-B':'10','레이저':'3','레이져':'3'})[v('process1')] || ''}" style="margin-top:0;width:52px;">
+                        <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">명</span>
+                    </div>
                     <button type="button" class="btn btn-sm btn-outline" id="${idPrefix}AddBtn2" style="height:38px; padding:0 10px; ${v('process2') || v('process3') ? 'display:none !important;' : ''}" onclick="this.style.setProperty('display', 'none', 'important'); document.getElementById('${idPrefix}Row2').style.setProperty('display', 'flex', 'important');">
                         <span class="material-symbols-outlined" style="font-size:18px;">add</span>
                     </button>
@@ -1396,6 +1401,11 @@ const SettingsModule = (function() {
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:65px;">C.TIME</label>
                         <input type="text" class="form-input" id="${idPrefix}Ct2" placeholder="예: 60" value="${v('ct2')}" style="margin-top:0;">
                         <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">sec</span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:6px; flex: 0 0 160px;">
+                        <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:65px;">작업 인원</label>
+                        <input type="text" class="form-input" id="${idPrefix}Worker2" placeholder="0" value="${v('worker2') || ({'도장-A':'6','도장-B':'10','레이저':'3','레이져':'3'})[v('process2')] || ''}" style="margin-top:0;width:52px;">
+                        <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">명</span>
                     </div>
                     <div style="display:flex;gap:4px;">
                         <button type="button" class="btn btn-sm btn-outline" id="${idPrefix}AddBtn3" style="height:38px; padding:0 10px; ${v('process3') ? 'display:none !important;' : ''}" onclick="this.style.setProperty('display', 'none', 'important'); document.getElementById('${idPrefix}Row3').style.setProperty('display', 'flex', 'important');">
@@ -1422,6 +1432,11 @@ const SettingsModule = (function() {
                         <input type="text" class="form-input" id="${idPrefix}Ct3" placeholder="예: 60" value="${v('ct3')}" style="margin-top:0;">
                         <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">sec</span>
                     </div>
+                    <div style="display:flex; align-items:center; gap:6px; flex: 0 0 160px;">
+                        <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:65px;">작업 인원</label>
+                        <input type="text" class="form-input" id="${idPrefix}Worker3" placeholder="0" value="${v('worker3') || ({'도장-A':'6','도장-B':'10','레이저':'3','레이져':'3'})[v('process3')] || ''}" style="margin-top:0;width:52px;">
+                        <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">명</span>
+                    </div>
                     <div style="display:flex;gap:4px;">
                         <button type="button" class="btn btn-sm btn-outline" id="${idPrefix}AddBtn4" style="height:38px; padding:0 10px; ${v('process4') ? 'display:none !important;' : ''}" onclick="this.style.setProperty('display', 'none', 'important'); document.getElementById('${idPrefix}Row4').style.setProperty('display', 'flex', 'important');">
                             <span class="material-symbols-outlined" style="font-size:18px;">add</span>
@@ -1446,6 +1461,11 @@ const SettingsModule = (function() {
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:65px;">C.TIME</label>
                         <input type="text" class="form-input" id="${idPrefix}Ct4" placeholder="예: 60" value="${v('ct4')}" style="margin-top:0;">
                         <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">sec</span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:6px; flex: 0 0 160px;">
+                        <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:65px;">작업 인원</label>
+                        <input type="text" class="form-input" id="${idPrefix}Worker4" placeholder="0" value="${v('worker4') || ({'도장-A':'6','도장-B':'10','레이저':'3','레이져':'3'})[v('process4')] || ''}" style="margin-top:0;width:52px;">
+                        <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">명</span>
                     </div>
                     <button type="button" class="btn btn-sm btn-danger" style="height:38px; padding:0 10px;" onclick="SettingsModule.removeProcessRow('${idPrefix}', 4)">
                         <span class="material-symbols-outlined" style="font-size:18px;">remove</span>
@@ -2302,11 +2322,21 @@ const SettingsModule = (function() {
     }
 
     /* 제조공정 셀렉트 변경 시 도장-A/B 컬러 행 표시/숨김 + 단계 수 업데이트 */
+    const _DEFAULT_WORKERS = { '도장-A': '6', '도장-B': '10', '레이저': '3', '레이져': '3' };
+
     function onProductProcessChange(prefix) {
         const g = id => (document.getElementById(id) || {}).value || '';
         const procs = [1,2,3,4].map(i => g(`${prefix}Process${i}`)).filter(Boolean);
         const hasA = procs.includes('도장-A');
         const hasB = procs.includes('도장-B');
+        // 작업 인원 자동 기입 (빈 칸만)
+        [1,2,3,4].forEach(n => {
+            const proc = g(`${prefix}Process${n}`);
+            const workerEl = document.getElementById(`${prefix}Worker${n}`);
+            if (workerEl && !workerEl.value && _DEFAULT_WORKERS[proc]) {
+                workerEl.value = _DEFAULT_WORKERS[proc];
+            }
+        });
         const row = document.getElementById(`${prefix}PaintColorRow`);
         if (row) row.style.display = (hasA && hasB) ? '' : 'none';
         if (document.getElementById(`${prefix}PaintList`)) {
@@ -2392,6 +2422,10 @@ const SettingsModule = (function() {
             process4: _normalizeProcess(g(`${prefix}Process4`).trim()),
             ct4: _normalizeProcess(g(`${prefix}Process4`).trim()) ? g(`${prefix}Ct4`).trim() : '',
             cvt4: _normalizeProcess(g(`${prefix}Process4`).trim()) ? g(`${prefix}Cvt4`).trim() : '',
+            worker1: _normalizeProcess(g(`${prefix}Process1`).trim()) ? g(`${prefix}Worker1`).trim() : '',
+            worker2: _normalizeProcess(g(`${prefix}Process2`).trim()) ? g(`${prefix}Worker2`).trim() : '',
+            worker3: _normalizeProcess(g(`${prefix}Process3`).trim()) ? g(`${prefix}Worker3`).trim() : '',
+            worker4: _normalizeProcess(g(`${prefix}Process4`).trim()) ? g(`${prefix}Worker4`).trim() : '',
             appearanceCvt: g(`${prefix}AppearanceCvt`).trim(),
             appearanceCt: g(`${prefix}AppearanceCt`).trim(),
             appearanceWorkers: g(`${prefix}AppearanceWorkers`).trim(),
