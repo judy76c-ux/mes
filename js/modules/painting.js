@@ -4297,7 +4297,7 @@ const PaintingInspectionModule = (function() {
                 }
             </style>
             <div style="position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:1000;">
-                <div style="background:white; border-radius:12px; max-width:78vw; max-height:92vh; width:78vw; overflow:auto; padding:16px 20px; box-shadow:0 10px 40px rgba(0,0,0,0.2);">
+                <div style="background:white; border-radius:12px; max-width:85vw; max-height:92vh; width:85vw; overflow:auto; padding:16px 20px; box-shadow:0 10px 40px rgba(0,0,0,0.2);">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                         <h2 style="margin:0; font-size:1.1rem;">도장 검사 입력</h2>
                         <button onclick="PaintingInspectionModule._closeInspectionModal()" style="background:none; border:none; font-size:24px; cursor:pointer; color:var(--text-muted);">✕</button>

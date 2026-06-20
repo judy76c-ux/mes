@@ -2574,7 +2574,7 @@ var LaserInspectionModule = (function() {
                     .form-input { border:1px solid #ccc!important; }
                 }
             </style>
-            <div id="liCustomModalInner" style="background:white;border-radius:12px;max-width:78vw;width:78vw;max-height:92vh;overflow:auto;padding:16px 20px;box-shadow:0 10px 40px rgba(0,0,0,0.2);">
+            <div id="liCustomModalInner" style="background:white;border-radius:12px;max-width:85vw;width:85vw;max-height:92vh;overflow:auto;padding:16px 20px;box-shadow:0 10px 40px rgba(0,0,0,0.2);">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                     <h2 style="margin:0;font-size:1.1rem;">${title}</h2>
                     <button onclick="LaserInspectionModule._closeModal()" style="background:none;border:none;font-size:24px;cursor:pointer;color:var(--text-muted);">✕</button>
