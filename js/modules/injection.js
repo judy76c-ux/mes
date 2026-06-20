@@ -377,7 +377,7 @@ var InjectionIncomingModule = (function() {
                 <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;">warning</span>
                 불량 상세 (사출 불량)
             </div>
-            <div id="addInjDefectBreakdown" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;margin-bottom:12px;">
+            <div id="addInjDefectBreakdown" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px;">
                 <!-- JavaScript 통해서 동적 렌더링됨 -->
             </div>
 
@@ -405,7 +405,7 @@ var InjectionIncomingModule = (function() {
                     } else {
                         container.innerHTML = defects.map(d => `
                     <div style="background:var(--bg-secondary);padding:8px;border-radius:6px;border:1px solid var(--border);">
-                        <label style="font-size:0.8rem;color:var(--text-secondary);display:block;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${d.name}">${d.name}</label>
+                        <label style="font-size:0.8rem;color:var(--text-secondary);display:block;margin-bottom:4px;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${d.name}">${d.name}</label>
                         <input type="number" class="form-input defect-input-new" data-defect-id="${d.id}" data-defect-name="${d.name}" min="0" placeholder="0" style="padding:4px 8px;font-size:0.85rem;" oninput="InjectionIncomingModule.calcTotalAddFailQty()">
                     </div>
                 `).join('');
@@ -733,7 +733,7 @@ var InjectionIncomingModule = (function() {
                 <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;">warning</span>
                 불량 상세 (사출 불량)
             </div>
-            <div id="editInjDefectBreakdown" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;margin-bottom:12px;">
+            <div id="editInjDefectBreakdown" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px;">
                 <!-- JavaScript 통해서 동적 렌더링됨 -->
             </div>
 
@@ -763,7 +763,7 @@ var InjectionIncomingModule = (function() {
                         container.innerHTML = defects.map(function(df) {
                             const val = details[df.name] || '';
                             return '<div style="background:var(--bg-secondary);padding:8px;border-radius:6px;border:1px solid var(--border);">'
-                                + '<label style="font-size:0.8rem;color:var(--text-secondary);display:block;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + df.name + '">' + df.name + '</label>'
+                                + '<label style="font-size:0.8rem;color:var(--text-secondary);display:block;margin-bottom:4px;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="' + df.name + '">' + df.name + '</label>'
                                 + '<input type="number" class="form-input defect-input-edit" data-defect-id="' + df.id + '" data-defect-name="' + df.name + '" min="0" placeholder="0" value="' + val + '" style="padding:4px 8px;font-size:0.85rem;" oninput="InjectionIncomingModule.calcTotalEditFailQty()">'
                                 + '</div>';
                         }).join('');

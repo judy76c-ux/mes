@@ -1031,15 +1031,12 @@ var ProdStandardsModule = (function() {
         ];
 
         const groups = [
-            { process: '공정 설계', icon: 'account_tree', stations: [
-                { station: '전체 공정', standards: [flowChart, pfmea] },
-            ] },
-            { process: '수입검사', icon: 'inventory_2', stations: [
-                { station: '도료 입고', standards: [tds, color, mesh] },
-            ] },
             { process: '보관', icon: 'warehouse', stations: [
                 { station: '도료창고 (위험물)', standards: [] },
                 { station: '사출 창고', standards: [] },
+            ] },
+            { process: '수입검사', icon: 'inventory_2', stations: [
+                { station: '도료 입고', standards: [tds, color, mesh] },
             ] },
             { process: '도장(A)', icon: 'format_paint', stations: paintStations },
             { process: '도장(B)', icon: 'format_paint', stations: paintStations },
@@ -2318,37 +2315,32 @@ var ProdStandardsModule = (function() {
                 data-std-link-target="${_esc(target)}"
                 data-std-link-line="${_esc(std.linkLine || '')}"
                 onclick="${std.action}"
-                title="${_esc(dragHint)}"
-                style="text-align:left;border:1px solid var(--border-color);border-left:4px solid ${std.accent};
-                       border-radius:8px;background:var(--bg-primary);padding:10px 11px;cursor:${_processStandardMoveEdit ? 'grab' : 'pointer'};min-height:76px;${buttonReset}">
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
-                    <span style="display:flex;align-items:center;gap:7px;font-weight:850;color:var(--text-primary);font-size:.82rem;">
-                        ${_processStandardMoveEdit ? `<span class="material-symbols-outlined" style="font-size:15px;color:var(--text-muted);">drag_indicator</span>` : ''}
-                        <span class="material-symbols-outlined" style="font-size:19px;color:${std.accent};">${std.icon}</span>
-                        ${std.label}
+                title="${_esc(std.desc || dragHint)}"
+                style="text-align:left;border:1px solid var(--border-color);border-left:3px solid ${std.accent};
+                       border-radius:6px;background:var(--bg-primary);padding:5px 8px;cursor:${_processStandardMoveEdit ? 'grab' : 'pointer'};flex-shrink:0;${buttonReset}">
+                <div style="display:flex;align-items:center;gap:5px;white-space:nowrap;">
+                    ${_processStandardMoveEdit ? `<span class="material-symbols-outlined" style="font-size:13px;color:var(--text-muted);">drag_indicator</span>` : ''}
+                    <span class="material-symbols-outlined" style="font-size:15px;color:${std.accent};">${std.icon}</span>
+                    <span style="font-weight:700;color:var(--text-primary);font-size:.77rem;">${std.label}</span>
+                    <span style="font-size:.61rem;background:${std.badgeColor || std.accent};color:#fff;border-radius:3px;padding:1px 5px;font-weight:700;white-space:nowrap;">
+                        ${std.count == null ? std.badge : `${std.count.toLocaleString()}건`}
                     </span>
-                    <span style="display:flex;align-items:center;gap:5px;">
-                        <span style="font-size:.66rem;background:${std.badgeColor || std.accent};color:#fff;border-radius:4px;padding:2px 6px;font-weight:800;white-space:nowrap;">
-                            ${std.count == null ? std.badge : `${std.count.toLocaleString()}건`}
-                        </span>
-                        ${_processStandardMoveEdit && std.linkKind === 'custom-upload' ? `<button type="button" title="이미지 업로드" onclick="event.stopPropagation();ProdStandardsModule._openCustomUploadStdViewer('${_jsArg(std.linkTarget)}')"
-                            style="border:1px solid rgba(37,99,235,.35);background:#fff;color:#2563eb;border-radius:5px;
-                                   width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;">
-                            <span class="material-symbols-outlined" style="font-size:13px;">upload_file</span>
-                        </button>` : ''}
-                        ${_processStandardMoveEdit && std.linkKind === 'custom-web' ? `<button type="button" title="내용 편집" onclick="event.stopPropagation();ProdStandardsModule._openCustomWebStdEditor('${_jsArg(std.linkTarget)}')"
-                            style="border:1px solid rgba(13,148,136,.35);background:#fff;color:#0d9488;border-radius:5px;
-                                   width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;">
-                            <span class="material-symbols-outlined" style="font-size:13px;">edit</span>
-                        </button>` : ''}
-                        ${_processStandardMoveEdit ? `<button type="button" data-std-delete="1" title="삭제" onclick="event.stopPropagation();ProdStandardsModule._removeProcessStandardMenuItem('${_jsArg(std.id)}')"
-                            style="border:1px solid rgba(239,68,68,.35);background:#fff;color:#dc2626;border-radius:5px;
-                                   width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;">
-                            <span class="material-symbols-outlined" style="font-size:13px;">close</span>
-                        </button>` : ''}
-                    </span>
+                    ${_processStandardMoveEdit && std.linkKind === 'custom-upload' ? `<button type="button" title="이미지 업로드" onclick="event.stopPropagation();ProdStandardsModule._openCustomUploadStdViewer('${_jsArg(std.linkTarget)}')"
+                        style="border:1px solid rgba(37,99,235,.35);background:#fff;color:#2563eb;border-radius:4px;
+                               width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;flex-shrink:0;">
+                        <span class="material-symbols-outlined" style="font-size:12px;">upload_file</span>
+                    </button>` : ''}
+                    ${_processStandardMoveEdit && std.linkKind === 'custom-web' ? `<button type="button" title="내용 편집" onclick="event.stopPropagation();ProdStandardsModule._openCustomWebStdEditor('${_jsArg(std.linkTarget)}')"
+                        style="border:1px solid rgba(13,148,136,.35);background:#fff;color:#0d9488;border-radius:4px;
+                               width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;flex-shrink:0;">
+                        <span class="material-symbols-outlined" style="font-size:12px;">edit</span>
+                    </button>` : ''}
+                    ${_processStandardMoveEdit ? `<button type="button" data-std-delete="1" title="삭제" onclick="event.stopPropagation();ProdStandardsModule._removeProcessStandardMenuItem('${_jsArg(std.id)}')"
+                        style="border:1px solid rgba(239,68,68,.35);background:#fff;color:#dc2626;border-radius:4px;
+                               width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;flex-shrink:0;">
+                        <span class="material-symbols-outlined" style="font-size:12px;">close</span>
+                    </button>` : ''}
                 </div>
-                <div style="font-size:.72rem;color:var(--text-muted);line-height:1.38;">${std.desc}</div>
             </${tagEnd}>`;
         };
 
@@ -2384,14 +2376,14 @@ var ProdStandardsModule = (function() {
                     </span>` : ''}
                 </div>
                 <div ${dropAttrs(process, station)}
-                    style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;min-height:84px;
-                           ${_processStandardMoveEdit ? 'outline:1px dashed rgba(37,99,235,.22);outline-offset:3px;border-radius:8px;' : ''}">
+                    style="display:flex;flex-wrap:nowrap;gap:6px;overflow-x:auto;
+                           ${_processStandardMoveEdit ? 'min-height:40px;outline:1px dashed rgba(37,99,235,.22);outline-offset:3px;border-radius:6px;padding:4px;' : ''}">
                     ${(standards || []).map(std => renderStd(std, process, station)).join('')}
                 </div>
             </div>`;
         const paintSection = (paintA || paintB) ? `
             <section style="border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary);overflow:hidden;">
-                <div style="display:flex;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid var(--border-color);">
+                <div style="display:flex;align-items:center;gap:8px;padding:8px 11px;border-bottom:1px solid var(--border-color);">
                     <span class="material-symbols-outlined" style="font-size:20px;color:var(--accent-blue);">format_paint</span>
                     <div style="font-weight:900;color:var(--text-primary);">도장(A) / 도장(B)</div>
                     <div style="font-size:.73rem;color:var(--text-muted);">같은 세부공정을 한 행에서 비교·배치</div>
@@ -2404,14 +2396,14 @@ var ProdStandardsModule = (function() {
                         <button type="button" onclick="ProdStandardsModule._removeProcessStandardProcess('도장(B)')" class="btn btn-sm btn-outline" style="color:#dc2626;border-color:rgba(239,68,68,.45);">도장(B) 삭제</button>
                     </div>` : ''}
                 </div>
-                <div style="display:flex;flex-direction:column;gap:10px;padding:12px;">
+                <div style="display:flex;flex-direction:column;gap:7px;padding:9px;">
                     ${stationNames.map(station => {
                         const a = findStation(paintA, station);
                         const b = findStation(paintB, station);
                         return `
-                        <div style="display:grid;grid-template-columns:140px minmax(0,1fr) 24px minmax(0,1fr);gap:10px;align-items:start;">
-                            <div style="font-size:.8rem;font-weight:900;color:var(--text-secondary);padding:9px 10px;
-                                        border-radius:8px;background:var(--bg-primary);border:1px solid var(--border-color);">
+                        <div style="display:grid;grid-template-columns:120px minmax(0,1fr) 16px minmax(0,1fr);gap:8px;align-items:center;">
+                            <div style="font-size:.77rem;font-weight:800;color:var(--text-secondary);padding:6px 8px;
+                                        border-radius:6px;background:var(--bg-primary);border:1px solid var(--border-color);">
                                 ${station}
                             </div>
                             ${renderDropZone('도장(A)', station, a.standards)}
@@ -2426,7 +2418,7 @@ var ProdStandardsModule = (function() {
             if (group.process === '도장(A)' || group.process === '도장(B)') return group.process === paintAnchor ? paintSection : '';
             return `
             <section style="border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary);overflow:hidden;">
-                <div style="display:flex;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid var(--border-color);">
+                <div style="display:flex;align-items:center;gap:8px;padding:8px 11px;border-bottom:1px solid var(--border-color);">
                     <span class="material-symbols-outlined" style="font-size:20px;color:var(--accent-blue);">${group.icon}</span>
                     <div style="font-weight:900;color:var(--text-primary);">${group.process}</div>
                     ${_processStandardMoveEdit ? `
@@ -2437,11 +2429,11 @@ var ProdStandardsModule = (function() {
                             <button type="button" onclick="ProdStandardsModule._addProcessStandardStation('${_jsArg(group.process)}')" class="btn btn-sm btn-outline">+ 세부공정</button>
                         </div>` : ''}
                 </div>
-                <div style="display:flex;flex-direction:column;gap:10px;padding:12px;">
+                <div style="display:flex;flex-direction:column;gap:7px;padding:9px;">
                     ${group.stations.map(st => `
-                        <div style="display:grid;grid-template-columns:140px minmax(0,1fr);gap:10px;align-items:start;">
-                            <div style="display:flex;flex-direction:column;gap:7px;font-size:.8rem;font-weight:900;color:var(--text-secondary);
-                                        padding:9px 10px;border-radius:8px;background:var(--bg-primary);border:1px solid var(--border-color);">
+                        <div style="display:grid;grid-template-columns:120px minmax(0,1fr);gap:8px;align-items:center;">
+                            <div style="display:flex;flex-direction:column;gap:5px;font-size:.77rem;font-weight:800;color:var(--text-secondary);
+                                        padding:6px 8px;border-radius:6px;background:var(--bg-primary);border:1px solid var(--border-color);">
                                 <span>${st.station}</span>
                                 ${_processStandardMoveEdit ? `<div style="display:flex;gap:4px;flex-wrap:wrap;">
                                 <button type="button" onclick="ProdStandardsModule._moveProcessStandardStation('${_jsArg(group.process)}','${_jsArg(st.station)}',-1)"
@@ -2495,13 +2487,13 @@ var ProdStandardsModule = (function() {
         }));
 
         const cardBase = `
-            border:1px solid var(--border-color);border-radius:10px;background:var(--bg-primary);
-            padding:18px;box-shadow:var(--shadow-sm);display:flex;flex-direction:column;gap:12px;min-height:150px;
+            border:1px solid var(--border-color);border-radius:8px;background:var(--bg-primary);
+            padding:10px 14px;box-shadow:var(--shadow-sm);display:flex;flex-direction:column;gap:4px;
         `;
         const actionBtn = `
-            margin-top:auto;display:inline-flex;align-items:center;justify-content:center;gap:6px;
-            padding:8px 12px;border-radius:8px;border:1px solid var(--accent-blue);
-            background:rgba(59,130,246,.08);color:var(--accent-blue);font-weight:700;font-size:.82rem;cursor:pointer;
+            margin-top:6px;display:inline-flex;align-items:center;justify-content:center;gap:4px;
+            padding:4px 10px;border-radius:6px;border:1px solid var(--accent-blue);
+            background:rgba(59,130,246,.08);color:var(--accent-blue);font-weight:700;font-size:.75rem;cursor:pointer;
         `;
 
         container.innerHTML = `
@@ -2512,55 +2504,45 @@ var ProdStandardsModule = (function() {
                     </div>
                 </div>
 
-                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-bottom:18px;">
-                    <div style="${cardBase}border-top:4px solid var(--accent-blue);">
-                        <div style="display:flex;align-items:center;gap:10px;">
-                            <span class="material-symbols-outlined" style="font-size:26px;color:var(--accent-blue);">description</span>
-                            <div style="font-weight:800;">관리계획서</div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px;">
+                    <div style="${cardBase}border-top:3px solid var(--accent-blue);">
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-blue);">description</span>
+                            <div style="font-weight:800;font-size:.85rem;">관리계획서</div>
                         </div>
-                        <div style="font-size:2rem;font-weight:900;color:var(--text-primary);">${cpProductCount.toLocaleString()}</div>
-                        <div style="font-size:.82rem;color:var(--text-muted);">등록 품목 수 · 관리항목 ${cpRows.length.toLocaleString()}건</div>
-                        <div style="display:flex;gap:8px;margin-top:auto;">
-                            <button style="${actionBtn}flex:1;" onclick="ProdStandardsModule.selectDocType('${DOC_CP_STATUS}')">
-                                관리계획서현황
-                            </button>
-                        </div>
+                        <div style="font-size:1.4rem;font-weight:900;color:var(--text-primary);">${cpProductCount.toLocaleString()}</div>
+                        <div style="font-size:.73rem;color:var(--text-muted);">품목 ${cpProductCount.toLocaleString()}개 · 항목 ${cpRows.length.toLocaleString()}건</div>
+                        <button style="${actionBtn}" onclick="ProdStandardsModule.selectDocType('${DOC_CP_STATUS}')">관리계획서현황</button>
                     </div>
 
-                    <div style="${cardBase}border-top:4px solid #7c3aed;">
-                        <div style="display:flex;align-items:center;gap:10px;">
-                            <span class="material-symbols-outlined" style="font-size:26px;color:#7c3aed;">assignment</span>
-                            <div style="font-weight:800;">작업 표준서</div>
+                    <div style="${cardBase}border-top:3px solid #7c3aed;">
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span class="material-symbols-outlined" style="font-size:18px;color:#7c3aed;">assignment</span>
+                            <div style="font-weight:800;font-size:.85rem;">작업 표준서</div>
                         </div>
-                        <div style="font-size:2rem;font-weight:900;color:var(--text-primary);">${workStandardCount.toLocaleString()}</div>
-                        <div style="font-size:.82rem;color:var(--text-muted);">공정별 작업 표준서 등록 수</div>
-                        <button style="${actionBtn}border-color:#7c3aed;color:#7c3aed;background:rgba(124,58,237,.08);" onclick="Router.navigate('work-standard')">
-                            작업 표준서 열기
-                        </button>
+                        <div style="font-size:1.4rem;font-weight:900;color:var(--text-primary);">${workStandardCount.toLocaleString()}</div>
+                        <div style="font-size:.73rem;color:var(--text-muted);">공정별 작업 표준서</div>
+                        <button style="${actionBtn}border-color:#7c3aed;color:#7c3aed;background:rgba(124,58,237,.08);" onclick="Router.navigate('work-standard')">작업 표준서 열기</button>
                     </div>
 
-                    <div style="${cardBase}border-top:4px solid #2563eb;">
-                        <div style="display:flex;align-items:center;gap:10px;">
-                            <span class="material-symbols-outlined" style="font-size:26px;color:#2563eb;">account_tree</span>
-                            <div style="font-weight:800;">공정 흐름도</div>
+                    <div style="${cardBase}border-top:3px solid #2563eb;">
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span class="material-symbols-outlined" style="font-size:18px;color:#2563eb;">account_tree</span>
+                            <div style="font-weight:800;font-size:.85rem;">공정 흐름도</div>
                         </div>
-                        <div style="font-size:2rem;font-weight:900;color:var(--text-primary);">${flowChartCount.toLocaleString()}</div>
-                        <div style="font-size:.82rem;color:var(--text-muted);">제품별 주공정/세부공정 흐름 등록 수</div>
-                        <button style="${actionBtn}border-color:#2563eb;color:#2563eb;background:rgba(37,99,235,.08);" onclick="ProdStandardsModule.selectDocType('process-flow-chart')">
-                            공정 흐름도 열기
-                        </button>
+                        <div style="font-size:1.4rem;font-weight:900;color:var(--text-primary);">${flowChartCount.toLocaleString()}</div>
+                        <div style="font-size:.73rem;color:var(--text-muted);">제품별 공정 흐름</div>
+                        <button style="${actionBtn}border-color:#2563eb;color:#2563eb;background:rgba(37,99,235,.08);" onclick="ProdStandardsModule.selectDocType('process-flow-chart')">흐름도 열기</button>
                     </div>
 
-                    <div style="${cardBase}border-top:4px solid #dc2626;">
-                        <div style="display:flex;align-items:center;gap:10px;">
-                            <span class="material-symbols-outlined" style="font-size:26px;color:#dc2626;">report_problem</span>
-                            <div style="font-weight:800;">PFMEA</div>
+                    <div style="${cardBase}border-top:3px solid #dc2626;">
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span class="material-symbols-outlined" style="font-size:18px;color:#dc2626;">report_problem</span>
+                            <div style="font-weight:800;font-size:.85rem;">PFMEA</div>
                         </div>
-                        <div style="font-size:2rem;font-weight:900;color:var(--text-primary);">${pfmeaCount.toLocaleString()}</div>
-                        <div style="font-size:.82rem;color:var(--text-muted);">잠재 불량 모드/영향 분석 등록 수</div>
-                        <button style="${actionBtn}border-color:#dc2626;color:#dc2626;background:rgba(220,38,38,.08);" onclick="ProdStandardsModule.selectDocType('pfmea')">
-                            PFMEA 열기
-                        </button>
+                        <div style="font-size:1.4rem;font-weight:900;color:var(--text-primary);">${pfmeaCount.toLocaleString()}</div>
+                        <div style="font-size:.73rem;color:var(--text-muted);">불량 모드/영향 분석</div>
+                        <button style="${actionBtn}border-color:#dc2626;color:#dc2626;background:rgba(220,38,38,.08);" onclick="ProdStandardsModule.selectDocType('pfmea')">PFMEA 열기</button>
                     </div>
                 </div>
 

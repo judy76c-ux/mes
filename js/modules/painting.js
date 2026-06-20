@@ -1242,6 +1242,39 @@ const PaintingWorkModule = (function() {
         return (parts.length > 1 ? '<option value="">-- 사출명 선택 --</option>' : '') + opts;
     }
 
+    function _getMatchedInjectionColors(carModel, partName, planColor) {
+        if (!partName) return [];
+        var materials = Storage.getAll(INJECTMAT_STORE) || [];
+        var seen = {};
+        var colors = [];
+        materials.forEach(function(m) {
+            if (!m) return;
+            var nameMatch = m.mfgProductName === partName || m.mfgProductName2 === partName;
+            var modelMatch = !carModel || !m.carModel || m.carModel === carModel;
+            var colorMatch = _injColorMatches(m.injColor, planColor || '');
+            if (!nameMatch || !modelMatch || !colorMatch || !m.injColor) return;
+            String(m.injColor || '')
+                .split(/[,，、\/|]/)
+                .map(function(c) { return c.trim(); })
+                .filter(Boolean)
+                .forEach(function(color) {
+                    var key = color.toLowerCase();
+                    if (seen[key]) return;
+                    seen[key] = true;
+                    colors.push(color);
+                });
+        });
+        return colors;
+    }
+
+    function _isPlatingInjectionColor(carModel, partName, planColor) {
+        var colors = _getMatchedInjectionColors(carModel, partName, planColor);
+        if (!colors.length && planColor) colors = [String(planColor)];
+        return colors.some(function(color) {
+            return /(crom|chrom|chrome|도금)/i.test(String(color || '').trim());
+        });
+    }
+
     // injPartName으로 사출 창고 LOT를 조회
     // planColor: 사출 소재 컬러와 일치하는 LOT 우선 — 불일치 시 전체 반환 (폴백)
     // 도장 컬러(DYS 등)와 사출 소재 컬러(GRAY 등)가 다를 수 있으므로
@@ -4112,6 +4145,9 @@ const PaintingInspectionModule = (function() {
         const allDefects = Storage.getAll(DEFECT_STORE) || [];
         const injectionDefects = allDefects.filter(d => d && (d.type === 'injection' || !d.type));
         const paintingDefects = allDefects.filter(d => d && d.type === 'painting');
+        const platingDefects = _isPlatingInjectionColor(work.carModel, work.partName, work.color)
+            ? allDefects.filter(d => d && d.type === 'plating')
+            : [];
         const inspectors = Storage.getAll(DB.STORES.INSPECTORS) || [];
 
         const lotDisplay = work.lots && work.lots.length > 0 ?
@@ -4316,6 +4352,27 @@ const PaintingInspectionModule = (function() {
                                                 </button>
                                             </label>
                                             <input type="text" inputmode="numeric" enterkeyhint="done" id="paint-${d.id}" value="" placeholder="-" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem;" oninput="this.value=this.value.replace(/[^0-9]/g,'');PaintingInspectionModule._updateDefectTotal()">
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                            ` : ''}
+
+                            ${platingDefects.length > 0 ? `
+                            <div style="margin-top:14px;">
+                                <div style="font-size:0.78rem; font-weight:700; color:#7c3aed; border-bottom:2px solid #7c3aed; padding-bottom:4px; margin-bottom:10px; display:flex; align-items:center; gap:4px;">
+                                    <span class="material-symbols-outlined" style="font-size:14px;color:#7c3aed;">layers</span> 도금 불량
+                                </div>
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:8px;">
+                    ${platingDefects.map(d => `
+                                        <div style="display:flex; flex-direction:column; gap:4px;">
+                                            <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary); display:flex; align-items:flex-start; gap:4px; min-width:0;">
+                                                <span style="flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name}</span>
+                                                <button type="button" title="불량유형 보기" onclick="LaserInspectionModule.showDefectTypeView('${d.id}')" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex-shrink:0;padding:0;">
+                                                    <span class="material-symbols-outlined" style="font-size:14px;">search</span>
+                                                </button>
+                                            </label>
+                                            <input type="text" inputmode="numeric" enterkeyhint="done" id="plate-${d.id}" value="" placeholder="-" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem;" oninput="this.value=this.value.replace(/[^0-9]/g,'');PaintingInspectionModule._updateDefectTotal()">
                                         </div>
                                     `).join('')}
                                 </div>
@@ -4548,9 +4605,11 @@ const PaintingInspectionModule = (function() {
 
         const injDefects = defects.filter(d => d.type === 'injection' || !d.type);
         const paintDefects = defects.filter(d => d.type === 'painting');
-        const platingDefects = /도금/i.test(String(state.selectedProduct?.color || state.selectedWork?.color || '').trim())
-            ? defects.filter(d => d.type === 'plating')
-            : [];
+        const platingDefects = _isPlatingInjectionColor(
+            state.selectedProduct?.carModel || state.selectedWork?.carModel || '',
+            state.selectedProduct?.partName || state.selectedWork?.partName || '',
+            state.selectedProduct?.color || state.selectedWork?.color || ''
+        ) ? defects.filter(d => d.type === 'plating') : [];
 
         let html = '';
 
@@ -4594,7 +4653,7 @@ const PaintingInspectionModule = (function() {
 
         if (platingDefects.length > 0) {
             html += `<h5 style="margin:0 0 10px 0;color:var(--text-primary);border-bottom:2px solid #7c3aed;padding-bottom:5px;">
-                         <span class="material-symbols-outlined" style="vertical-align:middle;font-size:16px;color:#7c3aed;">layers</span> ?? ??
+                         <span class="material-symbols-outlined" style="vertical-align:middle;font-size:16px;color:#7c3aed;">layers</span> 도금 불량
                      </h5>`;
             html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;margin-bottom:10px;">`;
             html += platingDefects.map(d => {
@@ -5009,7 +5068,7 @@ const PaintingInspectionModule = (function() {
     function _updateDefectTotal() {
         // 모든 불량 유형 입력값 합산 (inj-*, paint-*)
         let defectSum = 0;
-        const defectInputs = document.querySelectorAll('[id^="inj-"], [id^="paint-"]');
+        const defectInputs = document.querySelectorAll('[id^="inj-"], [id^="paint-"], [id^="plate-"]');
         defectInputs.forEach(el => {
             defectSum += parseInt(el.value || 0);
         });
@@ -5227,8 +5286,10 @@ const PaintingInspectionModule = (function() {
             let count = 0;
             const injInput   = document.getElementById(`inj-${defect.id}`);
             const paintInput = document.getElementById(`paint-${defect.id}`);
+            const plateInput = document.getElementById(`plate-${defect.id}`);
             if (injInput)   count = parseInt(injInput.value   || 0);
             if (paintInput) count = parseInt(paintInput.value || 0);
+            if (plateInput) count = parseInt(plateInput.value || 0);
 
             if (count > 0) {
                 defectDetails.push({
@@ -6006,6 +6067,9 @@ const PaintingInspectionModule = (function() {
         const defectTypes = Storage.getAll(DB.STORES.DEFECT_TYPES) || [];
         const injDefectTypes  = defectTypes.filter(dt => dt && (dt.type === 'injection' || !dt.type));
         const paintDefectTypes = defectTypes.filter(dt => dt && dt.type === 'painting');
+        const platingDefectTypes = _isPlatingInjectionColor(inspection.carModel, inspection.partName, inspection.color)
+            ? defectTypes.filter(dt => dt && dt.type === 'plating')
+            : [];
 
         const defectMap = {};
         (inspection.defects || []).forEach(d => {
@@ -6138,7 +6202,7 @@ const PaintingInspectionModule = (function() {
                     ${platingDefectTypes.length > 0 ? `
                     <div>
                         <div style="font-size:0.78rem;font-weight:700;color:#7c3aed;margin-bottom:8px;display:flex;align-items:center;gap:4px;">
-                            <span class="material-symbols-outlined" style="font-size:0.9rem;">layers</span> ?? ??
+                            <span class="material-symbols-outlined" style="font-size:0.9rem;">layers</span> 도금 불량
                         </div>
                         ${defectInputs(platingDefectTypes, '#7c3aed')}
                     </div>` : ''}
