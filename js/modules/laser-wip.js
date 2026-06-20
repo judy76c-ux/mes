@@ -30,31 +30,31 @@ var LaserWipModule = (function() {
 
     function _tabNav() {
         const standbyActions = `
-            ${_actionBtn('입고', 'arrow_downward', "LaserWipModule.openManualInput()", 'var(--accent-green)')}
-            ${_actionBtn('출고', 'arrow_upward',   "LaserStandbyModule.openStandbyOutModal()", 'var(--accent-red)')}
-            ${_actionBtn('일괄 등록', 'table_rows', "LaserStandbyModule.openBulkModal()", 'var(--accent-blue)')}`;
+            ${_actionBtn('수동입고', 'arrow_downward', "LaserWipModule.openManualInput()", 'var(--accent-green)')}
+            ${_actionBtn('수동출고', 'arrow_upward',   "LaserStandbyModule.openStandbyOutModal()", 'var(--accent-red)')}
+            ${_actionBtn('일괄등록', 'table_rows', "LaserStandbyModule.openBulkModal()", 'var(--accent-blue)')}`;
         const afterActions = `
-            ${_actionBtn('입고', 'arrow_downward', "LaserWipModule.openAfterLaserInput()", 'var(--accent-green)')}
-            ${_actionBtn('출고', 'arrow_upward',   "LaserWipModule.openAfterLaserOut()", 'var(--accent-red)')}`;
+            ${_actionBtn('수동입고', 'arrow_downward', "LaserWipModule.openAfterLaserInput()", 'var(--accent-green)')}
+            ${_actionBtn('수동출고', 'arrow_upward',   "LaserWipModule.openAfterLaserOut()", 'var(--accent-red)')}`;
         return `
         <div style="margin-bottom:18px;">
-            <div style="display:flex;gap:8px;margin-bottom:10px;">
-                ${TABS.map(t => `
-                    <button type="button" id="wipTab-${t.id}"
-                        onclick="LaserWipModule.switchTab('${t.id}')"
-                        class="btn ${_activeTab === t.id ? 'btn-primary' : 'btn-outline'}"
-                        style="display:flex;align-items:center;gap:6px;${_activeTab === t.id ? '' : 'background:#fff;'}">
-                        <span class="material-symbols-outlined" style="font-size:18px;">${t.icon}</span>
-                        ${t.label}
-                    </button>`).join('')}
-            </div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-                ${_activeTab === 'standby' ? standbyActions : (_activeTab === 'after-laser' ? afterActions : '')}
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    ${TABS.map(t => `
+                        <button type="button" id="wipTab-${t.id}"
+                            onclick="LaserWipModule.switchTab('${t.id}')"
+                            class="btn ${_activeTab === t.id ? 'btn-primary' : 'btn-outline'}"
+                            style="display:flex;align-items:center;gap:6px;${_activeTab === t.id ? '' : 'background:#fff;'}">
+                            <span class="material-symbols-outlined" style="font-size:18px;">${t.icon}</span>
+                            ${t.label}
+                        </button>`).join('')}
+                </div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:flex-end;">
+                    ${_activeTab === 'standby' ? standbyActions : (_activeTab === 'after-laser' ? afterActions : '')}
+                </div>
             </div>
         </div>`;
     }
-
-    // ── 페이지 전체 렌더 ──────────────────────────────────────────────────
     function render(container) {
         container.innerHTML = `
         <div style="padding:20px;">
