@@ -4498,6 +4498,9 @@ const PaintingInspectionModule = (function() {
 
         const injDefects = defects.filter(d => d.type === 'injection' || !d.type);
         const paintDefects = defects.filter(d => d.type === 'painting');
+        const platingDefects = /도금/i.test(String(state.selectedProduct?.color || state.selectedWork?.color || '').trim())
+            ? defects.filter(d => d.type === 'plating')
+            : [];
 
         let html = '';
 
@@ -4527,6 +4530,25 @@ const PaintingInspectionModule = (function() {
             html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;margin-bottom:10px;">`;
             html += paintDefects.map(d => {
                 const safeName = (d.name || '').replace(/'/g, "\\'");
+                return `
+                    <button class="defect-btn" id="defect-btn-${d.id}"
+                        onclick="PaintingInspectionModule.increment('${d.id}', '${safeName}')"
+                        oncontextmenu="event.preventDefault(); PaintingInspectionModule.decrement('${d.id}')">
+                        <span class="defect-name">${d.name || ''}</span>
+                        <span class="defect-count">${state.counts[d.id] || 0}</span>
+                    </button>
+                `;
+            }).join('');
+            html += `</div>`;
+        }
+
+        if (platingDefects.length > 0) {
+            html += `<h5 style="margin:0 0 10px 0;color:var(--text-primary);border-bottom:2px solid #7c3aed;padding-bottom:5px;">
+                         <span class="material-symbols-outlined" style="vertical-align:middle;font-size:16px;color:#7c3aed;">layers</span> ?? ??
+                     </h5>`;
+            html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;margin-bottom:10px;">`;
+            html += platingDefects.map(d => {
+                const safeName = (d.name || '').replace(/'/g, \"\'\");
                 return `
                     <button class="defect-btn" id="defect-btn-${d.id}"
                         onclick="PaintingInspectionModule.increment('${d.id}', '${safeName}')"

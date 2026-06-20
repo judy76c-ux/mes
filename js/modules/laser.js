@@ -561,7 +561,7 @@ var LaserWorkModule = (function() {
 
     function render(container) {
         container.innerHTML = `
-            <div class="fade-in-up">
+            <div class="fade-in-up jig-page">
                 ${LaserProcessUI.renderSection('laser-work', '레이져 작업일지', '레이져 작업 실적, 설비별 가동 이력, 작업자와 초중종물 확인 기록을 관리합니다.')}
                 <div class="page-header">
                     <div class="page-actions">
@@ -1980,7 +1980,7 @@ var LaserInspectionModule = (function() {
             return;
         }
         container.innerHTML = `
-            <div class="fade-in-up">
+            <div class="fade-in-up jig-page">
                 ${LaserProcessUI.renderSection('laser-inspection', '외관 검사 일지', '레이져 작업 완료품의 외관 검사 결과와 불량 유형, 검사 대기 현황을 관리합니다.')}
 
                 <div class="page-header" style="margin:-6px 0 14px;">
@@ -2141,7 +2141,7 @@ var LaserInspectionModule = (function() {
         _nonconformStandardImage = await _loadNonconformStandardImage();
         const canUpload = _canUploadNonconformStandard();
         container.innerHTML = `
-            <div class="fade-in-up">
+            <div class="fade-in-up jig-page">
                 ${LaserProcessUI.renderSection('laser-inspection-standard', '부적합 처리 기준서', '기준서 업로드 및 인쇄')}
                 <div class="page-header" style="margin:-6px 0 14px;">
                     <div class="page-actions" style="display:flex;justify-content:flex-end;gap:8px;width:100%;">
