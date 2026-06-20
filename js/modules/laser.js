@@ -811,6 +811,7 @@ var LaserWorkModule = (function() {
                     박스당 포장 수량은 : <strong style="font-size:1.18rem;color:var(--accent-blue);">-</strong> 개
                 </div>
             </div>
+            <div id="lwResidualInfo" style="display:none;margin-bottom:8px;"></div>
             <div id="lwSplitPanel" style="display:none;margin-bottom:8px;padding:8px 12px;background:rgba(109,40,217,0.06);border:1px solid rgba(109,40,217,0.25);border-radius:8px;">
                 <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
                     <span class="material-symbols-outlined" style="font-size:1rem;color:#7c3aed;">call_split</span>
@@ -1095,6 +1096,69 @@ var LaserWorkModule = (function() {
 
         const resEl = document.getElementById('lwStandbyResults');
         if (resEl) resEl.innerHTML = '<span style="color:var(--text-muted)">품명을 선택하세요.</span>';
+        _renderResidualInfo('', '');
+    }
+
+    // 레이져 후 잔량 현황 섹션 렌더링
+    function _renderResidualInfo(car, part) {
+        const el = document.getElementById('lwResidualInfo');
+        if (!el) return;
+        if (!car || !part) { el.style.display = 'none'; return; }
+
+        const workLogs = Storage.getAll(DB.STORES.LASER_WORK_LOG) || [];
+        const residuals = workLogs.filter(w =>
+            w.carModel === car && w.partName === part &&
+            Number(w.laserResidualQty) > 0
+        ).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+        if (residuals.length === 0) { el.style.display = 'none'; return; }
+
+        const totalResidual = residuals.reduce((sum, w) => sum + (Number(w.laserResidualQty) || 0), 0);
+
+        el.style.display = 'block';
+        el.innerHTML = `
+        <div style="padding:8px 12px;background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.4);border-radius:8px;">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-orange);">inventory</span>
+                <span style="font-weight:700;font-size:0.85rem;color:var(--accent-orange);">레이져 후 잔량 현황</span>
+                <span style="margin-left:8px;font-size:0.78rem;color:var(--text-muted);">${car} / ${part}</span>
+                <span style="margin-left:auto;font-size:0.85rem;font-weight:800;color:var(--accent-orange);">합계 ${UIUtils.formatNumber(totalResidual)} EA</span>
+            </div>
+            <table style="width:100%;border-collapse:collapse;">
+                <thead>
+                    <tr style="background:rgba(245,158,11,0.06);">
+                        <th style="padding:4px 8px;font-size:0.72rem;color:var(--text-muted);text-align:left;border-bottom:1px solid rgba(245,158,11,0.3);">레이져 작업일</th>
+                        <th style="padding:4px 8px;font-size:0.72rem;color:var(--text-muted);text-align:left;border-bottom:1px solid rgba(245,158,11,0.3);">장비</th>
+                        <th style="padding:4px 8px;font-size:0.72rem;color:var(--text-muted);text-align:left;border-bottom:1px solid rgba(245,158,11,0.3);">도장LOT</th>
+                        <th style="padding:4px 8px;font-size:0.72rem;color:var(--text-muted);text-align:left;border-bottom:1px solid rgba(245,158,11,0.3);">사출LOT</th>
+                        <th style="padding:4px 8px;font-size:0.72rem;color:var(--text-muted);text-align:right;border-bottom:1px solid rgba(245,158,11,0.3);">작업수량</th>
+                        <th style="padding:4px 8px;font-size:0.72rem;color:var(--text-muted);text-align:right;border-bottom:1px solid rgba(245,158,11,0.3);">잔량 (EA)</th>
+                        <th style="padding:4px 8px;font-size:0.72rem;color:var(--text-muted);text-align:left;border-bottom:1px solid rgba(245,158,11,0.3);">상태</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${residuals.map(w => {
+                        const paintLots = Array.isArray(w.paintLots) ? w.paintLots : [];
+                        const paintDates = paintLots.length > 0
+                            ? [...new Set(paintLots.map(l => l && l.paintDate).filter(Boolean))].join(', ')
+                            : (w.paintDate || '-');
+                        const injLots = paintLots.length > 0
+                            ? [...new Set(paintLots.map(l => l && l.lotNo).filter(Boolean))].join(', ')
+                            : (w.paintLot || '-');
+                        return `
+                        <tr onmouseover="this.style.background='rgba(245,158,11,0.06)'" onmouseout="this.style.background=''">
+                            <td style="padding:4px 8px;font-size:0.8rem;">${w.date||'-'}</td>
+                            <td style="padding:4px 8px;font-size:0.8rem;">${w.machine||'-'}</td>
+                            <td style="padding:4px 8px;font-size:0.75rem;font-family:monospace;">${paintDates}</td>
+                            <td style="padding:4px 8px;font-size:0.75rem;font-family:monospace;">${injLots}</td>
+                            <td style="padding:4px 8px;font-size:0.8rem;text-align:right;">${UIUtils.formatNumber(Number(w.quantity)||0)}</td>
+                            <td style="padding:4px 8px;font-size:0.95rem;text-align:right;font-weight:800;color:var(--accent-orange);">${UIUtils.formatNumber(Number(w.laserResidualQty)||0)}</td>
+                            <td style="padding:4px 8px;"><span style="font-size:0.72rem;padding:2px 6px;border-radius:10px;background:rgba(245,158,11,0.15);color:var(--accent-orange);">${w.laserResidualStatus||'잔량'}</span></td>
+                        </tr>`;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>`;
     }
 
     // 품명 변경 → 결과 테이블 렌더링
@@ -1102,6 +1166,7 @@ var LaserWorkModule = (function() {
         const car  = (document.getElementById('lwSbCar')  || {}).value || '';
         const part = (document.getElementById('lwSbPart') || {}).value || '';
         renderStandbyResults(car, part);
+        _renderResidualInfo(car, part);
     }
 
     // 필터 결과 테이블 렌더링 (선입선출: 도장작업일 오름차순)
@@ -1273,6 +1338,7 @@ var LaserWorkModule = (function() {
         partSelect.innerHTML = '<option value="">-- 품명 선택 --</option>';
         colorSelect.innerHTML = '<option value="">-- 컬러 선택 --</option>';
 
+        _renderResidualInfo('', '');
         if (!car) return;
         const parts = [...new Set(products.filter(p => _productCarName(p) === car).map(_productPartName).filter(Boolean))].sort();
         partSelect.innerHTML = '<option value="">-- 품명 선택 --</option>' +
@@ -1298,6 +1364,7 @@ var LaserWorkModule = (function() {
         _selectedColor = prevColor || colorSelect.value || '';
         updateLaserGuideChecks();
         _refreshLaserCycleSpec(true);
+        _renderResidualInfo(car, part);
     }
 
     function refreshLaserCycleSpec(forceValue = false) {
