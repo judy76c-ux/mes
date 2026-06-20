@@ -4516,7 +4516,7 @@ const PaintingInspectionModule = (function() {
                         onclick="PaintingInspectionModule.increment('${d.id}', '${safeName}')"
                         oncontextmenu="event.preventDefault(); PaintingInspectionModule.decrement('${d.id}')">
                         <span class="defect-name">${d.name || ''}</span>
-                        <span class="defect-count">${state.counts[d.id] || 0}</span>
+                        <span class="defect-count">${(state.counts[d.id] || 0) > 0 ? state.counts[d.id] : '-'}</span>
                     </button>
                 `;
             }).join('');
@@ -4535,7 +4535,7 @@ const PaintingInspectionModule = (function() {
                         onclick="PaintingInspectionModule.increment('${d.id}', '${safeName}')"
                         oncontextmenu="event.preventDefault(); PaintingInspectionModule.decrement('${d.id}')">
                         <span class="defect-name">${d.name || ''}</span>
-                        <span class="defect-count">${state.counts[d.id] || 0}</span>
+                        <span class="defect-count">${(state.counts[d.id] || 0) > 0 ? state.counts[d.id] : '-'}</span>
                     </button>
                 `;
             }).join('');
@@ -4554,7 +4554,7 @@ const PaintingInspectionModule = (function() {
                         onclick="PaintingInspectionModule.increment('${d.id}', '${safeName}')"
                         oncontextmenu="event.preventDefault(); PaintingInspectionModule.decrement('${d.id}')">
                         <span class="defect-name">${d.name || ''}</span>
-                        <span class="defect-count">${state.counts[d.id] || 0}</span>
+                        <span class="defect-count">${(state.counts[d.id] || 0) > 0 ? state.counts[d.id] : '-'}</span>
                     </button>
                 `;
             }).join('');
@@ -5880,7 +5880,7 @@ const PaintingInspectionModule = (function() {
                     return `<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
                         <div style="font-size:0.78rem;font-weight:600;color:${color};margin-bottom:6px;">${dt.name}</div>
                         <input type="text" class="form-input defect-count-input" data-defect-id="${dt.id}"
-                            value="${val}" inputmode="numeric" enterkeyhint="done"
+                            value="${val > 0 ? val : ''}" placeholder="-" inputmode="numeric" enterkeyhint="done"
                             style="text-align:right;font-weight:700;font-size:1rem;padding:4px 8px;"
                             oninput="this.value=this.value.replace(/[^0-9]/g,'')">
                     </div>`;
