@@ -2317,7 +2317,7 @@ var ProdStandardsModule = (function() {
                 onclick="${std.action}"
                 title="${_esc(std.desc || dragHint)}"
                 style="text-align:left;border:1px solid var(--border-color);border-left:3px solid ${std.accent};
-                       border-radius:6px;background:var(--bg-primary);padding:3px 6px;cursor:${_processStandardMoveEdit ? 'grab' : 'pointer'};${buttonReset}">
+                       border-radius:6px;background:var(--bg-primary);padding:8px 8px;cursor:${_processStandardMoveEdit ? 'grab' : 'pointer'};${buttonReset}">
                 <div style="display:flex;align-items:center;gap:3px;white-space:nowrap;">
                     ${_processStandardMoveEdit ? `<span class="material-symbols-outlined" style="font-size:12px;color:var(--text-muted);">drag_indicator</span>` : ''}
                     <span class="material-symbols-outlined" style="font-size:12px;color:${std.accent};">${std.icon}</span>
@@ -2397,7 +2397,7 @@ var ProdStandardsModule = (function() {
                         <button type="button" onclick="ProdStandardsModule._removeProcessStandardProcess('도장(B)')" class="btn btn-sm btn-outline" style="color:#dc2626;border-color:rgba(239,68,68,.45);">도장(B) 삭제</button>
                     </div>` : ''}
                 </div>
-                <div style="display:flex;flex-direction:column;gap:7px;padding:9px;">
+                <div style="display:flex;flex-direction:column;gap:3px;padding:6px 9px;">
                     ${stationNames.map(station => {
                         const a = findStation(paintA, station);
                         const b = findStation(paintB, station);
@@ -2408,7 +2408,7 @@ var ProdStandardsModule = (function() {
                                 ${station}
                             </div>
                             ${renderDropZone('도장(A)', station, a.standards)}
-                            <div style="min-height:84px;border-left:1px dashed var(--border-color);opacity:.9;"></div>
+                            <div style="align-self:stretch;border-left:1px dashed var(--border-color);opacity:.9;"></div>
                             ${renderDropZone('도장(B)', station, b.standards)}
                         </div>`;
                     }).join('')}
@@ -2430,7 +2430,7 @@ var ProdStandardsModule = (function() {
                             <button type="button" onclick="ProdStandardsModule._addProcessStandardStation('${_jsArg(group.process)}')" class="btn btn-sm btn-outline">+ 세부공정</button>
                         </div>` : ''}
                 </div>
-                <div style="display:flex;flex-direction:column;gap:7px;padding:9px;">
+                <div style="display:flex;flex-direction:column;gap:3px;padding:6px 9px;">
                     ${group.stations.map(st => `
                         <div style="display:grid;grid-template-columns:120px minmax(0,1fr);gap:8px;align-items:center;">
                             <div style="display:flex;flex-direction:column;gap:5px;font-size:.77rem;font-weight:800;color:var(--text-secondary);
@@ -2456,8 +2456,8 @@ var ProdStandardsModule = (function() {
                                 </button>` : ''}
                             </div>
                             <div ${dropAttrs(group.process, st.station)}
-                                style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;min-height:84px;
-                                       ${_processStandardMoveEdit ? 'outline:1px dashed rgba(37,99,235,.22);outline-offset:3px;border-radius:8px;' : ''}">
+                                style="display:flex;flex-wrap:wrap;gap:4px;align-items:flex-start;
+                                       ${_processStandardMoveEdit ? 'min-height:36px;outline:1px dashed rgba(37,99,235,.22);outline-offset:3px;border-radius:8px;padding:4px;' : ''}">
                                 ${st.standards.map(std => renderStd(std, group.process, st.station)).join('')}
                             </div>
                         </div>
