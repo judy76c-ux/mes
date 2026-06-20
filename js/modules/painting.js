@@ -5994,6 +5994,13 @@ const PaintingInspectionModule = (function() {
                         </div>
                         ${defectInputs(paintDefectTypes, '#16a34a')}
                     </div>` : ''}
+                    ${platingDefectTypes.length > 0 ? `
+                    <div>
+                        <div style="font-size:0.78rem;font-weight:700;color:#7c3aed;margin-bottom:8px;display:flex;align-items:center;gap:4px;">
+                            <span class="material-symbols-outlined" style="font-size:0.9rem;">layers</span> ?? ??
+                        </div>
+                        ${defectInputs(platingDefectTypes, '#7c3aed')}
+                    </div>` : ''}
                 </div>
             </div>
 

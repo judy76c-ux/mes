@@ -2100,6 +2100,8 @@ input[type="time"] {
 
 .fade-in-up {
     animation: fadeInUp 0.4s ease both;
+    overflow-x: hidden;
+    max-width: 100%;
 }
 
 /* ===================================================================
