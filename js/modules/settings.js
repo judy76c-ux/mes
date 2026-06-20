@@ -939,7 +939,16 @@ const SettingsModule = (function() {
                             p.process3 ? `<div style="display:flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap;"><span class="badge badge-info" style="white-space:nowrap;">${p.process3}</span> <span style="color:var(--text-muted);">${p.cvt3 || '-'}|${p.ct3 || '-'}</span></div>` : '',
                             p.process4 ? `<div style="display:flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap;"><span class="badge badge-info" style="white-space:nowrap;">${p.process4}</span> <span style="color:var(--text-muted);">${p.cvt4 || '-'}|${p.ct4 || '-'}</span></div>` : '',
                             (() => {
-                                const _inspLabel = p.appearanceInspType === '외관+각인 검사' ? '외관+각인 검사' : '외관검사';
+                                // 저장값 없으면 마지막 공정 기준 자동 결정
+                                const _computedInspType = (() => {
+                                    if (p.appearanceInspType) return p.appearanceInspType;
+                                    for (let _i = 4; _i >= 1; _i--) {
+                                        const _lp = p[`process${_i}`]; if (!_lp) continue;
+                                        return (_lp.includes('레이저') || _lp.includes('레이져')) ? '외관+각인 검사' : '외관 검사';
+                                    }
+                                    return '외관 검사';
+                                })();
+                                const _inspLabel = _computedInspType === '외관+각인 검사' ? '외관+각인 검사' : '외관검사';
                                 const _hasAppear = p.process1 || p.process2 || p.process3 || p.process4;
                                 if (!_hasAppear) return '';
                                 // 저장된 값 없으면 마지막 공정 기준 계산
@@ -1151,6 +1160,17 @@ const SettingsModule = (function() {
             return { cvt: v('appearanceCvt'), ct: v('appearanceCt') };
         };
         const _appDefaults = _calcAppearanceDefaults();
+        // 검사 유형 기본값: 저장값 우선, 없으면 마지막 공정 기준 자동 결정
+        const _defaultInspType = (() => {
+            const stored = v('appearanceInspType');
+            if (stored) return stored;
+            for (let n = 4; n >= 1; n--) {
+                const proc = v(`process${n}`);
+                if (!proc) continue;
+                return (proc.includes('레이저') || proc.includes('레이져')) ? '외관+각인 검사' : '외관 검사';
+            }
+            return '외관 검사';
+        })();
 
         // 수정 모드: 이 제품에 연결된 사출 자재 조회
         const linkedInjMats = isEdit
@@ -1513,14 +1533,14 @@ const SettingsModule = (function() {
                     <div style="display:flex;align-items:center;gap:14px;margin-left:8px;">
                         <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.84rem;font-weight:600;">
                             <input type="radio" name="${idPrefix}AppearanceInspType" value="외관 검사"
-                                ${(v('appearanceInspType')||'외관 검사')==='외관 검사' ? 'checked' : ''}
+                                ${_defaultInspType === '외관 검사' ? 'checked' : ''}
                                 style="accent-color:var(--accent-green);width:15px;height:15px;cursor:pointer;">
                             <span class="material-symbols-outlined" style="font-size:15px;color:var(--accent-green);">check_circle</span>
                             외관 검사
                         </label>
                         <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.84rem;font-weight:600;">
                             <input type="radio" name="${idPrefix}AppearanceInspType" value="외관+각인 검사"
-                                ${v('appearanceInspType')==='외관+각인 검사' ? 'checked' : ''}
+                                ${_defaultInspType === '외관+각인 검사' ? 'checked' : ''}
                                 style="accent-color:#7c3aed;width:15px;height:15px;cursor:pointer;">
                             <span class="material-symbols-outlined" style="font-size:15px;color:#7c3aed;">checklist</span>
                             외관+각인 검사
