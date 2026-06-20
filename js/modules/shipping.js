@@ -93,6 +93,7 @@ const ShippingStandbyModule = (function() {
                                         <th>도장 LOT</th>
                                         <th>사출 LOT</th>
                                         <th style="text-align:right">수량</th>
+                                        <th style="text-align:center">박스수</th>
                                         <th>납품처</th>
                                         <th>작업</th>
                                     </tr>
@@ -206,7 +207,7 @@ const ShippingStandbyModule = (function() {
         if (!waitingBody) return;
 
         if (!waiting.length) {
-            waitingBody.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:32px;color:var(--text-muted);">
+            waitingBody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:32px;color:var(--text-muted);">
                 <span class="material-symbols-outlined" style="font-size:2rem;display:block;margin-bottom:8px;opacity:0.3;">check_circle</span>
                 현재 검사 대기 품목이 없습니다.</td></tr>`;
             return;
@@ -222,6 +223,7 @@ const ShippingStandbyModule = (function() {
                 <td style="font-family:monospace;font-size:0.8rem;">${d.paintingDate || '-'}</td>
                 <td style="font-family:monospace;font-size:0.8rem;">${d.lotNo || '-'}</td>
                 <td style="text-align:right;font-weight:600;">${UIUtils.formatNumber(d.goodQty || d.inspectionQty || 0)}</td>
+                <td style="text-align:center;font-weight:700;color:var(--accent-blue);">${d.boxCount > 0 ? UIUtils.formatNumber(d.boxCount) + ' BOX' : '-'}</td>
                 <td style="font-size:0.85rem;">${d.customer || '-'}</td>
                 <td style="white-space:nowrap;" onclick="event.stopPropagation()">
                     <button class="btn btn-sm btn-primary"

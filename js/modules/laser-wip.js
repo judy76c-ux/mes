@@ -36,6 +36,9 @@ var LaserWipModule = (function() {
         const afterActions = `
             ${_actionBtn('수동입고', 'arrow_downward', "LaserWipModule.openAfterLaserInput()", 'var(--accent-green)')}
             ${_actionBtn('수동출고', 'arrow_upward',   "LaserWipModule.openAfterLaserOut()", 'var(--accent-red)')}`;
+        const residualActions = `
+            ${_actionBtn('수동입고', 'arrow_downward', "LaserWipModule.openResidualInput()", 'var(--accent-green)')}
+            ${_actionBtn('수동출고', 'arrow_upward',   "LaserWipModule.openResidualOut()", 'var(--accent-red)')}`;
         return `
         <div style="margin-bottom:18px;">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
@@ -50,7 +53,9 @@ var LaserWipModule = (function() {
                         </button>`).join('')}
                 </div>
                 <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:flex-end;">
-                    ${_activeTab === 'standby' ? standbyActions : (_activeTab === 'after-laser' ? afterActions : '')}
+                    ${_activeTab === 'standby'
+                        ? standbyActions
+                        : (_activeTab === 'after-laser' ? afterActions : residualActions)}
                 </div>
             </div>
         </div>`;
@@ -392,27 +397,70 @@ var LaserWipModule = (function() {
 
     function _calcLaserResidualWip() {
         const laserWorks = Storage.getAll(STORE_LASER) || [];
-        return laserWorks
-            .filter(w => !w.isManualOut)
-            .map(w => {
+        const residualMap = {};
+
+        laserWorks
+            .filter(w => !w.isManualOut && !w.isResidualManualIn && !w.isResidualManualOut)
+            .forEach(w => {
                 const packUnit = _num(w.packUnit);
                 const goodQty = _num(w.inspectionGoodQty) || _num(w.completedQty) || _num(w.quantity);
                 const fullBoxQty = _num(w.shippingEligibleQty) || (packUnit > 0 ? Math.floor(goodQty / packUnit) * packUnit : goodQty);
                 const residualQty = _num(w.laserResidualQty) || (packUnit > 0 ? Math.max(0, goodQty - fullBoxQty) : 0);
                 const paintLots = Array.isArray(w.paintLots) ? w.paintLots : [];
-                return {
-                    carModel: w.carModel || '',
-                    partName: w.partName || '',
-                    color: w.color || '',
-                    laserDates: [_dateTime(w.date || '', w.startTime || w.endTime || '')],
-                    paintDates: paintLots.length ? paintLots.map(l => l && l.paintDate) : [w.paintDate || ''],
-                    injectionLots: paintLots.length ? paintLots.map(l => l && l.lotNo) : [w.paintLot || w.lotNo || ''],
-                    goodQty,
-                    fullBoxQty,
-                    packUnit,
-                    residualQty
-                };
-            })
+                const key = `${w.carModel || ''}||${w.partName || ''}||${w.color || ''}`;
+                if (!residualMap[key]) {
+                    residualMap[key] = {
+                        carModel: w.carModel || '',
+                        partName: w.partName || '',
+                        color: w.color || '',
+                        laserDates: [],
+                        paintDates: [],
+                        injectionLots: [],
+                        goodQty: 0,
+                        fullBoxQty: 0,
+                        packUnit,
+                        residualQty: 0
+                    };
+                }
+                residualMap[key].laserDates.push(_dateTime(w.date || '', w.startTime || w.endTime || ''));
+                (paintLots.length ? paintLots.map(l => l && l.paintDate) : [w.paintDate || '']).forEach(v => residualMap[key].paintDates.push(v));
+                (paintLots.length ? paintLots.map(l => l && l.lotNo) : [w.paintLot || w.lotNo || '']).forEach(v => residualMap[key].injectionLots.push(v));
+                residualMap[key].goodQty += goodQty;
+                residualMap[key].fullBoxQty += fullBoxQty;
+                residualMap[key].packUnit = residualMap[key].packUnit || packUnit;
+                residualMap[key].residualQty += residualQty;
+            });
+
+        laserWorks
+            .filter(w => w.isResidualManualIn || w.isResidualManualOut)
+            .forEach(w => {
+                const key = `${w.carModel || ''}||${w.partName || ''}||${w.color || ''}`;
+                if (!residualMap[key]) {
+                    residualMap[key] = {
+                        carModel: w.carModel || '',
+                        partName: w.partName || '',
+                        color: w.color || '',
+                        laserDates: [],
+                        paintDates: [],
+                        injectionLots: [],
+                        goodQty: 0,
+                        fullBoxQty: 0,
+                        packUnit: _num(w.packUnit),
+                        residualQty: 0
+                    };
+                }
+                residualMap[key].packUnit = residualMap[key].packUnit || _num(w.packUnit);
+                residualMap[key].residualQty += w.isResidualManualIn ? _num(w.quantity) : -_num(w.quantity);
+                residualMap[key].laserDates.push(_dateTime(w.date || '', w.startTime || w.endTime || ''));
+                if (w.paintDate) residualMap[key].paintDates.push(w.paintDate);
+                if (w.lotNo) residualMap[key].injectionLots.push(w.lotNo);
+            });
+
+        return Object.values(residualMap)
+            .map(r => ({
+                ...r,
+                residualQty: Math.max(0, _num(r.residualQty))
+            }))
             .filter(r => r.residualQty > 0)
             .sort((a, b) => {
                 const d = String(b.laserDates[0] || '').localeCompare(String(a.laserDates[0] || ''));
@@ -420,6 +468,204 @@ var LaserWipModule = (function() {
                 const cm = (a.carModel || '').localeCompare(b.carModel || '');
                 return cm !== 0 ? cm : (a.partName || '').localeCompare(b.partName || '');
             });
+    }
+
+    function _getResidualProducts() {
+        return _getPaintBProducts();
+    }
+
+    function openResidualInput() {
+        const products = _getResidualProducts();
+        const carModels = [...new Set(products.map(p => p.carModel).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'ko'));
+        const today = new Date().toISOString().slice(0, 10);
+
+        UIUtils.showModal('레이져 후 잔량 수기 등록', `
+            <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.18);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.82rem;color:var(--text-secondary);">
+                포장단위 미달 잔량을 수동으로 추가 등록합니다.
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">날짜</label>
+                    <input type="date" class="form-input" id="lwResidualInDate" value="${today}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">차종</label>
+                    <select class="form-select" id="lwResidualInCarModel" onchange="LaserWipModule.onResidualInCarChange()">
+                        <option value="">-- 차종 선택 --</option>
+                        ${carModels.map(m => `<option value="${m}">${m}</option>`).join('')}
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">품명</label>
+                    <select class="form-select" id="lwResidualInPartName" onchange="LaserWipModule.onResidualInPartChange()">
+                        <option value="">-- 품명 선택 --</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">컬러</label>
+                    <select class="form-select" id="lwResidualInColor">
+                        <option value="">-- 컬러 선택 --</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">잔량 수량 (EA)</label>
+                    <input type="number" class="form-input" id="lwResidualInQty" min="1" placeholder="0">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">비고</label>
+                    <input type="text" class="form-input" id="lwResidualInNote" placeholder="수기 잔량입고">
+                </div>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="LaserWipModule.saveResidualInput()">등록</button>
+        `, 'lg');
+    }
+
+    function onResidualInCarChange() {
+        const carModel = (document.getElementById('lwResidualInCarModel') || {}).value || '';
+        const products = _getResidualProducts().filter(p => !carModel || p.carModel === carModel);
+        const partNames = [...new Set(products.map(p => p.partName).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'ko'));
+        const partSel = document.getElementById('lwResidualInPartName');
+        if (partSel) partSel.innerHTML = '<option value="">-- 품명 선택 --</option>' + partNames.map(n => `<option value="${n}">${n}</option>`).join('');
+        const colorSel = document.getElementById('lwResidualInColor');
+        if (colorSel) colorSel.innerHTML = '<option value="">-- 컬러 선택 --</option>';
+    }
+
+    function onResidualInPartChange() {
+        const carModel = (document.getElementById('lwResidualInCarModel') || {}).value || '';
+        const partName = (document.getElementById('lwResidualInPartName') || {}).value || '';
+        const products = _getResidualProducts().filter(p => (!carModel || p.carModel === carModel) && (!partName || p.partName === partName));
+        const colors = [...new Set(products.map(p => p.color).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'ko'));
+        const colorSel = document.getElementById('lwResidualInColor');
+        if (colorSel) colorSel.innerHTML = '<option value="">-- 컬러 선택 --</option>' + colors.map(c => `<option value="${c}">${c}</option>`).join('');
+    }
+
+    async function saveResidualInput() {
+        const date = (document.getElementById('lwResidualInDate') || {}).value || '';
+        const carModel = (document.getElementById('lwResidualInCarModel') || {}).value || '';
+        const partName = (document.getElementById('lwResidualInPartName') || {}).value || '';
+        const color = (document.getElementById('lwResidualInColor') || {}).value || '';
+        const quantity = parseInt((document.getElementById('lwResidualInQty') || {}).value || '0', 10);
+        const note = (document.getElementById('lwResidualInNote') || {}).value.trim() || '수기 잔량입고';
+        const prod = _getResidualProducts().find(p => p.carModel === carModel && p.partName === partName && (!color || p.color === color))
+            || _getResidualProducts().find(p => p.carModel === carModel && p.partName === partName);
+        const packUnit = prod ? _num(prod.packUnit || prod.packingUnit || prod.packageUnit || prod.packQty || prod.packingQty) : 0;
+
+        if (!date || !carModel || !partName || !quantity || quantity <= 0) {
+            UIUtils.toast('날짜, 차종, 품명, 잔량 수량(1 이상)은 필수입니다.', 'warning');
+            return;
+        }
+
+        await Storage.add(STORE_LASER, { date, carModel, partName, color, quantity, note, packUnit, isManual: true, isResidualManualIn: true });
+        UIUtils.closeModal();
+        UIUtils.toast(`레이져 후 잔량 수기 등록 완료 — ${partName} ${quantity}EA`, 'success');
+        refresh();
+    }
+
+    function openResidualOut() {
+        const rows = _calcLaserResidualWip().filter(r => r.residualQty > 0);
+        const carModels = [...new Set(rows.map(r => r.carModel).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'ko'));
+        const today = new Date().toISOString().slice(0, 10);
+
+        UIUtils.showModal('레이져 후 잔량 수동출고', `
+            <div style="background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.18);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.82rem;color:var(--accent-red);">
+                잔량 재고를 수동으로 출고 처리합니다.
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">날짜</label>
+                    <input type="date" class="form-input" id="lwResidualOutDate" value="${today}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">차종</label>
+                    <select class="form-select" id="lwResidualOutCarModel" onchange="LaserWipModule.onResidualOutCarChange()">
+                        <option value="">-- 차종 선택 --</option>
+                        ${carModels.map(m => `<option value="${m}">${m}</option>`).join('')}
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">품명</label>
+                    <select class="form-select" id="lwResidualOutPartName" onchange="LaserWipModule.onResidualOutPartChange()">
+                        <option value="">-- 품명 선택 --</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">컬러</label>
+                    <select class="form-select" id="lwResidualOutColor">
+                        <option value="">-- 컬러 선택 --</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">출고 수량 (EA)</label>
+                    <input type="number" class="form-input" id="lwResidualOutQty" min="1" placeholder="0">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">비고</label>
+                    <input type="text" class="form-input" id="lwResidualOutNote" placeholder="수기 잔량출고">
+                </div>
+            </div>
+            <div id="lwResidualOutStockInfo" style="font-size:0.82rem;color:var(--text-muted);margin-top:4px;"></div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" style="background:var(--accent-red);border-color:var(--accent-red);" onclick="LaserWipModule.saveResidualOut()">출고 등록</button>
+        `, 'lg');
+    }
+
+    function onResidualOutCarChange() {
+        const carModel = (document.getElementById('lwResidualOutCarModel') || {}).value || '';
+        const rows = _calcLaserResidualWip().filter(r => r.residualQty > 0 && (!carModel || r.carModel === carModel));
+        const partNames = [...new Set(rows.map(r => r.partName).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'ko'));
+        const partSel = document.getElementById('lwResidualOutPartName');
+        if (partSel) partSel.innerHTML = '<option value="">-- 품명 선택 --</option>' + partNames.map(n => `<option value="${n}">${n}</option>`).join('');
+        const colorSel = document.getElementById('lwResidualOutColor');
+        if (colorSel) colorSel.innerHTML = '<option value="">-- 컬러 선택 --</option>';
+        const info = document.getElementById('lwResidualOutStockInfo');
+        if (info) info.textContent = '';
+    }
+
+    function onResidualOutPartChange() {
+        const carModel = (document.getElementById('lwResidualOutCarModel') || {}).value || '';
+        const partName = (document.getElementById('lwResidualOutPartName') || {}).value || '';
+        const rows = _calcLaserResidualWip().filter(r => r.residualQty > 0 && (!carModel || r.carModel === carModel) && (!partName || r.partName === partName));
+        const colors = [...new Set(rows.map(r => r.color).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'ko'));
+        const colorSel = document.getElementById('lwResidualOutColor');
+        if (colorSel) colorSel.innerHTML = '<option value="">-- 컬러 선택 --</option>' + colors.map(c => `<option value="${c}">${c}</option>`).join('');
+        const match = rows.find(r => r.partName === partName);
+        const info = document.getElementById('lwResidualOutStockInfo');
+        if (info && match) info.innerHTML = `현재 잔량 재고 <strong style="color:var(--accent-orange);">${UIUtils.formatNumber(match.residualQty)} EA</strong>`;
+    }
+
+    async function saveResidualOut() {
+        const date = (document.getElementById('lwResidualOutDate') || {}).value || '';
+        const carModel = (document.getElementById('lwResidualOutCarModel') || {}).value || '';
+        const partName = (document.getElementById('lwResidualOutPartName') || {}).value || '';
+        const color = (document.getElementById('lwResidualOutColor') || {}).value || '';
+        const quantity = parseInt((document.getElementById('lwResidualOutQty') || {}).value || '0', 10);
+        const note = (document.getElementById('lwResidualOutNote') || {}).value.trim() || '수기 잔량출고';
+
+        if (!date || !carModel || !partName || !quantity || quantity <= 0) {
+            UIUtils.toast('날짜, 차종, 품명, 출고 수량(1 이상)은 필수입니다.', 'warning');
+            return;
+        }
+        const residual = _calcLaserResidualWip().find(r => r.carModel === carModel && r.partName === partName && (!color || r.color === color));
+        if (residual && quantity > residual.residualQty) {
+            UIUtils.toast(`출고 수량(${quantity})이 현재 잔량(${residual.residualQty})을 초과합니다.`, 'warning');
+            return;
+        }
+
+        await Storage.add(STORE_LASER, { date, carModel, partName, color, quantity, note, packUnit: residual ? residual.packUnit : 0, isManual: true, isResidualManualOut: true });
+        UIUtils.closeModal();
+        UIUtils.toast(`레이져 후 잔량 출고 완료 — ${partName} ${quantity}EA`, 'success');
+        refresh();
     }
 
     function _num(value) {
@@ -847,5 +1093,7 @@ var LaserWipModule = (function() {
     return { init, render, refresh, switchTab, openTab, openManualInput,
              openAfterLaserInput, onAfterCarChange, onAfterPartChange, saveAfterLaserInput,
              openAfterLaserOut, onOutCarChange, onOutPartChange, saveAfterLaserOut,
+             openResidualInput, onResidualInCarChange, onResidualInPartChange, saveResidualInput,
+             openResidualOut, onResidualOutCarChange, onResidualOutPartChange, saveResidualOut,
              getWipStock, _calcWip };
 })();

@@ -4118,6 +4118,14 @@ const PaintingInspectionModule = (function() {
             work.lots.map(l => l.lotNo).join(', ') :
             (work.lotNo || '-');
 
+        // 포장 초기값 계산
+        const prevResidualQty = _getPaintPrevResidualQty(work.carModel, work.partName, work.color);
+        const packUnitVal     = _findPaintProductPackUnit(work.carModel, work.partName, work.color);
+        const initGoodQty     = work.productionQty || 0;
+        const initBoxCount    = packUnitVal > 0 ? Math.floor((prevResidualQty + initGoodQty) / packUnitVal) : 0;
+        const initPackQty     = packUnitVal * initBoxCount;
+        const initNewResid    = prevResidualQty + initGoodQty - initPackQty;
+
         // 모달 HTML 작성
         let modalContent = `
             <div style="display:flex; flex-direction:column; gap:10px;">
@@ -4189,6 +4197,48 @@ const PaintingInspectionModule = (function() {
                                     <div class="form-group" style="margin:0;">
                                         <label class="form-label" style="font-size:0.72rem;">합계 (자동)</label>
                                         <input type="text" class="form-input" id="inpTotalQty" value="${UIUtils.formatNumber(work.productionQty || 0)}" readonly style="background:var(--bg-secondary); text-align:right; font-weight:700; font-size:0.9rem; padding:5px 6px; color:var(--accent-blue);">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 포장 -->
+                        <div class="card">
+                            <div class="card-body" style="padding:12px;">
+                                <h5 style="margin:0 0 10px 0;font-size:0.85rem;color:var(--text-primary);display:flex;align-items:center;gap:5px;">
+                                    <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);">inventory_2</span>
+                                    포장
+                                </h5>
+                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;">
+                                    <div class="form-group" style="margin:0;">
+                                        <label class="form-label" style="font-size:0.72rem;">기존 잔량</label>
+                                        <input type="number" class="form-input" id="piPrevResidual" value="${prevResidualQty}" min="0"
+                                            style="text-align:right;font-weight:600;font-size:0.9rem;padding:5px 6px;"
+                                            oninput="PaintingInspectionModule._updatePaintPackagingCalc()">
+                                    </div>
+                                    <div class="form-group" style="margin:0;">
+                                        <label class="form-label" style="font-size:0.72rem;">박스당 수량</label>
+                                        <input type="number" class="form-input" id="piPackUnit" value="${packUnitVal || ''}" min="1" placeholder="-"
+                                            style="text-align:right;font-weight:600;font-size:0.9rem;padding:5px 6px;"
+                                            oninput="PaintingInspectionModule._autoPaintBoxCount()">
+                                    </div>
+                                </div>
+                                <div class="form-group" style="margin:0 0 8px 0;">
+                                    <label class="form-label" style="font-size:0.72rem;">박스 수 <span style="font-weight:400;color:var(--text-muted);font-size:0.68rem;">(조정 가능)</span></label>
+                                    <input type="number" class="form-input" id="piPackBoxCount" value="${initBoxCount || ''}" min="0" placeholder="0"
+                                        style="text-align:right;font-weight:700;font-size:0.95rem;padding:5px 6px;"
+                                        oninput="PaintingInspectionModule._updatePaintPackagingCalc()">
+                                </div>
+                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;background:var(--bg-secondary);border-radius:6px;padding:8px;">
+                                    <div style="text-align:center;">
+                                        <div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:2px;">포장수량</div>
+                                        <div id="piPackQtyDisp" style="font-weight:700;font-size:1.05rem;color:var(--accent-blue);">${UIUtils.formatNumber(initPackQty)}</div>
+                                        <div style="font-size:0.65rem;color:var(--text-muted);">EA</div>
+                                    </div>
+                                    <div style="text-align:center;">
+                                        <div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:2px;">신규 잔량</div>
+                                        <div id="piNewResidDisp" style="font-weight:700;font-size:1.05rem;color:${initNewResid < 0 ? 'var(--accent-red)' : 'var(--accent-orange)'};">${UIUtils.formatNumber(Math.max(0, initNewResid))}</div>
+                                        <div style="font-size:0.65rem;color:var(--text-muted);">EA</div>
                                     </div>
                                 </div>
                             </div>
@@ -4910,6 +4960,7 @@ const PaintingInspectionModule = (function() {
         document.getElementById('inpDefectQty').value = Math.max(0, defectQty);
         const totalEl = document.getElementById('inpTotalQty');
         if (totalEl) totalEl.value = inspectionQty;
+        _updatePaintPackagingCalc();
     }
 
     function _updateGoodQty() {
@@ -4925,6 +4976,7 @@ const PaintingInspectionModule = (function() {
         document.getElementById('inpGoodQty').value = Math.max(0, goodQty);
         const totalEl = document.getElementById('inpTotalQty');
         if (totalEl) totalEl.value = Math.max(0, goodQty) + defectQty;
+        _autoPaintBoxCount();
     }
 
     function _calculateInspectionTime() {
@@ -5008,6 +5060,78 @@ const PaintingInspectionModule = (function() {
         return true;
     }
 
+    // ── 포장 헬퍼 함수 ──────────────────────────────────────────────
+    function _parsePaintPackNum(raw) {
+        if (raw === undefined || raw === null || raw === '' || raw === 0) return 0;
+        const cleaned = String(raw).replace(/,/g, '');
+        const direct = Number(cleaned);
+        if (!isNaN(direct) && direct > 0) return direct;
+        const m = cleaned.match(/^(\d+(?:\.\d+)?)/);
+        return m ? Number(m[1]) : 0;
+    }
+
+    function _findPaintProductPackUnit(carModel, partName, color) {
+        const products = Storage.getAll(PRODUCTS_STORE) || [];
+        const packKeys = ['packUnit', 'packingUnit', 'packageUnit', 'packQty', 'packingQty'];
+        const getRaw = prod => {
+            for (const key of packKeys) {
+                const v = prod && prod[key];
+                if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
+            }
+            return '';
+        };
+        const hasPack = p => _parsePaintPackNum(getRaw(p)) > 0;
+        const exact = products.find(p =>
+            (p.carModel || '') === (carModel || '') &&
+            (p.partName || '') === (partName || '') &&
+            (p.color || '') === (color || '') &&
+            hasPack(p)
+        );
+        if (exact) return _parsePaintPackNum(getRaw(exact));
+        const byPart = products.find(p =>
+            (p.carModel || '') === (carModel || '') &&
+            (p.partName || '') === (partName || '') &&
+            hasPack(p)
+        );
+        return byPart ? _parsePaintPackNum(getRaw(byPart)) : 0;
+    }
+
+    function _getPaintPrevResidualQty(carModel, partName, color) {
+        const all = Storage.getAll(STORE) || [];
+        const match = all
+            .filter(i => i.carModel === carModel && i.partName === partName &&
+                         (!color || !i.color || i.color === color) &&
+                         typeof i.residualQty === 'number')
+            .sort((a, b) => (b.date || '').localeCompare(a.date || '') ||
+                            (b.inspectionStartTime || '').localeCompare(a.inspectionStartTime || ''));
+        return match.length ? (Number(match[0].residualQty) || 0) : 0;
+    }
+
+    function _updatePaintPackagingCalc() {
+        const prevRes  = parseInt(document.getElementById('piPrevResidual')?.value || 0);
+        const packUnit = parseInt(document.getElementById('piPackUnit')?.value || 0);
+        const boxCount = parseInt(document.getElementById('piPackBoxCount')?.value || 0);
+        const goodQty  = parseInt(document.getElementById('inpGoodQty')?.value || 0);
+        const packQty  = packUnit * boxCount;
+        const newResid = prevRes + goodQty - packQty;
+        const packDisp  = document.getElementById('piPackQtyDisp');
+        const residDisp = document.getElementById('piNewResidDisp');
+        if (packDisp)  packDisp.textContent = UIUtils.formatNumber(packQty);
+        if (residDisp) {
+            residDisp.textContent = UIUtils.formatNumber(Math.max(0, newResid));
+            residDisp.style.color = newResid < 0 ? 'var(--accent-red)' : 'var(--accent-orange)';
+        }
+    }
+
+    function _autoPaintBoxCount() {
+        const prevRes  = parseInt(document.getElementById('piPrevResidual')?.value || 0);
+        const packUnit = parseInt(document.getElementById('piPackUnit')?.value || 0);
+        const goodQty  = parseInt(document.getElementById('inpGoodQty')?.value || 0);
+        const el = document.getElementById('piPackBoxCount');
+        if (el && packUnit > 0) el.value = Math.floor((prevRes + goodQty) / packUnit);
+        _updatePaintPackagingCalc();
+    }
+
     // 검사 데이터 저장 함수
     async function _saveInspection(workId) {
         const work = Storage.getById(PAINTING_WORK_STORE, workId);
@@ -5019,6 +5143,13 @@ const PaintingInspectionModule = (function() {
         const goodQty      = parseInt(document.getElementById('inpGoodQty').value || 0);
         const defectQty    = parseInt(document.getElementById('inpDefectQty').value || 0);
         const inspectionQty = parseInt(document.getElementById('inpInspectionQty').value.replace(/,/g, '') || 0);
+
+        // 포장 데이터 수집
+        const prevResidualQty = parseInt(document.getElementById('piPrevResidual')?.value || 0);
+        const packUnit        = parseInt(document.getElementById('piPackUnit')?.value || 0);
+        const packBoxCount    = parseInt(document.getElementById('piPackBoxCount')?.value || 0);
+        const packQty         = packUnit * packBoxCount;
+        const residualQty     = Math.max(0, prevResidualQty + goodQty - packQty);
 
         // 검사 수량 검증 (검사수량이 0이면 양품수 기준으로 허용)
         const effectiveInspQty = inspectionQty > 0 ? inspectionQty : goodQty;
@@ -5079,6 +5210,11 @@ const PaintingInspectionModule = (function() {
             goodQty,
             defectQty,
             inspectors,
+            prevResidualQty,
+            packUnit,
+            packBoxCount,
+            packQty,
+            residualQty,
             planId: null,
             planOrderNo: null
         };
@@ -5138,6 +5274,7 @@ const PaintingInspectionModule = (function() {
         const _paintLineName = (work.line || '').trim();
         const _isLaser = _laserAfterPaintLine(_prod, _paintLineName);
         if (!_isLaser) {
+            const standbyQty = packQty > 0 ? packQty : goodQty;
             await Storage.add(DB.STORES.SHIPPING_STANDBY, {
                 date         : inspectionDate,
                 source       : 'painting_inspection',
@@ -5149,8 +5286,11 @@ const PaintingInspectionModule = (function() {
                 lotNo        : work.lots && work.lots.length > 0
                                 ? work.lots.map(l => l.lotNo).join(', ')
                                 : (work.lotNo || ''),
-                inspectionQty: goodQty,
-                goodQty      : goodQty,
+                inspectionQty: standbyQty,
+                goodQty      : standbyQty,
+                packUnit     : packUnit,
+                boxCount     : packBoxCount,
+                residualQty  : residualQty,
                 customer     : _prod ? (_prod.customer || '') : '',
                 status       : '대기'
             });
@@ -6656,6 +6796,8 @@ const PaintingInspectionModule = (function() {
         _updateDefectTotal,
         _calculateInspectionTime,
         _saveInspection,
+        _updatePaintPackagingCalc,
+        _autoPaintBoxCount,
         _addInspectorField,
         _syncInspectorOptions,
         showInspectionDetail,
