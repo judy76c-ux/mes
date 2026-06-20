@@ -613,8 +613,8 @@ var LaserWorkModule = (function() {
                                         <th style="width:92px;">수량</th>
                                         <th style="width:96px;">도장작업일</th>
                                         <th style="width:120px;">사출LOT</th>
-                                        <th style="width:80px;">품질확인</th>
-                                        <th style="width:200px;">작업자</th>
+                                        <th style="width:104px;">품질확인</th>
+                                        <th style="width:190px;">작업자</th>
                                         <th style="width:132px;">작업</th>
                                     </tr>
                                 </thead>
@@ -691,11 +691,11 @@ var LaserWorkModule = (function() {
                 <td style="text-align:right; font-weight:700;">${UIUtils.formatNumber(d.quantity)}</td>
                 <td style="white-space:nowrap;">${_paintDateCell(d)}</td>
                 <td style="font-size:0.8rem; font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${d.paintLot || '-'}</td>
-                <td>
-                    <div style="display:flex; gap:4px; flex-wrap:nowrap; align-items:center; white-space:nowrap;">
-                        ${d.qcFirst ? '<span class="badge badge-success">초</span>' : ''}
-                        ${d.qcMiddle ? '<span class="badge badge-success">중</span>' : ''}
-                        ${d.qcLast ? '<span class="badge badge-success">종</span>' : ''}
+                <td style="overflow:hidden;">
+                    <div style="display:flex; gap:3px; flex-wrap:nowrap; align-items:center;">
+                        ${d.qcFirst ? '<span class="badge badge-success" style="padding:1px 5px;font-size:0.72rem;">초</span>' : '<span style="color:var(--text-muted);font-size:0.75rem;">-</span>'}
+                        ${d.qcMiddle ? '<span class="badge badge-success" style="padding:1px 5px;font-size:0.72rem;">중</span>' : ''}
+                        ${d.qcLast ? '<span class="badge badge-success" style="padding:1px 5px;font-size:0.72rem;">종</span>' : ''}
                     </div>
                 </td>
                 <td style="font-size:0.8rem;white-space:nowrap;">${[d.worker1, d.worker2, d.worker3].filter(Boolean).join(', ') || '-'}</td>

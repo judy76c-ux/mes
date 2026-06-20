@@ -571,7 +571,14 @@ var InjectionIncomingModule = (function() {
                 } else {
                     container.innerHTML = defects.map(d => `
                         <div style="background:var(--bg-secondary);padding:8px;border-radius:6px;border:1px solid var(--border);">
-                            <label style="font-size:0.8rem;color:var(--text-secondary);display:block;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name || ''}</label>
+                            <label style="font-size:0.8rem;color:var(--text-secondary);display:flex;align-items:center;gap:4px;margin-bottom:4px;min-width:0;">
+                                <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name || ''}</span>
+                                <button type="button" title="불량유형 보기"
+                                    onclick="LaserInspectionModule.showDefectTypeView('${d.id}')"
+                                    style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex-shrink:0;padding:0;">
+                                    <span class="material-symbols-outlined" style="font-size:14px;">search</span>
+                                </button>
+                            </label>
                             <input type="number" class="form-input defect-input-new" data-defect-id="${d.id}" data-defect-name="${(d.name || '').replace(/"/g, '&quot;')}" min="0" placeholder="0" style="padding:4px 8px;font-size:0.85rem;" oninput="InjectionIncomingModule.calcTotalAddFailQty()">
                         </div>
                     `).join('');
@@ -1279,7 +1286,14 @@ var InjectionIncomingModule = (function() {
                         const safeName = (df.name || '').replace(/"/g, '&quot;');
                         return `
                         <div style="background:var(--bg-secondary);padding:8px;border-radius:6px;border:1px solid var(--border);">
-                            <label style="font-size:0.8rem;color:var(--text-secondary);display:block;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${safeName}">${df.name || ''}</label>
+                            <label style="font-size:0.8rem;color:var(--text-secondary);display:flex;align-items:center;gap:4px;margin-bottom:4px;min-width:0;">
+                                <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${safeName}">${df.name || ''}</span>
+                                <button type="button" title="불량유형 보기"
+                                    onclick="LaserInspectionModule.showDefectTypeView('${df.id}')"
+                                    style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex-shrink:0;padding:0;">
+                                    <span class="material-symbols-outlined" style="font-size:14px;">search</span>
+                                </button>
+                            </label>
                             <input type="number" class="form-input defect-input-edit" data-defect-id="${df.id}" data-defect-name="${safeName}" min="0" placeholder="0" value="${val}" style="padding:4px 8px;font-size:0.85rem;" oninput="InjectionIncomingModule.calcTotalEditFailQty()">
                         </div>
                     `;
