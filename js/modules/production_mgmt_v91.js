@@ -2317,12 +2317,12 @@ var ProdStandardsModule = (function() {
                 onclick="${std.action}"
                 title="${_esc(std.desc || dragHint)}"
                 style="text-align:left;border:1px solid var(--border-color);border-left:3px solid ${std.accent};
-                       border-radius:6px;background:var(--bg-primary);padding:5px 8px;cursor:${_processStandardMoveEdit ? 'grab' : 'pointer'};flex-shrink:0;${buttonReset}">
-                <div style="display:flex;align-items:center;gap:5px;white-space:nowrap;">
-                    ${_processStandardMoveEdit ? `<span class="material-symbols-outlined" style="font-size:13px;color:var(--text-muted);">drag_indicator</span>` : ''}
-                    <span class="material-symbols-outlined" style="font-size:15px;color:${std.accent};">${std.icon}</span>
-                    <span style="font-weight:700;color:var(--text-primary);font-size:.77rem;">${std.label}</span>
-                    <span style="font-size:.61rem;background:${std.badgeColor || std.accent};color:#fff;border-radius:3px;padding:1px 5px;font-weight:700;white-space:nowrap;">
+                       border-radius:6px;background:var(--bg-primary);padding:3px 6px;cursor:${_processStandardMoveEdit ? 'grab' : 'pointer'};${buttonReset}">
+                <div style="display:flex;align-items:center;gap:3px;white-space:nowrap;">
+                    ${_processStandardMoveEdit ? `<span class="material-symbols-outlined" style="font-size:12px;color:var(--text-muted);">drag_indicator</span>` : ''}
+                    <span class="material-symbols-outlined" style="font-size:12px;color:${std.accent};">${std.icon}</span>
+                    <span style="font-weight:700;color:var(--text-primary);font-size:.72rem;">${std.label}</span>
+                    <span style="font-size:.6rem;background:${std.badgeColor || std.accent};color:#fff;border-radius:3px;padding:1px 4px;font-weight:700;white-space:nowrap;">
                         ${std.count == null ? std.badge : `${std.count.toLocaleString()}건`}
                     </span>
                     ${_processStandardMoveEdit && std.linkKind === 'custom-upload' ? `<button type="button" title="이미지 업로드" onclick="event.stopPropagation();ProdStandardsModule._openCustomUploadStdViewer('${_jsArg(std.linkTarget)}')"
@@ -2377,7 +2377,7 @@ var ProdStandardsModule = (function() {
                     </span>
                 </div>` : ''}
                 <div ${dropAttrs(process, station)}
-                    style="display:flex;flex-wrap:nowrap;gap:6px;overflow-x:auto;
+                    style="display:flex;flex-wrap:wrap;gap:4px;
                            ${_processStandardMoveEdit ? 'min-height:40px;outline:1px dashed rgba(37,99,235,.22);outline-offset:3px;border-radius:6px;padding:4px;' : ''}">
                     ${(standards || []).map(std => renderStd(std, process, station)).join('')}
                 </div>
