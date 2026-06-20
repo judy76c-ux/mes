@@ -930,6 +930,17 @@ body.sidebar-hidden .sidebar-show-btn {
     transition: var(--transition);
 }
 
+.form-select {
+    font-size: 0.82rem;
+    line-height: 1.2;
+    padding: 10px 34px 10px 12px;
+    text-overflow: ellipsis;
+}
+
+.form-select option {
+    font-size: 0.82rem;
+}
+
 .form-input:focus,
 .form-select:focus,
 .form-textarea:focus {
@@ -1373,6 +1384,17 @@ input[type="time"] {
 .sdp-page .filter-bar .form-select {
     width: 180px;
     min-width: 0;
+}
+
+@media (max-width: 1280px) {
+    .form-select {
+        font-size: 0.78rem;
+        padding: 9px 30px 9px 10px;
+    }
+
+    .form-select option {
+        font-size: 0.78rem;
+    }
 }
 
 .sdp-page .stat-cards {

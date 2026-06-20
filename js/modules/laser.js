@@ -2199,7 +2199,7 @@ var LaserInspectionModule = (function() {
         const start = document.getElementById('liFilterStart').value;
         const end   = document.getElementById('liFilterEnd').value;
         let data = Storage.getByDateRange(STORE, start, end);
-        data.sort((a, b) => b.date.localeCompare(a.date));
+        data.sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.startTime || '').localeCompare(b.startTime || ''));
         renderStats(data);
         renderTable(data);
     }
