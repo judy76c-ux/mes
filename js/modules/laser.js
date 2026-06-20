@@ -602,20 +602,20 @@ var LaserWorkModule = (function() {
                     </div>
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
-                            <table class="data-table" style="min-width:1020px;table-layout:fixed;">
+                            <table class="data-table data-table--compact" style="min-width:920px;table-layout:fixed;">
                                 <thead>
                                     <tr>
-                                        <th style="width:86px;">레이져작업일</th>
-                                        <th style="width:110px;">장비</th>
-                                        <th style="width:112px;">시간</th>
-                                        <th style="width:96px;">차종</th>
-                                        <th style="width:230px;">품명</th>
-                                        <th style="width:92px;">수량</th>
-                                        <th style="width:96px;">도장작업일</th>
-                                        <th style="width:120px;">사출LOT</th>
-                                        <th style="width:104px;">품질확인</th>
-                                        <th style="width:190px;">작업자</th>
-                                        <th style="width:132px;">작업</th>
+                                        <th style="width:76px;">레이져작업일</th>
+                                        <th style="width:80px;">장비</th>
+                                        <th style="width:68px;">시간</th>
+                                        <th style="width:76px;">차종</th>
+                                        <th style="width:200px;">품명</th>
+                                        <th style="width:72px;">수량</th>
+                                        <th style="width:80px;">도장작업일</th>
+                                        <th style="width:110px;">사출LOT</th>
+                                        <th style="width:96px;">품질확인</th>
+                                        <th style="width:180px;">작업자</th>
+                                        <th style="width:100px;">작업</th>
                                     </tr>
                                 </thead>
                                 <tbody id="lwTableBody"></tbody>
@@ -682,8 +682,8 @@ var LaserWorkModule = (function() {
         tbody.innerHTML = data.map(d => `
             <tr>
                 <td style="white-space:nowrap;">${_workDateCell(d.date, d.startTime)}</td>
-                <td style="white-space:nowrap;"><span class="badge badge-info" style="display:inline-flex;align-items:center;justify-content:center;min-width:72px;white-space:nowrap;">${d.machine || '-'}</span></td>
-                <td style="font-size:0.8rem;white-space:nowrap;">${d.startTime || '-'} ~ ${d.endTime || '-'}</td>
+                <td style="white-space:nowrap;"><span class="badge badge-info" style="display:inline-flex;align-items:center;justify-content:center;min-width:56px;font-size:0.7rem;padding:2px 6px;white-space:nowrap;">${d.machine || '-'}</span></td>
+                <td style="font-size:0.78rem;line-height:1.3;text-align:center;"><div>${d.startTime || '-'}</div><div style="color:var(--text-muted);font-size:0.72rem;">${d.endTime || '-'}</div></td>
                 <td style="font-weight:600;white-space:nowrap;">${d.carModel || '-'}</td>
                 <td style="min-width:0;">
                     <div style="font-weight:600;">${d.partName || '-'}</div>

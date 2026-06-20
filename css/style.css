@@ -813,6 +813,10 @@ body.sidebar-hidden .sidebar-show-btn {
     vertical-align: middle;
 }
 
+.data-table--compact td {
+    padding: 6px 10px;
+}
+
 .data-table tbody tr {
     transition: var(--transition);
 }
