@@ -4510,7 +4510,7 @@ const PaintingInspectionModule = (function() {
                      </h5>`;
             html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;margin-bottom:20px;">`;
             html += injDefects.map(d => {
-                const safeName = (d.name || '').replace(/'/g, "\\'");
+                const safeName = (d.name || '').replace(/'/g, "\'");
                 return `
                     <button class="defect-btn" id="defect-btn-${d.id}"
                         onclick="PaintingInspectionModule.increment('${d.id}', '${safeName}')"
@@ -4529,7 +4529,7 @@ const PaintingInspectionModule = (function() {
                      </h5>`;
             html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;margin-bottom:10px;">`;
             html += paintDefects.map(d => {
-                const safeName = (d.name || '').replace(/'/g, "\\'");
+                const safeName = (d.name || '').replace(/'/g, "\'");
                 return `
                     <button class="defect-btn" id="defect-btn-${d.id}"
                         onclick="PaintingInspectionModule.increment('${d.id}', '${safeName}')"
@@ -4548,7 +4548,7 @@ const PaintingInspectionModule = (function() {
                      </h5>`;
             html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px;margin-bottom:10px;">`;
             html += platingDefects.map(d => {
-                const safeName = (d.name || '').replace(/'/g, \"\'\");
+                const safeName = (d.name || '').replace(/'/g, "\'");
                 return `
                     <button class="defect-btn" id="defect-btn-${d.id}"
                         onclick="PaintingInspectionModule.increment('${d.id}', '${safeName}')"
