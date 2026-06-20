@@ -933,29 +933,30 @@ const SettingsModule = (function() {
                                         <td style="text-align:center;font-size:.8rem;white-space:nowrap;">${p.packUnit || '-'}</td>
                                         <td style="white-space:nowrap;">
                                             <div style="display:flex; align-items:center; gap:6px; font-size:0.75rem; flex-wrap:nowrap; white-space:nowrap;">
-                                                ${[
-                            p.process1 ? `<div style="display:flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap;"><span class="badge badge-info" style="white-space:nowrap;">${p.process1}</span> <span style="color:var(--text-muted);">${p.cvt1 || '-'}|${p.ct1 || '-'}</span></div>` : '',
-                            p.process2 ? `<div style="display:flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap;"><span class="badge badge-info" style="white-space:nowrap;">${p.process2}</span> <span style="color:var(--text-muted);">${p.cvt2 || '-'}|${p.ct2 || '-'}</span></div>` : '',
-                            p.process3 ? `<div style="display:flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap;"><span class="badge badge-info" style="white-space:nowrap;">${p.process3}</span> <span style="color:var(--text-muted);">${p.cvt3 || '-'}|${p.ct3 || '-'}</span></div>` : '',
-                            p.process4 ? `<div style="display:flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap;"><span class="badge badge-info" style="white-space:nowrap;">${p.process4}</span> <span style="color:var(--text-muted);">${p.cvt4 || '-'}|${p.ct4 || '-'}</span></div>` : '',
-                            (() => {
-                                // 저장값 없으면 마지막 공정 기준 자동 결정
+                                                ${(() => {
+                                // 검사 유형은 파란 공정 뱃지에서 제외하고 초록 뱃지로만 표시
+                                const _inspSet = new Set(['외관 검사', '외관+각인 검사']);
+                                const _procBadge = (proc, cvt, ct) => proc && !_inspSet.has(proc)
+                                    ? `<div style="display:flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap;"><span class="badge badge-info" style="white-space:nowrap;">${proc}</span> <span style="color:var(--text-muted);">${cvt || '-'}|${ct || '-'}</span></div>`
+                                    : '';
+                                // 검사 유형 제외한 마지막 실공정 기준으로 검사 유형 결정
                                 const _computedInspType = (() => {
                                     if (p.appearanceInspType) return p.appearanceInspType;
                                     for (let _i = 4; _i >= 1; _i--) {
-                                        const _lp = p[`process${_i}`]; if (!_lp) continue;
+                                        const _lp = p[`process${_i}`];
+                                        if (!_lp || _inspSet.has(_lp)) continue;
                                         return (_lp.includes('레이저') || _lp.includes('레이져')) ? '외관+각인 검사' : '외관 검사';
                                     }
                                     return '외관 검사';
                                 })();
                                 const _inspLabel = _computedInspType === '외관+각인 검사' ? '외관+각인 검사' : '외관검사';
-                                const _hasAppear = p.process1 || p.process2 || p.process3 || p.process4;
-                                if (!_hasAppear) return '';
-                                // 저장된 값 없으면 마지막 공정 기준 계산
+                                // 실공정 존재 여부 (검사 유형 제외)
+                                const _hasRealProc = [p.process1,p.process2,p.process3,p.process4].some(pr => pr && !_inspSet.has(pr));
+                                // 외관 CVT/CT: 저장값 없으면 마지막 실공정 기준 계산
                                 let _aCvt = p.appearanceCvt, _aCt = p.appearanceCt;
                                 if (!_aCvt || !_aCt) {
                                     for (let _n = 4; _n >= 1; _n--) {
-                                        const _lp = p[`process${_n}`]; if (!_lp) continue;
+                                        const _lp = p[`process${_n}`]; if (!_lp || _inspSet.has(_lp)) continue;
                                         const _lv = parseFloat(p[`cvt${_n}`]) || 0;
                                         const _lt = parseFloat(p[`ct${_n}`]) || 0;
                                         if (_lp.includes('레이저') || _lp.includes('레이져')) {
@@ -968,10 +969,18 @@ const SettingsModule = (function() {
                                         break;
                                     }
                                 }
-                                return `<div style="display:flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap;"><span class="badge badge-success" style="white-space:nowrap;">${_inspLabel}</span> <span style="color:var(--text-muted);">${_aCvt || '-'}|${_aCt || '-'}</span></div>`;
-                            })()
-                        ].filter(Boolean).join('<span class="material-symbols-outlined" style="font-size:14px;color:var(--text-muted);flex-shrink:0;">arrow_forward</span>')}
-                                                ${!p.process1 && !p.process2 && !p.process3 && !p.process4 ? '-' : ''}
+                                const _appearBadge = _hasRealProc
+                                    ? `<div style="display:flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap;"><span class="badge badge-success" style="white-space:nowrap;">${_inspLabel}</span> <span style="color:var(--text-muted);">${_aCvt || '-'}|${_aCt || '-'}</span></div>`
+                                    : '';
+                                return [
+                                    _procBadge(p.process1, p.cvt1, p.ct1),
+                                    _procBadge(p.process2, p.cvt2, p.ct2),
+                                    _procBadge(p.process3, p.cvt3, p.ct3),
+                                    _procBadge(p.process4, p.cvt4, p.ct4),
+                                    _appearBadge
+                                ].filter(Boolean).join('<span class="material-symbols-outlined" style="font-size:14px;color:var(--text-muted);flex-shrink:0;">arrow_forward</span>');
+                            })()}
+                                                ${![p.process1,p.process2,p.process3,p.process4].some(pr => pr && pr !== '외관 검사' && pr !== '외관+각인 검사') ? '-' : ''}
                                             </div>
                                         </td>
                                         <td style="white-space:nowrap;"><div style="display:flex;flex-wrap:nowrap;gap:4px;">${matBadges}</div></td>
