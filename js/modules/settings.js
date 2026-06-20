@@ -1546,15 +1546,15 @@ const SettingsModule = (function() {
                         <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.84rem;font-weight:600;">
                             <input type="radio" name="${idPrefix}AppearanceInspType" value="외관 검사"
                                 ${_defaultInspType === '외관 검사' ? 'checked' : ''}
+                                onchange="(function(p){var w=document.getElementById(p+'AppearanceWorkers');if(w&&!w.value)w.value='';}('${idPrefix}'))"
                                 style="accent-color:var(--accent-green);width:15px;height:15px;cursor:pointer;">
-                            <span class="material-symbols-outlined" style="font-size:15px;color:var(--accent-green);">check_circle</span>
                             외관 검사
                         </label>
-                        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.84rem;font-weight:600;">
+                        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.84rem;font-weight:600;color:#7c3aed;">
                             <input type="radio" name="${idPrefix}AppearanceInspType" value="외관+각인 검사"
                                 ${_defaultInspType === '외관+각인 검사' ? 'checked' : ''}
+                                onchange="(function(p){var w=document.getElementById(p+'AppearanceWorkers');if(w&&!w.value)w.value='1';}('${idPrefix}'))"
                                 style="accent-color:#7c3aed;width:15px;height:15px;cursor:pointer;">
-                            <span class="material-symbols-outlined" style="font-size:15px;color:#7c3aed;">checklist</span>
                             외관+각인 검사
                         </label>
                     </div>
@@ -1571,7 +1571,7 @@ const SettingsModule = (function() {
                     </div>
                     <div style="display:flex;align-items:center;gap:8px;flex:0 0 200px;">
                         <label class="form-label" style="white-space:nowrap;margin-bottom:0;width:70px;">검사 인원</label>
-                        <input type="text" class="form-input" id="${idPrefix}AppearanceWorkers" placeholder="0" value="${v('appearanceWorkers')}" style="margin-top:0;">
+                        <input type="text" class="form-input" id="${idPrefix}AppearanceWorkers" placeholder="0" value="${v('appearanceWorkers') || (_defaultInspType === '외관+각인 검사' ? '1' : '')}" style="margin-top:0;">
                         <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">명</span>
                     </div>
                 </div>
