@@ -2097,7 +2097,6 @@ var LaserInspectionModule = (function() {
                                         <th style="width:56px;text-align:center;">레이져불량</th>
                                         <th style="width:68px;text-align:right;color:var(--accent-blue);">포장수량</th>
                                         <th style="width:56px;text-align:right;color:var(--accent-orange);">잔량</th>
-                                        <th style="width:72px;">비고</th>
                                         <th style="width:96px;">작업</th>
                                     </tr>
                                 </thead>
@@ -2520,10 +2519,6 @@ var LaserInspectionModule = (function() {
                 ${defectGroupHtml('레이져 불량', '#ef4444', laserDefects)}
             </div>` : `<div style="color:var(--text-muted);font-size:0.8rem;text-align:center;padding:2px 0;border-top:1px solid var(--border);padding-top:8px;">불량 내역 없음</div>`}
 
-            ${d.note ? `
-            <div style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px;font-size:0.78rem;color:var(--text-muted);">
-                비고: <span style="color:var(--text-primary);">${d.note}</span>
-            </div>` : ''}
         `;
 
         document.body.appendChild(popup);
@@ -2726,11 +2721,11 @@ var LaserInspectionModule = (function() {
                 <div style="font-size:0.78rem;font-weight:700;color:${color};border-bottom:2px solid ${color};padding-bottom:4px;margin-bottom:10px;display:flex;align-items:center;gap:4px;">
                     <span class="material-symbols-outlined" style="font-size:14px;">${icon}</span> ${label}
                 </div>
-                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;">
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;">
                     ${defects.map(d => `
                         <div style="display:flex;flex-direction:column;gap:4px;">
-                            <label style="font-size:0.78rem;font-weight:600;margin:0;color:var(--text-secondary);display:flex;align-items:center;gap:4px;min-width:0;">
-                                <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(d.name||'').replace(/"/g,'&quot;')}">${d.name}</span>
+                            <label style="font-size:0.78rem;font-weight:600;margin:0;color:var(--text-secondary);display:flex;align-items:flex-start;gap:4px;min-width:0;">
+                                <span style="flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${(d.name||'').replace(/"/g,'&quot;')}">${d.name}</span>
                                 <button type="button" title="불량유형 보기"
                                     onclick="LaserInspectionModule.showDefectTypeView('${d.id}')"
                                     style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border-color);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex-shrink:0;padding:0;">
@@ -2757,14 +2752,6 @@ var LaserInspectionModule = (function() {
         </div>`;
     }
 
-    // 비고 (좌측)
-    function _buildNoteInput(d = {}) {
-        return `
-        <div class="form-group" style="margin:0;">
-            <label class="form-label" style="font-size:0.72rem;">비고</label>
-            <textarea class="form-textarea" id="liNote" style="height:60px;">${d.note||''}</textarea>
-        </div>`;
-    }
 
     // 저장/취소 버튼 (좌측, 세로 배치)
     function _buildBtns(saveAction) {
@@ -2789,7 +2776,7 @@ var LaserInspectionModule = (function() {
     }
 
     function buildFormHTML(d = {}) {
-        const left = _buildSelectCard(d) + _buildInspInfoCard(d) + _buildQtyCard(d) + _buildNoteInput(d);
+        const left = _buildSelectCard(d) + _buildInspInfoCard(d) + _buildQtyCard(d);
         return _build2Col(left, _buildDefectCard(d.defectDetails||{}));
     }
 
@@ -2797,7 +2784,7 @@ var LaserInspectionModule = (function() {
     function openAddModal() {
         _liCarModel = ''; _liPartName = ''; _liColor = ''; _liWorkId = null;
         const left = _buildSelectCard() + _buildInspInfoCard() + _buildQtyCard() +
-            _buildPackagingCard() + _buildNoteInput() + _buildBtns('LaserInspectionModule._saveInspection()');
+            _buildPackagingCard() + _buildBtns('LaserInspectionModule._saveInspection()');
         _openModal('레이져 검사 등록', _build2Col(left, _buildDefectCard()));
     }
 
@@ -2811,7 +2798,7 @@ var LaserInspectionModule = (function() {
         const initGoodQty = w.quantity || 0;
         const left = _buildInspInfoCard({}, w) + _buildQtyCard({}, w.quantity||0) +
             _buildPackagingCard({}, prevResidualQty, packUnit, initGoodQty) +
-            _buildNoteInput() + _buildBtns('LaserInspectionModule._saveInspection()');
+            _buildBtns('LaserInspectionModule._saveInspection()');
         _openModal(`레이져 검사 등록 — ${w.partName||''}`,
             _buildWorkBanner(w) + _build2Col(left, _buildDefectCard()));
         setTimeout(_calculateInspectionTime, 0);
@@ -2830,7 +2817,7 @@ var LaserInspectionModule = (function() {
         const left = (workRef ? '' : _buildSelectCard(d)) +
             _buildInspInfoCard(d) + _buildQtyCard(d) +
             _buildPackagingCard(d, prevResidualQty, packUnit) +
-            _buildNoteInput(d) + _buildBtns(`LaserInspectionModule._saveInspection('${id}')`);
+            _buildBtns(`LaserInspectionModule._saveInspection('${id}')`);
         _openModal('레이져 검사 수정',
             (workRef ? _buildWorkBanner(workRef) : '') +
             _build2Col(left, _buildDefectCard(d.defectDetails||{})));
@@ -2958,8 +2945,7 @@ var LaserInspectionModule = (function() {
             inspQty, goodQty, failQty,
             failRate           : inspQty > 0 ? (failQty / inspQty * 100) : 0,
             defectDetails,
-            prevResidualQty, packUnit, packBoxCount, packQty, residualQty,
-            note               : document.getElementById('liNote')?.value?.trim() || ''
+            prevResidualQty, packUnit, packBoxCount, packQty, residualQty
         };
     }
 

@@ -4285,11 +4285,11 @@ const PaintingInspectionModule = (function() {
                                 <div style="font-size:0.78rem; font-weight:700; color:#ea580c; border-bottom:2px solid #ea580c; padding-bottom:4px; margin-bottom:10px; display:flex; align-items:center; gap:4px;">
                                     <span class="material-symbols-outlined" style="font-size:14px;">precision_manufacturing</span> 사출 불량
                                 </div>
-                <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:8px;">
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:8px;">
                     ${injectionDefects.map(d => `
                                         <div style="display:flex; flex-direction:column; gap:4px;">
-                                            <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary); display:flex; align-items:center; gap:4px; min-width:0;">
-                                                <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name}</span>
+                                            <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary); display:flex; align-items:flex-start; gap:4px; min-width:0;">
+                                                <span style="flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name}</span>
                                                 <button type="button" title="불량유형 보기" onclick="LaserInspectionModule.showDefectTypeView('${d.id}')" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex-shrink:0;padding:0;">
                                                     <span class="material-symbols-outlined" style="font-size:14px;">search</span>
                                                 </button>
@@ -4306,11 +4306,11 @@ const PaintingInspectionModule = (function() {
                                 <div style="font-size:0.78rem; font-weight:700; color:#16a34a; border-bottom:2px solid #16a34a; padding-bottom:4px; margin-bottom:10px; display:flex; align-items:center; gap:4px;">
                                     <span class="material-symbols-outlined" style="font-size:14px;">format_paint</span> 도장 불량
                                 </div>
-                <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:8px;">
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:8px;">
                     ${paintingDefects.map(d => `
                                         <div style="display:flex; flex-direction:column; gap:4px;">
-                                            <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary); display:flex; align-items:center; gap:4px; min-width:0;">
-                                                <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name}</span>
+                                            <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary); display:flex; align-items:flex-start; gap:4px; min-width:0;">
+                                                <span style="flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name}</span>
                                                 <button type="button" title="불량유형 보기" onclick="LaserInspectionModule.showDefectTypeView('${d.id}')" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex-shrink:0;padding:0;">
                                                     <span class="material-symbols-outlined" style="font-size:14px;">search</span>
                                                 </button>

@@ -531,7 +531,7 @@ var InjectionIncomingModule = (function() {
                 <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;">warning</span>
                 불량 상세 (사출 불량)
             </div>
-            <div id="addInjDefectBreakdown" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;margin-bottom:12px;">
+            <div id="addInjDefectBreakdown" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px;">
                 <!-- JavaScript 통해서 동적 렌더링됨 -->
             </div>
 
@@ -572,7 +572,7 @@ var InjectionIncomingModule = (function() {
                     container.innerHTML = defects.map(d => `
                         <div style="background:var(--bg-secondary);padding:8px;border-radius:6px;border:1px solid var(--border);">
                             <label style="font-size:0.8rem;color:var(--text-secondary);display:flex;align-items:center;gap:4px;margin-bottom:4px;min-width:0;">
-                                <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name || ''}</span>
+                                <span style="flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name || ''}</span>
                                 <button type="button" title="불량유형 보기"
                                     onclick="LaserInspectionModule.showDefectTypeView('${d.id}')"
                                     style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex-shrink:0;padding:0;">
@@ -1141,7 +1141,7 @@ var InjectionIncomingModule = (function() {
                 <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;">warning</span>
                 불량 상세 (사출 불량)
             </div>
-            <div id="editInjDefectBreakdown" style="display:grid;grid-template-columns:repeat(3, 1fr);gap:10px;margin-bottom:12px;">
+            <div id="editInjDefectBreakdown" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px;">
                 <!-- JavaScript 통해서 동적 렌더링됨 -->
             </div>
 
@@ -1287,7 +1287,7 @@ var InjectionIncomingModule = (function() {
                         return `
                         <div style="background:var(--bg-secondary);padding:8px;border-radius:6px;border:1px solid var(--border);">
                             <label style="font-size:0.8rem;color:var(--text-secondary);display:flex;align-items:center;gap:4px;margin-bottom:4px;min-width:0;">
-                                <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${safeName}">${df.name || ''}</span>
+                                <span style="flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${safeName}">${df.name || ''}</span>
                                 <button type="button" title="불량유형 보기"
                                     onclick="LaserInspectionModule.showDefectTypeView('${df.id}')"
                                     style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex-shrink:0;padding:0;">
