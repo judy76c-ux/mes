@@ -11716,7 +11716,7 @@ const SettingsModule = (function() {
                             <span class="material-symbols-outlined">add</span> 역할 추가
                         </button>
                     </div>
-                    <div class="card-body" style="padding:10px;max-height:55vh;overflow-y:auto;">
+                    <div class="card-body" style="padding:10px;">
                         <div style="display:flex;flex-direction:column;gap:6px;">
                             ${roles.map(r => `
                             <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;
