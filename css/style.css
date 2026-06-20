@@ -237,6 +237,44 @@ body.sidebar-hidden .sidebar-toggle .material-symbols-outlined {
     min-width: 22px;
 }
 
+.sidebar-nav-tooltip {
+    position: fixed;
+    z-index: 1000;
+    top: 0;
+    left: 0;
+    transform: translateY(-50%) translateX(-4px);
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    padding: 7px 10px;
+    border-radius: var(--border-radius-sm);
+    background: #111827;
+    color: #ffffff;
+    font-size: 0.82rem;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.28);
+    transition: opacity 0.14s ease, transform 0.14s ease, visibility 0.14s ease;
+}
+
+.sidebar-nav-tooltip.visible {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(-50%) translateX(0);
+}
+
+.sidebar-nav-tooltip::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: -5px;
+    transform: translateY(-50%);
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+    border-right: 5px solid #111827;
+}
+
 .nav-item.nav-subitem {
     margin-left: 16px;
     padding: 8px 12px 8px 18px;

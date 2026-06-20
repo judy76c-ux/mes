@@ -203,6 +203,7 @@ const Router = (function() {
 
     function init() {
         setupNavigation();
+        setupSidebarTooltips();
         setupMobileMenu();
         setupSidebarToggle();
         updateDateTime();
@@ -226,6 +227,58 @@ const Router = (function() {
                 navigate(page);
             });
         });
+    }
+
+    function setupSidebarTooltips() {
+        const navItems = document.querySelectorAll('.nav-item');
+        if (!navItems.length) return;
+
+        let tooltip = document.getElementById('sidebarNavTooltip');
+        if (!tooltip) {
+            tooltip = document.createElement('div');
+            tooltip.id = 'sidebarNavTooltip';
+            tooltip.className = 'sidebar-nav-tooltip';
+            document.body.appendChild(tooltip);
+        }
+
+        const getLabel = (item) => {
+            const labelEl = item.querySelector('.nav-label');
+            return labelEl ? labelEl.textContent.trim() : '';
+        };
+
+        const shouldShow = () => {
+            const sidebar = document.getElementById('sidebar');
+            return sidebar && (sidebar.classList.contains('collapsed') || window.matchMedia('(min-width: 769px) and (max-width: 1024px)').matches);
+        };
+
+        const showTooltip = (item) => {
+            const label = item.dataset.tooltip || getLabel(item);
+            if (!label || !shouldShow()) return;
+            const rect = item.getBoundingClientRect();
+            tooltip.textContent = label;
+            tooltip.classList.add('visible');
+            tooltip.style.left = (rect.right + 10) + 'px';
+            tooltip.style.top = (rect.top + rect.height / 2) + 'px';
+        };
+
+        const hideTooltip = () => {
+            tooltip.classList.remove('visible');
+        };
+
+        navItems.forEach(function(item) {
+            const label = getLabel(item);
+            if (!label) return;
+            item.dataset.tooltip = label;
+            item.title = label;
+            item.setAttribute('aria-label', label);
+            item.addEventListener('mouseenter', function() { showTooltip(item); });
+            item.addEventListener('focus', function() { showTooltip(item); });
+            item.addEventListener('mouseleave', hideTooltip);
+            item.addEventListener('blur', hideTooltip);
+        });
+
+        window.addEventListener('scroll', hideTooltip, true);
+        window.addEventListener('resize', hideTooltip);
     }
 
     function navigate(pageName) {

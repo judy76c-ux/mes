@@ -830,12 +830,19 @@ const SettingsModule = (function() {
                 </div>
                 <div class="card-body" style="padding:0;">
                     <div class="data-table-wrapper">
+                        ${(() => {
+                            // 품명 최대 길이 → 열 너비 계산 (글자당 ~7.5px, 최소 160 최대 400)
+                            const _maxPNLen = products.reduce((m, p) => Math.max(m, (p.partName || '').length), 0);
+                            const _pnW = Math.max(160, Math.min(400, Math.round(_maxPNLen * 7.5)));
+                            window.__productPartNameColW = _pnW;
+                            return '';
+                        })()}
                         <table class="data-table">
                             <thead>
                                 <tr>
                                     <th style="width:36px;">No</th>
                                     <th style="width:56px;">차종</th>
-                                    <th style="min-width:260px;">품명</th>
+                                    <th style="width:${window.__productPartNameColW || 260}px;white-space:nowrap;">품명</th>
                                     <th style="width:70px;white-space:nowrap;">도장컬러</th>
                                     <th style="width:48px;white-space:nowrap;text-align:center;">구분</th>
                                     <th style="width:64px;white-space:nowrap;text-align:center;">포장</th>
@@ -917,20 +924,20 @@ const SettingsModule = (function() {
                                     <tr>
                                         <td style="text-align:center;">${i + 1}</td>
                                         <td style="white-space:nowrap;font-size:.78rem;max-width:56px;overflow:hidden;text-overflow:ellipsis;" title="${p.carModel || ''}">${p.carModel || '-'}</td>
-                                        <td style="min-width:260px;">
+                                        <td style="width:${window.__productPartNameColW || 260}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
                                             <strong style="font-size:.86rem;">${p.partName || '-'}</strong>
                                             ${p.linkedProductId ? (() => { const lp = productsById[p.linkedProductId]; return lp ? `<span title="레이져 분리 연결: ${lp.partName} (${lp.customer||''})" style="display:inline-flex;align-items:center;gap:2px;margin-left:4px;padding:1px 5px;background:rgba(109,40,217,0.1);border:1px solid rgba(109,40,217,0.3);border-radius:4px;font-size:0.68rem;color:#7c3aed;white-space:nowrap;vertical-align:middle;"><span class="material-symbols-outlined" style="font-size:11px;">call_split</span>${lp.customer||lp.partName}</span>` : ''; })() : ''}
                                         </td>
                                         <td style="font-size:.8rem;white-space:nowrap;">${p.color || '-'}</td>
                                         <td style="text-align:center;">${itBadge}</td>
                                         <td style="text-align:center;font-size:.8rem;white-space:nowrap;">${p.packUnit || '-'}</td>
-                                        <td>
-                                            <div style="display:flex; align-items:center; gap:6px; font-size:0.75rem; flex-wrap:wrap;">
+                                        <td style="white-space:nowrap;">
+                                            <div style="display:flex; align-items:center; gap:6px; font-size:0.75rem; flex-wrap:nowrap; white-space:nowrap;">
                                                 ${[
-                            p.process1 ? `<div style="display:flex; align-items:center; gap:4px;"><span class="badge badge-info">${p.process1}</span> <span style="color:var(--text-muted);">${p.cvt1 || '-'}|${p.ct1 || '-'}</span></div>` : '',
-                            p.process2 ? `<div style="display:flex; align-items:center; gap:4px;"><span class="badge badge-info">${p.process2}</span> <span style="color:var(--text-muted);">${p.cvt2 || '-'}|${p.ct2 || '-'}</span></div>` : '',
-                            p.process3 ? `<div style="display:flex; align-items:center; gap:4px;"><span class="badge badge-info">${p.process3}</span> <span style="color:var(--text-muted);">${p.cvt3 || '-'}|${p.ct3 || '-'}</span></div>` : '',
-                            p.process4 ? `<div style="display:flex; align-items:center; gap:4px;"><span class="badge badge-info">${p.process4}</span> <span style="color:var(--text-muted);">${p.cvt4 || '-'}|${p.ct4 || '-'}</span></div>` : '',
+                            p.process1 ? `<div style="display:flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap;"><span class="badge badge-info" style="white-space:nowrap;">${p.process1}</span> <span style="color:var(--text-muted);">${p.cvt1 || '-'}|${p.ct1 || '-'}</span></div>` : '',
+                            p.process2 ? `<div style="display:flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap;"><span class="badge badge-info" style="white-space:nowrap;">${p.process2}</span> <span style="color:var(--text-muted);">${p.cvt2 || '-'}|${p.ct2 || '-'}</span></div>` : '',
+                            p.process3 ? `<div style="display:flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap;"><span class="badge badge-info" style="white-space:nowrap;">${p.process3}</span> <span style="color:var(--text-muted);">${p.cvt3 || '-'}|${p.ct3 || '-'}</span></div>` : '',
+                            p.process4 ? `<div style="display:flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap;"><span class="badge badge-info" style="white-space:nowrap;">${p.process4}</span> <span style="color:var(--text-muted);">${p.cvt4 || '-'}|${p.ct4 || '-'}</span></div>` : '',
                             (() => {
                                 const _inspLabel = p.appearanceInspType === '외관+각인 검사' ? '외관+각인 검사' : '외관검사';
                                 const _hasAppear = p.process1 || p.process2 || p.process3 || p.process4;
@@ -952,9 +959,9 @@ const SettingsModule = (function() {
                                         break;
                                     }
                                 }
-                                return `<div style="display:flex; align-items:center; gap:4px;"><span class="badge badge-success">${_inspLabel}</span> <span style="color:var(--text-muted);">${_aCvt || '-'}|${_aCt || '-'}</span></div>`;
+                                return `<div style="display:flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap;"><span class="badge badge-success" style="white-space:nowrap;">${_inspLabel}</span> <span style="color:var(--text-muted);">${_aCvt || '-'}|${_aCt || '-'}</span></div>`;
                             })()
-                        ].filter(Boolean).join('<span class="material-symbols-outlined" style="font-size:14px; color:var(--text-muted);">arrow_forward</span>')}
+                        ].filter(Boolean).join('<span class="material-symbols-outlined" style="font-size:14px;color:var(--text-muted);flex-shrink:0;">arrow_forward</span>')}
                                                 ${!p.process1 && !p.process2 && !p.process3 && !p.process4 ? '-' : ''}
                                             </div>
                                         </td>
