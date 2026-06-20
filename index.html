@@ -7,7 +7,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <title>?�산 공정 관�??�스??(MES)</title>
+    <title>생산 공정 관리 시스템 (MES)</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
     <link rel="stylesheet" href="css/style.css?v=6">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -21,47 +21,47 @@
                 <div class="logo">
                     <span class="material-symbols-outlined logo-icon">precision_manufacturing</span>
                     <div class="logo-text">
-                        <h1>MES</h1><span>?�산 공정 관�?/span>
+                        <h1>MES</h1><span>생산 공정 관리</span>
                     </div>
                 </div>
                 <button class="sidebar-toggle" id="sidebarToggle"><span class="material-symbols-outlined">menu</span></button>
             </div>
             <nav class="sidebar-nav" id="sidebarNav">
-                <a class="nav-item active" data-page="dashboard" id="nav-dashboard"><span class="material-symbols-outlined">dashboard</span><span class="nav-label">?�?�보??/span></a>
-                <a class="nav-item" data-page="sales-delivery-plan" id="nav-sales-delivery-plan"><span class="material-symbols-outlined">sell</span><span class="nav-label">?�업 관�?/span></a>
-                <a class="nav-item" data-page="board" id="nav-board"><span class="material-symbols-outlined">forum</span><span class="nav-label">게시??/span></a>
-                <a class="nav-item" data-page="incoming-overview" id="nav-incoming-overview"><span class="material-symbols-outlined">fact_check</span><span class="nav-label">?�입검??/span></a>
-                <a class="nav-item" data-page="warehouse-overview" id="nav-warehouse-overview"><span class="material-symbols-outlined">warehouse</span><span class="nav-label">?�재 창고</span></a>
-                <a class="nav-item" data-page="product-warehouse" id="nav-product-warehouse"><span class="material-symbols-outlined">inventory_2</span><span class="nav-label">?�품창고</span></a>
-                <a class="nav-item" data-page="injection-process" id="nav-injection-process"><span class="material-symbols-outlined">precision_manufacturing</span><span class="nav-label">?�출 공정</span></a>
-                <div class="nav-divider"><span>?�장 공정</span></div>
-                <a class="nav-item" data-page="production-plan" id="nav-production-plan"><span class="material-symbols-outlined">assignment</span><span class="nav-label">?�산 계획 지?�서</span></a>
-                <a class="nav-item" data-page="painting-work" id="nav-painting-work"><span class="material-symbols-outlined">format_paint</span><span class="nav-label">?�장 ?�업?��?</span></a>
-                <a class="nav-item" data-page="painting-inspection" id="nav-painting-inspection"><span class="material-symbols-outlined">search</span><span class="nav-label">?�장 검???��?</span></a>
-                <a class="nav-item" data-page="paint-mix" id="nav-paint-mix"><span class="material-symbols-outlined">science</span><span class="nav-label">?�료?�용?�력</span></a>
-                <a class="nav-item" data-page="laser-process" id="nav-laser-process"><span class="material-symbols-outlined">bolt</span><span class="nav-label">?�이??공정</span></a>
-                <a class="nav-item" data-page="laser-wip" id="nav-laser-wip"><span class="material-symbols-outlined">inventory</span><span class="nav-label">?�공???�황</span></a>
-                <a class="nav-item" data-page="shipping-standby" id="nav-shipping-standby"><span class="material-symbols-outlined">verified</span><span class="nav-label">출하검??/span></a>
-                <div class="nav-divider"><span>?�산 관�?/span></div>
-                <a class="nav-item" data-page="painting-jig" id="nav-painting-jig"><span class="material-symbols-outlined">build</span><span class="nav-label">?�장지�?/span></a>
-                <a class="nav-item" data-page="prod-standards" id="nav-prod-standards"><span class="material-symbols-outlined">rule</span><span class="nav-label">?�조 관�??��?</span></a>
-                <a class="nav-item" data-page="prod-conditions" id="nav-prod-conditions"><span class="material-symbols-outlined">tune</span><span class="nav-label">?�업조건 관�?/span></a>
-                <a class="nav-item" data-page="prod-sub-materials" id="nav-prod-sub-materials"><span class="material-symbols-outlined">inventory</span><span class="nav-label">부?�재 관�?/span></a>
-                <a class="nav-item" data-page="prod-equipment" id="nav-prod-equipment"><span class="material-symbols-outlined">construction</span><span class="nav-label">?�비관�?/span></a>
-                <a class="nav-item" data-page="five-s" id="nav-five-s"><span class="material-symbols-outlined">cleaning_services</span><span class="nav-label">3??S 관�?/span></a>
-                <div class="nav-divider"><span>공정?�질</span></div>
-                <a class="nav-item" data-page="prod-quality" id="nav-prod-quality"><span class="material-symbols-outlined">analytics</span><span class="nav-label">초중종물 관�?/span></a>
-                <a class="nav-item" data-page="quality-performance" id="nav-quality-performance"><span class="material-symbols-outlined">query_stats</span><span class="nav-label">?�질 ?�적</span></a>
-                <a class="nav-item" data-page="improvement-activity" id="nav-improvement-activity"><span class="material-symbols-outlined">emoji_objects</span><span class="nav-label">개선?�동</span></a>
-                <a class="nav-item" data-page="limit-samples" id="nav-limit-samples"><span class="material-symbols-outlined">photo_library</span><span class="nav-label">?�도 견본</span></a>
-                <a class="nav-item" data-page="prod-spc" id="nav-prod-spc"><span class="material-symbols-outlined">ssid_chart</span><span class="nav-label">SPC 관�?/span></a>
-                <a class="nav-item" data-page="certifications-mgmt" id="nav-certifications-mgmt"><span class="material-symbols-outlined">workspace_premium</span><span class="nav-label">?�격?�증 관�?/span></a>
-                <div class="nav-divider"><span>?�전 관�?/span></div>
-                <a class="nav-item" data-page="safety-hub" id="nav-safety-hub"><span class="material-symbols-outlined">shield</span><span class="nav-label">?�전관�?/span></a>
-                <a class="nav-item" data-page="fire-safety-hub" id="nav-fire-safety-hub"><span class="material-symbols-outlined">local_fire_department</span><span class="nav-label">?�방관�?/span></a>
+                <a class="nav-item active" data-page="dashboard" id="nav-dashboard"><span class="material-symbols-outlined">dashboard</span><span class="nav-label">대시보드</span></a>
+                <a class="nav-item" data-page="sales-delivery-plan" id="nav-sales-delivery-plan"><span class="material-symbols-outlined">sell</span><span class="nav-label">영업 관리</span></a>
+                <a class="nav-item" data-page="board" id="nav-board"><span class="material-symbols-outlined">forum</span><span class="nav-label">게시판</span></a>
+                <a class="nav-item" data-page="incoming-overview" id="nav-incoming-overview"><span class="material-symbols-outlined">fact_check</span><span class="nav-label">수입검사</span></a>
+                <a class="nav-item" data-page="warehouse-overview" id="nav-warehouse-overview"><span class="material-symbols-outlined">warehouse</span><span class="nav-label">자재 창고</span></a>
+                <a class="nav-item" data-page="product-warehouse" id="nav-product-warehouse"><span class="material-symbols-outlined">inventory_2</span><span class="nav-label">제품창고</span></a>
+                <a class="nav-item" data-page="injection-process" id="nav-injection-process"><span class="material-symbols-outlined">precision_manufacturing</span><span class="nav-label">사출 공정</span></a>
+                <div class="nav-divider"><span>도장 공정</span></div>
+                <a class="nav-item" data-page="production-plan" id="nav-production-plan"><span class="material-symbols-outlined">assignment</span><span class="nav-label">생산 계획 지시서</span></a>
+                <a class="nav-item" data-page="painting-work" id="nav-painting-work"><span class="material-symbols-outlined">format_paint</span><span class="nav-label">도장 작업일지</span></a>
+                <a class="nav-item" data-page="painting-inspection" id="nav-painting-inspection"><span class="material-symbols-outlined">search</span><span class="nav-label">도장 검사 일지</span></a>
+                <a class="nav-item" data-page="paint-mix" id="nav-paint-mix"><span class="material-symbols-outlined">science</span><span class="nav-label">도료사용이력</span></a>
+                <a class="nav-item" data-page="laser-process" id="nav-laser-process"><span class="material-symbols-outlined">bolt</span><span class="nav-label">레이져 공정</span></a>
+                <a class="nav-item" data-page="laser-wip" id="nav-laser-wip"><span class="material-symbols-outlined">inventory</span><span class="nav-label">재공품 현황</span></a>
+                <a class="nav-item" data-page="shipping-standby" id="nav-shipping-standby"><span class="material-symbols-outlined">verified</span><span class="nav-label">출하검사</span></a>
+                <div class="nav-divider"><span>생산 관리</span></div>
+                <a class="nav-item" data-page="painting-jig" id="nav-painting-jig"><span class="material-symbols-outlined">build</span><span class="nav-label">도장지그</span></a>
+                <a class="nav-item" data-page="prod-standards" id="nav-prod-standards"><span class="material-symbols-outlined">rule</span><span class="nav-label">제조 관리 표준</span></a>
+                <a class="nav-item" data-page="prod-conditions" id="nav-prod-conditions"><span class="material-symbols-outlined">tune</span><span class="nav-label">작업조건 관리</span></a>
+                <a class="nav-item" data-page="prod-sub-materials" id="nav-prod-sub-materials"><span class="material-symbols-outlined">inventory</span><span class="nav-label">부자재 관리</span></a>
+                <a class="nav-item" data-page="prod-equipment" id="nav-prod-equipment"><span class="material-symbols-outlined">construction</span><span class="nav-label">설비관리</span></a>
+                <a class="nav-item" data-page="five-s" id="nav-five-s"><span class="material-symbols-outlined">cleaning_services</span><span class="nav-label">3정5S 관리</span></a>
+                <div class="nav-divider"><span>공정품질</span></div>
+                <a class="nav-item" data-page="prod-quality" id="nav-prod-quality"><span class="material-symbols-outlined">analytics</span><span class="nav-label">초중종물 관리</span></a>
+                <a class="nav-item" data-page="quality-performance" id="nav-quality-performance"><span class="material-symbols-outlined">query_stats</span><span class="nav-label">품질 실적</span></a>
+                <a class="nav-item" data-page="improvement-activity" id="nav-improvement-activity"><span class="material-symbols-outlined">emoji_objects</span><span class="nav-label">개선활동</span></a>
+                <a class="nav-item" data-page="limit-samples" id="nav-limit-samples"><span class="material-symbols-outlined">photo_library</span><span class="nav-label">한도 견본</span></a>
+                <a class="nav-item" data-page="prod-spc" id="nav-prod-spc"><span class="material-symbols-outlined">ssid_chart</span><span class="nav-label">SPC 관리</span></a>
+                <a class="nav-item" data-page="certifications-mgmt" id="nav-certifications-mgmt"><span class="material-symbols-outlined">workspace_premium</span><span class="nav-label">자격인증 관리</span></a>
+                <div class="nav-divider"><span>안전 관리</span></div>
+                <a class="nav-item" data-page="safety-hub" id="nav-safety-hub"><span class="material-symbols-outlined">shield</span><span class="nav-label">안전관리</span></a>
+                <a class="nav-item" data-page="fire-safety-hub" id="nav-fire-safety-hub"><span class="material-symbols-outlined">local_fire_department</span><span class="nav-label">소방관리</span></a>
 
-                <div class="nav-divider"><span>?�스??/span></div>
-                <a class="nav-item" data-page="settings" id="nav-settings"><span class="material-symbols-outlined">settings</span><span class="nav-label">관�?/ ?�정</span></a>
+                <div class="nav-divider"><span>시스템</span></div>
+                <a class="nav-item" data-page="settings" id="nav-settings"><span class="material-symbols-outlined">settings</span><span class="nav-label">관리 / 설정</span></a>
             </nav>
             <div class="sidebar-footer"><span class="version">v2.0</span></div>
         </aside>
@@ -69,10 +69,10 @@
             <header class="topbar">
                 <div class="topbar-left">
                     <button class="mobile-menu-btn" id="mobileMenuBtn"><span class="material-symbols-outlined">menu</span></button>
-                    <button class="sidebar-show-btn" id="sidebarShowBtn" title="메뉴 보이�? aria-label="메뉴 보이�?>
+                    <button class="sidebar-show-btn" id="sidebarShowBtn" title="메뉴 보이기" aria-label="메뉴 보이기">
                         <span class="material-symbols-outlined">dock_to_right</span>
                     </button>
-                    <h2 id="pageTitle">?�?�보??/h2>
+                    <h2 id="pageTitle">대시보드</h2>
                 </div>
                 <div class="topbar-right"><span class="topbar-date" id="currentDate"></span>
                     <div class="topbar-user" id="topbarUserBadge" style="display:flex;align-items:center;"><span class="material-symbols-outlined">person</span></div>
@@ -118,12 +118,12 @@
     <script src="js/modules/injection-wip.js?v=1"></script>
     <script src="js/modules/injection-room-layout.js?v=3"></script>
     <script src="js/modules/painting.js?v=72"></script>
-    <script src="js/modules/laser.js?v=52"></script>
+    <script src="js/modules/laser.js?v=51"></script>
     <script src="js/modules/laser-wip.js?v=4"></script>
     <script src="js/modules/laser-hub.js?v=7"></script>
     <script src="js/modules/laser-layout.js?v=4"></script>
     <script src="js/modules/sales.js?v=16"></script>
-    <!-- production_mgmt_v91.js: lazy load (router가 �?진입 ???�적 로드) -->
+    <!-- production_mgmt_v91.js: lazy load (router가 첫 진입 시 동적 로드) -->
     <script src="js/modules/improvement.js?v=15"></script>
     <script src="js/modules/shipping.js?v=3"></script>
     <script src="js/modules/jig.js?v=17"></script>

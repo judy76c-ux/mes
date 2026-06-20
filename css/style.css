@@ -350,6 +350,8 @@ body.sidebar-hidden .sidebar-toggle .material-symbols-outlined {
    =================================================================== */
 .main-area {
     flex: 1;
+    min-width: 0;
+    overflow-x: hidden;
     margin-left: var(--sidebar-width);
     display: flex;
     flex-direction: column;
