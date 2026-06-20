@@ -1342,8 +1342,8 @@ const ProductWarehouseModule = (function() {
                     style="cursor:pointer;"
                     onmouseover="this.style.background='var(--bg-secondary)'"
                     onmouseout="this.style.background=''">
-                    <td style="padding:5px 8px;font-size:0.8rem;font-weight:600;border-bottom:1px solid var(--border-color);max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-                        ${i.part}
+                    <td style="padding:5px 8px;font-size:0.8rem;font-weight:600;border-bottom:1px solid var(--border-color);line-height:1.28;white-space:normal;word-break:break-word;min-width:170px;max-width:240px;">
+                        <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;" title="${_esc(i.part)}">${i.part}</span>
                     </td>
                     <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">
                         ${i.color || ''}
@@ -1385,7 +1385,7 @@ const ProductWarehouseModule = (function() {
             </div>`;
         });
 
-        blocksEl.innerHTML = `<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;align-items:start;">${cards.join('')}</div>`;
+        blocksEl.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:10px;align-items:start;">${cards.join('')}</div>`;
     }
 
     // ── 이력 팝업 ─────────────────────────────────────────────────────

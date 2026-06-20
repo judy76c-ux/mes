@@ -143,7 +143,9 @@ var LaserWipModule = (function() {
                         return `<tr style="border-bottom:1px solid var(--border-color);"
                                     onmouseover="this.style.background='var(--bg-secondary)'"
                                     onmouseout="this.style.background=''">
-                            <td style="padding:5px 8px;font-size:0.8rem;font-weight:600;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(r.partName)}</td>
+                            <td style="padding:5px 8px;font-size:0.8rem;font-weight:600;line-height:1.28;white-space:normal;word-break:break-word;min-width:160px;max-width:220px;">
+                                <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;" title="${_esc(r.partName)}">${_esc(r.partName)}</span>
+                            </td>
                             <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);">${r.color && r.color !== '-' ? _esc(r.color) : ''}</td>
                             <td style="padding:5px 8px;text-align:right;white-space:nowrap;">
                                 <span style="font-size:0.9rem;font-weight:800;color:${wipColor};">${UIUtils.formatNumber(Math.abs(r.wip))}</span>
@@ -178,7 +180,7 @@ var LaserWipModule = (function() {
             }).join('');
 
         const inventoryHtml = carCards
-            ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;">${carCards}</div>`
+            ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px;">${carCards}</div>`
             : `<div style="text-align:center;padding:40px;color:var(--text-muted);">
                 <span class="material-symbols-outlined" style="font-size:2.5rem;display:block;opacity:0.3;margin-bottom:8px;">check_circle</span>
                 현재 레이져 후 재공품이 없습니다.
@@ -283,7 +285,9 @@ var LaserWipModule = (function() {
                     <tr style="border-bottom:1px solid var(--border-color);"
                         onmouseover="this.style.background='var(--bg-secondary)'"
                         onmouseout="this.style.background=''">
-                        <td style="padding:5px 8px;font-size:0.8rem;font-weight:600;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(r.partName)}</td>
+                        <td style="padding:5px 8px;font-size:0.8rem;font-weight:600;line-height:1.28;white-space:normal;word-break:break-word;min-width:160px;max-width:220px;">
+                            <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;" title="${_esc(r.partName)}">${_esc(r.partName)}</span>
+                        </td>
                         <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);">${r.color && r.color !== '-' ? _esc(r.color) : ''}</td>
                         <td style="padding:5px 8px;text-align:right;white-space:nowrap;">
                             <span style="font-size:0.9rem;font-weight:800;color:var(--accent-orange,#f59e0b);">${UIUtils.formatNumber(r.residualQty)}</span>
@@ -317,7 +321,7 @@ var LaserWipModule = (function() {
             }).join('');
 
         const inventoryHtml = carCards
-            ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;">${carCards}</div>`
+            ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px;">${carCards}</div>`
             : `<div style="text-align:center;padding:40px;color:var(--text-muted);">
                 <span class="material-symbols-outlined" style="font-size:2.5rem;display:block;opacity:0.3;margin-bottom:8px;">check_circle</span>
                 현재 잔량이 없습니다.

@@ -2507,12 +2507,12 @@ var LaserInspectionModule = (function() {
                     .form-input { border:1px solid #ccc!important; }
                 }
             </style>
-            <div id="liCustomModalInner" style="background:white;border-radius:12px;max-width:63vw;width:63vw;max-height:90vh;overflow:auto;padding:24px;box-shadow:0 10px 40px rgba(0,0,0,0.2);">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-                    <h2 style="margin:0;font-size:1.25rem;">${title}</h2>
+            <div id="liCustomModalInner" style="background:white;border-radius:12px;max-width:78vw;width:78vw;max-height:92vh;overflow:auto;padding:16px 20px;box-shadow:0 10px 40px rgba(0,0,0,0.2);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                    <h2 style="margin:0;font-size:1.1rem;">${title}</h2>
                     <button onclick="LaserInspectionModule._closeModal()" style="background:none;border:none;font-size:24px;cursor:pointer;color:var(--text-muted);">✕</button>
                 </div>
-                <div style="display:grid;gap:16px;">${content}</div>
+                <div style="display:flex;flex-direction:column;gap:10px;">${content}</div>
             </div>`;
         document.body.appendChild(modalEl);
     }
@@ -2522,95 +2522,136 @@ var LaserInspectionModule = (function() {
         if (el) el.remove();
     }
 
-    function _buildWorkInfoCard(work) {
-        const lotInfo = _lotInfo(work);
+    // 작업 정보 컴팩트 배너 (도장 검사 일지 스타일)
+    function _buildWorkBanner(work) {
+        const lotInfo   = _lotInfo(work);
+        const paintLots = lotInfo.paintDates.join(', ')    || '-';
+        const injLots   = lotInfo.injectionLots.join(', ') || '-';
         return `
-        <div class="card"><div class="card-body">
-            <h4 style="margin:0 0 10px 0;color:var(--text-primary);">레이져 정보</h4>
-            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px 16px;background:var(--bg-secondary);border-radius:8px;padding:14px;">
-                <div>
-                    <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:3px;">레이져 작업일</div>
-                    <div>${_dateStack(work.date, work.startTime)}</div>
-                </div>
-                <div>
-                    <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:3px;">장비</div>
-                    <div style="font-size:0.9rem;">${work.machine||'-'}</div>
-                </div>
-                <div>
-                    <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:3px;">차종</div>
-                    <div style="font-weight:600;font-size:0.9rem;">${work.carModel||'-'}</div>
-                </div>
-                <div>
-                    <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:3px;">품명</div>
-                    <div style="font-weight:600;font-size:0.9rem;">${work.partName||'-'}</div>
-                </div>
-                <div>
-                    <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:3px;">컬러</div>
-                    <div style="font-size:0.9rem;">${work.color||'-'}</div>
-                </div>
-                <div>
-                    <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:3px;">도장 LOT</div>
-                    <div>${_dateListHtml(lotInfo.paintDates)}</div>
-                </div>
-                <div>
-                    <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:3px;">사출 LOT</div>
-                    <div>${_lotListHtml(lotInfo.injectionLots)}</div>
-                </div>
-                <div>
-                    <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:3px;">레이져 작업 수량</div>
-                    <div style="font-weight:700;font-size:1rem;color:var(--accent-blue);">
-                        ${UIUtils.formatNumber(work.quantity||0)} EA
-                        <input type="hidden" id="liInspQty" value="${work.quantity||0}">
-                    </div>
-                </div>
-            </div>
-        </div></div>`;
+        <div style="background:var(--bg-secondary);border-radius:8px;padding:8px 14px;display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;border-left:4px solid var(--accent-blue);">
+            <span style="font-size:0.75rem;color:var(--text-muted);">작업일 <strong style="color:var(--text-primary);">${work.date||'-'}</strong></span>
+            <span style="color:var(--border);">|</span>
+            <span style="font-size:0.75rem;color:var(--text-muted);">장비 <strong style="color:var(--text-primary);">${work.machine||'-'}</strong></span>
+            <span style="color:var(--border);">|</span>
+            <span style="font-size:0.75rem;color:var(--text-muted);">차종 <strong style="color:var(--text-primary);">${work.carModel||'-'}</strong></span>
+            <span style="color:var(--border);">|</span>
+            <span style="font-size:0.75rem;color:var(--text-muted);">품명 <strong style="color:var(--text-primary);">${work.partName||'-'}</strong></span>
+            <span style="color:var(--border);">|</span>
+            <span style="font-size:0.75rem;color:var(--text-muted);">컬러 <strong style="color:var(--text-primary);">${work.color||'-'}</strong></span>
+            <span style="color:var(--border);">|</span>
+            <span style="font-size:0.75rem;color:var(--text-muted);">도장LOT <strong style="color:var(--text-primary);font-family:monospace;">${paintLots}</strong></span>
+            <span style="color:var(--border);">|</span>
+            <span style="font-size:0.75rem;color:var(--text-muted);">사출LOT <strong style="color:var(--text-primary);font-family:monospace;">${injLots}</strong></span>
+            <span style="color:var(--border);">|</span>
+            <span style="font-size:0.75rem;color:var(--text-muted);">작업수량 <strong style="color:var(--accent-blue);font-size:0.95rem;">${UIUtils.formatNumber(work.quantity||0)} EA</strong>
+                <input type="hidden" id="liInspQty" value="${work.quantity||0}">
+            </span>
+        </div>`;
     }
 
+    // 검사 대상 선택 카드 (수동 등록용 — 좌측)
     function _buildSelectCard(d = {}) {
         const products  = Storage.getAll(DB.STORES.PRODUCTS) || [];
         const carModels = [...new Set(products.map(p => p.carModel).filter(Boolean))].sort();
         return `
-        <div class="card"><div class="card-body">
-            <h4 style="margin:0 0 12px 0;color:var(--text-primary);">검사 대상</h4>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;">
-                <div class="form-group"><label class="form-label">차종 <span style="color:var(--accent-red)">*</span></label>
-                    <select class="form-select" id="liCarModel" onchange="LaserInspectionModule.onCarModelChange()">
-                        <option value="">-- 차종 선택 --</option>
-                        ${carModels.map(c=>`<option value="${c}" ${d.carModel===c?'selected':''}>${c}</option>`).join('')}
-                    </select></div>
-                <div class="form-group"><label class="form-label">품명 <span style="color:var(--accent-red)">*</span></label>
-                    <select class="form-select" id="liPartName"><option value="">-- 품명 선택 --</option></select></div>
-                <div class="form-group"><label class="form-label">검사수량 <span style="color:var(--accent-red)">*</span></label>
-                    <input type="number" class="form-input" id="liInspQty" value="${d.inspQty||''}"
-                        onchange="LaserInspectionModule._updateDefectTotal()" placeholder="0"></div>
+        <div class="card">
+            <div class="card-body" style="padding:12px;">
+                <h5 style="margin:0 0 10px 0;font-size:0.85rem;color:var(--text-primary);">검사 대상</h5>
+                <div style="display:flex;flex-direction:column;gap:8px;">
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-size:0.72rem;">차종 <span style="color:var(--accent-red)">*</span></label>
+                        <select class="form-select" id="liCarModel" onchange="LaserInspectionModule.onCarModelChange()">
+                            <option value="">-- 차종 선택 --</option>
+                            ${carModels.map(c=>`<option value="${c}" ${d.carModel===c?'selected':''}>${c}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-size:0.72rem;">품명 <span style="color:var(--accent-red)">*</span></label>
+                        <select class="form-select" id="liPartName"><option value="">-- 품명 선택 --</option></select>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-size:0.72rem;">검사수량 <span style="color:var(--accent-red)">*</span></label>
+                        <input type="number" class="form-input" id="liInspQty" value="${d.inspQty||''}"
+                            onchange="LaserInspectionModule._updateDefectTotal()" placeholder="0"
+                            style="text-align:right;font-weight:600;font-size:0.9rem;padding:5px 6px;">
+                    </div>
+                </div>
             </div>
-        </div></div>`;
+        </div>`;
     }
 
+    // 검사 정보 카드 (좌측)
     function _buildInspInfoCard(d = {}, workRef = null) {
         const defaultStart = d.inspectionStartTime || (workRef ? workRef.startTime || '' : '');
         const defaultEnd   = d.inspectionEndTime   || (workRef ? workRef.endTime   || '' : '');
         return `
-        <div class="card"><div class="card-body">
-            <h4 style="margin:0 0 12px 0;color:var(--text-primary);">검사 정보</h4>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;">
-                <div class="form-group"><label class="form-label">검사일자 <span style="color:var(--accent-red)">*</span></label>
-                    <input type="date" class="form-input" id="liDate" value="${d.date||UIUtils.today()}" style="font-weight:600;"></div>
-                <div class="form-group"><label class="form-label">검사 시작시간</label>
-                    <input type="time" class="form-input" id="liStartTime" value="${defaultStart}" style="font-weight:600;"
-                        oninput="LaserInspectionModule._calculateInspectionTime()"
-                        onchange="LaserInspectionModule._calculateInspectionTime()"></div>
-                <div class="form-group"><label class="form-label">검사 완료시간</label>
-                    <input type="time" class="form-input" id="liEndTime" value="${defaultEnd}" style="font-weight:600;"
-                        oninput="LaserInspectionModule._calculateInspectionTime()"
-                        onchange="LaserInspectionModule._calculateInspectionTime()"></div>
-                <div class="form-group"><label class="form-label">소요시간</label>
-                    <input type="text" class="form-input" id="liDuration" placeholder="자동계산" readonly style="background:var(--bg-secondary);font-weight:600;"></div>
+        <div class="card">
+            <div class="card-body" style="padding:12px;">
+                <h5 style="margin:0 0 10px 0;font-size:0.85rem;color:var(--text-primary);">검사 정보</h5>
+                <div style="display:flex;flex-direction:column;gap:8px;">
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-size:0.72rem;">검사일자</label>
+                        <input type="date" class="form-input" id="liDate" value="${d.date||UIUtils.today()}"
+                            style="font-weight:600;font-size:0.85rem;padding:6px 8px;">
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label" style="font-size:0.72rem;">시작시간</label>
+                            <input type="time" class="form-input" id="liStartTime" value="${defaultStart}"
+                                style="font-weight:600;font-size:0.82rem;padding:6px 4px;"
+                                oninput="LaserInspectionModule._calculateInspectionTime()"
+                                onchange="LaserInspectionModule._calculateInspectionTime()">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label class="form-label" style="font-size:0.72rem;">완료시간</label>
+                            <input type="time" class="form-input" id="liEndTime" value="${defaultEnd}"
+                                style="font-weight:600;font-size:0.82rem;padding:6px 4px;"
+                                oninput="LaserInspectionModule._calculateInspectionTime()"
+                                onchange="LaserInspectionModule._calculateInspectionTime()">
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-size:0.72rem;">소요시간</label>
+                        <input type="text" class="form-input" id="liDuration" placeholder="자동계산" readonly
+                            style="background:var(--bg-secondary);font-weight:600;font-size:0.85rem;padding:6px 8px;">
+                    </div>
+                </div>
             </div>
-        </div></div>`;
+        </div>`;
     }
 
+    // 검사 수량 카드 (좌측)
+    function _buildQtyCard(d = {}, autoInspQty = 0) {
+        const failQty = d.failQty || 0;
+        const goodQty = d.goodQty !== undefined ? d.goodQty : Math.max(0, autoInspQty - failQty);
+        return `
+        <div class="card">
+            <div class="card-body" style="padding:12px;">
+                <h5 style="margin:0 0 10px 0;font-size:0.85rem;color:var(--text-primary);">검사 수량</h5>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-size:0.72rem;">양품수</label>
+                        <input type="number" class="form-input" id="liGoodQty" value="${goodQty>0?goodQty:''}" placeholder="-" min="0"
+                            style="text-align:right;font-weight:600;font-size:0.9rem;padding:5px 6px;"
+                            onchange="LaserInspectionModule._updateDefectQty()">
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-size:0.72rem;">불량수</label>
+                        <input type="number" class="form-input" id="liDefectQty" value="${failQty}" min="0"
+                            style="text-align:right;font-weight:600;font-size:0.9rem;padding:5px 6px;"
+                            onchange="LaserInspectionModule._updateGoodQty()">
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-size:0.72rem;">합계 (자동)</label>
+                        <input type="text" class="form-input" id="liTotalQty" value="${goodQty+failQty}" readonly
+                            style="background:var(--bg-secondary);text-align:right;font-weight:700;font-size:0.9rem;padding:5px 6px;color:var(--accent-blue);">
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    // 불량 유형 카드 — 우측, 5열 그리드 (도장 검사 일지 스타일)
     function _buildDefectCard(dd = {}) {
         const allDefects   = Storage.getAll(DB.STORES.DEFECT_TYPES) || [];
         const injDefects   = allDefects.filter(d => d.type === 'injection' || !d.type);
@@ -2620,24 +2661,24 @@ var LaserInspectionModule = (function() {
         const section = (label, color, icon, prefix, defects) => {
             if (!defects.length) return '';
             return `
-            <div style="margin-bottom:16px;">
-                <h5 style="margin:0 0 10px 0;color:${color};border-bottom:2px solid ${color};padding-bottom:5px;font-size:0.9rem;">
-                    <span class="material-symbols-outlined" style="vertical-align:middle;font-size:16px;">${icon}</span> ${label}
-                </h5>
-                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;">
+            <div style="margin-bottom:14px;">
+                <div style="font-size:0.78rem;font-weight:700;color:${color};border-bottom:2px solid ${color};padding-bottom:4px;margin-bottom:10px;display:flex;align-items:center;gap:4px;">
+                    <span class="material-symbols-outlined" style="font-size:14px;">${icon}</span> ${label}
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;">
                     ${defects.map(d => `
-                        <div style="display:flex;flex-direction:column;gap:8px;">
-                            <label style="font-size:0.9rem;font-weight:600;margin:0;display:flex;align-items:center;gap:4px;min-width:0;">
-                                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${d.name}</span>
+                        <div style="display:flex;flex-direction:column;gap:4px;">
+                            <label style="font-size:0.78rem;font-weight:600;margin:0;color:var(--text-secondary);display:flex;align-items:center;gap:4px;min-width:0;">
+                                <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(d.name||'').replace(/"/g,'&quot;')}">${d.name}</span>
                                 <button type="button" title="불량유형 보기"
                                     onclick="LaserInspectionModule.showDefectTypeView('${d.id}')"
-                                    style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid var(--border-color);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex-shrink:0;padding:0;">
-                                    <span class="material-symbols-outlined" style="font-size:15px;">search</span>
+                                    style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border-color);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex-shrink:0;padding:0;">
+                                    <span class="material-symbols-outlined" style="font-size:14px;">search</span>
                                 </button>
                             </label>
                             <input type="text" inputmode="numeric" enterkeyhint="done" id="${prefix}${d.id}" data-defect-name="${d.name}"
-                                value="${Number(dd[d.name] || 0) > 0 ? dd[d.name] : ''}" placeholder="-"
-                                style="padding:8px;border:1px solid var(--border-color);border-radius:4px;text-align:center;font-weight:600;font-size:0.95rem;"
+                                value="${Number(dd[d.name]||0)>0?dd[d.name]:''}" placeholder="-"
+                                style="padding:6px;border:1px solid var(--border-color);border-radius:4px;text-align:center;font-weight:700;font-size:0.9rem;"
                                 oninput="this.value=this.value.replace(/[^0-9]/g,'');LaserInspectionModule._updateDefectTotal()">
                         </div>`).join('')}
                 </div>
@@ -2645,56 +2686,58 @@ var LaserInspectionModule = (function() {
         };
 
         return `
-        <div class="card"><div class="card-body">
-            <h4 style="margin:0 0 12px 0;color:var(--text-primary);">불량 유형 입력</h4>
-            ${section('사출 불량','#ea580c','precision_manufacturing','linj-',injDefects)}
-            ${section('도장 불량','#16a34a','format_paint','lpaint-',paintDefects)}
-            ${section('레이져 불량','#ef4444','crisis_alert','llaser-',laserDefects)}
-        </div></div>`;
-    }
-
-    function _buildResultCard(d = {}, autoInspQty = 0) {
-        const failQty = d.failQty || 0;
-        const goodQty = d.goodQty !== undefined ? d.goodQty : Math.max(0, autoInspQty - failQty);
-        return `
-        <div class="card"><div class="card-body">
-            <h4 style="margin:0 0 12px 0;color:var(--text-primary);">검사 결과</h4>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
-                <div class="form-group"><label class="form-label">양품수</label>
-                    <input type="number" class="form-input" id="liGoodQty" value="${goodQty > 0 ? goodQty : ''}" placeholder="-" min="0"
-                        style="text-align:right;font-weight:600;" onchange="LaserInspectionModule._updateDefectQty()"></div>
-                <div class="form-group"><label class="form-label">불량수</label>
-                    <input type="number" class="form-input" id="liDefectQty" value="${failQty}" min="0"
-                        style="text-align:right;font-weight:600;" onchange="LaserInspectionModule._updateGoodQty()"></div>
-                <div class="form-group"><label class="form-label">합계 (자동)</label>
-                    <input type="text" class="form-input" id="liTotalQty" value="${goodQty+failQty}" readonly
-                        style="background:var(--bg-secondary);text-align:right;font-weight:600;"></div>
+        <div class="card" style="height:100%;">
+            <div class="card-body" style="padding:14px;">
+                <h5 style="margin:0 0 12px 0;font-size:0.85rem;color:var(--text-primary);">불량 유형 입력</h5>
+                ${section('사출 불량','#ea580c','precision_manufacturing','linj-',injDefects)}
+                ${section('도장 불량','#16a34a','format_paint','lpaint-',paintDefects)}
+                ${section('레이져 불량','#ef4444','crisis_alert','llaser-',laserDefects)}
             </div>
-            <div class="form-group" style="margin-top:12px;"><label class="form-label">비고</label>
-                <textarea class="form-textarea" id="liNote" style="height:50px;">${d.note||''}</textarea>
-            </div>
-        </div></div>`;
-    }
-
-    function _btnSection(saveAction) {
-        return `
-        <div style="display:flex;gap:8px;padding-top:16px;border-top:1px solid var(--border-color);">
-            <button class="btn btn-primary" onclick="${saveAction}">
-                <span class="material-symbols-outlined">save</span> 저장</button>
-            <button class="btn btn-outline" onclick="LaserInspectionModule._closeModal()">
-                <span class="material-symbols-outlined">close</span> 취소</button>
         </div>`;
     }
 
-    // (buildFormHTML은 하위호환용으로 _buildSelectCard 위임)
-    function buildFormHTML(d = {}) { return _buildSelectCard(d) + _buildInspInfoCard(d) + _buildDefectCard(d.defectDetails||{}) + _buildResultCard(d); }
+    // 비고 (좌측)
+    function _buildNoteInput(d = {}) {
+        return `
+        <div class="form-group" style="margin:0;">
+            <label class="form-label" style="font-size:0.72rem;">비고</label>
+            <textarea class="form-textarea" id="liNote" style="height:60px;">${d.note||''}</textarea>
+        </div>`;
+    }
+
+    // 저장/취소 버튼 (좌측, 세로 배치)
+    function _buildBtns(saveAction) {
+        return `
+        <div style="display:flex;flex-direction:column;gap:6px;">
+            <button class="btn btn-primary" onclick="${saveAction}" style="width:100%;justify-content:center;">
+                <span class="material-symbols-outlined">save</span> 저장
+            </button>
+            <button class="btn btn-outline" onclick="LaserInspectionModule._closeModal()" style="width:100%;justify-content:center;">
+                <span class="material-symbols-outlined">close</span> 취소
+            </button>
+        </div>`;
+    }
+
+    // 2-컬럼 레이아웃 래퍼 (도장 검사 일지 스타일)
+    function _build2Col(leftContent, rightContent) {
+        return `
+        <div style="display:grid;grid-template-columns:260px 1fr;gap:10px;align-items:start;">
+            <div style="display:flex;flex-direction:column;gap:10px;">${leftContent}</div>
+            ${rightContent}
+        </div>`;
+    }
+
+    function buildFormHTML(d = {}) {
+        const left = _buildSelectCard(d) + _buildInspInfoCard(d) + _buildQtyCard(d) + _buildNoteInput(d);
+        return _build2Col(left, _buildDefectCard(d.defectDetails||{}));
+    }
 
     // ─ 모달 열기 ─────────────────────────────────────────────────────
     function openAddModal() {
         _liCarModel = ''; _liPartName = ''; _liColor = ''; _liWorkId = null;
-        _openModal('레이져 검사 등록',
-            _buildSelectCard() + _buildInspInfoCard() + _buildDefectCard() + _buildResultCard() +
-            _btnSection('LaserInspectionModule._saveInspection()'));
+        const left = _buildSelectCard() + _buildInspInfoCard() + _buildQtyCard() +
+            _buildNoteInput() + _buildBtns('LaserInspectionModule._saveInspection()');
+        _openModal('레이져 검사 등록', _build2Col(left, _buildDefectCard()));
     }
 
     function openInspFromWork(workId) {
@@ -2702,10 +2745,10 @@ var LaserInspectionModule = (function() {
         if (!w) { UIUtils.toast('작업 정보를 찾을 수 없습니다.', 'error'); return; }
         _liCarModel = w.carModel || ''; _liPartName = w.partName || '';
         _liColor    = w.color    || ''; _liWorkId   = w.id;
-        _openModal(`레이져 검사 등록 — ${w.partName || ''}`,
-            _buildWorkInfoCard(w) + _buildInspInfoCard({}, w) + _buildDefectCard() +
-            _buildResultCard({}, w.quantity || 0) +
-            _btnSection('LaserInspectionModule._saveInspection()'));
+        const left = _buildInspInfoCard({}, w) + _buildQtyCard({}, w.quantity||0) +
+            _buildNoteInput() + _buildBtns('LaserInspectionModule._saveInspection()');
+        _openModal(`레이져 검사 등록 — ${w.partName||''}`,
+            _buildWorkBanner(w) + _build2Col(left, _buildDefectCard()));
         setTimeout(_calculateInspectionTime, 0);
     }
 
@@ -2715,10 +2758,12 @@ var LaserInspectionModule = (function() {
         _liCarModel = d.carModel || ''; _liPartName = d.partName || '';
         _liColor    = d.color    || ''; _liWorkId   = d.workLogId || null;
         const workRef = d.workLogId ? Storage.getById(DB.STORES.LASER_WORK_LOG, d.workLogId) : null;
+        const left = (workRef ? '' : _buildSelectCard(d)) +
+            _buildInspInfoCard(d) + _buildQtyCard(d) +
+            _buildNoteInput(d) + _buildBtns(`LaserInspectionModule._saveInspection('${id}')`);
         _openModal('레이져 검사 수정',
-            (workRef ? _buildWorkInfoCard(workRef) : _buildSelectCard(d)) +
-            _buildInspInfoCard(d) + _buildDefectCard(d.defectDetails || {}) + _buildResultCard(d) +
-            _btnSection(`LaserInspectionModule._saveInspection('${id}')`));
+            (workRef ? _buildWorkBanner(workRef) : '') +
+            _build2Col(left, _buildDefectCard(d.defectDetails||{})));
         if (!workRef) setTimeout(() => onCarModelChange(d.partName), 50);
     }
 
