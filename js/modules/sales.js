@@ -1357,10 +1357,11 @@ var SalesDeliveryPlanModule = (function() {
         }
 
         wrap.innerHTML = `
-            <table class="data-table sdp-status-table" style="min-width:${560 + days.length * 38}px;font-size:10px;">
+            <style>.sdp-status-table th,.sdp-status-table td{padding:3px 5px!important;}</style>
+            <table class="data-table sdp-status-table" style="min-width:${460 + days.length * 38}px;font-size:10px;">
                 <thead>
                     <tr>
-                        <th colspan="9"></th>
+                        <th colspan="9" style="padding:2px 4px!important;"></th>
                         ${_monthHeaderCells(days)}
                     </tr>
                     <tr>
