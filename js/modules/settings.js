@@ -848,7 +848,7 @@ const SettingsModule = (function() {
                                     <th style="width:64px;white-space:nowrap;text-align:center;">포장</th>
                                     <th style="white-space:nowrap;">공정별 사양</th>
                                     <th style="white-space:nowrap;">사용 사출 자재</th>
-                                    <th style="white-space:nowrap;min-width:360px;">도료 자재</th>
+                                    <th style="white-space:nowrap;">도료 자재</th>
                                     <th style="width:80px;">작업</th>
                                 </tr>
                             </thead>
@@ -965,8 +965,8 @@ const SettingsModule = (function() {
                                                 ${!p.process1 && !p.process2 && !p.process3 && !p.process4 ? '-' : ''}
                                             </div>
                                         </td>
-                                        <td><div style="display:flex;flex-wrap:nowrap;gap:4px;overflow:hidden;">${matBadges}</div></td>
-                                        <td style="min-width:360px;max-width:520px;"><div style="display:flex;flex-direction:column;gap:1px;overflow:hidden;">${paintBadges}</div></td>
+                                        <td style="white-space:nowrap;"><div style="display:flex;flex-wrap:nowrap;gap:4px;">${matBadges}</div></td>
+                                        <td><div style="display:flex;flex-direction:column;gap:1px;">${paintBadges}</div></td>
                                         <td style="white-space:nowrap;">
                                             <button class="btn btn-sm btn-outline" onclick="SettingsModule.editProduct('${p.id}')">수정</button>
                                             <button class="btn btn-sm btn-danger" onclick="SettingsModule.removeProduct('${p.id}')">삭제</button>
