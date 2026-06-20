@@ -2038,24 +2038,24 @@ var LaserInspectionModule = (function() {
                     </div>
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
-                            <table class="data-table" style="min-width:1420px;table-layout:fixed;">
+                            <table class="data-table" style="min-width:1140px;table-layout:fixed;">
                                 <thead>
                                     <tr>
-                                        <th style="width:90px;">검사일</th>
-                                        <th style="width:90px;">레이져 작업일</th>
-                                        <th style="width:80px;">차종</th>
-                                        <th style="width:150px;">품명</th>
-                                        <th style="width:100px;">도장LOT</th>
-                                        <th style="width:140px;">사출LOT</th>
-                                        <th style="width:80px;text-align:right;">검사수량</th>
-                                        <th style="width:70px;">양품</th>
-                                        <th style="width:70px;">불량<br><small style="font-weight:400;">(계)</small></th>
-                                        <th style="width:70px;">불량률</th>
-                                        <th style="width:76px;text-align:center;">사출불량</th>
-                                        <th style="width:76px;text-align:center;">도장불량</th>
-                                        <th style="width:80px;text-align:center;">레이져불량</th>
-                                        <th style="width:100px;">비고</th>
-                                        <th style="width:108px;">작업</th>
+                                        <th style="width:76px;">검사일</th>
+                                        <th style="width:76px;">레이져 작업일</th>
+                                        <th style="width:68px;">차종</th>
+                                        <th style="width:130px;">품명</th>
+                                        <th style="width:82px;">도장LOT</th>
+                                        <th style="width:120px;">사출LOT</th>
+                                        <th style="width:68px;text-align:right;">검사수량</th>
+                                        <th style="width:56px;">양품</th>
+                                        <th style="width:56px;">불량<br><small style="font-weight:400;">(계)</small></th>
+                                        <th style="width:56px;">불량률</th>
+                                        <th style="width:64px;text-align:center;">사출불량</th>
+                                        <th style="width:64px;text-align:center;">도장불량</th>
+                                        <th style="width:64px;text-align:center;">레이져불량</th>
+                                        <th style="width:84px;">비고</th>
+                                        <th style="width:96px;">작업</th>
                                     </tr>
                                 </thead>
                                 <tbody id="liTableBody"></tbody>
@@ -2089,18 +2089,18 @@ var LaserInspectionModule = (function() {
 
         body.innerHTML = `
             <div class="data-table-wrapper">
-                <table class="data-table" style="min-width:1080px;table-layout:fixed;">
+                <table class="data-table" style="min-width:820px;table-layout:fixed;">
                     <thead>
                         <tr>
-                            <th style="width:100px;">레이져 작업일</th>
-                            <th style="width:92px;">장비</th>
-                            <th style="width:90px;">차종</th>
-                            <th style="width:160px;">품명</th>
-                            <th style="width:72px;">컬러</th>
-                            <th style="width:96px;text-align:right;">작업수량</th>
-                            <th style="width:120px;">도장LOT</th>
-                            <th style="width:160px;">사출LOT</th>
-                            <th style="width:120px;"></th>
+                            <th style="width:80px;">레이져 작업일</th>
+                            <th style="width:72px;">장비</th>
+                            <th style="width:72px;">차종</th>
+                            <th style="width:140px;">품명</th>
+                            <th style="width:64px;">컬러</th>
+                            <th style="width:72px;text-align:right;">작업수량</th>
+                            <th style="width:90px;">도장LOT</th>
+                            <th style="width:140px;">사출LOT</th>
+                            <th style="width:90px;"></th>
                         </tr>
                     </thead>
                     <tbody>
