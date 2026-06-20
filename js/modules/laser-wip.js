@@ -180,7 +180,7 @@ var LaserWipModule = (function() {
             }).join('');
 
         const inventoryHtml = carCards
-            ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px;">${carCards}</div>`
+            ? `<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-items:start;">${carCards}</div>`
             : `<div style="text-align:center;padding:40px;color:var(--text-muted);">
                 <span class="material-symbols-outlined" style="font-size:2.5rem;display:block;opacity:0.3;margin-bottom:8px;">check_circle</span>
                 현재 레이져 후 재공품이 없습니다.
@@ -321,7 +321,7 @@ var LaserWipModule = (function() {
             }).join('');
 
         const inventoryHtml = carCards
-            ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px;">${carCards}</div>`
+            ? `<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-items:start;">${carCards}</div>`
             : `<div style="text-align:center;padding:40px;color:var(--text-muted);">
                 <span class="material-symbols-outlined" style="font-size:2.5rem;display:block;opacity:0.3;margin-bottom:8px;">check_circle</span>
                 현재 잔량이 없습니다.
