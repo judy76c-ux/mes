@@ -973,9 +973,9 @@ var LaserWorkModule = (function() {
                 </div>
             </div>
             <div class="form-row">
-                ${_workerSelect('lwWorker1', '작업자 1', d.worker1 || '')}
-                ${_workerSelect('lwWorker2', '작업자 2', d.worker2 || '')}
-                ${_workerSelect('lwWorker3', '작업자 3', d.worker3 || '')}
+                ${_workerSelect('lwWorker1', '작업자 1 - 조작원&외관검사', d.worker1 || '')}
+                ${_workerSelect('lwWorker2', '작업자 2 - 각인검사', d.worker2 || '')}
+                ${_workerSelect('lwWorker3', '작업자 3 - 제품지그', d.worker3 || '')}
             </div>
             <div style="display:flex;justify-content:flex-end;margin-top:-8px;">
                 <button type="button" class="btn btn-outline btn-sm" onclick="LaserWorkModule.addExternalWorker()">

@@ -11581,151 +11581,185 @@ const SettingsModule = (function() {
        사용자 관리 탭
     ════════════════════════════════════════════════════════════ */
     const _esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    let _selectedPermRole = null; /* 권한 패널에서 현재 선택된 역할 키 */
+
+    function _roleBadgeHtml(userOrRole, roles) {
+        const keys = Array.isArray(userOrRole?.roles)
+            ? userOrRole.roles
+            : (userOrRole && typeof userOrRole === 'object' ? [userOrRole.role] : [userOrRole]);
+        const uniqueKeys = [...new Set(keys.map(String).filter(Boolean))];
+        return `<div style="display:flex;gap:4px;flex-wrap:wrap;">${uniqueKeys.map(r => {
+            const role = roles.find(x => x.key === r);
+            return role
+                ? `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;background:${role.bg};color:${role.color};">${_esc(role.label)}</span>`
+                : `<span style="color:var(--text-muted);">${_esc(r)}</span>`;
+        }).join('') || '<span style="color:var(--text-muted);">-</span>'}</div>`;
+    }
+
+    function _renderGroupPermsPanel(roleKey) {
+        if (!roleKey) return '<div style="padding:20px;color:var(--text-muted);">왼쪽에서 역할을 선택하세요.</div>';
+        const groups = AuthModule.PAGE_GROUPS || [];
+        const roles = AuthModule.getRoles();
+        const role = roles.find(r => r.key === roleKey);
+        if (!role) return '';
+        return `
+        <div style="padding:14px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+                <span style="padding:3px 12px;border-radius:12px;font-size:0.82rem;font-weight:700;background:${role.bg};color:${role.color};">${_esc(role.label)}</span>
+                <span style="font-size:0.8rem;color:var(--text-muted);">의 그룹별 접근 권한</span>
+                <div style="margin-left:auto;display:flex;gap:6px;">
+                    <button class="btn btn-sm" onclick="SettingsModule.toggleAllGroupPerm('${roleKey}',true)">전체 허용</button>
+                    <button class="btn btn-sm" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;" onclick="SettingsModule.toggleAllGroupPerm('${roleKey}',false)">전체 해제</button>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px;">
+                ${groups.map(g => {
+                    const pids = g.pages;
+                    const accessAll = pids.every(pid => AuthModule.isPageAccessGranted(roleKey, pid));
+                    const writeAll  = pids.every(pid => AuthModule.isPageWriteGranted(roleKey, pid));
+                    const accessAny = pids.some(pid => AuthModule.isPageAccessGranted(roleKey, pid));
+                    const writeAny  = pids.some(pid => AuthModule.isPageWriteGranted(roleKey, pid));
+                    return `
+                    <div style="border:1px solid var(--border-color);border-radius:8px;padding:10px 12px;background:var(--bg-primary);">
+                        <div style="font-weight:700;font-size:0.82rem;margin-bottom:8px;color:var(--text-primary);">${_esc(g.label)}</div>
+                        <div style="display:flex;gap:16px;">
+                            <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.8rem;">
+                                <input type="checkbox" data-role="${roleKey}" data-group="${g.key}" data-type="access"
+                                    ${accessAll ? 'checked' : ''}
+                                    onchange="SettingsModule.onGroupPermChange(this)"
+                                    style="width:15px;height:15px;cursor:pointer;accent-color:${role.color};">
+                                <span style="color:${role.color};font-weight:600;">접근</span>
+                            </label>
+                            <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.8rem;">
+                                <input type="checkbox" data-role="${roleKey}" data-group="${g.key}" data-type="write"
+                                    ${writeAll ? 'checked' : ''}
+                                    onchange="SettingsModule.onGroupPermChange(this)"
+                                    style="width:15px;height:15px;cursor:pointer;accent-color:#dc2626;">
+                                <span style="color:#dc2626;font-weight:600;">입력</span>
+                            </label>
+                        </div>
+                        <div style="margin-top:5px;font-size:0.68rem;color:var(--text-muted);">${pids.length}개 페이지${accessAny && !accessAll ? ' (일부 접근)' : ''}${writeAny && !writeAll ? ' (일부 입력)' : ''}</div>
+                    </div>`;
+                }).join('')}
+            </div>
+        </div>`;
+    }
 
     function renderUsersTab(el) {
         const users = AuthModule.getUsers();
-        const perms = AuthModule.getPermissions();
-        const roles = AuthModule.ROLES;
-        const pages = AuthModule.ALL_PAGES;
-
-        /* 역할 뱃지 */
-        const roleBadge = userOrRole => {
-            const keys = Array.isArray(userOrRole?.roles)
-                ? userOrRole.roles
-                : (userOrRole && typeof userOrRole === 'object'
-                    ? [userOrRole.role]
-                    : [userOrRole]);
-            const uniqueKeys = [...new Set(keys.map(String).filter(Boolean))];
-            return `<div style="display:flex;gap:4px;flex-wrap:wrap;">${uniqueKeys.map(r => {
-                const role = roles.find(x => x.key === r);
-                return role
-                    ? `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;background:${role.bg};color:${role.color};">${role.label}</span>`
-                    : `<span style="color:var(--text-muted);">${_esc(r)}</span>`;
-            }).join('') || '<span style="color:var(--text-muted);">-</span>'}</div>`;
-        };
-
-        /* 페이지 그룹별 권한 매트릭스 */
-        const groups = [...new Set(pages.map(p => p.group))];
+        const roles = AuthModule.getRoles();
         const nonAdminRoles = roles.filter(r => r.key !== 'admin');
         const passwordMask = u => u.password ? '••••••' : '-';
+        if (!_selectedPermRole || !nonAdminRoles.find(r => r.key === _selectedPermRole)) {
+            _selectedPermRole = nonAdminRoles[0]?.key || null;
+        }
 
-        const matrixRows = groups.map(g => {
-            const gPages = pages.filter(p => p.group === g);
-            return `
-            <tr>
-                <td colspan="${nonAdminRoles.length + 1}" style="background:var(--bg-secondary);font-weight:700;font-size:0.8rem;padding:6px 10px;color:var(--text-secondary);">${g}</td>
-            </tr>
-            ${gPages.map(p => `
-            <tr>
-                <td style="padding:5px 10px;font-size:0.82rem;">${_esc(p.label)}</td>
-                ${nonAdminRoles.map(r => {
-                    const accessOk = AuthModule.isPageAccessGranted(r.key, p.id);
-                    const writeOk  = AuthModule.isPageWriteGranted(r.key, p.id);
-                    return `<td style="text-align:center;padding:3px 4px;">
-                        <div style="display:inline-flex;flex-direction:column;gap:2px;align-items:center;">
-                            <label style="display:flex;align-items:center;gap:2px;cursor:pointer;font-size:9px;color:var(--text-muted);white-space:nowrap;"
-                                title="${_esc(r.label)} — 접근 허용">
-                                <input type="checkbox" data-role="${r.key}" data-page="${p.id}" data-type="access"
-                                    ${accessOk ? 'checked' : ''}
-                                    onchange="SettingsModule.onPermChange(this)"
-                                    style="width:13px;height:13px;cursor:pointer;accent-color:${r.color};">
-                                <span>접</span>
-                            </label>
-                            <label style="display:flex;align-items:center;gap:2px;cursor:pointer;font-size:9px;color:var(--text-muted);white-space:nowrap;"
-                                title="${_esc(r.label)} — 입력 허용">
-                                <input type="checkbox" data-role="${r.key}" data-page="${p.id}" data-type="write"
-                                    ${writeOk ? 'checked' : ''}
-                                    onchange="SettingsModule.onPermChange(this)"
-                                    style="width:13px;height:13px;cursor:pointer;accent-color:#dc2626;">
-                                <span style="color:#dc2626;">입</span>
-                            </label>
-                        </div>
-                    </td>`;
-                }).join('')}
-            </tr>`).join('')}`;
-        }).join('');
+        const COLOR_PRESETS = [
+            { color:'#dc2626', bg:'#fee2e2' }, { color:'#2563eb', bg:'#dbeafe' },
+            { color:'#d97706', bg:'#fef3c7' }, { color:'#16a34a', bg:'#dcfce7' },
+            { color:'#7c3aed', bg:'#ede9fe' }, { color:'#0369a1', bg:'#e0f2fe' },
+            { color:'#059669', bg:'#d1fae5' }, { color:'#9333ea', bg:'#fae8ff' },
+            { color:'#c2410c', bg:'#ffedd5' }, { color:'#0f766e', bg:'#ccfbf1' },
+        ];
 
         el.innerHTML = `
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start;">
+        <div style="display:flex;flex-direction:column;gap:16px;">
 
-            <!-- 사용자 목록 -->
-            <div class="card">
-                <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
-                    <h4><span class="material-symbols-outlined">group</span> 사용자 목록</h4>
-                    <button class="btn btn-primary btn-sm" onclick="SettingsModule.openUserModal()">
-                        <span class="material-symbols-outlined">person_add</span> 사용자 추가
-                    </button>
+            <!-- 상단: 사용자 목록 + 역할 관리 -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;">
+
+                <!-- 사용자 목록 -->
+                <div class="card">
+                    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+                        <h4><span class="material-symbols-outlined">group</span> 사용자 목록</h4>
+                        <button class="btn btn-primary btn-sm" onclick="SettingsModule.openUserModal()">
+                            <span class="material-symbols-outlined">person_add</span> 사용자 추가
+                        </button>
+                    </div>
+                    <div class="card-body" style="padding:0;">
+                        <table class="data-table">
+                            <thead><tr>
+                                <th>ID</th><th>사진</th><th>이름</th><th>비밀번호</th><th>역할</th><th>상태</th><th>작업</th>
+                            </tr></thead>
+                            <tbody>
+                            ${users.length === 0
+                                ? `<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px;">등록된 사용자가 없습니다.</td></tr>`
+                                : users.map(u => `
+                                <tr>
+                                    <td style="font-weight:600;">${_esc(u.username)}</td>
+                                    <td style="padding:6px 10px;">${_avatarHtml(u, 38)}</td>
+                                    <td>${_esc(u.displayName)}</td>
+                                    <td style="font-family:monospace;color:var(--text-muted);">${passwordMask(u)}</td>
+                                    <td>${_roleBadgeHtml(u, roles)}</td>
+                                    <td>
+                                        <span style="color:${u.active !== false ? '#16a34a' : '#dc2626'};font-size:12px;font-weight:600;">
+                                            ${u.active !== false ? '● 활성' : '○ 비활성'}
+                                        </span>
+                                    </td>
+                                    <td style="white-space:nowrap;">
+                                        <button class="btn btn-outline btn-sm" onclick="SettingsModule.openUserModal('${_esc(u.id)}')">수정</button>
+                                        <button class="btn btn-sm" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;"
+                                            onclick="SettingsModule.deleteUser('${_esc(u.id)}')">삭제</button>
+                                    </td>
+                                </tr>`).join('')
+                            }
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-                <div class="card-body" style="padding:0;">
-                    <table class="data-table">
-                        <thead><tr>
-                            <th>ID</th><th>사진</th><th>이름</th><th>비밀번호</th><th>역할</th><th>상태</th><th>작업</th>
-                        </tr></thead>
-                        <tbody>
-                        ${users.length === 0
-                            ? `<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px;">등록된 사용자가 없습니다.</td></tr>`
-                            : users.map(u => `
-                            <tr>
-                                <td style="font-weight:600;">${_esc(u.username)}</td>
-                                <td style="padding:6px 10px;">${_avatarHtml(u, 38)}</td>
-                                <td>${_esc(u.displayName)}</td>
-                                <td style="font-family:monospace;color:var(--text-muted);">${passwordMask(u)}</td>
-                                <td>${roleBadge(u)}</td>
-                                <td>
-                                    <span style="color:${u.active !== false ? '#16a34a' : '#dc2626'};font-size:12px;font-weight:600;">
-                                        ${u.active !== false ? '● 활성' : '○ 비활성'}
-                                    </span>
-                                </td>
-                                <td style="white-space:nowrap;">
-                                    <button class="btn btn-outline btn-sm" onclick="SettingsModule.openUserModal('${_esc(u.id)}')">수정</button>
-                                    <button class="btn btn-sm" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;"
-                                        onclick="SettingsModule.deleteUser('${_esc(u.id)}')">삭제</button>
-                                </td>
-                            </tr>`).join('')
-                        }
-                        </tbody>
-                    </table>
+
+                <!-- 역할 관리 -->
+                <div class="card">
+                    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+                        <h4><span class="material-symbols-outlined">badge</span> 역할 관리</h4>
+                        <button class="btn btn-primary btn-sm" onclick="SettingsModule.openRoleModal()">
+                            <span class="material-symbols-outlined">add</span> 역할 추가
+                        </button>
+                    </div>
+                    <div class="card-body" style="padding:10px;max-height:55vh;overflow-y:auto;">
+                        <div style="display:flex;flex-direction:column;gap:6px;">
+                            ${roles.map(r => `
+                            <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;
+                                        border:1px solid var(--border-color);border-radius:8px;background:var(--bg-primary);">
+                                <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${r.color};flex-shrink:0;"></span>
+                                <span style="padding:2px 10px;border-radius:10px;font-size:0.75rem;font-weight:700;background:${r.bg};color:${r.color};white-space:nowrap;">${_esc(r.label)}</span>
+                                <span style="flex:1;font-size:0.78rem;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(r.description||'')}</span>
+                                ${r.key !== 'admin' ? `
+                                <button class="btn btn-sm btn-outline" style="flex-shrink:0;" onclick="SettingsModule.openRoleModal('${_esc(r.key)}')">수정</button>
+                                <button class="btn btn-sm" style="flex-shrink:0;background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;" onclick="SettingsModule.deleteRole('${_esc(r.key)}')">삭제</button>
+                                ` : `<span style="font-size:0.72rem;color:var(--text-muted);flex-shrink:0;">시스템</span>`}
+                            </div>`).join('')}
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <!-- 역할별 접근 권한 -->
+            <!-- 하단: 역할별 접근 권한 (2-패널) -->
             <div class="card">
                 <div class="card-header">
                     <h4><span class="material-symbols-outlined">security</span> 역할별 접근 권한</h4>
                 </div>
                 <div class="card-body" style="padding:0;">
-                    <div style="overflow-x:auto;max-height:75vh;overflow-y:auto;">
-                        <table class="data-table" style="font-size:0.82rem;">
-                            <thead style="position:sticky;top:0;z-index:1;">
-                                <tr>
-                                    <th rowspan="2" style="min-width:130px;vertical-align:middle;">페이지</th>
-                                    ${nonAdminRoles.map(r =>
-                                        `<th style="text-align:center;min-width:68px;color:${r.color};border-bottom:1px solid var(--border-color);padding-bottom:2px;">${r.label}</th>`
-                                    ).join('')}
-                                </tr>
-                                <tr style="background:var(--bg-tertiary);">
-                                    ${nonAdminRoles.map(r =>
-                                        `<th style="text-align:center;padding:2px 4px;font-size:9px;font-weight:600;">
-                                            <span style="color:${r.color};">접</span>
-                                            <span style="color:var(--text-muted);margin:0 2px;">/</span>
-                                            <span style="color:#dc2626;">입</span>
-                                        </th>`
-                                    ).join('')}
-                                </tr>
-                                <tr style="background:var(--bg-secondary);">
-                                    <td style="padding:4px 10px;font-size:0.75rem;color:var(--text-muted);">관리자는 전체 접근+입력</td>
-                                    ${nonAdminRoles.map(r =>
-                                        `<td style="text-align:center;padding:3px 2px;">
-                                            <button class="btn btn-sm" style="font-size:9px;padding:1px 5px;"
-                                                onclick="SettingsModule.toggleAllPerm('${r.key}',true)" title="접근+입력 전체 허용">전체</button>
-                                            <button class="btn btn-sm" style="font-size:9px;padding:1px 5px;"
-                                                onclick="SettingsModule.toggleAllPerm('${r.key}',false)" title="접근+입력 전체 해제">해제</button>
-                                        </td>`
-                                    ).join('')}
-                                </tr>
-                            </thead>
-                            <tbody>${matrixRows}</tbody>
-                        </table>
+                    <div style="display:grid;grid-template-columns:190px 1fr;min-height:280px;">
+                        <!-- 역할 선택 사이드바 -->
+                        <div style="border-right:1px solid var(--border-color);padding:10px;background:var(--bg-secondary);">
+                            <div style="font-size:0.72rem;color:var(--text-muted);font-weight:700;margin-bottom:8px;letter-spacing:0.5px;">역할 선택</div>
+                            <div style="display:flex;flex-direction:column;gap:3px;">
+                                ${nonAdminRoles.map(r => `
+                                <button id="rpBtn_${r.key}" onclick="SettingsModule.onRolePermSelect('${r.key}')"
+                                    style="text-align:left;padding:8px 10px;border-radius:6px;cursor:pointer;font-size:0.82rem;font-weight:600;
+                                           background:${_selectedPermRole === r.key ? r.bg : 'transparent'};
+                                           color:${_selectedPermRole === r.key ? r.color : 'var(--text-secondary)'};
+                                           border:none;border-left:3px solid ${_selectedPermRole === r.key ? r.color : 'transparent'};
+                                           transition:all 0.15s;">
+                                    ${_esc(r.label)}
+                                </button>`).join('')}
+                            </div>
+                        </div>
+                        <!-- 그룹 권한 패널 -->
+                        <div id="umGroupPermsPanel">
+                            ${_renderGroupPermsPanel(_selectedPermRole)}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -11736,9 +11770,9 @@ const SettingsModule = (function() {
     function openUserModal(userId) {
         const users = AuthModule.getUsers();
         const u = userId ? users.find(x => x.id === userId) : null;
-        const roles = AuthModule.ROLES;
+        const roles = AuthModule.getRoles();
         const selectedRoles = [...new Set((Array.isArray(u?.roles) ? u.roles : [u?.role || 'admin']).map(String).filter(Boolean))];
-        const roleOptions = selected => roles.map(r => `<option value="${r.key}" ${selected === r.key ? 'selected' : ''}>${r.label}</option>`).join('');
+        const roleOptions = selected => roles.map(r => `<option value="${r.key}" ${selected === r.key ? 'selected' : ''}>${_esc(r.label)}</option>`).join('');
         const roleRow = (selected, canRemove) => `
             <div class="um-role-row" style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
                 <select class="form-select um-role-select" style="flex:1;">
@@ -11788,13 +11822,13 @@ const SettingsModule = (function() {
     function addUserRoleRow() {
         const wrap = document.getElementById('umRoleRows');
         if (!wrap) return;
-        const roles = AuthModule.ROLES || [];
+        const roles = AuthModule.getRoles() || [];
         const row = document.createElement('div');
         row.className = 'um-role-row';
         row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:8px;';
         row.innerHTML = `
             <select class="form-select um-role-select" style="flex:1;">
-                ${roles.map(r => `<option value="${r.key}">${r.label}</option>`).join('')}
+                ${roles.map(r => `<option value="${r.key}">${_esc(r.label)}</option>`).join('')}
             </select>
             <button type="button" class="btn btn-sm btn-outline" onclick="SettingsModule.addUserRoleRow()" title="역할 추가">
                 <span class="material-symbols-outlined" style="font-size:16px;">add</span>
@@ -11874,63 +11908,190 @@ const SettingsModule = (function() {
     }
 
     /* 권한 체크박스 변경 (data-type="access"|"write") */
-    function onPermChange(checkbox) {
-        const role   = checkbox.dataset.role;
-        const pageId = checkbox.dataset.page;
-        const type   = checkbox.dataset.type || 'access';  /* 'access' 또는 'write' */
-        const perms  = AuthModule.getPermissions();
+    /* 역할 사이드바에서 역할 선택 */
+    function onRolePermSelect(roleKey) {
+        _selectedPermRole = roleKey;
+        const roles = AuthModule.getRoles();
+        roles.filter(r => r.key !== 'admin').forEach(r => {
+            const btn = document.getElementById(`rpBtn_${r.key}`);
+            if (!btn) return;
+            const active = r.key === roleKey;
+            btn.style.background = active ? r.bg : 'transparent';
+            btn.style.color = active ? r.color : 'var(--text-secondary)';
+            btn.style.borderLeft = `3px solid ${active ? r.color : 'transparent'}`;
+        });
+        const panel = document.getElementById('umGroupPermsPanel');
+        if (panel) panel.innerHTML = _renderGroupPermsPanel(roleKey);
+    }
 
-        let rp = perms[role];
-        /* admin null → 체크박스 변경 불가(모든 항목 checked 상태이므로 건드리지 않음) */
+    /* 그룹 체크박스 변경 → 그룹 내 전체 페이지에 적용 */
+    function onGroupPermChange(el) {
+        const roleKey  = el.dataset.role;
+        const groupKey = el.dataset.group;
+        const type     = el.dataset.type;
+        const checked  = el.checked;
+        const groups   = AuthModule.PAGE_GROUPS || [];
+        const group    = groups.find(g => g.key === groupKey);
+        if (!group) return;
+
+        const perms = AuthModule.getPermissions();
+        let rp = perms[roleKey];
         if (rp === null) {
             const all = AuthModule.ALL_PAGES.map(p => p.id);
             rp = { access: [...all], write: [...all] };
-        } else if (Array.isArray(rp)) {
-            /* 구버전 array → 신버전 변환 */
-            rp = { access: [...rp], write: [...rp] };
         } else if (!rp || typeof rp !== 'object') {
             rp = { access: [], write: [] };
         } else {
-            rp = { access: [...(rp.access || [])], write: [...(rp.write || [])] };
+            rp = { access: [...(rp.access||[])], write: [...(rp.write||[])] };
         }
 
-        const list = rp[type] ? [...rp[type]] : [];
-        if (checkbox.checked) {
-            if (!list.includes(pageId)) list.push(pageId);
-            /* 입력 허용 시 접근도 자동 허용 */
-            if (type === 'write' && !rp.access.includes(pageId)) {
-                rp.access.push(pageId);
-                /* DOM에서 같은 페이지의 접근 체크박스도 체크 */
-                const accessCb = document.querySelector(
-                    `input[data-role="${role}"][data-page="${pageId}"][data-type="access"]`
-                );
-                if (accessCb) accessCb.checked = true;
-            }
-        } else {
-            const idx = list.indexOf(pageId);
-            if (idx >= 0) list.splice(idx, 1);
-            /* 접근 해제 시 입력도 자동 해제 */
-            if (type === 'access') {
-                const wi = rp.write.indexOf(pageId);
-                if (wi >= 0) rp.write.splice(wi, 1);
-                const writeCb = document.querySelector(
-                    `input[data-role="${role}"][data-page="${pageId}"][data-type="write"]`
-                );
+        const pids = group.pages;
+        if (type === 'access') {
+            if (checked) {
+                pids.forEach(pid => { if (!rp.access.includes(pid)) rp.access.push(pid); });
+            } else {
+                rp.access = rp.access.filter(pid => !pids.includes(pid));
+                rp.write  = rp.write.filter(pid => !pids.includes(pid));
+                const writeCb = document.querySelector(`input[data-role="${roleKey}"][data-group="${groupKey}"][data-type="write"]`);
                 if (writeCb) writeCb.checked = false;
             }
+        } else {
+            if (checked) {
+                pids.forEach(pid => {
+                    if (!rp.access.includes(pid)) rp.access.push(pid);
+                    if (!rp.write.includes(pid)) rp.write.push(pid);
+                });
+                const accessCb = document.querySelector(`input[data-role="${roleKey}"][data-group="${groupKey}"][data-type="access"]`);
+                if (accessCb) accessCb.checked = true;
+            } else {
+                rp.write = rp.write.filter(pid => !pids.includes(pid));
+            }
         }
-        rp[type] = list;
-        perms[role] = rp;
+        perms[roleKey] = rp;
         AuthModule.savePermissions(perms);
+        UIUtils.toast('권한이 저장되었습니다.', 'success');
     }
 
-    /* 전체/해제: 접근+입력 동시 적용 */
+    /* 전체 허용 / 전체 해제 */
+    function toggleAllGroupPerm(roleKey, grant) {
+        const perms = AuthModule.getPermissions();
+        const all = AuthModule.ALL_PAGES.map(p => p.id);
+        perms[roleKey] = grant ? { access: [...all], write: [...all] } : { access: [], write: [] };
+        AuthModule.savePermissions(perms);
+        const panel = document.getElementById('umGroupPermsPanel');
+        if (panel) panel.innerHTML = _renderGroupPermsPanel(roleKey);
+        UIUtils.toast(grant ? '전체 권한이 허용되었습니다.' : '전체 권한이 해제되었습니다.', 'success');
+    }
+
+    /* 역할 추가/수정 모달 */
+    function openRoleModal(roleKey) {
+        const roles = AuthModule.getRoles();
+        const r = roleKey ? roles.find(x => x.key === roleKey) : null;
+        const COLOR_PRESETS = [
+            { color:'#dc2626', bg:'#fee2e2' }, { color:'#2563eb', bg:'#dbeafe' },
+            { color:'#d97706', bg:'#fef3c7' }, { color:'#16a34a', bg:'#dcfce7' },
+            { color:'#7c3aed', bg:'#ede9fe' }, { color:'#0369a1', bg:'#e0f2fe' },
+            { color:'#059669', bg:'#d1fae5' }, { color:'#9333ea', bg:'#fae8ff' },
+            { color:'#c2410c', bg:'#ffedd5' }, { color:'#0f766e', bg:'#ccfbf1' },
+        ];
+        UIUtils.showModal(
+            r ? '역할 수정' : '역할 추가',
+            `<div class="form-group">
+                <label class="form-label">역할 키 <span style="color:var(--text-muted);font-size:0.78rem;">(영문/숫자/_)</span></label>
+                <input type="text" class="form-input" id="rmKey" value="${_esc(r?.key||'')}"
+                    ${r ? 'readonly style="background:var(--bg-secondary);"' : ''}
+                    placeholder="예: paint_inspector">
+            </div>
+            <div class="form-group">
+                <label class="form-label">역할 이름</label>
+                <input type="text" class="form-input" id="rmLabel" value="${_esc(r?.label||'')}" placeholder="예: 도장검사자">
+            </div>
+            <div class="form-group">
+                <label class="form-label">설명 <span style="color:var(--text-muted);font-size:0.78rem;">(선택)</span></label>
+                <input type="text" class="form-input" id="rmDesc" value="${_esc(r?.description||'')}" placeholder="역할 설명">
+            </div>
+            <div class="form-group">
+                <label class="form-label">색상 프리셋</label>
+                <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">
+                    ${COLOR_PRESETS.map(cp => `
+                    <div onclick="document.getElementById('rmColor').value='${cp.color}';document.getElementById('rmBg').value='${cp.bg}';"
+                        style="width:28px;height:28px;border-radius:50%;background:${cp.bg};border:2px solid ${cp.color};cursor:pointer;"></div>`).join('')}
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <div class="form-group">
+                    <label class="form-label">글자색</label>
+                    <input type="color" class="form-input" id="rmColor" value="${r?.color||'#2563eb'}" style="height:38px;padding:2px 4px;">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">배경색</label>
+                    <input type="color" class="form-input" id="rmBg" value="${r?.bg||'#dbeafe'}" style="height:38px;padding:2px 4px;">
+                </div>
+            </div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+             <button class="btn btn-primary" onclick="SettingsModule.saveRole(${r ? `'${_esc(r.key)}'` : 'null'})">저장</button>`
+        );
+    }
+
+    /* 역할 저장 */
+    async function saveRole(editKey) {
+        const key   = editKey || (document.getElementById('rmKey')?.value||'').trim().replace(/[^a-z0-9_]/gi,'_').toLowerCase();
+        const label = (document.getElementById('rmLabel')?.value||'').trim();
+        const desc  = (document.getElementById('rmDesc')?.value||'').trim();
+        const color = document.getElementById('rmColor')?.value || '#2563eb';
+        const bg    = document.getElementById('rmBg')?.value || '#dbeafe';
+        if (!key || !label) { UIUtils.toast('역할 키와 이름은 필수입니다.', 'error'); return; }
+        const roles = AuthModule.getRoles();
+        if (!editKey && roles.some(r => r.key === key)) { UIUtils.toast('이미 존재하는 역할 키입니다.', 'error'); return; }
+        const newRole = { key, label, color, bg, description: desc, canWrite: true };
+        const newRoles = editKey
+            ? roles.map(r => r.key === editKey ? { ...r, ...newRole } : r)
+            : [...roles, newRole];
+        await AuthModule.saveRoles(newRoles);
+        UIUtils.closeModal();
+        UIUtils.toast(editKey ? '역할이 수정되었습니다.' : '역할이 추가되었습니다.', 'success');
+        SettingsModule.switchTab('users');
+    }
+
+    /* 역할 삭제 */
+    function deleteRole(roleKey) {
+        const roles = AuthModule.getRoles();
+        const r = roles.find(x => x.key === roleKey);
+        UIUtils.confirm(`"${r?.label || roleKey}" 역할을 삭제하시겠습니까?`, async () => {
+            const newRoles = roles.filter(x => x.key !== roleKey);
+            await AuthModule.saveRoles(newRoles);
+            if (_selectedPermRole === roleKey) _selectedPermRole = null;
+            UIUtils.toast('역할이 삭제되었습니다.', 'success');
+            SettingsModule.switchTab('users');
+        });
+    }
+
+    /* 하위 호환: 구형 onPermChange (개별 페이지 직접 변경) */
+    function onPermChange(checkbox) {
+        const role   = checkbox.dataset.role;
+        const pageId = checkbox.dataset.page;
+        const type   = checkbox.dataset.type || 'access';
+        const perms  = AuthModule.getPermissions();
+        let rp = perms[role];
+        if (rp === null) { const all = AuthModule.ALL_PAGES.map(p => p.id); rp = { access:[...all], write:[...all] }; }
+        else if (Array.isArray(rp)) { rp = { access:[...rp], write:[...rp] }; }
+        else if (!rp || typeof rp !== 'object') { rp = { access:[], write:[] }; }
+        else { rp = { access:[...(rp.access||[])], write:[...(rp.write||[])] }; }
+        const list = [...(rp[type]||[])];
+        if (checkbox.checked) {
+            if (!list.includes(pageId)) list.push(pageId);
+            if (type === 'write' && !rp.access.includes(pageId)) rp.access.push(pageId);
+        } else {
+            const idx = list.indexOf(pageId); if (idx >= 0) list.splice(idx, 1);
+            if (type === 'access') { const wi = rp.write.indexOf(pageId); if (wi >= 0) rp.write.splice(wi, 1); }
+        }
+        rp[type] = list; perms[role] = rp;
+        AuthModule.savePermissions(perms);
+    }
     function toggleAllPerm(role, grant) {
         const perms = AuthModule.getPermissions();
         const all = AuthModule.ALL_PAGES.map(p => p.id);
-        perms[role] = grant
-            ? { access: [...all], write: [...all] }
-            : { access: [], write: [] };
+        perms[role] = grant ? { access:[...all], write:[...all] } : { access:[], write:[] };
         AuthModule.savePermissions(perms);
         SettingsModule.switchTab('users');
     }
@@ -11938,6 +12099,7 @@ const SettingsModule = (function() {
     return {
         render,
         openUserModal, addUserRoleRow, removeUserRoleRow, saveUser, deleteUser, onPermChange, toggleAllPerm,
+        onRolePermSelect, onGroupPermChange, toggleAllGroupPerm, openRoleModal, saveRole, deleteRole,
         switchTab,
         openAddProductModal,
         saveProduct,

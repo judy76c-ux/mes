@@ -16,9 +16,11 @@ const AuthModule = (function () {
     const AUTH_USERS_CONFIG_KEY = 'auth_users';
     const AUTH_PERMS_CONFIG_KEY = 'auth_role_permissions';
     const AUTH_MESSAGES_CONFIG_KEY = 'auth_internal_messages';
+    const AUTH_ROLES_CONFIG_KEY    = 'auth_roles';
     let _usersCache = null;
     let _permissionsCache = null;
     let _messagesCache = null;
+    let _rolesCache = null; /* null = 하드코딩 ROLES 사용 */
 
     /* ── 역할 정의 ─────────────────────────────────────────── */
     const ROLES = [
@@ -83,6 +85,21 @@ const AuthModule = (function () {
         { id:'settings',                  label:'관리 / 설정',        group:'시스템' },
     ];
 
+    /* ── 페이지 그룹 (권한 관리 단위) ──────────────────────────── */
+    const PAGE_GROUPS = [
+        { key:'common',    label:'공통',      pages:['dashboard'] },
+        { key:'incoming',  label:'수입검사',   pages:['incoming-overview','injection-incoming','paint-incoming-inspection'] },
+        { key:'warehouse', label:'창고',       pages:['warehouse-overview','injection-warehouse','paint-inventory','raw-material-inventory'] },
+        { key:'injection', label:'사출공정',   pages:['injection-process','injection-work'] },
+        { key:'painting',  label:'도장공정',   pages:['production-plan','painting-work','painting-inspection','paint-mix'] },
+        { key:'laser',     label:'레이져공정', pages:['laser-standby','laser-work','laser-inspection','laser-jig-master','laser-jig-disposal','laser-jig-cleaning'] },
+        { key:'shipping',  label:'출하/제품',  pages:['shipping-standby','product-warehouse'] },
+        { key:'sales',     label:'영업',       pages:['sales-delivery-plan','sales-delivery','sales-analytics','sales-outsourcing'] },
+        { key:'prod_mgmt', label:'생산관리',   pages:['painting-jig','jig-management','jig-master','jig-disposal','jig-cleaning','jig-change-history','jig-repair-history','prod-standards','prod-conditions','prod-sub-materials','prod-equipment','five-s'] },
+        { key:'quality',   label:'공정품질',   pages:['prod-quality','quality-performance','improvement-activity','limit-samples','prod-spc','certifications-mgmt'] },
+        { key:'system',    label:'시스템',     pages:['settings'] },
+    ];
+
     /* ── 내부 스토리지 ───────────────────────────────────────── */
     async function _readPersistedJson(key, fallback) {
         try {
@@ -100,14 +117,16 @@ const AuthModule = (function () {
             const localUsers = await _readPersistedJson(USERS_KEY, []);
             const localPerms = _migratePerms(await _readPersistedJson(PERMS_KEY, _defaultPerms()));
             const localMessages = await _readPersistedJson(MESSAGES_KEY, []);
-            const [users, perms, messages] = await Promise.all([
+            const [users, perms, messages, savedRoles] = await Promise.all([
                 Storage.getConfigValue(AUTH_USERS_CONFIG_KEY).catch(() => null),
                 Storage.getConfigValue(AUTH_PERMS_CONFIG_KEY).catch(() => null),
                 Storage.getConfigValue(AUTH_MESSAGES_CONFIG_KEY).catch(() => null),
+                Storage.getConfigValue(AUTH_ROLES_CONFIG_KEY).catch(() => null),
             ]);
             _usersCache = Array.isArray(users) && users.length ? users : localUsers;
             _permissionsCache = perms && typeof perms === 'object' ? _migratePerms(perms) : localPerms;
             _messagesCache = Array.isArray(messages) && messages.length ? messages : localMessages;
+            _rolesCache = Array.isArray(savedRoles) && savedRoles.length ? savedRoles : null;
             await Promise.all([
                 _writePersistedJson(USERS_KEY, _usersCache),
                 _writePersistedJson(PERMS_KEY, _permissionsCache),
@@ -130,6 +149,9 @@ const AuthModule = (function () {
             _messagesCache = await _readPersistedJson(MESSAGES_KEY, []);
             return false;
         }
+    }
+    function _getDynamicRoles() {
+        return Array.isArray(_rolesCache) && _rolesCache.length ? _rolesCache : ROLES;
     }
     function _primeLocalAuthCache() {
         if (_usersCache === null) _usersCache = [];
@@ -305,8 +327,12 @@ const AuthModule = (function () {
         _messagesCache = Array.isArray(rows) ? rows : [];
         return _persistAuthState(AUTH_MESSAGES_CONFIG_KEY, _messagesCache, MESSAGES_KEY);
     }
+    async function saveRoles(newRoles) {
+        _rolesCache = Array.isArray(newRoles) && newRoles.length ? newRoles : null;
+        try { await Storage.setConfigValue(AUTH_ROLES_CONFIG_KEY, _rolesCache || ROLES); } catch(e) {}
+    }
     function _roleLabel(roleKey) {
-        const role = ROLES.find(r => r.key === roleKey);
+        const role = _getDynamicRoles().find(r => r.key === roleKey);
         return role ? role.label : roleKey;
     }
     function _roleKeys(userOrRole) {
@@ -1021,6 +1047,9 @@ const AuthModule = (function () {
     return {
         ROLES,
         ALL_PAGES,
+        PAGE_GROUPS,
+        getRoles: _getDynamicRoles,
+        saveRoles,
         getUsers:             _getUsers,
         saveUsers:            _saveUsers,
         getPermissions:       _getPermissions,
