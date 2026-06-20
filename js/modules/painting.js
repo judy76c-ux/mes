@@ -4235,10 +4235,15 @@ const PaintingInspectionModule = (function() {
                                 <div style="font-size:0.78rem; font-weight:700; color:#ea580c; border-bottom:2px solid #ea580c; padding-bottom:4px; margin-bottom:10px; display:flex; align-items:center; gap:4px;">
                                     <span class="material-symbols-outlined" style="font-size:14px;">precision_manufacturing</span> 사출 불량
                                 </div>
-                                <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:8px;">
-                                    ${injectionDefects.map(d => `
+                <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:8px;">
+                    ${injectionDefects.map(d => `
                                         <div style="display:flex; flex-direction:column; gap:4px;">
-                                            <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary);">${d.name}</label>
+                                            <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary); display:flex; align-items:center; gap:4px; min-width:0;">
+                                                <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name}</span>
+                                                <button type="button" title="불량유형 보기" onclick="LaserInspectionModule.showDefectTypeView('${d.id}')" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex-shrink:0;padding:0;">
+                                                    <span class="material-symbols-outlined" style="font-size:14px;">search</span>
+                                                </button>
+                                            </label>
                                             <input type="text" inputmode="numeric" enterkeyhint="done" id="inj-${d.id}" value="0" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem;" oninput="this.value=this.value.replace(/[^0-9]/g,'');PaintingInspectionModule._updateDefectTotal()">
                                         </div>
                                     `).join('')}
@@ -4251,10 +4256,15 @@ const PaintingInspectionModule = (function() {
                                 <div style="font-size:0.78rem; font-weight:700; color:#16a34a; border-bottom:2px solid #16a34a; padding-bottom:4px; margin-bottom:10px; display:flex; align-items:center; gap:4px;">
                                     <span class="material-symbols-outlined" style="font-size:14px;">format_paint</span> 도장 불량
                                 </div>
-                                <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:8px;">
-                                    ${paintingDefects.map(d => `
+                <div style="display:grid; grid-template-columns:repeat(5, 1fr); gap:8px;">
+                    ${paintingDefects.map(d => `
                                         <div style="display:flex; flex-direction:column; gap:4px;">
-                                            <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary);">${d.name}</label>
+                                            <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary); display:flex; align-items:center; gap:4px; min-width:0;">
+                                                <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name}</span>
+                                                <button type="button" title="불량유형 보기" onclick="LaserInspectionModule.showDefectTypeView('${d.id}')" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex-shrink:0;padding:0;">
+                                                    <span class="material-symbols-outlined" style="font-size:14px;">search</span>
+                                                </button>
+                                            </label>
                                             <input type="text" inputmode="numeric" enterkeyhint="done" id="paint-${d.id}" value="0" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem;" oninput="this.value=this.value.replace(/[^0-9]/g,'');PaintingInspectionModule._updateDefectTotal()">
                                         </div>
                                     `).join('')}
@@ -5682,8 +5692,8 @@ const PaintingInspectionModule = (function() {
                 <div style="font-size:0.78rem; font-weight:600; color:${color}; margin-bottom:4px;">${label}</div>
                 <div style="display:flex; flex-wrap:wrap; gap:6px;">
                     ${group.map(def => `
-                        <span style="background:var(--bg-secondary); border:1px solid var(--border); border-radius:6px; padding:3px 10px; font-size:0.82rem;">
-                            <span style="color:var(--text-muted);">${def.defectName}</span>
+                        <span style="display:inline-flex;align-items:flex-start;gap:4px;background:var(--bg-secondary); border:1px solid var(--border); border-radius:6px; padding:3px 10px; font-size:0.82rem; max-width:100%; white-space:normal; word-break:break-word; line-height:1.35;">
+                            <span style="color:var(--text-muted);white-space:normal;word-break:break-word;">${def.defectName}</span>
                             <strong style="margin-left:4px; color:var(--accent-red);">${UIUtils.formatNumber(def.defectCount)}</strong>
                         </span>
                     `).join('')}
@@ -5700,7 +5710,7 @@ const PaintingInspectionModule = (function() {
             position:fixed; z-index:9999;
             background:var(--bg-primary); border:1px solid var(--border);
             border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.22);
-            padding:20px 22px; min-width:320px; max-width:420px;
+            padding:20px 22px; min-width:360px; max-width:720px; width:min(720px,88vw);
             font-size:0.88rem;
         `;
 
