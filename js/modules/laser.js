@@ -2636,7 +2636,7 @@ var LaserInspectionModule = (function() {
                                 </button>
                             </label>
                             <input type="text" inputmode="numeric" enterkeyhint="done" id="${prefix}${d.id}" data-defect-name="${d.name}"
-                                value="${dd[d.name]||0}"
+                                value="${Number(dd[d.name] || 0) > 0 ? dd[d.name] : ''}" placeholder="-"
                                 style="padding:8px;border:1px solid var(--border-color);border-radius:4px;text-align:center;font-weight:600;font-size:0.95rem;"
                                 oninput="this.value=this.value.replace(/[^0-9]/g,'');LaserInspectionModule._updateDefectTotal()">
                         </div>`).join('')}
@@ -2661,7 +2661,7 @@ var LaserInspectionModule = (function() {
             <h4 style="margin:0 0 12px 0;color:var(--text-primary);">검사 결과</h4>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
                 <div class="form-group"><label class="form-label">양품수</label>
-                    <input type="number" class="form-input" id="liGoodQty" value="${goodQty}" min="0"
+                    <input type="number" class="form-input" id="liGoodQty" value="${goodQty > 0 ? goodQty : ''}" placeholder="-" min="0"
                         style="text-align:right;font-weight:600;" onchange="LaserInspectionModule._updateDefectQty()"></div>
                 <div class="form-group"><label class="form-label">불량수</label>
                     <input type="number" class="form-input" id="liDefectQty" value="${failQty}" min="0"
