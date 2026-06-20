@@ -602,7 +602,7 @@ var LaserWorkModule = (function() {
                     </div>
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
-                            <table class="data-table" style="min-width:1160px;table-layout:fixed;">
+                            <table class="data-table" style="min-width:1020px;table-layout:fixed;">
                                 <thead>
                                     <tr>
                                         <th style="width:86px;">레이져작업일</th>
@@ -610,12 +610,11 @@ var LaserWorkModule = (function() {
                                         <th style="width:112px;">시간</th>
                                         <th style="width:96px;">차종</th>
                                         <th style="width:230px;">품명</th>
-                                        <th style="width:132px;">프로그램</th>
                                         <th style="width:92px;">수량</th>
                                         <th style="width:96px;">도장작업일</th>
                                         <th style="width:120px;">사출LOT</th>
-                                        <th style="width:96px;">품질확인</th>
-                                        <th style="width:150px;">작업자</th>
+                                        <th style="width:80px;">품질확인</th>
+                                        <th style="width:200px;">작업자</th>
                                         <th style="width:132px;">작업</th>
                                     </tr>
                                 </thead>
@@ -689,7 +688,6 @@ var LaserWorkModule = (function() {
                 <td style="min-width:0;">
                     <div style="font-weight:600;">${d.partName || '-'}</div>
                 </td>
-                <td style="font-size:0.8rem; color:var(--accent-blue);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${d.programName || '-'}</td>
                 <td style="text-align:right; font-weight:700;">${UIUtils.formatNumber(d.quantity)}</td>
                 <td style="white-space:nowrap;">${_paintDateCell(d)}</td>
                 <td style="font-size:0.8rem; font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${d.paintLot || '-'}</td>
@@ -700,7 +698,7 @@ var LaserWorkModule = (function() {
                         ${d.qcLast ? '<span class="badge badge-success">종</span>' : ''}
                     </div>
                 </td>
-                <td style="font-size:0.8rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${[d.worker1, d.worker2, d.worker3].filter(Boolean).join(', ') || '-'}</td>
+                <td style="font-size:0.8rem;white-space:nowrap;">${[d.worker1, d.worker2, d.worker3].filter(Boolean).join(', ') || '-'}</td>
                 <td style="white-space:nowrap;">
                     <div style="display:flex;gap:4px;align-items:center;justify-content:flex-start;white-space:nowrap;">
                         <button class="btn btn-sm btn-outline" onclick="LaserWorkModule.edit('${d.id}')">수정</button>
