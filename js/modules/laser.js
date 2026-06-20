@@ -2367,7 +2367,7 @@ var LaserInspectionModule = (function() {
                     <td>${_dateStack(d.date, d.inspectionStartTime)}</td>
                     <td>${lotInfo.laserDate ? _dateStack(lotInfo.laserDate, lotInfo.laserTime) : '<span style="color:var(--text-muted);">-</span>'}</td>
                     <td style="white-space:nowrap;font-size:0.82rem;">${d.carModel || '-'}</td>
-                    <td style="font-weight:600;">${d.partName || '-'}</td>
+                    <td style="font-weight:600;font-size:0.78rem;line-height:1.3;">${d.partName || '-'}</td>
                     <td>${_dateListHtml(lotInfo.paintDates)}</td>
                     <td>${_lotListHtml(lotInfo.injectionLots)}</td>
                     <td style="text-align:right;">${UIUtils.formatNumber(d.inspQty)}</td>
