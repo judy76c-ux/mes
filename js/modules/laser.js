@@ -2362,12 +2362,10 @@ var LaserInspectionModule = (function() {
                 else if (t === 'laser') laserBad += Number(cnt) || 0;
                 else injBad += Number(cnt) || 0;
             });
-            // 검사일과 레이져 작업일이 동일한 경우 레이져 작업일 표시 억제
-            const sameDate = lotInfo.laserDate && d.date && lotInfo.laserDate.slice(0,10) === d.date.slice(0,10);
             return `
                 <tr style="cursor:pointer;" onclick="LaserInspectionModule._showDetail('${d.id}', event)">
                     <td>${_dateStack(d.date, d.inspectionStartTime)}</td>
-                    <td>${sameDate ? '<span style="color:var(--text-muted);font-size:0.75rem;">동일</span>' : _dateStack(lotInfo.laserDate, lotInfo.laserTime)}</td>
+                    <td>${lotInfo.laserDate ? _dateStack(lotInfo.laserDate, lotInfo.laserTime) : '<span style="color:var(--text-muted);">-</span>'}</td>
                     <td style="white-space:nowrap;font-size:0.82rem;">${d.carModel || '-'}</td>
                     <td style="font-weight:600;">${d.partName || '-'}</td>
                     <td>${_dateListHtml(lotInfo.paintDates)}</td>
