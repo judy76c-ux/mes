@@ -4244,7 +4244,7 @@ const PaintingInspectionModule = (function() {
                                                     <span class="material-symbols-outlined" style="font-size:14px;">search</span>
                                                 </button>
                                             </label>
-                                            <input type="text" inputmode="numeric" enterkeyhint="done" id="inj-${d.id}" value="0" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem;" oninput="this.value=this.value.replace(/[^0-9]/g,'');PaintingInspectionModule._updateDefectTotal()">
+                                            <input type="text" inputmode="numeric" enterkeyhint="done" id="inj-${d.id}" value="" placeholder="-" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem;" oninput="this.value=this.value.replace(/[^0-9]/g,'');PaintingInspectionModule._updateDefectTotal()">
                                         </div>
                                     `).join('')}
                                 </div>
@@ -4265,7 +4265,7 @@ const PaintingInspectionModule = (function() {
                                                     <span class="material-symbols-outlined" style="font-size:14px;">search</span>
                                                 </button>
                                             </label>
-                                            <input type="text" inputmode="numeric" enterkeyhint="done" id="paint-${d.id}" value="0" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem;" oninput="this.value=this.value.replace(/[^0-9]/g,'');PaintingInspectionModule._updateDefectTotal()">
+                                            <input type="text" inputmode="numeric" enterkeyhint="done" id="paint-${d.id}" value="" placeholder="-" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem;" oninput="this.value=this.value.replace(/[^0-9]/g,'');PaintingInspectionModule._updateDefectTotal()">
                                         </div>
                                     `).join('')}
                                 </div>
