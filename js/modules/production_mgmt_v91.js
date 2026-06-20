@@ -11355,7 +11355,7 @@ var PaintMixModule = (function() {
     /* ─── 탭 타일 카드 네비게이션 ──────────────────────────────── */
     const _PMIX_TABS = [
         { key: 'history',  label: '도료사용등록', desc: '도장 실적 연동 · 도료 출고/사용량 기록', icon: 'science',    accent: '#2563eb' },
-        { key: 'mixhist',  label: '배합 이력',    desc: '등록된 배합 기록 조회',                  icon: 'receipt_long', accent: '#8b5cf6' },
+        { key: 'mixhist',  label: '도료사용 이력', desc: '등록된 도료 사용 기록 조회',              icon: 'receipt_long', accent: '#8b5cf6' },
         { key: 'residual', label: '배합실 잔량',  desc: '도료 잔량 재고 현황 · 사용/폐기 처리',  icon: 'inventory_2', accent: '#10b981' }
     ];
 

@@ -33,6 +33,7 @@ const UIUtils = (function () {
         if (n == null || n === '') return '-';
         const num = Number(n);
         if (isNaN(num)) return String(n);
+        if (num === 0) return '-';
         return num.toLocaleString('ko-KR');
     }
 
