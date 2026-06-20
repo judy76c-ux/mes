@@ -4587,7 +4587,8 @@ const PaintingInspectionModule = (function() {
     function updateCountDisplay(defectId) {
         const btn = document.getElementById(`defect-btn-${defectId}`);
         if (btn) {
-            btn.querySelector('.defect-count').textContent = state.counts[defectId] || 0;
+            const count = Number(state.counts[defectId] || 0);
+            btn.querySelector('.defect-count').textContent = count > 0 ? count : '-';
         }
     }
 
