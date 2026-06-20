@@ -969,8 +969,11 @@ const SettingsModule = (function() {
                                         break;
                                     }
                                 }
+                                const _inspBadgeStyle = _computedInspType === '외관+각인 검사'
+                                    ? 'background:rgba(124,58,237,0.15);color:#7c3aed;border:1px solid rgba(124,58,237,0.4);'
+                                    : 'background:rgba(16,185,129,0.15);color:#059669;border:1px solid rgba(16,185,129,0.4);';
                                 const _appearBadge = _hasRealProc
-                                    ? `<div style="display:flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap;"><span class="badge badge-success" style="white-space:nowrap;">${_inspLabel}</span> <span style="color:var(--text-muted);">${_aCvt || '-'}|${_aCt || '-'}</span></div>`
+                                    ? `<div style="display:flex;align-items:center;gap:4px;flex-shrink:0;white-space:nowrap;"><span class="badge" style="white-space:nowrap;${_inspBadgeStyle}">${_inspLabel}</span> <span style="color:var(--text-muted);">${_aCvt || '-'}|${_aCt || '-'}</span></div>`
                                     : '';
                                 return [
                                     _procBadge(p.process1, p.cvt1, p.ct1),
