@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 메인 앱 초기화
  * 모든 모듈을 라우터에 등록하고 시스템을 부트스트랩
  */
@@ -46,7 +46,7 @@ const App = (function() {
             Router.registerLazy(
                 ['prod-standards', 'prod-conditions', 'paint-mix', 'prod-sub-materials',
                  'prod-quality', 'quality-performance', 'limit-samples', 'prod-spc', 'prod-equipment'],
-                'js/modules/production_mgmt_v91.js?v=104',
+                'js/modules/production_mgmt_v91.js?v=105',
                 function() {
                     Router.registerModule('prod-standards',
                         (typeof ProdStandardsModule !== 'undefined') ? ProdStandardsModule

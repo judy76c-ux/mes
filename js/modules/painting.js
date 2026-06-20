@@ -3737,7 +3737,7 @@ const PaintingInspectionModule = (function() {
         selectedPlan: null,
         selectedWork: null, // 도장 작업 완료에서 선택한 작업
         counts: {},
-        currentTab: 'inspection' // 'inspection' | 'completion' | 'nonconform-standard'
+        currentTab: 'inspection' // 'inspection' | 'completion' | 'residual-wip' | 'nonconform-standard'
     };
     let _nonconformStandardImage = null;
 
@@ -3787,10 +3787,11 @@ const PaintingInspectionModule = (function() {
                 </div>
 
                 <!-- 탭 네비게이션 (타일 카드 스타일) -->
-                <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:20px;">
+                <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:20px;">
                     ${[
                         { key: 'inspection', label: '외관 검사', desc: '도장 완료품 외관 검사 진행', icon: 'done_all', accent: 'var(--accent-blue)' },
                         { key: 'completion', label: '검사 완료 실적', desc: '외관 검사 완료 이력 조회', icon: 'task_alt', accent: '#10b981' },
+                        { key: 'residual-wip', label: '도장 후 잔량 현황', desc: '포장 후 남은 잔량 재공 현황 조회', icon: 'inventory_2', accent: '#f97316' },
                         { key: 'nonconform-standard', label: '부적합 처리 기준서', desc: '기준서 업로드 및 인쇄', icon: 'description', accent: '#8b5cf6' }
                     ].map(tab => {
                         const active = state.currentTab === tab.key;
@@ -3887,9 +3888,204 @@ const PaintingInspectionModule = (function() {
         } else if (state.currentTab === 'completion') {
             // 검사 완료 실적 탭
             showCompletionResults();
+        } else if (state.currentTab === 'residual-wip') {
+            showResidualWipStatus();
         } else if (state.currentTab === 'nonconform-standard') {
             renderNonconformStandardPage();
         }
+    }
+
+    function _buildResidualKey(carModel, partName, color) {
+        return [carModel || '', partName || '', color || ''].join('||');
+    }
+
+    function _getResidualWipItems() {
+        const inspections = Storage.getAll(STORE) || [];
+        const latestMap = {};
+        inspections.forEach(function(item) {
+            const residualQty = Number(item.residualQty || 0);
+            if (residualQty <= 0) return;
+            const key = _buildResidualKey(item.carModel, item.partName, item.color);
+            const prev = latestMap[key];
+            const currentStamp = [item.date || '', item.createdAt || '', item.id || ''].join('|');
+            const prevStamp = prev ? [prev.date || '', prev.createdAt || '', prev.id || ''].join('|') : '';
+            if (!prev || currentStamp > prevStamp) latestMap[key] = item;
+        });
+        return Object.values(latestMap)
+            .map(function(item) {
+                return {
+                    key: _buildResidualKey(item.carModel, item.partName, item.color),
+                    carModel: item.carModel || '',
+                    partName: item.partName || '',
+                    color: item.color || '',
+                    residualQty: Number(item.residualQty || 0),
+                    packUnit: Number(item.packUnit || 0),
+                    packQty: Number(item.packQty || 0),
+                    packBoxCount: Number(item.packBoxCount || 0),
+                    inspectionDate: item.date || '',
+                    paintingDate: item.paintingDate || '',
+                    lotNo: item.lotNo || '',
+                    inspectors: Array.isArray(item.inspectors) ? item.inspectors.filter(Boolean) : [],
+                    sourceId: item.id || ''
+                };
+            })
+            .sort(function(a, b) {
+                if ((a.carModel || '') !== (b.carModel || '')) return String(a.carModel || '').localeCompare(String(b.carModel || ''));
+                if ((a.partName || '') !== (b.partName || '')) return String(a.partName || '').localeCompare(String(b.partName || ''));
+                return String(a.color || '').localeCompare(String(b.color || ''));
+            });
+    }
+
+    function showResidualWipStatus() {
+        const tabContent = document.getElementById('tabContent');
+        if (!tabContent) return;
+
+        const items = _getResidualWipItems();
+        const totalQty = items.reduce(function(sum, item) { return sum + (Number(item.residualQty) || 0); }, 0);
+        const grouped = {};
+        items.forEach(function(item) {
+            const key = item.carModel || '미지정';
+            if (!grouped[key]) grouped[key] = [];
+            grouped[key].push(item);
+        });
+
+        const cards = Object.keys(grouped).sort().map(function(carModel) {
+            const carItems = grouped[carModel];
+            const carTotal = carItems.reduce(function(sum, item) { return sum + (Number(item.residualQty) || 0); }, 0);
+            const rows = carItems.map(function(item) {
+                return `
+                    <tr onclick="PaintingInspectionModule._showResidualDetail('${encodeURIComponent(item.key)}', event)"
+                        style="cursor:pointer;"
+                        onmouseover="this.style.background='var(--bg-secondary)'"
+                        onmouseout="this.style.background=''">
+                        <td style="padding:6px 10px;border-bottom:1px solid var(--border-color);font-weight:600;">${item.partName || '-'}</td>
+                        <td style="padding:6px 10px;border-bottom:1px solid var(--border-color);font-size:0.78rem;color:var(--text-secondary);">${item.color || '-'}</td>
+                        <td style="padding:6px 10px;border-bottom:1px solid var(--border-color);text-align:right;white-space:nowrap;">
+                            <span style="font-size:0.95rem;font-weight:800;color:var(--accent-orange);">${UIUtils.formatNumber(item.residualQty || 0)}</span>
+                            <span style="font-size:0.7rem;color:var(--text-muted);margin-left:2px;">EA</span>
+                        </td>
+                        <td style="padding:6px 10px;border-bottom:1px solid var(--border-color);text-align:right;font-size:0.78rem;color:var(--text-secondary);">${item.packUnit > 0 ? UIUtils.formatNumber(item.packUnit) : '-'}</td>
+                        <td style="padding:6px 10px;border-bottom:1px solid var(--border-color);font-size:0.76rem;color:var(--text-muted);white-space:nowrap;">${item.inspectionDate || '-'}</td>
+                    </tr>
+                `;
+            }).join('');
+
+            return `
+                <div style="border:1px solid var(--border-color);border-radius:10px;overflow:hidden;background:#fff;">
+                    <div style="background:#f97316;color:#fff;padding:9px 12px;display:flex;align-items:center;justify-content:space-between;">
+                        <span style="font-weight:700;font-size:0.9rem;display:flex;align-items:center;gap:6px;">
+                            <span class="material-symbols-outlined" style="font-size:1rem;">inventory_2</span>
+                            ${carModel}
+                            <span style="font-size:0.72rem;font-weight:500;opacity:0.9;">${carItems.length}종</span>
+                        </span>
+                        <div style="font-size:0.8rem;">잔량 <strong>${UIUtils.formatNumber(carTotal)}</strong> EA</div>
+                    </div>
+                    <table style="width:100%;border-collapse:collapse;">
+                        <thead>
+                            <tr style="background:var(--bg-secondary);">
+                                <th style="padding:5px 10px;text-align:left;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">품명</th>
+                                <th style="padding:5px 10px;text-align:left;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">컬러</th>
+                                <th style="padding:5px 10px;text-align:right;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">잔량</th>
+                                <th style="padding:5px 10px;text-align:right;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">포장단위</th>
+                                <th style="padding:5px 10px;text-align:left;font-size:0.72rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">최근 검사일</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+            `;
+        }).join('');
+
+        tabContent.innerHTML = `
+            <div class="card" style="margin-bottom:18px;">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">inventory_2</span> 도장 후 잔량 현황</h4>
+                    <span style="font-size:0.75rem;color:var(--text-muted);">도장 외관검사 완료 후 포장단위 미만으로 남은 잔량 재공품입니다.</span>
+                </div>
+                <div class="card-body" style="padding:16px;">
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;">
+                        <div style="padding:14px;border:1px solid rgba(249,115,22,0.18);border-radius:10px;background:rgba(249,115,22,0.05);">
+                            <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:6px;">잔량 품목 수</div>
+                            <div style="font-size:1.7rem;font-weight:800;color:#f97316;">${items.length}</div>
+                        </div>
+                        <div style="padding:14px;border:1px solid rgba(249,115,22,0.18);border-radius:10px;background:rgba(249,115,22,0.05);">
+                            <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:6px;">총 잔량</div>
+                            <div style="font-size:1.7rem;font-weight:800;color:#f97316;">${UIUtils.formatNumber(totalQty)}<span style="font-size:0.95rem;margin-left:4px;">EA</span></div>
+                        </div>
+                        <div style="padding:14px;border:1px solid rgba(249,115,22,0.18);border-radius:10px;background:rgba(249,115,22,0.05);">
+                            <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:6px;">차종 수</div>
+                            <div style="font-size:1.7rem;font-weight:800;color:#f97316;">${Object.keys(grouped).length}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            ${items.length === 0
+                ? `<div class="card"><div class="card-body" style="padding:40px;text-align:center;color:var(--text-muted);">현재 등록된 도장 후 잔량이 없습니다.</div></div>`
+                : `<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start;">${cards}</div>`
+            }
+        `;
+    }
+
+    function _showResidualDetail(keyEnc, event) {
+        if (event && event.stopPropagation) event.stopPropagation();
+        const key = decodeURIComponent(keyEnc);
+        const [carModel, partName, color] = key.split('||');
+        const inspections = (Storage.getAll(STORE) || [])
+            .filter(function(item) {
+                return (item.carModel || '') === (carModel || '')
+                    && (item.partName || '') === (partName || '')
+                    && (item.color || '') === (color || '')
+                    && typeof item.residualQty === 'number';
+            })
+            .sort(function(a, b) {
+                return String(b.date || '').localeCompare(String(a.date || ''))
+                    || String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
+            });
+        if (!inspections.length) return;
+
+        const rows = inspections.map(function(item) {
+            return `
+                <tr>
+                    <td style="white-space:nowrap;">${item.date || '-'}</td>
+                    <td style="white-space:nowrap;">${item.paintingDate || '-'}</td>
+                    <td style="text-align:right;">${UIUtils.formatNumber(item.goodQty || 0)}</td>
+                    <td style="text-align:right;">${UIUtils.formatNumber(item.packQty || 0)}</td>
+                    <td style="text-align:right;font-weight:700;color:var(--accent-orange);">${UIUtils.formatNumber(item.residualQty || 0)}</td>
+                    <td style="text-align:right;">${item.packUnit ? UIUtils.formatNumber(item.packUnit) : '-'}</td>
+                    <td style="font-family:monospace;font-size:0.78rem;">${item.lotNo || '-'}</td>
+                    <td style="font-size:0.78rem;color:var(--text-muted);">${Array.isArray(item.inspectors) ? item.inspectors.join(', ') : '-'}</td>
+                </tr>
+            `;
+        }).join('');
+
+        UIUtils.showModal('도장 후 잔량 상세', `
+            <div style="display:flex;flex-direction:column;gap:14px;">
+                <div style="padding:14px 16px;border-radius:10px;background:var(--bg-secondary);border-left:4px solid #f97316;">
+                    <div style="font-size:1rem;font-weight:800;color:var(--text-primary);">${carModel || '-'} / ${partName || '-'}</div>
+                    <div style="margin-top:6px;font-size:0.85rem;color:var(--text-secondary);">
+                        컬러 <strong>${color || '-'}</strong>
+                    </div>
+                </div>
+                <div class="data-table-wrapper">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>검사일</th>
+                                <th>도장작업일</th>
+                                <th style="text-align:right;">양품수</th>
+                                <th style="text-align:right;">포장수량</th>
+                                <th style="text-align:right;">잔량</th>
+                                <th style="text-align:right;">포장단위</th>
+                                <th>사출 LOT</th>
+                                <th>검사자</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+            </div>
+        `, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'xl');
     }
 
     async function renderNonconformStandardPage() {
@@ -6834,8 +7030,10 @@ const PaintingInspectionModule = (function() {
         _renderStatisticsCharts,
         // Phase 2: 검사 완료 실적
         showCompletionResults,
+        showResidualWipStatus,
         _filterCompletionResults,
         _showCompletionDetail,
+        _showResidualDetail,
         _updateCompletionPartFilter,
         _updateStatsPartFilter,
         openEditInspectionModal,

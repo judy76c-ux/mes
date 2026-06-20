@@ -2356,10 +2356,11 @@ var ProdStandardsModule = (function() {
         });
         const findStation = (group, station) => (group && group.stations || []).find(st => st.station === station) || { station, standards: [] };
         const renderDropZone = (process, station, standards) => `
-            <div style="display:flex;flex-direction:column;gap:7px;min-width:0;">
+            <div style="display:flex;flex-direction:column;gap:5px;min-width:0;">
+                ${_processStandardMoveEdit ? `
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-                    <span style="font-size:.75rem;font-weight:900;color:var(--text-muted);">${process}</span>
-                    ${_processStandardMoveEdit ? `<span style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;justify-content:flex-end;">
+                    <span style="font-size:.72rem;font-weight:900;color:var(--text-muted);">${process}</span>
+                    <span style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;justify-content:flex-end;">
                         <button type="button" title="세부공정 위로" onclick="ProdStandardsModule._moveProcessStandardStation('${_jsArg(process)}','${_jsArg(station)}',-1)"
                             style="border:1px solid var(--border-color);background:#fff;color:var(--text-secondary);border-radius:6px;padding:3px 6px;font-size:11px;font-weight:850;cursor:pointer;">↑</button>
                         <button type="button" title="세부공정 아래로" onclick="ProdStandardsModule._moveProcessStandardStation('${_jsArg(process)}','${_jsArg(station)}',1)"
@@ -2373,8 +2374,8 @@ var ProdStandardsModule = (function() {
                             style="border:1px solid rgba(239,68,68,.35);background:#fff;color:#dc2626;border-radius:6px;padding:3px 6px;font-size:11px;font-weight:850;cursor:pointer;">
                             삭제
                         </button>
-                    </span>` : ''}
-                </div>
+                    </span>
+                </div>` : ''}
                 <div ${dropAttrs(process, station)}
                     style="display:flex;flex-wrap:nowrap;gap:6px;overflow-x:auto;
                            ${_processStandardMoveEdit ? 'min-height:40px;outline:1px dashed rgba(37,99,235,.22);outline-offset:3px;border-radius:6px;padding:4px;' : ''}">
