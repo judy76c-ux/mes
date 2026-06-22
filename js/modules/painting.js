@@ -3736,6 +3736,7 @@ const PaintingInspectionModule = (function() {
         selectedProduct: null,
         selectedPlan: null,
         selectedWork: null, // 도장 작업 완료에서 선택한 작업
+        inspectionWaitingWorks: {},
         counts: {},
         currentTab: 'inspection' // 'inspection' | 'completion' | 'residual-wip' | 'nonconform-standard'
     };
@@ -3796,7 +3797,10 @@ const PaintingInspectionModule = (function() {
                     ].map(tab => {
                         const active = state.currentTab === tab.key;
                         return `
-                        <div onclick="PaintingInspectionModule._switchTab('${tab.key}')"
+                        <div data-painting-tab="${tab.key}"
+                             role="button"
+                             tabindex="0"
+                             aria-pressed="${active ? 'true' : 'false'}"
                              onmouseenter="this.style.boxShadow='0 6px 20px rgba(0,0,0,0.12)';this.style.transform='translateY(-2px)'"
                              onmouseleave="this.style.boxShadow='${active ? '0 4px 14px rgba(37,99,235,0.15)' : '0 2px 8px rgba(0,0,0,0.06)'}';this.style.transform=''"
                              style="cursor:pointer;display:flex;align-items:center;gap:14px;
@@ -3830,16 +3834,35 @@ const PaintingInspectionModule = (function() {
 
         // 탭 컨텐츠 렌더링
         setTimeout(() => {
+            _bindTabEvents();
             _renderTabContent();
         }, 50);
+    }
+
+    function _bindTabEvents() {
+        const tabButtons = document.querySelectorAll('[data-painting-tab]');
+        tabButtons.forEach(function(tabEl) {
+            if (tabEl.dataset.boundClick === '1') return;
+            const tabKey = tabEl.getAttribute('data-painting-tab') || '';
+            tabEl.addEventListener('click', function() {
+                _switchTab(tabKey);
+            });
+            tabEl.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    _switchTab(tabKey);
+                }
+            });
+            tabEl.dataset.boundClick = '1';
+        });
     }
 
     // 탭 전환
     function _switchTab(tabName) {
         state.currentTab = tabName;
-        const container = document.querySelector('.fade-in-up');
-        if (container) {
-            render(container);
+        const contentArea = document.getElementById('contentArea');
+        if (contentArea) {
+            render(contentArea);
         }
     }
 
@@ -4189,6 +4212,7 @@ const PaintingInspectionModule = (function() {
         const inspections = Storage.getAll(STORE) || []; // 검사 실적 저장소
         const products = Storage.getAll(PRODUCTS_STORE) || [];
         const el = document.getElementById('inspectionWaitingList');
+        state.inspectionWaitingWorks = {};
 
         // 제품 조회 헬퍼 (carModel + partName + color 우선, 없으면 carModel + partName)
         function findProduct(w) {
@@ -4224,6 +4248,38 @@ const PaintingInspectionModule = (function() {
             return;
         }
 
+        const waitingRowsHtml = inspectionWorks.map((w, index) => {
+            const lotDisplay = (w.lots && w.lots.length > 0) ?
+                w.lots.map(l => l.lotNo).join(', ') : (w.lotNo || '-');
+
+            const _wp = (w.date || '').split('-');
+            const _wst = (w.startTime || '').slice(0, 5);
+            const _workDateHtml = _wp.length === 3
+                ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;">' + _wp[0] + '</span>' +
+                  '<span style="font-weight:600;white-space:nowrap;">' + _wp[1] + '-' + _wp[2] + '</span>' +
+                  (_wst ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1.4;">' + _wst + '</span>' : '')
+                : (w.date || '-');
+            const waitKey = String(w.id || w.workId || [w.date || '', w.line || '', w.carModel || '', w.partName || '', w.color || '', index].join('::'));
+            state.inspectionWaitingWorks[waitKey] = w;
+
+            return `
+                                <tr>
+                                    <td style="line-height:1.3;">${_workDateHtml}</td>
+                                    <td><span class="badge badge-info">${w.line || '-'}</span></td>
+                                    <td>${w.carModel || '-'}</td>
+                                    <td><strong>${w.partName || '-'}</strong></td>
+                                    <td>${w.color || '-'}</td>
+                                    <td style="font-family:monospace;font-size:0.85rem;">${lotDisplay}</td>
+                                    <td style="text-align:right;font-weight:600;">${UIUtils.formatNumber(w.productionQty || 0)}</td>
+                                    <td style="text-align:center;">
+                                        <button class="btn btn-sm btn-primary" type="button" data-open-painting-inspection="${waitKey}">
+                                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:2px;">edit</span>외관 검사
+                                        </button>
+                                    </td>
+                                </tr>
+                            `;
+        }).join('');
+
         el.innerHTML = `
             <div class="data-table-wrapper">
                 <table class="data-table">
@@ -4240,39 +4296,23 @@ const PaintingInspectionModule = (function() {
                         </tr>
                     </thead>
                     <tbody>
-                        ${inspectionWorks.map(w => {
-            const lotDisplay = (w.lots && w.lots.length > 0) ?
-                w.lots.map(l => l.lotNo).join(', ') : (w.lotNo || '-');
-
-            const _wp = (w.date || '').split('-');
-            const _wst = (w.startTime || '').slice(0, 5);
-            const _workDateHtml = _wp.length === 3
-                ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;">' + _wp[0] + '</span>' +
-                  '<span style="font-weight:600;white-space:nowrap;">' + _wp[1] + '-' + _wp[2] + '</span>' +
-                  (_wst ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1.4;">' + _wst + '</span>' : '')
-                : (w.date || '-');
-
-            return `
-                                <tr>
-                                    <td style="line-height:1.3;">${_workDateHtml}</td>
-                                    <td><span class="badge badge-info">${w.line || '-'}</span></td>
-                                    <td>${w.carModel || '-'}</td>
-                                    <td><strong>${w.partName || '-'}</strong></td>
-                                    <td>${w.color || '-'}</td>
-                                    <td style="font-family:monospace;font-size:0.85rem;">${lotDisplay}</td>
-                                    <td style="text-align:right;font-weight:600;">${UIUtils.formatNumber(w.productionQty || 0)}</td>
-                                    <td style="text-align:center;">
-                                        <button class="btn btn-sm btn-primary" onclick="PaintingInspectionModule.openInspectionModal('${w.id}')">
-                                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:2px;">edit</span>외관 검사
-                                        </button>
-                                    </td>
-                                </tr>
-                            `;
-        }).join('')}
+                        ${waitingRowsHtml}
                     </tbody>
                 </table>
             </div>
         `;
+
+        if (el.dataset.waitingClickBound !== '1') {
+            el.addEventListener('click', function(event) {
+                const btn = event.target.closest('[data-open-painting-inspection]');
+                if (!btn || !el.contains(btn)) return;
+                event.preventDefault();
+                event.stopPropagation();
+                const workId = btn.getAttribute('data-open-painting-inspection') || '';
+                openInspectionModal(workId);
+            });
+            el.dataset.waitingClickBound = '1';
+        }
     }
 
     // 생산 계획 지시서 목록 표시
@@ -4332,34 +4372,43 @@ const PaintingInspectionModule = (function() {
 
     // 도장 작업 완료에서 직접 검사 시작 (통합 입력 모달)
     function openInspectionModal(workId) {
-        const work = Storage.getById(PAINTING_WORK_STORE, workId);
-        if (!work) {
-            UIUtils.toast('도장 작업을 찾을 수 없습니다.', 'error');
-            return;
-        }
+        try {
+            let work = state.inspectionWaitingWorks && state.inspectionWaitingWorks[workId]
+                ? state.inspectionWaitingWorks[workId]
+                : null;
+            if (!work && workId) {
+                work = Storage.getById(PAINTING_WORK_STORE, workId)
+                    || (Storage.getAll(PAINTING_WORK_STORE) || []).find(function(item) {
+                        return String(item.id || '') === String(workId) || String(item.workId || '') === String(workId);
+                    });
+            }
+            if (!work) {
+                UIUtils.toast('도장 작업을 찾을 수 없습니다.', 'error');
+                return;
+            }
 
-        const allDefects = Storage.getAll(DEFECT_STORE) || [];
-        const injectionDefects = allDefects.filter(d => d && (d.type === 'injection' || !d.type));
-        const paintingDefects = allDefects.filter(d => d && d.type === 'painting');
-        const platingDefects = _isPlatingInjectionColor(work.carModel, work.partName, work.color)
-            ? allDefects.filter(d => d && d.type === 'plating')
-            : [];
-        const inspectors = Storage.getAll(DB.STORES.INSPECTORS) || [];
+            const allDefects = Storage.getAll(DEFECT_STORE) || [];
+            const injectionDefects = allDefects.filter(d => d && (d.type === 'injection' || !d.type));
+            const paintingDefects = allDefects.filter(d => d && d.type === 'painting');
+            const platingDefects = _isPlatingInjectionColor(work.carModel, work.partName, work.color)
+                ? allDefects.filter(d => d && d.type === 'plating')
+                : [];
+            const inspectors = Storage.getAll(DB.STORES.INSPECTORS) || [];
 
-        const lotDisplay = work.lots && work.lots.length > 0 ?
-            work.lots.map(l => l.lotNo).join(', ') :
-            (work.lotNo || '-');
+            const lotDisplay = work.lots && work.lots.length > 0 ?
+                work.lots.map(l => l.lotNo).join(', ') :
+                (work.lotNo || '-');
 
         // 포장 초기값 계산
-        const prevResidualQty = _getPaintPrevResidualQty(work.carModel, work.partName, work.color);
-        const packUnitVal     = _findPaintProductPackUnit(work.carModel, work.partName, work.color);
-        const initGoodQty     = work.productionQty || 0;
-        const initBoxCount    = packUnitVal > 0 ? Math.floor((prevResidualQty + initGoodQty) / packUnitVal) : 0;
-        const initPackQty     = packUnitVal * initBoxCount;
-        const initNewResid    = prevResidualQty + initGoodQty - initPackQty;
+            const prevResidualQty = _getPaintPrevResidualQty(work.carModel, work.partName, work.color);
+            const packUnitVal     = _findPaintProductPackUnit(work.carModel, work.partName, work.color);
+            const initGoodQty     = work.productionQty || 0;
+            const initBoxCount    = packUnitVal > 0 ? Math.floor((prevResidualQty + initGoodQty) / packUnitVal) : 0;
+            const initPackQty     = packUnitVal * initBoxCount;
+            const initNewResid    = prevResidualQty + initGoodQty - initPackQty;
 
         // 모달 HTML 작성
-        let modalContent = `
+            let modalContent = `
             <div style="display:flex; flex-direction:column; gap:10px;">
                 <!-- 도장 정보 컴팩트 배너 -->
                 <div style="background:var(--bg-secondary); border-radius:8px; padding:8px 14px; display:flex; flex-wrap:wrap; gap:6px 20px; align-items:center; border-left:4px solid var(--accent-blue);">
@@ -4581,10 +4630,10 @@ const PaintingInspectionModule = (function() {
         `;
 
         // 커스텀 모달 생성
-        const modalEl = document.createElement('div');
-        modalEl.className = 'modal fade';
-        modalEl.style.display = 'block';
-        modalEl.innerHTML = `
+            const modalEl = document.createElement('div');
+            modalEl.className = 'modal fade';
+            modalEl.style.display = 'block';
+            modalEl.innerHTML = `
             <style>
                 @media print {
                     body { margin: 0 !important; padding: 0 !important; background: white !important; }
@@ -4610,27 +4659,31 @@ const PaintingInspectionModule = (function() {
             </div>
         `;
 
-        document.body.appendChild(modalEl);
+            document.body.appendChild(modalEl);
 
         // 모달에 데이터 저장 (나중에 접근하기 위해)
-        modalEl.inspectionWorkId = workId;
-        modalEl.injectionDefects = injectionDefects;
-        modalEl.paintingDefects = paintingDefects;
-        // 부모 페이지 컨테이너 저장 (닫을 때 복귀하기 위해)
-        modalEl.parentPageContainer = document.querySelector('[data-page="painting-inspection"]');
+            modalEl.inspectionWorkId = workId;
+            modalEl.injectionDefects = injectionDefects;
+            modalEl.paintingDefects = paintingDefects;
+            // 부모 페이지 컨테이너 저장 (닫을 때 복귀하기 위해)
+            modalEl.parentPageContainer = document.querySelector('[data-page="painting-inspection"]');
 
         // 검사자 필드 초기화 (기본 4명)
-        setTimeout(() => {
-            const container = document.getElementById('inspectorContainer');
-            if (container) {
-                container.innerHTML = '';
-                container.inspectorCount = 0;
-                PaintingInspectionModule._addInspectorField(true);
-                PaintingInspectionModule._addInspectorField();
-                PaintingInspectionModule._addInspectorField();
-                PaintingInspectionModule._addInspectorField();
-            }
-        }, 100);
+            setTimeout(() => {
+                const container = document.getElementById('inspectorContainer');
+                if (container) {
+                    container.innerHTML = '';
+                    container.inspectorCount = 0;
+                    _addInspectorField(true);
+                    _addInspectorField();
+                    _addInspectorField();
+                    _addInspectorField();
+                }
+            }, 100);
+        } catch (error) {
+            console.error('도장 검사 입력 모달 열기 실패', error);
+            UIUtils.toast('외관 검사 창을 여는 중 오류가 발생했습니다.', 'error');
+        }
     }
 
     // 검사자 필드 동적 추가

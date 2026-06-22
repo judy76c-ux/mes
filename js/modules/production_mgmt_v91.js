@@ -1715,6 +1715,114 @@ var ProdStandardsModule = (function() {
         _refreshProcessStandardStatus();
     }
 
+    let _processDragSrc = '';
+    let _stationDragSrc = null;
+
+    function _reorderProcessStandardProcess(dragProcess, targetProcess) {
+        if (!_processStandardMoveEdit || !dragProcess || !targetProcess || dragProcess === targetProcess) return;
+        const groups = _processStandardLayout();
+        const dragIdx = groups.findIndex(g => g.process === dragProcess);
+        const targetIdx = groups.findIndex(g => g.process === targetProcess);
+        if (dragIdx < 0 || targetIdx < 0) return;
+        const nextGroups = [...groups];
+        const [moving] = nextGroups.splice(dragIdx, 1);
+        const insertIdx = nextGroups.findIndex(g => g.process === targetProcess);
+        nextGroups.splice(insertIdx, 0, moving);
+        _saveProcessStandardMenuLayout([
+            ..._processStandardStructureRows(nextGroups),
+            ..._flattenProcessStandardLayout(nextGroups)
+        ]);
+        _refreshProcessStandardStatus();
+    }
+
+    function _reorderProcessStandardStation(dragProcess, dragStation, targetProcess, targetStation) {
+        if (!_processStandardMoveEdit) return;
+        if (!dragProcess || !dragStation || !targetProcess || !targetStation) return;
+        if (dragProcess === targetProcess && dragStation === targetStation) return;
+        if (dragProcess !== targetProcess) return;
+        const paintSet = new Set(['도장(A)', '도장(B)']);
+        const groups = _processStandardLayout();
+        const targetProcs = paintSet.has(dragProcess)
+            ? ['도장(A)', '도장(B)'].filter(p => groups.some(g => g.process === p))
+            : [dragProcess];
+        const nextGroups = groups.map(g => targetProcs.includes(g.process) ? { ...g, stations: [...g.stations] } : g);
+        for (const proc of targetProcs) {
+            const grp = nextGroups.find(g => g.process === proc);
+            if (!grp) continue;
+            const dragIdx = grp.stations.findIndex(st => st.station === dragStation);
+            if (dragIdx < 0) continue;
+            const [moving] = grp.stations.splice(dragIdx, 1);
+            let insertIdx = grp.stations.findIndex(st => st.station === targetStation);
+            if (insertIdx < 0) insertIdx = grp.stations.length;
+            grp.stations.splice(insertIdx, 0, moving);
+        }
+        _saveProcessStandardMenuLayout([
+            ..._processStandardStructureRows(nextGroups),
+            ..._flattenProcessStandardLayout(nextGroups)
+        ]);
+        _refreshProcessStandardStatus();
+    }
+
+    function _processDragStart(process, event) {
+        if (!_processStandardMoveEdit) { if (event) event.preventDefault(); return; }
+        _processDragSrc = process;
+        if (event && event.dataTransfer) {
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', 'proc:' + process);
+        }
+        if (event) event.stopPropagation();
+    }
+
+    function _processDragOver(event) {
+        if (!_processStandardMoveEdit || !_processDragSrc) return;
+        if (event) { event.preventDefault(); event.stopPropagation(); }
+        if (event && event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    }
+
+    function _processDrop(targetProcess, event) {
+        if (!_processStandardMoveEdit) return;
+        if (event) { event.preventDefault(); event.stopPropagation(); }
+        const src = _processDragSrc;
+        _processDragSrc = '';
+        if (!src) return;
+        const paintSet = new Set(['도장(A)', '도장(B)']);
+        if (paintSet.has(src) && paintSet.has(targetProcess)) return;
+        if (paintSet.has(src) || paintSet.has(targetProcess)) {
+            const groups = _processStandardLayout();
+            const srcIdx = groups.findIndex(g => g.process === src);
+            const tgtIdx = groups.findIndex(g => g.process === targetProcess);
+            if (srcIdx < 0 || tgtIdx < 0) return;
+            _movePaintProcessGroup(tgtIdx - srcIdx);
+            return;
+        }
+        _reorderProcessStandardProcess(src, targetProcess);
+    }
+
+    function _stationDragStart(process, station, event) {
+        if (!_processStandardMoveEdit) { if (event) event.preventDefault(); return; }
+        _stationDragSrc = { process, station };
+        if (event && event.dataTransfer) {
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', 'st:' + process + '|' + station);
+        }
+        if (event) event.stopPropagation();
+    }
+
+    function _stationDragOver(event) {
+        if (!_processStandardMoveEdit || !_stationDragSrc) return;
+        if (event) { event.preventDefault(); event.stopPropagation(); }
+        if (event && event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    }
+
+    function _stationDrop(targetProcess, targetStation, event) {
+        if (!_processStandardMoveEdit) return;
+        if (event) { event.preventDefault(); event.stopPropagation(); }
+        const src = _stationDragSrc;
+        _stationDragSrc = null;
+        if (!src) return;
+        _reorderProcessStandardStation(src.process, src.station, targetProcess, targetStation);
+    }
+
     function _movePaintProcessGroup(delta) {
         if (!_processStandardMoveEdit || !delta) return;
         const groups = _processStandardLayout();
@@ -2361,10 +2469,6 @@ var ProdStandardsModule = (function() {
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
                     <span style="font-size:.72rem;font-weight:900;color:var(--text-muted);">${process}</span>
                     <span style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;justify-content:flex-end;">
-                        <button type="button" title="세부공정 위로" onclick="ProdStandardsModule._moveProcessStandardStation('${_jsArg(process)}','${_jsArg(station)}',-1)"
-                            style="border:1px solid var(--border-color);background:#fff;color:var(--text-secondary);border-radius:6px;padding:3px 6px;font-size:11px;font-weight:850;cursor:pointer;">↑</button>
-                        <button type="button" title="세부공정 아래로" onclick="ProdStandardsModule._moveProcessStandardStation('${_jsArg(process)}','${_jsArg(station)}',1)"
-                            style="border:1px solid var(--border-color);background:#fff;color:var(--text-secondary);border-radius:6px;padding:3px 6px;font-size:11px;font-weight:850;cursor:pointer;">↓</button>
                         <button type="button" onclick="ProdStandardsModule._openProcessStandardAddMenu('${_jsArg(process)}','${_jsArg(station)}')"
                             style="border:1px dashed var(--accent-blue);background:rgba(37,99,235,.06);color:var(--accent-blue);
                                    border-radius:6px;padding:3px 7px;font-size:11px;font-weight:850;cursor:pointer;">
@@ -2383,14 +2487,17 @@ var ProdStandardsModule = (function() {
                 </div>
             </div>`;
         const paintSection = (paintA || paintB) ? `
-            <section style="border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary);overflow:hidden;">
+            <section ${_processStandardMoveEdit ? `draggable="true"
+                ondragstart="ProdStandardsModule._processDragStart('도장(A)',event)"
+                ondragover="ProdStandardsModule._processDragOver(event)"
+                ondrop="ProdStandardsModule._processDrop('도장(A)',event)"` : ''}
+                style="border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary);overflow:hidden;${_processStandardMoveEdit ? 'cursor:grab;' : ''}">
                 <div style="display:flex;align-items:center;gap:8px;padding:8px 11px;border-bottom:1px solid var(--border-color);">
+                    ${_processStandardMoveEdit ? `<span class="material-symbols-outlined" title="주공정 드래그로 이동" style="font-size:18px;color:var(--text-muted);cursor:grab;">drag_indicator</span>` : ''}
                     <span class="material-symbols-outlined" style="font-size:20px;color:var(--accent-blue);">format_paint</span>
                     <div style="font-weight:900;color:var(--text-primary);">도장(A) / 도장(B)</div>
                     <div style="font-size:.73rem;color:var(--text-muted);">같은 세부공정을 한 행에서 비교·배치</div>
                     ${_processStandardMoveEdit ? `<div style="margin-left:auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-                        <button type="button" onclick="ProdStandardsModule._movePaintProcessGroup(-1)" class="btn btn-sm btn-outline">↑</button>
-                        <button type="button" onclick="ProdStandardsModule._movePaintProcessGroup(1)" class="btn btn-sm btn-outline">↓</button>
                         <button type="button" onclick="ProdStandardsModule._addProcessStandardStation('도장(A)')" class="btn btn-sm btn-outline">도장(A) 세부공정 +</button>
                         <button type="button" onclick="ProdStandardsModule._addProcessStandardStation('도장(B)')" class="btn btn-sm btn-outline">도장(B) 세부공정 +</button>
                         <button type="button" onclick="ProdStandardsModule._removeProcessStandardProcess('도장(A)')" class="btn btn-sm btn-outline" style="color:#dc2626;border-color:rgba(239,68,68,.45);">도장(A) 삭제</button>
@@ -2401,11 +2508,16 @@ var ProdStandardsModule = (function() {
                     ${stationNames.map(station => {
                         const a = findStation(paintA, station);
                         const b = findStation(paintB, station);
+                        const paintStationProc = paintA ? '도장(A)' : '도장(B)';
                         return `
-                        <div style="display:grid;grid-template-columns:120px minmax(0,1fr) 16px minmax(0,1fr);gap:8px;align-items:center;">
-                            <div style="font-size:.77rem;font-weight:800;color:var(--text-secondary);padding:6px 8px;
+                        <div ${_processStandardMoveEdit ? `draggable="true"
+                            ondragstart="ProdStandardsModule._stationDragStart('${_jsArg(paintStationProc)}','${_jsArg(station)}',event)"
+                            ondragover="ProdStandardsModule._stationDragOver(event)"
+                            ondrop="ProdStandardsModule._stationDrop('${_jsArg(paintStationProc)}','${_jsArg(station)}',event)"` : ''}
+                            style="display:grid;grid-template-columns:120px minmax(0,1fr) 16px minmax(0,1fr);gap:8px;align-items:center;${_processStandardMoveEdit ? 'cursor:grab;' : ''}">
+                            <div style="display:flex;align-items:center;gap:4px;font-size:.77rem;font-weight:800;color:var(--text-secondary);padding:6px 8px;
                                         border-radius:6px;background:var(--bg-primary);border:1px solid var(--border-color);">
-                                ${station}
+                                ${_processStandardMoveEdit ? `<span class="material-symbols-outlined" title="세부공정 드래그로 이동" style="font-size:14px;color:var(--text-muted);cursor:grab;">drag_indicator</span>` : ''}${station}
                             </div>
                             ${renderDropZone('도장(A)', station, a.standards)}
                             <div style="align-self:stretch;border-left:1px dashed var(--border-color);opacity:.9;"></div>
@@ -2418,13 +2530,16 @@ var ProdStandardsModule = (function() {
         return groups.map(group => {
             if (group.process === '도장(A)' || group.process === '도장(B)') return group.process === paintAnchor ? paintSection : '';
             return `
-            <section style="border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary);overflow:hidden;">
+            <section ${_processStandardMoveEdit ? `draggable="true"
+                ondragstart="ProdStandardsModule._processDragStart('${_jsArg(group.process)}',event)"
+                ondragover="ProdStandardsModule._processDragOver(event)"
+                ondrop="ProdStandardsModule._processDrop('${_jsArg(group.process)}',event)"` : ''}
+                style="border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary);overflow:hidden;${_processStandardMoveEdit ? 'cursor:grab;' : ''}">
                 <div style="display:flex;align-items:center;gap:8px;padding:8px 11px;border-bottom:1px solid var(--border-color);">
+                    ${_processStandardMoveEdit ? `<span class="material-symbols-outlined" title="주공정 드래그로 이동" style="font-size:18px;color:var(--text-muted);cursor:grab;">drag_indicator</span>` : ''}
                     <span class="material-symbols-outlined" style="font-size:20px;color:var(--accent-blue);">${group.icon}</span>
                     <div style="font-weight:900;color:var(--text-primary);">${group.process}</div>
                     ${_processStandardMoveEdit ? `
-                        <button type="button" onclick="ProdStandardsModule._moveProcessStandardProcess('${_jsArg(group.process)}',-1)" class="btn btn-sm btn-outline">↑</button>
-                        <button type="button" onclick="ProdStandardsModule._moveProcessStandardProcess('${_jsArg(group.process)}',1)" class="btn btn-sm btn-outline">↓</button>
                         <button type="button" onclick="ProdStandardsModule._removeProcessStandardProcess('${_jsArg(group.process)}')" class="btn btn-sm btn-outline" style="color:#dc2626;border-color:rgba(239,68,68,.45);">주공정 삭제</button>
                         <div style="margin-left:auto;">
                             <button type="button" onclick="ProdStandardsModule._addProcessStandardStation('${_jsArg(group.process)}')" class="btn btn-sm btn-outline">+ 세부공정</button>
@@ -2432,18 +2547,15 @@ var ProdStandardsModule = (function() {
                 </div>
                 <div style="display:flex;flex-direction:column;gap:3px;padding:6px 9px;">
                     ${group.stations.map(st => `
-                        <div style="display:grid;grid-template-columns:120px minmax(0,1fr);gap:8px;align-items:center;">
+                        <div ${_processStandardMoveEdit ? `draggable="true"
+                            ondragstart="ProdStandardsModule._stationDragStart('${_jsArg(group.process)}','${_jsArg(st.station)}',event)"
+                            ondragover="ProdStandardsModule._stationDragOver(event)"
+                            ondrop="ProdStandardsModule._stationDrop('${_jsArg(group.process)}','${_jsArg(st.station)}',event)"` : ''}
+                            style="display:grid;grid-template-columns:120px minmax(0,1fr);gap:8px;align-items:center;${_processStandardMoveEdit ? 'cursor:grab;' : ''}">
                             <div style="display:flex;flex-direction:column;gap:5px;font-size:.77rem;font-weight:800;color:var(--text-secondary);
                                         padding:6px 8px;border-radius:6px;background:var(--bg-primary);border:1px solid var(--border-color);">
-                                <span>${st.station}</span>
-                                ${_processStandardMoveEdit ? `<div style="display:flex;gap:4px;flex-wrap:wrap;">
-                                <button type="button" onclick="ProdStandardsModule._moveProcessStandardStation('${_jsArg(group.process)}','${_jsArg(st.station)}',-1)"
-                                    style="border:1px solid var(--border-color);background:#fff;color:var(--text-secondary);
-                                           border-radius:6px;padding:4px 6px;font-size:11px;font-weight:850;cursor:pointer;">↑</button>
-                                <button type="button" onclick="ProdStandardsModule._moveProcessStandardStation('${_jsArg(group.process)}','${_jsArg(st.station)}',1)"
-                                    style="border:1px solid var(--border-color);background:#fff;color:var(--text-secondary);
-                                           border-radius:6px;padding:4px 6px;font-size:11px;font-weight:850;cursor:pointer;">↓</button>
-                                </div>
+                                <span style="display:flex;align-items:center;gap:4px;">${_processStandardMoveEdit ? `<span class="material-symbols-outlined" title="세부공정 드래그로 이동" style="font-size:14px;color:var(--text-muted);cursor:grab;">drag_indicator</span>` : ''}${st.station}</span>
+                                ${_processStandardMoveEdit ? `
                                 <button type="button" onclick="ProdStandardsModule._openProcessStandardAddMenu('${_jsArg(group.process)}','${_jsArg(st.station)}')"
                                     style="border:1px dashed var(--accent-blue);background:rgba(37,99,235,.06);color:var(--accent-blue);
                                            border-radius:6px;padding:4px 6px;font-size:11px;font-weight:850;cursor:pointer;">
@@ -9919,6 +10031,12 @@ window.addEventListener('load', function() {
         _moveProcessStandardProcess,
         _moveProcessStandardStation,
         _movePaintProcessGroup,
+        _processDragStart,
+        _processDragOver,
+        _processDrop,
+        _stationDragStart,
+        _stationDragOver,
+        _stationDrop,
         _openCustomUploadStdViewer,
         _armCustomStdPaste,
         _openCustomWebStdViewer,
