@@ -567,8 +567,9 @@ const PaintInventoryModule = (function() {
                         ${d.type === '출고' ? '-' : '+'}${UIUtils.formatNumber(qty)}
                     </td>
                     <td>${badge}</td>
+                    <td style="color:var(--text-muted);font-size:0.78rem;">${d.receivedBy || ''}</td>
                 </tr>`;
-        }).join('') || `<tr><td colspan="5" style="text-align:center;padding:14px;color:var(--text-muted);">이력 없음</td></tr>`;
+        }).join('') || `<tr><td colspan="6" style="text-align:center;padding:14px;color:var(--text-muted);">이력 없음</td></tr>`;
 
         const typeColors = { 'Primer': '#6366f1', 'Color': '#ec4899', '희석제': '#0ea5e9', '경화제': '#f59e0b' };
         const typeBg  = typeColors[mat.paintType || mat.type || ''] || '#6b7280';
@@ -637,6 +638,7 @@ const PaintInventoryModule = (function() {
                             <th>제조사 표기 LOT</th>
                             <th style="text-align:right;">수량</th>
                             <th style="text-align:center;">유형</th>
+                            <th>입고자</th>
                         </tr>
                     </thead>
                     <tbody>${histRows}</tbody>
@@ -885,7 +887,7 @@ const PaintInventoryModule = (function() {
         }
     }
 
-    // 제조일자(YYYY-MM-DD) → 제조 LOT(YYMMDD) 자동 변환
+    // 제조일자(YYYY-MM-DD) → 제조 LOT(YYMMDD) + 유효기한 자동 계산
     function autoFillProdLot(dateVal) {
         const prodLotEl = document.getElementById('addPaintInvProdLot');
         if (!prodLotEl) return;
@@ -895,6 +897,22 @@ const PaintInventoryModule = (function() {
         if (m) {
             prodLotEl.value = m[2] + m[3] + m[4]; // YY + MM + DD
         }
+        // 유효기한 자동 계산 (도료 마스터의 shelfLife 기준)
+        _autoFillExpDate(dateVal);
+    }
+
+    // 선택된 도료의 shelfLife + 제조일자로 유효기한 자동 입력
+    function _autoFillExpDate(mfgDate) {
+        const expEl = document.getElementById('addPaintInvExpDate');
+        if (!expEl || expEl.value) return;  // 이미 값이 있으면 덮어쓰지 않음
+        const matId = (document.getElementById('addPaintInvMaterial') || {}).value;
+        if (!matId || !mfgDate) return;
+        const mat = (Storage.getAll(MATERIALS_STORE) || []).find(m => m.id === matId);
+        if (!mat || !mat.shelfLife) return;
+        const months = _parseShelfLifeMonths(mat.shelfLife);
+        if (!months) return;
+        const expDate = _addMonths(mfgDate, months);
+        if (expDate) expEl.value = expDate;
     }
 
     // 도료 검사 기록으로부터 입고 모달 자동 채움
@@ -1064,6 +1082,16 @@ const PaintInventoryModule = (function() {
                     <label class="form-label">유효기한</label>
                     <input type="date" class="form-input" id="addPaintInvExpDate">
                 </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">입고자 <span style="font-size:.78rem;color:var(--text-muted);font-weight:400;">(선택)</span></label>
+                    <select class="form-select" id="addPaintInvReceivedBy">
+                        <option value="">-- 선택 --</option>
+                        ${(Storage.getAll(DB.STORES.OPERATORS) || []).map(o => `<option value="${_escapeHtml(o.name || o.id)}">${_escapeHtml(o.name || o.id)}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="form-group" style="visibility:hidden;"></div>
             </div>` : ''}
             <div id="addPaintInvStockWarning" style="display:none; margin-top:10px; padding:12px; background:rgba(244, 67, 54, 0.1); border:1px solid var(--accent-red); border-radius:6px; color:var(--accent-red); font-size:0.875rem;">
                 <div style="display:flex; align-items:center; gap:8px;">
@@ -1121,6 +1149,11 @@ const PaintInventoryModule = (function() {
         const mat = materials.find(m => m.id === matId);
         if (packUnitInput && mat) {
             packUnitInput.value = mat.packUnit ? (mat.packUnit + ' KG') : '-';
+        }
+        // 유효기한 자동 계산 (제조일자가 이미 입력된 경우)
+        if (type === '입고') {
+            const mfgVal = (document.getElementById('addPaintInvMfgDate') || {}).value || '';
+            if (mfgVal) _autoFillExpDate(mfgVal);
         }
 
         const data = Storage.getAll(STORE);
@@ -1737,6 +1770,7 @@ const PaintInventoryModule = (function() {
             mfgDate: (document.getElementById('addPaintInvMfgDate') || {}).value || '',
             expDate: (document.getElementById('addPaintInvExpDate') || {}).value || '',
             inspDate: (document.getElementById('addPaintInvInspDate') || {}).value || '',
+            receivedBy: type === '입고' ? ((document.getElementById('addPaintInvReceivedBy') || {}).value || '') : '',
             sourceInspectionId: (type === '입고' && window._sourceInspectionId) ? window._sourceInspectionId : ''
         };
 

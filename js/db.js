@@ -5,7 +5,7 @@
 
 const DB = (function() {
     const DB_NAME = 'ProductionMES_DB';
-    const DB_VERSION = 51;
+    const DB_VERSION = 52;
     let db = null;
 
     // 스토어 이름 - 전체 공정에 대응
@@ -19,6 +19,7 @@ const DB = (function() {
 
         // 생산 계획
         PRODUCTION_PLANS: 'production_plans', // 생산 계획 지시서
+        OVERTIME_PLANS: 'overtime_plans', // 연장근무계획
 
         // 수입검사
         INJECTION_INSPECTIONS: 'injection_inspections', // 사출 수입검사일지
@@ -192,6 +193,14 @@ const DB = (function() {
                         pattern: /^\d{4}-\d{2}-\d{2}$/, patternDesc: 'YYYY-MM-DD' },
             partName: { required: true,  type: 'string', label: '부품명'   },
             planQty:  { required: true,  type: 'number', label: '계획수량', min: 1 }
+        },
+        [STORES.OVERTIME_PLANS]: {
+            date:      { required: true,  type: 'string', label: '계획일',
+                         pattern: /^\d{4}-\d{2}-\d{2}$/, patternDesc: 'YYYY-MM-DD' },
+            process:   { required: true,  type: 'string', label: '공정' },
+            taskName:  { required: true,  type: 'string', label: '작업명' },
+            startTime: { required: true,  type: 'string', label: '시작시간' },
+            endTime:   { required: true,  type: 'string', label: '완료시간' }
         },
 
         // ── 수입 검사 ──────────────────────────────────────────────
@@ -519,6 +528,7 @@ const DB = (function() {
         [STORES.PROD_STANDARDS]:             { remove: 'manager', clear: 'admin'   },
         // ── 생산 계획 ──────────────────────────────────────────────
         [STORES.PRODUCTION_PLANS]:           { remove: 'manager', clear: 'admin'   },
+        [STORES.OVERTIME_PLANS]:             { remove: 'operator', clear: 'manager'},
         // ── 수입 검사 기록 (품질 추적 필수) ──────────────────────
         [STORES.INJECTION_INSPECTIONS]:      { remove: 'manager', clear: 'admin'   },
         [STORES.PAINT_INCOMING_INSPECTIONS]: { remove: 'manager', clear: 'admin'   },
@@ -724,6 +734,15 @@ const DB = (function() {
                     if (!store.indexNames.contains('productId')) {
                         store.createIndex('productId', 'productId', { unique: false });
                     }
+                }
+
+                if (!database.objectStoreNames.contains(STORES.OVERTIME_PLANS)) {
+                    const store = database.createObjectStore(STORES.OVERTIME_PLANS, {
+                        keyPath: 'id'
+                    });
+                    store.createIndex('date', 'date', { unique: false });
+                    store.createIndex('process', 'process', { unique: false });
+                    store.createIndex('startTime', 'startTime', { unique: false });
                 }
 
                 // 사출 수입검사

@@ -38,12 +38,12 @@ var LaserWorkModule = (function() {
         return [...new Set([...registered, ..._externalWorkers])].sort((a, b) => a.localeCompare(b, 'ko'));
     }
 
-    function _workerSelect(id, label, selectedValue) {
+    function _workerSelect(id, label, selectedValue, required = true) {
         const options = [...new Set([..._getLaserWorkerOptions(), selectedValue].filter(Boolean))]
             .sort((a, b) => a.localeCompare(b, 'ko'));
         return `
             <div class="form-group">
-                <label class="form-label">${label} <span style="color:var(--accent-red)">*</span></label>
+                <label class="form-label">${label}${required ? ' <span style="color:var(--accent-red)">*</span>' : ''}</label>
                 <select class="form-select" id="${id}">
                     <option value="">-- 작업자 선택 --</option>
                     ${options.map(name => `<option value="${_esc(name)}" ${name === selectedValue ? 'selected' : ''}>${_esc(name)}</option>`).join('')}
@@ -971,9 +971,9 @@ var LaserWorkModule = (function() {
                 </div>
             </div>
             <div class="form-row">
-                ${_workerSelect('lwWorker1', '작업자 1 - 조작원&외관검사', d.worker1 || '')}
-                ${_workerSelect('lwWorker2', '작업자 2 - 각인검사', d.worker2 || '')}
-                ${_workerSelect('lwWorker3', '작업자 3 - 제품지그', d.worker3 || '')}
+                ${_workerSelect('lwWorker1', '작업자 1 - 조작원&외관검사', d.worker1 || '', true)}
+                ${_workerSelect('lwWorker2', '작업자 2 - 각인검사', d.worker2 || '', true)}
+                ${_workerSelect('lwWorker3', '작업자 3 - 제품지그', d.worker3 || '', false)}
             </div>
             <div style="display:flex;justify-content:flex-end;margin-top:-8px;">
                 <button type="button" class="btn btn-outline btn-sm" onclick="LaserWorkModule.addExternalWorker()">
@@ -1646,7 +1646,6 @@ var LaserWorkModule = (function() {
 
         if (!data.worker1) add('작업자 1', 'lwWorker1');
         if (!data.worker2) add('작업자 2', 'lwWorker2');
-        if (!data.worker3) add('작업자 3', 'lwWorker3');
 
         if (missing.length) {
             UIUtils.toast(`필수 입력 항목을 확인하세요: ${missing.slice(0, 6).join(', ')}${missing.length > 6 ? ` 외 ${missing.length - 6}개` : ''}`, 'warning');
@@ -2732,7 +2731,7 @@ var LaserInspectionModule = (function() {
                                 </button>
                                 <span style="flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${(d.name||'').replace(/"/g,'&quot;')}">${d.name}</span>
                             </label>
-                            <input type="text" inputmode="numeric" enterkeyhint="done" id="${prefix}${d.id}" data-defect-name="${d.name}"
+                            <input type="text" inputmode="numeric" enterkeyhint="done" data-ime-dismiss="true" id="${prefix}${d.id}" data-defect-name="${d.name}"
                                 value="${Number(dd[d.name]||0)>0?dd[d.name]:''}" placeholder="-"
                                 style="padding:6px;border:1px solid var(--border-color);border-radius:4px;text-align:center;font-weight:700;font-size:0.9rem;"
                                 oninput="this.value=this.value.replace(/[^0-9]/g,'');LaserInspectionModule._updateDefectTotal()">

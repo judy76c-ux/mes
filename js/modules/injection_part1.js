@@ -593,7 +593,7 @@ var InjectionIncomingModule = (function() {
                                 </button>
                                 <span style="flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name || ''}</span>
                             </label>
-                            <input type="number" class="form-input defect-input-new" data-defect-id="${d.id}" data-defect-name="${(d.name || '').replace(/"/g, '&quot;')}" min="0" placeholder="0" style="padding:4px 8px;font-size:0.85rem;" oninput="InjectionIncomingModule.calcTotalAddFailQty()">
+                            <input type="number" class="form-input defect-input-new" data-defect-id="${d.id}" data-defect-name="${(d.name || '').replace(/"/g, '&quot;')}" min="0" placeholder="0" inputmode="numeric" enterkeyhint="done" data-ime-dismiss="true" style="padding:4px 8px;font-size:0.85rem;" oninput="InjectionIncomingModule.calcTotalAddFailQty()">
                         </div>
                     `).join('');
                 }
@@ -1380,7 +1380,7 @@ var InjectionIncomingModule = (function() {
                                     <span class="material-symbols-outlined" style="font-size:14px;">search</span>
                                 </button>
                             </label>
-                            <input type="number" class="form-input defect-input-edit" data-defect-id="${df.id}" data-defect-name="${safeName}" min="0" placeholder="0" value="${val}" style="padding:4px 8px;font-size:0.85rem;" oninput="InjectionIncomingModule.calcTotalEditFailQty()">
+                            <input type="number" class="form-input defect-input-edit" data-defect-id="${df.id}" data-defect-name="${safeName}" min="0" placeholder="0" value="${val}" inputmode="numeric" enterkeyhint="done" data-ime-dismiss="true" style="padding:4px 8px;font-size:0.85rem;" oninput="InjectionIncomingModule.calcTotalEditFailQty()">
                         </div>
                     `;
                     }).join('');

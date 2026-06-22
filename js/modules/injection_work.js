@@ -365,7 +365,7 @@ var InjectionWorkLogModule = (function() {
                 container.innerHTML = defects.map(df => `
                     <div style="background:var(--bg-secondary);padding:6px 10px;border-radius:6px;border:1px solid #e2e8f0;display:flex;align-items:center;gap:8px;">
                         <label style="font-size:0.75rem;color:var(--text-secondary);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${df.name}">${df.name}</label>
-                        <input type="number" class="form-input iw-defect-input" data-defect-name="${df.name}" min="0" placeholder="0"
+                        <input type="number" class="form-input iw-defect-input" data-defect-name="${df.name}" min="0" placeholder="0" inputmode="numeric" enterkeyhint="done" data-ime-dismiss="true"
                             value="${details[df.name] || ''}" style="padding:4px 6px;width:60px;font-size:0.85rem;"
                             oninput="InjectionWorkLogModule.calcFailFromDefects()">
                     </div>

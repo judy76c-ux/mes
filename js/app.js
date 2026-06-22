@@ -6,6 +6,28 @@
 const App = (function() {
     const API_BASE_CONFIG_KEY = 'mes_api_base';
 
+    function installImeDoneBlurHandler() {
+        if (window.__MES_IME_DONE_BLUR_INSTALLED__) return;
+        window.__MES_IME_DONE_BLUR_INSTALLED__ = true;
+
+        document.addEventListener('keydown', function(event) {
+            if (event.key !== 'Enter') return;
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) return;
+            if (!target.matches('input, textarea')) return;
+
+            const shouldDismiss =
+                target.getAttribute('enterkeyhint') === 'done' ||
+                target.dataset.imeDismiss === 'true';
+
+            if (!shouldDismiss) return;
+
+            requestAnimationFrame(function() {
+                try { target.blur(); } catch (e) {}
+            });
+        }, true);
+    }
+
     async function primeApiBaseOverride() {
         try {
             await DB.init();
@@ -22,6 +44,7 @@ const App = (function() {
 
     async function init() {
         await primeApiBaseOverride();
+        installImeDoneBlurHandler();
         console.log('🏭 생산 공정 관리 시스템 (MES) 시작...');
 
         try {
@@ -189,6 +212,7 @@ const App = (function() {
         Router.registerModule('dashboard', DashboardModule);
         Router.registerModule('board', BoardModule);
         Router.registerModule('production-plan', ProductionPlanModule);
+        Router.registerModule('overtime-plan', OvertimePlanModule);
         Router.registerModule('injection-incoming', InjectionIncomingModule);
         Router.registerModule('injection-warehouse', InjectionWarehouseModule);
         Router.registerModule('paint-incoming-inspection', PaintIncomingInspectionModule);

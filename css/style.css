@@ -14,6 +14,7 @@
     --sidebar-width: 190px;
     --sidebar-collapsed-width: 68px;
     --sidebar-divider: #1e293b;
+    --sidebar-live-width: 190px;
 
     /* 메인 영역 */
     --bg-primary: #f1f5f9;
@@ -88,7 +89,7 @@ body {
    사이드바
    =================================================================== */
 .sidebar {
-    width: var(--sidebar-width);
+    width: var(--sidebar-live-width, var(--sidebar-width));
     background: var(--sidebar-bg);
     display: flex;
     flex-direction: column;
@@ -171,6 +172,36 @@ body.sidebar-hidden .main-area .sdp-table-scroll {
 
 .sidebar-toggle .material-symbols-outlined {
     transition: transform 0.2s ease;
+}
+
+.sidebar-expand-btn {
+    position: absolute;
+    top: 86px;
+    right: -14px;
+    width: 28px;
+    height: 56px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(59, 130, 246, 0.28);
+    border-left: 0;
+    border-radius: 0 12px 12px 0;
+    background: rgba(15, 23, 42, 0.96);
+    color: #cbd5e1;
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.24);
+    cursor: pointer;
+    z-index: 2;
+    transition: var(--transition);
+}
+
+.sidebar-expand-btn:hover,
+.sidebar-expand-btn.active {
+    background: var(--accent-blue-dark);
+    color: #ffffff;
+}
+
+.sidebar-expand-btn .material-symbols-outlined {
+    font-size: 20px;
 }
 
 body.sidebar-hidden .sidebar-toggle .material-symbols-outlined {
@@ -352,7 +383,7 @@ body.sidebar-hidden .sidebar-toggle .material-symbols-outlined {
     flex: 1;
     min-width: 0;
     overflow-x: hidden;
-    margin-left: var(--sidebar-width);
+    margin-left: var(--sidebar-live-width, var(--sidebar-width));
     display: flex;
     flex-direction: column;
     min-height: 100vh;
@@ -446,6 +477,33 @@ body.sidebar-hidden .sidebar-toggle .material-symbols-outlined {
     color: var(--accent-blue);
     border-color: rgba(59, 130, 246, 0.45);
     background: rgba(59, 130, 246, 0.06);
+}
+
+.sidebar-resizer {
+    position: absolute;
+    top: 0;
+    right: -4px;
+    width: 10px;
+    height: 100%;
+    cursor: ew-resize;
+    z-index: 3;
+    display: none;
+}
+
+.sidebar-resizer::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 4px;
+    width: 2px;
+    height: 100%;
+    background: rgba(148, 163, 184, 0.18);
+    transition: background 0.2s ease;
+}
+
+.sidebar.user-expanded .sidebar-resizer::before,
+.sidebar-resizer:hover::before {
+    background: rgba(96, 165, 250, 0.7);
 }
 
 body.sidebar-hidden .sidebar-show-btn {
@@ -2159,10 +2217,55 @@ input[type="time"] {
         margin: 0;
     }
     .sidebar-toggle { display: none; }
+    .sidebar-expand-btn { display: inline-flex; }
+    .sidebar-resizer { display: block; }
 
     /* 메인 영역 */
     .main-area {
         margin-left: var(--sidebar-collapsed-width) !important;
+    }
+
+    .sidebar.user-expanded {
+        width: var(--sidebar-live-width, 250px) !important;
+    }
+
+    .sidebar.user-expanded .nav-label,
+    .sidebar.user-expanded .logo-text,
+    .sidebar.user-expanded .nav-divider span,
+    .sidebar.user-expanded .sidebar-footer {
+        display: initial;
+    }
+
+    .sidebar.user-expanded .logo-icon {
+        margin: 0;
+    }
+
+    .sidebar.user-expanded .sidebar-header {
+        justify-content: space-between;
+        padding: 20px 16px;
+    }
+
+    .sidebar.user-expanded .nav-item {
+        justify-content: flex-start;
+        padding: 10px 14px;
+    }
+
+    .sidebar.user-expanded .nav-item .material-symbols-outlined {
+        margin: 0;
+    }
+
+    .sidebar.user-expanded .nav-divider {
+        padding: 18px 10px 8px;
+        border-bottom: 0;
+        margin: 0;
+    }
+
+    .sidebar.user-expanded .nav-divider::after {
+        display: block;
+    }
+
+    .sidebar.user-expanded ~ .main-area {
+        margin-left: var(--sidebar-live-width, 250px) !important;
     }
 
     /* 그리드 */
@@ -2222,6 +2325,11 @@ input[type="time"] {
 
     .sidebar.mobile-open {
         transform: translateX(0);
+    }
+
+    .sidebar-expand-btn,
+    .sidebar-resizer {
+        display: none !important;
     }
 
     .main-area {

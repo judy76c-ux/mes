@@ -49,10 +49,11 @@ const AuthModule = (function () {
         { id:'injection-process',         label:'사출 공정',          group:'사출공정' },
         { id:'injection-work',            label:'사출 작업일지',      group:'사출공정' },
         { id:'production-plan',           label:'생산 계획 지시서',   group:'도장공정' },
+        { id:'overtime-plan',             label:'연장근무계획',       group:'도장공정' },
         { id:'painting-work',             label:'도장 작업일지',      group:'도장공정' },
-        { id:'painting-inspection',       label:'도장 검사일지',      group:'도장공정' },
-        { id:'paint-mix',                 label:'도료 배합 관리',     group:'도장공정' },
+        { id:'painting-inspection',       label:'도장 검사일지',      group:'도장공정' },        { id:'paint-mix',                 label:'도료 배합 관리',     group:'도장공정' },
         { id:'laser-standby',             label:'레이져 대기품',      group:'레이져공정' },
+        { id:'laser-wip',                 label:'재공품 현황',       group:'레이져공정' },
         { id:'laser-work',                label:'레이져 작업일지',    group:'레이져공정' },
         { id:'laser-inspection',          label:'레이져 검사일지',    group:'레이져공정' },
         { id:'laser-jig-master',          label:'레이져 지그대장',    group:'레이져공정' },
@@ -91,8 +92,8 @@ const AuthModule = (function () {
         { key:'incoming',  label:'수입검사',   pages:['incoming-overview','injection-incoming','paint-incoming-inspection'] },
         { key:'warehouse', label:'창고',       pages:['warehouse-overview','injection-warehouse','paint-inventory','raw-material-inventory'] },
         { key:'injection', label:'사출공정',   pages:['injection-process','injection-work'] },
-        { key:'painting',  label:'도장공정',   pages:['production-plan','painting-work','painting-inspection','paint-mix'] },
-        { key:'laser',     label:'레이져공정', pages:['laser-standby','laser-work','laser-inspection','laser-jig-master','laser-jig-disposal','laser-jig-cleaning'] },
+        { key:'painting',  label:'도장공정',   pages:['production-plan','overtime-plan','painting-work','painting-inspection','paint-mix'] },
+        { key:'laser',     label:'레이져공정', pages:['laser-standby','laser-wip','laser-work','laser-inspection','laser-jig-master','laser-jig-disposal','laser-jig-cleaning'] },
         { key:'shipping',  label:'출하/제품',  pages:['shipping-standby','product-warehouse'] },
         { key:'sales',     label:'영업',       pages:['sales-delivery-plan','sales-delivery','sales-analytics','sales-outsourcing'] },
         { key:'prod_mgmt', label:'생산관리',   pages:['painting-jig','jig-management','jig-master','jig-disposal','jig-cleaning','jig-change-history','jig-repair-history','prod-standards','prod-conditions','prod-sub-materials','prod-equipment','five-s'] },
@@ -194,8 +195,8 @@ const AuthModule = (function () {
                 'incoming-overview','injection-incoming','paint-incoming-inspection',
                 'warehouse-overview','injection-warehouse','paint-inventory','raw-material-inventory',
                 'injection-process','injection-work',
-                'production-plan','painting-work','painting-inspection','paint-mix',
-                'laser-standby','laser-work','laser-inspection',
+                'production-plan','overtime-plan','painting-work','painting-inspection','paint-mix',
+                'laser-standby','laser-wip','laser-work','laser-inspection',
                 'shipping-standby','product-warehouse',
             ]),
 
@@ -216,7 +217,7 @@ const AuthModule = (function () {
             /* 영업관리자 — 영업·납품·제품창고 + 생산계획 조회 */
             sales_manager: rw([
                 'dashboard',
-                'production-plan',
+                'production-plan','overtime-plan',
                 'shipping-standby','product-warehouse',
                 'sales-delivery','sales-outsourcing',
                 'incoming-overview','warehouse-overview',
@@ -227,13 +228,13 @@ const AuthModule = (function () {
                 'dashboard',
                 'incoming-overview','paint-incoming-inspection',
                 'warehouse-overview','paint-inventory',
-                'production-plan','painting-work','painting-inspection','paint-mix',
+                'production-plan','overtime-plan','painting-work','painting-inspection','paint-mix',
             ]),
 
             /* 자주검사자 — 공정 자주 검사 담당 */
             self_inspector: rw([
                 'dashboard',
-                'production-plan',
+                'production-plan','overtime-plan',
                 'painting-work','painting-inspection',
                 'prod-quality','quality-performance',
                 'laser-inspection',
@@ -242,14 +243,14 @@ const AuthModule = (function () {
             /* 레이져운영자 — 레이져 공정 전담 */
             laser_op: rw([
                 'dashboard',
-                'laser-standby','laser-work','laser-inspection',
+                'laser-standby','laser-wip','laser-work','laser-inspection',
                 'laser-jig-master','laser-jig-cleaning',
             ]),
 
             /* 레이져검사자 — 레이져 검사 담당 */
             laser_inspector: rw([
                 'dashboard',
-                'laser-standby','laser-inspection',
+                'laser-standby','laser-wip','laser-inspection',
                 'quality-performance',
             ]),
 

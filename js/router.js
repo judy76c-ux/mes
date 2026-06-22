@@ -8,6 +8,8 @@ const Router = (function() {
     const modules = {};
     const PAGE_STATE_KEY = 'mes_last_page';
     const SIDEBAR_STATE_KEY = 'mes_sidebar_hidden';
+    const SIDEBAR_EXPANDED_KEY = 'mes_sidebar_user_expanded';
+    const SIDEBAR_WIDTH_KEY = 'mes_sidebar_live_width';
 
     // ── Lazy 번들 ─────────────────────────────────────────────────────────
     // _lazyBundles: src → { src, loaded, loading, onLoad, pending }
@@ -45,6 +47,7 @@ const Router = (function() {
     const PAGE_TITLES = {
         'dashboard': '대시보드',
         'production-plan': '생산 계획 지시서',
+        'overtime-plan': '연장근무계획',
         'injection-incoming': '사출 입고',
         'paint-incoming-inspection': '도료 입고',
         'incoming-overview': '수입검사',
@@ -148,6 +151,7 @@ const Router = (function() {
         'injection-room-layout': { target: 'injection-process', label: '사출 공정으로 돌아가기' },
 
         'laser-standby': { target: 'laser-process', label: '레이져 공정으로 돌아가기' },
+        'laser-wip': { target: 'laser-process', label: '레이져 공정으로 돌아가기' },
         'laser-work': { target: 'laser-process', label: '레이져 공정으로 돌아가기' },
         'laser-inspection': { target: 'laser-process', label: '레이져 공정으로 돌아가기' },
         'laser-layout': { target: 'laser-process', label: '레이져 공정으로 돌아가기' },
@@ -206,6 +210,7 @@ const Router = (function() {
         setupSidebarTooltips();
         setupMobileMenu();
         setupSidebarToggle();
+        setupSidebarExpandControls();
         updateDateTime();
         setInterval(updateDateTime, 60000);
 
@@ -248,7 +253,7 @@ const Router = (function() {
 
         const shouldShow = () => {
             const sidebar = document.getElementById('sidebar');
-            return sidebar && (sidebar.classList.contains('collapsed') || window.matchMedia('(min-width: 769px) and (max-width: 1024px)').matches);
+            return sidebar && !sidebar.classList.contains('user-expanded') && (sidebar.classList.contains('collapsed') || window.matchMedia('(min-width: 769px) and (max-width: 1024px)').matches);
         };
 
         const showTooltip = (item) => {
@@ -387,12 +392,114 @@ const Router = (function() {
         });
     }
 
+    function setupSidebarExpandControls() {
+        const sidebar = document.getElementById('sidebar');
+        const expandBtn = document.getElementById('sidebarExpandBtn');
+        const resizer = document.getElementById('sidebarResizer');
+        if (!sidebar) return;
+
+        const isTabletLayout = () => window.matchMedia('(min-width: 769px) and (max-width: 1024px)').matches;
+        const clampWidth = (width) => {
+            const numeric = Number(width) || 250;
+            return Math.max(190, Math.min(360, numeric));
+        };
+
+        let expanded = false;
+        let dragging = false;
+
+        try {
+            expanded = sessionStorage.getItem(SIDEBAR_EXPANDED_KEY) === '1';
+        } catch (e) {
+            expanded = false;
+        }
+
+        const applyWidth = (width) => {
+            const resolved = clampWidth(width);
+            document.documentElement.style.setProperty('--sidebar-live-width', resolved + 'px');
+            try {
+                sessionStorage.setItem(SIDEBAR_WIDTH_KEY, String(resolved));
+            } catch (e) {}
+        };
+
+        const updateExpandButton = () => {
+            if (!expandBtn) return;
+            const icon = expandBtn.querySelector('.material-symbols-outlined');
+            expandBtn.classList.toggle('active', expanded);
+            expandBtn.title = expanded ? '메뉴 폭 줄이기' : '메뉴 확장';
+            expandBtn.setAttribute('aria-label', expanded ? '메뉴 폭 줄이기' : '메뉴 확장');
+            if (icon) icon.textContent = expanded ? 'keyboard_double_arrow_left' : 'keyboard_double_arrow_right';
+        };
+
+        const applyExpandedState = () => {
+            const allowExpanded = isTabletLayout() && !document.body.classList.contains('sidebar-hidden');
+            sidebar.classList.toggle('user-expanded', allowExpanded && expanded);
+            if (!isTabletLayout()) {
+                sidebar.classList.remove('user-expanded');
+            }
+            updateExpandButton();
+        };
+
+        try {
+            applyWidth(sessionStorage.getItem(SIDEBAR_WIDTH_KEY));
+        } catch (e) {
+            applyWidth(250);
+        }
+        applyExpandedState();
+
+        if (expandBtn) {
+            expandBtn.addEventListener('click', function() {
+                expanded = !expanded;
+                try {
+                    sessionStorage.setItem(SIDEBAR_EXPANDED_KEY, expanded ? '1' : '0');
+                } catch (e) {}
+                applyExpandedState();
+            });
+        }
+
+        if (resizer) {
+            resizer.addEventListener('mousedown', function(event) {
+                if (!isTabletLayout()) return;
+                dragging = true;
+                expanded = true;
+                try {
+                    sessionStorage.setItem(SIDEBAR_EXPANDED_KEY, '1');
+                } catch (e) {}
+                applyExpandedState();
+                event.preventDefault();
+                document.body.style.userSelect = 'none';
+                document.body.style.cursor = 'ew-resize';
+            });
+        }
+
+        const onDragMove = (event) => {
+            if (!dragging) return;
+            applyWidth(event.clientX);
+            applyExpandedState();
+        };
+
+        const stopDragging = () => {
+            if (!dragging) return;
+            dragging = false;
+            document.body.style.userSelect = '';
+            document.body.style.cursor = '';
+        };
+
+        document.addEventListener('mousemove', onDragMove);
+        document.addEventListener('mouseup', stopDragging);
+        window.addEventListener('resize', applyExpandedState);
+    }
+
     function setupSidebarToggle() {
         const hideBtn = document.getElementById('sidebarToggle');
         const showBtn = document.getElementById('sidebarShowBtn');
         const setHidden = (hidden) => {
             document.body.classList.toggle('sidebar-hidden', hidden);
             try { sessionStorage.setItem(SIDEBAR_STATE_KEY, hidden ? '1' : '0'); } catch(e) {}
+            const sidebar = document.getElementById('sidebar');
+            if (sidebar && hidden) {
+                sidebar.classList.remove('user-expanded');
+            }
+            window.dispatchEvent(new Event('resize'));
         };
         try {
             setHidden(sessionStorage.getItem(SIDEBAR_STATE_KEY) === '1');

@@ -383,7 +383,7 @@ const PaintingIncomingModule = (function() {
             const timeChangeBadge = d.timeReason
                 ? '<span style="display:inline-block;background:#ef4444;color:#fff;padding:2px 7px;border-radius:4px;font-size:0.7rem;font-weight:700;margin-right:3px;" title="시간변경 ' + (d.timeReason || '') + (d.timeReasonDetail ? ' / ' + d.timeReasonDetail : '') + '">시간변경</span>'
                 : '';
-            const actionButtons = '<button class="btn btn-sm btn-outline" onclick="PaintingWorkModule.openWorkViewPage(\'' + d.id + '\')">보기</button>';
+            const actionButtons = '<button type="button" class="btn btn-sm btn-outline" onclick="PaintingWorkModule.openWorkViewPage(\'' + d.id + '\')">보기</button>';
 
             const regDate = d.registeredAt ? d.registeredAt.slice(0, 10) : '-';
             const wdParts = (d.date || '').split('-');
@@ -1082,9 +1082,9 @@ const PaintingWorkModule = (function() {
             const _cu = AuthModule.getCurrentUser ? AuthModule.getCurrentUser() : null;
             const _isAdmin = _cu && _cu.role === 'admin';
             const deleteBtn = _isAdmin
-                ? '<button class="btn btn-sm btn-danger" onclick="PaintingWorkModule.removeWork(\'' + d.id + '\')" style="margin-left:4px;">삭제</button>'
+                ? '<button type="button" class="btn btn-sm btn-danger" onclick="PaintingWorkModule.removeWork(\'' + d.id + '\')" style="margin-left:4px;">삭제</button>'
                 : '';
-            const actionButtons = '<button class="btn btn-sm btn-outline" onclick="PaintingWorkModule.openWorkViewPage(\'' + d.id + '\')">보기</button>' + deleteBtn;
+            const actionButtons = '<button type="button" class="btn btn-sm btn-outline" onclick="PaintingWorkModule.openWorkViewPage(\'' + d.id + '\')">보기</button>' + deleteBtn;
 
             const regDateRaw = d.registeredAt ? d.registeredAt.slice(0, 10) : '';
             const regParts = regDateRaw.split('-');
@@ -3008,7 +3008,12 @@ const PaintingWorkModule = (function() {
 
     // 보기 페이지 진입점: 부모창이면 팝업 열기, 팝업창이면 contentArea에 바로 렌더링
     function openWorkViewPage(id) {
-        _renderWorkView(id);
+        try {
+            _renderWorkView(id);
+        } catch (error) {
+            console.error('[PaintingWorkModule] openWorkViewPage failed:', error);
+            UIUtils.toast('작업 실적 보기를 여는 중 오류가 발생했습니다.', 'error');
+        }
     }
 
 
@@ -3119,7 +3124,7 @@ const PaintingWorkModule = (function() {
             '<button class="btn btn-primary" onclick="PaintingWorkModule.openWorkEditPage(\'' + id + '\')">' +
             '<span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">edit</span> 수정</button>';
 
-        UIUtils.openModal({ title: '도장 작업 실적 보기', body: bodyHtml, footer: footerHtml, size: 'lg' });
+        UIUtils.showModal({ title: '도장 작업 실적 보기', body: bodyHtml, footer: footerHtml, size: 'lg' });
     }
 
     // 수정 페이지 (입력 폼)
@@ -6731,7 +6736,7 @@ const PaintingInspectionModule = (function() {
                     return `<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
                         <div style="font-size:0.78rem;font-weight:600;color:${color};margin-bottom:6px;">${dt.name}</div>
                         <input type="text" class="form-input defect-count-input" data-defect-id="${dt.id}"
-                            value="${val > 0 ? val : ''}" placeholder="-" inputmode="numeric" enterkeyhint="done"
+                            value="${val > 0 ? val : ''}" placeholder="-" inputmode="numeric" enterkeyhint="done" data-ime-dismiss="true"
                             style="text-align:right;font-weight:700;font-size:1rem;padding:4px 8px;"
                             oninput="this.value=this.value.replace(/[^0-9]/g,'')">
                     </div>`;

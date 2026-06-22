@@ -11,6 +11,7 @@
 var LaserProcessUI = (function () {
     const MENUS = [
         { id: 'laser-process', label: '메인', icon: 'dashboard' },
+        { id: 'laser-wip', label: '재공품 현황', icon: 'inventory' },
         { id: 'laser-work', label: '레이져 작업일지', icon: 'history' },
         { id: 'laser-inspection', label: '외관 검사 일지', icon: 'fact_check', onclick: "LaserInspectionModule.showInspectionPage()" },
         { id: 'laser-jig-master', label: '레이져 지그대장', icon: 'view_list' },
