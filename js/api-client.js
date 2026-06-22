@@ -258,6 +258,10 @@ const ApiClient = (function() {
     return request('POST', '/api/photos/mkdirs', { subdirs });
   }
 
+  async function getPhotosStats(subdirs) {
+    return request('POST', '/api/photos/stats', { subdirs });
+  }
+
   // API 서버 주소 반환 (에러 메시지·UI 표시용)
   function getBase() { return getApiBase(); }
 

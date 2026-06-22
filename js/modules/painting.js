@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 도장 공정 모듈
  * - 도장 입고
  * - 도장 작업일지 (생산 투입)
@@ -1157,7 +1157,10 @@ const PaintingWorkModule = (function() {
         const lots = getInjectionLots(carModel, partName);
         if (lots.length === 0) return '<option value="" data-balance="">-- 해당 LOT 없음 (직접입력 가능) --</option>';
         return lots.map((l, i) =>
-            '<option value="' + l.lotNo + '"' + (i === 0 ? ' selected' : '') + ' data-balance="' + l.balance + '">' +
+            '<option value="' + l.lotNo + '"' + (i === 0 ? ' selected' : '') +
+            ' data-balance="' + l.balance + '"' +
+            ' data-part-name="' + String(l.partName || '').replace(/"/g, '&quot;') + '"' +
+            ' data-color="' + String(l.color || '').replace(/"/g, '&quot;') + '">' +
             l.lotNo + ' │ ' + (l.partName || l.carModel) +
             ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA</option>'
         ).join('');
@@ -1321,7 +1324,10 @@ const PaintingWorkModule = (function() {
         if (lots.length === 0) return '<option value="" data-balance="">-- 해당 LOT 없음 (직접입력 가능) --</option>';
         return lots.map(function(l, i) {
             var colorTag = l.color ? ' │ ' + l.color : '';
-            return '<option value="' + l.lotNo + '"' + (i === 0 ? ' selected' : '') + ' data-balance="' + l.balance + '">' +
+            return '<option value="' + l.lotNo + '"' + (i === 0 ? ' selected' : '') +
+                ' data-balance="' + l.balance + '"' +
+                ' data-part-name="' + String(l.partName || '').replace(/"/g, '&quot;') + '"' +
+                ' data-color="' + String(l.color || '').replace(/"/g, '&quot;') + '">' +
                 l.lotNo + ' │ ' + (l.partName || l.carModel) + colorTag +
                 ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA</option>';
         }).join('');
@@ -1340,7 +1346,10 @@ const PaintingWorkModule = (function() {
                 '<option value="" data-balance="">-- 해당 LOT 없음 (직접입력 가능) --</option>' :
                 '<option value="" data-balance="">-- LOT 선택 --</option>' + lots.map(function(l) {
                     var colorTag = l.color ? ' │ ' + l.color : '';
-                    return '<option value="' + l.lotNo + '" data-balance="' + l.balance + '">' +
+                    return '<option value="' + l.lotNo + '"' +
+                        ' data-balance="' + l.balance + '"' +
+                        ' data-part-name="' + String(l.partName || '').replace(/"/g, '&quot;') + '"' +
+                        ' data-color="' + String(l.color || '').replace(/"/g, '&quot;') + '">' +
                         l.lotNo + ' │ ' + (l.partName || l.carModel) + colorTag +
                         ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA</option>';
                 }).join('');
@@ -1415,7 +1424,10 @@ const PaintingWorkModule = (function() {
 
         function lotOptionHtml(l) {
             var colorTag = l.color ? ' │ ' + l.color : '';
-            return '<option value="' + l.lotNo + '" data-balance="' + l.balance + '">' +
+            return '<option value="' + l.lotNo + '"' +
+                ' data-balance="' + l.balance + '"' +
+                ' data-part-name="' + String(l.partName || '').replace(/"/g, '&quot;') + '"' +
+                ' data-color="' + String(l.color || '').replace(/"/g, '&quot;') + '">' +
                 l.lotNo + ' │ ' + (l.partName || l.carModel) + colorTag +
                 ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA</option>';
         }
@@ -1499,6 +1511,37 @@ const PaintingWorkModule = (function() {
         _updateLotSummary();
     }
 
+    function _renderSelectedInjectionMeta() {
+        var container = document.getElementById('pwLotRows');
+        if (!container) return;
+        var infoEl = document.getElementById('pwSelectedInjectionMeta');
+        if (!infoEl) {
+            infoEl = document.createElement('div');
+            infoEl.id = 'pwSelectedInjectionMeta';
+            infoEl.style.cssText = 'margin-top:8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:#fff;';
+            container.parentNode.appendChild(infoEl);
+        }
+        var lots = _collectLots();
+        if (!lots.length) {
+            infoEl.style.display = 'none';
+            infoEl.innerHTML = '';
+            return;
+        }
+        infoEl.style.display = 'block';
+        infoEl.innerHTML =
+            '<div style="font-size:0.74rem;color:var(--text-muted);margin-bottom:6px;">선택된 사출 정보</div>' +
+            lots.map(function(lot) {
+                return '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:5px 0;border-top:1px dashed var(--border);">' +
+                    '<span style="font-weight:700;color:var(--text-primary);">' + (lot.partName || '-') + '</span>' +
+                    '<span style="color:var(--text-muted);">|</span>' +
+                    '<span style="font-weight:600;color:var(--text-secondary);">' + (lot.color || '-') + '</span>' +
+                    '<span style="color:var(--text-muted);">|</span>' +
+                    '<span style="font-family:monospace;">' + (lot.lotNo || '-') + '</span>' +
+                    (lot.qty ? '<span style="color:var(--text-muted);">|</span><span>' + UIUtils.formatNumber(lot.qty) + ' EA</span>' : '') +
+                    '</div>';
+            }).join('');
+    }
+
     // ── 실시간 LOT 합계 vs 산출수량 표시 ──
     function _updateLotSummary() {
         var container = document.getElementById('pwLotRows');
@@ -1537,6 +1580,7 @@ const PaintingWorkModule = (function() {
             icon + ' LOT 수량 합계: <strong>' + UIUtils.formatNumber(totalLotQty) + ' EA</strong>' +
             ' / 투입수량: <strong>' + UIUtils.formatNumber(inputQty) + ' EA</strong>' +
             '<span style="font-size:0.76rem;font-weight:400;">' + diffMsg + '</span>';
+        _renderSelectedInjectionMeta();
     }
 
     function _buildLotRow(lotsHtml, lotNo, qty) {
@@ -1775,6 +1819,7 @@ const PaintingWorkModule = (function() {
 
         _refreshOtherLotDropdowns(row);      // 다른 행 드롭다운 갱신
         _refreshAddLotBtn();                 // 버튼 활성화 재확인
+        _updateLotSummary();
     }
 
     // ── 선입선출(FIFO) 경고 표시/숨김 ──────────────────────────────────
@@ -1848,12 +1893,16 @@ const PaintingWorkModule = (function() {
         rows.forEach(function(row) {
             const lotNo = (row.querySelector('.pw-lot-no') ? row.querySelector('.pw-lot-no').value : '').trim();
             const qty = Number(row.querySelector('.pw-lot-qty') ? row.querySelector('.pw-lot-qty').value : 0) || 0;
+            const sel = row.querySelector('.pw-lot-sel');
+            const opt = sel && sel.options ? sel.options[sel.selectedIndex] : null;
+            const partName = opt ? String(opt.getAttribute('data-part-name') || '').trim() : '';
+            const color = opt ? String(opt.getAttribute('data-color') || '').trim() : '';
             const warnEl = row.querySelector('.pw-fifo-warn');
             const isFifoViolated = warnEl && warnEl.style.display !== 'none';
             const fifoReason = isFifoViolated
                 ? ((row.querySelector('.pw-fifo-reason') || {}).value || '')
                 : '';
-            if (lotNo) lots.push({ lotNo, qty, fifoReason });
+            if (lotNo) lots.push({ lotNo, qty, fifoReason, partName, color });
         });
         return lots;
     }
@@ -2760,6 +2809,32 @@ const PaintingWorkModule = (function() {
         }
 
         var allLots = injPartName ? getInjectionLotsByInjPart(injPartName, _saveColor) : getInjectionLots(cm, pn);
+        var injPartSeen = {};
+        var injPartNames = [];
+        var injColorSeen = {};
+        var injColors = [];
+        (data.lots || []).forEach(function(l) {
+            var partName = String(l.partName || injPartName || '').trim();
+            if (partName) {
+                var partKey = partName.toLowerCase();
+                if (!injPartSeen[partKey]) {
+                    injPartSeen[partKey] = true;
+                    injPartNames.push(partName);
+                }
+            }
+            String(l.color || '')
+                .split(/[,，、\/|]/)
+                .map(function(entry) { return entry.trim(); })
+                .filter(Boolean)
+                .forEach(function(entry) {
+                    var key = entry.toLowerCase();
+                    if (injColorSeen[key]) return;
+                    injColorSeen[key] = true;
+                    injColors.push(entry);
+                });
+        });
+        data.injPartName = injPartNames.join(', ') || injPartName || '';
+        data.injColor = injColors.join(', ');
 
         for (var vi = 0; vi < data.lots.length; vi++) {
             var vl = data.lots[vi];
@@ -2945,11 +3020,16 @@ const PaintingWorkModule = (function() {
         var alertsHtml = _buildWorkAlerts(d);
 
         var lotItems = (d.lots && d.lots.length > 0) ? d.lots : (d.lotNo ? [{lotNo: d.lotNo, qty: 0}] : []);
+        var lotMeta = _getInjectionMetaForWork(d);
         var lotDisplayHtml = lotItems.length
             ? lotItems.map(function(l) {
+                var partName = String(l.partName || '').trim();
+                var color = String(l.color || '').trim();
                 return '<div style="display:inline-flex;align-items:center;gap:6px;' +
                     'background:var(--bg-secondary);border:1px solid var(--border);' +
-                    'border-radius:4px;padding:4px 12px;font-family:monospace;font-size:0.9rem;margin:3px 6px 3px 0;">' +
+                    'border-radius:4px;padding:4px 12px;font-family:monospace;font-size:0.9rem;margin:3px 6px 3px 0;flex-wrap:wrap;">' +
+                    (partName ? '<span style="font-family:var(--font-family-base);font-weight:700;color:var(--text-primary);">' + partName + '</span><span style="color:var(--text-muted);">|</span>' : '') +
+                    (color ? '<span style="font-family:var(--font-family-base);font-weight:600;color:var(--text-secondary);">' + color + '</span><span style="color:var(--text-muted);">|</span>' : '') +
                     '<span>' + l.lotNo + '</span>' +
                     (l.qty ? '<span style="color:var(--text-muted);">—</span><span>' + UIUtils.formatNumber(l.qty) + ' 개</span>' : '') +
                     '</div>';
@@ -3022,7 +3102,12 @@ const PaintingWorkModule = (function() {
 
             '<div class="card" style="margin-bottom:14px;">' +
             '<div class="card-header" style="padding:10px 16px;"><h4 style="margin:0;font-size:0.9rem;">사출 LOT</h4></div>' +
-            '<div class="card-body" style="padding:14px 20px;">' + lotDisplayHtml + '</div></div>' +
+            '<div class="card-body" style="padding:14px 20px;">' +
+            '<div style="display:flex;flex-wrap:wrap;gap:18px;margin-bottom:12px;">' +
+            vf('사출명', lotMeta.partNameText) +
+            vf('사출컬러', lotMeta.colorText) +
+            '</div>' +
+            lotDisplayHtml + '</div></div>' +
 
             (d.note ? '<div class="card" style="margin-bottom:0;">' +
             '<div class="card-header" style="padding:10px 16px;"><h4 style="margin:0;font-size:0.9rem;">비고</h4></div>' +
@@ -3465,12 +3550,43 @@ const PaintingWorkModule = (function() {
             if (totalMin > 0) avgCT = Number((totalMin * 60 / prodQty).toFixed(2));
         }
 
+        const editCarModel = ((document.getElementById('editPwCarModel') || {}).value || '').trim();
+        const editPartName = ((document.getElementById('editPwPartName') || {}).value || '').trim();
+        const editColor = ((document.getElementById('editPwColor') || {}).value || '').trim();
+        const editLotNos = (lots || []).map(function(l) { return String(l.lotNo || '').trim(); }).filter(Boolean);
+        const editPartSeen = {};
+        const editColorSeen = {};
+        const editInjPartNames = [];
+        const editInjColors = [];
+        (lots || []).forEach(function(item) {
+            const partName = String(item.partName || '').trim();
+            if (partName) {
+                const key = partName.toLowerCase();
+                if (!editPartSeen[key]) {
+                    editPartSeen[key] = true;
+                    editInjPartNames.push(partName);
+                }
+            }
+            String(item.color || '')
+                .split(/[,，、\/|]/)
+                .map(function(entry) { return entry.trim(); })
+                .filter(Boolean)
+                .forEach(function(entry) {
+                    const key = entry.toLowerCase();
+                    if (editColorSeen[key]) return;
+                    editColorSeen[key] = true;
+                    editInjColors.push(entry);
+                });
+        });
+
         await Storage.update(STORE, id, {
-            carModel: ((document.getElementById('editPwCarModel') || {}).value || '').trim(),
-            partName: ((document.getElementById('editPwPartName') || {}).value || '').trim(),
-            color: ((document.getElementById('editPwColor') || {}).value || '').trim(),
+            carModel: editCarModel,
+            partName: editPartName,
+            color: editColor,
             lotNo: lotNo,
             lots: lots,
+            injPartName: editInjPartNames.join(', '),
+            injColor: editInjColors.join(', '),
             inputQty: inputQty,
             productionQty: prodQty,
             workers: Number((document.getElementById('editPwWorkers') || {}).value) || 0,
@@ -3727,6 +3843,8 @@ const PaintingInspectionModule = (function() {
     const DEFECT_STORE = DB.STORES.DEFECT_TYPES;
     const PRODUCTS_STORE = DB.STORES.PRODUCTS;
     const PAINTING_WORK_STORE = DB.STORES.PAINTING_WORK;
+    const INJ_INV_STORE = DB.STORES.INJECTION_INVENTORY;
+    const INJECTMAT_STORE = DB.STORES.INJECTION_MATERIALS;
     const PLAN_STORE = DB.STORES.PRODUCTION_PLANS;
     const STANDARD_UPLOAD_ROLES = ['admin', 'prod_manager', 'quality_manager', 'paint_line_op'];
     const NONCONFORM_STANDARD_IMAGE_KEY = 'painting_nonconform_standard_image_v1';
@@ -3741,6 +3859,227 @@ const PaintingInspectionModule = (function() {
         currentTab: 'inspection' // 'inspection' | 'completion' | 'residual-wip' | 'nonconform-standard'
     };
     let _nonconformStandardImage = null;
+
+    function _injColorMatches(matColor, planColor) {
+        if (!matColor || !planColor) return true;
+        var mc = String(matColor).trim().toLowerCase().replace(/\s+/g, '');
+        var pc = String(planColor).trim().toLowerCase().replace(/\s+/g, '');
+        if (mc === pc) return true;
+        return mc.split(/[,，\/]/).map(function(c) { return c.trim(); })
+            .some(function(c) { return c === pc; });
+    }
+
+    function _getMatchedInjectionColors(carModel, partName, planColor) {
+        if (!partName) return [];
+        var materials = Storage.getAll(INJECTMAT_STORE) || [];
+        var seen = {};
+        var colors = [];
+        materials.forEach(function(m) {
+            if (!m) return;
+            var nameMatch = m.mfgProductName === partName || m.mfgProductName2 === partName;
+            var modelMatch = !carModel || !m.carModel || m.carModel === carModel;
+            var colorMatch = _injColorMatches(m.injColor, planColor || '');
+            if (!nameMatch || !modelMatch || !colorMatch || !m.injColor) return;
+            String(m.injColor || '')
+                .split(/[,，、\/|]/)
+                .map(function(c) { return c.trim(); })
+                .filter(Boolean)
+                .forEach(function(color) {
+                    var key = color.toLowerCase();
+                    if (seen[key]) return;
+                    seen[key] = true;
+                    colors.push(color);
+                });
+        });
+        return colors;
+    }
+
+    function _getInjectionLotColorsForWork(work) {
+        if (!work) return [];
+        var inventory = Storage.getAll(INJ_INV_STORE) || [];
+        var lotNos = [];
+        if (Array.isArray(work.lots) && work.lots.length > 0) {
+            lotNos = work.lots.map(function(lot) { return String(lot && lot.lotNo || '').trim(); }).filter(Boolean);
+        } else if (work.lotNo) {
+            lotNos = String(work.lotNo)
+                .split(',')
+                .map(function(lotNo) { return lotNo.trim(); })
+                .filter(Boolean);
+        }
+        if (!lotNos.length) return [];
+
+        var seen = {};
+        var colors = [];
+        inventory.forEach(function(item) {
+            if (!item || !item.lotNo) return;
+            if (lotNos.indexOf(String(item.lotNo).trim()) < 0) return;
+            var color = String(item.color || item.injColor || '').trim();
+            if (!color) return;
+            String(color)
+                .split(/[,，、\/|]/)
+                .map(function(c) { return c.trim(); })
+                .filter(Boolean)
+                .forEach(function(entry) {
+                    var key = entry.toLowerCase();
+                    if (seen[key]) return;
+                    seen[key] = true;
+                    colors.push(entry);
+                });
+        });
+        return colors;
+    }
+
+    function _getInjectionMetaForWork(work) {
+        if (!work) {
+            return { partNames: [], colors: [], partNameText: '-', colorText: '-' };
+        }
+        var partSeen = {};
+        var colorSeen = {};
+        var partNames = [];
+        var colors = [];
+
+        if (Array.isArray(work.lots) && work.lots.length > 0) {
+            work.lots.forEach(function(lot) {
+                if (!lot) return;
+                var partName = String(lot.partName || '').trim();
+                var color = String(lot.color || '').trim();
+                if (partName) {
+                    var partKey = partName.toLowerCase();
+                    if (!partSeen[partKey]) {
+                        partSeen[partKey] = true;
+                        partNames.push(partName);
+                    }
+                }
+                if (color) {
+                    String(color)
+                        .split(/[,，、\/|]/)
+                        .map(function(entry) { return entry.trim(); })
+                        .filter(Boolean)
+                        .forEach(function(entry) {
+                            var colorKey = entry.toLowerCase();
+                            if (colorSeen[colorKey]) return;
+                            colorSeen[colorKey] = true;
+                            colors.push(entry);
+                        });
+                }
+            });
+        }
+
+        if (!partNames.length && work.injPartName) {
+            partNames = String(work.injPartName).split(',').map(function(name) { return name.trim(); }).filter(Boolean);
+        }
+        if (!colors.length && work.injColor) {
+            colors = String(work.injColor).split(',').map(function(color) { return color.trim(); }).filter(Boolean);
+        }
+
+        if (!partNames.length || !colors.length) {
+            var inventory = Storage.getAll(INJ_INV_STORE) || [];
+            var injectionPartCandidates = [];
+            var lotNos = [];
+            if (Array.isArray(work.lots) && work.lots.length > 0) {
+                lotNos = work.lots.map(function(lot) { return String(lot && lot.lotNo || '').trim(); }).filter(Boolean);
+            } else if (work.lotNo) {
+                lotNos = String(work.lotNo).split(',').map(function(lotNo) { return lotNo.trim(); }).filter(Boolean);
+            }
+            if (work.injPartName) {
+                injectionPartCandidates = String(work.injPartName)
+                    .split(',')
+                    .map(function(name) { return name.trim(); })
+                    .filter(Boolean);
+            } else {
+                var materialCandidates = Storage.getAll(INJECTMAT_STORE) || [];
+                injectionPartCandidates = materialCandidates
+                    .filter(function(item) {
+                        if (!item) return false;
+                        var nameMatch = item.mfgProductName === (work.partName || '') || item.mfgProductName2 === (work.partName || '');
+                        var modelMatch = !work.carModel || !item.carModel || item.carModel === work.carModel;
+                        return nameMatch && modelMatch && item.injPartName;
+                    })
+                    .map(function(item) { return String(item.injPartName || '').trim(); })
+                    .filter(Boolean);
+            }
+            var candidateKeySet = {};
+            injectionPartCandidates.forEach(function(name) {
+                candidateKeySet[String(name).toLowerCase()] = true;
+            });
+            inventory.forEach(function(item) {
+                if (!item || !item.lotNo) return;
+                if (lotNos.indexOf(String(item.lotNo).trim()) < 0) return;
+                var partName = String(item.partName || item.injPartName || '').trim();
+                if (injectionPartCandidates.length && (!partName || !candidateKeySet[String(partName).toLowerCase()])) return;
+                var color = String(item.color || item.injColor || '').trim();
+                if (partName && !partSeen[partName.toLowerCase()]) {
+                    partSeen[partName.toLowerCase()] = true;
+                    partNames.push(partName);
+                }
+                if (color) {
+                    String(color)
+                        .split(/[,，、\/|]/)
+                        .map(function(entry) { return entry.trim(); })
+                        .filter(Boolean)
+                        .forEach(function(entry) {
+                            var colorKey = entry.toLowerCase();
+                            if (colorSeen[colorKey]) return;
+                            colorSeen[colorKey] = true;
+                            colors.push(entry);
+                        });
+                }
+            });
+        }
+
+        return {
+            partNames: partNames,
+            colors: colors,
+            partNameText: partNames.length ? partNames.join(', ') : '-',
+            colorText: colors.length ? colors.join(', ') : '-'
+        };
+    }
+
+    function _isPlatingInjectionColor(carModel, partName, planColor) {
+        var colors = _getMatchedInjectionColors(carModel, partName, planColor);
+        if (!colors.length && planColor) colors = [String(planColor)];
+        return colors.some(function(color) {
+            return /(crom|chrom|chrome|도금)/i.test(String(color || '').trim());
+        });
+    }
+
+    function _isPlatingForWork(work) {
+        if (!work) return false;
+        var lotColors = _getInjectionLotColorsForWork(work);
+        if (lotColors.length) {
+            return lotColors.some(function(color) {
+                return /(crom|chrom|chrome|도금)/i.test(String(color || '').trim());
+            });
+        }
+        return _isPlatingInjectionColor(work.carModel, work.partName, work.color);
+    }
+
+    function _getPaintingWorkByInspection(inspection) {
+        if (!inspection) return null;
+        const works = Storage.getAll(PAINTING_WORK_STORE) || [];
+        if (inspection.workId) {
+            const byId = Storage.getById(PAINTING_WORK_STORE, inspection.workId)
+                || works.find(function(work) {
+                    return String(work.id || '') === String(inspection.workId) || String(work.workId || '') === String(inspection.workId);
+                });
+            if (byId) return byId;
+        }
+        const inspectionLots = String(inspection.lotNo || '')
+            .split(',')
+            .map(function(lotNo) { return lotNo.trim(); })
+            .filter(Boolean);
+        return works.find(function(work) {
+            const sameCar = String(work.carModel || '') === String(inspection.carModel || '');
+            const samePart = String(work.partName || '') === String(inspection.partName || '');
+            const sameColor = !inspection.color || !work.color || String(work.color || '') === String(inspection.color || '');
+            if (!sameCar || !samePart || !sameColor) return false;
+            const workLots = Array.isArray(work.lots) && work.lots.length
+                ? work.lots.map(function(lot) { return String(lot && lot.lotNo || '').trim(); }).filter(Boolean)
+                : String(work.lotNo || '').split(',').map(function(lotNo) { return lotNo.trim(); }).filter(Boolean);
+            if (!inspectionLots.length) return true;
+            return inspectionLots.some(function(lotNo) { return workLots.indexOf(lotNo) >= 0; });
+        }) || null;
+    }
 
     // 지정된 도장 라인 완료 후 바로 다음 공정이 레이저인지 판단
     // true  → 다음 공정이 레이저 (레이저 대기품으로 이동)
@@ -4390,7 +4729,7 @@ const PaintingInspectionModule = (function() {
             const allDefects = Storage.getAll(DEFECT_STORE) || [];
             const injectionDefects = allDefects.filter(d => d && (d.type === 'injection' || !d.type));
             const paintingDefects = allDefects.filter(d => d && d.type === 'painting');
-            const platingDefects = _isPlatingInjectionColor(work.carModel, work.partName, work.color)
+            const platingDefects = _isPlatingForWork(work)
                 ? allDefects.filter(d => d && d.type === 'plating')
                 : [];
             const inspectors = Storage.getAll(DB.STORES.INSPECTORS) || [];
@@ -4398,6 +4737,7 @@ const PaintingInspectionModule = (function() {
             const lotDisplay = work.lots && work.lots.length > 0 ?
                 work.lots.map(l => l.lotNo).join(', ') :
                 (work.lotNo || '-');
+            const injectionMeta = _getInjectionMetaForWork(work);
 
         // 포장 초기값 계산
             const prevResidualQty = _getPaintPrevResidualQty(work.carModel, work.partName, work.color);
@@ -4422,7 +4762,11 @@ const PaintingInspectionModule = (function() {
                     <span style="color:var(--border);">|</span>
                     <span style="font-size:0.75rem; color:var(--text-muted);">컬러&nbsp;<strong style="color:var(--text-primary);">${work.color || '-'}</strong></span>
                     <span style="color:var(--border);">|</span>
-                    <span style="font-size:0.75rem; color:var(--text-muted);">LOT&nbsp;<strong style="color:var(--text-primary); font-family:monospace;">${lotDisplay}</strong></span>
+                    <span style="font-size:0.75rem; color:var(--text-muted);">사출명&nbsp;<strong style="color:var(--text-primary);">${injectionMeta.partNameText}</strong></span>
+                    <span style="color:var(--border);">|</span>
+                    <span style="font-size:0.75rem; color:var(--text-muted);">사출컬러&nbsp;<strong style="color:var(--text-primary);">${injectionMeta.colorText}</strong></span>
+                    <span style="color:var(--border);">|</span>
+                    <span style="font-size:0.75rem; color:var(--text-muted);">사출 LOT&nbsp;<strong style="color:var(--text-primary); font-family:monospace;">${lotDisplay}</strong></span>
                     <span style="color:var(--border);">|</span>
                     <span style="font-size:0.75rem; color:var(--text-muted);">작업수량&nbsp;<strong style="color:var(--accent-blue); font-size:0.95rem;">${UIUtils.formatNumber(work.productionQty || 0)} EA</strong>
                         <input type="hidden" id="inpInspectionQty" value="${work.productionQty || 0}">
@@ -4569,11 +4913,11 @@ const PaintingInspectionModule = (function() {
                 <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:8px;">
                     ${injectionDefects.map(d => `
                                         <div style="display:flex; flex-direction:column; gap:4px;">
-                                            <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary); display:flex; align-items:flex-start; gap:4px; min-width:0;">
-                                                <span style="flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name}</span>
-                                                <button type="button" title="불량유형 보기" onclick="LaserInspectionModule.showDefectTypeView('${d.id}')" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex-shrink:0;padding:0;">
+                                            <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary); display:flex; align-items:flex-start; gap:6px; min-width:0;">
+                                                <button type="button" title="불량유형 보기" onclick="LaserInspectionModule.showDefectTypeView('${d.id}')" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex:0 0 20px;padding:0;margin-top:1px;">
                                                     <span class="material-symbols-outlined" style="font-size:14px;">search</span>
                                                 </button>
+                                                <span style="flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name}</span>
                                             </label>
                                             <input type="text" inputmode="numeric" enterkeyhint="done" id="inj-${d.id}" value="" placeholder="-" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem;" oninput="this.value=this.value.replace(/[^0-9]/g,'');PaintingInspectionModule._updateDefectTotal()">
                                         </div>
@@ -4590,11 +4934,11 @@ const PaintingInspectionModule = (function() {
                 <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:8px;">
                     ${paintingDefects.map(d => `
                                         <div style="display:flex; flex-direction:column; gap:4px;">
-                                            <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary); display:flex; align-items:flex-start; gap:4px; min-width:0;">
-                                                <span style="flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name}</span>
-                                                <button type="button" title="불량유형 보기" onclick="LaserInspectionModule.showDefectTypeView('${d.id}')" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex-shrink:0;padding:0;">
+                                            <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary); display:flex; align-items:flex-start; gap:6px; min-width:0;">
+                                                <button type="button" title="불량유형 보기" onclick="LaserInspectionModule.showDefectTypeView('${d.id}')" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex:0 0 20px;padding:0;margin-top:1px;">
                                                     <span class="material-symbols-outlined" style="font-size:14px;">search</span>
                                                 </button>
+                                                <span style="flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name}</span>
                                             </label>
                                             <input type="text" inputmode="numeric" enterkeyhint="done" id="paint-${d.id}" value="" placeholder="-" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem;" oninput="this.value=this.value.replace(/[^0-9]/g,'');PaintingInspectionModule._updateDefectTotal()">
                                         </div>
@@ -4611,11 +4955,11 @@ const PaintingInspectionModule = (function() {
                 <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:8px;">
                     ${platingDefects.map(d => `
                                         <div style="display:flex; flex-direction:column; gap:4px;">
-                                            <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary); display:flex; align-items:flex-start; gap:4px; min-width:0;">
-                                                <span style="flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name}</span>
-                                                <button type="button" title="불량유형 보기" onclick="LaserInspectionModule.showDefectTypeView('${d.id}')" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex-shrink:0;padding:0;">
+                                            <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary); display:flex; align-items:flex-start; gap:6px; min-width:0;">
+                                                <button type="button" title="불량유형 보기" onclick="LaserInspectionModule.showDefectTypeView('${d.id}')" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex:0 0 20px;padding:0;margin-top:1px;">
                                                     <span class="material-symbols-outlined" style="font-size:14px;">search</span>
                                                 </button>
+                                                <span style="flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name}</span>
                                             </label>
                                             <input type="text" inputmode="numeric" enterkeyhint="done" id="plate-${d.id}" value="" placeholder="-" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem;" oninput="this.value=this.value.replace(/[^0-9]/g,'');PaintingInspectionModule._updateDefectTotal()">
                                         </div>
@@ -4633,6 +4977,8 @@ const PaintingInspectionModule = (function() {
             const modalEl = document.createElement('div');
             modalEl.className = 'modal fade';
             modalEl.style.display = 'block';
+            const modalId = 'paintingInspectionModalBox';
+            const modalHandleId = 'paintingInspectionModalHandle';
             modalEl.innerHTML = `
             <style>
                 @media print {
@@ -4648,9 +4994,9 @@ const PaintingInspectionModule = (function() {
                     .form-select { border: 1px solid #ccc !important; }
                 }
             </style>
-            <div style="position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:1000;">
-                <div style="background:white; border-radius:12px; max-width:85vw; max-height:92vh; width:85vw; overflow:auto; padding:16px 20px; box-shadow:0 10px 40px rgba(0,0,0,0.2);">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+            <div style="position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:1000;">
+                <div id="${modalId}" style="position:fixed; top:4vh; left:50%; transform:translateX(-50%); background:white; border-radius:12px; max-width:85vw; max-height:92vh; width:85vw; overflow:auto; padding:16px 20px; box-shadow:0 10px 40px rgba(0,0,0,0.2);">
+                    <div id="${modalHandleId}" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; cursor:move; user-select:none;">
                         <h2 style="margin:0; font-size:1.1rem;">도장 검사 입력</h2>
                         <button onclick="PaintingInspectionModule._closeInspectionModal()" style="background:none; border:none; font-size:24px; cursor:pointer; color:var(--text-muted);">✕</button>
                     </div>
@@ -4660,6 +5006,7 @@ const PaintingInspectionModule = (function() {
         `;
 
             document.body.appendChild(modalEl);
+            _makeInspectionModalDraggable(modalEl, modalId, modalHandleId);
 
         // 모달에 데이터 저장 (나중에 접근하기 위해)
             modalEl.inspectionWorkId = workId;
@@ -4684,6 +5031,46 @@ const PaintingInspectionModule = (function() {
             console.error('도장 검사 입력 모달 열기 실패', error);
             UIUtils.toast('외관 검사 창을 여는 중 오류가 발생했습니다.', 'error');
         }
+    }
+
+    function _makeInspectionModalDraggable(rootEl, modalId, handleId) {
+        const modalBox = rootEl.querySelector('#' + modalId);
+        const handle = rootEl.querySelector('#' + handleId);
+        if (!modalBox || !handle) return;
+
+        let dragState = null;
+
+        function onMouseMove(event) {
+            if (!dragState) return;
+            const nextLeft = dragState.startLeft + (event.clientX - dragState.startX);
+            const nextTop = dragState.startTop + (event.clientY - dragState.startY);
+            const maxLeft = Math.max(0, window.innerWidth - modalBox.offsetWidth);
+            const maxTop = Math.max(0, window.innerHeight - 60);
+            modalBox.style.left = Math.min(Math.max(0, nextLeft), maxLeft) + 'px';
+            modalBox.style.top = Math.min(Math.max(0, nextTop), maxTop) + 'px';
+            modalBox.style.transform = 'none';
+        }
+
+        function stopDrag() {
+            if (!dragState) return;
+            dragState = null;
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', stopDrag);
+        }
+
+        handle.addEventListener('mousedown', function(event) {
+            if (event.target.closest('button')) return;
+            const rect = modalBox.getBoundingClientRect();
+            dragState = {
+                startX: event.clientX,
+                startY: event.clientY,
+                startLeft: rect.left,
+                startTop: rect.top
+            };
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', stopDrag);
+            event.preventDefault();
+        });
     }
 
     // 검사자 필드 동적 추가
@@ -4854,11 +5241,15 @@ const PaintingInspectionModule = (function() {
 
         const injDefects = defects.filter(d => d.type === 'injection' || !d.type);
         const paintDefects = defects.filter(d => d.type === 'painting');
-        const platingDefects = _isPlatingInjectionColor(
-            state.selectedProduct?.carModel || state.selectedWork?.carModel || '',
-            state.selectedProduct?.partName || state.selectedWork?.partName || '',
-            state.selectedProduct?.color || state.selectedWork?.color || ''
-        ) ? defects.filter(d => d.type === 'plating') : [];
+        const _platingBaseWork = state.selectedWork || (state.selectedProduct ? {
+            carModel: state.selectedProduct.carModel || '',
+            partName: state.selectedProduct.partName || '',
+            color: state.selectedProduct.color || '',
+            lots: []
+        } : null);
+        const platingDefects = _isPlatingForWork(_platingBaseWork)
+            ? defects.filter(d => d.type === 'plating')
+            : [];
 
         let html = '';
 
@@ -6316,7 +6707,13 @@ const PaintingInspectionModule = (function() {
         const defectTypes = Storage.getAll(DB.STORES.DEFECT_TYPES) || [];
         const injDefectTypes  = defectTypes.filter(dt => dt && (dt.type === 'injection' || !dt.type));
         const paintDefectTypes = defectTypes.filter(dt => dt && dt.type === 'painting');
-        const platingDefectTypes = _isPlatingInjectionColor(inspection.carModel, inspection.partName, inspection.color)
+        const platingBaseWork = _getPaintingWorkByInspection(inspection) || {
+            carModel: inspection.carModel || '',
+            partName: inspection.partName || '',
+            color: inspection.color || '',
+            lotNo: inspection.lotNo || ''
+        };
+        const platingDefectTypes = _isPlatingForWork(platingBaseWork)
             ? defectTypes.filter(dt => dt && dt.type === 'plating')
             : [];
 

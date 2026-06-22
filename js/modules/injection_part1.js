@@ -571,13 +571,13 @@ var InjectionIncomingModule = (function() {
                 } else {
                     container.innerHTML = defects.map(d => `
                         <div style="background:var(--bg-secondary);padding:8px;border-radius:6px;border:1px solid var(--border);">
-                            <label style="font-size:0.8rem;color:var(--text-secondary);display:flex;align-items:center;gap:4px;margin-bottom:4px;min-width:0;">
-                                <span style="flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name || ''}</span>
+                            <label style="font-size:0.8rem;color:var(--text-secondary);display:flex;align-items:flex-start;gap:6px;margin-bottom:4px;min-width:0;">
                                 <button type="button" title="불량유형 보기"
                                     onclick="LaserInspectionModule.showDefectTypeView('${d.id}')"
-                                    style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex-shrink:0;padding:0;">
+                                    style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex:0 0 20px;padding:0;margin-top:1px;">
                                     <span class="material-symbols-outlined" style="font-size:14px;">search</span>
                                 </button>
+                                <span style="flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name || ''}</span>
                             </label>
                             <input type="number" class="form-input defect-input-new" data-defect-id="${d.id}" data-defect-name="${(d.name || '').replace(/"/g, '&quot;')}" min="0" placeholder="0" style="padding:4px 8px;font-size:0.85rem;" oninput="InjectionIncomingModule.calcTotalAddFailQty()">
                         </div>

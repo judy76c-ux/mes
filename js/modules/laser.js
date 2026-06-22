@@ -2724,13 +2724,13 @@ var LaserInspectionModule = (function() {
                 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;">
                     ${defects.map(d => `
                         <div style="display:flex;flex-direction:column;gap:4px;">
-                            <label style="font-size:0.78rem;font-weight:600;margin:0;color:var(--text-secondary);display:flex;align-items:flex-start;gap:4px;min-width:0;">
-                                <span style="flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${(d.name||'').replace(/"/g,'&quot;')}">${d.name}</span>
+                            <label style="font-size:0.78rem;font-weight:600;margin:0;color:var(--text-secondary);display:flex;align-items:flex-start;gap:6px;min-width:0;">
                                 <button type="button" title="불량유형 보기"
                                     onclick="LaserInspectionModule.showDefectTypeView('${d.id}')"
-                                    style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border-color);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex-shrink:0;padding:0;">
+                                    style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border-color);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex:0 0 20px;padding:0;margin-top:1px;">
                                     <span class="material-symbols-outlined" style="font-size:14px;">search</span>
                                 </button>
+                                <span style="flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${(d.name||'').replace(/"/g,'&quot;')}">${d.name}</span>
                             </label>
                             <input type="text" inputmode="numeric" enterkeyhint="done" id="${prefix}${d.id}" data-defect-name="${d.name}"
                                 value="${Number(dd[d.name]||0)>0?dd[d.name]:''}" placeholder="-"
@@ -3653,17 +3653,17 @@ var LaserStandbyModule = (function() {
                             style="cursor:pointer;"
                             onmouseover="this.style.background='var(--bg-secondary)'"
                             onmouseout="this.style.background=''">
-                            <td style="padding:5px 8px;font-size:0.8rem;font-weight:600;border-bottom:1px solid var(--border-color);max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                            <td style="padding:5px 8px;font-size:0.78rem;font-weight:600;border-bottom:1px solid var(--border-color);white-space:normal;word-break:break-word;line-height:1.3;">
                                 ${item.partName}
                             </td>
-                            <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">
+                            <td style="padding:5px 6px;font-size:0.74rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
                                 ${item.color && item.color !== '-' ? item.color : ''}
                             </td>
                             <td style="padding:5px 8px;text-align:right;border-bottom:1px solid var(--border-color);white-space:nowrap;">
-                                <span style="font-size:0.9rem;font-weight:800;color:${stockColor};">${UIUtils.formatNumber(stock)}</span>
-                                <span style="font-size:0.68rem;color:var(--text-muted);margin-left:1px;">EA</span>
+                                <span style="font-size:0.88rem;font-weight:800;color:${stockColor};">${UIUtils.formatNumber(stock)}</span>
+                                <span style="font-size:0.66rem;color:var(--text-muted);margin-left:1px;">EA</span>
                             </td>
-                            <td style="padding:5px 8px;font-size:0.7rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);white-space:nowrap;">
+                            <td style="padding:5px 8px;font-size:0.7rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);white-space:nowrap;text-align:right;">
                                 ${lastIn}
                             </td>
                         </tr>`;
@@ -3682,13 +3682,19 @@ var LaserStandbyModule = (function() {
                             재공 <strong>${UIUtils.formatNumber(totalStock)}</strong> EA
                         </div>
                     </div>
-                    <table style="width:100%;border-collapse:collapse;background:var(--bg-primary);">
+                    <table style="width:100%;border-collapse:collapse;background:var(--bg-primary);table-layout:fixed;">
+                        <colgroup>
+                            <col>
+                            <col style="width:62px;">
+                            <col style="width:96px;">
+                            <col style="width:108px;">
+                        </colgroup>
                         <thead>
                             <tr style="background:var(--bg-secondary);">
                                 <th style="padding:4px 8px;text-align:left;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">품명</th>
-                                <th style="padding:4px 8px;text-align:left;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">컬러</th>
+                                <th style="padding:4px 6px;text-align:center;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">컬러</th>
                                 <th style="padding:4px 8px;text-align:right;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">재고</th>
-                                <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">최근입고</th>
+                                <th style="padding:4px 8px;text-align:right;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">최근입고</th>
                             </tr>
                         </thead>
                         <tbody>${rows}</tbody>

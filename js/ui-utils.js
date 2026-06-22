@@ -7,6 +7,8 @@
 const UIUtils = (function () {
     'use strict';
 
+    let modalDragObserverInitialized = false;
+
     // ── 날짜 유틸 ────────────────────────────────────────────────────────
     function today() {
         return new Date().toISOString().split('T')[0];
@@ -78,6 +80,122 @@ const UIUtils = (function () {
         }, 3500);
     }
 
+    function _clamp(value, min, max) {
+        return Math.min(Math.max(value, min), max);
+    }
+
+    function _resetModalPosition(box) {
+        if (!box) return;
+        box.style.left = '';
+        box.style.top = '';
+        box.style.right = '';
+        box.style.bottom = '';
+        box.style.position = '';
+        box.style.margin = '';
+        box.style.transform = '';
+    }
+
+    function _findDragHandle(box) {
+        if (!box) return null;
+        return box.querySelector('.modal-header, [data-modal-drag-handle]') || box.firstElementChild || box;
+    }
+
+    function _primeDraggableBoxPosition(box) {
+        if (!box) return;
+        const rect = box.getBoundingClientRect();
+        box.style.position = 'fixed';
+        box.style.left = `${Math.max(8, rect.left)}px`;
+        box.style.top = `${Math.max(8, rect.top)}px`;
+        box.style.margin = '0';
+        box.style.transform = 'none';
+    }
+
+    function makeDraggableModal(box, handle) {
+        if (!box) return;
+        const dragHandle = handle || _findDragHandle(box);
+        if (!dragHandle || box.dataset.draggableModalBound === 'true') return;
+
+        box.dataset.draggableModalBound = 'true';
+        dragHandle.dataset.modalDragHandle = 'true';
+        if (!dragHandle.style.cursor) dragHandle.style.cursor = 'move';
+
+        dragHandle.addEventListener('mousedown', (event) => {
+            if (event.button !== 0) return;
+            if (event.target.closest('button, a, input, select, textarea, label, [role="button"], .btn, .modal-close-btn')) return;
+
+            _primeDraggableBoxPosition(box);
+            const rect = box.getBoundingClientRect();
+            const startX = event.clientX;
+            const startY = event.clientY;
+            const startLeft = rect.left;
+            const startTop = rect.top;
+
+            document.body.style.userSelect = 'none';
+
+            function onMove(moveEvent) {
+                const nextLeft = _clamp(startLeft + (moveEvent.clientX - startX), 8, Math.max(8, window.innerWidth - rect.width - 8));
+                const nextTop = _clamp(startTop + (moveEvent.clientY - startY), 8, Math.max(8, window.innerHeight - rect.height - 8));
+                box.style.left = `${nextLeft}px`;
+                box.style.top = `${nextTop}px`;
+            }
+
+            function onUp() {
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                document.body.style.userSelect = '';
+            }
+
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+    }
+
+    function _looksLikeFullOverlay(el) {
+        if (!(el instanceof HTMLElement)) return false;
+        const style = window.getComputedStyle(el);
+        if (style.position !== 'fixed') return false;
+        if (el.classList.contains('modal-overlay')) return true;
+        const rect = el.getBoundingClientRect();
+        return rect.width >= window.innerWidth * 0.7 && rect.height >= window.innerHeight * 0.7;
+    }
+
+    function _enhanceDraggableModals(root) {
+        if (!(root instanceof HTMLElement)) return;
+
+        if (root.classList?.contains('modal-overlay')) {
+            const box = root.querySelector('.modal-container') || root.firstElementChild;
+            makeDraggableModal(box);
+        }
+
+        if (_looksLikeFullOverlay(root) && root.firstElementChild instanceof HTMLElement) {
+            makeDraggableModal(root.firstElementChild);
+        }
+
+        root.querySelectorAll?.('.modal-overlay').forEach((overlay) => {
+            const box = overlay.querySelector('.modal-container') || overlay.firstElementChild;
+            makeDraggableModal(box);
+        });
+    }
+
+    function _initModalDragObserver() {
+        if (modalDragObserverInitialized) return;
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', _initModalDragObserver, { once: true });
+            return;
+        }
+        modalDragObserverInitialized = true;
+        _enhanceDraggableModals(document.body);
+
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                mutation.addedNodes.forEach((node) => {
+                    if (node instanceof HTMLElement) _enhanceDraggableModals(node);
+                });
+            });
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+    }
+
     // ── 모달 ──────────────────────────────────────────────────────────────
     // options: { title, body, footer, buttons, size }
     // buttons: [{ label, class, onClick }]
@@ -94,10 +212,12 @@ const UIUtils = (function () {
         if (header) {
             header.classList.remove('plan-day-modal-header');
             header.querySelector('.plan-day-line-switch')?.remove();
+            header.setAttribute('data-modal-drag-handle', 'true');
         }
         if (container) {
             container.style.borderTop = '';
             container.style.boxShadow = '';
+            _resetModalPosition(container);
             const sizeMap = {
                 sm: 'min(420px, calc(100vw - 32px))',
                 md: 'min(920px, calc(100vw - 32px))',
@@ -132,6 +252,7 @@ const UIUtils = (function () {
         }
 
         overlay.classList.add('active');
+        makeDraggableModal(container, header);
 
         // 닫기 버튼
         const closeBtn = document.getElementById('modalCloseBtn');
@@ -159,6 +280,7 @@ const UIUtils = (function () {
             if (container) {
                 container.style.borderTop = '';
                 container.style.boxShadow = '';
+                _resetModalPosition(container);
             }
         }
     }
@@ -174,28 +296,50 @@ const UIUtils = (function () {
 
     // ── 확인 다이얼로그 ───────────────────────────────────────────────────
     function confirm(message, onConfirm, onCancel) {
+        let settled = false;
+        const cleanup = () => {
+            document.removeEventListener('keydown', keyHandler, true);
+        };
+        const accept = () => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            closeModal();
+            if (typeof onConfirm === 'function') onConfirm();
+        };
+        const cancel = () => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            closeModal();
+            if (typeof onCancel === 'function') onCancel();
+        };
+        const keyHandler = (e) => {
+            if (e.key === 'Enter') {
+                // 텍스트 입력 중에는 무시 — confirm 모달에 입력 필드는 없지만 안전 가드
+                const tag = (e.target && e.target.tagName || '').toLowerCase();
+                if (tag === 'textarea' || (tag === 'input' && e.target.type === 'text')) return;
+                e.preventDefault();
+                accept();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                cancel();
+            }
+        };
         openModal({
             title: '확인',
             body:  `<p style="margin:8px 0;font-size:.9rem;color:var(--text-primary);">${_esc(message)}</p>`,
             buttons: [
-                {
-                    label: '확인',
-                    class: 'btn-primary',
-                    onClick: () => {
-                        closeModal();
-                        if (typeof onConfirm === 'function') onConfirm();
-                    }
-                },
-                {
-                    label: '취소',
-                    class: 'btn-secondary',
-                    onClick: () => {
-                        closeModal();
-                        if (typeof onCancel === 'function') onCancel();
-                    }
-                }
+                { label: '확인', class: 'btn-primary',   onClick: accept },
+                { label: '취소', class: 'btn-secondary', onClick: cancel }
             ]
         });
+        document.addEventListener('keydown', keyHandler, true);
+        // 확인 버튼에 포커스
+        setTimeout(() => {
+            const btn = document.querySelector('.modal .modal-footer .btn-primary, .modal-footer .btn-primary');
+            if (btn) btn.focus();
+        }, 50);
     }
 
     // ── 배지 HTML ─────────────────────────────────────────────────────────
@@ -310,9 +454,14 @@ const UIUtils = (function () {
                 display:flex;flex-direction:column;gap:8px;
                 z-index:9999;pointer-events:none;
             }
+            [data-modal-drag-handle="true"] {
+                cursor: move;
+            }
         `;
         document.head.appendChild(style);
     })();
+
+    _initModalDragObserver();
 
     // ── Public API ───────────────────────────────────────────────────────
     return {
@@ -329,6 +478,7 @@ const UIUtils = (function () {
         badge,
         itemTypeBadge,
         sortCarModels,
-        renderPagination
+        renderPagination,
+        makeDraggableModal
     };
 })();

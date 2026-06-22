@@ -909,6 +909,49 @@ app.post('/api/photos/mkdirs', async (req, res) => {
   res.json({ baseDir, created: results.filter(r => r.ok).length, total: results.length, results });
 });
 
+// 폴더별 상태(존재/파일수/총크기/최근수정) 조회
+app.post('/api/photos/stats', async (req, res) => {
+  const { subdirs = [] } = req.body || {};
+  const baseDir = getPhotoDir();
+  const results = [];
+  for (const subdir of subdirs) {
+    const safeSub = String(subdir).split('/').map(s => s.replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 40)).filter(Boolean).join('/');
+    if (!safeSub) { results.push({ subdir, exists: false, error: 'invalid name' }); continue; }
+    const dir = path.join(baseDir, safeSub);
+    try {
+      const stat = await fs.stat(dir);
+      if (!stat.isDirectory()) {
+        results.push({ subdir: safeSub, exists: false, error: 'not a directory' });
+        continue;
+      }
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      let fileCount = 0;
+      let totalSize = 0;
+      let latestMtime = 0;
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        try {
+          const st = await fs.stat(path.join(dir, entry.name));
+          fileCount += 1;
+          totalSize += st.size;
+          if (st.mtimeMs > latestMtime) latestMtime = st.mtimeMs;
+        } catch {}
+      }
+      results.push({
+        subdir: safeSub,
+        path: dir,
+        exists: true,
+        fileCount,
+        totalSize,
+        latestMtime: latestMtime ? new Date(latestMtime).toISOString() : null
+      });
+    } catch (err) {
+      results.push({ subdir: safeSub, exists: false, error: err.code || err.message });
+    }
+  }
+  res.json({ baseDir, results });
+});
+
 // ?? ?ъ쭊 ??젣 ??
 app.delete('/api/photos', async (req, res) => {
   const { url } = req.body || {};

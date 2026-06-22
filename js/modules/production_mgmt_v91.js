@@ -2505,16 +2505,19 @@ var ProdStandardsModule = (function() {
                     </div>` : ''}
                 </div>
                 <div style="display:flex;flex-direction:column;gap:3px;padding:6px 9px;">
-                    ${stationNames.map(station => {
+                    ${stationNames.map((station, idx) => {
                         const a = findStation(paintA, station);
                         const b = findStation(paintB, station);
                         const paintStationProc = paintA ? '도장(A)' : '도장(B)';
+                        const isLast = idx === stationNames.length - 1;
                         return `
                         <div ${_processStandardMoveEdit ? `draggable="true"
                             ondragstart="ProdStandardsModule._stationDragStart('${_jsArg(paintStationProc)}','${_jsArg(station)}',event)"
                             ondragover="ProdStandardsModule._stationDragOver(event)"
                             ondrop="ProdStandardsModule._stationDrop('${_jsArg(paintStationProc)}','${_jsArg(station)}',event)"` : ''}
-                            style="display:grid;grid-template-columns:120px minmax(0,1fr) 16px minmax(0,1fr);gap:8px;align-items:center;${_processStandardMoveEdit ? 'cursor:grab;' : ''}">
+                            style="display:grid;grid-template-columns:120px minmax(0,1fr) 16px minmax(0,1fr);gap:8px;align-items:center;
+                                   ${isLast ? '' : 'border-bottom:1px dashed var(--border-color);padding-bottom:6px;'}
+                                   ${_processStandardMoveEdit ? 'cursor:grab;' : ''}">
                             <div style="display:flex;align-items:center;gap:4px;font-size:.77rem;font-weight:800;color:var(--text-secondary);padding:6px 8px;
                                         border-radius:6px;background:var(--bg-primary);border:1px solid var(--border-color);">
                                 ${_processStandardMoveEdit ? `<span class="material-symbols-outlined" title="세부공정 드래그로 이동" style="font-size:14px;color:var(--text-muted);cursor:grab;">drag_indicator</span>` : ''}${station}
@@ -2546,12 +2549,16 @@ var ProdStandardsModule = (function() {
                         </div>` : ''}
                 </div>
                 <div style="display:flex;flex-direction:column;gap:3px;padding:6px 9px;">
-                    ${group.stations.map(st => `
+                    ${group.stations.map((st, idx) => {
+                        const isLast = idx === group.stations.length - 1;
+                        return `
                         <div ${_processStandardMoveEdit ? `draggable="true"
                             ondragstart="ProdStandardsModule._stationDragStart('${_jsArg(group.process)}','${_jsArg(st.station)}',event)"
                             ondragover="ProdStandardsModule._stationDragOver(event)"
                             ondrop="ProdStandardsModule._stationDrop('${_jsArg(group.process)}','${_jsArg(st.station)}',event)"` : ''}
-                            style="display:grid;grid-template-columns:120px minmax(0,1fr);gap:8px;align-items:center;${_processStandardMoveEdit ? 'cursor:grab;' : ''}">
+                            style="display:grid;grid-template-columns:120px minmax(0,1fr);gap:8px;align-items:center;
+                                   ${isLast ? '' : 'border-bottom:1px dashed var(--border-color);padding-bottom:6px;'}
+                                   ${_processStandardMoveEdit ? 'cursor:grab;' : ''}">
                             <div style="display:flex;flex-direction:column;gap:5px;font-size:.77rem;font-weight:800;color:var(--text-secondary);
                                         padding:6px 8px;border-radius:6px;background:var(--bg-primary);border:1px solid var(--border-color);">
                                 <span style="display:flex;align-items:center;gap:4px;">${_processStandardMoveEdit ? `<span class="material-symbols-outlined" title="세부공정 드래그로 이동" style="font-size:14px;color:var(--text-muted);cursor:grab;">drag_indicator</span>` : ''}${st.station}</span>
@@ -2572,8 +2579,8 @@ var ProdStandardsModule = (function() {
                                        ${_processStandardMoveEdit ? 'min-height:36px;outline:1px dashed rgba(37,99,235,.22);outline-offset:3px;border-radius:8px;padding:4px;' : ''}">
                                 ${st.standards.map(std => renderStd(std, group.process, st.station)).join('')}
                             </div>
-                        </div>
-                    `).join('')}
+                        </div>`;
+                    }).join('')}
                 </div>
             </section>
         `;
@@ -3616,33 +3623,78 @@ var ProdStandardsModule = (function() {
             return val ? `<td style="${s}">${_esc(val)}</td>` : `<td style="${s}color:#cbd5e1;">/ </td>`;
         };
 
-        const tableBlocks = Object.entries(carGroups).length ? Object.entries(carGroups)
-            .sort(([a], [b]) => a.localeCompare(b, 'ko'))
-            .map(([car, tmpls]) => {
-                const firstProd = productById[(tmpls[0] || {}).productId] || {};
-                const typeBadge = itemTypeBadge(firstProd.itemType);
-                const seen = new Set();
-                const rows = tmpls
-                    .sort((a, b) => (a.color || '').localeCompare(b.color || '', 'ko'))
-                    .filter(t => { const k = (t.color || '').trim(); if (seen.has(k)) return false; seen.add(k); return true; })
-                    .map(t => {
-                        const items = t.items || [];
-                        return `<tr>
-                            ${td(t.color || '', 'left')}
-                            ${td(colorRangeStr(findItem(items, 'color_l')))}
-                            ${td(colorRangeStr(findItem(items, 'color_a')))}
-                            ${td(colorRangeStr(findItem(items, 'color_b')))}
-                            ${td(glossStr(findItem(items, 'gloss')))}
-                        </tr>`;
-                    }).join('');
-                return `<div style="margin-bottom:20px;">
-                    <div style="font-size:.83rem;font-weight:800;color:#1e293b;padding:7px 12px;background:#f1f5f9;border-radius:6px 6px 0 0;border:1px solid #e2e8f0;border-bottom:none;display:flex;align-items:center;">${_esc(car)}${typeBadge}</div>
-                    <table style="width:100%;border-collapse:collapse;">
-                        <thead><tr>${th('컬러','left')}${th('색차 △L')}${th('색차 △a')}${th('색차 △b')}${th('광택 G')}</tr></thead>
-                        <tbody>${rows}</tbody>
-                    </table>
-                </div>`;
-            }).join('')
+        const typeOrder = (t) => t === '양산품' ? 0 : (t && String(t).startsWith('A')) ? 1 : t === '개발품' ? 2 : 3;
+        const productsByCar = {};
+        products.forEach(p => {
+            const c = String(p.carModel || '').trim();
+            if (!c) return;
+            if (!productsByCar[c]) productsByCar[c] = [];
+            productsByCar[c].push(p);
+        });
+        const carRepItemType = (car) => {
+            const list = productsByCar[car] || [];
+            if (!list.length) return '기타';
+            const counts = {};
+            list.forEach(p => {
+                const it = p.itemType || '기타';
+                counts[it] = (counts[it] || 0) + 1;
+            });
+            let best = '기타', bestRank = 999, bestCount = -1;
+            Object.entries(counts).forEach(([k, v]) => {
+                const r = typeOrder(k);
+                if (v > bestCount || (v === bestCount && r < bestRank)) { best = k; bestCount = v; bestRank = r; }
+            });
+            return best;
+        };
+
+        const sortedCarEntries = Object.entries(carGroups).sort(([carA], [carB]) => {
+            const oa = typeOrder(carRepItemType(carA));
+            const ob = typeOrder(carRepItemType(carB));
+            if (oa !== ob) return oa - ob;
+            return carA.localeCompare(carB, 'ko');
+        });
+
+        const carCellStyle = `padding:7px 12px;border:1px solid #e2e8f0;font-size:.83rem;font-weight:800;color:#1e293b;background:#f1f5f9;white-space:nowrap;vertical-align:middle;text-align:left;`;
+        const bodyRowsHtml = sortedCarEntries.map(([car, tmpls]) => {
+            const seen = new Set();
+            const uniqueTmpls = tmpls
+                .sort((a, b) => (a.color || '').localeCompare(b.color || '', 'ko'))
+                .filter(t => { const k = (t.color || '').trim(); if (seen.has(k)) return false; seen.add(k); return true; });
+            if (!uniqueTmpls.length) return '';
+            const repType = carRepItemType(car);
+            const typeBadge = itemTypeBadge(repType);
+            return uniqueTmpls.map((t, idx) => {
+                const items = t.items || [];
+                const carCell = idx === 0
+                    ? `<td rowspan="${uniqueTmpls.length}" style="${carCellStyle}">
+                            <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+                                <span>${_esc(car)}</span>${typeBadge}
+                            </div>
+                       </td>`
+                    : '';
+                return `<tr>
+                    ${carCell}
+                    ${td(t.color || '', 'left')}
+                    ${td(colorRangeStr(findItem(items, 'color_l')))}
+                    ${td(colorRangeStr(findItem(items, 'color_a')))}
+                    ${td(colorRangeStr(findItem(items, 'color_b')))}
+                    ${td(glossStr(findItem(items, 'gloss')))}
+                </tr>`;
+            }).join('');
+        }).join('');
+
+        const tableBlocks = bodyRowsHtml
+            ? `<table style="width:100%;border-collapse:collapse;">
+                <thead><tr>
+                    ${th('차종','left')}
+                    ${th('컬러','left')}
+                    ${th('색차 △L')}
+                    ${th('색차 △a')}
+                    ${th('색차 △b')}
+                    ${th('광택 G')}
+                </tr></thead>
+                <tbody>${bodyRowsHtml}</tbody>
+               </table>`
             : `<div style="text-align:center;padding:48px 20px;color:#94a3b8;border:2px dashed #e2e8f0;border-radius:8px;">
                 <span class="material-symbols-outlined" style="font-size:36px;display:block;margin-bottom:8px;">inventory_2</span>
                 <div style="font-size:.85rem;">초중종물 관리 &gt; 품목별 항목 기준에 등록된 데이터가 없습니다.</div>
@@ -3682,6 +3734,281 @@ var ProdStandardsModule = (function() {
             ${historyHtml}`;
     }
 
+    async function _renderFilmThicknessPage(el) {
+        const TEMPLATE_KIND = 'quality_template';
+        const all = Storage.getAll(DB.STORES.PROD_QUALITY_CHECK) || [];
+        const templates = all.filter(d => d._docKind === TEMPLATE_KIND);
+
+        const findItem = (items, key) => (items || []).find(i => String(i.key || '') === key);
+
+        const filmInfo = (item) => {
+            // na: 항목 자체가 템플릿에 정의되지 않음 (예: 하도가 없는 타입)
+            if (!item) return { display: '', mid: null, lo: null, hi: null, raw: '', na: true };
+            const lo = parseFloat(item.lowerSpec ?? '');
+            const hi = parseFloat(item.upperSpec ?? '');
+            const rawSpec = String(item.spec || '').trim();
+            if (!isNaN(lo) && !isNaN(hi)) {
+                const mid = (lo + hi) / 2;
+                const fmt = v => v % 1 === 0 ? String(v) : String(Math.round(v * 10) / 10);
+                return { display: `${fmt(lo)} ~ ${fmt(hi)}`, mid, lo, hi, raw: rawSpec || `${fmt(lo)}~${fmt(hi)}`, na: false };
+            }
+            const single = parseFloat(rawSpec);
+            if (!isNaN(single)) return { display: rawSpec, mid: single, lo: single, hi: single, raw: rawSpec, na: false };
+            return { display: rawSpec, mid: null, lo: null, hi: null, raw: rawSpec, na: false };
+        };
+
+        const sumInfo = (a, b) => {
+            const fmt = v => v % 1 === 0 ? String(v) : String(Math.round(v * 10) / 10);
+            if (a.lo != null && a.hi != null && b.lo != null && b.hi != null) {
+                return `${fmt(a.lo + b.lo)} ~ ${fmt(a.hi + b.hi)}`;
+            }
+            if (a.mid != null && b.mid != null) return fmt(a.mid + b.mid);
+            return '';
+        };
+
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const productById = {};
+        products.forEach(p => { if (p.id) productById[p.id] = p; });
+
+        const itemTypeBadge = (itemType) => {
+            if (itemType === '양산품') return `<span style="margin-left:6px;font-size:.7rem;font-weight:700;padding:1px 6px;border-radius:9px;background:rgba(52,211,153,0.15);color:#059669;border:1px solid #6ee7b7;">양산</span>`;
+            if (itemType === '개발품') return `<span style="margin-left:6px;font-size:.7rem;font-weight:700;padding:1px 6px;border-radius:9px;background:rgba(59,130,246,0.15);color:#2563eb;border:1px solid #93c5fd;">개발</span>`;
+            if (itemType && itemType.startsWith('A')) return `<span style="margin-left:6px;font-size:.7rem;font-weight:700;padding:1px 6px;border-radius:9px;background:rgba(251,191,36,0.15);color:#b45309;border:1px solid #fcd34d;">A/S</span>`;
+            return '';
+        };
+
+        const groupMap = new Map();
+        templates.forEach(t => {
+            const car = String(t.carModel || '').trim();
+            const color = String(t.color || '').trim();
+            if (!car) return;
+            const key = car + '||' + color;
+            const items = t.items || [];
+            const under = filmInfo(findItem(items, 'film_under'));
+            const top = filmInfo(findItem(items, 'film_top'));
+            const prod = productById[t.productId] || {};
+            const partName = String(t.partName || prod.partName || '').trim();
+            if (!groupMap.has(key)) groupMap.set(key, { car, color, productId: t.productId, entries: [] });
+            groupMap.get(key).entries.push({ under, top, productId: t.productId, partName, updatedAt: t.updatedAt || '' });
+        });
+
+        // 같은 spec을 가진 품명들을 그룹화 + 최다 빈도 spec을 권장값으로
+        const groupSpecsByValue = (entries, keyField) => {
+            const map = new Map();
+            entries.forEach(e => {
+                const raw = e[keyField].raw || '';
+                const display = e[keyField].display || (raw || '-');
+                if (!map.has(raw)) map.set(raw, { raw, display, parts: [] });
+                map.get(raw).parts.push(e.partName || '(품명 없음)');
+            });
+            const arr = [...map.values()].map(g => ({ ...g, parts: [...new Set(g.parts)].sort((a, b) => a.localeCompare(b, 'ko')) }));
+            arr.sort((a, b) => b.parts.length - a.parts.length); // 다수 우선
+            return arr;
+        };
+
+        const carGroups = {};
+        const conflicts = [];
+        [...groupMap.values()].forEach(g => {
+            // na (항목 미정의)는 비교/미입력 카운트 모두에서 제외
+            const underApplicable = g.entries.filter(e => !e.under.na);
+            const topApplicable = g.entries.filter(e => !e.top.na);
+            const underFilled = underApplicable.filter(e => e.under.raw);
+            const topFilled = topApplicable.filter(e => e.top.raw);
+            const underSpecs = new Set(underFilled.map(e => e.under.raw));
+            const topSpecs = new Set(topFilled.map(e => e.top.raw));
+            const underConflict = underSpecs.size > 1;
+            const topConflict = topSpecs.size > 1;
+            const conflict = underConflict || topConflict;
+            const underGroups = groupSpecsByValue(underFilled.length ? underFilled : underApplicable, 'under');
+            const topGroups = groupSpecsByValue(topFilled.length ? topFilled : topApplicable, 'top');
+            if (conflict) {
+                conflicts.push({
+                    car: g.car,
+                    color: g.color,
+                    templateCount: g.entries.length,
+                    underApplicable: underApplicable.length,
+                    topApplicable: topApplicable.length,
+                    underFilledCount: underFilled.length,
+                    topFilledCount: topFilled.length,
+                    underMissingCount: underApplicable.length - underFilled.length,
+                    topMissingCount: topApplicable.length - topFilled.length,
+                    underNa: g.entries.length - underApplicable.length,
+                    topNa: g.entries.length - topApplicable.length,
+                    underConflict,
+                    topConflict,
+                    underGroups,
+                    topGroups,
+                    underRecommended: underGroups[0],
+                    topRecommended: topGroups[0]
+                });
+            }
+            // 대표값(다수결): 값이 있는 entry 중 최다 빈도. 모두 비어있으면 첫 applicable. 모두 na면 첫 entry.
+            const refUnder = underGroups[0] ? (g.entries.find(e => e.under.raw === underGroups[0].raw) || underApplicable[0] || g.entries[0]).under
+                                            : (underApplicable[0] || g.entries[0]).under;
+            const refTop   = topGroups[0]   ? (g.entries.find(e => e.top.raw === topGroups[0].raw)   || topApplicable[0]   || g.entries[0]).top
+                                            : (topApplicable[0]   || g.entries[0]).top;
+            if (!carGroups[g.car]) carGroups[g.car] = [];
+            carGroups[g.car].push({ color: g.color, productId: g.productId, under: refUnder, top: refTop, conflict });
+        });
+
+        const th = (txt, align = 'center') => `<th style="padding:7px 12px;border:1px solid #e2e8f0;font-size:.76rem;font-weight:700;text-align:${align};background:#f8fafc;white-space:nowrap;">${txt}</th>`;
+        const td = (val, align = 'center', extra = '') => {
+            const s = `padding:7px 12px;border:1px solid #e2e8f0;font-size:.8rem;text-align:${align};white-space:nowrap;${extra}`;
+            return val ? `<td style="${s}">${_esc(val)}</td>` : `<td style="${s}color:#cbd5e1;">/ </td>`;
+        };
+
+        const renderSpecGroups = (groups, conflictThis) => {
+            if (!groups.length) return '<span style="color:#94a3b8;">(데이터 없음)</span>';
+            const total = groups.reduce((s, g) => s + g.parts.length, 0);
+            return groups.map((g, idx) => {
+                const isRecommended = conflictThis && idx === 0;
+                const labelText = g.display || '-';
+                const partsText = g.parts.length
+                    ? g.parts.map(p => `<span style="display:inline-block;background:#fff;padding:1px 7px;margin:1px 2px 1px 0;border-radius:10px;border:1px solid #fecaca;font-size:.72rem;color:#7f1d1d;">${_esc(p)}</span>`).join('')
+                    : '<span style="color:#94a3b8;font-size:.72rem;">(품명 정보 없음)</span>';
+                const tag = isRecommended
+                    ? `<span style="display:inline-block;font-size:.66rem;font-weight:800;color:#065f46;background:#d1fae5;border:1px solid #6ee7b7;border-radius:8px;padding:1px 6px;margin-left:4px;">권장(${g.parts.length}/${total})</span>`
+                    : (conflictThis ? `<span style="display:inline-block;font-size:.66rem;font-weight:800;color:#dc2626;background:#fff;border:1px solid #fecaca;border-radius:8px;padding:1px 6px;margin-left:4px;">상이(${g.parts.length}/${total})</span>` : '');
+                return `<div style="margin:4px 0;padding:5px 8px;background:${isRecommended ? '#ecfdf5' : '#fff7f7'};border:1px solid ${isRecommended ? '#a7f3d0' : '#fecaca'};border-radius:6px;">
+                    <div style="font-size:.78rem;font-weight:800;color:#0f172a;">
+                        <code style="background:transparent;font-size:.8rem;">${_esc(labelText)}</code>${tag}
+                    </div>
+                    <div style="margin-top:3px;line-height:1.5;">${partsText}</div>
+                </div>`;
+            }).join('');
+        };
+
+        const conflictBanner = conflicts.length ? `
+            <div style="margin-bottom:14px;padding:12px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;font-size:.82rem;">
+                <div style="display:flex;align-items:center;gap:6px;font-weight:800;margin-bottom:4px;">
+                    <span class="material-symbols-outlined" style="font-size:18px;">warning</span>
+                    동일 차종/컬러에서 도막두께 값 불일치 ${conflicts.length}건
+                </div>
+                <div style="font-size:.74rem;color:#7f1d1d;margin-bottom:10px;line-height:1.5;">
+                    같은 차종·컬러에 속한 품명들의 기준값이 일치하지 않습니다. 본 표에는 다수결로 채택된 <strong>권장값</strong>이 표시되며,
+                    아래 목록에서 <strong>상이한 값을 가진 품명</strong>을 확인해 <strong>초중종물 관리 &gt; 품목별 항목 기준</strong>에서 수정하세요.
+                </div>
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                ${conflicts.map(c => `
+                    <div style="background:#fff;border:1px solid #fecaca;border-radius:8px;padding:10px 12px;">
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+                            <strong style="font-size:.86rem;color:#7f1d1d;">${_esc(c.car)} / ${_esc(c.color || '(컬러 미지정)')}</strong>
+                            <span style="font-size:.7rem;color:#7f1d1d;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:1px 7px;">템플릿 ${c.templateCount}건</span>
+                            ${c.underConflict ? `<span style="font-size:.7rem;color:#fff;background:#dc2626;border-radius:8px;padding:1px 7px;">하도 불일치(${c.underGroups.length}종)</span>` : ''}
+                            ${c.topConflict ? `<span style="font-size:.7rem;color:#fff;background:#dc2626;border-radius:8px;padding:1px 7px;">상도 불일치(${c.topGroups.length}종)</span>` : ''}
+                            ${c.underMissingCount ? `<span style="font-size:.7rem;color:#92400e;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:1px 7px;">하도 미입력 ${c.underMissingCount}건</span>` : ''}
+                            ${c.topMissingCount ? `<span style="font-size:.7rem;color:#92400e;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:1px 7px;">상도 미입력 ${c.topMissingCount}건</span>` : ''}
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                            <div>
+                                <div style="font-size:.72rem;font-weight:800;color:#475569;margin-bottom:3px;">하도 (μm)</div>
+                                ${renderSpecGroups(c.underGroups, c.underConflict)}
+                            </div>
+                            <div>
+                                <div style="font-size:.72rem;font-weight:800;color:#475569;margin-bottom:3px;">상도 (μm)</div>
+                                ${renderSpecGroups(c.topGroups, c.topConflict)}
+                            </div>
+                        </div>
+                        ${(c.underConflict || c.topConflict) ? `
+                        <div style="margin-top:8px;padding:6px 9px;background:#f0fdf4;border:1px dashed #86efac;border-radius:6px;font-size:.74rem;color:#065f46;">
+                            <strong>조치 제안:</strong> 위의 <em>권장</em> 값으로 통일하거나, 품명별로 다른 기준이 맞다면 차종/컬러를 세분화하세요.
+                            ${c.underConflict ? `하도 권장: <code style="background:#fff;padding:1px 5px;border:1px solid #86efac;border-radius:3px;">${_esc(c.underRecommended.display || '-')}</code>` : ''}
+                            ${c.topConflict ? `${c.underConflict ? ' · ' : ''}상도 권장: <code style="background:#fff;padding:1px 5px;border:1px solid #86efac;border-radius:3px;">${_esc(c.topRecommended.display || '-')}</code>` : ''}
+                        </div>` : ''}
+                    </div>
+                `).join('')}
+                </div>
+            </div>` : '';
+
+        const typeOrder = (t) => t === '양산품' ? 0 : (t && String(t).startsWith('A')) ? 1 : t === '개발품' ? 2 : 3;
+        // 차종 대표 itemType: 차종 내 제품 마스터 전체에서 가장 많은 itemType (templates productId가 없어도 동작)
+        const productsByCar = {};
+        products.forEach(p => {
+            const c = String(p.carModel || '').trim();
+            if (!c) return;
+            if (!productsByCar[c]) productsByCar[c] = [];
+            productsByCar[c].push(p);
+        });
+        const carRepItemType = (car) => {
+            const list = productsByCar[car] || [];
+            if (!list.length) return '기타';
+            const counts = {};
+            list.forEach(p => {
+                const it = p.itemType || '기타';
+                counts[it] = (counts[it] || 0) + 1;
+            });
+            let best = '기타', bestRank = 999, bestCount = -1;
+            Object.entries(counts).forEach(([k, v]) => {
+                const r = typeOrder(k);
+                if (v > bestCount || (v === bestCount && r < bestRank)) { best = k; bestCount = v; bestRank = r; }
+            });
+            return best;
+        };
+
+        // 차종별 정렬 → flat 행 생성 (차종 셀은 rowspan)
+        const sortedCarEntries = Object.entries(carGroups).sort(([carA], [carB]) => {
+            const oa = typeOrder(carRepItemType(carA));
+            const ob = typeOrder(carRepItemType(carB));
+            if (oa !== ob) return oa - ob;
+            return carA.localeCompare(carB, 'ko');
+        });
+
+        const carCellStyle = `padding:7px 12px;border:1px solid #e2e8f0;font-size:.83rem;font-weight:800;color:#1e293b;background:#f1f5f9;white-space:nowrap;vertical-align:middle;text-align:left;`;
+        const bodyRowsHtml = sortedCarEntries.length ? sortedCarEntries.map(([car, rows]) => {
+            const sortedRows = rows.sort((a, b) => (a.color || '').localeCompare(b.color || '', 'ko'));
+            const repType = carRepItemType(car);
+            const typeBadge = itemTypeBadge(repType);
+            return sortedRows.map((r, idx) => {
+                const sum = sumInfo(r.under, r.top);
+                const rowExtra = r.conflict ? 'background:#fef2f2;' : '';
+                const carCell = idx === 0
+                    ? `<td rowspan="${sortedRows.length}" style="${carCellStyle}">
+                            <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+                                <span>${_esc(car)}</span>${typeBadge}
+                            </div>
+                       </td>`
+                    : '';
+                return `<tr style="${rowExtra}">
+                    ${carCell}
+                    ${td(r.color || '', 'left')}
+                    ${td(r.under.display)}
+                    ${td(r.top.display)}
+                    ${td(sum, 'center', 'font-weight:800;color:#0f172a;')}
+                    ${r.conflict
+                        ? `<td style="padding:7px 12px;border:1px solid #fecaca;text-align:center;background:#fef2f2;color:#dc2626;font-size:.72rem;font-weight:800;">불일치</td>`
+                        : `<td style="padding:7px 12px;border:1px solid #e2e8f0;text-align:center;color:#10b981;font-size:.72rem;font-weight:700;">OK</td>`}
+                </tr>`;
+            }).join('');
+        }).join('') : '';
+
+        const tableBlocks = bodyRowsHtml
+            ? `<table style="width:100%;border-collapse:collapse;">
+                    <thead><tr>
+                        ${th('차종','left')}
+                        ${th('컬러','left')}
+                        ${th('하도 (μm)')}
+                        ${th('상도 (μm)')}
+                        ${th('합 (μm)')}
+                        ${th('상태')}
+                    </tr></thead>
+                    <tbody>${bodyRowsHtml}</tbody>
+               </table>`
+            : `<div style="text-align:center;padding:48px 20px;color:#94a3b8;border:2px dashed #e2e8f0;border-radius:8px;">
+                <span class="material-symbols-outlined" style="font-size:36px;display:block;margin-bottom:8px;">inventory_2</span>
+                <div style="font-size:.85rem;">초중종물 관리 &gt; 품목별 항목 기준에 등록된 도막두께 데이터가 없습니다.</div>
+               </div>`;
+
+        el.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+                <div style="font-size:.8rem;color:#0369a1;display:flex;align-items:center;gap:5px;">
+                    <span class="material-symbols-outlined" style="font-size:14px;">link</span>
+                    상위 문서: <strong>초중종물 관리 &gt; 품목별 항목 기준</strong> · 도막두께(하도/상도)
+                </div>
+            </div>
+            ${conflictBanner}
+            ${tableBlocks}`;
+    }
+
     async function _confirmColorGlossStdUpdate() {
         const history = (await Storage.getConfigValue('color_gloss_std_history')) || [];
         history.unshift({ date: new Date().toISOString() });
@@ -3701,6 +4028,7 @@ var ProdStandardsModule = (function() {
         if (_curDocType === 'paint-tds') { _renderPaintTdsTable(el); return; }
         if (_curDocType === 'process-flow-chart') { _renderProcessFlowPresetPage(el); return; }
         if (_curDocType === 'color-gloss') { _renderColorGlossPage(el); return; }
+        if (_curDocType === 'film-thickness') { _renderFilmThicknessPage(el); return; }
         if (_curDocType === 'pfmea') { _renderPfmeaPage(el); return; }
 
         const cfg = STANDARD_DOC_TYPES[_curDocType];
@@ -15008,14 +15336,14 @@ var ProdQualityModule = (function() {
                             <button class="btn btn-outline" onclick="ProdQualityModule.openQualityStandardPage()">
                                 <span class="material-symbols-outlined">description</span> 초중종물 관리 기준서
                             </button>
-                            <button class="btn btn-outline" onclick="ProdQualityModule.openStandardsPage()">
-                                <span class="material-symbols-outlined">rule</span> 품목별 항목 기준
-                            </button>
                             <button class="btn btn-outline" onclick="ProdQualityModule.openMeasureHistory('colorGloss')">
                                 <span class="material-symbols-outlined">monitoring</span> 색차/광택 이력
                             </button>
                             <button class="btn btn-outline" onclick="ProdQualityModule.openMeasureHistory('film')">
                                 <span class="material-symbols-outlined">layers</span> 도막 이력
+                            </button>
+                            <button class="btn btn-outline" onclick="ProdQualityModule.openStandardsPage()">
+                                <span class="material-symbols-outlined">rule</span> 품목별 항목 기준
                             </button>
                         </div>
                         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
@@ -15133,9 +15461,12 @@ var ProdQualityModule = (function() {
                 </div>
 
                 <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
-                    <select class="form-select" id="pqStdFilterCar" style="height:42px;min-width:160px;max-width:220px;font-size:0.95rem;" onchange="ProdQualityModule.renderStandardsCard()">
+                    <select class="form-select" id="pqStdFilterCar" style="height:42px;min-width:160px;max-width:220px;font-size:0.95rem;" onchange="ProdQualityModule.onStdFilterCarChange()">
                         <option value="">전체 차종</option>
                         ${_carOptions('')}
+                    </select>
+                    <select class="form-select" id="pqStdFilterColor" style="height:42px;min-width:140px;max-width:220px;font-size:0.95rem;" onchange="ProdQualityModule.renderStandardsCard()">
+                        <option value="">전체 컬러</option>
                     </select>
                 </div>
 
@@ -15288,20 +15619,59 @@ var ProdQualityModule = (function() {
         return it;
     }
 
+    function onStdFilterCarChange() {
+        // 차종 변경 시 컬러 옵션을 그 차종 기준으로 다시 채우고 컬러는 전체로 리셋
+        const filterCar = document.getElementById('pqStdFilterCar')?.value || '';
+        const colorSel = document.getElementById('pqStdFilterColor');
+        if (colorSel) {
+            const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+            const colors = [...new Set(products
+                .filter(p => _normText(p.carModel))
+                .filter(p => !filterCar || _normText(p.carModel) === filterCar)
+                .map(p => _normText(p.color || p.paintColor || p.paint || p.drawingColor || ''))
+                .filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+            colorSel.innerHTML = `<option value="">전체 컬러</option>` +
+                colors.map(c => `<option value="${_esc(c)}">${_esc(c)}</option>`).join('');
+        }
+        renderStandardsCard();
+    }
+
     // ── 품목별 항목 기준 카드 렌더링 (제품 마스터 기준, 차종별 블럭) ───────────
     function renderStandardsCard() {
         const el = document.getElementById('pqStandardsBody');
         if (!el) return;
         const filterCar = document.getElementById('pqStdFilterCar')?.value || '';
+        const filterColor = document.getElementById('pqStdFilterColor')?.value || '';
+
+        // 컬러 옵션이 비어있으면 (최초 렌더) 차종 기준으로 채움
+        const colorSel = document.getElementById('pqStdFilterColor');
+        if (colorSel && colorSel.options.length <= 1) {
+            const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+            const colors = [...new Set(products
+                .filter(p => _normText(p.carModel))
+                .filter(p => !filterCar || _normText(p.carModel) === filterCar)
+                .map(p => _normText(p.color || p.paintColor || p.paint || p.drawingColor || ''))
+                .filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+            colorSel.innerHTML = `<option value="">전체 컬러</option>` +
+                colors.map(c => `<option value="${_esc(c)}" ${c === filterColor ? 'selected' : ''}>${_esc(c)}</option>`).join('');
+        }
+
+        const _hasPaintProcess = (p) => {
+            const procs = [p.process1, p.process2, p.process3, p.process4].filter(Boolean).map(String);
+            return procs.some(s => s.includes('도장'));
+        };
         const allProducts = (Storage.getAll(DB.STORES.PRODUCTS) || [])
             .filter(p => _normText(p.carModel))
+            .filter(_hasPaintProcess)
             .filter(p => !filterCar || _normText(p.carModel) === filterCar)
             .map(p => ({
                 id: p.id,
                 carModel: _normText(p.carModel),
                 partName: _normText(p.partName || '-'),
-                color: _normText(p.color || p.paintColor || p.paint || p.drawingColor || '')
-            }));
+                color: _normText(p.color || p.paintColor || p.paint || p.drawingColor || ''),
+                itemType: p.itemType || ''
+            }))
+            .filter(p => !filterColor || p.color === filterColor);
 
         if (!allProducts.length) {
             el.innerHTML = `<div style="padding:36px;text-align:center;color:var(--text-muted);">
@@ -15313,21 +15683,26 @@ var ProdQualityModule = (function() {
 
         const total = allProducts.length;
 
-        // 도장-A+B 겸용 제품 → 두 가상 행으로 분리
+        // 도장-A+B 겸용 제품 → 두 가상 행으로 분리, 각 공정의 컬러(paintColorA/B) 사용
         function _expandDualProcess(prod) {
             const product = (Storage.getAll(DB.STORES.PRODUCTS) || []).find(p => p.id === prod.id);
             if (!product) return [prod];
             const procs = [product.process1, product.process2, product.process3, product.process4].filter(Boolean);
             const hasA = procs.includes('도장-A'), hasB = procs.includes('도장-B');
+            const colorA = _normText(product.paintColorA || prod.color || '');
+            const colorB = _normText(product.paintColorB || prod.color || '');
+            const fallback = [prod.color, colorA, colorB].filter(Boolean);
             if (hasA && hasB) return [
-                { ...prod, paintProcess: '도장-A' },
-                { ...prod, paintProcess: '도장-B' }
+                { ...prod, paintProcess: '도장-A', color: colorA, fallbackColors: fallback },
+                { ...prod, paintProcess: '도장-B', color: colorB, fallbackColors: fallback }
             ];
+            if (hasA) return [{ ...prod, paintProcess: '도장-A', color: colorA, fallbackColors: fallback }];
+            if (hasB) return [{ ...prod, paintProcess: '도장-B', color: colorB, fallbackColors: fallback }];
             return [prod];
         }
 
         const _prodStatus = p => {
-            return _specStatus(_productSpecItems(p.carModel, p.partName, p.color, { fallbackToMaster: false, paintProcess: p.paintProcess || '' }));
+            return _specStatus(_productSpecItems(p.carModel, p.partName, p.color, { fallbackToMaster: false, paintProcess: p.paintProcess || '', fallbackColors: p.fallbackColors || [] }));
         };
         const expandedAll = allProducts.flatMap(_expandDualProcess);
         const completeCount = expandedAll.filter(p => _prodStatus(p) === 'complete').length;
@@ -15349,8 +15724,34 @@ var ProdQualityModule = (function() {
                 <span style="color:var(--accent-orange);font-weight:600;">✗ 미설정 ${noneCount}</span>
             </div>`;
 
+        const _itemTypeOrder = (t) => {
+            if (t === '양산품') return 0;
+            if (t && String(t).startsWith('A')) return 1;
+            if (t === '개발품') return 2;
+            return 3;
+        };
+        const _carRepItemType = (prods) => {
+            const counts = {};
+            (prods || []).forEach(p => {
+                const t = p.itemType || '기타';
+                counts[t] = (counts[t] || 0) + 1;
+            });
+            let best = '기타', bestRank = 999, bestCount = -1;
+            Object.entries(counts).forEach(([k, v]) => {
+                const rank = _itemTypeOrder(k);
+                if (v > bestCount || (v === bestCount && rank < bestRank)) {
+                    best = k; bestCount = v; bestRank = rank;
+                }
+            });
+            return best;
+        };
         const blocks = Object.entries(carGroups)
-            .sort(([a],[b]) => a.localeCompare(b, 'ko'))
+            .sort(([carA, prodsA], [carB, prodsB]) => {
+                const oa = _itemTypeOrder(_carRepItemType(prodsA));
+                const ob = _itemTypeOrder(_carRepItemType(prodsB));
+                if (oa !== ob) return oa - ob;
+                return carA.localeCompare(carB, 'ko');
+            })
             .map(([carModel, prods]) => {
                 const completeInGroup = prods.filter(p => _prodStatus(p) === 'complete').length;
                 const partialInGroup  = prods.filter(p => ['items-only','partial'].includes(_prodStatus(p))).length;
@@ -15371,7 +15772,7 @@ var ProdQualityModule = (function() {
                 const bodyRows = prods
                     .sort((a,b) => a.partName.localeCompare(b.partName,'ko') || a.color.localeCompare(b.color,'ko') || (a.paintProcess||'').localeCompare(b.paintProcess||''))
                     .map(p => {
-                        const specItems = _productSpecItems(p.carModel, p.partName, p.color, { fallbackToMaster: false, paintProcess: p.paintProcess || '' });
+                        const specItems = _productSpecItems(p.carModel, p.partName, p.color, { fallbackToMaster: false, paintProcess: p.paintProcess || '', fallbackColors: p.fallbackColors || [] });
                         const status = _specStatus(specItems);
                         const filledCount = specItems.filter(_hasSpecValue).length;
                         const specMap = new Map(specItems.map(item => [item.key, item]));
@@ -15385,7 +15786,7 @@ var ProdQualityModule = (function() {
                             let specText = '-';
                             if (_isGlossSpecItem(ti)) {
                                 const { targetSpec, toleranceSpec } = _glossValues(ti);
-                                specText = (targetSpec && toleranceSpec) ? `${targetSpec}?${toleranceSpec}` : (ti.spec || '-');
+                                specText = (targetSpec && toleranceSpec) ? `${targetSpec} ± ${toleranceSpec}` : (ti.spec || '-');
                             } else {
                                 specText = _composeRangeSpec(ti) || ti.spec || '-';
                             }
@@ -15612,13 +16013,13 @@ var ProdQualityModule = (function() {
         const color    = _normText(product.color||product.paintColor||product.paint||product.drawingColor||'');
         const proc     = _normText(paintProcess || '');
 
-        // 동일 차종+컬러의 다른 품목
+        // 동일 컬러의 다른 품목 (차종 무관)
         const sameColorProducts = allProducts.filter(p => {
             const pc = _normText(p.color||p.paintColor||p.paint||p.drawingColor||'');
             return p.id !== productId
-                && _normText(p.carModel) === carModel
                 && pc === color;
         });
+        const sameColorTemplateCandidates = _getSameColorTemplateCandidates(productId, color, proc);
 
         const items = _sortItemsByMaster(_productSpecItems(carModel, partName, color, { paintProcess: proc }).map(item => _normalizeItemForEdit({ ...item })));
 
@@ -15639,7 +16040,29 @@ var ProdQualityModule = (function() {
                 <button type="button" class="btn btn-outline btn-sm" onclick="ProdQualityModule.applyPresetToSpec()">적용</button>
             </div>` : '';
 
-        // 동일 차종+컬러 품목 체크 패널
+        const sameColorLoadPanel = !viewOnly && color && sameColorTemplateCandidates.length ? `
+            <div class="card" style="margin-bottom:14px;border-left:3px solid #16a34a;">
+                <div class="card-body" style="padding:12px 16px;">
+                    <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;">
+                        <span class="material-symbols-outlined" style="font-size:1rem;color:#16a34a;">upload_file</span>
+                        <span style="font-weight:700;font-size:0.88rem;">기준값 불러와서 적용</span>
+                    </div>
+                    <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px;">
+                        다른 차종이어도 <strong>동일 색상(${_esc(color)})</strong>이면 등록된 기준값을 현재 품목으로 불러와 적용할 수 있습니다.
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <select class="form-select" id="pqSpecLoadSource" style="flex:1;min-width:280px;">
+                            <option value="">기준값을 불러올 동일 색상 품목 선택</option>
+                            ${sameColorTemplateCandidates.map(c => `
+                                <option value="${_esc(c.id)}">${_esc(c.carModel)} / ${_esc(c.partName)}${c.paintProcess ? ` / ${_esc(c.paintProcess)}` : ''} (${c.filledCount}/${c.totalCount})</option>
+                            `).join('')}
+                        </select>
+                        <button type="button" class="btn btn-outline btn-sm" onclick="ProdQualityModule.applySameColorTemplateToSpec()">불러와 적용</button>
+                    </div>
+                </div>
+            </div>` : '';
+
+        // 동일 컬러 품목 체크 패널
         const sameColorPanel = !viewOnly && sameColorProducts.length ? `
             <div class="card" style="margin-bottom:14px;border-left:3px solid var(--accent-blue);">
                 <div class="card-body" style="padding:12px 16px;">
@@ -15654,12 +16077,13 @@ var ProdQualityModule = (function() {
                         </div>
                     </div>
                     <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px;">
-                        <strong>${_esc(carModel)}</strong> / 컬러: <strong>${_esc(color)||'공통'}</strong> — 체크한 품목에 아래 기준값이 동일하게 저장됩니다.
+                        컬러: <strong>${_esc(color)||'공통'}</strong> — 체크한 품목에 아래 기준값이 동일하게 저장됩니다.
                     </div>
                     <div style="display:flex;flex-wrap:wrap;gap:8px;">
                         ${sameColorProducts.map(p => {
                             const pn = _normText(p.partName||'');
-                            const pt = _templateForProduct(_normText(p.carModel), pn, _normText(p.color||p.paintColor||p.paint||p.drawingColor||''));
+                            const pcm = _normText(p.carModel||'');
+                            const pt = _templateForProduct(_normText(p.carModel), pn, _normText(p.color||p.paintColor||p.paint||p.drawingColor||''), { paintProcess: proc });
                             const ps = pt && Array.isArray(pt.items) ? pt.items : [];
                             const pFilled = ps.filter(_hasSpecValue).length;
                             const pTotal  = ps.length;
@@ -15669,7 +16093,7 @@ var ProdQualityModule = (function() {
                                         font-size:0.83rem;min-width:140px;">
                                 <input type="checkbox" class="pq-same-color-chk" value="${_esc(p.id)}"
                                     style="width:15px;height:15px;accent-color:var(--accent-blue);">
-                                <span style="font-weight:600;">${_esc(pn||p.id)}</span>
+                                <span style="font-weight:600;">${_esc(pcm)} / ${_esc(pn||p.id)}</span>
                                 <span style="font-size:0.72rem;font-weight:700;color:${pColor};margin-left:auto;">${pFilled}/${pTotal}</span>
                             </label>`;
                         }).join('')}
@@ -15725,6 +16149,7 @@ var ProdQualityModule = (function() {
                 ` : ''}
 
                 ${sameColorPanel}
+                ${sameColorLoadPanel}
                 ${presetRow}
 
                 ${!viewOnly ? `<div id="pqPresetDetectionPanel" style="margin-bottom:10px;"></div>` : ''}
@@ -15769,6 +16194,68 @@ var ProdQualityModule = (function() {
 
     function _checkAllSameColor(checked) {
         document.querySelectorAll('.pq-same-color-chk').forEach(el => { el.checked = checked; });
+    }
+
+    function _getSameColorTemplateCandidates(productId, color, paintProcess = '') {
+        const targetColor = _normText(color || '');
+        const targetProc = _normText(paintProcess || '');
+        if (!targetColor) return [];
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const templates = _templates();
+        return templates
+            .filter(t => _normText(t.color || '') === targetColor)
+            .filter(t => _normText(t.paintProcess || '') === targetProc)
+            .filter(t => {
+                const product = products.find(p =>
+                    p.id !== productId &&
+                    _normText(p.carModel) === _normText(t.carModel) &&
+                    _normText(p.partName || '') === _normText(t.partName || '') &&
+                    _normText(p.color || p.paintColor || p.paint || p.drawingColor || '') === targetColor
+                );
+                return !!product;
+            })
+            .map(t => {
+                const items = Array.isArray(t.items) ? t.items : [];
+                return {
+                    id: t.id,
+                    carModel: _normText(t.carModel),
+                    partName: _normText(t.partName || ''),
+                    color: targetColor,
+                    paintProcess: _normText(t.paintProcess || ''),
+                    totalCount: items.length,
+                    filledCount: items.filter(_hasSpecValue).length,
+                    items
+                };
+            })
+            .filter(t => t.totalCount > 0)
+            .sort((a, b) => {
+                if (b.filledCount !== a.filledCount) return b.filledCount - a.filledCount;
+                if (b.totalCount !== a.totalCount) return b.totalCount - a.totalCount;
+                return `${a.carModel} ${a.partName}`.localeCompare(`${b.carModel} ${b.partName}`, 'ko');
+            });
+    }
+
+    function _renderSpecItemsToPage(items) {
+        const body = document.getElementById('pqSpecItemsBody');
+        if (!body) return;
+        const normalized = _sortItemsByMaster((items || []).map(item => _normalizeItemForEdit({ ...item })));
+        body.innerHTML = normalized.map(i => _specItemRowHtml(i, { readOnly: false, showDelete: true })).join('');
+        _pqUpdatePresetDetection();
+    }
+
+    function applySameColorTemplateToSpec() {
+        const sourceId = document.getElementById('pqSpecLoadSource')?.value || '';
+        if (!sourceId) {
+            UIUtils.toast('불러올 동일 색상 품목을 선택하세요.', 'warning');
+            return;
+        }
+        const source = (_templates() || []).find(t => t.id === sourceId);
+        if (!source || !Array.isArray(source.items) || !source.items.length) {
+            UIUtils.toast('선택한 품목의 기준값을 찾을 수 없습니다.', 'error');
+            return;
+        }
+        _renderSpecItemsToPage(source.items);
+        UIUtils.toast(`[${_normText(source.carModel)} / ${_normText(source.partName || '')}] 기준값을 불러와 적용했습니다.`, 'success');
     }
 
     async function saveSpecPage() {
@@ -15834,7 +16321,7 @@ var ProdQualityModule = (function() {
             ? `기준값이 저장되었습니다. (${extraCount}개 품목에 동일 적용)`
             : '기준값이 저장되었습니다.';
         UIUtils.toast(msg, 'success');
-        openSpecPage(productId, 'view');
+        openSpecPage(productId, 'view', paintProcess);
     }
 
     function applyPresetToSpec() {
@@ -16009,16 +16496,32 @@ var ProdQualityModule = (function() {
         const end = document.getElementById('pqFilterEnd').value;
         const car = document.getElementById('pqFilterCar')?.value || '';
 
-        let works = (Storage.getAll(PAINT_WORK_STORE) || [])
-            .filter(w => (!start || w.date >= start) && (!end || w.date <= end))
-            .filter(w => !car || w.carModel === car)
+        const allWorks = (Storage.getAll(PAINT_WORK_STORE) || []);
+        const allIssues = (Storage.getAll(STORE) || []).filter(d => (d._docKind || ISSUE_KIND) === ISSUE_KIND);
+        const issuedWorkIds = new Set(allIssues.map(i => i.workId).filter(Boolean));
+        const recordMap = new Map(_measureRecords().filter(r => r.issueId).map(r => [r.issueId, r]));
+
+        // 발행 대상: 필터에 해당하는 작업 + 미발행 작업은 누락 방지를 위해 항상 포함
+        const filterWork = (w) =>
+            (!start || w.date >= start) && (!end || w.date <= end) && (!car || w.carModel === car);
+        const filteredWorkIds = new Set(allWorks.filter(filterWork).map(w => w.id));
+        const unissuedAlwaysOn = allWorks.filter(w => !issuedWorkIds.has(w.id)).map(w => w.id);
+        unissuedAlwaysOn.forEach(id => filteredWorkIds.add(id));
+        const works = allWorks
+            .filter(w => filteredWorkIds.has(w.id))
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
-        let data = (Storage.getAll(STORE) || [])
-            .filter(d => (d._docKind || ISSUE_KIND) === ISSUE_KIND)
-            .filter(d => (!start || d.date >= start) && (!end || d.date <= end))
-            .filter(d => !car || d.carModel === car)
-            .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        // 발행 이력: 필터에 해당하는 양식 + DATA 미입력 양식은 항상 포함
+        const filterIssue = (d) =>
+            (!start || d.date >= start) && (!end || d.date <= end) && (!car || d.carModel === car);
+        const filteredIssueIds = new Set(allIssues.filter(filterIssue).map(d => d.id));
+        const noDataAlwaysOn = allIssues.filter(d => !recordMap.has(d.id)).map(d => d.id);
+        noDataAlwaysOn.forEach(id => filteredIssueIds.add(id));
+        // 발행 시간 기준 정렬 (최근 발행 우선): createdAt > id(시간순 슬러그) > date
+        const issueSortKey = (d) => String(d.createdAt || d.updatedAt || d.id || d.date || '');
+        const data = allIssues
+            .filter(d => filteredIssueIds.has(d.id))
+            .sort((a, b) => issueSortKey(b).localeCompare(issueSortKey(a)));
 
         renderStats(works, data);
         renderWorkTable(works);
@@ -16042,31 +16545,60 @@ var ProdQualityModule = (function() {
         const tbody = document.getElementById('pqWorkBody');
         if (!tbody) return;
         if (!works.length) {
-            tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:30px;">해당 기간의 도장 작업일지가 없습니다.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:30px;color:var(--text-muted);">해당 기간의 도장 작업일지가 없습니다.</td></tr>`;
             return;
         }
         const issueMap = new Map(_issues().filter(i => i.workId).map(i => [i.workId, i]));
+        const canDelete = _isAdminUser();
+        const fmtPrintedAt = (iso) => {
+            if (!iso) return '';
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return String(iso).replace('T', ' ').slice(0, 16);
+            const p = n => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+        };
+        // 작업일 컬럼: mm-dd / HHmm 2줄 (연도 제외)
+        const fmtWorkDateCell = (w) => {
+            const date = String(w.date || '');
+            const m = date.match(/^(\d{4})-(\d{2})-(\d{2})/);
+            const md = m ? `${m[2]}-${m[3]}` : (date || '-');
+            const t = String(w.startTime || '').match(/(\d{1,2}):(\d{2})/);
+            const hhmm = t ? `${t[1].padStart(2, '0')}:${t[2]}` : '';
+            return `<div style="text-align:center;line-height:1.25;font-size:0.78rem;">
+                <div style="font-weight:700;">${_esc(md)}</div>
+                ${hhmm ? `<div style="font-family:monospace;font-size:0.72rem;color:var(--text-secondary);">${_esc(hhmm)}</div>` : ''}
+            </div>`;
+        };
         tbody.innerHTML = works.map(w => {
             const tmpl = _templateFor(w.carModel, w.color);
             const hasTemplate = !!tmpl;
             const issue = issueMap.get(w.id);
+            const printed = !!(issue && issue.printedAt);
+            // 기준 양식 컬럼: 인쇄 완료(발행 완료) > 양식만 발행됨(인쇄 대기) > 항목 수 > 항목 설정 필요
+            const statusCell = printed
+                ? `<span class="badge badge-success" title="인쇄 완료">● 발행 완료</span><div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">${_esc(fmtPrintedAt(issue.printedAt))}</div>`
+                : (issue
+                    ? '<span class="badge badge-warning">인쇄 대기</span>'
+                    : (hasTemplate
+                        ? `<span class="badge badge-info">${(tmpl.items || []).length}항목</span>`
+                        : `<button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openTemplateModal('${_js(w.carModel || '')}','${_js(w.color || '')}')">항목설정필요</button>`));
+            // 작업 컬럼: 양식 미발행 → [발행] / 양식 있고 인쇄 전 → [인쇄물 발행] / 인쇄 완료 → [재인쇄]
+            const actionBtn = issue
+                ? `<button class="btn btn-sm ${printed ? 'btn-outline' : 'btn-primary'}" onclick="ProdQualityModule.printIssue('${_js(issue.id)}')">${printed ? '재인쇄' : '인쇄물 발행'}</button>`
+                : `<button class="btn btn-sm btn-primary" onclick="ProdQualityModule.issueAndPrintFromWork('${_js(w.id)}')">발행</button>`;
             return `
                 <tr>
-                    <td>${_esc(w.date || '-')}</td>
+                    <td>${fmtWorkDateCell(w)}</td>
                     <td>${_esc(w.line || '-')}</td>
                     <td><strong>${_esc(w.carModel || '-')}</strong></td>
                     <td>${_esc(w.partName || '-')}</td>
                     <td>${_esc(w.color || '-')}</td>
                     <td style="font-family:monospace;font-size:0.8rem;">${_esc(w.lotNo || '-')}</td>
                     <td style="text-align:right;">${UIUtils.formatNumber(w.productionQty || 0)}</td>
-                    <td>${issue
-                        ? '<span class="badge badge-success">작성완료</span>'
-                        : (hasTemplate
-                            ? `<span class="badge badge-info">${(tmpl.items || []).length}항목</span>`
-                            : `<button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openTemplateModal('${_js(w.carModel || '')}','${_js(w.color || '')}')">항목설정필요</button>`)}</td>
+                    <td>${statusCell}</td>
                     <td style="white-space:nowrap;">
-                        ${issue ? `<button class="btn btn-sm btn-primary" onclick="ProdQualityModule.printIssue('${_js(issue.id)}')">인쇄물 발행</button>` : ''}
-                        <button class="btn btn-sm ${issue ? 'btn-outline' : 'btn-primary'}" onclick="ProdQualityModule.openWriteFromWork('${_js(w.id)}')">${issue ? '재발행' : '발행'}</button>
+                        ${actionBtn}
+                        ${canDelete ? `<button class="btn btn-sm btn-danger" onclick="ProdQualityModule.removeWorkLog('${_js(w.id)}')">삭제</button>` : ''}
                     </td>
                 </tr>`;
         }).join('');
@@ -16095,9 +16627,10 @@ var ProdQualityModule = (function() {
                     <td style="font-size:0.78rem;color:var(--text-secondary);">${_esc(printedText)}</td>
                     <td>${record ? '<span class="badge badge-success">입력완료</span>' : '<span class="badge badge-secondary">미입력</span>'}</td>
                     <td style="white-space:nowrap;">
-                        <button class="btn btn-sm btn-primary" onclick="ProdQualityModule.printIssue('${_js(d.id)}')">인쇄물 발행</button>
-                        <button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openDataModal('${_js(d.id)}')">DATA 입력</button>
-                        <button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openView('${_js(d.id)}')">보기</button>
+                        ${record
+                            ? `<button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openDataView('${_js(d.id)}')">DATA 보기</button>`
+                            : `<button class="btn btn-sm btn-primary" onclick="ProdQualityModule.openDataModal('${_js(d.id)}')">DATA 입력</button>`}
+                        <button class="btn btn-sm btn-outline" onclick="ProdQualityModule.printIssue('${_js(d.id)}')">재인쇄</button>
                         ${canDelete ? `<button class="btn btn-sm btn-danger" onclick="ProdQualityModule.remove('${_js(d.id)}')">삭제</button>` : ''}
                     </td>
                 </tr>
@@ -16268,6 +16801,22 @@ var ProdQualityModule = (function() {
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="ProdQualityModule.saveMeasureRecord('${_js(issueId)}','${_js(record.id || '')}')">저장</button>
         `, 'xl');
+    }
+
+    function openDataView(issueId) {
+        const issue = Storage.getById(STORE, issueId);
+        if (!issue) return;
+        const record = _measureRecordForIssue(issueId) || {};
+        UIUtils.showModal('초중종물 DATA 보기', _measureRecordForm(issue, record), `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+            <button class="btn btn-primary" onclick="UIUtils.closeModal();setTimeout(()=>ProdQualityModule.openDataModal('${_js(issueId)}'),50)">편집</button>
+        `, 'xl');
+        // 보기 모드: 모든 입력 비활성화
+        const body = document.getElementById('modalBody');
+        if (body) {
+            body.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
+            body.querySelectorAll('button').forEach(btn => { btn.disabled = true; });
+        }
     }
 
     async function saveMeasureRecord(issueId, recordId = '') {
@@ -16524,8 +17073,15 @@ var ProdQualityModule = (function() {
         return _normText(product?.color || product?.paintColor || product?.paint || product?.drawingColor || '');
     }
 
-    function _productSpecItems(carModel, partName, color, { fallbackToMaster = true, paintProcess = '' } = {}) {
-        const tmpl = _templateForProduct(carModel, partName, color, paintProcess);
+    function _productSpecItems(carModel, partName, color, { fallbackToMaster = true, paintProcess = '', fallbackColors = [] } = {}) {
+        let tmpl = _templateForProduct(carModel, partName, color, paintProcess);
+        if (!tmpl && fallbackColors.length) {
+            for (const fc of fallbackColors) {
+                if (!fc || fc === color) continue;
+                tmpl = _templateForProduct(carModel, partName, fc, paintProcess);
+                if (tmpl) break;
+            }
+        }
         const items = tmpl && Array.isArray(tmpl.items) && tmpl.items.length
             ? _normalizeQualityItems(tmpl.items.map(item => ({ ...item })))
             : [];
@@ -16702,6 +17258,15 @@ var ProdQualityModule = (function() {
         const hours = _durationHours(start, end);
         const el = document.getElementById('pqWorkHours');
         if (el) el.value = hours ? `${hours}HR` : '00HR';
+
+        // 작업시간 기준 구분 자동 체크: 4시간 이하 → 초/종, 4시간 초과 → 초/중/종
+        const h = parseFloat(hours);
+        if (!isNaN(h) && h > 0) {
+            document.querySelectorAll('.pq-type-check').forEach(cb => {
+                if (cb.value === '초물' || cb.value === '종물') cb.checked = true;
+                else if (cb.value === '중물') cb.checked = h > 4;
+            });
+        }
     }
 
     function _sortItemsByMaster(items = [], masterItems = null) {
@@ -16827,7 +17392,7 @@ var ProdQualityModule = (function() {
     function _issueItemRows(items) {
         const bodyRows = items.length
             ? items.map((item, idx) => _issueItemRowHtml(item, idx + 1)).join('')
-            : `<tr class="pq-empty-row"><td colspan="9" style="padding:20px;text-align:center;color:var(--text-muted);background:#fff;">
+            : `<tr class="pq-empty-row"><td colspan="8" style="padding:20px;text-align:center;color:var(--text-muted);background:#fff;">
                     차종과 품명을 선택하면 저장된 초중종 관리 항목이 표시됩니다.
                </td></tr>`;
         return `
@@ -16842,7 +17407,6 @@ var ProdQualityModule = (function() {
                         <th style="width:62px;background:rgba(59,130,246,0.06);color:var(--accent-blue,#3b82f6);">초물</th>
                         <th style="width:62px;background:rgba(59,130,246,0.06);color:var(--accent-blue,#3b82f6);">중물</th>
                         <th style="width:62px;background:rgba(59,130,246,0.06);color:var(--accent-blue,#3b82f6);">종물</th>
-                        <th style="width:48px;">삭제</th>
                     </tr>
                 </thead>
                 <tbody id="pqIssueItemsBody">
@@ -16969,11 +17533,6 @@ var ProdQualityModule = (function() {
                 ${vInp('pq-item-val1', vals['초물'])}
                 ${vInp('pq-item-val2', vals['중물'])}
                 ${vInp('pq-item-val3', vals['종물'])}
-                <td style="text-align:center;">
-                    <button type="button" class="btn btn-sm btn-danger"
-                        onclick="ProdQualityModule.removeIssueItemRow(this)"
-                        style="padding:3px 6px;font-size:0.72rem;">삭제</button>
-                </td>
             </tr>`;
     }
 
@@ -17139,6 +17698,23 @@ var ProdQualityModule = (function() {
         });
     }
 
+    function removeWorkLog(workId) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('삭제 권한은 관리자에게만 있습니다.', 'warning');
+            return;
+        }
+        const linkedIssue = _issues().find(i => i.workId === workId);
+        const msg = linkedIssue
+            ? '이 도장 작업일지와 연결된 기준 양식을 모두 삭제하시겠습니까?'
+            : '이 도장 작업일지를 삭제하시겠습니까?';
+        UIUtils.confirm(msg, async () => {
+            if (linkedIssue) await Storage.remove(STORE, linkedIssue.id);
+            await Storage.remove(PAINT_WORK_STORE, workId);
+            UIUtils.toast('삭제되었습니다.', 'success');
+            search();
+        });
+    }
+
     function exportData() {
         const data = _issues();
         const headers = ['발행일', '구분', '라인', '차종', '품명', '생산 LOT', '작업시간', '항목수', '상태', '작성자', '비고'];
@@ -17197,6 +17773,49 @@ var ProdQualityModule = (function() {
             saved = await Storage.add(STORE, data);
         }
         UIUtils.closeModal();
+        search();
+        printIssue(saved.id);
+    }
+
+    async function issueAndPrintFromWork(workId) {
+        const work = Storage.getById(PAINT_WORK_STORE, workId);
+        if (!work) return;
+        // 이미 발행된 양식이 있으면 바로 인쇄
+        const existing = _issues().find(i => i.workId === workId);
+        if (existing) {
+            printIssue(existing.id);
+            return;
+        }
+        const items = _issueItemsForProduct(work.carModel, work.partName, work.color, []).filter(item => item.selected !== false);
+        if (!items.length) {
+            UIUtils.toast('해당 차종의 관리항목을 먼저 설정하세요.', 'warning');
+            openTemplateModal(work.carModel || '', work.color || '');
+            return;
+        }
+        const data = {
+            _docKind: ISSUE_KIND,
+            workId,
+            date: work.date || UIUtils.today(),
+            type: '초물/중물/종물',
+            types: ['초물', '중물', '종물'],
+            line: work.line || '',
+            carModel: work.carModel || '',
+            partName: work.partName || '',
+            color: work.color || '',
+            lotNo: work.lotNo || ((work.lots || []).map(l => l.lotNo).filter(Boolean).join(', ')),
+            productionQty: Number(work.productionQty) || 0,
+            startTime: work.startTime || '',
+            endTime: work.endTime || '',
+            workHours: _durationHours(work.startTime || '', work.endTime || ''),
+            time: _formatIssueTime(work.startTime || '', work.endTime || ''),
+            items: items.map(item => ({ ...item })),
+            status: '발행대기',
+            inspector: '',
+            writer: '',
+            note: ''
+        };
+        const saved = await Storage.add(STORE, data);
+        UIUtils.toast('초중종물 기준 양식이 발행되었습니다.', 'success');
         search();
         printIssue(saved.id);
     }
@@ -18367,8 +18986,9 @@ var ProdQualityModule = (function() {
 <style>
 *{box-sizing:border-box}
 body{font-family:Arial,'Malgun Gothic',sans-serif;margin:0;padding:20px 0;color:#111827;background:#eef2f7}
-.print-toolbar{position:fixed;right:18px;top:12px;z-index:10;display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;box-shadow:0 10px 24px rgba(15,23,42,.16);font-size:12px;color:#475569}
+.print-toolbar{position:fixed;right:18px;top:12px;z-index:10;display:flex;flex-direction:column;align-items:stretch;gap:6px;background:#fff;border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;box-shadow:0 10px 24px rgba(15,23,42,.16);font-size:12px;color:#475569}
 .print-btn{padding:8px 14px;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:6px;cursor:pointer;font-weight:700}
+.print-close-btn{padding:6px 14px;border:1px solid #cbd5e1;background:#fff;color:#475569;border-radius:6px;cursor:pointer;font-weight:700}
 [contenteditable="true"]:focus{outline:2px solid #2563eb;outline-offset:-2px;background:#fff7d6}
 .print-page{width:100%;margin:0 auto}
 .sheet{width:1180px;max-width:calc(100% - 32px);margin:20px auto;page-break-inside:avoid;background:#fff;border:2px solid #111827;padding:12px;box-shadow:0 18px 44px rgba(15,23,42,.18),0 3px 10px rgba(15,23,42,.12)}
@@ -18467,6 +19087,7 @@ table{border-collapse:collapse;width:100%}
 <div class="print-toolbar">
   <span>클릭해서 수정 후 인쇄물 발행</span>
   <button class="print-btn" onclick="window.print()">인쇄물 발행</button>
+  <button class="print-close-btn" onclick="window.close()">창 닫기</button>
 </div>
 <div class="print-page">
   <div class="sheet">
@@ -18595,6 +19216,7 @@ window.addEventListener('afterprint', () => {
   if (window.opener && window.opener.ProdQualityModule && window.opener.ProdQualityModule.markIssuePrinted) {
     window.opener.ProdQualityModule.markIssuePrinted('${_js(id)}');
   }
+  setTimeout(() => { try { window.close(); } catch(e) {} }, 300);
 });
 </script>
 </body></html>`;
@@ -18612,10 +19234,12 @@ window.addEventListener('afterprint', () => {
         edit,
         saveEdit,
         remove,
+        removeWorkLog,
         exportData
         ,openWriteFromWork
         ,saveWriteAndPrint
         ,issueFromWork
+        ,issueAndPrintFromWork
         ,openView
         ,openItemListModal
         ,saveItemMaster
@@ -18639,6 +19263,7 @@ window.addEventListener('afterprint', () => {
         ,printIssue
         ,markIssuePrinted
         ,openDataModal
+        ,openDataView
         ,saveMeasureRecord
         ,openMeasureHistory
         ,renderMeasureHistoryTable
@@ -18654,12 +19279,14 @@ window.addEventListener('afterprint', () => {
         ,handleQualityStandardPaste
         ,printQualityStandardPage
         ,renderStandardsCard
+        ,onStdFilterCarChange
         ,openSpecModal
         ,saveSpecModal
         ,openSpecPage
         ,saveSpecPage
         ,_checkAllSameColor
         ,applyPresetToSpec
+        ,applySameColorTemplateToSpec
         ,_pqRemoveSpecItem
         ,_pqSpecDragStart
         ,_pqSpecDragOver

@@ -14241,13 +14241,13 @@ var ProdQualityModule = (function() {
         const partName = _normText(product.partName||'');
         const color    = _normText(product.color||product.paintColor||product.paint||product.drawingColor||'');
 
-        // 동일 차종+컬러의 다른 품목
+        // 동일 컬러의 다른 품목 (차종 무관)
         const sameColorProducts = allProducts.filter(p => {
             const pc = _normText(p.color||p.paintColor||p.paint||p.drawingColor||'');
             return p.id !== productId
-                && _normText(p.carModel) === carModel
                 && pc === color;
         });
+        const sameColorTemplateCandidates = _getSameColorTemplateCandidates(productId, color);
 
         const items = _sortItemsByMaster(_productSpecItems(carModel, partName, color).map(item => _normalizeItemForEdit({ ...item })));
 
@@ -14268,7 +14268,29 @@ var ProdQualityModule = (function() {
                 <button type="button" class="btn btn-outline btn-sm" onclick="ProdQualityModule.applyPresetToSpec()">적용</button>
             </div>` : '';
 
-        // 동일 차종+컬러 품목 체크 패널
+        const sameColorLoadPanel = !viewOnly && color && sameColorTemplateCandidates.length ? `
+            <div class="card" style="margin-bottom:14px;border-left:3px solid #16a34a;">
+                <div class="card-body" style="padding:12px 16px;">
+                    <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;">
+                        <span class="material-symbols-outlined" style="font-size:1rem;color:#16a34a;">upload_file</span>
+                        <span style="font-weight:700;font-size:0.88rem;">기준값 불러와서 적용</span>
+                    </div>
+                    <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px;">
+                        다른 차종이어도 <strong>동일 색상(${_esc(color)})</strong>이면 등록된 기준값을 현재 품목으로 불러와 적용할 수 있습니다.
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <select class="form-select" id="pqSpecLoadSource" style="flex:1;min-width:280px;">
+                            <option value="">기준값을 불러올 동일 색상 품목 선택</option>
+                            ${sameColorTemplateCandidates.map(c => `
+                                <option value="${_esc(c.id)}">${_esc(c.carModel)} / ${_esc(c.partName)} (${c.filledCount}/${c.totalCount})</option>
+                            `).join('')}
+                        </select>
+                        <button type="button" class="btn btn-outline btn-sm" onclick="ProdQualityModule.applySameColorTemplateToSpec()">불러와 적용</button>
+                    </div>
+                </div>
+            </div>` : '';
+
+        // 동일 컬러 품목 체크 패널
         const sameColorPanel = !viewOnly && sameColorProducts.length ? `
             <div class="card" style="margin-bottom:14px;border-left:3px solid var(--accent-blue);">
                 <div class="card-body" style="padding:12px 16px;">
@@ -14283,11 +14305,12 @@ var ProdQualityModule = (function() {
                         </div>
                     </div>
                     <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px;">
-                        <strong>${_esc(carModel)}</strong> / 컬러: <strong>${_esc(color)||'공통'}</strong> — 체크한 품목에 아래 기준값이 동일하게 저장됩니다.
+                        컬러: <strong>${_esc(color)||'공통'}</strong> — 체크한 품목에 아래 기준값이 동일하게 저장됩니다.
                     </div>
                     <div style="display:flex;flex-wrap:wrap;gap:8px;">
                         ${sameColorProducts.map(p => {
                             const pn = _normText(p.partName||'');
+                            const pcm = _normText(p.carModel||'');
                             const pt = _templateForProduct(_normText(p.carModel), pn, _normText(p.color||p.paintColor||p.paint||p.drawingColor||''));
                             const ps = pt && Array.isArray(pt.items) ? pt.items : [];
                             const pFilled = ps.filter(_hasSpecValue).length;
@@ -14298,7 +14321,7 @@ var ProdQualityModule = (function() {
                                         font-size:0.83rem;min-width:140px;">
                                 <input type="checkbox" class="pq-same-color-chk" value="${_esc(p.id)}"
                                     style="width:15px;height:15px;accent-color:var(--accent-blue);">
-                                <span style="font-weight:600;">${_esc(pn||p.id)}</span>
+                                <span style="font-weight:600;">${_esc(pcm)} / ${_esc(pn||p.id)}</span>
                                 <span style="font-size:0.72rem;font-weight:700;color:${pColor};margin-left:auto;">${pFilled}/${pTotal}</span>
                             </label>`;
                         }).join('')}
@@ -14352,6 +14375,7 @@ var ProdQualityModule = (function() {
                 ` : ''}
 
                 ${sameColorPanel}
+                ${sameColorLoadPanel}
                 ${presetRow}
 
                 ${!viewOnly ? `<div id="pqPresetDetectionPanel" style="margin-bottom:10px;"></div>` : ''}
@@ -14396,6 +14420,65 @@ var ProdQualityModule = (function() {
 
     function _checkAllSameColor(checked) {
         document.querySelectorAll('.pq-same-color-chk').forEach(el => { el.checked = checked; });
+    }
+
+    function _getSameColorTemplateCandidates(productId, color) {
+        const targetColor = _normText(color || '');
+        if (!targetColor) return [];
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const templates = _templates();
+        return templates
+            .filter(t => _normText(t.color || '') === targetColor)
+            .filter(t => {
+                const product = products.find(p =>
+                    p.id !== productId &&
+                    _normText(p.carModel) === _normText(t.carModel) &&
+                    _normText(p.partName || '') === _normText(t.partName || '') &&
+                    _normText(p.color || p.paintColor || p.paint || p.drawingColor || '') === targetColor
+                );
+                return !!product;
+            })
+            .map(t => {
+                const items = Array.isArray(t.items) ? t.items : [];
+                return {
+                    id: t.id,
+                    carModel: _normText(t.carModel),
+                    partName: _normText(t.partName || ''),
+                    color: targetColor,
+                    totalCount: items.length,
+                    filledCount: items.filter(_hasSpecValue).length,
+                    items
+                };
+            })
+            .filter(t => t.totalCount > 0)
+            .sort((a, b) => {
+                if (b.filledCount !== a.filledCount) return b.filledCount - a.filledCount;
+                if (b.totalCount !== a.totalCount) return b.totalCount - a.totalCount;
+                return `${a.carModel} ${a.partName}`.localeCompare(`${b.carModel} ${b.partName}`, 'ko');
+            });
+    }
+
+    function _renderSpecItemsToPage(items) {
+        const body = document.getElementById('pqSpecItemsBody');
+        if (!body) return;
+        const normalized = _sortItemsByMaster((items || []).map(item => _normalizeItemForEdit({ ...item })));
+        body.innerHTML = normalized.map(i => _specItemRowHtml(i, { readOnly: false, showDelete: true })).join('');
+        _pqUpdatePresetDetection();
+    }
+
+    function applySameColorTemplateToSpec() {
+        const sourceId = document.getElementById('pqSpecLoadSource')?.value || '';
+        if (!sourceId) {
+            UIUtils.toast('불러올 동일 색상 품목을 선택하세요.', 'warning');
+            return;
+        }
+        const source = (_templates() || []).find(t => t.id === sourceId);
+        if (!source || !Array.isArray(source.items) || !source.items.length) {
+            UIUtils.toast('선택한 품목의 기준값을 찾을 수 없습니다.', 'error');
+            return;
+        }
+        _renderSpecItemsToPage(source.items);
+        UIUtils.toast(`[${_normText(source.carModel)} / ${_normText(source.partName || '')}] 기준값을 불러와 적용했습니다.`, 'success');
     }
 
     async function saveSpecPage() {
@@ -17269,6 +17352,7 @@ window.addEventListener('afterprint', () => {
         ,openSpecPage
         ,saveSpecPage
         ,_checkAllSameColor
+        ,applySameColorTemplateToSpec
         ,applyPresetToSpec
         ,_pqRemoveSpecItem
         ,_pqSpecDragStart
