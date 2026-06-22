@@ -1209,6 +1209,20 @@ var PaintIncomingInspectionModule = (function() {
                     <label class="form-label">접수일 <span style="color:var(--accent-red)">*</span></label>
                     <input type="date" class="form-input" id="piCertReceivedDate" value="${Storage.today()}" max="${Storage.today()}">
                 </div>
+                <div class="form-group" style="margin-top:14px;">
+                    <label class="form-label" style="margin-bottom:6px;">성적서 사진 <span style="font-size:.78rem;color:var(--text-muted);font-weight:400;">(선택)</span></label>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;padding:6px 12px;border:1px solid var(--accent-green);border-radius:6px;font-size:.82rem;color:var(--accent-green);background:#f0fdf4;">
+                            <span class="material-symbols-outlined" style="font-size:16px;">photo_camera</span> 사진 선택
+                            <input type="file" id="piCertQuickPhotoFile" accept="image/*" capture="environment" style="display:none;"
+                                onchange="PaintIncomingInspectionModule._onCertQuickPhotoSelected()">
+                        </label>
+                        <span id="piCertQuickPhotoName" style="font-size:.8rem;color:var(--text-muted);">선택된 파일 없음</span>
+                    </div>
+                    <div id="piCertQuickPhotoPreview" style="margin-top:8px;display:none;">
+                        <img id="piCertQuickPhotoImg" style="max-width:100%;max-height:180px;border-radius:6px;border:1px solid var(--border-color);">
+                    </div>
+                </div>
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
@@ -1218,10 +1232,38 @@ var PaintIncomingInspectionModule = (function() {
         `);
     }
 
+    function _onCertQuickPhotoSelected() {
+        const input = document.getElementById('piCertQuickPhotoFile');
+        const nameEl = document.getElementById('piCertQuickPhotoName');
+        const previewEl = document.getElementById('piCertQuickPhotoPreview');
+        const imgEl = document.getElementById('piCertQuickPhotoImg');
+        if (!input || !input.files[0]) return;
+        if (nameEl) nameEl.textContent = input.files[0].name;
+        const reader = new FileReader();
+        reader.onload = e => {
+            if (imgEl) imgEl.src = e.target.result;
+            if (previewEl) previewEl.style.display = '';
+        };
+        reader.readAsDataURL(input.files[0]);
+    }
+
     async function confirmCertReceived(id) {
         const dateVal = (document.getElementById('piCertReceivedDate') || {}).value;
         if (!dateVal) { UIUtils.toast('접수일을 입력하세요.', 'warning'); return; }
-        await Storage.update(STORE, id, { certCheck: '접수완료', certNote: '접수 완료', certReceivedDate: dateVal });
+
+        let certPhotoUrl = '';
+        const photoInput = document.getElementById('piCertQuickPhotoFile');
+        if (photoInput && photoInput.files[0]) {
+            try {
+                certPhotoUrl = await ApiClient.uploadPhoto(photoInput.files[0], 'paint-inspections');
+            } catch (err) {
+                UIUtils.toast('사진 업로드 실패: ' + err.message, 'warning');
+            }
+        }
+
+        const updateData = { certCheck: '접수완료', certNote: '접수 완료', certReceivedDate: dateVal };
+        if (certPhotoUrl) updateData.certPhotoUrl = certPhotoUrl;
+        await Storage.update(STORE, id, updateData);
         UIUtils.closeModal();
         UIUtils.toast('성적서 접수 완료 처리되었습니다.', 'success');
         search();
@@ -1245,6 +1287,7 @@ var PaintIncomingInspectionModule = (function() {
         onNameplateFileChange,
         onCertFileChange,
         markCertReceived,
+        _onCertQuickPhotoSelected,
         confirmCertReceived
     };
 })();

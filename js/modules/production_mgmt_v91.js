@@ -1377,10 +1377,19 @@ var ProdStandardsModule = (function() {
         else _refreshProcessStandardStatus();
     }
 
+    function _isVisibleColorGlossTemplate(t = {}) {
+        const color = _normText(t.color || '');
+        if (!color || color === '/' || color === '-') return false;
+        const items = Array.isArray(t.items) ? t.items : [];
+        const colorItems = items.filter(item => ['color_l', 'color_a', 'color_b'].includes(String(item.key || '')));
+        if (!colorItems.length) return false;
+        return colorItems.some(item => _hasSpecValue(item));
+    }
+
     async function _openColorGlossStdViewer() {
         const TEMPLATE_KIND = 'quality_template';
         const all = Storage.getAll(DB.STORES.PROD_QUALITY_CHECK) || [];
-        const templates = all.filter(d => d._docKind === TEMPLATE_KIND);
+        const templates = all.filter(d => d._docKind === TEMPLATE_KIND).filter(_isVisibleColorGlossTemplate);
         const history = (await Storage.getConfigValue('color_gloss_std_history')) || [];
 
         const noteHtml = `<div style="margin-bottom:14px;padding:8px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;font-size:.8rem;color:#0369a1;display:flex;align-items:center;gap:6px;">
@@ -3576,7 +3585,10 @@ var ProdStandardsModule = (function() {
         const TEMPLATE_KIND = 'quality_template';
         const all = Storage.getAll(DB.STORES.PROD_QUALITY_CHECK) || [];
         const templates = all.filter(d => d._docKind === TEMPLATE_KIND);
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
         const history = (await Storage.getConfigValue('color_gloss_std_history')) || [];
+
+        const findItem = (items, key) => (items || []).find(i => String(i.key || '') === key);
 
         const colorRangeStr = (item) => {
             if (!item) return '';
@@ -3597,36 +3609,21 @@ var ProdStandardsModule = (function() {
             }
             return String(item.spec || '').trim();
         };
-        const findItem = (items, key) => (items || []).find(i => String(i.key || '') === key);
-        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-        const productById = {};
-        products.forEach(p => { if (p.id) productById[p.id] = p; });
-
-        const itemTypeBadge = (itemType) => {
-            if (itemType === '양산품') return `<span style="margin-left:6px;font-size:.7rem;font-weight:700;padding:1px 6px;border-radius:9px;background:rgba(52,211,153,0.15);color:#059669;border:1px solid #6ee7b7;">양산</span>`;
-            if (itemType === '개발품') return `<span style="margin-left:6px;font-size:.7rem;font-weight:700;padding:1px 6px;border-radius:9px;background:rgba(59,130,246,0.15);color:#2563eb;border:1px solid #93c5fd;">개발</span>`;
-            if (itemType && itemType.startsWith('A')) return `<span style="margin-left:6px;font-size:.7rem;font-weight:700;padding:1px 6px;border-radius:9px;background:rgba(251,191,36,0.15);color:#b45309;border:1px solid #fcd34d;">A/S</span>`;
-            return '';
-        };
-
-        const carGroups = {};
-        templates.forEach(t => {
-            const car = String(t.carModel || '').trim();
-            if (!car) return;
-            if (!carGroups[car]) carGroups[car] = [];
-            carGroups[car].push(t);
-        });
-
-        const th = (txt, align = 'center') => `<th style="padding:7px 12px;border:1px solid #e2e8f0;font-size:.76rem;font-weight:700;text-align:${align};background:#f8fafc;white-space:nowrap;">${txt}</th>`;
-        const td = (val, align = 'center') => {
-            const s = `padding:7px 12px;border:1px solid #e2e8f0;font-size:.8rem;text-align:${align};white-space:nowrap;`;
-            return val ? `<td style="${s}">${_esc(val)}</td>` : `<td style="${s}color:#cbd5e1;">/ </td>`;
+        const getRaw = (item, isGloss = false) => {
+            if (!item || !_hasSpecValue(item)) return '';
+            if (isGloss) {
+                const t = String(item.targetSpec ?? '').trim(), tol = String(item.toleranceSpec ?? '').trim();
+                if (t && tol) return `${t}±${tol}`;
+            }
+            const u = String(item.upperSpec ?? '').trim(), l = String(item.lowerSpec ?? '').trim();
+            if (u && l) return `${u}/${l}`;
+            return String(item.spec || '').trim();
         };
 
         const typeOrder = (t) => t === '양산품' ? 0 : (t && String(t).startsWith('A')) ? 1 : t === '개발품' ? 2 : 3;
         const productsByCar = {};
         products.forEach(p => {
-            const c = String(p.carModel || '').trim();
+            const c = _normText(p.carModel || '');
             if (!c) return;
             if (!productsByCar[c]) productsByCar[c] = [];
             productsByCar[c].push(p);
@@ -3635,10 +3632,7 @@ var ProdStandardsModule = (function() {
             const list = productsByCar[car] || [];
             if (!list.length) return '기타';
             const counts = {};
-            list.forEach(p => {
-                const it = p.itemType || '기타';
-                counts[it] = (counts[it] || 0) + 1;
-            });
+            list.forEach(p => { const it = p.itemType || '기타'; counts[it] = (counts[it] || 0) + 1; });
             let best = '기타', bestRank = 999, bestCount = -1;
             Object.entries(counts).forEach(([k, v]) => {
                 const r = typeOrder(k);
@@ -3646,62 +3640,147 @@ var ProdStandardsModule = (function() {
             });
             return best;
         };
+        const itemTypeBadge = (itemType) => {
+            if (itemType === '양산품') return `<span style="margin-left:6px;font-size:.7rem;font-weight:700;padding:1px 6px;border-radius:9px;background:rgba(52,211,153,0.15);color:#059669;border:1px solid #6ee7b7;">양산</span>`;
+            if (itemType === '개발품') return `<span style="margin-left:6px;font-size:.7rem;font-weight:700;padding:1px 6px;border-radius:9px;background:rgba(59,130,246,0.15);color:#2563eb;border:1px solid #93c5fd;">개발</span>`;
+            if (itemType && itemType.startsWith('A')) return `<span style="margin-left:6px;font-size:.7rem;font-weight:700;padding:1px 6px;border-radius:9px;background:rgba(251,191,36,0.15);color:#b45309;border:1px solid #fcd34d;">A/S</span>`;
+            return '';
+        };
 
-        const sortedCarEntries = Object.entries(carGroups).sort(([carA], [carB]) => {
-            const oa = typeOrder(carRepItemType(carA));
-            const ob = typeOrder(carRepItemType(carB));
-            if (oa !== ob) return oa - ob;
-            return carA.localeCompare(carB, 'ko');
+        // 그룹: car||color 단위로 집계 (색차/광택은 컬러 단위 기준)
+        const groupMap = new Map();
+        templates.forEach(t => {
+            const car = _normText(t.carModel || '');
+            if (!car) return;
+            const color = _normText(t.color || '');
+            if (!color) return;
+            const items = t.items || [];
+            const clItem = findItem(items, 'color_l');
+            const caItem = findItem(items, 'color_a');
+            const cbItem = findItem(items, 'color_b');
+            const glossItem = findItem(items, 'gloss');
+            if (!clItem && !caItem && !cbItem && !glossItem) return;
+            const key = car + '||' + color;
+            if (!groupMap.has(key)) groupMap.set(key, { car, color, entries: [] });
+            groupMap.get(key).entries.push({
+                partName: _normText(t.partName || '-'),
+                color_l: clItem, color_a: caItem, color_b: cbItem, gloss: glossItem,
+            });
         });
 
+        if (!groupMap.size) {
+            el.innerHTML = `<div style="text-align:center;padding:48px 20px;color:#94a3b8;border:2px dashed #e2e8f0;border-radius:8px;">
+                <span class="material-symbols-outlined" style="font-size:36px;display:block;margin-bottom:8px;">inventory_2</span>
+                <div style="font-size:.85rem;">초중종물 관리 &gt; 품목별 항목 기준에 등록된 데이터가 없습니다.</div>
+            </div>`;
+            return;
+        }
+
+        // 불일치 감지 + 대표값 선택
+        const conflicts = [];
+        groupMap.forEach(g => {
+            const lRaws = new Set(g.entries.map(e => getRaw(e.color_l)).filter(Boolean));
+            const aRaws = new Set(g.entries.map(e => getRaw(e.color_a)).filter(Boolean));
+            const bRaws = new Set(g.entries.map(e => getRaw(e.color_b)).filter(Boolean));
+            const gRaws = new Set(g.entries.map(e => getRaw(e.gloss, true)).filter(Boolean));
+            const lC = lRaws.size > 1, aC = aRaws.size > 1, bC = bRaws.size > 1, gC = gRaws.size > 1;
+            g.conflict = lC || aC || bC || gC;
+            if (g.conflict) {
+                conflicts.push({ car: g.car, color: g.color, entries: g.entries,
+                    lC, aC, bC, gC, lRaws, aRaws, bRaws, gRaws });
+            }
+            // 대표값: 가장 많이 채워진 항목
+            const scored = g.entries.map(e => ({
+                e, score: [e.color_l, e.color_a, e.color_b, e.gloss].filter(i => i && _hasSpecValue(i)).length
+            })).sort((a, b) => b.score - a.score);
+            g.rep = scored[0].e;
+        });
+
+        // 정렬: 양산 → A/S → 개발, 같은 품종 내 차종명순, 컬러순
+        const rows = [...groupMap.values()].sort((a, b) => {
+            const oa = typeOrder(carRepItemType(a.car)), ob = typeOrder(carRepItemType(b.car));
+            if (oa !== ob) return oa - ob;
+            const c = a.car.localeCompare(b.car, 'ko');
+            if (c !== 0) return c;
+            return a.color.localeCompare(b.color, 'ko');
+        });
+
+        // 차종별 rowspan 그룹 구성
+        const carGroupsOrdered = [];
+        const seenCars = new Set();
+        rows.forEach(r => {
+            if (!seenCars.has(r.car)) { seenCars.add(r.car); carGroupsOrdered.push({ car: r.car, rows: [] }); }
+            carGroupsOrdered[carGroupsOrdered.length - 1].rows.push(r);
+        });
+
+        const th = (txt, align = 'center') => `<th style="padding:7px 12px;border:1px solid #e2e8f0;font-size:.76rem;font-weight:700;text-align:${align};background:#f8fafc;white-space:nowrap;">${txt}</th>`;
+        const td = (val, align = 'center') => {
+            const s = `padding:7px 12px;border:1px solid #e2e8f0;font-size:.8rem;text-align:${align};white-space:nowrap;`;
+            return val ? `<td style="${s}">${_esc(val)}</td>` : `<td style="${s}color:#cbd5e1;">/ </td>`;
+        };
         const carCellStyle = `padding:7px 12px;border:1px solid #e2e8f0;font-size:.83rem;font-weight:800;color:#1e293b;background:#f1f5f9;white-space:nowrap;vertical-align:middle;text-align:left;`;
-        const bodyRowsHtml = sortedCarEntries.map(([car, tmpls]) => {
-            const seen = new Set();
-            const uniqueTmpls = tmpls
-                .sort((a, b) => (a.color || '').localeCompare(b.color || '', 'ko'))
-                .filter(t => { const k = (t.color || '').trim(); if (seen.has(k)) return false; seen.add(k); return true; });
-            if (!uniqueTmpls.length) return '';
+
+        const bodyRowsHtml = carGroupsOrdered.map(({ car, rows: carRows }) => {
             const repType = carRepItemType(car);
             const typeBadge = itemTypeBadge(repType);
-            return uniqueTmpls.map((t, idx) => {
-                const items = t.items || [];
+            return carRows.map((r, idx) => {
                 const carCell = idx === 0
-                    ? `<td rowspan="${uniqueTmpls.length}" style="${carCellStyle}">
+                    ? `<td rowspan="${carRows.length}" style="${carCellStyle}">
                             <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
                                 <span>${_esc(car)}</span>${typeBadge}
                             </div>
-                       </td>`
-                    : '';
+                       </td>` : '';
+                const conflictMark = r.conflict
+                    ? `<span style="margin-left:4px;color:#dc2626;font-size:.7rem;font-weight:700;vertical-align:middle;" title="값 불일치">⚠</span>` : '';
+                const allFilled = [r.rep.color_l, r.rep.color_a, r.rep.color_b, r.rep.gloss].every(i => i && _hasSpecValue(i));
+                const anyFilled = [r.rep.color_l, r.rep.color_a, r.rep.color_b, r.rep.gloss].some(i => i && _hasSpecValue(i));
+                const statusCell = r.conflict
+                    ? `<td style="padding:5px 8px;border:1px solid #e2e8f0;text-align:center;"><span style="font-size:.7rem;color:#fff;background:#dc2626;border-radius:6px;padding:1px 6px;font-weight:700;">불일치</span></td>`
+                    : allFilled
+                        ? `<td style="padding:5px 8px;border:1px solid #e2e8f0;text-align:center;"><span style="font-size:.7rem;color:#fff;background:#16a34a;border-radius:6px;padding:1px 6px;font-weight:700;">완료</span></td>`
+                        : anyFilled
+                            ? `<td style="padding:5px 8px;border:1px solid #e2e8f0;text-align:center;"><span style="font-size:.7rem;color:#fff;background:#2563eb;border-radius:6px;padding:1px 6px;font-weight:700;">일부</span></td>`
+                            : `<td style="padding:5px 8px;border:1px solid #e2e8f0;text-align:center;color:#94a3b8;font-size:.75rem;">미입력</td>`;
                 return `<tr>
                     ${carCell}
-                    ${td(t.color || '', 'left')}
-                    ${td(colorRangeStr(findItem(items, 'color_l')))}
-                    ${td(colorRangeStr(findItem(items, 'color_a')))}
-                    ${td(colorRangeStr(findItem(items, 'color_b')))}
-                    ${td(glossStr(findItem(items, 'gloss')))}
+                    <td style="padding:7px 12px;border:1px solid #e2e8f0;font-size:.8rem;text-align:left;white-space:nowrap;">${_esc(r.color)}${conflictMark}</td>
+                    ${td(colorRangeStr(r.rep.color_l))}
+                    ${td(colorRangeStr(r.rep.color_a))}
+                    ${td(colorRangeStr(r.rep.color_b))}
+                    ${td(glossStr(r.rep.gloss))}
+                    ${statusCell}
                 </tr>`;
             }).join('');
         }).join('');
 
-        const tableBlocks = bodyRowsHtml
-            ? `<table style="width:100%;border-collapse:collapse;">
-                <thead><tr>
-                    ${th('차종','left')}
-                    ${th('컬러','left')}
-                    ${th('색차 △L')}
-                    ${th('색차 △a')}
-                    ${th('색차 △b')}
-                    ${th('광택 G')}
-                </tr></thead>
-                <tbody>${bodyRowsHtml}</tbody>
-               </table>`
-            : `<div style="text-align:center;padding:48px 20px;color:#94a3b8;border:2px dashed #e2e8f0;border-radius:8px;">
-                <span class="material-symbols-outlined" style="font-size:36px;display:block;margin-bottom:8px;">inventory_2</span>
-                <div style="font-size:.85rem;">초중종물 관리 &gt; 품목별 항목 기준에 등록된 데이터가 없습니다.</div>
-               </div>`;
+        // 불일치 배너
+        const conflictBanner = conflicts.length ? `
+            <div style="margin-bottom:14px;padding:12px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;font-size:.82rem;">
+                <div style="display:flex;align-items:center;gap:6px;font-weight:800;margin-bottom:4px;">
+                    <span class="material-symbols-outlined" style="font-size:18px;">warning</span>
+                    동일 차종/컬러에서 색차·광택 값 불일치 ${conflicts.length}건
+                </div>
+                <div style="font-size:.74rem;color:#7f1d1d;margin-bottom:10px;">
+                    같은 차종·컬러에 속한 품명들의 기준값이 일치하지 않습니다.
+                    <strong>초중종물 관리 &gt; 품목별 항목 기준</strong>에서 수정하세요.
+                </div>
+                <div style="display:flex;flex-direction:column;gap:8px;">
+                ${conflicts.map(c => {
+                    const fields = [];
+                    if (c.lC) fields.push(`△L: ${[...c.lRaws].join(' vs ')}`);
+                    if (c.aC) fields.push(`△a: ${[...c.aRaws].join(' vs ')}`);
+                    if (c.bC) fields.push(`△b: ${[...c.bRaws].join(' vs ')}`);
+                    if (c.gC) fields.push(`광택: ${[...c.gRaws].join(' vs ')}`);
+                    return `<div style="background:#fff;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:.78rem;">
+                        <div style="font-weight:700;margin-bottom:4px;color:#7f1d1d;">${_esc(c.car)} / ${_esc(c.color)}</div>
+                        <div style="color:#991b1b;margin-bottom:3px;">${fields.join(' · ')}</div>
+                        <div style="font-size:.72rem;color:#7f1d1d;">품명: ${c.entries.map(e => _esc(e.partName)).join(', ')}</div>
+                    </div>`;
+                }).join('')}
+                </div>
+            </div>` : '';
 
         const fmtDt = (iso) => { const d = new Date(iso), p = n => String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
-
         const historyHtml = `<div style="margin-top:28px;border-top:1px solid #e2e8f0;padding-top:16px;">
             <div style="font-size:.78rem;font-weight:700;color:#64748b;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
                 <span class="material-symbols-outlined" style="font-size:15px;">history</span>업데이트 이력
@@ -3724,13 +3803,25 @@ var ProdStandardsModule = (function() {
             <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
                 <div style="font-size:.8rem;color:#0369a1;display:flex;align-items:center;gap:5px;">
                     <span class="material-symbols-outlined" style="font-size:14px;">link</span>
-                    상위 문서: <strong>초중종물 관리 &gt; 품목별 항목 기준</strong>
+                    상위 문서: <strong>초중종물 관리 &gt; 품목별 항목 기준</strong> · 색차(△L/a/b) / 광택
                 </div>
                 <button class="btn btn-primary btn-sm" onclick="ProdStandardsModule._confirmColorGlossStdUpdate()" style="display:inline-flex;align-items:center;gap:6px;">
                     <span class="material-symbols-outlined" style="font-size:15px;">sync</span>값 업데이트
                 </button>
             </div>
-            ${tableBlocks}
+            ${conflictBanner}
+            <table style="width:100%;border-collapse:collapse;">
+                <thead><tr>
+                    ${th('차종','left')}
+                    ${th('컬러','left')}
+                    ${th('색차 △L')}
+                    ${th('색차 △a')}
+                    ${th('색차 △b')}
+                    ${th('광택 G')}
+                    ${th('상태')}
+                </tr></thead>
+                <tbody>${bodyRowsHtml}</tbody>
+            </table>
             ${historyHtml}`;
     }
 
@@ -3769,6 +3860,19 @@ var ProdStandardsModule = (function() {
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
         const productById = {};
         products.forEach(p => { if (p.id) productById[p.id] = p; });
+        const findProductForTemplate = (templateCar = '', templatePart = '', templateColor = '') => {
+            const car = String(templateCar || '').trim();
+            const part = String(templatePart || '').trim();
+            const color = String(templateColor || '').trim();
+            if (!car || !part || !color) return null;
+            return productById[`${car}||${part}||${color}`]
+                || products.find(p =>
+                    String(p.carModel || '').trim() === car &&
+                    String(p.partName || '').trim() === part &&
+                    String(p.color || p.paintColor || p.paint || p.drawingColor || '').trim() === color
+                )
+                || null;
+        };
 
         const itemTypeBadge = (itemType) => {
             if (itemType === '양산품') return `<span style="margin-left:6px;font-size:.7rem;font-weight:700;padding:1px 6px;border-radius:9px;background:rgba(52,211,153,0.15);color:#059669;border:1px solid #6ee7b7;">양산</span>`;
@@ -3777,19 +3881,50 @@ var ProdStandardsModule = (function() {
             return '';
         };
 
+        // 도장 라인(공정) 추정: product.paintColorA/B 또는 process 필드로
+        const inferPaintProcess = (template, product) => {
+            const saved = String(template?.paintProcess || product?.paintProcess || '').trim();
+            if (saved === '도장-A' || saved === '도장-B') return saved;
+            const color = String(template.color || '').trim();
+            const cA = String(product?.paintColorA || '').trim();
+            const cB = String(product?.paintColorB || '').trim();
+            if (color && cA && color === cA) return '도장-A';
+            if (color && cB && color === cB) return '도장-B';
+            const procs = [template?.process1, template?.process2, template?.process3, template?.process4, product?.process1, product?.process2, product?.process3, product?.process4]
+                .map(v => String(v || '').trim())
+                .filter(Boolean);
+            const hasA = procs.includes('도장-A'), hasB = procs.includes('도장-B');
+            if (hasA && !hasB) return '도장-A';
+            if (hasB && !hasA) return '도장-B';
+            if (hasA && hasB) {
+                const pn = String(template?.partName || product?.partName || '').toUpperCase();
+                if (/(TRIM|BEZEL|P-?BUTTON|BUTTON|LENS|COVER|MAP|KNOB|LINER|DEC0|DECO|GARNISH)/.test(pn)) return '도장-B';
+                return '도장-A';
+            }
+            return ''; // 추정 불가 또는 단일 도장
+        };
+
+        // 그룹화: 차종 + 도장공정(A/B) + 품명 + 컬러 — 같은 라인끼리만 비교
+        // 라인별 적용 항목: 도장-A = 하도만 측정 / 도장-B(또는 단일) = 하도+상도
         const groupMap = new Map();
+        const allProducts = Storage.getAll(DB.STORES.PRODUCTS) || [];
         templates.forEach(t => {
             const car = String(t.carModel || '').trim();
             const color = String(t.color || '').trim();
-            if (!car) return;
-            const key = car + '||' + color;
+            const prod = productById[t.productId] || findProductForTemplate(car, t.partName || '', color) || allProducts.find(p =>
+                String(p.carModel || '').trim() === car &&
+                String(p.partName || '').trim() === String(t.partName || '').trim()
+            );
+            const partName = String(t.partName || prod?.partName || '').trim();
+            const resolvedColor = String(color || prod?.color || prod?.paintColor || prod?.paint || prod?.drawingColor || '').trim();
+            if (!car || !partName || !resolvedColor) return;
             const items = t.items || [];
             const under = filmInfo(findItem(items, 'film_under'));
             const top = filmInfo(findItem(items, 'film_top'));
-            const prod = productById[t.productId] || {};
-            const partName = String(t.partName || prod.partName || '').trim();
-            if (!groupMap.has(key)) groupMap.set(key, { car, color, productId: t.productId, entries: [] });
-            groupMap.get(key).entries.push({ under, top, productId: t.productId, partName, updatedAt: t.updatedAt || '' });
+            const paintProcess = inferPaintProcess(t, prod);
+            const key = car + '||' + paintProcess + '||' + partName + '||' + resolvedColor;
+            if (!groupMap.has(key)) groupMap.set(key, { car, color: resolvedColor, partName, paintProcess, productId: t.productId, entries: [] });
+            groupMap.get(key).entries.push({ under, top, productId: t.productId, partName, paintProcess, updatedAt: t.updatedAt || '' });
         });
 
         // 같은 spec을 가진 품명들을 그룹화 + 최다 빈도 spec을 권장값으로
@@ -3825,6 +3960,7 @@ var ProdStandardsModule = (function() {
                 conflicts.push({
                     car: g.car,
                     color: g.color,
+                    paintProcess: g.paintProcess || '',
                     templateCount: g.entries.length,
                     underApplicable: underApplicable.length,
                     topApplicable: topApplicable.length,
@@ -3848,7 +3984,7 @@ var ProdStandardsModule = (function() {
             const refTop   = topGroups[0]   ? (g.entries.find(e => e.top.raw === topGroups[0].raw)   || topApplicable[0]   || g.entries[0]).top
                                             : (topApplicable[0]   || g.entries[0]).top;
             if (!carGroups[g.car]) carGroups[g.car] = [];
-            carGroups[g.car].push({ color: g.color, productId: g.productId, under: refUnder, top: refTop, conflict });
+            carGroups[g.car].push({ color: g.color, partName: g.partName || '', paintProcess: g.paintProcess || '', productId: g.productId, under: refUnder, top: refTop, conflict });
         });
 
         const th = (txt, align = 'center') => `<th style="padding:7px 12px;border:1px solid #e2e8f0;font-size:.76rem;font-weight:700;text-align:${align};background:#f8fafc;white-space:nowrap;">${txt}</th>`;
@@ -3893,6 +4029,7 @@ var ProdStandardsModule = (function() {
                     <div style="background:#fff;border:1px solid #fecaca;border-radius:8px;padding:10px 12px;">
                         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
                             <strong style="font-size:.86rem;color:#7f1d1d;">${_esc(c.car)} / ${_esc(c.color || '(컬러 미지정)')}</strong>
+                            ${c.paintProcess ? `<span style="font-size:.72rem;padding:1px 7px;border-radius:8px;font-weight:700;background:${c.paintProcess==='도장-A'?'#ede9fe':'#e0f2fe'};color:${c.paintProcess==='도장-A'?'#6d28d9':'#0369a1'};">${_esc(c.paintProcess)}</span>` : ''}
                             <span style="font-size:.7rem;color:#7f1d1d;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:1px 7px;">템플릿 ${c.templateCount}건</span>
                             ${c.underConflict ? `<span style="font-size:.7rem;color:#fff;background:#dc2626;border-radius:8px;padding:1px 7px;">하도 불일치(${c.underGroups.length}종)</span>` : ''}
                             ${c.topConflict ? `<span style="font-size:.7rem;color:#fff;background:#dc2626;border-radius:8px;padding:1px 7px;">상도 불일치(${c.topGroups.length}종)</span>` : ''}
@@ -3954,8 +4091,20 @@ var ProdStandardsModule = (function() {
         });
 
         const carCellStyle = `padding:7px 12px;border:1px solid #e2e8f0;font-size:.83rem;font-weight:800;color:#1e293b;background:#f1f5f9;white-space:nowrap;vertical-align:middle;text-align:left;`;
+        const procBadge = (p) => {
+            if (!p) return '';
+            const bg = p === '도장-A' ? '#ede9fe' : p === '도장-B' ? '#e0f2fe' : '#f1f5f9';
+            const fg = p === '도장-A' ? '#6d28d9' : p === '도장-B' ? '#0369a1' : '#475569';
+            const br = p === '도장-A' ? '#c4b5fd' : p === '도장-B' ? '#7dd3fc' : '#cbd5e1';
+            return `<span style="display:inline-block;font-size:.66rem;font-weight:800;padding:1px 6px;border-radius:9px;background:${bg};color:${fg};border:1px solid ${br};">${_esc(p)}</span>`;
+        };
+        const procOrder = (p) => p === '도장-A' ? 0 : p === '도장-B' ? 1 : 2;
         const bodyRowsHtml = sortedCarEntries.length ? sortedCarEntries.map(([car, rows]) => {
-            const sortedRows = rows.sort((a, b) => (a.color || '').localeCompare(b.color || '', 'ko'));
+            const sortedRows = rows.sort((a, b) =>
+                procOrder(a.paintProcess) - procOrder(b.paintProcess)
+                || (a.partName || '').localeCompare(b.partName || '', 'ko')
+                || (a.color || '').localeCompare(b.color || '', 'ko')
+            );
             const repType = carRepItemType(car);
             const typeBadge = itemTypeBadge(repType);
             return sortedRows.map((r, idx) => {
@@ -3970,6 +4119,8 @@ var ProdStandardsModule = (function() {
                     : '';
                 return `<tr style="${rowExtra}">
                     ${carCell}
+                    <td style="padding:7px 10px;border:1px solid #e2e8f0;text-align:center;white-space:nowrap;">${procBadge(r.paintProcess)}</td>
+                    ${td(r.partName || '', 'left')}
                     ${td(r.color || '', 'left')}
                     ${td(r.under.display)}
                     ${td(r.top.display)}
@@ -3985,6 +4136,8 @@ var ProdStandardsModule = (function() {
             ? `<table style="width:100%;border-collapse:collapse;">
                     <thead><tr>
                         ${th('차종','left')}
+                        ${th('도장')}
+                        ${th('품명','left')}
                         ${th('컬러','left')}
                         ${th('하도 (μm)')}
                         ${th('상도 (μm)')}
@@ -13381,11 +13534,45 @@ var PaintMixModule = (function() {
         }).join('');
     }
 
-    /* ── 배합실 잔량: 배합 기록에서 (출고량 × 포장단위) - 사용량 집계 ── */
+    /* ── 배합실 잔량: 창고 출고량(g) - 도료사용량(g) 집계 ── */
     function _calcMixingRoomResiduals() {
         const mats  = Storage.getAll(PAINT_MAT_STORE) || [];
         const mixes = _mixes();
         const map   = {};  // key: materialId__lotNo
+
+        // ① 도료 창고 수동 출고 → 배합실 입고 (paintMixId 없는 출고 레코드)
+        (Storage.getAll(PAINT_INV_STORE) || []).forEach(r => {
+            if (r.type !== '출고') return;
+            if (r.paintMixId) return;  // 도료사용등록 연동 출고는 ②에서 처리
+            const matId = r.materialId || '';
+            const mat   = mats.find(x => x.id === matId);
+            if (!mat) return;
+            const lotNo  = r.prodLot || r.lotNo || '미기입';
+            const key    = `${matId}__${lotNo}`;
+            const packKg = Number(mat.packUnit) || 0;
+            const cans   = Number(r.quantity) || 0;  // quantity 단위: EA(캔)
+            const inG    = cans * packKg * 1000;
+            if (!map[key]) {
+                map[key] = {
+                    materialId: matId,
+                    lotNo,
+                    paintName:    mat.name || '',
+                    supplier:     mat.supplier || '',
+                    manufacturer: mat.manufacturer || '',
+                    packUnit:     packKg,
+                    usageType:    '',
+                    totalWithdrawG: 0,
+                    totalUsedG:     0,
+                    residualG:      0,
+                    withdrawDetail: []
+                };
+            }
+            map[key].totalWithdrawG += inG;
+            map[key].withdrawDetail.push({ cans, packKg, inG, date: r.date || '' });
+            map[key].residualG = map[key].totalWithdrawG - map[key].totalUsedG;
+        });
+
+        // ② 도료사용등록 warehouseCans → 배합실 입고 (기존 방식 유지)
         mixes.forEach(m => {
             (m.usages || []).forEach(u => {
                 const matId   = u.materialId || '';
@@ -13395,15 +13582,17 @@ var PaintMixModule = (function() {
                 const key     = `${matId}__${lotNo}`;
                 if (!map[key]) {
                     map[key] = {
-                        materialId: matId,
+                        materialId:   matId,
                         lotNo,
-                        paintName:  u.paintName || mat.name || '',
-                        supplier:   mat.supplier || '',
-                        packUnit:   Number(u.packUnitKg) || Number(mat.packUnit) || 0,
-                        usageType:  u.usageType || '',
-                        totalWithdrawG: 0,   // 총 출고량 (g 환산)
-                        totalUsedG:     0,   // 총 사용량 (g)
-                        residualG:      0    // 잔량 (g)
+                        paintName:    u.paintName || mat.name || '',
+                        supplier:     mat.supplier || '',
+                        manufacturer: mat.manufacturer || '',
+                        packUnit:     Number(u.packUnitKg) || Number(mat.packUnit) || 0,
+                        usageType:    u.usageType || '',
+                        totalWithdrawG: 0,
+                        totalUsedG:     0,
+                        residualG:      0,
+                        withdrawDetail: []
                     };
                 }
                 const cans    = Number(u.warehouseCans) || 0;
@@ -13412,9 +13601,11 @@ var PaintMixModule = (function() {
                 const usedG   = Number(u.usageG) || 0;
                 map[key].totalWithdrawG += withdrawG;
                 map[key].totalUsedG     += usedG;
-                map[key].residualG      = map[key].totalWithdrawG - map[key].totalUsedG;
+                if (cans > 0) map[key].withdrawDetail.push({ cans, packKg, inG: withdrawG, date: m.date || '' });
+                map[key].residualG = map[key].totalWithdrawG - map[key].totalUsedG;
             });
         });
+
         return Object.values(map)
             .filter(r => r.residualG > 0)
             .sort((a, b) => (a.paintName||'').localeCompare(b.paintName||'', 'ko'));
@@ -13443,26 +13634,36 @@ var PaintMixModule = (function() {
                     <div class="data-table-wrapper">
                         <table class="data-table" style="font-size:0.85rem;">
                             <thead><tr>
-                                <th>도료명</th><th>용도</th><th>제조 LOT</th><th>공급사</th>
-                                <th style="text-align:right;">총 출고(g)</th>
+                                <th>도료명</th><th>용도</th><th>제조 LOT</th><th>공급사</th><th>제조사</th>
+                                <th>입고 내역 (캔×용량=g)</th>
+                                <th style="text-align:right;">총 입고(g)</th>
                                 <th style="text-align:right;">총 사용(g)</th>
                                 <th style="text-align:right;">잔량(g)</th>
-                                <th style="text-align:right;">잔량(KG)</th>
                             </tr></thead>
                             <tbody>
                                 ${mixResiduals.map(r => {
                                     const residKg = (r.residualG / 1000).toFixed(2);
                                     const pct = r.totalWithdrawG > 0 ? (r.residualG / r.totalWithdrawG * 100).toFixed(0) : 0;
                                     const color = Number(pct) > 50 ? '#15803d' : Number(pct) > 20 ? '#b45309' : '#b91c1c';
+                                    const detailHtml = (r.withdrawDetail || []).length
+                                        ? r.withdrawDetail.map(d =>
+                                            `<div style="white-space:nowrap;font-size:0.78rem;color:var(--text-secondary);">
+                                                <span style="color:var(--accent-blue);font-weight:600;">${d.cans}캔</span>
+                                                × ${d.packKg}KG
+                                                = <span style="font-weight:600;">${UIUtils.formatNumber(d.inG)}g</span>
+                                                <span style="color:var(--text-muted);font-size:0.72rem;">${d.date ? '(' + d.date + ')' : ''}</span>
+                                            </div>`).join('')
+                                        : '<span style="color:var(--text-muted);">-</span>';
                                     return `<tr>
                                         <td><strong>${_esc(r.paintName||'-')}</strong></td>
                                         <td>${r.usageType ? `<span class="badge badge-info" style="font-size:0.75rem;">${_esc(r.usageType)}</span>` : '-'}</td>
                                         <td style="font-family:monospace;font-size:0.8rem;">${_esc(r.lotNo)}</td>
                                         <td style="font-size:0.8rem;">${_esc(r.supplier||'-')}</td>
+                                        <td style="font-size:0.8rem;">${_esc(r.manufacturer||'-')}</td>
+                                        <td>${detailHtml}</td>
                                         <td style="text-align:right;">${UIUtils.formatNumber(r.totalWithdrawG)}</td>
                                         <td style="text-align:right;">${UIUtils.formatNumber(r.totalUsedG)}</td>
                                         <td style="text-align:right;font-weight:700;color:${color};">${UIUtils.formatNumber(r.residualG)}</td>
-                                        <td style="text-align:right;font-weight:700;color:${color};">${residKg}</td>
                                     </tr>`;
                                 }).join('')}
                             </tbody>
@@ -13839,7 +14040,6 @@ var PaintMixModule = (function() {
         rows.forEach(row => {
             [
                 ['mainId', '주제'],
-                ['hardId', '경화제'],
                 ['thinnerId', '희석제']
             ].forEach(([field, role]) => {
                 const materialId = row[field] || '';
@@ -13962,9 +14162,10 @@ var PaintMixModule = (function() {
     function _formHtml(data = {}, usages = []) {
         const work = data.workId ? Storage.getById(PAINT_WORK_STORE, data.workId) : null;
         const product = work ? _findProduct(work) : _findProduct(data);
-        const components = usages.length ? usages : _paintComponents(product);
+        const allComponents = usages.length ? usages : _paintComponents(product);
+        const components = allComponents.filter(c => c.role !== '경화제');
         const ignoreMixId = data.id || '';
-        // Primer → Color → Clear 순, 각 그룹 내 주제 → 경화제 → 희석제 순 정렬
+        // Primer → Color → Clear 순, 각 그룹 내 주제 → 희석제 순 정렬
         const SPEC_ORD = { 'Primer': 0, 'Color': 1, 'Clear': 2 };
         const ROLE_ORD = { '주제': 0, '경화제': 1, '희석제': 2 };
         const sortedComponents = [...components].sort((a, b) => {
@@ -15468,6 +15669,11 @@ var ProdQualityModule = (function() {
                     <select class="form-select" id="pqStdFilterColor" style="height:42px;min-width:140px;max-width:220px;font-size:0.95rem;" onchange="ProdQualityModule.renderStandardsCard()">
                         <option value="">전체 컬러</option>
                     </select>
+                    <select class="form-select" id="pqStdFilterLine" style="height:42px;min-width:120px;max-width:160px;font-size:0.95rem;" onchange="ProdQualityModule.renderStandardsCard()">
+                        <option value="">전체 라인</option>
+                        <option value="도장-A">도장-A</option>
+                        <option value="도장-B">도장-B</option>
+                    </select>
                 </div>
 
                 <div id="pqStandardsBody"></div>
@@ -15642,6 +15848,7 @@ var ProdQualityModule = (function() {
         if (!el) return;
         const filterCar = document.getElementById('pqStdFilterCar')?.value || '';
         const filterColor = document.getElementById('pqStdFilterColor')?.value || '';
+        const filterLine = document.getElementById('pqStdFilterLine')?.value || '';
 
         // 컬러 옵션이 비어있으면 (최초 렌더) 차종 기준으로 채움
         const colorSel = document.getElementById('pqStdFilterColor');
@@ -15704,10 +15911,13 @@ var ProdQualityModule = (function() {
         const _prodStatus = p => {
             return _specStatus(_productSpecItems(p.carModel, p.partName, p.color, { fallbackToMaster: false, paintProcess: p.paintProcess || '', fallbackColors: p.fallbackColors || [] }));
         };
-        const expandedAll = allProducts.flatMap(_expandDualProcess);
+        const expandedAll = allProducts.flatMap(_expandDualProcess)
+            .filter(p => !filterLine || (p.paintProcess || '') === filterLine);
+        const expandedTotal = expandedAll.length;
         const completeCount = expandedAll.filter(p => _prodStatus(p) === 'complete').length;
         const partialCount  = expandedAll.filter(p => ['items-only','partial'].includes(_prodStatus(p))).length;
-        const noneCount     = total - completeCount - partialCount;
+        const noneItems     = expandedAll.filter(p => _prodStatus(p) === 'none');
+        const noneCount     = noneItems.length;
 
         // 차종별 그룹핑 (도장-A+B 분리된 expandedAll 기준)
         const carGroups = {};
@@ -15716,12 +15926,36 @@ var ProdQualityModule = (function() {
             carGroups[p.carModel].push(p);
         });
 
+        const noneDetailId = 'pqSummaryNoneDetail';
+        const noneDetailHtml = noneCount > 0 ? `
+            <div id="${noneDetailId}" style="display:none;margin-top:8px;padding:8px 12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:0.8rem;color:#9a3412;">
+                <div style="font-weight:600;margin-bottom:5px;color:#c2410c;">미설정 품목 목록</div>
+                ${noneItems.map(p => {
+                    const lineBadge = p.paintProcess
+                        ? `<span style="font-size:0.72rem;padding:1px 5px;border-radius:4px;font-weight:600;background:${p.paintProcess==='도장-A'?'#ede9fe':'#e0f2fe'};color:${p.paintProcess==='도장-A'?'#6d28d9':'#0369a1'};">${_esc(p.paintProcess)}</span>`
+                        : '';
+                    return `<div style="display:flex;align-items:center;gap:5px;padding:2px 0;">
+                        <span style="color:#64748b;min-width:50px;">${_esc(p.carModel)}</span>
+                        ${lineBadge}
+                        <span style="font-weight:600;">${_esc(p.partName)}</span>
+                        <span style="color:#78716c;">${_esc(p.color||'-')}</span>
+                    </div>`;
+                }).join('')}
+            </div>` : '';
+
         const summaryBar = `
-            <div style="display:flex;gap:12px;padding:10px 16px;background:var(--bg-secondary);border-radius:10px;margin-bottom:14px;font-size:0.83rem;flex-wrap:wrap;align-items:center;">
-                <span>전체 <strong style="color:var(--text-primary);">${total}</strong>개 품목</span>
-                <span style="color:var(--accent-green);font-weight:600;">✓ 항목+기준값 완료 ${completeCount}</span>
-                <span style="color:#2563eb;font-weight:600;">△ 기준값 미입력 ${partialCount}</span>
-                <span style="color:var(--accent-orange);font-weight:600;">✗ 미설정 ${noneCount}</span>
+            <div style="padding:10px 16px;background:var(--bg-secondary);border-radius:10px;margin-bottom:14px;font-size:0.83rem;">
+                <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+                    <span>전체 <strong style="color:var(--text-primary);">${expandedTotal}</strong>개 품목</span>
+                    <span style="color:var(--accent-green);font-weight:600;">✓ 항목+기준값 완료 ${completeCount}</span>
+                    <span style="color:#2563eb;font-weight:600;">△ 기준값 미입력 ${partialCount}</span>
+                    ${noneCount > 0
+                        ? `<span style="color:var(--accent-orange);font-weight:600;cursor:pointer;text-decoration:underline;text-underline-offset:2px;"
+                            onclick="(function(){var d=document.getElementById('${noneDetailId}');if(d)d.style.display=d.style.display==='none'?'block':'none';})()">✗ 미설정 ${noneCount} ▾</span>`
+                        : `<span style="color:var(--accent-orange);font-weight:600;">✗ 미설정 0</span>`
+                    }
+                </div>
+                ${noneDetailHtml}
             </div>`;
 
         const _itemTypeOrder = (t) => {
@@ -16757,22 +16991,39 @@ var ProdQualityModule = (function() {
                 </div>
                 <div class="form-group">
                     <label class="form-label">검사자</label>
-                    <input type="text" class="form-input" id="pqDataInspector" value="${_esc(record.inspector || issue.inspector || '')}" placeholder="검사자">
+                    <select class="form-select" id="pqDataInspector">
+                        ${_operatorOptions(record.inspector || issue.inspector || '')}
+                    </select>
                 </div>
                 <div class="form-group">
                     <label class="form-label">상태</label>
                     <div class="form-input" style="display:flex;align-items:center;background:#f8fafc;font-weight:700;">${record.id ? 'DATA 수정' : 'DATA 입력'}</div>
                 </div>
             </div>
-            <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:12px;padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;background:#f8fafc;font-size:0.82rem;">
-                <div><span style="color:var(--text-muted);">차종</span><br><strong>${_esc(issue.carModel || '-')}</strong></div>
-                <div><span style="color:var(--text-muted);">품명</span><br><strong>${_esc(issue.partName || '-')}</strong></div>
-                <div><span style="color:var(--text-muted);">컬러</span><br><strong>${_esc(issue.color || '-')}</strong></div>
-                <div><span style="color:var(--text-muted);">라인</span><br><strong>${_esc(issue.line || '-')}</strong></div>
-                <div><span style="color:var(--text-muted);">LOT</span><br><strong>${_esc(issue.lotNo || '-')}</strong></div>
-            </div>
+            ${(() => {
+                const work = issue.workId ? (Storage.getById(PAINT_WORK_STORE, issue.workId) || {}) : {};
+                const injLots = Array.isArray(work.lots) && work.lots.length
+                    ? work.lots.map(l => l.lotNo + (l.qty ? `(${UIUtils.formatNumber(l.qty)})` : '')).filter(Boolean).join(', ')
+                    : '';
+                const prodQty = issue.productionQty || work.productionQty || 0;
+                const timeText = issue.time
+                    || (issue.startTime && issue.endTime ? `${issue.startTime} ~ ${issue.endTime}${issue.workHours ? ` (${issue.workHours}HR)` : ''}` : (issue.startTime || ''));
+                return `
+                <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:8px;padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;background:#f8fafc;font-size:0.82rem;">
+                    <div><span style="color:var(--text-muted);">차종</span><br><strong>${_esc(issue.carModel || '-')}</strong></div>
+                    <div><span style="color:var(--text-muted);">품명</span><br><strong>${_esc(issue.partName || '-')}</strong></div>
+                    <div><span style="color:var(--text-muted);">컬러</span><br><strong>${_esc(issue.color || '-')}</strong></div>
+                    <div><span style="color:var(--text-muted);">라인</span><br><strong>${_esc(issue.line || '-')}</strong></div>
+                </div>
+                <div style="display:grid;grid-template-columns:1.4fr 1fr 1.2fr 2fr;gap:8px;margin-bottom:12px;padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;background:#f0f9ff;font-size:0.82rem;">
+                    <div><span style="color:var(--text-muted);">도장 LOT</span><br><strong style="font-family:monospace;">${_esc(issue.lotNo || '-')}</strong></div>
+                    <div><span style="color:var(--text-muted);">생산 수량</span><br><strong>${prodQty ? `${UIUtils.formatNumber(prodQty)} EA` : '-'}</strong></div>
+                    <div><span style="color:var(--text-muted);">생산 시간</span><br><strong style="font-family:monospace;">${_esc(timeText || '-')}</strong></div>
+                    <div><span style="color:var(--text-muted);">사출 LOT</span><br><strong style="font-family:monospace;font-size:0.76rem;">${_esc(injLots || '-')}</strong></div>
+                </div>`;
+            })()}
             ${items.length ? `
-                <div class="data-table-wrapper" style="max-height:56vh;overflow:auto;">
+                <div class="data-table-wrapper" style="max-height:46vh;overflow:auto;">
                     <table class="data-table" style="font-size:0.82rem;">
                         <thead>
                             <tr>
@@ -16790,32 +17041,114 @@ var ProdQualityModule = (function() {
                     </table>
                 </div>
             ` : `<div style="padding:28px;text-align:center;color:var(--text-muted);border:1px dashed var(--border-color);border-radius:8px;">색차, 광택, 도막두께 관리항목이 없습니다.</div>`}
+            <div style="margin-top:14px;border:1px solid var(--border-color);border-radius:8px;padding:10px 12px;background:#f8fafc;">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+                    <div style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:.86rem;">
+                        <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-blue);">photo_camera</span>
+                        C/Sheet 사진 (촬영 / 첨부)
+                    </div>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                        <label class="btn btn-sm btn-outline" style="cursor:pointer;font-size:.76rem;">
+                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">photo_camera</span> 촬영
+                            <input type="file" accept="image/*" capture="environment" multiple
+                                onchange="ProdQualityModule.addPqDataPhotos(this)" style="display:none;">
+                        </label>
+                        <label class="btn btn-sm btn-outline" style="cursor:pointer;font-size:.76rem;">
+                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">upload</span> 파일 선택
+                            <input type="file" accept="image/*" multiple
+                                onchange="ProdQualityModule.addPqDataPhotos(this)" style="display:none;">
+                        </label>
+                    </div>
+                </div>
+                <div id="pqDataPhotoList" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+            </div>
         `;
+    }
+
+    // 사진 업로드/삭제는 모달 메모리 상태로 관리
+    let _pqDataPhotos = [];
+
+    function _renderPqDataPhotoList() {
+        const el = document.getElementById('pqDataPhotoList');
+        if (!el) return;
+        if (!_pqDataPhotos.length) {
+            el.innerHTML = `<div style="padding:14px;color:var(--text-muted);font-size:.78rem;text-align:center;width:100%;border:1px dashed var(--border-color);border-radius:6px;">등록된 사진이 없습니다. [촬영] 또는 [파일 선택]으로 추가하세요.</div>`;
+            return;
+        }
+        el.innerHTML = _pqDataPhotos.map((p, idx) => {
+            const src = ApiClient.photoUrl ? ApiClient.photoUrl(p.url) : p.url;
+            return `<div style="position:relative;width:120px;height:120px;border:1px solid var(--border-color);border-radius:6px;overflow:hidden;background:#fff;">
+                <img src="${_esc(src)}" alt="${_esc(p.name || '')}" style="width:100%;height:100%;object-fit:cover;cursor:pointer;" onclick="window.open('${_esc(src)}','_blank')">
+                <button type="button" onclick="ProdQualityModule.removePqDataPhoto(${idx})"
+                    style="position:absolute;top:3px;right:3px;width:22px;height:22px;border:0;border-radius:50%;background:rgba(220,38,38,.92);color:#fff;font-weight:800;cursor:pointer;font-size:14px;line-height:1;">×</button>
+                <div style="position:absolute;bottom:0;left:0;right:0;padding:2px 5px;background:rgba(0,0,0,.5);color:#fff;font-size:.66rem;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;">${_esc(p.name || '')}</div>
+            </div>`;
+        }).join('');
+    }
+
+    async function addPqDataPhotos(input) {
+        const files = Array.from(input?.files || []);
+        if (!files.length) return;
+        // 저장 폴더: quality-checksheet/{YYYY}/{MM} — 기록일 우선, 없으면 오늘
+        const dateStr = document.getElementById('pqDataDate')?.value || new Date().toISOString().slice(0, 10);
+        const m = dateStr.match(/^(\d{4})-(\d{2})/);
+        const year = m ? m[1] : new Date().getFullYear().toString();
+        const month = m ? m[2] : String(new Date().getMonth() + 1).padStart(2, '0');
+        const subdir = `quality-checksheet/${year}/${month}`;
+        UIUtils.toast(`사진 업로드 중... (${files.length}장)`, 'info');
+        for (const file of files) {
+            try {
+                const url = await ApiClient.uploadPhoto(file, subdir, { noAutoYearMonth: true });
+                _pqDataPhotos.push({ name: file.name, url, uploadedAt: new Date().toISOString() });
+            } catch (e) {
+                UIUtils.toast(`사진 업로드 실패: ${file.name} — ${e.message}`, 'error');
+            }
+        }
+        input.value = '';
+        _renderPqDataPhotoList();
+        UIUtils.toast('사진이 추가되었습니다.', 'success');
+    }
+
+    function removePqDataPhoto(idx) {
+        if (idx < 0 || idx >= _pqDataPhotos.length) return;
+        _pqDataPhotos.splice(idx, 1);
+        _renderPqDataPhotoList();
     }
 
     function openDataModal(issueId) {
         const issue = Storage.getById(STORE, issueId);
         if (!issue) return;
         const record = _measureRecordForIssue(issueId) || {};
+        _pqDataPhotos = Array.isArray(record.photos) ? record.photos.map(p => ({ ...p })) : [];
         UIUtils.showModal('초중종물 DATA 입력', _measureRecordForm(issue, record), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="ProdQualityModule.saveMeasureRecord('${_js(issueId)}','${_js(record.id || '')}')">저장</button>
         `, 'xl');
+        setTimeout(_renderPqDataPhotoList, 50);
     }
 
     function openDataView(issueId) {
         const issue = Storage.getById(STORE, issueId);
         if (!issue) return;
         const record = _measureRecordForIssue(issueId) || {};
+        _pqDataPhotos = Array.isArray(record.photos) ? record.photos.map(p => ({ ...p })) : [];
         UIUtils.showModal('초중종물 DATA 보기', _measureRecordForm(issue, record), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
             <button class="btn btn-primary" onclick="UIUtils.closeModal();setTimeout(()=>ProdQualityModule.openDataModal('${_js(issueId)}'),50)">편집</button>
         `, 'xl');
-        // 보기 모드: 모든 입력 비활성화
+        // 보기 모드: 모든 입력 비활성화 (사진 영역은 클릭 가능하게 유지, 삭제 버튼만 숨김)
         const body = document.getElementById('modalBody');
         if (body) {
             body.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
-            body.querySelectorAll('button').forEach(btn => { btn.disabled = true; });
+            // 사진 영역 버튼(촬영/파일 선택, 삭제 ×)은 숨김
+            setTimeout(() => {
+                _renderPqDataPhotoList();
+                const list = document.getElementById('pqDataPhotoList');
+                if (list) list.querySelectorAll('button').forEach(b => { b.style.display = 'none'; });
+                // 촬영/파일선택 라벨도 비활성화
+                body.querySelectorAll('#modalBody label.btn').forEach(l => { l.style.pointerEvents = 'none'; l.style.opacity = '0.4'; });
+            }, 50);
+            body.querySelectorAll('button').forEach(btn => { if (!btn.closest('.modal-footer')) btn.disabled = true; });
         }
     }
 
@@ -16876,6 +17209,7 @@ var ProdQualityModule = (function() {
             productionQty: Number(issue.productionQty) || 0,
             inspector,
             items,
+            photos: (_pqDataPhotos || []).map(p => ({ name: p.name || '', url: p.url || '', uploadedAt: p.uploadedAt || '' })),
             updatedAt: now
         };
 
@@ -19264,6 +19598,8 @@ window.addEventListener('afterprint', () => {
         ,markIssuePrinted
         ,openDataModal
         ,openDataView
+        ,addPqDataPhotos
+        ,removePqDataPhoto
         ,saveMeasureRecord
         ,openMeasureHistory
         ,renderMeasureHistoryTable

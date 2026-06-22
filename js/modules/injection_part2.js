@@ -543,9 +543,31 @@ var InjectionWarehouseModule = (function() {
             `;
         }).join('');
 
+        const _cmJs = carModel.replace(/'/g, "\\'");
+        const _pnJs = partName.replace(/'/g, "\\'");
+        const _clJs = (color || '').replace(/'/g, "\\'");
+
         UIUtils.showModal(
             `📦 ${carModel} · ${partName}${color ? ' · ' + color : ''}`,
             `
+            <!-- 기본 정보 + 입고/출고 버튼 -->
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:10px 14px;
+                        background:var(--bg-secondary);border-radius:8px;font-size:0.85rem;flex-wrap:wrap;">
+                <span><strong>${carModel}</strong></span>
+                <span style="color:var(--text-muted);">·</span>
+                <span><strong>${partName}</strong></span>
+                ${color ? `<span style="color:var(--text-muted);">·</span><span>${color}</span>` : ''}
+                <div style="margin-left:auto;display:flex;gap:6px;flex-shrink:0;">
+                    <button class="btn btn-sm btn-primary" style="font-size:0.78rem;"
+                        onclick="UIUtils.closeModal();setTimeout(()=>InjectionWarehouseModule._openAddModalForPart('입고','${_cmJs}','${_pnJs}','${_clJs}'),80);">
+                        <span class="material-symbols-outlined" style="font-size:0.9rem;">login</span> 입고
+                    </button>
+                    <button class="btn btn-sm btn-danger" style="font-size:0.78rem;"
+                        onclick="UIUtils.closeModal();setTimeout(()=>InjectionWarehouseModule._openAddModalForPart('출고','${_cmJs}','${_pnJs}','${_clJs}'),80);">
+                        <span class="material-symbols-outlined" style="font-size:0.9rem;">logout</span> 출고
+                    </button>
+                </div>
+            </div>
             <div style="margin-bottom:16px; display:flex; gap:16px; flex-wrap:wrap;">
                 <div style="background:var(--bg-secondary); padding:12px 20px; border-radius:8px; text-align:center;">
                     <div style="font-size:1.4rem; font-weight:700; color:var(--accent-blue);">${UIUtils.formatNumber(stock)}</div>
@@ -579,6 +601,30 @@ var InjectionWarehouseModule = (function() {
             `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`,
             'md'
         );
+    }
+
+    function _openAddModalForPart(type, carModel, partName, color) {
+        openAddModal(type);
+        setTimeout(() => {
+            const carSel = document.getElementById('addInvCarModel');
+            if (carSel) {
+                carSel.value = carModel;
+                InjectionWarehouseModule.onModalCarModelChange();
+            }
+            setTimeout(() => {
+                const partSel = document.getElementById('addInvPart');
+                if (partSel) {
+                    partSel.value = partName;
+                    InjectionWarehouseModule.onModalPartChange();
+                }
+                setTimeout(() => {
+                    if (color) {
+                        const colorSel = document.getElementById('addInvColor');
+                        if (colorSel) colorSel.value = color;
+                    }
+                }, 80);
+            }, 80);
+        }, 80);
     }
 
     // ── 수입 검사 완료품 입고 대기 섹션 ──────────────────────────────
@@ -1062,6 +1108,14 @@ var InjectionWarehouseModule = (function() {
                     <label class="form-label">비고</label>
                     <input type="text" class="form-input" id="addInvSource" placeholder="기타 특이사항">
                 </div>
+                ${type === '입고' ? `
+                <div class="form-group">
+                    <label class="form-label">입고자 <span style="font-size:.78rem;color:var(--text-muted);font-weight:400;">(임의 입고)</span></label>
+                    <select class="form-select" id="addInvReceivedBy">
+                        <option value="">-- 선택 --</option>
+                        ${(Storage.getAll(DB.STORES.OPERATORS) || []).map(o => `<option value="${(o.name||o.id).replace(/"/g,'&quot;')}">${o.name||o.id}</option>`).join('')}
+                    </select>
+                </div>` : '<div class="form-group" style="visibility:hidden;"></div>'}
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
@@ -1965,7 +2019,8 @@ var InjectionWarehouseModule = (function() {
             unit: (document.getElementById('addInvUnit') || { value: 'EA', textContent: 'EA' }).value || 'EA',
             source: ((document.getElementById('addInvSource') || {}).value || '').trim(),
             injMaterialId: _injMaterialId || undefined,  // v19
-            inspDate: _pendingInspDate || undefined
+            inspDate: _pendingInspDate || undefined,
+            receivedBy: _type === '입고' ? ((document.getElementById('addInvReceivedBy') || {}).value || '') : undefined
         };
         _pendingInspDate = '';
 
@@ -2593,6 +2648,7 @@ var InjectionWarehouseModule = (function() {
         filterTransactions,
         onTxCarChange,
         showPartDetail,
+        _openAddModalForPart,
         openAddModal,
         openAddFromInspection,
         onModalCarModelChange,

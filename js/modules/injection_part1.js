@@ -384,6 +384,7 @@ var InjectionIncomingModule = (function() {
                             ${Object.entries(d.defectDetails || {}).map(([k, v]) => `${k}(${v})`).join(', ')}
                         </div>
                         ${d.note || '-'}
+
                     </td>
                     <td>
                         <button class="btn btn-sm btn-outline" onclick="InjectionIncomingModule.view('${d.id}')">
@@ -494,6 +495,18 @@ var InjectionIncomingModule = (function() {
                 </div>
                 <input type="hidden" id="addInjInQty" value="0">
             </div>
+            <div id="injCertPhotoRow" style="display:none;margin-bottom:16px;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:12px 16px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;">
+                    <label class="form-label" style="margin:0;font-weight:600;">
+                        성적서 접수 사진
+                        <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;margin-left:6px;">체크 시 사진 촬영/등록 가능</span>
+                    </label>
+                    <span id="injCertPhotoName" style="font-size:0.78rem;color:var(--text-muted);"></span>
+                </div>
+                <input type="file" class="form-input" id="injCertPhotoFile" accept="image/*" capture="environment" onchange="InjectionIncomingModule.onInjCertPhotoChange(this)">
+                <input type="hidden" id="injCertPhotoUrl" value="">
+                <div id="injCertPhotoPreview" style="display:none;margin-top:10px;"></div>
+            </div>
             <div id="injSamplingInfo" style="display:none;margin-bottom:16px;background:var(--bg-primary);border:1.5px solid var(--accent-blue);border-radius:var(--border-radius);padding:12px 16px;">
                 <div style="font-size:0.78rem;font-weight:700;color:var(--accent-blue);margin-bottom:10px;">
                     <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;margin-right:4px;">science</span>
@@ -559,8 +572,9 @@ var InjectionIncomingModule = (function() {
             <button class="btn btn-primary" onclick="InjectionIncomingModule.saveNew()">등록</button>
         `, '1050px');
 
-        setTimeout(() => {
+                setTimeout(() => {
             addInjLotRow(); // 첫 LOT 행 초기화
+            _syncInjCertPhotoSection();
             try {
                 const allDefs = Storage.getAll(DB.STORES.DEFECT_TYPES) || [];
                 const defects = allDefs.filter(d => d && (d.type === 'injection' || !d.type));
@@ -626,12 +640,64 @@ var InjectionIncomingModule = (function() {
     }
 
     function selectInjCertLot(checkbox) {
-        if (!checkbox || !checkbox.checked) return;
         const container = checkbox.closest('#editInjLotRows, #injLotRows');
         if (!container) return;
-        container.querySelectorAll('.inj-lot-cert').forEach(cb => {
-            if (cb !== checkbox) cb.checked = false;
-        });
+        if (checkbox && checkbox.checked) {
+            container.querySelectorAll('.inj-lot-cert').forEach(cb => {
+                if (cb !== checkbox) cb.checked = false;
+            });
+        }
+        _syncInjCertPhotoSection();
+    }
+
+    function _syncInjCertPhotoSection() {
+        const row = document.getElementById('injCertPhotoRow');
+        if (!row) return;
+        const checked = document.querySelector('#injLotRows .inj-lot-cert:checked, #editInjLotRows .inj-lot-cert:checked');
+        row.style.display = checked ? 'block' : 'none';
+    }
+
+    function _renderInjCertPhotoPreview(url, name) {
+        const preview = document.getElementById('injCertPhotoPreview');
+        const hidden = document.getElementById('injCertPhotoUrl');
+        const nameEl = document.getElementById('injCertPhotoName');
+        const isDataUrl = String(url || '').startsWith('data:');
+        if (hidden) hidden.value = isDataUrl ? '' : (url || '');
+        if (nameEl) nameEl.textContent = name || (url ? '저장된 사진' : '');
+        if (!preview) return;
+        if (!url) {
+            preview.innerHTML = '';
+            preview.style.display = 'none';
+            return;
+        }
+        const absUrl = isDataUrl ? url : ApiClient.photoUrl(url);
+        preview.innerHTML = `
+            <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
+                <img src="${absUrl}" alt="성적서 사진" style="width:120px;height:90px;object-fit:cover;border-radius:8px;border:1px solid var(--border);cursor:pointer;"
+                    onclick="window.open(${JSON.stringify(absUrl)}, '_blank')">
+                <div style="display:flex;flex-direction:column;gap:4px;min-width:0;">
+                    <a href="${absUrl}" target="_blank" rel="noopener" style="color:var(--accent-blue);font-size:0.9rem;font-weight:600;text-decoration:none;">저장된 사진 보기</a>
+                    <span style="font-size:0.78rem;color:var(--text-muted);word-break:break-all;">${name || url}</span>
+                </div>
+            </div>
+        `;
+        preview.style.display = 'block';
+    }
+
+    function onInjCertPhotoChange(input) {
+        const file = input && input.files && input.files[0];
+        if (!file) {
+            _renderInjCertPhotoPreview('', '');
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = (e) => _renderInjCertPhotoPreview(e.target.result, file.name || 'photo');
+        reader.readAsDataURL(file);
+    }
+
+    async function _uploadInjCertPhoto(file) {
+        if (!file) return '';
+        return ApiClient.uploadPhoto(file, 'inj-inspections');
     }
 
     function removeInjLotRow(btn) {
@@ -949,6 +1015,11 @@ var InjectionIncomingModule = (function() {
     async function saveNew() {
         const dateVal = document.getElementById('addInjDate').value;
         const timeVal = document.getElementById('addInjTime').value;
+        const certPhotoInput = document.getElementById('injCertPhotoFile');
+        let certPhotoUrl = document.getElementById('injCertPhotoUrl')?.value || '';
+        if (certPhotoInput && certPhotoInput.files && certPhotoInput.files[0]) {
+            certPhotoUrl = await _uploadInjCertPhoto(certPhotoInput.files[0]);
+        }
 
         // LOT 목록 수집
         const lotRows = document.querySelectorAll('#injLotRows .inj-lot-row');
@@ -997,7 +1068,8 @@ var InjectionIncomingModule = (function() {
             failQty: Number(document.getElementById('addInjFailQty').value) || 0,
             defectDetails: {},
             supplierName: document.getElementById('addInjSupplier').value.trim(),
-            note: document.getElementById('addInjNote').value.trim()
+            note: document.getElementById('addInjNote').value.trim(),
+            certPhotoUrl: certPhotoUrl
         };
 
         const defectInputs = document.querySelectorAll('.defect-input-new');
@@ -1128,6 +1200,18 @@ var InjectionIncomingModule = (function() {
                     <span style="font-size:0.85rem; color:var(--text-muted);">EA</span>
                 </div>
                 <input type="hidden" id="editInjInQty" value="0">
+            </div>
+            <div id="injCertPhotoRow" style="display:none;margin-bottom:16px;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:12px 16px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;">
+                    <label class="form-label" style="margin:0;font-weight:600;">
+                        성적서 접수 사진
+                        <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;margin-left:6px;">체크 시 사진 촬영/등록 가능</span>
+                    </label>
+                    <span id="injCertPhotoName" style="font-size:0.78rem;color:var(--text-muted);"></span>
+                </div>
+                <input type="file" class="form-input" id="injCertPhotoFile" accept="image/*" capture="environment" onchange="InjectionIncomingModule.onInjCertPhotoChange(this)">
+                <input type="hidden" id="injCertPhotoUrl" value="${d.certPhotoUrl || ''}">
+                <div id="injCertPhotoPreview" style="display:none;margin-top:10px;"></div>
             </div>
             <div class="form-row">
                 <div class="form-group">
@@ -1268,6 +1352,8 @@ var InjectionIncomingModule = (function() {
                     lotContainer.appendChild(row);
                 }
                 InjectionIncomingModule.calcInjLotTotalEdit();
+                _syncInjCertPhotoSection();
+                _renderInjCertPhotoPreview(d.certPhotoUrl || '', d.certPhotoUrl ? '저장된 사진' : '');
             }
 
             // 3. 불량 상세 입력 초기화
@@ -1318,6 +1404,11 @@ var InjectionIncomingModule = (function() {
     async function saveEdit(id) {
         const dateVal = document.getElementById('editInjDate').value;
         const timeVal = document.getElementById('editInjTime').value;
+        const certPhotoInput = document.getElementById('injCertPhotoFile');
+        let certPhotoUrl = document.getElementById('injCertPhotoUrl')?.value || '';
+        if (certPhotoInput && certPhotoInput.files && certPhotoInput.files[0]) {
+            certPhotoUrl = await _uploadInjCertPhoto(certPhotoInput.files[0]);
+        }
 
         // LOT 목록 수집
         const lotRows = document.querySelectorAll('#editInjLotRows .inj-lot-row');
@@ -1359,7 +1450,8 @@ var InjectionIncomingModule = (function() {
             failQty: Number(document.getElementById('editInjFailQty').value) || 0,
             defectDetails: {},
             supplierName: document.getElementById('editInjSupplier').value.trim(),
-            note: document.getElementById('editInjNote').value.trim()
+            note: document.getElementById('editInjNote').value.trim(),
+            certPhotoUrl: certPhotoUrl
         };
 
         const defectInputs = document.querySelectorAll('.defect-input-edit');
@@ -1408,6 +1500,14 @@ var InjectionIncomingModule = (function() {
             ? `<span style="color:var(--accent-green);font-weight:600;">${certRepLot.lotNo} ✓ 접수완료</span>`
             : `<span style="color:var(--accent-red);">미접수</span>`;
         const defectStr = Object.entries(d.defectDetails || {}).map(([k, v]) => `${k}(${v})`).join(', ') || '-';
+        const certPhotoUrl = d.certPhotoUrl || '';
+        const certPhotoAbs = certPhotoUrl ? ApiClient.photoUrl(certPhotoUrl) : '';
+        const certPhotoDisplay = certPhotoAbs
+            ? `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <a href="${certPhotoAbs}" target="_blank" rel="noopener" style="color:var(--accent-blue);font-weight:600;text-decoration:none;">저장된 사진 보기</a>
+                    <img src="${certPhotoAbs}" alt="성적서 사진" style="width:120px;height:90px;object-fit:cover;border-radius:8px;border:1px solid var(--border);cursor:pointer;" onclick="window.open(${JSON.stringify(certPhotoAbs)}, '_blank')">
+                </div>`
+            : '-';
 
         const row = (label, value) =>
             `<div style="display:flex;gap:0;border-bottom:1px solid var(--border);">
@@ -1433,6 +1533,8 @@ var InjectionIncomingModule = (function() {
                 ${row('불합격수량', `<span style="color:var(--accent-red);font-weight:600;">${UIUtils.formatNumber(d.failQty)}</span>`)}
                 ${row('불량내역', defectStr)}
                 ${row('비고', d.note || '-')}
+
+                ${row('성적서 사진', certPhotoDisplay)}
                 ${row('합격 판정', `<strong style="color:${verdictColor};font-size:1rem;">${verdictText}</strong>`)}
             </div>
         `, `

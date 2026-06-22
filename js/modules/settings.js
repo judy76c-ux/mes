@@ -9510,10 +9510,6 @@ const SettingsModule = (function() {
                     <div>
                         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
                             <span style="font-size:.82rem;font-weight:600;color:var(--text-secondary);">공정별 사진 저장 폴더</span>
-                            <button class="btn btn-sm btn-outline" onclick="SettingsModule.createAllPhotoDirs()" style="font-size:.75rem;">
-                                <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">create_new_folder</span>
-                                전체 폴더 생성
-                            </button>
                         </div>
                         <div id="photoProcessTable" style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;font-size:.8rem;">
                             <div style="padding:12px;color:var(--text-muted);text-align:center;">경로 로딩 중...</div>
@@ -9669,6 +9665,34 @@ const SettingsModule = (function() {
         { name: '개선활동',        subdir: 'improvement' }
     ];
 
+    const PHOTO_USER_DIRS_KEY = 'photo_user_processes';
+    async function _loadUserPhotoDirs() {
+        try {
+            const v = await Storage.getConfigValue(PHOTO_USER_DIRS_KEY);
+            return Array.isArray(v) ? v : [];
+        } catch { return []; }
+    }
+    async function _saveUserPhotoDirs(list) {
+        try { await Storage.setConfigValue(PHOTO_USER_DIRS_KEY, list); } catch (e) { console.error(e); }
+    }
+    function _sanitizeSubdir(s) {
+        return String(s || '').trim().split('/').map(p => p.replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 40)).filter(Boolean).join('/');
+    }
+    function _fmtBytes(n) {
+        if (!n) return '0 B';
+        if (n >= 1024*1024*1024) return (n/1024/1024/1024).toFixed(1) + ' GB';
+        if (n >= 1024*1024) return (n/1024/1024).toFixed(1) + ' MB';
+        if (n >= 1024) return (n/1024).toFixed(0) + ' KB';
+        return n + ' B';
+    }
+    function _fmtMtime(iso) {
+        if (!iso) return '-';
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return '-';
+        const p = n => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+
     async function loadImageStoragePolicy() {
         const statusEl = document.getElementById('imageStorageStatus');
         const inputEl = document.getElementById('sysNasUploadDirInput');
@@ -9730,25 +9754,110 @@ const SettingsModule = (function() {
         </div>`;
     }
 
-    function _renderPhotoProcessTable(baseDir) {
+    async function _renderPhotoProcessTable(baseDir) {
         const tableEl = document.getElementById('photoProcessTable');
         if (!tableEl) return;
         const sep = (baseDir || '').endsWith('/') ? '' : '/';
-        const rows = PHOTO_PROCESSES.map(p => {
+        const userDirs = await _loadUserPhotoDirs();
+        const allProcs = [
+            ...PHOTO_PROCESSES.map(p => ({ ...p, builtin: true })),
+            ...userDirs.map(p => ({ ...p, builtin: false }))
+        ];
+        // 폴더 상태 조회
+        let statsMap = {};
+        try {
+            const stats = await ApiClient.getPhotosStats(allProcs.map(p => p.subdir));
+            (stats.results || []).forEach(r => { statsMap[r.subdir] = r; });
+        } catch (e) { console.warn('photo stats fetch failed:', e); }
+
+        const cols = 'minmax(110px,150px) minmax(120px,160px) minmax(0,1.4fr) 70px 90px 110px 110px';
+        const gridHeader = `
+            <div style="display:grid;grid-template-columns:${cols};gap:0;border-bottom:2px solid var(--border-color);background:var(--bg-tertiary);">
+                <div style="padding:6px 10px;font-size:.72rem;font-weight:700;color:var(--text-muted);border-right:1px solid var(--border-color);">공정명</div>
+                <div style="padding:6px 10px;font-size:.72rem;font-weight:700;color:var(--text-muted);border-right:1px solid var(--border-color);">폴더명</div>
+                <div style="padding:6px 10px;font-size:.72rem;font-weight:700;color:var(--text-muted);border-right:1px solid var(--border-color);">전체 경로</div>
+                <div style="padding:6px 6px;font-size:.72rem;font-weight:700;color:var(--text-muted);text-align:center;border-right:1px solid var(--border-color);">상태</div>
+                <div style="padding:6px 6px;font-size:.72rem;font-weight:700;color:var(--text-muted);text-align:right;border-right:1px solid var(--border-color);">파일수</div>
+                <div style="padding:6px 10px;font-size:.72rem;font-weight:700;color:var(--text-muted);text-align:right;border-right:1px solid var(--border-color);">크기</div>
+                <div style="padding:6px 6px;font-size:.72rem;font-weight:700;color:var(--text-muted);text-align:center;">작업</div>
+            </div>`;
+        const rowsHtml = allProcs.map(p => {
             const fullPath = baseDir ? `${baseDir}${sep}${p.subdir}` : p.subdir;
-            return `<div style="display:grid;grid-template-columns:130px 140px 1fr;gap:0;border-bottom:1px solid var(--border-color);">
-                <div style="padding:7px 10px;font-size:.8rem;font-weight:600;color:var(--text-primary);background:var(--bg-secondary);border-right:1px solid var(--border-color);">${p.name}</div>
-                <div style="padding:7px 10px;font-size:.78rem;font-family:monospace;color:var(--accent-blue);background:var(--bg-secondary);border-right:1px solid var(--border-color);">${p.subdir}</div>
-                <div style="padding:7px 10px;font-size:.78rem;font-family:monospace;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${fullPath}">${fullPath}</div>
+            const st = statsMap[p.subdir] || {};
+            const exists = !!st.exists;
+            const statusBadge = exists
+                ? `<span style="display:inline-block;padding:1px 7px;border-radius:9px;font-size:.66rem;font-weight:800;background:#dcfce7;color:#166534;border:1px solid #86efac;" title="${_esc(_fmtMtime(st.latestMtime))}">존재</span>`
+                : `<span style="display:inline-block;padding:1px 7px;border-radius:9px;font-size:.66rem;font-weight:800;background:#fef2f2;color:#991b1b;border:1px solid #fecaca;" title="${_esc(st.error || '')}">없음</span>`;
+            const fileCount = exists ? String(st.fileCount || 0) : '-';
+            const sizeText = exists ? _fmtBytes(st.totalSize || 0) : '-';
+            const actionBtn = p.builtin
+                ? `<span style="font-size:.66rem;color:var(--text-muted);">기본</span>`
+                : `<button class="btn btn-sm" style="font-size:.7rem;padding:2px 7px;border:1px solid rgba(239,68,68,.45);color:#dc2626;background:#fff;border-radius:5px;cursor:pointer;"
+                        onclick="SettingsModule.removePhotoDir('${_jsEscape(p.subdir)}')">삭제</button>`;
+            return `<div style="display:grid;grid-template-columns:${cols};gap:0;border-bottom:1px solid var(--border-color);">
+                <div style="padding:7px 10px;font-size:.78rem;font-weight:600;color:var(--text-primary);background:${p.builtin?'var(--bg-secondary)':'rgba(59,130,246,0.04)'};border-right:1px solid var(--border-color);">${_esc(p.name)}${p.builtin?'':'<span style=\"font-size:.6rem;color:#2563eb;margin-left:4px;\">추가</span>'}</div>
+                <div style="padding:7px 10px;font-size:.76rem;font-family:monospace;color:var(--accent-blue);background:${p.builtin?'var(--bg-secondary)':'rgba(59,130,246,0.04)'};border-right:1px solid var(--border-color);">${_esc(p.subdir)}</div>
+                <div style="padding:7px 10px;font-size:.74rem;font-family:monospace;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-right:1px solid var(--border-color);" title="${_esc(fullPath)}">${_esc(fullPath)}</div>
+                <div style="padding:7px 6px;text-align:center;border-right:1px solid var(--border-color);">${statusBadge}</div>
+                <div style="padding:7px 6px;text-align:right;font-size:.76rem;font-family:monospace;border-right:1px solid var(--border-color);">${fileCount}</div>
+                <div style="padding:7px 10px;text-align:right;font-size:.74rem;font-family:monospace;color:var(--text-secondary);border-right:1px solid var(--border-color);">${sizeText}</div>
+                <div style="padding:7px 6px;text-align:center;">${actionBtn}</div>
             </div>`;
         }).join('');
-        tableEl.innerHTML = `
-            <div style="display:grid;grid-template-columns:130px 140px 1fr;gap:0;border-bottom:2px solid var(--border-color);background:var(--bg-tertiary);">
-                <div style="padding:6px 10px;font-size:.75rem;font-weight:700;color:var(--text-muted);border-right:1px solid var(--border-color);">공정명</div>
-                <div style="padding:6px 10px;font-size:.75rem;font-weight:700;color:var(--text-muted);border-right:1px solid var(--border-color);">폴더명</div>
-                <div style="padding:6px 10px;font-size:.75rem;font-weight:700;color:var(--text-muted);">전체 경로</div>
-            </div>
-            ${rows}`;
+
+        // 새 폴더 추가 폼
+        const addForm = `
+            <div style="display:grid;grid-template-columns:minmax(110px,150px) minmax(120px,160px) 1fr 200px;gap:6px;padding:8px 10px;background:#fafafa;border-top:1px solid var(--border-color);">
+                <input id="newPhotoDirName" type="text" class="form-input" placeholder="공정명 (예: 외관검사)"
+                    style="font-size:.78rem;height:30px;padding:3px 8px;">
+                <input id="newPhotoDirSubdir" type="text" class="form-input" placeholder="폴더명 (영문/숫자/-/_)"
+                    style="font-family:monospace;font-size:.76rem;height:30px;padding:3px 8px;">
+                <div style="font-size:.72rem;color:var(--text-muted);align-self:center;">폴더명은 영문/숫자/하이픈/언더바만 허용 · 추가 시 디렉토리 자동 생성</div>
+                <button class="btn btn-sm btn-primary" onclick="SettingsModule.addPhotoDir()" style="font-size:.74rem;">
+                    <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">add</span> 폴더 추가
+                </button>
+            </div>`;
+
+        tableEl.innerHTML = gridHeader + rowsHtml + addForm;
+    }
+    function _jsEscape(s) { return String(s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+
+    async function addPhotoDir() {
+        const nameEl = document.getElementById('newPhotoDirName');
+        const subdirEl = document.getElementById('newPhotoDirSubdir');
+        const name = (nameEl?.value || '').trim();
+        const subdir = _sanitizeSubdir(subdirEl?.value || '');
+        if (!name) { UIUtils.toast('공정명을 입력하세요.', 'warning'); return; }
+        if (!subdir) { UIUtils.toast('폴더명은 영문/숫자/-/_ 만 사용 가능합니다.', 'warning'); return; }
+        const userDirs = await _loadUserPhotoDirs();
+        const allSub = [...PHOTO_PROCESSES.map(p => p.subdir), ...userDirs.map(p => p.subdir)];
+        if (allSub.includes(subdir)) { UIUtils.toast('이미 존재하는 폴더명입니다.', 'warning'); return; }
+        userDirs.push({ name, subdir });
+        await _saveUserPhotoDirs(userDirs);
+        // 디스크에 디렉토리 즉시 생성
+        try {
+            const result = await ApiClient.mkdirPhotos([subdir]);
+            const ok = (result.results || []).some(r => r.ok);
+            if (ok) UIUtils.toast(`"${name}" 폴더가 추가되고 디렉토리가 생성되었습니다.`, 'success');
+            else UIUtils.toast(`"${name}" 항목은 추가됐지만 디렉토리 생성에 실패했습니다.`, 'warning');
+        } catch (e) {
+            UIUtils.toast(`"${name}" 항목은 추가됐지만 디렉토리 생성 실패: ${e.message}`, 'warning');
+        }
+        if (nameEl) nameEl.value = '';
+        if (subdirEl) subdirEl.value = '';
+        loadImageStoragePolicy();
+    }
+
+    async function removePhotoDir(subdir) {
+        const list = await _loadUserPhotoDirs();
+        const target = list.find(p => p.subdir === subdir);
+        if (!target) return;
+        UIUtils.confirm(`"${target.name}" (${subdir}) 폴더 항목을 삭제하시겠습니까? (디스크의 실제 파일은 삭제되지 않습니다)`, async () => {
+            const next = list.filter(p => p.subdir !== subdir);
+            await _saveUserPhotoDirs(next);
+            UIUtils.toast('폴더 항목이 삭제되었습니다.', 'success');
+            loadImageStoragePolicy();
+        });
     }
 
     async function saveImageStoragePolicy() {
@@ -9769,7 +9878,8 @@ const SettingsModule = (function() {
     }
 
     async function createAllPhotoDirs() {
-        const subdirs = PHOTO_PROCESSES.map(p => p.subdir);
+        const userDirs = await _loadUserPhotoDirs();
+        const subdirs = [...PHOTO_PROCESSES.map(p => p.subdir), ...userDirs.map(p => p.subdir)];
         try {
             UIUtils.toast('폴더 생성 중...', 'info');
             const result = await ApiClient.mkdirPhotos(subdirs);
@@ -9781,6 +9891,7 @@ const SettingsModule = (function() {
                     console.warn('폴더 생성 실패:', failed);
                 }
             }
+            loadImageStoragePolicy();
         } catch (e) {
             UIUtils.toast('폴더 생성 실패: ' + e.message, 'error');
         }
@@ -12257,6 +12368,8 @@ const SettingsModule = (function() {
         refreshSystemInfo,
         saveImageStoragePolicy,
         createAllPhotoDirs,
+        addPhotoDir,
+        removePhotoDir,
         _askCascadeRename,
         _doCascadeRename,
         deleteRecordsByPartNames,

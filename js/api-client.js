@@ -218,7 +218,7 @@ const ApiClient = (function() {
     });
   }
 
-  async function uploadPhoto(file, subdir) {
+  async function uploadPhoto(file, subdir, options = {}) {
     const uploadFile = await compressImageFile(file);
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -230,8 +230,11 @@ const ApiClient = (function() {
           const contentType = dataUrl.slice(5, commaIdx).split(';')[0];
           const ext = String(uploadFile.name || file.name || 'jpg').split('.').pop().toLowerCase();
           const safeName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-          const ym = new Date().toISOString().slice(0, 7); // YYYY-MM
-          const fullSubdir = `${subdir || 'misc'}/${ym}`;
+          // 자동 YYYY-MM 폴더 추가 (옵션으로 끌 수 있음)
+          const baseSub = subdir || 'misc';
+          const fullSubdir = options.noAutoYearMonth
+            ? baseSub
+            : `${baseSub}/${new Date().toISOString().slice(0, 7)}`;
           const result = await request('POST', '/api/photos', {
             subdir: fullSubdir,
             filename: safeName,
@@ -272,7 +275,7 @@ const ApiClient = (function() {
     getNasConfig, saveNasConfig,
     listNasBackups, nasBackupDownloadUrl, copyNasToLocal, restoreNasBackup,
     getSystemInfo,
-    uploadPhoto, photoUrl, mkdirPhotos,
+    uploadPhoto, photoUrl, mkdirPhotos, getPhotosStats,
     getBase
   };
 })();
