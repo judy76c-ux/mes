@@ -3343,7 +3343,15 @@ var ProdStandardsModule = (function() {
 
     function _paintTdsDocListHtml(docs) {
         if (!docs.length) {
-            return `<span style="color:var(--text-muted);">업로드된 TDS 없음</span>`;
+            return `
+                <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid #dbeafe;border-radius:10px;background:#f8fbff;margin-bottom:8px;">
+                    <span class="material-symbols-outlined" style="font-size:18px;color:#94a3b8;">description</span>
+                    <div>
+                        <div style="font-size:.82rem;font-weight:800;color:var(--text-primary);">업로드된 TDS 없음</div>
+                        <div style="font-size:.74rem;color:var(--text-muted);margin-top:2px;">아래 드래그 업로드 영역 또는 업로드 버튼을 사용하세요.</div>
+                    </div>
+                </div>
+            `;
         }
         return docs.map(doc => `
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border:1px solid var(--border-color);border-radius:7px;background:#fff;margin-bottom:5px;">
@@ -3356,8 +3364,14 @@ var ProdStandardsModule = (function() {
                         ${_esc(_fileSizeText(doc.fileSize))} · ${_esc(doc.uploadedAt || doc.updatedAt || '-')}
                     </div>
                 </div>
-                <button class="btn btn-sm" style="border:1px solid var(--accent-red);color:var(--accent-red);background:transparent;"
-                    onclick="ProdStandardsModule.deletePaintTds('${_jsArg(doc.id)}')">삭제</button>
+                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                    <button class="btn btn-sm btn-outline" type="button"
+                        onclick="ProdStandardsModule.openPaintTdsFile('${_jsArg(doc.id)}')">보기</button>
+                    <button class="btn btn-sm btn-outline" type="button"
+                        onclick="ProdStandardsModule.printPaintTdsFile('${_jsArg(doc.id)}')">인쇄</button>
+                    <button class="btn btn-sm" type="button" style="border:1px solid var(--accent-red);color:var(--accent-red);background:transparent;"
+                        onclick="ProdStandardsModule.deletePaintTds('${_jsArg(doc.id)}')">삭제</button>
+                </div>
             </div>
         `).join('');
     }
@@ -3369,6 +3383,13 @@ var ProdStandardsModule = (function() {
         const materials = _paintMainMaterials();
         const docs = _paintTdsRecords();
         const linkedMaterialIds = new Set(docs.map(d => d.materialId).filter(Boolean));
+        const supplierGroups = materials.reduce((acc, mat) => {
+            const supplier = String(mat.supplier || '제조사 미지정').trim() || '제조사 미지정';
+            if (!acc[supplier]) acc[supplier] = [];
+            acc[supplier].push(mat);
+            return acc;
+        }, {});
+        const supplierNames = Object.keys(supplierGroups).sort((a, b) => a.localeCompare(b, 'ko'));
 
         el.innerHTML = `
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
@@ -3394,47 +3415,69 @@ var ProdStandardsModule = (function() {
                 ${cfg.desc}
             </div>
             ${materials.length ? `
-                <div class="data-table-wrapper" style="overflow-x:auto;">
-                    <table class="data-table" style="width:100%;font-size:12px;min-width:980px;">
-                        <thead>
-                            <tr>
-                                <th style="width:48px;text-align:center;">No</th>
-                                <th style="min-width:150px;">도료사</th>
-                                <th style="min-width:220px;">주제 도료명</th>
-                                <th style="width:90px;text-align:center;">사양</th>
-                                <th style="min-width:340px;">업로드 TDS</th>
-                                <th style="width:110px;text-align:center;">상태</th>
-                                <th style="width:120px;text-align:center;">작업</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${materials.map((mat, idx) => {
-                                const matDocs = _paintTdsDocsForMaterial(mat);
-                                const registered = mat.id && linkedMaterialIds.has(mat.id);
-                                return `
-                                    <tr>
-                                        <td style="text-align:center;font-weight:800;">${idx + 1}</td>
-                                        <td>${_esc(mat.supplier || '-')}</td>
-                                        <td>
-                                            <strong>${_esc(mat.name || '-')}</strong>
-                                            <div style="font-size:.74rem;color:var(--text-muted);margin-top:2px;">주제</div>
-                                        </td>
-                                        <td style="text-align:center;">${mat.paintSpec ? UIUtils.badge(mat.paintSpec, 'info') : '-'}</td>
-                                        <td>${_paintTdsDocListHtml(matDocs)}</td>
-                                        <td style="text-align:center;">
-                                            ${registered || matDocs.length
-                                                ? UIUtils.badge(`등록 ${matDocs.length}`, 'success')
-                                                : UIUtils.badge('미등록', 'secondary')}
-                                        </td>
-                                        <td style="text-align:center;">
-                                            <button class="btn btn-sm btn-primary" onclick="ProdStandardsModule.openPaintTdsUpload('${_jsArg(mat.id)}')">
-                                                업로드
-                                            </button>
-                                        </td>
-                                    </tr>`;
-                            }).join('')}
-                        </tbody>
-                    </table>
+                <div style="display:flex;flex-direction:column;gap:16px;">
+                    ${supplierNames.map((supplierName) => {
+                        const groupRows = supplierGroups[supplierName] || [];
+                        return `
+                            <div style="border:1px solid var(--border-color);border-radius:12px;overflow:hidden;background:#fff;">
+                                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;background:#f8fafc;border-bottom:1px solid var(--border-color);">
+                                    <div style="display:flex;align-items:center;gap:8px;">
+                                        <span class="material-symbols-outlined" style="font-size:18px;color:#334155;">factory</span>
+                                        <strong style="font-size:14px;color:var(--text-primary);">${_esc(supplierName)}</strong>
+                                    </div>
+                                    <span style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--border-color);border-radius:999px;background:#fff;font-size:.76rem;font-weight:800;color:var(--text-muted);">
+                                        주제 ${groupRows.length}개
+                                    </span>
+                                </div>
+                                <div class="data-table-wrapper" style="overflow-x:auto;">
+                                    <table class="data-table" style="width:100%;font-size:12px;min-width:980px;">
+                                        <thead>
+                                            <tr>
+                                                <th style="width:48px;text-align:center;">No</th>
+                                                <th style="min-width:220px;">주제 도료명</th>
+                                                <th style="width:90px;text-align:center;">사양</th>
+                                                <th style="min-width:340px;">업로드 TDS</th>
+                                                <th style="width:110px;text-align:center;">상태</th>
+                                                <th style="width:120px;text-align:center;">작업</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${groupRows.map((mat, idx) => {
+                                                const matDocs = _paintTdsDocsForMaterial(mat);
+                                                const registered = mat.id && linkedMaterialIds.has(mat.id);
+                                                return `
+                                                    <tr>
+                                                        <td style="text-align:center;font-weight:800;">${idx + 1}</td>
+                                                        <td>
+                                                            <strong>${_esc(mat.name || '-')}</strong>
+                                                            <div style="font-size:.74rem;color:var(--text-muted);margin-top:2px;">주제</div>
+                                                        </td>
+                                                        <td style="text-align:center;">${mat.paintSpec ? UIUtils.badge(mat.paintSpec, 'info') : '-'}</td>
+                                                        <td>
+                                                            ${_paintTdsDocListHtml(matDocs)}
+                                                            ${_paintTdsDropZoneHtml(mat)}
+                                                        </td>
+                                                        <td style="text-align:center;">
+                                                            ${registered || matDocs.length
+                                                                ? UIUtils.badge(`등록 ${matDocs.length}`, 'success')
+                                                                : UIUtils.badge('미등록', 'secondary')}
+                                                        </td>
+                                                        <td style="text-align:center;">
+                                                            <div style="display:flex;flex-direction:column;gap:6px;align-items:center;">
+                                                                <button class="btn btn-sm btn-primary" type="button" onclick="ProdStandardsModule.openPaintTdsUpload('${_jsArg(mat.id)}')">
+                                                                    업로드
+                                                                </button>
+                                                                <span style="font-size:.72rem;color:var(--text-muted);">드래그 가능</span>
+                                                            </div>
+                                                        </td>
+                                                    </tr>`;
+                                            }).join('')}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
                 </div>
             ` : `
                 <div style="text-align:center;padding:44px 20px;color:var(--text-muted);">
@@ -3455,6 +3498,26 @@ var ProdStandardsModule = (function() {
         });
     }
 
+    function _paintTdsDropZoneHtml(material) {
+        if (!material) return '';
+        return `
+            <div
+                ondragover="ProdStandardsModule._paintTdsDragOver(event)"
+                ondragleave="ProdStandardsModule._paintTdsDragLeave(event)"
+                ondrop="ProdStandardsModule._paintTdsDrop(event,'${_jsArg(material.id)}')"
+                onclick="ProdStandardsModule.openPaintTdsUpload('${_jsArg(material.id)}')"
+                style="margin-top:8px;padding:16px 14px;border:2px dashed #60a5fa;border-radius:12px;background:#eff6ff;cursor:pointer;transition:all .15s;text-align:center;">
+                <div style="display:flex;align-items:center;justify-content:center;gap:8px;font-size:.9rem;font-weight:900;color:#1d4ed8;">
+                    <span class="material-symbols-outlined" style="font-size:20px;">upload_file</span>
+                    여기에 파일 드래그 업로드
+                </div>
+                <div style="margin-top:6px;font-size:.78rem;color:var(--text-muted);line-height:1.45;">
+                    파일을 끌어다 놓거나 클릭해서 업로드하세요
+                </div>
+            </div>
+        `;
+    }
+
     function openPaintTdsUpload(materialId) {
         const material = _paintMainMaterials().find(m => m.id === materialId);
         if (!material) {
@@ -3470,6 +3533,39 @@ var ProdStandardsModule = (function() {
             await _savePaintTdsFile(material, file);
         };
         input.click();
+    }
+
+    function _paintTdsDragOver(event) {
+        if (!event) return;
+        event.preventDefault();
+        const zone = event.currentTarget;
+        if (zone) {
+            zone.style.borderColor = '#2563eb';
+            zone.style.background = '#dbeafe';
+        }
+    }
+
+    function _paintTdsDragLeave(event) {
+        const zone = event && event.currentTarget;
+        if (zone) {
+            zone.style.borderColor = '#93c5fd';
+            zone.style.background = '#eff6ff';
+        }
+    }
+
+    async function _paintTdsDrop(event, materialId) {
+        if (event) event.preventDefault();
+        const zone = event && event.currentTarget;
+        _paintTdsDragLeave({ currentTarget: zone });
+        const material = _paintMainMaterials().find(m => m.id === materialId);
+        if (!material) {
+            UIUtils.toast('주제 도료 정보를 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const files = Array.from((event && event.dataTransfer && event.dataTransfer.files) || []);
+        const file = files[0];
+        if (!file) return;
+        await _savePaintTdsFile(material, file);
     }
 
     async function _savePaintTdsFile(material, file) {
@@ -3520,6 +3616,34 @@ var ProdStandardsModule = (function() {
                 <div class="body">
                     ${isImage ? `<img src="${doc.fileData}" alt="TDS">`
                               : isPdf ? `<iframe src="${doc.fileData}"></iframe>`
+                                      : `<div style="text-align:center;"><div style="font-size:15px;font-weight:800;margin-bottom:12px;">브라우저 미리보기를 지원하지 않는 파일입니다.</div><a class="download" download="${_esc(doc.fileName || 'TDS')}" href="${doc.fileData}">파일 다운로드</a></div>`}
+                </div>
+            </body></html>
+        `);
+        win.document.close();
+    }
+
+    function printPaintTdsFile(id) {
+        const doc = _paintTdsRecords().find(r => r.id === id);
+        if (!doc || !doc.fileData) {
+            UIUtils.toast('인쇄할 TDS 파일을 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const win = window.open('', '_blank');
+        if (!win) {
+            UIUtils.toast('팝업 차단을 해제한 뒤 다시 시도하세요.', 'warning');
+            return;
+        }
+        const isImage = String(doc.fileType || '').startsWith('image/');
+        const isPdf = String(doc.fileType || '').includes('pdf') || /\.pdf$/i.test(doc.fileName || '');
+        win.document.write(`
+            <html><head><title>${_esc(doc.fileName || 'TDS')}</title>
+            <style>body{margin:0;font-family:'Malgun Gothic',sans-serif;background:#fff;color:#111827}.bar{height:46px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;background:#fff;border-bottom:1px solid #e5e7eb;font-size:13px}.body{height:calc(100vh - 47px);display:flex;align-items:center;justify-content:center}.body img{max-width:100%;max-height:100%;object-fit:contain}.body iframe{width:100%;height:100%;border:0}.download{color:#2563eb;font-weight:800;text-decoration:none}@media print {.bar{display:none}.body{height:auto}}</style>
+            </head><body>
+                <div class="bar"><strong>${_esc(doc.paintName || '')} · ${_esc(doc.fileName || 'TDS')}</strong><button onclick="window.print()">인쇄</button></div>
+                <div class="body">
+                    ${isImage ? `<img src="${doc.fileData}" alt="TDS" onload="setTimeout(function(){window.print();}, 200)">`
+                              : isPdf ? `<iframe src="${doc.fileData}" onload="setTimeout(function(){window.print();}, 400)"></iframe>`
                                       : `<div style="text-align:center;"><div style="font-size:15px;font-weight:800;margin-bottom:12px;">브라우저 미리보기를 지원하지 않는 파일입니다.</div><a class="download" download="${_esc(doc.fileName || 'TDS')}" href="${doc.fileData}">파일 다운로드</a></div>`}
                 </div>
             </body></html>
@@ -8783,7 +8907,11 @@ window.addEventListener('load', function() {
         openStandardPrintPage,
         toggleStandardMergeView,
         openPaintTdsUpload,
+        _paintTdsDragOver,
+        _paintTdsDragLeave,
+        _paintTdsDrop,
         openPaintTdsFile,
+        printPaintTdsFile,
         deletePaintTds,
     };
 })();
