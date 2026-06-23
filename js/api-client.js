@@ -229,7 +229,10 @@ const ApiClient = (function() {
           const base64 = dataUrl.slice(commaIdx + 1);
           const contentType = dataUrl.slice(5, commaIdx).split(';')[0];
           const ext = String(uploadFile.name || file.name || 'jpg').split('.').pop().toLowerCase();
-          const safeName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+          // options.filename 지정 시 원본 파일명 사용 (특수문자 제거)
+          const safeName = options.filename
+            ? String(options.filename).replace(/[\/\\:*?"<>|]/g, '_')
+            : `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
           // 자동 YYYY-MM 폴더 추가 (옵션으로 끌 수 있음)
           const baseSub = subdir || 'misc';
           const fullSubdir = options.noAutoYearMonth
@@ -257,6 +260,10 @@ const ApiClient = (function() {
     return (getApiBase() || '') + relUrl;
   }
 
+  async function deletePhoto(relUrl) {
+    return request('DELETE', '/api/photos', { url: relUrl });
+  }
+
   async function mkdirPhotos(subdirs) {
     return request('POST', '/api/photos/mkdirs', { subdirs });
   }
@@ -275,7 +282,7 @@ const ApiClient = (function() {
     getNasConfig, saveNasConfig,
     listNasBackups, nasBackupDownloadUrl, copyNasToLocal, restoreNasBackup,
     getSystemInfo,
-    uploadPhoto, photoUrl, mkdirPhotos, getPhotosStats,
+    uploadPhoto, deletePhoto, photoUrl, mkdirPhotos, getPhotosStats,
     getBase
   };
 })();

@@ -26,6 +26,7 @@ const AuthModule = (function () {
     const ROLES = [
         { key: 'admin',           label: '관리자',         color: '#dc2626', bg: '#fee2e2', canWrite: true },
         { key: 'prod_worker',     label: '생산 작업자',    color: '#2563eb', bg: '#dbeafe', canWrite: true },
+        { key: 'logistics_worker',label: '물류작업자',     color: '#0891b2', bg: '#cffafe', canWrite: true },
         { key: 'prod_manager',    label: '생산관리자',     color: '#d97706', bg: '#fef3c7', canWrite: true },
         { key: 'quality_manager', label: '품질 관리자',    color: '#16a34a', bg: '#dcfce7', canWrite: true },
         { key: 'sales_manager',   label: '영업관리자',     color: '#7c3aed', bg: '#ede9fe', canWrite: true },

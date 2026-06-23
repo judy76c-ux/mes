@@ -6117,6 +6117,7 @@ const SettingsModule = (function() {
                                         <th>No</th>
                                         <th>사진</th>
                                         <th>성함</th>
+                                        <th>역할</th>
                                         <th>소속/직함</th>
                                         <th>주요 공정</th>
                                         <th>연락처</th>
@@ -6129,6 +6130,7 @@ const SettingsModule = (function() {
                                             <td>${i + 1}</td>
                                             <td style="padding:6px 10px;">${_avatarHtml(op, 40)}</td>
                                             <td><strong style="font-size:1.1rem;color:var(--accent-blue);">${op.name}</strong></td>
+                                            <td>${op.role || '-'}</td>
                                             <td>${op.position || '-'}</td>
                                             <td>${op.dept || '-'}</td>
                                             <td style="font-family:monospace;">${op.phone || '-'}</td>
@@ -6157,17 +6159,30 @@ const SettingsModule = (function() {
             </div>
             <div class="form-row">
                 <div class="form-group">
+                    <label class="form-label">역할 <span style="color:var(--accent-red)">*</span></label>
+                    <select class="form-select" id="opRole">
+                        <option value="">-- 선택 --</option>
+                        <option value="생산 작업자">생산 작업자</option>
+                        <option value="반장/조장">반장/조장</option>
+                        <option value="품질검사">품질검사</option>
+                        <option value="창고관리">창고관리</option>
+                        <option value="기타">기타</option>
+                    </select>
+                </div>
+                <div class="form-group">
                     <label class="form-label">소속/직함</label>
                     <input type="text" class="form-input" id="opPosition" placeholder="예: 조장, 작업반장">
                 </div>
+            </div>
+            <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">담당 공정</label>
                     <input type="text" class="form-input" id="opDept" placeholder="예: 도장라인, 사출반">
                 </div>
-            </div>
-            <div class="form-group">
-                <label class="form-label">연락처</label>
-                <input type="text" class="form-input" id="opPhone" placeholder="010-0000-0000">
+                <div class="form-group">
+                    <label class="form-label">연락처</label>
+                    <input type="text" class="form-input" id="opPhone" placeholder="010-0000-0000">
+                </div>
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
@@ -6178,6 +6193,7 @@ const SettingsModule = (function() {
 
     async function saveOperator() {
         const name = document.getElementById('opName').value.trim();
+        const role = document.getElementById('opRole').value;
         const position = document.getElementById('opPosition').value.trim();
         const dept = document.getElementById('opDept').value.trim();
         const phone = document.getElementById('opPhone').value.trim();
@@ -6186,9 +6202,14 @@ const SettingsModule = (function() {
             UIUtils.toast('성함을 입력하세요.', 'warning');
             return;
         }
+        if (!role) {
+            UIUtils.toast('역할을 선택하세요.', 'warning');
+            return;
+        }
 
         await Storage.add(OPERATORS_STORE, {
             name,
+            role,
             position,
             dept,
             phone,
@@ -6213,17 +6234,30 @@ const SettingsModule = (function() {
             </div>
             <div class="form-row">
                 <div class="form-group">
+                    <label class="form-label">역할 <span style="color:var(--accent-red)">*</span></label>
+                    <select class="form-select" id="editOpRole">
+                        <option value="">-- 선택 --</option>
+                        <option value="생산 작업자" ${op.role === '생산 작업자' ? 'selected' : ''}>생산 작업자</option>
+                        <option value="반장/조장" ${op.role === '반장/조장' ? 'selected' : ''}>반장/조장</option>
+                        <option value="품질검사" ${op.role === '품질검사' ? 'selected' : ''}>품질검사</option>
+                        <option value="창고관리" ${op.role === '창고관리' ? 'selected' : ''}>창고관리</option>
+                        <option value="기타" ${op.role === '기타' ? 'selected' : ''}>기타</option>
+                    </select>
+                </div>
+                <div class="form-group">
                     <label class="form-label">소속/직함</label>
                     <input type="text" class="form-input" id="editOpPosition" value="${op.position || ''}">
                 </div>
+            </div>
+            <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">담당 공정</label>
                     <input type="text" class="form-input" id="editOpDept" value="${op.dept || ''}">
                 </div>
-            </div>
-            <div class="form-group">
-                <label class="form-label">연락처</label>
-                <input type="text" class="form-input" id="editOpPhone" value="${op.phone || ''}">
+                <div class="form-group">
+                    <label class="form-label">연락처</label>
+                    <input type="text" class="form-input" id="editOpPhone" value="${op.phone || ''}">
+                </div>
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
@@ -6234,6 +6268,7 @@ const SettingsModule = (function() {
 
     async function updateOperator(id) {
         const name = document.getElementById('editOpName').value.trim();
+        const role = document.getElementById('editOpRole').value;
         const position = document.getElementById('editOpPosition').value.trim();
         const dept = document.getElementById('editOpDept').value.trim();
         const phone = document.getElementById('editOpPhone').value.trim();
@@ -6242,12 +6277,17 @@ const SettingsModule = (function() {
             UIUtils.toast('성함을 입력하세요.', 'warning');
             return;
         }
+        if (!role) {
+            UIUtils.toast('역할을 선택하세요.', 'warning');
+            return;
+        }
 
         const existingOp = Storage.getById(OPERATORS_STORE, id);
         const photo = _pendingPhoto !== undefined ? (_pendingPhoto || null) : (existingOp && existingOp.photo) || null;
         _pendingPhoto = null;
         await Storage.update(OPERATORS_STORE, id, {
             name,
+            role,
             position,
             dept,
             phone,

@@ -5,6 +5,38 @@ var InjectionWarehouseModule = (function() {
     const STORE = DB.STORES.INJECTION_INVENTORY;
     let _pendingInspDate = '';
 
+    function _hasRole(user, roleKey) {
+        if (!user || !roleKey) return false;
+        const keys = [];
+        if (Array.isArray(user.roles)) keys.push.apply(keys, user.roles);
+        if (user.role) keys.push(user.role);
+        return keys.map(function(value) { return String(value || '').trim(); }).includes(String(roleKey));
+    }
+
+    function _getProductionWorkerUsers() {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.getUsers !== 'function') return [];
+        return (AuthModule.getUsers() || [])
+            .filter(function(user) {
+                return user && user.active !== false && _hasRole(user, 'prod_worker');
+            })
+            .map(function(user) {
+                return {
+                    id: String(user.id || user.username || user.displayName || ''),
+                    name: String(user.displayName || user.name || user.username || user.id || '')
+                };
+            })
+            .filter(function(user) { return user.id && user.name; })
+            .sort(function(a, b) { return a.name.localeCompare(b.name, 'ko'); });
+    }
+
+    function _buildProductionWorkerOptionHtml() {
+        return _getProductionWorkerUsers()
+            .map(function(user) {
+                return '<option value="' + user.id.replace(/"/g, '&quot;') + '">' + user.name + '</option>';
+            })
+            .join('');
+    }
+
     function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
@@ -1075,7 +1107,7 @@ var InjectionWarehouseModule = (function() {
                         onclick="InjectionWarehouseModule.autoFillFIFO()"
                         style="white-space:nowrap; display:flex; align-items:center; gap:4px;">
                         <span class="material-symbols-outlined" style="font-size:0.9rem;">playlist_add_check</span>
-                        선입선출 자동 입력
+                        선입선출 로트 자동 입력
                     </button>
                 </div>` : `
                 <div id="addInvStockArea" style="display:none; margin-bottom:10px; padding:10px 12px; background:var(--bg-secondary); border:1px solid var(--border); border-radius:8px;">
@@ -1113,9 +1145,16 @@ var InjectionWarehouseModule = (function() {
                     <label class="form-label">입고자 <span style="font-size:.78rem;color:var(--text-muted);font-weight:400;">(임의 입고)</span></label>
                     <select class="form-select" id="addInvReceivedBy">
                         <option value="">-- 선택 --</option>
-                        ${(Storage.getAll(DB.STORES.OPERATORS) || []).map(o => `<option value="${(o.name||o.id).replace(/"/g,'&quot;')}">${o.name||o.id}</option>`).join('')}
+                        ${_buildProductionWorkerOptionHtml()}
                     </select>
-                </div>` : '<div class="form-group" style="visibility:hidden;"></div>'}
+                </div>` : `
+                <div class="form-group">
+                    <label class="form-label">출고자 <span style="color:var(--accent-red)">*</span></label>
+                    <select class="form-select" id="addInvOutgoingBy">
+                        <option value="">-- 선택 --</option>
+                        ${_buildProductionWorkerOptionHtml()}
+                    </select>
+                </div>`}
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
@@ -1994,6 +2033,12 @@ var InjectionWarehouseModule = (function() {
         if (_type === '출고') {
             const outTypeEl = document.querySelector('input[name="outgoingType"]:checked');
             _outgoingType = outTypeEl ? outTypeEl.value : '생산출고';
+            const outgoingBy = ((document.getElementById('addInvOutgoingBy') || {}).value || '').trim();
+            if (!outgoingBy) {
+                UIUtils.toast('출고자를 선택하세요.', 'warning');
+                document.getElementById('addInvOutgoingBy')?.focus();
+                return;
+            }
             if (_outgoingType === '반출') {
                 _returnReason = ((document.getElementById('returnReasonInput') || {}).value || '').trim();
                 if (!_returnReason) {
@@ -2020,7 +2065,8 @@ var InjectionWarehouseModule = (function() {
             source: ((document.getElementById('addInvSource') || {}).value || '').trim(),
             injMaterialId: _injMaterialId || undefined,  // v19
             inspDate: _pendingInspDate || undefined,
-            receivedBy: _type === '입고' ? ((document.getElementById('addInvReceivedBy') || {}).value || '') : undefined
+            receivedBy: _type === '입고' ? ((document.getElementById('addInvReceivedBy') || {}).value || '') : undefined,
+            outgoingBy: _type === '출고' ? ((document.getElementById('addInvOutgoingBy') || {}).value || '') : undefined
         };
         _pendingInspDate = '';
 

@@ -11,6 +11,17 @@ const PaintInventoryModule = (function() {
     let _page     = 1;
     let _pageSize = 50;
 
+    // 다양한 날짜 형식 → YYYY-MM-DD 변환 (date input value용)
+    function _toIsoDate(value) {
+        if (!value) return '';
+        const s = String(value).trim().replace(/[./]/g, '-');
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;          // 이미 YYYY-MM-DD
+        if (/^\d{8}$/.test(s))                                  // YYYYMMDD
+            return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`;
+        if (/^\d{6}$/.test(s)) return _dateFromProdLot(s);     // YYMMDD
+        return '';
+    }
+
     function _parseShelfLifeMonths(value) {
         if (!value) return null;
         const s = String(value).trim();
@@ -46,8 +57,8 @@ const PaintInventoryModule = (function() {
     }
 
     function _resolveLotDates(record, material) {
-        const mfgDate = record.mfgDate || _dateFromProdLot(record.prodLot || record.lotNo);
-        const expDate = record.expDate || _addMonths(mfgDate, _parseShelfLifeMonths(material && material.shelfLife));
+        const mfgDate = _toIsoDate(record.mfgDate) || _dateFromProdLot(record.prodLot || record.lotNo);
+        const expDate = _toIsoDate(record.expDate) || _addMonths(mfgDate, _parseShelfLifeMonths(material && material.shelfLife));
         return { mfgDate, expDate };
     }
 
@@ -567,7 +578,7 @@ const PaintInventoryModule = (function() {
                         ${d.type === '출고' ? '-' : '+'}${UIUtils.formatNumber(qty)}
                     </td>
                     <td>${badge}</td>
-                    <td style="color:var(--text-muted);font-size:0.78rem;">${d.receivedBy || ''}</td>
+                    <td style="color:var(--text-muted);font-size:0.78rem;">${d.type === '입고' ? (d.receivedBy || '') : (d.issuedBy || '')}</td>
                 </tr>`;
         }).join('') || `<tr><td colspan="6" style="text-align:center;padding:14px;color:var(--text-muted);">이력 없음</td></tr>`;
 
@@ -887,6 +898,23 @@ const PaintInventoryModule = (function() {
         }
     }
 
+    // type="text" date 입력 자동 포맷 (숫자 입력 → YYYY-MM-DD 형식 삽입)
+    function _onDateInput(input) {
+        let v = input.value.replace(/\D/g, '').slice(0, 8);
+        if (v.length >= 5) v = v.slice(0, 4) + '-' + v.slice(4, 6) + '-' + v.slice(6, 8);
+        else if (v.length >= 3) v = v.slice(0, 4) + '-' + v.slice(4);
+        input.value = v;
+    }
+
+    // 제조일자 입력 자동 포맷 + prodLot/유효기한 자동 계산
+    function _onMfgDateInput(input) {
+        _onDateInput(input);
+        if (input.value.length === 10) {
+            autoFillProdLot(input.value);
+            _autoFillExpDate(input.value);
+        }
+    }
+
     // 제조일자(YYYY-MM-DD) → 제조 LOT(YYMMDD) + 유효기한 자동 계산
     function autoFillProdLot(dateVal) {
         const prodLotEl = document.getElementById('addPaintInvProdLot');
@@ -901,10 +929,10 @@ const PaintInventoryModule = (function() {
         _autoFillExpDate(dateVal);
     }
 
-    // 선택된 도료의 shelfLife + 제조일자로 유효기한 자동 입력
+    // 선택된 도료의 shelfLife + 제조일자로 유효기한 자동 입력 (항상 덮어씀)
     function _autoFillExpDate(mfgDate) {
         const expEl = document.getElementById('addPaintInvExpDate');
-        if (!expEl || expEl.value) return;  // 이미 값이 있으면 덮어쓰지 않음
+        if (!expEl) return;
         const matId = (document.getElementById('addPaintInvMaterial') || {}).value;
         if (!matId || !mfgDate) return;
         const mat = (Storage.getAll(MATERIALS_STORE) || []).find(m => m.id === matId);
@@ -962,9 +990,9 @@ const PaintInventoryModule = (function() {
                     const expInput = document.getElementById('addPaintInvExpDate');
                     if (lotInput) lotInput.value = insp.lotNo       || '';
                     if (qtyInput) qtyInput.value = insp.incomingQty || '';
-                    if (mfgInput) mfgInput.value = insp.mfgDate     || '';
-                    if (expInput) expInput.value = insp.expDate      || '';
-                    autoFillProdLot(insp.mfgDate || '');
+                    if (mfgInput) mfgInput.value = _toIsoDate(insp.mfgDate);
+                    if (expInput) expInput.value = _toIsoDate(insp.expDate);
+                    autoFillProdLot(_toIsoDate(insp.mfgDate));
                     const inspDateInput = document.getElementById('addPaintInvInspDate');
                     if (inspDateInput) inspDateInput.value = (insp.date || '').slice(0, 10);
                 }, 80);
@@ -1002,7 +1030,7 @@ const PaintInventoryModule = (function() {
                 ${type === '입고' ? `
                 <div class="form-group">
                     <label class="form-label">수입검사일 <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(검사 연동 시 자동)</span></label>
-                    <input type="date" class="form-input" id="addPaintInvInspDate">
+                    <input type="date" class="form-input" id="addPaintInvInspDate" readonly style="background:var(--bg-secondary);cursor:default;">
                 </div>` : '<div class="form-group" style="visibility:hidden;"></div>'}
             </div>
             <div class="form-row">
@@ -1051,19 +1079,6 @@ const PaintInventoryModule = (function() {
                     <div id="addPaintInvLotMsg" style="font-size:0.75rem;margin-top:5px;min-height:16px;"></div>
                 </div>
             </div>
-            ${type === '입고' ? `
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">
-                        제조 LOT <span style="color:var(--accent-red)">*</span>
-                        <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;margin-left:4px;">YYMMDD · 자사 내부 관리 LOT</span>
-                    </label>
-                    <input type="text" class="form-input" id="addPaintInvProdLot" placeholder="예: 260227" maxlength="6" inputmode="numeric"
-                        oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,6); PaintInventoryModule.validateProdLot(this);">
-                    <div id="addPaintInvProdLotMsg" style="font-size:0.75rem;margin-top:5px;min-height:16px;"></div>
-                </div>
-                <div class="form-group" style="visibility:hidden;"></div>
-            </div>` : ''}
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">수량 <span style="color:var(--accent-red)">*</span></label>
@@ -1074,13 +1089,17 @@ const PaintInventoryModule = (function() {
             ${type === '입고' ? `
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">제조일자</label>
-                    <input type="date" class="form-input" id="addPaintInvMfgDate"
+                    <label class="form-label">제조일자 <span style="color:var(--accent-red)">*</span> <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">— 제조 LOT(YYMMDD) 자동 생성</span></label>
+                    <input type="text" class="form-input" id="addPaintInvMfgDate"
+                        placeholder="YYYY-MM-DD" maxlength="10" inputmode="numeric"
+                        oninput="PaintInventoryModule._onMfgDateInput(this)"
                         onchange="PaintInventoryModule.autoFillProdLot(this.value)">
                 </div>
                 <div class="form-group">
                     <label class="form-label">유효기한</label>
-                    <input type="date" class="form-input" id="addPaintInvExpDate">
+                    <input type="text" class="form-input" id="addPaintInvExpDate"
+                        placeholder="YYYY-MM-DD" maxlength="10" inputmode="numeric"
+                        oninput="PaintInventoryModule._onDateInput(this)">
                 </div>
             </div>
             <div class="form-row">
@@ -1088,7 +1107,16 @@ const PaintInventoryModule = (function() {
                     <label class="form-label">입고자 <span style="font-size:.78rem;color:var(--text-muted);font-weight:400;">(선택)</span></label>
                     <select class="form-select" id="addPaintInvReceivedBy">
                         <option value="">-- 선택 --</option>
-                        ${(Storage.getAll(DB.STORES.OPERATORS) || []).map(o => `<option value="${_escapeHtml(o.name || o.id)}">${_escapeHtml(o.name || o.id)}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="form-group" style="visibility:hidden;"></div>
+            </div>` : ''}
+            ${type === '출고' ? `
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">출고자 <span style="font-size:.78rem;color:var(--text-muted);font-weight:400;">(선택)</span></label>
+                    <select class="form-select" id="addPaintInvIssuedBy">
+                        <option value="">-- 선택 --</option>
                     </select>
                 </div>
                 <div class="form-group" style="visibility:hidden;"></div>
@@ -1111,6 +1139,22 @@ const PaintInventoryModule = (function() {
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="PaintInventoryModule.saveNew('${type}')">등록</button>
         `);
+        // 모달 DOM 삽입 후 작업자 목록 채우기
+        setTimeout(() => _fillWorkerSelect(type), 0);
+    }
+
+    function _fillWorkerSelect(type) {
+        const users = (typeof AuthModule !== 'undefined' ? AuthModule.getUsers() : []) || [];
+        const TARGET_ROLES = ['prod_worker', 'logistics_worker'];
+        const workers = users.filter(u => {
+            if (u.active === false) return false;
+            const roles = [...(Array.isArray(u.roles) ? u.roles : []), u.role].filter(Boolean);
+            return roles.some(r => TARGET_ROLES.includes(r));
+        });
+        const opts = '<option value="">-- 선택 --</option>' +
+            workers.map(u => `<option value="${_escapeHtml(u.displayName || u.username)}">${_escapeHtml(u.displayName || u.username)}</option>`).join('');
+        const sel = document.getElementById(type === '입고' ? 'addPaintInvReceivedBy' : 'addPaintInvIssuedBy');
+        if (sel) sel.innerHTML = opts;
     }
 
     function onSupplierChange(type) {
@@ -1765,12 +1809,12 @@ const PaintInventoryModule = (function() {
             type: type,
             materialId: document.getElementById('addPaintInvMaterial').value,
             lotNo: document.getElementById('addPaintInvLot').value.trim(),
-            prodLot: (document.getElementById('addPaintInvProdLot') || {}).value?.trim() || '',
             quantity: Number(document.getElementById('addPaintInvQty').value) || 0,
-            mfgDate: (document.getElementById('addPaintInvMfgDate') || {}).value || '',
-            expDate: (document.getElementById('addPaintInvExpDate') || {}).value || '',
+            mfgDate: _toIsoDate((document.getElementById('addPaintInvMfgDate') || {}).value || ''),
+            expDate: _toIsoDate((document.getElementById('addPaintInvExpDate') || {}).value || ''),
             inspDate: (document.getElementById('addPaintInvInspDate') || {}).value || '',
             receivedBy: type === '입고' ? ((document.getElementById('addPaintInvReceivedBy') || {}).value || '') : '',
+            issuedBy: type === '출고' ? ((document.getElementById('addPaintInvIssuedBy') || {}).value || '') : '',
             sourceInspectionId: (type === '입고' && window._sourceInspectionId) ? window._sourceInspectionId : ''
         };
 
@@ -1778,26 +1822,18 @@ const PaintInventoryModule = (function() {
             UIUtils.toast('도료를 선택하세요.', 'warning');
             return;
         }
-        // 제조 LOT — 입고 시 필수 (YYMMDD 6자리)
+        // 입고 시 제조일자 필수 → prodLot 자동 생성 (YYMMDD)
         if (type === '입고') {
+            if (!data.mfgDate) {
+                UIUtils.toast('제조일자를 입력하세요.', 'warning');
+                document.getElementById('addPaintInvMfgDate')?.focus();
+                return;
+            }
+            // YYYY-MM-DD → YYMMDD
+            const m = data.mfgDate.match(/^(\d{2})(\d{2})-(\d{2})-(\d{2})$/);
+            data.prodLot = m ? (m[2] + m[3] + m[4]) : '';
             if (!data.prodLot) {
-                UIUtils.toast('제조 LOT를 입력하세요. (YYMMDD 6자리)', 'warning');
-                const prodLotInput = document.getElementById('addPaintInvProdLot');
-                if (prodLotInput) prodLotInput.focus();
-                return;
-            }
-            if (!/^\d{6}$/.test(data.prodLot)) {
-                UIUtils.toast('제조 LOT는 숫자 6자리(YYMMDD) 형식이어야 합니다.', 'warning');
-                const prodLotInput = document.getElementById('addPaintInvProdLot');
-                if (prodLotInput) prodLotInput.focus();
-                return;
-            }
-            const pm = parseInt(data.prodLot.slice(2, 4), 10);
-            const pd = parseInt(data.prodLot.slice(4, 6), 10);
-            if (pm < 1 || pm > 12 || pd < 1 || pd > 31) {
-                UIUtils.toast('제조 LOT의 월/일 값이 유효하지 않습니다.', 'warning');
-                const prodLotInput = document.getElementById('addPaintInvProdLot');
-                if (prodLotInput) prodLotInput.focus();
+                UIUtils.toast('제조일자 형식이 올바르지 않습니다.', 'warning');
                 return;
             }
         }
@@ -3741,6 +3777,8 @@ const PaintInventoryModule = (function() {
         _bulkSave,
         openIncomingFromInspection,
         autoFillProdLot,
+        _onMfgDateInput,
+        _onDateInput,
         validateProdLot,
         openOutgoingModal,
         onLotInput,

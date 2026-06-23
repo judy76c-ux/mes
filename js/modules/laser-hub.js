@@ -10,11 +10,13 @@
 
 var LaserProcessUI = (function () {
     const MENUS = [
-        { id: 'laser-process', label: '메인', icon: 'dashboard' },
-        { id: 'laser-wip', label: '재공품 현황', icon: 'inventory' },
-        { id: 'laser-work', label: '레이져 작업일지', icon: 'history' },
-        { id: 'laser-inspection', label: '외관 검사 일지', icon: 'fact_check', onclick: "LaserInspectionModule.showInspectionPage()" },
-        { id: 'laser-jig-master', label: '레이져 지그대장', icon: 'view_list' },
+        { id: 'laser-process',              label: '메인',                   icon: 'dashboard' },
+        { id: 'laser-work',                 label: '레이져 작업일지',        icon: 'history' },
+        { id: 'laser-inspection',           label: '외관 검사 일지',         icon: 'fact_check', onclick: "LaserInspectionModule.showInspectionPage()" },
+        { id: 'laser-wip-standby',          label: '레이져 대기품 현황',     icon: 'hourglass_top',  onclick: "LaserWipModule.openTab('standby')" },
+        { id: 'laser-wip-residual',         label: '레이져 후 잔량 현황',    icon: 'inventory_2',    onclick: "LaserWipModule.openTab('after-laser-residual')" },
+        { id: 'laser-wip-after',            label: '레이져 후 재공품 현황',  icon: 'bolt',           onclick: "LaserWipModule.openTab('after-laser')" },
+        { id: 'laser-jig-master',           label: '레이져 지그대장',        icon: 'view_list' },
     ];
 
     const JIG_SUB_MENUS = [
@@ -46,7 +48,16 @@ var LaserProcessUI = (function () {
                 </div>
                 <div style="display:flex;gap:10px;flex-wrap:wrap;">
                     ${MENUS.map(function (menu) {
-                        const active = menu.id === activePage;
+                        let active = menu.id === activePage;
+                        // laser-wip 탭 버튼의 active 판별: laser-wip 페이지에서 현재 탭 비교
+                        if (!active && activePage === 'laser-wip' && menu.id.startsWith('laser-wip-')) {
+                            try {
+                                const tab = LaserWipModule._activeTabId ? LaserWipModule._activeTabId() : '';
+                                if (menu.id === 'laser-wip-standby'  && tab === 'standby')          active = true;
+                                if (menu.id === 'laser-wip-after'    && tab === 'after-laser')       active = true;
+                                if (menu.id === 'laser-wip-residual' && tab === 'after-laser-residual') active = true;
+                            } catch(e) {}
+                        }
                         return `
                             <button type="button"
                                 onclick="${menu.onclick || "Router.navigate('" + menu.id + "')"}"

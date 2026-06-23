@@ -947,13 +947,14 @@ var MSDSModule = (function () {
     let _dict = {};   // materialId → msdsData
     let _mats = [];   // paint_materials 목록
 
+    // 도료 MSDS 관련 GHS 그림문자
     const HAZARD_ICONS = [
-        { no: '①', label: '경고',    sym: '⚠',  color: '#f59e0b' },
-        { no: '②', label: '인화성',  sym: '🔥', color: '#ef4444' },
-        { no: '③', label: '발암성',  sym: '☠',  color: '#7c3aed' },
-        { no: '④', label: '급성독성',sym: '💀', color: '#dc2626' },
-        { no: '⑤', label: '피부부식',sym: '🧪', color: '#d97706' },
-        { no: '⑥', label: '수생유해',sym: '🐟', color: '#0891b2' }
+        { no: 'GHS02', label: '인화성',    sym: '🔥', color: '#ef4444' },
+        { no: 'GHS05', label: '부식성',    sym: '🧪', color: '#d97706' },
+        { no: 'GHS06', label: '급성독성',  sym: '☠',  color: '#7c3aed' },
+        { no: 'GHS07', label: '경고',      sym: '⚠',  color: '#f59e0b' },
+        { no: 'GHS08', label: '건강유해성',sym: '🫁', color: '#be185d' },
+        { no: 'GHS09', label: '환경유해성',sym: '🐟', color: '#059669' }
     ];
 
     /* 제품 구분 색상 */
@@ -969,7 +970,7 @@ var MSDSModule = (function () {
     };
 
     async function render(container) {
-        const saved = await SafetyCommon.load(KEY);
+        const saved = await Storage.getConfigValue(KEY).catch(function(){ return null; });
         _dict = (saved && !Array.isArray(saved) && typeof saved === 'object') ? saved : {};
         _mats = (typeof Storage !== 'undefined' && DB && DB.STORES)
             ? (Storage.getAll(DB.STORES.PAINT_MATERIALS) || [])
@@ -1011,26 +1012,15 @@ var MSDSModule = (function () {
         return pt || '기타';
     }
 
-    /* 정렬: 세척제 최상단 → 양산/A/S/개발 → 카테고리 → 이름 */
+    /* 정렬: 구매처 → 카테고리 → 이름 */
     function _sortedMats() {
-        const ptOrder  = { '양산': 0, 'A/S': 1, '개발': 2 };
-        const catOrder = { '세척제': -1, '주제': 0, '경화제': 1, '희석 신너': 2 };
+        const catOrder = { '세척제': 0, '주제': 1, '경화제': 2, '희석 신너': 3 };
         return _mats.slice().sort(function(a, b) {
-            const catA = _paintCat(a);
-            const catB = _paintCat(b);
-            /* 세척제 우선 */
-            const isCleanA = catA === '세척제' ? 0 : 1;
-            const isCleanB = catB === '세척제' ? 0 : 1;
-            if (isCleanA !== isCleanB) return isCleanA - isCleanB;
-            /* itemType 순서 */
-            const ta = _normType(a.itemType);
-            const tb = _normType(b.itemType);
-            const oa = ptOrder[ta] !== undefined ? ptOrder[ta] : 3;
-            const ob = ptOrder[tb] !== undefined ? ptOrder[tb] : 3;
-            if (oa !== ob) return oa - ob;
-            /* 카테고리 순서 */
-            const ca = catOrder[catA] !== undefined ? catOrder[catA] : 3;
-            const cb = catOrder[catB] !== undefined ? catOrder[catB] : 3;
+            const supA = (a.supplier || '(미등록)').localeCompare(b.supplier || '(미등록)');
+            if (supA !== 0) return supA;
+            const catA = _paintCat(a), catB = _paintCat(b);
+            const ca = catOrder[catA] !== undefined ? catOrder[catA] : 9;
+            const cb = catOrder[catB] !== undefined ? catOrder[catB] : 9;
             if (ca !== cb) return ca - cb;
             return (a.name || '').localeCompare(b.name || '');
         });
@@ -1063,7 +1053,10 @@ var MSDSModule = (function () {
             </div>`;
         }).join('');
 
-        /* 행 HTML */
+        /* 행 HTML — 구매처별 그룹 헤더 삽입 */
+        const COL_COUNT = 4 + HAZARD_ICONS.length + 4; // No+제품명+도료유형+제품구분 + GHS + 제조사+파일+비고+작업
+        let _lastSup = null;
+        let _groupNo = 0;
         const rows = sorted.map(function(mat, i) {
             const d    = _dict[mat.id] || {};
             const hz   = d.hazards || [];
@@ -1105,28 +1098,33 @@ var MSDSModule = (function () {
                 ? `<span style="font-size:.63rem;background:${ptColor}22;color:${ptColor};border-radius:3px;padding:1px 5px;font-weight:700;">${esc(pt)}</span>`
                 : `<span style="font-size:.63rem;background:#f3f4f6;color:#9ca3af;border-radius:3px;padding:1px 5px;">미지정</span>`;
 
-            return `<tr style="${rowBg}" data-pt="${esc(pt)}" data-cat="${esc(cat)}" data-sup="${esc(sup)}" data-missing="${hasF ? '0' : '1'}">
+            /* 구매처 그룹 헤더 */
+            let groupHeader = '';
+            const supLabel = sup || '(구매처 미등록)';
+            if (supLabel !== _lastSup) {
+                _lastSup = supLabel;
+                _groupNo++;
+                groupHeader = `<tr class="msds-sup-header" data-sup="${esc(sup)}"
+                    style="background:var(--bg-secondary);border-top:2px solid var(--border-color);">
+                    <td colspan="${COL_COUNT}" style="padding:6px 12px;font-size:.78rem;font-weight:700;
+                        color:var(--text-secondary);letter-spacing:.03em;">
+                        <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;margin-right:4px;">business</span>
+                        ${esc(supLabel)}
+                    </td>
+                </tr>`;
+            }
+
+            return groupHeader + `<tr style="${rowBg}" data-pt="${esc(pt)}" data-cat="${esc(cat)}" data-sup="${esc(sup)}" data-missing="${hasF ? '0' : '1'}">
                 <td style="text-align:center;font-size:.8rem;">${i + 1}</td>
                 <td style="font-size:.82rem;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(mat.name)}"><strong>${esc(mat.name)}</strong></td>
                 <td style="text-align:center;">${catBadge}</td>
                 <td style="text-align:center;">${ptBadge}</td>
-                <td style="text-align:center;">${hCell('①')}</td>
-                <td style="text-align:center;">${hCell('②')}</td>
-                <td style="text-align:center;">${hCell('③')}</td>
-                <td style="text-align:center;">${hCell('④')}</td>
-                <td style="text-align:center;">${hCell('⑤')}</td>
-                <td style="text-align:center;">${hCell('⑥')}</td>
+                ${HAZARD_ICONS.map(function(h){ return `<td style="text-align:center;">${hCell(h.no)}</td>`; }).join('')}
                 <td style="font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(sup)}">${esc(sup || '-')}</td>
                 <td style="text-align:center;">${fileCell}</td>
                 <td style="font-size:.76rem;color:var(--text-muted);">${esc(d.note || '')}</td>
                 <td style="text-align:center;white-space:nowrap;">
-                    ${!pt
-                        ? `<button class="btn btn-sm" style="background:#f59e0b22;color:#d97706;border:1px solid #f59e0b66;font-size:.72rem;"
-                               onclick="MSDSModule._gotoSettings('${js(mat.id)}')" title="도료 기초 정보에서 제품 구분 설정">
-                               <span class="material-symbols-outlined" style="font-size:12px;vertical-align:middle;">settings</span> 구분 설정
-                           </button>`
-                        : `<button class="btn btn-sm btn-outline" onclick="MSDSModule._edit('${js(mat.id)}')">편집</button>`
-                    }
+                    <button class="btn btn-sm btn-outline" onclick="MSDSModule._edit('${js(mat.id)}')">편집</button>
                 </td>
             </tr>`;
         }).join('');
@@ -1261,12 +1259,7 @@ var MSDSModule = (function () {
                                     <th>제품명 (도료명)</th>
                                     <th style="text-align:center;">도료 유형</th>
                                     <th style="text-align:center;">제품 구분</th>
-                                    <th style="text-align:center;padding:5px 1px;line-height:1.3;">①<br><span style="font-size:.62rem;font-weight:400;color:var(--text-muted);">경고</span></th>
-                                    <th style="text-align:center;padding:5px 1px;line-height:1.3;">②<br><span style="font-size:.62rem;font-weight:400;color:var(--text-muted);">인화성</span></th>
-                                    <th style="text-align:center;padding:5px 1px;line-height:1.3;">③<br><span style="font-size:.62rem;font-weight:400;color:var(--text-muted);">발암성</span></th>
-                                    <th style="text-align:center;padding:5px 1px;line-height:1.3;">④<br><span style="font-size:.62rem;font-weight:400;color:var(--text-muted);">급성독성</span></th>
-                                    <th style="text-align:center;padding:5px 1px;line-height:1.3;">⑤<br><span style="font-size:.62rem;font-weight:400;color:var(--text-muted);">피부부식</span></th>
-                                    <th style="text-align:center;padding:5px 1px;line-height:1.3;">⑥<br><span style="font-size:.62rem;font-weight:400;color:var(--text-muted);">수생유해</span></th>
+                                    ${HAZARD_ICONS.map(h => `<th style="text-align:center;padding:5px 1px;line-height:1.3;">${h.sym}<br><span style="font-size:.58rem;font-weight:400;color:var(--text-muted);">${h.label}</span></th>`).join('')}
                                     <th>제조사</th>
                                     <th style="text-align:center;">MSDS<br>파일</th>
                                     <th>비 고</th>
@@ -1337,12 +1330,14 @@ var MSDSModule = (function () {
         if (!tbody) return;
 
         let visible = 0;
-        Array.from(tbody.rows).forEach(function(tr) {
+        const rows = Array.from(tbody.rows);
+        /* 데이터 행 먼저 필터 */
+        rows.forEach(function(tr) {
+            if (tr.classList.contains('msds-sup-header')) return;
             const pt      = tr.getAttribute('data-pt')  || '';
             const cat     = tr.getAttribute('data-cat') || '';
             const sup     = tr.getAttribute('data-sup') || '';
             const missing = tr.getAttribute('data-missing') === '1';
-            const name    = tr.getAttribute('data-name') || '';
 
             const ptOk  = _fState.pt  === '전체' || pt  === _fState.pt;
             const catOk = _fState.cat === '전체' || cat === _fState.cat;
@@ -1354,8 +1349,20 @@ var MSDSModule = (function () {
             if (show) visible++;
         });
 
+        /* 구매처 헤더: 다음 헤더 전까지 보이는 데이터 행이 없으면 숨김 */
+        rows.forEach(function(tr, idx) {
+            if (!tr.classList.contains('msds-sup-header')) return;
+            var hasVisible = false;
+            for (var j = idx + 1; j < rows.length; j++) {
+                if (rows[j].classList.contains('msds-sup-header')) break;
+                if (rows[j].style.display !== 'none') { hasVisible = true; break; }
+            }
+            tr.style.display = hasVisible ? '' : 'none';
+        });
+
+        const total = rows.filter(function(tr){ return !tr.classList.contains('msds-sup-header'); }).length;
         const lbl = document.getElementById('msds-count-label');
-        if (lbl) lbl.textContent = `표시 ${visible} / 전체 ${tbody.rows.length}종`;
+        if (lbl) lbl.textContent = `표시 ${visible} / 전체 ${total}종`;
     }
 
     /* ── 필터 초기화 ── */
@@ -1381,9 +1388,9 @@ var MSDSModule = (function () {
             const chk = (d.hazards || []).includes(h.no) ? 'checked' : '';
             return `<label style="display:inline-flex;align-items:center;gap:5px;padding:6px 10px;
                         border-radius:8px;cursor:pointer;border:2px solid ${chk ? h.color : 'var(--border-color)'};
-                        background:${chk ? h.color + '18' : 'var(--bg-secondary)'};" id="hz-lbl-${h.no.charCodeAt(0)}">
+                        background:${chk ? h.color + '18' : 'var(--bg-secondary)'};" id="hz-lbl-${h.no}">
                     <input type="checkbox" class="msds-hzchk" value="${h.no}" ${chk}
-                        onchange="MSDSModule._onHzChange(this,'${h.no}',${h.no.charCodeAt(0)})">
+                        onchange="MSDSModule._onHzChange(this,'${h.no}')">
                     <span style="font-size:1.1rem;">${h.sym}</span>
                     <span style="font-size:.8rem;font-weight:700;">${h.no} ${h.label}</span>
                 </label>`;
@@ -1397,8 +1404,8 @@ var MSDSModule = (function () {
                 <span style="font-size:.72rem;color:var(--text-muted);">${_fmtSize(f.size)}</span>
                 <button type="button" class="btn btn-sm" style="padding:2px 8px;font-size:.72rem;color:#2563eb;border:1px solid #2563eb22;"
                     onclick="MSDSModule._downloadFile('${js(matId)}',${i})">다운로드</button>
-                <button type="button" style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:18px;line-height:1;"
-                    onclick="document.getElementById('msds-file-item-${i}').remove();MSDSModule._pendingDelIdx.push(${i})">×</button>
+                <button type="button" class="btn btn-sm" style="padding:2px 8px;font-size:.72rem;color:#dc2626;border:1px solid #dc262622;"
+                    onclick="MSDSModule._deleteFile('${js(matId)}',${i})">삭제</button>
             </div>`;
         }).join('') || `<p style="color:var(--text-muted);font-size:.82rem;margin:4px 0;">첨부된 파일이 없습니다.</p>`;
 
@@ -1414,25 +1421,17 @@ var MSDSModule = (function () {
                 </div>
             </div>
 
-            <!-- 제품 구분(읽기전용) + 쪽수 + 비고 -->
+            <!-- 제품 구분(선택) + 쪽수 + 비고 -->
             <div style="display:grid;grid-template-columns:1fr 1fr 2fr;gap:12px;margin-bottom:14px;">
                 <div class="form-group">
-                    <label class="form-label">제품 구분
-                        <span style="font-size:.7rem;color:var(--text-muted);">(도료 마스터 연동)</span>
-                    </label>
-                    ${(function(){
-                        const pt = _normType(mat.itemType);
-                        const ptColor = PROD_COLORS[pt] || '#6b7280';
-                        return pt
-                            ? `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;
-                                    background:${ptColor}11;border:1px solid ${ptColor}44;border-radius:6px;">
-                                   <span style="font-size:.85rem;font-weight:700;color:${ptColor};">${esc(pt)}</span>
-                                   <span style="font-size:.72rem;color:var(--text-muted);">설정 → 도료 정보에서 변경</span>
-                               </div>`
-                            : `<div style="padding:7px 10px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:6px;font-size:.82rem;color:var(--text-muted);">
-                                   미지정 — 설정 → 도료 정보에서 품목구분 등록
-                               </div>`;
-                    })()}
+                    <label class="form-label">제품 구분</label>
+                    <select class="form-select" id="msds-itemType">
+                        <option value="">-- 미지정 --</option>
+                        ${['양산','A/S','개발'].map(function(t){
+                            const sel = _normType(mat.itemType) === t ? 'selected' : '';
+                            return `<option value="${t}" ${sel}>${t}</option>`;
+                        }).join('')}
+                    </select>
                 </div>
                 <div class="form-group">
                     <label class="form-label">쪽수</label>
@@ -1452,16 +1451,22 @@ var MSDSModule = (function () {
 
             <!-- 파일 첨부 -->
             <div class="form-group">
-                <label class="form-label" style="display:flex;align-items:center;justify-content:space-between;">
-                    MSDS 파일 첨부 (PDF / ZIP / 이미지)
-                    <label style="cursor:pointer;display:inline-flex;align-items:center;gap:5px;padding:5px 12px;
-                        background:#2563eb;color:#fff;border-radius:6px;font-size:.78rem;font-weight:600;">
-                        <span class="material-symbols-outlined" style="font-size:15px;">upload_file</span> 파일 선택
-                        <input type="file" id="msds-fileInput" multiple accept=".pdf,.zip,.jpg,.jpeg,.png,.gif"
-                            style="display:none;" onchange="MSDSModule._onFileSelect(this,'${js(matId)}')">
-                    </label>
-                </label>
-                <div id="msds-file-list">${fileListHTML}</div>
+                <label class="form-label">MSDS 파일 첨부 (PDF / ZIP / 이미지)</label>
+                <div id="msds-drop-zone"
+                    ondragover="event.preventDefault();this.classList.add('msds-drag-over')"
+                    ondragleave="this.classList.remove('msds-drag-over')"
+                    ondrop="event.preventDefault();this.classList.remove('msds-drag-over');MSDSModule._onDrop(event,'${js(matId)}')"
+                    style="border:2px dashed var(--border-color);border-radius:8px;padding:18px 16px;
+                           text-align:center;cursor:pointer;transition:border-color .2s,background .2s;
+                           background:var(--bg-secondary);"
+                    onclick="document.getElementById('msds-fileInput').click()">
+                    <span class="material-symbols-outlined" style="font-size:32px;color:var(--text-muted);display:block;margin-bottom:4px;">upload_file</span>
+                    <div style="font-size:0.85rem;color:var(--text-muted);">파일을 끌어다 놓거나 클릭해서 선택</div>
+                    <div style="font-size:0.75rem;color:var(--text-muted);margin-top:2px;">PDF / ZIP / 이미지 (JPG, PNG, GIF)</div>
+                    <input type="file" id="msds-fileInput" multiple accept=".pdf,.zip,.jpg,.jpeg,.png,.gif"
+                        style="display:none;" onchange="MSDSModule._onFileSelect(this,'${js(matId)}')">
+                </div>
+                <div id="msds-file-list" style="margin-top:8px;">${fileListHTML}</div>
                 <div id="msds-new-files"></div>
             </div>
         `;
@@ -1475,39 +1480,46 @@ var MSDSModule = (function () {
     }
 
     /* ── 경고 체크 시 라벨 스타일 갱신 ── */
-    function _onHzChange(cb, no, charCode) {
+    function _onHzChange(cb, no) {
         const h = HAZARD_ICONS.find(function(x){ return x.no === no; });
         if (!h) return;
-        const lbl = document.getElementById('hz-lbl-' + charCode);
+        const lbl = document.getElementById('hz-lbl-' + no);
         if (!lbl) return;
         lbl.style.borderColor    = cb.checked ? h.color : 'var(--border-color)';
         lbl.style.background     = cb.checked ? h.color + '18' : 'var(--bg-secondary)';
     }
 
-    /* ── 파일 선택 → 미리보기 추가 ── */
-    var _pendingFiles = {};  // matId → [{name,data,type,size}]
+    /* ── 드래그&드롭 ── */
+    function _onDrop(event, matId) {
+        const files = event.dataTransfer && event.dataTransfer.files;
+        if (!files || !files.length) return;
+        _processFiles(files, matId);
+    }
+
+    /* ── 파일 선택 → 대기 목록 추가 (NAS 업로드는 저장 시) ── */
+    var _pendingFiles = {};  // matId → [{name, _fileObj, size, type}]
     var _pendingDelIdx = [];
+
+    function _processFiles(fileList, matId) {
+        if (!_pendingFiles[matId]) _pendingFiles[matId] = [];
+        const container = document.getElementById('msds-new-files');
+        Array.from(fileList).forEach(function(file) {
+            const entry = { name: file.name, _fileObj: file, size: file.size, type: file.type };
+            _pendingFiles[matId].push(entry);
+            if (!container) return;
+            const div = document.createElement('div');
+            div.style.cssText = 'display:flex;align-items:center;gap:8px;padding:5px 8px;border:1px solid #2563eb44;border-radius:6px;margin-bottom:4px;background:#eff6ff;';
+            div.innerHTML = `<span class="material-symbols-outlined" style="font-size:18px;color:#2563eb;">attach_file</span>
+                <span style="flex:1;font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${SafetyCommon.esc(file.name)}</span>
+                <span style="font-size:.72rem;color:#6b7280;">${_fmtSize(file.size)}</span>
+                <span style="font-size:.72rem;color:#059669;font-weight:700;">신규</span>`;
+            container.appendChild(div);
+        });
+    }
 
     function _onFileSelect(input, matId) {
         if (!input.files || !input.files.length) return;
-        if (!_pendingFiles[matId]) _pendingFiles[matId] = [];
-        const container = document.getElementById('msds-new-files');
-        Array.from(input.files).forEach(function(file) {
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                const entry = { name: file.name, data: e.target.result, type: file.type, size: file.size };
-                _pendingFiles[matId].push(entry);
-                if (!container) return;
-                const div = document.createElement('div');
-                div.style.cssText = 'display:flex;align-items:center;gap:8px;padding:5px 8px;border:1px solid #2563eb44;border-radius:6px;margin-bottom:4px;background:#eff6ff;';
-                div.innerHTML = `<span class="material-symbols-outlined" style="font-size:18px;color:#2563eb;">attach_file</span>
-                    <span style="flex:1;font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${SafetyCommon.esc(file.name)}</span>
-                    <span style="font-size:.72rem;color:#6b7280;">${_fmtSize(file.size)}</span>
-                    <span style="font-size:.72rem;color:#059669;font-weight:700;">신규</span>`;
-                container.appendChild(div);
-            };
-            reader.readAsDataURL(file);
-        });
+        _processFiles(input.files, matId);
         input.value = '';
     }
 
@@ -1520,37 +1532,117 @@ var MSDSModule = (function () {
 
     /* ── 저장 ── */
     async function _save(matId) {
-        const hazards = Array.from(document.querySelectorAll('.msds-hzchk:checked')).map(function(cb){ return cb.value; });
+        const hazards  = Array.from(document.querySelectorAll('.msds-hzchk:checked')).map(function(cb){ return cb.value; });
+        const itemType = (document.getElementById('msds-itemType') || {}).value || '';
+
+        /* itemType 변경 시 paint_materials 업데이트 */
+        const mat = _mats.find(function(m){ return m.id === matId; });
+        if (mat && itemType !== _normType(mat.itemType)) {
+            try { await Storage.update(DB.STORES.PAINT_MATERIALS, Object.assign({}, mat, { itemType: itemType || '' })); } catch(e) {}
+            if (mat) mat.itemType = itemType;
+        }
 
         /* 기존 파일에서 삭제된 것 제거 */
         let files = ((_dict[matId] || {}).files || []).filter(function(_, i){ return _pendingDelIdx.indexOf(i) === -1; });
-        /* 신규 파일 추가 */
-        files = files.concat(_pendingFiles[matId] || []);
+
+        /* 신규 파일 → NAS /mnt/nas-photo/MSDS 업로드 (원본 파일명 유지) */
+        const pending = _pendingFiles[matId] || [];
+        for (var pi = 0; pi < pending.length; pi++) {
+            var pf = pending[pi];
+            UIUtils.toast('업로드 중 (' + (pi + 1) + '/' + pending.length + '): ' + pf.name, 'info');
+            try {
+                var uploadedUrl = await ApiClient.uploadPhoto(pf._fileObj, 'MSDS', {
+                    noAutoYearMonth: true,
+                    filename: pf.name
+                });
+                files.push({ name: pf.name, url: uploadedUrl, size: pf.size, type: pf.type });
+            } catch(uploadErr) {
+                UIUtils.toast('업로드 실패: ' + pf.name, 'error');
+                console.error('[MSDS] NAS upload failed:', uploadErr);
+                return;
+            }
+        }
         delete _pendingFiles[matId];
         _pendingDelIdx = [];
 
         _dict[matId] = {
             hazards,
-            pageNo:      document.getElementById('msds-pageNo').value.trim(),
-            note:        document.getElementById('msds-note').value.trim(),
+            pageNo:    document.getElementById('msds-pageNo').value.trim(),
+            note:      document.getElementById('msds-note').value.trim(),
             files,
-            updatedAt:   SafetyCommon.today()
+            updatedAt: SafetyCommon.today()
         };
 
-        await SafetyCommon.save(KEY, _dict);
+        await Storage.setConfigValue(KEY, _dict);
         UIUtils.closeModal();
         UIUtils.toast('MSDS가 저장되었습니다.', 'success');
         _draw(document.getElementById('contentArea'));
     }
 
+    /* ── 파일 삭제 (NAS + DB) ── */
+    async function _deleteFile(matId, idx) {
+        const d = _dict[matId] || {};
+        const f = (d.files || [])[idx];
+        if (!f) return;
+        if (!confirm('"' + f.name + '"\n이 파일을 NAS에서도 삭제합니다. 계속하시겠습니까?')) return;
+
+        /* NAS에서 삭제 */
+        if (f.url) {
+            try { await ApiClient.deletePhoto(f.url); } catch(e) { console.warn('[MSDS] NAS delete failed:', e); }
+        }
+
+        /* _dict에서 제거 후 즉시 저장 */
+        d.files = (d.files || []).filter(function(_, i){ return i !== idx; });
+        _dict[matId] = d;
+        try { await Storage.setConfigValue(KEY, _dict); } catch(e) {}
+
+        /* 모달 내 해당 항목 제거 */
+        const el = document.getElementById('msds-file-item-' + idx);
+        if (el) el.remove();
+
+        /* idx 이후 항목들의 id·버튼 재인덱싱 */
+        const list = document.getElementById('msds-file-list');
+        if (list) {
+            Array.from(list.children).forEach(function(el, newIdx) {
+                el.id = 'msds-file-item-' + newIdx;
+                const btns = el.querySelectorAll('button');
+                if (btns[0]) btns[0].setAttribute('onclick', "MSDSModule._downloadFile('" + matId + "'," + newIdx + ")");
+                if (btns[1]) btns[1].setAttribute('onclick', "MSDSModule._deleteFile('" + matId + "'," + newIdx + ")");
+            });
+        }
+        UIUtils.toast(f.name + ' 삭제되었습니다.', 'success');
+    }
+
     /* ── 파일 다운로드 ── */
-    function _downloadFile(matId, idx) {
+    async function _downloadFile(matId, idx) {
         const f = ((_dict[matId] || {}).files || [])[idx];
         if (!f) return;
-        const a = document.createElement('a');
-        a.href     = f.data;
-        a.download = f.name;
-        a.click();
+
+        if (f.url) {
+            const href = ApiClient.photoUrl(f.url);
+            try {
+                UIUtils.toast('다운로드 준비 중…', 'info');
+                const resp = await fetch(href);
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const blob = await resp.blob();
+                const blobUrl = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href     = blobUrl;
+                a.download = f.name;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(function(){ URL.revokeObjectURL(blobUrl); }, 2000);
+            } catch(e) {
+                console.warn('[MSDS] download via fetch failed, opening tab:', e);
+                window.open(href, '_blank');
+            }
+        } else if (f.data) {
+            const a = document.createElement('a');
+            a.href     = f.data;
+            a.download = f.name;
+            a.click();
+        }
     }
 
     /* ── 파일 목록 모달 ── */
@@ -1572,7 +1664,7 @@ var MSDSModule = (function () {
                     <p style="margin:0;font-size:.85rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(f.name)}</p>
                     <p style="margin:0;font-size:.72rem;color:var(--text-muted);">${_fmtSize(f.size)}</p>
                 </div>
-                ${isImg ? `<img src="${f.data}" style="height:50px;border-radius:4px;object-fit:cover;">` : ''}
+                ${isImg && (f.url || f.data) ? `<img src="${f.url ? SafetyCommon.esc(ApiClient.photoUrl(f.url)) : f.data}" style="height:50px;border-radius:4px;object-fit:cover;">` : ''}
                 <button class="btn btn-sm btn-outline" onclick="MSDSModule._downloadFile('${js(matId)}',${i})">
                     <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">download</span> 다운로드
                 </button>
@@ -1598,74 +1690,78 @@ var MSDSModule = (function () {
     }
 
     /* ── 세척제 신규 등록 ── */
-    function _addCleaner() {
+function _addCleaner() {
+        const itemTypes = [
+            { value: '양산', color: '#059669', bg: '#ecfdf5', border: '#a7f3d0' },
+            { value: 'A/S', color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe' },
+            { value: '개발', color: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe' }
+        ];
         const body = `
-            <!-- 필수: 도료명 -->
-            <div class="form-group" style="margin-bottom:10px;">
-                <label class="form-label" style="font-weight:700;">도료명 (세척제명) <span style="color:#dc2626;">*</span></label>
-                <input class="form-control" id="cl-name" placeholder="예) IPA 세척제, 세척신너 SP-100" autofocus
-                    style="font-size:.95rem;">
-            </div>
-
-            <!-- 세척제 종류 + 제품 구분 -->
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
-                <div class="form-group">
-                    <label class="form-label">세척제 종류</label>
-                    <select class="form-control" id="cl-type">
-                        <option value="IPA세척제">IPA 세척제</option>
-                        <option value="세척신너">세척신너</option>
-                        <option value="세척제">기타 세척제</option>
-                    </select>
+            <div style="display:flex;flex-direction:column;gap:18px;padding-top:4px;">
+                <div class="form-group" style="margin:0;">
+                    <label class="form-label" style="font-weight:800;font-size:0.95rem;color:var(--text-primary);margin-bottom:8px;">도료명 (세척제명) <span style="color:#dc2626;">*</span></label>
+                    <input class="form-control" id="cl-name" placeholder="예) IPA 세척제, 세척신너 SP-100" autofocus
+                        style="height:42px;font-size:.96rem;border-radius:8px;">
                 </div>
-                <div class="form-group">
-                    <label class="form-label">제품 구분</label>
-                    <div style="display:flex;gap:6px;padding-top:4px;">
-                        ${['양산','A/S','개발'].map(function(t){
-                            const col = {'양산':'#059669','A/S':'#2563eb','개발':'#7c3aed'}[t];
-                            return `<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;
-                                        padding:4px 10px;border-radius:6px;font-size:.8rem;font-weight:600;
-                                        border:1px solid ${col}44;background:${col}11;color:${col};">
-                                        <input type="radio" name="cl-itemType" value="${t}" style="accent-color:${col};"
-                                            ${t==='양산'?'checked':''}>
-                                        ${t}
-                                    </label>`;
-                        }).join('')}
+
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;">
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-weight:700;margin-bottom:8px;">세척제 종류</label>
+                        <select class="form-control" id="cl-type" style="height:42px;font-size:.95rem;border-radius:8px;">
+                            <option value="IPA세척제">IPA 세척제</option>
+                            <option value="세척신너">세척신너</option>
+                            <option value="세척제">기타 세척제</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-weight:700;margin-bottom:8px;">제품 구분</label>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                            ${itemTypes.map(function(item, index){
+                                return `<label style="position:relative;display:flex;align-items:center;justify-content:center;min-width:62px;height:42px;padding:0 16px;border-radius:10px;border:1px solid ${item.border};background:${item.bg};color:${item.color};font-size:.95rem;font-weight:800;cursor:pointer;box-sizing:border-box;">
+                                    <input type="radio" name="cl-itemType" value="${item.value}" ${index === 0 ? 'checked' : ''} style="position:absolute;opacity:0;pointer-events:none;">
+                                    <span>${item.value}</span>
+                                </label>`;
+                            }).join('')}
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            <!-- 구분선 -->
-            <div style="border-top:1px solid var(--border-color);margin:12px 0 10px;"></div>
+                <div style="height:1px;background:var(--border-color);"></div>
 
-            <!-- 구매처 + 제조사 -->
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
-                <div class="form-group">
-                    <label class="form-label">구매처 / 공급사</label>
-                    <input class="form-control" id="cl-supplier" placeholder="예) 화인플러스, KCC">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-weight:700;margin-bottom:8px;">구매처 / 공급사</label>
+                        <input class="form-control" id="cl-supplier" placeholder="예) 화인플러스, KCC"
+                            style="height:42px;font-size:.95rem;border-radius:8px;">
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-weight:700;margin-bottom:8px;">제조사</label>
+                        <input class="form-control" id="cl-manufacturer" placeholder="제조사명"
+                            style="height:42px;font-size:.95rem;border-radius:8px;">
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">제조사</label>
-                    <input class="form-control" id="cl-manufacturer" placeholder="제조사명">
-                </div>
-            </div>
 
-            <!-- 포장 용량 + 유효기한 -->
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-                <div class="form-group">
-                    <label class="form-label">포장 용량 (KG)</label>
-                    <input class="form-control" id="cl-pack" type="number" min="0" placeholder="예) 20">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">유효기한</label>
-                    <input class="form-control" id="cl-shelf" placeholder="예) 12개월">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-weight:700;margin-bottom:8px;">포장 용량 (KG)</label>
+                        <input class="form-control" id="cl-pack" type="number" min="0" placeholder="예) 20"
+                            style="height:42px;font-size:.95rem;border-radius:8px;">
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-weight:700;margin-bottom:8px;">유효기간</label>
+                        <input class="form-control" id="cl-shelf" placeholder="예) 12개월"
+                            style="height:42px;font-size:.95rem;border-radius:8px;">
+                    </div>
                 </div>
             </div>
         `;
         const footer = `
-            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" style="background:#0891b2;min-width:90px;" onclick="MSDSModule._saveCleaner()">
-                <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">add</span> 등록
-            </button>
+            <div style="display:flex;justify-content:flex-end;gap:10px;width:100%;padding-top:8px;">
+                <button class="btn btn-secondary" style="min-width:88px;height:46px;border-radius:14px;font-weight:800;" onclick="UIUtils.closeModal()">취소</button>
+                <button class="btn btn-primary" style="background:#0891b2;min-width:118px;height:46px;border-radius:14px;font-weight:800;box-shadow:0 10px 24px rgba(8,145,178,.22);" onclick="MSDSModule._saveCleaner()">
+                    <span class="material-symbols-outlined" style="font-size:17px;vertical-align:middle;">add</span> 등록
+                </button>
+            </div>
         `;
         UIUtils.showModal('세척제 신규 등록', body, footer, 'sm');
     }
@@ -1693,7 +1789,7 @@ var MSDSModule = (function () {
     }
 
     return { render, _edit, _save, _setPt, _setCat, _applyFilter, _resetFilter,
-             _onHzChange, _onFileSelect, _downloadFile, _openFiles,
+             _onHzChange, _onFileSelect, _onDrop, _downloadFile, _deleteFile, _openFiles,
              _gotoSettings, _addCleaner, _saveCleaner };
 })();
 

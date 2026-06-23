@@ -2885,7 +2885,11 @@ var LaserInspectionModule = (function() {
                 });
             }
 
-            if (_packQty > 0) {
+            // 레이져 후 도장(A/B) 공정이 있는 제품은 출하대기가 아닌 재공품(WIP)으로 남김
+            const _isWipProduct = typeof LaserWipModule !== 'undefined' &&
+                LaserWipModule.isAfterLaserDrainProduct(data.carModel || '', data.partName || '');
+
+            if (_packQty > 0 && !_isWipProduct) {
                 await Storage.add(DB.STORES.SHIPPING_STANDBY, {
                     date         : data.date || UIUtils.today(),
                     source       : 'laser_inspection',

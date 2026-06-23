@@ -144,7 +144,7 @@ var LaserWipModule = (function() {
                     .sort((a,b) => (a.partName||'').localeCompare(b.partName||'', 'ko'))
                     .map(r => {
                         const wipColor   = r.wip > 0 ? 'var(--accent-green)' : (r.wip < 0 ? 'var(--accent-red)' : 'var(--text-muted)');
-                        const statusText = r.wip > 0 ? '대기중' : (r.wip < 0 ? '오류' : '소진');
+                        const statusText = r.wip > 0 ? '도장 투입 대기' : (r.wip < 0 ? '오류' : '소진');
                         return `<tr style="border-bottom:1px solid var(--border-color);"
                                     onmouseover="this.style.background='var(--bg-secondary)'"
                                     onmouseout="this.style.background=''">
@@ -729,7 +729,7 @@ var LaserWipModule = (function() {
         let statusBadge;
         if (wip > 0) {
             statusBadge = `<span style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:12px;font-size:0.75rem;font-weight:600;background:rgba(34,197,94,0.12);color:var(--accent-green);">
-                <span class="material-symbols-outlined" style="font-size:0.85rem;">hourglass_empty</span> 대기중
+                <span class="material-symbols-outlined" style="font-size:0.85rem;">hourglass_empty</span> 도장 투입 대기
             </span>`;
         } else if (wip < 0) {
             statusBadge = `<span style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:12px;font-size:0.75rem;font-weight:600;background:rgba(239,68,68,0.12);color:var(--accent-red);">
@@ -844,22 +844,15 @@ var LaserWipModule = (function() {
      * 차종+품명+컬러 기준 레이져 후 재공 재고 조회
      * production-plan.js 도장-B 모달에서 호출용
      */
-    function getWipStock(carModel, partName, color) {
-        const drainMap  = _buildAfterLaserDrainMap();
-        const drainLine = drainMap[`${carModel||''}||${partName||''}`] || '도장-B';
-        const laserWorks = Storage.getAll(STORE_LASER) || [];
-        const paintWorks = Storage.getAll(STORE_PAINT) || [];
-        const _match = w => {
-            const cmOk = !carModel || (w.carModel||'') === carModel;
-            const pnOk = !partName || (w.partName||'') === partName;
-            const clOk = !color    || !w.color || (w.color||'') === color;
-            return cmOk && pnOk && clOk;
-        };
-        const laserQty  = laserWorks.filter(w => !w.isManualOut && _match(w)).reduce((s,w) => s + (Number(w.quantity)||0), 0);
-        const manualOut = laserWorks.filter(w =>  w.isManualOut && _match(w)).reduce((s,w) => s + (Number(w.quantity)||0), 0);
-        const drainQty  = paintWorks.filter(w => (w.line||'').trim() === drainLine && _match(w))
-                                    .reduce((s,w) => s + (Number(w.productionQty)||0), 0);
-        return Math.max(0, laserQty - drainQty - manualOut);
+    function getWipStock(carModel, partName) {
+        // 도장 컬러와 무관하게 차종+품명 기준으로 합산
+        return _calcWip()
+            .filter(r => {
+                const cmOk = !carModel || r.carModel === carModel;
+                const pnOk = !partName || r.partName === partName;
+                return cmOk && pnOk;
+            })
+            .reduce((s, r) => s + Math.max(0, r.wip), 0);
     }
 
     function refresh() {
@@ -1090,7 +1083,14 @@ var LaserWipModule = (function() {
         render(container);
     }
 
-    return { init, render, refresh, switchTab, openTab, openManualInput,
+    function _activeTabId() { return _activeTab; }
+
+    // 레이져 후 다음 공정이 도장(A/B)인 제품 여부 — laser.js에서 출하대기 유입 차단용
+    function isAfterLaserDrainProduct(carModel, partName) {
+        return !!_buildAfterLaserDrainMap()[`${carModel||''}||${partName||''}`];
+    }
+
+    return { init, render, refresh, switchTab, openTab, _activeTabId, isAfterLaserDrainProduct, openManualInput,
              openAfterLaserInput, onAfterCarChange, onAfterPartChange, saveAfterLaserInput,
              openAfterLaserOut, onOutCarChange, onOutPartChange, saveAfterLaserOut,
              openResidualInput, onResidualInCarChange, onResidualInPartChange, saveResidualInput,
