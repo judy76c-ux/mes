@@ -227,11 +227,11 @@ const ApiClient = (function() {
           const dataUrl = e.target.result; // "data:image/jpeg;base64,..."
           const commaIdx = dataUrl.indexOf(',');
           const base64 = dataUrl.slice(commaIdx + 1);
-          const contentType = dataUrl.slice(5, commaIdx).split(';')[0];
+          const contentType = options.forceContentType || dataUrl.slice(5, commaIdx).split(';')[0];
           const ext = String(uploadFile.name || file.name || 'jpg').split('.').pop().toLowerCase();
-          // options.filename 지정 시 원본 파일명 사용 (특수문자 제거)
+          // options.filename 지정 시 원본 파일명 사용 (공백·특수문자 → _)
           const safeName = options.filename
-            ? String(options.filename).replace(/[\/\\:*?"<>|]/g, '_')
+            ? String(options.filename).replace(/[\s\/\\:*?"<>|()\[\]{}#%&+,;=@!^`~]/g, '_').replace(/_+/g, '_')
             : `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
           // 자동 YYYY-MM 폴더 추가 (옵션으로 끌 수 있음)
           const baseSub = subdir || 'misc';

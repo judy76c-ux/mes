@@ -1059,7 +1059,7 @@ var MSDSModule = (function () {
         let _groupNo = 0;
         const rows = sorted.map(function(mat, i) {
             const d    = _dict[mat.id] || {};
-            const hz   = d.hazards || [];
+            const hz   = (d.hazards && d.hazards.length > 0) ? d.hazards : ['GHS02', 'GHS07', 'GHS08'];
             const hasF = _hasFile(mat.id);
             const pt   = _normType(mat.itemType);
             const cat  = _paintCat(mat);
@@ -1073,6 +1073,7 @@ var MSDSModule = (function () {
                 : (hasF ? '' : 'background:#fefce8;');
 
             const hCell = function(no) {
+                if (!hasF) return `<span style="color:#e5e7eb;font-size:.8rem;">—</span>`;
                 const icon = HAZARD_ICONS.find(function(h){ return h.no === no; });
                 return hz.includes(no)
                     ? `<span style="color:${icon ? icon.color : '#333'};font-size:1rem;font-weight:900;">✔</span>`
@@ -1384,8 +1385,10 @@ var MSDSModule = (function () {
         const esc = SafetyCommon.esc;
         const js  = SafetyCommon.js;
 
+        const DEFAULT_HAZARDS = ['GHS02', 'GHS07', 'GHS08'];
+        const effectiveHazards = (d.hazards && d.hazards.length > 0) ? d.hazards : DEFAULT_HAZARDS;
         const hazardHTML = HAZARD_ICONS.map(function(h) {
-            const chk = (d.hazards || []).includes(h.no) ? 'checked' : '';
+            const chk = effectiveHazards.includes(h.no) ? 'checked' : '';
             return `<label style="display:inline-flex;align-items:center;gap:5px;padding:6px 10px;
                         border-radius:8px;cursor:pointer;border:2px solid ${chk ? h.color : 'var(--border-color)'};
                         background:${chk ? h.color + '18' : 'var(--bg-secondary)'};" id="hz-lbl-${h.no}">
@@ -1551,13 +1554,18 @@ var MSDSModule = (function () {
             var pf = pending[pi];
             UIUtils.toast('업로드 중 (' + (pi + 1) + '/' + pending.length + '): ' + pf.name, 'info');
             try {
+                /* 서버 허용: 영문·숫자·_·-·. 만 허용 — 나머지는 _ 치환 */
+                var ext = pf.name.split('.').pop().toLowerCase();
+                var base = pf.name.slice(0, pf.name.length - ext.length - 1);
+                var safeBase = base.replace(/[^a-zA-Z0-9_\-]/g, '_').replace(/_+/g, '_').slice(0, 80);
+                var safeFilename = (safeBase || 'file') + '.' + ext;
                 var uploadedUrl = await ApiClient.uploadPhoto(pf._fileObj, 'MSDS', {
                     noAutoYearMonth: true,
-                    filename: pf.name
+                    filename: safeFilename
                 });
                 files.push({ name: pf.name, url: uploadedUrl, size: pf.size, type: pf.type });
             } catch(uploadErr) {
-                UIUtils.toast('업로드 실패: ' + pf.name, 'error');
+                UIUtils.toast('업로드 실패: ' + (uploadErr && uploadErr.message ? uploadErr.message : String(uploadErr)), 'error');
                 console.error('[MSDS] NAS upload failed:', uploadErr);
                 return;
             }
@@ -1577,6 +1585,35 @@ var MSDSModule = (function () {
         UIUtils.closeModal();
         UIUtils.toast('MSDS가 저장되었습니다.', 'success');
         _draw(document.getElementById('contentArea'));
+    }
+
+    /* ── 파일 인쇄 ── */
+    async function _printFile(matId, idx) {
+        const f = ((_dict[matId] || {}).files || [])[idx];
+        if (!f) return;
+        const href = f.url ? ApiClient.photoUrl(f.url) : f.data;
+        if (!href) return;
+
+        /* PDF/이미지: 숨겨진 iframe에 로드 후 print() */
+        UIUtils.toast('인쇄 준비 중…', 'info');
+        const iframe = document.createElement('iframe');
+        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;border:none;';
+        document.body.appendChild(iframe);
+        iframe.onload = function() {
+            try {
+                iframe.contentWindow.focus();
+                iframe.contentWindow.print();
+            } catch(e) {
+                /* 크로스오리진 제한 시 새 탭으로 fallback */
+                window.open(href, '_blank');
+            }
+            setTimeout(function(){ document.body.removeChild(iframe); }, 3000);
+        };
+        iframe.onerror = function() {
+            document.body.removeChild(iframe);
+            window.open(href, '_blank');
+        };
+        iframe.src = href;
     }
 
     /* ── 파일 삭제 (NAS + DB) ── */
@@ -1665,6 +1702,9 @@ var MSDSModule = (function () {
                     <p style="margin:0;font-size:.72rem;color:var(--text-muted);">${_fmtSize(f.size)}</p>
                 </div>
                 ${isImg && (f.url || f.data) ? `<img src="${f.url ? SafetyCommon.esc(ApiClient.photoUrl(f.url)) : f.data}" style="height:50px;border-radius:4px;object-fit:cover;">` : ''}
+                <button class="btn btn-sm btn-outline" onclick="MSDSModule._printFile('${js(matId)}',${i})" title="인쇄">
+                    <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">print</span>
+                </button>
                 <button class="btn btn-sm btn-outline" onclick="MSDSModule._downloadFile('${js(matId)}',${i})">
                     <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">download</span> 다운로드
                 </button>
@@ -1789,7 +1829,7 @@ function _addCleaner() {
     }
 
     return { render, _edit, _save, _setPt, _setCat, _applyFilter, _resetFilter,
-             _onHzChange, _onFileSelect, _onDrop, _downloadFile, _deleteFile, _openFiles,
+             _onHzChange, _onFileSelect, _onDrop, _downloadFile, _printFile, _deleteFile, _openFiles,
              _gotoSettings, _addCleaner, _saveCleaner };
 })();
 
