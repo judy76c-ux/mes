@@ -873,8 +873,8 @@ app.post('/api/backups/:fileName/restore', async (req, res) => {
 app.post('/api/photos', async (req, res) => {
   const { subdir = 'misc', filename, data, contentType } = req.body || {};
   if (!filename || !data) return res.status(400).json({ error: 'filename怨?data ?꾨뱶 ?꾩슂' });
-  const allowed = /^[a-zA-Z0-9_\-\.]+$/;
-  if (!allowed.test(filename)) return res.status(400).json({ error: '?뚯씪紐낆뿉 ?덉슜?섏? ?딅뒗 臾몄옄' });
+  const allowed = /^[^\/:\*\?"<>\|]+$/;
+  if (!allowed.test(filename) || filename.startsWith('.')) return res.status(400).json({ error: 'invalid filename' });
   const safeSub = String(subdir).split('/').map(s => s.replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 40)).filter(Boolean).join('/') || 'misc';
   const dir = path.join(getPhotoDir(), safeSub);
   const baseDir = getPhotoDir();

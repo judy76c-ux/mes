@@ -1554,14 +1554,9 @@ var MSDSModule = (function () {
             var pf = pending[pi];
             UIUtils.toast('업로드 중 (' + (pi + 1) + '/' + pending.length + '): ' + pf.name, 'info');
             try {
-                /* 서버 허용: 영문·숫자·_·-·. 만 허용 — 나머지는 _ 치환 */
-                var ext = pf.name.split('.').pop().toLowerCase();
-                var base = pf.name.slice(0, pf.name.length - ext.length - 1);
-                var safeBase = base.replace(/[^a-zA-Z0-9_\-]/g, '_').replace(/_+/g, '_').slice(0, 80);
-                var safeFilename = (safeBase || 'file') + '.' + ext;
                 var uploadedUrl = await ApiClient.uploadPhoto(pf._fileObj, 'MSDS', {
                     noAutoYearMonth: true,
-                    filename: safeFilename
+                    filename: pf.name
                 });
                 files.push({ name: pf.name, url: uploadedUrl, size: pf.size, type: pf.type });
             } catch(uploadErr) {
