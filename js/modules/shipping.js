@@ -1212,33 +1212,130 @@ const ProductWarehouseModule = (function() {
     const STORE = DB.STORES.PRODUCT_INVENTORY;
 
     function render(container) {
+        const adminBtn = _isAdminUser()
+            ? `<button class="btn btn-outline btn-sm" onclick="ProductWarehouseModule.openBulkModal()"
+                style="margin-left:auto;font-size:0.78rem;display:flex;align-items:center;gap:4px;">
+                <span class="material-symbols-outlined" style="font-size:14px;">admin_panel_settings</span> 일괄 등록/수정
+               </button>`
+            : '<span style="margin-left:auto;"></span>';
+
         container.innerHTML = `
             <div class="fade-in-up">
-                <div class="page-header">
-                    <div class="page-actions" style="display:flex;align-items:center;gap:8px;width:100%;">
-                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                            <button class="btn btn-primary" onclick="ProductWarehouseModule.openAddModal()"
-                                title="관리자 계정으로 제품 재고를 등록하고, 이력에서 수량과 LOT를 수정합니다.">
-                                <span class="material-symbols-outlined">edit_note</span> 재고 등록과 수정
-                            </button>
-                            <button class="btn btn-outline"
-                                onclick="ProductWarehouseModule.openBulkModal()"
-                                title="관리자 계정으로 로그인한 경우에만 일괄 반영할 수 있습니다.">
-                                <span class="material-symbols-outlined">admin_panel_settings</span> 일괄 등록 및 수정
-                            </button>
-                        </div>
-                        <button class="btn btn-outline" style="margin-left:auto;" onclick="Router.navigate('injection-layout')"
-                            title="1층 소재/완제품 보관창고 배치 레이아웃을 시각적으로 편집합니다.">
-                            <span class="material-symbols-outlined">map</span> 레이아웃
-                        </button>
-                    </div>
+                <div style="display:flex;align-items:center;gap:0;border-bottom:2px solid var(--border-color);margin-bottom:16px;">
+                    <button class="pw-tab-btn" data-tab="stock"
+                        onclick="ProductWarehouseModule._switchTab('stock')"
+                        style="padding:10px 20px;border:none;border-bottom:2px solid var(--accent-blue);margin-bottom:-2px;background:none;cursor:pointer;font-size:0.9rem;font-weight:700;color:var(--accent-blue);">
+                        <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;margin-right:3px;">inventory_2</span>재고 현황
+                    </button>
+                    <button class="pw-tab-btn" data-tab="incoming"
+                        onclick="ProductWarehouseModule._switchTab('incoming')"
+                        style="padding:10px 20px;border:none;border-bottom:2px solid transparent;margin-bottom:-2px;background:none;cursor:pointer;font-size:0.9rem;font-weight:400;color:var(--text-secondary);">
+                        <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;margin-right:3px;">move_to_inbox</span>입고 이력
+                    </button>
+                    <button class="pw-tab-btn" data-tab="outgoing"
+                        onclick="ProductWarehouseModule._switchTab('outgoing')"
+                        style="padding:10px 20px;border:none;border-bottom:2px solid transparent;margin-bottom:-2px;background:none;cursor:pointer;font-size:0.9rem;font-weight:400;color:var(--text-secondary);">
+                        <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;margin-right:3px;">outbox</span>출고 이력
+                    </button>
+                    ${adminBtn}
                 </div>
 
-                <div class="stat-cards" id="pwStats"></div>
-                <div id="pwBlocks"></div>
+                <div id="pwTabStock">
+                    <div class="stat-cards" id="pwStats"></div>
+                    <div id="pwBlocks"></div>
+                </div>
+                <div id="pwTabIncoming" style="display:none;"></div>
+                <div id="pwTabOutgoing" style="display:none;"></div>
             </div>
         `;
         loadData();
+    }
+
+    function _switchTab(tab) {
+        ['stock', 'incoming', 'outgoing'].forEach(t => {
+            const panelEl = document.getElementById(`pwTab${t.charAt(0).toUpperCase() + t.slice(1)}`);
+            if (panelEl) panelEl.style.display = t === tab ? '' : 'none';
+        });
+        document.querySelectorAll('.pw-tab-btn').forEach(btn => {
+            const active = btn.dataset.tab === tab;
+            btn.style.fontWeight = active ? '700' : '400';
+            btn.style.color = active ? 'var(--accent-blue)' : 'var(--text-secondary)';
+            btn.style.borderBottom = active ? '2px solid var(--accent-blue)' : '2px solid transparent';
+        });
+        if (tab === 'incoming') _loadIncoming();
+        if (tab === 'outgoing') _loadOutgoing();
+    }
+
+    function _loadIncoming() {
+        const el = document.getElementById('pwTabIncoming');
+        if (!el) return;
+        const data = (Storage.getAll(STORE) || [])
+            .filter(d => d.type !== '출고')
+            .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+        const rows = data.length ? data.map(d => `
+            <tr>
+                <td style="white-space:nowrap;">${d.date || '-'}</td>
+                <td>${d.carModel || '-'}</td>
+                <td><strong>${d.partName || '-'}</strong></td>
+                <td>${d.color || '-'}</td>
+                <td style="text-align:right;font-weight:700;color:var(--accent-green);">+${UIUtils.formatNumber(d.quantity || 0)}</td>
+                <td style="font-family:monospace;font-size:0.8rem;">${d.lotNo || '-'}</td>
+                <td style="font-family:monospace;font-size:0.8rem;">${d.paintingDate || '-'}</td>
+                <td style="font-size:0.82rem;color:var(--text-secondary);">${d.source || '-'}</td>
+            </tr>`).join('')
+            : `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-muted);">입고 이력이 없습니다.</td></tr>`;
+
+        el.innerHTML = `
+            <div class="card">
+                <div class="card-body" style="padding:0;">
+                    <div class="data-table-wrapper">
+                        <table class="data-table">
+                            <thead><tr>
+                                <th>날짜</th><th>차종</th><th>품명</th><th>컬러</th>
+                                <th style="text-align:right;">수량</th>
+                                <th>사출 LOT</th><th>도장 LOT</th><th>출처</th>
+                            </tr></thead>
+                            <tbody>${rows}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    function _loadOutgoing() {
+        const el = document.getElementById('pwTabOutgoing');
+        if (!el) return;
+        const data = (Storage.getAll(DB.STORES.PRODUCT_OUTGOING) || [])
+            .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+        const rows = data.length ? data.map(d => `
+            <tr>
+                <td style="white-space:nowrap;">${d.date || '-'}</td>
+                <td><strong>${d.partName || '-'}</strong></td>
+                <td style="text-align:right;font-weight:700;color:var(--accent-red);">-${UIUtils.formatNumber(d.quantity || 0)}</td>
+                <td>${d.customer || '-'}</td>
+                <td>${d.deliveryTo || '-'}</td>
+                <td style="font-size:0.82rem;">${d.vehicleNo || '-'}</td>
+                <td style="font-size:0.82rem;color:var(--text-secondary);">${d.note || '-'}</td>
+            </tr>`).join('')
+            : `<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted);">출고 이력이 없습니다.</td></tr>`;
+
+        el.innerHTML = `
+            <div class="card">
+                <div class="card-body" style="padding:0;">
+                    <div class="data-table-wrapper">
+                        <table class="data-table">
+                            <thead><tr>
+                                <th>출고일</th><th>품명</th>
+                                <th style="text-align:right;">수량</th>
+                                <th>거래처</th><th>납품처</th><th>차량번호</th><th>비고</th>
+                            </tr></thead>
+                            <tbody>${rows}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>`;
     }
 
     function loadData() {
@@ -2171,6 +2268,9 @@ const ProductWarehouseModule = (function() {
     return {
         render,
         loadData,
+        _switchTab,
+        _loadIncoming,
+        _loadOutgoing,
         _showHistory,
         openBulkModal,
         _bulkParse,

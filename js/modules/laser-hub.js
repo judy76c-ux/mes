@@ -14,8 +14,8 @@ var LaserProcessUI = (function () {
         { id: 'laser-work',                 label: '레이져 작업일지',        icon: 'history' },
         { id: 'laser-inspection',           label: '외관 검사 일지',         icon: 'fact_check', onclick: "LaserInspectionModule.showInspectionPage()" },
         { id: 'laser-wip-standby',          label: '레이져 대기품 현황',     icon: 'hourglass_top',  onclick: "LaserWipModule.openTab('standby')" },
-        { id: 'laser-wip-residual',         label: '레이져 후 잔량 현황',    icon: 'inventory_2',    onclick: "LaserWipModule.openTab('after-laser-residual')" },
         { id: 'laser-wip-after',            label: '레이져 후 재공품 현황',  icon: 'bolt',           onclick: "LaserWipModule.openTab('after-laser')" },
+        { id: 'laser-wip-residual',         label: '레이져 잔량 현황',       icon: 'inventory_2',    onclick: "LaserWipModule.openTab('after-laser-residual')" },
         { id: 'laser-jig-master',           label: '레이져 지그대장',        icon: 'view_list' },
     ];
 
@@ -155,6 +155,37 @@ var LaserHubModule = (function () {
         `;
     }
 
+    function _quickTile(title, desc, icon, onClick, tone) {
+        const palette = {
+            blue:   { border: '#3b82f6', bg: '#eff6ff', iconBg: '#dbeafe', color: '#1d4ed8' },
+            green:  { border: '#10b981', bg: '#ecfdf5', iconBg: '#d1fae5', color: '#047857' },
+            orange: { border: '#f97316', bg: '#fff7ed', iconBg: '#ffedd5', color: '#c2410c' },
+            purple: { border: '#8b5cf6', bg: '#f5f3ff', iconBg: '#ede9fe', color: '#6d28d9' },
+            cyan:   { border: '#06b6d4', bg: '#ecfeff', iconBg: '#cffafe', color: '#0e7490' },
+            red:    { border: '#ef4444', bg: '#fef2f2', iconBg: '#fee2e2', color: '#b91c1c' }
+        }[tone || 'blue'] || { border: '#3b82f6', bg: '#eff6ff', iconBg: '#dbeafe', color: '#1d4ed8' };
+
+        return `
+            <button type="button" onclick="${onClick}"
+                onmouseenter="this.style.transform='translateY(-2px)';this.style.boxShadow='0 12px 26px rgba(15,23,42,.10)'"
+                onmouseleave="this.style.transform='';this.style.boxShadow='0 3px 10px rgba(15,23,42,.05)'"
+                style="text-align:left;border:1px solid ${palette.border}33;background:${palette.bg};border-radius:16px;
+                       padding:18px 18px 16px;box-shadow:0 3px 10px rgba(15,23,42,.05);cursor:pointer;transition:all .15s;
+                       display:flex;flex-direction:column;gap:14px;min-height:132px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                    <span class="material-symbols-outlined"
+                        style="width:44px;height:44px;border-radius:14px;display:flex;align-items:center;justify-content:center;
+                               background:${palette.iconBg};color:${palette.color};font-size:22px;">${icon}</span>
+                    <span class="material-symbols-outlined" style="font-size:18px;color:${palette.color};">arrow_forward</span>
+                </div>
+                <div>
+                    <div style="font-size:1rem;font-weight:800;color:var(--text-primary);margin-bottom:6px;">${title}</div>
+                    <div style="font-size:.83rem;line-height:1.5;color:var(--text-muted);">${desc}</div>
+                </div>
+            </button>
+        `;
+    }
+
     function _metricCard(tone, value, label, subLabel) {
         return `
             <div class="stat-card ${tone}">
@@ -221,6 +252,12 @@ var LaserHubModule = (function () {
                 <div class="section-card" style="padding:0;overflow:hidden;">
                     <div style="padding:24px;">
                         <div id="laserHubStats" class="stat-cards" style="margin-bottom:18px;"></div>
+                        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin:4px 0 12px;">
+                            <div>
+                                <div style="font-size:1rem;font-weight:800;color:var(--text-primary);">하단 타일 메뉴</div>
+                                <div style="font-size:.82rem;color:var(--text-muted);">레이져 공정 주요 화면을 순서대로 바로 이동합니다.</div>
+                            </div>
+                        </div>
                         <div id="laserHubCards" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;"></div>
                     </div>
                 </div>
@@ -255,12 +292,12 @@ var LaserHubModule = (function () {
         const cardsEl = document.getElementById('laserHubCards');
         if (cardsEl) {
             cardsEl.innerHTML = [
-                _homeCard('레이져 작업일지', '금일 작업 실적과 가동 이력을 기록합니다.', 'history', `${metrics.workCount}건`, "Router.navigate('laser-work')", 'blue'),
-                _homeCard('외관 검사 일지', '검사 대기, 검사 결과, 불량 유형을 관리합니다.', 'fact_check', `${metrics.inspectionCount}건`, "Router.navigate('laser-inspection')", 'green'),
-                _homeCard('레이져 지그대장', '레이져 지그명과 공용 사용 제품을 체크 선택하여 관리합니다.', 'view_list', `${jigRows.length}건`, "Router.navigate('laser-jig-master')", 'purple'),
-                _homeCard('폐기 대장', '폐기 처리된 레이져 지그 이력을 확인합니다.', 'delete_sweep', `${disposalRows.length}건`, "Router.navigate('laser-jig-disposal')", 'red'),
-                _homeCard('지그 세척일지', '지그 세척 실적과 다음 세척 예정일을 기록합니다.', 'cleaning_services', `${cleanThisMonth}건`, "Router.navigate('laser-jig-cleaning')", 'cyan'),
-                _homeCard('레이져대기품현황', '도장 완료 후 레이져 대기 중인 재공 현황을 확인합니다.', 'hourglass_top', `${standbyItems}건`, "Router.navigate('laser-standby')", 'orange'),
+                _quickTile('레이져 작업일지', '레이져 작업 실적과 가동 이력을 기록합니다.', 'history', "Router.navigate('laser-work')", 'blue'),
+                _quickTile('외관 검사 일지', '검사 대기, 검사 결과, 불량 유형을 관리합니다.', 'fact_check', "LaserInspectionModule.showInspectionPage()", 'green'),
+                _quickTile('레이져 대기품 현황', '도장 완료 후 레이져 공정 대기 재공품을 확인합니다.', 'hourglass_top', "LaserWipModule.openTab('standby')", 'orange'),
+                _quickTile('레이져 후 재공현황', '레이져 완료 후 다음 공정 투입 전 재공품을 확인합니다.', 'bolt', "LaserWipModule.openTab('after-laser')", 'purple'),
+                _quickTile('레이져 잔량현황', '포장 단위 미만으로 남은 잔량 현황을 관리합니다.', 'inventory_2', "LaserWipModule.openTab('after-laser-residual')", 'cyan'),
+                _quickTile('레이져 지그대장', '레이져 지그와 공용 사용 제품 연결을 관리합니다.', 'view_list', "Router.navigate('laser-jig-master')", 'red'),
             ].join('');
         }
     }
