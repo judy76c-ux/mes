@@ -1503,10 +1503,19 @@ var MSDSModule = (function () {
     var _pendingFiles = {};  // matId → [{name, _fileObj, size, type}]
     var _pendingDelIdx = [];
 
+    function _hasKorean(str) {
+        return /[가-힣ㄱ-ㅎㅏ-ㅣ]/.test(str);
+    }
+
     function _processFiles(fileList, matId) {
         if (!_pendingFiles[matId]) _pendingFiles[matId] = [];
         const container = document.getElementById('msds-new-files');
+        var rejected = [];
         Array.from(fileList).forEach(function(file) {
+            if (_hasKorean(file.name)) {
+                rejected.push(file.name);
+                return;
+            }
             const entry = { name: file.name, _fileObj: file, size: file.size, type: file.type };
             _pendingFiles[matId].push(entry);
             if (!container) return;
@@ -1518,6 +1527,12 @@ var MSDSModule = (function () {
                 <span style="font-size:.72rem;color:#059669;font-weight:700;">신규</span>`;
             container.appendChild(div);
         });
+        if (rejected.length) {
+            UIUtils.toast(
+                '파일명에 한글이 포함된 파일은 첨부할 수 없습니다.\n영문 파일명으로 변경 후 다시 시도하세요.\n\n' + rejected.join('\n'),
+                'error'
+            );
+        }
     }
 
     function _onFileSelect(input, matId) {
