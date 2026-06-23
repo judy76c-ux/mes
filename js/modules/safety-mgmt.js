@@ -1593,27 +1593,8 @@ var MSDSModule = (function () {
         if (!f) return;
         const href = f.url ? ApiClient.photoUrl(f.url) : f.data;
         if (!href) return;
-
-        /* PDF/이미지: 숨겨진 iframe에 로드 후 print() */
-        UIUtils.toast('인쇄 준비 중…', 'info');
-        const iframe = document.createElement('iframe');
-        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;border:none;';
-        document.body.appendChild(iframe);
-        iframe.onload = function() {
-            try {
-                iframe.contentWindow.focus();
-                iframe.contentWindow.print();
-            } catch(e) {
-                /* 크로스오리진 제한 시 새 탭으로 fallback */
-                window.open(href, '_blank');
-            }
-            setTimeout(function(){ document.body.removeChild(iframe); }, 3000);
-        };
-        iframe.onerror = function() {
-            document.body.removeChild(iframe);
-            window.open(href, '_blank');
-        };
-        iframe.src = href;
+        /* 크로스오리진 PDF는 새 탭에서 브라우저 PDF 뷰어로 인쇄 */
+        window.open(href, '_blank');
     }
 
     /* ── 파일 삭제 (NAS + DB) ── */
