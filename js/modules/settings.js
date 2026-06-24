@@ -9792,6 +9792,7 @@ const SettingsModule = (function() {
             const existing = await Storage.getConfigValue(TELEGRAM_CONFIG_KEY).catch(() => ({})) || {};
             existing.botToken = token;
             await Storage.setConfigValue(TELEGRAM_CONFIG_KEY, existing);
+            await ApiClient.setConfig(TELEGRAM_CONFIG_KEY, existing);
             const statusEl = document.getElementById('alimtalkStatus');
             if (statusEl) statusEl.innerHTML = '<span style=\"color:var(--accent-green);\"><span class=\"material-symbols-outlined\" style=\"font-size:14px;vertical-align:-2px;\">check_circle</span> 저장되었습니다.</span>';
             UIUtils.toast('Bot Token이 저장되었습니다.', 'success');
