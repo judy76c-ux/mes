@@ -55,42 +55,23 @@ var SafetyProcessUI = (function () {
     ];
 
     function renderSection(activePage, title, desc) {
-        const tiles = MENUS.map(function (m) {
-            const active = m.id === activePage;
-            const borderStyle = active
-                ? `border-left:4px solid ${m.accent};background:var(--bg-primary);`
-                : 'border-left:4px solid transparent;background:var(--bg-secondary);';
-            const iconBg = active ? m.accent : 'var(--border-color)';
-            const iconColor = active ? '#fff' : 'var(--text-muted)';
-            const checkIcon = active
-                ? `<span class="material-symbols-outlined" style="position:absolute;top:6px;right:6px;font-size:14px;color:${m.accent};">check_circle</span>`
-                : '';
-            return `
-                <div onclick="Router.navigate('${m.id}')"
-                     style="position:relative;cursor:pointer;border-radius:10px;padding:10px 14px;
-                            display:flex;align-items:center;gap:10px;min-width:140px;
-                            border:1px solid var(--border-color);${borderStyle}
-                            transition:box-shadow .15s;user-select:none;"
-                     onmouseover="this.style.boxShadow='0 2px 10px rgba(0,0,0,.10)'"
-                     onmouseout="this.style.boxShadow='none'">
-                    <div style="width:34px;height:34px;border-radius:8px;background:${iconBg};
-                                display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-                        <span class="material-symbols-outlined" style="font-size:18px;color:${iconColor};">${m.icon}</span>
-                    </div>
-                    <span style="font-size:0.82rem;font-weight:${active ? '700' : '500'};
-                                 color:${active ? 'var(--text-primary)' : 'var(--text-secondary)'};">${m.label}</span>
-                    ${checkIcon}
-                </div>
-            `;
-        }).join('');
-
         return `
-            <div style="margin-bottom:20px;">
-                <div style="margin-bottom:12px;">
-                    <h3 style="margin:0 0 4px;font-size:1.15rem;">${SafetyCommon.esc(title)}</h3>
-                    <p style="margin:0;color:var(--text-muted);font-size:.88rem;">${SafetyCommon.esc(desc || '')}</p>
+            <div style="margin-bottom:18px;">
+                <div style="margin-bottom:14px;">
+                    <h3 style="margin:0 0 6px;font-size:1.15rem;">${SafetyCommon.esc(title)}</h3>
+                    <p style="margin:0;color:var(--text-muted);font-size:.9rem;">${SafetyCommon.esc(desc || '')}</p>
                 </div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;">${tiles}</div>
+                <div class="mes-apple-tabbar">
+                    ${MENUS.map(function (m) {
+                        const active = m.id === activePage;
+                        return `<button type="button"
+                            onclick="Router.navigate('${m.id}')"
+                            class="mes-apple-tab ${active ? 'active' : ''}">
+                            <span class="material-symbols-outlined">${m.icon}</span>
+                            <span class="mes-apple-tab-label">${m.label}</span>
+                        </button>`;
+                    }).join('')}
+                </div>
             </div>
         `;
     }

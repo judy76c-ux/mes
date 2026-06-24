@@ -69,7 +69,7 @@ const App = (function() {
             Router.registerLazy(
                 ['prod-standards', 'prod-conditions', 'paint-mix', 'prod-sub-materials',
                  'prod-quality', 'quality-performance', 'limit-samples', 'prod-spc', 'prod-equipment'],
-                'js/modules/production_mgmt_v91.js?v=109',
+                'js/modules/production_mgmt_v91.js?v=116',
                 function() {
                     Router.registerModule('prod-standards',
                         (typeof ProdStandardsModule !== 'undefined') ? ProdStandardsModule
@@ -323,7 +323,7 @@ const App = (function() {
         Router.registerModule('cert-status', {
             render(container) {
                 container.innerHTML = '<div class="fade-in-up">'
-                    + CertProcessUI.renderSection('cert-status', '자격인증 현황', '부여된 자격 인증 현황을 확인합니다.')
+                    + CertProcessUI.renderSection('cert-status')
                     + '<div id="settingsContent"></div></div>';
                 SettingsModule.renderCertificationTab(document.getElementById('settingsContent'));
             }
@@ -331,7 +331,7 @@ const App = (function() {
         Router.registerModule('inspectors-mgmt', {
             render(container) {
                 container.innerHTML = '<div class="fade-in-up">'
-                    + CertProcessUI.renderSection('inspectors-mgmt', '검사자 관리', '검사자 인력 마스터를 관리합니다.')
+                    + CertProcessUI.renderSection('inspectors-mgmt')
                     + '<div id="settingsContent"></div></div>';
                 SettingsModule.renderInspectorsTab(document.getElementById('settingsContent'));
             }
@@ -339,7 +339,7 @@ const App = (function() {
         Router.registerModule('operators-mgmt', {
             render(container) {
                 container.innerHTML = '<div class="fade-in-up">'
-                    + CertProcessUI.renderSection('operators-mgmt', '작업자 관리', '작업자 인력 마스터를 관리합니다.')
+                    + CertProcessUI.renderSection('operators-mgmt')
                     + '<div id="settingsContent"></div></div>';
                 SettingsModule.renderOperatorsTab(document.getElementById('settingsContent'));
             }

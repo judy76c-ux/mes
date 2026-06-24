@@ -13,6 +13,40 @@ const OvertimePlanModule = (function() {
     let _calMonth = new Date().getMonth() + 1;
     let _activeDate = '';
 
+    const FIXED_HOLIDAYS = {
+        '01-01':'신정', '03-01':'삼일절', '05-01':'근로자의날',
+        '05-05':'어린이날', '06-06':'현충일', '08-15':'광복절',
+        '10-03':'개천절', '10-09':'한글날', '12-25':'성탄절'
+    };
+
+    const LUNAR_HOLIDAYS = {
+        '2024-02-09':'설 연휴','2024-02-10':'설날','2024-02-11':'설 연휴','2024-02-12':'대체공휴일',
+        '2025-01-28':'설 연휴','2025-01-29':'설날','2025-01-30':'설 연휴',
+        '2026-02-16':'설 연휴','2026-02-17':'설날','2026-02-18':'설 연휴','2026-02-19':'대체공휴일',
+        '2027-02-05':'설 연휴','2027-02-06':'설날','2027-02-07':'설 연휴','2027-02-08':'대체공휴일',
+        '2028-01-25':'설 연휴','2028-01-26':'설날','2028-01-27':'설 연휴',
+        '2029-02-12':'설 연휴','2029-02-13':'설날','2029-02-14':'설 연휴',
+        '2030-02-02':'설 연휴','2030-02-03':'설날','2030-02-04':'설 연휴',
+        '2024-05-15':'부처님오신날',
+        '2025-05-06':'부처님오신날',
+        '2026-05-24':'부처님오신날',
+        '2027-05-13':'부처님오신날',
+        '2028-05-02':'부처님오신날',
+        '2029-05-20':'부처님오신날',
+        '2030-05-09':'부처님오신날',
+        '2024-09-16':'추석 연휴','2024-09-17':'추석','2024-09-18':'추석 연휴',
+        '2025-10-05':'추석 연휴','2025-10-06':'추석','2025-10-07':'추석 연휴','2025-10-08':'대체공휴일',
+        '2026-09-24':'추석 연휴','2026-09-25':'추석','2026-09-26':'추석 연휴','2026-09-27':'대체공휴일',
+        '2027-09-14':'추석 연휴','2027-09-15':'추석','2027-09-16':'추석 연휴',
+        '2028-10-02':'추석 연휴','2028-10-03':'추석','2028-10-04':'대체공휴일',
+        '2029-09-21':'추석 연휴','2029-09-22':'추석','2029-09-23':'추석 연휴',
+        '2030-09-11':'추석 연휴','2030-09-12':'추석','2030-09-13':'추석 연휴',
+    };
+
+    function _getHoliday(ds) {
+        return FIXED_HOLIDAYS[ds.slice(5)] || LUNAR_HOLIDAYS[ds] || null;
+    }
+
     function _buildTimeSlots() {
         const slots = [];
         for (let hour = 18; hour <= 19; hour += 1) {
@@ -170,15 +204,24 @@ const OvertimePlanModule = (function() {
                 const dateStr = `${_calYear}-${String(_calMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                 const plans = (byDate[dateStr] || []).slice().sort((a, b) => String(a.startTime || '').localeCompare(String(b.startTime || '')));
                 const isToday = dateStr === today;
-                const dayColor = col === 0 ? 'var(--accent-red)' : col === 6 ? 'var(--accent-blue)' : 'var(--text-primary)';
+                const isSun = col === 0;
+                const isSat = col === 6;
+                const holiday = _getHoliday(dateStr);
+                const isHoliday = !!holiday;
+                const dayColor = isSun ? 'var(--accent-red)' : isSat ? 'var(--accent-blue)' : (isHoliday ? '#ef4444' : 'var(--text-primary)');
+                const cellBg = isToday ? 'rgba(37,99,235,0.05)' : (isSun ? 'rgba(254,242,242,0.5)' : (isSat ? 'rgba(239,246,255,0.4)' : (isHoliday ? 'rgba(254,242,242,0.3)' : '#fff')));
+                const cellExtra = isToday ? 'box-shadow:inset 0 0 0 2px var(--accent-blue);' : (isHoliday && !isSun ? 'border-top:2px solid #fca5a5;' : '');
 
                 html += `
                     <td onclick="OvertimePlanModule.openDayModal('${dateStr}')"
-                        style="height:178px;padding:8px;border:1px solid var(--border-color);background:${isToday ? 'rgba(37,99,235,0.05)' : '#fff'};cursor:pointer;vertical-align:top;${isToday ? 'box-shadow:inset 0 0 0 2px var(--accent-blue);' : ''}"
+                        style="height:178px;padding:8px;border:1px solid var(--border-color);background:${cellBg};cursor:pointer;vertical-align:top;${cellExtra}"
                         onmouseover="this.style.background='rgba(241,245,249,0.9)'"
-                        onmouseout="this.style.background='${isToday ? 'rgba(37,99,235,0.05)' : '#fff'}'">
-                        <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:8px;">
-                            <span style="font-size:0.95rem;font-weight:800;color:${dayColor};">${day}</span>
+                        onmouseout="this.style.background='${cellBg}'">
+                        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:6px;margin-bottom:8px;">
+                            <div>
+                                <span style="font-size:0.95rem;font-weight:800;color:${dayColor};">${day}</span>
+                                ${holiday ? `<div style="font-size:0.62rem;font-weight:700;color:#ef4444;line-height:1.2;margin-top:1px;">${holiday}</div>` : ''}
+                            </div>
                             ${plans.length ? `<span style="font-size:0.72rem;color:var(--text-muted);">${plans.length}건</span>` : ''}
                         </div>
                         <div style="display:flex;flex-direction:column;gap:6px;">

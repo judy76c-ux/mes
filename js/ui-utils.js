@@ -482,3 +482,47 @@ const UIUtils = (function () {
         makeDraggableModal
     };
 })();
+
+
+/* =========================================================
+   ProdAppleMenu — Apple-style card tab menu (global)
+   card()  : 개별 카드 버튼 HTML
+   strip() : 가로 배열 컨테이너 HTML
+   hero()  : 제목+설명+카드 탭 전체 블록 HTML
+   ========================================================= */
+const ProdAppleMenu = (function() {
+    function card({ label, icon, subtitle, active, onClick, accent, tabKey }) {
+        subtitle = subtitle || '';
+        active = active || false;
+        onClick = onClick || '';
+        accent = accent || '#2563eb';
+        tabKey = tabKey || '';
+        return '<button type="button"' +
+            ' class="mes-apple-menu-card' + (active ? ' active' : '') + '"' +
+            ' style="--menu-accent:' + accent + ';"' +
+            (tabKey ? ' data-tab="' + tabKey + '"' : '') +
+            (onClick ? ' onclick="' + onClick.replace(/"/g, '&quot;') + '"' : '') +
+            '>' +
+            '<span class="mes-apple-menu-card-icon">' +
+            '<span class="material-symbols-outlined">' + icon + '</span>' +
+            '</span>' +
+            '<span class="mes-apple-menu-card-body">' +
+            '<span class="mes-apple-menu-card-title">' + label + '</span>' +
+            (subtitle ? '<span class="mes-apple-menu-card-subtitle">' + subtitle + '</span>' : '') +
+            '</span>' +
+            '</button>';
+    }
+    function strip(items) {
+        return '<div class="mes-apple-menu-strip">' + items.map(function(i) { return card(i); }).join('') + '</div>';
+    }
+    function hero(title, desc, items) {
+        return '<div class="mes-apple-menu-hero">' +
+            '<div class="mes-apple-menu-head">' +
+            '<h3>' + title + '</h3>' +
+            (desc ? '<p>' + desc + '</p>' : '') +
+            '</div>' +
+            strip(items) +
+            '</div>';
+    }
+    return { card: card, strip: strip, hero: hero };
+})();

@@ -22,6 +22,11 @@ const ApiClient = (function() {
         return `${location.protocol}//${h}:3000`;
       }
     }
+    // localStorage 체크 (로컬 개발: file:// 에서도 서버 연결 가능)
+    try {
+      const lsBase = localStorage.getItem('__mes_api_base__');
+      if (lsBase && lsBase.trim()) return lsBase.trim().replace(/\/$/g, '');
+    } catch (e) {}
     // file:// 등 — override 미설정 시 빈 문자열(헬스체크 실패 → 오프라인 모드)
     return '';
   }

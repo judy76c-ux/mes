@@ -31,10 +31,6 @@ var IncomingUI = (function () {
 
         return `
             <div style="margin-bottom:18px;">
-                <div style="margin-bottom:14px;">
-                    <h3 style="margin:0 0 6px;font-size:1.15rem;">${activeMenu.label}</h3>
-                    <p style="margin:0;color:var(--text-muted);font-size:.9rem;">${activeMenu.desc}</p>
-                </div>
                 <div class="mes-apple-tabbar">
                     ${MENUS.map(makeBtn).join('')}
                 </div>

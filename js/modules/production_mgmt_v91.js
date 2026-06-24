@@ -38,39 +38,7 @@ const ProdUtils = {
     }
 };
 
-const ProdAppleMenu = {
-    card({ label, icon, subtitle = '', active = false, onClick = '', accent = '#2563eb' }) {
-        return `
-            <button type="button"
-                class="mes-apple-menu-card${active ? ' active' : ''}"
-                style="--menu-accent:${accent};"
-                ${onClick ? `onclick="${onClick}"` : ''}
-            >
-                <span class="mes-apple-menu-card-icon">
-                    <span class="material-symbols-outlined">${icon}</span>
-                </span>
-                <span class="mes-apple-menu-card-body">
-                    <span class="mes-apple-menu-card-title">${label}</span>
-                    ${subtitle ? `<span class="mes-apple-menu-card-subtitle">${subtitle}</span>` : ''}
-                </span>
-            </button>
-        `;
-    },
-    strip(items) {
-        return `<div class="mes-apple-menu-strip">${items.map(item => ProdAppleMenu.card(item)).join('')}</div>`;
-    },
-    hero(title, desc, items) {
-        return `
-            <div class="mes-apple-menu-hero">
-                <div class="mes-apple-menu-head">
-                    <h3>${title}</h3>
-                    <p>${desc}</p>
-                </div>
-                ${ProdAppleMenu.strip(items)}
-            </div>
-        `;
-    }
-};
+// ProdAppleMenu -> ui-utils.js (global)
 
 /**
  * 0) 제조 관리 표준 (ProdStandardsModule)
@@ -15118,19 +15086,21 @@ var ProdSubMaterialsModule = (function() {
         );
         const filterBar = container.querySelector('.filter-bar');
         if (filterBar) {
-            filterBar.insertAdjacentHTML('beforebegin', ProdAppleMenu.hero(
-                '부자재 관리',
-                '부자재 입고 기록과 공정별 소모자재 종류를 같은 화면 흐름으로 관리합니다.',
-                [
-                    { label: '부자재 현황', icon: 'inventory', subtitle: '입고 이력 조회', active: true, onClick: 'ProdSubMaterialsModule.search()', accent: '#ef4444' },
-                    { label: '소모자재 종류', icon: 'list_alt', subtitle: '공정별 종류 정의', onClick: 'ProdSubMaterialsModule.openTypeModal()', accent: '#2563eb' },
-                    { label: '입고 등록', icon: 'add_circle', subtitle: '새 입고 기록 추가', onClick: 'ProdSubMaterialsModule.openAddModal()', accent: '#059669' },
-                    { label: '내보내기', icon: 'download', subtitle: 'CSV 저장', onClick: 'ProdSubMaterialsModule.exportData()', accent: '#7c3aed' }
-                ]
-            ));
+            filterBar.insertAdjacentHTML('beforebegin',
+                '<div class="mes-action-bar">' +
+                '<div class="mes-action-bar-tabs">' +
+                '<button type="button" class="mes-bar-tab active" onclick="ProdSubMaterialsModule.search()"><span class="material-symbols-outlined">inventory</span>부자재 현황</button>' +
+                '<button type="button" class="mes-bar-tab" onclick="ProdSubMaterialsModule.openTypeModal()"><span class="material-symbols-outlined">list_alt</span>소모자재 종류</button>' +
+                '</div>' +
+                '<div class="mes-action-bar-sep"></div>' +
+                '<div class="mes-action-bar-btns">' +
+                '<button class="btn btn-primary btn-sm" onclick="ProdSubMaterialsModule.openAddModal()"><span class="material-symbols-outlined">add_circle</span> 입고 등록</button>' +
+                '<button class="btn btn-outline btn-sm" onclick="ProdSubMaterialsModule.exportData()"><span class="material-symbols-outlined">download</span> 내보내기</button>' +
+                '</div></div>'
+            );
         }
         const actions = container.querySelector('.page-actions');
-        if (actions) actions.innerHTML = '';
+        if (actions) actions.parentElement && (actions.parentElement.style.display = 'none');
         _renderTypeMasterSection(container);
         search();
     }
@@ -15819,33 +15789,29 @@ var ProdQualityModule = (function() {
         }
     }
 
-    function _qualityMenuTab(label, icon, active, onClick) {
-        return `
-            <button type="button" onclick="${onClick}" class="mes-apple-tab ${active ? 'active' : ''}">
-                <span class="material-symbols-outlined">${icon}</span>
-                <span class="mes-apple-tab-label">${label}</span>
-            </button>
-        `;
+    const _QUALITY_MENUS = [
+        { key: 'main',       label: '기준 양식 발행', icon: 'edit_document', subtitle: '초중종물 C/S',      accent: '#2563eb', onClick: "ProdQualityModule.backToMain()" },
+        { key: 'standard',   label: '관리 기준서',    icon: 'description',   subtitle: '기준서 조회',       accent: '#0891b2', onClick: "ProdQualityModule.openQualityStandardPage()" },
+        { key: 'colorGloss', label: '색차/광택 이력', icon: 'monitoring',    subtitle: '측정값 조회',       accent: '#7c3aed', onClick: "ProdQualityModule.openMeasureHistory('colorGloss')" },
+        { key: 'film',       label: '도막 이력',      icon: 'layers',        subtitle: '도막 막 측정',      accent: '#059669', onClick: "ProdQualityModule.openMeasureHistory('film')" },
+        { key: 'items',      label: '품목별 기준',    icon: 'rule',          subtitle: '항목 기준 설정',    accent: '#f59e0b', onClick: "ProdQualityModule.openStandardsPage()" },
+        { key: 'preset',     label: '프레셋',         icon: 'bookmarks',     subtitle: '측정 프레셋',       accent: '#64748b', onClick: "ProdQualityModule.openPresetMgmtModal()" },
+        { key: 'itemList',   label: '관리 항목',      icon: 'list_alt',      subtitle: '초중종 항목 목록',  accent: '#475569', onClick: "ProdQualityModule.openItemListModal()" }
+    ];
+
+    function _qualityNav(activeKey) {
+        return '<div class="mes-apple-menu-hero">' +
+            ProdAppleMenu.strip(_QUALITY_MENUS.map(function(m) {
+                return { label: m.label, icon: m.icon, subtitle: m.subtitle, accent: m.accent, active: m.key === activeKey, onClick: m.onClick };
+            })) +
+            '</div>';
     }
 
     function render(container) {
         _rootContainer = container;
         container.innerHTML = `
             <div class="fade-in-up">
-                <div class="mes-apple-tabbar" style="margin-bottom:18px;">
-                    ${_qualityMenuTab('기준 양식 발행', 'edit_document', true, "ProdQualityModule.openAddModal()")}
-                    ${_qualityMenuTab('초중종물 관리 기준서', 'description', false, "ProdQualityModule.openQualityStandardPage()")}
-                    ${_qualityMenuTab('색차/광택 이력', 'monitoring', false, "ProdQualityModule.openMeasureHistory('colorGloss')")}
-                    ${_qualityMenuTab('도막 이력', 'layers', false, "ProdQualityModule.openMeasureHistory('film')")}
-                    ${_qualityMenuTab('품목별 항목 기준', 'rule', false, "ProdQualityModule.openStandardsPage()")}
-                    ${_qualityMenuTab('프레셋 관리', 'bookmarks', false, "ProdQualityModule.openPresetMgmtModal()")}
-                    ${_qualityMenuTab('초중종 관리 항목', 'list_alt', false, "ProdQualityModule.openItemListModal()")}
-                </div>
-                <div class="page-header">
-                    <div class="page-actions" style="width:100%;justify-content:flex-end;gap:12px;">
-                    </div>
-                </div>
-
+                ${_qualityNav('main')}
                 <!-- ── C/S 발행 섹션 ── -->
                 <div class="filter-bar" style="flex-wrap:wrap; gap:10px;">
                     <div class="form-group">
@@ -15926,23 +15892,7 @@ var ProdQualityModule = (function() {
         _rootContainer = container;
         container.innerHTML = `
             <div class="fade-in-up">
-                <div class="page-header">
-                    <div class="page-actions" style="width:100%;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                            <button class="btn btn-outline" onclick="ProdQualityModule.backToMain()">
-                                <span class="material-symbols-outlined">arrow_back</span> 초중종물 관리
-                            </button>
-                        </div>
-                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
-                            <button class="btn btn-outline" onclick="ProdQualityModule.openPresetMgmtModal()">
-                                <span class="material-symbols-outlined">bookmarks</span> 프레셋 관리
-                            </button>
-                            <button class="btn btn-outline" onclick="ProdQualityModule.openItemListModal()">
-                                <span class="material-symbols-outlined">list_alt</span> 초중종 관리 항목
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                ${_qualityNav('items')}
 
                 <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;padding:10px 14px;background:rgba(59,130,246,0.06);border-radius:10px;border:1px solid rgba(59,130,246,0.18);font-size:0.83rem;color:var(--text-secondary);">
                     <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);">info</span>
@@ -15982,21 +15932,15 @@ var ProdQualityModule = (function() {
         const canUpload = _canUploadQualityStandard();
         container.innerHTML = `
             <div class="fade-in-up">
+                ${_qualityNav('standard')}
                 <div class="page-header" style="margin-bottom:14px;">
-                    <div class="page-actions" style="width:100%;justify-content:space-between;gap:12px;">
-                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                            <button class="btn btn-outline" onclick="ProdQualityModule.backToMain()">
-                                <span class="material-symbols-outlined">arrow_back</span> 초중종물 관리
-                            </button>
-                        </div>
-                        <div style="display:flex;justify-content:flex-end;gap:8px;align-items:center;flex-wrap:wrap;">
-                            <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.printQualityStandardPage()">
-                                <span class="material-symbols-outlined" style="font-size:15px;">print</span> 인쇄
-                            </button>
-                            <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.focusQualityStandardPasteZone()" ${canUpload ? '' : 'disabled'} style="${canUpload ? '' : 'opacity:.5;cursor:not-allowed;'}">
-                                <span class="material-symbols-outlined" style="font-size:15px;">upload_file</span> 기준서 업로드
-                            </button>
-                        </div>
+                    <div class="page-actions" style="width:100%;justify-content:flex-end;gap:8px;">
+                        <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.printQualityStandardPage()">
+                            <span class="material-symbols-outlined" style="font-size:15px;">print</span> 인쇄
+                        </button>
+                        <button class="btn btn-outline btn-sm" onclick="ProdQualityModule.focusQualityStandardPasteZone()" ${canUpload ? '' : 'disabled'} style="${canUpload ? '' : 'opacity:.5;cursor:not-allowed;'}">
+                            <span class="material-symbols-outlined" style="font-size:15px;">upload_file</span> 기준서 업로드
+                        </button>
                     </div>
                 </div>
                 <div class="card" style="display:inline-block;width:auto;max-width:100%;background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);padding:18px 18px 24px;border-radius:18px;box-shadow:0 18px 42px rgba(15,23,42,0.14),0 6px 14px rgba(15,23,42,0.10);">
@@ -17525,29 +17469,10 @@ var ProdQualityModule = (function() {
         const container = _rootContainer || document.getElementById('contentArea');
         if (!container) return;
         _rootContainer = container;
-        const title = kind === 'film' ? '도막 이력' : '색차/광택 이력';
         container.innerHTML = `
             <div class="fade-in-up">
-                <div class="page-header">
-                    <div class="page-actions" style="width:100%;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                            <button class="btn btn-outline" onclick="ProdQualityModule.backToMain()">
-                                <span class="material-symbols-outlined">arrow_back</span> 초중종물 관리
-                            </button>
-                            <button class="btn ${kind === 'colorGloss' ? 'btn-primary' : 'btn-outline'}" onclick="ProdQualityModule.openMeasureHistory('colorGloss')">
-                                <span class="material-symbols-outlined">monitoring</span> 색차/광택 이력
-                            </button>
-                            <button class="btn ${kind === 'film' ? 'btn-primary' : 'btn-outline'}" onclick="ProdQualityModule.openMeasureHistory('film')">
-                                <span class="material-symbols-outlined">layers</span> 도막 이력
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                ${_qualityNav(kind)}
                 <input type="hidden" id="pqMeasureHistoryKind" value="${_esc(kind)}">
-                <div style="margin-bottom:12px;">
-                    <h3 style="margin:0 0 4px;font-size:1.15rem;">${_esc(title)}</h3>
-                    <p style="margin:0;color:var(--text-muted);font-size:0.86rem;">초중종물 DATA 입력에서 저장한 수치 기록을 월/일, 차종, 품목 기준으로 확인합니다.</p>
-                </div>
                 <div class="filter-bar" style="flex-wrap:wrap;gap:10px;">
                     <div class="form-group">
                         <label class="form-label">월</label>
@@ -18481,12 +18406,26 @@ var ProdQualityModule = (function() {
     }
 
     function openItemListModal() {
-        UIUtils.showModal('초중종 관리 항목', _itemMasterFormHtml(_masterItems()), `
-            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" onclick="ProdQualityModule.saveItemMaster()">저장</button>
-        `, 'xl');
-        requestAnimationFrame(_initMasterDrag);
+        const container = _rootContainer || document.getElementById('contentArea');
+        if (!container) return;
+        _rootContainer = container;
+        container.innerHTML = `
+            <div class="fade-in-up">
+                ${_qualityNav('itemList')}
+                <div class="card">
+                    <div class="card-body">
+                        ${_itemMasterFormHtml(_masterItems())}
+                        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;padding-top:16px;border-top:1px solid var(--border-color);">
+                            <button class="btn btn-secondary" onclick="ProdQualityModule.backToMain()">취소</button>
+                            <button class="btn btn-primary" onclick="ProdQualityModule.saveItemMaster()">저장</button>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+        _bindMasterDragDrop();
     }
+
+
 
     function _initMasterDrag() {
         const tbody = document.getElementById('pqMasterItemsBody');
@@ -18555,7 +18494,7 @@ var ProdQualityModule = (function() {
                     <span class="material-symbols-outlined">add</span> 초중종 관리 항목 추가
                 </button>
             </div>
-            <div class="data-table-wrapper" style="max-height:60vh;overflow:auto;">
+            <div class="data-table-wrapper">
                 <table class="data-table" style="font-size:0.82rem;">
                     <thead>
                         <tr>
@@ -18646,9 +18585,8 @@ var ProdQualityModule = (function() {
         // 프리셋·품목별 기준값 동기화 (삭제된 항목 제거, 레이블/단위/방법 업데이트)
         await _syncPresetsAndTemplates(items);
 
-        UIUtils.closeModal();
         UIUtils.toast('관리항목이 저장되었습니다. 프리셋·품목별 기준도 반영되었습니다.', 'success');
-        search();
+        openItemListModal();
     }
 
     async function _syncPresetsAndTemplates(newMasterItems) {
@@ -18842,11 +18780,20 @@ var ProdQualityModule = (function() {
         applyPreset(presetId);
     }
 
-    // ── 프레셋 관리 모달 ────────────────────────────────────────────────────
+    // ── 프레셋 관리 페이지 ────────────────────────────────────────────────────
     function openPresetMgmtModal() {
-        UIUtils.showModal('프레셋 관리', _presetMgmtHtml(), `
-            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
-        `, 'lg');
+        const container = _rootContainer || document.getElementById('contentArea');
+        if (!container) return;
+        _rootContainer = container;
+        container.innerHTML = `
+            <div class="fade-in-up">
+                ${_qualityNav('preset')}
+                <div class="card">
+                    <div class="card-body">
+                        ${_presetMgmtHtml()}
+                    </div>
+                </div>
+            </div>`;
     }
 
     function _presetMgmtHtml() {
@@ -25336,16 +25283,17 @@ var QualityPerformanceModule = (function() {
         const y = new Date().getFullYear();
         container.innerHTML = `
         <div class="fade-in-up">
-            ${ProdAppleMenu.hero(
-                '품질 실적',
-                '공정, 고객, 외주 품질 실적과 목표 달성 여부, 개선대책을 같은 흐름에서 관리합니다.',
-                [
-                    { label: '품질 실적', icon: 'query_stats', subtitle: '월별 PPM 현황', active: true, onClick: 'QualityPerformanceModule.search()', accent: '#ef4444' },
-                    { label: '도장검사실적', icon: 'lab_profile', subtitle: '도장 검사 결과', onClick: `Router.navigate('painting-quality-performance')`, accent: '#2563eb' },
-                    { label: '목표 설정', icon: 'flag', subtitle: '연간 목표 관리', onClick: 'QualityPerformanceModule.openTargetModal()', accent: '#f59e0b' },
-                    { label: '실적 등록', icon: 'add_circle', subtitle: '신규 실적 추가', onClick: 'QualityPerformanceModule.openRecordModal()', accent: '#059669' }
-                ]
-            )}
+            <div class="mes-action-bar">
+                <div class="mes-action-bar-tabs">
+                    <button type="button" class="mes-bar-tab active" onclick="QualityPerformanceModule.search()"><span class="material-symbols-outlined">query_stats</span>품질 실적</button>
+                    <button type="button" class="mes-bar-tab" onclick="Router.navigate('painting-quality-performance')"><span class="material-symbols-outlined">lab_profile</span>도장검사실적</button>
+                </div>
+                <div class="mes-action-bar-sep"></div>
+                <div class="mes-action-bar-btns">
+                    <button class="btn btn-outline btn-sm" onclick="QualityPerformanceModule.openTargetModal()"><span class="material-symbols-outlined">flag</span> 목표 설정</button>
+                    <button class="btn btn-primary btn-sm" onclick="QualityPerformanceModule.openRecordModal()"><span class="material-symbols-outlined">add_circle</span> 실적 등록</button>
+                </div>
+            </div>
             <div class="filter-bar" style="flex-wrap:wrap;gap:10px;">
                 <div class="form-group"><label class="form-label">년도</label><select class="form-select" id="qperfYear" onchange="QualityPerformanceModule.search()">${Array.from({length:5},(_,i)=>y-2+i).map(v=>`<option value="${v}" ${v===y?'selected':''}>${v}년</option>`).join('')}</select></div>
                 <div class="form-group"><label class="form-label">월</label><select class="form-select" id="qperfMonth" onchange="QualityPerformanceModule.search()"><option value="">전체</option>${Array.from({length:12},(_,i)=>i+1).map(v=>`<option value="${v}">${v}월</option>`).join('')}</select></div>
@@ -25546,14 +25494,12 @@ var ProdSpcModule = (function() {
         const today = UIUtils.today();
         container.innerHTML = `
         <div class="fade-in-up">
-            ${ProdAppleMenu.hero(
-                'SPC 관리',
-                '초중종물 측정값을 기준으로 X-bar / R 관리도를 확인하고 이상 추세를 관리합니다.',
-                [
-                    { label: 'SPC 관리', icon: 'ssid_chart', subtitle: '통계 관리도 조회', active: true, onClick: 'ProdSpcModule.search()', accent: '#ef4444' },
-                    { label: '초중종물 작성', icon: 'edit_document', subtitle: '실측값 입력 화면', onClick: `Router.navigate('prod-quality')`, accent: '#2563eb' }
-                ]
-            )}
+            <div class="mes-action-bar">
+                <div class="mes-action-bar-tabs">
+                    <button type="button" class="mes-bar-tab active" onclick="ProdSpcModule.search()"><span class="material-symbols-outlined">ssid_chart</span>SPC 관리</button>
+                    <button type="button" class="mes-bar-tab" onclick="Router.navigate('prod-quality')"><span class="material-symbols-outlined">edit_document</span>초중종물 작성</button>
+                </div>
+            </div>
 
             <div class="filter-bar" style="flex-wrap:wrap;gap:10px;margin-bottom:16px;">
                 <div class="form-group">

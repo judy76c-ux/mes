@@ -132,36 +132,13 @@ var ImprovementActivityModule = (function() {
     function _renderApplePage(rows, monthRows, sum) {
         return `
             <div class="fade-in-up">
-                <div class="mes-apple-menu-hero">
-                    <div class="mes-apple-menu-head">
-                        <h3>개선 활동</h3>
-                        <p>현장 제안부터 PDCA 실행, 효과 확인, 표준화까지 한 흐름으로 관리합니다.</p>
+                <div class="mes-action-bar">
+                    <div class="mes-action-bar-tabs">
+                        <button type="button" class="mes-bar-tab active" onclick="ImprovementActivityModule.render(document.getElementById('contentArea'))"><span class="material-symbols-outlined">insights</span>개선활동 현황</button>
                     </div>
-                    <div class="mes-apple-menu-strip">
-                        <button type="button"
-                            class="mes-apple-menu-card active"
-                            style="--menu-accent:#2563eb;"
-                            onclick="ImprovementActivityModule.render(document.getElementById('contentArea'))">
-                            <span class="mes-apple-menu-card-icon">
-                                <span class="material-symbols-outlined">insights</span>
-                            </span>
-                            <span class="mes-apple-menu-card-body">
-                                <span class="mes-apple-menu-card-title">개선활동 현황</span>
-                                <span class="mes-apple-menu-card-subtitle">제안·진행·완료 현황</span>
-                            </span>
-                        </button>
-                        <button type="button"
-                            class="mes-apple-menu-card"
-                            style="--menu-accent:#10b981;"
-                            onclick="ImprovementActivityModule.openProposalModal()">
-                            <span class="mes-apple-menu-card-icon">
-                                <span class="material-symbols-outlined">add_task</span>
-                            </span>
-                            <span class="mes-apple-menu-card-body">
-                                <span class="mes-apple-menu-card-title">개선 등록</span>
-                                <span class="mes-apple-menu-card-subtitle">신규 제안·문제 등록</span>
-                            </span>
-                        </button>
+                    <div class="mes-action-bar-sep"></div>
+                    <div class="mes-action-bar-btns">
+                        <button class="btn btn-primary btn-sm" onclick="ImprovementActivityModule.openProposalModal()"><span class="material-symbols-outlined">add_task</span> 개선 등록</button>
                     </div>
                 </div>
 

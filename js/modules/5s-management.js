@@ -39,32 +39,24 @@ var FiveSModule = (function () {
     const CAT_COLOR = { '3정': '#3b82f6', '5행': '#22c55e', '안전': '#f59e0b', '공정': '#8b5cf6' };
 
     const MENUS = [
-        { id: 'main', label: '메인', icon: 'dashboard' },
-        { id: 'inspection', label: '점검일지 작성', icon: 'edit_document' },
-        { id: 'inspection-history', label: '점검일지 이력', icon: 'assignment' },
-        { id: 'issue', label: '지적사항', icon: 'report_problem' },
-        { id: 'plan', label: '점검계획', icon: 'calendar_month' },
-        { id: 'assignment', label: '업무 분담', icon: 'groups' },
-        { id: 'standard', label: '3정 5행 관리 기준서', icon: 'rule' }
+        { id: 'main',               label: '메인',             icon: 'dashboard',      accent: '#2563eb', subtitle: '종합 현황' },
+        { id: 'inspection',         label: '점검일지 작성', icon: 'edit_document',  accent: '#0ea5e9', subtitle: '현장 점검' },
+        { id: 'inspection-history', label: '점검일지 이력', icon: 'assignment',     accent: '#8b5cf6', subtitle: '과거 로그' },
+        { id: 'issue',              label: '지적사항',        icon: 'report_problem', accent: '#ef4444', subtitle: '미처리 확인' },
+        { id: 'plan',               label: '점검계획',        icon: 'calendar_month', accent: '#f59e0b', subtitle: '일정 관리' },
+        { id: 'assignment',         label: '업무 분담',       icon: 'groups',         accent: '#059669', subtitle: '담리자 배정' },
+        { id: 'standard',           label: '관리 기준서',      icon: 'rule',           accent: '#0891b2', subtitle: '3정 5행 기준' }
     ];
 
-    function _menu(active, title, desc) {
-        return `
-            <div style="margin-bottom:18px;">
-                <div style="margin-bottom:14px;">
-                    <h3 style="margin:0 0 6px;font-size:1.15rem;">${title}</h3>
-                    <p style="margin:0;color:var(--text-muted);font-size:.9rem;">${desc || ''}</p>
-                </div>
-                <div class="mes-apple-tabbar">
-                    ${MENUS.map(m => `
-                        <button type="button" onclick="FiveSModule.switchTab('${m.id}')"
-                            class="mes-apple-tab ${m.id === active ? 'active' : ''}">
-                            <span class="material-symbols-outlined">${m.icon}</span>
-                            <span class="mes-apple-tab-label">${m.label}</span>
-                        </button>
-                    `).join('')}
-                </div>
-            </div>`;
+    function _menu(active, actionsHtml) {
+        var tabs = MENUS.map(function(m) {
+            return '<button type="button" onclick="FiveSModule.switchTab(\'' + m.id + '\')" class="mes-bar-tab ' + (m.id === active ? 'active' : '') + '">' +
+                '<span class="material-symbols-outlined">' + m.icon + '</span>' + m.label + '</button>';
+        }).join('');
+        return '<div class="mes-action-bar">' +
+            '<div class="mes-action-bar-tabs">' + tabs + '</div>' +
+            (actionsHtml ? '<div class="mes-action-bar-sep"></div><div class="mes-action-bar-btns">' + actionsHtml + '</div>' : '') +
+            '</div>';
     }
 
     /* ─── 점수 → 등급 ─────────────────────────────────────────── */
@@ -123,23 +115,28 @@ var FiveSModule = (function () {
         const shell = document.getElementById('s5Shell');
         if (!shell) return;
 
-        const page = {
-            main:       { title: '3정5S 관리', desc: '점검일지, 지적사항, 점검계획과 기준서를 한 화면에서 관리합니다.' },
-            inspection: { title: '점검일지 작성', desc: '현장 3정 5행 점검 결과를 페이지에서 바로 작성합니다.' },
-            'inspection-history': { title: '점검일지 이력', desc: '점검 결과와 월별/구역별 누락 여부를 함께 확인합니다.' },
-            issue:      { title: '지적사항', desc: '점검 중 발견된 미흡 사항과 시정조치 상태를 추적합니다.' },
-            plan:       { title: '점검계획', desc: '구역별 점검 예정 일정을 확인합니다.' },
-            assignment: { title: '업무 분담', desc: '구역별 담당자와 점검 주기를 설정합니다.' },
-            standard:   { title: '3정 5행 관리 기준서', desc: '3정5S 용어, 판정 기준, 업무 절차와 기록 관리를 확인합니다.' }
-        }[_tab] || {};
+        var actionsHtml = '';
+        if (_tab === 'inspection') {
+            actionsHtml = (_inspectionEditId
+                ? '<button class="btn btn-outline btn-sm" onclick="FiveSModule.newInspPage()"><span class="material-symbols-outlined">add</span> 새 점검일지</button>'
+                : '') +
+                '<button class="btn btn-primary btn-sm" onclick="FiveSModule.saveInsp(' + (_inspectionEditId ? '\'' + _js(_inspectionEditId) + '\'' : 'null') + ')"><span class="material-symbols-outlined">save</span> 저장</button>';
+        } else if (_tab === 'inspection-history') {
+            actionsHtml = '<button class="btn btn-outline btn-sm" onclick="FiveSModule.switchTab(\'inspection\')"><span class="material-symbols-outlined">edit_document</span> 점검일지 작성</button>';
+        } else if (_tab === 'issue') {
+            actionsHtml = '<button class="btn btn-primary btn-sm" onclick="FiveSModule.openIssueModal()"><span class="material-symbols-outlined">add</span> 지적사항 등록</button>';
+        } else if (_tab === 'assignment') {
+            actionsHtml = '<button class="btn btn-primary btn-sm" onclick="FiveSModule.savePlan()"><span class="material-symbols-outlined">save</span> 계획 저장</button>';
+        } else if (_tab === 'standard') {
+            var canUpload = _canUploadStandard();
+            actionsHtml = '<button class="btn btn-outline btn-sm" onclick="FiveSModule.printStandardPage()"><span class="material-symbols-outlined">print</span> 인쇄</button>' +
+                '<button class="btn btn-outline btn-sm" onclick="FiveSModule.focusStandardPasteZone()"' + (canUpload ? '' : ' disabled') + '><span class="material-symbols-outlined">upload_file</span> 기준서 업로드</button>';
+        }
 
-        shell.innerHTML = `
-            ${_menu(_tab, page.title || '3정5S 관리', page.desc || '')}
-            <div class="page-header">
-                <div class="page-actions" id="s5Actions"></div>
-            </div>
-            ${_tab === 'main' ? '<div class="stat-cards" id="s5Stats"></div>' : ''}
-            <div id="s5Content"></div>`;
+        shell.innerHTML =
+            _menu(_tab, actionsHtml) +
+            (_tab === 'main' ? '<div class="stat-cards" id="s5Stats"></div>' : '') +
+            '<div id="s5Content"></div>';
 
         if (_tab === 'main') {
             _refreshStats();
@@ -250,8 +247,6 @@ var FiveSModule = (function () {
 
     function _renderInspectionFormPage() {
         const rec = _inspectionEditId ? Storage.getById(STORE, _inspectionEditId) : null;
-        const actions = document.getElementById('s5Actions');
-        if (actions) actions.innerHTML = `${_inspectionEditId ? `<button class="btn btn-outline" onclick="FiveSModule.newInspPage()"><span class="material-symbols-outlined">add</span> 새 점검일지</button>` : ''}<button class="btn btn-primary" onclick="FiveSModule.saveInsp(${_inspectionEditId ? `'${_js(_inspectionEditId)}'` : 'null'})"><span class="material-symbols-outlined">save</span> 저장</button>`;
         document.getElementById('s5Content').innerHTML = _inspectionFormHtml(rec);
         setTimeout(() => { FiveSModule._calcPreview(); FiveSModule._togglePhotoRows(); }, 30);
     }
@@ -278,8 +273,6 @@ var FiveSModule = (function () {
     }
 
     async function _renderInspectionHistoryPage() {
-        const actions = document.getElementById('s5Actions');
-        if (actions) actions.innerHTML = `<button class="btn btn-outline" onclick="FiveSModule.switchTab('inspection')"><span class="material-symbols-outlined">edit_document</span> 점검일지 작성</button>`;
         const now = new Date();
         const from = new Date(now.getFullYear(), now.getMonth() - 2, 1).toISOString().split('T')[0];
         const saved = await Storage.getConfigValue('s5_plan');
@@ -531,12 +524,6 @@ var FiveSModule = (function () {
        TAB 2 : 지적사항·시정조치
     ══════════════════════════════════════════════════════════ */
     function _renderIssueTab() {
-        const actions = document.getElementById('s5Actions');
-        if (actions) actions.innerHTML = `
-            <button class="btn btn-primary" onclick="FiveSModule.openIssueModal()">
-                <span class="material-symbols-outlined">add</span> 지적사항 등록
-            </button>`;
-
         const now  = new Date();
         const from = new Date(now.getFullYear(), now.getMonth() - 2, 1).toISOString().split('T')[0];
 
@@ -798,9 +785,6 @@ var FiveSModule = (function () {
        TAB 3 : 점검 계획·업무분담
     ══════════════════════════════════════════════════════════ */
     function _renderMainPage() {
-        const actions = document.getElementById('s5Actions');
-        if (actions) actions.innerHTML = '';
-
         const thisMonth   = _today().slice(0, 7);
         const inspections = Storage.getAll(STORE) || [];
         const issues      = Storage.getAll(ISSUE_STORE) || [];
@@ -834,21 +818,6 @@ var FiveSModule = (function () {
     }
 
     function _renderStandardPage() {
-        const actions = document.getElementById('s5Actions');
-        const canUpload = _canUploadStandard();
-        if (actions) actions.innerHTML = `
-            <div style="display:flex;justify-content:flex-end;gap:6px;width:100%;">
-                <button class="btn btn-outline" onclick="FiveSModule.printStandardPage()"
-                        style="padding:5px 10px;font-size:0.76rem;line-height:1.2;min-height:auto;">
-                    <span class="material-symbols-outlined" style="font-size:15px;">print</span> 인쇄
-                </button>
-                <button class="btn btn-outline" onclick="FiveSModule.focusStandardPasteZone()"
-                        ${canUpload ? '' : 'disabled'}
-                        style="padding:5px 10px;font-size:0.76rem;line-height:1.2;min-height:auto;${canUpload ? '' : 'opacity:.5;cursor:not-allowed;'}">
-                    <span class="material-symbols-outlined" style="font-size:15px;">upload_file</span> 기준서 업로드
-                </button>
-            </div>`;
-
         document.getElementById('s5Content').innerHTML = `
         <div class="card" style="display:inline-block;width:auto;max-width:100%;">
             <div class="card-body" style="padding:12px;overflow:auto;width:auto;">
@@ -949,12 +918,6 @@ var FiveSModule = (function () {
 
     async function _renderPlanTab(mode = 'plan') {
         const isAssignment = mode === 'assignment';
-        const actions = document.getElementById('s5Actions');
-        if (actions) actions.innerHTML = isAssignment ? `
-            <button class="btn btn-primary" onclick="FiveSModule.savePlan()">
-                <span class="material-symbols-outlined">save</span> 계획 저장
-            </button>` : '';
-
         const el = document.getElementById('s5Content');
         el.innerHTML = `<div style="padding:32px;text-align:center;color:var(--text-muted);">로딩 중...</div>`;
 

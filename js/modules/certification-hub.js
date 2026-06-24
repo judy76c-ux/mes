@@ -31,28 +31,17 @@ var CertProcessUI = (function () {
         { id: 'operators-mgmt', label: '작업자 관리', icon: 'engineering' }
     ];
 
-    function renderSection(activePage, title, desc) {
-        return `
-            <div style="margin-bottom:18px;">
-                <div style="margin-bottom:14px;">
-                    <h3 style="margin:0 0 6px;font-size:1.15rem;">${title}</h3>
-                    <p style="margin:0;color:var(--text-muted);font-size:.9rem;">${desc || ''}</p>
-                </div>
-                <div class="mes-apple-tabbar">
-                    ${MENUS.map(function (menu) {
-                        const active = menu.id === activePage;
-                        return `
-                            <button type="button"
-                                onclick="Router.navigate('${menu.id}')"
-                                class="mes-apple-tab ${active ? 'active' : ''}">
-                                <span class="material-symbols-outlined">${menu.icon}</span>
-                                <span class="mes-apple-tab-label">${menu.label}</span>
-                            </button>
-                        `;
-                    }).join('')}
-                </div>
-            </div>
-        `;
+    function renderSection(activePage, actionsHtml) {
+        var tabs = MENUS.map(function (menu) {
+            var active = menu.id === activePage;
+            return '<button type="button" onclick="Router.navigate(\'' + menu.id + '\')" class="mes-apple-tab ' + (active ? 'active' : '') + '">' +
+                '<span class="material-symbols-outlined">' + menu.icon + '</span>' +
+                '<span class="mes-apple-tab-label">' + menu.label + '</span></button>';
+        }).join('');
+        return '<div style="margin-bottom:16px;">' +
+            '<div class="mes-apple-tabbar">' + tabs + '</div>' +
+            (actionsHtml ? '<div style="display:flex;justify-content:flex-end;gap:6px;margin-top:8px;">' + actionsHtml + '</div>' : '') +
+            '</div>';
     }
 
     return { renderSection: renderSection };
@@ -191,7 +180,7 @@ var CertHubModule = (function () {
     async function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
-                ${CertProcessUI.renderSection('certifications-mgmt', '자격인증 관리', '검사원 자격인증과 작업자 다기능 평가, 게이지 R&R 평가를 한 화면에서 관리합니다.')}
+                ${CertProcessUI.renderSection('certifications-mgmt')}
                 <div class="section-card" style="padding:0;overflow:hidden;">
                     <div style="padding:24px;">
                         <div id="certHubStats" class="stat-cards" style="margin-bottom:18px;"></div>
@@ -280,7 +269,7 @@ var CertStandardModule = (function () {
         await _ensureSeed();
         container.innerHTML = `
             <div class="fade-in-up">
-                ${CertProcessUI.renderSection('cert-standard', '자격인증 및 다기능 평가 기준서', '자격 부여 요건과 평가 방식·주기·합격 기준을 정의합니다.')}
+                ${CertProcessUI.renderSection('cert-standard', '<button class="btn btn-primary btn-sm" onclick="CertStandardModule.openModal()"><span class="material-symbols-outlined">add</span> 기준 추가</button>')}
                 <div class="card" style="margin-bottom:16px;">
                     <div class="card-header"><h4><span class="material-symbols-outlined">info</span> 자격 인증 및 다기능 평가 방법</h4></div>
                     <div class="card-body">
@@ -289,13 +278,6 @@ var CertStandardModule = (function () {
                                 return `<li ${i === 4 ? 'style="color:var(--accent-red);font-weight:600;"' : ''}>${C.esc(n)}</li>`;
                             }).join('')}
                         </ol>
-                    </div>
-                </div>
-                <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-primary" onclick="CertStandardModule.openModal()">
-                            <span class="material-symbols-outlined">add</span> 기준 추가
-                        </button>
                     </div>
                 </div>
                 <div class="card">
@@ -448,14 +430,7 @@ var CertEvalModule = (function () {
     async function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
-                ${CertProcessUI.renderSection('cert-eval', '자격인증 평가서', '검사원 자격 인증 평가 항목별 점수와 합부 판정을 기록합니다. (합격: 70점 이상)')}
-                <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-primary" onclick="CertEvalModule.openModal()">
-                            <span class="material-symbols-outlined">add</span> 평가 등록
-                        </button>
-                    </div>
-                </div>
+                ${CertProcessUI.renderSection('cert-eval', '<button class="btn btn-primary btn-sm" onclick="CertEvalModule.openModal()"><span class="material-symbols-outlined">add</span> 평가 등록</button>')}
                 <div class="card">
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
@@ -658,14 +633,7 @@ var CertLedgerModule = (function () {
     async function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
-                ${CertProcessUI.renderSection('cert-ledger', '자격인증 평가 관리대장', '인증서 번호, 유효기간(최초/갱신), 평가서 평점, R&R 등급을 통합 관리합니다.')}
-                <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-primary" onclick="CertLedgerModule.openModal()">
-                            <span class="material-symbols-outlined">add</span> 인증 인원 등록
-                        </button>
-                    </div>
-                </div>
+                ${CertProcessUI.renderSection('cert-ledger', '<button class="btn btn-primary btn-sm" onclick="CertLedgerModule.openModal()"><span class="material-symbols-outlined">add</span> 인증 인원 등록</button>')}
                 <div class="card">
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
@@ -839,14 +807,7 @@ var CertMultiskillEvalModule = (function () {
     async function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
-                ${CertProcessUI.renderSection('cert-multiskill-eval', '작업자 다기능 평가서', '주공정별 작업자 다기능 평가 점수를 항목별로 기록하고 등급을 산출합니다. (배점 ${MAX}점)')}
-                <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-primary" onclick="CertMultiskillEvalModule.openModal()">
-                            <span class="material-symbols-outlined">add</span> 평가 등록
-                        </button>
-                    </div>
-                </div>
+                ${CertProcessUI.renderSection('cert-multiskill-eval', '<button class="btn btn-primary btn-sm" onclick="CertMultiskillEvalModule.openModal()"><span class="material-symbols-outlined">add</span> 평가 등록</button>')}
                 <div class="card">
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
@@ -1066,14 +1027,7 @@ var CertMultiskillAnalysisModule = (function () {
 
         container.innerHTML = `
             <div class="fade-in-up">
-                ${CertProcessUI.renderSection('cert-multiskill-analysis', '작업자 다기능 분석표', '작업자 × 공정별 다기능 보유 등급을 한눈에 확인합니다.')}
-                <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-primary" onclick="CertMultiskillAnalysisModule.openModal()">
-                            <span class="material-symbols-outlined">add</span> 작업자 등록
-                        </button>
-                    </div>
-                </div>
+                ${CertProcessUI.renderSection('cert-multiskill-analysis', '<button class="btn btn-primary btn-sm" onclick="CertMultiskillAnalysisModule.openModal()"><span class="material-symbols-outlined">add</span> 작업자 등록</button>')}
                 <div class="card">
                     <div class="card-body">
                         ${legend}
@@ -1181,14 +1135,7 @@ var GaugeRRVariableModule = (function () {
     async function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
-                ${CertProcessUI.renderSection('gauge-rr-variable', '계량형 게이지 R&R 관리대장', '계량형 측정 시스템 분석 결과(%R&R, ndc)를 기록·판정합니다. (%R&R 10% 미만 우수 / 30% 이하 조건부)')}
-                <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-primary" onclick="GaugeRRVariableModule.openModal()">
-                            <span class="material-symbols-outlined">add</span> R&R 등록
-                        </button>
-                    </div>
-                </div>
+                ${CertProcessUI.renderSection('gauge-rr-variable', '<button class="btn btn-primary btn-sm" onclick="GaugeRRVariableModule.openModal()"><span class="material-symbols-outlined">add</span> R&R 등록</button>')}
                 <div class="card">
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
@@ -1330,14 +1277,7 @@ var GaugeRRAttributeModule = (function () {
     async function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
-                ${CertProcessUI.renderSection('gauge-rr-attribute', '계수형 GAUGE R&R 평가서', '계수형(합부 판정) 측정 시스템의 일치율·Kappa를 평가합니다. (일치율 95% 이상 A등급)')}
-                <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-primary" onclick="GaugeRRAttributeModule.openModal()">
-                            <span class="material-symbols-outlined">add</span> 평가 등록
-                        </button>
-                    </div>
-                </div>
+                ${CertProcessUI.renderSection('gauge-rr-attribute', '<button class="btn btn-primary btn-sm" onclick="GaugeRRAttributeModule.openModal()"><span class="material-symbols-outlined">add</span> 평가 등록</button>')}
                 <div class="card">
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">

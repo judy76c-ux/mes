@@ -1,69 +1,77 @@
 /**
- * 사출 공정 메인
- * - 사출 작업일지 / 금형 교체 이력 / 원재료 변경이력 / 월간 스케쥴 / 원재료입출고 / 사출 재공품 현황 / 사출 레이아웃
+ * 사출 공정 공통 네비게이션 + 메인 허브
  */
+
+/* ── 사출 공정 공통 탭바 ─────────────────────────────────────────── */
+var InjectionNavUI = (function () {
+    // activeKey: 'hub' | 'worklog' | 'mold' | 'rawmat' | 'schedule' | 'rawmat-inv' | 'wip' | 'layout'
+    const MENUS = [
+        { key: 'worklog',   label: '작업일지',    icon: 'assignment',      go: function () { _goTab('worklog'); } },
+        { key: 'mold',      label: '금형 교체',   icon: 'construction',    go: function () { _goTab('mold'); } },
+        { key: 'rawmat',    label: '원재료 변경', icon: 'inventory_2',     go: function () { _goTab('rawmat'); } },
+        { key: 'schedule',  label: '월간 스케쥴', icon: 'calendar_month',  go: function () { _goTab('schedule'); } },
+        { key: 'rawmat-inv',label: '원재료 입출고',icon: 'warehouse',      go: function () { Router.navigate('raw-material-inventory'); } },
+        { key: 'wip',       label: '사출 재공품', icon: 'layers',          go: function () { Router.navigate('injection-wip'); } },
+        { key: 'layout',    label: '사출실 레이아웃', icon: 'space_dashboard', go: function () { Router.navigate('injection-room-layout'); } }
+    ];
+
+    function _goTab(tab) {
+        try { sessionStorage.setItem('injectionWorkTab', tab); } catch {}
+        Router.navigate('injection-work');
+    }
+
+    function renderSection(activeKey, actionsHtml) {
+        const tabs = MENUS.map(function (m) {
+            const onclick = m.key === 'rawmat-inv' ? "Router.navigate('raw-material-inventory')"
+                          : m.key === 'wip'        ? "Router.navigate('injection-wip')"
+                          : m.key === 'layout'     ? "Router.navigate('injection-room-layout')"
+                          : "InjectionNavUI.goTab('" + m.key + "')";
+            return '<button type="button" onclick="' + onclick + '" class="mes-bar-tab ' + (m.key === activeKey ? 'active' : '') + '">' +
+                '<span class="material-symbols-outlined">' + m.icon + '</span>' + m.label +
+            '</button>';
+        }).join('');
+        return '<div class="mes-action-bar">' +
+            '<div class="mes-action-bar-tabs">' + tabs + '</div>' +
+            (actionsHtml ? '<div class="mes-action-bar-sep"></div><div class="mes-action-bar-btns">' + actionsHtml + '</div>' : '') +
+        '</div>';
+    }
+
+    return {
+        renderSection,
+        goTab: _goTab
+    };
+})();
+
+/* ── 사출 공정 메인 허브 ─────────────────────────────────────────── */
 var InjectionProcessModule = (function () {
     const WORK_LOG_STORE = DB.STORES.INJECTION_WORK_LOG;
-    const MOLD_STORE = DB.STORES.MOLD_CHANGE_LOG;
+    const MOLD_STORE     = DB.STORES.MOLD_CHANGE_LOG;
     const RAW_CHANGE_STORE = DB.STORES.RAW_MAT_CHANGE_LOG;
-    const RAW_INV_STORE = DB.STORES.RAW_MATERIAL_INVENTORY;
+    const RAW_INV_STORE  = DB.STORES.RAW_MATERIAL_INVENTORY;
 
     function _count(store) {
         try { return (Storage.getAll(store) || []).length; } catch { return 0; }
     }
 
-    function _goWorkTab(tab) {
-        try { sessionStorage.setItem('injectionWorkTab', tab); } catch {}
-        Router.navigate('injection-work');
-    }
-
-    function _card(title, desc, icon, count, action, tone) {
-        return `
-            <button type="button" onclick="${action}" class="submodule-card submodule-card-${tone || 'blue'}"
-                onmouseenter="this.style.boxShadow='0 6px 24px rgba(0,0,0,0.13)';this.style.transform='translateY(-2px)'"
-                onmouseleave="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.07)';this.style.transform=''"
-                style="text-align:left;border:1px solid var(--border);background:#ffffff;border-radius:12px;
-                       padding:22px;box-shadow:0 2px 8px rgba(0,0,0,0.07);cursor:pointer;min-height:132px;
-                       display:flex;flex-direction:column;gap:12px;transition:all .15s;">
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-                    <span class="material-symbols-outlined"
-                        style="width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;
-                               background:#ffffff;border:1px solid var(--border);color:var(--text-secondary);font-size:24px;">${icon}</span>
-                    <span style="font-size:.82rem;color:var(--text-muted);font-weight:700;">${count}</span>
-                </div>
-                <div>
-                    <div style="font-size:1.02rem;font-weight:800;color:var(--text-primary);margin-bottom:6px;">${title}</div>
-                    <div style="font-size:.86rem;color:var(--text-muted);line-height:1.45;">${desc}</div>
-                </div>
-            </button>
-        `;
-    }
-
     function render(container) {
-        const workCount = _count(WORK_LOG_STORE);
-        const moldCount = _count(MOLD_STORE);
-        const rawChangeCount = _count(RAW_CHANGE_STORE);
+        const workCount   = _count(WORK_LOG_STORE);
+        const moldCount   = _count(MOLD_STORE);
+        const rawChgCount = _count(RAW_CHANGE_STORE);
         const rawInvCount = _count(RAW_INV_STORE);
+
+        const tabs = [
+            { label: '사출 작업일지',    icon: 'assignment',      subtitle: `${workCount}건 · 생산 실적`,    accent: '#2563eb', onClick: "InjectionNavUI.goTab('worklog')" },
+            { label: '금형 교체 이력',   icon: 'construction',    subtitle: `${moldCount}건 · 교체 이력`,    accent: '#f59e0b', onClick: "InjectionNavUI.goTab('mold')" },
+            { label: '원재료 변경이력',  icon: 'inventory_2',     subtitle: `${rawChgCount}건 · 변경 기록`,  accent: '#10b981', onClick: "InjectionNavUI.goTab('rawmat')" },
+            { label: '월간 스케쥴',      icon: 'calendar_month',  subtitle: '생산 일정 분석',                accent: '#8b5cf6', onClick: "InjectionNavUI.goTab('schedule')" },
+            { label: '원재료 입출고',    icon: 'warehouse',       subtitle: `${rawInvCount}건 · 재고 현황`,  accent: '#0891b2', onClick: "Router.navigate('raw-material-inventory')" },
+            { label: '사출 재공품',      icon: 'layers',          subtitle: '도장 투입 전 재공품 현황',      accent: '#2563eb', onClick: "Router.navigate('injection-wip')" },
+            { label: '사출실 레이아웃',  icon: 'space_dashboard', subtitle: '설비 배치도 편집·인쇄',         accent: '#2563eb', onClick: "Router.navigate('injection-room-layout')" }
+        ];
 
         container.innerHTML = `
             <div class="fade-in-up">
-                <div class="section-card" style="padding:0;overflow:hidden;">
-                    <div style="padding:22px 24px;border-bottom:1px solid var(--border);">
-                        <h3 style="margin:0 0 6px;font-size:1.15rem;">사출 공정</h3>
-                        <p style="margin:0;color:var(--text-muted);font-size:.9rem;">
-                            작업일지, 금형 교체, 원재료 변경, 월간 스케쥴, 원재료 입출고, 재공품 현황, 레이아웃을 한 화면에서 선택합니다.
-                        </p>
-                    </div>
-                    <div style="padding:24px;display:grid;grid-template-columns:repeat(4,1fr);gap:16px;">
-                        ${_card('사출 작업일지', '사출 생산 실적과 작업 조건을 기록합니다.', 'settings_suggest', `${workCount}건`, "InjectionProcessModule.goWorkTab('worklog')", 'blue')}
-                        ${_card('금형 교체 이력', '금형 교체 실적과 예정 이력을 관리합니다.', 'construction', `${moldCount}건`, "InjectionProcessModule.goWorkTab('mold')", 'orange')}
-                        ${_card('원재료 변경이력', '원재료 변경 전후 정보와 변경 사유를 기록합니다.', 'inventory_2', `${rawChangeCount}건`, "InjectionProcessModule.goWorkTab('rawmat')", 'green')}
-                        ${_card('월간 스케쥴', '금형 교체와 원재료 변경 계획을 월간으로 확인합니다.', 'calendar_month', '월간', "InjectionProcessModule.goWorkTab('schedule')", 'purple')}
-                        ${_card('원재료입출고', '원재료 입고, 출고, 재고 현황을 관리합니다.', 'warehouse', `${rawInvCount}건`, "Router.navigate('raw-material-inventory')", 'teal')}
-                        ${_card('사출 재공품 현황', '사출 완료 후 도장 투입 전까지의 재공품 수량을 관리합니다.', 'layers', '', "Router.navigate('injection-wip')", 'blue')}
-                        ${_card('사출실 레이아웃', '사출실 설비 배치도를 편집하고 인쇄합니다.', 'space_dashboard', '', "Router.navigate('injection-room-layout')", 'blue')}
-                    </div>
-                </div>
+                ${ProdAppleMenu.hero('사출 공정', '작업일지 · 금형 교체 · 원재료 변경 · 월간 스케쥴 · 재공품 현황을 통합 관리합니다.', tabs)}
             </div>
         `;
     }
@@ -71,6 +79,6 @@ var InjectionProcessModule = (function () {
     return {
         render,
         init: render,
-        goWorkTab: _goWorkTab
+        goWorkTab: InjectionNavUI.goTab
     };
 })();

@@ -199,7 +199,7 @@ var InjectionRoomLayoutModule = (function () {
         container.innerHTML = `
         <div class="fade-in-up" style="display:flex;flex-direction:column;height:100%;min-height:0;">
 
-          <!-- 툴바 -->
+          ${InjectionNavUI.renderSection('layout')}<!-- 툴바 -->
           <div style="display:flex;align-items:center;gap:8px;padding:10px 16px;
                       background:var(--bg-card);border-bottom:1px solid var(--border);
                       flex-wrap:wrap;flex-shrink:0;">

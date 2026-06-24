@@ -10,13 +10,13 @@
 
 var LaserProcessUI = (function () {
     const MENUS = [
-        { id: 'laser-process',              label: '메인',                   icon: 'dashboard' },
-        { id: 'laser-work',                 label: '레이져 작업일지',        icon: 'history' },
-        { id: 'laser-inspection',           label: '외관 검사 일지',         icon: 'fact_check', onclick: "LaserInspectionModule.showInspectionPage()" },
-        { id: 'laser-wip-standby',          label: '레이져 대기품 현황',     icon: 'hourglass_top',  onclick: "LaserWipModule.openTab('standby')" },
-        { id: 'laser-wip-after',            label: '레이져 후 재공품 현황',  icon: 'bolt',           onclick: "LaserWipModule.openTab('after-laser')" },
-        { id: 'laser-wip-residual',         label: '레이져 잔량 현황',       icon: 'inventory_2',    onclick: "LaserWipModule.openTab('after-laser-residual')" },
-        { id: 'laser-jig-master',           label: '레이져 지그대장',        icon: 'view_list' },
+        { id: 'laser-process',     label: '메인',              subtitle: '공정 현황 대시보드',  icon: 'dashboard',     accent: '#2563eb' },
+        { id: 'laser-work',        label: '레이져 작업일지',   subtitle: '작업 실적 기록',       icon: 'history',       accent: '#10b981' },
+        { id: 'laser-inspection',  label: '외관 검사 일지',    subtitle: '검사 대기·결과 관리',  icon: 'fact_check',    accent: '#f59e0b', onclick: "LaserInspectionModule.showInspectionPage()" },
+        { id: 'laser-wip-standby', label: '레이져 대기품',     subtitle: '도장 완료 후 대기',    icon: 'hourglass_top', accent: '#f97316', onclick: "LaserWipModule.openTab('standby')" },
+        { id: 'laser-wip-after',   label: '레이져 후 재공품',  subtitle: '레이져 완료 재공품',   icon: 'bolt',          accent: '#8b5cf6', onclick: "LaserWipModule.openTab('after-laser')" },
+        { id: 'laser-wip-residual',label: '레이져 잔량',       subtitle: '포장 미만 잔량',       icon: 'inventory_2',   accent: '#06b6d4', onclick: "LaserWipModule.openTab('after-laser-residual')" },
+        { id: 'laser-jig-master',  label: '레이져 지그대장',   subtitle: '지그 기본 정보',       icon: 'view_list',     accent: '#ef4444' },
     ];
 
     const JIG_SUB_MENUS = [
@@ -39,40 +39,39 @@ var LaserProcessUI = (function () {
         </div>`;
     }
 
-    function renderSection(activePage, title, desc) {
-        return `
-            <div style="margin-bottom:18px;">
-                <div style="margin-bottom:14px;">
-                    <h3 style="margin:0 0 6px;font-size:1.15rem;">${title}</h3>
-                    <p style="margin:0;color:var(--text-muted);font-size:.9rem;">${desc || ''}</p>
-                </div>
-                <div class="mes-apple-tabbar">
-                    ${MENUS.map(function (menu) {
-                        let active = menu.id === activePage;
-                        // laser-wip 탭 버튼의 active 판별: laser-wip 페이지에서 현재 탭 비교
-                        if (!active && activePage === 'laser-wip' && menu.id.startsWith('laser-wip-')) {
-                            try {
-                                const tab = LaserWipModule._activeTabId ? LaserWipModule._activeTabId() : '';
-                                if (menu.id === 'laser-wip-standby'  && tab === 'standby')          active = true;
-                                if (menu.id === 'laser-wip-after'    && tab === 'after-laser')       active = true;
-                                if (menu.id === 'laser-wip-residual' && tab === 'after-laser-residual') active = true;
-                            } catch(e) {}
-                        }
-                        return `
-                            <button type="button"
-                                onclick="${menu.onclick || "Router.navigate('" + menu.id + "')"}"
-                                class="mes-apple-tab ${active ? 'active' : ''}">
-                                <span class="material-symbols-outlined">${menu.icon}</span>
-                                <span class="mes-apple-tab-label">${menu.label}</span>
-                            </button>
-                        `;
-                    }).join('')}
-                </div>
-            </div>
-        `;
+    function backBtn() {
+        return '<button type="button" onclick="Router.navigate(\'laser-process\')"' +
+            ' style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;' +
+            'border:none;background:none;cursor:pointer;font-size:0.85rem;' +
+            'color:var(--text-muted);border-radius:8px;transition:background 0.15s;margin-bottom:10px;"' +
+            ' onmouseover="this.style.background=\'var(--bg-secondary)\'"' +
+            ' onmouseout="this.style.background=\'none\'">' +
+            '<span class="material-symbols-outlined" style="font-size:16px;">arrow_back</span>' +
+            '레이져 공정으로 돌아가기</button>';
+    }
+
+    function renderSection(activePage, _title, _desc, actionsHtml) {
+        const items = MENUS.map(function (menu) {
+            let active = menu.id === activePage;
+            if (!active && menu.id.startsWith('laser-wip-')) {
+                try {
+                    const tab = LaserWipModule._activeTabId ? LaserWipModule._activeTabId() : '';
+                    if (menu.id === 'laser-wip-standby'  && tab === 'standby')             active = true;
+                    if (menu.id === 'laser-wip-after'    && tab === 'after-laser')         active = true;
+                    if (menu.id === 'laser-wip-residual' && tab === 'after-laser-residual') active = true;
+                } catch(e) {}
+            }
+            const onClick = menu.onclick || "Router.navigate('" + menu.id + "')";
+            return { label: menu.label, icon: menu.icon, subtitle: menu.subtitle, accent: menu.accent, active: active, onClick: onClick };
+        });
+        return '<div class="mes-apple-menu-hero" style="margin-bottom:' + (actionsHtml ? '8px' : '16px') + ';">' +
+            ProdAppleMenu.strip(items) +
+            '</div>' +
+            (actionsHtml ? '<div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:14px;">' + actionsHtml + '</div>' : '');
     }
 
     return {
+        backBtn: backBtn,
         renderSection: renderSection,
         renderJigSubNav: renderJigSubNav
     };
@@ -247,7 +246,6 @@ var LaserHubModule = (function () {
     async function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
-                ${LaserProcessUI.renderSection('laser-process', '레이져 공정', '레이져 작업, 외관 검사, 지그 관리, 대기품 현황, 장비 점검/수리 내역을 한 화면에서 선택합니다.')}
                 <div class="section-card" style="padding:0;overflow:hidden;">
                     <div style="padding:24px;">
                         <div id="laserHubStats" class="stat-cards" style="margin-bottom:18px;"></div>
@@ -465,8 +463,9 @@ var LaserJigMasterModule = (function () {
         await _clearLegacyList();
         container.innerHTML = `
             <div class="fade-in-up">
-                ${LaserProcessUI.renderSection('laser-jig-master', '레이져 지그대장', '제품 정보에서 제조공정에 레이져가 포함된 제품을 체크 선택하여 레이져 지그명을 등록합니다.')}
-                ${LaserProcessUI.renderJigSubNav('laser-jig-master', `<button class="btn btn-primary btn-sm" onclick="LaserJigMasterModule.openModal()"><span class="material-symbols-outlined" style="font-size:16px;">add</span> 레이져 지그 등록</button>`)}
+                ${LaserProcessUI.renderSection('laser-jig-master', '', '',
+                    '<button class="btn btn-primary btn-sm" onclick="LaserJigMasterModule.openModal()"><span class="material-symbols-outlined">add</span> 지그 등록</button>')}
+                ${LaserProcessUI.renderJigSubNav('laser-jig-master')}
                 <div class="card">
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
@@ -812,7 +811,7 @@ var LaserJigDisposalModule = (function () {
     async function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
-                ${LaserProcessUI.renderSection('laser-jig-disposal', '폐기 대장', '폐기 처리된 레이져 지그 이력을 확인합니다.')}
+                ${LaserProcessUI.renderSection('laser-jig-disposal')}
                 ${LaserProcessUI.renderJigSubNav('laser-jig-disposal')}
                 <div class="card">
                     <div class="card-body" style="padding:0;">
@@ -947,15 +946,9 @@ var LaserJigCleaningModule = (function () {
     async function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
-                ${LaserProcessUI.renderSection('laser-jig-cleaning', '지그 세척일지', '지그 세척 이력과 세척 방법, 담당자, 다음 세척 예정일을 기록합니다.')}
+                ${LaserProcessUI.renderSection('laser-jig-cleaning', '', '',
+                    '<button class="btn btn-primary btn-sm" onclick="LaserJigCleaningModule.openModal()"><span class="material-symbols-outlined">add</span> 세척 기록 등록</button>')}
                 ${LaserProcessUI.renderJigSubNav('laser-jig-cleaning')}
-                <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-primary" onclick="LaserJigCleaningModule.openModal()">
-                            <span class="material-symbols-outlined">add</span> 세척 기록 등록
-                        </button>
-                    </div>
-                </div>
                 <div class="card">
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
@@ -1150,14 +1143,8 @@ var LaserEquipmentHistoryModule = (function () {
     async function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
-                ${LaserProcessUI.renderSection('laser-equipment-history', '레이져 장비 점검/수리 내역', '레이져 장비의 이상, 점검, 수리 이력을 기록하고 진행 상태를 관리합니다.')}
-                <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-primary" onclick="LaserEquipmentHistoryModule.openModal()">
-                            <span class="material-symbols-outlined">add</span> 점검/수리 등록
-                        </button>
-                    </div>
-                </div>
+                ${LaserProcessUI.renderSection('laser-equipment-history', '', '',
+                    '<button class="btn btn-primary btn-sm" onclick="LaserEquipmentHistoryModule.openModal()"><span class="material-symbols-outlined">add</span> 점검/수리 등록</button>')}
                 <div class="card">
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">

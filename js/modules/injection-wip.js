@@ -51,22 +51,10 @@ var InjectionWipModule = (function () {
 
         container.innerHTML = `
         <div class="fade-in-up">
-
-          <!-- 헤더 -->
-          <div style="display:flex;align-items:center;justify-content:space-between;
-                      flex-wrap:wrap;gap:12px;margin-bottom:20px;">
-            <div>
-              <h2 style="margin:0 0 4px;font-size:1.25rem;">사출 재공품 현황</h2>
-              <p style="margin:0;color:var(--text-muted);font-size:.88rem;">
-                사출 완료 후 도장 투입 전까지의 재공품 수량을 관리합니다.
-              </p>
-            </div>
-            <div style="display:flex;gap:8px;">
-              <button class="btn btn-primary" onclick="InjectionWipModule.openAddModal()">
-                <span class="material-symbols-outlined">add</span> 재공품 등록
-              </button>
-            </div>
-          </div>
+            ${InjectionNavUI.renderSection('wip',
+                '<button class="btn btn-primary btn-sm" onclick="InjectionWipModule.openAddModal()">' +
+                    '<span class="material-symbols-outlined">add</span> 재공품 등록</button>'
+            )}
 
           <!-- 요약 카드 -->
           <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px;">

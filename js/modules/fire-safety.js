@@ -25,10 +25,7 @@ var FireSafetyHubModule = (function () {
             try { counts[m.id] = ((await SafetyCommon.load(m.key)) || []).length; } catch(e) { counts[m.id] = 0; }
         }
         container.innerHTML = `<div class="fade-in-up">
-            <div style="margin-bottom:20px;">
-                <h3 style="margin:0 0 4px;font-size:1.15rem;">소방관리</h3>
-                <p style="margin:0;color:var(--text-muted);font-size:.88rem;">소방 시설 점검, 소화기 점검, 소방 안전 교육을 관리합니다.</p>
-            </div>
+            ${FireSafetyNavUI.renderSection('fire-safety-hub', '소방관리', '소방 시설 점검, 소화기 점검, 소방 안전 교육을 관리합니다.')}
             <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;">
                 ${MENUS.map(function(m) {
                     return `<div onclick="Router.navigate('${m.id}')"
@@ -64,54 +61,32 @@ var FireSafetyHubModule = (function () {
 ────────────────────────────────────────────── */
 var FireSafetyNavUI = (function () {
     const MENUS = [
-        { id: 'fire-facility-check', label: '소방시설 점검',   icon: 'fire_truck',            accent: '#ea580c' },
-        { id: 'fire-ext-check',      label: '소화기 점검',     icon: 'fire_extinguisher',     accent: '#b91c1c' },
-        { id: 'fire-edu',            label: '소방 안전 교육',  icon: 'local_fire_department', accent: '#c2410c' }
+        { id: 'fire-safety-hub',     label: '메인',            icon: 'local_fire_department' },
+        { id: 'fire-facility-check', label: '소방시설 점검',   icon: 'fire_truck'            },
+        { id: 'fire-ext-check',      label: '소화기 점검',     icon: 'fire_extinguisher'     },
+        { id: 'fire-edu',            label: '소방안전 교육',   icon: 'co2'                   }
     ];
 
     function renderSection(activePage, title, desc) {
-        const tiles = MENUS.map(function (m) {
-            const active = m.id === activePage;
-            const borderStyle = active
-                ? `border-left:4px solid ${m.accent};background:var(--bg-primary);`
-                : 'border-left:4px solid transparent;background:var(--bg-secondary);';
-            const iconBg    = active ? m.accent : 'var(--border-color)';
-            const iconColor = active ? '#fff' : 'var(--text-muted)';
-            const checkIcon = active
-                ? `<span class="material-symbols-outlined" style="position:absolute;top:6px;right:6px;font-size:14px;color:${m.accent};">check_circle</span>`
-                : '';
-            return `
-                <div onclick="Router.navigate('${m.id}')"
-                     style="position:relative;cursor:pointer;border-radius:10px;padding:10px 14px;
-                            display:flex;align-items:center;gap:10px;min-width:150px;
-                            border:1px solid var(--border-color);${borderStyle}
-                            transition:box-shadow .15s;user-select:none;"
-                     onmouseover="this.style.boxShadow='0 2px 10px rgba(0,0,0,.10)'"
-                     onmouseout="this.style.boxShadow='none'">
-                    <div style="width:34px;height:34px;border-radius:8px;background:${iconBg};
-                                display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-                        <span class="material-symbols-outlined" style="font-size:18px;color:${iconColor};">${m.icon}</span>
-                    </div>
-                    <span style="font-size:0.82rem;font-weight:${active ? '700' : '500'};
-                                 color:${active ? 'var(--text-primary)' : 'var(--text-secondary)'};">${SafetyCommon.esc(m.label)}</span>
-                    ${checkIcon}
-                </div>`;
-        }).join('');
-
         return `
-            <div style="margin-bottom:20px;">
-                <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
-                    <button onclick="Router.navigate('fire-safety-hub')"
-                        style="display:flex;align-items:center;gap:4px;padding:4px 10px;font-size:0.78rem;background:transparent;border:1px solid var(--border-color);border-radius:6px;cursor:pointer;color:var(--text-muted);white-space:nowrap;">
-                        <span class="material-symbols-outlined" style="font-size:14px;">arrow_back</span> 소방관리
-                    </button>
-                    <div>
-                        <h3 style="margin:0 0 2px;font-size:1.15rem;">${SafetyCommon.esc(title)}</h3>
-                        <p style="margin:0;color:var(--text-muted);font-size:.88rem;">${SafetyCommon.esc(desc || '')}</p>
-                    </div>
+            <div style="margin-bottom:18px;">
+                <div style="margin-bottom:14px;">
+                    <h3 style="margin:0 0 6px;font-size:1.15rem;">${SafetyCommon.esc(title)}</h3>
+                    <p style="margin:0;color:var(--text-muted);font-size:.9rem;">${SafetyCommon.esc(desc || '')}</p>
                 </div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;">${tiles}</div>
-            </div>`;
+                <div class="mes-apple-tabbar">
+                    ${MENUS.map(function (m) {
+                        const active = m.id === activePage;
+                        return `<button type="button"
+                            onclick="Router.navigate('${m.id}')"
+                            class="mes-apple-tab ${active ? 'active' : ''}">
+                            <span class="material-symbols-outlined">${m.icon}</span>
+                            <span class="mes-apple-tab-label">${m.label}</span>
+                        </button>`;
+                    }).join('')}
+                </div>
+            </div>
+        `;
     }
 
     return { renderSection };

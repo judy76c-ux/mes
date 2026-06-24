@@ -46,46 +46,21 @@ const SettingsModule = (function() {
         await _loadProcessTypes();
         container.innerHTML = `
             <div class="fade-in-up">
-                <!-- 탭 네비게이션 -->
-                <div class="settings-tabs">
-                    <button class="tab-btn ${currentTab === 'products' ? 'active' : ''}" 
-                        onclick="SettingsModule.switchTab('products')">
-                        <span class="material-symbols-outlined">category</span> 제품 정보
-                    </button>
-                    <button class="tab-btn ${currentTab === 'defects' ? 'active' : ''}" 
-                        onclick="SettingsModule.switchTab('defects')">
-                        <span class="material-symbols-outlined">report_problem</span> 불량 유형
-                    </button>
-                    <button class="tab-btn ${currentTab === 'paint' ? 'active' : ''}"
-                        onclick="SettingsModule.switchTab('paint')">
-                        <span class="material-symbols-outlined">palette</span> 도료 관리
-                    </button>
-                    <button class="tab-btn ${currentTab === 'injectMat' ? 'active' : ''}"
-                        onclick="SettingsModule.switchTab('injectMat')">
-                        <span class="material-symbols-outlined">inventory_2</span> 사출자재
-                    </button>
-                    <button class="tab-btn ${currentTab === 'rawMaterials' ? 'active' : ''}"
-                        onclick="SettingsModule.switchTab('rawMaterials')">
-                        <span class="material-symbols-outlined">science</span> 원재료
-                    </button>
-                    <button class="tab-btn ${currentTab === 'process' ? 'active' : ''}"
-                        onclick="SettingsModule.switchTab('process')">
-                        <span class="material-symbols-outlined">settings_applications</span> 공정 관리
-                    </button>
-                    <button class="tab-btn ${currentTab === 'backup' ? 'active' : ''}"
-                        onclick="SettingsModule.switchTab('backup')">
-                        <span class="material-symbols-outlined">backup</span> 백업/복원
-                    </button>
-                    <button class="tab-btn ${currentTab === 'system' ? 'active' : ''}"
-                        onclick="SettingsModule.switchTab('system')">
-                        <span class="material-symbols-outlined">settings</span> 시스템
-                    </button>
-                    <button class="tab-btn ${currentTab === 'users' ? 'active' : ''}"
-                        onclick="SettingsModule.switchTab('users')"
-                        style="${currentTab === 'users' ? '' : 'border-color:#7c3aed;color:#7c3aed;'}">
-                        <span class="material-symbols-outlined">manage_accounts</span> 사용자 관리
-                    </button>
-                </div>
+                ${ProdAppleMenu.hero(
+                    '관리 / 설정',
+                    '제품 정보, 공정, 사용자 관리를 통합합니다.',
+                    [
+                        { label: '제품 정보',   icon: 'category',              subtitle: '제품 마스터',    active: currentTab === 'products',     onClick: "SettingsModule.switchTab('products')",     tabKey: 'products',     accent: '#2563eb' },
+                        { label: '불량 유형',   icon: 'report_problem',        subtitle: '불량 코드',      active: currentTab === 'defects',      onClick: "SettingsModule.switchTab('defects')",      tabKey: 'defects',      accent: '#ef4444' },
+                        { label: '도료 관리',   icon: 'palette',               subtitle: '도료 마스터',    active: currentTab === 'paint',        onClick: "SettingsModule.switchTab('paint')",        tabKey: 'paint',        accent: '#059669' },
+                        { label: '사출자재',    icon: 'inventory_2',           subtitle: '사출 자재 목록', active: currentTab === 'injectMat',    onClick: "SettingsModule.switchTab('injectMat')",    tabKey: 'injectMat',    accent: '#6366f1' },
+                        { label: '원재료',      icon: 'science',               subtitle: '원재료 관리',    active: currentTab === 'rawMaterials', onClick: "SettingsModule.switchTab('rawMaterials')", tabKey: 'rawMaterials', accent: '#8b5cf6' },
+                        { label: '공정 관리',   icon: 'settings_applications', subtitle: '공정 유형',      active: currentTab === 'process',      onClick: "SettingsModule.switchTab('process')",      tabKey: 'process',      accent: '#0891b2' },
+                        { label: '백업/복원',   icon: 'backup',                subtitle: 'DB 백업',        active: currentTab === 'backup',       onClick: "SettingsModule.switchTab('backup')",       tabKey: 'backup',       accent: '#64748b' },
+                        { label: '시스템',      icon: 'settings',              subtitle: '알림/권한',      active: currentTab === 'system',       onClick: "SettingsModule.switchTab('system')",       tabKey: 'system',       accent: '#475569' },
+                        { label: '사용자 관리', icon: 'manage_accounts',       subtitle: '계정 관리',      active: currentTab === 'users',        onClick: "SettingsModule.switchTab('users')",        tabKey: 'users',        accent: '#7c3aed' }
+                    ]
+                )}
 
                 <!-- 탭 콘텐츠 -->
                 <div id="settingsContent"></div>

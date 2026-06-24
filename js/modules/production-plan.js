@@ -14,6 +14,43 @@ const ProductionPlanModule = (function() {
     let _autoTimer = null; // 자동 상태 갱신 타이머
     let _calYear = new Date().getFullYear();
     let _calMonth = new Date().getMonth() + 1;
+    let _satExpanded = false;
+
+    const FIXED_HOLIDAYS = {
+        '01-01':'신정', '03-01':'삼일절', '05-01':'근로자의날',
+        '05-05':'어린이날', '06-06':'현충일', '08-15':'광복절',
+        '10-03':'개천절', '10-09':'한글날', '12-25':'성탄절'
+    };
+
+    // 음력 기반 공휴일 (2024~2030 사전계산)
+    const LUNAR_HOLIDAYS = {
+        '2024-02-09':'설 연휴','2024-02-10':'설날','2024-02-11':'설 연휴','2024-02-12':'대체공휴일',
+        '2025-01-28':'설 연휴','2025-01-29':'설날','2025-01-30':'설 연휴',
+        '2026-02-16':'설 연휴','2026-02-17':'설날','2026-02-18':'설 연휴','2026-02-19':'대체공휴일',
+        '2027-02-05':'설 연휴','2027-02-06':'설날','2027-02-07':'설 연휴','2027-02-08':'대체공휴일',
+        '2028-01-25':'설 연휴','2028-01-26':'설날','2028-01-27':'설 연휴',
+        '2029-02-12':'설 연휴','2029-02-13':'설날','2029-02-14':'설 연휴',
+        '2030-02-02':'설 연휴','2030-02-03':'설날','2030-02-04':'설 연휴',
+        '2024-05-15':'부처님오신날',
+        '2025-05-06':'부처님오신날',
+        '2026-05-24':'부처님오신날',
+        '2027-05-13':'부처님오신날',
+        '2028-05-02':'부처님오신날',
+        '2029-05-20':'부처님오신날',
+        '2030-05-09':'부처님오신날',
+        '2024-09-16':'추석 연휴','2024-09-17':'추석','2024-09-18':'추석 연휴',
+        '2025-10-05':'추석 연휴','2025-10-06':'추석','2025-10-07':'추석 연휴','2025-10-08':'대체공휴일',
+        '2026-09-24':'추석 연휴','2026-09-25':'추석','2026-09-26':'추석 연휴','2026-09-27':'대체공휴일',
+        '2027-09-14':'추석 연휴','2027-09-15':'추석','2027-09-16':'추석 연휴',
+        '2028-10-02':'추석 연휴','2028-10-03':'추석','2028-10-04':'대체공휴일',
+        '2029-09-21':'추석 연휴','2029-09-22':'추석','2029-09-23':'추석 연휴',
+        '2030-09-11':'추석 연휴','2030-09-12':'추석','2030-09-13':'추석 연휴',
+    };
+
+    function _getHoliday(ds) {
+        return FIXED_HOLIDAYS[ds.slice(5)] || LUNAR_HOLIDAYS[ds] || null;
+    }
+
     let _activePlanDateModal = '';
     let _activePlanLineModal = '도장-A';
 
@@ -184,12 +221,6 @@ const ProductionPlanModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <input type="hidden" id="planDateFilter" value="${UIUtils.today()}">
-                <div style="margin-bottom:14px;">
-                    <div style="font-size:1.15rem;font-weight:800;color:var(--text-primary);margin-bottom:6px;">생산 계획 지시서</div>
-                    <p style="margin:0;color:var(--text-muted);font-size:.92rem;line-height:1.6;">
-                        도장 라인별 생산 계획을 달력에서 등록하고, 날짜별 작업 시간과 품목 배치를 한 화면에서 관리합니다.
-                    </p>
-                </div>
                 <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
                     <div style="display:flex;align-items:center;gap:10px;">
                         <button class="btn btn-outline" onclick="ProductionPlanModule.prevMonth()">
@@ -310,17 +341,25 @@ const ProductionPlanModule = (function() {
         });
 
         const DAY_KO = ['일', '월', '화', '수', '목', '금', '토'];
+        const DAY_COLOR = ['#ef4444','#64748b','#64748b','#64748b','#64748b','#64748b','#2563eb'];
         let html = `
+            <div style="border-radius:14px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.07),0 4px 18px rgba(0,0,0,0.07);border:1px solid #e2e8f0;">
             <table style="width:100%;border-collapse:collapse;min-width:780px;table-layout:fixed;">
                 <colgroup>
-                    <col style="width:48px;">
+                    <col style="width:38px;">
                     <col><col><col><col><col>
-                    <col style="width:120px;">
+                    <col style="${_satExpanded ? '' : 'width:72px;'}">
                 </colgroup>
-                <thead><tr>
-                    ${DAY_KO.map((d, i) => `
-                        <th style="padding:10px 6px;text-align:center;font-size:0.85rem;font-weight:700;color:${i===0?'var(--accent-red)':i===6?'var(--accent-blue)':'var(--text-secondary)'};border-bottom:2px solid var(--border-color);">${d}</th>
-                    `).join('')}
+                <thead><tr style="background:linear-gradient(135deg,#f8fafc 0%,#f1f5f9 100%);">
+                    ${DAY_KO.map((d, i) => {
+                        const isSatCol = i === 6;
+                        const extra = isSatCol
+                            ? `<span class="material-symbols-outlined" style="font-size:11px;vertical-align:middle;margin-left:2px;">${_satExpanded ? 'chevron_left' : 'chevron_right'}</span>`
+                            : '';
+                        const clickAttr = isSatCol ? `onclick="event.stopPropagation();ProductionPlanModule.toggleSat()" style="cursor:pointer;" title="${_satExpanded ? '토요일 축소' : '토요일 확장'}"` : '';
+                        return `<th ${clickAttr} style="padding:12px ${i===0?'2px':'8px'};text-align:center;font-size:0.8rem;font-weight:800;
+                            color:${DAY_COLOR[i]};border-bottom:2px solid #e2e8f0;letter-spacing:0.5px;user-select:none;">${d}${extra}</th>`;
+                    }).join('')}
                 </tr></thead>
                 <tbody>
         `;
@@ -332,7 +371,9 @@ const ProductionPlanModule = (function() {
             for (let col = 0; col < 7; col++) {
                 const blank = (row === 0 && col < firstDow) || day > lastDay;
                 if (blank) {
-                    html += `<td style="height:168px;border:1px solid var(--border-color);background:var(--bg-secondary);"></td>`;
+                    const blankBg = col===0 ? 'rgba(254,242,242,0.5)' : col===6 ? 'rgba(239,246,255,0.5)' : '#f8fafc';
+                    const blankPad = col===0 ? 'padding:0;' : '';
+                    html += `<td style="height:160px;${blankPad}border:1px solid #e2e8f0;background:${blankBg};"></td>`;
                     continue;
                 }
 
@@ -344,6 +385,8 @@ const ProductionPlanModule = (function() {
                 const isToday = ds === today;
                 const isSun = col === 0;
                 const isSat = col === 6;
+                const holiday = _getHoliday(ds);
+                const isHoliday = !!holiday;
                 const plansA = dayPlans.filter(p => p.line === '도장-A');
                 const plansB = dayPlans.filter(p => p.line === '도장-B');
                 const planActualStatus = p => {
@@ -377,44 +420,74 @@ const ProductionPlanModule = (function() {
                         const inspected = actualStatus === '검사완료';
                         const worked = actualStatus === '도장완료';
                         const rowColor = inspected ? 'var(--accent-green)' : (worked ? '#0f766e' : color);
-                        const badgeBg = inspected ? 'rgba(16,185,129,0.12)' : (worked ? 'rgba(20,184,166,0.12)' : 'rgba(148,163,184,0.14)');
-                        const badgeColor = inspected ? 'var(--accent-green)' : (worked ? '#0f766e' : 'var(--text-muted)');
-                        return `<span style="font-size:0.68rem;font-weight:700;color:${rowColor};line-height:1.18;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-                            ${p.carModel || '-'} : ${UIUtils.formatNumber(Number(p.planQty) || 0)}
-                            <small style="font-size:0.6rem;font-weight:800;color:${badgeColor};background:${badgeBg};border-radius:4px;padding:0 3px;margin-left:2px;">${actualStatus}</small>
-                        </span>`;
+                        const badgeBg = inspected ? 'rgba(16,185,129,0.15)' : (worked ? 'rgba(20,184,166,0.15)' : 'rgba(100,116,139,0.12)');
+                        const badgeColor = inspected ? '#065f46' : (worked ? '#0f766e' : '#475569');
+                        return `<div style="display:flex;align-items:center;gap:3px;white-space:nowrap;overflow:hidden;">
+                            <span style="font-size:0.68rem;font-weight:700;color:${rowColor};overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;">${p.carModel || '-'} : ${UIUtils.formatNumber(Number(p.planQty) || 0)}</span>
+                            <span style="font-size:0.58rem;font-weight:800;color:${badgeColor};background:${badgeBg};border-radius:4px;padding:1px 4px;flex-shrink:0;">${actualStatus}</span>
+                        </div>`;
                     }).join('');
                     const more = items.length > 4
                         ? `<span style="font-size:0.65rem;color:var(--text-muted);line-height:1.1;">+${items.length - 4}</span>`
                         : '';
+                    const lineBg = label==='A' ? 'rgba(37,99,235,0.1)' : 'rgba(234,88,12,0.1)';
+                    const lineChip = text ? `<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:0.6rem;font-weight:900;color:${color};background:${lineBg};margin-bottom:2px;">${label}</span>` : '';
                     return `<div onclick="event.stopPropagation(); ProductionPlanModule.openDayPlan('${ds}', '${line}')"
                         title="${line} ${text}"
-                        style="width:50%;padding:4px 3px;display:flex;flex-direction:column;gap:2px;cursor:pointer;min-width:0;${!isSun && label === 'B' ? 'border-left:1px dashed var(--border-color);' : ''}">
-                        ${text ? `<span style="font-size:0.68rem;font-weight:900;color:${color};line-height:1.1;">${label}</span>
-                        ${rows}${more}` : ''}
+                        style="width:50%;padding:4px 4px;display:flex;flex-direction:column;gap:2px;cursor:pointer;min-width:0;${label==='B' ? 'border-left:1px solid #e2e8f0;' : ''}">
+                        ${lineChip}${rows}${more}
                     </div>`;
                 };
 
+                const cellBg = isToday ? '#eff6ff' : isSun ? 'rgba(254,242,242,0.5)' : isSat ? 'rgba(239,246,255,0.4)' : (isHoliday ? 'rgba(254,242,242,0.3)' : '#fff');
+                const cellBorderTop = isToday ? 'border-top:2px solid #2563eb;' : (isHoliday && !isSun && !isSat ? 'border-top:2px solid #fca5a5;' : '');
+                const dayNumColor = isSun ? '#ef4444' : isSat ? '#2563eb' : isToday ? '#fff' : (isHoliday ? '#ef4444' : 'var(--text-primary)');
+                const dayNumStyle = isToday
+                    ? `display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#2563eb;font-size:0.78rem;font-weight:800;color:#fff;`
+                    : `font-size:0.88rem;font-weight:800;color:${dayNumColor};`;
+                const countBadge = dayPlans.length
+                    ? `<span style="font-size:0.6rem;font-weight:700;padding:1px 7px;background:rgba(99,102,241,0.1);color:#4f46e5;border-radius:99px;">${dayPlans.length}</span>`
+                    : '';
+                if (isSun || (isSat && !_satExpanded)) {
+                    const hoverBg = isSun ? '#fee2e2' : '#dbeafe';
+                    const clickFn = isSat
+                        ? `ProductionPlanModule.toggleSat()`
+                        : `ProductionPlanModule.openDayPlan('${ds}', '도장-A')`;
+                    const tip = isSat && dayPlans.length ? `title="${dayPlans.length}건 계획"` : '';
+                    html += `
+                    <td onclick="${clickFn}" ${tip}
+                        style="height:160px;padding:6px 2px;border:1px solid #e2e8f0;${cellBorderTop}background:${cellBg};cursor:pointer;vertical-align:top;text-align:center;transition:background 0.12s;position:relative;"
+                        onmouseover="this.style.background='${hoverBg}';"
+                        onmouseout="this.style.background='${cellBg}';">
+                        <span style="${dayNumStyle}">${day}</span>
+                        ${holiday ? `<div style="font-size:0.5rem;font-weight:700;color:#ef4444;margin-top:2px;line-height:1.2;word-break:break-all;">${holiday}</div>` : ''}
+                        ${isSat && dayPlans.length ? `<span style="display:block;margin-top:3px;font-size:0.58rem;font-weight:700;color:#2563eb;background:rgba(37,99,235,0.1);border-radius:99px;padding:1px 4px;">${dayPlans.length}</span>` : ''}
+                    </td>`;
+                } else {
                 html += `
                     <td onclick="ProductionPlanModule.openDayPlan('${ds}', '도장-A')"
-                        style="height:168px;padding:7px 8px;border:1px solid var(--border-color);background:${isToday?'rgba(59,130,246,0.05)':'#fff'};cursor:pointer;vertical-align:top;${isToday?'box-shadow:inset 0 0 0 2px var(--accent-blue);':''}"
-                        onmouseover="this.style.background='rgba(241,245,249,0.9)'"
-                        onmouseout="this.style.background='${isToday?'rgba(59,130,246,0.05)':'#fff'}'">
-                        <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;">
-                            <span style="font-size:0.9rem;font-weight:800;color:${isSun?'var(--accent-red)':isSat?'var(--accent-blue)':'var(--text-primary)'};">${day}</span>
-                            ${dayPlans.length ? `<span style="font-size:0.68rem;color:var(--text-muted);">${dayPlans.length}건</span>` : ''}
+                        style="height:160px;padding:7px 7px;border:1px solid #e2e8f0;${cellBorderTop}background:${cellBg};cursor:pointer;vertical-align:top;transition:background 0.12s,box-shadow 0.12s;"
+                        onmouseover="this.style.background='#f1f5f9';this.style.boxShadow='inset 0 0 0 1.5px #94a3b8';"
+                        onmouseout="this.style.background='${cellBg}';this.style.boxShadow='';">
+                        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:4px;margin-bottom:5px;">
+                            <div>
+                                <span style="${dayNumStyle}">${day}</span>
+                                ${holiday ? `<div style="font-size:0.58rem;font-weight:700;color:#ef4444;line-height:1.2;margin-top:1px;white-space:nowrap;">${holiday}</div>` : ''}
+                            </div>
+                            ${countBadge}
                         </div>
-                        <div style="margin-top:5px;height:111px;display:flex;">
-                            ${lineSummary(plansA, '도장-A', 'A', 'var(--accent-blue)')}
-                            ${lineSummary(plansB, '도장-B', 'B', 'var(--accent-orange)')}
+                        <div style="height:${holiday ? '96px' : '108px'};display:flex;">
+                            ${lineSummary(plansA, '도장-A', 'A', '#2563eb')}
+                            ${lineSummary(plansB, '도장-B', 'B', '#ea580c')}
                         </div>
                     </td>
                 `;
+                }
                 day++;
             }
             html += '</tr>';
         }
-        html += '</tbody></table>';
+        html += '</tbody></table></div>';
         calEl.innerHTML = html;
     }
 
@@ -516,6 +589,11 @@ const ProductionPlanModule = (function() {
         } else {
             renderGrid('planGridBodyA', 'planGridFootA', slotDataA, '도장-A');
         }
+    }
+
+    function toggleSat() {
+        _satExpanded = !_satExpanded;
+        renderCalendar();
     }
 
     function prevMonth() {
@@ -2886,6 +2964,7 @@ const ProductionPlanModule = (function() {
         renderCalendar,
         openDayPlan,
         closeDayPlan,
+        toggleSat,
         prevMonth,
         nextMonth,
         goToday,

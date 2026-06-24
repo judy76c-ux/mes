@@ -68,13 +68,9 @@ var JigModule = (function () {
         { id: 'jig-repair-history', label: '지그수리 개선 이력', icon: 'build_circle' }
     ];
 
-    function renderMenu(activePage, title, desc) {
+    function renderMenu(activePage) {
         return `
             <div style="margin-bottom:18px;">
-                <div style="margin-bottom:14px;">
-                    <h3 style="margin:0 0 6px;font-size:1.15rem;">${title}</h3>
-                    <p style="margin:0;color:var(--text-muted);font-size:.9rem;">${desc || ''}</p>
-                </div>
                 <div class="mes-apple-tabbar">
                     ${JIG_MENUS.map(menu => `
                         <button type="button" onclick="Router.navigate('${menu.id}')"

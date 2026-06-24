@@ -39,30 +39,19 @@ var LaserWipModule = (function() {
         const residualActions = `
             ${_actionBtn('수동입고', 'arrow_downward', "LaserWipModule.openResidualInput()", 'var(--accent-green)')}
             ${_actionBtn('수동출고', 'arrow_upward',   "LaserWipModule.openResidualOut()", 'var(--accent-red)')}`;
+        const currentActions = _activeTab === 'standby' ? standbyActions
+            : (_activeTab === 'after-laser' ? afterActions : residualActions);
         return `
-        <div style="margin-bottom:18px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-                <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    ${TABS.map(t => `
-                        <button type="button" id="wipTab-${t.id}"
-                            onclick="LaserWipModule.switchTab('${t.id}')"
-                            class="btn ${_activeTab === t.id ? 'btn-primary' : 'btn-outline'}"
-                            style="display:flex;align-items:center;gap:6px;${_activeTab === t.id ? '' : 'background:#fff;'}">
-                            <span class="material-symbols-outlined" style="font-size:18px;">${t.icon}</span>
-                            ${t.label}
-                        </button>`).join('')}
-                </div>
-                <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:flex-end;">
-                    ${_activeTab === 'standby'
-                        ? standbyActions
-                        : (_activeTab === 'after-laser' ? afterActions : residualActions)}
-                </div>
-            </div>
+        <div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
+            ${currentActions}
         </div>`;
     }
     function render(container) {
+        const activePageId = _activeTab === 'standby' ? 'laser-wip-standby'
+            : (_activeTab === 'after-laser' ? 'laser-wip-after' : 'laser-wip-residual');
         container.innerHTML = `
-        <div style="padding:20px;">
+        <div class="fade-in-up">
+            ${LaserProcessUI.renderSection(activePageId)}
             <div id="wipTabNav">${_tabNav()}</div>
             <div id="wipTabContent"></div>
         </div>`;
@@ -72,6 +61,8 @@ var LaserWipModule = (function() {
     // ── 탭 전환 ──────────────────────────────────────────────────────────
     function switchTab(tab) {
         _activeTab = tab;
+        const container = document.getElementById('contentArea');
+        if (container) { render(container); return; }
         const navEl = document.getElementById('wipTabNav');
         if (navEl) navEl.innerHTML = _tabNav();
         _renderTabContent();

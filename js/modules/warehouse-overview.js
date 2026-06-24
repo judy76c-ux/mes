@@ -1,4 +1,27 @@
 /**
+ * 자재창고 공통 네비게이션
+ */
+var WarehouseNavUI = (function () {
+    const MENUS = [
+        { id: 'warehouse-overview',  label: '자재 현황',  icon: 'warehouse'               },
+        { id: 'injection-warehouse', label: '사출 자재',  icon: 'precision_manufacturing' },
+        { id: 'paint-inventory',     label: '도료 자재',  icon: 'palette'                 }
+    ];
+    function renderSection(activePage, actionsHtml) {
+        const tabs = MENUS.map(function (m) {
+            return '<button type="button" onclick="Router.navigate(\'' + m.id + '\')" class="mes-bar-tab ' + (m.id === activePage ? 'active' : '') + '">' +
+                '<span class="material-symbols-outlined">' + m.icon + '</span>' + m.label +
+            '</button>';
+        }).join('');
+        return '<div class="mes-action-bar">' +
+            '<div class="mes-action-bar-tabs">' + tabs + '</div>' +
+            (actionsHtml ? '<div class="mes-action-bar-sep"></div><div class="mes-action-bar-btns">' + actionsHtml + '</div>' : '') +
+        '</div>';
+    }
+    return { renderSection };
+})();
+
+/**
  * 자재창고 허브 (사출 자재 + 도료 자재 통합 현황)
  */
 var WarehouseOverviewModule = (function () {
@@ -21,14 +44,9 @@ var WarehouseOverviewModule = (function () {
         container.innerHTML = `
             <div class="fade-in-up">
 
-                <!-- ── 섹션 카드 ── -->
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:28px;">
-                    ${_sectionCard('사출 자재', '사출 부품 입출고 및 재고 현황',
-                        'warehouse', 'var(--accent-blue)', '#ffffff',
-                        'injection-warehouse', injBadges)}
-                    ${_sectionCard('도료 자재', '도료 입출고 및 재고 · 유효기간 관리',
-                        'palette', '#8b5cf6', '#ffffff',
-                        'paint-inventory', paintBadges)}
+                    ${_sectionCard('사출 자재', '사출 부품 입출고 및 재고 현황', 'precision_manufacturing', '#2563eb', 'rgba(37,99,235,0.08)', 'injection-warehouse', injBadges)}
+                    ${_sectionCard('도료 자재', '도료 입출고 및 재고·유효기간 관리', 'palette', '#8b5cf6', 'rgba(139,92,246,0.08)', 'paint-inventory', paintBadges)}
                 </div>
 
                 <!-- ── 사출 자재 창고 ── -->

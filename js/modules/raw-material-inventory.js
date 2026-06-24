@@ -149,19 +149,13 @@ const RawMaterialInventoryModule = (function () {
 
         container.innerHTML = `
             <div class="fade-in-up">
-                <div class="page-header">
-                    <div class="page-actions">
-                        <button class="btn btn-primary" onclick="RawMaterialInventoryModule.openIncomingModal()">
-                            <span class="material-symbols-outlined">login</span> + 입고
-                        </button>
-                        <button class="btn btn-danger" onclick="RawMaterialInventoryModule.openOutgoingModal()">
-                            <span class="material-symbols-outlined">logout</span> - 출고
-                        </button>
-                        <button id="rawMatStockToggleBtn" class="btn btn-outline" onclick="RawMaterialInventoryModule.showCurrentStock()">
-                            ⊙ 재고 보기
-                        </button>
-                    </div>
-                </div>
+                ${InjectionNavUI.renderSection('rawmat-inv',
+                    '<button class="btn btn-primary btn-sm" onclick="RawMaterialInventoryModule.openIncomingModal()">' +
+                        '<span class="material-symbols-outlined">login</span> 입고</button>' +
+                    '<button class="btn btn-danger btn-sm" onclick="RawMaterialInventoryModule.openOutgoingModal()">' +
+                        '<span class="material-symbols-outlined">logout</span> 출고</button>' +
+                    '<button id="rawMatStockToggleBtn" class="btn btn-outline btn-sm" onclick="RawMaterialInventoryModule.showCurrentStock()">재고 보기</button>'
+                )}
 
                 <!-- 현재 재고 현황 카드 (기본 숨김) -->
                 <div class="card" id="rawMatStockSection" style="display:none; margin-bottom:20px; border-left:3px solid var(--accent-blue);">

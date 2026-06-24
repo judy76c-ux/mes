@@ -24,21 +24,7 @@ var InjectionWorkLogModule = (function() {
         } catch {}
         container.innerHTML = `
             <div class="fade-in-up">
-                <div class="iw-tab-bar">
-                    <button id="iw-tab-worklog"  class="iw-tab-btn" onclick="InjectionWorkLogModule.switchTab('worklog')">
-                        <span class="material-symbols-outlined">assignment</span> 작업일지
-                    </button>
-                    <button id="iw-tab-mold"     class="iw-tab-btn" onclick="InjectionWorkLogModule.switchTab('mold')">
-                        <span class="material-symbols-outlined">construction</span> 금형 교체 이력
-                    </button>
-                    <button id="iw-tab-rawmat"   class="iw-tab-btn" onclick="InjectionWorkLogModule.switchTab('rawmat')">
-                        <span class="material-symbols-outlined">inventory_2</span> 원재료 변경 이력
-                    </button>
-                    <button id="iw-tab-schedule" class="iw-tab-btn" onclick="InjectionWorkLogModule.switchTab('schedule')">
-                        <span class="material-symbols-outlined">calendar_month</span> 월간 스케쥴
-                    </button>
-                </div>
-
+                ${InjectionNavUI.renderSection(_activeTab)}
                 <div id="iw-tab-content"></div>
             </div>
         `;
@@ -47,9 +33,10 @@ var InjectionWorkLogModule = (function() {
 
     function switchTab(tab) {
         _activeTab = tab;
-        document.querySelectorAll('.iw-tab-btn').forEach(b => b.classList.remove('active'));
-        const btn = document.getElementById('iw-tab-' + tab);
-        if (btn) btn.classList.add('active');
+        document.querySelectorAll('.mes-bar-tab').forEach(function (btn) {
+            const onclick = btn.getAttribute('onclick') || '';
+            btn.classList.toggle('active', onclick.includes("goTab('" + tab + "')"));
+        });
         _renderTabContent();
     }
 

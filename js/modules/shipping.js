@@ -1212,94 +1212,35 @@ const ProductWarehouseModule = (function() {
     const STORE = DB.STORES.PRODUCT_INVENTORY;
 
     function render(container) {
-        const adminBtn = _isAdminUser()
-            ? `<button class="btn btn-outline btn-sm" onclick="ProductWarehouseModule.openBulkModal()"
-                style="margin-left:auto;font-size:0.78rem;display:flex;align-items:center;gap:4px;">
-                <span class="material-symbols-outlined" style="font-size:14px;">admin_panel_settings</span> 일괄 등록/수정
-               </button>`
-            : '<span style="margin-left:auto;"></span>';
+        const adminCard = _isAdminUser()
+            ? ProdAppleMenu.card({ label: '일괄 등록/수정', subtitle: '관리자 재고 보정', icon: 'admin_panel_settings', accent: '#ef4444', onClick: 'ProductWarehouseModule.openBulkModal()' })
+            : '';
 
         container.innerHTML = `
             <div class="fade-in-up">
-                <div style="display:flex;align-items:center;gap:0;border-bottom:2px solid var(--border-color);margin-bottom:16px;">
-                    <button class="pw-tab-btn" data-tab="stock"
-                        onclick="ProductWarehouseModule._switchTab('stock')"
-                        style="padding:10px 20px;border:none;border-bottom:2px solid var(--accent-blue);margin-bottom:-2px;background:none;cursor:pointer;font-size:0.9rem;font-weight:700;color:var(--accent-blue);">
-                        <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;margin-right:3px;">inventory_2</span>재고 현황
-                    </button>
-                    <button class="pw-tab-btn" data-tab="incoming"
-                        onclick="ProductWarehouseModule._switchTab('incoming')"
-                        style="padding:10px 20px;border:none;border-bottom:2px solid transparent;margin-bottom:-2px;background:none;cursor:pointer;font-size:0.9rem;font-weight:400;color:var(--text-secondary);">
-                        <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;margin-right:3px;">move_to_inbox</span>입고 이력
-                    </button>
-                    <button class="pw-tab-btn" data-tab="outgoing"
-                        onclick="ProductWarehouseModule._switchTab('outgoing')"
-                        style="padding:10px 20px;border:none;border-bottom:2px solid transparent;margin-bottom:-2px;background:none;cursor:pointer;font-size:0.9rem;font-weight:400;color:var(--text-secondary);">
-                        <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;margin-right:3px;">outbox</span>출고 이력
-                    </button>
-                    ${adminBtn}
-                </div>
-
-                <div id="pwTabStock">
-                    <div class="stat-cards" id="pwStats"></div>
-                    <div id="pwBlocks"></div>
-                </div>
-                <div id="pwTabIncoming" style="display:none;"></div>
-                <div id="pwTabOutgoing" style="display:none;"></div>
-            </div>
-        `;
-        loadData();
-        _decorateTabMenu();
-    }
-
-    function _decorateTabMenu() {
-        const root = document.querySelector('#contentArea .fade-in-up');
-        const legacyTabs = root?.firstElementChild;
-        if (!legacyTabs) return;
-        const adminCard = _isAdminUser()
-            ? `
-                <button type="button"
-                    class="mes-apple-menu-card"
-                    style="--menu-accent:#ef4444;"
-                    onclick="ProductWarehouseModule.openBulkModal()">
-                    <span class="mes-apple-menu-card-icon">
-                        <span class="material-symbols-outlined">admin_panel_settings</span>
-                    </span>
-                    <span class="mes-apple-menu-card-body">
-                        <span class="mes-apple-menu-card-title">일괄 등록/수정</span>
-                        <span class="mes-apple-menu-card-subtitle">관리자 재고 보정</span>
-                    </span>
-                </button>`
-            : '';
-
-        legacyTabs.outerHTML = `
-            <div class="mes-apple-menu-hero">
-                <div class="mes-apple-menu-head">
-                    <h3>제품창고</h3>
-                    <p>제품 재고, 입고 기록, 출고 기록을 한 화면에서 빠르게 확인합니다.</p>
-                </div>
-                <div class="mes-apple-menu-strip">
-                    <button type="button"
-                        class="mes-apple-menu-card pw-tab-btn active"
-                        style="--menu-accent:#2563eb;"
-                        data-tab="stock"
-                        onclick="ProductWarehouseModule._switchTab('stock')">
-                        <span class="mes-apple-menu-card-icon">
-                            <span class="material-symbols-outlined">inventory_2</span>
-                        </span>
-                        <span class="mes-apple-menu-card-body">
-                            <span class="mes-apple-menu-card-title">재고 현황</span>
-                            <span class="mes-apple-menu-card-subtitle">현재 보유 제품 재고</span>
-                        </span>
-                    </button>
-                    <button type="button"
-                        class="mes-apple-menu-card pw-tab-btn"
-                        style="--menu-accent:#0ea5e9;"
-                        data-tab="incoming"
-                        onclick="ProductWarehouseModule._switchTab('incoming')">
-                        <span class="mes-apple-menu-card-icon">
-                            <span class="material-symbols-outlined">move_to_inbox</span>
-                        </span>
+                <div class="mes-apple-menu-hero">
+                    <div class="mes-apple-menu-strip">
+                        <button type="button"
+                            class="mes-apple-menu-card pw-tab-btn active"
+                            style="--menu-accent:#2563eb;"
+                            data-tab="stock"
+                            onclick="ProductWarehouseModule._switchTab('stock')">
+                            <span class="mes-apple-menu-card-icon">
+                                <span class="material-symbols-outlined">inventory_2</span>
+                            </span>
+                            <span class="mes-apple-menu-card-body">
+                                <span class="mes-apple-menu-card-title">재고 현황</span>
+                                <span class="mes-apple-menu-card-subtitle">현재 보유 제품 재고</span>
+                            </span>
+                        </button>
+                        <button type="button"
+                            class="mes-apple-menu-card pw-tab-btn"
+                            style="--menu-accent:#0ea5e9;"
+                            data-tab="incoming"
+                            onclick="ProductWarehouseModule._switchTab('incoming')">
+                            <span class="mes-apple-menu-card-icon">
+                                <span class="material-symbols-outlined">move_to_inbox</span>
+                            </span>
                         <span class="mes-apple-menu-card-body">
                             <span class="mes-apple-menu-card-title">입고 이력</span>
                             <span class="mes-apple-menu-card-subtitle">제품 입고 기록</span>
@@ -1321,7 +1262,16 @@ const ProductWarehouseModule = (function() {
                     ${adminCard}
                 </div>
             </div>
+
+            <div id="pwTabStock">
+                <div class="stat-cards" id="pwStats"></div>
+                <div id="pwBlocks"></div>
+            </div>
+            <div id="pwTabIncoming" style="display:none;"></div>
+            <div id="pwTabOutgoing" style="display:none;"></div>
+        </div>
         `;
+        loadData();
     }
 
     function _switchTab(tab) {
@@ -1330,14 +1280,17 @@ const ProductWarehouseModule = (function() {
             if (panelEl) panelEl.style.display = t === tab ? '' : 'none';
         });
         document.querySelectorAll('.pw-tab-btn').forEach(btn => {
-            const active = btn.dataset.tab === tab;
-            btn.classList.toggle('active', active);
-            btn.style.fontWeight = '';
-            btn.style.color = '';
-            btn.style.borderBottom = '';
+            btn.classList.toggle('active', btn.dataset.tab === tab);
         });
         if (tab === 'incoming') _loadIncoming();
         if (tab === 'outgoing') _loadOutgoing();
+    }
+
+    function _switchTabOutside(tab) {
+        const container = document.getElementById('contentArea');
+        if (!container) return;
+        ProductWarehouseModule.render(container);
+        setTimeout(function () { _switchTab(tab); }, 50);
     }
 
     function _loadIncoming() {
@@ -1873,52 +1826,71 @@ const ProductWarehouseModule = (function() {
 
     function _showBulkModal() {
         ProductWarehouseModule._bulkRecords = [];
-        UIUtils.showModal('제품 재고 일괄 등록 및 수정', `
-            <div style="margin-bottom:10px;padding:10px 14px;background:rgba(59,130,246,0.07);
-                        border:1px solid rgba(59,130,246,0.25);border-radius:8px;font-size:0.82rem;
-                        color:var(--text-secondary);line-height:1.7;">
-                <b style="color:var(--accent-blue);">붙여넣기 방법</b><br>
-                엑셀에서 <b>차종 / 품명 / 컬러 / 재고</b> 4열을 복사(Ctrl+C) →
-                아래 입력창에 붙여넣기(Ctrl+V) → <b>미리보기</b> 클릭<br>
-                <span style="font-size:0.78rem;color:var(--text-muted);">
-                • 헤더가 있어도 됩니다: <b>차종 / 품명 / 컬러 / 재고</b><br>
-                • 컬러가 없는 예전 3열 양식(<b>차종 / 품명 / 재고</b>)도 계속 인식합니다<br>
-                • <b>-</b>는 목표 재고 0으로 인식합니다<br>
-                • 같은 <b>차종+품명+컬러</b>가 중복되면 저장할 수 없습니다<br>
-                • 저장 시 기존 제품창고 재고를 모두 삭제하고, 붙여넣은 목록으로 새로 등록합니다
-                </span>
-            </div>
-            <div style="margin-bottom:10px;padding:8px 10px;background:var(--bg-secondary);border-radius:6px;
-                        font-family:Consolas,monospace;font-size:0.78rem;line-height:1.45;color:var(--text-secondary);">
-                차종&nbsp;&nbsp;&nbsp;&nbsp;품명&nbsp;&nbsp;&nbsp;&nbsp;컬러&nbsp;&nbsp;&nbsp;&nbsp;재고<br>
-                GOLF-7&nbsp;&nbsp;&nbsp;&nbsp;KNOB- DOOR [DYS (LASER)]&nbsp;&nbsp;&nbsp;&nbsp;DYS&nbsp;&nbsp;&nbsp;&nbsp;1,500<br>
-                A3&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;KNOB [DOOR LOW] 6PS 레이저인쇄&nbsp;&nbsp;&nbsp;&nbsp;6PS&nbsp;&nbsp;&nbsp;&nbsp;1,000<br>
-                T1XX&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;PARK&nbsp;&nbsp;&nbsp;&nbsp;BK&nbsp;&nbsp;&nbsp;&nbsp;-
-            </div>
-            <div class="form-row" style="margin-bottom:12px;">
-                <div class="form-group">
-                    <label class="form-label">기준일자</label>
-                    <input type="date" class="form-input" id="bulkInvDate" value="${UIUtils.today()}">
+        const container = document.getElementById('contentArea');
+        if (!container) return;
+        container.innerHTML = `
+            <div class="fade-in-up">
+                <div class="mes-apple-menu-hero">
+                    ${ProdAppleMenu.strip([
+                        { label: '재고 현황',    icon: 'inventory_2',         subtitle: '현재 재고 조회',   accent: '#2563eb', active: false, onClick: "ProductWarehouseModule.render(document.getElementById('contentArea'))" },
+                        { label: '입고 기록',    icon: 'login',               subtitle: '입고 이력 조회',   accent: '#10b981', active: false, onClick: "ProductWarehouseModule._switchTabOutside('incoming')" },
+                        { label: '출고 기록',    icon: 'logout',              subtitle: '출고 이력 조회',   accent: '#f59e0b', active: false, onClick: "ProductWarehouseModule._switchTabOutside('outgoing')" },
+                        { label: '일괄 등록/수정', icon: 'admin_panel_settings', subtitle: '관리자 재고 보정', accent: '#ef4444', active: true,  onClick: 'ProductWarehouseModule.openBulkModal()' }
+                    ])}
                 </div>
-                <div class="form-group" style="align-self:flex-end;">
-                    <button class="btn btn-outline" onclick="ProductWarehouseModule._bulkParse()">
-                        <span class="material-symbols-outlined">preview</span> 미리보기
-                    </button>
+                <div class="card" style="margin-top:16px;">
+                    <div class="card-body">
+                        <div style="margin-bottom:10px;padding:10px 14px;background:rgba(59,130,246,0.07);
+                                    border:1px solid rgba(59,130,246,0.25);border-radius:8px;font-size:0.82rem;
+                                    color:var(--text-secondary);line-height:1.7;">
+                            <b style="color:var(--accent-blue);">붙여넣기 방법</b><br>
+                            엑셀에서 <b>차종 / 품명 / 컬러 / 재고</b> 4열을 복사(Ctrl+C) →
+                            아래 입력창에 붙여넣기(Ctrl+V) → <b>미리보기</b> 클릭<br>
+                            <span style="font-size:0.78rem;color:var(--text-muted);">
+                            • 헤더가 있어도 됩니다: <b>차종 / 품명 / 컬러 / 재고</b><br>
+                            • 컬러가 없는 예전 3열 양식(<b>차종 / 품명 / 재고</b>)도 계속 인식합니다<br>
+                            • <b>-</b>는 목표 재고 0으로 인식합니다<br>
+                            • 같은 <b>차종+품명+컬러</b>가 중복되면 저장할 수 없습니다<br>
+                            • 저장 시 기존 제품창고 재고를 모두 삭제하고, 붙여넣은 목록으로 새로 등록합니다
+                            </span>
+                        </div>
+                        <div style="margin-bottom:10px;padding:8px 10px;background:var(--bg-secondary);border-radius:6px;
+                                    font-family:Consolas,monospace;font-size:0.78rem;line-height:1.45;color:var(--text-secondary);">
+                            차종&nbsp;&nbsp;&nbsp;&nbsp;품명&nbsp;&nbsp;&nbsp;&nbsp;컬러&nbsp;&nbsp;&nbsp;&nbsp;재고<br>
+                            GOLF-7&nbsp;&nbsp;&nbsp;&nbsp;KNOB- DOOR [DYS (LASER)]&nbsp;&nbsp;&nbsp;&nbsp;DYS&nbsp;&nbsp;&nbsp;&nbsp;1,500<br>
+                            A3&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;KNOB [DOOR LOW] 6PS 레이저인쇄&nbsp;&nbsp;&nbsp;&nbsp;6PS&nbsp;&nbsp;&nbsp;&nbsp;1,000<br>
+                            T1XX&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;PARK&nbsp;&nbsp;&nbsp;&nbsp;BK&nbsp;&nbsp;&nbsp;&nbsp;-
+                        </div>
+                        <div class="form-row" style="margin-bottom:12px;">
+                            <div class="form-group">
+                                <label class="form-label">기준일자</label>
+                                <input type="date" class="form-input" id="bulkInvDate" value="${UIUtils.today()}">
+                            </div>
+                            <div class="form-group" style="align-self:flex-end;">
+                                <button class="btn btn-outline" onclick="ProductWarehouseModule._bulkParse()">
+                                    <span class="material-symbols-outlined">preview</span> 미리보기
+                                </button>
+                            </div>
+                        </div>
+                        <textarea id="bulkPasteArea" class="form-textarea"
+                            placeholder="엑셀에서 복사한 내용을 여기에 붙여넣으세요 (Ctrl+V)"
+                            style="height:180px;font-family:monospace;font-size:0.78rem;resize:vertical;"
+                            oninput="document.getElementById('bulkPreviewWrap').innerHTML='';
+                                     var s=document.getElementById('bulkSaveBtn');if(s)s.style.display='none';"></textarea>
+                        <div id="bulkPreviewWrap" style="margin-top:12px;"></div>
+                        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+                            <button class="btn btn-secondary"
+                                onclick="ProductWarehouseModule.render(document.getElementById('contentArea'))">
+                                취소
+                            </button>
+                            <button class="btn btn-primary" id="bulkSaveBtn" style="display:none;"
+                                onclick="ProductWarehouseModule._bulkSave()">
+                                <span class="material-symbols-outlined">save</span> 전체 교체 저장
+                            </button>
+                        </div>
+                    </div>
                 </div>
-            </div>
-            <textarea id="bulkPasteArea" class="form-textarea"
-                placeholder="엑셀에서 복사한 내용을 여기에 붙여넣으세요 (Ctrl+V)"
-                style="height:180px;font-family:monospace;font-size:0.78rem;resize:vertical;"
-                oninput="document.getElementById('bulkPreviewWrap').innerHTML='';
-                         var s=document.getElementById('bulkSaveBtn');if(s)s.style.display='none';"></textarea>
-            <div id="bulkPreviewWrap" style="margin-top:12px;"></div>
-        `, `
-            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" id="bulkSaveBtn" style="display:none;"
-                onclick="ProductWarehouseModule._bulkSave()">
-                <span class="material-symbols-outlined">save</span> 전체 교체 저장
-            </button>
-        `, 'lg');
+            </div>`;
     }
 
     // 엑셀 텍스트 파싱
@@ -2343,6 +2315,7 @@ const ProductWarehouseModule = (function() {
         render,
         loadData,
         _switchTab,
+        _switchTabOutside,
         _loadIncoming,
         _loadOutgoing,
         _showHistory,

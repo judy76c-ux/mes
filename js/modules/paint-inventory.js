@@ -65,32 +65,12 @@ const PaintInventoryModule = (function() {
     function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
-                <div class="page-header">
-                    <div class="page-actions" style="display:flex;align-items:center;gap:8px;width:100%;">
-                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                            <button class="btn btn-primary" onclick="PaintInventoryModule.openIncomingModal()">
-                                <span class="material-symbols-outlined">login</span> 도료 입고
-                            </button>
-                            <button class="btn btn-danger" onclick="PaintInventoryModule.openOutgoingModal()">
-                                <span class="material-symbols-outlined">logout</span> 도료 출고
-                            </button>
-                            <button class="btn btn-outline"
-                                onclick="PaintInventoryModule.openBulkModal()"
-                                title="관리자만 도료 창고 재고를 일괄 등록 및 전체 교체할 수 있습니다.">
-                                <span class="material-symbols-outlined">admin_panel_settings</span> 일괄 등록 및 수정
-                            </button>
-                        </div>
-                        <div style="display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end;">
-                            <button class="btn btn-outline" onclick="PaintInventoryModule.openTemperatureStandard()"
-                                title="도료 보관창고 온도관리 기준서를 확인합니다.">
-                                <span class="material-symbols-outlined">device_thermostat</span> 온도관리 기준서
-                            </button>
-                            <button class="btn btn-outline" onclick="Router.navigate('paint-layout')"
-                                title="도료 보관 창고 배치 레이아웃을 시각적으로 편집합니다.">
-                                <span class="material-symbols-outlined">map</span> 레이아웃
-                            </button>
-                        </div>
-                    </div>
+                <div style="display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap;margin-bottom:14px;">
+                    <button class="btn btn-primary btn-sm" onclick="PaintInventoryModule.openIncomingModal()"><span class="material-symbols-outlined">login</span> 도료 입고</button>
+                    <button class="btn btn-danger btn-sm" onclick="PaintInventoryModule.openOutgoingModal()"><span class="material-symbols-outlined">logout</span> 도료 출고</button>
+                    <button class="btn btn-outline btn-sm" onclick="PaintInventoryModule.openBulkModal()"><span class="material-symbols-outlined">admin_panel_settings</span> 일괄 수정</button>
+                    <button class="btn btn-outline btn-sm" onclick="PaintInventoryModule.openTemperatureStandard()"><span class="material-symbols-outlined">device_thermostat</span> 온도 기준</button>
+                    <button class="btn btn-outline btn-sm" onclick="Router.navigate('paint-layout')"><span class="material-symbols-outlined">map</span> 레이아웃</button>
                 </div>
 
                 <!-- 도료 창고 입고 대기품 섹션 -->
