@@ -95,6 +95,7 @@ $FrontendItems = @(
 
 $ApiItems = @(
     "api-server/server.js",
+    "api-server/notify-routes.js",
     "api-server/package.json",
     "api-server/Dockerfile"
 )
