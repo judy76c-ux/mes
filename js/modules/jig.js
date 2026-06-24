@@ -75,13 +75,12 @@ var JigModule = (function () {
                     <h3 style="margin:0 0 6px;font-size:1.15rem;">${title}</h3>
                     <p style="margin:0;color:var(--text-muted);font-size:.9rem;">${desc || ''}</p>
                 </div>
-                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                <div class="mes-apple-tabbar">
                     ${JIG_MENUS.map(menu => `
                         <button type="button" onclick="Router.navigate('${menu.id}')"
-                            class="btn ${menu.id === activePage ? 'btn-primary' : 'btn-outline'}"
-                            style="display:flex;align-items:center;gap:6px;${menu.id === activePage ? '' : 'background:#fff;'}">
-                            <span class="material-symbols-outlined" style="font-size:18px;">${menu.icon}</span>
-                            ${menu.label}
+                            class="mes-apple-tab ${menu.id === activePage ? 'active' : ''}">
+                            <span class="material-symbols-outlined">${menu.icon}</span>
+                            <span class="mes-apple-tab-label">${menu.label}</span>
                         </button>
                     `).join('')}
                 </div>

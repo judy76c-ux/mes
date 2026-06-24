@@ -38,6 +38,40 @@ const ProdUtils = {
     }
 };
 
+const ProdAppleMenu = {
+    card({ label, icon, subtitle = '', active = false, onClick = '', accent = '#2563eb' }) {
+        return `
+            <button type="button"
+                class="mes-apple-menu-card${active ? ' active' : ''}"
+                style="--menu-accent:${accent};"
+                ${onClick ? `onclick="${onClick}"` : ''}
+            >
+                <span class="mes-apple-menu-card-icon">
+                    <span class="material-symbols-outlined">${icon}</span>
+                </span>
+                <span class="mes-apple-menu-card-body">
+                    <span class="mes-apple-menu-card-title">${label}</span>
+                    ${subtitle ? `<span class="mes-apple-menu-card-subtitle">${subtitle}</span>` : ''}
+                </span>
+            </button>
+        `;
+    },
+    strip(items) {
+        return `<div class="mes-apple-menu-strip">${items.map(item => ProdAppleMenu.card(item)).join('')}</div>`;
+    },
+    hero(title, desc, items) {
+        return `
+            <div class="mes-apple-menu-hero">
+                <div class="mes-apple-menu-head">
+                    <h3>${title}</h3>
+                    <p>${desc}</p>
+                </div>
+                ${ProdAppleMenu.strip(items)}
+            </div>
+        `;
+    }
+};
+
 /**
  * 0) 제조 관리 표준 (ProdStandardsModule)
  * 공정별 탭 + 차종/품목별 파라미터 값 입력
@@ -4294,6 +4328,85 @@ var ProdStandardsModule = (function() {
         return n ? `${n} B` : '-';
     }
 
+    let _paintTdsFilterState = { spec: '전체', supplier: '', missing: false };
+
+    function _paintTdsSpecLabel(spec) {
+        const raw = String(spec || '').trim();
+        return raw || '공용';
+    }
+
+    function _paintTdsSpecMeta(spec) {
+        const label = _paintTdsSpecLabel(spec);
+        const key = label.toLowerCase();
+        if (key === 'primer') return { color: '#2563eb', bg: '#dbeafe' };
+        if (key === 'color') return { color: '#7c3aed', bg: '#ede9fe' };
+        if (key === 'clear') return { color: '#0891b2', bg: '#cffafe' };
+        if (label === '공용') return { color: '#334155', bg: '#e2e8f0' };
+        return { color: '#6b7280', bg: '#f3f4f6' };
+    }
+
+    function _paintTdsSpecOptions(materials) {
+        const seen = new Set();
+        const list = ['전체'];
+        materials.forEach(mat => {
+            const label = _paintTdsSpecLabel(mat && mat.paintSpec);
+            if (seen.has(label)) return;
+            seen.add(label);
+            list.push(label);
+        });
+        return list;
+    }
+
+    function _paintTdsSpecButtonsHtml(materials) {
+        return _paintTdsSpecOptions(materials).map(spec => {
+            const active = _paintTdsFilterState.spec === spec;
+            const meta = _paintTdsSpecMeta(spec);
+            const borderColor = active ? meta.color : 'var(--border-color)';
+            const bg = active ? meta.bg : 'var(--bg-secondary)';
+            const color = active ? meta.color : 'var(--text-primary)';
+            return `
+                <button class="btn btn-sm" type="button" data-ptds-spec="${_esc(spec)}"
+                    onclick="ProdStandardsModule._setPaintTdsSpecFilter('${_jsArg(spec)}')"
+                    style="font-size:.76rem;border-color:${borderColor};background:${bg};color:${color};font-weight:${active ? '800' : '600'};">
+                    ${_esc(spec)}
+                </button>
+            `;
+        }).join('');
+    }
+
+    function _paintTdsFilterMaterials(materials, docs) {
+        const linkedMaterialIds = new Set((docs || []).map(d => d.materialId).filter(Boolean));
+        return (materials || []).filter(mat => {
+            const specLabel = _paintTdsSpecLabel(mat && mat.paintSpec);
+            const supplier = String(mat && mat.supplier || '').trim();
+            const hasDoc = !!(mat && mat.id && linkedMaterialIds.has(mat.id));
+            const specOk = _paintTdsFilterState.spec === '전체' || specLabel === _paintTdsFilterState.spec;
+            const supplierOk = !_paintTdsFilterState.supplier || supplier === _paintTdsFilterState.supplier;
+            const missingOk = !_paintTdsFilterState.missing || !hasDoc;
+            return specOk && supplierOk && missingOk;
+        });
+    }
+
+    function _setPaintTdsSpecFilter(spec) {
+        _paintTdsFilterState.spec = spec || '전체';
+        _renderPaintTdsTable();
+    }
+
+    function _setPaintTdsSupplierFilter(value) {
+        _paintTdsFilterState.supplier = value || '';
+        _renderPaintTdsTable();
+    }
+
+    function _togglePaintTdsMissingFilter(checked) {
+        _paintTdsFilterState.missing = !!checked;
+        _renderPaintTdsTable();
+    }
+
+    function _resetPaintTdsFilter() {
+        _paintTdsFilterState = { spec: '전체', supplier: '', missing: false };
+        _renderPaintTdsTable();
+    }
+
     function _paintTdsDocListHtml(docs) {
         if (!docs.length) {
             return `
@@ -4336,7 +4449,11 @@ var ProdStandardsModule = (function() {
         const materials = _paintMainMaterials();
         const docs = _paintTdsRecords();
         const linkedMaterialIds = new Set(docs.map(d => d.materialId).filter(Boolean));
-        const supplierGroups = materials.reduce((acc, mat) => {
+        const registeredCount = materials.filter(mat => mat && mat.id && linkedMaterialIds.has(mat.id)).length;
+        const missingCount = Math.max(0, materials.length - registeredCount);
+        const supplierOptions = Array.from(new Set(materials.map(mat => String(mat.supplier || '제조사 미지정').trim() || '제조사 미지정'))).sort((a, b) => a.localeCompare(b, 'ko'));
+        const filteredMaterials = _paintTdsFilterMaterials(materials, docs);
+        const supplierGroups = filteredMaterials.reduce((acc, mat) => {
             const supplier = String(mat.supplier || '제조사 미지정').trim() || '제조사 미지정';
             if (!acc[supplier]) acc[supplier] = [];
             acc[supplier].push(mat);
@@ -4355,19 +4472,66 @@ var ProdStandardsModule = (function() {
                         도료 기초 정보의 <strong>주제</strong> 도료만 표시합니다. 도료사가 배포한 TDS 원본 파일을 도료별로 업로드하세요.
                     </div>
                 </div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    <span style="display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid var(--border-color);border-radius:999px;background:var(--bg-secondary);font-size:.78rem;font-weight:800;">
-                        주제 ${materials.length}개
-                    </span>
-                    <span style="display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid var(--border-color);border-radius:999px;background:var(--bg-secondary);font-size:.78rem;font-weight:800;color:var(--accent-blue);">
-                        TDS ${docs.length}건
-                    </span>
+            </div>
+            <div class="card" style="margin-bottom:10px;">
+                <div class="card-body" style="padding:10px 14px;">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                        <span style="font-size:.78rem;font-weight:700;color:var(--text-muted);">TDS 등록 현황</span>
+                        <span style="display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--border-color);border-radius:999px;background:var(--bg-secondary);font-size:.76rem;font-weight:800;">
+                            주제 ${materials.length}개
+                        </span>
+                        <span style="display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid #bfdbfe;border-radius:999px;background:#eff6ff;font-size:.76rem;font-weight:800;color:#2563eb;">
+                            첨부 ${registeredCount}개
+                        </span>
+                        <span style="display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid #fecaca;border-radius:999px;background:#fef2f2;font-size:.76rem;font-weight:800;color:#dc2626;">
+                            미등록 ${missingCount}개
+                        </span>
+                        <div style="margin-left:auto;display:flex;gap:12px;align-items:center;flex-shrink:0;">
+                            <div style="text-align:center;">
+                                <div style="font-size:1.1rem;font-weight:900;">${materials.length}</div>
+                                <div style="font-size:.68rem;color:var(--text-muted);">전체 주제</div>
+                            </div>
+                            <div style="text-align:center;">
+                                <div style="font-size:1.1rem;font-weight:900;color:#059669;">${docs.length}</div>
+                                <div style="font-size:.68rem;color:#059669;">업로드 파일</div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
-            <div style="margin-bottom:14px;padding:12px 14px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);color:var(--text-muted);font-size:13px;">
-                ${cfg.desc}
+            <div class="card" style="margin-bottom:10px;">
+                <div class="card-body" style="padding:10px 14px;">
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin-bottom:6px;">
+                        <span style="font-size:.72rem;color:var(--text-muted);margin-right:2px;white-space:nowrap;">사양 구분</span>
+                        ${_paintTdsSpecButtonsHtml(materials)}
+                        <label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-size:.78rem;padding:5px 10px;border-radius:6px;flex-shrink:0;margin-left:8px;border:1px solid ${_paintTdsFilterState.missing ? '#dc2626' : 'var(--border-color)'};background:${_paintTdsFilterState.missing ? '#dc262611' : 'var(--bg-secondary)'};color:${_paintTdsFilterState.missing ? '#dc2626' : 'var(--text-primary)'};">
+                            <input type="checkbox" ${_paintTdsFilterState.missing ? 'checked' : ''} onchange="ProdStandardsModule._togglePaintTdsMissingFilter(this.checked)" style="accent-color:#dc2626;">
+                            미등록만
+                        </label>
+                        <button class="btn btn-sm btn-outline" type="button" onclick="ProdStandardsModule._resetPaintTdsFilter()" style="font-size:.76rem;flex-shrink:0;">초기화</button>
+                    </div>
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
+                        <span style="font-size:.72rem;color:var(--text-muted);margin-right:2px;white-space:nowrap;">제조사</span>
+                        <div style="margin-left:auto;min-width:170px;">
+                            <select class="form-control" style="font-size:.8rem;" onchange="ProdStandardsModule._setPaintTdsSupplierFilter(this.value)">
+                                <option value="">전체 제조사</option>
+                                ${supplierOptions.map(supplier => `<option value="${_esc(supplier)}" ${_paintTdsFilterState.supplier === supplier ? 'selected' : ''}>${_esc(supplier)}</option>`).join('')}
+                            </select>
+                        </div>
+                    </div>
+                </div>
             </div>
             ${materials.length ? `
+                <div class="card">
+                    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+                        <h4 style="margin:0;font-size:1rem;">도장 사양서(TDS) 등록대장
+                            <span style="color:var(--text-muted);font-size:.8rem;margin-left:6px;">표시 ${filteredMaterials.length} / 전체 ${materials.length}개</span>
+                        </h4>
+                        <span style="font-size:.75rem;background:#eff6ff;border:1px solid #bfdbfe;border-radius:3px;padding:2px 8px;color:#1d4ed8;">
+                            파일 셀 안 드래그 업로드 가능
+                        </span>
+                    </div>
+                    <div class="card-body" style="padding:12px;">
                 <div style="display:flex;flex-direction:column;gap:16px;">
                     ${supplierNames.map((supplierName) => {
                         const groupRows = supplierGroups[supplierName] || [];
@@ -4432,11 +4596,13 @@ var ProdStandardsModule = (function() {
                         `;
                     }).join('')}
                 </div>
+                    </div>
+                </div>
             ` : `
                 <div style="text-align:center;padding:44px 20px;color:var(--text-muted);">
                     <span class="material-symbols-outlined" style="font-size:44px;display:block;margin-bottom:10px;opacity:.35;">palette</span>
-                    <div style="font-weight:800;margin-bottom:6px;">도료 기초 정보에 등록된 주제 도료가 없습니다</div>
-                    <div style="font-size:13px;">관리/설정 &gt; 도료 관리에서 도료 구분을 <strong>주제</strong>로 등록하면 이 목록에 표시됩니다.</div>
+                    <div style="font-weight:800;margin-bottom:6px;">표시할 TDS 대상이 없습니다</div>
+                    <div style="font-size:13px;">필터 조건에 맞는 주제 도료가 없거나, 도료 기초 정보에 주제 도료가 아직 등록되지 않았습니다.</div>
                 </div>
             `}
         `;
@@ -10730,6 +10896,10 @@ window.addEventListener('load', function() {
         exportStandardDoc,
         openStandardPrintPage,
         toggleStandardMergeView,
+        _setPaintTdsSpecFilter,
+        _setPaintTdsSupplierFilter,
+        _togglePaintTdsMissingFilter,
+        _resetPaintTdsFilter,
         openPaintTdsUpload,
         _paintTdsDragOver,
         _paintTdsDragLeave,
@@ -14946,24 +15116,21 @@ var ProdSubMaterialsModule = (function() {
             'psmTable',
             headers
         );
+        const filterBar = container.querySelector('.filter-bar');
+        if (filterBar) {
+            filterBar.insertAdjacentHTML('beforebegin', ProdAppleMenu.hero(
+                '부자재 관리',
+                '부자재 입고 기록과 공정별 소모자재 종류를 같은 화면 흐름으로 관리합니다.',
+                [
+                    { label: '부자재 현황', icon: 'inventory', subtitle: '입고 이력 조회', active: true, onClick: 'ProdSubMaterialsModule.search()', accent: '#ef4444' },
+                    { label: '소모자재 종류', icon: 'list_alt', subtitle: '공정별 종류 정의', onClick: 'ProdSubMaterialsModule.openTypeModal()', accent: '#2563eb' },
+                    { label: '입고 등록', icon: 'add_circle', subtitle: '새 입고 기록 추가', onClick: 'ProdSubMaterialsModule.openAddModal()', accent: '#059669' },
+                    { label: '내보내기', icon: 'download', subtitle: 'CSV 저장', onClick: 'ProdSubMaterialsModule.exportData()', accent: '#7c3aed' }
+                ]
+            ));
+        }
         const actions = container.querySelector('.page-actions');
-        if (actions) actions.innerHTML = `
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;flex-wrap:wrap;">
-                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                    <button class="btn btn-outline" onclick="ProdSubMaterialsModule.openTypeModal()">
-                        <span class="material-symbols-outlined">list_alt</span> 소모자재 종류
-                    </button>
-                    <button class="btn btn-primary" onclick="ProdSubMaterialsModule.openAddModal()">
-                        <span class="material-symbols-outlined">add</span> 입고 등록
-                    </button>
-                </div>
-                <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap;">
-                    <button class="btn btn-outline" onclick="ProdSubMaterialsModule.exportData()">
-                        <span class="material-symbols-outlined">download</span> 내보내기
-                    </button>
-                </div>
-            </div>
-        `;
+        if (actions) actions.innerHTML = '';
         _renderTypeMasterSection(container);
         search();
     }
@@ -15652,37 +15819,30 @@ var ProdQualityModule = (function() {
         }
     }
 
+    function _qualityMenuTab(label, icon, active, onClick) {
+        return `
+            <button type="button" onclick="${onClick}" class="mes-apple-tab ${active ? 'active' : ''}">
+                <span class="material-symbols-outlined">${icon}</span>
+                <span class="mes-apple-tab-label">${label}</span>
+            </button>
+        `;
+    }
+
     function render(container) {
         _rootContainer = container;
         container.innerHTML = `
             <div class="fade-in-up">
+                <div class="mes-apple-tabbar" style="margin-bottom:18px;">
+                    ${_qualityMenuTab('기준 양식 발행', 'edit_document', true, "ProdQualityModule.openAddModal()")}
+                    ${_qualityMenuTab('초중종물 관리 기준서', 'description', false, "ProdQualityModule.openQualityStandardPage()")}
+                    ${_qualityMenuTab('색차/광택 이력', 'monitoring', false, "ProdQualityModule.openMeasureHistory('colorGloss')")}
+                    ${_qualityMenuTab('도막 이력', 'layers', false, "ProdQualityModule.openMeasureHistory('film')")}
+                    ${_qualityMenuTab('품목별 항목 기준', 'rule', false, "ProdQualityModule.openStandardsPage()")}
+                    ${_qualityMenuTab('프레셋 관리', 'bookmarks', false, "ProdQualityModule.openPresetMgmtModal()")}
+                    ${_qualityMenuTab('초중종 관리 항목', 'list_alt', false, "ProdQualityModule.openItemListModal()")}
+                </div>
                 <div class="page-header">
-                    <div class="page-actions" style="width:100%;justify-content:space-between;gap:12px;">
-                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                            <button class="btn btn-primary" onclick="ProdQualityModule.openAddModal()">
-                                <span class="material-symbols-outlined">edit_document</span> 기준 양식 발행
-                            </button>
-                            <button class="btn btn-outline" onclick="ProdQualityModule.openQualityStandardPage()">
-                                <span class="material-symbols-outlined">description</span> 초중종물 관리 기준서
-                            </button>
-                            <button class="btn btn-outline" onclick="ProdQualityModule.openMeasureHistory('colorGloss')">
-                                <span class="material-symbols-outlined">monitoring</span> 색차/광택 이력
-                            </button>
-                            <button class="btn btn-outline" onclick="ProdQualityModule.openMeasureHistory('film')">
-                                <span class="material-symbols-outlined">layers</span> 도막 이력
-                            </button>
-                            <button class="btn btn-outline" onclick="ProdQualityModule.openStandardsPage()">
-                                <span class="material-symbols-outlined">rule</span> 품목별 항목 기준
-                            </button>
-                        </div>
-                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
-                            <button class="btn btn-outline" onclick="ProdQualityModule.openPresetMgmtModal()">
-                                <span class="material-symbols-outlined">bookmarks</span> 프레셋 관리
-                            </button>
-                            <button class="btn btn-outline" onclick="ProdQualityModule.openItemListModal()">
-                                <span class="material-symbols-outlined">list_alt</span> 초중종 관리 항목
-                            </button>
-                        </div>
+                    <div class="page-actions" style="width:100%;justify-content:flex-end;gap:12px;">
                     </div>
                 </div>
 
@@ -20062,106 +20222,57 @@ var ProdEquipmentModule = (function() {
         { area:'작업장', item:'메인컨트롤러', method:'청소기/AIR', detail:'메인컨트롤러 내부 이물제거(감전주의)', cycle:'1년', months:[7] }
     ];
 
+    // ── 탭 메뉴 데이터 ────────────────────────────────────────
+    const _EQUIP_TABS = [
+        { key: 'dashboard',        label: '현황 요약',     icon: 'home' },
+        { key: 'general',          label: '설비 일반관리',  icon: 'build' },
+        { key: 'illumination',     label: '조도 점검',     icon: 'lightbulb' },
+        { key: 'temperature',      label: '온도 프로파일', icon: 'device_thermostat' },
+        { key: 'conveyor',         label: '컨베이어',      icon: 'speed' },
+        { key: 'maintenance',      label: '정비/청소',     icon: 'cleaning_services' },
+        { key: 'fproof',           label: 'F/PROOF',      icon: 'fact_check' },
+        { key: 'airfilter',        label: '압축에어필터',  icon: 'filter_alt' },
+        { key: 'supplyfilter',     label: '급기필터',      icon: 'air' },
+        { key: 'dryerclean',       label: '건조로 청소',   icon: 'local_fire_department' },
+        { key: 'wastewater',       label: '폐수처리',      icon: 'water_drop' },
+        { key: 'activated-carbon', label: '활성탄 교체',   icon: 'recycling' }
+    ];
+
+    function _modeTabsHtml() {
+        return _EQUIP_TABS.map(function(t) {
+            var active = _mode === t.key;
+            return '<button data-equip-tab="' + t.key + '" onclick="ProdEquipmentModule.switchMode(\'' + t.key + '\')"'
+                + ' style="display:inline-flex;flex-direction:column;align-items:center;gap:4px;'
+                + 'padding:9px 14px;border:none;cursor:pointer;border-radius:10px;'
+                + 'min-width:68px;flex-shrink:0;transition:background .18s,color .18s;'
+                + 'background:' + (active ? 'var(--accent-blue)' : 'transparent') + ';'
+                + 'color:' + (active ? '#fff' : 'var(--text-muted)') + ';'
+                + 'font-weight:' + (active ? '600' : '400') + ';">'
+                + '<span class="material-symbols-outlined" style="font-size:22px;">' + t.icon + '</span>'
+                + '<span style="font-size:0.65rem;line-height:1.2;text-align:center;white-space:nowrap;">' + t.label + '</span>'
+                + '</button>';
+        }).join('');
+    }
+
     // ── 메인 렌더 ────────────────────────────────────────────────
     function init() {}
 
     function render(container) {
         try {
             const pendingMode = sessionStorage.getItem('prodEquipmentMode');
-            if (pendingMode === 'illumination' || pendingMode === 'conveyor' || pendingMode === 'general' || pendingMode === 'temperature' || pendingMode === 'maintenance' || pendingMode === 'fproof' || pendingMode === 'airfilter' || pendingMode === 'supplyfilter' || pendingMode === 'dryerclean') {
+            const validModes = _EQUIP_TABS.map(function(t) { return t.key; });
+            if (validModes.includes(pendingMode)) {
                 _mode = pendingMode;
                 sessionStorage.removeItem('prodEquipmentMode');
             }
         } catch (e) {}
         container.innerHTML = `
         <div class="fade-in-up">
-            <!-- 메인 모드 탭 -->
-            <div style="display:flex;gap:0;margin-bottom:16px;border:1px solid var(--border-color);
-                        border-radius:8px;overflow:hidden;width:fit-content;">
-                <button id="modeTabDashboard" onclick="ProdEquipmentModule.switchMode('dashboard')"
-                    style="padding:9px 20px;border:none;cursor:pointer;font-size:0.875rem;
-                           display:flex;align-items:center;gap:6px;transition:all .15s;
-                           background:${_mode==='dashboard'?'var(--accent-blue)':'var(--bg-secondary)'};
-                           color:${_mode==='dashboard'?'#fff':'var(--text-secondary)'};font-weight:${_mode==='dashboard'?'600':'400'};">
-                    <span class="material-symbols-outlined" style="font-size:16px;">home</span> 현황 요약
-                </button>
-                <button id="modeTabGeneral" onclick="ProdEquipmentModule.switchMode('general')"
-                    style="padding:9px 20px;border:none;border-left:1px solid var(--border-color);cursor:pointer;font-size:0.875rem;
-                           display:flex;align-items:center;gap:6px;transition:all .15s;
-                           background:${_mode==='general'?'var(--accent-blue)':'var(--bg-secondary)'};
-                           color:${_mode==='general'?'#fff':'var(--text-secondary)'};font-weight:${_mode==='general'?'600':'400'};">
-                    <span class="material-symbols-outlined" style="font-size:16px;">build</span> 설비 일반관리
-                </button>
-                <button id="modeTabIllumination" onclick="ProdEquipmentModule.switchMode('illumination')"
-                    style="padding:9px 20px;border:none;border-left:1px solid var(--border-color);cursor:pointer;font-size:0.875rem;
-                           display:flex;align-items:center;gap:6px;transition:all .15s;
-                           background:${_mode==='illumination'?'var(--accent-blue)':'var(--bg-secondary)'};
-                           color:${_mode==='illumination'?'#fff':'var(--text-secondary)'};font-weight:${_mode==='illumination'?'600':'400'};">
-                    <span class="material-symbols-outlined" style="font-size:16px;">lightbulb</span> 조도 점검
-                </button>
-                <button id="modeTabTemperature" onclick="ProdEquipmentModule.switchMode('temperature')"
-                    style="padding:9px 20px;border:none;border-left:1px solid var(--border-color);cursor:pointer;font-size:0.875rem;
-                           display:flex;align-items:center;gap:6px;transition:all .15s;
-                           background:${_mode==='temperature'?'var(--accent-blue)':'var(--bg-secondary)'};
-                           color:${_mode==='temperature'?'#fff':'var(--text-secondary)'};font-weight:${_mode==='temperature'?'600':'400'};">
-                    <span class="material-symbols-outlined" style="font-size:16px;">device_thermostat</span> 온도 프로파일
-                </button>
-                <button id="modeTabConveyor" onclick="ProdEquipmentModule.switchMode('conveyor')"
-                    style="padding:9px 20px;border:none;border-left:1px solid var(--border-color);cursor:pointer;font-size:0.875rem;
-                           display:flex;align-items:center;gap:6px;transition:all .15s;
-                           background:${_mode==='conveyor'?'var(--accent-blue)':'var(--bg-secondary)'};
-                           color:${_mode==='conveyor'?'#fff':'var(--text-secondary)'};font-weight:${_mode==='conveyor'?'600':'400'};">
-                    <span class="material-symbols-outlined" style="font-size:16px;">speed</span> 컨베이어
-                </button>
-                <button id="modeTabMaintenance" onclick="ProdEquipmentModule.switchMode('maintenance')"
-                    style="padding:9px 20px;border:none;border-left:1px solid var(--border-color);cursor:pointer;font-size:0.875rem;
-                           display:flex;align-items:center;gap:6px;transition:all .15s;
-                           background:${_mode==='maintenance'?'var(--accent-blue)':'var(--bg-secondary)'};
-                           color:${_mode==='maintenance'?'#fff':'var(--text-secondary)'};font-weight:${_mode==='maintenance'?'600':'400'};">
-                    <span class="material-symbols-outlined" style="font-size:16px;">cleaning_services</span> 정비/청소
-                </button>
-                <button id="modeTabFProof" onclick="ProdEquipmentModule.switchMode('fproof')"
-                    style="padding:9px 20px;border:none;border-left:1px solid var(--border-color);cursor:pointer;font-size:0.875rem;
-                           display:flex;align-items:center;gap:6px;transition:all .15s;
-                           background:${_mode==='fproof'?'var(--accent-blue)':'var(--bg-secondary)'};
-                           color:${_mode==='fproof'?'#fff':'var(--text-secondary)'};font-weight:${_mode==='fproof'?'600':'400'};">
-                    <span class="material-symbols-outlined" style="font-size:16px;">fact_check</span> F/PROOF
-                </button>
-                <button id="modeTabAirFilter" onclick="ProdEquipmentModule.switchMode('airfilter')"
-                    style="padding:9px 20px;border:none;border-left:1px solid var(--border-color);cursor:pointer;font-size:0.875rem;
-                           display:flex;align-items:center;gap:6px;transition:all .15s;
-                           background:${_mode==='airfilter'?'var(--accent-blue)':'var(--bg-secondary)'};
-                           color:${_mode==='airfilter'?'#fff':'var(--text-secondary)'};font-weight:${_mode==='airfilter'?'600':'400'};">
-                    <span class="material-symbols-outlined" style="font-size:16px;">filter_alt</span> 압축에어필터
-                </button>
-                <button id="modeTabSupplyFilter" onclick="ProdEquipmentModule.switchMode('supplyfilter')"
-                    style="padding:9px 20px;border:none;border-left:1px solid var(--border-color);cursor:pointer;font-size:0.875rem;
-                           display:flex;align-items:center;gap:6px;transition:all .15s;
-                           background:${_mode==='supplyfilter'?'var(--accent-blue)':'var(--bg-secondary)'};
-                           color:${_mode==='supplyfilter'?'#fff':'var(--text-secondary)'};font-weight:${_mode==='supplyfilter'?'600':'400'};">
-                    <span class="material-symbols-outlined" style="font-size:16px;">air</span> 급기필터
-                </button>
-                <button id="modeTabDryerClean" onclick="ProdEquipmentModule.switchMode('dryerclean')"
-                    style="padding:9px 20px;border:none;border-left:1px solid var(--border-color);cursor:pointer;font-size:0.875rem;
-                           display:flex;align-items:center;gap:6px;transition:all .15s;
-                           background:${_mode==='dryerclean'?'var(--accent-blue)':'var(--bg-secondary)'};
-                           color:${_mode==='dryerclean'?'#fff':'var(--text-secondary)'};font-weight:${_mode==='dryerclean'?'600':'400'};">
-                    <span class="material-symbols-outlined" style="font-size:16px;">local_fire_department</span> 건조로 청소
-                </button>
-                <button id="modeTabWastewater" onclick="ProdEquipmentModule.switchMode('wastewater')"
-                    style="padding:9px 20px;border:none;border-left:1px solid var(--border-color);cursor:pointer;font-size:0.875rem;
-                           display:flex;align-items:center;gap:6px;transition:all .15s;
-                           background:${_mode==='wastewater'?'var(--accent-blue)':'var(--bg-secondary)'};
-                           color:${_mode==='wastewater'?'#fff':'var(--text-secondary)'};font-weight:${_mode==='wastewater'?'600':'400'};">
-                    <span class="material-symbols-outlined" style="font-size:16px;">water_drop</span> 폐수처리
-                </button>
-                <button id="modeTabActivatedCarbon" onclick="ProdEquipmentModule.switchMode('activated-carbon')"
-                    style="padding:9px 20px;border:none;border-left:1px solid var(--border-color);cursor:pointer;font-size:0.875rem;
-                           display:flex;align-items:center;gap:6px;transition:all .15s;
-                           background:${_mode==='activated-carbon'?'var(--accent-blue)':'var(--bg-secondary)'};
-                           color:${_mode==='activated-carbon'?'#fff':'var(--text-secondary)'};font-weight:${_mode==='activated-carbon'?'600':'400'};">
-                    <span class="material-symbols-outlined" style="font-size:16px;">recycling</span> 활성탄 교체
-                </button>
+            <!-- 메인 모드 탭 (Apple 스타일) -->
+            <div style="display:flex;gap:2px;margin-bottom:16px;
+                        background:var(--bg-secondary);border-radius:14px;padding:5px;
+                        overflow-x:auto;white-space:nowrap;scrollbar-width:none;-webkit-overflow-scrolling:touch;">
+                ${_modeTabsHtml()}
             </div>
 
             <div id="equipLineTabs" style="display:flex;gap:8px;margin-bottom:16px;"></div>
@@ -20181,25 +20292,10 @@ var ProdEquipmentModule = (function() {
 
     function switchMode(mode) {
         _mode = mode;
-        [
-            ['modeTabDashboard', 'dashboard'],
-            ['modeTabGeneral', 'general'],
-            ['modeTabIllumination', 'illumination'],
-            ['modeTabTemperature', 'temperature'],
-            ['modeTabConveyor', 'conveyor'],
-            ['modeTabMaintenance', 'maintenance'],
-            ['modeTabFProof', 'fproof'],
-            ['modeTabAirFilter', 'airfilter'],
-            ['modeTabSupplyFilter', 'supplyfilter'],
-            ['modeTabDryerClean', 'dryerclean'],
-            ['modeTabWastewater', 'wastewater'],
-            ['modeTabActivatedCarbon', 'activated-carbon']
-        ].forEach(([id, key]) => {
-            const btn = document.getElementById(id);
-            if (!btn) return;
-            const active = mode === key;
-            btn.style.background = active ? 'var(--accent-blue)' : 'var(--bg-secondary)';
-            btn.style.color = active ? '#fff' : 'var(--text-secondary)';
+        document.querySelectorAll('[data-equip-tab]').forEach(function(btn) {
+            const active = btn.dataset.equipTab === mode;
+            btn.style.background = active ? 'var(--accent-blue)' : 'transparent';
+            btn.style.color = active ? '#fff' : 'var(--text-muted)';
             btn.style.fontWeight = active ? '600' : '400';
         });
         _renderLineTabs();
@@ -24940,26 +25036,15 @@ var LimitSamplesModule = (function() {
     function render(container) {
         container.innerHTML = `
         <div class="fade-in-up">
-            <div class="page-header">
-                <div class="page-actions">
-                    <button class="btn btn-primary" onclick="LimitSamplesModule.openModal()">
-                        <span class="material-symbols-outlined">add</span>등록
-                    </button>
-                </div>
-            </div>
-
-            <div style="display:flex;gap:0;margin-bottom:16px;border:1px solid var(--border-color);border-radius:8px;overflow:hidden;width:fit-content;">
-                ${[
-                    ['master', 'verified', '마스터 대장'],
-                    ['limit', 'rule', '한도견본 대장']
-                ].map(([k, icon, label], idx) => `
-                    <button id="limitTab_${k}" onclick="LimitSamplesModule.switchTab('${k}')"
-                        style="padding:9px 20px;border:none;${idx ? 'border-left:1px solid var(--border-color);' : ''}cursor:pointer;font-size:.875rem;
-                               display:flex;align-items:center;gap:6px;background:${_tab===k?'var(--accent-blue)':'var(--bg-secondary)'};
-                               color:${_tab===k?'#fff':'var(--text-secondary)'};font-weight:${_tab===k?'700':'400'};">
-                        <span class="material-symbols-outlined" style="font-size:16px;">${icon}</span>${label}
-                    </button>`).join('')}
-            </div>
+            ${ProdAppleMenu.hero(
+                '한도 견본',
+                '마스터 대장과 한도견본 대장을 차종별로 구분해 관리합니다.',
+                [
+                    { label: '마스터 대장', icon: 'verified', subtitle: '기준 견본 목록', active: _tab === 'master', onClick: `LimitSamplesModule.switchTab('master')`, accent: '#ef4444' },
+                    { label: '한도견본 대장', icon: 'rule', subtitle: '한도 기준 견본', active: _tab === 'limit', onClick: `LimitSamplesModule.switchTab('limit')`, accent: '#2563eb' },
+                    { label: '견본 등록', icon: 'add_photo_alternate', subtitle: '신규 견본 추가', onClick: 'LimitSamplesModule.openModal()', accent: '#059669' }
+                ]
+            )}
 
             <div class="filter-bar" style="gap:10px;flex-wrap:wrap;">
                 <div class="form-group">
@@ -25251,13 +25336,16 @@ var QualityPerformanceModule = (function() {
         const y = new Date().getFullYear();
         container.innerHTML = `
         <div class="fade-in-up">
-            <div class="page-header">
-                <div class="page-actions">
-                    <button class="btn btn-outline" onclick="Router.navigate('painting-quality-performance')"><span class="material-symbols-outlined">lab_profile</span> 도장검사실적</button>
-                    <button class="btn btn-secondary" onclick="QualityPerformanceModule.openTargetModal()"><span class="material-symbols-outlined">flag</span> 목표 설정</button>
-                    <button class="btn btn-primary" onclick="QualityPerformanceModule.openRecordModal()"><span class="material-symbols-outlined">add</span> 실적 등록</button>
-                </div>
-            </div>
+            ${ProdAppleMenu.hero(
+                '품질 실적',
+                '공정, 고객, 외주 품질 실적과 목표 달성 여부, 개선대책을 같은 흐름에서 관리합니다.',
+                [
+                    { label: '품질 실적', icon: 'query_stats', subtitle: '월별 PPM 현황', active: true, onClick: 'QualityPerformanceModule.search()', accent: '#ef4444' },
+                    { label: '도장검사실적', icon: 'lab_profile', subtitle: '도장 검사 결과', onClick: `Router.navigate('painting-quality-performance')`, accent: '#2563eb' },
+                    { label: '목표 설정', icon: 'flag', subtitle: '연간 목표 관리', onClick: 'QualityPerformanceModule.openTargetModal()', accent: '#f59e0b' },
+                    { label: '실적 등록', icon: 'add_circle', subtitle: '신규 실적 추가', onClick: 'QualityPerformanceModule.openRecordModal()', accent: '#059669' }
+                ]
+            )}
             <div class="filter-bar" style="flex-wrap:wrap;gap:10px;">
                 <div class="form-group"><label class="form-label">년도</label><select class="form-select" id="qperfYear" onchange="QualityPerformanceModule.search()">${Array.from({length:5},(_,i)=>y-2+i).map(v=>`<option value="${v}" ${v===y?'selected':''}>${v}년</option>`).join('')}</select></div>
                 <div class="form-group"><label class="form-label">월</label><select class="form-select" id="qperfMonth" onchange="QualityPerformanceModule.search()"><option value="">전체</option>${Array.from({length:12},(_,i)=>i+1).map(v=>`<option value="${v}">${v}월</option>`).join('')}</select></div>
@@ -25458,13 +25546,14 @@ var ProdSpcModule = (function() {
         const today = UIUtils.today();
         container.innerHTML = `
         <div class="fade-in-up">
-            <div class="page-header">
-                <div class="page-actions">
-                    <button class="btn btn-outline" onclick="Router.navigate('prod-quality')">
-                        <span class="material-symbols-outlined">edit_document</span> 초중종물 작성
-                    </button>
-                </div>
-            </div>
+            ${ProdAppleMenu.hero(
+                'SPC 관리',
+                '초중종물 측정값을 기준으로 X-bar / R 관리도를 확인하고 이상 추세를 관리합니다.',
+                [
+                    { label: 'SPC 관리', icon: 'ssid_chart', subtitle: '통계 관리도 조회', active: true, onClick: 'ProdSpcModule.search()', accent: '#ef4444' },
+                    { label: '초중종물 작성', icon: 'edit_document', subtitle: '실측값 입력 화면', onClick: `Router.navigate('prod-quality')`, accent: '#2563eb' }
+                ]
+            )}
 
             <div class="filter-bar" style="flex-wrap:wrap;gap:10px;margin-bottom:16px;">
                 <div class="form-group">

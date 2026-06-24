@@ -55,13 +55,12 @@ var FiveSModule = (function () {
                     <h3 style="margin:0 0 6px;font-size:1.15rem;">${title}</h3>
                     <p style="margin:0;color:var(--text-muted);font-size:.9rem;">${desc || ''}</p>
                 </div>
-                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                <div class="mes-apple-tabbar">
                     ${MENUS.map(m => `
                         <button type="button" onclick="FiveSModule.switchTab('${m.id}')"
-                            class="btn ${m.id === active ? 'btn-primary' : 'btn-outline'}"
-                            style="display:flex;align-items:center;gap:6px;${m.id === active ? '' : 'background:#fff;'}">
-                            <span class="material-symbols-outlined" style="font-size:18px;">${m.icon}</span>
-                            ${m.label}
+                            class="mes-apple-tab ${m.id === active ? 'active' : ''}">
+                            <span class="material-symbols-outlined">${m.icon}</span>
+                            <span class="mes-apple-tab-label">${m.label}</span>
                         </button>
                     `).join('')}
                 </div>

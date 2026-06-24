@@ -46,7 +46,7 @@ var LaserProcessUI = (function () {
                     <h3 style="margin:0 0 6px;font-size:1.15rem;">${title}</h3>
                     <p style="margin:0;color:var(--text-muted);font-size:.9rem;">${desc || ''}</p>
                 </div>
-                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                <div class="mes-apple-tabbar">
                     ${MENUS.map(function (menu) {
                         let active = menu.id === activePage;
                         // laser-wip 탭 버튼의 active 판별: laser-wip 페이지에서 현재 탭 비교
@@ -61,10 +61,9 @@ var LaserProcessUI = (function () {
                         return `
                             <button type="button"
                                 onclick="${menu.onclick || "Router.navigate('" + menu.id + "')"}"
-                                class="btn ${active ? 'btn-primary' : 'btn-outline'}"
-                                style="display:flex;align-items:center;gap:6px;${active ? '' : 'background:#fff;'}">
-                                <span class="material-symbols-outlined" style="font-size:18px;">${menu.icon}</span>
-                                ${menu.label}
+                                class="mes-apple-tab ${active ? 'active' : ''}">
+                                <span class="material-symbols-outlined">${menu.icon}</span>
+                                <span class="mes-apple-tab-label">${menu.label}</span>
                             </button>
                         `;
                     }).join('')}

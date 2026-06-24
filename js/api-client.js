@@ -259,6 +259,21 @@ const ApiClient = (function() {
     return (getApiBase() || '') + relUrl;
   }
 
+  // 알림톡 발송: recipients = [{ phone, name, params }]
+  async function sendNotify(templateCode, recipients, templateParams) {
+    return request('POST', '/api/notify', { templateCode, recipients, templateParams: templateParams || {} });
+  }
+
+  // 알림톡 설정 확인
+  async function checkNotifyConfig() {
+    return request('GET', '/api/notify/config', undefined, 5000);
+  }
+
+  // 알림톡 연결 테스트
+  async function testNotifyConnection() {
+    return request('POST', '/api/notify/test', {}, 10000);
+  }
+
   async function deletePhoto(relUrl) {
     return request('DELETE', '/api/photos', { url: relUrl });
   }
@@ -282,6 +297,7 @@ const ApiClient = (function() {
     listNasBackups, nasBackupDownloadUrl, copyNasToLocal, restoreNasBackup,
     getSystemInfo,
     uploadPhoto, deletePhoto, photoUrl, mkdirPhotos, getPhotosStats,
+    sendNotify, checkNotifyConfig, testNotifyConnection,
     getBase
   };
 })();

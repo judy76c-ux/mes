@@ -117,6 +117,12 @@ const DashboardModule = (function() {
             <!-- 출하검사 대기 목록 -->
             <div id="dashShippingStandby"></div>
 
+            <!-- 도료 입고 대기 (물류담당자 전용) -->
+            <div id="dashPaintPending"></div>
+
+            <!-- 사출 입고 대기 / 실적 미입력 / 도료 사용 미등록 (3열 경보 섹션) -->
+            <div id="dashAlertRow" style="display:none;grid-template-columns:repeat(3,1fr);gap:10px;"></div>
+
             <!-- 점검/관리 타일 -->
             <div id="dashMonitorTiles"></div>
 
@@ -169,10 +175,213 @@ const DashboardModule = (function() {
         renderProductionTiles();
         renderManagerAlerts();
         renderShippingStandby();
+        renderPaintPending();
+        renderAlertRow();
         renderMonitorTiles();   // async
         renderImprovementTiles();
         renderBoardSection();
         renderCharts();
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       도료 입고 대기 (물류담당자/관리자 전용)
+    ══════════════════════════════════════════════════════════ */
+    function renderPaintPending() {
+        const el = document.getElementById('dashPaintPending');
+        if (!el) return;
+
+        // 담당자 권한 확인: paint-inventory 페이지 쓰기 권한 또는 admin/prod_manager/logistics_worker
+        function _canSeePaint() {
+            if (typeof AuthModule === 'undefined') return true;
+            const user = AuthModule.getCurrentUser ? AuthModule.getCurrentUser() : null;
+            if (!user) return false;
+            const roles = (user.roles || [user.role]).map(String).filter(Boolean);
+            if (roles.some(r => ['admin', 'prod_manager', 'logistics_worker'].includes(r))) return true;
+            if (typeof AuthModule.canWritePage === 'function' && AuthModule.canWritePage('paint-inventory')) return true;
+            return false;
+        }
+
+        if (!_canSeePaint()) { el.style.display = 'none'; return; }
+
+        const inspections = Storage.getAll(DB.STORES.PAINT_INCOMING_INSPECTIONS) || [];
+        const inventory   = Storage.getAll(DB.STORES.PAINT_INVENTORY) || [];
+        const materials   = Storage.getAll(DB.STORES.PAINT_MATERIALS) || [];
+
+        function _isBulkRecord(r) {
+            return r && (r.inventoryMode === 'current_stock_edit' ||
+                r.source === '도료 창고 현재 재고 설정' ||
+                r.source === '도료 창고 일괄 등록 및 설정');
+        }
+
+        const processedIds = new Set(
+            inventory.filter(i => i.sourceInspectionId && !_isBulkRecord(i)).map(i => i.sourceInspectionId)
+        );
+        const legacySet = new Set(
+            inventory.filter(i => i.type !== '출고' && !i.sourceInspectionId && !_isBulkRecord(i))
+                .map(i => `${i.materialId}||${i.lotNo}`)
+        );
+        const bulkMatIds = new Set(
+            inventory.filter(i => _isBulkRecord(i)).map(i => i.materialId)
+        );
+        function getMid(name) {
+            const m = materials.find(function(m) { return m.name === name; });
+            return m ? m.id : null;
+        }
+
+        const pending = inspections
+            .filter(function(i) {
+                if (i.verdict !== '합격' || (Number(i.incomingQty) || 0) <= 0) return false;
+                if (i.warehouseStatus === '입고취소') return false;
+                if (processedIds.has(i.id)) return false;
+                const mid = getMid(i.paintName);
+                if (mid && legacySet.has(`${mid}||${i.lotNo}`)) return false;
+                if (mid && bulkMatIds.has(mid)) return false;
+                return true;
+            })
+            .sort(function(a, b) { return (b.date || '').localeCompare(a.date || ''); });
+
+        if (!pending.length) { el.innerHTML = ''; return; }
+
+        el.innerHTML = `
+        <div style="border:1px solid var(--border-color);border-top:3px solid #0891b2;border-radius:8px;overflow:hidden;background:var(--bg-primary);">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 12px;background:#0891b20d;">
+                <div style="display:flex;align-items:center;gap:5px;font-size:.72rem;font-weight:700;color:#0891b2;letter-spacing:.04em;text-transform:uppercase;">
+                    <span class="material-symbols-outlined" style="font-size:14px;">inventory</span>
+                    도료 입고 대기
+                    <span style="background:#0891b2;color:#fff;border-radius:10px;padding:1px 7px;font-size:.68rem;">${pending.length}건</span>
+                </div>
+                <div style="display:flex;gap:4px;align-items:center;">
+                    <button onclick="DashboardModule.openNotifyModal('paint_pending',${pending.length})"
+                        style="border:1px solid #0891b2;background:none;cursor:pointer;font-size:.72rem;color:#0891b2;font-weight:600;padding:2px 8px;border-radius:5px;display:flex;align-items:center;gap:3px;">
+                        <span class="material-symbols-outlined" style="font-size:13px;">notifications</span>알림 발송
+                    </button>
+                    <button onclick="Router.navigate('paint-inventory')" style="border:none;background:none;cursor:pointer;font-size:.72rem;color:#0891b2;font-weight:600;padding:2px 6px;">도료창고 →</button>
+                </div>
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:0.78rem;">
+                <thead>
+                    <tr style="background:var(--bg-secondary);">
+                        <th style="padding:5px 10px;text-align:left;font-weight:600;color:var(--text-muted);font-size:.7rem;">검사일</th>
+                        <th style="padding:5px 8px;text-align:left;font-weight:600;color:var(--text-muted);font-size:.7rem;">도료명</th>
+                        <th style="padding:5px 8px;text-align:left;font-weight:600;color:var(--text-muted);font-size:.7rem;">LOT No.</th>
+                        <th style="padding:5px 8px;text-align:left;font-weight:600;color:var(--text-muted);font-size:.7rem;">색상</th>
+                        <th style="padding:5px 10px;text-align:right;font-weight:600;color:var(--text-muted);font-size:.7rem;">수량</th>
+                        <th style="padding:5px 10px;text-align:left;font-weight:600;color:var(--text-muted);font-size:.7rem;">공급사</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${pending.slice(0, 15).map(function(r) {
+                        return `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
+                            <td style="padding:5px 10px;white-space:nowrap;color:var(--text-muted);">${r.date || '-'}</td>
+                            <td style="padding:5px 8px;font-weight:600;">${r.paintName || '-'}</td>
+                            <td style="padding:5px 8px;font-size:.72rem;color:var(--text-muted);">${r.lotNo || '-'}</td>
+                            <td style="padding:5px 8px;font-size:.72rem;">${r.color || ''}</td>
+                            <td style="padding:5px 10px;text-align:right;font-weight:700;color:#0891b2;">${UIUtils.formatNumber(r.incomingQty || 0)}</td>
+                            <td style="padding:5px 10px;font-size:.72rem;color:var(--text-muted);">${r.supplier || ''}</td>
+                        </tr>`;
+                    }).join('')}
+                </tbody>
+            </table>
+            ${pending.length > 15 ? `<div style="padding:5px 12px;font-size:.72rem;color:var(--text-muted);border-top:1px solid var(--border-color);">외 ${pending.length - 15}건 더 있음</div>` : ''}
+        </div>`;
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       경보 3열 (사출 입고 대기 / 실적 미입력 / 도료 사용 미등록)
+    ══════════════════════════════════════════════════════════ */
+    function renderAlertRow() {
+        const el = document.getElementById('dashAlertRow');
+        if (!el) return;
+        const today = UIUtils.today();
+
+        /* ① 사출 입고 대기 */
+        const injInsp = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
+        const injInv  = Storage.getAll(DB.STORES.INJECTION_INVENTORY)   || [];
+        const inStockSet = new Set();
+        injInv.filter(i => i.type === '입고').forEach(i => {
+            if (i.lots && i.lots.length) {
+                i.lots.forEach(l => { if ((Number(l.qty)||0) > 0) inStockSet.add(`${i.partName}||${l.lotNo}`); });
+            } else if (i.lotNo && (Number(i.quantity)||0) > 0) {
+                inStockSet.add(`${i.partName}||${i.lotNo}`);
+            }
+        });
+        const injPending = [];
+        injInsp.sort((a,b) => (b.date||'').localeCompare(a.date||'')).forEach(insp => {
+            const lots = (insp.lots && insp.lots.length) ? insp.lots : [{ lotNo: insp.lotNo, qty: insp.passQty || 0 }];
+            lots.forEach(l => {
+                if ((Number(l.qty)||0) <= 0) return;
+                const k = `${insp.partName}||${l.lotNo}`;
+                if (!inStockSet.has(k)) injPending.push({ date: insp.date, carModel: insp.carModel, partName: insp.partName, color: insp.color, lotNo: l.lotNo, qty: l.qty });
+            });
+        });
+
+        /* ② 실적 미입력 (전일 이전 계획 중 작업일지 없음) */
+        const plans = Storage.getAll(DB.STORES.PRODUCTION_PLANS) || [];
+        const works = Storage.getAll(DB.STORES.PAINTING_WORK)    || [];
+        const workedPlanIds = new Set(works.map(w => w.planId).filter(Boolean));
+        const unenteredPlans = plans
+            .filter(p => p.date && p.date < today && (p.carModel || p.partName) && !workedPlanIds.has(p.id))
+            .sort((a, b) => b.date.localeCompare(a.date));
+
+        /* ③ 도료 사용 미등록 (전일 이전 작업일지 중 도료 배합 기록 없음) */
+        const mixes = (Storage.getAll(DB.STORES.PROD_CONDITIONS) || []).filter(d => d._docKind === 'paint_mix');
+        const mixedWorkIds = new Set(mixes.map(m => m.workId).filter(Boolean));
+        const paintMissing = works
+            .filter(w => w.date && w.date < today && !mixedWorkIds.has(w.id))
+            .sort((a, b) => (b.date||'').localeCompare(a.date||''));
+
+        const total = (injPending.length > 0 ? 1 : 0) + (unenteredPlans.length > 0 ? 1 : 0) + (paintMissing.length > 0 ? 1 : 0);
+        if (!total) { el.style.display = 'none'; return; }
+        el.style.display = 'grid';
+
+        /* 공통: 미니 카드 생성 헬퍼 */
+        function _alertCard(icon, iconColor, title, count, rows, nav, emptyMsg) {
+            if (!count) return `<div style="border:1px solid var(--border-color);border-radius:8px;padding:10px 12px;background:var(--bg-secondary);display:flex;align-items:center;gap:8px;color:var(--text-muted);font-size:0.82rem;">
+                <span class="material-symbols-outlined" style="font-size:16px;color:var(--accent-green);">check_circle</span>${emptyMsg}</div>`;
+            return `<div style="border:1px solid var(--border-color);border-top:3px solid ${iconColor};border-radius:8px;overflow:hidden;background:var(--bg-primary);">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 12px;background:${iconColor}0d;">
+                    <div style="display:flex;align-items:center;gap:5px;font-size:.72rem;font-weight:700;color:${iconColor};letter-spacing:.04em;text-transform:uppercase;">
+                        <span class="material-symbols-outlined" style="font-size:14px;">${icon}</span>${title}
+                        <span style="background:${iconColor};color:#fff;border-radius:10px;padding:1px 7px;font-size:.68rem;">${count}건</span>
+                    </div>
+                    <button onclick="Router.navigate('${nav}')" style="border:none;background:none;cursor:pointer;font-size:.72rem;color:${iconColor};font-weight:600;padding:2px 6px;">바로가기 →</button>
+                </div>
+                <div style="max-height:160px;overflow-y:auto;">${rows}</div>
+            </div>`;
+        }
+
+        /* 사출 입고 대기 rows */
+        const injRows = injPending.length ? `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;">` +
+            injPending.slice(0, 20).map(r => `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
+                <td style="padding:4px 10px;white-space:nowrap;color:var(--text-muted);">${r.date||'-'}</td>
+                <td style="padding:4px 8px;font-weight:600;">${r.partName||'-'}</td>
+                <td style="padding:4px 8px;font-size:0.72rem;color:var(--text-muted);">${r.carModel||''} ${r.color||''}</td>
+                <td style="padding:4px 10px;text-align:right;font-weight:700;color:#8b5cf6;">${UIUtils.formatNumber(r.qty||0)}</td>
+            </tr>`).join('') + `</table>` : '';
+
+        /* 실적 미입력 rows */
+        const unenteredRows = unenteredPlans.length ? `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;">` +
+            unenteredPlans.slice(0, 20).map(p => `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
+                <td style="padding:4px 10px;white-space:nowrap;color:var(--text-muted);">${p.date||'-'}</td>
+                <td style="padding:4px 8px;font-size:0.72rem;color:#0891b2;font-weight:600;">${p.line||''}</td>
+                <td style="padding:4px 8px;font-weight:600;">${p.carModel||''}</td>
+                <td style="padding:4px 8px;font-size:0.72rem;color:var(--text-muted);">${p.partName||''}</td>
+                <td style="padding:4px 10px;text-align:right;font-weight:700;color:#f59e0b;">${UIUtils.formatNumber(p.planQty||0)}</td>
+            </tr>`).join('') + `</table>` : '';
+
+        /* 도료 사용 미등록 rows */
+        const paintRows = paintMissing.length ? `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;">` +
+            paintMissing.slice(0, 20).map(w => `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
+                <td style="padding:4px 10px;white-space:nowrap;color:var(--text-muted);">${(w.date||'-').split(' ')[0]}</td>
+                <td style="padding:4px 8px;font-size:0.72rem;color:#0891b2;font-weight:600;">${w.line||''}</td>
+                <td style="padding:4px 8px;font-weight:600;">${w.carModel||''}</td>
+                <td style="padding:4px 8px;font-size:0.72rem;color:var(--text-muted);">${w.partName||''}</td>
+            </tr>`).join('') + `</table>` : '';
+
+        el.innerHTML =
+            _alertCard('precision_manufacturing', '#8b5cf6', '사출 입고 대기', injPending.length, injRows, 'warehouse-overview', '사출 입고 대기 없음') +
+            _alertCard('edit_note',               '#f59e0b', '실적 미입력',    unenteredPlans.length, unenteredRows, 'painting-work', '미입력 계획 없음') +
+            _alertCard('science',                 '#ef4444', '도료 사용 미등록', paintMissing.length, paintRows, 'paint-mix', '도료 사용 모두 등록됨');
     }
 
     /* ══════════════════════════════════════════════════════════
@@ -917,12 +1126,91 @@ const DashboardModule = (function() {
         UIUtils.toast('대시보드를 새로고침했습니다.', 'success');
     }
 
+    /* ══════════════════════════════════════════════════════════
+       텔레그램 알림 발송 모달
+    ══════════════════════════════════════════════════════════ */
+    function openNotifyModal(templateKey, count) {
+        const LABELS = {
+            paint_pending:     '도료 입고 대기',
+            inj_pending:       '사출 입고 대기',
+            work_missing:      '실적 미입력',
+            paint_mix_missing: '도료 사용 미등록'
+        };
+        const label = LABELS[templateKey] || templateKey;
+
+        // Chat ID가 있는 사용자만 표시
+        const allUsers = (typeof AuthModule !== 'undefined' && AuthModule.getUsers)
+            ? AuthModule.getUsers().filter(function(u) { return u.active !== false && u.chatId; }) : [];
+        const noChatUsers = (typeof AuthModule !== 'undefined' && AuthModule.getUsers)
+            ? AuthModule.getUsers().filter(function(u) { return u.active !== false && !u.chatId; }).length : 0;
+
+        const userRows = allUsers.map(function(u) {
+            return `<label style="display:flex;align-items:center;gap:8px;padding:7px 0;cursor:pointer;border-bottom:1px solid var(--border-color);">
+                <input type="checkbox" class="notify-recipient" value="${u.id}" checked style="width:15px;height:15px;cursor:pointer;">
+                <span class="material-symbols-outlined" style="font-size:18px;color:#229ED9;">send</span>
+                <span style="font-weight:600;min-width:80px;">${u.displayName || u.username}</span>
+                <span style="font-size:.78rem;color:var(--text-muted);">Chat ID: ${u.chatId}</span>
+                <span style="font-size:.72rem;color:var(--text-muted);margin-left:auto;">${(u.roles||[u.role||'']).join(', ')}</span>
+            </label>`;
+        }).join('');
+
+        UIUtils.showModal(`텔레그램 알림 발송 — ${label}`,
+            `<div style="min-width:360px;max-width:500px;">
+                <div style="background:#229ED915;border:1px solid #229ED940;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:.85rem;display:flex;align-items:center;gap:8px;">
+                    <span class="material-symbols-outlined" style="font-size:18px;color:#229ED9;">send</span>
+                    <div><strong>${label}</strong> ${count}건 발생 알림을<br>텔레그램으로 전송합니다.</div>
+                </div>
+                <div style="font-size:.8rem;font-weight:700;color:var(--text-secondary);margin-bottom:6px;">수신자 선택</div>
+                ${allUsers.length
+                    ? `<div style="max-height:220px;overflow-y:auto;border:1px solid var(--border-color);border-radius:6px;padding:0 10px;">${userRows}</div>`
+                    : `<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:.85rem;border:1px solid var(--border-color);border-radius:6px;">
+                        텔레그램 Chat ID가 등록된 사용자가 없습니다.<br>
+                        <span style="font-size:.78rem;">설정 → 사용자 관리에서 Chat ID를 등록하세요.</span>
+                    </div>`}
+                ${noChatUsers > 0 ? `<div style="font-size:.75rem;color:var(--text-muted);margin-top:4px;">※ Chat ID 미등록 사용자 ${noChatUsers}명은 목록에 표시되지 않습니다.</div>` : ''}
+                <div id="notifyStatusMsg" style="margin-top:10px;min-height:20px;font-size:.82rem;"></div>
+            </div>`,
+            allUsers.length
+                ? `<button class="btn btn-primary" onclick="DashboardModule._doSendNotify('${templateKey}',${count})">
+                        <span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px;">send</span> 발송
+                    </button>
+                    <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>`
+                : `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`
+        );
+    }
+
+    async function _doSendNotify(templateKey, count) {
+        const statusEl = document.getElementById('notifyStatusMsg');
+        if (statusEl) statusEl.innerHTML = '<span style="color:var(--text-muted);">발송 중…</span>';
+
+        const checked = Array.from(document.querySelectorAll('.notify-recipient:checked'));
+        if (!checked.length) {
+            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-red);">수신자를 선택하세요.</span>';
+            return;
+        }
+        const allUsers = AuthModule.getUsers ? AuthModule.getUsers() : [];
+        const recipients = checked.map(function(cb) {
+            const u = allUsers.find(function(u) { return u.id === cb.value; });
+            return u ? { chatId: u.chatId, name: u.displayName || u.username } : null;
+        }).filter(Boolean);
+
+        try {
+            await ApiClient.sendNotify(null, recipients, { templateKey, count: String(count) });
+            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-green);">✓ 텔레그램 알림이 발송되었습니다.</span>';
+            setTimeout(function() { UIUtils.closeModal(); }, 1500);
+        } catch(e) {
+            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-red);">발송 실패: ' + e.message + '</span>';
+        }
+    }
+
     return {
         render,
         refresh,
         openIlluminationCheck,
         openFProof,
         openEquipMode,
-        openProductAdjustLogs
+        openProductAdjustLogs,
+        openNotifyModal,
+        _doSendNotify
     };
 })();

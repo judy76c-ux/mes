@@ -65,6 +65,8 @@ var ImprovementActivityModule = (function() {
         const rows = _filtered();
         const monthRows = _monthRows();
         const sum = _summary(_all());
+        container.innerHTML = _renderApplePage(rows, monthRows, sum);
+        return;
         container.innerHTML = `
             <div class="fade-in-up">
                 <div class="page-toolbar" style="display:flex;justify-content:flex-start;gap:8px;margin-bottom:12px;">
@@ -118,6 +120,95 @@ var ImprovementActivityModule = (function() {
                                 <thead><tr>
                                     <th style="width:95px;">등록일</th><th>제안자</th><th>구분</th><th>제목/공정</th>
                                     <th>PDCA</th><th>찬성/반대</th><th>상태</th><th style="width:170px;">작업</th>
+                                </tr></thead>
+                                <tbody>${rows.length ? rows.map(_rowHtml).join('') : '<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--text-muted);">등록된 개선활동이 없습니다.</td></tr>'}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    function _renderApplePage(rows, monthRows, sum) {
+        return `
+            <div class="fade-in-up">
+                <div class="mes-apple-menu-hero">
+                    <div class="mes-apple-menu-head">
+                        <h3>개선 활동</h3>
+                        <p>현장 제안부터 PDCA 실행, 효과 확인, 표준화까지 한 흐름으로 관리합니다.</p>
+                    </div>
+                    <div class="mes-apple-menu-strip">
+                        <button type="button"
+                            class="mes-apple-menu-card active"
+                            style="--menu-accent:#2563eb;"
+                            onclick="ImprovementActivityModule.render(document.getElementById('contentArea'))">
+                            <span class="mes-apple-menu-card-icon">
+                                <span class="material-symbols-outlined">insights</span>
+                            </span>
+                            <span class="mes-apple-menu-card-body">
+                                <span class="mes-apple-menu-card-title">개선활동 현황</span>
+                                <span class="mes-apple-menu-card-subtitle">제안·진행·완료 현황</span>
+                            </span>
+                        </button>
+                        <button type="button"
+                            class="mes-apple-menu-card"
+                            style="--menu-accent:#10b981;"
+                            onclick="ImprovementActivityModule.openProposalModal()">
+                            <span class="mes-apple-menu-card-icon">
+                                <span class="material-symbols-outlined">add_task</span>
+                            </span>
+                            <span class="mes-apple-menu-card-body">
+                                <span class="mes-apple-menu-card-title">개선 등록</span>
+                                <span class="mes-apple-menu-card-subtitle">신규 제안·문제 등록</span>
+                            </span>
+                        </button>
+                    </div>
+                </div>
+
+                <div style="display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;margin-bottom:14px;">
+                    ${_stat('전체 제안', sum.total, '#3b82f6')}
+                    ${_stat('승인 제안', sum.approved, '#10b981')}
+                    ${_stat('진행 과제', sum.running, '#f97316')}
+                    ${_stat('완료 과제', sum.closed, '#6366f1')}
+                </div>
+
+                <div class="card" style="margin-bottom:14px;">
+                    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+                        <div>
+                            <h3 style="margin:0;font-size:1rem;">이달의 개선 활동</h3>
+                            <p style="margin:4px 0 0;color:var(--text-muted);font-size:0.82rem;">우수 제안과 진행 현황을 월 단위로 빠르게 확인합니다.</p>
+                        </div>
+                        <input type="month" class="form-input" style="width:150px;" value="${state.month}" onchange="ImprovementActivityModule.setMonth(this.value)">
+                    </div>
+                    <div class="card-body">${_rankHtml(monthRows)}</div>
+                </div>
+
+                <div class="filter-bar" style="gap:10px;flex-wrap:wrap;">
+                    <div class="form-group"><label class="form-label">상태</label>
+                        <select class="form-select" id="iaStatus" onchange="ImprovementActivityModule.setFilter('status',this.value)">
+                            <option value="">전체 상태</option>
+                            ${Object.keys(STATUS).map(k => `<option value="${k}" ${state.status===k?'selected':''}>${STATUS[k]}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group"><label class="form-label">PDCA 단계</label>
+                        <select class="form-select" id="iaStage" onchange="ImprovementActivityModule.setFilter('stage',this.value)">
+                            <option value="">전체 단계</option>
+                            ${STAGES.map(s => `<option value="${s.key}" ${state.stage===s.key?'selected':''}>${s.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group" style="min-width:260px;"><label class="form-label">검색</label>
+                        <input class="form-input" id="iaQ" value="${_esc(state.q)}" placeholder="제목, 작업자, 공정, 내용 검색" oninput="ImprovementActivityModule.setFilter('q',this.value)">
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header"><h3 style="margin:0;font-size:1rem;">개선활동 목록</h3></div>
+                    <div class="card-body" style="padding:0;">
+                        <div class="data-table-wrapper">
+                            <table class="data-table">
+                                <thead><tr>
+                                    <th style="width:95px;">등록일</th><th>제안자</th><th>구분</th><th>제목/공정</th>
+                                    <th>PDCA</th><th>찬성/반려</th><th>상태</th><th style="width:170px;">작업</th>
                                 </tr></thead>
                                 <tbody>${rows.length ? rows.map(_rowHtml).join('') : '<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--text-muted);">등록된 개선활동이 없습니다.</td></tr>'}</tbody>
                             </table>

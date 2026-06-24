@@ -18,17 +18,14 @@ var IncomingUI = (function () {
 
     function renderSection(activePage) {
         const activeMenu = MENUS.find(m => m.id === activePage) || MENUS[0];
-        const leftMenus  = MENUS.slice(0, 3);  // 수입검사 현황 / 사출 입고 / 도료 입고
-        const rightMenus = MENUS.slice(3);     // 기준서 / 표준서 / 이력변경 관리
 
         function makeBtn(menu) {
             const active = menu.id === activePage;
             return `<button type="button"
                 onclick="Router.navigate('${menu.id}')"
-                class="btn ${active ? 'btn-primary' : 'btn-outline'}"
-                style="display:flex;align-items:center;gap:6px;${active ? '' : 'background:#fff;'}">
-                <span class="material-symbols-outlined" style="font-size:18px;">${menu.icon}</span>
-                ${menu.label}
+                class="mes-apple-tab ${active ? 'active' : ''}">
+                <span class="material-symbols-outlined">${menu.icon}</span>
+                <span class="mes-apple-tab-label">${menu.label}</span>
             </button>`;
         }
 
@@ -38,17 +35,11 @@ var IncomingUI = (function () {
                     <h3 style="margin:0 0 6px;font-size:1.15rem;">${activeMenu.label}</h3>
                     <p style="margin:0;color:var(--text-muted);font-size:.9rem;">${activeMenu.desc}</p>
                 </div>
-                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                        ${leftMenus.map(makeBtn).join('')}
-                    </div>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                        ${rightMenus.map(makeBtn).join('')}
-                    </div>
+                <div class="mes-apple-tabbar">
+                    ${MENUS.map(makeBtn).join('')}
                 </div>
             </div>`;
     }
-
     return { renderSection };
 })();
 

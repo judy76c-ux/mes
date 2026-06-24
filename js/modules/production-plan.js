@@ -184,6 +184,12 @@ const ProductionPlanModule = (function() {
         container.innerHTML = `
             <div class="fade-in-up">
                 <input type="hidden" id="planDateFilter" value="${UIUtils.today()}">
+                <div style="margin-bottom:14px;">
+                    <div style="font-size:1.15rem;font-weight:800;color:var(--text-primary);margin-bottom:6px;">생산 계획 지시서</div>
+                    <p style="margin:0;color:var(--text-muted);font-size:.92rem;line-height:1.6;">
+                        도장 라인별 생산 계획을 달력에서 등록하고, 날짜별 작업 시간과 품목 배치를 한 화면에서 관리합니다.
+                    </p>
+                </div>
                 <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
                     <div style="display:flex;align-items:center;gap:10px;">
                         <button class="btn btn-outline" onclick="ProductionPlanModule.prevMonth()">

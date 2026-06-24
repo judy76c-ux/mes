@@ -1249,6 +1249,79 @@ const ProductWarehouseModule = (function() {
             </div>
         `;
         loadData();
+        _decorateTabMenu();
+    }
+
+    function _decorateTabMenu() {
+        const root = document.querySelector('#contentArea .fade-in-up');
+        const legacyTabs = root?.firstElementChild;
+        if (!legacyTabs) return;
+        const adminCard = _isAdminUser()
+            ? `
+                <button type="button"
+                    class="mes-apple-menu-card"
+                    style="--menu-accent:#ef4444;"
+                    onclick="ProductWarehouseModule.openBulkModal()">
+                    <span class="mes-apple-menu-card-icon">
+                        <span class="material-symbols-outlined">admin_panel_settings</span>
+                    </span>
+                    <span class="mes-apple-menu-card-body">
+                        <span class="mes-apple-menu-card-title">일괄 등록/수정</span>
+                        <span class="mes-apple-menu-card-subtitle">관리자 재고 보정</span>
+                    </span>
+                </button>`
+            : '';
+
+        legacyTabs.outerHTML = `
+            <div class="mes-apple-menu-hero">
+                <div class="mes-apple-menu-head">
+                    <h3>제품창고</h3>
+                    <p>제품 재고, 입고 기록, 출고 기록을 한 화면에서 빠르게 확인합니다.</p>
+                </div>
+                <div class="mes-apple-menu-strip">
+                    <button type="button"
+                        class="mes-apple-menu-card pw-tab-btn active"
+                        style="--menu-accent:#2563eb;"
+                        data-tab="stock"
+                        onclick="ProductWarehouseModule._switchTab('stock')">
+                        <span class="mes-apple-menu-card-icon">
+                            <span class="material-symbols-outlined">inventory_2</span>
+                        </span>
+                        <span class="mes-apple-menu-card-body">
+                            <span class="mes-apple-menu-card-title">재고 현황</span>
+                            <span class="mes-apple-menu-card-subtitle">현재 보유 제품 재고</span>
+                        </span>
+                    </button>
+                    <button type="button"
+                        class="mes-apple-menu-card pw-tab-btn"
+                        style="--menu-accent:#0ea5e9;"
+                        data-tab="incoming"
+                        onclick="ProductWarehouseModule._switchTab('incoming')">
+                        <span class="mes-apple-menu-card-icon">
+                            <span class="material-symbols-outlined">move_to_inbox</span>
+                        </span>
+                        <span class="mes-apple-menu-card-body">
+                            <span class="mes-apple-menu-card-title">입고 이력</span>
+                            <span class="mes-apple-menu-card-subtitle">제품 입고 기록</span>
+                        </span>
+                    </button>
+                    <button type="button"
+                        class="mes-apple-menu-card pw-tab-btn"
+                        style="--menu-accent:#f97316;"
+                        data-tab="outgoing"
+                        onclick="ProductWarehouseModule._switchTab('outgoing')">
+                        <span class="mes-apple-menu-card-icon">
+                            <span class="material-symbols-outlined">outbox</span>
+                        </span>
+                        <span class="mes-apple-menu-card-body">
+                            <span class="mes-apple-menu-card-title">출고 이력</span>
+                            <span class="mes-apple-menu-card-subtitle">제품 출고 기록</span>
+                        </span>
+                    </button>
+                    ${adminCard}
+                </div>
+            </div>
+        `;
     }
 
     function _switchTab(tab) {
@@ -1258,9 +1331,10 @@ const ProductWarehouseModule = (function() {
         });
         document.querySelectorAll('.pw-tab-btn').forEach(btn => {
             const active = btn.dataset.tab === tab;
-            btn.style.fontWeight = active ? '700' : '400';
-            btn.style.color = active ? 'var(--accent-blue)' : 'var(--text-secondary)';
-            btn.style.borderBottom = active ? '2px solid var(--accent-blue)' : '2px solid transparent';
+            btn.classList.toggle('active', active);
+            btn.style.fontWeight = '';
+            btn.style.color = '';
+            btn.style.borderBottom = '';
         });
         if (tab === 'incoming') _loadIncoming();
         if (tab === 'outgoing') _loadOutgoing();

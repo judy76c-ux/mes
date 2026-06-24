@@ -9664,6 +9664,41 @@ const SettingsModule = (function() {
                 </div>
             </div>
 
+            <!-- ── 텔레그램 Bot 알림 설정 ──────────────────────────────── -->
+            <div class="card" style="margin-top:20px;">
+                <div class="card-header">
+                    <h4>
+                        <span class="material-symbols-outlined" style="color:#229ED9;">send</span>
+                        텔레그램 Bot 알림 (무료)
+                    </h4>
+                </div>
+                <div class="card-body">
+                    <p style="margin:0 0 14px;font-size:0.875rem;color:var(--text-secondary);line-height:1.65;">
+                        텔레그램 Bot을 통해 담당자에게 무료로 메시지를 발송합니다.<br>
+                        <span style="font-size:.8rem;color:var(--text-muted);">
+                            준비: ① 텔레그램 <strong>@BotFather</strong> → /newbot → Bot Token 발급
+                            &nbsp;② 담당자는 Bot 검색 후 <strong>/start</strong> → Chat ID를 사용자 관리에 입력
+                        </span>
+                    </p>
+                    <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:flex-end;margin-bottom:12px;">
+                        <div>
+                            <label class="form-label">Bot Token</label>
+                            <input class="form-input" id="telegramBotToken" type="password"
+                                placeholder="123456789:ABCdef..." autocomplete="off">
+                        </div>
+                        <div style="display:flex;gap:8px;">
+                            <button class="btn btn-outline" onclick="SettingsModule.saveTelegramConfig()">
+                                <span class="material-symbols-outlined" style="font-size:16px;">save</span> 저장
+                            </button>
+                            <button class="btn btn-secondary" onclick="SettingsModule.testAlimtalk()">
+                                <span class="material-symbols-outlined" style="font-size:16px;">wifi_tethering</span> 테스트
+                            </button>
+                        </div>
+                    </div>
+                    <div id="alimtalkStatus" style="font-size:0.82rem;"></div>
+                </div>
+            </div>            </div>
+
         `;
 
         // ── API 서버 URL 표시 / 입력 초기화 ──────────────────────────
@@ -9689,6 +9724,7 @@ const SettingsModule = (function() {
             // 탭 진입 시 서버 상태 자동 조회
             refreshSystemInfo();
             loadImageStoragePolicy();
+            _loadTelegramConfig();
         }, 50);
     }
 
@@ -9733,7 +9769,53 @@ const SettingsModule = (function() {
         return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
     }
 
-    async function loadImageStoragePolicy() {
+    const TELEGRAM_CONFIG_KEY = 'telegram_notify_config';
+
+    async function _loadTelegramConfig() {
+        try {
+            const cfg = await Storage.getConfigValue(TELEGRAM_CONFIG_KEY).catch(() => null);
+            if (!cfg || !cfg.botToken) return;
+            const el = document.getElementById('telegramBotToken');
+            if (el) el.value = '••••••••';
+            const statusEl = document.getElementById('alimtalkStatus');
+            if (statusEl) statusEl.innerHTML = '<span style=\"color:var(--accent-green);\"><span class=\"material-symbols-outlined\" style=\"font-size:14px;vertical-align:-2px;\">check_circle</span> Bot Token이 저장되어 있습니다.</span>';
+        } catch(e) {}
+    }
+
+    async function saveTelegramConfig() {
+        const el = document.getElementById('telegramBotToken');
+        const token = el ? el.value.trim() : '';
+        if (!token || token === '••••••••') {
+            UIUtils.toast('Bot Token을 입력하세요.', 'warning'); return;
+        }
+        try {
+            const existing = await Storage.getConfigValue(TELEGRAM_CONFIG_KEY).catch(() => ({})) || {};
+            existing.botToken = token;
+            await Storage.setConfigValue(TELEGRAM_CONFIG_KEY, existing);
+            const statusEl = document.getElementById('alimtalkStatus');
+            if (statusEl) statusEl.innerHTML = '<span style=\"color:var(--accent-green);\"><span class=\"material-symbols-outlined\" style=\"font-size:14px;vertical-align:-2px;\">check_circle</span> 저장되었습니다.</span>';
+            UIUtils.toast('Bot Token이 저장되었습니다.', 'success');
+        } catch(e) {
+            UIUtils.toast('저장 실패: ' + e.message, 'error');
+        }
+    }
+
+    async function testAlimtalk() {
+        const statusEl = document.getElementById('alimtalkStatus');
+        if (statusEl) statusEl.innerHTML = '<span style=\"color:var(--text-muted);\">테스트 중…</span>';
+        try {
+            const result = await ApiClient.testNotifyConnection();
+            if (statusEl) {
+                statusEl.innerHTML = result.success
+                    ? '<span style=\"color:var(--accent-green);\"><span class=\"material-symbols-outlined\" style=\"font-size:14px;vertical-align:-2px;\">check_circle</span> ' + (result.message || '연결 성공') + '</span>'
+                    : '<span style=\"color:var(--accent-red);\"><span class=\"material-symbols-outlined\" style=\"font-size:14px;vertical-align:-2px;\">error</span> ' + (result.message || '연결 실패') + '</span>';
+            }
+        } catch(e) {
+            if (statusEl) statusEl.innerHTML = '<span style=\"color:var(--accent-red);\"><span class=\"material-symbols-outlined\" style=\"font-size:14px;vertical-align:-2px;\">error</span> ' + e.message + '</span>';
+        }
+    }
+
+        async function loadImageStoragePolicy() {
         const statusEl = document.getElementById('imageStorageStatus');
         const inputEl = document.getElementById('sysNasUploadDirInput');
         if (!statusEl || !inputEl) return;
@@ -11954,6 +12036,9 @@ const SettingsModule = (function() {
             <div class="form-group"><label class="form-label">전화번호</label>
                 <input type="text" class="form-input" id="umPhone" value="${_esc(u ? (u.phone || '') : '')}" placeholder="010-0000-0000">
             </div>
+            <div class="form-group"><label class="form-label">텔레그램 Chat ID <span style="font-size:.75rem;color:var(--text-muted);font-weight:400;">(@userinfobot 으로 확인)</span></label>
+                <input type="text" class="form-input" id="umChatId" value="${_esc(u ? (u.chatId || '') : '')}" placeholder="예: 123456789">
+            </div>
             <div class="form-group"><label class="form-label">역할</label>
                 <div id="umRoleRows">
                     ${selectedRoles.map((role, index) => roleRow(role, index > 0)).join('')}
@@ -12006,6 +12091,7 @@ const SettingsModule = (function() {
         const displayName = (document.getElementById('umDisplayName') || {}).value || '';
         const password    = (document.getElementById('umPassword')    || {}).value || '';
         const phone       = (document.getElementById('umPhone')       || {}).value || '';
+        const chatId      = (document.getElementById('umChatId')      || {}).value || '';
         const sealFont    = (document.getElementById('umSealFont')    || {}).value || 'gothic';
         const selectedRoles = Array.from(document.querySelectorAll('.um-role-select'))
             .map(select => String(select.value || '').trim())
@@ -12024,7 +12110,7 @@ const SettingsModule = (function() {
             if (idx < 0) return;
             const photo = _pendingPhoto !== undefined ? (_pendingPhoto || null) : (users[idx].photo || null);
             const seal = _pendingSeal !== undefined ? (_pendingSeal || null) : (users[idx].seal || null);
-            users[idx] = { ...users[idx], displayName: displayName.trim(), phone: phone.trim(), photo, seal, sealFont, role, roles, active,
+            users[idx] = { ...users[idx], displayName: displayName.trim(), phone: phone.trim(), chatId: chatId.trim(), photo, seal, sealFont, role, roles, active,
                            ...(password ? { password } : {}) };
         } else {
             /* 추가 */
@@ -12033,7 +12119,7 @@ const SettingsModule = (function() {
                 UIUtils.toast('이미 존재하는 사용자 ID입니다.', 'warning'); return;
             }
             users.push({ id: 'user_' + Date.now(), username: username.trim(),
-                         displayName: displayName.trim(), password, phone: phone.trim(), photo: _pendingPhoto || null, seal: _pendingSeal || null, sealFont, role, roles, active, createdAt: new Date().toISOString() });
+                         displayName: displayName.trim(), password, phone: phone.trim(), chatId: chatId.trim(), photo: _pendingPhoto || null, seal: _pendingSeal || null, sealFont, role, roles, active, createdAt: new Date().toISOString() });
         }
         _pendingPhoto = null;
         _pendingSeal = null;
@@ -12249,6 +12335,7 @@ const SettingsModule = (function() {
 
     return {
         render,
+        saveTelegramConfig, testAlimtalk,
         openUserModal, addUserRoleRow, removeUserRoleRow, saveUser, deleteUser, onPermChange, toggleAllPerm,
         onRolePermSelect, onGroupPermChange, toggleAllGroupPerm, openRoleModal, saveRole, deleteRole,
         switchTab,

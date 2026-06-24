@@ -966,6 +966,9 @@ app.delete('/api/photos', async (req, res) => {
   }
 });
 
+// 알림톡 라우트
+require('./notify-routes')(app, function() { return pool; });
+
 // ?쒕쾭 ?쒖옉
 initDB().then(() => {
   startBackupScheduler();
