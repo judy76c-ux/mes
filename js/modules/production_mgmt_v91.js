@@ -14423,11 +14423,14 @@ var PaintMixModule = (function() {
         });
         const rows = sortedComponents.map((c, i) => {
             const materialId = c.materialId || '';
-            const residualProdLot = c.residualProdLot || c.prodLot || '';
             const availInvLots = _lotBalances(materialId, ignoreMixId);
             const autoLot = availInvLots.length > 0 ? availInvLots[0].prodLot : '';
             const warehouseProdLot = c.warehouseProdLot || c.prodLot || autoLot;
             const packUnit = Number(c.packUnit) || 0;
+            // 배합실 잔량 LOT: 저장값 없으면 배합실 잔량 중 첫 번째 LOT 자동 선택
+            const mixRoomAvailLots = _mixRoomLots(materialId, ignoreMixId);
+            const residualProdLot = c.residualProdLot || c.prodLot
+                || (mixRoomAvailLots.length > 0 ? mixRoomAvailLots[0].prodLot : '');
             // 창고 재고: balance는 이미 캔 단위 (paint_inventory.quantity 단위 = 캔)
             const totalCans = availInvLots.reduce((s, l) => s + l.balance, 0);
             const invRec = (Storage.getAll(PAINT_INV_STORE) || []).find(r =>
