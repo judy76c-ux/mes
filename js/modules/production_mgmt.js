@@ -12871,10 +12871,11 @@ var PaintMixModule = (function() {
             if (u.warehouseCans > 0) {
                 if (!u.warehouseProdLot) return `${u.paintName || '도료'}의 출고 LOT를 선택하세요.`;
                 const lot = _lotBalances(u.materialId, ignoreMixId).find(l => l.prodLot === u.warehouseProdLot);
-                const available = lot ? Number(lot.balance) || 0 : 0;
+                const availableCans = lot ? Number(lot.balance) || 0 : 0;
+                const available = _roundQty(availableCans * (u.packUnit || 1));
                 const required = _roundQty(u.warehouseCans * u.packUnit);
                 if (required > available) {
-                    return `${u.paintName || '도료'} LOT ${u.warehouseProdLot} 창고 재고가 부족합니다. 출고 필요: ${UIUtils.formatNumber(required)} KG, 가용: ${UIUtils.formatNumber(available)} KG`;
+                    return `${u.paintName || '도료'} LOT ${u.warehouseProdLot} 창고 재고가 부족합니다. 출고 필요: ${UIUtils.formatNumber(required)} KG, 가용: ${UIUtils.formatNumber(available)} KG (${UIUtils.formatNumber(availableCans)}캔)`;
                 }
             }
             if (u.residualUseG > 0) {
