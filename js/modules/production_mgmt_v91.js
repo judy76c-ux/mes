@@ -13866,14 +13866,37 @@ var PaintMixModule = (function() {
         pane.style.display = '';
 
         const mixResiduals = _calcMixingRoomResiduals();
+        const mixes = _mixes().sort((a, b) => String(b.date||'').localeCompare(String(a.date||'')));
+
+        // 잔량 있는 mix 레코드: 사용된 도료 중 mixResiduals에 포함된 것 (warehouseCans > 0 사용 기록)
+        const residualLotKeys = new Set(mixResiduals.map(r => `${r.materialId}__${r.lotNo}`));
+        const usageMixes = mixes.filter(m =>
+            (m.usages || []).some(u => {
+                const key = `${u.materialId}__${u.prodLot || u.lotNo || '미기입'}`;
+                return u.warehouseCans > 0 && residualLotKeys.has(key);
+            })
+        );
+
+        // 요약 stat
+        const totalResidualG = mixResiduals.reduce((s, r) => s + r.residualG, 0);
 
         pane.innerHTML = `
         <div style="margin-bottom:14px;">
-            <div class="card">
+            <div class="stat-cards" style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+                <div class="stat-card green">
+                    <div class="stat-card-value">${mixResiduals.length}</div>
+                    <div class="stat-card-label">잔량 도료 종류</div>
+                </div>
+                <div class="stat-card blue">
+                    <div class="stat-card-value">${UIUtils.formatNumber(totalResidualG)}g</div>
+                    <div class="stat-card-label">총 배합실 잔량</div>
+                </div>
+            </div>
+
+            <!-- 도료별 잔량 요약 -->
+            <div class="card" style="margin-bottom:14px;">
                 <div class="card-header">
-                    <h4><span class="material-symbols-outlined">science</span> 배합실 잔량
-                        <span style="font-size:0.78rem;font-weight:400;color:var(--text-muted);margin-left:6px;">도료 출고량 - 실제 사용량 = 배합실 남은 잔량</span>
-                    </h4>
+                    <h4><span class="material-symbols-outlined">inventory_2</span> 도료별 잔량 요약</h4>
                     <button class="btn btn-sm btn-outline" onclick="PaintMixModule.renderResidualTab()">
                         <span class="material-symbols-outlined" style="font-size:16px;">refresh</span>
                     </button>
@@ -13881,38 +13904,76 @@ var PaintMixModule = (function() {
                 <div class="card-body" style="padding:0;">
                     ${mixResiduals.length ? `
                     <div class="data-table-wrapper">
-                        <table class="data-table" style="font-size:0.85rem;">
+                        <table class="data-table" style="font-size:0.83rem;">
                             <thead><tr>
-                                <th>도료명</th><th>용도</th><th>제조 LOT</th><th>공급사</th><th>제조사</th>
-                                <th>입고 내역 (캔×용량=g)</th>
+                                <th>도료명</th><th>제조 LOT</th><th>공급사</th>
                                 <th style="text-align:right;">총 입고(g)</th>
                                 <th style="text-align:right;">총 사용(g)</th>
                                 <th style="text-align:right;">잔량(g)</th>
                             </tr></thead>
                             <tbody>
                                 ${mixResiduals.map(r => {
-                                    const residKg = (r.residualG / 1000).toFixed(2);
                                     const pct = r.totalWithdrawG > 0 ? (r.residualG / r.totalWithdrawG * 100).toFixed(0) : 0;
                                     const color = Number(pct) > 50 ? '#15803d' : Number(pct) > 20 ? '#b45309' : '#b91c1c';
-                                    const detailHtml = (r.withdrawDetail || []).length
-                                        ? r.withdrawDetail.map(d =>
-                                            `<div style="white-space:nowrap;font-size:0.78rem;color:var(--text-secondary);">
-                                                <span style="color:var(--accent-blue);font-weight:600;">${d.cans}캔</span>
-                                                × ${d.packKg}KG
-                                                = <span style="font-weight:600;">${UIUtils.formatNumber(d.inG)}g</span>
-                                                <span style="color:var(--text-muted);font-size:0.72rem;">${d.date ? '(' + d.date + ')' : ''}</span>
-                                            </div>`).join('')
-                                        : '<span style="color:var(--text-muted);">-</span>';
                                     return `<tr>
-                                        <td><strong>${_esc(r.paintName||'-')}</strong></td>
-                                        <td>${r.usageType ? `<span class="badge badge-info" style="font-size:0.75rem;">${_esc(r.usageType)}</span>` : '-'}</td>
+                                        <td><strong>${_esc(r.paintName||'-')}</strong>
+                                            <div style="font-size:0.72rem;color:var(--text-muted);">${_esc(r.supplier||'-')}</div>
+                                        </td>
                                         <td style="font-family:monospace;font-size:0.8rem;">${_esc(r.lotNo)}</td>
                                         <td style="font-size:0.8rem;">${_esc(r.supplier||'-')}</td>
-                                        <td style="font-size:0.8rem;">${_esc(r.manufacturer||'-')}</td>
-                                        <td>${detailHtml}</td>
                                         <td style="text-align:right;">${UIUtils.formatNumber(r.totalWithdrawG)}</td>
                                         <td style="text-align:right;">${UIUtils.formatNumber(r.totalUsedG)}</td>
                                         <td style="text-align:right;font-weight:700;color:${color};">${UIUtils.formatNumber(r.residualG)}</td>
+                                    </tr>`;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>` : `<div style="text-align:center;padding:24px;color:var(--text-muted);">배합실에 잔량이 없습니다.</div>`}
+                </div>
+            </div>
+
+            <!-- 사용 이력 상세 -->
+            <div class="card">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">science</span> 배합실 잔량 도료 사용 이력
+                        <span style="font-size:0.78rem;font-weight:400;color:var(--text-muted);margin-left:6px;">잔량이 남아 있는 도료를 사용한 작업 기록</span>
+                    </h4>
+                </div>
+                <div class="card-body" style="padding:0;">
+                    ${usageMixes.length ? `
+                    <div class="data-table-wrapper">
+                        <table class="data-table" style="font-size:0.83rem;">
+                            <thead><tr>
+                                <th>도료 사용일</th>
+                                <th>라인</th>
+                                <th>차종</th>
+                                <th>품명</th>
+                                <th>사출 LOT</th>
+                                <th>사용 도료</th>
+                                <th style="text-align:right;">총 사용량(g)</th>
+                                <th>작업자</th>
+                                <th>작업</th>
+                            </tr></thead>
+                            <tbody>
+                                ${usageMixes.map(m => {
+                                    const relevantUsages = (m.usages || []).filter(u => {
+                                        const key = `${u.materialId}__${u.prodLot || u.lotNo || '미기입'}`;
+                                        return u.warehouseCans > 0 && residualLotKeys.has(key);
+                                    });
+                                    const paintNames = [...new Set(relevantUsages.map(u => u.paintName||'').filter(Boolean))].join(', ');
+                                    const totalUsageG = relevantUsages.reduce((s, u) => s + (Number(u.usageG)||0) + (Number(u.residualUseG)||0) + (Number(u.warehouseUseG)||0), 0);
+                                    return `<tr>
+                                        <td style="white-space:nowrap;">${_esc(m.date||'-')}</td>
+                                        <td>${_esc(m.line||'-')}</td>
+                                        <td style="font-weight:600;">${_esc(m.carModel||'-')}</td>
+                                        <td>${_esc(m.partName||'-')}</td>
+                                        <td style="font-family:monospace;font-size:0.78rem;">${_esc(m.productionLot||m.lotNo||'-')}</td>
+                                        <td style="font-size:0.8rem;color:var(--accent-blue);">${_esc(paintNames||'-')}</td>
+                                        <td style="text-align:right;font-weight:600;">${totalUsageG > 0 ? UIUtils.formatNumber(totalUsageG) : '-'}</td>
+                                        <td>${_esc(m.operator||'-')}</td>
+                                        <td><button class="btn btn-sm btn-outline" onclick="PaintMixModule.openPaintMixModal('${_esc(m.id||'')}')">
+                                            <span class="material-symbols-outlined" style="font-size:14px;">edit</span>
+                                        </button></td>
                                     </tr>`;
                                 }).join('')}
                             </tbody>
