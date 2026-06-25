@@ -4352,14 +4352,17 @@ var LaserStandbyModule = (function() {
         const allRows = snapshot.allRows;
 
         // LOT별 잔량 계산 (allRows 기반 — 입고 +, 출고 -)
+        // inRecords 필드: date(도장작업일), lotNo(사출LOT), qty
+        // outRecords 필드: date, lotNo(injLots), qty
         const lotBalMap2 = {}, lotPaintMap2 = {};
         allRows.forEach(r => {
-            const k = r.injLotNo || r.lotNo || '(미확인)';
+            const k = r.lotNo || '(미확인)';
             const qty = Number(r.qty) || 0;
             lotBalMap2[k] = (lotBalMap2[k] || 0) + (r.kind === 'in' ? qty : -qty);
-            if (r.kind === 'in' && r.paintLot && !lotPaintMap2[k]) {
-                const pl = String(r.paintLot).replace(/-/g,'');
-                lotPaintMap2[k] = pl.length >= 8 ? pl.slice(2,8) : pl;
+            if (r.kind === 'in' && r.date && !lotPaintMap2[k]) {
+                // date = "2026-06-25 08:30" 형식 → YYMMDD 추출
+                const dateStr = String(r.date).slice(0,10).replace(/-/g,'');
+                lotPaintMap2[k] = dateStr.length >= 8 ? dateStr.slice(2,8) : dateStr;
             }
         });
         const lotBalRows2 = Object.entries(lotBalMap2)
