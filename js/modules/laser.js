@@ -1152,19 +1152,34 @@ var LaserWorkModule = (function() {
 
         const oldestDate = filtered[0].date || '';
 
+        // 현재 재고 합계
+        const totalBalance = filtered.reduce((sum, w) => {
+            const lots = Array.isArray(w.lots) && w.lots.length > 0 ? w.lots : [{ qty: Number(w.productionQty) || 0 }];
+            return sum + lots.reduce((s, l) => s + (Number(l.qty) || 0), 0);
+        }, 0);
+
         el.innerHTML = `
-            <div style="font-size:0.75rem; color:var(--accent-green); font-weight:600; margin-bottom:6px; display:flex; align-items:center; gap:4px;">
-                <span class="material-symbols-outlined" style="font-size:0.9rem;">swap_vert</span>
-                선입선출(FIFO) 순서 — 도장작업일 오래된 순으로 정렬됨
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; gap:8px;">
+                <div style="font-size:0.75rem; color:var(--accent-green); font-weight:600; display:flex; align-items:center; gap:4px;">
+                    <span class="material-symbols-outlined" style="font-size:0.9rem;">swap_vert</span>
+                    선입선출(FIFO) 순서 — 도장작업일 오래된 순으로 정렬됨
+                </div>
+                <div style="display:flex; align-items:center; gap:6px; background:rgba(37,99,235,0.08); border:1px solid rgba(37,99,235,0.2); border-radius:6px; padding:3px 10px;">
+                    <span class="material-symbols-outlined" style="font-size:14px; color:var(--accent-blue);">inventory_2</span>
+                    <span style="font-size:0.75rem; color:var(--text-secondary);">현재 재고 합계</span>
+                    <span style="font-size:0.88rem; font-weight:700; color:var(--accent-blue);">${UIUtils.formatNumber(totalBalance)} EA</span>
+                </div>
             </div>
             <table style="width:100%; border-collapse:collapse;">
                 <thead>
                     <tr style="background:var(--bg-primary);">
                         <th style="padding:5px 8px; text-align:center; font-size:0.78rem; border-bottom:1px solid var(--border-color);">순서</th>
+                        <th style="padding:5px 8px; text-align:center; font-size:0.78rem; border-bottom:1px solid var(--border-color);">순서</th>
                         <th style="padding:5px 8px; text-align:left; font-size:0.78rem; border-bottom:1px solid var(--border-color);">차종</th>
                         <th style="padding:5px 8px; text-align:left; font-size:0.78rem; border-bottom:1px solid var(--border-color);">품명</th>
                         <th style="padding:5px 8px; text-align:left; font-size:0.78rem; border-bottom:1px solid var(--border-color);">컬러</th>
                         <th style="padding:5px 8px; text-align:left; font-size:0.78rem; border-bottom:1px solid var(--border-color);">도장작업일</th>
+                        <th style="padding:5px 8px; text-align:left; font-size:0.78rem; border-bottom:1px solid var(--border-color);">도장LOT</th>
                         <th style="padding:5px 8px; text-align:right; font-size:0.78rem; border-bottom:1px solid var(--border-color);">LOT잔량</th>
                         <th style="padding:5px 8px; text-align:left; font-size:0.78rem; border-bottom:1px solid var(--border-color);">사출LOT</th>
                         <th style="padding:5px 8px; text-align:right; font-size:0.78rem; border-bottom:1px solid var(--border-color);">작업수량</th>
@@ -1189,6 +1204,7 @@ var LaserWorkModule = (function() {
                                 <td style="padding:5px 8px; font-weight:600;">${lotIdx === 0 ? (w.partName || '-') : ''}</td>
                                 <td style="padding:5px 8px;">${lotIdx === 0 ? (w.color || '-') : ''}</td>
                                 <td style="padding:5px 8px; font-weight:${isFirst ? '700' : '400'}; color:${isFirst ? 'var(--accent-green)' : 'inherit'};">${lotIdx === 0 ? (w.date || '-') : ''}</td>
+                                <td style="padding:5px 8px; font-family:monospace; font-size:0.8rem; color:var(--accent-green);">${lotIdx === 0 ? (w.date ? w.date.replace(/-/g,'').slice(2,8) : '-') : ''}</td>
                                 <td style="padding:5px 8px; text-align:right; font-weight:700; color:var(--accent-blue);">${UIUtils.formatNumber(lot.qty || 0)}</td>
                                 <td style="padding:5px 8px; font-family:monospace; font-size:0.8rem;">${lot.lotNo || '-'}</td>
                                 <td style="padding:5px 8px;">
@@ -3910,39 +3926,156 @@ var LaserStandbyModule = (function() {
         ].sort((a, b) => b.date.localeCompare(a.date));
 
         const rowsHtml = allRows.length === 0
-            ? `<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:12px;font-size:0.82rem;">내역이 없습니다.</td></tr>`
-            : allRows.map(r => `
+            ? `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:12px;font-size:0.82rem;">내역이 없습니다.</td></tr>`
+            : allRows.map(r => {
+                const injLot  = r.injLotNo  || '-';
+                const paintLot = r.kind === 'in'
+                    ? (r.paintLot ? String(r.paintLot).replace(/-/g,'').slice(2,8) : '-')
+                    : (r.paintLot || '-');
+                return `
                 <tr style="border-left:3px solid ${r.kind === 'in' ? 'var(--accent-green)' : 'var(--accent-blue)'};">
-                    <td style="padding:5px 8px;font-size:0.8rem;">
+                    <td style="padding:4px 7px;font-size:0.8rem;">
                         ${r.kind === 'in'
-                            ? `<span style="background:var(--accent-green);color:#fff;padding:2px 6px;border-radius:4px;font-size:0.72rem;">입고</span>`
-                            : `<span style="background:var(--accent-blue);color:#fff;padding:2px 6px;border-radius:4px;font-size:0.72rem;">출고</span>`}
+                            ? `<span style="background:var(--accent-green);color:#fff;padding:1px 5px;border-radius:4px;font-size:0.7rem;">입고</span>`
+                            : `<span style="background:var(--accent-blue);color:#fff;padding:1px 5px;border-radius:4px;font-size:0.7rem;">출고</span>`}
                     </td>
-                    <td style="padding:5px 8px;font-size:0.8rem;white-space:nowrap;">${r.date || '-'}</td>
-                    <td style="padding:5px 8px;text-align:right;font-size:0.85rem;font-weight:700;
+                    <td style="padding:4px 7px;font-size:0.78rem;white-space:nowrap;">${r.date || '-'}</td>
+                    <td style="padding:4px 7px;text-align:right;font-size:0.84rem;font-weight:700;
                                color:${r.kind === 'in' ? 'var(--accent-green)' : 'var(--accent-blue)'};">
                         ${r.kind === 'in' ? '+' : '-'}${UIUtils.formatNumber(r.qty)}
                     </td>
-                    <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);">${r.kind === 'in' ? (r.lotNo || '') : (r.note || '')}</td>
-                </tr>`).join('');
+                    <td style="padding:4px 7px;font-family:monospace;font-size:0.75rem;color:var(--text-muted);">${injLot}</td>
+                    <td style="padding:4px 7px;font-family:monospace;font-size:0.75rem;color:var(--accent-green);">${paintLot}</td>
+                    <td style="padding:4px 7px;font-size:0.74rem;color:var(--text-muted);">${r.note || ''}</td>
+                </tr>`;
+            }).join('');
+
+        // LOT별 잔량 계산 (_standbyItems에서 해당 품목만 추출, 도장LOT 포함)
+        const lotBalMap = {};   // lotNo → qty
+        const lotPaintMap = {}; // lotNo → 도장LOT(YYMMDD)
+        _standbyItems
+            .filter(w => w.carModel === carModel && w.partName === partName && (w.color || '') === (color || ''))
+            .forEach(w => {
+                const paintLot = String(w.date || '').replace(/-/g,'').slice(2,8);
+                const wLots = Array.isArray(w.lots) && w.lots.length > 0
+                    ? w.lots
+                    : [{ lotNo: w.lotNo || '', qty: Number(w.productionQty) || 0 }];
+                wLots.forEach(l => {
+                    const key = l.lotNo || '(미확인)';
+                    lotBalMap[key] = (lotBalMap[key] || 0) + (Number(l.qty) || 0);
+                    if (!lotPaintMap[key] && paintLot) lotPaintMap[key] = paintLot;
+                });
+            });
+        const lotBalRows = Object.entries(lotBalMap)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .filter(([, qty]) => qty > 0)
+            .map(([lotNo, qty]) => ({ lotNo, paintLot: lotPaintMap[lotNo] || '-', qty }));
+
+        const lotTableHtml = lotBalRows.length === 0
+            ? `<div style="color:var(--text-muted);font-size:0.82rem;padding:6px 0;">잔량 없음</div>`
+            : `<table style="width:100%;border-collapse:collapse;">
+                <thead>
+                    <tr style="background:rgba(37,99,235,0.06);">
+                        <th style="padding:5px 10px;font-size:0.72rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">도장 LOT</th>
+                        <th style="padding:5px 10px;font-size:0.72rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">사출 LOT</th>
+                        <th style="padding:5px 10px;font-size:0.72rem;color:var(--text-muted);font-weight:600;text-align:right;border-bottom:1px solid var(--border-color);">잔량 (EA)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${lotBalRows.map(r => `
+                    <tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
+                        <td style="padding:5px 10px;font-family:monospace;font-size:0.82rem;color:var(--accent-green);">${r.paintLot}</td>
+                        <td style="padding:5px 10px;font-family:monospace;font-size:0.82rem;">${r.lotNo}</td>
+                        <td style="padding:5px 10px;text-align:right;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(r.qty)}</td>
+                    </tr>`).join('')}
+                </tbody>
+               </table>`;
 
         const popup = document.createElement('div');
         popup.id = 'lsbDetailPopup';
         popup.style.cssText = `
             position:fixed; z-index:9999; background:var(--bg-primary);
             border:1px solid var(--border-color); border-radius:10px;
-            box-shadow:0 8px 32px rgba(0,0,0,0.18); min-width:320px; max-width:440px;
-            max-height:70vh; overflow:hidden; display:flex; flex-direction:column;
+            box-shadow:0 8px 32px rgba(0,0,0,0.18); min-width:380px; max-width:520px;
+            max-height:80vh; overflow:hidden; display:flex; flex-direction:column;
         `;
 
         // 위치 조정
-        const popW = 440, popH = 400;
+        const popW = 440, popH = 360;
         let top = rect.bottom + 6;
         let left = rect.left;
         if (left + popW > window.innerWidth - 10) left = window.innerWidth - popW - 10;
         if (top + popH > window.innerHeight - 10) top = rect.top - popH - 6;
         popup.style.top = top + 'px';
         popup.style.left = left + 'px';
+
+        // 입출고 이력 새창 열기 함수 (최근 1개월)
+        const histKeyEnc = encodeURIComponent(carModel + '||' + partName + '||' + (color || ''));
+        window._lsbOpenHistory = function(keyEnc) {
+            const p = decodeURIComponent(keyEnc).split('||');
+            const cm = p[0]||'', pn = p[1]||'', cl = p[2]||'';
+            const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth()-1);
+            const cutoffStr = cutoff.toISOString().slice(0,10);
+            const recentRows = allRows.filter(r => (r.date||'') >= cutoffStr);
+            const recentHtml = recentRows.length === 0
+                ? `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:16px;font-size:0.82rem;">최근 1개월 내역이 없습니다.</td></tr>`
+                : recentRows.map(r => {
+                    const injLot  = r.injLotNo  || '-';
+                    const paintLot = r.kind === 'in'
+                        ? (r.paintLot ? String(r.paintLot).replace(/-/g,'').slice(2,8) : '-')
+                        : (r.paintLot || '-');
+                    return `<tr style="border-bottom:1px solid var(--border-color);border-left:3px solid ${r.kind==='in'?'var(--accent-green)':'var(--accent-blue)'};">
+                        <td style="padding:5px 8px;"><span style="background:${r.kind==='in'?'var(--accent-green)':'var(--accent-blue)'};color:#fff;padding:1px 6px;border-radius:4px;font-size:0.7rem;">${r.kind==='in'?'입고':'출고'}</span></td>
+                        <td style="padding:5px 8px;font-size:0.78rem;white-space:nowrap;">${r.date||'-'}</td>
+                        <td style="padding:5px 8px;text-align:right;font-weight:700;color:${r.kind==='in'?'var(--accent-green)':'var(--accent-blue)'};">${r.kind==='in'?'+':'-'}${UIUtils.formatNumber(r.qty)}</td>
+                        <td style="padding:5px 8px;font-family:monospace;font-size:0.75rem;">${injLot}</td>
+                        <td style="padding:5px 8px;font-family:monospace;font-size:0.75rem;color:var(--accent-green);">${paintLot}</td>
+                        <td style="padding:5px 8px;font-size:0.74rem;color:var(--text-muted);">${r.note||''}</td>
+                    </tr>`;
+                }).join('');
+
+            const old = document.getElementById('lsbHistoryPopup');
+            if (old) old.remove();
+            const hp = document.createElement('div');
+            hp.id = 'lsbHistoryPopup';
+            hp.style.cssText = `position:fixed;z-index:10000;top:50%;left:50%;transform:translate(-50%,-50%);
+                background:var(--bg-primary);border:1px solid var(--border-color);border-radius:12px;
+                box-shadow:0 16px 48px rgba(0,0,0,0.22);width:560px;max-width:96vw;max-height:80vh;
+                overflow:hidden;display:flex;flex-direction:column;`;
+            hp.innerHTML = `
+                <div style="background:var(--accent-blue);color:#fff;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-radius:12px 12px 0 0;flex-shrink:0;">
+                    <div>
+                        <div style="font-size:0.72rem;opacity:0.8;">${cm} / ${pn}${cl&&cl!=='-'?' / '+cl:''}</div>
+                        <div style="font-weight:700;font-size:0.9rem;">입출고 이력 <span style="font-size:0.75rem;font-weight:400;opacity:0.85;">(최근 1개월 · ${recentRows.length}건)</span></div>
+                    </div>
+                    <button onclick="document.getElementById('lsbHistoryPopup').remove()"
+                        style="background:rgba(255,255,255,0.2);border:none;border-radius:6px;color:#fff;padding:4px 8px;cursor:pointer;font-size:0.8rem;">✕ 닫기</button>
+                </div>
+                <div style="overflow-y:auto;flex:1;">
+                    <table style="width:100%;border-collapse:collapse;">
+                        <thead style="position:sticky;top:0;background:var(--bg-secondary);">
+                            <tr>
+                                <th style="padding:5px 8px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">구분</th>
+                                <th style="padding:5px 8px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">날짜</th>
+                                <th style="padding:5px 8px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:right;border-bottom:1px solid var(--border-color);">수량</th>
+                                <th style="padding:5px 8px;font-size:0.7rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">사출LOT</th>
+                                <th style="padding:5px 8px;font-size:0.7rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">도장LOT</th>
+                                <th style="padding:5px 8px;font-size:0.7rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">비고</th>
+                            </tr>
+                        </thead>
+                        <tbody>${recentHtml}</tbody>
+                    </table>
+                </div>`;
+            document.body.appendChild(hp);
+            // 배경 클릭으로 닫기
+            setTimeout(function(){
+                document.addEventListener('click', function _hClose(e){
+                    if (!hp.contains(e.target) && !document.getElementById('lsbDetailPopup')?.contains(e.target)) {
+                        hp.remove(); document.removeEventListener('click', _hClose);
+                    }
+                });
+            }, 0);
+        };
 
         popup.innerHTML = `
             <div style="background:var(--accent-blue);color:#fff;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-radius:10px 10px 0 0;">
@@ -3955,23 +4088,24 @@ var LaserStandbyModule = (function() {
                     <div style="font-size:1.3rem;font-weight:800;color:${stock >= 30 ? '#fff' : '#ffd966'};">${UIUtils.formatNumber(stock)} <span style="font-size:0.75rem;font-weight:400;">EA</span></div>
                 </div>
             </div>
-            <div style="padding:8px 12px;background:var(--bg-secondary);border-bottom:1px solid var(--border-color);display:flex;gap:20px;font-size:0.78rem;">
-                <span>총 입고: <strong style="color:var(--accent-green);">${UIUtils.formatNumber(totalIn)} EA</strong></span>
-                <span>총 출고: <strong style="color:var(--accent-blue);">${UIUtils.formatNumber(totalOut)} EA</strong></span>
-                <span>내역 ${allRows.length}건</span>
+
+            <!-- LOT별 잔량 (기본 표시) -->
+            <div style="padding:10px 12px 6px;">
+                <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:4px;">
+                    <span class="material-symbols-outlined" style="font-size:14px;">inventory_2</span>현재 재고
+                </div>
+                ${lotTableHtml}
             </div>
-            <div style="overflow-y:auto;flex:1;">
-                <table style="width:100%;border-collapse:collapse;">
-                    <thead style="position:sticky;top:0;background:var(--bg-secondary);">
-                        <tr>
-                            <th style="padding:5px 8px;font-size:0.72rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">구분</th>
-                            <th style="padding:5px 8px;font-size:0.72rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">날짜</th>
-                            <th style="padding:5px 8px;font-size:0.72rem;color:var(--text-muted);font-weight:600;text-align:right;border-bottom:1px solid var(--border-color);">수량</th>
-                            <th style="padding:5px 8px;font-size:0.72rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">비고</th>
-                        </tr>
-                    </thead>
-                    <tbody>${rowsHtml}</tbody>
-                </table>
+
+            <!-- 입출고 이력 버튼 -->
+            <div style="padding:6px 12px 12px;border-top:1px solid var(--border-color);margin-top:2px;">
+                <button onclick="_lsbOpenHistory('${histKeyEnc}')"
+                    style="font-size:0.78rem;padding:5px 14px;border:1px solid var(--accent-blue);border-radius:6px;
+                           background:rgba(37,99,235,0.06);cursor:pointer;display:flex;align-items:center;gap:5px;
+                           color:var(--accent-blue);font-weight:600;width:100%;justify-content:center;">
+                    <span class="material-symbols-outlined" style="font-size:15px;">history</span>
+                    입출고 이력 조회 (최근 1개월)
+                </button>
             </div>
         `;
 
@@ -4217,32 +4351,117 @@ var LaserStandbyModule = (function() {
         const stock = snapshot.stock;
         const allRows = snapshot.allRows;
 
-        const rowsHtml = allRows.length === 0
-            ? `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:12px;font-size:0.82rem;">내역이 없습니다.</td></tr>`
-            : allRows.map(r => `
-                <tr style="border-left:3px solid ${r.kind === 'in' ? 'var(--accent-green)' : 'var(--accent-blue)'};">
-                    <td style="padding:5px 8px;font-size:0.8rem;">
-                        ${r.kind === 'in'
-                            ? `<span style="background:var(--accent-green);color:#fff;padding:2px 6px;border-radius:4px;font-size:0.72rem;">입고</span>`
-                            : `<span style="background:var(--accent-blue);color:#fff;padding:2px 6px;border-radius:4px;font-size:0.72rem;">출고</span>`}
-                    </td>
-                    <td style="padding:5px 8px;font-size:0.8rem;white-space:nowrap;">${r.date || '-'}</td>
-                    <td style="padding:5px 8px;text-align:right;font-size:0.85rem;font-weight:700;color:${r.kind === 'in' ? 'var(--accent-green)' : 'var(--accent-blue)'};">${r.kind === 'in' ? '+' : '-'}${UIUtils.formatNumber(r.qty)}</td>
-                    <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);font-family:monospace;">${r.injLotNo || r.lotNo || '-'}</td>
-                    <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);font-family:monospace;">${r.paintLot || '-'}</td>
-                    <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);">${r.note || r.machine || ''}</td>
-                </tr>`).join('');
+        // LOT별 잔량 계산
+        const lotBalMap2 = {}, lotPaintMap2 = {};
+        _standbyItems
+            .filter(w => w.carModel === carModel && w.partName === partName && (w.color || '') === (color || ''))
+            .forEach(w => {
+                const paintLot = String(w.date || '').replace(/-/g,'').slice(2,8);
+                const wLots = Array.isArray(w.lots) && w.lots.length > 0
+                    ? w.lots : [{ lotNo: w.lotNo || '', qty: Number(w.productionQty) || 0 }];
+                wLots.forEach(l => {
+                    const k = l.lotNo || '(미확인)';
+                    lotBalMap2[k] = (lotBalMap2[k] || 0) + (Number(l.qty) || 0);
+                    if (!lotPaintMap2[k] && paintLot) lotPaintMap2[k] = paintLot;
+                });
+            });
+        const lotBalRows2 = Object.entries(lotBalMap2)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .filter(([, qty]) => qty > 0)
+            .map(([lotNo, qty]) => ({ lotNo, paintLot: lotPaintMap2[lotNo] || '-', qty }));
+
+        const lotTableHtml2 = lotBalRows2.length === 0
+            ? `<div style="color:var(--text-muted);font-size:0.82rem;padding:6px 0;">잔량 없음</div>`
+            : `<table style="width:100%;border-collapse:collapse;">
+                <thead><tr style="background:rgba(37,99,235,0.06);">
+                    <th style="padding:5px 10px;font-size:0.72rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">도장 LOT</th>
+                    <th style="padding:5px 10px;font-size:0.72rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">사출 LOT</th>
+                    <th style="padding:5px 10px;font-size:0.72rem;color:var(--text-muted);font-weight:600;text-align:right;border-bottom:1px solid var(--border-color);">잔량 (EA)</th>
+                </tr></thead>
+                <tbody>${lotBalRows2.map(r => `
+                    <tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
+                        <td style="padding:5px 10px;font-family:monospace;font-size:0.82rem;color:var(--accent-green);">${r.paintLot}</td>
+                        <td style="padding:5px 10px;font-family:monospace;font-size:0.82rem;">${r.lotNo}</td>
+                        <td style="padding:5px 10px;text-align:right;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(r.qty)}</td>
+                    </tr>`).join('')}
+                </tbody></table>`;
+
+        // 입출고 이력 새창 함수
+        const histKeyEnc2 = encodeURIComponent(key);
+        window._lsbOpenHistory2 = function(kEnc) {
+            const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth()-1);
+            const cutoffStr = cutoff.toISOString().slice(0,10);
+            const recentRows = allRows.filter(r => (r.date||'') >= cutoffStr);
+            const recentHtml = recentRows.length === 0
+                ? `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:16px;font-size:0.82rem;">최근 1개월 내역이 없습니다.</td></tr>`
+                : recentRows.map(r => {
+                    const injLot   = r.injLotNo || r.lotNo || '-';
+                    const paintLot = r.kind === 'in'
+                        ? (r.paintLot ? String(r.paintLot).replace(/-/g,'').slice(2,8) : '-')
+                        : (r.paintLot || '-');
+                    return `<tr style="border-bottom:1px solid var(--border-color);border-left:3px solid ${r.kind==='in'?'var(--accent-green)':'var(--accent-blue)'};">
+                        <td style="padding:5px 8px;"><span style="background:${r.kind==='in'?'var(--accent-green)':'var(--accent-blue)'};color:#fff;padding:1px 6px;border-radius:4px;font-size:0.7rem;">${r.kind==='in'?'입고':'출고'}</span></td>
+                        <td style="padding:5px 8px;font-size:0.78rem;white-space:nowrap;">${r.date||'-'}</td>
+                        <td style="padding:5px 8px;text-align:right;font-weight:700;color:${r.kind==='in'?'var(--accent-green)':'var(--accent-blue)'};">${r.kind==='in'?'+':'-'}${UIUtils.formatNumber(r.qty)}</td>
+                        <td style="padding:5px 8px;font-family:monospace;font-size:0.75rem;">${injLot}</td>
+                        <td style="padding:5px 8px;font-family:monospace;font-size:0.75rem;color:var(--accent-green);">${paintLot}</td>
+                        <td style="padding:5px 8px;font-size:0.74rem;color:var(--text-muted);">${r.note||r.machine||''}</td>
+                    </tr>`;
+                }).join('');
+            const old = document.getElementById('lsbHistoryPopup');
+            if (old) old.remove();
+            const hp = document.createElement('div');
+            hp.id = 'lsbHistoryPopup';
+            hp.style.cssText = `position:fixed;z-index:10000;top:50%;left:50%;transform:translate(-50%,-50%);
+                background:var(--bg-primary);border:1px solid var(--border-color);border-radius:12px;
+                box-shadow:0 16px 48px rgba(0,0,0,0.22);width:580px;max-width:96vw;max-height:80vh;
+                overflow:hidden;display:flex;flex-direction:column;`;
+            hp.innerHTML = `
+                <div style="background:var(--accent-blue);color:#fff;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-radius:12px 12px 0 0;flex-shrink:0;">
+                    <div>
+                        <div style="font-size:0.72rem;opacity:0.8;">${carModel} / ${partName}${color&&color!=='-'?' / '+color:''}</div>
+                        <div style="font-weight:700;font-size:0.9rem;">입출고 이력 <span style="font-size:0.75rem;font-weight:400;opacity:0.85;">(최근 1개월 · ${recentRows.length}건)</span></div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <button type="button" onclick="event.stopPropagation();LaserStandbyModule.openAdjustModal('${encodeURIComponent(key)}')"
+                            style="background:rgba(255,255,255,0.2);border:none;border-radius:6px;color:#fff;padding:4px 8px;cursor:pointer;font-size:0.78rem;">✏️ 수정</button>
+                        <button onclick="document.getElementById('lsbHistoryPopup').remove()"
+                            style="background:rgba(255,255,255,0.2);border:none;border-radius:6px;color:#fff;padding:4px 8px;cursor:pointer;font-size:0.8rem;">✕ 닫기</button>
+                    </div>
+                </div>
+                <div style="overflow-y:auto;flex:1;">
+                    <table style="width:100%;border-collapse:collapse;">
+                        <thead style="position:sticky;top:0;background:var(--bg-secondary);">
+                            <tr>
+                                <th style="padding:5px 8px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">구분</th>
+                                <th style="padding:5px 8px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">날짜</th>
+                                <th style="padding:5px 8px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:right;border-bottom:1px solid var(--border-color);">수량</th>
+                                <th style="padding:5px 8px;font-size:0.7rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">사출LOT</th>
+                                <th style="padding:5px 8px;font-size:0.7rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">도장LOT</th>
+                                <th style="padding:5px 8px;font-size:0.7rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">비고</th>
+                            </tr>
+                        </thead>
+                        <tbody>${recentHtml}</tbody>
+                    </table>
+                </div>`;
+            document.body.appendChild(hp);
+            setTimeout(function(){
+                document.addEventListener('click', function _hClose(e){
+                    if (!hp.contains(e.target)) { hp.remove(); document.removeEventListener('click', _hClose); }
+                });
+            }, 0);
+        };
 
         const popup = document.createElement('div');
         popup.id = 'lsbDetailPopup';
         popup.style.cssText = `
             position:fixed; z-index:9999; background:var(--bg-primary);
             border:1px solid var(--border-color); border-radius:10px;
-            box-shadow:0 8px 32px rgba(0,0,0,0.18); min-width:320px; max-width:640px;
-            max-height:70vh; overflow:hidden; display:flex; flex-direction:column;
+            box-shadow:0 8px 32px rgba(0,0,0,0.18); min-width:360px; max-width:480px;
+            max-height:80vh; overflow:hidden; display:flex; flex-direction:column;
         `;
 
-        const popW = 640, popH = 420;
+        const popW = 480, popH = 360;
         let top = rect.bottom + 6;
         let left = rect.left;
         if (left + popW > window.innerWidth - 10) left = window.innerWidth - popW - 10;
@@ -4261,28 +4480,20 @@ var LaserStandbyModule = (function() {
                     <div style="font-size:1.3rem;font-weight:800;color:${stock >= 30 ? '#fff' : '#ffd966'};">${UIUtils.formatNumber(stock)} <span style="font-size:0.75rem;font-weight:400;">EA</span></div>
                 </div>
             </div>
-            <div style="padding:8px 12px;background:var(--bg-secondary);border-bottom:1px solid var(--border-color);display:flex;gap:20px;font-size:0.78rem;align-items:center;">
-                <span>총 입고: <strong style="color:var(--accent-green);">${UIUtils.formatNumber(totalIn)} EA</strong></span>
-                <span>총 출고: <strong style="color:var(--accent-blue);">${UIUtils.formatNumber(totalOut)} EA</strong></span>
-                <span style="display:flex;align-items:center;gap:6px;">
-                    <span>내역 ${allRows.length}건</span>
-                    <button type="button" class="btn btn-secondary" style="padding:2px 8px;font-size:0.72rem;height:24px;border-radius:6px;" onclick="event.stopPropagation(); LaserStandbyModule.openAdjustModal('${encodeURIComponent(key)}')">수정</button>
-                </span>
+            <div style="padding:10px 12px 6px;">
+                <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:4px;">
+                    <span class="material-symbols-outlined" style="font-size:14px;">inventory_2</span>현재 재고
+                </div>
+                ${lotTableHtml2}
             </div>
-            <div style="overflow-y:auto;flex:1;">
-                <table style="width:100%;border-collapse:collapse;">
-                    <thead style="position:sticky;top:0;background:var(--bg-secondary);">
-                        <tr>
-                            <th style="padding:5px 8px;font-size:0.72rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">구분</th>
-                            <th style="padding:5px 8px;font-size:0.72rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">날짜</th>
-                            <th style="padding:5px 8px;font-size:0.72rem;color:var(--text-muted);font-weight:600;text-align:right;border-bottom:1px solid var(--border-color);">수량</th>
-                            <th style="padding:5px 8px;font-size:0.72rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">사출LOT</th>
-                            <th style="padding:5px 8px;font-size:0.72rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">도장LOT</th>
-                            <th style="padding:5px 8px;font-size:0.72rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">비고</th>
-                        </tr>
-                    </thead>
-                    <tbody>${rowsHtml}</tbody>
-                </table>
+            <div style="padding:6px 12px 12px;border-top:1px solid var(--border-color);margin-top:2px;">
+                <button onclick="_lsbOpenHistory2('${histKeyEnc2}')"
+                    style="font-size:0.78rem;padding:5px 14px;border:1px solid var(--accent-blue);border-radius:6px;
+                           background:rgba(37,99,235,0.06);cursor:pointer;display:flex;align-items:center;gap:5px;
+                           color:var(--accent-blue);font-weight:600;width:100%;justify-content:center;font-family:inherit;">
+                    <span class="material-symbols-outlined" style="font-size:15px;">history</span>
+                    입출고 이력 조회 (최근 1개월)
+                </button>
             </div>
         `;
 

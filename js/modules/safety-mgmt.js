@@ -57,10 +57,6 @@ var SafetyProcessUI = (function () {
     function renderSection(activePage, title, desc) {
         return `
             <div style="margin-bottom:18px;">
-                <div style="margin-bottom:14px;">
-                    <h3 style="margin:0 0 6px;font-size:1.15rem;">${SafetyCommon.esc(title)}</h3>
-                    <p style="margin:0;color:var(--text-muted);font-size:.9rem;">${SafetyCommon.esc(desc || '')}</p>
-                </div>
                 <div class="mes-apple-tabbar">
                     ${MENUS.map(function (m) {
                         const active = m.id === activePage;

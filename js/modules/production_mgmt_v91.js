@@ -11797,46 +11797,29 @@ var ProdConditionsModule = (function() {
 
     let _pcContainer = null; // render()에 넘어온 container 저장
 
+    function _pcNavItems() {
+        return [
+            { label: '공정 C/S 기록', icon: 'edit_note',            subtitle: 'C/S 작성',  accent: '#2563eb', active: _pcTab === 'cs-form',  onClick: "ProdConditionsModule.switchPcTab('cs-form')" },
+            { label: '기록 조회',     icon: 'format_list_bulleted', subtitle: '이력 조회', accent: '#8b5cf6', active: _pcTab === 'records',  onClick: "ProdConditionsModule.switchPcTab('records')" },
+            { label: 'C/S 프리셋',   icon: 'bookmark',              subtitle: '프리셋 관리', accent: '#f59e0b', active: _pcTab === 'presets', onClick: "ProdConditionsModule.switchPcTab('presets')" },
+        ];
+    }
+
     function _renderTabShell(container) {
         _pcContainer = container;
         container.innerHTML = `
             <div class="fade-in-up">
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:18px;
-                            padding-bottom:12px;border-bottom:2px solid var(--border-color);">
-                    <button id="pcTabCsForm"
-                            class="btn btn-sm ${_pcTab === 'cs-form' ? 'btn-primary' : 'btn-outline'}"
-                            onclick="ProdConditionsModule.switchPcTab('cs-form')">
-                        <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">edit_note</span>
-                        공정 C/S 기록
-                    </button>
-                    <button id="pcTabRecords"
-                            class="btn btn-sm ${_pcTab === 'records' ? 'btn-primary' : 'btn-outline'}"
-                            onclick="ProdConditionsModule.switchPcTab('records')">
-                        <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">format_list_bulleted</span>
-                        기록 조회
-                    </button>
-                    <div style="flex:1;"></div>
-                    <button id="pcTabPresets"
-                            class="btn btn-sm ${_pcTab === 'presets' ? 'btn-primary' : 'btn-outline'}"
-                            onclick="ProdConditionsModule.switchPcTab('presets')">
-                        <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">bookmark</span>
-                        C/S 프리셋
-                    </button>
-                </div>
+                <div class="mes-apple-menu-hero" id="pcNavHero" style="margin-bottom:16px;"></div>
                 <div id="pcTabContent"></div>
             </div>
         `;
+        document.getElementById('pcNavHero').innerHTML = ProdAppleMenu.strip(_pcNavItems());
     }
 
     function switchPcTab(tab) {
         _pcTab = tab;
-        if (!_pcContainer) return;
-        const csBtn  = document.getElementById('pcTabCsForm');
-        const recBtn = document.getElementById('pcTabRecords');
-        const preBtn = document.getElementById('pcTabPresets');
-        if (csBtn)  csBtn.className  = `btn btn-sm ${tab === 'cs-form'  ? 'btn-primary' : 'btn-outline'}`;
-        if (recBtn) recBtn.className = `btn btn-sm ${tab === 'records'  ? 'btn-primary' : 'btn-outline'}`;
-        if (preBtn) preBtn.className = `btn btn-sm ${tab === 'presets'  ? 'btn-primary' : 'btn-outline'}`;
+        const hero = document.getElementById('pcNavHero');
+        if (hero) hero.innerHTML = ProdAppleMenu.strip(_pcNavItems());
         const content = document.getElementById('pcTabContent');
         if (!content) return;
         if (tab === 'cs-form') _renderCsFormView(content);
@@ -24983,15 +24966,11 @@ var LimitSamplesModule = (function() {
     function render(container) {
         container.innerHTML = `
         <div class="fade-in-up">
-            ${ProdAppleMenu.hero(
-                '한도 견본',
-                '마스터 대장과 한도견본 대장을 차종별로 구분해 관리합니다.',
-                [
+            <div class="mes-apple-menu-hero">${ProdAppleMenu.strip([
                     { label: '마스터 대장', icon: 'verified', subtitle: '기준 견본 목록', active: _tab === 'master', onClick: `LimitSamplesModule.switchTab('master')`, accent: '#ef4444' },
                     { label: '한도견본 대장', icon: 'rule', subtitle: '한도 기준 견본', active: _tab === 'limit', onClick: `LimitSamplesModule.switchTab('limit')`, accent: '#2563eb' },
                     { label: '견본 등록', icon: 'add_photo_alternate', subtitle: '신규 견본 추가', onClick: 'LimitSamplesModule.openModal()', accent: '#059669' }
-                ]
-            )}
+                ])}</div>
 
             <div class="filter-bar" style="gap:10px;flex-wrap:wrap;">
                 <div class="form-group">

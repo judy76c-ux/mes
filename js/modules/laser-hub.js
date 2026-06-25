@@ -53,11 +53,11 @@ var LaserProcessUI = (function () {
     function renderSection(activePage, _title, _desc, actionsHtml) {
         const items = MENUS.map(function (menu) {
             let active = menu.id === activePage;
-            if (!active && menu.id.startsWith('laser-wip-')) {
+            if (!active && menu.id.startsWith('laser-wip-') && activePage.startsWith('laser-wip-')) {
                 try {
                     const tab = LaserWipModule._activeTabId ? LaserWipModule._activeTabId() : '';
-                    if (menu.id === 'laser-wip-standby'  && tab === 'standby')             active = true;
-                    if (menu.id === 'laser-wip-after'    && tab === 'after-laser')         active = true;
+                    if (menu.id === 'laser-wip-standby'  && tab === 'standby')              active = true;
+                    if (menu.id === 'laser-wip-after'    && tab === 'after-laser')          active = true;
                     if (menu.id === 'laser-wip-residual' && tab === 'after-laser-residual') active = true;
                 } catch(e) {}
             }
@@ -122,181 +122,302 @@ var LaserHubModule = (function () {
         await Storage.setConfigValue(key, Array.isArray(rows) ? rows : []);
     }
 
-    function _homeCard(title, desc, icon, countText, onClick, tone) {
-        const border = {
-            blue: '#3b82f6',
-            green: '#10b981',
-            purple: '#8b5cf6',
-            orange: '#f97316',
-            red: '#ef4444',
-            cyan: '#06b6d4'
-        }[tone || 'blue'] || '#3b82f6';
+    // ── 대시보드 KPI 카드 ────────────────────────────────────────────────
+    function _kpiCard(icon, color, bgColor, label, value, sub) {
+        return `
+            <div style="background:#fff;border-radius:14px;border:1px solid #e2e8f0;padding:18px 20px;
+                        box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+                    <span class="material-symbols-outlined"
+                        style="width:38px;height:38px;border-radius:10px;display:flex;align-items:center;
+                               justify-content:center;background:${bgColor};color:${color};font-size:20px;">${icon}</span>
+                    <span style="font-size:0.76rem;font-weight:700;color:var(--text-muted);">${label}</span>
+                </div>
+                <div style="font-size:1.55rem;font-weight:800;color:var(--text-primary);line-height:1.2;">${value}</div>
+                <div style="font-size:0.73rem;color:var(--text-muted);margin-top:4px;">${sub}</div>
+            </div>`;
+    }
 
+    function _wipCard(icon, color, label, qty, sub, onClick) {
         return `
             <button type="button" onclick="${onClick}"
-                onmouseenter="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 24px rgba(15,23,42,.10)'"
-                onmouseleave="this.style.transform='';this.style.boxShadow='0 2px 8px rgba(15,23,42,.06)'"
-                style="text-align:left;border:1px solid var(--border);border-top:3px solid ${border};background:#fff;border-radius:14px;
-                       padding:20px;box-shadow:0 2px 8px rgba(15,23,42,.06);cursor:pointer;transition:all .15s;
-                       display:flex;flex-direction:column;gap:14px;min-height:154px;">
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-                    <span class="material-symbols-outlined"
-                        style="width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;
-                               background:#eff6ff;color:${border};font-size:22px;">${icon}</span>
-                    <span style="font-size:.78rem;color:var(--text-muted);font-weight:700;">${countText || ''}</span>
-                </div>
-                <div>
-                    <div style="font-size:1rem;font-weight:800;color:var(--text-primary);margin-bottom:6px;">${title}</div>
-                    <div style="font-size:.84rem;line-height:1.5;color:var(--text-muted);">${desc}</div>
-                </div>
-            </button>
-        `;
+                onmouseenter="this.style.boxShadow='0 6px 16px rgba(0,0,0,0.10)';this.style.transform='translateY(-1px)';"
+                onmouseleave="this.style.boxShadow='none';this.style.transform='';"
+                style="text-align:left;background:#fff;border:1px solid #e2e8f0;border-top:3px solid ${color};
+                       border-radius:12px;padding:14px 14px 12px;cursor:pointer;transition:all 0.15s;width:100%;">
+                <span class="material-symbols-outlined" style="font-size:20px;color:${color};margin-bottom:8px;display:block;">${icon}</span>
+                <div style="font-size:1rem;font-weight:800;color:var(--text-primary);">${qty}</div>
+                <div style="font-size:0.72rem;font-weight:700;color:${color};margin-top:3px;">${label}</div>
+                <div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">${sub}</div>
+            </button>`;
     }
 
-    function _quickTile(title, desc, icon, onClick, tone) {
-        const palette = {
-            blue:   { border: '#3b82f6', bg: '#eff6ff', iconBg: '#dbeafe', color: '#1d4ed8' },
-            green:  { border: '#10b981', bg: '#ecfdf5', iconBg: '#d1fae5', color: '#047857' },
-            orange: { border: '#f97316', bg: '#fff7ed', iconBg: '#ffedd5', color: '#c2410c' },
-            purple: { border: '#8b5cf6', bg: '#f5f3ff', iconBg: '#ede9fe', color: '#6d28d9' },
-            cyan:   { border: '#06b6d4', bg: '#ecfeff', iconBg: '#cffafe', color: '#0e7490' },
-            red:    { border: '#ef4444', bg: '#fef2f2', iconBg: '#fee2e2', color: '#b91c1c' }
-        }[tone || 'blue'] || { border: '#3b82f6', bg: '#eff6ff', iconBg: '#dbeafe', color: '#1d4ed8' };
+    function _issueCard(severity, icon, label, desc, onClick) {
+        const C = severity === 'critical'
+            ? { bg:'#fef2f2', border:'#ef4444', icon:'#ef4444', text:'#b91c1c' }
+            : severity === 'warning'
+            ? { bg:'#fffbeb', border:'#f59e0b', icon:'#d97706', text:'#92400e' }
+            : { bg:'#f0fdf4', border:'#10b981', icon:'#10b981', text:'#065f46' };
+        const clickAttr = onClick
+            ? `onclick="${onClick}" onmouseover="this.style.opacity='.8'" onmouseout="this.style.opacity='1'" style="cursor:pointer;"`
+            : '';
+        return `
+            <div ${clickAttr}
+                style="padding:10px 12px;border-radius:10px;background:${C.bg};border-left:3px solid ${C.border};
+                       display:flex;align-items:center;gap:10px;${onClick ? 'cursor:pointer;' : ''}">
+                <span class="material-symbols-outlined" style="font-size:20px;color:${C.icon};flex-shrink:0;">${icon}</span>
+                <div style="flex:1;min-width:0;">
+                    <div style="font-size:0.82rem;font-weight:800;color:${C.text};">${label}</div>
+                    <div style="font-size:0.74rem;color:var(--text-muted);margin-top:2px;">${desc}</div>
+                </div>
+                ${onClick ? `<span class="material-symbols-outlined" style="font-size:16px;color:${C.icon};flex-shrink:0;">chevron_right</span>` : ''}
+            </div>`;
+    }
 
+    function _shortcutBtn(icon, color, label, onClick) {
         return `
             <button type="button" onclick="${onClick}"
-                onmouseenter="this.style.transform='translateY(-2px)';this.style.boxShadow='0 12px 26px rgba(15,23,42,.10)'"
-                onmouseleave="this.style.transform='';this.style.boxShadow='0 3px 10px rgba(15,23,42,.05)'"
-                style="text-align:left;border:1px solid ${palette.border}33;background:${palette.bg};border-radius:16px;
-                       padding:18px 18px 16px;box-shadow:0 3px 10px rgba(15,23,42,.05);cursor:pointer;transition:all .15s;
-                       display:flex;flex-direction:column;gap:14px;min-height:132px;">
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-                    <span class="material-symbols-outlined"
-                        style="width:44px;height:44px;border-radius:14px;display:flex;align-items:center;justify-content:center;
-                               background:${palette.iconBg};color:${palette.color};font-size:22px;">${icon}</span>
-                    <span class="material-symbols-outlined" style="font-size:18px;color:${palette.color};">arrow_forward</span>
-                </div>
-                <div>
-                    <div style="font-size:1rem;font-weight:800;color:var(--text-primary);margin-bottom:6px;">${title}</div>
-                    <div style="font-size:.83rem;line-height:1.5;color:var(--text-muted);">${desc}</div>
-                </div>
-            </button>
-        `;
-    }
-
-    function _metricCard(tone, value, label, subLabel) {
-        return `
-            <div class="stat-card ${tone}">
-                <div class="stat-card-value">${value}</div>
-                <div class="stat-card-label">${label}</div>
-                ${subLabel ? `<div style="margin-top:4px;font-size:.76rem;color:var(--text-muted);">${subLabel}</div>` : ''}
-            </div>
-        `;
-    }
-
-    function _collectLaserDailyMetrics() {
-        const today = _today();
-        const works = Storage.getAll(DB.STORES.LASER_WORK_LOG) || [];
-        const inspections = Storage.getAll(DB.STORES.LASER_INSPECTIONS) || [];
-
-        const todayWorks = works.filter(function (row) {
-            return String(row.date || '').slice(0, 10) === today;
-        });
-        const todayInspections = inspections.filter(function (row) {
-            return String(row.date || '').slice(0, 10) === today;
-        });
-
-        const inspectedWorkIds = new Set(
-            todayInspections.map(function (row) { return row.workLogId; }).filter(Boolean)
-        );
-
-        const qcMissingCount = todayWorks.filter(function (row) {
-            return !(row.qcFirst && row.qcMiddle && row.qcLast);
-        }).length;
-
-        const waitInspectionCount = todayWorks.filter(function (row) {
-            return row.id && !inspectedWorkIds.has(row.id);
-        }).length;
-
-        const workQty = todayWorks.reduce(function (sum, row) {
-            return sum + (Number(row.quantity) || 0);
-        }, 0);
-        const inspectionQty = todayInspections.reduce(function (sum, row) {
-            return sum + (Number(row.inspQty) || 0);
-        }, 0);
-        const defectQty = todayInspections.reduce(function (sum, row) {
-            return sum + (Number(row.failQty) || 0);
-        }, 0);
-
-        const efficiency = workQty > 0 ? ((inspectionQty / workQty) * 100).toFixed(1) : '0.0';
-
-        return {
-            today: today,
-            workCount: todayWorks.length,
-            inspectionCount: todayInspections.length,
-            workQty: workQty,
-            inspectionQty: inspectionQty,
-            defectQty: defectQty,
-            qcMissingCount: qcMissingCount,
-            waitInspectionCount: waitInspectionCount,
-            efficiency: efficiency
-        };
+                onmouseover="this.style.background='#f8fafc'"
+                onmouseout="this.style.background='#fff'"
+                style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #e2e8f0;
+                       border-radius:8px;background:#fff;cursor:pointer;width:100%;font-size:0.84rem;
+                       font-weight:700;color:var(--text-primary);transition:background 0.15s;font-family:inherit;text-align:left;">
+                <span class="material-symbols-outlined" style="font-size:18px;color:${color};">${icon}</span>
+                ${label}
+                <span class="material-symbols-outlined" style="font-size:16px;color:var(--text-muted);margin-left:auto;">chevron_right</span>
+            </button>`;
     }
 
     async function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
-                <div class="section-card" style="padding:0;overflow:hidden;">
-                    <div style="padding:24px;">
-                        <div id="laserHubStats" class="stat-cards" style="margin-bottom:18px;"></div>
-                        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin:4px 0 12px;">
-                            <div>
-                                <div style="font-size:1rem;font-weight:800;color:var(--text-primary);">하단 타일 메뉴</div>
-                                <div style="font-size:.82rem;color:var(--text-muted);">레이져 공정 주요 화면을 순서대로 바로 이동합니다.</div>
+                ${LaserProcessUI.renderSection('laser-process')}
+                <div id="laserDashKpi" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;"></div>
+                <div id="laserDashMain" style="display:grid;grid-template-columns:1fr 340px;gap:16px;"></div>
+            </div>`;
+
+        // ── 데이터 수집 ────────────────────────────────────────────────────
+        const today    = _today();
+        const thisMonth = today.slice(0, 7);
+        const works     = Storage.getAll(DB.STORES.LASER_WORK_LOG) || [];
+        const insps     = Storage.getAll(DB.STORES.LASER_INSPECTIONS) || [];
+        const paintWorks = Storage.getAll(DB.STORES.PAINTING_WORK) || [];
+        const equipRows = await _loadList(EQUIP_KEY);
+        const cleanRows = await _loadList(CLEAN_KEY);
+
+        // ── 금일 KPI ──────────────────────────────────────────────────────
+        const todayWorks = works.filter(function(w) { return String(w.date || '').slice(0,10) === today; });
+        const todayInsps = insps.filter(function(i) { return String(i.date || '').slice(0,10) === today; });
+        const inspectedIds = new Set(todayInsps.map(function(i) { return i.workLogId; }).filter(Boolean));
+
+        const workQtyToday   = todayWorks.reduce(function(s,w){ return s + (Number(w.quantity)||0); }, 0);
+        const inspQtyToday   = todayInsps.reduce(function(s,i){ return s + (Number(i.inspQty)||0); }, 0);
+        const defectQtyToday = todayInsps.reduce(function(s,i){ return s + (Number(i.failQty)||0); }, 0);
+        const defectRate     = inspQtyToday > 0 ? (defectQtyToday / inspQtyToday * 100).toFixed(1) : '0.0';
+        const qcMissing      = todayWorks.filter(function(w){ return !(w.qcFirst && w.qcMiddle && w.qcLast); }).length;
+        const waitInsp       = todayWorks.filter(function(w){ return w.id && !inspectedIds.has(w.id); }).length;
+
+        // ── 7일 추이 ──────────────────────────────────────────────────────
+        var trend7 = [];
+        for (var i = 6; i >= 0; i--) {
+            var d = new Date(); d.setDate(d.getDate() - i);
+            var ds = d.toISOString().slice(0, 10);
+            var dw = works.filter(function(w){ return String(w.date||'').slice(0,10) === ds; });
+            var di = insps.filter(function(ii){ return String(ii.date||'').slice(0,10) === ds; });
+            var wq = dw.reduce(function(s,w){ return s+(Number(w.quantity)||0); }, 0);
+            var iq = di.reduce(function(s,ii){ return s+(Number(ii.inspQty)||0); }, 0);
+            var fq = di.reduce(function(s,ii){ return s+(Number(ii.failQty)||0); }, 0);
+            trend7.push({ date: ds, wq: wq, iq: iq, fq: fq,
+                rate: iq > 0 ? (fq/iq*100).toFixed(1) : '-',
+                isToday: ds === today });
+        }
+        var maxWq = Math.max.apply(null, [1].concat(trend7.map(function(r){ return r.wq; })));
+
+        // ── 장비 이슈 ─────────────────────────────────────────────────────
+        var equipOpen = equipRows.filter(function(r){ return String(r.status||'') === '진행중'; });
+        var cleanThisMonth = cleanRows.filter(function(r){ return String(r.date||'').slice(0,7) === thisMonth; }).length;
+
+        // ── 재공품 대기 근사값 ────────────────────────────────────────────
+        var paintMap = {}, laserMap = {};
+        paintWorks.forEach(function(w){
+            var key = (w.carModel||'') + '||' + (w.partName||'') + '||' + (w.color||'');
+            paintMap[key] = (paintMap[key]||0) + (Number(w.productionQty)||0);
+        });
+        works.filter(function(w){ return !w.isManualOut; }).forEach(function(w){
+            var key = (w.carModel||'') + '||' + (w.partName||'') + '||' + (w.color||'');
+            laserMap[key] = (laserMap[key]||0) + (Number(w.quantity)||0);
+        });
+        var standbyCount = 0, standbyQty = 0;
+        Object.keys(paintMap).forEach(function(key){
+            var lq = laserMap[key] || 0;
+            if (paintMap[key] > lq) { standbyCount++; standbyQty += paintMap[key] - lq; }
+        });
+
+        // ── KPI 렌더 ──────────────────────────────────────────────────────
+        var kpiEl = document.getElementById('laserDashKpi');
+        if (kpiEl) {
+            kpiEl.innerHTML = [
+                _kpiCard('bolt', '#2563eb', '#eff6ff', '금일 작업량', _fmt(workQtyToday) + ' EA', todayWorks.length + '건 작업'),
+                _kpiCard('fact_check', '#10b981', '#ecfdf5', '금일 검사량', _fmt(inspQtyToday) + ' EA', todayInsps.length + '건 검사'),
+                _kpiCard('report_problem',
+                    defectQtyToday > 0 ? '#ef4444' : '#64748b',
+                    defectQtyToday > 0 ? '#fef2f2' : '#f8fafc',
+                    '금일 불량', _fmt(defectQtyToday) + ' EA', '불량률 ' + defectRate + '%'),
+                _kpiCard('edit_note',
+                    qcMissing > 0 ? '#f59e0b' : '#64748b',
+                    qcMissing > 0 ? '#fffbeb' : '#f8fafc',
+                    '초중종물 누락', qcMissing + '건', '검사 대기 ' + waitInsp + '건')
+            ].join('');
+        }
+
+        // ── 메인 대시보드 렌더 ────────────────────────────────────────────
+        var mainEl = document.getElementById('laserDashMain');
+        if (!mainEl) return;
+
+        var trendRows = trend7.map(function(r) {
+            var barW = Math.round(r.wq / maxWq * 100);
+            var dayLabel = new Date(r.date + 'T00:00:00').toLocaleDateString('ko-KR', {month:'numeric', day:'numeric', weekday:'short'});
+            var rowBg   = r.isToday ? 'background:#eff6ff;' : '';
+            var dateSt  = r.isToday ? 'font-weight:800;color:#2563eb;' : 'color:var(--text-primary);';
+            var defSt   = r.fq > 0 ? 'color:#ef4444;font-weight:700;' : 'color:var(--text-muted);';
+            return '<tr style="border-bottom:1px solid #e2e8f0;' + rowBg + '">' +
+                '<td style="padding:9px 12px;font-size:0.82rem;' + dateSt + 'white-space:nowrap;">' +
+                    dayLabel + (r.isToday ? ' <span style="font-size:0.62rem;background:#2563eb;color:#fff;border-radius:4px;padding:1px 4px;vertical-align:middle;">오늘</span>' : '') +
+                '</td>' +
+                '<td style="padding:9px 12px;text-align:right;font-size:0.84rem;font-weight:700;color:var(--text-primary);">' +
+                    (r.wq > 0 ? _fmt(r.wq) : '<span style="color:var(--text-muted);">-</span>') + '</td>' +
+                '<td style="padding:9px 12px;text-align:right;font-size:0.84rem;font-weight:700;color:#10b981;">' +
+                    (r.iq > 0 ? _fmt(r.iq) : '<span style="color:var(--text-muted);">-</span>') + '</td>' +
+                '<td style="padding:9px 12px;text-align:right;font-size:0.84rem;' + defSt + '">' +
+                    (r.fq > 0 ? _fmt(r.fq) : '-') + '</td>' +
+                '<td style="padding:9px 12px;text-align:right;font-size:0.8rem;' + (r.fq>0?'color:#ef4444;font-weight:700;':'color:var(--text-muted);') + '">' +
+                    (r.rate !== '-' ? r.rate + '%' : '-') + '</td>' +
+                '<td style="padding:9px 12px;">' +
+                    '<div style="background:#e2e8f0;border-radius:999px;height:8px;overflow:hidden;">' +
+                        '<div style="height:100%;border-radius:999px;background:' + (r.wq>0?'#2563eb':'transparent') + ';width:' + barW + '%;"></div>' +
+                    '</div></td>' +
+            '</tr>';
+        }).join('');
+
+        var equipIssueDesc = equipOpen.length > 0
+            ? equipOpen.length + '건 진행중' + (equipOpen[0] && equipOpen[0].equipmentName ? ': ' + _esc(equipOpen[0].equipmentName) : '')
+            : '진행중인 이슈 없음';
+
+        mainEl.innerHTML = `
+            <!-- 좌측: 공정 현황 -->
+            <div>
+                <div class="card" style="margin-bottom:14px;">
+                    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
+                        <h4 style="margin:0;display:flex;align-items:center;gap:6px;">
+                            <span class="material-symbols-outlined" style="font-size:18px;color:#2563eb;">show_chart</span>
+                            최근 7일 작업 추이
+                        </h4>
+                        <span style="font-size:0.76rem;color:var(--text-muted);">${trend7[0].date} ~ ${today}</span>
+                    </div>
+                    <div class="card-body" style="padding:0;">
+                        <table style="width:100%;border-collapse:collapse;">
+                            <thead>
+                                <tr style="background:#f8fafc;">
+                                    <th style="padding:9px 12px;text-align:left;font-size:0.73rem;font-weight:700;color:var(--text-muted);border-bottom:1px solid #e2e8f0;">날짜</th>
+                                    <th style="padding:9px 12px;text-align:right;font-size:0.73rem;font-weight:700;color:var(--text-muted);border-bottom:1px solid #e2e8f0;">작업량(EA)</th>
+                                    <th style="padding:9px 12px;text-align:right;font-size:0.73rem;font-weight:700;color:var(--text-muted);border-bottom:1px solid #e2e8f0;">검사량(EA)</th>
+                                    <th style="padding:9px 12px;text-align:right;font-size:0.73rem;font-weight:700;color:var(--text-muted);border-bottom:1px solid #e2e8f0;">불량(EA)</th>
+                                    <th style="padding:9px 12px;text-align:right;font-size:0.73rem;font-weight:700;color:var(--text-muted);border-bottom:1px solid #e2e8f0;">불량률</th>
+                                    <th style="padding:9px 12px;font-size:0.73rem;font-weight:700;color:var(--text-muted);border-bottom:1px solid #e2e8f0;min-width:120px;">작업량 추이</th>
+                                </tr>
+                            </thead>
+                            <tbody>${trendRows}</tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
+                        <h4 style="margin:0;display:flex;align-items:center;gap:6px;">
+                            <span class="material-symbols-outlined" style="font-size:18px;color:#f97316;">inventory</span>
+                            재공품 현황
+                        </h4>
+                        <button class="btn btn-sm btn-outline" onclick="LaserWipModule.openTab('standby')">자세히 보기</button>
+                    </div>
+                    <div class="card-body">
+                        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+                            ${_wipCard('hourglass_top','#f97316','레이져 대기품',
+                                standbyQty > 0 ? _fmt(standbyQty) + ' EA' : '-',
+                                standbyCount > 0 ? standbyCount + '개 품목' : '대기 없음',
+                                "LaserWipModule.openTab('standby')")}
+                            ${_wipCard('bolt','#8b5cf6','레이져 후 재공품','-','상세 확인',
+                                "LaserWipModule.openTab('after-laser')")}
+                            ${_wipCard('inventory_2','#06b6d4','레이져 잔량','-','상세 확인',
+                                "LaserWipModule.openTab('after-laser-residual')")}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 우측: 문제점·이슈 + 바로가기 -->
+            <div style="display:flex;flex-direction:column;gap:14px;">
+                <div class="card">
+                    <div class="card-header">
+                        <h4 style="margin:0;display:flex;align-items:center;gap:6px;">
+                            <span class="material-symbols-outlined" style="font-size:18px;color:#ef4444;">warning</span>
+                            문제점 · 이슈
+                        </h4>
+                    </div>
+                    <div class="card-body" style="display:flex;flex-direction:column;gap:8px;">
+                        ${_issueCard(
+                            qcMissing > 0 ? 'critical' : 'ok',
+                            'edit_note',
+                            '초중종물 미작성',
+                            qcMissing > 0 ? '오늘 ' + qcMissing + '건 미작성' : '금일 모두 작성됨',
+                            qcMissing > 0 ? "Router.navigate('laser-work')" : null
+                        )}
+                        ${_issueCard(
+                            waitInsp > 0 ? 'warning' : 'ok',
+                            'fact_check',
+                            '검사 대기',
+                            waitInsp > 0 ? waitInsp + '건 검사 미완료' : '검사 대기 없음',
+                            waitInsp > 0 ? "LaserInspectionModule.showInspectionPage()" : null
+                        )}
+                        ${_issueCard(
+                            defectQtyToday > 0 ? 'warning' : 'ok',
+                            'report_problem',
+                            '금일 불량 발생',
+                            defectQtyToday > 0 ? _fmt(defectQtyToday) + ' EA · 불량률 ' + defectRate + '%' : '금일 불량 없음',
+                            defectQtyToday > 0 ? "LaserInspectionModule.showInspectionPage()" : null
+                        )}
+                        ${_issueCard(
+                            equipOpen.length > 0 ? 'critical' : 'ok',
+                            'build_circle',
+                            '장비 이슈',
+                            equipIssueDesc,
+                            equipOpen.length > 0 ? "Router.navigate('laser-equipment-history')" : null
+                        )}
+                        <div style="border-top:1px solid #e2e8f0;padding-top:10px;margin-top:2px;">
+                            <div style="font-size:0.7rem;font-weight:700;color:var(--text-muted);margin-bottom:8px;letter-spacing:0.5px;text-transform:uppercase;">이달 현황</div>
+                            <div style="display:flex;align-items:center;justify-content:space-between;
+                                        padding:9px 12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;">
+                                <span style="font-size:0.82rem;color:var(--text-secondary);display:flex;align-items:center;gap:6px;">
+                                    <span class="material-symbols-outlined" style="font-size:16px;color:#0891b2;">cleaning_services</span>지그 세척
+                                </span>
+                                <span style="font-size:0.95rem;font-weight:800;color:#0891b2;">${cleanThisMonth}회</span>
                             </div>
                         </div>
-                        <div id="laserHubCards" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;"></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h4 style="margin:0;">바로가기</h4>
+                    </div>
+                    <div class="card-body" style="display:flex;flex-direction:column;gap:6px;">
+                        ${_shortcutBtn('history',    '#10b981', '레이져 작업일지 등록',   "Router.navigate('laser-work')")}
+                        ${_shortcutBtn('fact_check', '#f59e0b', '외관 검사 일지',          "LaserInspectionModule.showInspectionPage()")}
+                        ${_shortcutBtn('view_list',  '#ef4444', '레이져 지그대장',          "Router.navigate('laser-jig-master')")}
+                        ${_shortcutBtn('build_circle','#64748b','장비 점검/수리 내역',     "Router.navigate('laser-equipment-history')")}
                     </div>
                 </div>
             </div>
         `;
-
-        const metrics = _collectLaserDailyMetrics();
-        const standbyItems = (Storage.getAll(DB.STORES.LASER_WORK_LOG) || []).length;
-        const jigRows = await _loadList(JIG_KEY);
-        const disposalRows = await _loadList(DISPOSAL_KEY);
-        const cleanRows = await _loadList(CLEAN_KEY);
-        const equipRows = await _loadList(EQUIP_KEY);
-
-        const thisMonth = metrics.today.slice(0, 7);
-        const cleanThisMonth = cleanRows.filter(function (row) {
-            return String(row.date || '').slice(0, 7) === thisMonth;
-        }).length;
-        const repairOpenCount = equipRows.filter(function (row) {
-            return String(row.status || '') === '진행중';
-        }).length;
-
-        const statsEl = document.getElementById('laserHubStats');
-        if (statsEl) {
-            statsEl.innerHTML = [
-                _metricCard('blue', _fmt(metrics.workQty), '금일 작업수량', `${metrics.workCount}건`),
-                _metricCard('green', `${metrics.efficiency}%`, '가동 효율', `검사 ${_fmt(metrics.inspectionQty)} EA`),
-                _metricCard('red', _fmt(metrics.defectQty), '금일 불량', `${metrics.inspectionCount}건 검사`),
-                _metricCard('orange', _fmt(metrics.qcMissingCount), '초중종물 누락', `검사 대기 ${metrics.waitInspectionCount}건`)
-            ].join('');
-        }
-
-        const cardsEl = document.getElementById('laserHubCards');
-        if (cardsEl) {
-            cardsEl.innerHTML = [
-                _quickTile('레이져 작업일지', '레이져 작업 실적과 가동 이력을 기록합니다.', 'history', "Router.navigate('laser-work')", 'blue'),
-                _quickTile('외관 검사 일지', '검사 대기, 검사 결과, 불량 유형을 관리합니다.', 'fact_check', "LaserInspectionModule.showInspectionPage()", 'green'),
-                _quickTile('레이져 대기품 현황', '도장 완료 후 레이져 공정 대기 재공품을 확인합니다.', 'hourglass_top', "LaserWipModule.openTab('standby')", 'orange'),
-                _quickTile('레이져 후 재공현황', '레이져 완료 후 다음 공정 투입 전 재공품을 확인합니다.', 'bolt', "LaserWipModule.openTab('after-laser')", 'purple'),
-                _quickTile('레이져 잔량현황', '포장 단위 미만으로 남은 잔량 현황을 관리합니다.', 'inventory_2', "LaserWipModule.openTab('after-laser-residual')", 'cyan'),
-                _quickTile('레이져 지그대장', '레이져 지그와 공용 사용 제품 연결을 관리합니다.', 'view_list', "Router.navigate('laser-jig-master')", 'red'),
-            ].join('');
-        }
     }
 
     return {

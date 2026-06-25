@@ -49,14 +49,13 @@ var FiveSModule = (function () {
     ];
 
     function _menu(active, actionsHtml) {
-        var tabs = MENUS.map(function(m) {
-            return '<button type="button" onclick="FiveSModule.switchTab(\'' + m.id + '\')" class="mes-bar-tab ' + (m.id === active ? 'active' : '') + '">' +
-                '<span class="material-symbols-outlined">' + m.icon + '</span>' + m.label + '</button>';
-        }).join('');
-        return '<div class="mes-action-bar">' +
-            '<div class="mes-action-bar-tabs">' + tabs + '</div>' +
-            (actionsHtml ? '<div class="mes-action-bar-sep"></div><div class="mes-action-bar-btns">' + actionsHtml + '</div>' : '') +
-            '</div>';
+        var items = MENUS.map(function(m) {
+            return { label: m.label, icon: m.icon, subtitle: m.subtitle, accent: m.accent, active: m.id === active, onClick: "FiveSModule.switchTab('" + m.id + "')" };
+        });
+        return '<div class="mes-apple-menu-hero" style="margin-bottom:' + (actionsHtml ? '8px' : '16px') + ';">' +
+            ProdAppleMenu.strip(items) +
+            '</div>' +
+            (actionsHtml ? '<div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:14px;">' + actionsHtml + '</div>' : '');
     }
 
     /* ─── 점수 → 등급 ─────────────────────────────────────────── */

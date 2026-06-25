@@ -46,10 +46,7 @@ const SettingsModule = (function() {
         await _loadProcessTypes();
         container.innerHTML = `
             <div class="fade-in-up">
-                ${ProdAppleMenu.hero(
-                    '관리 / 설정',
-                    '제품 정보, 공정, 사용자 관리를 통합합니다.',
-                    [
+                <div class="mes-apple-menu-hero">${ProdAppleMenu.strip([
                         { label: '제품 정보',   icon: 'category',              subtitle: '제품 마스터',    active: currentTab === 'products',     onClick: "SettingsModule.switchTab('products')",     tabKey: 'products',     accent: '#2563eb' },
                         { label: '불량 유형',   icon: 'report_problem',        subtitle: '불량 코드',      active: currentTab === 'defects',      onClick: "SettingsModule.switchTab('defects')",      tabKey: 'defects',      accent: '#ef4444' },
                         { label: '도료 관리',   icon: 'palette',               subtitle: '도료 마스터',    active: currentTab === 'paint',        onClick: "SettingsModule.switchTab('paint')",        tabKey: 'paint',        accent: '#059669' },
@@ -59,8 +56,7 @@ const SettingsModule = (function() {
                         { label: '백업/복원',   icon: 'backup',                subtitle: 'DB 백업',        active: currentTab === 'backup',       onClick: "SettingsModule.switchTab('backup')",       tabKey: 'backup',       accent: '#64748b' },
                         { label: '시스템',      icon: 'settings',              subtitle: '알림/권한',      active: currentTab === 'system',       onClick: "SettingsModule.switchTab('system')",       tabKey: 'system',       accent: '#475569' },
                         { label: '사용자 관리', icon: 'manage_accounts',       subtitle: '계정 관리',      active: currentTab === 'users',        onClick: "SettingsModule.switchTab('users')",        tabKey: 'users',        accent: '#7c3aed' }
-                    ]
-                )}
+                    ])}</div>
 
                 <!-- 탭 콘텐츠 -->
                 <div id="settingsContent"></div>

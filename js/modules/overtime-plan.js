@@ -12,6 +12,7 @@ const OvertimePlanModule = (function() {
     let _calYear = new Date().getFullYear();
     let _calMonth = new Date().getMonth() + 1;
     let _activeDate = '';
+    let _satExpanded = false;
 
     const FIXED_HOLIDAYS = {
         '01-01':'신정', '03-01':'삼일절', '05-01':'근로자의날',
@@ -170,23 +171,36 @@ const OvertimePlanModule = (function() {
         const titleEl = document.getElementById('otCalendarTitle');
         const calEl = document.getElementById('overtimeCalendar');
         if (!calEl) return;
-
         if (titleEl) titleEl.textContent = `${_calYear}년 ${_calMonth}월`;
 
+        const pad = n => String(n).padStart(2, '0');
         const firstDow = new Date(_calYear, _calMonth - 1, 1).getDay();
         const lastDay = new Date(_calYear, _calMonth, 0).getDate();
         const today = UIUtils.today();
         const byDate = _plansByDate();
 
+        const DAY_COLOR = ['#ef4444','#64748b','#64748b','#64748b','#64748b','#64748b','#2563eb'];
+
         let html = `
-            <table style="width:100%;border-collapse:collapse;min-width:840px;table-layout:fixed;">
-                <thead>
-                    <tr>
-                        ${DAY_KO.map((day, index) => `
-                            <th style="padding:10px 6px;text-align:center;font-size:0.86rem;font-weight:700;color:${index === 0 ? 'var(--accent-red)' : index === 6 ? 'var(--accent-blue)' : 'var(--text-secondary)'};border-bottom:2px solid var(--border-color);">${day}</th>
-                        `).join('')}
-                    </tr>
-                </thead>
+            <div style="border-radius:14px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.07),0 4px 18px rgba(0,0,0,0.07);border:1px solid #e2e8f0;">
+            <table style="width:100%;border-collapse:collapse;min-width:780px;table-layout:fixed;">
+                <colgroup>
+                    <col style="width:38px;">
+                    <col><col><col><col><col>
+                    <col style="${_satExpanded ? '' : 'width:72px;'}">
+                </colgroup>
+                <thead><tr style="background:linear-gradient(135deg,#f8fafc 0%,#f1f5f9 100%);">
+                    ${DAY_KO.map((d, i) => {
+                        const isSatCol = i === 6;
+                        const extra = isSatCol
+                            ? `<span class="material-symbols-outlined" style="font-size:11px;vertical-align:middle;margin-left:2px;">${_satExpanded ? 'chevron_left' : 'chevron_right'}</span>`
+                            : '';
+                        const clickAttr = isSatCol
+                            ? `onclick="event.stopPropagation();OvertimePlanModule.toggleSat()" style="cursor:pointer;" title="${_satExpanded ? '토요일 축소' : '토요일 확장'}"`
+                            : '';
+                        return `<th ${clickAttr} style="padding:12px ${i===0?'2px':'8px'};text-align:center;font-size:0.8rem;font-weight:800;color:${DAY_COLOR[i]};border-bottom:2px solid #e2e8f0;letter-spacing:0.5px;user-select:none;">${d}${extra}</th>`;
+                    }).join('')}
+                </tr></thead>
                 <tbody>
         `;
 
@@ -197,58 +211,83 @@ const OvertimePlanModule = (function() {
             for (let col = 0; col < 7; col += 1) {
                 const blank = (row === 0 && col < firstDow) || day > lastDay;
                 if (blank) {
-                    html += `<td style="height:178px;border:1px solid var(--border-color);background:var(--bg-secondary);"></td>`;
+                    const blankBg = col===0 ? 'rgba(254,242,242,0.5)' : col===6 ? 'rgba(239,246,255,0.5)' : '#f8fafc';
+                    const blankPad = col===0 ? 'padding:0;' : '';
+                    html += `<td style="height:160px;${blankPad}border:1px solid #e2e8f0;background:${blankBg};"></td>`;
                     continue;
                 }
 
-                const dateStr = `${_calYear}-${String(_calMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const dateStr = `${_calYear}-${pad(_calMonth)}-${pad(day)}`;
                 const plans = (byDate[dateStr] || []).slice().sort((a, b) => String(a.startTime || '').localeCompare(String(b.startTime || '')));
                 const isToday = dateStr === today;
                 const isSun = col === 0;
                 const isSat = col === 6;
                 const holiday = _getHoliday(dateStr);
                 const isHoliday = !!holiday;
-                const dayColor = isSun ? 'var(--accent-red)' : isSat ? 'var(--accent-blue)' : (isHoliday ? '#ef4444' : 'var(--text-primary)');
-                const cellBg = isToday ? 'rgba(37,99,235,0.05)' : (isSun ? 'rgba(254,242,242,0.5)' : (isSat ? 'rgba(239,246,255,0.4)' : (isHoliday ? 'rgba(254,242,242,0.3)' : '#fff')));
-                const cellExtra = isToday ? 'box-shadow:inset 0 0 0 2px var(--accent-blue);' : (isHoliday && !isSun ? 'border-top:2px solid #fca5a5;' : '');
 
-                html += `
+                const cellBg = isToday ? '#eff6ff' : isSun ? 'rgba(254,242,242,0.5)' : isSat ? 'rgba(239,246,255,0.4)' : (isHoliday ? 'rgba(254,242,242,0.3)' : '#fff');
+                const cellBorderTop = isToday ? 'border-top:2px solid #2563eb;' : (isHoliday && !isSun && !isSat ? 'border-top:2px solid #fca5a5;' : '');
+                const dayNumColor = isSun ? '#ef4444' : isSat ? '#2563eb' : isToday ? '#fff' : (isHoliday ? '#ef4444' : 'var(--text-primary)');
+                const dayNumStyle = isToday
+                    ? 'display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:#2563eb;font-size:0.78rem;font-weight:800;color:#fff;'
+                    : `font-size:0.88rem;font-weight:800;color:${dayNumColor};`;
+                const countBadge = plans.length
+                    ? `<span style="font-size:0.6rem;font-weight:700;padding:1px 7px;background:rgba(99,102,241,0.1);color:#4f46e5;border-radius:99px;">${plans.length}</span>`
+                    : '';
+
+                if (isSun || (isSat && !_satExpanded)) {
+                    const hoverBg = isSun ? '#fee2e2' : '#dbeafe';
+                    const clickFn = isSat
+                        ? 'OvertimePlanModule.toggleSat()'
+                        : `OvertimePlanModule.openDayModal('${dateStr}')`;
+                    const tip = isSat && plans.length ? `title="${plans.length}건 계획"` : '';
+                    html += `
+                    <td onclick="${clickFn}" ${tip}
+                        style="height:160px;padding:6px 2px;border:1px solid #e2e8f0;${cellBorderTop}background:${cellBg};cursor:pointer;vertical-align:top;text-align:center;transition:background 0.12s;"
+                        onmouseover="this.style.background='${hoverBg}';"
+                        onmouseout="this.style.background='${cellBg}';">
+                        <span style="${dayNumStyle}">${day}</span>
+                        ${holiday ? `<div style="font-size:0.5rem;font-weight:700;color:#ef4444;margin-top:2px;line-height:1.2;word-break:break-all;">${holiday}</div>` : ''}
+                        ${isSat && plans.length ? `<span style="display:block;margin-top:3px;font-size:0.58rem;font-weight:700;color:#2563eb;background:rgba(37,99,235,0.1);border-radius:99px;padding:1px 4px;">${plans.length}</span>` : ''}
+                    </td>`;
+                } else {
+                    html += `
                     <td onclick="OvertimePlanModule.openDayModal('${dateStr}')"
-                        style="height:178px;padding:8px;border:1px solid var(--border-color);background:${cellBg};cursor:pointer;vertical-align:top;${cellExtra}"
-                        onmouseover="this.style.background='rgba(241,245,249,0.9)'"
-                        onmouseout="this.style.background='${cellBg}'">
-                        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:6px;margin-bottom:8px;">
+                        style="height:160px;padding:7px 7px;border:1px solid #e2e8f0;${cellBorderTop}background:${cellBg};cursor:pointer;vertical-align:top;transition:background 0.12s,box-shadow 0.12s;"
+                        onmouseover="this.style.background='#f1f5f9';this.style.boxShadow='inset 0 0 0 1.5px #94a3b8';"
+                        onmouseout="this.style.background='${cellBg}';this.style.boxShadow='';">
+                        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:4px;margin-bottom:5px;">
                             <div>
-                                <span style="font-size:0.95rem;font-weight:800;color:${dayColor};">${day}</span>
-                                ${holiday ? `<div style="font-size:0.62rem;font-weight:700;color:#ef4444;line-height:1.2;margin-top:1px;">${holiday}</div>` : ''}
+                                <span style="${dayNumStyle}">${day}</span>
+                                ${holiday ? `<div style="font-size:0.58rem;font-weight:700;color:#ef4444;line-height:1.2;margin-top:1px;white-space:nowrap;">${holiday}</div>` : ''}
                             </div>
-                            ${plans.length ? `<span style="font-size:0.72rem;color:var(--text-muted);">${plans.length}건</span>` : ''}
+                            ${countBadge}
                         </div>
-                        <div style="display:flex;flex-direction:column;gap:6px;">
-                            ${plans.slice(0, 4).map((plan) => {
+                        <div style="display:flex;flex-direction:column;gap:4px;overflow:hidden;max-height:${holiday ? '96px' : '108px'};">
+                            ${plans.slice(0, 3).map((plan) => {
                                 const tone = _processColor(plan.process);
-                                return `
-                                    <div style="padding:6px 7px;border-radius:8px;background:${tone.bg};border:1px solid ${tone.border};min-width:0;">
-                                        <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
-                                            <span style="font-size:0.69rem;font-weight:800;color:${tone.color};white-space:nowrap;">${_escape(plan.process)}</span>
-                                            <span style="font-size:0.68rem;color:var(--text-muted);white-space:nowrap;">${_escape(plan.startTime)}~${_escape(plan.endTime)}</span>
-                                        </div>
-                                        <div style="font-size:0.76rem;font-weight:700;color:var(--text-primary);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_escape(plan.taskName)}</div>
-                                    </div>
-                                `;
+                                return `<div style="display:flex;align-items:center;gap:3px;padding:3px 5px;border-radius:6px;background:${tone.bg};border:1px solid ${tone.border};min-width:0;">
+                                    <span style="font-size:0.62rem;font-weight:800;color:${tone.color};white-space:nowrap;flex-shrink:0;">${_escape(plan.process)}</span>
+                                    <span style="font-size:0.62rem;color:var(--text-muted);white-space:nowrap;flex-shrink:0;">${_escape(plan.startTime)}~${_escape(plan.endTime)}</span>
+                                    <span style="font-size:0.65rem;font-weight:700;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">${_escape(plan.taskName)}</span>
+                                </div>`;
                             }).join('')}
-                            ${plans.length > 4 ? `<div style="font-size:0.72rem;color:var(--text-muted);padding-left:2px;">+${plans.length - 4}건 더 있음</div>` : ''}
-                            ${!plans.length ? `<div style="font-size:0.76rem;color:var(--text-muted);padding-top:16px;">등록된 연장근무 계획이 없습니다.</div>` : ''}
+                            ${plans.length > 3 ? `<span style="font-size:0.65rem;color:var(--text-muted);">+${plans.length - 3}건 더</span>` : ''}
                         </div>
-                    </td>
-                `;
+                    </td>`;
+                }
                 day += 1;
             }
             html += '</tr>';
         }
 
-        html += '</tbody></table>';
+        html += '</tbody></table></div>';
         calEl.innerHTML = html;
+    }
+
+    function toggleSat() {
+        _satExpanded = !_satExpanded;
+        renderCalendar();
     }
 
     function openDayModal(dateStr) {
@@ -533,6 +572,7 @@ const OvertimePlanModule = (function() {
     return {
         render,
         renderCalendar,
+        toggleSat,
         openDayModal,
         openEntryModal,
         reopenDayModal,

@@ -136,8 +136,10 @@ var LaserWipModule = (function() {
                     .map(r => {
                         const wipColor   = r.wip > 0 ? 'var(--accent-green)' : (r.wip < 0 ? 'var(--accent-red)' : 'var(--text-muted)');
                         const statusText = r.wip > 0 ? '도장 투입 대기' : (r.wip < 0 ? '오류' : '소진');
-                        return `<tr style="border-bottom:1px solid var(--border-color);"
-                                    onmouseover="this.style.background='var(--bg-secondary)'"
+                        const encKey = encodeURIComponent(`${r.carModel}||${r.partName}||${r.color||''}`);
+                        return `<tr style="border-bottom:1px solid var(--border-color);cursor:pointer;"
+                                    onclick="LaserWipModule.showWipDetail('${encKey}', event)"
+                                    onmouseover="this.style.background='rgba(139,92,246,0.06)'"
                                     onmouseout="this.style.background=''">
                             <td style="padding:5px 8px;font-size:0.8rem;font-weight:600;line-height:1.28;white-space:normal;word-break:break-word;min-width:160px;max-width:220px;">
                                 <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;" title="${_esc(r.partName)}">${_esc(r.partName)}</span>
@@ -147,7 +149,9 @@ var LaserWipModule = (function() {
                                 <span style="font-size:0.9rem;font-weight:800;color:${wipColor};">${UIUtils.formatNumber(Math.abs(r.wip))}</span>
                                 <span style="font-size:0.68rem;color:var(--text-muted);margin-left:1px;">EA</span>
                             </td>
-                            <td style="padding:5px 8px;font-size:0.7rem;color:${wipColor};white-space:nowrap;">${statusText}</td>
+                            <td style="padding:5px 8px;font-size:0.7rem;color:${wipColor};white-space:nowrap;">${statusText}
+                                <span class="material-symbols-outlined" style="font-size:11px;vertical-align:middle;opacity:0.5;margin-left:2px;">open_in_new</span>
+                            </td>
                         </tr>`;
                     }).join('');
                 return `
@@ -186,7 +190,7 @@ var LaserWipModule = (function() {
             <div class="stat-cards" style="margin-bottom:16px;">
                 <div class="stat-card purple">
                     <div class="stat-card-value">${UIUtils.formatNumber(totalLaser)}</div>
-                    <div class="stat-card-label">레이져 완료 (EA)</div>
+                    <div class="stat-card-label">검사 양품 (EA)</div>
                 </div>
                 <div class="stat-card blue">
                     <div class="stat-card-value">${UIUtils.formatNumber(totalPaint)}</div>
@@ -225,7 +229,7 @@ var LaserWipModule = (function() {
                                 <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">레이져작업일</th>
                                 <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">도장작업일</th>
                                 <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">사출LOT</th>
-                                <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--accent-purple);white-space:nowrap;">레이져 완료</th>
+                                <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--accent-purple);white-space:nowrap;">검사 양품</th>
                                 <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--accent-blue);white-space:nowrap;">도장 투입</th>
                                 <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--accent-green);white-space:nowrap;">재공품</th>
                                 <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--text-secondary);white-space:nowrap;">상태</th>
@@ -277,9 +281,12 @@ var LaserWipModule = (function() {
                 const carResidual = items.reduce((s,r) => s + r.residualQty, 0);
                 const itemRows = items
                     .sort((a,b) => (a.partName||'').localeCompare(b.partName||'', 'ko'))
-                    .map(r => `
-                    <tr style="border-bottom:1px solid var(--border-color);"
-                        onmouseover="this.style.background='var(--bg-secondary)'"
+                    .map(r => {
+                        const encKey = encodeURIComponent(`${r.carModel}||${r.partName}||${r.color||''}`);
+                        return `
+                    <tr style="border-bottom:1px solid var(--border-color);cursor:pointer;"
+                        onclick="LaserWipModule.showResidualDetail('${encKey}', event)"
+                        onmouseover="this.style.background='rgba(245,158,11,0.07)'"
                         onmouseout="this.style.background=''">
                         <td style="padding:5px 8px;font-size:0.8rem;font-weight:600;line-height:1.28;white-space:normal;word-break:break-word;min-width:160px;max-width:220px;">
                             <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;" title="${_esc(r.partName)}">${_esc(r.partName)}</span>
@@ -289,8 +296,11 @@ var LaserWipModule = (function() {
                             <span style="font-size:0.9rem;font-weight:800;color:var(--accent-orange,#f59e0b);">${UIUtils.formatNumber(r.residualQty)}</span>
                             <span style="font-size:0.68rem;color:var(--text-muted);margin-left:1px;">EA</span>
                         </td>
-                        <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);">${r.packUnit ? UIUtils.formatNumber(r.packUnit) : '-'}</td>
-                    </tr>`).join('');
+                        <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);">${r.packUnit ? UIUtils.formatNumber(r.packUnit) : '-'}
+                            <span class="material-symbols-outlined" style="font-size:11px;vertical-align:middle;opacity:0.5;margin-left:2px;">open_in_new</span>
+                        </td>
+                    </tr>`;
+                    }).join('');
                 return `
                 <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
                     <div style="background:var(--accent-orange,#f59e0b);color:#fff;padding:7px 10px;
@@ -659,12 +669,379 @@ var LaserWipModule = (function() {
         refresh();
     }
 
+    // ── 제품 클릭 팝업 공통 닫기 ────────────────────────────────────────
+    function _closeDetailPopup() {
+        const el = document.getElementById('lwDetailPopup');
+        if (el) el.remove();
+    }
+
+    function _popupPosition(evt) {
+        const rect = evt.currentTarget ? evt.currentTarget.getBoundingClientRect() : { bottom: evt.clientY, left: evt.clientX, top: evt.clientY };
+        const popW = 460, popH = 380;
+        let top = (rect.bottom || evt.clientY) + 6;
+        let left = (rect.left || evt.clientX);
+        if (left + popW > window.innerWidth - 10) left = window.innerWidth - popW - 10;
+        if (top + popH > window.innerHeight - 10) top = (rect.top || evt.clientY) - popH - 6;
+        return { top, left };
+    }
+
+    // ── 레이져 후 재공품 LOT별 잔량 계산 ────────────────────────────────
+    function _calcWipLotDetail(carModel, partName, color) {
+        const laserWorks = Storage.getAll(STORE_LASER) || [];
+        const laserInsps = Storage.getAll(DB.STORES.LASER_INSPECTIONS) || [];
+        const paintWorks = Storage.getAll(STORE_PAINT) || [];
+        const drainMap   = _buildAfterLaserDrainMap();
+        const drainLine  = drainMap[`${carModel}||${partName}`];
+
+        const inspGoodMap = {};
+        laserInsps.forEach(function(insp) {
+            if (!insp.workLogId) return;
+            const good = Math.max(0, (Number(insp.inspQty)||0) - (Number(insp.failQty)||0));
+            inspGoodMap[insp.workLogId] = (inspGoodMap[insp.workLogId]||0) + good;
+        });
+
+        const usedByLot = {};
+        paintWorks.forEach(function(w) {
+            if ((w.carModel||'') !== carModel || (w.partName||'') !== partName) return;
+            if (drainLine && (w.line||'').trim() !== drainLine) return;
+            const wLots = Array.isArray(w.lots) && w.lots.length > 0
+                ? w.lots : [{ lotNo: w.lotNo||'', qty: Number(w.productionQty)||0 }];
+            wLots.forEach(function(l) {
+                if (l.lotNo) usedByLot[l.lotNo] = (usedByLot[l.lotNo]||0) + (Number(l.qty)||0);
+            });
+        });
+
+        const wipMap = {};
+        laserWorks.filter(function(w) {
+            if ((w.carModel||'') !== carModel || (w.partName||'') !== partName) return false;
+            if (color && (w.color||'') !== color) return false;
+            return !w.isManualOut;
+        }).forEach(function(w) {
+            const workQty = Number(w.quantity)||0;
+            const goodQty = (w.id && (w.id in inspGoodMap)) ? inspGoodMap[w.id] : workQty;
+            const effGood = goodQty > 0 ? goodQty : workQty;
+            if (effGood <= 0) return;
+
+            // 도장LOT: paintDate 기반 YYMMDD
+            const paintLot = (function() {
+                if (Array.isArray(w.paintLots) && w.paintLots.length > 0 && w.paintLots[0] && w.paintLots[0].paintDate) {
+                    return String(w.paintLots[0].paintDate).replace(/-/g,'').slice(2,8);
+                }
+                return String(w.paintDate||w.date||'').replace(/-/g,'').slice(2,8);
+            })();
+
+            let injLots = [];
+            if (Array.isArray(w.paintLots) && w.paintLots.length > 0) {
+                w.paintLots.forEach(function(pl) {
+                    if (!pl) return;
+                    let lotNo = String(pl.lotNo||'').trim();
+                    if (!lotNo && pl.paintDate) lotNo = String(pl.paintDate).replace(/-/g,'').slice(2,8);
+                    if (lotNo) injLots.push({ lotNo: lotNo, qty: Number(pl.qty)||0 });
+                });
+            }
+            if (!injLots.length) {
+                const s = String(w.paintLot||w.lotNo||'').trim();
+                if (s) injLots.push({ lotNo: s, qty: workQty });
+            }
+            if (!injLots.length) {
+                const dk = String(w.date||'').replace(/-/g,'').slice(2,8);
+                if (dk) injLots.push({ lotNo: dk, qty: workQty });
+            }
+            const totalLotQty = injLots.reduce(function(s,l){return s+l.qty;},0);
+            injLots.forEach(function(lj) {
+                const wipQty = totalLotQty > 0 ? (effGood * lj.qty / totalLotQty) : (effGood / injLots.length);
+                if (!wipMap[lj.lotNo]) wipMap[lj.lotNo] = { lotNo: lj.lotNo, paintLot: paintLot, balance: 0 };
+                else if (!wipMap[lj.lotNo].paintLot && paintLot) wipMap[lj.lotNo].paintLot = paintLot;
+                wipMap[lj.lotNo].balance += wipQty;
+            });
+        });
+
+        Object.keys(usedByLot).forEach(function(lotNo) {
+            if (wipMap[lotNo]) wipMap[lotNo].balance -= usedByLot[lotNo];
+        });
+
+        return Object.values(wipMap)
+            .map(function(l){ return { lotNo: l.lotNo, paintLot: l.paintLot||'', balance: Math.round(l.balance) }; })
+            .sort(function(a,b){ return a.lotNo.localeCompare(b.lotNo); });
+    }
+
+    // ── 레이져 후 재공품 팝업 ────────────────────────────────────────────
+    function showWipDetail(keyEnc, evt) {
+        _closeDetailPopup();
+        evt.stopPropagation();
+
+        const parts = decodeURIComponent(keyEnc).split('||');
+        const carModel = parts[0]||'', partName = parts[1]||'', color = parts[2]||'';
+
+        const r = (_calcWip()).find(function(x){ return x.carModel===carModel && x.partName===partName && (x.color||'')===color; });
+        if (!r) return;
+
+        const lotRows = _calcWipLotDetail(carModel, partName, color);
+
+        // 입출고 내역 rows
+        const laserWorks = (Storage.getAll(STORE_LASER)||[]).filter(function(w){
+            return (w.carModel||'')===carModel && (w.partName||'')===partName && (!color||(w.color||'')===color) && !w.isManualOut;
+        });
+        const drainMap  = _buildAfterLaserDrainMap();
+        const drainLine = drainMap[`${carModel}||${partName}`];
+        const paintWorks = (Storage.getAll(STORE_PAINT)||[]).filter(function(w){
+            return (w.carModel||'')===carModel && (w.partName||'')===partName && (!drainLine||(w.line||'').trim()===drainLine);
+        });
+
+        const laserInsps = Storage.getAll(DB.STORES.LASER_INSPECTIONS)||[];
+        const inspGoodMap = {};
+        laserInsps.forEach(function(i){ if(i.workLogId){ const g=Math.max(0,(Number(i.inspQty)||0)-(Number(i.failQty)||0)); inspGoodMap[i.workLogId]=(inspGoodMap[i.workLogId]||0)+g; } });
+
+        const allHistRows = [];
+        laserWorks.sort(function(a,b){return String(a.date||'').localeCompare(String(b.date||''));}).forEach(function(w){
+            const goodQty = (w.id&&(w.id in inspGoodMap)) ? inspGoodMap[w.id] : (Number(w.quantity)||0);
+            const lots = Array.isArray(w.paintLots)&&w.paintLots.length ? w.paintLots.map(function(pl){ return (pl&&pl.lotNo)||''; }).filter(Boolean).join(',') : (w.paintLot||w.lotNo||'-');
+            allHistRows.push(`<tr style="border-bottom:1px solid var(--border-color);">
+                <td style="padding:4px 8px;"><span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:0.68rem;font-weight:700;background:rgba(139,92,246,0.12);color:var(--accent-purple);">레이져 입고</span></td>
+                <td style="padding:4px 8px;font-size:0.78rem;">${_esc(w.date||'-')}</td>
+                <td style="padding:4px 8px;font-size:0.74rem;color:var(--text-muted);">${_esc(lots)}</td>
+                <td style="padding:4px 8px;text-align:right;font-weight:700;color:var(--accent-purple);">+${UIUtils.formatNumber(goodQty)}</td>
+            </tr>`);
+        });
+        paintWorks.sort(function(a,b){return String(a.date||'').localeCompare(String(b.date||''));}).forEach(function(w){
+            const qty = Number(w.productionQty)||0;
+            const wLots = Array.isArray(w.lots)&&w.lots.length ? w.lots.map(function(l){return l&&l.lotNo||'';}).filter(Boolean).join(',') : (w.lotNo||'-');
+            allHistRows.push(`<tr style="border-bottom:1px solid var(--border-color);">
+                <td style="padding:4px 8px;"><span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:0.68rem;font-weight:700;background:rgba(37,99,235,0.10);color:var(--accent-blue);">도장-B 출고</span></td>
+                <td style="padding:4px 8px;font-size:0.78rem;">${_esc(w.date||'-')}</td>
+                <td style="padding:4px 8px;font-size:0.74rem;color:var(--text-muted);">${_esc(wLots)}</td>
+                <td style="padding:4px 8px;text-align:right;font-weight:700;color:var(--accent-blue);">-${UIUtils.formatNumber(qty)}</td>
+            </tr>`);
+        });
+        allHistRows.sort(function(a,b){ const da=a.match(/\d{4}-\d{2}-\d{2}/)||['']; const db=b.match(/\d{4}-\d{2}-\d{2}/)||['']; return da[0].localeCompare(db[0]); });
+
+        const visibleLots = lotRows.filter(function(l){return l.balance>0;});
+        const lotTableHtml = visibleLots.length === 0
+            ? '<div style="color:var(--text-muted);font-size:0.82rem;padding:6px 0;">잔량 없음</div>'
+            : `<table style="width:100%;border-collapse:collapse;">
+                <thead><tr style="background:rgba(139,92,246,0.07);">
+                    <th style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">도장 LOT</th>
+                    <th style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">사출 LOT</th>
+                    <th style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:right;border-bottom:1px solid var(--border-color);">잔량 (EA)</th>
+                </tr></thead>
+                <tbody>${visibleLots.map(function(l){
+                    return `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
+                        <td style="padding:4px 10px;font-family:monospace;font-size:0.82rem;color:var(--accent-green);">${_esc(l.paintLot||'-')}</td>
+                        <td style="padding:4px 10px;font-family:monospace;font-size:0.82rem;">${_esc(l.lotNo)}</td>
+                        <td style="padding:4px 10px;text-align:right;font-weight:700;color:var(--accent-purple);">${UIUtils.formatNumber(l.balance)}</td>
+                    </tr>`;
+                }).join('')}</tbody>
+               </table>`;
+
+        const popup = document.createElement('div');
+        popup.id = 'lwDetailPopup';
+        popup.style.cssText = `position:fixed;z-index:9999;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.18);min-width:320px;max-width:460px;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;`;
+        const pos = _popupPosition(evt);
+        popup.style.top = pos.top + 'px';
+        popup.style.left = pos.left + 'px';
+
+        popup.innerHTML = `
+            <div style="background:var(--accent-purple,#7c3aed);color:#fff;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-radius:10px 10px 0 0;">
+                <div>
+                    <div style="font-size:0.72rem;opacity:0.8;">${_esc(carModel)}</div>
+                    <div style="font-weight:700;font-size:0.95rem;">${_esc(partName)} <span style="font-size:0.8rem;font-weight:400;">${color&&color!=='-'?'/ '+_esc(color):''}</span></div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-size:0.7rem;opacity:0.8;">현재 재공품</div>
+                    <div style="font-size:1.3rem;font-weight:800;">${UIUtils.formatNumber(Math.max(0,r.wip))} <span style="font-size:0.75rem;font-weight:400;">EA</span></div>
+                </div>
+            </div>
+            <div style="padding:10px 12px;">
+                <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:4px;">
+                    <span class="material-symbols-outlined" style="font-size:14px;">inventory_2</span>사출 LOT별 잔량
+                </div>
+                ${lotTableHtml}
+            </div>
+            <div style="padding:0 12px 10px;display:flex;align-items:center;gap:8px;">
+                <button onclick="(function(btn){
+                    const el=document.getElementById('lwDetailHistArea');
+                    const show=el.style.display==='none';
+                    el.style.display=show?'block':'none';
+                    btn.innerHTML=show?'<span class=\\'material-symbols-outlined\\' style=\\'font-size:14px;vertical-align:middle;\\'>expand_less</span> 내역 닫기':'<span class=\\'material-symbols-outlined\\' style=\\'font-size:14px;vertical-align:middle;\\'>expand_more</span> 입출고 내역 확인 (${allHistRows.length}건)';
+                })(this)" style="font-size:0.78rem;padding:4px 12px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-secondary);cursor:pointer;display:flex;align-items:center;gap:4px;color:var(--text-secondary);">
+                    <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">expand_more</span>입출고 내역 확인 (${allHistRows.length}건)
+                </button>
+                <span style="font-size:0.75rem;color:var(--text-muted);">입고 ${UIUtils.formatNumber(r.laserQty)} / 출고 ${UIUtils.formatNumber(r.paintBQty)} EA</span>
+            </div>
+            <div id="lwDetailHistArea" style="display:none;overflow-y:auto;max-height:240px;border-top:1px solid var(--border-color);">
+                <table style="width:100%;border-collapse:collapse;">
+                    <thead style="position:sticky;top:0;background:var(--bg-secondary);">
+                        <tr>
+                            <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">구분</th>
+                            <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">날짜</th>
+                            <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">LOT</th>
+                            <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;text-align:right;border-bottom:1px solid var(--border-color);">수량</th>
+                        </tr>
+                    </thead>
+                    <tbody>${allHistRows.join('')}</tbody>
+                </table>
+            </div>`;
+
+        document.body.appendChild(popup);
+        document.addEventListener('click', function _closeOnOuter(e) {
+            if (!popup.contains(e.target)) { popup.remove(); document.removeEventListener('click', _closeOnOuter); }
+        });
+    }
+
+    // ── 레이져 잔량 팝업 ─────────────────────────────────────────────────
+    function showResidualDetail(keyEnc, evt) {
+        _closeDetailPopup();
+        evt.stopPropagation();
+
+        const parts = decodeURIComponent(keyEnc).split('||');
+        const carModel = parts[0]||'', partName = parts[1]||'', color = parts[2]||'';
+
+        const r = _calcLaserResidualWip().find(function(x){ return x.carModel===carModel && x.partName===partName && (x.color||'')===color; });
+        if (!r) return;
+
+        // 레이져 작업 엔트리별 LOT잔량 계산
+        const laserAllWorks = (Storage.getAll(STORE_LASER)||[]).filter(function(w){
+            return (w.carModel||'')===carModel && (w.partName||'')===partName && (!color||(w.color||'')===color);
+        });
+
+        // 일반 작업 잔량 rows
+        const lotEntries = [];
+        laserAllWorks.filter(function(w){ return !w.isManualOut&&!w.isResidualManualIn&&!w.isResidualManualOut; }).forEach(function(w){
+            const goodQty  = Number(w.inspectionGoodQty)||Number(w.completedQty)||Number(w.quantity)||0;
+            const packUnit = Number(w.packUnit)||0;
+            const resQty   = Number(w.laserResidualQty)||(packUnit>0?Math.max(0,goodQty-Math.floor(goodQty/packUnit)*packUnit):0);
+            if (resQty <= 0) return;
+            const paintLots = Array.isArray(w.paintLots)&&w.paintLots.length ? w.paintLots : [];
+            const paintLot  = paintLots.length&&paintLots[0]&&paintLots[0].paintDate
+                ? String(paintLots[0].paintDate).replace(/-/g,'').slice(2,8)
+                : String(w.paintDate||w.date||'').replace(/-/g,'').slice(2,8);
+            const injLots   = paintLots.map(function(l){ return l&&l.lotNo||''; }).filter(Boolean);
+            const injStr    = injLots.length ? injLots.join(', ') : (w.paintLot||w.lotNo||'-');
+            lotEntries.push({ paintLot: paintLot||'-', injLot: injStr, qty: resQty });
+        });
+        // 수기 입출고 조정분 (별도 행)
+        var manualAdj = 0;
+        laserAllWorks.filter(function(w){ return w.isResidualManualIn||w.isResidualManualOut; }).forEach(function(w){
+            manualAdj += w.isResidualManualIn ? (Number(w.quantity)||0) : -(Number(w.quantity)||0);
+        });
+
+        const lotTableHtml = lotEntries.length === 0
+            ? '<div style="color:var(--text-muted);font-size:0.82rem;padding:6px 0;">LOT 정보 없음</div>'
+            : `<table style="width:100%;border-collapse:collapse;">
+                <thead><tr style="background:rgba(245,158,11,0.07);">
+                    <th style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">도장 LOT</th>
+                    <th style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">사출 LOT</th>
+                    <th style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:right;border-bottom:1px solid var(--border-color);">잔량 (EA)</th>
+                </tr></thead>
+                <tbody>
+                    ${lotEntries.map(function(e){
+                        return `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
+                            <td style="padding:4px 10px;font-family:monospace;font-size:0.82rem;color:var(--accent-green);">${_esc(e.paintLot)}</td>
+                            <td style="padding:4px 10px;font-family:monospace;font-size:0.82rem;">${_esc(e.injLot)}</td>
+                            <td style="padding:4px 10px;text-align:right;font-weight:700;color:var(--accent-orange,#f59e0b);">${UIUtils.formatNumber(e.qty)}</td>
+                        </tr>`;
+                    }).join('')}
+                    ${manualAdj !== 0 ? `<tr style="border-top:1px dashed var(--border-color);">
+                        <td colspan="2" style="padding:4px 10px;font-size:0.74rem;color:var(--text-muted);">수기 조정</td>
+                        <td style="padding:4px 10px;text-align:right;font-size:0.8rem;font-weight:700;color:${manualAdj>0?'var(--accent-green)':'var(--accent-red)'};">${manualAdj>0?'+':''}${UIUtils.formatNumber(manualAdj)}</td>
+                    </tr>` : ''}
+                </tbody>
+               </table>`;
+
+        // 입출고 내역: laserWorks rows (잔량 발생) + residual manual rows
+        const laserWorks = (Storage.getAll(STORE_LASER)||[]).filter(function(w){
+            return (w.carModel||'')===carModel && (w.partName||'')===partName && (!color||(w.color||'')===color);
+        });
+        const histRows = [];
+        laserWorks.filter(function(w){return !w.isManualOut&&!w.isResidualManualIn&&!w.isResidualManualOut;}).forEach(function(w){
+            const goodQty = Number(w.inspectionGoodQty)||Number(w.completedQty)||Number(w.quantity)||0;
+            const packUnit = Number(w.packUnit)||0;
+            const residualQty = Number(w.laserResidualQty)||(packUnit>0?Math.max(0,goodQty-Math.floor(goodQty/packUnit)*packUnit):0);
+            if (residualQty <= 0) return;
+            const lots = Array.isArray(w.paintLots)&&w.paintLots.length ? w.paintLots.map(function(pl){return pl&&pl.lotNo||'';}).filter(Boolean).join(',') : (w.paintLot||w.lotNo||'-');
+            histRows.push(`<tr style="border-bottom:1px solid var(--border-color);">
+                <td style="padding:4px 8px;"><span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:0.68rem;font-weight:700;background:rgba(245,158,11,0.12);color:var(--accent-orange,#f59e0b);">잔량 발생</span></td>
+                <td style="padding:4px 8px;font-size:0.78rem;">${_esc(w.date||'-')}</td>
+                <td style="padding:4px 8px;font-size:0.74rem;color:var(--text-muted);">${_esc(lots)}</td>
+                <td style="padding:4px 8px;text-align:right;font-weight:700;color:var(--accent-orange,#f59e0b);">+${UIUtils.formatNumber(residualQty)}</td>
+            </tr>`);
+        });
+        laserWorks.filter(function(w){return w.isResidualManualIn||w.isResidualManualOut;}).forEach(function(w){
+            const qty = Number(w.quantity)||0;
+            const isIn = w.isResidualManualIn;
+            histRows.push(`<tr style="border-bottom:1px solid var(--border-color);">
+                <td style="padding:4px 8px;"><span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:0.68rem;font-weight:700;background:${isIn?'rgba(34,197,94,0.12)':'rgba(239,68,68,0.10)'};color:${isIn?'var(--accent-green)':'var(--accent-red)'};">${isIn?'수기 입고':'수기 출고'}</span></td>
+                <td style="padding:4px 8px;font-size:0.78rem;">${_esc(w.date||'-')}</td>
+                <td style="padding:4px 8px;font-size:0.74rem;color:var(--text-muted);">${_esc(w.lotNo||w.note||'-')}</td>
+                <td style="padding:4px 8px;text-align:right;font-weight:700;color:${isIn?'var(--accent-green)':'var(--accent-red)'};">${isIn?'+':'-'}${UIUtils.formatNumber(qty)}</td>
+            </tr>`);
+        });
+
+        const popup = document.createElement('div');
+        popup.id = 'lwDetailPopup';
+        popup.style.cssText = `position:fixed;z-index:9999;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.18);min-width:340px;max-width:480px;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;`;
+        const pos = _popupPosition(evt);
+        popup.style.top = pos.top + 'px';
+        popup.style.left = pos.left + 'px';
+
+        popup.innerHTML = `
+            <div style="background:var(--accent-orange,#f59e0b);color:#fff;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-radius:10px 10px 0 0;">
+                <div>
+                    <div style="font-size:0.72rem;opacity:0.85;">${_esc(carModel)}</div>
+                    <div style="font-weight:700;font-size:0.95rem;">${_esc(partName)} <span style="font-size:0.8rem;font-weight:400;">${color&&color!=='-'?'/ '+_esc(color):''}</span></div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-size:0.7rem;opacity:0.85;">현재 잔량</div>
+                    <div style="font-size:1.3rem;font-weight:800;">${UIUtils.formatNumber(r.residualQty)} <span style="font-size:0.75rem;font-weight:400;">EA</span></div>
+                </div>
+            </div>
+            <div style="padding:10px 12px;">
+                <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:4px;">
+                    <span class="material-symbols-outlined" style="font-size:14px;">sell</span>LOT / 작업일 정보
+                </div>
+                ${lotTableHtml}
+                ${r.packUnit ? `<div style="margin-top:6px;font-size:0.74rem;color:var(--text-muted);">포장단위: <strong style="color:var(--text-primary);">${UIUtils.formatNumber(r.packUnit)}</strong> / 출하가능: <strong style="color:var(--accent-green);">${UIUtils.formatNumber(r.fullBoxQty)} EA</strong></div>` : ''}
+            </div>
+            <div style="padding:0 12px 10px;display:flex;align-items:center;gap:8px;">
+                <button onclick="(function(btn){
+                    const el=document.getElementById('lwDetailHistArea');
+                    const show=el.style.display==='none';
+                    el.style.display=show?'block':'none';
+                    btn.innerHTML=show?'<span class=\\'material-symbols-outlined\\' style=\\'font-size:14px;vertical-align:middle;\\'>expand_less</span> 내역 닫기':'<span class=\\'material-symbols-outlined\\' style=\\'font-size:14px;vertical-align:middle;\\'>expand_more</span> 입출고 내역 확인 (${histRows.length}건)';
+                })(this)" style="font-size:0.78rem;padding:4px 12px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-secondary);cursor:pointer;display:flex;align-items:center;gap:4px;color:var(--text-secondary);">
+                    <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">expand_more</span>입출고 내역 확인 (${histRows.length}건)
+                </button>
+            </div>
+            <div id="lwDetailHistArea" style="display:none;overflow-y:auto;max-height:240px;border-top:1px solid var(--border-color);">
+                <table style="width:100%;border-collapse:collapse;">
+                    <thead style="position:sticky;top:0;background:var(--bg-secondary);">
+                        <tr>
+                            <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">구분</th>
+                            <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">날짜</th>
+                            <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">LOT</th>
+                            <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;text-align:right;border-bottom:1px solid var(--border-color);">수량</th>
+                        </tr>
+                    </thead>
+                    <tbody>${histRows.join('')}</tbody>
+                </table>
+            </div>`;
+
+        document.body.appendChild(popup);
+        document.addEventListener('click', function _closeOnOuter(e) {
+            if (!popup.contains(e.target)) { popup.remove(); document.removeEventListener('click', _closeOnOuter); }
+        });
+    }
+
     function _num(value) {
         return Number(String(value == null ? '' : value).replace(/,/g, '')) || 0;
     }
 
     function _laserResidualRow(r) {
-        return `<tr style="border-bottom:1px solid var(--border-color);">
+        const encKey = encodeURIComponent(`${r.carModel||''}||${r.partName||''}||${r.color||''}`);
+        return `<tr style="border-bottom:1px solid var(--border-color);cursor:pointer;"
+                    onclick="LaserWipModule.showResidualDetail('${encKey}', event)"
+                    onmouseover="this.style.background='rgba(245,158,11,0.07)'"
+                    onmouseout="this.style.background=''">
             <td style="padding:10px 14px;font-weight:600;">${_esc(r.carModel || '-')}</td>
             <td style="padding:10px 14px;">${_esc(r.partName || '-')}</td>
             <td style="padding:10px 14px;">${r.color ? `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;background:var(--bg-secondary);font-size:0.82rem;">${_esc(r.color)}</span>` : '-'}</td>
@@ -732,8 +1109,10 @@ var LaserWipModule = (function() {
             </span>`;
         }
         const rowBg = wip > 0 ? '' : (wip < 0 ? 'background:rgba(239,68,68,0.04);' : 'background:var(--bg-secondary);opacity:0.7;');
-        return `<tr style="border-bottom:1px solid var(--border-color);${rowBg}"
-                    onmouseover="this.style.background='rgba(66,133,244,0.05)'"
+        const encKey = encodeURIComponent(`${r.carModel||''}||${r.partName||''}||${r.color||''}`);
+        return `<tr style="border-bottom:1px solid var(--border-color);${rowBg}cursor:pointer;"
+                    onclick="LaserWipModule.showWipDetail('${encKey}', event)"
+                    onmouseover="this.style.background='rgba(139,92,246,0.07)'"
                     onmouseout="this.style.background='${wip > 0 ? '' : (wip < 0 ? 'rgba(239,68,68,0.04)' : 'var(--bg-secondary)')}'">
             <td style="padding:10px 14px;font-weight:600;">${r.carModel || '-'}</td>
             <td style="padding:10px 14px;">${r.partName || '-'}</td>
@@ -778,11 +1157,23 @@ var LaserWipModule = (function() {
     }
 
     // ── 레이져 후 WIP 계산 ────────────────────────────────────────────────
+    // laserQty = 레이져 외관 검사 양품수(inspQty - failQty).
+    // 검사 기록이 없는 작업은 작업수량으로 fallback.
     function _calcWip() {
-        const laserWorks   = Storage.getAll(STORE_LASER) || [];
-        const paintWorks   = Storage.getAll(STORE_PAINT) || [];
-        const drainMap     = _buildAfterLaserDrainMap();
-        const laserMap     = {};
+        const laserWorks = Storage.getAll(STORE_LASER) || [];
+        const laserInsps = Storage.getAll(DB.STORES.LASER_INSPECTIONS) || [];
+        const paintWorks = Storage.getAll(STORE_PAINT) || [];
+        const drainMap   = _buildAfterLaserDrainMap();
+
+        // workLogId → 검사 양품수 (inspQty - failQty)
+        const inspGoodMap = {};
+        laserInsps.forEach(function(insp) {
+            if (!insp.workLogId) return;
+            const good = Math.max(0, (Number(insp.inspQty) || 0) - (Number(insp.failQty) || 0));
+            inspGoodMap[insp.workLogId] = (inspGoodMap[insp.workLogId] || 0) + good;
+        });
+
+        const laserMap = {};
 
         laserWorks.forEach(w => {
             const prodKey = `${w.carModel||''}||${w.partName||''}`;
@@ -796,7 +1187,11 @@ var LaserWipModule = (function() {
             if (w.isManualOut) {
                 laserMap[key].paintBQty += Number(w.quantity) || 0;
             } else {
-                laserMap[key].laserQty  += Number(w.quantity) || 0;
+                // 검사 양품수 우선 사용, 검사 기록 없으면 작업수량 fallback
+                const goodQty = (w.id && (w.id in inspGoodMap))
+                    ? inspGoodMap[w.id]
+                    : Number(w.quantity) || 0;
+                laserMap[key].laserQty += goodQty;
                 laserMap[key].laserDates.push(_dateTime(w.date || '', w.startTime || w.endTime || ''));
                 if (Array.isArray(w.paintLots) && w.paintLots.length > 0) {
                     w.paintLots.forEach(lot => {
@@ -1086,5 +1481,5 @@ var LaserWipModule = (function() {
              openAfterLaserOut, onOutCarChange, onOutPartChange, saveAfterLaserOut,
              openResidualInput, onResidualInCarChange, onResidualInPartChange, saveResidualInput,
              openResidualOut, onResidualOutCarChange, onResidualOutPartChange, saveResidualOut,
-             getWipStock, _calcWip };
+             getWipStock, _calcWip, showWipDetail, showResidualDetail };
 })();

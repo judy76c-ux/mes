@@ -3,20 +3,19 @@
  */
 var WarehouseNavUI = (function () {
     const MENUS = [
-        { id: 'warehouse-overview',  label: '자재 현황',  icon: 'warehouse'               },
-        { id: 'injection-warehouse', label: '사출 자재',  icon: 'precision_manufacturing' },
-        { id: 'paint-inventory',     label: '도료 자재',  icon: 'palette'                 }
+        { id: 'warehouse-overview',  label: '자재 현황',  icon: 'warehouse',               subtitle: '통합 현황·문제점', accent: '#2563eb' },
+        { id: 'injection-warehouse', label: '사출 자재',  icon: 'precision_manufacturing', subtitle: '사출 자재 관리',   accent: '#0891b2' },
+        { id: 'paint-inventory',     label: '도료 자재',  icon: 'palette',                 subtitle: '도료 재고 관리',   accent: '#8b5cf6' }
     ];
     function renderSection(activePage, actionsHtml) {
-        const tabs = MENUS.map(function (m) {
-            return '<button type="button" onclick="Router.navigate(\'' + m.id + '\')" class="mes-bar-tab ' + (m.id === activePage ? 'active' : '') + '">' +
-                '<span class="material-symbols-outlined">' + m.icon + '</span>' + m.label +
-            '</button>';
-        }).join('');
-        return '<div class="mes-action-bar">' +
-            '<div class="mes-action-bar-tabs">' + tabs + '</div>' +
-            (actionsHtml ? '<div class="mes-action-bar-sep"></div><div class="mes-action-bar-btns">' + actionsHtml + '</div>' : '') +
-        '</div>';
+        var items = MENUS.map(function (m) {
+            return { label: m.label, icon: m.icon, subtitle: m.subtitle, accent: m.accent,
+                     active: m.id === activePage, onClick: "Router.navigate('" + m.id + "')" };
+        });
+        return '<div class="mes-apple-menu-hero"' + (actionsHtml ? ' style="margin-bottom:8px;"' : '') + '>' +
+            ProdAppleMenu.strip(items) +
+        '</div>' +
+        (actionsHtml ? '<div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:14px;">' + actionsHtml + '</div>' : '');
     }
     return { renderSection };
 })();
@@ -34,141 +33,156 @@ var WarehouseOverviewModule = (function () {
 
     function init() {}
 
+    // ── 대시보드 헬퍼 ────────────────────────────────────────────────────
+    function _kpi(icon, color, bgColor, label, value, sub) {
+        return '<div style="background:#fff;border-radius:14px;border:1px solid #e2e8f0;padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">' +
+            '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">' +
+                '<span class="material-symbols-outlined" style="width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;background:' + bgColor + ';color:' + color + ';font-size:19px;">' + icon + '</span>' +
+                '<span style="font-size:0.75rem;font-weight:700;color:var(--text-muted);">' + label + '</span>' +
+            '</div>' +
+            '<div style="font-size:1.5rem;font-weight:800;color:var(--text-primary);line-height:1.2;">' + value + '</div>' +
+            '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:4px;">' + sub + '</div>' +
+        '</div>';
+    }
+
+    function _statRow(label, value, tone, clickable, fn) {
+        var colorMap = { blue:'#2563eb', purple:'#8b5cf6', red:'#ef4444', orange:'#f59e0b', ok:'#10b981' };
+        var valColor = colorMap[tone] || 'var(--text-primary)';
+        var rowAttr = clickable
+            ? 'onclick="' + fn + '" style="cursor:pointer;" onmouseover="this.style.background=\'#f8fafc\'" onmouseout="this.style.background=\'\'"'
+            : '';
+        return '<tr ' + rowAttr + '>' +
+            '<td style="padding:9px 14px;font-size:0.83rem;color:var(--text-secondary);border-bottom:1px solid #f1f5f9;">' + label + '</td>' +
+            '<td style="padding:9px 14px;text-align:right;font-size:0.9rem;font-weight:800;color:' + valColor + ';border-bottom:1px solid #f1f5f9;white-space:nowrap;">' +
+                value + (clickable ? '<span class="material-symbols-outlined" style="font-size:13px;margin-left:3px;vertical-align:middle;">chevron_right</span>' : '') +
+            '</td>' +
+        '</tr>';
+    }
+
+    function _issueCard(sev, icon, label, desc, fn) {
+        var C = sev === 'critical'
+            ? { bg:'#fef2f2', border:'#ef4444', ic:'#ef4444', txt:'#b91c1c' }
+            : { bg:'#fffbeb', border:'#f59e0b', ic:'#d97706', txt:'#92400e' };
+        return '<div onclick="' + fn + '" ' +
+            'onmouseover="this.style.opacity=\'.8\'" onmouseout="this.style.opacity=\'1\'" ' +
+            'style="padding:9px 12px;border-radius:10px;background:' + C.bg + ';border-left:3px solid ' + C.border + ';' +
+                   'display:flex;align-items:center;gap:10px;cursor:pointer;">' +
+            '<span class="material-symbols-outlined" style="font-size:18px;color:' + C.ic + ';flex-shrink:0;">' + icon + '</span>' +
+            '<div style="flex:1;">' +
+                '<div style="font-size:0.82rem;font-weight:800;color:' + C.txt + ';">' + label + '</div>' +
+                '<div style="font-size:0.73rem;color:var(--text-muted);">' + desc + '</div>' +
+            '</div>' +
+            '<span class="material-symbols-outlined" style="font-size:15px;color:' + C.ic + ';">chevron_right</span>' +
+        '</div>';
+    }
+
     function render(container) {
         _inj   = _calcInjStats();
         _paint = _calcPaintStats();
 
-        const injBadges   = _buildInjBadges(_inj);
-        const paintBadges = _buildPaintBadges(_paint);
+        // ── 문제점 이슈 목록 수집 ─────────────────────────────────────────
+        var issues = [];
+        if (_paint.expiredCount  > 0) issues.push({ sev:'critical', icon:'event_busy',    label:'도료 유효기간 만료', desc: _paint.expiredCount + '건 즉시 조치 필요',    fn:'WarehouseOverviewModule.showPaintExpired()' });
+        if (_inj.fifoCount       > 0) issues.push({ sev:'critical', icon:'swap_vert',     label:'사출 FIFO 위반',    desc: _inj.fifoCount + '건 선입선출 위반',           fn:'WarehouseOverviewModule.showInjFifo()' });
+        if (_paint.fifoCount     > 0) issues.push({ sev:'critical', icon:'swap_vert',     label:'도료 FIFO 위반',    desc: _paint.fifoCount + '건 선입선출 위반',          fn:'WarehouseOverviewModule.showPaintFifo()' });
+        if (_inj.longStock       > 0) issues.push({ sev:'critical', icon:'schedule',      label:'사출 장기재고',      desc: _inj.longStock + '건 ' + LONG_STOCK_DAYS + '일 이상 보관', fn:'WarehouseOverviewModule.showInjLong()' });
+        if (_inj.zeroStock       > 0) issues.push({ sev:'warning',  icon:'inventory',     label:'사출 재고 없음',     desc: _inj.zeroStock + '종 재고 부족',               fn:'WarehouseOverviewModule.showInjZero()' });
+        if (_inj.multiLot        > 0) issues.push({ sev:'warning',  icon:'layers',        label:'사출 다층 LOT',      desc: _inj.multiLot + '품목 복수 LOT 혼재',          fn:'WarehouseOverviewModule.showInjMultiLot()' });
+        if (_paint.longStock     > 0) issues.push({ sev:'warning',  icon:'schedule',      label:'도료 장기재고',      desc: _paint.longStock + '건 ' + LONG_STOCK_DAYS + '일 이상',  fn:'WarehouseOverviewModule.showPaintLong()' });
+        if (_paint.expiringCount > 0) issues.push({ sev:'warning',  icon:'event_available',label:'도료 유효기간 임박', desc: _paint.expiringCount + '건 30일 이내 만료',    fn:'WarehouseOverviewModule.showPaintExpiring()' });
 
-        container.innerHTML = `
-            <div class="fade-in-up">
+        var criticalCount = issues.filter(function(i){ return i.sev === 'critical'; }).length;
+        var warningCount  = issues.filter(function(i){ return i.sev === 'warning';  }).length;
 
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:28px;">
-                    ${_sectionCard('사출 자재', '사출 부품 입출고 및 재고 현황', 'precision_manufacturing', '#2563eb', 'rgba(37,99,235,0.08)', 'injection-warehouse', injBadges)}
-                    ${_sectionCard('도료 자재', '도료 입출고 및 재고·유효기간 관리', 'palette', '#8b5cf6', 'rgba(139,92,246,0.08)', 'paint-inventory', paintBadges)}
-                </div>
+        var issueHtml = issues.length
+            ? issues.map(function(iss){ return _issueCard(iss.sev, iss.icon, iss.label, iss.desc, iss.fn); }).join('')
+            : '<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:0.84rem;">' +
+                '<span class="material-symbols-outlined" style="font-size:20px;color:#10b981;vertical-align:middle;margin-right:4px;">check_circle</span>' +
+                '문제 없음 — 모든 자재 창고 정상' +
+              '</div>';
 
-                <!-- ── 사출 자재 창고 ── -->
-                <div style="font-size:0.82rem;font-weight:700;color:var(--text-muted);
-                            text-transform:uppercase;letter-spacing:0.5px;
-                            margin-bottom:10px;padding-left:2px;">
-                    사출 자재 창고
-                </div>
-                <div class="stat-cards" style="margin-bottom:28px;">
-                    ${_sc('재고 품목',  _inj.itemCount, '종',   'blue',   false, '')}
-                    ${_sc('총 재고',   UIUtils.formatNumber(_inj.totalStock), 'EA', 'purple', false, '')}
-                    ${_sc('재고 없음', _inj.zeroStock,  '종',
-                        _inj.zeroStock   > 0 ? 'orange' : '', _inj.zeroStock   > 0,
-                        'WarehouseOverviewModule.showInjZero()')}
-                    ${_sc('장기재고',  _inj.longStock,  '종',
-                        _inj.longStock   > 0 ? 'red'    : '', _inj.longStock   > 0,
-                        'WarehouseOverviewModule.showInjLong()')}
-                    ${_sc('FIFO 위반', _inj.fifoCount,  '건',
-                        _inj.fifoCount   > 0 ? 'red'    : '', _inj.fifoCount   > 0,
-                        'WarehouseOverviewModule.showInjFifo()')}
-                    ${_sc('다층 LOT',  _inj.multiLot,  '품목',
-                        _inj.multiLot    > 0 ? 'orange' : '', _inj.multiLot    > 0,
-                        'WarehouseOverviewModule.showInjMultiLot()')}
-                </div>
+        container.innerHTML =
+            '<div class="fade-in-up">' +
+                WarehouseNavUI.renderSection('warehouse-overview') +
 
-                <!-- ── 도료 자재 창고 ── -->
-                <div style="font-size:0.82rem;font-weight:700;color:var(--text-muted);
-                            text-transform:uppercase;letter-spacing:0.5px;
-                            margin-bottom:10px;padding-left:2px;">
-                    도료 자재 창고
-                </div>
-                <div class="stat-cards">
-                    ${_sc('재고 품목',  _paint.itemCount, '종',    'blue',   false, '')}
-                    ${_sc('총 재고',   UIUtils.formatNumber(_paint.totalStock), 'L/kg', 'purple', false, '')}
-                    ${_sc('유효기간 만료', _paint.expiredCount, '건',
-                        _paint.expiredCount  > 0 ? 'red'    : '', _paint.expiredCount  > 0,
-                        'WarehouseOverviewModule.showPaintExpired()')}
-                    ${_sc('유효기간 임박', _paint.expiringCount,'건',
-                        _paint.expiringCount > 0 ? 'orange' : '', _paint.expiringCount > 0,
-                        'WarehouseOverviewModule.showPaintExpiring()')}
-                    ${_sc('장기재고',  _paint.longStock,  '건',
-                        _paint.longStock     > 0 ? 'red'    : '', _paint.longStock     > 0,
-                        'WarehouseOverviewModule.showPaintLong()')}
-                    ${_sc('FIFO 위반', _paint.fifoCount,  '품목',
-                        _paint.fifoCount     > 0 ? 'red'    : '', _paint.fifoCount     > 0,
-                        'WarehouseOverviewModule.showPaintFifo()')}
-                </div>
+                // ── KPI ──────────────────────────────────────────────────
+                '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">' +
+                    _kpi('precision_manufacturing','#2563eb','#eff6ff','사출 재고 품목', _inj.itemCount + '종', '총 ' + UIUtils.formatNumber(_inj.totalStock) + ' EA') +
+                    _kpi('palette','#8b5cf6','#f5f3ff','도료 재고 품목', _paint.itemCount + '종', '총 ' + UIUtils.formatNumber(_paint.totalStock)) +
+                    _kpi('warning',
+                        criticalCount > 0 ? '#ef4444' : '#10b981',
+                        criticalCount > 0 ? '#fef2f2' : '#f0fdf4',
+                        '긴급 이슈', criticalCount + '건', '즉시 조치 필요') +
+                    _kpi('report_problem',
+                        warningCount > 0 ? '#f59e0b' : '#10b981',
+                        warningCount > 0 ? '#fffbeb' : '#f0fdf4',
+                        '주의 이슈', warningCount + '건', '모니터링 필요') +
+                '</div>' +
 
-            </div>
-        `;
-    }
+                // ── 2컬럼 메인 ──────────────────────────────────────────
+                '<div style="display:grid;grid-template-columns:1fr 340px;gap:16px;">' +
 
-    /* ── 섹션 카드 ── */
-    function _sectionCard(title, sub, icon, accentColor, iconBg, page, badges) {
-        const badgesHtml = badges.length
-            ? badges.map(b => `<span style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;
-                border-radius:12px;padding:2px 10px;font-size:0.78rem;font-weight:700;">${b}</span>`).join('')
-            : '<span style="background:#dcfce7;color:#16a34a;border:1px solid #86efac;border-radius:12px;padding:2px 10px;font-size:0.78rem;font-weight:700;">정상</span>';
+                    // 좌측: 창고 현황
+                    '<div style="display:flex;flex-direction:column;gap:14px;">' +
 
-        return `
-            <div onclick="Router.navigate('${page}')"
-                 onmouseenter="this.style.boxShadow='0 6px 24px rgba(0,0,0,0.13)';this.style.transform='translateY(-2px)'"
-                 onmouseleave="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.07)';this.style.transform=''"
-                 style="background:#ffffff;border:1px solid var(--border-color);
-                        border-left:4px solid ${accentColor};border-radius:12px;
-                        padding:20px 24px;cursor:pointer;transition:box-shadow 0.2s,transform 0.2s;
-                        box-shadow:0 2px 8px rgba(0,0,0,0.07);">
-                <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;">
-                    <div style="width:44px;height:44px;border-radius:10px;background:${iconBg};
-                                display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-                        <span class="material-symbols-outlined" style="color:${accentColor};font-size:24px;">${icon}</span>
-                    </div>
-                    <div style="flex:1;min-width:0;">
-                        <div style="font-size:1rem;font-weight:700;color:var(--text-primary);">${title}</div>
-                        <div style="font-size:0.8rem;color:var(--text-muted);">${sub}</div>
-                    </div>
-                    <span class="material-symbols-outlined" style="color:var(--text-muted);flex-shrink:0;">chevron_right</span>
-                </div>
-                <div style="display:flex;flex-wrap:wrap;gap:6px;">${badgesHtml}</div>
-            </div>
-        `;
-    }
+                        // 사출 창고
+                        '<div class="card">' +
+                            '<div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">' +
+                                '<h4 style="margin:0;display:flex;align-items:center;gap:6px;">' +
+                                    '<span class="material-symbols-outlined" style="font-size:18px;color:#2563eb;">precision_manufacturing</span>사출 자재 창고' +
+                                '</h4>' +
+                                '<button class="btn btn-sm btn-outline" onclick="Router.navigate(\'injection-warehouse\')">자세히 보기</button>' +
+                            '</div>' +
+                            '<div class="card-body" style="padding:0;">' +
+                                '<table style="width:100%;border-collapse:collapse;"><tbody>' +
+                                    _statRow('재고 품목',  _inj.itemCount + '종',                        'blue',   false) +
+                                    _statRow('총 재고량',  UIUtils.formatNumber(_inj.totalStock) + ' EA','blue',   false) +
+                                    _statRow('재고 없음',  _inj.zeroStock + '종',  _inj.zeroStock  > 0 ? 'orange':'ok', _inj.zeroStock  > 0, 'WarehouseOverviewModule.showInjZero()') +
+                                    _statRow('장기재고',   _inj.longStock + '종',  _inj.longStock  > 0 ? 'red'   :'ok', _inj.longStock  > 0, 'WarehouseOverviewModule.showInjLong()') +
+                                    _statRow('FIFO 위반',  _inj.fifoCount + '건',  _inj.fifoCount  > 0 ? 'red'   :'ok', _inj.fifoCount  > 0, 'WarehouseOverviewModule.showInjFifo()') +
+                                    _statRow('다층 LOT',   _inj.multiLot + '품목', _inj.multiLot   > 0 ? 'orange':'ok', _inj.multiLot   > 0, 'WarehouseOverviewModule.showInjMultiLot()') +
+                                '</tbody></table>' +
+                            '</div>' +
+                        '</div>' +
 
-    /* ── 클릭 가능 stat 카드 ── */
-    function _sc(label, value, unit, colorClass, clickable, onclickFn) {
-        const attrs = clickable
-            ? `onclick="${onclickFn}" style="cursor:pointer;position:relative;"
-               onmouseenter="this.querySelector('.hint')&&(this.querySelector('.hint').style.opacity='1')"
-               onmouseleave="this.querySelector('.hint')&&(this.querySelector('.hint').style.opacity='0')"`
-            : 'style="position:relative;"';
+                        // 도료 창고
+                        '<div class="card">' +
+                            '<div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">' +
+                                '<h4 style="margin:0;display:flex;align-items:center;gap:6px;">' +
+                                    '<span class="material-symbols-outlined" style="font-size:18px;color:#8b5cf6;">palette</span>도료 자재 창고' +
+                                '</h4>' +
+                                '<button class="btn btn-sm btn-outline" onclick="Router.navigate(\'paint-inventory\')">자세히 보기</button>' +
+                            '</div>' +
+                            '<div class="card-body" style="padding:0;">' +
+                                '<table style="width:100%;border-collapse:collapse;"><tbody>' +
+                                    _statRow('재고 품목',     _paint.itemCount + '종',                            'purple', false) +
+                                    _statRow('총 재고량',     UIUtils.formatNumber(_paint.totalStock) + ' L/kg',  'purple', false) +
+                                    _statRow('유효기간 만료', _paint.expiredCount  + '건', _paint.expiredCount  > 0 ? 'red'   :'ok', _paint.expiredCount  > 0, 'WarehouseOverviewModule.showPaintExpired()') +
+                                    _statRow('유효기간 임박', _paint.expiringCount + '건', _paint.expiringCount > 0 ? 'orange':'ok', _paint.expiringCount > 0, 'WarehouseOverviewModule.showPaintExpiring()') +
+                                    _statRow('장기재고',      _paint.longStock + '건',     _paint.longStock     > 0 ? 'red'   :'ok', _paint.longStock     > 0, 'WarehouseOverviewModule.showPaintLong()') +
+                                    _statRow('FIFO 위반',     _paint.fifoCount + '품목',   _paint.fifoCount     > 0 ? 'red'   :'ok', _paint.fifoCount     > 0, 'WarehouseOverviewModule.showPaintFifo()') +
+                                '</tbody></table>' +
+                            '</div>' +
+                        '</div>' +
+                    '</div>' +
 
-        const hint = clickable
-            ? `<div class="hint" style="opacity:0;transition:opacity 0.2s;position:absolute;
-                    bottom:8px;right:10px;font-size:0.68rem;color:var(--text-muted);
-                    display:flex;align-items:center;gap:2px;">
-                   <span class="material-symbols-outlined" style="font-size:12px;">open_in_new</span>상세보기
-               </div>` : '';
-
-        return `
-            <div class="stat-card ${colorClass}" ${attrs}>
-                ${hint}
-                <div class="stat-card-value">${value}</div>
-                <div class="stat-card-label">${label}</div>
-                ${unit ? `<div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">${unit}</div>` : ''}
-            </div>`;
-    }
-
-    /* ── 뱃지 ── */
-    function _buildInjBadges(s) {
-        const b = [];
-        if (s.longStock > 0) b.push('장기재고 ' + s.longStock + '건');
-        if (s.fifoCount > 0) b.push('FIFO위반 ' + s.fifoCount + '건');
-        if (s.zeroStock > 0) b.push('재고없음 ' + s.zeroStock + '종');
-        return b;
-    }
-
-    function _buildPaintBadges(s) {
-        const b = [];
-        if (s.expiredCount  > 0) b.push('유효기간만료 ' + s.expiredCount + '건');
-        if (s.fifoCount     > 0) b.push('FIFO위반 ' + s.fifoCount + '건');
-        if (s.longStock     > 0) b.push('장기재고 ' + s.longStock + '건');
-        return b;
+                    // 우측: 문제점·이슈
+                    '<div>' +
+                        '<div class="card">' +
+                            '<div class="card-header">' +
+                                '<h4 style="margin:0;display:flex;align-items:center;gap:6px;">' +
+                                    '<span class="material-symbols-outlined" style="font-size:18px;color:#ef4444;">warning</span>' +
+                                    '문제점 · 이슈' +
+                                    (issues.length ? '<span style="background:#ef4444;color:#fff;border-radius:999px;font-size:0.68rem;font-weight:800;padding:2px 7px;margin-left:4px;">' + issues.length + '</span>' : '') +
+                                '</h4>' +
+                            '</div>' +
+                            '<div class="card-body" style="display:flex;flex-direction:column;gap:7px;">' +
+                                issueHtml +
+                            '</div>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
     }
 
     /* ==============================================================

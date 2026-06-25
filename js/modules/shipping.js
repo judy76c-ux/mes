@@ -1435,16 +1435,14 @@ const ProductWarehouseModule = (function() {
             return /(^|[^A-Z0-9])A\/?S([^A-Z0-9]|$)/i.test(text) || /애프터|서비스/.test(text);
         };
 
-        const carModels = Object.keys(byCarModel).sort((a, b) => {
-            const aItems = byCarModel[a] || [];
-            const bItems = byCarModel[b] || [];
-            const aAsOnly = aItems.length > 0 && aItems.every(isAsItem);
-            const bAsOnly = bItems.length > 0 && bItems.every(isAsItem);
-            if (aAsOnly !== bAsOnly) return aAsOnly ? 1 : -1;
-            return bItems.length - aItems.length || a.localeCompare(b, 'ko');
-        });
+        // 양산 / A/S 차종 분리
+        const sortBySize = cars => cars.sort((a, b) =>
+            (byCarModel[b].length - byCarModel[a].length) || a.localeCompare(b, 'ko'));
+        const massanCars = sortBySize(Object.keys(byCarModel).filter(car => !byCarModel[car].every(isAsItem)));
+        const asCars     = sortBySize(Object.keys(byCarModel).filter(car =>  byCarModel[car].every(isAsItem)));
 
-        const cards = carModels.map(car => {
+        function renderCarBlock(car, isAs) {
+            const headerColor = isAs ? '#475569' : '#2563eb';
             const group = byCarModel[car].sort((a, b) => {
                 const aAs = isAsItem(a) ? 1 : 0;
                 const bAs = isAsItem(b) ? 1 : 0;
@@ -1452,7 +1450,6 @@ const ProductWarehouseModule = (function() {
                     (a.part || '').localeCompare(b.part, 'ko') ||
                     (a.color || '').localeCompare(b.color, 'ko');
             });
-
             const groupTotal = group.reduce((s, i) => s + (i.inQty - i.outQty), 0);
 
             const rows = group.map(i => {
@@ -1463,55 +1460,74 @@ const ProductWarehouseModule = (function() {
                     ? 'var(--accent-orange)'
                     : 'var(--accent-green)';
                 const keyEnc = encodeURIComponent(`${i.car}||${i.part}||${i.color}`);
+                const asTag = isAsItem(i)
+                    ? '<span style="font-size:0.58rem;background:#e2e8f0;color:#64748b;border-radius:3px;padding:0 3px;margin-left:3px;vertical-align:middle;">A/S</span>'
+                    : '';
                 return `
                 <tr onclick="ProductWarehouseModule._showHistory('${keyEnc}', event)"
                     style="cursor:pointer;"
                     onmouseover="this.style.background='var(--bg-secondary)'"
                     onmouseout="this.style.background=''">
-                    <td style="padding:5px 8px;font-size:0.8rem;font-weight:600;border-bottom:1px solid var(--border-color);line-height:1.28;white-space:normal;word-break:break-word;min-width:170px;max-width:240px;">
-                        <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;" title="${_escapeHtml(i.part)}">${i.part}</span>
+                    <td style="padding:5px 8px;font-size:0.8rem;font-weight:600;border-bottom:1px solid var(--border-color);line-height:1.28;white-space:normal;word-break:break-word;min-width:150px;max-width:220px;">
+                        <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;" title="${_escapeHtml(i.part)}">${i.part}</span>${asTag}
                     </td>
-                    <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">
-                        ${i.color || ''}
-                    </td>
+                    <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">${i.color || ''}</td>
                     <td style="padding:5px 8px;text-align:right;border-bottom:1px solid var(--border-color);white-space:nowrap;">
                         <span style="font-size:0.9rem;font-weight:800;color:${stockColor};">${UIUtils.formatNumber(stock)}</span>
                         <span style="font-size:0.68rem;color:var(--text-muted);margin-left:1px;">EA</span>
                     </td>
-                    <td style="padding:5px 8px;font-size:0.7rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);white-space:nowrap;">
-                        ${i.lastDate || ''}
-                    </td>
+                    <td style="padding:5px 8px;font-size:0.7rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);white-space:nowrap;">${i.lastDate || ''}</td>
                 </tr>`;
             }).join('');
 
-            return `
-            <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
-                <div style="background:var(--accent-blue);color:#fff;padding:7px 10px;
-                            display:flex;align-items:center;justify-content:space-between;">
+            return `<div style="break-inside:avoid;margin-bottom:10px;border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
+                <div style="background:${headerColor};color:#fff;padding:7px 10px;display:flex;align-items:center;justify-content:space-between;">
                     <span style="font-weight:700;font-size:0.85rem;display:flex;align-items:center;gap:5px;">
                         <span class="material-symbols-outlined" style="font-size:0.95rem;">directions_car</span>
                         ${car}
                         <span style="font-size:0.7rem;font-weight:400;opacity:0.85;">${group.length}종</span>
                     </span>
-                    <div style="font-size:0.75rem;">
-                        재고 <strong>${UIUtils.formatNumber(groupTotal)}</strong> EA
-                    </div>
+                    <div style="font-size:0.75rem;">재고 <strong>${UIUtils.formatNumber(groupTotal)}</strong> EA</div>
                 </div>
                 <table style="width:100%;border-collapse:collapse;background:var(--bg-primary);">
-                    <thead>
-                        <tr style="background:var(--bg-secondary);">
-                            <th style="padding:4px 8px;text-align:left;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">품명</th>
-                            <th style="padding:4px 8px;text-align:left;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">컬러</th>
-                            <th style="padding:4px 8px;text-align:right;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">재고</th>
-                            <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">최근일자</th>
-                        </tr>
-                    </thead>
+                    <thead><tr style="background:var(--bg-secondary);">
+                        <th style="padding:4px 8px;text-align:left;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">품명</th>
+                        <th style="padding:4px 8px;text-align:left;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">컬러</th>
+                        <th style="padding:4px 8px;text-align:right;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">재고</th>
+                        <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">최근일자</th>
+                    </tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
             </div>`;
-        });
+        }
 
-        blocksEl.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:10px;align-items:start;">${cards.join('')}</div>`;
+        function sectionDivider(text, count, color) {
+            return `<div style="display:flex;align-items:center;gap:8px;margin:0 0 10px;">
+                <span class="material-symbols-outlined" style="font-size:15px;color:${color};">directions_car</span>
+                <span style="font-size:0.76rem;font-weight:800;color:${color};text-transform:uppercase;letter-spacing:0.5px;">${text}</span>
+                <span style="font-size:0.7rem;color:var(--text-muted);font-weight:600;">${count}개 차종</span>
+                <div style="flex:1;height:1px;background:#e2e8f0;"></div>
+            </div>`;
+        }
+
+        let html = '';
+
+        if (massanCars.length) {
+            html += sectionDivider('양산품', massanCars.length, '#2563eb');
+            html += '<div style="columns:280px;column-gap:10px;">';
+            html += massanCars.map(car => renderCarBlock(car, false)).join('');
+            html += '</div>';
+        }
+
+        if (asCars.length) {
+            html += `<div style="margin-top:${massanCars.length ? '20px' : '0'};">`;
+            html += sectionDivider('A/S 품목', asCars.length, '#64748b');
+            html += '<div style="columns:280px;column-gap:10px;">';
+            html += asCars.map(car => renderCarBlock(car, true)).join('');
+            html += '</div></div>';
+        }
+
+        blocksEl.innerHTML = html;
     }
 
     // ── 이력 팝업 ─────────────────────────────────────────────────────

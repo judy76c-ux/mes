@@ -1167,6 +1167,116 @@ const PaintingWorkModule = (function() {
     }
 
     // ──────────────────────────────────────────────
+    // 레이져 후 재공품 LOT 잔량 (레이져→도장-B 전용)
+    // LASER_WORK_LOG.paintLots (사출 LOT 정보) 기준으로 WIP 잔량 계산
+    // ──────────────────────────────────────────────
+    function getLaserWipLots(carModel, partName) {
+        var laserWorks = Storage.getAll(DB.STORES.LASER_WORK_LOG) || [];
+        var laserInsps = Storage.getAll(DB.STORES.LASER_INSPECTIONS) || [];
+        var paintWorks = Storage.getAll(STORE) || [];
+
+        // workLogId → 검사 양품수 (_calcWip()와 동일한 방식)
+        var inspGoodMap = {};
+        laserInsps.forEach(function(insp) {
+            if (!insp.workLogId) return;
+            var good = Math.max(0, (Number(insp.inspQty) || 0) - (Number(insp.failQty) || 0));
+            inspGoodMap[insp.workLogId] = (inspGoodMap[insp.workLogId] || 0) + good;
+        });
+
+        // 이미 도장 투입된 수량 (LOT별)
+        var usedByLot = {};
+        paintWorks.forEach(function(pw) {
+            if ((pw.carModel || '') !== carModel || (pw.partName || '') !== partName) return;
+            if (Array.isArray(pw.lots) && pw.lots.length > 0) {
+                pw.lots.forEach(function(lot) {
+                    if (lot && lot.lotNo) {
+                        usedByLot[lot.lotNo] = (usedByLot[lot.lotNo] || 0) + (Number(lot.qty) || 0);
+                    }
+                });
+            } else if (pw.lotNo) {
+                usedByLot[pw.lotNo] = (usedByLot[pw.lotNo] || 0) + (Number(pw.inputQty) || 0);
+            }
+        });
+
+        // 레이져 작업 → WIP LOT 집계
+        var wipMap = {};
+        laserWorks.forEach(function(lw) {
+            if ((lw.carModel || '') !== carModel || (lw.partName || '') !== partName) return;
+            if (lw.isManualOut) return; // 수동출고 레코드는 WIP 입력분 아님
+
+            var workQty = Number(lw.quantity) || 0;
+            // 검사 양품수 우선, 없으면 작업수량 fallback (_calcWip()와 동일)
+            var goodQty = (lw.id && (lw.id in inspGoodMap)) ? inspGoodMap[lw.id] : workQty;
+            if (goodQty <= 0 && workQty <= 0) return;
+            if (goodQty <= 0) goodQty = workQty; // 검사 기록 없을 때 fallback
+
+            // 사출 LOT 추출 (우선순위: paintLots배열 → paintLot단일 → lotNo단일 → 날짜key)
+            var injLots = []; // [{lotNo, qty}]
+
+            if (Array.isArray(lw.paintLots) && lw.paintLots.length > 0) {
+                lw.paintLots.forEach(function(pl) {
+                    if (!pl) return;
+                    var lotNo = String(pl.lotNo || '').trim();
+                    // lotNo 없으면 paintDate를 YYMMDD 형식으로 변환해 대체
+                    if (!lotNo && pl.paintDate) {
+                        lotNo = String(pl.paintDate).replace(/-/g, '').slice(2, 8);
+                    }
+                    if (!lotNo) return;
+                    injLots.push({ lotNo: lotNo, qty: Number(pl.qty) || 0 });
+                });
+            }
+
+            // paintLots 미사용이거나 추출 실패 시 단일 필드 fallback
+            if (injLots.length === 0) {
+                var singleLot = String(lw.paintLot || lw.lotNo || '').trim();
+                if (singleLot) {
+                    injLots.push({ lotNo: singleLot, qty: workQty });
+                }
+            }
+
+            // LOT 정보 전혀 없으면 작업일자를 LOT 키로 사용
+            if (injLots.length === 0) {
+                var dateKey = String(lw.date || lw.workDate || '').replace(/-/g, '').slice(2, 8);
+                if (!dateKey) return;
+                injLots.push({ lotNo: dateKey, qty: workQty });
+            }
+
+            // 총 LOT 수량 합 (WIP 비율 분배용)
+            var totalLotQty = injLots.reduce(function(s, l) { return s + l.qty; }, 0);
+
+            injLots.forEach(function(lj) {
+                // qty 비율로 goodQty를 분배; qty=0인 경우 균등 배분
+                var wipQty = totalLotQty > 0
+                    ? (goodQty * lj.qty / totalLotQty)
+                    : (goodQty / injLots.length);
+                if (!wipMap[lj.lotNo]) wipMap[lj.lotNo] = { lotNo: lj.lotNo, balance: 0 };
+                wipMap[lj.lotNo].balance += wipQty;
+            });
+        });
+
+        // 도장 투입 소비량 차감
+        Object.keys(usedByLot).forEach(function(lotNo) {
+            if (wipMap[lotNo]) wipMap[lotNo].balance -= usedByLot[lotNo];
+        });
+
+        return Object.values(wipMap)
+            .map(function(l) { return { lotNo: l.lotNo, balance: Math.round(l.balance) }; })
+            .filter(function(l) { return l.balance > 0; })
+            .sort(function(a, b) { return a.lotNo.localeCompare(b.lotNo); });
+    }
+
+    function buildLaserWipLotOptionsHtml(carModel, partName) {
+        var lots = getLaserWipLots(carModel, partName);
+        if (lots.length === 0) return '<option value="" data-balance="">-- 재공품 재고 없음 (직접입력 가능) --</option>';
+        return lots.map(function(l, i) {
+            return '<option value="' + l.lotNo + '"' + (i === 0 ? ' selected' : '') +
+                ' data-balance="' + l.balance + '">' +
+                l.lotNo + ' │ ' + partName +
+                ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA</option>';
+        }).join('');
+    }
+
+    // ──────────────────────────────────────────────
     // 사출 컬러 매칭 헬퍼 (대소문자 무시, 복합색 지원)
     // matColor: 자재의 injColor ("BLACK" / "BLACK,GRAY" 등)
     // planColor: 생산계획의 color ("BLACK" / "6PS" 등)
@@ -1396,8 +1506,28 @@ const PaintingWorkModule = (function() {
     // 선택 제외 목록을 반영한 LOT 옵션 HTML 생성 (데이터-balance 포함, 컬러 필터)
     // ★ 사출명 지정 시: 해당 사출명 LOT만 표시 (다른 부품 LOT 혼입 방지)
     // ★ 사출명 미지정 시: carModel 전체 창고 재고 표시
+    // ★ 레이져→도장-B 제품: 재공품 LOT 표시
     function _buildFilteredLotOptions(injPartName, carModel, partName, excludeLotNos) {
         var planColor = (document.getElementById('addPwColorHidden') || {}).value || '';
+
+        // 레이져→도장-B 제품: 사출 창고 대신 재공품 LOT 사용
+        var isLaserWip = (document.getElementById('addPwIsLaserWip') || {}).value === '1';
+        if (isLaserWip) {
+            var wipLots = getLaserWipLots(carModel, partName);
+            var wipFiltered = excludeLotNos && excludeLotNos.length > 0
+                ? wipLots.filter(function(l) { return excludeLotNos.indexOf(l.lotNo) < 0; })
+                : wipLots;
+            if (wipFiltered.length === 0) return '<option value="" data-balance="">-- 재공품 재고 없음 --</option>';
+            var html = '<option value="" data-balance="">-- 재공품 LOT 선택 --</option>';
+            html += '<optgroup label="▶ 레이져 후 재공품 LOT (선입선출)">';
+            html += wipFiltered.map(function(l) {
+                return '<option value="' + l.lotNo + '"' +
+                    ' data-balance="' + l.balance + '">' +
+                    l.lotNo + ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA</option>';
+            }).join('');
+            html += '</optgroup>';
+            return html;
+        }
 
         var primaryLots, otherLots;
 
@@ -1454,8 +1584,9 @@ const PaintingWorkModule = (function() {
         if (!qtyInp) return;
         if (!lotNo) { qtyInp.removeAttribute('max'); return; }
         var cm = (document.getElementById('addPwCarModelHidden') || {}).value || '';
-        // 창고 전체 LOT에서 잔량 조회 (사출명 필터 없이)
-        var allLots = getInjectionLots(cm, '');
+        var pn = (document.getElementById('addPwPartNameHidden') || {}).value || '';
+        var isLaserWip = (document.getElementById('addPwIsLaserWip') || {}).value === '1';
+        var allLots = isLaserWip ? getLaserWipLots(cm, pn) : getInjectionLots(cm, '');
         var lot = allLots.find(function(l) { return l.lotNo === lotNo; });
         if (lot) {
             qtyInp.max = lot.balance;
@@ -2137,23 +2268,49 @@ const PaintingWorkModule = (function() {
         var planEndTime = p.planEndTime || '';
         var achievedQty = Number(p.achievedQty) || 0;
 
+        // 레이져→현재라인 여부 감지:
+        // 제품 공정 순서에서 레이져 공정 바로 다음에 오는 도장 공정이 현재 effectiveLine과 일치하면 재공품 LOT 사용
+        // 예) 도장-A → 레이져 → 도장-B : 도장-A 실적 입력 시 false, 도장-B 실적 입력 시 true
+        var _prods4Laser = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        var _prod4Laser = _prods4Laser.find(function(mp) {
+            return mp.carModel === carModel && mp.partName === partName;
+        });
+        var isLaserWipProduct = (function() {
+            if (!_prod4Laser) return false;
+            var lineLow = (effectiveLine || '').toLowerCase().replace(/\s+/g, '');
+            var seenLaser = false;
+            for (var _pi = 1; _pi <= 4; _pi++) {
+                var _pv = String(_prod4Laser['process' + _pi] || '').toLowerCase().replace(/\s+/g, '');
+                if (!_pv) break;
+                if (_pv.includes('레이') || _pv.includes('laser')) { seenLaser = true; continue; }
+                if (seenLaser && _pv.includes('도장')) {
+                    // 레이져 다음 도장 공정이 현재 라인과 일치하는지
+                    return _pv === lineLow || lineLow.startsWith(_pv) || _pv.startsWith(lineLow) ||
+                        (_pv.includes('-b') && lineLow.includes('-b')) ||
+                        (_pv.includes('-a') && lineLow.includes('-a')) ||
+                        _pv === '도장';
+                }
+            }
+            return false;
+        })();
+
         // 사출자재 마스터에서 제작품명1/2 + 컬러 매칭 → 사출명 자동 결정
         // 도장 컬러와 사출 소재 컬러가 다를 수 있으므로 컬러 무관 폴백 포함
-        var injParts = partName ? getInjPartNamesForProduct(partName, carModel, color) : [];
-        if (injParts.length === 0 && partName && carModel) injParts = getInjPartNamesForProduct(partName, '', color);
-        if (injParts.length === 0 && partName) injParts = getInjPartNamesForProduct(partName, carModel, '');
-        if (injParts.length === 0 && partName && carModel) injParts = getInjPartNamesForProduct(partName, '', '');
-        var autoInjPartName = injParts.length === 1 ? injParts[0].injPartName : '';
-        var injPartOptsHtml = buildInjPartOptionsHtml(partName, carModel, color);
-        // autoInjPartName 없을 때: partName은 제품명이므로 사출 창고 조회 불가 → carModel 전체 조회
-        var lotsHtml = autoInjPartName ?
-            buildLotOptionsHtmlByInjPart(autoInjPartName, color) :
-            buildLotOptionsHtml(carModel, '');
+        var injParts = (!isLaserWipProduct && partName) ? getInjPartNamesForProduct(partName, carModel, color) : [];
+        if (!isLaserWipProduct && injParts.length === 0 && partName && carModel) injParts = getInjPartNamesForProduct(partName, '', color);
+        if (!isLaserWipProduct && injParts.length === 0 && partName) injParts = getInjPartNamesForProduct(partName, carModel, '');
+        if (!isLaserWipProduct && injParts.length === 0 && partName && carModel) injParts = getInjPartNamesForProduct(partName, '', '');
+        var autoInjPartName = (!isLaserWipProduct && injParts.length === 1) ? injParts[0].injPartName : '';
+        var injPartOptsHtml = isLaserWipProduct ? '' : buildInjPartOptionsHtml(partName, carModel, color);
+        // 레이져 제품: 재공품 LOT / 일반 제품: 사출 창고 LOT
+        var lotsHtml = isLaserWipProduct
+            ? buildLaserWipLotOptionsHtml(carModel, partName)
+            : (autoInjPartName ? buildLotOptionsHtmlByInjPart(autoInjPartName, color) : buildLotOptionsHtml(carModel, ''));
         var initialLotRow = _buildLotRow(lotsHtml, '', '');
-        // LOT 추가 버튼 활성화 여부: 사출 창고에 LOT가 2개 이상일 때만 가능
-        var initialLotCount = autoInjPartName ?
-            getInjectionLotsByInjPart(autoInjPartName, color).length :
-            getInjectionLots(carModel, '').length;
+        // LOT 추가 버튼 활성화 여부
+        var initialLotCount = isLaserWipProduct
+            ? getLaserWipLots(carModel, partName).length
+            : (autoInjPartName ? getInjectionLotsByInjPart(autoInjPartName, color).length : getInjectionLots(carModel, '').length);
 
         var planQtyFmt = UIUtils.formatNumber(planQty);
         var achFmt = UIUtils.formatNumber(achievedQty);
@@ -2316,34 +2473,49 @@ const PaintingWorkModule = (function() {
         // ④ 계획 시간 변경 사유 섹션 — 삭제 (투입수량 미달/차이 섹션으로 통합)
         var reasonHtml = '';
 
-        // ⑤ LOT 섹션
+        // ⑤ LOT 섹션 (레이져→도장-B 제품은 재공품 LOT, 일반 제품은 사출 창고 LOT)
+        var _lotSectionIcon = isLaserWipProduct ? 'bolt' : 'inventory_2';
+        var _lotSectionTitle = isLaserWipProduct ? '재공품 LOT' : '사출 LOT';
+        var _lotSectionDesc  = isLaserWipProduct
+            ? '(레이져 후 재공품 잔량 기준 조회 · 복수 LOT 입력 가능)'
+            : '(사출 창고 잔량 기준 조회 · 복수 LOT 입력 가능)';
+        var _lotColHeader = isLaserWipProduct ? '재공품 LOT 선택' : '사출 창고 LOT 선택';
+        var _lotAddBtnDisabled = initialLotCount <= 1
+            ? ' disabled title="' + (isLaserWipProduct ? '재공품 LOT가 1개 이하여서 추가할 수 없습니다' : '사출 창고 LOT가 1개 이하여서 추가할 수 없습니다') + '"'
+            : '';
+
         var lotSectionHtml =
             '<div class="form-group" style="margin-bottom:14px;">' +
             '<label class="form-label" style="font-size:0.84rem;display:flex;align-items:center;gap:6px;">' +
-            '<span class="material-symbols-outlined" style="font-size:16px;">inventory_2</span>' +
-            '사출 LOT' +
+            '<span class="material-symbols-outlined" style="font-size:16px;">' + _lotSectionIcon + '</span>' +
+            _lotSectionTitle +
             '<span style="background:var(--accent-blue);color:#fff;font-size:0.68rem;padding:1px 6px;border-radius:10px;font-weight:600;">선입선출</span>' +
-            '<span style="color:var(--text-muted);font-size:0.74rem;">(사출 창고 잔량 기준 조회 · 복수 LOT 입력 가능)</span></label>' +
+            '<span style="color:var(--text-muted);font-size:0.74rem;">' + _lotSectionDesc + '</span></label>' +
             '<div style="background:var(--bg-secondary);border-radius:8px;padding:10px 12px;">' +
-            // 사출명 선택 행
-            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:9px;' +
-            'border-bottom:1px solid var(--border);">' +
-            '<label style="font-size:0.82rem;color:var(--text-secondary);white-space:nowrap;font-weight:600;">' +
-            '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:2px;">conveyor_belt</span>' +
-            '사출명</label>' +
-            '<select id="pwInjPartSelect" class="form-select" style="font-size:0.84rem;flex:1;"' +
-            ' onchange="PaintingWorkModule.onInjPartSelect(this)">' +
-            injPartOptsHtml + '</select>' +
-            '</div>' +
+            // 사출명 선택 행 (레이져 제품은 숨김)
+            (isLaserWipProduct
+                ? '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:9px;border-bottom:1px solid var(--border);font-size:0.82rem;color:var(--accent-blue);">' +
+                  '<span class="material-symbols-outlined" style="font-size:16px;">bolt</span>' +
+                  '<strong>레이져 후 재공품</strong>에서 자동 조회됩니다. (사출 창고 LOT 연계 선입선출)' +
+                  '<input type="hidden" id="pwInjPartSelect" value="">' +
+                  '</div>'
+                : '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:9px;' +
+                  'border-bottom:1px solid var(--border);">' +
+                  '<label style="font-size:0.82rem;color:var(--text-secondary);white-space:nowrap;font-weight:600;">' +
+                  '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:2px;">conveyor_belt</span>' +
+                  '사출명</label>' +
+                  '<select id="pwInjPartSelect" class="form-select" style="font-size:0.84rem;flex:1;"' +
+                  ' onchange="PaintingWorkModule.onInjPartSelect(this)">' +
+                  injPartOptsHtml + '</select>' +
+                  '</div>') +
             // LOT 행 헤더
             '<div style="display:grid;grid-template-columns:2.5fr 1.8fr 1fr 34px;gap:8px;' +
             'font-size:0.71rem;color:var(--text-muted);margin-bottom:5px;padding:0 4px;">' +
-            '<div>사출 창고 LOT 선택</div><div>LOT번호 (직접입력 가능)</div>' +
+            '<div>' + _lotColHeader + '</div><div>LOT번호 (직접입력 가능)</div>' +
             '<div style="text-align:right;">수량(EA)</div><div></div></div>' +
             '<div id="pwLotRows">' + initialLotRow + '</div>' +
             '<button id="pwAddLotBtn" class="btn btn-outline btn-sm" onclick="PaintingWorkModule.addLotRow()"' +
-            ' style="margin-top:7px;font-size:0.82rem;"' +
-            (initialLotCount <= 1 ? ' disabled title="사출 창고 LOT가 1개 이하여서 추가할 수 없습니다"' : '') + '>' +
+            ' style="margin-top:7px;font-size:0.82rem;"' + _lotAddBtnDisabled + '>' +
             '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">add</span> LOT 추가</button>' +
             '</div></div>';
 
@@ -2468,7 +2640,8 @@ const PaintingWorkModule = (function() {
             '<input type="hidden" id="addPwLineHidden"       value="' + effectiveLine + '">' +
             '<input type="hidden" id="addPwPlanId"           value="' + planId + '">' +
             '<input type="hidden" id="addPwPlanStartHidden"  value="' + planStartTime + '">' +
-            '<input type="hidden" id="addPwPlanEndHidden"    value="' + planEndTime + '">';
+            '<input type="hidden" id="addPwPlanEndHidden"    value="' + planEndTime + '">' +
+            '<input type="hidden" id="addPwIsLaserWip"       value="' + (isLaserWipProduct ? '1' : '0') + '">';
 
         UIUtils.showModal('도장 작업 실적 등록',
             bannerHtml + hiddenHtml + qtyRowHtml + timeRowHtml + reasonHtml + lotSectionHtml + overPlanHtml + planQtyReasonHtml + noteHtml,
@@ -2808,7 +2981,10 @@ const PaintingWorkModule = (function() {
             }
         }
 
-        var allLots = injPartName ? getInjectionLotsByInjPart(injPartName, _saveColor) : getInjectionLots(cm, pn);
+        var _isLaserWipSave = (document.getElementById('addPwIsLaserWip') || {}).value === '1';
+        var allLots = _isLaserWipSave
+            ? getLaserWipLots(cm, pn)
+            : (injPartName ? getInjectionLotsByInjPart(injPartName, _saveColor) : getInjectionLots(cm, pn));
         var injPartSeen = {};
         var injPartNames = [];
         var injColorSeen = {};
@@ -2849,34 +3025,35 @@ const PaintingWorkModule = (function() {
         var workId = savedWork ? savedWork.id : null;
 
         // 사출 창고 재고 차감 (LOT별 출고 처리, workId 연결)
-        // ★ Fix: 출고 기록에 color 저장 — 입고 기록의 color와 동일한 LOT 키로 합산되도록
-        //   LOT의 원래 입고 기록에서 color 조회 (없으면 작업의 product color 사용)
-        var _injInvAll = Storage.getAll(INJ_INV_STORE) || [];
-        for (var di = 0; di < data.lots.length; di++) {
-            var dl = data.lots[di];
-            if (!dl.lotNo || !dl.qty) continue;
-            var dlInfo = allLots.find(function(l) { return l.lotNo === dl.lotNo; });
-            var effectivePartName = (dlInfo && dlInfo.partName) || injPartName || data.partName;
+        // 레이져→도장-B 제품은 사출 창고 직접 차감 없음
+        // (사출 창고 잔량은 레이져 WIP 계산으로 별도 추적; 도장 투입 시 WIP 잔량에서 차감됨)
+        if (!_isLaserWipSave) {
+            var _injInvAll = Storage.getAll(INJ_INV_STORE) || [];
+            for (var di = 0; di < data.lots.length; di++) {
+                var dl = data.lots[di];
+                if (!dl.lotNo || !dl.qty) continue;
+                var dlInfo = allLots.find(function(l) { return l.lotNo === dl.lotNo; });
+                var effectivePartName = (dlInfo && dlInfo.partName) || injPartName || data.partName;
 
-            // LOT 원래 입고 기록에서 color 조회
-            var _origRec = _injInvAll.find(function(r) {
-                return r.lotNo === dl.lotNo
-                    && r.partName === effectivePartName
-                    && r.type !== '출고';
-            });
-            var dlColor = (_origRec && _origRec.color) ? _origRec.color : (data.color || '');
+                var _origRec = _injInvAll.find(function(r) {
+                    return r.lotNo === dl.lotNo
+                        && r.partName === effectivePartName
+                        && r.type !== '출고';
+                });
+                var dlColor = (_origRec && _origRec.color) ? _origRec.color : (data.color || '');
 
-            await Storage.add(INJ_INV_STORE, {
-                date: data.date,
-                lotNo: dl.lotNo,
-                partName: effectivePartName,
-                color: dlColor,
-                carModel: data.carModel,
-                quantity: dl.qty,
-                type: '출고',
-                source: '도장 작업 출고',
-                refWorkId: workId
-            });
+                await Storage.add(INJ_INV_STORE, {
+                    date: data.date,
+                    lotNo: dl.lotNo,
+                    partName: effectivePartName,
+                    color: dlColor,
+                    carModel: data.carModel,
+                    quantity: dl.qty,
+                    type: '출고',
+                    source: '도장 작업 출고',
+                    refWorkId: workId
+                });
+            }
         }
 
         UIUtils.closeModal();

@@ -132,14 +132,11 @@ var ImprovementActivityModule = (function() {
     function _renderApplePage(rows, monthRows, sum) {
         return `
             <div class="fade-in-up">
-                <div class="mes-action-bar">
-                    <div class="mes-action-bar-tabs">
-                        <button type="button" class="mes-bar-tab active" onclick="ImprovementActivityModule.render(document.getElementById('contentArea'))"><span class="material-symbols-outlined">insights</span>개선활동 현황</button>
-                    </div>
-                    <div class="mes-action-bar-sep"></div>
-                    <div class="mes-action-bar-btns">
-                        <button class="btn btn-primary btn-sm" onclick="ImprovementActivityModule.openProposalModal()"><span class="material-symbols-outlined">add_task</span> 개선 등록</button>
-                    </div>
+                <div class="mes-apple-menu-hero" style="margin-bottom:8px;">${ProdAppleMenu.strip([
+                    { label: '개선활동 현황', icon: 'insights', subtitle: '개선 현황', accent: '#2563eb', active: true, onClick: "ImprovementActivityModule.render(document.getElementById('contentArea'))" }
+                ])}</div>
+                <div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:14px;">
+                    <button class="btn btn-primary btn-sm" onclick="ImprovementActivityModule.openProposalModal()"><span class="material-symbols-outlined">add_task</span> 개선 등록</button>
                 </div>
 
                 <div style="display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;margin-bottom:14px;">

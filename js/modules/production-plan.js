@@ -2367,19 +2367,61 @@ const ProductionPlanModule = (function() {
             }
         }
 
+        // ★ 실적 미입력 이전 계획 중복 방지:
+        // 동일 라인+차종+품명 에 이전 날짜의 미완료 계획이 있으면 저장 차단
+        // (사출 창고·레이져 재공품 이중 차감 방지)
+        if (partName && !existingId) {
+            const _paintWorks = Storage.getAll(DB.STORES.PAINTING_WORK) || [];
+            const _pendingPlans = allData.filter(p => {
+                if (!p.partName || !p.line) return false;
+                if (p.partName !== partName) return false;
+                if ((p.carModel || '') !== (carModel || '')) return false;
+                if (p.line !== line) return false;
+                if (p.date >= date) return false; // 오늘 이후 계획은 제외 (이전 날짜만)
+                if (p.status === '완료') return false; // 완료된 계획 제외
+                // 해당 계획에 대한 도장 실적이 있는지 확인
+                const hasWork = _paintWorks.some(w =>
+                    w.planId === p.id ||
+                    (w.carModel === (p.carModel||'') && w.partName === p.partName && w.line === p.line && w.date === p.date)
+                );
+                return !hasWork; // 실적 없는 이전 계획만
+            });
+            if (_pendingPlans.length > 0) {
+                const _oldest = _pendingPlans.reduce((a, b) => a.date < b.date ? a : b);
+                UIUtils.toast(
+                    `${_oldest.date} [${line}] ${carModel} ${partName} 실적 미입력 계획이 있습니다. ` +
+                    `먼저 이전 계획의 실적을 등록하거나 삭제 후 새 계획을 등록하세요.`,
+                    'warning', 5000
+                );
+                return;
+            }
+        }
+
         // ① 이후 계획 Cascade shift (Overlap 체크 전에 먼저 실행)
         if (partName && planQty > 0) {
             const currentPlanId = document.getElementById('injStockPanel')?.getAttribute('data-current-plan-id') || existingId || '';
-            const stockCheck = _getInjectionAvailableForPlan(partName, carModel, color, productId, currentPlanId);
-            if (stockCheck.available < planQty) {
-                UIUtils.toast(`사출 창고 가용 재고보다 많은 계획은 등록할 수 없습니다. 가용 ${UIUtils.formatNumber(stockCheck.available)} EA / 계획 ${UIUtils.formatNumber(planQty)} EA`, 'warning');
-                const qtyEl = document.getElementById('sQty');
-                if (qtyEl) {
-                    qtyEl.focus();
-                    qtyEl.select();
+
+            if (_usesLaserWipForLine(_prodMatch, line)) {
+                // 레이져→도장 공정 품목: 사출 창고가 아닌 레이져 후 재공품 재고 검사
+                const wipStock = (typeof LaserWipModule !== 'undefined')
+                    ? LaserWipModule.getWipStock(carModel, partName, color)
+                    : 0;
+                if (wipStock < planQty) {
+                    UIUtils.toast(`레이져 후 재공품 재고보다 많은 계획은 등록할 수 없습니다. 재공품 ${UIUtils.formatNumber(wipStock)} EA / 계획 ${UIUtils.formatNumber(planQty)} EA`, 'warning');
+                    const qtyEl = document.getElementById('sQty');
+                    if (qtyEl) { qtyEl.focus(); qtyEl.select(); }
+                    return;
                 }
-                updateInjStockPanel(partName, carModel);
-                return;
+            } else {
+                // 일반 도장 품목: 사출 창고 가용 재고 검사
+                const stockCheck = _getInjectionAvailableForPlan(partName, carModel, color, productId, currentPlanId);
+                if (stockCheck.available < planQty) {
+                    UIUtils.toast(`사출 창고 가용 재고보다 많은 계획은 등록할 수 없습니다. 가용 ${UIUtils.formatNumber(stockCheck.available)} EA / 계획 ${UIUtils.formatNumber(planQty)} EA`, 'warning');
+                    const qtyEl = document.getElementById('sQty');
+                    if (qtyEl) { qtyEl.focus(); qtyEl.select(); }
+                    updateInjStockPanel(partName, carModel);
+                    return;
+                }
             }
         }
 
