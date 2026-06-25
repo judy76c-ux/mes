@@ -4351,20 +4351,17 @@ var LaserStandbyModule = (function() {
         const stock = snapshot.stock;
         const allRows = snapshot.allRows;
 
-        // LOT별 잔량 계산
+        // LOT별 잔량 계산 (allRows 기반 — 입고 +, 출고 -)
         const lotBalMap2 = {}, lotPaintMap2 = {};
-        _standbyItems
-            .filter(w => w.carModel === carModel && w.partName === partName && (w.color || '') === (color || ''))
-            .forEach(w => {
-                const paintLot = String(w.date || '').replace(/-/g,'').slice(2,8);
-                const wLots = Array.isArray(w.lots) && w.lots.length > 0
-                    ? w.lots : [{ lotNo: w.lotNo || '', qty: Number(w.productionQty) || 0 }];
-                wLots.forEach(l => {
-                    const k = l.lotNo || '(미확인)';
-                    lotBalMap2[k] = (lotBalMap2[k] || 0) + (Number(l.qty) || 0);
-                    if (!lotPaintMap2[k] && paintLot) lotPaintMap2[k] = paintLot;
-                });
-            });
+        allRows.forEach(r => {
+            const k = r.injLotNo || r.lotNo || '(미확인)';
+            const qty = Number(r.qty) || 0;
+            lotBalMap2[k] = (lotBalMap2[k] || 0) + (r.kind === 'in' ? qty : -qty);
+            if (r.kind === 'in' && r.paintLot && !lotPaintMap2[k]) {
+                const pl = String(r.paintLot).replace(/-/g,'');
+                lotPaintMap2[k] = pl.length >= 8 ? pl.slice(2,8) : pl;
+            }
+        });
         const lotBalRows2 = Object.entries(lotBalMap2)
             .sort(([a], [b]) => a.localeCompare(b))
             .filter(([, qty]) => qty > 0)
