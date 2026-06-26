@@ -14343,15 +14343,45 @@ var PaintMixModule = (function() {
             || null;
     }
 
+    // processTag 정규화: '도장-A' / '도장-B' 반환, 인식 불가 시 ''
+    function _pmixNormalizeProcTag(value) {
+        const t = String(value || '').trim().replace(/\s+/g, '');
+        if (!t) return '';
+        if (/도장-?B/i.test(t)) return '도장-B';
+        if (/도장-?A/i.test(t)) return '도장-A';
+        return '';
+    }
+
+    // 제품 공정 목록에서 도장 라인 태그 추출
+    function _pmixPaintTags(product) {
+        const procs = [product && product.process1, product && product.process2,
+                       product && product.process3, product && product.process4].filter(Boolean);
+        const tags = [];
+        procs.forEach(v => { const t = _pmixNormalizeProcTag(v); if (t && !tags.includes(t)) tags.push(t); });
+        return tags;
+    }
+
+    // processTag 결정: 저장 값 우선, 없으면 행 위치 기반 추론
+    function _pmixResolveTag(row, tags, rowIdx, rowCount) {
+        const saved = _pmixNormalizeProcTag(
+            row.processTag || row.line || row.linkedProcess || row.process || row.paintProcess || row.paintLine || ''
+        );
+        if (saved && tags.includes(saved)) return saved;
+        if (tags.length === 1) return tags[0];
+        if (tags.length >= 2 && rowCount > 1 && rowIdx >= Math.ceil(rowCount / 2)) return tags[1];
+        return tags[0] || '';
+    }
+
     function _paintComponents(product, filterLine) {
         const mats = Storage.getAll(PAINT_MAT_STORE) || [];
         const rows = (product && product.paintMaterials) || [];
+        const tags = _pmixPaintTags(product);
         const out = [];
         rows.forEach((row, index) => {
-            // 라인 정보: row.line, row.linkedProcess, row.process, row.paintLine 순으로 시도
-            const rowLine = row.line || row.linkedProcess || row.process || row.paintProcess || row.paintLine || '';
-            // filterLine이 지정된 경우, 해당 라인 행만 포함
-            if (filterLine && rowLine && rowLine !== filterLine) return;
+            const resolvedLine = tags.length ? _pmixResolveTag(row, tags, index, rows.length) : _pmixNormalizeProcTag(
+                row.processTag || row.line || row.linkedProcess || row.process || row.paintProcess || row.paintLine || ''
+            );
+            if (filterLine && resolvedLine && resolvedLine !== filterLine) return;
             [
                 ['mainId', '주제'],
                 ['thinnerId', '희석제']
@@ -14366,7 +14396,7 @@ var PaintMixModule = (function() {
                     paintName: mat ? mat.name : '(삭제된 도료)',
                     supplier: mat ? mat.supplier || '' : '',
                     packUnit: mat ? mat.packUnit || '' : '',
-                    rowLine
+                    rowLine: resolvedLine
                 });
             });
         });
