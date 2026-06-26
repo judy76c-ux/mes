@@ -14705,6 +14705,26 @@ var PaintMixModule = (function() {
     function _onCanOpenToggle(chk, rowIdx) {
         const row = document.querySelector(`.pmix-row[data-row="${rowIdx}"]`);
         if (!row) return;
+
+        // 잔량 사용량 미입력 시 오픈 차단
+        if (chk.checked) {
+            const materialId = row.querySelector('.pmix-material-id')?.value || '';
+            const ignoreMixId = document.getElementById('pmixId')?.value || '';
+            const residualLotSel = row.querySelector('.pmix-residual-lot');
+            const residualProdLot = residualLotSel ? residualLotSel.value : '';
+            const residualUseGInput = row.querySelector('.pmix-residual-use-g');
+            const residualUseG = residualUseGInput ? (Number(residualUseGInput.value) || 0) : 0;
+
+            if (materialId && residualProdLot) {
+                const mixRoomBal = _mixRoomBalanceG(materialId, residualProdLot, ignoreMixId);
+                if (mixRoomBal > 0 && residualUseG < mixRoomBal) {
+                    UIUtils.toast(`배합실 잔량(${UIUtils.formatNumber(mixRoomBal)}g)을 먼저 모두 사용량에 입력해야 캔을 오픈할 수 있습니다.`, 'warning');
+                    chk.checked = false;
+                    return;
+                }
+            }
+        }
+
         const section = row.querySelector('.pmix-can-section');
         if (section) section.style.display = chk.checked ? '' : 'none';
         if (!chk.checked) {
