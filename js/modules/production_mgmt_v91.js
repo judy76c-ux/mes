@@ -14343,11 +14343,15 @@ var PaintMixModule = (function() {
             || null;
     }
 
-    function _paintComponents(product) {
+    function _paintComponents(product, filterLine) {
         const mats = Storage.getAll(PAINT_MAT_STORE) || [];
         const rows = (product && product.paintMaterials) || [];
         const out = [];
-        rows.forEach(row => {
+        rows.forEach((row, index) => {
+            // 라인 정보: row.line, row.linkedProcess, row.process, row.paintLine 순으로 시도
+            const rowLine = row.line || row.linkedProcess || row.process || row.paintProcess || row.paintLine || '';
+            // filterLine이 지정된 경우, 해당 라인 행만 포함
+            if (filterLine && rowLine && rowLine !== filterLine) return;
             [
                 ['mainId', '주제'],
                 ['thinnerId', '희석제']
@@ -14361,7 +14365,8 @@ var PaintMixModule = (function() {
                     materialId,
                     paintName: mat ? mat.name : '(삭제된 도료)',
                     supplier: mat ? mat.supplier || '' : '',
-                    packUnit: mat ? mat.packUnit || '' : ''
+                    packUnit: mat ? mat.packUnit || '' : '',
+                    rowLine
                 });
             });
         });
@@ -14503,7 +14508,8 @@ var PaintMixModule = (function() {
     function _formHtml(data = {}, usages = []) {
         const work = data.workId ? Storage.getById(PAINT_WORK_STORE, data.workId) : null;
         const product = work ? _findProduct(work) : _findProduct(data);
-        const allComponents = usages.length ? usages : _paintComponents(product);
+        const filterLine = (!usages.length && data.line) ? data.line : '';
+        const allComponents = usages.length ? usages : _paintComponents(product, filterLine);
         const components = allComponents.filter(c => c.role !== '경화제');
         const ignoreMixId = data.id || '';
         // Primer → Color → Clear 순, 각 그룹 내 주제 → 희석제 순 정렬
