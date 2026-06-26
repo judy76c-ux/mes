@@ -14387,15 +14387,16 @@ var PaintMixModule = (function() {
                 ['thinnerId', '희석제']
             ].forEach(([field, role]) => {
                 const materialId = row[field] || '';
-                if (!materialId) return;
+                if (!materialId || materialId === '사용불필요') return;
                 const mat = mats.find(m => m.id === materialId);
+                if (!mat) return; // 삭제된 도료 스킵
                 out.push({
                     paintSpec: row.paintSpec || '',
                     role,
                     materialId,
-                    paintName: mat ? mat.name : '(삭제된 도료)',
-                    supplier: mat ? mat.supplier || '' : '',
-                    packUnit: mat ? mat.packUnit || '' : '',
+                    paintName: mat.name,
+                    supplier: mat.supplier || '',
+                    packUnit: mat.packUnit || '',
                     rowLine: resolvedLine
                 });
             });
