@@ -14414,6 +14414,22 @@ var PaintMixModule = (function() {
 
     function _mixRoomLots(materialId, ignoreMixId = '') {
         const map = {};
+
+        // ① 수동 창고 출고 → 배합실 입고 (paintMixId 없는 출고)
+        const mats = Storage.getAll(PAINT_MAT_STORE) || [];
+        (Storage.getAll(PAINT_INV_STORE) || []).forEach(r => {
+            if (r.type !== '출고') return;
+            if (r.paintMixId) return;
+            if (r.materialId !== materialId) return;
+            const mat = mats.find(x => x.id === materialId);
+            const packKg = Number(mat ? mat.packUnit : 0) || 0;
+            const prodLot = r.prodLot || r.lotNo || '미기입';
+            const inG = (Number(r.quantity) || 0) * packKg * 1000;
+            if (!map[prodLot]) map[prodLot] = { prodLot, balanceG: 0 };
+            map[prodLot].balanceG += inG;
+        });
+
+        // ② 도료사용등록 mix 레코드 기반 잔량
         (_mixes()).forEach(m => {
             if (ignoreMixId && m.id === ignoreMixId) return;
             (m.usages || []).forEach(u => {
@@ -14431,6 +14447,7 @@ var PaintMixModule = (function() {
                 map[prodLot].balanceG -= usedG;
             });
         });
+
         return Object.values(map)
             .map(l => ({ ...l, balanceG: Math.max(0, _roundQty(l.balanceG)) }))
             .filter(l => l.balanceG > 0)
@@ -14440,6 +14457,20 @@ var PaintMixModule = (function() {
     // 배합실 잔량: 해당 LOT에서 꺼낸 캔 합계g - 사용량 합계g
     function _mixRoomBalanceG(materialId, prodLot, ignoreMixId = '') {
         let takenG = 0, usedG = 0;
+
+        // ① 수동 창고 출고 (paintMixId 없는 출고) → 배합실 입고
+        const mats = Storage.getAll(PAINT_MAT_STORE) || [];
+        (Storage.getAll(PAINT_INV_STORE) || []).forEach(r => {
+            if (r.type !== '출고' || r.paintMixId) return;
+            if (r.materialId !== materialId) return;
+            const rLot = r.prodLot || r.lotNo || '미기입';
+            if (rLot !== prodLot) return;
+            const mat = mats.find(x => x.id === materialId);
+            const packKg = Number(mat ? mat.packUnit : 0) || 0;
+            takenG += (Number(r.quantity) || 0) * packKg * 1000;
+        });
+
+        // ② 도료사용등록 mix 레코드 기반
         (_mixes()).forEach(m => {
             if (ignoreMixId && m.id === ignoreMixId) return;
             (m.usages || []).forEach(u => {
