@@ -34,13 +34,21 @@ var CertProcessUI = (function () {
     function renderSection(activePage, actionsHtml) {
         var tabs = MENUS.map(function (menu) {
             var active = menu.id === activePage;
-            return '<button type="button" onclick="Router.navigate(\'' + menu.id + '\')" class="mes-apple-tab ' + (active ? 'active' : '') + '">' +
-                '<span class="material-symbols-outlined">' + menu.icon + '</span>' +
-                '<span class="mes-apple-tab-label">' + menu.label + '</span></button>';
+            return '<button type="button" onclick="Router.navigate(\'' + menu.id + '\')"' +
+                ' style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;' +
+                'border:' + (active ? '2px solid var(--accent-blue)' : '1.5px solid var(--border-color)') + ';' +
+                'background:var(--bg-primary);color:var(--text-primary);cursor:pointer;min-width:130px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">' +
+                '<span style="display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:10px;flex-shrink:0;' +
+                'background:' + (active ? 'var(--accent-blue)' : 'var(--bg-secondary)') + ';">' +
+                '<span class="material-symbols-outlined" style="font-size:24px;color:' + (active ? '#fff' : 'var(--text-muted)') + ';">' + menu.icon + '</span>' +
+                '</span>' +
+                '<span style="display:flex;flex-direction:column;gap:2px;">' +
+                '<span style="font-size:0.88rem;font-weight:700;white-space:nowrap;">' + menu.label + '</span>' +
+                '</span></button>';
         }).join('');
-        return '<div style="margin-bottom:16px;">' +
-            '<div class="mes-apple-tabbar">' + tabs + '</div>' +
-            (actionsHtml ? '<div style="display:flex;justify-content:flex-end;gap:6px;margin-top:8px;">' + actionsHtml + '</div>' : '') +
+        return '<div class="mes-apple-menu-hero" style="padding:16px 20px;margin-bottom:20px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;">' +
+            tabs +
+            (actionsHtml ? '<div style="margin-left:auto;">' + actionsHtml + '</div>' : '') +
             '</div>';
     }
 

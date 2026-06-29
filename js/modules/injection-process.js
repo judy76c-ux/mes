@@ -22,18 +22,24 @@ var InjectionNavUI = (function () {
 
     function renderSection(activeKey, actionsHtml) {
         const tabs = MENUS.map(function (m) {
+            const active = m.key === activeKey;
             const onclick = m.key === 'rawmat-inv' ? "Router.navigate('raw-material-inventory')"
                           : m.key === 'wip'        ? "Router.navigate('injection-wip')"
                           : m.key === 'layout'     ? "Router.navigate('injection-room-layout')"
                           : "InjectionNavUI.goTab('" + m.key + "')";
-            return '<button type="button" onclick="' + onclick + '" class="mes-bar-tab ' + (m.key === activeKey ? 'active' : '') + '">' +
-                '<span class="material-symbols-outlined">' + m.icon + '</span>' + m.label +
-            '</button>';
+            return '<button type="button" onclick="' + onclick + '"' +
+                ' style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;' +
+                'border:' + (active ? '2px solid var(--accent-blue)' : '1.5px solid var(--border-color)') + ';' +
+                'background:var(--bg-primary);color:var(--text-primary);cursor:pointer;min-width:130px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">' +
+                '<span style="display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:10px;flex-shrink:0;' +
+                'background:' + (active ? 'var(--accent-blue)' : 'var(--bg-secondary)') + ';">' +
+                '<span class="material-symbols-outlined" style="font-size:24px;color:' + (active ? '#fff' : 'var(--text-muted)') + ';">' + m.icon + '</span></span>' +
+                '<span style="font-size:0.88rem;font-weight:700;white-space:nowrap;">' + m.label + '</span></button>';
         }).join('');
-        return '<div class="mes-action-bar">' +
-            '<div class="mes-action-bar-tabs">' + tabs + '</div>' +
-            (actionsHtml ? '<div class="mes-action-bar-sep"></div><div class="mes-action-bar-btns">' + actionsHtml + '</div>' : '') +
-        '</div>';
+        return '<div class="mes-apple-menu-hero" style="padding:16px 20px;margin-bottom:20px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;">' +
+            tabs +
+            (actionsHtml ? '<div style="margin-left:auto;display:flex;gap:8px;">' + actionsHtml + '</div>' : '') +
+            '</div>';
     }
 
     return {
@@ -71,7 +77,7 @@ var InjectionProcessModule = (function () {
 
         container.innerHTML = `
             <div class="fade-in-up">
-                ${ProdAppleMenu.hero('사출 공정', '작업일지 · 금형 교체 · 원재료 변경 · 월간 스케쥴 · 재공품 현황을 통합 관리합니다.', tabs)}
+                ${ProdAppleMenu.strip(tabs)}
             </div>
         `;
     }

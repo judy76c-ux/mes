@@ -979,7 +979,7 @@ var ProdStandardsModule = (function() {
     function _standardRecordCount(type) {
         if (type === 'paint-tds') {
             return (Storage.getAll(STORE) || [])
-                .filter(r => r._docKind === STANDARD_DOC_KIND && r.standardType === type && r.fileData)
+                .filter(r => r._docKind === STANDARD_DOC_KIND && r.standardType === type && (r.fileUrl || r.fileData))
                 .length;
         }
         if (type === 'process-flow-chart') {
@@ -2762,7 +2762,15 @@ var ProdStandardsModule = (function() {
             return `<div style="padding:32px;text-align:center;color:var(--text-muted);">등록된 제품이 없습니다.</div>`;
         }
 
-        const rows = allProducts.map(p => {
+        const _typeOrder = t => t === '양산품' ? 0 : t === '개발품' ? 1 : (t && String(t).startsWith('A')) ? 2 : 3;
+        const sortedProducts = [...allProducts].sort((a, b) => {
+            const td = _typeOrder(a.itemType) - _typeOrder(b.itemType);
+            if (td !== 0) return td;
+            return String(a.carModel || '').localeCompare(String(b.carModel || ''), 'ko') ||
+                   String(a.partName || '').localeCompare(String(b.partName || ''), 'ko');
+        });
+
+        const rows = sortedProducts.map(p => {
             const car  = p.carModel || '';
             const part = p.partName || '';
             const code = p.partNo   || '';
@@ -2789,9 +2797,23 @@ var ProdStandardsModule = (function() {
 
             const flowPreview = hasFlow ? flowProcs.join(' → ') : '';
 
-            return `<tr class="cp-status-row" data-search="${_esc((car+' '+part+' '+code).toLowerCase())}">
+            const itype = p.itemType || '';
+            const typeBadge = itype === '양산품'
+                ? `<span style="font-size:10px;font-weight:700;padding:1px 5px;border-radius:6px;background:rgba(52,211,153,0.15);color:#059669;border:1px solid #6ee7b7;white-space:nowrap;">양산</span>`
+                : itype === '개발품'
+                    ? `<span style="font-size:10px;font-weight:700;padding:1px 5px;border-radius:6px;background:rgba(59,130,246,0.15);color:#2563eb;border:1px solid #93c5fd;white-space:nowrap;">개발</span>`
+                    : (itype && String(itype).startsWith('A'))
+                        ? `<span style="font-size:10px;font-weight:700;padding:1px 5px;border-radius:6px;background:rgba(251,191,36,0.15);color:#b45309;border:1px solid #fcd34d;white-space:nowrap;">A/S</span>`
+                        : '';
+
+            return `<tr class="cp-status-row" data-search="${_esc((car+' '+part+' '+code+' '+itype).toLowerCase())}">
                 <td style="padding:9px 12px;font-weight:700;white-space:nowrap;width:90px;">${_esc(car)}</td>
-                <td style="padding:9px 12px;width:220px;">${_esc(part)}</td>
+                <td style="padding:9px 12px;width:220px;">
+                    <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;">
+                        ${typeBadge}
+                        <span>${_esc(part)}</span>
+                    </div>
+                </td>
                 <td style="padding:9px 12px;">${flowBadge}
                     ${flowPreview ? `<div style="font-size:.7rem;color:var(--text-muted);margin-top:3px;">${_esc(flowPreview)}</div>` : ''}
                 </td>
@@ -3089,30 +3111,43 @@ var ProdStandardsModule = (function() {
     function _renderSubTabs() { }
 
     function _renderDocTypeTabs() {
-        const stdTabs = Object.entries(STANDARD_DOC_TYPES).map(([key, cfg]) => ({
-            key, label: cfg.label, icon: cfg.icon
-        }));
+        const menus = [
+            {
+                label: '관리계획서현황',
+                icon: 'fact_check',
+                active: _curDocType === DOC_CP_STATUS,
+                onClick: `ProdStandardsModule.selectDocType('${DOC_CP_STATUS}')`
+            },
+            {
+                label: '작업표준서',
+                icon: 'assignment',
+                active: false,
+                onClick: `Router.navigate('work-standard')`
+            },
+            ...Object.entries(STANDARD_DOC_TYPES).map(([key, cfg]) => ({
+                label: cfg.label,
+                icon: cfg.icon,
+                active: _curDocType === key,
+                onClick: `ProdStandardsModule.selectDocType('${key}')`
+            }))
+        ];
+
         return `
-            <div style="display:flex; gap:8px; flex-wrap:wrap; margin:0 0 14px;">
-                <button class="btn ${_curDocType === DOC_CP_STATUS ? 'btn-primary' : 'btn-outline'} btn-sm"
-                    onclick="ProdStandardsModule.selectDocType('${DOC_CP_STATUS}')"
-                    style="display:flex; align-items:center; gap:5px;">
-                    <span class="material-symbols-outlined" style="font-size:16px;">fact_check</span>
-                    관리계획서현황
-                </button>
-                <button class="btn btn-outline btn-sm"
-                    onclick="Router.navigate('work-standard')"
-                    style="display:flex; align-items:center; gap:5px; border-color:#7c3aed; color:#7c3aed;">
-                    <span class="material-symbols-outlined" style="font-size:16px;">assignment</span>
-                    작업표준서
-                    <span class="material-symbols-outlined" style="font-size:13px; opacity:0.7;">open_in_new</span>
-                </button>
-                ${stdTabs.map(t => `
-                    <button class="btn ${_curDocType === t.key ? 'btn-primary' : 'btn-outline'} btn-sm"
-                        onclick="ProdStandardsModule.selectDocType('${t.key}')"
-                        style="display:flex; align-items:center; gap:5px;">
-                        <span class="material-symbols-outlined" style="font-size:16px;">${t.icon}</span>
-                        ${t.label}
+            <div class="mes-apple-menu-hero" style="padding:16px 20px;margin-bottom:20px;display:flex;gap:10px;flex-wrap:wrap;">
+                ${menus.map(menu => `
+                    <button type="button" onclick="${menu.onClick}"
+                        style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;
+                               border:${menu.active ? '2px solid var(--accent-blue)' : '1.5px solid var(--border-color)'};
+                               background:var(--bg-primary);color:var(--text-primary);
+                               cursor:pointer;min-width:140px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+                        <span style="display:inline-flex;align-items:center;justify-content:center;
+                                     width:42px;height:42px;border-radius:10px;flex-shrink:0;
+                                     background:${menu.active ? 'var(--accent-blue)' : 'var(--bg-secondary)'};">
+                            <span class="material-symbols-outlined" style="font-size:24px;color:${menu.active ? '#fff' : 'var(--text-muted)'};">${menu.icon}</span>
+                        </span>
+                        <span style="display:flex;flex-direction:column;gap:2px;">
+                            <span style="font-size:0.88rem;font-weight:700;white-space:nowrap;">${menu.label}</span>
+                        </span>
                     </button>
                 `).join('')}
             </div>
@@ -3150,6 +3185,24 @@ var ProdStandardsModule = (function() {
         const next = btn.dataset.value ? '' : 'O';
         btn.dataset.value = next;
         btn.textContent   = next;
+        if (next) {
+            btn.style.background  = 'var(--accent-green, #16a34a)';
+            btn.style.color       = '#fff';
+            btn.style.borderColor = 'var(--accent-green, #16a34a)';
+        } else {
+            btn.style.background  = 'transparent';
+            btn.style.color       = 'var(--text-muted)';
+            btn.style.borderColor = 'var(--border-color)';
+        }
+    }
+
+    // ── 관리분담 토글 (공백 ↔ ○) ────────────────────────────────────
+    function toggleResp(field, key) {
+        const btn = document.getElementById(`psParam_${field}_${key}`);
+        if (!btn) return;
+        const next = btn.dataset.value ? '' : 'O';
+        btn.dataset.value = next;
+        btn.textContent   = next ? '○' : '';
         if (next) {
             btn.style.background  = 'var(--accent-green, #16a34a)';
             btn.style.color       = '#fff';
@@ -3450,6 +3503,51 @@ var ProdStandardsModule = (function() {
                                 id="psParam_control_${param.key}"
                                 value="${_esc(vControl)}" placeholder="관리방안">
                         </td>
+                        <td style="text-align:center; ${tdPad} ${tdBase} background:rgba(200,230,200,0.15);">
+                            <button type="button"
+                                id="psParam_respProd_${param.key}"
+                                data-value="${sv.resp&&sv.resp.prod ? 'O' : ''}"
+                                onclick="ProdStandardsModule.toggleResp('respProd','${param.key}')"
+                                style="min-width:28px; height:22px; border-radius:4px; border:1px solid;
+                                       cursor:pointer; font-weight:800; font-size:12px; line-height:1;
+                                       ${sv.resp&&sv.resp.prod ? 'background:var(--accent-green,#16a34a);color:#fff;border-color:var(--accent-green,#16a34a);' : 'background:transparent;color:var(--text-muted);border-color:var(--border-color);'}">
+                                ${sv.resp&&sv.resp.prod ? '○' : ''}
+                            </button>
+                        </td>
+                        <td style="text-align:center; ${tdPad} ${tdBase} background:rgba(200,230,200,0.15);">
+                            <button type="button"
+                                id="psParam_respMat_${param.key}"
+                                data-value="${sv.resp&&sv.resp.mat ? 'O' : ''}"
+                                onclick="ProdStandardsModule.toggleResp('respMat','${param.key}')"
+                                style="min-width:28px; height:22px; border-radius:4px; border:1px solid;
+                                       cursor:pointer; font-weight:800; font-size:12px; line-height:1;
+                                       ${sv.resp&&sv.resp.mat ? 'background:var(--accent-green,#16a34a);color:#fff;border-color:var(--accent-green,#16a34a);' : 'background:transparent;color:var(--text-muted);border-color:var(--border-color);'}">
+                                ${sv.resp&&sv.resp.mat ? '○' : ''}
+                            </button>
+                        </td>
+                        <td style="text-align:center; ${tdPad} ${tdBase} background:rgba(200,230,200,0.15);">
+                            <button type="button"
+                                id="psParam_respQc_${param.key}"
+                                data-value="${sv.resp&&sv.resp.qc ? 'O' : ''}"
+                                onclick="ProdStandardsModule.toggleResp('respQc','${param.key}')"
+                                style="min-width:28px; height:22px; border-radius:4px; border:1px solid;
+                                       cursor:pointer; font-weight:800; font-size:12px; line-height:1;
+                                       ${sv.resp&&sv.resp.qc ? 'background:var(--accent-green,#16a34a);color:#fff;border-color:var(--accent-green,#16a34a);' : 'background:transparent;color:var(--text-muted);border-color:var(--border-color);'}">
+                                ${sv.resp&&sv.resp.qc ? '○' : ''}
+                            </button>
+                        </td>
+                        <td style="${tdPad} ${tdBase} background:rgba(255,248,200,0.2);">
+                            <input type="text" class="form-input"
+                                style="${inStyle}"
+                                id="psParam_action_${param.key}"
+                                value="${_esc(sv.action||param.action||'')}" placeholder="조치사항">
+                        </td>
+                        <td style="${tdPad} ${tdBase}">
+                            <input type="text" class="form-input"
+                                style="${inStyle}"
+                                id="psParam_note_${param.key}"
+                                value="${_esc(sv.note||param.note||'')}" placeholder="비고">
+                        </td>
                     </tr>`;
                 });
             });
@@ -3484,9 +3582,14 @@ var ProdStandardsModule = (function() {
                     <span style="font-size:13px; font-weight:600; color:var(--text-muted);">${_esc(_partNo)}</span>` : ''}
                     ${statusBadge}
                 </div>
-                <button class="btn btn-primary btn-sm" onclick="ProdStandardsModule.saveAllParams()">
-                    <span class="material-symbols-outlined" style="font-size:15px;">save</span> 전체 저장
-                </button>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn btn-secondary btn-sm" onclick="ProdStandardsModule.printControlPlan()">
+                        <span class="material-symbols-outlined" style="font-size:15px;">print</span> 인쇄
+                    </button>
+                    <button class="btn btn-primary btn-sm" onclick="ProdStandardsModule.saveAllParams()">
+                        <span class="material-symbols-outlined" style="font-size:15px;">save</span> 전체 저장
+                    </button>
+                </div>
             </div>
 
             <!-- 개정이력 섹션 (비동기 로드 후 교체) -->
@@ -3506,7 +3609,10 @@ var ProdStandardsModule = (function() {
                             <th colspan="2" style="text-align:center; border-bottom:1px solid var(--border-color); padding:4px 8px; white-space:nowrap;">관리 항목</th>
                             <th rowspan="2" style="width:1%; white-space:nowrap; text-align:center; vertical-align:middle; padding:4px 6px;">특별<br>특성</th>
                             <th rowspan="2" style="width:1%; white-space:nowrap; text-align:center; vertical-align:middle; padding:4px 6px;">F/P</th>
-                            <th colspan="5" style="text-align:center; border-bottom:1px solid var(--border-color); padding:4px 8px; white-space:nowrap;">관리 기준</th>
+                            <th colspan="4" style="text-align:center; border-bottom:1px solid var(--border-color); padding:4px 8px; white-space:nowrap;">관리 기준</th>
+                            <th colspan="3" style="text-align:center; border-bottom:1px solid var(--border-color); padding:4px 8px; white-space:nowrap; background:#e8f5e9;">관리 분담</th>
+                            <th rowspan="2" style="width:8%; white-space:nowrap; text-align:center; vertical-align:middle; padding:4px 6px; font-size:10px; background:#fff8e1;">이상 발생시<br>조치사항</th>
+                            <th rowspan="2" style="width:4%; white-space:nowrap; text-align:center; vertical-align:middle; padding:4px 6px; font-size:10px;">비고</th>
                         </tr>
                         <tr>
                             <th style="width:6%; font-size:11px; color:var(--accent-blue);   background:var(--bg-secondary); padding:3px 6px; white-space:nowrap;">제 품</th>
@@ -3515,6 +3621,9 @@ var ProdStandardsModule = (function() {
                             <th style="width:8%;  font-size:11px; background:var(--bg-secondary); padding:3px 6px; white-space:nowrap;">확인방법</th>
                             <th style="width:6%;  font-size:11px; background:var(--bg-secondary); padding:3px 6px; white-space:nowrap;">주기</th>
                             <th style="width:10%; font-size:11px; background:var(--bg-secondary); padding:3px 6px; white-space:nowrap;">관리방안</th>
+                            <th style="width:3%; font-size:10px; background:#e8f5e9; padding:3px 4px; text-align:center; white-space:nowrap;">생산</th>
+                            <th style="width:3%; font-size:10px; background:#e8f5e9; padding:3px 4px; text-align:center; white-space:nowrap;">자재</th>
+                            <th style="width:3%; font-size:10px; background:#e8f5e9; padding:3px 4px; text-align:center; white-space:nowrap;">Q.C</th>
                         </tr>
                     </thead>
                     <tbody id="psParamTbody">
@@ -4296,74 +4405,99 @@ var ProdStandardsModule = (function() {
         return n ? `${n} B` : '-';
     }
 
-    let _paintTdsFilterState = { spec: '전체', supplier: '', missing: false };
+    let _paintTdsFilterState = { carModel: '전체', missing: false };
 
-    function _paintTdsSpecLabel(spec) {
-        const raw = String(spec || '').trim();
-        return raw || '공용';
-    }
-
-    function _paintTdsSpecMeta(spec) {
-        const label = _paintTdsSpecLabel(spec);
-        const key = label.toLowerCase();
-        if (key === 'primer') return { color: '#2563eb', bg: '#dbeafe' };
-        if (key === 'color') return { color: '#7c3aed', bg: '#ede9fe' };
-        if (key === 'clear') return { color: '#0891b2', bg: '#cffafe' };
-        if (label === '공용') return { color: '#334155', bg: '#e2e8f0' };
-        return { color: '#6b7280', bg: '#f3f4f6' };
-    }
-
-    function _paintTdsSpecOptions(materials) {
-        const seen = new Set();
-        const list = ['전체'];
-        materials.forEach(mat => {
-            const label = _paintTdsSpecLabel(mat && mat.paintSpec);
-            if (seen.has(label)) return;
-            seen.add(label);
-            list.push(label);
+    /* 제품 마스터에서 materialId → [carModel] 역매핑 */
+    function _buildMatCarModelMap() {
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const map = new Map(); // materialId → Set<carModel>
+        products.forEach(p => {
+            const car = String(p.carModel || '').trim();
+            if (!car) return;
+            (p.paintMaterials || []).forEach(row => {
+                const mid = row.mainId || row.paintMaterialId || '';
+                if (!mid) return;
+                if (!map.has(mid)) map.set(mid, new Set());
+                map.get(mid).add(car);
+            });
         });
-        return list;
+        return map;
     }
 
-    function _paintTdsSpecButtonsHtml(materials) {
-        return _paintTdsSpecOptions(materials).map(spec => {
-            const active = _paintTdsFilterState.spec === spec;
-            const meta = _paintTdsSpecMeta(spec);
-            const borderColor = active ? meta.color : 'var(--border-color)';
-            const bg = active ? meta.bg : 'var(--bg-secondary)';
-            const color = active ? meta.color : 'var(--text-primary)';
-            return `
-                <button class="btn btn-sm" type="button" data-ptds-spec="${_esc(spec)}"
-                    onclick="ProdStandardsModule._setPaintTdsSpecFilter('${_jsArg(spec)}')"
-                    style="font-size:.76rem;border-color:${borderColor};background:${bg};color:${color};font-weight:${active ? '800' : '600'};">
-                    ${_esc(spec)}
-                </button>
-            `;
+    /* materialId → Map<carModel, Set<partName>> */
+    function _buildMatPartNamesMapByCar() {
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const map = new Map();
+        products.forEach(p => {
+            const car = String(p.carModel || '').trim();
+            const part = String(p.partName || '').trim();
+            if (!part) return;
+            (p.paintMaterials || []).forEach(row => {
+                const mid = row.mainId || row.paintMaterialId || '';
+                if (!mid) return;
+                if (!map.has(mid)) map.set(mid, new Map());
+                const carMap = map.get(mid);
+                if (!carMap.has(car)) carMap.set(car, new Set());
+                carMap.get(car).add(part);
+            });
+        });
+        return map;
+    }
+
+    /* 차종별 그룹: carModel → material[] */
+    function _buildCarModelGroups(materials, matCarMap) {
+        const groups = {}; // carModel → []
+        materials.forEach(mat => {
+            const cars = matCarMap.get(mat.id);
+            if (cars && cars.size) {
+                cars.forEach(car => {
+                    if (!groups[car]) groups[car] = [];
+                    groups[car].push(mat);
+                });
+            } else {
+                if (!groups['미연결']) groups['미연결'] = [];
+                groups['미연결'].push(mat);
+            }
+        });
+        return groups;
+    }
+
+    function _paintTdsCarModelButtons(carModels) {
+        return ['전체', ...carModels].map(car => {
+            const active = _paintTdsFilterState.carModel === car;
+            return `<button class="btn btn-sm" type="button"
+                onclick="ProdStandardsModule._setPaintTdsCarModelFilter('${_jsArg(car)}')"
+                style="font-size:.76rem;font-weight:${active ? '800' : '600'};
+                       border-color:${active ? 'var(--accent-blue)' : 'var(--border-color)'};
+                       background:${active ? '#eff6ff' : 'var(--bg-secondary)'};
+                       color:${active ? 'var(--accent-blue)' : 'var(--text-primary)'};">
+                ${_esc(car)}
+            </button>`;
         }).join('');
     }
 
     function _paintTdsFilterMaterials(materials, docs) {
         const linkedMaterialIds = new Set((docs || []).map(d => d.materialId).filter(Boolean));
+        const matCarMap = _buildMatCarModelMap();
         return (materials || []).filter(mat => {
-            const specLabel = _paintTdsSpecLabel(mat && mat.paintSpec);
-            const supplier = String(mat && mat.supplier || '').trim();
             const hasDoc = !!(mat && mat.id && linkedMaterialIds.has(mat.id));
-            const specOk = _paintTdsFilterState.spec === '전체' || specLabel === _paintTdsFilterState.spec;
-            const supplierOk = !_paintTdsFilterState.supplier || supplier === _paintTdsFilterState.supplier;
             const missingOk = !_paintTdsFilterState.missing || !hasDoc;
-            return specOk && supplierOk && missingOk;
+            if (_paintTdsFilterState.carModel === '전체') return missingOk;
+            const cars = matCarMap.get(mat.id);
+            if (_paintTdsFilterState.carModel === '미연결') {
+                return (!cars || !cars.size) && missingOk;
+            }
+            return cars && cars.has(_paintTdsFilterState.carModel) && missingOk;
         });
     }
 
-    function _setPaintTdsSpecFilter(spec) {
-        _paintTdsFilterState.spec = spec || '전체';
+    function _setPaintTdsCarModelFilter(carModel) {
+        _paintTdsFilterState.carModel = carModel || '전체';
         _renderPaintTdsTable();
     }
 
-    function _setPaintTdsSupplierFilter(value) {
-        _paintTdsFilterState.supplier = value || '';
-        _renderPaintTdsTable();
-    }
+    function _setPaintTdsSpecFilter(spec) { _renderPaintTdsTable(); }      // 하위호환 유지
+    function _setPaintTdsSupplierFilter(value) { _renderPaintTdsTable(); } // 하위호환 유지
 
     function _togglePaintTdsMissingFilter(checked) {
         _paintTdsFilterState.missing = !!checked;
@@ -4371,41 +4505,44 @@ var ProdStandardsModule = (function() {
     }
 
     function _resetPaintTdsFilter() {
-        _paintTdsFilterState = { spec: '전체', supplier: '', missing: false };
+        _paintTdsFilterState = { carModel: '전체', missing: false };
         _renderPaintTdsTable();
     }
 
+    /* 테이블 셀용 파일 목록 (보기 / 인쇄 포함) */
     function _paintTdsDocListHtml(docs) {
         if (!docs.length) {
-            return `
-                <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid #dbeafe;border-radius:10px;background:#f8fbff;margin-bottom:8px;">
-                    <span class="material-symbols-outlined" style="font-size:18px;color:#94a3b8;">description</span>
-                    <div>
-                        <div style="font-size:.82rem;font-weight:800;color:var(--text-primary);">업로드된 TDS 없음</div>
-                        <div style="font-size:.74rem;color:var(--text-muted);margin-top:2px;">아래 드래그 업로드 영역 또는 업로드 버튼을 사용하세요.</div>
-                    </div>
-                </div>
-            `;
+            return `<span style="font-size:.76rem;color:#dc2626;font-weight:700;">누락</span>`;
         }
         return docs.map(doc => `
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border:1px solid var(--border-color);border-radius:7px;background:#fff;margin-bottom:5px;">
-                <div style="min-width:0;">
-                    <button type="button" onclick="ProdStandardsModule.openPaintTdsFile('${_jsArg(doc.id)}')"
-                        style="border:0;background:transparent;padding:0;color:var(--accent-blue);font-weight:800;cursor:pointer;text-align:left;max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-                        ${_esc(doc.fileName || 'TDS 파일')}
-                    </button>
-                    <div style="font-size:.72rem;color:var(--text-muted);margin-top:2px;">
-                        ${_esc(_fileSizeText(doc.fileSize))} · ${_esc(doc.uploadedAt || doc.updatedAt || '-')}
-                    </div>
-                </div>
-                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
-                    <button class="btn btn-sm btn-outline" type="button"
-                        onclick="ProdStandardsModule.openPaintTdsFile('${_jsArg(doc.id)}')">보기</button>
-                    <button class="btn btn-sm btn-outline" type="button"
-                        onclick="ProdStandardsModule.printPaintTdsFile('${_jsArg(doc.id)}')">인쇄</button>
-                    <button class="btn btn-sm" type="button" style="border:1px solid var(--accent-red);color:var(--accent-red);background:transparent;"
-                        onclick="ProdStandardsModule.deletePaintTds('${_jsArg(doc.id)}')">삭제</button>
-                </div>
+            <div style="display:flex;align-items:center;gap:5px;margin-bottom:3px;min-width:0;">
+                <span class="material-symbols-outlined" style="font-size:14px;color:#2563eb;flex-shrink:0;">description</span>
+                <span style="flex:1;font-size:.74rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;"
+                    title="${_esc(doc.fileName || '')}">${_esc(doc.fileName || 'TDS')}</span>
+                <button type="button" class="btn btn-sm" style="padding:1px 7px;font-size:.7rem;flex-shrink:0;"
+                    onclick="ProdStandardsModule.openPaintTdsFile('${_jsArg(doc.id)}')">보기</button>
+                <button type="button" class="btn btn-sm btn-outline" style="padding:1px 7px;font-size:.7rem;flex-shrink:0;"
+                    onclick="ProdStandardsModule.printPaintTdsFile('${_jsArg(doc.id)}')">인쇄</button>
+            </div>
+        `).join('');
+    }
+
+    /* 모달 내부 파일 목록 HTML */
+    function _paintTdsModalFileListHtml(matId) {
+        const material = _paintMainMaterials().find(m => m.id === matId);
+        const docs = _paintTdsDocsForMaterial(material);
+        if (!docs.length) {
+            return `<p style="color:var(--text-muted);font-size:.82rem;margin:4px 0;">첨부된 파일이 없습니다.</p>`;
+        }
+        return docs.map((doc, i) => `
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--border-color);border-radius:6px;margin-bottom:4px;" id="tds-file-item-${i}">
+                <span class="material-symbols-outlined" style="font-size:18px;color:#2563eb;">description</span>
+                <span style="flex:1;font-size:.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${_esc(doc.fileName || '')}">${_esc(doc.fileName || 'TDS 파일')}</span>
+                <span style="font-size:.72rem;color:var(--text-muted);">${_esc(_fileSizeText(doc.fileSize))}</span>
+                <button type="button" class="btn btn-sm btn-outline" onclick="ProdStandardsModule.openPaintTdsFile('${_jsArg(doc.id)}')">보기</button>
+                <button type="button" class="btn btn-sm btn-outline" onclick="ProdStandardsModule.printPaintTdsFile('${_jsArg(doc.id)}')">인쇄</button>
+                <button type="button" class="btn btn-sm" style="padding:2px 8px;font-size:.72rem;color:#dc2626;border:1px solid #dc262633;"
+                    onclick="ProdStandardsModule._deleteTdsInModal('${_jsArg(doc.id)}','${_jsArg(matId)}')">삭제</button>
             </div>
         `).join('');
     }
@@ -4419,15 +4556,47 @@ var ProdStandardsModule = (function() {
         const linkedMaterialIds = new Set(docs.map(d => d.materialId).filter(Boolean));
         const registeredCount = materials.filter(mat => mat && mat.id && linkedMaterialIds.has(mat.id)).length;
         const missingCount = Math.max(0, materials.length - registeredCount);
-        const supplierOptions = Array.from(new Set(materials.map(mat => String(mat.supplier || '제조사 미지정').trim() || '제조사 미지정'))).sort((a, b) => a.localeCompare(b, 'ko'));
+
+        /* 차종 ↔ 도료 매핑 */
+        const matCarMap = _buildMatCarModelMap();
+        const matPartByCar = _buildMatPartNamesMapByCar();
+        const allCarModels = UIUtils.sortCarModels(
+            Array.from(new Set(
+                Array.from(matCarMap.values()).flatMap(s => Array.from(s))
+            )),
+            Storage.getAll(DB.STORES.PRODUCTS) || []
+        );
+        const hasMissingLink = materials.some(mat => {
+            const cars = matCarMap.get(mat.id);
+            return !cars || !cars.size;
+        });
+        const carModelButtons = _paintTdsCarModelButtons([
+            ...allCarModels,
+            ...(hasMissingLink ? ['미연결'] : [])
+        ]);
+
         const filteredMaterials = _paintTdsFilterMaterials(materials, docs);
-        const supplierGroups = filteredMaterials.reduce((acc, mat) => {
-            const supplier = String(mat.supplier || '제조사 미지정').trim() || '제조사 미지정';
-            if (!acc[supplier]) acc[supplier] = [];
-            acc[supplier].push(mat);
-            return acc;
-        }, {});
-        const supplierNames = Object.keys(supplierGroups).sort((a, b) => a.localeCompare(b, 'ko'));
+
+        /* 그룹: 필터 상태가 "전체"면 차종별 그룹, 특정 차종이면 해당 차종만 */
+        let groupEntries; // [[groupLabel, [mat, ...]], ...]
+        if (_paintTdsFilterState.carModel === '전체') {
+            const groups = _buildCarModelGroups(filteredMaterials, matCarMap);
+            const sortedCars = [
+                ...UIUtils.sortCarModels(
+                    Object.keys(groups).filter(k => k !== '미연결'),
+                    Storage.getAll(DB.STORES.PRODUCTS) || []
+                ),
+                ...(groups['미연결'] ? ['미연결'] : [])
+            ];
+            groupEntries = sortedCars.map(car => [car, groups[car] || []]);
+        } else {
+            groupEntries = [[_paintTdsFilterState.carModel, filteredMaterials]];
+        }
+
+        const _carAccent = car => {
+            if (car === '미연결') return { icon: 'link_off', color: '#9ca3af', bg: '#f9fafb' };
+            return { icon: 'directions_car', color: '#2563eb', bg: '#eff6ff' };
+        };
 
         el.innerHTML = `
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
@@ -4437,28 +4606,30 @@ var ProdStandardsModule = (function() {
                         ${cfg.label}
                     </div>
                     <div style="font-size:13px;color:var(--text-muted);margin-top:4px;">
-                        도료 기초 정보의 <strong>주제</strong> 도료만 표시합니다. 도료사가 배포한 TDS 원본 파일을 도료별로 업로드하세요.
+                        제품 마스터의 도료 설정 기준으로 <strong>차종별</strong>로 정리됩니다. 도료사 배포 TDS 원본 파일을 도료별로 업로드하세요.
                     </div>
                 </div>
             </div>
+
+            <!-- 현황 요약 -->
             <div class="card" style="margin-bottom:10px;">
                 <div class="card-body" style="padding:10px 14px;">
                     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                         <span style="font-size:.78rem;font-weight:700;color:var(--text-muted);">TDS 등록 현황</span>
-                        <span style="display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--border-color);border-radius:999px;background:var(--bg-secondary);font-size:.76rem;font-weight:800;">
+                        <span style="display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border:1px solid var(--border-color);border-radius:999px;background:var(--bg-secondary);font-size:.76rem;font-weight:800;">
+                            <span class="material-symbols-outlined" style="font-size:14px;">directions_car</span>
+                            차종 ${allCarModels.length}종
+                        </span>
+                        <span style="display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border:1px solid var(--border-color);border-radius:999px;background:var(--bg-secondary);font-size:.76rem;font-weight:800;">
                             주제 ${materials.length}개
                         </span>
-                        <span style="display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid #bfdbfe;border-radius:999px;background:#eff6ff;font-size:.76rem;font-weight:800;color:#2563eb;">
-                            첨부 ${registeredCount}개
+                        <span style="display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border:1px solid #bfdbfe;border-radius:999px;background:#eff6ff;font-size:.76rem;font-weight:800;color:#2563eb;">
+                            첨부완료 ${registeredCount}개
                         </span>
-                        <span style="display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid #fecaca;border-radius:999px;background:#fef2f2;font-size:.76rem;font-weight:800;color:#dc2626;">
+                        <span style="display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border:1px solid #fecaca;border-radius:999px;background:#fef2f2;font-size:.76rem;font-weight:800;color:#dc2626;">
                             미등록 ${missingCount}개
                         </span>
                         <div style="margin-left:auto;display:flex;gap:12px;align-items:center;flex-shrink:0;">
-                            <div style="text-align:center;">
-                                <div style="font-size:1.1rem;font-weight:900;">${materials.length}</div>
-                                <div style="font-size:.68rem;color:var(--text-muted);">전체 주제</div>
-                            </div>
                             <div style="text-align:center;">
                                 <div style="font-size:1.1rem;font-weight:900;color:#059669;">${docs.length}</div>
                                 <div style="font-size:.68rem;color:#059669;">업로드 파일</div>
@@ -4467,93 +4638,90 @@ var ProdStandardsModule = (function() {
                     </div>
                 </div>
             </div>
+
+            <!-- 차종 필터 -->
             <div class="card" style="margin-bottom:10px;">
                 <div class="card-body" style="padding:10px 14px;">
-                    <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin-bottom:6px;">
-                        <span style="font-size:.72rem;color:var(--text-muted);margin-right:2px;white-space:nowrap;">사양 구분</span>
-                        ${_paintTdsSpecButtonsHtml(materials)}
-                        <label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-size:.78rem;padding:5px 10px;border-radius:6px;flex-shrink:0;margin-left:8px;border:1px solid ${_paintTdsFilterState.missing ? '#dc2626' : 'var(--border-color)'};background:${_paintTdsFilterState.missing ? '#dc262611' : 'var(--bg-secondary)'};color:${_paintTdsFilterState.missing ? '#dc2626' : 'var(--text-primary)'};">
-                            <input type="checkbox" ${_paintTdsFilterState.missing ? 'checked' : ''} onchange="ProdStandardsModule._togglePaintTdsMissingFilter(this.checked)" style="accent-color:#dc2626;">
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
+                        <span style="font-size:.72rem;color:var(--text-muted);margin-right:2px;white-space:nowrap;">차종</span>
+                        ${carModelButtons}
+                        <label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-size:.78rem;padding:5px 10px;border-radius:6px;flex-shrink:0;margin-left:auto;
+                            border:1px solid ${_paintTdsFilterState.missing ? '#dc2626' : 'var(--border-color)'};
+                            background:${_paintTdsFilterState.missing ? '#dc262611' : 'var(--bg-secondary)'};
+                            color:${_paintTdsFilterState.missing ? '#dc2626' : 'var(--text-primary)'};">
+                            <input type="checkbox" ${_paintTdsFilterState.missing ? 'checked' : ''}
+                                onchange="ProdStandardsModule._togglePaintTdsMissingFilter(this.checked)"
+                                style="accent-color:#dc2626;">
                             미등록만
                         </label>
                         <button class="btn btn-sm btn-outline" type="button" onclick="ProdStandardsModule._resetPaintTdsFilter()" style="font-size:.76rem;flex-shrink:0;">초기화</button>
                     </div>
-                    <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">
-                        <span style="font-size:.72rem;color:var(--text-muted);margin-right:2px;white-space:nowrap;">제조사</span>
-                        <div style="margin-left:auto;min-width:170px;">
-                            <select class="form-control" style="font-size:.8rem;" onchange="ProdStandardsModule._setPaintTdsSupplierFilter(this.value)">
-                                <option value="">전체 제조사</option>
-                                ${supplierOptions.map(supplier => `<option value="${_esc(supplier)}" ${_paintTdsFilterState.supplier === supplier ? 'selected' : ''}>${_esc(supplier)}</option>`).join('')}
-                            </select>
-                        </div>
-                    </div>
                 </div>
             </div>
-            ${materials.length ? `
-                <div class="card">
-                    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
-                        <h4 style="margin:0;font-size:1rem;">도장 사양서(TDS) 등록대장
-                            <span style="color:var(--text-muted);font-size:.8rem;margin-left:6px;">표시 ${filteredMaterials.length} / 전체 ${materials.length}개</span>
-                        </h4>
-                        <span style="font-size:.75rem;background:#eff6ff;border:1px solid #bfdbfe;border-radius:3px;padding:2px 8px;color:#1d4ed8;">
-                            파일 셀 안 드래그 업로드 가능
-                        </span>
-                    </div>
-                    <div class="card-body" style="padding:12px;">
-                <div style="display:flex;flex-direction:column;gap:16px;">
-                    ${supplierNames.map((supplierName) => {
-                        const groupRows = supplierGroups[supplierName] || [];
+
+            <!-- 차종별 그룹 테이블 -->
+            ${groupEntries.length ? `
+                <div style="display:flex;flex-direction:column;gap:14px;">
+                    ${groupEntries.map(([carLabel, groupRows]) => {
+                        if (!groupRows.length) return '';
+                        const acc = _carAccent(carLabel);
+                        const groupRegistered = groupRows.filter(mat => mat.id && linkedMaterialIds.has(mat.id)).length;
                         return `
-                            <div style="border:1px solid var(--border-color);border-radius:12px;overflow:hidden;background:#fff;">
-                                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;background:#f8fafc;border-bottom:1px solid var(--border-color);">
+                            <div style="border:1px solid var(--border-color);border-radius:12px;overflow:hidden;">
+                                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;background:${acc.bg};border-bottom:1px solid var(--border-color);">
                                     <div style="display:flex;align-items:center;gap:8px;">
-                                        <span class="material-symbols-outlined" style="font-size:18px;color:#334155;">factory</span>
-                                        <strong style="font-size:14px;color:var(--text-primary);">${_esc(supplierName)}</strong>
+                                        <span class="material-symbols-outlined" style="font-size:18px;color:${acc.color};">${acc.icon}</span>
+                                        <strong style="font-size:14px;color:var(--text-primary);">${_esc(carLabel)}</strong>
                                     </div>
-                                    <span style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--border-color);border-radius:999px;background:#fff;font-size:.76rem;font-weight:800;color:var(--text-muted);">
-                                        주제 ${groupRows.length}개
-                                    </span>
+                                    <div style="display:flex;gap:6px;align-items:center;">
+                                        <span style="font-size:.74rem;font-weight:700;color:#059669;">등록 ${groupRegistered}</span>
+                                        <span style="font-size:.74rem;color:var(--text-muted);">/</span>
+                                        <span style="font-size:.74rem;font-weight:700;color:var(--text-muted);">전체 ${groupRows.length}개</span>
+                                    </div>
                                 </div>
-                                <div class="data-table-wrapper" style="overflow-x:auto;">
-                                    <table class="data-table" style="width:100%;font-size:12px;min-width:980px;">
+                                <div class="data-table-wrapper" style="overflow-x:auto;background:#fff;">
+                                    <table class="data-table" style="width:100%;font-size:12px;min-width:820px;">
                                         <thead>
                                             <tr>
-                                                <th style="width:48px;text-align:center;">No</th>
-                                                <th style="min-width:220px;">주제 도료명</th>
-                                                <th style="width:90px;text-align:center;">사양</th>
-                                                <th style="min-width:340px;">업로드 TDS</th>
-                                                <th style="width:110px;text-align:center;">상태</th>
-                                                <th style="width:120px;text-align:center;">작업</th>
+                                                <th style="width:44px;text-align:center;">No</th>
+                                                <th style="min-width:200px;">주제 도료명</th>
+                                                <th style="width:80px;text-align:center;">사양</th>
+                                                <th style="width:120px;text-align:center;">공급사</th>
+                                                <th style="min-width:280px;">첨부 TDS</th>
+                                                <th style="width:100px;text-align:center;">상태</th>
+                                                <th style="width:80px;text-align:center;">작업</th>
                                             </tr>
                                         </thead>
                                         <tbody>
                                             ${groupRows.map((mat, idx) => {
                                                 const matDocs = _paintTdsDocsForMaterial(mat);
                                                 const registered = mat.id && linkedMaterialIds.has(mat.id);
+                                                const partNames = mat.id
+                                                    ? Array.from(matPartByCar.get(mat.id)?.get(carLabel) || []).sort()
+                                                    : [];
                                                 return `
                                                     <tr>
                                                         <td style="text-align:center;font-weight:800;">${idx + 1}</td>
                                                         <td>
                                                             <strong>${_esc(mat.name || '-')}</strong>
-                                                            <div style="font-size:.74rem;color:var(--text-muted);margin-top:2px;">주제</div>
+                                                            ${partNames.length ? `
+                                                                <div style="margin-top:3px;display:flex;flex-wrap:wrap;gap:3px;">
+                                                                    ${partNames.map(p => `<span style="display:inline-block;font-size:.68rem;padding:1px 6px;border-radius:4px;background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;">${_esc(p)}</span>`).join('')}
+                                                                </div>` : ''}
                                                         </td>
                                                         <td style="text-align:center;">${mat.paintSpec ? UIUtils.badge(mat.paintSpec, 'info') : '-'}</td>
-                                                        <td>
-                                                            ${_paintTdsDocListHtml(matDocs)}
-                                                            ${_paintTdsDropZoneHtml(mat)}
-                                                        </td>
+                                                        <td style="font-size:.76rem;color:var(--text-secondary);">${_esc(mat.supplier || '-')}</td>
+                                                        <td style="padding:6px 8px;">${_paintTdsDocListHtml(matDocs)}</td>
                                                         <td style="text-align:center;">
                                                             ${registered || matDocs.length
                                                                 ? UIUtils.badge(`등록 ${matDocs.length}`, 'success')
                                                                 : UIUtils.badge('미등록', 'secondary')}
                                                         </td>
                                                         <td style="text-align:center;">
-                                                            <div style="display:flex;flex-direction:column;gap:6px;align-items:center;">
-                                                                <button class="btn btn-sm btn-primary" type="button" onclick="ProdStandardsModule.openPaintTdsUpload('${_jsArg(mat.id)}')">
-                                                                    업로드
-                                                                </button>
-                                                                <span style="font-size:.72rem;color:var(--text-muted);">드래그 가능</span>
-                                                            </div>
+                                                            <button class="btn btn-sm btn-outline" type="button"
+                                                                onclick="ProdStandardsModule.openPaintTdsEdit('${_jsArg(mat.id)}')">
+                                                                편집
+                                                            </button>
                                                         </td>
                                                     </tr>`;
                                             }).join('')}
@@ -4564,13 +4732,11 @@ var ProdStandardsModule = (function() {
                         `;
                     }).join('')}
                 </div>
-                    </div>
-                </div>
             ` : `
                 <div style="text-align:center;padding:44px 20px;color:var(--text-muted);">
-                    <span class="material-symbols-outlined" style="font-size:44px;display:block;margin-bottom:10px;opacity:.35;">palette</span>
+                    <span class="material-symbols-outlined" style="font-size:44px;display:block;margin-bottom:10px;opacity:.35;">directions_car</span>
                     <div style="font-weight:800;margin-bottom:6px;">표시할 TDS 대상이 없습니다</div>
-                    <div style="font-size:13px;">필터 조건에 맞는 주제 도료가 없거나, 도료 기초 정보에 주제 도료가 아직 등록되지 않았습니다.</div>
+                    <div style="font-size:13px;">필터 조건에 맞는 도료가 없거나, 제품 마스터에 주제 도료가 연결되지 않았습니다.</div>
                 </div>
             `}
         `;
@@ -4622,6 +4788,100 @@ var ProdStandardsModule = (function() {
         input.click();
     }
 
+    /* MSDS 등록 방식처럼 편집 모달에서 TDS 등록 */
+    function openPaintTdsEdit(materialId) {
+        const material = _paintMainMaterials().find(m => m.id === materialId);
+        if (!material) {
+            UIUtils.toast('주제 도료 정보를 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        UIUtils.showModal(
+            `도장 사양서(TDS) 편집 — ${_esc(material.name || '')}`,
+            _paintTdsEditModalBody(materialId),
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`,
+            'lg'
+        );
+    }
+
+    function _paintTdsEditModalBody(matId) {
+        const material = _paintMainMaterials().find(m => m.id === matId);
+        if (!material) return '';
+        return `
+            <div style="background:var(--bg-secondary);border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;">
+                <span class="material-symbols-outlined" style="color:#334155;">description</span>
+                <div>
+                    <p style="margin:0;font-weight:700;">${_esc(material.name || '')}</p>
+                    <p style="margin:0;font-size:.78rem;color:var(--text-muted);">
+                        공급사: ${_esc(material.supplier || '-')} &nbsp;|&nbsp;
+                        사양: ${material.paintSpec ? `<strong>${_esc(material.paintSpec)}</strong>` : '-'}
+                    </p>
+                </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom:14px;">
+                <label class="form-label">등록된 TDS 파일</label>
+                <div id="tds-modal-file-list" style="margin-top:6px;">
+                    ${_paintTdsModalFileListHtml(matId)}
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">TDS 파일 추가 (PDF / 이미지 / Office)</label>
+                <div id="tds-edit-drop-zone"
+                    ondragover="event.preventDefault();document.getElementById('tds-edit-drop-zone').style.borderColor='#2563eb';document.getElementById('tds-edit-drop-zone').style.background='#dbeafe';"
+                    ondragleave="document.getElementById('tds-edit-drop-zone').style.borderColor='var(--border-color)';document.getElementById('tds-edit-drop-zone').style.background='var(--bg-secondary)';"
+                    ondrop="event.preventDefault();document.getElementById('tds-edit-drop-zone').style.borderColor='var(--border-color)';document.getElementById('tds-edit-drop-zone').style.background='var(--bg-secondary)';ProdStandardsModule._tdsModalDrop(event,'${_jsArg(matId)}')"
+                    onclick="document.getElementById('tds-edit-file-input').click()"
+                    style="border:2px dashed var(--border-color);border-radius:8px;padding:22px 16px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;background:var(--bg-secondary);">
+                    <span class="material-symbols-outlined" style="font-size:32px;color:var(--text-muted);display:block;margin-bottom:4px;">upload_file</span>
+                    <div style="font-size:0.85rem;color:var(--text-muted);">파일을 끌어다 놓거나 클릭해서 선택</div>
+                    <div style="font-size:0.75rem;color:var(--text-muted);margin-top:2px;">PDF / 이미지 / Excel / Word</div>
+                    <input type="file" id="tds-edit-file-input" multiple
+                        accept=".pdf,.jpg,.jpeg,.png,.webp,.xlsx,.xls,.doc,.docx"
+                        style="display:none;"
+                        onchange="ProdStandardsModule._tdsModalFileSelect(this,'${_jsArg(matId)}')">
+                </div>
+            </div>
+        `;
+    }
+
+    async function _tdsModalFileSelect(input, matId) {
+        const material = _paintMainMaterials().find(m => m.id === matId);
+        if (!material) return;
+        const files = Array.from(input.files || []);
+        for (const file of files) {
+            await _savePaintTdsFile(material, file);
+        }
+        const listEl = document.getElementById('tds-modal-file-list');
+        if (listEl) listEl.innerHTML = _paintTdsModalFileListHtml(matId);
+        input.value = '';
+        _renderPaintTdsTable();
+    }
+
+    async function _tdsModalDrop(event, matId) {
+        const material = _paintMainMaterials().find(m => m.id === matId);
+        if (!material) return;
+        const files = Array.from((event && event.dataTransfer && event.dataTransfer.files) || []);
+        for (const file of files) {
+            await _savePaintTdsFile(material, file);
+        }
+        const listEl = document.getElementById('tds-modal-file-list');
+        if (listEl) listEl.innerHTML = _paintTdsModalFileListHtml(matId);
+        _renderPaintTdsTable();
+    }
+
+    async function _deleteTdsInModal(id, matId) {
+        UIUtils.confirm('선택한 TDS 파일을 삭제하시겠습니까?', async () => {
+            const doc = _paintTdsRecords().find(r => r.id === id);
+            await _deleteTdsServerFile(doc);
+            await Storage.remove(STORE, id);
+            UIUtils.toast('TDS 파일이 삭제되었습니다.', 'success');
+            const listEl = document.getElementById('tds-modal-file-list');
+            if (listEl) listEl.innerHTML = _paintTdsModalFileListHtml(matId);
+            _renderPaintTdsTable();
+        });
+    }
+
     function _paintTdsDragOver(event) {
         if (!event) return;
         event.preventDefault();
@@ -4657,8 +4917,16 @@ var ProdStandardsModule = (function() {
 
     async function _savePaintTdsFile(material, file) {
         try {
-            const fileData = await _readFileAsDataUrl(file);
-            await Storage.add(STORE, {
+            let fileUrl = null;
+            /* 서버 API 연결 시 서버에 업로드, 미연결 시 IndexedDB 폴백 */
+            if (typeof ApiClient !== 'undefined' && ApiClient.isOnline && ApiClient.isOnline()) {
+                try {
+                    fileUrl = await ApiClient.uploadPhoto(file, 'TDS', { noAutoYearMonth: true });
+                } catch (uploadErr) {
+                    console.warn('TDS 서버 업로드 실패, IndexedDB 폴백:', uploadErr.message);
+                }
+            }
+            const record = {
                 _docKind: STANDARD_DOC_KIND,
                 standardType: 'paint-tds',
                 standardLabel: STANDARD_DOC_TYPES['paint-tds'].label,
@@ -4670,10 +4938,16 @@ var ProdStandardsModule = (function() {
                 fileName: file.name || '',
                 fileType: file.type || '',
                 fileSize: file.size || 0,
-                fileData,
                 uploadedAt: UIUtils.now(),
                 updatedAt: UIUtils.now()
-            });
+            };
+            if (fileUrl) {
+                record.fileUrl = fileUrl;
+            } else {
+                /* 서버 미사용 시 base64 폴백 */
+                record.fileData = await _readFileAsDataUrl(file);
+            }
+            await Storage.add(STORE, record);
             UIUtils.toast('도장 사양서(TDS)가 업로드되었습니다.', 'success');
             _renderPaintTdsTable();
         } catch (err) {
@@ -4682,66 +4956,67 @@ var ProdStandardsModule = (function() {
         }
     }
 
+    function _tdsFileSrc(doc) {
+        /* 서버 URL 우선, 없으면 IndexedDB base64 폴백 */
+        if (doc.fileUrl) {
+            return typeof ApiClient !== 'undefined' ? ApiClient.photoUrl(doc.fileUrl) : doc.fileUrl;
+        }
+        return doc.fileData || '';
+    }
+
     function openPaintTdsFile(id) {
         const doc = _paintTdsRecords().find(r => r.id === id);
-        if (!doc || !doc.fileData) {
+        const src = doc && _tdsFileSrc(doc);
+        if (!src) {
             UIUtils.toast('열람할 TDS 파일을 찾을 수 없습니다.', 'warning');
             return;
         }
-        const win = window.open('', '_blank');
-        if (!win) {
-            UIUtils.toast('팝업 차단을 해제한 뒤 다시 시도하세요.', 'warning');
+        /* 서버 URL인 경우 바로 새 탭으로 열기 */
+        if (doc.fileUrl) {
+            window.open(src, '_blank');
             return;
         }
+        const win = window.open('', '_blank');
+        if (!win) { UIUtils.toast('팝업 차단을 해제한 뒤 다시 시도하세요.', 'warning'); return; }
         const isImage = String(doc.fileType || '').startsWith('image/');
         const isPdf = String(doc.fileType || '').includes('pdf') || /\.pdf$/i.test(doc.fileName || '');
-        win.document.write(`
-            <html><head><title>${_esc(doc.fileName || 'TDS')}</title>
+        win.document.write(`<html><head><title>${_esc(doc.fileName || 'TDS')}</title>
             <style>body{margin:0;font-family:'Malgun Gothic',sans-serif;background:#f8fafc;color:#111827}.bar{height:46px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;background:#fff;border-bottom:1px solid #e5e7eb;font-size:13px}.bar strong{max-width:70vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.body{height:calc(100vh - 47px);display:flex;align-items:center;justify-content:center}.body img{max-width:100%;max-height:100%;object-fit:contain}.body iframe{width:100%;height:100%;border:0}.download{color:#2563eb;font-weight:800;text-decoration:none}</style>
             </head><body>
-                <div class="bar"><strong>${_esc(doc.paintName || '')} · ${_esc(doc.fileName || 'TDS')}</strong><a class="download" download="${_esc(doc.fileName || 'TDS')}" href="${doc.fileData}">다운로드</a></div>
-                <div class="body">
-                    ${isImage ? `<img src="${doc.fileData}" alt="TDS">`
-                              : isPdf ? `<iframe src="${doc.fileData}"></iframe>`
-                                      : `<div style="text-align:center;"><div style="font-size:15px;font-weight:800;margin-bottom:12px;">브라우저 미리보기를 지원하지 않는 파일입니다.</div><a class="download" download="${_esc(doc.fileName || 'TDS')}" href="${doc.fileData}">파일 다운로드</a></div>`}
-                </div>
-            </body></html>
-        `);
+                <div class="bar"><strong>${_esc(doc.paintName || '')} · ${_esc(doc.fileName || 'TDS')}</strong><a class="download" download="${_esc(doc.fileName || 'TDS')}" href="${src}">다운로드</a></div>
+                <div class="body">${isImage ? `<img src="${src}" alt="TDS">` : isPdf ? `<iframe src="${src}"></iframe>` : `<div style="text-align:center;"><div style="font-size:15px;font-weight:800;margin-bottom:12px;">브라우저 미리보기를 지원하지 않는 파일입니다.</div><a class="download" download="${_esc(doc.fileName || 'TDS')}" href="${src}">파일 다운로드</a></div>`}</div>
+            </body></html>`);
         win.document.close();
     }
 
     function printPaintTdsFile(id) {
         const doc = _paintTdsRecords().find(r => r.id === id);
-        if (!doc || !doc.fileData) {
-            UIUtils.toast('인쇄할 TDS 파일을 찾을 수 없습니다.', 'warning');
-            return;
-        }
+        const src = doc && _tdsFileSrc(doc);
+        if (!src) { UIUtils.toast('인쇄할 TDS 파일을 찾을 수 없습니다.', 'warning'); return; }
         const win = window.open('', '_blank');
-        if (!win) {
-            UIUtils.toast('팝업 차단을 해제한 뒤 다시 시도하세요.', 'warning');
-            return;
-        }
+        if (!win) { UIUtils.toast('팝업 차단을 해제한 뒤 다시 시도하세요.', 'warning'); return; }
         const isImage = String(doc.fileType || '').startsWith('image/');
         const isPdf = String(doc.fileType || '').includes('pdf') || /\.pdf$/i.test(doc.fileName || '');
-        win.document.write(`
-            <html><head><title>${_esc(doc.fileName || 'TDS')}</title>
+        win.document.write(`<html><head><title>${_esc(doc.fileName || 'TDS')}</title>
             <style>body{margin:0;font-family:'Malgun Gothic',sans-serif;background:#fff;color:#111827}.bar{height:46px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;background:#fff;border-bottom:1px solid #e5e7eb;font-size:13px}.body{height:calc(100vh - 47px);display:flex;align-items:center;justify-content:center}.body img{max-width:100%;max-height:100%;object-fit:contain}.body iframe{width:100%;height:100%;border:0}.download{color:#2563eb;font-weight:800;text-decoration:none}@media print {.bar{display:none}.body{height:auto}}</style>
             </head><body>
                 <div class="bar"><strong>${_esc(doc.paintName || '')} · ${_esc(doc.fileName || 'TDS')}</strong><button onclick="window.print()">인쇄</button></div>
-                <div class="body">
-                    ${isImage ? `<img src="${doc.fileData}" alt="TDS" onload="setTimeout(function(){window.print();}, 200)">`
-                              : isPdf ? `<iframe src="${doc.fileData}" onload="setTimeout(function(){window.print();}, 400)"></iframe>`
-                                      : `<div style="text-align:center;"><div style="font-size:15px;font-weight:800;margin-bottom:12px;">브라우저 미리보기를 지원하지 않는 파일입니다.</div><a class="download" download="${_esc(doc.fileName || 'TDS')}" href="${doc.fileData}">파일 다운로드</a></div>`}
-                </div>
-            </body></html>
-        `);
+                <div class="body">${isImage ? `<img src="${src}" alt="TDS" onload="setTimeout(function(){window.print();},200)">` : isPdf ? `<iframe src="${src}" onload="setTimeout(function(){window.print();},400)"></iframe>` : `<div style="text-align:center;"><div style="font-size:15px;font-weight:800;margin-bottom:12px;">브라우저 미리보기를 지원하지 않는 파일입니다.</div><a class="download" download="${_esc(doc.fileName || 'TDS')}" href="${src}">파일 다운로드</a></div>`}</div>
+            </body></html>`);
         win.document.close();
+    }
+
+    async function _deleteTdsServerFile(doc) {
+        if (doc && doc.fileUrl && typeof ApiClient !== 'undefined') {
+            try { await ApiClient.deletePhoto(doc.fileUrl); } catch (_) {}
+        }
     }
 
     async function deletePaintTds(id) {
         const doc = _paintTdsRecords().find(r => r.id === id);
         if (!doc) return;
         if (!confirm('선택한 도장 사양서(TDS)를 삭제하시겠습니까?')) return;
+        await _deleteTdsServerFile(doc);
         await Storage.remove(STORE, id);
         UIUtils.toast('TDS 파일이 삭제되었습니다.', 'success');
         _renderPaintTdsTable();
@@ -6787,6 +7062,279 @@ window.addEventListener('load', function() {
     }
 
     // ── 전체 공정 일괄 저장 (CP 형식 통합 테이블용) ─────────────
+    function printControlPlan() {
+        if (!_curCarModel || !_curPartName) {
+            UIUtils.toast('차종과 품명을 선택하세요.', 'warning');
+            return;
+        }
+
+        // ── 1. 개정이력 수집 ─────────────────────────────────────
+        const revList = _revHistCache || [];
+
+        // ── 2. CP 메타 (품번) ──────────────────────────────────────
+        const histRec = _loadCpHistory().find(h => h.carModel === _curCarModel && h.partName === _curPartName);
+        const partNo  = (histRec && histRec.partNo) ? histRec.partNo : '';
+
+        // ── 3. 파라미터 데이터 수집 (DOM input 현재값 우선) ───────
+        const _gv = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+        const _gd = id => { const el = document.getElementById(id); return el && el.dataset ? el.dataset.value : ''; };
+
+        const allStds = Storage.getAll(DB.STORES.PROD_STANDARDS)
+            .filter(s => s.carModel === _curCarModel && s.partName === _curPartName && _isCpParamRecord(s));
+        const isCpMode = allStds.some(s => s._fromCpImport);
+        const carCfg   = isCpMode ? _getCarConfig('') : _getCarConfig(_curLine || '');
+
+        // ── 4. 행 데이터 빌드 ─────────────────────────────────────
+        const printRows = [];
+        Object.entries(carCfg).forEach(([procName, cfg]) => {
+            const color = cfg.color || '#2563eb';
+            const allSaved = Storage.getAll(DB.STORES.PROD_STANDARDS)
+                .filter(s => s.carModel === _curCarModel && s.partName === _curPartName
+                          && s.process === procName && _isCpParamRecord(s));
+
+            const stationGroups = [];
+            const seen = new Set();
+
+            Object.entries(cfg.stations).forEach(([stName, fixedParams]) => {
+                seen.add(stName);
+                const rec = _getRecord(_curCarModel, _curPartName, procName, stName, cfg.storeLine ? cfg.storeLine : '');
+                if (isCpMode && !rec) return;
+                const saved  = rec ? (rec.params || {}) : {};
+                const cust   = rec ? (rec.customParams || []) : [];
+                const stNo   = (rec && rec.rawProcNo != null && rec.rawProcNo !== '') ? rec.rawProcNo
+                    : (cfg.stationNos && cfg.stationNos[stName] != null ? cfg.stationNos[stName] : cfg.procNo || '');
+                const params = (rec && rec._fromCpImport)
+                    ? cust.map(cp => ({ key: cp.key, label: cp.label }))
+                    : [...fixedParams, ...cust.filter(cp => !fixedParams.find(p => p.key === cp.key))];
+                if (params.length === 0) return;
+                stationGroups.push({ stName, stNo, params, saved, rec });
+            });
+
+            allSaved.filter(s => !seen.has(s.station)).forEach(rec => {
+                const cust = rec.customParams || [];
+                const params = (rec._fromCpImport)
+                    ? cust.map(cp => ({ key: cp.key, label: cp.label }))
+                    : cust;
+                if (params.length === 0) return;
+                stationGroups.push({ stName: rec.station, stNo: rec.rawProcNo || cfg.procNo || '',
+                    params, saved: rec.params || {}, rec });
+            });
+
+            let procPrinted = false;
+            stationGroups.forEach(sg => {
+                sg.params.forEach((param, pidx) => {
+                    const sv = sg.saved[param.key] || {};
+                    // DOM 우선, 없으면 저장값
+                    const itemProd  = _gv('psParam_itemProd_'  + param.key) || sv.itemProd  || '';
+                    const itemProc  = _gv('psParam_itemProc_'  + param.key) || sv.itemProc  || '';
+                    const spec      = _gv('psParam_val_'       + param.key) || sv.value     || '';
+                    const special   = _gd('psParam_special_'   + param.key) || sv.special   || '';
+                    const fp        = _gd('psParam_fp_'        + param.key) || sv.fp        || '';
+                    const method    = _gv('psParam_method_'    + param.key) || sv.method    || '';
+                    const cycle     = _gv('psParam_cycle_'     + param.key) || sv.cycle     || '';
+                    const control   = _gv('psParam_control_'   + param.key) || sv.control   || '';
+                    const action    = _gv('psParam_action_'    + param.key) || sv.action    || '';
+                    const note      = _gv('psParam_note_'      + param.key) || sv.note      || '';
+                    const respProd  = _gd('psParam_respProd_'  + param.key) ? '○' : (sv.resp && sv.resp.prod ? '○' : '');
+                    const respMat   = _gd('psParam_respMat_'   + param.key) ? '○' : (sv.resp && sv.resp.mat  ? '○' : '');
+                    const respQc    = _gd('psParam_respQc_'    + param.key) ? '○' : (sv.resp && sv.resp.qc   ? '○' : '');
+
+                    printRows.push({
+                        procName, color,
+                        stNo: sg.stNo,
+                        stName: sg.stName,
+                        equipName: sg.rec ? (sg.rec.equipName || '') : '',
+                        isFirstProc: !procPrinted && pidx === 0,
+                        isFirstSt: pidx === 0,
+                        procRowSpan: 0, stRowSpan: 0,  // 계산 후 채움
+                        no: pidx + 1,
+                        itemProd, itemProc, spec, special, fp, method, cycle, control, action, note,
+                        respProd, respMat, respQc,
+                    });
+                    if (!procPrinted && pidx === 0) procPrinted = true;
+                });
+            });
+        });
+
+        // rowspan 계산
+        for (let i = 0; i < printRows.length; i++) {
+            if (printRows[i].isFirstProc) {
+                let span = 1;
+                for (let j = i + 1; j < printRows.length && !printRows[j].isFirstProc; j++) span++;
+                printRows[i].procRowSpan = span;
+            }
+            if (printRows[i].isFirstSt) {
+                let span = 1;
+                for (let j = i + 1; j < printRows.length && !printRows[j].isFirstSt && !printRows[j].isFirstProc; j++) span++;
+                printRows[i].stRowSpan = span;
+            }
+        }
+
+        // ── 5. 개정이력 행 HTML ──────────────────────────────────
+        const maxRev = Math.max(revList.length, 3);
+        const revRows = Array.from({ length: maxRev }, (_, i) => {
+            const r = revList[i] || {};
+            return `<tr>
+                <td style="text-align:center; width:28px;">${r.no != null ? r.no : ''}</td>
+                <td style="text-align:center; width:72px; font-size:10px;">${r.date || ''}</td>
+                <td>${r.reason || ''}</td>
+            </tr>`;
+        }).join('');
+
+        // ── 6. 데이터 행 HTML ─────────────────────────────────────
+        const _e = v => String(v||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const dataRows = printRows.map(r => {
+            let html = '<tr>';
+            if (r.isFirstProc) {
+                html += `<td rowspan="${r.procRowSpan}" style="text-align:center;font-weight:700;vertical-align:middle;background:${r.color}15;font-size:11px;">${_e(r.stNo)}</td>`;
+                html += `<td rowspan="${r.procRowSpan}" style="text-align:center;font-weight:700;vertical-align:middle;background:${r.color}20;font-size:10px;writing-mode:vertical-rl;text-orientation:mixed;">${_e(r.procName)}</td>`;
+            }
+            if (r.isFirstSt) {
+                html += `<td rowspan="${r.stRowSpan}" style="text-align:center;vertical-align:middle;font-size:10px;">${_e(r.stName)}</td>`;
+                html += `<td rowspan="${r.stRowSpan}" style="text-align:center;vertical-align:middle;font-size:10px;">${_e(r.equipName)}</td>`;
+            }
+            html += `<td style="text-align:center;">${r.no}</td>`;
+            html += `<td>${_e(r.itemProd)}</td>`;
+            html += `<td>${_e(r.itemProc)}</td>`;
+            html += `<td style="text-align:center;font-weight:700;">${_e(r.special)}</td>`;
+            html += `<td style="text-align:center;font-weight:700;">${_e(r.fp)}</td>`;
+            html += `<td>${_e(r.spec)}</td>`;
+            html += `<td>${_e(r.method)}</td>`;
+            html += `<td style="text-align:center;">${_e(r.cycle)}</td>`;
+            html += `<td>${_e(r.control)}</td>`;
+            html += `<td style="text-align:center;">${_e(r.respProd)}</td>`;
+            html += `<td style="text-align:center;">${_e(r.respMat)}</td>`;
+            html += `<td style="text-align:center;">${_e(r.respQc)}</td>`;
+            html += `<td>${_e(r.action)}</td>`;
+            html += `<td>${_e(r.note)}</td>`;
+            html += '</tr>';
+            return html;
+        }).join('');
+
+        // ── 7. 인쇄 창 ─────────────────────────────────────────────
+        const win = window.open('', '_blank', 'width=1400,height=900');
+        win.document.write(`<!DOCTYPE html><html lang="ko"><head>
+<meta charset="UTF-8">
+<title>관리 계획서 (Control Plan)</title>
+<style>
+* { box-sizing:border-box; margin:0; padding:0; }
+body { font-family:'Malgun Gothic','맑은 고딕',Arial,sans-serif; font-size:11px; padding:8px; background:#fff; color:#000; }
+h1 { font-size:18px; font-weight:700; text-align:center; margin-bottom:8px; letter-spacing:1px; }
+.meta-line { font-size:12px; font-weight:600; margin-bottom:6px; }
+table { border-collapse:collapse; width:100%; }
+th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-break:break-word; }
+.hdr-tbl th { background:#d0d8e4; font-size:10px; text-align:center; }
+.hdr-tbl td { font-size:10px; }
+.cp-tbl th { background:#c8d8c0; font-size:10px; text-align:center; }
+.cp-tbl td { font-size:10px; }
+.cp-tbl .proc-col { text-align:center; }
+.rev-tbl th { background:#e0e0e0; font-size:10px; text-align:center; }
+.rev-tbl td { font-size:10px; text-align:center; }
+.approval-box { border:1px solid #555; font-size:10px; }
+.approval-box th { background:#e0e0e0; }
+@media print {
+    body { padding:4mm; font-size:9px; }
+    @page { size:A3 landscape; margin:8mm; }
+    h1 { font-size:15px; }
+}
+</style>
+</head><body>
+<h1>관리 계획서 (Control Plan)</h1>
+<div class="meta-line">사 명 : &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</div>
+
+<!-- 헤더 정보 테이블 -->
+<table class="hdr-tbl" style="margin-bottom:6px;">
+  <tr>
+    <th style="width:60px;">단 계</th>
+    <th style="width:60px;">고객명</th>
+    <td colspan="3"></td>
+    <th style="width:30px;">NO</th>
+    <th style="width:70px;">개정일자</th>
+    <th>개정사유</th>
+    <th style="width:36px;">작성</th>
+    <th style="width:36px;">검토</th>
+    <th style="width:36px;">승인</th>
+    <td rowspan="5" style="width:28px; text-align:center; font-weight:700; writing-mode:vertical-rl; background:#e8e8e8;">결&nbsp;재</td>
+    <th colspan="4" style="text-align:center; background:#e0e0e0;">제정일자</th>
+  </tr>
+  <tr>
+    <th>모델</th>
+    <td colspan="4" style="font-weight:700; text-align:center;">${_e(_curCarModel)}</td>
+    ${revRows.split('</tr>')[0].replace('<tr>', '')}
+    <td rowspan="4" colspan="4" style="font-size:10px; text-align:center; vertical-align:middle;">
+      <table class="approval-box" style="width:100%;height:100%;">
+        <tr><th>입 안</th><th>검 토</th><th>심 사</th><th>승 인</th></tr>
+        <tr><td style="height:36px;"></td><td></td><td></td><td></td></tr>
+      </table>
+    </td>
+  </tr>
+  <tr>
+    <th>부품명</th>
+    <td colspan="4" style="font-weight:700; text-align:center;">${_e(_curPartName)}</td>
+    ${revRows.split('</tr>')[1] ? revRows.split('</tr>')[1].replace('<tr>', '') + '</tr>' : '<tr><td colspan="5"></td></tr>'}
+  </tr>
+  <tr>
+    <th>품번</th>
+    <td colspan="4" style="text-align:center;">${_e(partNo)}</td>
+    ${revRows.split('</tr>')[2] ? revRows.split('</tr>')[2].replace('<tr>', '') + '</tr>' : '<tr><td colspan="5"></td></tr>'}
+  </tr>
+  <tr>
+    <td>양산단계</td>
+    <th>재질</th>
+    <td colspan="3"></td>
+    <td colspan="3"></td>
+  </tr>
+</table>
+
+<!-- 서명란 / 업체코드 -->
+<table class="hdr-tbl" style="margin-bottom:6px;">
+  <tr>
+    <th style="width:80px;">업체코드</th><td style="width:160px;"></td>
+    <th style="width:120px;">고객기술 승인/일자</th><td style="width:160px;"></td>
+    <th style="width:120px;">고객품질 승인/일자</th><td></td>
+    <th style="width:120px;">기술승인/일자</th><td></td>
+  </tr>
+</table>
+
+<!-- 메인 CP 테이블 -->
+<table class="cp-tbl">
+  <thead>
+    <tr>
+      <th rowspan="2" style="width:36px;">공정<br>번호</th>
+      <th rowspan="2" style="width:28px;">공정<br>명</th>
+      <th rowspan="2" style="width:52px;">세부공정</th>
+      <th rowspan="2" style="width:52px;">설비명</th>
+      <th rowspan="2" style="width:22px;">No</th>
+      <th colspan="2">관 리 항 목</th>
+      <th rowspan="2" style="width:24px;">특별<br>특성</th>
+      <th rowspan="2" style="width:24px;">F/P</th>
+      <th colspan="4">관 리 기 준</th>
+      <th colspan="3" style="background:#c8e6c9;">관 리 분 담</th>
+      <th rowspan="2" style="background:#fff9c4;">이상 발생시<br>조 치 사 항</th>
+      <th rowspan="2" style="width:44px;">비 고</th>
+    </tr>
+    <tr>
+      <th style="width:70px;">제 품</th>
+      <th style="width:70px;">공 정</th>
+      <th>규  격</th>
+      <th style="width:56px;">확인방법</th>
+      <th style="width:44px;">주기</th>
+      <th style="width:80px;">관리방안</th>
+      <th style="width:28px; background:#c8e6c9;">생산</th>
+      <th style="width:28px; background:#c8e6c9;">자재</th>
+      <th style="width:28px; background:#c8e6c9;">Q.C</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${dataRows || '<tr><td colspan="18" style="text-align:center; padding:20px; color:#888;">데이터 없음</td></tr>'}
+  </tbody>
+</table>
+
+<script>window.onload = function(){ window.print(); }<\/script>
+</body></html>`);
+        win.document.close();
+    }
+
     async function saveAllParams() {
         if (!_curCarModel || !_curPartName) {
             UIUtils.toast('차종과 품명을 선택하세요.', 'warning');
@@ -6825,6 +7373,11 @@ window.addEventListener('load', function() {
                         if (p.itemType === 'prod') _vProc = '';
                         else                       _vProd = '';
                     }
+                    const iRespProd = g('psParam_respProd_' + p.key);
+                    const iRespMat  = g('psParam_respMat_'  + p.key);
+                    const iRespQc   = g('psParam_respQc_'   + p.key);
+                    const iAction   = g('psParam_action_'   + p.key);
+                    const iNote     = g('psParam_note_'     + p.key);
                     paramData[p.key] = {
                         itemProd: _vProd,
                         itemProc: _vProc,
@@ -6835,27 +7388,38 @@ window.addEventListener('load', function() {
                         method:   iMethod.value  !== undefined ? iMethod.value  : (prev.method   || ''),
                         cycle:    iCycle.value   !== undefined ? iCycle.value   : (prev.cycle    || ''),
                         control:  iControl.value !== undefined ? iControl.value : (prev.control  || ''),
-                        action:   prev.action || '',
-                        resp:     prev.resp   || { prod:false, mat:false, qc:false },
+                        action:   iAction.value  !== undefined ? iAction.value  : (prev.action   || ''),
+                        note:     iNote.value    !== undefined ? iNote.value    : (prev.note     || ''),
+                        resp: {
+                            prod: iRespProd.dataset ? !!iRespProd.dataset.value : (prev.resp ? !!prev.resp.prod : false),
+                            mat:  iRespMat.dataset  ? !!iRespMat.dataset.value  : (prev.resp ? !!prev.resp.mat  : false),
+                            qc:   iRespQc.dataset   ? !!iRespQc.dataset.value   : (prev.resp ? !!prev.resp.qc   : false),
+                        },
                     };
                 });
 
                 // 커스텀 파라미터: input 있으면 업데이트, 없으면 기존 값 유지
                 savedCust.forEach(cp => {
                     const prev = prevSaved[cp.key] || {};
-                    const gv   = id => { const el = g(id); return el.value !== undefined ? el.value : ''; };
+                    const gv   = id => { const el = g(id); return el.value !== undefined ? el.value : null; };
+                    const gd   = id => { const el = g(id); return el.dataset ? el.dataset.value : null; };
                     paramData[cp.key] = {
-                        itemProd: gv('psParam_itemProd_' + cp.key) || prev.itemProd || '',
-                        itemProc: gv('psParam_itemProc_' + cp.key) || prev.itemProc || '',
-                        value:    gv('psParam_val_'      + cp.key) || prev.value    || '',
-                        special:  gv('psParam_special_'  + cp.key) || prev.special  || '',
-                        fp:       gv('psParam_fp_'       + cp.key) || prev.fp       || '',
-                        method:   gv('psParam_method_'   + cp.key) || prev.method   || '',
-                        cycle:    gv('psParam_cycle_'    + cp.key) || prev.cycle    || '',
-                        control:  gv('psParam_control_'  + cp.key) || prev.control  || '',
-                        range:    prev.range  || '',
-                        action:   prev.action || '',
-                        resp:     prev.resp   || { prod:false, mat:false, qc:false },
+                        itemProd: gv('psParam_itemProd_' + cp.key) ?? (prev.itemProd || ''),
+                        itemProc: gv('psParam_itemProc_' + cp.key) ?? (prev.itemProc || ''),
+                        value:    gv('psParam_val_'      + cp.key) ?? (prev.value    || ''),
+                        special:  gd('psParam_special_'  + cp.key) ?? (prev.special  || ''),
+                        fp:       gd('psParam_fp_'       + cp.key) ?? (prev.fp       || ''),
+                        method:   gv('psParam_method_'   + cp.key) ?? (prev.method   || ''),
+                        cycle:    gv('psParam_cycle_'    + cp.key) ?? (prev.cycle    || ''),
+                        control:  gv('psParam_control_'  + cp.key) ?? (prev.control  || ''),
+                        action:   gv('psParam_action_'   + cp.key) ?? (prev.action   || ''),
+                        note:     gv('psParam_note_'     + cp.key) ?? (prev.note     || ''),
+                        range:    prev.range || '',
+                        resp: {
+                            prod: gd('psParam_respProd_' + cp.key) !== null ? !!gd('psParam_respProd_' + cp.key) : (prev.resp ? !!prev.resp.prod : false),
+                            mat:  gd('psParam_respMat_'  + cp.key) !== null ? !!gd('psParam_respMat_'  + cp.key) : (prev.resp ? !!prev.resp.mat  : false),
+                            qc:   gd('psParam_respQc_'   + cp.key) !== null ? !!gd('psParam_respQc_'   + cp.key) : (prev.resp ? !!prev.resp.qc   : false),
+                        },
                     };
                 });
 
@@ -9312,6 +9876,10 @@ window.addEventListener('load', function() {
             cycle:    -1,   // 주기
             control:  -1,   // 관리방안
             action:   -1,   // 조치사항
+            respProd: -1,   // 관리분담-생산
+            respMat:  -1,   // 관리분담-자재
+            respQc:   -1,   // 관리분담-Q.C
+            note:     -1,   // 비고
         };
 
         // 전체 행을 스캔해 키워드로 열 탐색 (헤더 30행 이내)
@@ -9363,6 +9931,12 @@ window.addEventListener('load', function() {
                     (n.includes('관리방안')||n.includes('관리방법')||n==='관리'||n.includes('처리방법'))) col.control = ci;
                 // 조치사항
                 if (col.action   < 0 && n.includes('조치'))                                          col.action  = ci;
+                // 관리분담 - 생산/자재/QC
+                if (col.respProd < 0 && (n==='생산'||n==='생산담당') && ci > processCol+8)           col.respProd = ci;
+                if (col.respMat  < 0 && (n==='자재'||n==='자재담당') && ci > processCol+8)           col.respMat  = ci;
+                if (col.respQc   < 0 && (n==='q.c'||n==='qc'||n==='품질') && ci > processCol+8)     col.respQc   = ci;
+                // 비고
+                if (col.note     < 0 && (n==='비고'||n==='remark'||n==='remarks'))                   col.note     = ci;
             });
         }
         // 주공정 헤더로 processCol이 갱신됐을 수 있으므로 col.process 동기화
@@ -9411,6 +9985,10 @@ window.addEventListener('load', function() {
         if (col.cycle    < 0) col.cycle    = pc + 10;
         if (col.control  < 0) col.control  = pc + 11;
         if (col.action   < 0 || col.action === col.spec) col.action = pc + 15;
+        if (col.respProd < 0) col.respProd = pc + 16;
+        if (col.respMat  < 0) col.respMat  = pc + 17;
+        if (col.respQc   < 0) col.respQc   = pc + 18;
+        if (col.note     < 0) col.note     = pc + 19;
 
         console.log('[CP] 최종 열 위치:', JSON.stringify(col));
 
@@ -9537,6 +10115,13 @@ window.addEventListener('load', function() {
             if (rControl) lastControl = rControl;
             if (rAction)  lastAction  = rAction;
 
+            // 관리분담/비고 — 셀 원본값 사용 (○, O, o → true)
+            const _isCheck = v => /^[○oO◯]$/.test(_t(v).trim());
+            const respProd = _isCheck(col.respProd >= 0 ? row[col.respProd] : '');
+            const respMat  = _isCheck(col.respMat  >= 0 ? row[col.respMat]  : '');
+            const respQc   = _isCheck(col.respQc   >= 0 ? row[col.respQc]   : '');
+            const note     = col.note >= 0 ? _t(row[col.note]) : '';
+
             // ── 공정+스테이션 결정 ────────────────────────────────
             // 우선순위:
             //   sysProcess: ① 주공정 텍스트 → ② procNo 역조회
@@ -9579,7 +10164,8 @@ window.addEventListener('load', function() {
                 rawStation:  rawStationText,  // 엑셀 원본 세부공정 텍스트 (매핑 학습용)
                 itemNo:      noVal,           // 엑셀 원본 No
                 equipName:   station,
-                itemName, itemProd, itemProc, spec, special, fp, method, cycle, control, action
+                itemName, itemProd, itemProc, spec, special, fp, method, cycle, control, action,
+                respProd, respMat, respQc, note
             });
         }
 
@@ -9616,7 +10202,8 @@ window.addEventListener('load', function() {
                 cycle:    item.cycle   || '',
                 control:  item.control || '',
                 action:   item.action  || '',
-                resp:     { prod: false, mat: false, qc: false },
+                resp:     { prod: !!item.respProd, mat: !!item.respMat, qc: !!item.respQc },
+                note:     item.note   || '',
             });
         });
 
@@ -10681,6 +11268,8 @@ window.addEventListener('load', function() {
                     method:   p.method  || '',
                     cycle:    p.cycle   || '',
                     control:  p.control || '',
+                    action:   p.action  || '',
+                    note:     p.note    || '',
                     resp:     p.resp    || { prod:false, mat:false, qc:false },
                 };
             });
@@ -10741,6 +11330,8 @@ window.addEventListener('load', function() {
         selectLine,
         saveParams,      // 단일 공정 저장 (하위 호환)
         saveAllParams,   // 전체 공정 일괄 저장 (CP 통합 테이블용)
+        printControlPlan,
+        toggleResp,
         addParamRow,
         removeExtraRow,
         onDrawingFileChange,
@@ -10866,9 +11457,14 @@ window.addEventListener('load', function() {
         toggleStandardMergeView,
         _setPaintTdsSpecFilter,
         _setPaintTdsSupplierFilter,
+        _setPaintTdsCarModelFilter,
         _togglePaintTdsMissingFilter,
         _resetPaintTdsFilter,
         openPaintTdsUpload,
+        openPaintTdsEdit,
+        _tdsModalFileSelect,
+        _tdsModalDrop,
+        _deleteTdsInModal,
         _paintTdsDragOver,
         _paintTdsDragLeave,
         _paintTdsDrop,
@@ -10892,6 +11488,7 @@ window.addEventListener('load', function() {
  */
 var ProdConditionsModule = (function() {
     const STORE = DB.STORES.PROD_CONDITIONS;
+    const _pcNormText = value => String(value || '').trim().toUpperCase();
 
     const _isAdmin = () => {
         const u = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
@@ -10902,15 +11499,51 @@ var ProdConditionsModule = (function() {
     // ── C/S 프리셋 & 탭 상태 ──────────────────────────────────────────
     let _csPresets = [];
     let _pcTab = 'cs-form'; // 'cs-form' | 'records' | 'presets'
+    let _inlinePartOutsideBound = false;
     const CS_TPL_LABELS = { 'A-KNOB': 'A라인 KNOB', 'A-COVER': 'A라인 COVER', 'B-LINE': 'B라인' };
+
+    function _normalizeCsProduct(product = {}) {
+        if (!product || typeof product !== 'object') return null;
+        const carModel = String(product.carModel || product.car || '').trim();
+        const partName = String(product.partName || product.productName || product.part || '').trim();
+        if (!partName) return null;
+        return { carModel, partName };
+    }
+
+    function _normalizeCsPreset(preset = {}, idx = 0) {
+        if (!preset || typeof preset !== 'object') return null;
+        const csType = CS_TPL_LABELS[preset.csType] ? preset.csType : 'A-KNOB';
+        const sourceProducts = Array.isArray(preset.products)
+            ? preset.products
+            : (preset.partName || preset.productName
+                ? [{ carModel: preset.carModel || '', partName: preset.partName || preset.productName || '' }]
+                : []);
+        const products = sourceProducts
+            .map(_normalizeCsProduct)
+            .filter(Boolean);
+        return {
+            id: String(preset.id || `csp_${Date.now()}_${idx}`),
+            name: String(preset.name || '').trim() || (products[0]?.partName || (CS_TPL_LABELS[csType] || 'C/S 프리셋')),
+            csType,
+            products
+        };
+    }
+
+    function _normalizedCsPresets(list) {
+        if (!Array.isArray(list)) return [];
+        return list
+            .map((preset, idx) => _normalizeCsPreset(preset, idx))
+            .filter(preset => preset && Array.isArray(preset.products));
+    }
 
     async function _loadPresets() {
         try {
             const saved = await Storage.getConfigValue('csPresets');
-            if (Array.isArray(saved)) _csPresets = saved;
+            _csPresets = _normalizedCsPresets(saved);
         } catch(e) {}
     }
     async function _savePresets() {
+        _csPresets = _normalizedCsPresets(_csPresets);
         await Storage.setConfigValue('csPresets', _csPresets);
     }
     const CSHEET_SHARED_A = [
@@ -11137,7 +11770,7 @@ var ProdConditionsModule = (function() {
 
         return `
             <div style="max-height: 74vh; overflow-y: auto; padding-right: 10px; font-size:11px;">
-                ${_presetSelectorHtml(selectedType)}
+                ${_presetSelectorHtml(selectedType, d.carModel || '', d.partName || '')}
                 <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:6px;">
                     <div class="form-group" style="margin:0;">
                         <label class="form-label" style="font-size:10px;margin-bottom:2px;">기록일자 <span style="color:var(--accent-red)">*</span></label>
@@ -11332,24 +11965,353 @@ var ProdConditionsModule = (function() {
         </div>`;
     }
 
-    function _presetSelectorHtml(csType) {
-        const matching = _csPresets.filter(p => p.csType === csType);
-        if (matching.length === 0 && _csPresets.length === 0) return '';
+    function _presetSelectorHtml(csType, carModel, partName) {
+        if (_csPresets.length === 0) return '';
+        // 차종+품명이 선택된 경우: 해당 조합 매칭 프리셋만 표시
+        // 미선택 시: 전체 or csType 기준 표시
+        let matching;
+        if (carModel && partName) {
+            matching = _csPresets.filter(p =>
+                (p.products || []).some(pr => _productMappingMatches(pr, carModel, partName))
+            );
+        } else {
+            matching = _csPresets.filter(p => p.csType === csType);
+        }
+        const helpText = (carModel && partName)
+            ? `<span style="font-size:0.75rem;color:var(--text-muted);">${_esc(carModel)} / ${_esc(partName)} 매칭 프리셋 ${matching.length}개 · C/S 양식 자동 적용</span>`
+            : `<span style="font-size:0.75rem;color:var(--text-muted);">차종·품명 선택 시 C/S 양식 자동 적용</span>`;
         return `
             <div style="margin-bottom:10px;padding:10px 14px;
                         background:rgba(37,99,235,0.05);border:1px solid rgba(37,99,235,0.2);
                         border-radius:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
                 <span class="material-symbols-outlined" style="color:var(--accent-blue);font-size:18px;flex-shrink:0;">bookmark</span>
-                <span style="font-size:0.82rem;font-weight:600;color:var(--accent-blue);flex-shrink:0;">프리셋 불러오기</span>
+                <span style="font-size:0.82rem;font-weight:600;color:var(--accent-blue);flex-shrink:0;">C/S 양식 프리셋</span>
+                ${helpText}
                 <select id="pcPresetSel" class="form-select"
-                        style="flex:1;min-width:180px;max-width:280px;"
+                        style="flex:1;min-width:180px;max-width:300px;"
                         onchange="ProdConditionsModule.applyPreset()">
                     <option value="">-- 프리셋 선택 --</option>
-                    ${matching.map(p => `<option value="${_esc(p.id)}">${_esc(p.name)}</option>`).join('')}
+                    ${matching.map(p => `<option value="${_esc(p.id)}">${_esc(p.name)} (${_esc(CS_TPL_LABELS[p.csType]||p.csType)})</option>`).join('')}
                 </select>
                 <div id="pcPresetProducts" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"></div>
             </div>
         `;
+    }
+
+    function _getMasterCarModels() {
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        return [...new Set(products.map(p => String(p.carModel || '').trim()).filter(Boolean))]
+            .sort((a, b) => a.localeCompare(b, 'ko'));
+    }
+
+    function _getMasterPartNames(carModel) {
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const normalizedCar = _pcNormText(carModel || '');
+        const filtered = normalizedCar
+            ? products.filter(p => _pcNormText(p.carModel || '') === normalizedCar)
+            : products;
+        return [...new Set(filtered.map(p => String(p.partName || '').trim()).filter(Boolean))]
+            .sort((a, b) => a.localeCompare(b, 'ko'));
+    }
+
+    function _refreshCsPartOptions(partList, partInput, carModel) {
+        if (!partList) return;
+        const parts = _getMasterPartNames(carModel);
+        partList.innerHTML = parts.map(name => `<option value="${_esc(name)}">`).join('');
+        if (partInput && partInput.value) {
+            const currentPart = String(partInput.value || '').trim();
+            if (currentPart && !parts.includes(currentPart)) partInput.value = '';
+        }
+    }
+
+    function _partSelectShellStyle() {
+        return 'display:flex;align-items:center;gap:8px;height:40px;padding:0 12px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(15,23,42,0.04);font-size:0.84rem;';
+    }
+
+    function _renderInlinePartPicker(csType, carModel) {
+        const parts = _getMasterPartNames(carModel);
+        return `
+            <div style="position:relative;flex:2;min-width:260px;" data-cs-part-picker="${_esc(csType)}">
+                <button type="button" id="cpInlinePartTrigger_${csType}"
+                        data-cs-part-trigger="${_esc(csType)}"
+                        style="${_partSelectShellStyle()} width:100%;justify-content:space-between;cursor:pointer;"
+                        onclick="ProdConditionsModule._toggleInlinePartDropdown('${_esc(csType)}')">
+                    <span id="cpInlinePartSummary_${csType}" style="color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">품명 선택</span>
+                    <span class="material-symbols-outlined" style="font-size:18px;color:#64748b;">expand_more</span>
+                </button>
+                <div id="cpInlinePartDropdown_${csType}" data-cs-part-dropdown="${_esc(csType)}"
+                     style="display:none;position:absolute;left:0;right:0;top:calc(100% + 6px);z-index:30;background:#fff;border:1px solid #cbd5e1;border-radius:14px;box-shadow:0 18px 42px rgba(15,23,42,0.16);padding:10px;">
+                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                        <span class="material-symbols-outlined" style="font-size:18px;color:#64748b;">search</span>
+                        <input type="text" id="cpInlinePartSearch_${csType}" data-cs-part-search="${_esc(csType)}"
+                               placeholder="품명 검색" style="flex:1;border:none;outline:none;font-size:0.82rem;background:transparent;"
+                               oninput="ProdConditionsModule._filterInlinePartOptions('${_esc(csType)}')">
+                    </div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:0.76rem;">
+                        <span style="color:var(--text-muted);">${parts.length}개 품명</span>
+                        <div style="display:flex;gap:6px;">
+                            <button type="button" class="btn btn-sm btn-outline" style="padding:4px 8px;font-size:0.74rem;" onclick="ProdConditionsModule._setAllInlineParts('${_esc(csType)}', true)">전체선택</button>
+                            <button type="button" class="btn btn-sm btn-outline" style="padding:4px 8px;font-size:0.74rem;" onclick="ProdConditionsModule._setAllInlineParts('${_esc(csType)}', false)">해제</button>
+                        </div>
+                    </div>
+                    <div id="cpInlinePartOptions_${csType}" data-cs-part-options="${_esc(csType)}"
+                         style="max-height:240px;overflow:auto;padding-right:2px;">
+                        ${parts.length ? parts.map(part => `
+                            <label data-cs-part-option="${_esc(csType)}" data-part-name="${_esc(part)}"
+                                   style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;cursor:pointer;">
+                                <input type="checkbox" class="cp-inline-part-check" value="${_esc(part)}"
+                                       onchange="ProdConditionsModule._updateInlinePartSummary('${_esc(csType)}')"
+                                       style="width:15px;height:15px;accent-color:#2563eb;">
+                                <span style="font-size:0.82rem;color:var(--text-primary);">${_esc(part)}</span>
+                            </label>
+                        `).join('') : `<div style="padding:16px 10px;color:var(--text-muted);font-size:0.8rem;text-align:center;">차종을 먼저 선택하세요.</div>`}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    function _getMappingsForCsType(csType) {
+        const list = [];
+        _csPresets.forEach(p => {
+            if (p.csType !== csType) return;
+            const products = Array.isArray(p.products) ? p.products : [];
+            products.forEach((prod, idx) => {
+                if (!prod.partName) return;
+                list.push({
+                    presetId: p.id,
+                    productIdx: idx,
+                    carModel: prod.carModel || '',
+                    partName: prod.partName,
+                    presetName: p.name || ''
+                });
+            });
+        });
+        return list;
+    }
+
+    function _groupCsMappingsByCar(mappings = []) {
+        const grouped = new Map();
+        mappings.forEach(mapping => {
+            const carKey = String(mapping.carModel || '차종 미지정').trim() || '차종 미지정';
+            if (!grouped.has(carKey)) grouped.set(carKey, []);
+            grouped.get(carKey).push(mapping);
+        });
+        return [...grouped.entries()]
+            .sort((a, b) => a[0].localeCompare(b[0], 'ko'))
+            .map(([carModel, items]) => ({
+                carModel,
+                items: items.sort((a, b) => String(a.partName || '').localeCompare(String(b.partName || ''), 'ko'))
+            }));
+    }
+
+    function _buildCsPresetAudit() {
+        const products = (Storage.getAll(DB.STORES.PRODUCTS) || [])
+            .map(product => ({
+                carModel: String(product.carModel || '').trim(),
+                partName: String(product.partName || '').trim()
+            }))
+            .filter(product => product.carModel && product.partName);
+
+        const uniqueProducts = [];
+        const productSeen = new Set();
+        products.forEach(product => {
+            const key = `${_pcNormText(product.carModel)}||${_pcNormText(product.partName)}`;
+            if (productSeen.has(key)) return;
+            productSeen.add(key);
+            uniqueProducts.push(product);
+        });
+
+        const mappings = [];
+        _csPresets.forEach(preset => {
+            (Array.isArray(preset.products) ? preset.products : []).forEach(product => {
+                if (!product?.partName) return;
+                mappings.push({
+                    presetId: preset.id,
+                    presetName: preset.name || '',
+                    csType: preset.csType || '',
+                    carModel: String(product.carModel || '').trim(),
+                    partName: String(product.partName || '').trim()
+                });
+            });
+        });
+
+        const duplicateMap = new Map();
+        mappings.forEach(mapping => {
+            const key = `${mapping.csType}||${_pcNormText(mapping.carModel)}||${_pcNormText(mapping.partName)}`;
+            if (!duplicateMap.has(key)) duplicateMap.set(key, []);
+            duplicateMap.get(key).push(mapping);
+        });
+        const duplicates = [...duplicateMap.entries()]
+            .filter(([, items]) => items.length > 1)
+            .map(([key, items]) => {
+                const [csType, carModel, partName] = key.split('||');
+                return { csType, carModel, partName, items };
+            })
+            .sort((a, b) =>
+                String(CS_TPL_LABELS[a.csType] || a.csType).localeCompare(String(CS_TPL_LABELS[b.csType] || b.csType), 'ko') ||
+                a.carModel.localeCompare(b.carModel, 'ko') ||
+                a.partName.localeCompare(b.partName, 'ko')
+            );
+
+        const mappedKeys = new Set(mappings.map(mapping =>
+            `${_pcNormText(mapping.carModel)}||${_pcNormText(mapping.partName)}`
+        ));
+        const missing = uniqueProducts
+            .filter(product => !mappedKeys.has(`${_pcNormText(product.carModel)}||${_pcNormText(product.partName)}`))
+            .sort((a, b) =>
+                String(a.carModel || '').localeCompare(String(b.carModel || ''), 'ko') ||
+                String(a.partName || '').localeCompare(String(b.partName || ''), 'ko')
+            );
+
+        return {
+            totalProducts: uniqueProducts.length,
+            mappedProducts: uniqueProducts.length - missing.length,
+            duplicates,
+            missing
+        };
+    }
+
+    function _renderCsPresetAuditHtml() {
+        const audit = _buildCsPresetAudit();
+        const duplicateTone = audit.duplicates.length ? '#dc2626' : '#16a34a';
+        const missingTone = audit.missing.length ? '#d97706' : '#16a34a';
+        return `
+            <div style="margin-bottom:18px;padding:14px 16px;border:1px solid var(--border-color);border-radius:14px;background:linear-gradient(135deg,#f8fbff 0%,#ffffff 100%);">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+                    <div>
+                        <div style="font-size:0.92rem;font-weight:800;color:var(--text-primary);">중복 / 누락 확인</div>
+                        <div style="font-size:0.78rem;color:var(--text-muted);margin-top:2px;">제품 마스터 기준으로 프리셋 연결 상태를 점검합니다.</div>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        <span style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:0.78rem;font-weight:700;">전체 ${audit.totalProducts}개</span>
+                        <span style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#ecfdf5;color:#15803d;font-size:0.78rem;font-weight:700;">연결 ${audit.mappedProducts}개</span>
+                        <span style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#fef2f2;color:${duplicateTone};font-size:0.78rem;font-weight:700;">중복 ${audit.duplicates.length}건</span>
+                        <span style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#fff7ed;color:${missingTone};font-size:0.78rem;font-weight:700;">누락 ${audit.missing.length}개</span>
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;">
+                    <div style="border:1px solid rgba(220,38,38,0.16);border-radius:12px;padding:12px;background:#fff;">
+                        <div style="font-size:0.82rem;font-weight:800;color:${duplicateTone};margin-bottom:8px;">중복 등록</div>
+                        ${audit.duplicates.length
+                            ? `<div style="display:flex;flex-direction:column;gap:8px;max-height:240px;overflow:auto;">${audit.duplicates.map(row => `
+                                <div style="padding:8px 10px;border-radius:10px;background:#fef2f2;">
+                                    <div style="font-size:0.78rem;font-weight:700;color:#991b1b;">${_esc(CS_TPL_LABELS[row.csType] || row.csType)} · ${_esc(row.carModel)} / ${_esc(row.partName)}</div>
+                                    <div style="font-size:0.74rem;color:#7f1d1d;margin-top:4px;">${row.items.map(item => _esc(item.presetName || item.presetId)).join(', ')}</div>
+                                </div>
+                            `).join('')}</div>`
+                            : `<div style="font-size:0.78rem;color:#15803d;">중복 등록이 없습니다.</div>`}
+                    </div>
+                    <div style="border:1px solid rgba(217,119,6,0.18);border-radius:12px;padding:12px;background:#fff;">
+                        <div style="font-size:0.82rem;font-weight:800;color:${missingTone};margin-bottom:8px;">누락 제품</div>
+                        ${audit.missing.length
+                            ? `<div style="display:flex;flex-direction:column;gap:8px;max-height:240px;overflow:auto;">${_groupCsMappingsByCar(audit.missing).map(group => `
+                                <div style="padding:8px 10px;border-radius:10px;background:#fff7ed;">
+                                    <div style="font-size:0.78rem;font-weight:700;color:#b45309;">${_esc(group.carModel)}</div>
+                                    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">
+                                        ${group.items.map(item => `<span style="display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;background:#fff;border:1px solid rgba(217,119,6,0.2);font-size:0.74rem;color:#92400e;">${_esc(item.partName)}</span>`).join('')}
+                                    </div>
+                                </div>
+                            `).join('')}</div>`
+                            : `<div style="font-size:0.78rem;color:#15803d;">누락된 제품이 없습니다.</div>`}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    function _productMappingMatches(pr, carModel, partName) {
+        if (!_pcNormText(partName) || _pcNormText(pr.partName) !== _pcNormText(partName)) return false;
+        if (!pr.carModel) return true;
+        return _pcNormText(pr.carModel) === _pcNormText(carModel || '');
+    }
+
+    function _findPresetsByProduct(carModel, partName) {
+        if (!partName) return [];
+        return _csPresets.filter(p =>
+            (Array.isArray(p.products) ? p.products : []).some(pr => _productMappingMatches(pr, carModel, partName))
+        );
+    }
+
+    function _autoApplyCsTypeFromProduct() {
+        const carModel  = document.getElementById('pcCarModel')?.value?.trim() || '';
+        const partName  = document.getElementById('pcPartName')?.value?.trim() || '';
+        const csTypeSel = document.getElementById('pcCsType');
+        const container = document.getElementById('pcPresetProducts');
+        if (!partName || !csTypeSel) {
+            if (container) container.innerHTML = '';
+            return false;
+        }
+
+        const matching = _findPresetsByProduct(carModel, partName);
+        if (matching.length === 0) {
+            if (container) container.innerHTML = '';
+            return false;
+        }
+
+        const csTypes = [...new Set(matching.map(p => p.csType))];
+        const presetSel = document.getElementById('pcPresetSel');
+
+        if (csTypes.length === 1) {
+            const csType = csTypes[0];
+            const changed = csTypeSel.value !== csType;
+            if (changed) csTypeSel.value = csType;
+            if (presetSel && matching.length === 1) presetSel.value = matching[0].id;
+            if (container) {
+                container.innerHTML = `
+                    <span style="font-size:0.78rem;color:#15803d;font-weight:600;">
+                        ✓ C/S 양식: ${_esc(CS_TPL_LABELS[csType] || csType)} 자동 적용
+                    </span>`;
+            }
+            return changed;
+        }
+
+        if (presetSel) presetSel.value = '';
+        if (container) {
+            container.innerHTML = `
+                <span style="font-size:0.78rem;color:#b45309;font-weight:600;">
+                    ⚠ 매칭 프리셋 ${matching.length}개 — C/S 양식을 프리셋에서 선택하세요
+                </span>`;
+        }
+        if (typeof UIUtils !== 'undefined') {
+            UIUtils.toast(
+                `${carModel} / ${partName}: C/S 양식이 ${csTypes.map(t => CS_TPL_LABELS[t] || t).join(', ')}로 중복됩니다. 프리셋을 선택하세요.`,
+                'warning'
+            );
+        }
+        return false;
+    }
+
+    function _updatePresetSelector() {
+        const presetArea = document.getElementById('pcPresetSel');
+        if (!presetArea) return;
+        const wrap = presetArea.closest('div[style*="bookmark"]') || presetArea.parentElement?.parentElement;
+        if (!wrap) return;
+        const carModel  = document.getElementById('pcCarModel')?.value  || '';
+        const partName  = document.getElementById('pcPartName')?.value  || '';
+        const csType    = document.getElementById('pcCsType')?.value    || '';
+
+        let matching;
+        if (carModel && partName) {
+            matching = _csPresets.filter(p =>
+                (p.products || []).some(pr => _productMappingMatches(pr, carModel, partName))
+            );
+        } else {
+            matching = _csPresets.filter(p => p.csType === csType);
+        }
+
+        const helpSpan = wrap.querySelector('span[style*="text-muted"]');
+        if (helpSpan) {
+            helpSpan.textContent = (carModel && partName)
+                ? `${carModel} / ${partName} 매칭 프리셋 ${matching.length}개 · C/S 양식 자동 적용`
+                : '차종·품명 선택 시 C/S 양식 자동 적용';
+        }
+
+        presetArea.innerHTML = '<option value="">-- 프리셋 선택 --</option>' +
+            matching.map(p => `<option value="${_esc(p.id)}">${_esc(p.name)} (${_esc(CS_TPL_LABELS[p.csType]||p.csType)})</option>`).join('');
+
+        const prodContainer = document.getElementById('pcPresetProducts');
+        if (prodContainer) prodContainer.innerHTML = '';
     }
 
     function applyPreset() {
@@ -11358,25 +12320,42 @@ var ProdConditionsModule = (function() {
         const preset = _csPresets.find(p => p.id === sel.value);
         if (!preset) return;
 
-        // C/S 양식 변경
+        // C/S 양식 자동 설정
         const csTypeSel = document.getElementById('pcCsType');
-        if (csTypeSel) {
+        if (csTypeSel && csTypeSel.value !== preset.csType) {
             csTypeSel.value = preset.csType;
             toggleLine(preset.csType);
         }
 
-        const prods = preset.products || [];
+        // 현재 차종/품명 이미 선택돼 있으면 그대로, 없으면 프리셋에서 채움
+        const curCar  = (document.getElementById('pcCarModel')?.value || '').trim();
+        const curPart = (document.getElementById('pcPartName')?.value || '').trim();
+        const prods   = preset.products || [];
         const container = document.getElementById('pcPresetProducts');
         if (!container) return;
+
+        // 현재 차종+품명과 일치하는 제품이 있으면 자동 확정
+        const exact = prods.find(p => p.carModel === curCar && p.partName === curPart);
+        if (exact || (curCar && curPart)) {
+            container.innerHTML = `
+                <span style="font-size:0.78rem;color:#15803d;font-weight:600;">
+                    ✓ C/S 양식: ${_esc(CS_TPL_LABELS[preset.csType]||preset.csType)} 적용됨
+                </span>`;
+            return;
+        }
 
         if (prods.length === 0) {
             container.innerHTML = '';
         } else if (prods.length === 1) {
-            // 단일 제품 → 바로 자동 입력
             _fillProduct(prods[0]);
+            onPcCarChange();
+            setTimeout(() => {
+                const partEl = document.getElementById('pcPartName');
+                if (partEl) { partEl.value = prods[0].partName; _reloadCheckItemsWithCp(); }
+            }, 50);
             container.innerHTML = `
                 <span style="font-size:0.78rem;color:#15803d;font-weight:600;">
-                    ✓ ${_esc(prods[0].carModel || '')} ${_esc(prods[0].partName)} 적용됨
+                    ✓ ${_esc(prods[0].carModel || '')} / ${_esc(prods[0].partName)} 적용됨
                 </span>`;
         } else {
             // 복수 제품 → 서브 드롭다운
@@ -11415,15 +12394,8 @@ var ProdConditionsModule = (function() {
         const content = document.getElementById('pcCheckItemsBody');
         if (!content) return;
         content.innerHTML = renderLineSpecificFields(type, { checkItems: _templateItems(type, []) });
-        // 프리셋 드롭다운도 현재 C/S 양식에 맞게 갱신
-        const presetSel = document.getElementById('pcPresetSel');
-        if (presetSel) {
-            const matching = _csPresets.filter(p => p.csType === type);
-            presetSel.innerHTML = '<option value="">-- 프리셋 선택 --</option>' +
-                matching.map(p => `<option value="${_esc(p.id)}">${_esc(p.name)}</option>`).join('');
-            const prodContainer = document.getElementById('pcPresetProducts');
-            if (prodContainer) prodContainer.innerHTML = '';
-        }
+        // 프리셋 드롭다운 갱신 (차종/품명 선택 우선, 없으면 C/S 양식 기준)
+        _updatePresetSelector();
         updateProgress();
     }
 
@@ -11500,12 +12472,21 @@ var ProdConditionsModule = (function() {
         )].sort();
         partSel.innerHTML = '<option value="">-- 품명 선택 --</option>' +
             parts.map(p => `<option value="${_esc(p)}">${_esc(p)}</option>`).join('');
-        // 품명도 초기화됐으므로 점검항목 재로드
+        _updatePresetSelector();
         _reloadCheckItemsWithCp();
     }
 
     function onPcPartChange() {
-        _reloadCheckItemsWithCp();
+        _updatePresetSelector();
+        const csTypeSel = document.getElementById('pcCsType');
+        const prevCsType = csTypeSel?.value || '';
+        const csTypeChanged = _autoApplyCsTypeFromProduct();
+        const newCsType = csTypeSel?.value || '';
+        if (csTypeChanged || newCsType !== prevCsType) {
+            toggleLine(newCsType);
+        } else {
+            _reloadCheckItemsWithCp();
+        }
     }
 
     function _reloadCheckItemsWithCp() {
@@ -11909,47 +12890,132 @@ var ProdConditionsModule = (function() {
     // ── C/S 프리셋 관리 뷰 ──────────────────────────────────────────
 
     function _renderPresetsView(content) {
-        const groups = Object.entries(CS_TPL_LABELS).map(([key, label]) => ({
-            key, label,
-            presets: _csPresets.filter(p => p.csType === key)
-        }));
-        content.innerHTML = `
+        try {
+            _csPresets = _normalizedCsPresets(_csPresets);
+            const carModels = _getMasterCarModels();
+            const groups = Object.entries(CS_TPL_LABELS).map(([key, label]) => ({
+                key, label,
+                mappings: _getMappingsForCsType(key)
+            }));
+            content.innerHTML = `
             <div class="card">
                 <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
                     <h4>
                         <span class="material-symbols-outlined">bookmark</span>
                         C/S 프리셋 관리
                     </h4>
-                    <button class="btn btn-primary btn-sm" onclick="ProdConditionsModule.openAddPresetModal()">
-                        <span class="material-symbols-outlined">add</span> 프리셋 추가
+                    <button class="btn btn-outline btn-sm" data-cs-preset-action="open-modal" onclick="ProdConditionsModule.openAddPresetModal()">
+                        <span class="material-symbols-outlined">add</span> 고급 프리셋
                     </button>
                 </div>
                 <div class="card-body">
+                    ${_renderCsPresetAuditHtml()}
                     <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:20px;">
-                        C/S 양식별 차종·품명 조합을 프리셋으로 등록합니다.
-                        작업조건 기록 시 프리셋을 선택하면 차종·품명이 자동으로 입력됩니다.
+                        C/S 양식별로 <strong>차종·품명</strong>을 등록하면, 공정 C/S 기록 시 해당 조합 선택 시 C/S 양식이 자동 적용됩니다.
+                        같은 차종의 품명을 여러 개 선택해서 한 번에 등록할 수 있습니다.
                     </p>
-                    ${groups.map(g => `
-                        <div style="margin-bottom:24px;">
-                            <div style="display:flex;align-items:center;gap:10px;
-                                        margin-bottom:10px;padding-bottom:8px;
-                                        border-bottom:2px solid var(--accent-blue);">
+                    ${groups.map(g => {
+                        const jsKey = String(g.key).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                        return `
+                        <div style="margin-bottom:28px;padding:16px;background:var(--bg-secondary);border-radius:10px;border:1px solid var(--border-color);">
+                            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
                                 <span style="font-weight:800;font-size:0.95rem;color:var(--accent-blue);">${g.label}</span>
-                                <span style="font-size:0.78rem;color:var(--text-muted);">${g.presets.length}개</span>
+                                <span style="font-size:0.78rem;color:var(--text-muted);">연결 ${g.mappings.length}건</span>
                             </div>
-                            ${g.presets.length === 0
-                                ? `<p style="color:var(--text-muted);font-size:0.82rem;padding:8px 0;">
-                                       등록된 프리셋이 없습니다.
-                                   </p>`
-                                : `<div style="display:flex;flex-direction:column;gap:6px;">
-                                       ${g.presets.map(_presetRowHtml).join('')}
-                                   </div>`
-                            }
-                        </div>
-                    `).join('')}
+                            <div style="display:flex;flex-wrap:wrap;gap:6px;min-height:28px;margin-bottom:12px;">
+                                ${g.mappings.length === 0
+                                    ? `<span style="color:var(--text-muted);font-size:0.82rem;">등록된 차종·품명이 없습니다.</span>`
+                                    : _groupCsMappingsByCar(g.mappings).map(group => `
+                                        <div style="width:100%;background:#fff;border:1px solid #dbeafe;border-radius:14px;padding:10px 12px;">
+                                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                                                <span class="material-symbols-outlined" style="font-size:16px;color:#2563eb;">directions_car</span>
+                                                <strong style="font-size:0.83rem;color:#1d4ed8;">${_esc(group.carModel)}</strong>
+                                                <span style="font-size:0.74rem;color:var(--text-muted);">${group.items.length}개 품명</span>
+                                            </div>
+                                            <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                                                ${group.items.map(m => {
+                                                    const jsPid = String(m.presetId).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                                                    return `
+                                                    <span style="display:inline-flex;align-items:center;gap:6px;
+                                                                  background:rgba(37,99,235,0.08);border:1px solid rgba(37,99,235,0.25);
+                                                                  border-radius:12px;padding:4px 10px;font-size:0.78rem;color:#1d4ed8;">
+                                                        ${_esc(m.partName)}
+                                                        <button type="button"
+                                                                data-cs-remove-preset="${_esc(jsPid)}"
+                                                                data-cs-remove-idx="${m.productIdx}"
+                                                                onclick="ProdConditionsModule.removeCsMapping('${jsPid}',${m.productIdx})"
+                                                                style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:16px;line-height:1;padding:0;">×</button>
+                                                    </span>`;
+                                                }).join('')}
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                            </div>
+                            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+                                        padding:12px;background:var(--bg-primary);border-radius:8px;border:1px dashed var(--border-color);">
+                                <span style="font-size:0.78rem;font-weight:600;color:var(--text-muted);white-space:nowrap;">차종·품명 추가</span>
+                                <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:180px;max-width:220px;${_partSelectShellStyle()}">
+                                    <span class="material-symbols-outlined" style="font-size:18px;color:#2563eb;">directions_car</span>
+                                    <select id="cpInlineCar_${g.key}" class="form-select"
+                                            data-cs-inline-car="${_esc(jsKey)}"
+                                            onchange="ProdConditionsModule._onInlineCsCarInput('${jsKey}', true)"
+                                            style="flex:1;border:none;background:transparent;height:100%;padding:0;box-shadow:none;font-size:0.84rem;">
+                                        <option value="">차종 선택</option>
+                                        ${carModels.map(car => `<option value="${_esc(car)}">${_esc(car)}</option>`).join('')}
+                                    </select>
+                                </div>
+                                ${_renderInlinePartPicker(jsKey, '')}
+                                <button type="button" class="btn btn-primary btn-sm"
+                                        data-cs-inline-add="${_esc(jsKey)}"
+                                        onclick="ProdConditionsModule.addInlineCsMapping('${jsKey}')"
+                                        style="height:40px;padding:0 16px;border-radius:12px;">
+                                    <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">playlist_add</span> 일괄 등록
+                                </button>
+                            </div>
+                        </div>`;
+                    }).join('')}
                 </div>
             </div>
         `;
+            groups.forEach(g => _onInlineCsCarInput(g.key, false));
+            _bindPresetViewEvents(content);
+        } catch (error) {
+            console.error('[ProdConditionsModule] preset view render failed:', error);
+            content.innerHTML = `
+                <div class="card">
+                    <div class="card-body" style="padding:28px;text-align:center;color:var(--text-muted);">
+                        <span class="material-symbols-outlined" style="font-size:42px;color:#f59e0b;display:block;margin-bottom:10px;">warning</span>
+                        C/S 프리셋 화면을 불러오는 중 오류가 발생했습니다.<br>
+                        <span style="font-size:0.82rem;">저장된 프리셋 데이터를 정리한 뒤 다시 열어주세요.</span>
+                    </div>
+                </div>
+            `;
+        }
+    }
+
+    function _bindPresetViewEvents(content) {
+        if (!content) return;
+        document.querySelectorAll('[data-cs-part-dropdown]').forEach(dropdown => { dropdown.style.display = 'none'; });
+        content.querySelectorAll('[data-cs-preset-action="open-modal"]').forEach(button => {
+            button.onclick = () => openAddPresetModal();
+        });
+        content.querySelectorAll('[data-cs-inline-car]').forEach(select => {
+            const csType = select.getAttribute('data-cs-inline-car') || '';
+            select.onchange = () => _onInlineCsCarInput(csType, true);
+        });
+        content.querySelectorAll('[data-cs-inline-add]').forEach(button => {
+            const csType = button.getAttribute('data-cs-inline-add') || '';
+            button.onclick = () => addInlineCsMapping(csType);
+        });
+        content.querySelectorAll('[data-cs-remove-preset]').forEach(button => {
+            const presetId = button.getAttribute('data-cs-remove-preset') || '';
+            const productIdx = Number(button.getAttribute('data-cs-remove-idx'));
+            button.onclick = () => removeCsMapping(presetId, productIdx);
+        });
+        if (!_inlinePartOutsideBound) {
+            document.addEventListener('click', _handleInlinePartOutsideClick, true);
+            _inlinePartOutsideBound = true;
+        }
     }
 
     function _presetRowHtml(p) {
@@ -12003,12 +13069,15 @@ var ProdConditionsModule = (function() {
                 </div>
                 <div>
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                        <label class="form-label" style="margin:0;">연결 차종·품명</label>
-                        <button class="btn btn-sm btn-outline"
+                        <label class="form-label" style="margin:0;">연결 차종·품명 <span style="color:red;">*</span></label>
+                        <button type="button" class="btn btn-sm btn-outline"
                                 onclick="ProdConditionsModule._addPresetProductRow()">
                             <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">add</span> 추가
                         </button>
                     </div>
+                    <p style="font-size:0.78rem;color:var(--text-muted);margin:0 0 8px;">
+                        제품 마스터에서 선택하거나 차종·품명을 직접 입력하세요.
+                    </p>
                     <div id="cpProductRows" style="display:flex;flex-direction:column;gap:6px;">${rows}</div>
                 </div>
             </div>
@@ -12017,26 +13086,27 @@ var ProdConditionsModule = (function() {
 
     function _presetProductRow(pr = {}, products, carModels) {
         if (!products) products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-        if (!carModels) carModels = [...new Set(products.map(p => p.carModel).filter(Boolean))].sort();
+        if (!carModels) carModels = _getMasterCarModels();
         const selCar  = pr.carModel || '';
         const selPart = pr.partName || '';
-        const partOpts = selCar
-            ? [...new Set(products.filter(p => p.carModel===selCar).map(p=>p.partName).filter(Boolean))].sort()
-                .map(n=>`<option value="${_esc(n)}" ${n===selPart?'selected':''}>${_esc(n)}</option>`).join('')
-            : (selPart ? `<option value="${_esc(selPart)}" selected>${_esc(selPart)}</option>` : '');
+        const rowId = 'cpr' + Math.random().toString(36).slice(2, 9);
+        const partNames = selCar ? _getMasterPartNames(selCar) : _getMasterPartNames('');
+        const carDatalist = carModels.map(c => `<option value="${_esc(c)}">`).join('');
+        const partDatalist = partNames.map(n => `<option value="${_esc(n)}">`).join('');
         return `
             <div class="cp-prod-row" style="display:flex;align-items:center;gap:6px;
                         padding:8px;background:var(--bg-secondary);border-radius:6px;
                         border:1px solid var(--border-color);">
-                <select class="form-select cp-car-sel" style="flex:1;"
-                        onchange="ProdConditionsModule._onPresetCarChange(this)">
-                    <option value="">차종 선택</option>
-                    ${carModels.map(c=>`<option value="${_esc(c)}" ${c===selCar?'selected':''}>${_esc(c)}</option>`).join('')}
-                </select>
-                <select class="form-select cp-part-sel" style="flex:2;">
-                    <option value="">품명 선택</option>${partOpts}
-                </select>
-                <button onclick="this.closest('.cp-prod-row').remove()"
+                <input class="form-control cp-car-inp" list="cpCarList_${rowId}"
+                       value="${_esc(selCar)}" placeholder="차종"
+                       style="flex:1;height:34px;font-size:0.82rem;"
+                       oninput="ProdConditionsModule._onPresetCarInput(this)">
+                <datalist id="cpCarList_${rowId}">${carDatalist}</datalist>
+                <input class="form-control cp-part-inp" list="cpPartList_${rowId}"
+                       value="${_esc(selPart)}" placeholder="품명 *"
+                       style="flex:2;height:34px;font-size:0.82rem;">
+                <datalist id="cpPartList_${rowId}">${partDatalist}</datalist>
+                <button type="button" onclick="this.closest('.cp-prod-row').remove()"
                         style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:20px;line-height:1;">×</button>
             </div>
         `;
@@ -12050,25 +13120,160 @@ var ProdConditionsModule = (function() {
         container.appendChild(div.firstElementChild);
     }
 
-    function _onPresetCarChange(sel) {
-        const row = sel.closest('.cp-prod-row');
+    function _onPresetCarInput(input) {
+        const row = input.closest('.cp-prod-row');
         if (!row) return;
-        const partSel = row.querySelector('.cp-part-sel');
-        if (!partSel) return;
-        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-        const parts = [...new Set(products.filter(p=>p.carModel===sel.value).map(p=>p.partName).filter(Boolean))].sort();
-        partSel.innerHTML = '<option value="">품명 선택</option>' +
-            parts.map(n=>`<option value="${_esc(n)}">${_esc(n)}</option>`).join('');
+        const partInp = row.querySelector('.cp-part-inp');
+        const partList = row.querySelector('datalist[id^="cpPartList_"]');
+        _refreshCsPartOptions(partList, partInp, input.value.trim());
+    }
+
+    function _onPresetCarChange(sel) {
+        _onPresetCarInput(sel);
+    }
+
+    function _onInlineCsCarInput(csType, focusPart = false) {
+        const carInput = document.getElementById(`cpInlineCar_${csType}`);
+        const optionsWrap = document.getElementById(`cpInlinePartOptions_${csType}`);
+        const searchInput = document.getElementById(`cpInlinePartSearch_${csType}`);
+        if (!carInput || !optionsWrap) return;
+        const car = carInput.value.trim();
+        const parts = _getMasterPartNames(car);
+        optionsWrap.innerHTML = parts.length ? parts.map(part => `
+            <label data-cs-part-option="${_esc(csType)}" data-part-name="${_esc(part)}"
+                   style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;cursor:pointer;">
+                <input type="checkbox" class="cp-inline-part-check" value="${_esc(part)}"
+                       onchange="ProdConditionsModule._updateInlinePartSummary('${_esc(csType)}')"
+                       style="width:15px;height:15px;accent-color:#2563eb;">
+                <span style="font-size:0.82rem;color:var(--text-primary);">${_esc(part)}</span>
+            </label>
+        `).join('') : `<div style="padding:16px 10px;color:var(--text-muted);font-size:0.8rem;text-align:center;">선택한 차종의 품명이 없습니다.</div>`;
+        if (searchInput) {
+            searchInput.value = '';
+        }
+        _updateInlinePartSummary(csType);
+        if (focusPart) _toggleInlinePartDropdown(csType, true);
+    }
+
+    function _handleInlinePartOutsideClick(event) {
+        document.querySelectorAll('[data-cs-part-picker]').forEach(picker => {
+            if (!picker.contains(event.target)) {
+                const dropdown = picker.querySelector('[data-cs-part-dropdown]');
+                if (dropdown) dropdown.style.display = 'none';
+            }
+        });
+    }
+
+    function _toggleInlinePartDropdown(csType, forceOpen = false) {
+        const dropdown = document.getElementById(`cpInlinePartDropdown_${csType}`);
+        if (!dropdown) return;
+        const shouldOpen = forceOpen || dropdown.style.display === 'none' || !dropdown.style.display;
+        document.querySelectorAll('[data-cs-part-dropdown]').forEach(el => { if (el !== dropdown) el.style.display = 'none'; });
+        dropdown.style.display = shouldOpen ? 'block' : 'none';
+        if (shouldOpen) document.getElementById(`cpInlinePartSearch_${csType}`)?.focus();
+    }
+
+    function _filterInlinePartOptions(csType) {
+        const keyword = String(document.getElementById(`cpInlinePartSearch_${csType}`)?.value || '').trim().toUpperCase();
+        document.querySelectorAll(`[data-cs-part-option="${csType}"]`).forEach(option => {
+            const partName = String(option.getAttribute('data-part-name') || '').toUpperCase();
+            option.style.display = !keyword || partName.includes(keyword) ? 'flex' : 'none';
+        });
+    }
+
+    function _setAllInlineParts(csType, checked) {
+        document.querySelectorAll(`#cpInlinePartOptions_${csType} .cp-inline-part-check`).forEach(check => {
+            if (check.closest('[data-cs-part-option]')?.style.display !== 'none') check.checked = checked;
+        });
+        _updateInlinePartSummary(csType);
+    }
+
+    function _getInlineSelectedParts(csType) {
+        return [...document.querySelectorAll(`#cpInlinePartOptions_${csType} .cp-inline-part-check:checked`)]
+            .map(input => String(input.value || '').trim())
+            .filter(Boolean);
+    }
+
+    function _updateInlinePartSummary(csType) {
+        const summary = document.getElementById(`cpInlinePartSummary_${csType}`);
+        if (!summary) return;
+        const parts = _getInlineSelectedParts(csType);
+        if (!parts.length) {
+            summary.textContent = '품명 선택';
+            summary.style.color = 'var(--text-muted)';
+            return;
+        }
+        summary.textContent = parts.length === 1 ? parts[0] : `${parts[0]} 외 ${parts.length - 1}개`;
+        summary.style.color = 'var(--text-primary)';
     }
 
     function _collectCpProducts() {
         const result = [];
         document.querySelectorAll('#cpProductRows .cp-prod-row').forEach(row => {
-            const car  = (row.querySelector('.cp-car-sel')?.value  || '').trim();
-            const part = (row.querySelector('.cp-part-sel')?.value || '').trim();
+            const car  = (row.querySelector('.cp-car-inp')?.value || row.querySelector('.cp-car-sel')?.value || '').trim();
+            const part = (row.querySelector('.cp-part-inp')?.value || row.querySelector('.cp-part-sel')?.value || '').trim();
             if (part) result.push({ carModel: car, partName: part });
         });
         return result;
+    }
+
+    function _mappingExists(csType, carModel, partName) {
+        return _getMappingsForCsType(csType).some(m =>
+            m.carModel === carModel && m.partName === partName
+        );
+    }
+
+    async function addInlineCsMapping(csType) {
+        const car  = (document.getElementById(`cpInlineCar_${csType}`)?.value || '').trim();
+        const parts = _getInlineSelectedParts(csType);
+        if (!car) {
+            UIUtils.toast('차종을 선택하세요.', 'warning');
+            document.getElementById(`cpInlineCar_${csType}`)?.focus();
+            return;
+        }
+        if (!parts.length) {
+            UIUtils.toast('등록할 품명을 1개 이상 선택하세요.', 'warning');
+            return;
+        }
+        const newProducts = parts
+            .filter(part => !_mappingExists(csType, car, part))
+            .map(part => ({ carModel: car, partName: part }));
+        if (!newProducts.length) {
+            UIUtils.toast('선택한 품명이 이미 모두 등록되어 있습니다.', 'warning');
+            return;
+        }
+        const label = CS_TPL_LABELS[csType] || csType;
+        const autoName = newProducts.length === 1
+            ? `${car} ${newProducts[0].partName}`.trim()
+            : `${car} ${newProducts[0].partName} 외 ${newProducts.length - 1}`.trim();
+        _csPresets.push({
+            id: 'csp_' + Date.now(),
+            name: autoName || label,
+            csType,
+            products: newProducts
+        });
+        await _savePresets();
+        UIUtils.toast(`${label}: ${car} ${newProducts.length}개 품명이 등록됐습니다.`, 'success');
+        const content = document.getElementById('pcTabContent');
+        if (content) _renderPresetsView(content);
+    }
+
+    async function removeCsMapping(presetId, productIdx) {
+        const preset = _csPresets.find(p => p.id === presetId);
+        if (!preset) return;
+        const products = [...(preset.products || [])];
+        if (productIdx < 0 || productIdx >= products.length) return;
+        const removed = products[productIdx];
+        products.splice(productIdx, 1);
+        if (products.length === 0) {
+            _csPresets = _csPresets.filter(p => p.id !== presetId);
+        } else {
+            preset.products = products;
+        }
+        await _savePresets();
+        UIUtils.toast(`${removed.carModel ? removed.carModel + ' / ' : ''}${removed.partName} 연결이 삭제됐습니다.`, 'success');
+        const content = document.getElementById('pcTabContent');
+        if (content) _renderPresetsView(content);
     }
 
     function openAddPresetModal() {
@@ -12094,6 +13299,10 @@ var ProdConditionsModule = (function() {
         const csType = document.getElementById('cpCsType')?.value || 'A-KNOB';
         if (!name) { UIUtils.toast('프리셋명을 입력하세요.', 'warning'); return; }
         const products = _collectCpProducts();
+        if (products.length === 0) {
+            UIUtils.toast('연결할 차종·품명을 1개 이상 입력하세요.', 'warning');
+            return;
+        }
         if (id) {
             const idx = _csPresets.findIndex(p => p.id === id);
             if (idx >= 0) _csPresets[idx] = { ..._csPresets[idx], name, csType, products };
@@ -12155,8 +13364,16 @@ var ProdConditionsModule = (function() {
         editPreset,
         savePreset,
         removePreset,
+        addInlineCsMapping,
+        removeCsMapping,
         _addPresetProductRow,
-        _onPresetCarChange
+        _toggleInlinePartDropdown,
+        _filterInlinePartOptions,
+        _setAllInlineParts,
+        _updateInlinePartSummary,
+        _onInlineCsCarInput,
+        _onPresetCarChange,
+        _onPresetCarInput
     };
 })();
 
@@ -12193,7 +13410,7 @@ var PaintMixModule = (function() {
     function render(container) {
         container.innerHTML = `
         <div class="fade-in-up">
-            <div id="pmixTileNav" style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px;"></div>
+            <div id="pmixTileNav" class="mes-apple-menu-hero" style="padding:16px 20px;margin-bottom:20px;display:flex;gap:10px;flex-wrap:wrap;"></div>
             <div id="pmixPane_formula"  style="display:none;"></div>
             <div id="pmixPane_history"  style="display:none;"></div>
             <div id="pmixPane_mixhist"  style="display:none;"></div>
@@ -12210,29 +13427,21 @@ var PaintMixModule = (function() {
         nav.innerHTML = _PMIX_TABS.map(tab => {
             const active = tab.key === activeKey;
             return `
-            <div onclick="PaintMixModule.switchTab('${tab.key}')"
-                 onmouseenter="this.style.boxShadow='0 6px 20px rgba(0,0,0,0.12)';this.style.transform='translateY(-2px)'"
-                 onmouseleave="this.style.boxShadow='${active ? '0 4px 14px rgba(37,99,235,0.15)' : '0 2px 8px rgba(0,0,0,0.06)'}';this.style.transform=''"
-                 style="cursor:pointer;display:flex;align-items:center;gap:14px;
-                        background:${active ? '#eff6ff' : '#ffffff'};
-                        border:1px solid ${active ? tab.accent : 'var(--border-color)'};
-                        border-left:4px solid ${active ? tab.accent : 'var(--border-color)'};
-                        border-radius:12px;padding:14px 18px;
-                        box-shadow:${active ? '0 4px 14px rgba(37,99,235,0.15)' : '0 2px 8px rgba(0,0,0,0.06)'};
-                        transition:box-shadow 0.2s,transform 0.2s;">
-                <div style="width:42px;height:42px;border-radius:10px;flex-shrink:0;
-                            display:flex;align-items:center;justify-content:center;
-                            background:${active ? tab.accent : '#f1f5f9'};">
-                    <span class="material-symbols-outlined" style="font-size:22px;color:${active ? '#fff' : 'var(--text-muted)'};">${tab.icon}</span>
-                </div>
-                <div style="flex:1;min-width:0;">
-                    <div style="font-size:0.95rem;font-weight:700;color:${active ? tab.accent : 'var(--text-primary)'};">${tab.label}</div>
-                    <div style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${tab.desc}</div>
-                </div>
-                ${active
-                    ? `<span class="material-symbols-outlined" style="color:${tab.accent};flex-shrink:0;font-size:18px;">check_circle</span>`
-                    : `<span class="material-symbols-outlined" style="color:var(--text-muted);flex-shrink:0;">chevron_right</span>`}
-            </div>`;
+            <button type="button" onclick="PaintMixModule.switchTab('${tab.key}')"
+                style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;
+                       border:${active ? '2px solid var(--accent-blue)' : '1.5px solid var(--border-color)'};
+                       background:var(--bg-primary);color:var(--text-primary);
+                       cursor:pointer;min-width:160px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+                <span style="display:inline-flex;align-items:center;justify-content:center;
+                             width:42px;height:42px;border-radius:10px;flex-shrink:0;
+                             background:${active ? 'var(--accent-blue)' : 'var(--bg-secondary)'};">
+                    <span class="material-symbols-outlined" style="font-size:24px;color:${active ? '#fff' : 'var(--text-muted)'};">${tab.icon}</span>
+                </span>
+                <span style="display:flex;flex-direction:column;gap:2px;">
+                    <span style="font-size:0.92rem;font-weight:700;">${tab.label}</span>
+                    <span style="font-size:0.73rem;color:var(--text-muted);">${tab.desc}</span>
+                </span>
+            </button>`;
         }).join('');
     }
 
@@ -13646,7 +14855,7 @@ var PaintMixModule = (function() {
         <div class="card">
             <div class="card-header">
                 <h4><span class="material-symbols-outlined">format_paint</span> 도장 완료 실적 — 도료사용등록 대상</h4>
-                <span style="font-size:0.78rem;color:var(--text-muted);">미등록: 파란 버튼 / 등록완료: 회색 버튼</span>
+                <span style="font-size:0.78rem;color:var(--text-muted);">미등록: 파란 버튼 / 부분등록: 노란 테두리 / 전체등록 완료: 회색 버튼</span>
             </div>
             <div class="card-body" style="padding:0;">
                 <div class="data-table-wrapper">
@@ -13663,21 +14872,45 @@ var PaintMixModule = (function() {
         search();
     }
 
+    // workId → Set<materialId> : 해당 작업에서 실제 사용량(usageG>0 또는 warehouseCans>0)이 등록된 도료 목록
+    function _buildRegisteredMap() {
+        const map = new Map();
+        _mixes().forEach(m => {
+            if (!m.workId) return;
+            if (!map.has(m.workId)) map.set(m.workId, new Set());
+            (m.usages || []).forEach(u => {
+                if ((Number(u.usageG) || 0) > 0 || (Number(u.warehouseCans) || 0) > 0) {
+                    if (u.materialId) map.get(m.workId).add(u.materialId);
+                }
+            });
+        });
+        return map;
+    }
+
+    // 작업의 모든 도료가 등록됐으면 true
+    function _isWorkFullyReg(work, regMap) {
+        const product = _findProduct(work);
+        const comps = _paintComponents(product);
+        if (!comps.length) return regMap.has(work.id); // 도료 구성 미설정이면 기존 기준
+        const regged = regMap.get(work.id) || new Set();
+        return comps.every(c => regged.has(c.materialId));
+    }
+
     function search() {
         const start = document.getElementById('pmixStart')?.value || '';
         const end   = document.getElementById('pmixEnd')?.value || '';
         const car   = document.getElementById('pmixCarFilter')?.value || '';
         const allWorks = Storage.getAll(PAINT_WORK_STORE) || [];
-        const mixed = new Set(_mixes().map(m => m.workId).filter(Boolean));
+        const regMap = _buildRegisteredMap();
 
         const filtered = allWorks
             .filter(w => (!start || w.date >= start) && (!end || w.date <= end))
             .filter(w => !car || w.carModel === car);
 
-        // 미등록 작업은 날짜 필터 밖이어도 항상 표시 (누락 방지)
+        // 미등록/부분등록 작업은 날짜 필터 밖이어도 항상 표시 (누락 방지)
         const filteredIds = new Set(filtered.map(w => w.id));
         const alwaysShow = allWorks
-            .filter(w => !mixed.has(w.id) && !filteredIds.has(w.id))
+            .filter(w => !_isWorkFullyReg(w, regMap) && !filteredIds.has(w.id))
             .filter(w => !car || w.carModel === car);
 
         const works = [...filtered, ...alwaysShow]
@@ -13688,7 +14921,7 @@ var PaintMixModule = (function() {
             .filter(m => !car || m.carModel === car)
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
         renderStats(works, mixes);
-        renderWorkTable(works, mixed);
+        renderWorkTable(works, regMap);
         renderMixTable(mixes);
     }
 
@@ -13705,14 +14938,14 @@ var PaintMixModule = (function() {
         `;
     }
 
-    function renderWorkTable(works, mixed) {
+    function renderWorkTable(works, regMap) {
         const tbody = document.getElementById('pmixWorkBody');
         if (!tbody) return;
         if (!works.length) {
             tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:30px;">해당 기간의 도장 작업실적이 없습니다.</td></tr>`;
             return;
         }
-        if (!mixed) mixed = new Set(_mixes().map(m => m.workId).filter(Boolean));
+        if (!regMap) regMap = _buildRegisteredMap();
         tbody.innerHTML = works.map(w => {
             const product = _findProduct(w);
             const comps = _paintComponents(product);
@@ -13721,10 +14954,25 @@ var PaintMixModule = (function() {
                 : (w.lotNo || '-');
             const _wkd = (w.date||'').split(' ')[0]; const _wkt = (w.date||'').split(' ')[1]||w.startTime||'';
             const _wkp = _wkd.split('-'); const _wkDateFmt = _wkd ? `<span style="font-size:0.72rem;color:var(--text-muted);">${_wkp[0]||''}</span><br><strong>${(_wkp[1]||'')+'-'+(_wkp[2]||'')}</strong>${_wkt?`<br><span style="font-size:0.72rem;color:var(--text-muted);">${_wkt}</span>`:''}` : '-';
-            const isUnreg = !mixed.has(w.id);
-            const rowStyle = isUnreg
-                ? 'background:rgba(239,68,68,0.05);border-left:3px solid #ef4444;'
-                : 'border-left:3px solid transparent;';
+            const regged = regMap.get(w.id) || new Set();
+            const hasAny = regged.size > 0;
+            const isFullyReg = _isWorkFullyReg(w, regMap);
+            const isPartial = hasAny && !isFullyReg;
+            const isUnreg = !hasAny;
+            const rowStyle = isFullyReg
+                ? 'border-left:3px solid transparent;'
+                : isPartial
+                    ? 'background:rgba(234,179,8,0.05);border-left:3px solid #eab308;'
+                    : 'background:rgba(239,68,68,0.05);border-left:3px solid #ef4444;';
+            const reggedCount = comps.length ? comps.filter(c => regged.has(c.materialId)).length : (hasAny ? 1 : 0);
+            let statusBadge = '';
+            if (isUnreg) {
+                statusBadge = `<span style="display:inline-flex;align-items:center;gap:3px;background:#fef2f2;border:1px solid #fca5a5;border-radius:4px;padding:1px 6px;font-size:0.72rem;color:#dc2626;margin-bottom:3px;"><span class="material-symbols-outlined" style="font-size:12px;">warning</span>미등록</span><br>`;
+            } else if (isPartial) {
+                statusBadge = `<span style="display:inline-flex;align-items:center;gap:3px;background:#fefce8;border:1px solid #fde047;border-radius:4px;padding:1px 6px;font-size:0.72rem;color:#a16207;margin-bottom:3px;"><span class="material-symbols-outlined" style="font-size:12px;">pending</span>부분등록 ${reggedCount}/${comps.length}</span><br>`;
+            }
+            const btnLabel = isFullyReg ? '재등록' : '도료사용등록';
+            const btnClass = isFullyReg ? 'btn-outline' : 'btn-primary';
             return `
                 <tr style="${rowStyle}">
                     <td>${_wkDateFmt}</td>
@@ -13736,10 +14984,8 @@ var PaintMixModule = (function() {
                     <td style="text-align:right;">${UIUtils.formatNumber(w.productionQty || 0)}</td>
                     <td>${comps.length ? `<span class="badge badge-success">${comps.length}개</span>` : '<span class="badge badge-warning">미설정</span>'}</td>
                     <td style="white-space:nowrap;">
-                        ${isUnreg
-                            ? `<span style="display:inline-flex;align-items:center;gap:3px;background:#fef2f2;border:1px solid #fca5a5;border-radius:4px;padding:1px 6px;font-size:0.72rem;color:#dc2626;margin-bottom:3px;"><span class="material-symbols-outlined" style="font-size:12px;">warning</span>미등록</span><br>`
-                            : ''}
-                        <button class="btn btn-sm ${isUnreg ? 'btn-primary' : 'btn-outline'}" onclick="PaintMixModule.openFromWork('${_js(w.id)}')">${isUnreg ? '도료사용등록' : '재등록'}</button>
+                        ${statusBadge}
+                        <button class="btn btn-sm ${btnClass}" onclick="PaintMixModule.openFromWork('${_js(w.id)}')">${btnLabel}</button>
                     </td>
                 </tr>`;
         }).join('');
@@ -14540,7 +15786,26 @@ var PaintMixModule = (function() {
         const work = data.workId ? Storage.getById(PAINT_WORK_STORE, data.workId) : null;
         const product = work ? _findProduct(work) : _findProduct(data);
         const filterLine = (!usages.length && data.line) ? data.line : '';
-        const allComponents = usages.length ? usages : _paintComponents(product, filterLine);
+        // 항상 제품 레시피 전체를 기준으로 표시하고, 저장된 usages 값을 오버레이
+        const recipeComponents = _paintComponents(product, filterLine);
+        let allComponents;
+        if (!usages.length || !recipeComponents.length) {
+            // 신규 등록 or 레시피 없음 → 기존 방식
+            allComponents = usages.length ? usages : recipeComponents;
+        } else {
+            // 수정 모드: 레시피 전체 행을 보여주되 저장된 usage 값으로 채움
+            const usageByMatId = new Map(usages.map(u => [u.materialId, u]));
+            allComponents = recipeComponents.map(comp => {
+                const saved = usageByMatId.get(comp.materialId);
+                return saved ? { ...comp, ...saved } : comp;
+            });
+            // 레시피에 없지만 수동으로 추가된 usage가 있으면 뒤에 붙임
+            usages.forEach(u => {
+                if (!recipeComponents.find(c => c.materialId === u.materialId)) {
+                    allComponents.push(u);
+                }
+            });
+        }
         const components = allComponents.filter(c => c.role !== '경화제');
         const ignoreMixId = data.id || '';
         // Primer → Color → Clear 순, 각 그룹 내 주제 → 희석제 순 정렬
@@ -14764,7 +16029,13 @@ var PaintMixModule = (function() {
 
         const section = row.querySelector('.pmix-can-section');
         if (section) section.style.display = chk.checked ? '' : 'none';
-        if (!chk.checked) {
+        if (chk.checked) {
+            const cansInput = row.querySelector('.pmix-warehouse-cans');
+            if (cansInput && !Number(cansInput.value)) {
+                cansInput.value = '1';
+                _onCanCountChange(cansInput, rowIdx);
+            }
+        } else {
             const cansInput = row.querySelector('.pmix-warehouse-cans');
             const useGInput = row.querySelector('.pmix-warehouse-use-g');
             if (cansInput) cansInput.value = '';
@@ -15123,7 +16394,8 @@ var PaintMixModule = (function() {
                 { store: STORE, op: 'remove', id }
             ]);
             UIUtils.toast('삭제되었습니다.', 'success');
-            search();
+            if (_curTab === 'mixhist') searchMixHist();
+            else search();
         });
     }
 
@@ -15223,13 +16495,32 @@ var ProdSubMaterialsModule = (function() {
         const filterBar = container.querySelector('.filter-bar');
         if (filterBar) {
             filterBar.insertAdjacentHTML('beforebegin',
-                '<div class="mes-action-bar">' +
-                '<div class="mes-action-bar-tabs">' +
-                '<button type="button" class="mes-bar-tab active" onclick="ProdSubMaterialsModule.search()"><span class="material-symbols-outlined">inventory</span>부자재 현황</button>' +
-                '<button type="button" class="mes-bar-tab" onclick="ProdSubMaterialsModule.openTypeModal()"><span class="material-symbols-outlined">list_alt</span>소모자재 종류</button>' +
+                '<div class="mes-apple-menu-hero" style="padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
+                '<div style="display:flex;gap:10px;flex:1;flex-wrap:wrap;">' +
+                '<button type="button" onclick="ProdSubMaterialsModule.search()"' +
+                ' style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;' +
+                'border:2px solid var(--accent-blue);background:var(--bg-primary);color:var(--text-primary);' +
+                'cursor:pointer;min-width:160px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">' +
+                '<span style="display:inline-flex;align-items:center;justify-content:center;' +
+                'width:42px;height:42px;border-radius:10px;flex-shrink:0;background:var(--accent-blue);">' +
+                '<span class="material-symbols-outlined" style="font-size:24px;color:#fff;">inventory</span></span>' +
+                '<span style="display:flex;flex-direction:column;gap:2px;">' +
+                '<span style="font-size:0.92rem;font-weight:700;">부자재 현황</span>' +
+                '<span style="font-size:0.73rem;color:var(--text-muted);">입고 현황 조회</span>' +
+                '</span></button>' +
+                '<button type="button" onclick="ProdSubMaterialsModule.openTypeModal()"' +
+                ' style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;' +
+                'border:1.5px solid var(--border-color);background:var(--bg-primary);color:var(--text-primary);' +
+                'cursor:pointer;min-width:160px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">' +
+                '<span style="display:inline-flex;align-items:center;justify-content:center;' +
+                'width:42px;height:42px;border-radius:10px;flex-shrink:0;background:var(--bg-secondary);">' +
+                '<span class="material-symbols-outlined" style="font-size:24px;color:var(--text-muted);">list_alt</span></span>' +
+                '<span style="display:flex;flex-direction:column;gap:2px;">' +
+                '<span style="font-size:0.92rem;font-weight:700;">소모자재 종류</span>' +
+                '<span style="font-size:0.73rem;color:var(--text-muted);">자재 분류 관리</span>' +
+                '</span></button>' +
                 '</div>' +
-                '<div class="mes-action-bar-sep"></div>' +
-                '<div class="mes-action-bar-btns">' +
+                '<div style="display:flex;gap:8px;flex-shrink:0;">' +
                 '<button class="btn btn-primary btn-sm" onclick="ProdSubMaterialsModule.openAddModal()"><span class="material-symbols-outlined">add_circle</span> 입고 등록</button>' +
                 '<button class="btn btn-outline btn-sm" onclick="ProdSubMaterialsModule.exportData()"><span class="material-symbols-outlined">download</span> 내보내기</button>' +
                 '</div></div>'
@@ -20325,14 +21616,14 @@ var ProdEquipmentModule = (function() {
         return _EQUIP_TABS.map(function(t) {
             var active = _mode === t.key;
             return '<button data-equip-tab="' + t.key + '" onclick="ProdEquipmentModule.switchMode(\'' + t.key + '\')"'
-                + ' style="display:inline-flex;flex-direction:column;align-items:center;gap:4px;'
-                + 'padding:9px 14px;border:none;cursor:pointer;border-radius:10px;'
-                + 'min-width:68px;flex-shrink:0;transition:background .18s,color .18s;'
+                + ' style="display:inline-flex;flex-direction:column;align-items:center;gap:5px;'
+                + 'padding:10px 16px;border:none;cursor:pointer;border-radius:10px;'
+                + 'min-width:74px;flex-shrink:0;transition:background .18s,color .18s;'
                 + 'background:' + (active ? 'var(--accent-blue)' : 'transparent') + ';'
                 + 'color:' + (active ? '#fff' : 'var(--text-muted)') + ';'
                 + 'font-weight:' + (active ? '600' : '400') + ';">'
-                + '<span class="material-symbols-outlined" style="font-size:22px;">' + t.icon + '</span>'
-                + '<span style="font-size:0.65rem;line-height:1.2;text-align:center;white-space:nowrap;">' + t.label + '</span>'
+                + '<span class="material-symbols-outlined" style="font-size:30px;">' + t.icon + '</span>'
+                + '<span style="font-size:0.7rem;line-height:1.2;text-align:center;white-space:nowrap;">' + t.label + '</span>'
                 + '</button>';
         }).join('');
     }
@@ -25415,13 +26706,38 @@ var QualityPerformanceModule = (function() {
         const y = new Date().getFullYear();
         container.innerHTML = `
         <div class="fade-in-up">
-            <div class="mes-action-bar">
-                <div class="mes-action-bar-tabs">
-                    <button type="button" class="mes-bar-tab active" onclick="QualityPerformanceModule.search()"><span class="material-symbols-outlined">query_stats</span>품질 실적</button>
-                    <button type="button" class="mes-bar-tab" onclick="Router.navigate('painting-quality-performance')"><span class="material-symbols-outlined">lab_profile</span>도장검사실적</button>
+            <div class="mes-apple-menu-hero" style="padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <div style="display:flex;gap:10px;flex:1;flex-wrap:wrap;">
+                    <button type="button" onclick="QualityPerformanceModule.search()"
+                        style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;
+                               border:2px solid var(--accent-blue);background:var(--bg-primary);color:var(--text-primary);
+                               cursor:pointer;min-width:160px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+                        <span style="display:inline-flex;align-items:center;justify-content:center;
+                                     width:42px;height:42px;border-radius:10px;flex-shrink:0;
+                                     background:var(--accent-blue);">
+                            <span class="material-symbols-outlined" style="font-size:24px;color:#fff;">query_stats</span>
+                        </span>
+                        <span style="display:flex;flex-direction:column;gap:2px;">
+                            <span style="font-size:0.92rem;font-weight:700;">품질 실적</span>
+                            <span style="font-size:0.73rem;color:var(--text-muted);">실적 현황 조회</span>
+                        </span>
+                    </button>
+                    <button type="button" onclick="Router.navigate('painting-quality-performance')"
+                        style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;
+                               border:1.5px solid var(--border-color);background:var(--bg-primary);color:var(--text-primary);
+                               cursor:pointer;min-width:160px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+                        <span style="display:inline-flex;align-items:center;justify-content:center;
+                                     width:42px;height:42px;border-radius:10px;flex-shrink:0;
+                                     background:var(--bg-secondary);">
+                            <span class="material-symbols-outlined" style="font-size:24px;color:var(--text-muted);">lab_profile</span>
+                        </span>
+                        <span style="display:flex;flex-direction:column;gap:2px;">
+                            <span style="font-size:0.92rem;font-weight:700;">도장검사 실적</span>
+                            <span style="font-size:0.73rem;color:var(--text-muted);">도장 검사 현황</span>
+                        </span>
+                    </button>
                 </div>
-                <div class="mes-action-bar-sep"></div>
-                <div class="mes-action-bar-btns">
+                <div style="display:flex;gap:8px;flex-shrink:0;">
                     <button class="btn btn-outline btn-sm" onclick="QualityPerformanceModule.openTargetModal()"><span class="material-symbols-outlined">flag</span> 목표 설정</button>
                     <button class="btn btn-primary btn-sm" onclick="QualityPerformanceModule.openRecordModal()"><span class="material-symbols-outlined">add_circle</span> 실적 등록</button>
                 </div>
@@ -25626,11 +26942,35 @@ var ProdSpcModule = (function() {
         const today = UIUtils.today();
         container.innerHTML = `
         <div class="fade-in-up">
-            <div class="mes-action-bar">
-                <div class="mes-action-bar-tabs">
-                    <button type="button" class="mes-bar-tab active" onclick="ProdSpcModule.search()"><span class="material-symbols-outlined">ssid_chart</span>SPC 관리</button>
-                    <button type="button" class="mes-bar-tab" onclick="Router.navigate('prod-quality')"><span class="material-symbols-outlined">edit_document</span>초중종물 작성</button>
-                </div>
+            <div class="mes-apple-menu-hero" style="padding:16px 20px;margin-bottom:20px;display:flex;gap:10px;flex-wrap:wrap;">
+                <button type="button" onclick="ProdSpcModule.search()"
+                    style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;
+                           border:2px solid var(--accent-blue);background:var(--bg-primary);color:var(--text-primary);
+                           cursor:pointer;min-width:160px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+                    <span style="display:inline-flex;align-items:center;justify-content:center;
+                                 width:42px;height:42px;border-radius:10px;flex-shrink:0;
+                                 background:var(--accent-blue);">
+                        <span class="material-symbols-outlined" style="font-size:24px;color:#fff;">ssid_chart</span>
+                    </span>
+                    <span style="display:flex;flex-direction:column;gap:2px;">
+                        <span style="font-size:0.92rem;font-weight:700;">SPC 관리</span>
+                        <span style="font-size:0.73rem;color:var(--text-muted);">관리도 조회</span>
+                    </span>
+                </button>
+                <button type="button" onclick="Router.navigate('prod-quality')"
+                    style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;
+                           border:1.5px solid var(--border-color);background:var(--bg-primary);color:var(--text-primary);
+                           cursor:pointer;min-width:160px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+                    <span style="display:inline-flex;align-items:center;justify-content:center;
+                                 width:42px;height:42px;border-radius:10px;flex-shrink:0;
+                                 background:var(--bg-secondary);">
+                        <span class="material-symbols-outlined" style="font-size:24px;color:var(--text-muted);">edit_document</span>
+                    </span>
+                    <span style="display:flex;flex-direction:column;gap:2px;">
+                        <span style="font-size:0.92rem;font-weight:700;">초중종물 작성</span>
+                        <span style="font-size:0.73rem;color:var(--text-muted);">실측값 입력</span>
+                    </span>
+                </button>
             </div>
 
             <div class="filter-bar" style="flex-wrap:wrap;gap:10px;margin-bottom:16px;">
@@ -25990,323 +27330,204 @@ var ProdSpcModule = (function() {
 
 /**
  * 폐수처리 계획 및 실적 (WastewaterModule)
- * 연 2~3회 계획 단위, 월별 계획일/폐수량 + 실적일/폐수량 관리
+ * 연도별 행, 월별 열 표 형식 — 주기 + ○(계획)/●(실적완료) 표시
  */
 var WastewaterModule = (function () {
     const ST_PLAN = DB.STORES.WASTEWATER_PLAN;
     const ST_LOG  = DB.STORES.WASTEWATER_LOG;
+    const MONTHS  = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
+    const CYCLE_OPTS = ['','4개월','6개월','12개월'];
 
-    const MONTHS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
+    let _displayYears = [];
 
-    let _year  = new Date().getFullYear();
-    let _planId = null;
-
-    // ── 진입점 ─────────────────────────────────────────────────────
-    function render(container) {
-        _year = new Date().getFullYear();
-        _planId = null;
-        _renderMain(container);
-    }
-
-    // 설비관리 탭 내부에서 호출될 때 사용
-    function _renderInTab(el) {
-        _year = _year || new Date().getFullYear();
-        _renderMain(el);
-    }
+    function render(container)       { _renderMain(container); }
+    function _renderInTab(el)        { _renderMain(el); }
 
     function _renderMain(container) {
-        const plans = _plansForYear(_year);
-        const yearOpts = _yearRange().map(y =>
-            `<option value="${y}" ${y===_year?'selected':''}>${y}년</option>`).join('');
+        const cy = new Date().getFullYear();
+        if (!_displayYears.length) {
+            _displayYears = [cy + 1, cy, cy - 1, cy - 2];
+        }
 
         container.innerHTML = `
         <div class="fade-in-up">
-            <div class="page-header" style="margin-bottom:12px;">
+            <div class="page-header" style="margin-bottom:16px;">
                 <div class="page-header-left">
                     <h3 style="margin:0;font-size:1.1rem;">폐수처리 계획 및 실적</h3>
-                    <p style="margin:4px 0 0;font-size:0.82rem;color:var(--text-secondary);">연 2~3회 계획 단위로 월별 폐수처리 날짜 및 폐수량을 관리합니다.</p>
+                    <p style="margin:4px 0 0;font-size:0.82rem;color:var(--text-secondary);">
+                        셀 클릭 시 계획일·폐수량·실적 입력 &nbsp;|&nbsp;
+                        <span style="color:var(--accent-blue);">○</span> 계획&nbsp;
+                        <span style="color:var(--accent-green);">●</span> 실적완료
+                    </p>
                 </div>
-                <div class="page-actions" style="display:flex;gap:8px;align-items:center;">
-                    <select class="form-select" id="wwYear" style="width:100px;"
-                        onchange="WastewaterModule._onYearChange(this.value)">${yearOpts}</select>
-                    <button class="btn btn-primary" onclick="WastewaterModule.openPlanModal()">
-                        <span class="material-symbols-outlined">add</span> 계획 등록
+                <div class="page-actions">
+                    <button class="btn btn-sm btn-outline" onclick="WastewaterModule._addYear()">
+                        <span class="material-symbols-outlined" style="font-size:16px;">add</span> 연도 추가
                     </button>
                 </div>
             </div>
-
-            <div id="wwPlanList"></div>
+            <div style="overflow-x:auto;">
+                <table class="data-table" id="wwTable" style="min-width:900px;">
+                    <thead>
+                        <tr>
+                            <th style="width:56px;text-align:center;">년도</th>
+                            <th style="width:80px;text-align:center;">주기</th>
+                            ${MONTHS.map(m => `<th style="width:56px;text-align:center;">${m}</th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody id="wwTbody">
+                        ${_displayYears.map(y => _buildRow(y)).join('')}
+                    </tbody>
+                </table>
+            </div>
         </div>`;
-
-        _renderPlanList(document.getElementById('wwPlanList'), plans);
     }
 
-    function _renderPlanList(el, plans) {
-        if (!plans.length) {
-            el.innerHTML = `<div class="empty-state" style="padding:60px 0;">
-                <span class="material-symbols-outlined" style="font-size:48px;color:var(--text-muted);">water_drop</span>
-                <p style="color:var(--text-secondary);margin-top:12px;">${_year}년 폐수처리 계획이 없습니다.<br>상단 [계획 등록] 버튼으로 추가하세요.</p>
-            </div>`;
-            return;
-        }
+    function _buildRow(year) {
+        const plan  = _getPlan(year);
+        const cycle = plan ? (plan.cycle || '') : '';
+        const cycleOpts = CYCLE_OPTS.map(v =>
+            `<option value="${v}" ${v === cycle ? 'selected' : ''}>${v || '선택'}</option>`).join('');
 
-        el.innerHTML = plans.map(p => _renderPlanCard(p)).join('');
-    }
-
-    function _renderPlanCard(plan) {
-        const logs  = _logsForPlan(plan.id);
-        const round = plan.round;
-        const colors = ['var(--accent-blue)','var(--accent-green)','var(--accent-orange,#f59e0b)'];
-        const color = colors[(round - 1) % colors.length];
-
-        const totalPlan   = logs.reduce((s,l) => s + (Number(l.planAmount)||0), 0);
-        const totalActual = logs.reduce((s,l) => s + (Number(l.actualAmount)||0), 0);
-        const doneCnt     = logs.filter(l => l.actualDate).length;
-
-        const rowsHtml = MONTHS.map((mLabel, mi) => {
+        const cells = MONTHS.map((_, mi) => {
             const m   = mi + 1;
-            const log = logs.find(l => l.month === m);
-            const lid = log ? log.id : '';
-            return `
-            <tr>
-                <td style="font-weight:500;width:52px;">${mLabel}</td>
-                <td>
-                    <input type="date" class="form-input" style="width:130px;font-size:0.82rem;"
-                        value="${log?.planDate||''}"
-                        onchange="WastewaterModule.saveLog('${plan.id}',${m},'planDate',this.value,'${lid}')">
-                </td>
-                <td>
-                    <div style="display:flex;align-items:center;gap:4px;">
-                        <input type="number" class="form-input" style="width:90px;font-size:0.82rem;text-align:right;"
-                            placeholder="0" min="0" value="${log?.planAmount||''}"
-                            onchange="WastewaterModule.saveLog('${plan.id}',${m},'planAmount',this.value,'${lid}')">
-                        <span style="font-size:0.78rem;color:var(--text-muted);">L</span>
-                    </div>
-                </td>
-                <td>
-                    <input type="date" class="form-input" style="width:130px;font-size:0.82rem;"
-                        value="${log?.actualDate||''}"
-                        onchange="WastewaterModule.saveLog('${plan.id}',${m},'actualDate',this.value,'${lid}')">
-                </td>
-                <td>
-                    <div style="display:flex;align-items:center;gap:4px;">
-                        <input type="number" class="form-input" style="width:90px;font-size:0.82rem;text-align:right;"
-                            placeholder="0" min="0" value="${log?.actualAmount||''}"
-                            onchange="WastewaterModule.saveLog('${plan.id}',${m},'actualAmount',this.value,'${lid}')">
-                        <span style="font-size:0.78rem;color:var(--text-muted);">L</span>
-                    </div>
-                </td>
-                <td>
-                    <input type="text" class="form-input" style="width:160px;font-size:0.82rem;"
-                        placeholder="비고" value="${log?.note||''}"
-                        onchange="WastewaterModule.saveLog('${plan.id}',${m},'note',this.value,'${lid}')">
-                </td>
-            </tr>`;
+            const log = _getLog(year, m);
+            let mark  = '';
+            if (log && log.actualDate) {
+                mark = `<span style="color:var(--accent-green);font-size:1.1rem;line-height:1;">●</span>`;
+            } else if (log && (log.planDate || log.planAmount != null)) {
+                mark = `<span style="color:var(--accent-blue);font-size:1.1rem;line-height:1;">○</span>`;
+            }
+            return `<td style="text-align:center;cursor:pointer;padding:6px 2px;"
+                        onclick="WastewaterModule._openCell(${year},${m})">${mark}</td>`;
         }).join('');
 
         return `
-        <div class="card" style="margin-bottom:16px;">
-            <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;
-                         border-left:4px solid ${color};padding-left:16px;">
-                <div style="display:flex;align-items:center;gap:12px;">
-                    <span class="material-symbols-outlined" style="color:${color};font-size:20px;">water_drop</span>
-                    <div>
-                        <h4 style="margin:0;font-size:0.95rem;font-weight:600;">${plan.year}년 ${plan.round}차 폐수처리</h4>
-                        ${plan.manager ? `<div style="font-size:0.78rem;color:var(--text-secondary);margin-top:2px;">담당: ${plan.manager}</div>` : ''}
-                    </div>
-                    <div style="display:flex;gap:8px;margin-left:16px;">
-                        <span class="badge badge-info" style="font-size:0.75rem;">계획 ${totalPlan.toLocaleString()} L</span>
-                        <span class="badge ${totalActual>0?'badge-success':'badge-secondary'}" style="font-size:0.75rem;">실적 ${totalActual.toLocaleString()} L</span>
-                        <span class="badge badge-warning" style="font-size:0.75rem;">완료 ${doneCnt}/12</span>
-                    </div>
-                </div>
-                <div style="display:flex;gap:6px;">
-                    <button class="btn btn-xs btn-outline" onclick="WastewaterModule.openPlanModal('${plan.id}')">수정</button>
-                    <button class="btn btn-xs btn-danger"  onclick="WastewaterModule.deletePlan('${plan.id}')">삭제</button>
-                </div>
-            </div>
-            <div class="card-body" style="padding:0;overflow-x:auto;">
-                <table class="data-table" style="min-width:700px;">
-                    <thead>
-                        <tr>
-                            <th style="width:52px;">월</th>
-                            <th>계획일</th>
-                            <th>계획 폐수량</th>
-                            <th>실적일</th>
-                            <th>실적 폐수량</th>
-                            <th>비고</th>
-                        </tr>
-                    </thead>
-                    <tbody>${rowsHtml}</tbody>
-                    <tfoot>
-                        <tr style="background:var(--bg-secondary);font-weight:600;">
-                            <td>합계</td>
-                            <td>-</td>
-                            <td style="text-align:right;padding-right:12px;">${totalPlan.toLocaleString()} L</td>
-                            <td>-</td>
-                            <td style="text-align:right;padding-right:12px;">${totalActual.toLocaleString()} L</td>
-                            <td></td>
-                        </tr>
-                    </tfoot>
-                </table>
-            </div>
-            ${plan.note ? `<div style="padding:8px 16px;font-size:0.8rem;color:var(--text-muted);border-top:1px solid var(--border-color);">메모: ${plan.note}</div>` : ''}
-        </div>`;
+        <tr data-ww-year="${year}">
+            <td style="text-align:center;font-weight:600;">${year}</td>
+            <td style="padding:4px 6px;">
+                <select class="form-select" style="font-size:0.78rem;padding:3px 4px;width:100%;"
+                    onchange="WastewaterModule._saveCycle(${year},this.value)">${cycleOpts}</select>
+            </td>
+            ${cells}
+        </tr>`;
     }
 
-    // ── 계획 모달 ──────────────────────────────────────────────────
-    function openPlanModal(id) {
-        const p = id ? Storage.getById(ST_PLAN, id) : null;
-        const cy = new Date().getFullYear();
-        const yearOpts = _yearRange().map(y =>
-            `<option value="${y}" ${(p?.year||_year)===y?'selected':''}>${y}년</option>`).join('');
-        const roundOpts = [1,2,3].map(r =>
-            `<option value="${r}" ${(p?.round||1)===r?'selected':''}>${r}차</option>`).join('');
+    function _getPlan(year) {
+        return (Storage.getAll(ST_PLAN) || []).find(p => p.year === year && !p.round);
+    }
+
+    function _getLog(year, month) {
+        return (Storage.getAll(ST_LOG) || []).find(l => l.year === year && l.month === month);
+    }
+
+    async function _saveCycle(year, cycle) {
+        const plan = _getPlan(year);
+        if (plan) {
+            await Storage.update(ST_PLAN, { ...plan, cycle });
+        } else {
+            await Storage.add(ST_PLAN, { year, cycle });
+        }
+    }
+
+    function _openCell(year, month) {
+        const log    = _getLog(year, month) || {};
+        const mLabel = MONTHS[month - 1];
 
         const body = `
         <div style="display:flex;flex-direction:column;gap:14px;">
+            <div style="font-size:0.8rem;font-weight:600;color:var(--accent-blue);border-bottom:1px solid var(--border-color);padding-bottom:6px;">계획 (월 단위)</div>
             <div class="form-group">
-                <label class="form-label">연도</label>
-                <select class="form-select" id="wwPYear">${yearOpts}</select>
+                <label class="form-label">계획 폐수량 (L)</label>
+                <input type="number" class="form-input" id="wwCPlanAmt" min="0" placeholder="0"
+                    value="${log.planAmount != null ? log.planAmount : ''}">
+            </div>
+            <div style="font-size:0.8rem;font-weight:600;color:var(--accent-green);border-bottom:1px solid var(--border-color);padding-bottom:6px;margin-top:4px;">실적</div>
+            <div class="form-group">
+                <label class="form-label">실적일</label>
+                <input type="date" class="form-input" id="wwCActDate" value="${log.actualDate || ''}">
             </div>
             <div class="form-group">
-                <label class="form-label">회차</label>
-                <select class="form-select" id="wwPRound">${roundOpts}</select>
+                <label class="form-label">실적 폐수량 (L)</label>
+                <input type="number" class="form-input" id="wwCActAmt" min="0" placeholder="0"
+                    value="${log.actualAmount != null ? log.actualAmount : ''}">
             </div>
             <div class="form-group">
-                <label class="form-label">담당자</label>
-                <input type="text" class="form-input" id="wwPManager" value="${p?.manager||''}" placeholder="담당자명">
-            </div>
-            <div class="form-group">
-                <label class="form-label">메모</label>
-                <textarea class="form-input" id="wwPNote" rows="2" style="resize:vertical;"
-                    placeholder="특이사항, 허가 번호 등">${p?.note||''}</textarea>
+                <label class="form-label">비고</label>
+                <input type="text" class="form-input" id="wwCNote" value="${log.note || ''}" placeholder="특이사항">
             </div>
         </div>`;
 
-        UIUtils.showModal(id ? '계획 수정' : '폐수처리 계획 등록', body, `
+        UIUtils.showModal(`${year}년 ${mLabel} 폐수처리`, body, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" onclick="WastewaterModule.savePlan('${id||''}')">저장</button>`, 'sm');
+            ${log.id ? `<button class="btn btn-danger" onclick="WastewaterModule._deleteCell('${log.id}',${year},${month})">삭제</button>` : ''}
+            <button class="btn btn-primary" onclick="WastewaterModule._saveCell('${log.id || ''}',${year},${month})">저장</button>`, 'sm');
     }
 
-    async function savePlan(id) {
-        const year    = parseInt(document.getElementById('wwPYear')?.value)  || _year;
-        const round   = parseInt(document.getElementById('wwPRound')?.value) || 1;
-        const manager = (document.getElementById('wwPManager')?.value || '').trim();
-        const note    = (document.getElementById('wwPNote')?.value    || '').trim();
+    async function _saveCell(id, year, month) {
+        const planAmtVal   =  document.getElementById('wwCPlanAmt')?.value;
+        const actualDate   = (document.getElementById('wwCActDate')?.value    || '').trim();
+        const actualAmtVal =  document.getElementById('wwCActAmt')?.value;
+        const note         = (document.getElementById('wwCNote')?.value        || '').trim();
 
-        // 중복 체크
-        const exists = (Storage.getAll(ST_PLAN)||[]).find(p =>
-            p.year === year && p.round === round && p.id !== id);
-        if (exists) {
-            UIUtils.toast(`${year}년 ${round}차 계획이 이미 존재합니다.`, 'error'); return;
-        }
-
-        const data = { year, round, manager, note };
+        const data = {
+            year: parseInt(year), month: parseInt(month),
+            planAmount:   planAmtVal   === '' ? null : Number(planAmtVal),
+            actualDate,
+            actualAmount: actualAmtVal === '' ? null : Number(actualAmtVal),
+            note
+        };
         if (id) {
-            await Storage.update(ST_PLAN, { id, ...data });
-            UIUtils.toast('계획이 수정되었습니다.', 'success');
+            await Storage.update(ST_LOG, { id, ...data });
         } else {
-            await Storage.add(ST_PLAN, data);
-            UIUtils.toast('계획이 등록되었습니다.', 'success');
+            await Storage.add(ST_LOG, data);
         }
         UIUtils.closeModal();
-        _year = year;
-        const root = document.getElementById('equipMainContent') || document.getElementById('contentArea');
-        _renderMain(root);
+        UIUtils.toast('저장되었습니다.', 'success');
+        _refreshRow(parseInt(year));
     }
 
-    async function deletePlan(id) {
-        if (!confirm('이 계획과 모든 월별 실적을 삭제하시겠습니까?')) return;
-        await Storage.delete(ST_PLAN, id);
-        const logs = (Storage.getAll(ST_LOG)||[]).filter(l => l.planId === id);
-        for (const l of logs) await Storage.delete(ST_LOG, l.id);
-        UIUtils.toast('삭제되었습니다.', 'success');
-        const root = document.getElementById('equipMainContent') || document.getElementById('contentArea');
-        _renderMain(root);
+    async function _deleteCell(id, year, month) {
+        if (!confirm('이 항목을 삭제하시겠습니까?')) return;
+        await Storage.delete(ST_LOG, id);
+        UIUtils.closeModal();
+        _refreshRow(parseInt(year));
     }
 
-    // ── 월별 로그 인라인 저장 ─────────────────────────────────────
-    async function saveLog(planId, month, field, value, existingId) {
-        month = parseInt(month);
-        const allLogs = Storage.getAll(ST_LOG) || [];
-        let log = allLogs.find(l => l.planId === planId && l.month === month);
-
-        if (field === 'planAmount' || field === 'actualAmount') {
-            value = value === '' ? null : Number(value);
-        }
-
-        if (log) {
-            log[field] = value;
-            await Storage.update(ST_LOG, log);
-        } else {
-            const newLog = { planId, month };
-            newLog[field] = value;
-            await Storage.add(ST_LOG, newLog);
-        }
-        _refreshSummary(planId);
+    function _refreshRow(year) {
+        const tbody = document.getElementById('wwTbody');
+        if (!tbody) return;
+        const tr = tbody.querySelector(`tr[data-ww-year="${year}"]`);
+        if (!tr) return;
+        const tmp = document.createElement('tbody');
+        tmp.innerHTML = _buildRow(year);
+        tbody.replaceChild(tmp.firstElementChild, tr);
     }
 
-    function _refreshSummary(planId) {
-        const plan  = Storage.getById(ST_PLAN, planId);
-        if (!plan) return;
-        const logs  = _logsForPlan(planId);
-        const totalPlan   = logs.reduce((s,l) => s + (Number(l.planAmount)||0), 0);
-        const totalActual = logs.reduce((s,l) => s + (Number(l.actualAmount)||0), 0);
-        const doneCnt     = logs.filter(l => l.actualDate).length;
-
-        // 배지 업데이트
-        const cards = document.querySelectorAll('.card');
-        cards.forEach(card => {
-            const btn = card.querySelector(`button[onclick*="${planId}"]`);
-            if (!btn) return;
-            const badges = card.querySelectorAll('.badge');
-            if (badges.length >= 3) {
-                badges[0].textContent = `계획 ${totalPlan.toLocaleString()} L`;
-                badges[1].textContent = `실적 ${totalActual.toLocaleString()} L`;
-                badges[1].className   = `badge ${totalActual>0?'badge-success':'badge-secondary'}`;
-                badges[2].textContent = `완료 ${doneCnt}/12`;
-            }
-            // tfoot 합계 업데이트
-            const tfoot = card.querySelector('tfoot tr');
-            if (tfoot) {
-                const cells = tfoot.querySelectorAll('td');
-                if (cells[2]) cells[2].textContent = totalPlan.toLocaleString() + ' L';
-                if (cells[4]) cells[4].textContent = totalActual.toLocaleString() + ' L';
-            }
-        });
-    }
-
-    // ── 헬퍼 ───────────────────────────────────────────────────────
-    function _plansForYear(year) {
-        return (Storage.getAll(ST_PLAN)||[])
-            .filter(p => p.year === year)
-            .sort((a,b) => a.round - b.round);
-    }
-
-    function _logsForPlan(planId) {
-        return (Storage.getAll(ST_LOG)||[]).filter(l => l.planId === planId);
-    }
-
-    function _yearRange() {
-        const cy = new Date().getFullYear();
-        return [cy-1, cy, cy+1];
-    }
-
-    function _onYearChange(val) {
-        _year = parseInt(val);
-        const plans = _plansForYear(_year);
-        _renderPlanList(document.getElementById('wwPlanList'), plans);
+    function _addYear() {
+        const tbody = document.getElementById('wwTbody');
+        if (!tbody) return;
+        const rows  = tbody.querySelectorAll('tr[data-ww-year]');
+        const years = Array.from(rows).map(r => parseInt(r.dataset.wwYear));
+        const prev  = (Math.min(...years, new Date().getFullYear())) - 1;
+        _displayYears.push(prev);
+        tbody.insertAdjacentHTML('beforeend', _buildRow(prev));
     }
 
     return {
         render,
         _renderInTab,
-        openPlanModal,
-        savePlan,
-        deletePlan,
-        saveLog,
-        _onYearChange
+        _saveCycle,
+        _openCell,
+        _saveCell,
+        _deleteCell,
+        _addYear,
+        // 하위 호환
+        openPlanModal: () => {},
+        savePlan:      async () => {},
+        deletePlan:    async () => {},
+        saveLog:       async () => {},
+        _onYearChange: () => {}
     };
 })();
 

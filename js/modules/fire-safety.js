@@ -68,21 +68,18 @@ var FireSafetyNavUI = (function () {
     ];
 
     function renderSection(activePage, title, desc) {
-        return `
-            <div style="margin-bottom:18px;">
-                <div class="mes-apple-tabbar">
-                    ${MENUS.map(function (m) {
-                        const active = m.id === activePage;
-                        return `<button type="button"
-                            onclick="Router.navigate('${m.id}')"
-                            class="mes-apple-tab ${active ? 'active' : ''}">
-                            <span class="material-symbols-outlined">${m.icon}</span>
-                            <span class="mes-apple-tab-label">${m.label}</span>
-                        </button>`;
-                    }).join('')}
-                </div>
-            </div>
-        `;
+        return '<div class="mes-apple-menu-hero" style="padding:16px 20px;margin-bottom:20px;display:flex;flex-wrap:wrap;gap:10px;">' +
+            MENUS.map(function (m) {
+                const active = m.id === activePage;
+                return '<button type="button" onclick="Router.navigate(\'' + m.id + '\')"' +
+                    ' style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;' +
+                    'border:' + (active ? '2px solid var(--accent-blue)' : '1.5px solid var(--border-color)') + ';' +
+                    'background:var(--bg-primary);color:var(--text-primary);cursor:pointer;min-width:140px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">' +
+                    '<span style="display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:10px;flex-shrink:0;' +
+                    'background:' + (active ? 'var(--accent-blue)' : 'var(--bg-secondary)') + ';">' +
+                    '<span class="material-symbols-outlined" style="font-size:24px;color:' + (active ? '#fff' : 'var(--text-muted)') + ';">' + m.icon + '</span></span>' +
+                    '<span style="font-size:0.88rem;font-weight:700;white-space:nowrap;">' + m.label + '</span></button>';
+            }).join('') + '</div>';
     }
 
     return { renderSection };

@@ -54,33 +54,25 @@ var SalesProcessUI = (function () {
     ];
     function renderSection(activePage) {
         return `
-            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:24px;">
+            <div class="mes-apple-menu-hero" style="padding:16px 20px;margin-bottom:20px;display:flex;gap:10px;flex-wrap:wrap;">
                 ${MENUS.map(function (menu) {
                     const active = menu.id === activePage;
                     return `
-                        <div onclick="Router.navigate('${menu.id}')"
-                             onmouseenter="this.style.boxShadow='0 6px 20px rgba(0,0,0,0.12)';this.style.transform='translateY(-2px)'"
-                             onmouseleave="this.style.boxShadow='${active ? '0 4px 14px rgba(59,130,246,0.18)' : '0 2px 8px rgba(0,0,0,0.06)'}';this.style.transform=''"
-                             style="cursor:pointer;display:flex;align-items:center;gap:14px;
-                                    background:${active ? '#eff6ff' : '#ffffff'};
-                                    border:1px solid ${active ? menu.accent : 'var(--border-color)'};
-                                    border-left:4px solid ${active ? menu.accent : 'var(--border-color)'};
-                                    border-radius:12px;padding:16px 20px;
-                                    box-shadow:${active ? '0 4px 14px rgba(59,130,246,0.18)' : '0 2px 8px rgba(0,0,0,0.06)'};
-                                    transition:box-shadow 0.2s,transform 0.2s;">
-                            <div style="width:44px;height:44px;border-radius:10px;flex-shrink:0;
-                                        display:flex;align-items:center;justify-content:center;
-                                        background:${active ? menu.accent : '#f1f5f9'};">
-                                <span class="material-symbols-outlined"
-                                      style="font-size:24px;color:${active ? '#ffffff' : 'var(--text-muted)'};">${menu.icon}</span>
-                            </div>
-                            <div style="flex:1;min-width:0;">
-                                <div style="font-size:1rem;font-weight:700;color:${active ? menu.accent : 'var(--text-primary)'};">${menu.label}</div>
-                                <div style="font-size:0.8rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${menu.desc}</div>
-                            </div>
-                            ${active ? `<span class="material-symbols-outlined" style="color:${menu.accent};flex-shrink:0;font-size:20px;">check_circle</span>`
-                                     : `<span class="material-symbols-outlined" style="color:var(--text-muted);flex-shrink:0;">chevron_right</span>`}
-                        </div>`;
+                        <button type="button" onclick="Router.navigate('${menu.id}')"
+                            style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;
+                                   border:${active ? '2px solid var(--accent-blue)' : '1.5px solid var(--border-color)'};
+                                   background:var(--bg-primary);color:var(--text-primary);
+                                   cursor:pointer;min-width:160px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+                            <span style="display:inline-flex;align-items:center;justify-content:center;
+                                         width:42px;height:42px;border-radius:10px;flex-shrink:0;
+                                         background:${active ? 'var(--accent-blue)' : 'var(--bg-secondary)'};">
+                                <span class="material-symbols-outlined" style="font-size:24px;color:${active ? '#fff' : 'var(--text-muted)'};">${menu.icon}</span>
+                            </span>
+                            <span style="display:flex;flex-direction:column;gap:2px;">
+                                <span style="font-size:0.92rem;font-weight:700;">${menu.label}</span>
+                                <span style="font-size:0.73rem;color:var(--text-muted);">${menu.desc}</span>
+                            </span>
+                        </button>`;
                 }).join('')}
             </div>`;
     }

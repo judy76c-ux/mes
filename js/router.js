@@ -63,8 +63,8 @@ const Router = (function() {
         'injection-layout': '사출 레이아웃',
         'injection-wip': '사출 재공품 현황',
         'injection-room-layout': '사출실 레이아웃',
-        'painting-work': '도장 작업일지',
-        'painting-inspection': '도장 검사 일지',
+        'painting-work': '도장작업현황',
+        'painting-inspection': '도장작업현황',
         'painting-quality-performance': '도장품 실적',
         'laser-process': '레이져 공정',
         'laser-wip': '재공품 현황',
@@ -98,7 +98,7 @@ const Router = (function() {
         'drying-std':   '건조 및 셋팅룸 온도 기준서',
         'customer-return-nc-std': '고객 반송품 부적합품 처리 기준서',
         'prod-conditions': '작업조건 관리',
-        'paint-mix': '배합 기준서',
+        'paint-mix': '도료 사용이력',
         'prod-sub-materials': '부자재 관리',
         'prod-equipment': '설비관리',
         'five-s': '3정5S 관리',
@@ -177,7 +177,6 @@ const Router = (function() {
         'robot-pg-std': { target: 'prod-standards', label: '제조 관리 표준 돌아가기' },
         'drying-std':   { target: 'prod-standards', label: '제조 관리 표준 돌아가기' },
         'customer-return-nc-std': { target: 'prod-standards', label: '제조 관리 표준 돌아가기' },
-        'paint-mix': { target: 'prod-standards', label: '제조 관리 표준 돌아가기' },
 
         'cert-standard': { target: 'certifications-mgmt', label: '자격인증 관리로 돌아가기' },
         'cert-eval': { target: 'certifications-mgmt', label: '자격인증 관리로 돌아가기' },
@@ -207,6 +206,7 @@ const Router = (function() {
 
     function init() {
         setupNavigation();
+        setupTopbarPermissionInspector();
         setupSidebarTooltips();
         setupMobileMenu();
         setupSidebarToggle();
@@ -232,6 +232,35 @@ const Router = (function() {
                 navigate(page);
             });
         });
+    }
+
+    function injectTopbarPermissionInspector() {
+        const badge = document.getElementById('topbarUserBadge');
+        if (!badge) return;
+        if (badge.querySelector('.topbar-permission-tools')) return;
+        if (typeof AuthModule === 'undefined' || !AuthModule.getCurrentUser || !AuthModule.getCurrentUser()) return;
+        if (typeof AuthModule.openPageRolePermissionWindow !== 'function') return;
+
+        const tools = document.createElement('div');
+        tools.className = 'topbar-permission-tools';
+        tools.innerHTML = ''
+            + '<button type="button" class="topbar-permission-link" onclick="AuthModule.openPageRolePermissionWindow(\'access\')" title="현재 페이지 접근 가능 역할 보기">접근 가능</button>'
+            + '<button type="button" class="topbar-permission-link" onclick="AuthModule.openPageRolePermissionWindow(\'write\')" title="현재 페이지 입력 가능 역할 보기">입력 가능</button>';
+
+        const mailButton = badge.querySelector('button[onclick="AuthModule.openInboxModal()"]');
+        if (mailButton) mailButton.insertAdjacentElement('beforebegin', tools);
+        else badge.appendChild(tools);
+    }
+
+    function setupTopbarPermissionInspector() {
+        const badge = document.getElementById('topbarUserBadge');
+        if (!badge || badge.dataset.permissionInspectorBound === '1') return;
+        badge.dataset.permissionInspectorBound = '1';
+        const observer = new MutationObserver(function() {
+            injectTopbarPermissionInspector();
+        });
+        observer.observe(badge, { childList: true, subtree: true });
+        injectTopbarPermissionInspector();
     }
 
     function setupSidebarTooltips() {
@@ -351,6 +380,7 @@ const Router = (function() {
         if (typeof AuthModule !== 'undefined' && AuthModule.updateTopbar) {
             AuthModule.updateTopbar();
         }
+        injectTopbarPermissionInspector();
     }
 
     function renderModule(pageName) {

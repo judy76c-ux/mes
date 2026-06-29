@@ -7,6 +7,54 @@
  */
 
 // ===================================================================
+// 도장 공정 공유 내비게이션
+// ===================================================================
+var PaintingNavUI = (function() {
+    // page: 라우터 페이지 ID, tab: PaintingInspectionModule 내부 탭 key (없으면 기본)
+    var MENUS = [
+        { id: 'painting-work',       tab: '',                    icon: 'format_paint',    label: '도장 작업 현황',        sub: '도장 작업일지 입력·조회' },
+        { id: 'painting-inspection', tab: 'inspection',          icon: 'done_all',        label: '외관 검사',             sub: '도장 완료품 외관 검사 진행' },
+        { id: 'painting-inspection', tab: 'completion',          icon: 'task_alt',        label: '검사완료 실적',          sub: '외관 검사 완료 이력 조회' },
+        { id: 'painting-inspection', tab: 'residual-wip',        icon: 'inventory_2',     label: '도장후 전량 현황',       sub: '포장 후 남은 잔량 재공 현황' },
+        { id: 'painting-inspection', tab: 'nonconform-standard', icon: 'description',     label: '부적합품 처리 기준서',   sub: '기준서 업로드 및 인쇄' }
+    ];
+
+    function _navigate(m) {
+        if (m.tab) sessionStorage.setItem('paintingInspectionTab', m.tab);
+        Router.navigate(m.id);
+    }
+
+    function render(activePage, activeTab) {
+        return '<div class="mes-apple-menu-hero" style="padding:16px 20px;margin-bottom:20px;display:flex;gap:10px;flex-wrap:wrap;">' +
+            MENUS.map(function(m, i) {
+                var active = m.id === activePage && (m.tab ? m.tab === activeTab : !activeTab || activePage === 'painting-work');
+                return '<button type="button" onclick="PaintingNavUI._navigate(' + i + ')"' +
+                    ' style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;' +
+                    'border:' + (active ? '2px solid var(--accent-blue)' : '1.5px solid var(--border-color)') + ';' +
+                    'background:var(--bg-primary);color:var(--text-primary);' +
+                    'cursor:pointer;min-width:150px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">' +
+                    '<span style="display:inline-flex;align-items:center;justify-content:center;' +
+                    'width:42px;height:42px;border-radius:10px;flex-shrink:0;' +
+                    'background:' + (active ? 'var(--accent-blue)' : 'var(--bg-secondary)') + ';">' +
+                    '<span class="material-symbols-outlined" style="font-size:24px;color:' + (active ? '#fff' : 'var(--text-muted)') + ';">' + m.icon + '</span>' +
+                    '</span>' +
+                    '<span style="display:flex;flex-direction:column;gap:2px;">' +
+                    '<span style="font-size:0.92rem;font-weight:700;">' + m.label + '</span>' +
+                    '<span style="font-size:0.73rem;color:var(--text-muted);">' + m.sub + '</span>' +
+                    '</span></button>';
+            }).join('') + '</div>';
+    }
+
+    function navigateByIndex(idx) {
+        var m = MENUS[idx];
+        if (!m) return;
+        _navigate(m);
+    }
+
+    return { render: render, _navigate: navigateByIndex };
+})();
+
+// ===================================================================
 // 도장 입고
 // ===================================================================
 const PaintingIncomingModule = (function() {
@@ -552,6 +600,7 @@ const PaintingWorkModule = (function() {
 
         container.innerHTML = `
             <div class="fade-in-up">
+                ${PaintingNavUI.render('painting-work')}
                 <!-- 페이지 목적 안내 -->
                 <div style="margin-bottom:0.75rem;padding:8px 14px;background:rgba(37,99,235,0.05);border-left:3px solid var(--accent-blue);border-radius:0 6px 6px 0;">
                     <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;color:var(--accent-blue);margin-right:4px;">info</span>
@@ -4301,52 +4350,18 @@ const PaintingInspectionModule = (function() {
     }
 
     function render(container) {
+        // PaintingNavUI에서 탭을 지정해 왔으면 복원
+        const pendingTab = sessionStorage.getItem('paintingInspectionTab');
+        const validTabs = ['inspection', 'completion', 'residual-wip', 'nonconform-standard'];
+        if (pendingTab && validTabs.includes(pendingTab)) {
+            state.currentTab = pendingTab;
+            sessionStorage.removeItem('paintingInspectionTab');
+        }
+
         container.innerHTML = `
             <div class="fade-in-up">
-                <div class="page-header">
-                    <div class="page-actions">
-                    </div>
-                </div>
-
-                <!-- 탭 네비게이션 (타일 카드 스타일) -->
-                <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:20px;">
-                    ${[
-                        { key: 'inspection', label: '외관 검사', desc: '도장 완료품 외관 검사 진행', icon: 'done_all', accent: 'var(--accent-blue)' },
-                        { key: 'completion', label: '검사 완료 실적', desc: '외관 검사 완료 이력 조회', icon: 'task_alt', accent: '#10b981' },
-                        { key: 'residual-wip', label: '도장 후 잔량 현황', desc: '포장 후 남은 잔량 재공 현황 조회', icon: 'inventory_2', accent: '#f97316' },
-                        { key: 'nonconform-standard', label: '부적합 처리 기준서', desc: '기준서 업로드 및 인쇄', icon: 'description', accent: '#8b5cf6' }
-                    ].map(tab => {
-                        const active = state.currentTab === tab.key;
-                        return `
-                        <div data-painting-tab="${tab.key}"
-                             role="button"
-                             tabindex="0"
-                             aria-pressed="${active ? 'true' : 'false'}"
-                             onmouseenter="this.style.boxShadow='0 6px 20px rgba(0,0,0,0.12)';this.style.transform='translateY(-2px)'"
-                             onmouseleave="this.style.boxShadow='${active ? '0 4px 14px rgba(37,99,235,0.15)' : '0 2px 8px rgba(0,0,0,0.06)'}';this.style.transform=''"
-                             style="cursor:pointer;display:flex;align-items:center;gap:14px;
-                                    background:${active ? '#eff6ff' : '#ffffff'};
-                                    border:1px solid ${active ? tab.accent : 'var(--border-color)'};
-                                    border-left:4px solid ${active ? tab.accent : 'var(--border-color)'};
-                                    border-radius:12px;padding:16px 20px;
-                                    box-shadow:${active ? '0 4px 14px rgba(37,99,235,0.15)' : '0 2px 8px rgba(0,0,0,0.06)'};
-                                    transition:box-shadow 0.2s,transform 0.2s;">
-                            <div style="width:44px;height:44px;border-radius:10px;flex-shrink:0;
-                                        display:flex;align-items:center;justify-content:center;
-                                        background:${active ? tab.accent : '#f1f5f9'};">
-                                <span class="material-symbols-outlined"
-                                      style="font-size:24px;color:${active ? '#ffffff' : 'var(--text-muted)'};">${tab.icon}</span>
-                            </div>
-                            <div style="flex:1;min-width:0;">
-                                <div style="font-size:1rem;font-weight:700;color:${active ? tab.accent : 'var(--text-primary)'};">${tab.label}</div>
-                                <div style="font-size:0.8rem;color:var(--text-muted);">${tab.desc}</div>
-                            </div>
-                            ${active
-                                ? `<span class="material-symbols-outlined" style="color:${tab.accent};flex-shrink:0;font-size:20px;">check_circle</span>`
-                                : `<span class="material-symbols-outlined" style="color:var(--text-muted);flex-shrink:0;">chevron_right</span>`}
-                        </div>`;
-                    }).join('')}
-                </div>
+                <!-- 공유 상단 내비게이션 -->
+                ${PaintingNavUI.render('painting-inspection', state.currentTab)}
 
                 <!-- 탭 컨텐츠 -->
                 <div id="tabContent"></div>
@@ -4355,7 +4370,6 @@ const PaintingInspectionModule = (function() {
 
         // 탭 컨텐츠 렌더링
         setTimeout(() => {
-            _bindTabEvents();
             _renderTabContent();
         }, 50);
     }

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * MES 사용자 인증 / 접근 권한 모듈 (AuthModule)
  *
  * 동작 방식:
@@ -39,70 +39,135 @@ const AuthModule = (function () {
 
     /* ── 전체 페이지 목록 ────────────────────────────────────── */
     const ALL_PAGES = [
-        { id:'dashboard',                label:'대시보드',          group:'공통' },
+        { id:'dashboard',                label:'대시보드',          group:'공용' },
+        { id:'board',                    label:'게시판',            group:'공용' },
         { id:'incoming-overview',         label:'수입검사 현황',      group:'수입검사' },
         { id:'injection-incoming',        label:'사출 입고',          group:'수입검사' },
         { id:'paint-incoming-inspection', label:'도료 입고',          group:'수입검사' },
+        { id:'inj-incoming-std',          label:'사출 수입검사 기준서', group:'수입검사' },
+        { id:'paint-incoming-std',        label:'도료 수입검사 기준서', group:'수입검사' },
+        { id:'inj-insp-std-photo',        label:'수입검사 사진 기준',   group:'수입검사' },
         { id:'warehouse-overview',        label:'자재 창고 현황',     group:'창고' },
         { id:'injection-warehouse',       label:'사출 창고',          group:'창고' },
         { id:'paint-inventory',           label:'도료 창고',          group:'창고' },
         { id:'raw-material-inventory',    label:'원재료입출고',       group:'사출공정' },
         { id:'injection-process',         label:'사출 공정',          group:'사출공정' },
         { id:'injection-work',            label:'사출 작업일지',      group:'사출공정' },
+        { id:'injection-layout',          label:'사출 레이아웃',      group:'사출공정' },
+        { id:'injection-wip',             label:'사출 재공품 현황',   group:'사출공정' },
+        { id:'injection-room-layout',     label:'사출실 레이아웃',    group:'사출공정' },
         { id:'production-plan',           label:'생산 계획 지시서',   group:'도장공정' },
         { id:'overtime-plan',             label:'연장근무계획',       group:'도장공정' },
-        { id:'painting-work',             label:'도장 작업일지',      group:'도장공정' },
-        { id:'painting-inspection',       label:'도장 검사일지',      group:'도장공정' },        { id:'paint-mix',                 label:'도료 배합 관리',     group:'도장공정' },
+        { id:'painting-work',             label:'도장작업현황',       group:'도장공정' },
+        { id:'painting-inspection',       label:'도장 검사일지',      group:'도장공정' },
+        { id:'paint-mix',                 label:'도료 배합 관리',     group:'도장공정' },
+        { id:'laser-process',             label:'레이저 공정',        group:'레이저공정' },
         { id:'laser-standby',             label:'레이져 대기품',      group:'레이져공정' },
         { id:'laser-wip',                 label:'재공품 현황',       group:'레이져공정' },
         { id:'laser-work',                label:'레이져 작업일지',    group:'레이져공정' },
         { id:'laser-inspection',          label:'레이져 검사일지',    group:'레이져공정' },
+        { id:'laser-layout',              label:'레이저 레이아웃',    group:'레이져공정' },
         { id:'laser-jig-master',          label:'레이져 지그대장',    group:'레이져공정' },
         { id:'laser-jig-disposal',        label:'폐기 대장',          group:'레이져공정' },
         { id:'laser-jig-cleaning',        label:'지그 세척일지',      group:'레이져공정' },
+        { id:'laser-equipment-history',   label:'레이저 설비 이력',   group:'레이져공정' },
         { id:'shipping-standby',          label:'출하검사',           group:'출하/제품' },
+        { id:'shipping-inspection',       label:'출하검사 일지',      group:'출하/제품' },
         { id:'product-warehouse',         label:'제품 창고',          group:'출하/제품' },
+        { id:'product-outgoing',          label:'제품 출고',          group:'출하/제품' },
         { id:'sales-delivery-plan',       label:'납품 계획',          group:'영업' },
         { id:'sales-delivery',            label:'출고 등록',          group:'영업' },
         { id:'sales-analytics',           label:'영업관리(매출분석)', group:'영업' },
         { id:'sales-outsourcing',         label:'외주처관리',         group:'영업' },
         { id:'painting-jig',              label:'도장지그',           group:'생산관리' },
         { id:'jig-management',            label:'JIG 수명 관리',      group:'생산관리' },
+        { id:'jig-life-standard',         label:'지그 수명 기준',     group:'생산관리' },
         { id:'jig-master',                label:'도장 지그 대장',     group:'생산관리' },
         { id:'jig-disposal',              label:'지그 폐기 대장',     group:'생산관리' },
         { id:'jig-cleaning',              label:'세척 이력',          group:'생산관리' },
         { id:'jig-change-history',        label:'교체 이력',          group:'생산관리' },
         { id:'jig-repair-history',        label:'지그수리/개선 이력', group:'생산관리' },
+        { id:'jig-layout',                label:'지그 레이아웃',      group:'생산관리' },
         { id:'prod-standards',            label:'제조 관리 표준',     group:'생산관리' },
+        { id:'work-standard',             label:'작업 표준서',        group:'생산관리' },
+        { id:'robot-pg-std',              label:'로봇 프로그램 기준', group:'생산관리' },
+        { id:'drying-std',                label:'건조 조건 기준',     group:'생산관리' },
+        { id:'customer-return-nc-std',    label:'고객 반송 기준',     group:'생산관리' },
         { id:'prod-conditions',           label:'작업조건 관리',      group:'생산관리' },
         { id:'prod-sub-materials',        label:'부자재 관리',        group:'생산관리' },
         { id:'prod-equipment',            label:'설비관리',           group:'생산관리' },
         { id:'five-s',                    label:'3정5S 관리',         group:'생산관리' },
         { id:'prod-quality',              label:'초중종물 관리',      group:'공정품질' },
         { id:'quality-performance',       label:'품질 실적',          group:'공정품질' },
+        { id:'painting-quality-performance', label:'도장품 실적',     group:'공정품질' },
         { id:'improvement-activity',      label:'개선활동',           group:'공정품질' },
         { id:'limit-samples',             label:'한도 견본',          group:'공정품질' },
         { id:'prod-spc',                  label:'SPC 관리',           group:'공정품질' },
         { id:'certifications-mgmt',       label:'자격인증 관리',      group:'공정품질' },
+        { id:'cert-standard',             label:'자격인증 기준',      group:'공정품질' },
+        { id:'cert-eval',                 label:'자격인증 평가',      group:'공정품질' },
+        { id:'cert-ledger',               label:'자격인증 대장',      group:'공정품질' },
+        { id:'cert-multiskill-eval',      label:'다기능 평가',        group:'공정품질' },
+        { id:'cert-multiskill-analysis',  label:'다기능 분석',        group:'공정품질' },
+        { id:'gauge-rr-variable',         label:'Gauge R&R 계량',     group:'공정품질' },
+        { id:'gauge-rr-attribute',        label:'Gauge R&R 계수',     group:'공정품질' },
+        { id:'cert-status',               label:'자격 현황',          group:'공정품질' },
+        { id:'inspectors-mgmt',           label:'검사자 관리',        group:'공정품질' },
+        { id:'operators-mgmt',            label:'작업자 관리',        group:'공정품질' },
+        { id:'safety-hub',                label:'안전관리',           group:'안전관리' },
+        { id:'safety-standard',           label:'안전 표준',          group:'안전관리' },
+        { id:'safety-msds',               label:'MSDS',               group:'안전관리' },
+        { id:'safety-checklist',          label:'안전 체크리스트',    group:'안전관리' },
+        { id:'safety-ppe',                label:'보호구 기준',        group:'안전관리' },
+        { id:'safety-rules',              label:'안전 수칙',          group:'안전관리' },
+        { id:'fire-safety-hub',           label:'소방관리',           group:'소방관리' },
+        { id:'fire-facility-check',       label:'소방시설 점검',      group:'소방관리' },
+        { id:'fire-ext-check',            label:'소화기 점검',        group:'소방관리' },
+        { id:'fire-edu',                  label:'소방 교육',          group:'소방관리' },
         { id:'settings',                  label:'관리 / 설정',        group:'시스템' },
     ];
 
     /* ── 페이지 그룹 (권한 관리 단위) ──────────────────────────── */
     const PAGE_GROUPS = [
-        { key:'common',    label:'공통',      pages:['dashboard'] },
-        { key:'incoming',  label:'수입검사',   pages:['incoming-overview','injection-incoming','paint-incoming-inspection'] },
-        { key:'warehouse', label:'창고',       pages:['warehouse-overview','injection-warehouse','paint-inventory','raw-material-inventory'] },
-        { key:'injection', label:'사출공정',   pages:['injection-process','injection-work'] },
-        { key:'painting',  label:'도장공정',   pages:['production-plan','overtime-plan','painting-work','painting-inspection','paint-mix'] },
-        { key:'laser',     label:'레이져공정', pages:['laser-standby','laser-wip','laser-work','laser-inspection','laser-jig-master','laser-jig-disposal','laser-jig-cleaning'] },
-        { key:'shipping',  label:'출하/제품',  pages:['shipping-standby','product-warehouse'] },
-        { key:'sales',     label:'영업',       pages:['sales-delivery-plan','sales-delivery','sales-analytics','sales-outsourcing'] },
-        { key:'prod_mgmt', label:'생산관리',   pages:['painting-jig','jig-management','jig-master','jig-disposal','jig-cleaning','jig-change-history','jig-repair-history','prod-standards','prod-conditions','prod-sub-materials','prod-equipment','five-s'] },
-        { key:'quality',   label:'공정품질',   pages:['prod-quality','quality-performance','improvement-activity','limit-samples','prod-spc','certifications-mgmt'] },
-        { key:'system',    label:'시스템',     pages:['settings'] },
+        { key:'sales_menu',       label:'\uc601\uc5c5 \uad00\ub9ac',     pages:['sales-delivery-plan','sales-delivery','sales-analytics','sales-outsourcing'] },
+        { key:'board',            label:'\uac8c\uc2dc\ud310',            pages:['board'] },
+        { key:'incoming',         label:'\uc218\uc785\uac80\uc0ac',      pages:['incoming-overview','injection-incoming','paint-incoming-inspection','inj-incoming-std','paint-incoming-std','inj-insp-std-photo'] },
+        { key:'material_wh',      label:'\uc790\uc7ac \ucc3d\uace0',     pages:['warehouse-overview','injection-warehouse','paint-inventory','raw-material-inventory'] },
+        { key:'product_wh',       label:'\uc644\uc81c\ud488 \ucc3d\uace0', pages:['product-warehouse','product-outgoing'] },
+        { key:'injection',        label:'\uc0ac\ucd9c \uacf5\uc815',     pages:['injection-process','injection-work','injection-layout','injection-wip','injection-room-layout'] },
+        { key:'painting',         label:'\ub3c4\uc7a5 \uacf5\uc815',     pages:['production-plan','overtime-plan','painting-work','painting-inspection','paint-mix'] },
+        { key:'laser',            label:'\ub808\uc774\uc800 \uacf5\uc815', pages:['laser-process','laser-standby','laser-wip','laser-work','laser-inspection','laser-layout','laser-jig-master','laser-jig-disposal','laser-jig-cleaning','laser-equipment-history'] },
+        { key:'shipping',         label:'\ucd9c\ud558\uac80\uc0ac',      pages:['shipping-standby','shipping-inspection'] },
+        { key:'painting_jig',     label:'\ub3c4\uc7a5\uc9c0\uadf8',      pages:['painting-jig','jig-management','jig-life-standard','jig-master','jig-disposal','jig-cleaning','jig-change-history','jig-repair-history','jig-layout'] },
+        { key:'prod_standards',   label:'\uc81c\uc870 \uad00\ub9ac \ud45c\uc900', pages:['prod-standards','work-standard','robot-pg-std','drying-std','customer-return-nc-std'] },
+        { key:'prod_conditions',  label:'\uc791\uc5c5\uc870\uac74 \uad00\ub9ac', pages:['prod-conditions'] },
+        { key:'prod_submat',      label:'\ubd80\uc790\uc7ac \uad00\ub9ac', pages:['prod-sub-materials'] },
+        { key:'prod_equipment',   label:'\uc124\ube44\uad00\ub9ac',      pages:['prod-equipment'] },
+        { key:'five_s',           label:'3\uc8155S \uad00\ub9ac',       pages:['five-s'] },
+        { key:'quality',          label:'\uacf5\uc815\ud488\uc9c8',     pages:['prod-quality','quality-performance','painting-quality-performance','improvement-activity','limit-samples','prod-spc','certifications-mgmt','cert-standard','cert-eval','cert-ledger','cert-multiskill-eval','cert-multiskill-analysis','gauge-rr-variable','gauge-rr-attribute','cert-status','inspectors-mgmt','operators-mgmt'] },
+        { key:'safety',           label:'\uc548\uc804\uad00\ub9ac',     pages:['safety-hub','safety-standard','safety-msds','safety-checklist','safety-ppe','safety-rules'] },
+        { key:'fire',             label:'\uc18c\ubc29\uad00\ub9ac',     pages:['fire-safety-hub','fire-facility-check','fire-ext-check','fire-edu'] },
+        { key:'system',           label:'\uad00\ub9ac / \uc124\uc815', pages:['settings'] },
     ];
 
     /* ── 내부 스토리지 ───────────────────────────────────────── */
+    const MENU_PERMISSION_SCOPES = {
+        'board': ['board'],
+        'sales-delivery-plan': ['sales-delivery-plan','sales-delivery','sales-analytics','sales-outsourcing'],
+        'incoming-overview': ['incoming-overview','injection-incoming','paint-incoming-inspection','inj-incoming-std','paint-incoming-std','inj-insp-std-photo'],
+        'warehouse-overview': ['warehouse-overview','injection-warehouse','paint-inventory','raw-material-inventory'],
+        'product-warehouse': ['product-warehouse','product-outgoing'],
+        'injection-process': ['injection-process','injection-work','injection-layout','injection-wip','injection-room-layout'],
+        'laser-process': ['laser-process','laser-standby','laser-wip','laser-work','laser-inspection','laser-layout','laser-jig-master','laser-jig-disposal','laser-jig-cleaning','laser-equipment-history'],
+        'shipping-standby': ['shipping-standby','shipping-inspection'],
+        'painting-jig': ['painting-jig','jig-management','jig-life-standard','jig-master','jig-disposal','jig-cleaning','jig-change-history','jig-repair-history','jig-layout'],
+        'prod-standards': ['prod-standards','work-standard','robot-pg-std','drying-std','customer-return-nc-std'],
+        'quality-performance': ['quality-performance','painting-quality-performance'],
+        'certifications-mgmt': ['certifications-mgmt','cert-standard','cert-eval','cert-ledger','cert-multiskill-eval','cert-multiskill-analysis','gauge-rr-variable','gauge-rr-attribute','cert-status','inspectors-mgmt','operators-mgmt'],
+        'safety-hub': ['safety-hub','safety-standard','safety-msds','safety-checklist','safety-ppe','safety-rules'],
+        'fire-safety-hub': ['fire-safety-hub','fire-facility-check','fire-ext-check','fire-edu']
+    };
+
     async function _readPersistedJson(key, fallback) {
         try {
             const raw = await DB.getConfig(key);
@@ -201,6 +266,15 @@ const AuthModule = (function () {
                 'shipping-standby','product-warehouse',
             ]),
 
+            /* 물류작업자 — 입고/창고/출하/제품 이동 전담 */
+            logistics_worker: rw([
+                'dashboard',
+                'incoming-overview','injection-incoming','paint-incoming-inspection',
+                'warehouse-overview','injection-warehouse','paint-inventory','raw-material-inventory',
+                'shipping-standby','shipping-inspection',
+                'product-warehouse','product-outgoing',
+            ]),
+
             /* 생산관리자 — 생산 전반 + 관리 표준 (설정 제외) */
             prod_manager: rw(noSettings),
 
@@ -266,12 +340,32 @@ const AuthModule = (function () {
     }
 
     /* 구버전(array) → 신버전({access,write}) 자동 변환 */
+    function _syncMenuAccessPages(perms) {
+        Object.keys(MENU_PERMISSION_SCOPES).forEach(menuPageId => {
+            ROLES.forEach(role => {
+                if (role.key === 'admin') return;
+                const rp = perms[role.key];
+                if (!rp || rp === null || Array.isArray(rp)) return;
+                const access = Array.isArray(rp.access) ? rp.access : [];
+                const hasScopedAccess = MENU_PERMISSION_SCOPES[menuPageId].some(scopePageId => access.includes(scopePageId));
+                if (hasScopedAccess && !access.includes(menuPageId)) {
+                    access.push(menuPageId);
+                }
+                rp.access = access;
+            });
+        });
+        return perms;
+    }
+
     function _migratePerms(raw) {
         if (!raw || typeof raw !== 'object') return _defaultPerms();
         const defaults = _defaultPerms();
         const result = { admin: (raw.admin !== undefined ? raw.admin : null) };
+        /* 하드코딩 역할 처리 */
+        const processedKeys = new Set(['admin']);
         ROLES.forEach(r => {
             if (r.key === 'admin') return;
+            processedKeys.add(r.key);
             const existing = raw[r.key];
             if (existing === undefined || existing === null) {
                 result[r.key] = defaults[r.key] || { access: [], write: [] };
@@ -284,7 +378,21 @@ const AuthModule = (function () {
                 result[r.key] = defaults[r.key] || { access: [], write: [] };
             }
         });
-        return result;
+        /* 동적 역할(커스텀 추가 역할) 권한 보존 */
+        Object.keys(raw).forEach(key => {
+            if (processedKeys.has(key)) return;
+            const existing = raw[key];
+            if (existing && typeof existing === 'object' && Array.isArray(existing.access)) {
+                result[key] = existing;
+            } else if (Array.isArray(existing)) {
+                result[key] = { access: existing, write: existing };
+            } else if (existing === null) {
+                result[key] = null;
+            } else {
+                result[key] = { access: [], write: [] };
+            }
+        });
+        return _syncMenuAccessPages(result);
     }
 
     function _getPermissions() {
@@ -294,6 +402,7 @@ const AuthModule = (function () {
 
     /* 역할 × 페이지 접근 허용 여부 */
     function isPageAccessGranted(roleKey, pageId) {
+        if (pageId === 'dashboard') return true;
         if (Array.isArray(roleKey)) return roleKey.some(key => isPageAccessGranted(key, pageId));
         if (roleKey === 'admin') return true;
         const perms = _getPermissions();
@@ -306,6 +415,7 @@ const AuthModule = (function () {
 
     /* 역할 × 페이지 입력/등록 허용 여부 */
     function isPageWriteGranted(roleKey, pageId) {
+        if (pageId === 'dashboard') return true;
         if (Array.isArray(roleKey)) return roleKey.some(key => isPageWriteGranted(key, pageId));
         if (roleKey === 'admin') return true;
         const perms = _getPermissions();
@@ -351,6 +461,25 @@ const AuthModule = (function () {
     function _roleLabels(userOrRole) {
         return _roleKeys(userOrRole).map(_roleLabel).filter(Boolean).join(', ');
     }
+    function _getPermissionScopePages(pageId) {
+        const scope = MENU_PERMISSION_SCOPES[pageId];
+        if (!Array.isArray(scope) || !scope.length) return [pageId];
+        return [...new Set(scope.concat(pageId).map(String).filter(Boolean))];
+    }
+    function _hasScopedPermission(roleKey, pageId, permissionType) {
+        const checker = permissionType === 'write' ? isPageWriteGranted : isPageAccessGranted;
+        return _getPermissionScopePages(pageId).some(scopePageId => checker(roleKey, scopePageId));
+    }
+    function _pageLabel(pageId) {
+        const page = ALL_PAGES.find(row => row.id === pageId);
+        if (page && page.label) return page.label;
+        const titleEl = document.getElementById('pageTitle');
+        const titleText = titleEl ? String(titleEl.textContent || '').trim() : '';
+        return titleText || pageId || '페이지';
+    }
+    function _rolesAllowedForPage(pageId, permissionType) {
+        return _getDynamicRoles().filter(role => _hasScopedPermission(role.key, pageId, permissionType));
+    }
     function _esc(value) {
         return String(value ?? '')
             .replace(/&/g, '&amp;')
@@ -358,6 +487,48 @@ const AuthModule = (function () {
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
+    }
+    function _openPageRolePermissionWindow(permissionType) {
+        const pageId = (typeof Router !== 'undefined' && Router.getCurrentPage) ? Router.getCurrentPage() : '';
+        if (!pageId) {
+            UIUtils.toast('현재 페이지를 확인할 수 없습니다.', 'warning');
+            return;
+        }
+        const isWrite = permissionType === 'write';
+        const roles = _rolesAllowedForPage(pageId, isWrite ? 'write' : 'access');
+        const pageLabel = _pageLabel(pageId);
+        const permLabel = isWrite ? '입력 가능' : '접근 가능';
+        const emptyMessage = isWrite ? '입력 가능한 역할이 없습니다.' : '접근 가능한 역할이 없습니다.';
+        const rowsHtml = roles.length
+            ? roles.map(role => `
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid #e5e7eb;border-radius:10px;background:#ffffff;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="width:10px;height:10px;border-radius:999px;background:${_esc(role.color || '#2563eb')};flex-shrink:0;"></span>
+                        <strong style="font-size:14px;color:#111827;">${_esc(role.label || role.key)}</strong>
+                    </div>
+                    <span style="font-size:11px;color:#64748b;background:${_esc(role.bg || '#eff6ff')};padding:4px 8px;border-radius:999px;">${_esc(role.key)}</span>
+                </div>
+            `).join('')
+            : `<div style="padding:18px 14px;border:1px dashed #cbd5e1;border-radius:12px;background:#f8fafc;color:#64748b;text-align:center;">${emptyMessage}</div>`;
+
+        const popup = window.open('', `mesPagePerm_${pageId}_${permissionType}`, 'width=480,height=640,resizable=yes,scrollbars=yes');
+        if (!popup) {
+            UIUtils.toast('새창이 차단되었습니다. 팝업 허용 후 다시 시도해 주세요.', 'warning');
+            return;
+        }
+        popup.document.title = `${pageLabel} - ${permLabel}`;
+        popup.document.body.innerHTML = `
+            <div style="font-family:'Segoe UI',sans-serif;background:#f8fafc;min-height:100vh;margin:0;padding:20px;box-sizing:border-box;">
+                <div style="max-width:420px;margin:0 auto;">
+                    <div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:18px 18px 16px;box-shadow:0 12px 28px rgba(15,23,42,0.08);">
+                        <div style="font-size:12px;font-weight:700;color:${isWrite ? '#16a34a' : '#2563eb'};margin-bottom:8px;">${permLabel}</div>
+                        <h1 style="margin:0 0 6px;font-size:20px;color:#0f172a;">${_esc(pageLabel)}</h1>
+                        <div style="font-size:12px;color:#64748b;margin-bottom:14px;">페이지 ID: ${_esc(pageId)}</div>
+                        <div style="display:grid;gap:10px;">${rowsHtml}</div>
+                    </div>
+                </div>
+            </div>
+        `;
     }
     function _newMessageId() {
         return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -789,8 +960,8 @@ const AuthModule = (function () {
 
             // 현재 페이지 권한 배지
             const pageId = (typeof Router !== 'undefined' && Router.getCurrentPage) ? Router.getCurrentPage() : '';
-            const canAccess = !pageId || isPageAccessGranted(roleKeys, pageId);
-            const canWrite  = !pageId || isPageWriteGranted(roleKeys, pageId);
+            const canAccess = !pageId || _hasScopedPermission(roleKeys, pageId, 'access');
+            const canWrite  = !pageId || _hasScopedPermission(roleKeys, pageId, 'write');
             const _permBadge = (ok, label) => `
                 <span title="${label}: ${ok ? '허용' : '제한'}" style="display:inline-flex;align-items:center;gap:2px;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;
                     background:${ok ? 'rgba(22,163,74,0.1)' : 'rgba(220,38,38,0.1)'};
@@ -1070,6 +1241,7 @@ const AuthModule = (function () {
         sendInternalMessage,
         openInboxModal,
         openComposeMessageModal,
+        openPageRolePermissionWindow: _openPageRolePermissionWindow,
         markMessageRead,
         showUnreadInboxPopup,
         _toggleComposeChecks,

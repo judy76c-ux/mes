@@ -11813,8 +11813,9 @@ const SettingsModule = (function() {
                 <span style="padding:3px 12px;border-radius:12px;font-size:0.82rem;font-weight:700;background:${role.bg};color:${role.color};">${_esc(role.label)}</span>
                 <span style="font-size:0.8rem;color:var(--text-muted);">의 그룹별 접근 권한</span>
                 <div style="margin-left:auto;display:flex;gap:6px;">
-                    <button class="btn btn-sm" onclick="SettingsModule.toggleAllGroupPerm('${roleKey}',true)">전체 허용</button>
-                    <button class="btn btn-sm" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;" onclick="SettingsModule.toggleAllGroupPerm('${roleKey}',false)">전체 해제</button>
+                    <button class="btn btn-sm" onclick="SettingsModule.toggleAllGroupPerm('${roleKey}','access')">전체 접근 허용</button>
+                    <button class="btn btn-sm" onclick="SettingsModule.toggleAllGroupPerm('${roleKey}','write')">전체 입력 허용</button>
+                    <button class="btn btn-sm" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;" onclick="SettingsModule.toggleAllGroupPerm('${roleKey}','clear')">전체 해제</button>
                 </div>
             </div>
             <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px;">
@@ -12133,8 +12134,28 @@ const SettingsModule = (function() {
         if (panel) panel.innerHTML = _renderGroupPermsPanel(roleKey);
     }
 
+    async function _saveAndRefreshRolePerms(roleKey, perms, toastMessage) {
+        await AuthModule.savePermissions(perms);
+        _selectedPermRole = roleKey;
+        const panel = document.getElementById('umGroupPermsPanel');
+        if (panel) {
+            panel.innerHTML = _renderGroupPermsPanel(roleKey);
+        } else if (currentTab === 'users') {
+            const content = document.getElementById('settingsContent');
+            if (content) renderUsersTab(content);
+        }
+        if (toastMessage) UIUtils.toast(toastMessage, 'success');
+    }
+
+    let _permSaving = false;
+
     /* 그룹 체크박스 변경 → 그룹 내 전체 페이지에 적용 */
-    function onGroupPermChange(el) {
+    async function onGroupPermChange(el) {
+        if (_permSaving) return;
+        _permSaving = true;
+        try { await _onGroupPermChangeInner(el); } finally { _permSaving = false; }
+    }
+    async function _onGroupPermChangeInner(el) {
         const roleKey  = el.dataset.role;
         const groupKey = el.dataset.group;
         const type     = el.dataset.type;
@@ -12143,7 +12164,8 @@ const SettingsModule = (function() {
         const group    = groups.find(g => g.key === groupKey);
         if (!group) return;
 
-        const perms = AuthModule.getPermissions();
+        const raw = AuthModule.getPermissions();
+        const perms = JSON.parse(JSON.stringify(raw));
         let rp = perms[roleKey];
         if (rp === null) {
             const all = AuthModule.ALL_PAGES.map(p => p.id);
@@ -12177,19 +12199,34 @@ const SettingsModule = (function() {
             }
         }
         perms[roleKey] = rp;
-        AuthModule.savePermissions(perms);
-        UIUtils.toast('권한이 저장되었습니다.', 'success');
+        await _saveAndRefreshRolePerms(roleKey, perms, '권한이 저장되었습니다.');
     }
 
-    /* 전체 허용 / 전체 해제 */
-    function toggleAllGroupPerm(roleKey, grant) {
-        const perms = AuthModule.getPermissions();
-        const all = AuthModule.ALL_PAGES.map(p => p.id);
-        perms[roleKey] = grant ? { access: [...all], write: [...all] } : { access: [], write: [] };
-        AuthModule.savePermissions(perms);
-        const panel = document.getElementById('umGroupPermsPanel');
-        if (panel) panel.innerHTML = _renderGroupPermsPanel(roleKey);
-        UIUtils.toast(grant ? '전체 권한이 허용되었습니다.' : '전체 권한이 해제되었습니다.', 'success');
+    /* 전체 접근 허용 / 전체 입력 허용 / 전체 해제 */
+    async function toggleAllGroupPerm(roleKey, mode) {
+        if (_permSaving) return;
+        _permSaving = true;
+        try {
+            const raw = AuthModule.getPermissions();
+            /* 참조 복사 방지: 깊은 복사 */
+            const perms = JSON.parse(JSON.stringify(raw));
+            const all = AuthModule.ALL_PAGES.map(p => p.id);
+            if (mode === 'access') {
+                perms[roleKey] = { access: [...all], write: perms[roleKey]?.write || [] };
+            } else if (mode === 'write') {
+                perms[roleKey] = { access: [...all], write: [...all] };
+            } else {
+                perms[roleKey] = { access: [], write: [] };
+            }
+            const message = mode === 'access'
+                ? '전체 접근 권한이 허용되었습니다.'
+                : mode === 'write'
+                    ? '전체 입력 권한이 허용되었습니다.'
+                    : '전체 접근/입력 권한이 해제되었습니다.';
+            await _saveAndRefreshRolePerms(roleKey, perms, message);
+        } finally {
+            _permSaving = false;
+        }
     }
 
     /* 역할 추가/수정 모달 */

@@ -29,6 +29,56 @@ const WorkStandardModule = (function () {
     let _editId    = null;
     let _editData  = null;
 
+    function _openProdStandardsDoc(docType) {
+        Router.navigate('prod-standards');
+        const applyDocType = () => {
+            if (window.ProdStandardsModule && typeof window.ProdStandardsModule.selectDocType === 'function') {
+                window.ProdStandardsModule.selectDocType(docType);
+                return true;
+            }
+            return false;
+        };
+        if (applyDocType()) return;
+        let retry = 0;
+        const timer = setInterval(() => {
+            retry += 1;
+            if (applyDocType() || retry >= 20) clearInterval(timer);
+        }, 100);
+    }
+
+    function _renderTopMenu(active) {
+        const items = [
+            { key: 'cp-status', label: '\uAD00\uB9AC\uACC4\uD68D\uC11C\uD604\uD669', icon: 'fact_check', onClick: "WorkStandardModule._openProdStandardsDoc('cp-status')" },
+            { key: 'work-standard', label: '\uC791\uC5C5\uD45C\uC900\uC11C', icon: 'assignment', onClick: "Router.navigate('work-standard')" },
+            { key: 'film-thickness', label: '\uB3C4\uB9C9\uB450\uAED8 \uAE30\uC900\uC11C', icon: 'layers', onClick: "WorkStandardModule._openProdStandardsDoc('film-thickness')" },
+            { key: 'color-gloss', label: '\uC0C9\uCC28/\uAD11\uD0DD \uAE30\uC900\uC11C', icon: 'palette', onClick: "WorkStandardModule._openProdStandardsDoc('color-gloss')" },
+            { key: 'filter-mesh', label: '\uC5EC\uACFC\uB9DD \uAE30\uC900\uC11C', icon: 'filter_alt', onClick: "WorkStandardModule._openProdStandardsDoc('filter-mesh')" },
+            { key: 'paint-tds', label: '\uB3C4\uC7A5 \uC0AC\uC591\uC11C(TDS)', icon: 'description', onClick: "WorkStandardModule._openProdStandardsDoc('paint-tds')" },
+            { key: 'process-flow-chart', label: '\uACF5\uC815 \uD750\uB984\uB3C4', icon: 'account_tree', onClick: "WorkStandardModule._openProdStandardsDoc('process-flow-chart')" },
+            { key: 'pfmea', label: 'PFMEA', icon: 'report_problem', onClick: "WorkStandardModule._openProdStandardsDoc('pfmea')" },
+            { key: 'mixing', label: '\uBC30\uD569 \uAE30\uC900\uC11C', icon: 'science', onClick: "WorkStandardModule._openProdStandardsDoc('mixing')" },
+            { key: 'paint-usage', label: '\uC0AC\uC6A9\uB7C9 \uAE30\uC900\uD45C', icon: 'straighten', onClick: "WorkStandardModule._openProdStandardsDoc('paint-usage')" }
+        ];
+        return `
+            <div class="mes-apple-menu-hero" style="padding:16px 20px;margin-bottom:20px;display:flex;flex-wrap:wrap;gap:10px;">
+                ${items.map(item => {
+                    const isActive = active === item.key;
+                    return `<button type="button" onclick="${item.onClick}"
+                        style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;
+                               border:${isActive ? '2px solid var(--accent-blue)' : '1.5px solid var(--border-color)'};
+                               background:var(--bg-primary);color:var(--text-primary);
+                               cursor:pointer;min-width:130px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+                        <span style="display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:10px;flex-shrink:0;
+                                     background:${isActive ? 'var(--accent-blue)' : 'var(--bg-secondary)'};">
+                            <span class="material-symbols-outlined" style="font-size:24px;color:${isActive ? '#fff' : 'var(--text-muted)'};">${item.icon}</span>
+                        </span>
+                        <span style="font-size:0.88rem;font-weight:700;white-space:nowrap;">${item.label}</span>
+                    </button>`;
+                }).join('')}
+            </div>
+        `;
+    }
+
     /* ════════════════════════════════════════════════════════════
        목록
     ════════════════════════════════════════════════════════════ */
@@ -39,6 +89,7 @@ const WorkStandardModule = (function () {
         _editId = null; _editData = null;
         _container.innerHTML = `
         <div class="fade-in-up">
+            ${_renderTopMenu('work-standard')}
             <div class="page-header">
                 <div class="page-actions">
                     <button class="btn btn-primary" onclick="WorkStandardModule.openEditor()">
@@ -166,6 +217,7 @@ const WorkStandardModule = (function () {
         const v = k => _esc(d[k]||'');
         return `
         <div class="fade-in-up" style="max-width:1200px;">
+            ${_renderTopMenu('work-standard')}
             <div style="display:flex;align-items:center;justify-content:space-between;
                         margin-bottom:18px;padding-bottom:14px;border-bottom:2px solid var(--border-color);">
                 <div style="display:flex;align-items:center;gap:12px;">
@@ -820,5 +872,6 @@ const WorkStandardModule = (function () {
         openEditor, save, remove, preview, _doPrint,
         _addStep, _delStep, _addPhoto, _replacePhoto, _removePhoto,
         _addCondRow, _delCondRow,
+        _openProdStandardsDoc,
     };
 })();

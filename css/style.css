@@ -529,6 +529,34 @@ body.sidebar-hidden .sidebar-show-btn {
     min-width: 0;
 }
 
+.topbar-permission-tools {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 0 8px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+}
+
+.topbar-permission-link {
+    appearance: none;
+    border: 1px solid rgba(37, 99, 235, 0.18);
+    background: #ffffff;
+    color: #2563eb;
+    border-radius: 999px;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.35;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.topbar-permission-link:hover {
+    background: #eff6ff;
+    border-color: rgba(37, 99, 235, 0.3);
+}
+
 .topbar-user-icon {
     width: 36px;
     height: 36px;
@@ -2298,6 +2326,9 @@ input[type="time"] {
     /* 탑바 */
     .topbar { padding: 0 14px; }
     .topbar-date { display: none; }
+    .topbar-user { gap: 6px; }
+    .topbar-permission-tools { margin: 0 4px; gap: 3px; }
+    .topbar-permission-link { padding: 2px 6px; font-size: 9px; }
 
     /* 카드 패딩 축소 */
     .card-body { padding: 12px; }
@@ -3391,7 +3422,7 @@ td {
 }
 
 .mes-apple-tab .material-symbols-outlined {
-    font-size: 20px;
+    font-size: 30px;
 }
 
 .mes-apple-tab-label {
@@ -3399,6 +3430,29 @@ td {
     line-height: 1.15;
     white-space: nowrap;
     text-align: center;
+}
+
+.prod-standards-tabbar {
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 22px;
+    justify-content: flex-start;
+}
+
+.prod-standards-tab {
+    min-width: 92px;
+    padding: 10px 12px;
+    gap: 6px;
+    border-radius: 16px;
+}
+
+.prod-standards-tab .material-symbols-outlined {
+    font-size: 19px;
+}
+
+.prod-standards-tab .mes-apple-tab-label {
+    font-size: 0.74rem;
+    letter-spacing: -0.01em;
 }
 
 .mes-apple-menu-hero {

@@ -1218,50 +1218,30 @@ const ProductWarehouseModule = (function() {
 
         container.innerHTML = `
             <div class="fade-in-up">
-                <div class="mes-apple-menu-hero">
-                    <div class="mes-apple-menu-strip">
-                        <button type="button"
-                            class="mes-apple-menu-card pw-tab-btn active"
-                            style="--menu-accent:#2563eb;"
-                            data-tab="stock"
-                            onclick="ProductWarehouseModule._switchTab('stock')">
-                            <span class="mes-apple-menu-card-icon">
-                                <span class="material-symbols-outlined">inventory_2</span>
+                <div id="pwNavStrip" class="mes-apple-menu-hero" style="padding:16px 20px;margin-bottom:20px;display:flex;gap:10px;flex-wrap:wrap;">
+                    ${[
+                        { tab:'stock',    icon:'inventory_2',  title:'재고 현황', sub:'현재 보유 제품 재고', active:true  },
+                        { tab:'incoming', icon:'move_to_inbox',title:'입고 이력', sub:'제품 입고 기록',     active:false },
+                        { tab:'outgoing', icon:'outbox',       title:'출고 이력', sub:'제품 출고 기록',     active:false }
+                    ].map(m => `
+                        <button type="button" class="pw-tab-btn${m.active?' pw-tab-active':''}" data-tab="${m.tab}"
+                            onclick="ProductWarehouseModule._switchTab('${m.tab}')"
+                            style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;
+                                   border:${m.active?'2px solid var(--accent-blue)':'1.5px solid var(--border-color)'};
+                                   background:var(--bg-primary);color:var(--text-primary);
+                                   cursor:pointer;min-width:160px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+                            <span style="display:inline-flex;align-items:center;justify-content:center;
+                                         width:42px;height:42px;border-radius:10px;flex-shrink:0;
+                                         background:${m.active?'var(--accent-blue)':'var(--bg-secondary)'};">
+                                <span class="material-symbols-outlined" style="font-size:24px;color:${m.active?'#fff':'var(--text-muted)'};">${m.icon}</span>
                             </span>
-                            <span class="mes-apple-menu-card-body">
-                                <span class="mes-apple-menu-card-title">재고 현황</span>
-                                <span class="mes-apple-menu-card-subtitle">현재 보유 제품 재고</span>
+                            <span style="display:flex;flex-direction:column;gap:2px;">
+                                <span style="font-size:0.92rem;font-weight:700;">${m.title}</span>
+                                <span style="font-size:0.73rem;color:var(--text-muted);">${m.sub}</span>
                             </span>
-                        </button>
-                        <button type="button"
-                            class="mes-apple-menu-card pw-tab-btn"
-                            style="--menu-accent:#0ea5e9;"
-                            data-tab="incoming"
-                            onclick="ProductWarehouseModule._switchTab('incoming')">
-                            <span class="mes-apple-menu-card-icon">
-                                <span class="material-symbols-outlined">move_to_inbox</span>
-                            </span>
-                        <span class="mes-apple-menu-card-body">
-                            <span class="mes-apple-menu-card-title">입고 이력</span>
-                            <span class="mes-apple-menu-card-subtitle">제품 입고 기록</span>
-                        </span>
-                    </button>
-                    <button type="button"
-                        class="mes-apple-menu-card pw-tab-btn"
-                        style="--menu-accent:#f97316;"
-                        data-tab="outgoing"
-                        onclick="ProductWarehouseModule._switchTab('outgoing')">
-                        <span class="mes-apple-menu-card-icon">
-                            <span class="material-symbols-outlined">outbox</span>
-                        </span>
-                        <span class="mes-apple-menu-card-body">
-                            <span class="mes-apple-menu-card-title">출고 이력</span>
-                            <span class="mes-apple-menu-card-subtitle">제품 출고 기록</span>
-                        </span>
-                    </button>
+                        </button>`).join('')}
                     ${adminCard}
                 </div>
-            </div>
 
             <div id="pwTabStock">
                 <div class="stat-cards" id="pwStats"></div>
@@ -1280,7 +1260,12 @@ const ProductWarehouseModule = (function() {
             if (panelEl) panelEl.style.display = t === tab ? '' : 'none';
         });
         document.querySelectorAll('.pw-tab-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.tab === tab);
+            const isActive = btn.dataset.tab === tab;
+            btn.style.border = isActive ? '2px solid var(--accent-blue)' : '1.5px solid var(--border-color)';
+            const iconBox = btn.querySelector('span[style*="border-radius:10px"]');
+            const icon    = btn.querySelector('.material-symbols-outlined');
+            if (iconBox) iconBox.style.background = isActive ? 'var(--accent-blue)' : 'var(--bg-secondary)';
+            if (icon)    icon.style.color          = isActive ? '#fff' : 'var(--text-muted)';
         });
         if (tab === 'incoming') _loadIncoming();
         if (tab === 'outgoing') _loadOutgoing();
