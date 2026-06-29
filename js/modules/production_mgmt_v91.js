@@ -21629,7 +21629,15 @@ var ProdEquipmentModule = (function() {
     }
 
     // ── 메인 렌더 ────────────────────────────────────────────────
-    function init() {}
+    async function init() {
+        /* IndexedDB에만 저장된 구형 TDS 레코드(fileData, fileUrl 없음) 자동 정리 */
+        const oldRecs = (Storage.getAll(STORE) || []).filter(
+            r => r._docKind === STANDARD_DOC_KIND && r.standardType === 'paint-tds' && r.fileData && !r.fileUrl
+        );
+        for (const r of oldRecs) {
+            await Storage.remove(STORE, r.id);
+        }
+    }
 
     function render(container) {
         try {
