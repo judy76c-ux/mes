@@ -4921,7 +4921,8 @@ var ProdStandardsModule = (function() {
                 UIUtils.toast('서버에 연결되지 않았습니다. TDS 파일은 서버 연결 후 업로드할 수 있습니다.', 'error');
                 return;
             }
-            const fileUrl = await ApiClient.uploadPhoto(file, 'TDS', { noAutoYearMonth: true });
+            const safeFileName = (file.name || 'tds').replace(/[^\w가-힣.()\-]/g, '_');
+            const fileUrl = await ApiClient.uploadPhoto(file, 'TDS', { noAutoYearMonth: true, filename: safeFileName });
             await Storage.add(STORE, {
                 _docKind: STANDARD_DOC_KIND,
                 standardType: 'paint-tds',
