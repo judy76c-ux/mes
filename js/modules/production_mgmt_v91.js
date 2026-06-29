@@ -979,7 +979,7 @@ var ProdStandardsModule = (function() {
     function _standardRecordCount(type) {
         if (type === 'paint-tds') {
             return (Storage.getAll(STORE) || [])
-                .filter(r => r._docKind === STANDARD_DOC_KIND && r.standardType === type && (r.fileUrl || r.fileData))
+                .filter(r => r._docKind === STANDARD_DOC_KIND && r.standardType === type && r.fileUrl)
                 .length;
         }
         if (type === 'process-flow-chart') {
@@ -4384,7 +4384,7 @@ var ProdStandardsModule = (function() {
 
     function _paintTdsRecords() {
         return (Storage.getAll(STORE) || [])
-            .filter(r => r._docKind === STANDARD_DOC_KIND && r.standardType === 'paint-tds')
+            .filter(r => r._docKind === STANDARD_DOC_KIND && r.standardType === 'paint-tds' && r.fileUrl)
             .sort((a, b) => String(b.uploadedAt || b.updatedAt || '').localeCompare(String(a.uploadedAt || a.updatedAt || '')));
     }
 
@@ -4917,16 +4917,12 @@ var ProdStandardsModule = (function() {
 
     async function _savePaintTdsFile(material, file) {
         try {
-            let fileUrl = null;
-            /* 서버 API 연결 시 서버에 업로드, 미연결 시 IndexedDB 폴백 */
-            if (typeof ApiClient !== 'undefined' && ApiClient.isOnline && ApiClient.isOnline()) {
-                try {
-                    fileUrl = await ApiClient.uploadPhoto(file, 'TDS', { noAutoYearMonth: true });
-                } catch (uploadErr) {
-                    console.warn('TDS 서버 업로드 실패, IndexedDB 폴백:', uploadErr.message);
-                }
+            if (typeof ApiClient === 'undefined' || !ApiClient.getBase || !ApiClient.getBase()) {
+                UIUtils.toast('서버에 연결되지 않았습니다. TDS 파일은 서버 연결 후 업로드할 수 있습니다.', 'error');
+                return;
             }
-            const record = {
+            const fileUrl = await ApiClient.uploadPhoto(file, 'TDS', { noAutoYearMonth: true });
+            await Storage.add(STORE, {
                 _docKind: STANDARD_DOC_KIND,
                 standardType: 'paint-tds',
                 standardLabel: STANDARD_DOC_TYPES['paint-tds'].label,
@@ -4938,21 +4934,15 @@ var ProdStandardsModule = (function() {
                 fileName: file.name || '',
                 fileType: file.type || '',
                 fileSize: file.size || 0,
+                fileUrl,
                 uploadedAt: UIUtils.now(),
                 updatedAt: UIUtils.now()
-            };
-            if (fileUrl) {
-                record.fileUrl = fileUrl;
-            } else {
-                /* 서버 미사용 시 base64 폴백 */
-                record.fileData = await _readFileAsDataUrl(file);
-            }
-            await Storage.add(STORE, record);
+            });
             UIUtils.toast('도장 사양서(TDS)가 업로드되었습니다.', 'success');
             _renderPaintTdsTable();
         } catch (err) {
             console.error('TDS upload failed:', err);
-            UIUtils.toast('TDS 업로드 중 오류가 발생했습니다.', 'error');
+            UIUtils.toast('TDS 업로드 중 오류가 발생했습니다: ' + err.message, 'error');
         }
     }
 
@@ -21629,14 +21619,22 @@ var ProdEquipmentModule = (function() {
     }
 
     // ── 메인 렌더 ────────────────────────────────────────────────
-    async function init() {
-        /* IndexedDB에만 저장된 구형 TDS 레코드(fileData, fileUrl 없음) 자동 정리 */
+    function init() {}
+
+    /* 구형 IndexedDB TDS 레코드(fileData만 있고 fileUrl 없음) 자동 정리 — 앱 준비 후 1회 실행 */
+    function _migrateRemoveLocalTdsRecords() {
         const oldRecs = (Storage.getAll(STORE) || []).filter(
             r => r._docKind === STANDARD_DOC_KIND && r.standardType === 'paint-tds' && r.fileData && !r.fileUrl
         );
-        for (const r of oldRecs) {
-            await Storage.remove(STORE, r.id);
-        }
+        if (!oldRecs.length) return;
+        Promise.all(oldRecs.map(r => Storage.remove(STORE, r.id)))
+            .then(() => console.log(`[TDS] 구형 로컬 레코드 ${oldRecs.length}개 정리 완료`))
+            .catch(err => console.warn('[TDS] 구형 레코드 정리 실패:', err));
+    }
+    if (document.readyState === 'complete') {
+        setTimeout(_migrateRemoveLocalTdsRecords, 500);
+    } else {
+        window.addEventListener('load', () => setTimeout(_migrateRemoveLocalTdsRecords, 500));
     }
 
     function render(container) {
