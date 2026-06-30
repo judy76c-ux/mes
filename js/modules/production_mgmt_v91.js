@@ -3018,16 +3018,11 @@ var ProdStandardsModule = (function() {
                             </div>
 
                             <div style="min-width:0; padding-right:16px; border-right:1px solid var(--border-color);">
-                                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;">
+                                <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
                                     <label class="form-label" style="font-weight:700; white-space:nowrap; margin:0;">
                                         <span class="material-symbols-outlined" style="font-size:13px; vertical-align:middle;">route</span>
                                         CP 공정 흐름
                                     </label>
-                                    <button class="btn btn-secondary btn-sm" onclick="ProdStandardsModule.openCpFlowModal('items')"
-                                        style="display:flex; align-items:center; gap:5px; font-size:12px; white-space:nowrap;">
-                                        <span class="material-symbols-outlined" style="font-size:15px;">tune</span>
-                                        관리항목 관리
-                                    </button>
                                 </div>
                                 <div id="cpFlowSelectorContainer">${_cpFlowSelectorHtml()}</div>
                             </div>
