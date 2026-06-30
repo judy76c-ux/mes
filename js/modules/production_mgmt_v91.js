@@ -664,7 +664,9 @@ var ProdStandardsModule = (function() {
             }
             const exact = all.find(s => s.process === raw.process && s.station === (raw.station || ''))
                 || all.find(s => s.process === raw.process && !raw.station);
-            const finalStep = exact || { process: raw.process, station: raw.station || '' };
+            // 현재 유효한 스텝에 없으면 제외 (스테이션명 변경·삭제 시 stale 스텝 정리)
+            if (!exact) return;
+            const finalStep = exact;
             const key = _cpStepKey(finalStep);
             if (seen.has(key)) return;
             seen.add(key);
@@ -738,7 +740,10 @@ var ProdStandardsModule = (function() {
     }
 
     function _cpFlowSelectedCount(procName) {
-        return (_cpSelectedFlow || []).filter(step => _cpStepProcess(step) === procName).length;
+        const validKeys = new Set(_cpFlowStepsForProcess(procName).map(_cpStepKey));
+        return (_cpSelectedFlow || []).filter(step =>
+            _cpStepProcess(step) === procName && validKeys.has(_cpStepKey(step))
+        ).length;
     }
 
     function _ensureCpFlowActiveProcess() {
