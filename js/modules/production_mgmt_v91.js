@@ -616,7 +616,11 @@ var ProdStandardsModule = (function() {
 
     function _cpAllFlowSteps() {
         const cfg = _getCarConfig('');
-        const procOrder = (typeof _smGetOrderedProcs === 'function') ? _smGetOrderedProcs('') : CANONICAL_PROCESS_ORDER;
+        // settings가 로드됐으면 settings 기반 순서 사용 (PROCESS_CONFIG의 "출하" 등 중복 제외)
+        // settings가 없으면 CANONICAL_PROCESS_ORDER 사용
+        const procOrder = (Array.isArray(_settingsProcessTypes) && _settingsProcessTypes.length)
+            ? _settingsProcessTypes
+            : CANONICAL_PROCESS_ORDER;
         const steps = [];
         procOrder.forEach(proc => {
             const pcfg = cfg[proc];
@@ -625,8 +629,9 @@ var ProdStandardsModule = (function() {
                 .filter(st => pcfg.stations && pcfg.stations[st] && !_isCpSelfStation(proc, st));
             if (stations.length) stations.forEach(st => steps.push({ process: proc, station: st }));
         });
-        if (_settingsProcessTypes && _settingsSubProcessTypes) {
-            _settingsProcessTypes.forEach(proc => {
+        // settings 없을 때 settings 세부공정 보완 추가 (settings 있으면 이미 procOrder에서 처리됨)
+        if (_settingsSubProcessTypes && !(Array.isArray(_settingsProcessTypes) && _settingsProcessTypes.length)) {
+            Object.keys(_settingsSubProcessTypes).forEach(proc => {
                 const subs = (_settingsSubProcessTypes[proc] || []).filter(st => !_isCpSelfStation(proc, st));
                 if (subs.length) subs.forEach(st => steps.push({ process: proc, station: st }));
             });
@@ -10573,7 +10578,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                     <select style="padding:2px 5px; border:1px solid var(--border-color);
                                    border-radius:4px; font-size:12px; background:var(--bg-primary);"
                         onchange="ProdStandardsModule._cpGroupEdit(${i},'process',this.value)">
-                        ${Object.keys(_getCarConfig('')).map(p =>
+                        ${_smGetOrderedProcs('').map(p =>
                             `<option value="${p}" ${p===g.process?'selected':''}>${p}</option>`
                         ).join('')}
                     </select>
@@ -10932,7 +10937,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                     <select style="padding:2px 5px;border:1px solid var(--border-color);
                                    border-radius:4px;font-size:12px;background:var(--bg-primary);"
                         onchange="ProdStandardsModule._cpGroupEdit(${i},'process',this.value)">
-                        ${Object.keys(_getCarConfig('')).map(p =>
+                        ${_smGetOrderedProcs('').map(p =>
                             `<option value="${p}" ${p===g.process?'selected':''}>${p}</option>`
                         ).join('')}
                     </select>
