@@ -8145,6 +8145,15 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                     if (!cfg[proc].stations[st]) cfg[proc].stations[st] = [];
                     if (cfg[proc].stationNos && cfg[proc].stationNos[st] == null) cfg[proc].stationNos[st] = cfg[proc].procNo || 0;
                 });
+
+                // settings 전용 공정의 커스텀 파라미터 적용
+                // (PROCESS_CONFIG 루프는 이미 끝났으므로 여기서 별도 처리)
+                const sl = _getStorageLine(proc);
+                (_customStationsCache[sl] || []).forEach(c => {
+                    if (c.process === proc && cfg[proc].stations[c.station] !== undefined) {
+                        cfg[proc].stations[c.station] = c.params || [];
+                    }
+                });
             });
         }
 
