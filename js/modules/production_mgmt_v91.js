@@ -3245,9 +3245,8 @@ var ProdStandardsModule = (function() {
             s._fromCpImport || (_hasCpImportHistory && Array.isArray(s.customParams) && s.customParams.length > 0));
 
         // 전체 공정 × 스테이션 구조 빌드 (rowspan 계산 포함)
-        // ★ CP 모드: 모든 라인(도장(A)/도장(B) 동시) 조회. 레코드 없는 행은 아래에서 제외
-        //   수동 모드: 현재 _curLine 기준 필터 적용 (기존 동작 유지)
-        const carCfg = _isCpMode ? _getCarConfig('') : _getCarConfig(_curLine || '');
+        // CP 흐름에 도장(B) 포함 여부 확인 → 항상 전체 공정 대상으로 조회
+        const carCfg = _getCarConfig('');
         const allGroups = [];
         const cpSortNo = (v) => {
             const m = String(v || '').trim().match(/^(\d+)(?:\s*[._\-\/]\s*(\d+))?/);
@@ -3264,11 +3263,13 @@ var ProdStandardsModule = (function() {
             const processedStations = new Set();
 
             Object.entries(cfg.stations).forEach(([stName, fixedParams]) => {
-                processedStations.add(stName);
                 const rec        = _getRecord(_curCarModel, _curPartName, procName, stName, line);
 
                 // ★ CP 모드: 레코드가 없는 PROCESS_CONFIG 고정 스테이션은 표시 생략
+                // processedStations에는 레코드가 실제로 있는 경우만 추가 →
+                // 레코드가 없는 고정 스테이션이 "records not in cfg.stations" 블록을 막지 않도록
                 if (_isCpMode && !rec) return;
+                processedStations.add(stName);
 
                 const stNo = (rec && rec.rawProcNo != null && rec.rawProcNo !== '')
                     ? rec.rawProcNo
@@ -7907,15 +7908,14 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         _stationOrderCache[line][proc] = order;
         await DB.setConfig(STATION_ORDER_KEY_PFX + line, _stationOrderCache[line]);
     }
-    /** 세부공정 목록을 저장된 순서 기준으로 반환. 순서에 없는 것은 정의 순서(canonical) 그대로 */
+    /** 관리/설정에 등록된 세부공정 목록과 순서를 그대로 반환 */
     function _smGetOrderedStations(line, proc) {
         const cfg = (_getCarConfig('')[proc]) || { stations: {} };
-        const allSt = Object.keys(cfg.stations);  // canonical definition order
-        const order = _getStationOrder('A라인', proc);  // user-saved order
-        if (!order || order.length === 0) return allSt;  // no saved order → use canonical
-        const inOrder    = order.filter(s => allSt.includes(s));
-        const notInOrder = allSt.filter(s => !inOrder.includes(s));  // preserve canonical order
-        return [...inOrder, ...notInOrder];
+        const allSt = Object.keys(cfg.stations);
+        const settingsStations = (_settingsSubProcessTypes && _settingsSubProcessTypes[proc]) || [];
+        return settingsStations.length
+            ? settingsStations.filter(st => allSt.includes(st))
+            : allSt;
     }
 
     // ── 세부공정 행 드래그&드롭 ─────────────────────────────────────
@@ -7974,21 +7974,13 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         _smStDragOverIdx = -1;
     }
 
-    /** 공정 목록을 저장된 순서 기준으로 반환. canonical 순서 우선, 커스텀 공정은 뒤에 추가 */
+    /** 관리/설정에 등록된 공정 목록과 순서를 그대로 반환 */
     function _smGetOrderedProcs(line) {
-        // line param kept for compat but ignored — now uses unified config + canonical order
-        const carCfg = _getCarConfig('');  // unified: all processes
+        const carCfg = _getCarConfig('');
         const allProcs = Object.keys(carCfg);
-        // Saved user order (if any) — use 'A라인' key for unified (backward compat)
-        const savedOrder = _getProcessOrder('A라인');
-        // Build ordered list: canonical order first, then any custom processes
-        const canonicalInConfig = CANONICAL_PROCESS_ORDER.filter(p => allProcs.includes(p));
-        const customProcs = allProcs.filter(p => !CANONICAL_PROCESS_ORDER.includes(p));
-        // Merge with saved order overlay
-        const baseOrder = [...canonicalInConfig, ...customProcs];
-        const savedOverlay = savedOrder.filter(p => baseOrder.includes(p));
-        const notInSaved = baseOrder.filter(p => !savedOverlay.includes(p));
-        return [...savedOverlay, ...notInSaved];
+        return Array.isArray(_settingsProcessTypes) && _settingsProcessTypes.length
+            ? _settingsProcessTypes.filter(proc => allProcs.includes(proc))
+            : allProcs;
     }
 
     // ── 공정 탭 드래그&드롭 ─────────────────────────────────────────
@@ -8265,42 +8257,13 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                 </span>
             </div>`;
 
-        const tabs = processKeys.map((p, idx) => {
+        const tabs = processKeys.map(p => {
             const isActive   = p === proc;
-            // 커스텀 공정: PROCESS_CONFIG에 없는 공정
-            const isCustomPr = !PROCESS_CONFIG[p];
             const borderColor = isActive ? 'var(--accent-blue)' : 'var(--border-color)';
             const bgColor     = isActive ? 'var(--accent-blue)' : 'transparent';
             const fgColor     = isActive ? '#fff' : 'var(--text-color)';
-            // 공통 드래그 wrapper 속성
-            const wrapBase = `id="smProcTab_${idx}" draggable="true"
-                ondragstart="ProdStandardsModule._smProcDragStart(event,${idx})"
-                ondragend="ProdStandardsModule._smProcDragEnd(event,${idx})"
-                ondragover="ProdStandardsModule._smProcDragOver(event,${idx})"
-                ondrop="ProdStandardsModule._smProcDrop(event,${idx})"`;
-            if (isCustomPr) {
-                return `<div ${wrapBase}
-                    style="display:inline-flex; align-items:stretch; border-radius:6px; overflow:hidden;
-                           border:1.5px solid ${borderColor}; cursor:grab;">
-                    <button onclick="ProdStandardsModule._smSelectProc('${_esc(p)}')"
-                        ondragstart="event.stopPropagation()"
-                        style="padding:5px 10px; font-size:12px; font-weight:600; cursor:pointer;
-                               border:none; background:${bgColor}; color:${fgColor};">${p}</button>
-                    <button onclick="ProdStandardsModule._smDeleteProcess('${_esc(p)}')"
-                        ondragstart="event.stopPropagation()"
-                        title="공정 삭제"
-                        style="padding:5px 6px; font-size:11px; cursor:pointer; border:none;
-                               border-left:1px solid ${isActive ? 'rgba(255,255,255,0.4)' : 'var(--border-color)'};
-                               background:${bgColor};
-                               color:${isActive ? 'rgba(255,255,255,0.85)' : 'var(--accent-red)'};">
-                        <span class="material-symbols-outlined" style="font-size:12px; vertical-align:middle;">close</span>
-                    </button>
-                </div>`;
-            }
-            return `<div ${wrapBase}
-                style="display:inline-block; cursor:grab; border-radius:6px;">
+            return `<div style="display:inline-block; border-radius:6px;">
                 <button onclick="ProdStandardsModule._smSelectProc('${_esc(p)}')"
-                    ondragstart="event.stopPropagation()"
                     style="padding:5px 12px; border-radius:6px; font-size:12px; font-weight:600;
                            cursor:pointer; border:1.5px solid ${borderColor};
                            background:${bgColor}; color:${fgColor};">${p}</button>
@@ -8312,15 +8275,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         _smCurrentStOrder = sortedStations;   // 드래그 핸들러 참조용
         const rows = sortedStations.map((stName, idx) => {
             const pCount = (carCfg[proc] || { stations: {} }).stations[stName]?.length ?? 0;
-            return `<tr id="smStRow_${idx}" style="border-top:1px solid var(--border-color);"
-                ondragover="ProdStandardsModule._smStDragOver(event,${idx})"
-                ondrop="ProdStandardsModule._smStDrop(event,${idx})">
-                <td draggable="true"
-                    ondragstart="ProdStandardsModule._smStDragStart(event,${idx})"
-                    ondragend="ProdStandardsModule._smStDragEnd(event,${idx})"
-                    style="padding:6px 8px; text-align:center; cursor:grab; color:var(--text-muted); user-select:none;">
-                    <span class="material-symbols-outlined" style="font-size:17px; vertical-align:middle; pointer-events:none;">drag_indicator</span>
-                </td>
+            return `<tr id="smStRow_${idx}" style="border-top:1px solid var(--border-color);">
                 <td style="padding:7px 12px; font-weight:600;">${stName}</td>
                 <td style="padding:7px 12px; text-align:center;">${pCount}</td>
                 <td style="padding:7px 12px; text-align:center; white-space:nowrap;">
@@ -8328,45 +8283,29 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                         onclick="ProdStandardsModule._smShowForm('${_esc(proc)}','${_esc(stName)}')">
                         <span class="material-symbols-outlined" style="font-size:12px;">edit</span>
                     </button>
-                    <button class="btn btn-sm" title="삭제" style="padding:2px 8px; font-size:11px;
-                                border:1px solid var(--accent-red); color:var(--accent-red);"
-                        onclick="ProdStandardsModule._smDeleteStation('${_esc(proc)}','${_esc(stName)}')">
-                        <span class="material-symbols-outlined" style="font-size:12px;">delete</span>
-                    </button>
                 </td>
             </tr>`;
         }).join('');
 
         return `
-            ${lineSelectorHtml}
+            <div style="font-size:11px; color:var(--text-muted); margin-bottom:10px;">
+                공정명과 세부공정은 관리/설정 기준을 사용합니다. 이 화면에서는 관리항목과 기준 파라미터만 편집합니다.
+            </div>
             <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; align-items:center;">
                 ${tabs}
-                <button onclick="ProdStandardsModule._smShowProcForm()"
-                    title="공정 추가"
-                    style="padding:5px 10px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;
-                           border:1.5px dashed var(--accent-blue); background:transparent;
-                           color:var(--accent-blue); display:inline-flex; align-items:center; gap:3px;">
-                    <span class="material-symbols-outlined" style="font-size:13px;">add</span>공정
-                </button>
             </div>
             <div style="overflow-x:auto; border:1px solid var(--border-color); border-radius:8px; margin-bottom:14px;">
                 <table style="width:100%; font-size:13px; border-collapse:collapse;">
                     <thead style="background:var(--bg-secondary);">
                         <tr>
-                            <th style="padding:7px 6px; width:22px;"></th>
-                            <th style="padding:7px 12px; text-align:left;">관리항목명</th>
-                            <th style="padding:7px 12px; text-align:center;">관리항목 파라메터수</th>
-                            <th style="padding:7px 12px; text-align:center; width:90px;">편집/삭제</th>
+                            <th style="padding:7px 12px; text-align:left;">세부공정명</th>
+                            <th style="padding:7px 12px; text-align:center;">관리항목·기준 파라미터 수</th>
+                            <th style="padding:7px 12px; text-align:center; width:90px;">편집</th>
                         </tr>
                     </thead>
                     <tbody>${rows}</tbody>
                 </table>
-            </div>
-            <button class="btn btn-primary" style="font-size:12px;"
-                onclick="ProdStandardsModule._smShowForm('${_esc(proc)}', null)">
-                <span class="material-symbols-outlined" style="font-size:14px;">add</span>
-                관리항목 추가
-            </button>`;
+            </div>`;
     }
 
     function _smSelectProc(proc) {
