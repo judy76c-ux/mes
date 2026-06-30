@@ -7607,8 +7607,8 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         { keys: ['사출소재입고','사출 소재 입고','소재입고','사출입고','사출소재'], sys: '사출소재 입고'     },
 
         // ── 보관 하위 ─────────────────────────────────────────────
-        { keys: ['위험물창고','위험물','도료창고','도료저장','paint창고'],         sys: '도료창고 (위험물)' },
-        { keys: ['사출창고','소재창고','사출소재창고','injection창고'],            sys: '사출 창고'         },
+        { keys: ['위험물창고','위험물','도료창고','도료저장','paint창고'],         sys: '도료창고' },
+        { keys: ['사출창고','소재창고','사출소재창고','injection창고'],            sys: '사출창고' },
 
         // ── 도장 하위 ─────────────────────────────────────────────
         { keys: ['로딩','loading','load'],                               sys: '로딩'      },
@@ -10886,6 +10886,9 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         if (!wrap || !_cpParsedGroups) return;
         const car = _cpParsedCarModel;
         wrap.innerHTML = _buildGroupsPreviewHtml(_cpParsedGroups, car);
+        // 진단 헤더도 함께 갱신 (드롭다운 수정 후 불일치 카운트 반영)
+        const diagWrap = document.getElementById('cpDiagSummary');
+        if (diagWrap) diagWrap.innerHTML = _cpDiagnosticSummaryHtml(_cpParsedGroups);
         UIUtils.toast('재파싱 완료 — 미리보기가 업데이트됐습니다', 'success');
         const carCfg  = _getCarConfig('');
         const total   = _cpParsedGroups.length;
