@@ -664,9 +664,7 @@ var ProdStandardsModule = (function() {
             }
             const exact = all.find(s => s.process === raw.process && s.station === (raw.station || ''))
                 || all.find(s => s.process === raw.process && !raw.station);
-            // 현재 유효한 스텝에 없으면 제외 (스테이션명 변경·삭제 시 stale 스텝 정리)
-            if (!exact) return;
-            const finalStep = exact;
+            const finalStep = exact || { process: raw.process, station: raw.station || '' };
             const key = _cpStepKey(finalStep);
             if (seen.has(key)) return;
             seen.add(key);
