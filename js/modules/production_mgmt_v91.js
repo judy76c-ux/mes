@@ -3023,7 +3023,7 @@ var ProdStandardsModule = (function() {
                                         <span class="material-symbols-outlined" style="font-size:13px; vertical-align:middle;">route</span>
                                         CP 공정 흐름
                                     </label>
-                                    <button class="btn btn-secondary btn-sm" onclick="ProdStandardsModule.openStationManager()"
+                                    <button class="btn btn-secondary btn-sm" onclick="ProdStandardsModule.openCpFlowModal('items')"
                                         style="display:flex; align-items:center; gap:5px; font-size:12px; white-space:nowrap;">
                                         <span class="material-symbols-outlined" style="font-size:15px;">tune</span>
                                         관리항목 관리
@@ -3244,7 +3244,10 @@ var ProdStandardsModule = (function() {
 
         // CP 임포트 여부 판별: _fromCpImport 레코드가 하나라도 있으면 "CP 모드"
         // CP 모드에서는 레코드 없는 PROCESS_CONFIG 고정 스테이션 행을 숨김
-        const _isCpMode = _allSavedStds.some(s => s._fromCpImport);
+        const _hasCpImportHistory = _loadCpHistory().some(h =>
+            h.carModel === _curCarModel && h.partName === _curPartName);
+        const _isCpMode = _allSavedStds.some(s =>
+            s._fromCpImport || (_hasCpImportHistory && Array.isArray(s.customParams) && s.customParams.length > 0));
 
         // 전체 공정 × 스테이션 구조 빌드 (rowspan 계산 포함)
         // ★ CP 모드: 모든 라인(도장(A)/도장(B) 동시) 조회. 레코드 없는 행은 아래에서 제외
@@ -3374,6 +3377,7 @@ var ProdStandardsModule = (function() {
                     const phProd    = param._custom ? '' : (param.itemType === 'prod' ? param.label : '');
                     const phProc    = param._custom ? '' : (param.itemType === 'proc' ? param.label : '');
                     const vSpec     = sv.value   || '';
+                    const vImage    = sv.image   || '';
                     const vSpecial  = sv.special  || '';
                     const vFp       = sv.fp       || '';
                     // 저장값 없으면 세부공정 관리에서 정의한 기본값으로 대체
@@ -3480,10 +3484,26 @@ var ProdStandardsModule = (function() {
                             </button>
                         </td>
                         <td style="${tdPad} ${tdBase}">
-                            <input type="text" class="form-input"
-                                style="${inStyle}"
+                            <textarea class="form-input"
+                                style="${inStyle} min-height:44px; height:auto; resize:none; overflow:hidden; line-height:1.35; padding:6px 8px;"
                                 id="psParam_val_${param.key}"
-                                value="${_esc(vSpec)}" placeholder="규격 / 기준값">
+                                placeholder="규격 / 기준값 (여러 줄 입력 가능)"
+                                oninput="ProdStandardsModule.autoGrowSpec(this)">${_esc(vSpec)}</textarea>
+                            <div id="psParam_image_${param.key}" tabindex="0"
+                                data-image="${_esc(vImage)}"
+                                onpaste="ProdStandardsModule.pasteParamImage(event,'${param.key}')"
+                                style="margin-top:4px; min-height:25px; border:1px dashed var(--border-color);
+                                       border-radius:5px; padding:4px 6px; cursor:text; outline:none;
+                                       font-size:10px; color:var(--text-muted);">
+                                <span class="cp-image-hint" style="${vImage ? 'display:none;' : ''}">클릭 후 Ctrl+V로 캡처 이미지 붙여넣기</span>
+                                <div class="cp-image-preview" style="${vImage ? '' : 'display:none;'}">
+                                    <img src="${_esc(vImage)}" alt="규격 참고 이미지"
+                                        style="display:block; max-width:100%; max-height:180px; margin:2px auto;">
+                                    <button type="button" onclick="ProdStandardsModule.clearParamImage('${param.key}')"
+                                        style="margin-top:3px; border:1px solid #ef4444; color:#ef4444;
+                                               background:#fff; border-radius:4px; padding:2px 7px; cursor:pointer;">이미지 삭제</button>
+                                </div>
+                            </div>
                         </td>
                         <td style="${tdPad} ${tdBase}">
                             <input type="text" class="form-input"
@@ -3541,12 +3561,6 @@ var ProdStandardsModule = (function() {
                                 style="${inStyle}"
                                 id="psParam_action_${param.key}"
                                 value="${_esc(sv.action||param.action||'')}" placeholder="조치사항">
-                        </td>
-                        <td style="${tdPad} ${tdBase}">
-                            <input type="text" class="form-input"
-                                style="${inStyle}"
-                                id="psParam_note_${param.key}"
-                                value="${_esc(sv.note||param.note||'')}" placeholder="비고">
                         </td>
                     </tr>`;
                 });
@@ -3612,7 +3626,6 @@ var ProdStandardsModule = (function() {
                             <th colspan="4" style="text-align:center; border-bottom:1px solid var(--border-color); padding:4px 8px; white-space:nowrap;">관리 기준</th>
                             <th colspan="3" style="text-align:center; border-bottom:1px solid var(--border-color); padding:4px 8px; white-space:nowrap; background:#e8f5e9;">관리 분담</th>
                             <th rowspan="2" style="width:8%; white-space:nowrap; text-align:center; vertical-align:middle; padding:4px 6px; font-size:10px; background:#fff8e1;">이상 발생시<br>조치사항</th>
-                            <th rowspan="2" style="width:4%; white-space:nowrap; text-align:center; vertical-align:middle; padding:4px 6px; font-size:10px;">비고</th>
                         </tr>
                         <tr>
                             <th style="width:6%; font-size:11px; color:var(--accent-blue);   background:var(--bg-secondary); padding:3px 6px; white-space:nowrap;">제 품</th>
@@ -3637,6 +3650,9 @@ var ProdStandardsModule = (function() {
                 ${_drawingSectionHtml(drawRec)}
             </div>
         `;
+        requestAnimationFrame(() => {
+            el.querySelectorAll('textarea[id^="psParam_val_"]').forEach(autoGrowSpec);
+        });
     }
 
     function _getLinkedStandardRecord(type, carModel = _curCarModel, partName = _curPartName) {
@@ -6369,11 +6385,6 @@ body {
         <div>${tableHtml(chunks[1])}</div>
     </main>
 </section>
-<script>
-window.addEventListener('load', function() {
-    setTimeout(function() { window.print(); }, 250);
-});
-</script>
 </body>
 </html>`);
         win.document.close();
@@ -7072,7 +7083,10 @@ window.addEventListener('load', function() {
 
         const allStds = Storage.getAll(DB.STORES.PROD_STANDARDS)
             .filter(s => s.carModel === _curCarModel && s.partName === _curPartName && _isCpParamRecord(s));
-        const isCpMode = allStds.some(s => s._fromCpImport);
+        const hasCpImportHistory = _loadCpHistory().some(h =>
+            h.carModel === _curCarModel && h.partName === _curPartName);
+        const isCpMode = allStds.some(s =>
+            s._fromCpImport || (hasCpImportHistory && Array.isArray(s.customParams) && s.customParams.length > 0));
         const carCfg   = isCpMode ? _getCarConfig('') : _getCarConfig(_curLine || '');
 
         // ── 4. 행 데이터 빌드 ─────────────────────────────────────
@@ -7126,6 +7140,8 @@ window.addEventListener('load', function() {
                     const control   = _gv('psParam_control_'   + param.key) || sv.control   || '';
                     const action    = _gv('psParam_action_'    + param.key) || sv.action    || '';
                     const note      = _gv('psParam_note_'      + param.key) || sv.note      || '';
+                    const imageEl   = document.getElementById('psParam_image_' + param.key);
+                    const image     = imageEl?.dataset?.image || sv.image || '';
                     const respProd  = _gd('psParam_respProd_'  + param.key) ? '○' : (sv.resp && sv.resp.prod ? '○' : '');
                     const respMat   = _gd('psParam_respMat_'   + param.key) ? '○' : (sv.resp && sv.resp.mat  ? '○' : '');
                     const respQc    = _gd('psParam_respQc_'    + param.key) ? '○' : (sv.resp && sv.resp.qc   ? '○' : '');
@@ -7139,7 +7155,7 @@ window.addEventListener('load', function() {
                         isFirstSt: pidx === 0,
                         procRowSpan: 0, stRowSpan: 0,  // 계산 후 채움
                         no: pidx + 1,
-                        itemProd, itemProc, spec, special, fp, method, cycle, control, action, note,
+                        itemProd, itemProc, spec, image, special, fp, method, cycle, control, action, note,
                         respProd, respMat, respQc,
                     });
                     if (!procPrinted && pidx === 0) procPrinted = true;
@@ -7162,42 +7178,52 @@ window.addEventListener('load', function() {
         }
 
         // ── 5. 개정이력 행 HTML ──────────────────────────────────
-        const maxRev = Math.max(revList.length, 3);
+        const _e = v => String(v||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const maxRev = Math.max(revList.length, 10);
         const revRows = Array.from({ length: maxRev }, (_, i) => {
             const r = revList[i] || {};
             return `<tr>
-                <td style="text-align:center; width:28px;">${r.no != null ? r.no : ''}</td>
-                <td style="text-align:center; width:72px; font-size:10px;">${r.date || ''}</td>
-                <td>${r.reason || ''}</td>
+                <td class="rev-no" data-no="${r.no != null ? _e(r.no) : ''}">${r.no != null ? _e(r.no) : ''}</td>
+                <td>${_e(_normalizeRevDate(r.date))}</td>
+                <td>${_e(r.reason || '')}</td>
+                <td>${_e(r.content || '')}</td>
+                <td>${r.quality ? '○' : ''}</td><td>${r.development ? '○' : ''}</td>
+                <td>${r.production ? '○' : ''}</td><td>${r.material ? '○' : ''}</td>
+                <td>${r.management ? '○' : ''}</td><td>${r.workStandard ? '○' : ''}</td>
+                <td>${r.report ? '○' : ''}</td><td>${r.firstArticle ? '○' : ''}</td>
+                <td>${r.condition ? '○' : ''}</td><td>${r.equipment ? '○' : ''}</td>
+                <td>${_e(r.writer || '')}</td><td>${_e(r.reviewer || '')}</td><td>${_e(r.approver || '')}</td>
             </tr>`;
         }).join('');
 
         // ── 6. 데이터 행 HTML ─────────────────────────────────────
-        const _e = v => String(v||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
         const dataRows = printRows.map(r => {
-            let html = '<tr>';
+            let html = `<tr class="${r.isFirstSt ? 'station-start' : 'station-inner'}">`;
+            if (r.isFirstSt) {
+                html += `<td rowspan="${r.stRowSpan}" class="cp-nowrap" style="text-align:center;font-weight:700;vertical-align:middle;background:${r.color}15;font-size:11px;">${_e(r.stNo)}</td>`;
+            }
             if (r.isFirstProc) {
-                html += `<td rowspan="${r.procRowSpan}" style="text-align:center;font-weight:700;vertical-align:middle;background:${r.color}15;font-size:11px;">${_e(r.stNo)}</td>`;
-                html += `<td rowspan="${r.procRowSpan}" style="text-align:center;font-weight:700;vertical-align:middle;background:${r.color}20;font-size:10px;writing-mode:vertical-rl;text-orientation:mixed;">${_e(r.procName)}</td>`;
+                html += `<td rowspan="${r.procRowSpan}" class="cp-nowrap" style="text-align:center;font-weight:700;vertical-align:middle;background:${r.color}20;font-size:8px;writing-mode:vertical-rl;text-orientation:mixed;">${_e(r.procName)}</td>`;
             }
             if (r.isFirstSt) {
-                html += `<td rowspan="${r.stRowSpan}" style="text-align:center;vertical-align:middle;font-size:10px;">${_e(r.stName)}</td>`;
-                html += `<td rowspan="${r.stRowSpan}" style="text-align:center;vertical-align:middle;font-size:10px;">${_e(r.equipName)}</td>`;
+                html += `<td rowspan="${r.stRowSpan}" class="cp-nowrap" style="text-align:center;vertical-align:middle;font-size:8px;">${_e(r.stName)}</td>`;
+                html += `<td rowspan="${r.stRowSpan}" class="cp-nowrap" style="text-align:center;vertical-align:middle;font-size:8px;">${_e(r.equipName)}</td>`;
             }
-            html += `<td style="text-align:center;">${r.no}</td>`;
-            html += `<td>${_e(r.itemProd)}</td>`;
-            html += `<td>${_e(r.itemProc)}</td>`;
-            html += `<td style="text-align:center;font-weight:700;">${_e(r.special)}</td>`;
-            html += `<td style="text-align:center;font-weight:700;">${_e(r.fp)}</td>`;
-            html += `<td>${_e(r.spec)}</td>`;
-            html += `<td>${_e(r.method)}</td>`;
-            html += `<td style="text-align:center;">${_e(r.cycle)}</td>`;
-            html += `<td>${_e(r.control)}</td>`;
-            html += `<td style="text-align:center;">${_e(r.respProd)}</td>`;
-            html += `<td style="text-align:center;">${_e(r.respMat)}</td>`;
-            html += `<td style="text-align:center;">${_e(r.respQc)}</td>`;
-            html += `<td>${_e(r.action)}</td>`;
-            html += `<td>${_e(r.note)}</td>`;
+            html += `<td class="cp-nowrap" style="text-align:center;">${r.no}</td>`;
+            html += `<td class="cp-fit">${_e(r.itemProd)}</td>`;
+            html += `<td class="cp-fit">${_e(r.itemProc)}</td>`;
+            html += `<td class="cp-nowrap" style="text-align:center;font-weight:700;">${_e(r.special)}</td>`;
+            html += `<td class="cp-nowrap" style="text-align:center;font-weight:700;">${_e(r.fp)}</td>`;
+            html += `<td class="cp-wrap">${_e(r.spec).replace(/\n/g, '<br>')}${r.image
+                ? `<img src="${_e(r.image)}" alt="규격 참고 이미지" style="display:block;max-width:100%;max-height:42mm;margin:3px auto 0;">`
+                : ''}</td>`;
+            html += `<td class="cp-fit">${_e(r.method)}</td>`;
+            html += `<td class="cp-fit" style="text-align:center;">${_e(r.cycle)}</td>`;
+            html += `<td class="cp-wrap">${_e(r.control)}</td>`;
+            html += `<td class="cp-nowrap cp-resp" style="text-align:center;">${_e(r.respProd)}</td>`;
+            html += `<td class="cp-nowrap cp-resp" style="text-align:center;">${_e(r.respMat)}</td>`;
+            html += `<td class="cp-nowrap cp-resp" style="text-align:center;">${_e(r.respQc)}</td>`;
+            html += `<td class="cp-wrap">${_e(r.action)}</td>`;
             html += '</tr>';
             return html;
         }).join('');
@@ -7210,118 +7236,208 @@ window.addEventListener('load', function() {
 <style>
 * { box-sizing:border-box; margin:0; padding:0; }
 body { font-family:'Malgun Gothic','맑은 고딕',Arial,sans-serif; font-size:11px; padding:8px; background:#fff; color:#000; }
+.print-toolbar {
+    position:fixed; top:14px; right:18px; z-index:1000;
+    display:flex; gap:8px;
+}
+.print-toolbar button {
+    border:1px solid #1d4ed8; border-radius:7px; padding:8px 18px;
+    background:#2563eb; color:#fff; font:700 13px 'Malgun Gothic',sans-serif;
+    cursor:pointer; box-shadow:0 3px 10px rgba(37,99,235,.25);
+}
+.print-toolbar button:hover { background:#1d4ed8; }
 h1 { font-size:18px; font-weight:700; text-align:center; margin-bottom:8px; letter-spacing:1px; }
 .meta-line { font-size:12px; font-weight:600; margin-bottom:6px; }
 table { border-collapse:collapse; width:100%; }
 th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-break:break-word; }
-.hdr-tbl th { background:#d0d8e4; font-size:10px; text-align:center; }
-.hdr-tbl td { font-size:10px; }
-.cp-tbl th { background:#c8d8c0; font-size:10px; text-align:center; }
-.cp-tbl td { font-size:10px; }
+.cover-page, .process-page { width:285mm; margin:0 auto; }
+.cover-page { min-height:198mm; }
+.cover-title { font-size:30px; font-weight:700; letter-spacing:2px; text-align:center; }
+.cover-meta { table-layout:fixed; border:2px solid #111; }
+.cover-meta th, .cover-meta td { height:32px; text-align:center; font-size:11px; border:1px solid #222; }
+.cover-meta th { font-weight:500; }
+.cover-meta .title-cell { height:96px; }
+.cover-meta .feature-cell { line-height:2; text-align:left; padding-left:10px; }
+.cover-meta .group-edge { border-right-width:2px; }
+.revision-table { table-layout:fixed; border:2px solid #111; }
+.revision-table th { background:#c9f7c7; height:30px; text-align:center; font-weight:500; }
+.revision-table th, .revision-table td { border:1px solid #222; padding:2px 4px; }
+.revision-table td { height:46px; text-align:center; font-size:10px; }
+.revision-table tbody tr > *:nth-child(4),
+.revision-table tbody tr > *:nth-child(8),
+.revision-table tbody tr > *:nth-child(14) { border-right-width:2px; }
+.revision-table thead tr:first-child th:not(:last-child) { border-right-width:2px; }
+.revision-table thead tr:nth-child(2) > *:nth-child(4),
+.revision-table thead tr:nth-child(2) > *:nth-child(8),
+.revision-table thead tr:nth-child(2) > *:nth-child(14) { border-right-width:2px; }
+.revision-table .rev-no { position:relative; width:42px; font-size:0; }
+.revision-table .rev-no:not(:empty)::before {
+    content:''; position:absolute; left:13px; top:9px; width:27px; height:27px;
+    border-left:1px solid #111; border-top:1px solid #111; transform:rotate(45deg);
+}
+.revision-table .rev-no:not(:empty)::after {
+    content:attr(data-no); position:absolute; inset:0; display:flex;
+    align-items:center; justify-content:center; font-size:10px;
+}
+.process-page { break-before:page; page-break-before:always; }
+.process-heading { display:flex; align-items:center; justify-content:space-between; margin-bottom:5px; }
+.process-heading h2 { font-size:17px; }
+.cp-tbl { table-layout:fixed; border:2px solid #111; }
+.cp-tbl th { background:#c8d8c0; font-size:9px; text-align:center; white-space:nowrap; padding:3px 2px; }
+.cp-tbl td { font-size:9px; padding:3px 3px; }
+.cp-tbl .cp-nowrap { white-space:nowrap; }
+.cp-tbl .cp-wrap { white-space:normal; }
+.cp-tbl .cp-resp { font-size:8px; }
+.cp-tbl .cp-fit {
+    white-space:normal;
+    word-break:keep-all;
+    overflow-wrap:anywhere;
+    line-height:1.25;
+}
+.cp-tbl td { overflow:hidden; }
+.cp-tbl tbody tr.station-inner > td {
+    border-top-style:dotted;
+    border-bottom-style:dotted;
+    border-top-color:#666;
+    border-bottom-color:#666;
+}
+.cp-tbl tbody tr.station-start > td {
+    border-top-style:solid;
+    border-bottom-style:dotted;
+    border-top-color:#222;
+    border-bottom-color:#666;
+}
+.cp-tbl tbody tr:first-child > td {
+    border-top-width:1px;
+    border-top-style:solid;
+}
 .cp-tbl .proc-col { text-align:center; }
-.rev-tbl th { background:#e0e0e0; font-size:10px; text-align:center; }
-.rev-tbl td { font-size:10px; text-align:center; }
 .approval-box { border:1px solid #555; font-size:10px; }
 .approval-box th { background:#e0e0e0; }
 @media print {
-    body { padding:4mm; font-size:9px; }
-    @page { size:A3 landscape; margin:8mm; }
-    h1 { font-size:15px; }
+    html, body { width:285mm; margin:0; padding:0; font-size:9px; }
+    @page { size:A4 landscape; margin:6mm; }
+    .print-toolbar { display:none !important; }
+    .cover-page, .process-page { width:285mm; max-width:285mm; margin:0; }
+    .cover-page { min-height:0; height:198mm; overflow:hidden; }
+    .process-page { break-before:page; page-break-before:always; }
 }
 </style>
 </head><body>
-<h1>관리 계획서 (Control Plan)</h1>
-<div class="meta-line">사 명 : &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</div>
-
-<!-- 헤더 정보 테이블 -->
-<table class="hdr-tbl" style="margin-bottom:6px;">
+<div class="print-toolbar">
+  <button type="button" onclick="window.print()">인쇄</button>
+</div>
+<section class="cover-page">
+<table class="cover-meta">
+  <colgroup>
+    <col style="width:4.2%"><col style="width:7.1%"><col style="width:17.4%"><col style="width:22.2%">
+    <col style="width:3.45%"><col style="width:3.45%"><col style="width:3.45%"><col style="width:3.45%">
+    <col style="width:4.05%"><col style="width:4.05%"><col style="width:4.05%">
+    <col style="width:4.05%"><col style="width:4.05%"><col style="width:4.05%">
+    <col style="width:3.65%"><col style="width:3.65%"><col style="width:3.65%">
+  </colgroup>
   <tr>
-    <th style="width:60px;">단 계</th>
-    <th style="width:60px;">고객명</th>
-    <td colspan="3"></td>
-    <th style="width:30px;">NO</th>
-    <th style="width:70px;">개정일자</th>
-    <th>개정사유</th>
-    <th style="width:36px;">작성</th>
-    <th style="width:36px;">검토</th>
-    <th style="width:36px;">승인</th>
-    <td rowspan="5" style="width:28px; text-align:center; font-weight:700; writing-mode:vertical-rl; background:#e8e8e8;">결&nbsp;재</td>
-    <th colspan="4" style="text-align:center; background:#e0e0e0;">제정일자</th>
+    <th colspan="2">단&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;계</th>
+    <td class="group-edge">□ 시작&nbsp;&nbsp; □ 개발&nbsp;&nbsp; ■ 양산</td>
+    <td rowspan="3" colspan="10" class="title-cell"><div class="cover-title">관리계획서(Control Plan)</div></td>
+    <th rowspan="3" class="group-edge">결<br>재</th>
+    <th>작성</th><th>검토</th><th>승인</th>
   </tr>
   <tr>
-    <th>모델</th>
-    <td colspan="4" style="font-weight:700; text-align:center;">${_e(_curCarModel)}</td>
-    ${revRows.split('</tr>')[0].replace('<tr>', '')}
-    <td rowspan="4" colspan="4" style="font-size:10px; text-align:center; vertical-align:middle;">
-      <table class="approval-box" style="width:100%;height:100%;">
-        <tr><th>입 안</th><th>검 토</th><th>심 사</th><th>승 인</th></tr>
-        <tr><td style="height:36px;"></td><td></td><td></td><td></td></tr>
-      </table>
-    </td>
+    <th colspan="2">문 서 번 호</th><td class="group-edge">CONTROLPLAN_002</td>
+    <td rowspan="2"></td><td rowspan="2"></td><td rowspan="2"></td>
   </tr>
   <tr>
-    <th>부품명</th>
-    <td colspan="4" style="font-weight:700; text-align:center;">${_e(_curPartName)}</td>
-    ${revRows.split('</tr>')[1] ? revRows.split('</tr>')[1].replace('<tr>', '') + '</tr>' : '<tr><td colspan="5"></td></tr>'}
+    <th colspan="2">제 정 일 자</th><td class="group-edge">${_e(_normalizeRevDate((revList[0] || {}).date))}</td>
   </tr>
   <tr>
-    <th>품번</th>
-    <td colspan="4" style="text-align:center;">${_e(partNo)}</td>
-    ${revRows.split('</tr>')[2] ? revRows.split('</tr>')[2].replace('<tr>', '') + '</tr>' : '<tr><td colspan="5"></td></tr>'}
+    <th colspan="2">양산 적용일</th><td class="group-edge"></td>
+    <th>차&nbsp;&nbsp;&nbsp;&nbsp;종</th><td colspan="4" class="group-edge">${_e(_curCarModel)}</td>
+    <th rowspan="3" colspan="2">특 별 특 성 구 분</th>
+    <td rowspan="3" colspan="3" class="feature-cell group-edge">★: 법규/안전특별특성<br>◇: 기능특별특성</td>
+    <td rowspan="3" colspan="4" class="feature-cell">관리: 관리계획서&nbsp;&nbsp;&nbsp; 초품: 초품 C/SHEET<br>작표: 작업표준서&nbsp;&nbsp;&nbsp; 조건: 작업 기준/조건 C/SHEET<br>성적: 수입/출하 성적서&nbsp;&nbsp;&nbsp; 설비: 설비일상점검표/설비셋팅</td>
   </tr>
   <tr>
-    <td>양산단계</td>
-    <th>재질</th>
-    <td colspan="3"></td>
-    <td colspan="3"></td>
+    <th rowspan="2" colspan="2">상호기능팀장</th><td rowspan="2" class="group-edge"></td>
+    <th>부품명/품명</th><td colspan="4" class="group-edge">${_e(_curPartName)}</td>
+  </tr>
+  <tr>
+    <th>부번 / 품번</th><td colspan="4" class="group-edge">${_e(partNo)}</td>
   </tr>
 </table>
 
-<!-- 서명란 / 업체코드 -->
-<table class="hdr-tbl" style="margin-bottom:6px;">
-  <tr>
-    <th style="width:80px;">업체코드</th><td style="width:160px;"></td>
-    <th style="width:120px;">고객기술 승인/일자</th><td style="width:160px;"></td>
-    <th style="width:120px;">고객품질 승인/일자</th><td></td>
-    <th style="width:120px;">기술승인/일자</th><td></td>
-  </tr>
-</table>
-
-<!-- 메인 CP 테이블 -->
-<table class="cp-tbl">
+<table class="revision-table">
+  <colgroup>
+    <col style="width:4.2%"><col style="width:7.1%"><col style="width:17.4%"><col style="width:22.2%">
+    <col style="width:3.45%"><col style="width:3.45%"><col style="width:3.45%"><col style="width:3.45%">
+    <col style="width:4.05%"><col style="width:4.05%"><col style="width:4.05%">
+    <col style="width:4.05%"><col style="width:4.05%"><col style="width:4.05%">
+    <col style="width:3.65%"><col style="width:3.65%"><col style="width:3.65%">
+  </colgroup>
   <thead>
     <tr>
-      <th rowspan="2" style="width:36px;">공정<br>번호</th>
-      <th rowspan="2" style="width:28px;">공정<br>명</th>
-      <th rowspan="2" style="width:52px;">세부공정</th>
-      <th rowspan="2" style="width:52px;">설비명</th>
-      <th rowspan="2" style="width:22px;">No</th>
+      <th colspan="4">개 정 이 력</th>
+      <th colspan="4">상호기능 협의</th>
+      <th colspan="6">관련 표준류 변경</th>
+      <th colspan="3">개 정 승 인</th>
+    </tr>
+    <tr>
+      <th>개정No</th><th>개정일자</th><th>개정사유</th><th>개정내용</th>
+      <th>품질</th><th>개발</th><th>생산</th><th>자재</th>
+      <th>관리</th><th>작표</th><th>성적</th><th>초품</th><th>조건</th><th>설비</th>
+      <th>작성</th><th>검토</th><th>승인</th>
+    </tr>
+  </thead>
+  <tbody>${revRows}</tbody>
+</table>
+</section>
+
+<section class="process-page">
+<div class="process-heading">
+  <h2>관리계획서(Control Plan) - 공정 관리 기준</h2>
+  <div>차종: ${_e(_curCarModel)} &nbsp;&nbsp; 품명: ${_e(_curPartName)} &nbsp;&nbsp; 품번: ${_e(partNo)}</div>
+</div>
+<table class="cp-tbl">
+  <colgroup>
+    <col style="width:3.0%"><col style="width:3.2%"><col style="width:6.2%"><col style="width:4.4%">
+    <col style="width:2.2%"><col style="width:5.2%"><col style="width:8.0%">
+    <col style="width:2.3%"><col style="width:2.3%"><col style="width:28.4%">
+    <col style="width:5.8%"><col style="width:4.6%"><col style="width:8.0%">
+    <col style="width:2.8%"><col style="width:2.8%"><col style="width:2.8%">
+    <col style="width:8.0%">
+  </colgroup>
+  <thead>
+    <tr>
+      <th rowspan="2">공정<br>번호</th>
+      <th rowspan="2">공정명</th>
+      <th rowspan="2">세부공정</th>
+      <th rowspan="2">설비명</th>
+      <th rowspan="2">No</th>
       <th colspan="2">관 리 항 목</th>
-      <th rowspan="2" style="width:24px;">특별<br>특성</th>
-      <th rowspan="2" style="width:24px;">F/P</th>
+      <th rowspan="2">특별<br>특성</th>
+      <th rowspan="2">F/P</th>
       <th colspan="4">관 리 기 준</th>
       <th colspan="3" style="background:#c8e6c9;">관 리 분 담</th>
       <th rowspan="2" style="background:#fff9c4;">이상 발생시<br>조 치 사 항</th>
-      <th rowspan="2" style="width:44px;">비 고</th>
     </tr>
     <tr>
-      <th style="width:70px;">제 품</th>
-      <th style="width:70px;">공 정</th>
+      <th>제 품</th>
+      <th>공 정</th>
       <th>규  격</th>
-      <th style="width:56px;">확인방법</th>
-      <th style="width:44px;">주기</th>
-      <th style="width:80px;">관리방안</th>
-      <th style="width:28px; background:#c8e6c9;">생산</th>
-      <th style="width:28px; background:#c8e6c9;">자재</th>
-      <th style="width:28px; background:#c8e6c9;">Q.C</th>
+      <th>확인방법</th>
+      <th>주기</th>
+      <th>관리방안</th>
+      <th style="background:#c8e6c9; font-size:8px;">생산</th>
+      <th style="background:#c8e6c9; font-size:8px;">자재</th>
+      <th style="background:#c8e6c9; font-size:8px;">Q.C</th>
     </tr>
   </thead>
   <tbody>
-    ${dataRows || '<tr><td colspan="18" style="text-align:center; padding:20px; color:#888;">데이터 없음</td></tr>'}
+    ${dataRows || '<tr><td colspan="17" style="text-align:center; padding:20px; color:#888;">데이터 없음</td></tr>'}
   </tbody>
 </table>
+</section>
 
-<script>window.onload = function(){ window.print(); }<\/script>
 </body></html>`);
         win.document.close();
     }
@@ -7334,6 +7450,8 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
 
         const g = id => (document.getElementById(id) || {});
         let savedCount = 0;
+        const hasCpImportHistory = _loadCpHistory().some(h =>
+            h.carModel === _curCarModel && h.partName === _curPartName);
 
         for (const [procName, cfg] of Object.entries(_getCarConfig(_curLine || ''))) {
             const line = cfg.storeLine ? cfg.storeLine : '';
@@ -7369,6 +7487,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                     const iRespQc   = g('psParam_respQc_'   + p.key);
                     const iAction   = g('psParam_action_'   + p.key);
                     const iNote     = g('psParam_note_'     + p.key);
+                    const iImage    = g('psParam_image_'    + p.key);
                     paramData[p.key] = {
                         itemProd: _vProd,
                         itemProc: _vProc,
@@ -7381,6 +7500,8 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                         control:  iControl.value !== undefined ? iControl.value : (prev.control  || ''),
                         action:   iAction.value  !== undefined ? iAction.value  : (prev.action   || ''),
                         note:     iNote.value    !== undefined ? iNote.value    : (prev.note     || ''),
+                        image:    iImage.dataset && iImage.dataset.image !== undefined
+                            ? iImage.dataset.image : (prev.image || ''),
                         resp: {
                             prod: iRespProd.dataset ? !!iRespProd.dataset.value : (prev.resp ? !!prev.resp.prod : false),
                             mat:  iRespMat.dataset  ? !!iRespMat.dataset.value  : (prev.resp ? !!prev.resp.mat  : false),
@@ -7394,6 +7515,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                     const prev = prevSaved[cp.key] || {};
                     const gv   = id => { const el = g(id); return el.value !== undefined ? el.value : null; };
                     const gd   = id => { const el = g(id); return el.dataset ? el.dataset.value : null; };
+                    const gi   = id => { const el = g(id); return el.dataset && el.dataset.image !== undefined ? el.dataset.image : null; };
                     paramData[cp.key] = {
                         itemProd: gv('psParam_itemProd_' + cp.key) ?? (prev.itemProd || ''),
                         itemProc: gv('psParam_itemProc_' + cp.key) ?? (prev.itemProc || ''),
@@ -7405,6 +7527,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                         control:  gv('psParam_control_'  + cp.key) ?? (prev.control  || ''),
                         action:   gv('psParam_action_'   + cp.key) ?? (prev.action   || ''),
                         note:     gv('psParam_note_'     + cp.key) ?? (prev.note     || ''),
+                        image:    gi('psParam_image_'    + cp.key) ?? (prev.image    || ''),
                         range:    prev.range || '',
                         resp: {
                             prod: gd('psParam_respProd_' + cp.key) !== null ? !!gd('psParam_respProd_' + cp.key) : (prev.resp ? !!prev.resp.prod : false),
@@ -7421,6 +7544,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                 }
 
                 const payload = {
+                    ...(existing || {}),
                     carModel:     _curCarModel,
                     partName:     _curPartName,
                     process:      procName,
@@ -7429,6 +7553,13 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                     params:       paramData,
                     customParams: savedCust,
                     drawing:      drawingToSave,
+                    rawProcNo:    existing && existing.rawProcNo != null && existing.rawProcNo !== ''
+                        ? existing.rawProcNo
+                        : (cfg.stationNos && cfg.stationNos[stName] != null ? cfg.stationNos[stName] : cfg.procNo || ''),
+                    equipName:    existing ? (existing.equipName || '') : '',
+                    _fromCpImport: existing
+                        ? (!!existing._fromCpImport || (hasCpImportHistory && savedCust.length > 0))
+                        : false,
                     updatedAt:    UIUtils.now(),
                 };
 
@@ -8044,8 +8175,15 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
             '<button class="btn btn-secondary" id="smFooterBtn" onclick="UIUtils.closeModal()">닫기</button>',
             'md'
         );
-        // 양 라인 설정 로드 후 렌더
-        Promise.all([_ensureCarConfig('A라인'), _ensureCarConfig('B라인')]).then(() => {
+        // 설정 공정 목록 + 양 라인 설정 로드 후 렌더 (매번 최신 설정 반영)
+        _settingsProcessTypes = null;
+        _settingsSubProcessTypes = null;
+        _carConfigCache = {};
+        Promise.all([
+            _loadSettingsProcessConfig(),
+            _ensureCarConfig('A라인'),
+            _ensureCarConfig('B라인')
+        ]).then(() => {
             const orderedProcs = _smGetOrderedProcs('');
             _smActiveProc = _smActiveProc || orderedProcs[0];
             _smLine = _smGetLine();
@@ -8056,7 +8194,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
     /** 모달 body/footer를 현재 상태에 맞게 DOM 업데이트 (showModal 재호출 없음) */
     function _smRefresh() {
         const bodyEl   = document.getElementById('smBody');
-        const footerEl = document.getElementById('modalFooter');
+        const footerEl = document.getElementById('cpFlowModalFooter') || document.getElementById('modalFooter');
         if (!bodyEl) return;
 
         if (_smProcFormMode) {
@@ -8072,8 +8210,8 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         } else {
             bodyEl.innerHTML = _smBuildListHtml();
             if (footerEl) footerEl.innerHTML = `
-                <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
-                <button class="btn btn-primary" onclick="ProdStandardsModule._smSaveAndClose()">저장</button>`;
+                <span style="font-size:11px;color:var(--text-muted);">관리항목을 추가하거나 편집하세요.</span>
+                <button class="btn btn-secondary" onclick="ProdStandardsModule.closeCpFlowModal()">닫기</button>`;
         }
     }
 
@@ -8846,6 +8984,21 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
     let _revHistCache = null;   // 현재 선택된 차종/품명의 개정이력
     let _revHistKey   = '';
 
+    function _normalizeRevDate(value) {
+        const raw = String(value || '').trim();
+        if (!raw) return '';
+        const digits = raw.replace(/\D/g, '');
+        if (digits.length !== 8) return raw;
+        const normalized = `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
+        const date = new Date(`${normalized}T00:00:00`);
+        return !Number.isNaN(date.getTime())
+            && date.getFullYear() === Number(digits.slice(0, 4))
+            && date.getMonth() + 1 === Number(digits.slice(4, 6))
+            && date.getDate() === Number(digits.slice(6, 8))
+            ? normalized
+            : raw;
+    }
+
     async function _loadRevHist(carModel, partName) {
         const key = REV_HIST_KEY_PFX + (carModel||'') + '__' + (partName||'');
         if (_revHistKey === key && _revHistCache !== null) return _revHistCache;
@@ -8874,7 +9027,13 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         }
         const list = await _loadRevHist(_curCarModel, _curPartName);
         const nextNo = list.length > 0 ? (Math.max(...list.map(r => r.no || 0)) + 1) : 1;
-        list.push({ no: nextNo, date: '', reason: '' });
+        list.push({
+            no: nextNo, date: '', reason: '', content: '',
+            quality: false, development: false, production: false, material: false,
+            management: false, workStandard: false, report: false,
+            firstArticle: false, condition: false, equipment: false,
+            writer: '', reviewer: '', approver: ''
+        });
         await _saveRevHist(_curCarModel, _curPartName, list);
         _refreshRevSection();
     }
@@ -8885,9 +9044,93 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         const list = await _loadRevHist(_curCarModel, _curPartName);
         const row = list.find(r => r.no === no);
         if (row) {
-            row[field] = val;
+            row[field] = field === 'date' ? _normalizeRevDate(val) : val;
             await _saveRevHist(_curCarModel, _curPartName, list);
         }
+    }
+
+    function autoGrowSpec(textarea) {
+        if (!textarea) return;
+        textarea.style.height = 'auto';
+        textarea.style.height = Math.max(44, textarea.scrollHeight) + 'px';
+    }
+
+    function _resizeParamImage(file) {
+        return new Promise((resolve, reject) => {
+            if (!file) {
+                reject(new Error('클립보드 이미지 파일을 찾을 수 없습니다.'));
+                return;
+            }
+            const reader = new FileReader();
+            reader.onerror = () => reject(reader.error || new Error('이미지 파일 읽기 실패'));
+            reader.onload = () => {
+                const img = new Image();
+                img.onerror = () => resolve(reader.result);
+                img.onload = () => {
+                    try {
+                        const scale = Math.min(1, 1200 / Math.max(img.width, img.height));
+                        const canvas = document.createElement('canvas');
+                        canvas.width = Math.max(1, Math.round(img.width * scale));
+                        canvas.height = Math.max(1, Math.round(img.height * scale));
+                        const context = canvas.getContext('2d');
+                        if (!context) {
+                            resolve(reader.result);
+                            return;
+                        }
+                        context.drawImage(img, 0, 0, canvas.width, canvas.height);
+                        resolve(canvas.toDataURL('image/jpeg', 0.85));
+                    } catch (e) {
+                        resolve(reader.result);
+                    }
+                };
+                img.src = reader.result;
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    async function pasteParamImage(event, key) {
+        const clipboard = event.clipboardData;
+        const imageItem = Array.from(clipboard?.items || [])
+            .find(item => item.type && item.type.startsWith('image/'));
+        const imageFile = imageItem?.getAsFile?.()
+            || Array.from(clipboard?.files || []).find(file => file.type && file.type.startsWith('image/'));
+        if (!imageFile) {
+            UIUtils.toast('클립보드에서 이미지 데이터를 찾지 못했습니다.', 'warning');
+            return;
+        }
+        event.preventDefault();
+        try {
+            const data = await _resizeParamImage(imageFile);
+            const box = document.getElementById('psParam_image_' + key);
+            if (!box) return;
+            box.dataset.image = data;
+            box.querySelector('.cp-image-hint').style.display = 'none';
+            const preview = box.querySelector('.cp-image-preview');
+            preview.style.display = '';
+            preview.querySelector('img').src = data;
+            UIUtils.toast('캡처 이미지가 추가되었습니다. 전체 저장을 눌러 저장하세요.', 'success');
+        } catch (e) {
+            console.error('[관리계획서] 클립보드 이미지 처리 실패:', e);
+            UIUtils.toast('이미지를 붙여넣지 못했습니다.', 'error');
+        }
+    }
+
+    function clearParamImage(key) {
+        const box = document.getElementById('psParam_image_' + key);
+        if (!box) return;
+        box.dataset.image = '';
+        box.querySelector('.cp-image-hint').style.display = '';
+        box.querySelector('.cp-image-preview').style.display = 'none';
+        box.querySelector('img').removeAttribute('src');
+    }
+
+    function revDateTyping(input) {
+        const digits = String(input.value || '').replace(/\D/g, '').slice(0, 8);
+        let formatted = digits.slice(0, 4);
+        if (digits.length > 4) formatted += '-' + digits.slice(4, 6);
+        if (digits.length > 6) formatted += '-' + digits.slice(6, 8);
+        input.value = formatted;
     }
 
     /** 개정이력 행 삭제 */
@@ -8908,19 +9151,48 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
     /** 개정이력 섹션 HTML (동기 — _revHistCache 사용) */
     function _renderRevHistSection_sync() {
         const list = _revHistCache || [];
+        const checkCell = (r, field, label) => `
+            <td style="text-align:center; padding:3px; min-width:48px;">
+                <input type="checkbox" aria-label="${label}" ${r[field] ? 'checked' : ''}
+                    onchange="ProdStandardsModule.revInput(${r.no},'${field}',this.checked)">
+            </td>`;
+        const textCell = (r, field, placeholder, width = 120) => `
+            <td style="padding:3px; min-width:${width}px;">
+                <input type="text" class="form-input" style="height:28px; font-size:12px; width:100%;"
+                    value="${_esc(r[field] || '')}" placeholder="${placeholder}"
+                    oninput="ProdStandardsModule.revInput(${r.no},'${field}',this.value)">
+            </td>`;
         const rows = list.map(r => `
             <tr id="revRow_${r.no}">
                 <td style="text-align:center; font-weight:700; width:48px; padding:4px 6px;">${r.no}</td>
                 <td style="padding:3px 5px;">
-                    <input type="date" class="form-input" style="height:28px; font-size:12px; width:130px;"
-                        value="${_esc(r.date || '')}"
-                        onchange="ProdStandardsModule.revInput(${r.no},'date',this.value)">
+                    <input type="text" inputmode="numeric" maxlength="10" class="form-input"
+                        style="height:28px; font-size:12px; width:130px;"
+                        value="${_esc(_normalizeRevDate(r.date))}"
+                        placeholder="YYYY-MM-DD" aria-label="개정일자 YYYY-MM-DD"
+                        oninput="ProdStandardsModule.revDateTyping(this)"
+                        onblur="ProdStandardsModule.revInput(${r.no},'date',this.value)"
+                        onkeydown="if(event.key==='Enter')this.blur()">
                 </td>
                 <td style="padding:3px 5px;">
                     <input type="text" class="form-input" style="height:28px; font-size:12px; width:100%;"
                         value="${_esc(r.reason || '')}" placeholder="개정 사유를 입력하세요"
                         oninput="ProdStandardsModule.revInput(${r.no},'reason',this.value)">
                 </td>
+                ${textCell(r, 'content', '개정 내용을 입력하세요', 220)}
+                ${checkCell(r, 'quality', '품질 협의')}
+                ${checkCell(r, 'development', '개발 협의')}
+                ${checkCell(r, 'production', '생산 협의')}
+                ${checkCell(r, 'material', '자재 협의')}
+                ${checkCell(r, 'management', '관리계획서 변경')}
+                ${checkCell(r, 'workStandard', '작업표준서 변경')}
+                ${checkCell(r, 'report', '성적서 변경')}
+                ${checkCell(r, 'firstArticle', '초품 변경')}
+                ${checkCell(r, 'condition', '조건 변경')}
+                ${checkCell(r, 'equipment', '설비 변경')}
+                ${textCell(r, 'writer', '작성', 76)}
+                ${textCell(r, 'reviewer', '검토', 76)}
+                ${textCell(r, 'approver', '승인', 76)}
                 <td style="text-align:center; padding:3px 5px; width:40px;">
                     <button type="button" title="행 삭제"
                         onclick="ProdStandardsModule.deleteRevRow(${r.no})"
@@ -8932,7 +9204,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
             </tr>`).join('');
 
         const emptyMsg = list.length === 0
-            ? `<tr><td colspan="4" style="text-align:center; padding:16px; color:var(--text-muted); font-size:13px;">
+            ? `<tr><td colspan="18" style="text-align:center; padding:16px; color:var(--text-muted); font-size:13px;">
                     개정 이력이 없습니다. 행 추가 버튼으로 등록하세요.
                </td></tr>` : '';
 
@@ -8952,13 +9224,23 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                 </button>
             </div>
             <div class="data-table-wrapper">
-                <table class="data-table" style="font-size:13px; width:100%;">
+                <table class="data-table" style="font-size:13px; width:max-content; min-width:100%;">
                     <thead>
                         <tr>
                             <th style="width:48px; text-align:center;">NO</th>
                             <th style="width:140px;">개정일자</th>
-                            <th>개정 사유</th>
+                            <th style="min-width:220px;">개정 사유</th>
+                            <th style="min-width:220px;">개정 내용</th>
+                            <th colspan="4">상호기능 협의</th>
+                            <th colspan="6">관련 표준류 변경</th>
+                            <th colspan="3">개정 승인</th>
                             <th style="width:40px;"></th>
+                        </tr>
+                        <tr>
+                            <th></th><th></th><th></th><th></th>
+                            <th>품질</th><th>개발</th><th>생산</th><th>자재</th>
+                            <th>관리</th><th>작표</th><th>성적</th><th>초품</th><th>조건</th><th>설비</th>
+                            <th>작성</th><th>검토</th><th>승인</th><th></th>
                         </tr>
                     </thead>
                     <tbody>${rows}${emptyMsg}</tbody>
@@ -9225,7 +9507,10 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         _refreshCpFlowUI();
     }
 
-    function openCpFlowModal() {
+    let _cpModalActiveTab = 'flow'; // 'flow' | 'items'
+
+    function openCpFlowModal(tab) {
+        _cpModalActiveTab = tab || 'flow';
         _ensureCpFlowActiveProcess();
         closeCpFlowModal();
         const overlay = document.createElement('div');
@@ -9236,28 +9521,93 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                         box-shadow:0 20px 60px rgba(15,23,42,.35);display:flex;flex-direction:column;overflow:hidden;">
                 <div style="display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--border-color);">
                     <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-blue);">route</span>
-                    <div style="font-weight:900;font-size:15px;flex:1;">CP 공정 순서 선택</div>
+                    <div style="font-weight:900;font-size:15px;">CP 공정 관리</div>
+                    <div style="display:flex;gap:2px;margin-left:12px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:8px;padding:3px;">
+                        <button type="button" id="cpTabFlow" onclick="ProdStandardsModule._switchCpModalTab('flow')"
+                            style="padding:5px 14px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:800;
+                                   background:${_cpModalActiveTab==='flow'?'#fff':'transparent'};
+                                   color:${_cpModalActiveTab==='flow'?'var(--accent-blue)':'var(--text-muted)'};
+                                   box-shadow:${_cpModalActiveTab==='flow'?'0 1px 3px rgba(0,0,0,.12)':'none'};">
+                            <span class="material-symbols-outlined" style="font-size:13px;vertical-align:-2px;">route</span> 공정 순서
+                        </button>
+                        <button type="button" id="cpTabItems" onclick="ProdStandardsModule._switchCpModalTab('items')"
+                            style="padding:5px 14px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:800;
+                                   background:${_cpModalActiveTab==='items'?'#fff':'transparent'};
+                                   color:${_cpModalActiveTab==='items'?'var(--accent-blue)':'var(--text-muted)'};
+                                   box-shadow:${_cpModalActiveTab==='items'?'0 1px 3px rgba(0,0,0,.12)':'none'};">
+                            <span class="material-symbols-outlined" style="font-size:13px;vertical-align:-2px;">checklist</span> 관리항목
+                        </button>
+                    </div>
+                    <div style="flex:1;"></div>
                     <button type="button" onclick="ProdStandardsModule.closeCpFlowModal()"
                         style="border:none;background:transparent;cursor:pointer;color:var(--text-muted);padding:4px;">
                         <span class="material-symbols-outlined" style="font-size:20px;">close</span>
                     </button>
                 </div>
-                <div id="cpFlowModalBody" style="padding:16px;overflow:auto;flex:1;min-height:0;">${_cpFlowModalHtml()}</div>
-                <div style="padding:12px 16px;border-top:1px solid var(--border-color);display:flex;justify-content:space-between;align-items:center;">
-                    <span id="cpFlowSaveBadge" style="font-size:11px;color:var(--text-muted);"></span>
-                    <div style="display:flex;gap:8px;">
-                        <button class="btn btn-primary" onclick="ProdStandardsModule._saveCpFlowManual()"
-                            style="display:flex;align-items:center;gap:5px;">
-                            <span class="material-symbols-outlined" style="font-size:15px;">save</span>공정 흐름 저장
-                        </button>
-                        <button class="btn btn-secondary" onclick="ProdStandardsModule.closeCpFlowModal()">닫기</button>
-                    </div>
-                </div>
+                <div id="cpFlowModalBody" style="padding:16px;overflow:auto;flex:1;min-height:0;"></div>
+                <div id="cpFlowModalFooter" style="padding:12px 16px;border-top:1px solid var(--border-color);display:flex;justify-content:space-between;align-items:center;"></div>
             </div>`;
         overlay.addEventListener('click', function(e) {
             if (e.target === overlay) closeCpFlowModal();
         });
         document.body.appendChild(overlay);
+
+        if (_cpModalActiveTab === 'items') {
+            _settingsProcessTypes = null;
+            _settingsSubProcessTypes = null;
+            _carConfigCache = {};
+            Promise.all([_loadSettingsProcessConfig(), _ensureCarConfig('A라인'), _ensureCarConfig('B라인')])
+                .then(() => { _smActiveProc = _smActiveProc || _smGetOrderedProcs('')[0]; _renderCpModalTab(); });
+        } else {
+            _renderCpModalTab();
+        }
+    }
+
+    function _switchCpModalTab(tab) {
+        _cpModalActiveTab = tab;
+        // 탭 버튼 스타일 갱신
+        ['flow','items'].forEach(t => {
+            const btn = document.getElementById('cpTab' + (t === 'flow' ? 'Flow' : 'Items'));
+            if (!btn) return;
+            const active = t === tab;
+            btn.style.background = active ? '#fff' : 'transparent';
+            btn.style.color = active ? 'var(--accent-blue)' : 'var(--text-muted)';
+            btn.style.boxShadow = active ? '0 1px 3px rgba(0,0,0,.12)' : 'none';
+        });
+        if (tab === 'items' && (_settingsProcessTypes === null)) {
+            _settingsProcessTypes = null;
+            _settingsSubProcessTypes = null;
+            _carConfigCache = {};
+            Promise.all([_loadSettingsProcessConfig(), _ensureCarConfig('A라인'), _ensureCarConfig('B라인')])
+                .then(() => { _smActiveProc = _smActiveProc || _smGetOrderedProcs('')[0]; _renderCpModalTab(); });
+        } else {
+            _renderCpModalTab();
+        }
+    }
+
+    function _renderCpModalTab() {
+        const body = document.getElementById('cpFlowModalBody');
+        const footer = document.getElementById('cpFlowModalFooter');
+        if (!body || !footer) return;
+        if (_cpModalActiveTab === 'items') {
+            body.style.padding = '0';
+            body.innerHTML = `<div id="smBody" style="min-height:200px;padding:16px;">${_smBuildListHtml()}</div>`;
+            footer.innerHTML = `
+                <span style="font-size:11px;color:var(--text-muted);">관리항목을 추가하거나 편집하세요.</span>
+                <button class="btn btn-secondary" onclick="ProdStandardsModule.closeCpFlowModal()">닫기</button>`;
+        } else {
+            body.style.padding = '16px';
+            body.innerHTML = _cpFlowModalHtml();
+            footer.innerHTML = `
+                <span id="cpFlowSaveBadge" style="font-size:11px;color:var(--text-muted);"></span>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn btn-primary" onclick="ProdStandardsModule._saveCpFlowManual()"
+                        style="display:flex;align-items:center;gap:5px;">
+                        <span class="material-symbols-outlined" style="font-size:15px;">save</span>공정 흐름 저장
+                    </button>
+                    <button class="btn btn-secondary" onclick="ProdStandardsModule.closeCpFlowModal()">닫기</button>
+                </div>`;
+        }
     }
 
     function closeCpFlowModal() {
@@ -11333,6 +11683,8 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         onControlPlanUpload,
         openCpFlowModal,
         closeCpFlowModal,
+        _switchCpModalTab,
+        _renderCpModalTab,
         _saveCpFlowManual,
         _setCpFlowProcessChecked,
         _stdMenuDragStart,
@@ -11437,8 +11789,12 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         _refreshGroupsPreview,
         toggleSpecial,
         toggleFp,
+        autoGrowSpec,
+        pasteParamImage,
+        clearParamImage,
         addRevRow,
         revInput,
+        revDateTyping,
         deleteRevRow,
         openStandardRowModal,
         saveStandardRow,
