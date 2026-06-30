@@ -81,13 +81,13 @@ var ProdStandardsModule = (function() {
         '보관': {
             icon: 'warehouse', color: 'var(--accent-teal, #0d9488)',
             procNo: 20,
-            stationNos: { '도료창고 (위험물)': 20, '사출 창고': 20 },
+            stationNos: { '도료창고': 20, '사출창고': 20 },
             stations: {
-                '도료창고 (위험물)': [
+                '도료창고': [
                     { key:'dc_temp',   label:'보관온도',   itemType:'proc', unit:'℃', special:'',  spec:'10~30℃',               method:'온도계',    cycle:'2회/일' },
                     { key:'dc_fifo',   label:'선입선출',   itemType:'proc', unit:'-',  special:'',  spec:'제조순으로 선입선출이 이루어질 것', method:'유효라벨', cycle:'1회'    },
                 ],
-                '사출 창고': [
+                '사출창고': [
                     { key:'sc_temp',   label:'보관온도',       itemType:'proc', unit:'℃', special:'',  spec:'',  method:'온도계', cycle:''     },
                     { key:'sc_fifo',   label:'선입선출',       itemType:'proc', unit:'-',  special:'',  spec:'제조순으로 선입선출이 이루어질 것', method:'육안', cycle:'' },
                     { key:'sc_stack',  label:'적재 높이',      itemType:'proc', unit:'단', special:'',  spec:'',  method:'육안',   cycle:''     },
@@ -8124,9 +8124,21 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                         stations: {}
                     };
                 }
-                (_settingsSubProcessTypes[proc] || [])
-                    .filter(st => !_isCpSelfStation(proc, st))
-                    .forEach(st => {
+                const settingsStations = (_settingsSubProcessTypes[proc] || [])
+                    .filter(st => !_isCpSelfStation(proc, st));
+
+                // 관리/설정이 기준 원본이다. 기본 설정에만 있는 세부공정은 노출하지 않는다.
+                if (Object.prototype.hasOwnProperty.call(_settingsSubProcessTypes, proc)) {
+                    const allowed = new Set(settingsStations);
+                    Object.keys(cfg[proc].stations || {}).forEach(st => {
+                        if (!allowed.has(st)) {
+                            delete cfg[proc].stations[st];
+                            if (cfg[proc].stationNos) delete cfg[proc].stationNos[st];
+                        }
+                    });
+                }
+
+                settingsStations.forEach(st => {
                     if (!cfg[proc].stations[st]) cfg[proc].stations[st] = [];
                     if (cfg[proc].stationNos && cfg[proc].stationNos[st] == null) cfg[proc].stationNos[st] = cfg[proc].procNo || 0;
                 });
@@ -8203,7 +8215,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
             bodyEl.innerHTML = _smBuildListHtml();
             if (footerEl) footerEl.innerHTML = `
                 <span style="font-size:11px;color:var(--text-muted);">관리항목을 추가하거나 편집하세요.</span>
-                <button class="btn btn-secondary" onclick="ProdStandardsModule.closeCpFlowModal()">닫기</button>`;
+                <button class="btn btn-secondary" onclick="ProdStandardsModule.closeCpFlowModal(true)">닫기</button>`;
         }
     }
 
@@ -9451,7 +9463,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
     function openCpFlowModal(tab) {
         _cpModalActiveTab = tab || 'flow';
         _ensureCpFlowActiveProcess();
-        closeCpFlowModal();
+        closeCpFlowModal(true);
         const overlay = document.createElement('div');
         overlay.id = 'cpFlowModalOverlay';
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.42);z-index:10050;display:flex;align-items:center;justify-content:center;padding:12px;';
@@ -9467,7 +9479,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                                    background:${_cpModalActiveTab==='flow'?'#fff':'transparent'};
                                    color:${_cpModalActiveTab==='flow'?'var(--accent-blue)':'var(--text-muted)'};
                                    box-shadow:${_cpModalActiveTab==='flow'?'0 1px 3px rgba(0,0,0,.12)':'none'};">
-                            <span class="material-symbols-outlined" style="font-size:13px;vertical-align:-2px;">route</span> 공정 순서
+                            <span class="material-symbols-outlined" style="font-size:13px;vertical-align:-2px;">format_list_numbered</span> 공정 순서
                         </button>
                         <button type="button" id="cpTabItems" onclick="ProdStandardsModule._switchCpModalTab('items')"
                             style="padding:5px 14px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:800;
@@ -9478,7 +9490,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                         </button>
                     </div>
                     <div style="flex:1;"></div>
-                    <button type="button" onclick="ProdStandardsModule.closeCpFlowModal()"
+                    <button type="button" onclick="ProdStandardsModule.closeCpFlowModal(true)"
                         style="border:none;background:transparent;cursor:pointer;color:var(--text-muted);padding:4px;">
                         <span class="material-symbols-outlined" style="font-size:20px;">close</span>
                     </button>
@@ -9486,9 +9498,6 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                 <div id="cpFlowModalBody" style="padding:16px;overflow:auto;flex:1;min-height:0;"></div>
                 <div id="cpFlowModalFooter" style="padding:12px 16px;border-top:1px solid var(--border-color);display:flex;justify-content:space-between;align-items:center;"></div>
             </div>`;
-        overlay.addEventListener('click', function(e) {
-            if (e.target === overlay) closeCpFlowModal();
-        });
         document.body.appendChild(overlay);
 
         if (_cpModalActiveTab === 'items') {
@@ -9532,8 +9541,8 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
             body.style.padding = '0';
             body.innerHTML = `<div id="smBody" style="min-height:200px;padding:16px;">${_smBuildListHtml()}</div>`;
             footer.innerHTML = `
-                <span style="font-size:11px;color:var(--text-muted);">관리항목을 추가하거나 편집하세요.</span>
-                <button class="btn btn-secondary" onclick="ProdStandardsModule.closeCpFlowModal()">닫기</button>`;
+                <span style="font-size:11px;color:var(--text-muted);">관리항목과 기준 파라미터를 편집하세요.</span>
+                <button class="btn btn-secondary" onclick="ProdStandardsModule.closeCpFlowModal(true)">닫기</button>`;
         } else {
             body.style.padding = '16px';
             body.innerHTML = _cpFlowModalHtml();
@@ -9544,12 +9553,13 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                         style="display:flex;align-items:center;gap:5px;">
                         <span class="material-symbols-outlined" style="font-size:15px;">save</span>공정 흐름 저장
                     </button>
-                    <button class="btn btn-secondary" onclick="ProdStandardsModule.closeCpFlowModal()">닫기</button>
+                    <button class="btn btn-secondary" onclick="ProdStandardsModule.closeCpFlowModal(true)">닫기</button>
                 </div>`;
         }
     }
 
-    function closeCpFlowModal() {
+    function closeCpFlowModal(forceClose = false) {
+        if (!forceClose) return;
         const existing = document.getElementById('cpFlowModalOverlay');
         if (existing) existing.remove();
     }
@@ -9589,26 +9599,32 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
             const total = _cpFlowStepsForProcess(proc).length;
             const orderIdx = selectedProcOrder.indexOf(proc);
             const displayNo = orderIdx >= 0 ? String(orderIdx + 1).padStart(2, '0') : '--';
-            return `<div draggable="true"
-                    ondragstart="ProdStandardsModule._cpFlowProcDragStart('${_esc(proc)}',event)"
+            return `<div
+                    onclick="ProdStandardsModule._setCpFlowProcessChecked('${_esc(proc)}', ${checked ? 'false' : 'true'})"
                     ondragover="ProdStandardsModule._cpFlowProcDragOver('${_esc(proc)}',event)"
                     ondrop="ProdStandardsModule._cpFlowProcDrop('${_esc(proc)}',event)"
-                    ondragend="ProdStandardsModule._cpFlowDragEnd(event)"
                     style="display:flex;align-items:center;gap:10px;padding:12px 12px;border-radius:8px;
                            border:1px solid ${active ? 'var(--accent-blue)' : 'var(--border-color)'};
                            background:${active ? 'rgba(37,99,235,.08)' : 'var(--bg-primary)'};
-                           cursor:grab;">
-                <span class="material-symbols-outlined" style="font-size:17px;color:var(--text-muted);">drag_indicator</span>
+                           cursor:pointer;">
+                <span class="material-symbols-outlined" draggable="true"
+                    onmousedown="event.stopPropagation()"
+                    onclick="event.stopPropagation()"
+                    ondragstart="event.stopPropagation();ProdStandardsModule._cpFlowProcDragStart('${_esc(proc)}',event)"
+                    ondragend="event.stopPropagation();ProdStandardsModule._cpFlowDragEnd(event)"
+                    title="드래그하여 순서 변경"
+                    style="font-size:20px;color:var(--text-muted);cursor:grab;padding:4px;">drag_indicator</span>
                 <span style="width:22px;text-align:center;font-size:11px;font-weight:900;color:${checked ? 'var(--accent-blue)' : 'var(--text-muted)'};">${displayNo}</span>
                 <input type="checkbox" ${checked ? 'checked' : ''}
                     onmousedown="event.stopPropagation();"
                     ondragstart="event.preventDefault();event.stopPropagation();"
                     onclick="event.stopPropagation();ProdStandardsModule._setCpFlowProcessChecked('${_esc(proc)}', this.checked)"
-                    style="width:22px;height:22px;margin:0;cursor:pointer;accent-color:var(--accent-blue);">
-                <button type="button" onclick="ProdStandardsModule._selectCpFlowProcess('${_esc(proc)}')"
+                    style="width:25px;height:25px;margin:0;cursor:pointer;accent-color:var(--accent-blue);">
+                <button type="button"
+                    onclick="event.stopPropagation();ProdStandardsModule._selectCpFlowProcess('${_esc(proc)}');ProdStandardsModule._setCpFlowProcessChecked('${_esc(proc)}', ${checked ? 'false' : 'true'})"
                     style="flex:1;text-align:left;border:none;background:transparent;cursor:pointer;padding:0;
                            color:${active ? 'var(--accent-blue)' : 'var(--text-primary)'};
-                           font-weight:800;font-size:12px;">
+                           font-weight:800;font-size:13px;min-height:30px;">
                     ${_esc(proc)}
                 </button>
                 <span style="font-size:10px;font-weight:800;padding:2px 7px;border-radius:999px;
