@@ -10304,6 +10304,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         const items = [];
         let lastProcess = '', lastSubProc = '', lastStation = '', lastProcNo = '';
         let lastMethod = '', lastCycle = '', lastControl = '', lastAction = '';
+        let lastItemProd = '', lastItemProc = '';
         let lastStationKey = '';
 
         for (let i = dataStart; i < rows.length; i++) {
@@ -10357,6 +10358,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
             const stationKey = process + '||' + (subProc || station);
             if (stationKey !== lastStationKey || isGroupStart) {
                 lastMethod = ''; lastCycle = ''; lastControl = ''; lastAction = '';
+                lastItemProd = ''; lastItemProc = '';
                 lastStationKey = stationKey;
             }
 
@@ -10364,7 +10366,15 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
             const rawItemProd = col.itemProd >= 0 ? _t(row[col.itemProd]) : '';
             const rawItemProc = col.itemProc >= 0 ? _t(row[col.itemProc]) : '';
             let itemName = rawItemProd || rawItemProc;
-            if (!itemName) continue;
+            // 관리항목이 비어도 규격이 있으면 이전 항목명 fill-down (병합셀 대응)
+            if (!itemName) {
+                const rSpecFill = col.spec >= 0 ? _t(row[col.spec]) : '';
+                if (rSpecFill && (lastItemProd || lastItemProc)) {
+                    itemName = lastItemProd || lastItemProc;
+                } else {
+                    continue;
+                }
+            }
             // 숫자만인 항목(NO 열 등) 제외
             if (/^\d+$/.test(itemName)) continue;
 
@@ -10376,6 +10386,10 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                 '관리기준','관리항목','제품특성','공정특성'];
             const _itemNorm = itemName.replace(/[\s\(\)\[\]\/]/g,'').toLowerCase();
             if (_HEADER_KW.some(k => _itemNorm === k)) continue;
+
+            // 관리항목 fill-down 갱신
+            if (rawItemProd) lastItemProd = rawItemProd;
+            if (rawItemProc) lastItemProc = rawItemProc;
 
             // ── 제품/공정 중복값 정리 ──────────────────────────────
             let itemProd = /^\d+$/.test(rawItemProd) ? '' : rawItemProd;
@@ -10770,8 +10784,8 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                     ` : ''}
                 </td>`;
 
-                row += `<td style="vertical-align:middle; padding:${isFirst?'4px 8px':'3px'};
-                                   font-size:12px; white-space:nowrap;
+                row += `<td style="vertical-align:middle; padding:${isFirst?'4px 6px':'3px'};
+                                   font-size:12px; overflow:hidden; word-break:break-all;
                                    ${isFirst ? `background:${color}07; border-left:3px solid ${color}55;` : 'border-left:3px solid transparent;'}">
                     ${isFirst ? `<span style="color:${color}; font-weight:600;">${g.station || '-'}</span>
                         ${!matched && isFirst
@@ -10779,8 +10793,8 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                             : ''}` : ''}
                 </td>`;
 
-                row += `<td style="vertical-align:middle; padding:${isFirst?'4px 8px':'3px'};
-                                   font-size:11px; white-space:nowrap; color:var(--text-muted);
+                row += `<td style="vertical-align:middle; padding:${isFirst?'4px 6px':'3px'};
+                                   font-size:11px; overflow:hidden; word-break:break-all; color:var(--text-muted);
                                    ${isFirst && g.equipName ? `background:${color}04;` : ''}">
                     ${isFirst ? (g.equipName || '-') : ''}
                 </td>`;
@@ -10823,26 +10837,41 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         <div style="border:1px solid var(--border-color); border-radius:10px; overflow:hidden;">
             ${summaryHtml}
             <div style="overflow-x:auto;">
-                <table style="width:100%; font-size:12px; border-collapse:collapse; min-width:920px;">
+                <table style="width:100%; font-size:12px; border-collapse:collapse; min-width:920px; table-layout:fixed;">
+                    <colgroup>
+                        <col style="width:4%">   <!-- 공정번호 -->
+                        <col style="width:7%">   <!-- 주공정 -->
+                        <col style="width:10%">  <!-- 세부공정 -->
+                        <col style="width:7%">   <!-- 설비명 -->
+                        <col style="width:3%">   <!-- No -->
+                        <col style="width:9%">   <!-- 관리항목 제품 -->
+                        <col style="width:9%">   <!-- 관리항목 공정 -->
+                        <col style="width:4%">   <!-- 특별특성 -->
+                        <col style="width:4%">   <!-- F/P -->
+                        <col style="width:22%">  <!-- 규격/기준값 -->
+                        <col style="width:8%">   <!-- 확인방법 -->
+                        <col style="width:5%">   <!-- 주기 -->
+                        <col style="width:8%">   <!-- 관리방안 -->
+                    </colgroup>
                     <thead style="background:var(--bg-secondary);">
                         <tr>
-                            <th rowspan="2" style="padding:6px 6px; text-align:center; vertical-align:middle; width:42px; border-bottom:2px solid var(--border-color); white-space:nowrap;">공정<br>번호</th>
-                            <th rowspan="2" style="padding:6px 8px; text-align:center; vertical-align:middle; min-width:68px; border-bottom:2px solid var(--border-color);">주공정</th>
-                            <th rowspan="2" style="padding:6px 8px; text-align:left; vertical-align:middle; min-width:68px; border-bottom:2px solid var(--border-color);">세부공정</th>
-                            <th rowspan="2" style="padding:6px 8px; text-align:left; vertical-align:middle; min-width:60px; border-bottom:2px solid var(--border-color); color:var(--text-muted);">설비명</th>
-                            <th rowspan="2" style="padding:6px 5px; text-align:center; vertical-align:middle; width:26px; border-bottom:2px solid var(--border-color);">No</th>
-                            <th colspan="2" style="padding:5px 8px; text-align:center; font-weight:700; border-bottom:1px solid var(--border-color);">관리 항목</th>
-                            <th rowspan="2" style="padding:6px 6px; text-align:center; vertical-align:middle; width:38px; border-bottom:2px solid var(--border-color);">특별<br>특성</th>
-                            <th rowspan="2" style="padding:6px 6px; text-align:center; vertical-align:middle; width:38px; border-bottom:2px solid var(--border-color);">F/P</th>
-                            <th colspan="4" style="padding:5px 8px; text-align:center; font-weight:700; border-bottom:1px solid var(--border-color);">관리 기준</th>
+                            <th rowspan="2" style="padding:6px 4px; text-align:center; vertical-align:middle; border-bottom:2px solid var(--border-color); white-space:nowrap; overflow:hidden;">공정<br>번호</th>
+                            <th rowspan="2" style="padding:6px 6px; text-align:center; vertical-align:middle; border-bottom:2px solid var(--border-color); overflow:hidden;">주공정</th>
+                            <th rowspan="2" style="padding:6px 6px; text-align:left; vertical-align:middle; border-bottom:2px solid var(--border-color); overflow:hidden;">세부공정</th>
+                            <th rowspan="2" style="padding:6px 6px; text-align:left; vertical-align:middle; border-bottom:2px solid var(--border-color); color:var(--text-muted); overflow:hidden;">설비명</th>
+                            <th rowspan="2" style="padding:6px 3px; text-align:center; vertical-align:middle; border-bottom:2px solid var(--border-color);">No</th>
+                            <th colspan="2" style="padding:5px 6px; text-align:center; font-weight:700; border-bottom:1px solid var(--border-color);">관리 항목</th>
+                            <th rowspan="2" style="padding:6px 4px; text-align:center; vertical-align:middle; border-bottom:2px solid var(--border-color); white-space:nowrap; overflow:hidden; font-size:10px;">특별<br>특성</th>
+                            <th rowspan="2" style="padding:6px 4px; text-align:center; vertical-align:middle; border-bottom:2px solid var(--border-color);">F/P</th>
+                            <th colspan="4" style="padding:5px 6px; text-align:center; font-weight:700; border-bottom:1px solid var(--border-color);">관리 기준</th>
                         </tr>
                         <tr style="background:var(--bg-secondary);">
-                            <th style="padding:4px 8px; font-size:11px; font-weight:600; color:var(--accent-blue);   border-bottom:2px solid var(--border-color); min-width:88px;">제 품</th>
-                            <th style="padding:4px 8px; font-size:11px; font-weight:600; color:var(--accent-orange); border-bottom:2px solid var(--border-color); min-width:100px;">공 정</th>
-                            <th style="padding:4px 8px; font-size:11px; font-weight:600; border-bottom:2px solid var(--border-color); min-width:180px;">규격 / 기준값</th>
-                            <th style="padding:4px 8px; font-size:11px; font-weight:600; border-bottom:2px solid var(--border-color); min-width:80px;">확인방법</th>
-                            <th style="padding:4px 8px; font-size:11px; font-weight:600; border-bottom:2px solid var(--border-color); min-width:50px;">주기</th>
-                            <th style="padding:4px 8px; font-size:11px; font-weight:600; border-bottom:2px solid var(--border-color); min-width:84px;">관리방안</th>
+                            <th style="padding:4px 6px; font-size:11px; font-weight:600; color:var(--accent-blue);   border-bottom:2px solid var(--border-color);">제 품</th>
+                            <th style="padding:4px 6px; font-size:11px; font-weight:600; color:var(--accent-orange); border-bottom:2px solid var(--border-color);">공 정</th>
+                            <th style="padding:4px 6px; font-size:11px; font-weight:600; border-bottom:2px solid var(--border-color);">규격 / 기준값</th>
+                            <th style="padding:4px 6px; font-size:11px; font-weight:600; border-bottom:2px solid var(--border-color);">확인방법</th>
+                            <th style="padding:4px 6px; font-size:11px; font-weight:600; border-bottom:2px solid var(--border-color);">주기</th>
+                            <th style="padding:4px 6px; font-size:11px; font-weight:600; border-bottom:2px solid var(--border-color);">관리방안</th>
                         </tr>
                     </thead>
                     <tbody>${previewRows.join('')}</tbody>
