@@ -9595,17 +9595,18 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
             UIUtils.toast('차종/품명을 먼저 선택하세요.', 'warning');
             return;
         }
-        await _saveCpFlow(_curCarModel, _curPartName, _cpSelectedFlow);
-        const procs = _cpSelectedProcessNames();
-        const badge = document.getElementById('cpFlowSaveBadge');
-        if (badge) {
-            badge.textContent = `저장 완료 — ${procs.length}개 주공정 (${UIUtils.now().slice(11,16)})`;
-            badge.style.color = 'var(--accent-green, #16a34a)';
-        }
-        UIUtils.toast(`[${_curCarModel} / ${_curPartName}] 공정 흐름 저장 완료 (${procs.length}개 주공정)`, 'success');
-        _refreshCpFlowUI();
-        _refreshCpStatusTableIfVisible();
-        console.log('[SaveFlow] 저장 완료. normalized=', JSON.stringify(_cpFlowCache[_cpFlowCacheKey(_curCarModel, _curPartName)]));
+        try {
+            await _saveCpFlow(_curCarModel, _curPartName, _cpSelectedFlow);
+            const procs = _cpSelectedProcessNames();
+            const badge = document.getElementById('cpFlowSaveBadge');
+            if (badge) {
+                badge.textContent = `저장 완료 — ${procs.length}개 주공정 (${UIUtils.now().slice(11,16)})`;
+                badge.style.color = 'var(--accent-green, #16a34a)';
+            }
+            UIUtils.toast(`[${_curCarModel} / ${_curPartName}] 공정 흐름 저장 완료 (${procs.length}개 주공정)`, 'success');
+            _refreshCpFlowUI();
+            _refreshCpStatusTableIfVisible();
+            console.log('[SaveFlow] 저장 완료. normalized=', JSON.stringify(_cpFlowCache[_cpFlowCacheKey(_curCarModel, _curPartName)]));
         } catch(e) {
             console.error('[SaveFlow] 저장 오류:', e);
             UIUtils.toast('공정 흐름 저장 실패: ' + e.message, 'error');
