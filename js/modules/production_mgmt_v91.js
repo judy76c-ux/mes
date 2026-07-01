@@ -6913,6 +6913,12 @@ body {
                         <span class="material-symbols-outlined" style="font-size:14px;">restart_alt</span>
                         파라메터 초기화
                     </button>
+                </div>
+                <div style="display:flex;align-items:flex-start;gap:6px;padding:6px 10px;border-radius:6px;
+                            background:#eff6ff;border:1px solid #bfdbfe;font-size:11px;color:#1e40af;line-height:1.5;">
+                    <span class="material-symbols-outlined" style="font-size:14px;margin-top:1px;flex-shrink:0;">info</span>
+                    <span>업로드 전 <b>CP 공정 흐름</b>에서 대상 공정·세부공정을 먼저 선택하세요.<br>
+                    파싱 결과가 흐름과 일치해야 누락 없이 CP 표에 반영됩니다.</span>
                 </div>`;
         } else {
             // ── 파라미터 데이터 없음 ──────────────────────────────
@@ -6937,6 +6943,12 @@ body {
                         <span class="material-symbols-outlined" style="font-size:14px;">restart_alt</span>
                         파라메터 초기화
                     </button>
+                </div>
+                <div style="display:flex;align-items:flex-start;gap:6px;padding:6px 10px;border-radius:6px;
+                            background:#eff6ff;border:1px solid #bfdbfe;font-size:11px;color:#1e40af;line-height:1.5;">
+                    <span class="material-symbols-outlined" style="font-size:14px;margin-top:1px;flex-shrink:0;">info</span>
+                    <span>업로드 전 <b>CP 공정 흐름</b>에서 대상 공정·세부공정을 먼저 선택하세요.<br>
+                    파싱 결과가 흐름과 일치해야 누락 없이 CP 표에 반영됩니다.</span>
                 </div>`;
         }
     }
