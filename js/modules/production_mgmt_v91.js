@@ -10974,6 +10974,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         const mapping = _getUserMap(carModel, partName);
         if (!mapping || mapping.length === 0) return 0;
         let applied = 0;
+        const _normK = s => (s || '').replace(/[\s\(\)]/g, '').toLowerCase();
         groups.forEach(g => {
             const entry = mapping.find(e =>
                 e.rawProcNo  === (g.rawProcNo  || '') &&
@@ -10983,7 +10984,17 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
             if (entry) {
                 const explicitPaint = _explicitPaintProcessFromText(g.rawProcess || '');
                 g.process   = explicitPaint || entry.sysProcess;
-                g.station   = entry.sysStation;
+                // 저장된 sysStation이 현재 config에 없으면 정규화 매칭으로 교정
+                const procName = g.process;
+                const cfg = _getCarConfig('')[procName];
+                const defined = [
+                    ...(cfg ? Object.keys(cfg.stations) : []),
+                    ...((_settingsSubProcessTypes && _settingsSubProcessTypes[procName]) || [])
+                ].filter((v, i, arr) => v && arr.indexOf(v) === i);
+                const exact = defined.includes(entry.sysStation);
+                const normalized = exact ? entry.sysStation
+                    : (defined.find(d => _normK(d) === _normK(entry.sysStation)) || entry.sysStation);
+                g.station   = normalized;
                 g.equipName = entry.equipName;
                 applied++;
             }
