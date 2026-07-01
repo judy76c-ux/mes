@@ -9589,6 +9589,8 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
     }
 
     async function _saveCpFlowManual() {
+        console.log('[SaveFlow] _curCarModel=', _curCarModel, '_curPartName=', _curPartName,
+                    '_cpSelectedFlow=', JSON.stringify(_cpSelectedFlow));
         if (!_curCarModel || !_curPartName) {
             UIUtils.toast('차종/품명을 먼저 선택하세요.', 'warning');
             return;
@@ -9603,6 +9605,11 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         UIUtils.toast(`[${_curCarModel} / ${_curPartName}] 공정 흐름 저장 완료 (${procs.length}개 주공정)`, 'success');
         _refreshCpFlowUI();
         _refreshCpStatusTableIfVisible();
+        console.log('[SaveFlow] 저장 완료. normalized=', JSON.stringify(_cpFlowCache[_cpFlowCacheKey(_curCarModel, _curPartName)]));
+        } catch(e) {
+            console.error('[SaveFlow] 저장 오류:', e);
+            UIUtils.toast('공정 흐름 저장 실패: ' + e.message, 'error');
+        }
     }
 
 
