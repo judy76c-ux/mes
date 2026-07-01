@@ -9612,7 +9612,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
             const orderIdx = selectedProcOrder.indexOf(proc);
             const displayNo = orderIdx >= 0 ? String(orderIdx + 1).padStart(2, '0') : '--';
             return `<div
-                    onclick="ProdStandardsModule._setCpFlowProcessChecked('${_esc(proc)}', ${checked ? 'false' : 'true'})"
+                    onclick="ProdStandardsModule._selectCpFlowProcess('${_esc(proc)}')"
                     ondragover="ProdStandardsModule._cpFlowProcDragOver('${_esc(proc)}',event)"
                     ondrop="ProdStandardsModule._cpFlowProcDrop('${_esc(proc)}',event)"
                     style="display:flex;align-items:center;gap:10px;padding:12px 12px;border-radius:8px;
@@ -9633,7 +9633,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                     onclick="event.stopPropagation();ProdStandardsModule._setCpFlowProcessChecked('${_esc(proc)}', this.checked)"
                     style="width:25px;height:25px;margin:0;cursor:pointer;accent-color:var(--accent-blue);">
                 <button type="button"
-                    onclick="event.stopPropagation();ProdStandardsModule._selectCpFlowProcess('${_esc(proc)}');ProdStandardsModule._setCpFlowProcessChecked('${_esc(proc)}', ${checked ? 'false' : 'true'})"
+                    onclick="event.stopPropagation();ProdStandardsModule._selectCpFlowProcess('${_esc(proc)}')"
                     style="flex:1;text-align:left;border:none;background:transparent;cursor:pointer;padding:0;
                            color:${active ? 'var(--accent-blue)' : 'var(--text-primary)'};
                            font-weight:800;font-size:13px;min-height:30px;">
