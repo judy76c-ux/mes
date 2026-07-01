@@ -10375,14 +10375,15 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
             const rawItemProd = col.itemProd >= 0 ? _t(row[col.itemProd]) : '';
             const rawItemProc = col.itemProc >= 0 ? _t(row[col.itemProc]) : '';
             let itemName = rawItemProd || rawItemProc;
-            // 관리항목이 비어도 규격이 있으면 이전 항목명 fill-down (병합셀 대응)
+            // 관리항목이 비어도 규격이 있으면 → 이전 항목의 spec에 합치기 (병합셀 다중규격 대응)
+            // 예: 치수 항목이 HOUSING/UPPER CASE/LOWER CASE 3행으로 나뉜 경우
             if (!itemName) {
                 const rSpecFill = col.spec >= 0 ? _t(row[col.spec]) : '';
-                if (rSpecFill && (lastItemProd || lastItemProc)) {
-                    itemName = lastItemProd || lastItemProc;
-                } else {
-                    continue;
+                if (rSpecFill && items.length > 0) {
+                    const last = items[items.length - 1];
+                    last.spec = last.spec ? last.spec + '\n' + rSpecFill : rSpecFill;
                 }
+                continue;  // 새 항목으로 추가하지 않음
             }
             // 숫자만인 항목(NO 열 등) 제외
             if (/^\d+$/.test(itemName)) continue;
@@ -10396,7 +10397,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
             const _itemNorm = itemName.replace(/[\s\(\)\[\]\/]/g,'').toLowerCase();
             if (_HEADER_KW.some(k => _itemNorm === k)) continue;
 
-            // 관리항목 fill-down 갱신
+            // 관리항목 fill-down 갱신 (다음 빈 행 판별용)
             if (rawItemProd) lastItemProd = rawItemProd;
             if (rawItemProc) lastItemProc = rawItemProc;
 
@@ -10814,7 +10815,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
                     <td style="padding:4px 8px; color:var(--accent-orange);">${p.itemProc || ''}</td>
                     <td style="padding:4px 6px; text-align:center;">${p.special || '-'}</td>
                     <td style="padding:4px 6px; text-align:center; color:var(--text-muted);">${p.fp || '-'}</td>
-                    <td style="padding:4px 8px;">${p.value || '-'}</td>
+                    <td style="padding:4px 8px; white-space:pre-wrap;">${p.value || '-'}</td>
                     <td style="padding:4px 8px; color:var(--text-muted);">${p.method || '-'}</td>
                     <td style="padding:4px 8px; color:var(--text-muted);">${p.cycle || '-'}</td>
                     <td style="padding:4px 8px; color:var(--text-muted);">${p.control || '-'}</td>
