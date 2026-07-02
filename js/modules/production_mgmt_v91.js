@@ -506,6 +506,7 @@ var ProdStandardsModule = (function() {
     let _customStdPasteTargetId = '';
     let _customStdPasteListenerReady = false;
     let _webStdEditorId = '';
+    let _webStdEditorProcess = '';
     let _webStdEditorSections = [];
 
     // ── 유틸 ─────────────────────────────────────────────────────
@@ -2088,13 +2089,13 @@ var ProdStandardsModule = (function() {
 
     // ── WEB 편집형 기준서 ─────────────────────────────────────────────
 
-    function _openCustomWebStdViewer(id) {
+    function _openCustomWebStdViewer(id, process = '') {
         const def = _customStdDefs.find(d => d.id === id);
         if (!def) { UIUtils.toast('기준서를 찾을 수 없습니다.', 'error'); return; }
         Storage.getConfigValue('custom_std_content_' + id).then(content => {
             const sections = Array.isArray(content) ? content : [];
             const editBtn = _processStandardMoveEdit
-                ? `<button class="btn btn-primary btn-sm" onclick="ProdStandardsModule._openCustomWebStdEditor('${_jsArg(id)}')" style="display:inline-flex;align-items:center;gap:6px;">
+                ? `<button class="btn btn-primary btn-sm" onclick="ProdStandardsModule._openCustomWebStdEditor('${_jsArg(id)}','${_jsArg(process)}')" style="display:inline-flex;align-items:center;gap:6px;">
                     <span class="material-symbols-outlined" style="font-size:15px;">edit</span>내용 편집
                    </button>`
                 : '';
@@ -2112,14 +2113,32 @@ var ProdStandardsModule = (function() {
         });
     }
 
-    async function _openCustomWebStdEditor(id) {
+    async function _openCustomWebStdEditor(id, process = '') {
         const def = _customStdDefs.find(d => d.id === id);
         if (!def) { UIUtils.toast('기준서를 찾을 수 없습니다.', 'error'); return; }
         const content = await Storage.getConfigValue('custom_std_content_' + id);
         _webStdEditorId = id;
+        _webStdEditorProcess = process || '';
         _webStdEditorSections = Array.isArray(content) ? JSON.parse(JSON.stringify(content)) : [];
+        _webStdRemoveLineColumns();
+        const syncedProducts = _webStdSyncAllProducts(id);
+        const selectedDocumentLine = _pfmeaNormalizeProcess(_webStdProcessForId(id));
         const body = `
             <div>
+                ${syncedProducts > 0 ? `<div style="margin-bottom:10px;padding:8px 10px;border-radius:6px;background:#ecfdf5;color:#047857;font-size:.78rem;font-weight:700;">
+                    제품 마스터에서 누락된 ${syncedProducts}개 품목을 자동 추가했습니다.
+                </div>` : ''}
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:8px 10px;border:1px solid #bfdbfe;border-radius:7px;background:#eff6ff;">
+                    <label for="webStdDocumentLine" style="font-size:.8rem;font-weight:800;color:#1d4ed8;">기준서 라인</label>
+                    <select id="webStdDocumentLine" class="form-select"
+                            onchange="ProdStandardsModule._webStdDocumentLineChanged(this.value)"
+                            style="width:160px;height:32px;font-size:.8rem;">
+                        <option value="">-- 라인 선택 --</option>
+                        <option value="도장-A" ${selectedDocumentLine === '도장-A' ? 'selected' : ''}>도장-A</option>
+                        <option value="도장-B" ${selectedDocumentLine === '도장-B' ? 'selected' : ''}>도장-B</option>
+                    </select>
+                    <span style="font-size:.75rem;color:#64748b;">선택한 라인의 전체 품목이 표에 자동 반영됩니다.</span>
+                </div>
                 <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
                     <button class="btn btn-sm btn-outline" onclick="ProdStandardsModule._webStdAddSection('heading')" style="display:inline-flex;align-items:center;gap:4px;font-size:.78rem;">
                         <span class="material-symbols-outlined" style="font-size:14px;">title</span>제목
@@ -2142,6 +2161,94 @@ var ProdStandardsModule = (function() {
              <button class="btn btn-primary" onclick="ProdStandardsModule._saveCurrentWebStdContent()">저장</button>`,
             'xl'
         );
+        setTimeout(_webStdBindGridClipboard, 0);
+    }
+
+    function _webStdProcessForId(id) {
+        if (id === _webStdEditorId && (_webStdEditorProcess === '도장(A)' || _webStdEditorProcess === '도장(B)')) {
+            return _webStdEditorProcess;
+        }
+        const rows = _flattenProcessStandardLayout(_processStandardLayout());
+        return rows.find(row => row.id === `custom-${id}`)?.process || '';
+    }
+
+    function _webStdRemoveLineColumns() {
+        _webStdEditorSections.forEach(section => {
+            if (section.type !== 'table') return;
+            const lineCol = (section.headers || []).findIndex(header =>
+                String(header || '').replace(/\s/g, '') === '라인'
+            );
+            if (lineCol < 0) return;
+            section.headers.splice(lineCol, 1);
+            (section.rows || []).forEach(row => {
+                if (Array.isArray(row)) row.splice(lineCol, 1);
+            });
+        });
+    }
+
+    function _webStdSyncAllProducts(id) {
+        const process = _webStdProcessForId(id);
+        if (process !== '도장(A)' && process !== '도장(B)') return 0;
+        const targetProcess = process === '도장(B)' ? '도장-B' : '도장-A';
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const uniqueProducts = [];
+        const seenProducts = new Set();
+        products.forEach(product => {
+            if (!_pfmeaProductProcesses(product).includes(targetProcess)) return;
+            const carModel = String(product.carModel || '').trim();
+            const partName = String(product.partName || '').trim();
+            if (!carModel || !partName) return;
+            const key = `${carModel.toUpperCase()}||${partName.toUpperCase()}`;
+            if (seenProducts.has(key)) return;
+            seenProducts.add(key);
+            uniqueProducts.push({ carModel, partName });
+        });
+        uniqueProducts.sort((a, b) =>
+            a.carModel.localeCompare(b.carModel, 'ko') || a.partName.localeCompare(b.partName, 'ko')
+        );
+
+        let added = 0;
+        _webStdEditorSections.forEach(section => {
+            if (section.type !== 'table') return;
+            const headers = section.headers || [];
+            const carCol = headers.findIndex(header => String(header || '').replace(/\s/g, '') === '차종');
+            const partCol = headers.findIndex(header => String(header || '').replace(/\s/g, '') === '품명');
+            const lineCol = headers.findIndex(header => String(header || '').replace(/\s/g, '') === '라인');
+            if (carCol < 0 || partCol < 0) return;
+            const cols = headers.length;
+            if (!Array.isArray(section.rows)) section.rows = [];
+            section.rows = section.rows.filter(row =>
+                String(row?.[carCol] || '').trim() && String(row?.[partCol] || '').trim()
+            );
+            const existing = new Set();
+            section.rows.forEach(row => {
+                const key = `${String(row?.[carCol] || '').trim().toUpperCase()}||${String(row?.[partCol] || '').trim().toUpperCase()}`;
+                existing.add(key);
+                if (lineCol >= 0 && row && !row[lineCol]) row[lineCol] = targetProcess;
+            });
+            uniqueProducts.forEach(product => {
+                const key = `${product.carModel.toUpperCase()}||${product.partName.toUpperCase()}`;
+                if (existing.has(key)) return;
+                const row = Array(cols).fill('');
+                if (lineCol >= 0) row[lineCol] = targetProcess;
+                row[carCol] = product.carModel;
+                row[partCol] = product.partName;
+                section.rows.push(row);
+                existing.add(key);
+                added++;
+            });
+        });
+        return added;
+    }
+
+    function _webStdIsMainValueHeader(header) {
+        const key = String(header || '').replace(/\s/g, '');
+        return key === '셋팅값' || key === '세팅값' || key.startsWith('허용');
+    }
+
+    function _webStdIsCenteredHeader(header) {
+        const key = String(header || '').replace(/\s/g, '');
+        return _webStdIsMainValueHeader(key) || key === '도장사양';
     }
 
     function _buildWebStdSectionsHtml(sections) {
@@ -2176,12 +2283,26 @@ var ProdStandardsModule = (function() {
             }
             if (sec.type === 'table') {
                 const cols = (sec.headers || []).length || 2;
-                const headerCells = (sec.headers || Array(cols).fill('')).map((h, ci) =>
-                    `<th style="border:1px solid #cbd5e1;padding:0;background:#f1f5f9;"><input data-sec-idx="${idx}" data-row="-1" data-col="${ci}" value="${_esc(h)}" placeholder="헤더${ci+1}" style="width:100%;border:none;background:transparent;padding:5px 7px;font-size:.78rem;font-weight:700;text-align:center;outline:none;box-sizing:border-box;"></th>`
-                ).join('');
+                const headerCells = (sec.headers || Array(cols).fill('')).map((h, ci) => {
+                    const key = String(h || '').replace(/\s/g, '');
+                    const main = _webStdIsMainValueHeader(key);
+                    return `<th style="border:1px solid #cbd5e1;padding:0;background:${main ? '#dbeafe' : '#f1f5f9'};">
+                        <input data-sec-idx="${idx}" data-row="-1" data-col="${ci}" value="${_esc(h)}" placeholder="헤더${ci+1}"
+                               onchange="ProdStandardsModule._webStdHeaderChanged()"
+                               style="width:100%;border:none;background:transparent;padding:6px 7px;font-size:${main ? '.84rem' : '.78rem'};
+                                      font-weight:${main ? '900' : '700'};color:${main ? '#1d4ed8' : 'inherit'};
+                                      text-align:center;outline:none;box-sizing:border-box;">
+                    </th>`;
+                }).join('');
+                const colgroup = `<colgroup>${(sec.headers || []).map(header => {
+                    const key = String(header || '').replace(/\s/g, '');
+                    const width = _webStdIsMainValueHeader(key) ? '22%'
+                        : key === '품명' ? '28%' : key === '차종' ? '16%' : '12%';
+                    return `<col style="width:${width};">`;
+                }).join('')}</colgroup>`;
                 const bodyRows = (sec.rows || [Array(cols).fill('')]).map((row, ri) =>
                     `<tr>${(row || Array(cols).fill('')).map((cell, ci) =>
-                        `<td style="border:1px solid #e2e8f0;padding:0;"><input data-sec-idx="${idx}" data-row="${ri}" data-col="${ci}" value="${_esc(cell||'')}" style="width:100%;border:none;background:transparent;padding:5px 7px;font-size:.78rem;outline:none;box-sizing:border-box;"></td>`
+                        `<td style="border:1px solid #e2e8f0;padding:0;">${_webStdTableCellEditor(sec, idx, ri, ci, cell)}</td>`
                     ).join('')}</tr>`
                 ).join('');
                 return `<div style="border:1px solid #e2e8f0;border-radius:6px;overflow:hidden;">
@@ -2190,17 +2311,115 @@ var ProdStandardsModule = (function() {
                         <div style="display:flex;align-items:center;gap:4px;">
                             <button type="button" onclick="ProdStandardsModule._webStdTableAddRow(${idx})" style="font-size:.7rem;padding:2px 7px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;cursor:pointer;line-height:1.4;">+ 행</button>
                             <button type="button" onclick="ProdStandardsModule._webStdTableRemoveRow(${idx})" style="font-size:.7rem;padding:2px 7px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;cursor:pointer;line-height:1.4;">- 행</button>
+                            <button type="button" onclick="ProdStandardsModule._webStdTableRemoveCol(${idx})" style="font-size:.7rem;padding:2px 7px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;cursor:pointer;line-height:1.4;">- 열</button>
                             <div style="width:1px;height:14px;background:#e2e8f0;"></div>
                             ${controls}
                         </div>
                     </div>
                     <div style="overflow-x:auto;padding:8px;">
-                        <table style="border-collapse:collapse;width:100%;"><thead><tr>${headerCells}</tr></thead><tbody>${bodyRows}</tbody></table>
+                        <table style="border-collapse:collapse;width:100%;table-layout:fixed;">${colgroup}<thead><tr>${headerCells}</tr></thead><tbody>${bodyRows}</tbody></table>
                     </div>
                 </div>`;
             }
             return '';
         }).join('');
+    }
+
+    function _webStdTableCellEditor(sec, secIdx, rowIdx, colIdx, value) {
+        const header = String((sec.headers || [])[colIdx] || '').replace(/\s/g, '');
+        const common = `data-sec-idx="${secIdx}" data-row="${rowIdx}" data-col="${colIdx}"`;
+        const centered = _webStdIsCenteredHeader(header);
+        const style = `width:100%;border:none;background:${centered ? '#eff6ff' : 'transparent'};padding:5px 7px;font-size:${centered ? '.84rem' : '.78rem'};font-weight:${centered ? '800' : '400'};color:${centered ? '#1e3a8a' : 'inherit'};outline:none;box-sizing:border-box;${centered ? 'text-align:center;' : ''}`;
+        if (header === '라인') {
+            const normalized = _pfmeaNormalizeProcess(value);
+            return `<input ${common} value="${_esc(normalized)}" readonly
+                           style="${style}background:#f8fafc;color:#475569;font-weight:700;">`;
+        }
+        if (header !== '차종' && header !== '품명') {
+            return `<input ${common} value="${_esc(value || '')}" style="${style}">`;
+        }
+
+        const lineCol = (sec.headers || []).findIndex(h => String(h || '').replace(/\s/g, '') === '라인');
+        const selectedLine = lineCol >= 0
+            ? _pfmeaNormalizeProcess(String((sec.rows?.[rowIdx] || [])[lineCol] || ''))
+            : _pfmeaNormalizeProcess(_webStdEditorProcess);
+        const products = (Storage.getAll(DB.STORES.PRODUCTS) || []).filter(product =>
+            !selectedLine || _pfmeaProductProcesses(product).includes(selectedLine)
+        );
+        let options;
+        if (header === '차종') {
+            options = [...new Set(products.map(p => p.carModel).filter(Boolean))].sort();
+        } else {
+            const carCol = (sec.headers || []).findIndex(h => String(h || '').replace(/\s/g, '') === '차종');
+            const selectedCar = carCol >= 0 ? String((sec.rows?.[rowIdx] || [])[carCol] || '') : '';
+            options = [...new Set(products
+                .filter(p => !selectedCar || p.carModel === selectedCar)
+                .map(p => p.partName).filter(Boolean))].sort();
+        }
+        const current = String(value || '');
+        if (current && !options.includes(current)) options.unshift(current);
+        const change = header === '차종'
+            ? ` onchange="ProdStandardsModule._webStdProductCarChanged(${secIdx},${rowIdx})"`
+            : '';
+        return `<select ${common}${change} style="${style}">
+            <option value="">-- ${header} 선택 --</option>
+            ${options.map(option => `<option value="${_esc(option)}" ${option === current ? 'selected' : ''}>${_esc(option)}</option>`).join('')}
+        </select>`;
+    }
+
+    function _webStdProductCarChanged(secIdx, rowIdx) {
+        _webStdSyncEditorState();
+        const section = _webStdEditorSections[secIdx];
+        const row = section?.rows?.[rowIdx];
+        if (section?.type === 'table' && row) {
+            const partCol = (section.headers || []).findIndex(header => String(header || '').replace(/\s/g, '') === '품명');
+            if (partCol >= 0) row[partCol] = '';
+        }
+        _webStdRenderSections();
+    }
+
+    function _webStdLineChanged(secIdx, rowIdx) {
+        _webStdSyncEditorState();
+        const section = _webStdEditorSections[secIdx];
+        const row = section?.rows?.[rowIdx];
+        if (section?.type === 'table' && row) {
+            const carCol = (section.headers || []).findIndex(header => String(header || '').replace(/\s/g, '') === '차종');
+            const partCol = (section.headers || []).findIndex(header => String(header || '').replace(/\s/g, '') === '품명');
+            if (carCol >= 0) row[carCol] = '';
+            if (partCol >= 0) row[partCol] = '';
+        }
+        _webStdRenderSections();
+    }
+
+    function _webStdDocumentLineChanged(line) {
+        _webStdSyncEditorState();
+        const targetProcess = _pfmeaNormalizeProcess(line);
+        if (targetProcess !== '도장-A' && targetProcess !== '도장-B') return;
+        _webStdEditorProcess = targetProcess === '도장-B' ? '도장(B)' : '도장(A)';
+        const allowed = new Set((Storage.getAll(DB.STORES.PRODUCTS) || [])
+            .filter(product => _pfmeaProductProcesses(product).includes(targetProcess))
+            .map(product => `${String(product.carModel || '').trim().toUpperCase()}||${String(product.partName || '').trim().toUpperCase()}`));
+        _webStdEditorSections.forEach(section => {
+            if (section.type !== 'table') return;
+            const headers = section.headers || [];
+            const lineCol = headers.findIndex(header => String(header || '').replace(/\s/g, '') === '라인');
+            const carCol = headers.findIndex(header => String(header || '').replace(/\s/g, '') === '차종');
+            const partCol = headers.findIndex(header => String(header || '').replace(/\s/g, '') === '품명');
+            if (carCol < 0 || partCol < 0) return;
+            section.rows = (section.rows || []).filter(row => {
+                const key = `${String(row?.[carCol] || '').trim().toUpperCase()}||${String(row?.[partCol] || '').trim().toUpperCase()}`;
+                return allowed.has(key);
+            });
+            if (lineCol >= 0) section.rows.forEach(row => { row[lineCol] = targetProcess; });
+        });
+        _webStdSyncAllProducts(_webStdEditorId);
+        _webStdRenderSections();
+    }
+
+    function _webStdHeaderChanged() {
+        _webStdSyncEditorState();
+        _webStdSyncAllProducts(_webStdEditorId);
+        _webStdRenderSections();
     }
 
     function _buildWebStdViewerHtml(sections) {
@@ -2212,13 +2431,29 @@ var ProdStandardsModule = (function() {
                 return `<p style="white-space:pre-wrap;font-size:.84rem;line-height:1.72;color:var(--text-primary);margin-bottom:12px;">${_esc(sec.text)}</p>`;
             }
             if (sec.type === 'table') {
-                const headers = (sec.headers || []).map(h =>
-                    `<th style="border:1px solid #cbd5e1;padding:7px 10px;background:#f1f5f9;font-size:.8rem;font-weight:700;text-align:center;white-space:nowrap;">${_esc(h)}</th>`
-                ).join('');
+                const headers = (sec.headers || []).map(h => {
+                    const key = String(h || '').replace(/\s/g, '');
+                    const main = _webStdIsMainValueHeader(key);
+                    return `<th style="border:1px solid #cbd5e1;padding:7px 10px;background:${main ? '#dbeafe' : '#f1f5f9'};
+                                color:${main ? '#1d4ed8' : 'inherit'};font-size:${main ? '.86rem' : '.8rem'};
+                                font-weight:${main ? '900' : '700'};text-align:center;white-space:nowrap;">${_esc(h)}</th>`;
+                }).join('');
+                const colgroup = `<colgroup>${(sec.headers || []).map(header => {
+                    const key = String(header || '').replace(/\s/g, '');
+                    const width = _webStdIsMainValueHeader(key) ? '22%'
+                        : key === '품명' ? '28%' : key === '차종' ? '16%' : '12%';
+                    return `<col style="width:${width};">`;
+                }).join('')}</colgroup>`;
                 const rows = (sec.rows || []).map(row =>
-                    `<tr>${(row || []).map(cell => `<td style="border:1px solid #e2e8f0;padding:6px 10px;font-size:.8rem;">${_esc(cell)}</td>`).join('')}</tr>`
+                    `<tr>${(row || []).map((cell, colIdx) => {
+                        const header = String((sec.headers || [])[colIdx] || '').replace(/\s/g, '');
+                        const centered = _webStdIsCenteredHeader(header);
+                        return `<td style="border:1px solid #e2e8f0;padding:6px 10px;background:${centered ? '#eff6ff' : 'transparent'};
+                                    color:${centered ? '#1e3a8a' : 'inherit'};font-size:${centered ? '.84rem' : '.8rem'};
+                                    font-weight:${centered ? '800' : '400'};${centered ? 'text-align:center;' : ''}">${_esc(cell)}</td>`;
+                    }).join('')}</tr>`
                 ).join('');
-                return `<div style="overflow-x:auto;margin-bottom:14px;"><table style="border-collapse:collapse;width:100%;"><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table></div>`;
+                return `<div style="overflow-x:auto;margin-bottom:14px;"><table style="border-collapse:collapse;width:100%;table-layout:fixed;">${colgroup}<thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table></div>`;
             }
             return '';
         }).join('');
@@ -2253,7 +2488,82 @@ var ProdStandardsModule = (function() {
 
     function _webStdRenderSections() {
         const el = document.getElementById('webStdSectionsBody');
-        if (el) el.innerHTML = _buildWebStdSectionsHtml(_webStdEditorSections);
+        if (el) {
+            el.innerHTML = _buildWebStdSectionsHtml(_webStdEditorSections);
+            _webStdBindGridClipboard();
+        }
+    }
+
+    function _webStdBindGridClipboard() {
+        const container = document.getElementById('webStdSectionsBody');
+        if (!container) return;
+        let selected = new Set();
+        let dragging = false;
+        const cells = [...container.querySelectorAll('tbody td')];
+        const fieldOf = td => td.querySelector('[data-sec-idx][data-row][data-col]');
+        const keyOf = td => {
+            const field = fieldOf(td);
+            return field ? `${field.dataset.secIdx}:${field.dataset.row}:${field.dataset.col}` : '';
+        };
+        const paint = () => cells.forEach(td => {
+            td.style.boxShadow = selected.has(keyOf(td)) ? 'inset 0 0 0 2px #2563eb' : '';
+        });
+        cells.forEach(td => {
+            td.onmousedown = event => {
+                const key = keyOf(td);
+                if (!key) return;
+                if (!event.ctrlKey && !event.metaKey) selected = new Set();
+                selected.add(key);
+                dragging = true;
+                paint();
+            };
+            td.onmouseenter = () => {
+                if (!dragging) return;
+                const key = keyOf(td);
+                if (key) selected.add(key);
+                paint();
+            };
+        });
+        document.addEventListener('mouseup', () => { dragging = false; }, { once: true });
+        container.oncopy = event => {
+            if (!selected.size) return;
+            const fields = [...container.querySelectorAll('tbody [data-sec-idx][data-row][data-col]')]
+                .filter(field => selected.has(`${field.dataset.secIdx}:${field.dataset.row}:${field.dataset.col}`));
+            if (!fields.length) return;
+            const secIdx = Number(fields[0].dataset.secIdx);
+            const group = fields.filter(field => Number(field.dataset.secIdx) === secIdx);
+            const minRow = Math.min(...group.map(field => Number(field.dataset.row)));
+            const maxRow = Math.max(...group.map(field => Number(field.dataset.row)));
+            const minCol = Math.min(...group.map(field => Number(field.dataset.col)));
+            const maxCol = Math.max(...group.map(field => Number(field.dataset.col)));
+            const text = Array.from({ length: maxRow - minRow + 1 }, (_, rowOffset) =>
+                Array.from({ length: maxCol - minCol + 1 }, (_, colOffset) => {
+                    const field = container.querySelector(`[data-sec-idx="${secIdx}"][data-row="${minRow + rowOffset}"][data-col="${minCol + colOffset}"]`);
+                    return field?.value || '';
+                }).join('\t')
+            ).join('\n');
+            event.preventDefault();
+            event.clipboardData.setData('text/plain', text);
+        };
+        container.onpaste = event => {
+            const active = event.target.closest('[data-sec-idx][data-row][data-col]');
+            const text = event.clipboardData?.getData('text/plain');
+            if (!active || !text) return;
+            event.preventDefault();
+            const secIdx = Number(active.dataset.secIdx);
+            const startRow = Number(active.dataset.row);
+            const startCol = Number(active.dataset.col);
+            text.replace(/\r/g, '').split('\n').forEach((line, rowOffset) => {
+                line.split('\t').forEach((value, colOffset) => {
+                    const field = container.querySelector(`[data-sec-idx="${secIdx}"][data-row="${startRow + rowOffset}"][data-col="${startCol + colOffset}"]`);
+                    if (!field) return;
+                    if (field.tagName === 'SELECT' && ![...field.options].some(option => option.value === value)) return;
+                    field.value = value;
+                });
+            });
+            _webStdSyncEditorState();
+            _webStdRenderSections();
+        };
     }
 
     function _webStdAddSection(type) {
@@ -2307,9 +2617,32 @@ var ProdStandardsModule = (function() {
         _webStdRenderSections();
     }
 
+    function _webStdTableRemoveCol(secIdx) {
+        _webStdSyncEditorState();
+        const sec = _webStdEditorSections[secIdx];
+        if (!sec || sec.type !== 'table') return;
+        if ((sec.headers || []).length <= 2) {
+            UIUtils.toast('차종·품명 열은 삭제할 수 없습니다.', 'warning');
+            return;
+        }
+        sec.headers.pop();
+        (sec.rows || []).forEach(row => {
+            if (Array.isArray(row)) row.pop();
+        });
+        _webStdRenderSections();
+    }
+
     async function _saveCurrentWebStdContent() {
         _webStdSyncEditorState();
+        _webStdSyncAllProducts(_webStdEditorId);
         await Storage.setConfigValue('custom_std_content_' + _webStdEditorId, _webStdEditorSections);
+        const heading = _webStdEditorSections.find(section => section.type === 'heading' && String(section.text || '').trim());
+        const def = _customStdDefs.find(item => item.id === _webStdEditorId);
+        if (heading && def && def.title !== String(heading.text).trim()) {
+            def.title = String(heading.text).trim();
+            await _saveCustomStdDefs();
+            _refreshProcessStandardStatus();
+        }
         UIUtils.closeModal();
         UIUtils.toast('기준서 내용이 저장되었습니다.', 'success');
     }
@@ -2415,7 +2748,7 @@ var ProdStandardsModule = (function() {
 
         if (kind === 'web') {
             UIUtils.toast(`"${title}" 기준서가 등록되었습니다. 내용을 작성하세요.`, 'success');
-            _openCustomWebStdEditor(id);
+            _openCustomWebStdEditor(id, process);
         } else {
             UIUtils.toast(`"${title}" 기준서가 등록되었습니다.`, 'success');
             _openCustomUploadStdViewer(id);
@@ -2436,12 +2769,15 @@ var ProdStandardsModule = (function() {
             const buttonReset = _processStandardMoveEdit ? '' : 'appearance:none;width:100%;font:inherit;';
             const kind = std.linkKind || (std.templateId || '').split(':')[0] || 'page';
             const target = std.linkTarget || (std.templateId || '').split(':').slice(1).join(':');
+            const clickAction = kind === 'custom-web'
+                ? `ProdStandardsModule._openCustomWebStdViewer('${_jsArg(target)}','${_jsArg(process)}')`
+                : std.action;
             return `
             <${tagStart} ${_processStandardMoveEdit ? `draggable="true" ondragstart="ProdStandardsModule._stdMenuDragStart('${_jsArg(std.id)}',event)" ${dropAttrs(process, station, std.id)}` : ''}
                 data-std-link-kind="${_esc(kind)}"
                 data-std-link-target="${_esc(target)}"
                 data-std-link-line="${_esc(std.linkLine || '')}"
-                onclick="${std.action}"
+                onclick="${clickAction}"
                 title="${_esc(std.desc || dragHint)}"
                 style="text-align:left;border:1px solid var(--border-color);border-left:3px solid ${std.accent};
                        border-radius:6px;background:var(--bg-primary);padding:8px 8px;cursor:${_processStandardMoveEdit ? 'grab' : 'pointer'};${buttonReset}">
@@ -2457,7 +2793,7 @@ var ProdStandardsModule = (function() {
                                width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;flex-shrink:0;">
                         <span class="material-symbols-outlined" style="font-size:12px;">upload_file</span>
                     </button>` : ''}
-                    ${_processStandardMoveEdit && std.linkKind === 'custom-web' ? `<button type="button" title="내용 편집" onclick="event.stopPropagation();ProdStandardsModule._openCustomWebStdEditor('${_jsArg(std.linkTarget)}')"
+                    ${_processStandardMoveEdit && std.linkKind === 'custom-web' ? `<button type="button" title="내용 편집" onclick="event.stopPropagation();ProdStandardsModule._openCustomWebStdEditor('${_jsArg(std.linkTarget)}','${_jsArg(process)}')"
                         style="border:1px solid rgba(13,148,136,.35);background:#fff;color:#0d9488;border-radius:4px;
                                width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;flex-shrink:0;">
                         <span class="material-symbols-outlined" style="font-size:12px;">edit</span>
@@ -9420,8 +9756,9 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
     function _cpFlowSelectorHtml() {
         _cpSelectedFlow = _normalizeCpFlow(_cpSelectedFlow);
         const procs = _cpSelectedProcessNames();
-        const paramCountForProc = proc => (_cpSelectedFlow || [])
-            .filter(step => _cpStepProcess(step) === proc)
+        const selectedKeys = new Set((_cpSelectedFlow || []).map(_cpStepKey));
+        const paramCountForProc = proc => _cpFlowStepsForProcess(proc)
+            .filter(step => selectedKeys.has(_cpStepKey(step)))
             .reduce((sum, step) => {
                 const rows = _cpFlowParamRowsForStep(step).rows;
                 return sum + _cpFlowSelectedParamKeys(step, rows).length;
@@ -11751,6 +12088,11 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         _webStdMoveSection,
         _webStdTableAddRow,
         _webStdTableRemoveRow,
+        _webStdTableRemoveCol,
+        _webStdProductCarChanged,
+        _webStdLineChanged,
+        _webStdDocumentLineChanged,
+        _webStdHeaderChanged,
         _saveCurrentWebStdContent,
         _openNewCustomStdForm,
         _confirmNewCustomStd,
@@ -11876,6 +12218,7 @@ var ProdConditionsModule = (function() {
 
     // ── C/S 프리셋 & 탭 상태 ──────────────────────────────────────────
     let _csPresets = [];
+    let _csTemplateOverrides = {};
     let _pcTab = 'cs-form'; // 'cs-form' | 'records' | 'presets'
     let _inlinePartOutsideBound = false;
     const CS_TPL_LABELS = { 'A-KNOB': 'A라인 KNOB', 'A-COVER': 'A라인 COVER', 'B-LINE': 'B라인' };
@@ -11916,8 +12259,13 @@ var ProdConditionsModule = (function() {
 
     async function _loadPresets() {
         try {
-            const saved = await Storage.getConfigValue('csPresets');
+            const [saved, templateOverrides] = await Promise.all([
+                Storage.getConfigValue('csPresets'),
+                Storage.getConfigValue('csTemplateItems')
+            ]);
             _csPresets = _normalizedCsPresets(saved);
+            _csTemplateOverrides = (templateOverrides && typeof templateOverrides === 'object')
+                ? templateOverrides : {};
         } catch(e) {}
     }
     async function _savePresets() {
@@ -11980,6 +12328,13 @@ var ProdConditionsModule = (function() {
         'B-LINE': { label: 'B라인', line: 'B-LINE', items: CSHEET_B }
     };
 
+    function _activeTemplateRows(key) {
+        const custom = _csTemplateOverrides[key];
+        return Array.isArray(custom) && custom.length
+            ? custom
+            : (CSHEET_TEMPLATES[key] || CSHEET_TEMPLATES['A-KNOB']).items;
+    }
+
     function _esc(v) {
         return String(v ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
     }
@@ -11992,7 +12347,7 @@ var ProdConditionsModule = (function() {
 
     function _templateItems(key, saved = []) {
         const byId = new Map((saved || []).map(item => [item.id, item]));
-        return (CSHEET_TEMPLATES[key] || CSHEET_TEMPLATES['A-KNOB']).items.map((row, idx) => {
+        return _activeTemplateRows(key).map((row, idx) => {
             const id = `${key}-${idx + 1}`;
             const prev = byId.get(id) || {};
             return {
@@ -12148,8 +12503,8 @@ var ProdConditionsModule = (function() {
 
         return `
             <div style="max-height: 74vh; overflow-y: auto; padding-right: 10px; font-size:11px;">
-                ${_presetSelectorHtml(selectedType, d.carModel || '', d.partName || '')}
-                <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:6px;">
+                <input type="hidden" id="pcCsType" value="${_esc(selectedType)}">
+                <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:6px;">
                     <div class="form-group" style="margin:0;">
                         <label class="form-label" style="font-size:10px;margin-bottom:2px;">기록일자 <span style="color:var(--accent-red)">*</span></label>
                         <input type="date" class="form-input" id="pcDate" style="height:30px;font-size:11px;padding:3px 6px;" value="${_esc(d.date || UIUtils.today())}">
@@ -12160,12 +12515,6 @@ var ProdConditionsModule = (function() {
                             <option value="조업전"     ${(d.checkTiming||'조업전')==='조업전'     ? 'selected':''}>조업전</option>
                             <option value="점심식사후" ${(d.checkTiming||'')==='점심식사후' ? 'selected':''}>점심식사후</option>
                             <option value="아이템 변경" ${(d.checkTiming||'')==='아이템 변경' ? 'selected':''}>아이템 변경</option>
-                        </select>
-                    </div>
-                    <div class="form-group" style="margin:0;">
-                        <label class="form-label" style="font-size:10px;margin-bottom:2px;">C/S 양식 <span style="color:var(--accent-red)">*</span></label>
-                        <select class="form-select" id="pcCsType" style="height:30px;font-size:11px;padding:3px 6px;" onchange="ProdConditionsModule.toggleLine(this.value)">
-                            ${Object.entries(CSHEET_TEMPLATES).map(([key, tpl]) => `<option value="${key}" ${selectedType === key ? 'selected' : ''}>${tpl.label}</option>`).join('')}
                         </select>
                     </div>
                     <div class="form-group" style="margin:0;">
@@ -12204,6 +12553,9 @@ var ProdConditionsModule = (function() {
 
                 <div style="margin:5px 0 4px; font-weight:700; color:var(--accent-blue); display:flex; align-items:center; gap:8px;">
                      <span class="material-symbols-outlined">fact_check</span> 왼쪽 위부터 아래 순서로 입력
+                     <span id="pcCsTypeDisplay" style="font-size:10px;font-weight:700;color:#059669;">
+                         * ${_esc(CS_TPL_LABELS[selectedType] || selectedType)} 양식 적용중
+                     </span>
                      <span id="pcCpStatusBadge" style="font-size:9px;font-weight:600;border:1px solid;border-radius:4px;padding:2px 6px;margin-left:auto;
                          ${(()=>{
                              const cpMap = _buildCpLabelSpecMap(d.carModel||'', d.partName||'', selectedType);
@@ -12615,49 +12967,40 @@ var ProdConditionsModule = (function() {
         const carModel  = document.getElementById('pcCarModel')?.value?.trim() || '';
         const partName  = document.getElementById('pcPartName')?.value?.trim() || '';
         const csTypeSel = document.getElementById('pcCsType');
-        const container = document.getElementById('pcPresetProducts');
+        const display   = document.getElementById('pcCsTypeDisplay');
         if (!partName || !csTypeSel) {
-            if (container) container.innerHTML = '';
+            if (display) {
+                display.textContent = '* 품명을 선택하세요';
+                display.style.color = 'var(--text-muted)';
+            }
             return false;
         }
 
         const matching = _findPresetsByProduct(carModel, partName);
         if (matching.length === 0) {
-            if (container) container.innerHTML = '';
+            if (display) {
+                display.textContent = '* 연결된 C/S 양식 없음';
+                display.style.color = 'var(--accent-red)';
+            }
             return false;
         }
 
         const csTypes = [...new Set(matching.map(p => p.csType))];
-        const presetSel = document.getElementById('pcPresetSel');
-
-        if (csTypes.length === 1) {
-            const csType = csTypes[0];
-            const changed = csTypeSel.value !== csType;
-            if (changed) csTypeSel.value = csType;
-            if (presetSel && matching.length === 1) presetSel.value = matching[0].id;
-            if (container) {
-                container.innerHTML = `
-                    <span style="font-size:0.78rem;color:#15803d;font-weight:600;">
-                        ✓ C/S 양식: ${_esc(CS_TPL_LABELS[csType] || csType)} 자동 적용
-                    </span>`;
-            }
-            return changed;
+        const csType = matching[0].csType;
+        const changed = csTypeSel.value !== csType;
+        if (changed) csTypeSel.value = csType;
+        if (display) {
+            display.textContent = `* ${CS_TPL_LABELS[csType] || csType} 양식 적용중${csTypes.length > 1 ? ' (중복 연결)' : ''}`;
+            display.style.color = csTypes.length > 1 ? '#b45309' : '#059669';
         }
 
-        if (presetSel) presetSel.value = '';
-        if (container) {
-            container.innerHTML = `
-                <span style="font-size:0.78rem;color:#b45309;font-weight:600;">
-                    ⚠ 매칭 프리셋 ${matching.length}개 — C/S 양식을 프리셋에서 선택하세요
-                </span>`;
-        }
-        if (typeof UIUtils !== 'undefined') {
+        if (csTypes.length > 1 && typeof UIUtils !== 'undefined') {
             UIUtils.toast(
-                `${carModel} / ${partName}: C/S 양식이 ${csTypes.map(t => CS_TPL_LABELS[t] || t).join(', ')}로 중복됩니다. 프리셋을 선택하세요.`,
+                `${carModel} / ${partName}: C/S 양식이 중복 연결되어 ${CS_TPL_LABELS[csType] || csType}을 자동 적용했습니다. 프리셋 관리에서 중복을 확인하세요.`,
                 'warning'
             );
         }
-        return false;
+        return changed;
     }
 
     function _updatePresetSelector() {
@@ -12772,8 +13115,6 @@ var ProdConditionsModule = (function() {
         const content = document.getElementById('pcCheckItemsBody');
         if (!content) return;
         content.innerHTML = renderLineSpecificFields(type, { checkItems: _templateItems(type, []) });
-        // 프리셋 드롭다운 갱신 (차종/품명 선택 우선, 없으면 C/S 양식 기준)
-        _updatePresetSelector();
         updateProgress();
     }
 
@@ -12850,12 +13191,15 @@ var ProdConditionsModule = (function() {
         )].sort();
         partSel.innerHTML = '<option value="">-- 품명 선택 --</option>' +
             parts.map(p => `<option value="${_esc(p)}">${_esc(p)}</option>`).join('');
-        _updatePresetSelector();
+        const display = document.getElementById('pcCsTypeDisplay');
+        if (display) {
+            display.textContent = '* 품명을 선택하세요';
+            display.style.color = 'var(--text-muted)';
+        }
         _reloadCheckItemsWithCp();
     }
 
     function onPcPartChange() {
-        _updatePresetSelector();
         const csTypeSel = document.getElementById('pcCsType');
         const prevCsType = csTypeSel?.value || '';
         const csTypeChanged = _autoApplyCsTypeFromProduct();
@@ -13299,6 +13643,12 @@ var ProdConditionsModule = (function() {
                             <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
                                 <span style="font-weight:800;font-size:0.95rem;color:var(--accent-blue);">${g.label}</span>
                                 <span style="font-size:0.78rem;color:var(--text-muted);">연결 ${g.mappings.length}건</span>
+                                <button type="button" class="btn btn-outline btn-sm"
+                                        onclick="ProdConditionsModule.openTemplateItemsModal('${jsKey}')"
+                                        style="margin-left:auto;">
+                                    <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">edit_note</span>
+                                    양식 항목 수정
+                                </button>
                             </div>
                             <div style="display:flex;flex-wrap:wrap;gap:6px;min-height:28px;margin-bottom:12px;">
                                 ${g.mappings.length === 0
@@ -13394,6 +13744,93 @@ var ProdConditionsModule = (function() {
             document.addEventListener('click', _handleInlinePartOutsideClick, true);
             _inlinePartOutsideBound = true;
         }
+    }
+
+    function _templateEditorRowHtml(row = ['', '', '', '', 'text']) {
+        const type = row[4] === 'check' ? 'check' : 'text';
+        return `
+            <tr class="cs-template-edit-row" data-section="${_esc(row[0] || '')}">
+                <td><input class="form-input cs-tpl-process" value="${_esc(row[1] || '')}" placeholder="공정명"></td>
+                <td><input class="form-input cs-tpl-item" value="${_esc(row[2] || '')}" placeholder="관리항목"></td>
+                <td><input class="form-input cs-tpl-spec" value="${_esc(row[3] || '')}" placeholder="점검사항 또는 기준"></td>
+                <td>
+                    <select class="form-select cs-tpl-type">
+                        <option value="text" ${type === 'text' ? 'selected' : ''}>값 입력</option>
+                        <option value="check" ${type === 'check' ? 'selected' : ''}>OK / NG</option>
+                    </select>
+                </td>
+                <td style="text-align:center;">
+                    <button type="button" class="btn btn-sm" title="삭제"
+                            onclick="this.closest('tr').remove()"
+                            style="color:#dc2626;background:#fee2e2;border:1px solid #fecaca;">×</button>
+                </td>
+            </tr>`;
+    }
+
+    function openTemplateItemsModal(csType) {
+        if (!CSHEET_TEMPLATES[csType]) return;
+        const rows = _activeTemplateRows(csType);
+        UIUtils.showModal(
+            `${CS_TPL_LABELS[csType]} 양식 항목 수정`,
+            `<div style="max-height:65vh;overflow:auto;">
+                <p style="margin:0 0 12px;color:var(--text-muted);font-size:0.82rem;">
+                    공정 조건 C/S에 표시할 항목과 입력방식을 수정합니다. 위에서부터 입력 순서대로 표시됩니다.
+                </p>
+                <table class="data-table" style="min-width:760px;">
+                    <thead><tr>
+                        <th style="width:20%;">공정명</th>
+                        <th style="width:31%;">관리항목</th>
+                        <th style="width:31%;">점검사항(기준)</th>
+                        <th style="width:14%;">입력 방식</th><th style="width:4%;"></th>
+                    </tr></thead>
+                    <tbody id="csTemplateEditorRows">
+                        ${rows.map(_templateEditorRowHtml).join('')}
+                    </tbody>
+                </table>
+                <button type="button" class="btn btn-outline btn-sm" onclick="ProdConditionsModule.addTemplateItemRow()"
+                        style="margin-top:10px;">
+                    <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">add</span> 항목 추가
+                </button>
+            </div>`,
+            `<button class="btn btn-outline" onclick="ProdConditionsModule.resetTemplateItems('${csType}')">기본값 복원</button>
+             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+             <button class="btn btn-primary" onclick="ProdConditionsModule.saveTemplateItems('${csType}')">저장</button>`,
+            'xl'
+        );
+    }
+
+    function addTemplateItemRow() {
+        const tbody = document.getElementById('csTemplateEditorRows');
+        if (tbody) tbody.insertAdjacentHTML('beforeend', _templateEditorRowHtml());
+    }
+
+    async function saveTemplateItems(csType) {
+        const rows = [...document.querySelectorAll('#csTemplateEditorRows .cs-template-edit-row')]
+            .map(row => [
+                row.dataset.section || row.querySelector('.cs-tpl-process')?.value.trim() || '',
+                row.querySelector('.cs-tpl-process')?.value.trim() || '',
+                row.querySelector('.cs-tpl-item')?.value.trim() || '',
+                row.querySelector('.cs-tpl-spec')?.value.trim() || '',
+                row.querySelector('.cs-tpl-type')?.value === 'check' ? 'check' : 'text'
+            ])
+            .filter(row => row[2]);
+        if (!rows.length) {
+            UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning');
+            return;
+        }
+        _csTemplateOverrides[csType] = rows;
+        await Storage.setConfigValue('csTemplateItems', _csTemplateOverrides);
+        UIUtils.closeModal();
+        UIUtils.toast(`${CS_TPL_LABELS[csType]} 양식 항목이 저장되었습니다.`, 'success');
+    }
+
+    function resetTemplateItems(csType) {
+        UIUtils.confirm(`${CS_TPL_LABELS[csType]} 양식 항목을 기본값으로 복원하시겠습니까?`, async () => {
+            delete _csTemplateOverrides[csType];
+            await Storage.setConfigValue('csTemplateItems', _csTemplateOverrides);
+            UIUtils.closeModal();
+            UIUtils.toast('기본 양식으로 복원되었습니다.', 'success');
+        });
     }
 
     function _presetRowHtml(p) {
@@ -13744,6 +14181,10 @@ var ProdConditionsModule = (function() {
         removePreset,
         addInlineCsMapping,
         removeCsMapping,
+        openTemplateItemsModal,
+        addTemplateItemRow,
+        saveTemplateItems,
+        resetTemplateItems,
         _addPresetProductRow,
         _toggleInlinePartDropdown,
         _filterInlinePartOptions,

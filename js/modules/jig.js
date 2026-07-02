@@ -1589,6 +1589,12 @@ var JigModule = (function () {
         UIUtils.showModal('사진 보기', `<div style="text-align:center;"><img src="${src}" alt="" style="max-width:100%;max-height:72vh;object-fit:contain;border-radius:8px;"></div>`, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'lg');
     }
 
+    function viewResetPhoto(photoUrl) {
+        if (!photoUrl) return;
+        const src = ApiClient.photoUrl(photoUrl);
+        UIUtils.showModal('교체일 작성 사진', `<div style="text-align:center;"><img src="${src}" alt="" style="max-width:100%;max-height:72vh;object-fit:contain;border-radius:8px;"></div>`, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'lg');
+    }
+
     function _historyMeta(type) {
         return {
             disposal: { key: DISPOSAL_KEY, route: 'jig-disposal', title: '지그 폐기 대장', action: '폐기', icon: 'delete_sweep' },
@@ -1646,12 +1652,15 @@ var JigModule = (function () {
                 ${renderMenu('jig-change-history', '조치 이력', '수명 초기화와 교체/박리 세척 기록을 조회합니다.')}
                 <div class="card"><div class="card-body">
                     <table class="data-table">
-                        <thead><tr><th>일자</th><th>차종</th><th>품명</th><th>라인</th><th>내용</th></tr></thead>
+                        <thead><tr><th>일자</th><th>차종</th><th>품명</th><th>라인</th><th>내용</th><th>작업자</th><th>사진</th></tr></thead>
                         <tbody>
                             ${rows.length ? rows.map(row => {
                                 const jig = jigMap[row.jigId] || {};
-                                return `<tr><td>${_esc(row.date || '-')}</td><td>${_esc(jig.carModel || '-')}</td><td>${_esc(jig.partName || '-')}</td><td>${_esc(jig.line || '-')}</td><td>${_esc(row.note || '교체')}</td></tr>`;
-                            }).join('') : `<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--text-muted);">조치 이력이 없습니다.</td></tr>`}
+                                const photoCell = row.photoUrl
+                                    ? `<button type="button" class="btn btn-outline btn-sm" style="padding:2px 8px;" onclick="JigModule.viewResetPhoto('${_js(row.photoUrl)}')">보기</button>`
+                                    : '<span style="color:var(--text-muted);">-</span>';
+                                return `<tr><td>${_esc(row.date || '-')}</td><td>${_esc(jig.carModel || '-')}</td><td>${_esc(jig.partName || '-')}</td><td>${_esc(jig.line || '-')}</td><td>${_esc(row.note || '교체')}</td><td>${_esc(row.worker || '-')}</td><td>${photoCell}</td></tr>`;
+                            }).join('') : `<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--text-muted);">조치 이력이 없습니다.</td></tr>`}
                         </tbody>
                     </table>
                 </div></div>
@@ -1749,17 +1758,78 @@ var JigModule = (function () {
         });
     }
 
+    let _resetPhotoUrl = '';
+
     function resetCount(id) {
         const jig = Storage.getById(STORE, id);
         if (!jig) return;
         const action = _resetActionForJig(jig);
-        UIUtils.confirm(`[${jig.carModel}] ${jig.partName} (${jig.line}) JIG를 ${action} 초기화하시겠습니까?\n기존 사용 이력은 삭제되고 ${action} 기록이 남습니다.`, async () => {
-            const logs = (Storage.getAll(LOG_STORE) || []).filter(l => l.jigId === id && !_isResetWorkType(l.workType));
-            for (const log of logs) await Storage.remove(LOG_STORE, log.id);
-            await Storage.add(LOG_STORE, { jigId: id, date: _today(), workType: action, useCount: 0, note: `${action} 초기화` });
-            UIUtils.toast('사용 횟수가 초기화되었습니다.', 'success');
-            loadAll();
-        });
+        _resetPhotoUrl = '';
+        UIUtils.showModal(`[${jig.carModel}] ${jig.partName} JIG ${action} 초기화`, `
+            <div style="margin-bottom:12px;font-size:0.85rem;color:var(--text-secondary);">
+                [${_esc(jig.carModel)}] ${_esc(jig.partName)} (${_esc(jig.line || '-')}) JIG를 ${action} 초기화합니다.<br>
+                기존 사용 이력은 삭제되고 ${action} 기록이 남습니다.
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-group"><label class="form-label">${action}일 <span style="color:var(--accent-red)">*</span></label><input type="date" class="form-input" id="jigResetDate" value="${_today()}"></div>
+                <div class="form-group"><label class="form-label">${action} 작업자 <span style="color:var(--accent-red)">*</span></label><input type="text" class="form-input" id="jigResetWorker" placeholder="작업자명 입력"></div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">지그박스 ${action}일 작성 사진 <span style="color:var(--accent-red)">*</span></label>
+                <div style="font-size:0.76rem;color:var(--text-muted);margin-bottom:6px;">지그박스에 ${action}일을 기재한 사진을 첨부하세요. (NAS 저장)</div>
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;padding:6px 12px;border:1px dashed var(--accent-blue);border-radius:6px;font-size:0.8rem;color:var(--accent-blue);white-space:nowrap;">
+                        <span class="material-symbols-outlined" style="font-size:16px;">add_photo_alternate</span>
+                        사진 선택
+                        <input type="file" id="jigResetPhotoFile" accept="image/*" style="display:none;" onchange="JigModule.uploadResetPhoto()">
+                    </label>
+                    <span id="jigResetPhotoStatus" style="font-size:0.78rem;color:var(--text-muted);">선택된 사진 없음</span>
+                </div>
+                <div id="jigResetPhotoPreviewWrap" style="display:none;margin-top:8px;">
+                    <img id="jigResetPhotoPreview" src="" alt="" style="max-width:100%;max-height:140px;border-radius:6px;border:1px solid var(--border-color);object-fit:cover;">
+                </div>
+            </div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="JigModule.confirmResetCount('${_js(id)}')">확인</button>`,
+            'lg'
+        );
+    }
+
+    async function uploadResetPhoto() {
+        const input = document.getElementById('jigResetPhotoFile');
+        if (!input || !input.files[0]) return;
+        const file = input.files[0];
+        const statusEl = document.getElementById('jigResetPhotoStatus');
+        if (statusEl) statusEl.textContent = '업로드 중...';
+        try {
+            const url = await ApiClient.uploadPhoto(file, 'paint_jig');
+            _resetPhotoUrl = url;
+            if (statusEl) statusEl.textContent = file.name;
+            const wrap = document.getElementById('jigResetPhotoPreviewWrap');
+            const img = document.getElementById('jigResetPhotoPreview');
+            if (img) img.src = ApiClient.photoUrl(url);
+            if (wrap) wrap.style.display = 'block';
+        } catch (e) {
+            _resetPhotoUrl = '';
+            if (statusEl) statusEl.textContent = '업로드 실패';
+            UIUtils.toast('사진 업로드 실패: ' + e.message, 'error');
+        }
+    }
+
+    async function confirmResetCount(id) {
+        const jig = Storage.getById(STORE, id);
+        if (!jig) return;
+        const action = _resetActionForJig(jig);
+        const date = document.getElementById('jigResetDate')?.value || '';
+        const worker = document.getElementById('jigResetWorker')?.value.trim() || '';
+        if (!date) { UIUtils.toast(`${action}일을 입력하세요.`, 'warning'); return; }
+        if (!worker) { UIUtils.toast(`${action} 작업자를 입력하세요.`, 'warning'); return; }
+        if (!_resetPhotoUrl) { UIUtils.toast('지그박스 교체일 작성 사진을 첨부하세요.', 'warning'); return; }
+        const logs = (Storage.getAll(LOG_STORE) || []).filter(l => l.jigId === id && !_isResetWorkType(l.workType));
+        for (const log of logs) await Storage.remove(LOG_STORE, log.id);
+        await Storage.add(LOG_STORE, { jigId: id, date, workType: action, useCount: 0, note: `${action} 초기화`, worker, photoUrl: _resetPhotoUrl });
+        UIUtils.closeModal();
+        UIUtils.toast('사용 횟수가 초기화되었습니다.', 'success');
+        loadAll();
     }
 
     function openAddLogModal() {
@@ -1935,12 +2005,15 @@ var JigModule = (function () {
         pasteJigMasterPhoto,
         clearJigMasterPhoto,
         viewJigPhoto,
+        viewResetPhoto,
         openHistoryModal,
         saveHistory,
         removeHistory,
         remove,
         removeLog,
         resetCount,
+        uploadResetPhoto,
+        confirmResetCount,
         addUsageFromWork,
         syncFromPaintingWork
     };

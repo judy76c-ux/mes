@@ -23,6 +23,10 @@ const SettingsModule = (function() {
     const DEFAULT_PROCESS_TYPES = ['사출', '도장-A', '도장-B', '레이저', '인쇄', '외관 검사', '외관+각인 검사'];
     let _processTypes = [...DEFAULT_PROCESS_TYPES];
     const PROCESS_CONFIG_KEY = 'processTypes';
+    // CP 공정 흐름 화면 등 다른 모듈은 '도장(A)'/'도장(B)' 표기를 쓰는데,
+    // 제품 마스터의 process1~4 값은 항상 '도장-A'/'도장-B'여야 드롭다운/뱃지가 정상 표시된다.
+    const PROCESS_ALIAS_MAP = { '도장(A)': '도장-A', '도장(B)': '도장-B' };
+    const _normalizeProcessAlias = val => PROCESS_ALIAS_MAP[val] || val;
 
     // ── 세부 공정 관리 ───────────────────────────────────────────────
     const SUB_PROCESS_CONFIG_KEY = 'subProcessTypes';
@@ -1103,7 +1107,10 @@ const SettingsModule = (function() {
         const _validProcSet = new Set(_processTypes);
         const v = k => {
             const val = p[k] !== undefined ? p[k] : '';
-            if (/^process[1-4]$/.test(k)) return _validProcSet.has(val) ? val : '';
+            if (/^process[1-4]$/.test(k)) {
+                const normalized = _normalizeProcessAlias(val);
+                return _validProcSet.has(normalized) ? normalized : '';
+            }
             return val;
         };
         const isEdit = idPrefix === 'editProd';
@@ -1398,7 +1405,7 @@ const SettingsModule = (function() {
                 <!-- 제조공정 Row 1 (항상 노출) -->
                 <div id="${idPrefix}Row1" style="background:var(--bg-secondary); padding:10px; border-radius:8px; margin-bottom:8px; display:flex !important; flex-wrap:nowrap; align-items:center; gap:12px;">
                     <div style="display:flex; align-items:center; gap:8px; flex: 0 0 380px;">
-                        <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:85px;">제조공정-1</label>
+                        <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:85px;">제조공정-1 <span style="color:var(--accent-red)">*</span></label>
                         <select class="form-input" id="${idPrefix}Process1" style="margin-top:0;" onchange="SettingsModule.onProductProcessChange('${idPrefix}')">${processOptions(v('process1'))}</select>
                     </div>
                     <div style="display:flex; align-items:center; gap:8px; flex: 0 0 200px;">
@@ -2399,7 +2406,8 @@ const SettingsModule = (function() {
             const updated = { ...p };
             for (const n of [1, 2, 3, 4]) {
                 const raw = updated[`process${n}`];
-                const proc = (raw && validProcs.has(raw)) ? raw : '';
+                const normalized = _normalizeProcessAlias(raw);
+                const proc = (normalized && validProcs.has(normalized)) ? normalized : '';
                 if (proc !== (raw || '') || (!proc && (updated[`cvt${n}`] || updated[`ct${n}`]))) {
                     updated[`process${n}`] = proc;
                     if (!proc) { updated[`cvt${n}`] = ''; updated[`ct${n}`] = ''; }
@@ -2776,6 +2784,10 @@ const SettingsModule = (function() {
             UIUtils.toast('품명은 필수입니다.', 'warning');
             return;
         }
+        if (!data.process1) {
+            UIUtils.toast('제조공정-1을 선택하세요. ("선택 안함" 상태로는 저장할 수 없습니다)', 'warning');
+            return;
+        }
 
         // ── 중복 검사 ──────────────────────────────────────────────────
         const _existing = Storage.getAll(PRODUCTS_STORE) || [];
@@ -2876,6 +2888,10 @@ const SettingsModule = (function() {
         const data = _collectProductForm('editProd');
         if (!data.partName) {
             UIUtils.toast('품명은 필수입니다.', 'warning');
+            return;
+        }
+        if (!data.process1) {
+            UIUtils.toast('제조공정-1을 선택하세요. ("선택 안함" 상태로는 저장할 수 없습니다)', 'warning');
             return;
         }
 
@@ -10533,6 +10549,24 @@ const SettingsModule = (function() {
             const saved = await Storage.getConfigValue(PROCESS_CONFIG_KEY);
             if (Array.isArray(saved) && saved.length > 0) _processTypes = saved;
         } catch(e) {}
+        // '도장(A)'/'도장(B)' 로 잘못 등록/수정된 항목을 '도장-A'/'도장-B' 로 자동 교정.
+        // 도료 자동매핑·재공품 LOT 판정·PFMEA 그룹핑 등 다수 기능이 하이픈 표기에 의존한다.
+        {
+            const seen = new Set();
+            const normalized = [];
+            let changed = false;
+            _processTypes.forEach(p => {
+                const n = _normalizeProcessAlias(p);
+                if (n !== p) changed = true;
+                if (seen.has(n)) { changed = true; return; }
+                seen.add(n);
+                normalized.push(n);
+            });
+            if (changed) {
+                _processTypes = normalized;
+                try { await _saveProcessTypes(); } catch(e) {}
+            }
+        }
         try {
             const savedSub = await Storage.getConfigValue(SUB_PROCESS_CONFIG_KEY);
             if (savedSub && typeof savedSub === 'object' && !Array.isArray(savedSub)) {
@@ -10544,6 +10578,15 @@ const SettingsModule = (function() {
         } catch(e) {
             _subProcessTypes = JSON.parse(JSON.stringify(DEFAULT_SUB_PROCESS_TYPES));
         }
+        // '도장(A)'/'도장(B)' 세부 공정 키도 '도장-A'/'도장-B' 로 병합 (커스텀 세부공정 보존)
+        ['도장(A)', '도장(B)'].forEach(alias => {
+            if (!_subProcessTypes[alias]) return;
+            const canonical = _normalizeProcessAlias(alias);
+            if (!_subProcessTypes[canonical] || !_subProcessTypes[canonical].length) {
+                _subProcessTypes[canonical] = _subProcessTypes[alias];
+            }
+            delete _subProcessTypes[alias];
+        });
         // 현재 주공정 중 세부 공정 키가 없으면 빈 배열로 초기화
         _processTypes.forEach(p => {
             if (!_subProcessTypes[p]) _subProcessTypes[p] = [];

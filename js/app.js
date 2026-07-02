@@ -62,6 +62,9 @@ const App = (function() {
             // 2-1. 기존 차종(carModel) 데이터 대문자 변환 (최초 1회)
             await _migrateCarModelUppercase();
 
+            // 2-2. 제품 제조공정 '도장(A)'/'도장(B)' 오표기 → '도장-A'/'도장-B' 자동 교정
+            await _migratePaintProcessAlias();
+
             // 3. 모듈 등록
             registerModules();
 
@@ -69,7 +72,7 @@ const App = (function() {
             Router.registerLazy(
                 ['prod-standards', 'prod-conditions', 'paint-mix', 'prod-sub-materials',
                  'prod-quality', 'quality-performance', 'limit-samples', 'prod-spc', 'prod-equipment'],
-                'js/modules/production_mgmt_v91.js?v=171',
+                'js/modules/production_mgmt_v91.js?v=190',
                 function() {
                     Router.registerModule('prod-standards',
                         (typeof ProdStandardsModule !== 'undefined') ? ProdStandardsModule
@@ -881,6 +884,28 @@ const App = (function() {
             } catch (_) { /* 해당 스토어 미지원 시 무시 */ }
         }
         if (updated > 0) console.log(`[CarModel 대문자 변환] ${updated}건 업데이트 완료`);
+    }
+
+    // ── 제품 마스터 제조공정 '도장(A)'/'도장(B)' → '도장-A'/'도장-B' 자동 교정 ──
+    // 도료 자동매핑·재공품 LOT 판정·PFMEA 그룹핑 등 다수 기능이 하이픈 표기('도장-A'/'도장-B')에
+    // 의존하고 있어, 공정 마스터 관리에서 실수로 괄호 표기로 바뀐 값을 원복한다.
+    async function _migratePaintProcessAlias() {
+        const ALIAS = { '도장(A)': '도장-A', '도장(B)': '도장-B' };
+        let updated = 0;
+        try {
+            const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+            for (const p of products) {
+                let changed = false;
+                const next = { ...p };
+                for (const n of [1, 2, 3, 4]) {
+                    const key = `process${n}`;
+                    const alias = ALIAS[next[key]];
+                    if (alias) { next[key] = alias; changed = true; }
+                }
+                if (changed) { await Storage.update(DB.STORES.PRODUCTS, p.id, next); updated++; }
+            }
+        } catch (_) { /* 무시 */ }
+        if (updated > 0) console.log(`[제조공정 표기 교정] ${updated}건 업데이트 완료 (도장(A)→도장-A, 도장(B)→도장-B)`);
     }
 
     // DOMContentLoaded
