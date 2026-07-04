@@ -508,6 +508,7 @@ var ProdStandardsModule = (function() {
     let _webStdEditorId = '';
     let _webStdEditorProcess = '';
     let _webStdEditorSections = [];
+    let _webStdMouseUpHandler = null;
 
     // ── 유틸 ─────────────────────────────────────────────────────
     function _recordKey(carModel, partName, process, station, line) {
@@ -2121,14 +2122,12 @@ var ProdStandardsModule = (function() {
         _webStdEditorProcess = process || '';
         _webStdEditorSections = Array.isArray(content) ? JSON.parse(JSON.stringify(content)) : [];
         _webStdRemoveLineColumns();
-        const syncedProducts = _webStdSyncAllProducts(id);
+        const syncResult = _webStdSyncAllProducts(id);
         const selectedDocumentLine = _pfmeaNormalizeProcess(_webStdProcessForId(id));
         const body = `
             <div>
-                ${syncedProducts > 0 ? `<div style="margin-bottom:10px;padding:8px 10px;border-radius:6px;background:#ecfdf5;color:#047857;font-size:.78rem;font-weight:700;">
-                    제품 마스터에서 누락된 ${syncedProducts}개 품목을 자동 추가했습니다.
-                </div>` : ''}
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:8px 10px;border:1px solid #bfdbfe;border-radius:7px;background:#eff6ff;">
+                ${_webStdSyncBannerHtml(syncResult)}
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:8px 10px;border:1px solid #bfdbfe;border-radius:7px;background:#eff6ff;flex-wrap:wrap;">
                     <label for="webStdDocumentLine" style="font-size:.8rem;font-weight:800;color:#1d4ed8;">기준서 라인</label>
                     <select id="webStdDocumentLine" class="form-select"
                             onchange="ProdStandardsModule._webStdDocumentLineChanged(this.value)"
@@ -2138,6 +2137,11 @@ var ProdStandardsModule = (function() {
                         <option value="도장-B" ${selectedDocumentLine === '도장-B' ? 'selected' : ''}>도장-B</option>
                     </select>
                     <span style="font-size:.75rem;color:#64748b;">선택한 라인의 전체 품목이 표에 자동 반영됩니다.</span>
+                    <button type="button" onclick="ProdStandardsModule._webStdRefreshFromProducts()"
+                            title="제품 마스터에서 제조공정이 바뀐 품목을 지금 다시 확인합니다."
+                            style="margin-left:auto;font-size:.74rem;padding:4px 10px;border:1px solid #93c5fd;border-radius:5px;background:#fff;color:#1d4ed8;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">
+                        <span class="material-symbols-outlined" style="font-size:14px;">sync</span>제조공정 최신화
+                    </button>
                 </div>
                 <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
                     <button class="btn btn-sm btn-outline" onclick="ProdStandardsModule._webStdAddSection('heading')" style="display:inline-flex;align-items:center;gap:4px;font-size:.78rem;">
@@ -2186,6 +2190,36 @@ var ProdStandardsModule = (function() {
         });
     }
 
+    function _webStdSyncBannerHtml(syncResult) {
+        const added = syncResult?.added || 0;
+        const removed = syncResult?.removed || 0;
+        if (!added && !removed) return '';
+        const parts = [];
+        if (added > 0) parts.push(`누락된 ${added}개 품목을 추가`);
+        if (removed > 0) parts.push(`제조공정이 바뀌어 대상이 아닌 ${removed}개 품목을 제거`);
+        return `<div style="margin-bottom:10px;padding:8px 10px;border-radius:6px;background:#ecfdf5;color:#047857;font-size:.78rem;font-weight:700;">
+            제품 마스터 기준으로 ${parts.join(', ')}했습니다.
+        </div>`;
+    }
+
+    // "제조공정 최신화" 버튼 — 제품 마스터에서 공정(라인)이 바뀐 품목을 즉시 다시 반영한다.
+    // 표를 껐다 켜지 않아도, 편집 중 바로 눌러서 확인할 수 있다.
+    function _webStdRefreshFromProducts() {
+        _webStdSyncEditorState();
+        const result = _webStdSyncAllProducts(_webStdEditorId);
+        _webStdRenderSections();
+        const added = result?.added || 0;
+        const removed = result?.removed || 0;
+        if (!added && !removed) {
+            UIUtils.toast('변경된 내용이 없습니다. 이미 최신 상태입니다.', 'info');
+            return;
+        }
+        const parts = [];
+        if (added > 0) parts.push(`${added}개 추가`);
+        if (removed > 0) parts.push(`${removed}개 제거`);
+        UIUtils.toast(`제조공정 최신화 완료 — ${parts.join(', ')}`, 'success');
+    }
+
     function _webStdSyncAllProducts(id) {
         const process = _webStdProcessForId(id);
         if (process !== '도장(A)' && process !== '도장(B)') return 0;
@@ -2193,52 +2227,288 @@ var ProdStandardsModule = (function() {
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
         const uniqueProducts = [];
         const seenProducts = new Set();
+        // A/S 차종 여부 조회용 (carModel||partName → itemType). 표 정렬 시 A/S 품목을 맨 아래로 내리기 위함.
+        const itemTypeMap = new Map();
+        // 컬러 무관 "기준 품명" 계산용 (carModel||partName → color)
+        const colorMap = new Map();
         products.forEach(product => {
-            if (!_pfmeaProductProcesses(product).includes(targetProcess)) return;
             const carModel = String(product.carModel || '').trim();
             const partName = String(product.partName || '').trim();
+            if (carModel && partName) {
+                const ckey = `${carModel.toUpperCase()}||${partName.toUpperCase()}`;
+                itemTypeMap.set(ckey, product.itemType || '');
+                colorMap.set(ckey, String(product.color || '').trim());
+            }
+            if (!_pfmeaProductProcesses(product).includes(targetProcess)) return;
             if (!carModel || !partName) return;
             const key = `${carModel.toUpperCase()}||${partName.toUpperCase()}`;
             if (seenProducts.has(key)) return;
             seenProducts.add(key);
             uniqueProducts.push({ carModel, partName });
         });
+        // 표 정렬 우선순위: 양산품 → A/S품 → 개발품(그 외는 맨 뒤)
+        const _itemTypeRank = itemType => {
+            if (itemType === '양산품') return 0;
+            if (itemType === 'A/S품') return 1;
+            if (itemType === '개발품') return 2;
+            return 3;
+        };
+        const _baseNameKey = (carModel, partName) => {
+            const color = colorMap.get(`${carModel.toUpperCase()}||${partName.toUpperCase()}`) || '';
+            return `${carModel.toUpperCase()}||${_webStdBaseName(partName, color).toUpperCase()}`;
+        };
         uniqueProducts.sort((a, b) =>
-            a.carModel.localeCompare(b.carModel, 'ko') || a.partName.localeCompare(b.partName, 'ko')
+            a.carModel.localeCompare(b.carModel, 'ko') ||
+            (_itemTypeRank(itemTypeMap.get(`${a.carModel.toUpperCase()}||${a.partName.toUpperCase()}`) || '')
+                - _itemTypeRank(itemTypeMap.get(`${b.carModel.toUpperCase()}||${b.partName.toUpperCase()}`) || '')) ||
+            a.partName.localeCompare(b.partName, 'ko')
         );
 
         let added = 0;
+        let removed = 0;
         _webStdEditorSections.forEach(section => {
             if (section.type !== 'table') return;
             const headers = section.headers || [];
             const carCol = headers.findIndex(header => String(header || '').replace(/\s/g, '') === '차종');
             const partCol = headers.findIndex(header => String(header || '').replace(/\s/g, '') === '품명');
             const lineCol = headers.findIndex(header => String(header || '').replace(/\s/g, '') === '라인');
+            const simCol = headers.findIndex(header => _webStdIsSimNameHeader(header));
             if (carCol < 0 || partCol < 0) return;
             const cols = headers.length;
             if (!Array.isArray(section.rows)) section.rows = [];
             section.rows = section.rows.filter(row =>
                 String(row?.[carCol] || '').trim() && String(row?.[partCol] || '').trim()
             );
+            // 제품의 제조공정이 바뀌어(예: 도장-B → 도장-A) 더 이상 이 문서의 대상 공정과
+            // 일치하지 않는 행은 자동으로 제거한다. 병합된 행은 숨은 원본 품명 중 하나라도
+            // 여전히 대상 공정이면 유지한다.
+            const beforePrune = section.rows.length;
+            section.rows = section.rows.filter(row => {
+                const rc = String(row?.[carCol] || '').trim().toUpperCase();
+                const rp = String(row?.[partCol] || '').trim().toUpperCase();
+                if (seenProducts.has(`${rc}||${rp}`)) return true;
+                const origList = (section.origNames && section.origNames[`${rc}||${rp}`]) || [];
+                return origList.some(n => seenProducts.has(`${rc}||${String(n || '').trim().toUpperCase()}`));
+            });
+            removed += beforePrune - section.rows.length;
+            // 이미 표에 있는 행은 정확히 일치하거나, "유사 품목 병합"으로 이미 축약돼 있어도
+            // (수동 입력한 유사품명 또는 컬러 무관 기준 품명 기준 baseKey 일치) 다시 추가하지 않는다
+            // — 그래야 병합 결과가 다음에 표를 열거나 저장할 때 다시 풀리지 않는다.
             const existing = new Set();
             section.rows.forEach(row => {
-                const key = `${String(row?.[carCol] || '').trim().toUpperCase()}||${String(row?.[partCol] || '').trim().toUpperCase()}`;
+                const carModel = String(row?.[carCol] || '').trim();
+                const partName = String(row?.[partCol] || '').trim();
+                const key = `${carModel.toUpperCase()}||${partName.toUpperCase()}`;
                 existing.add(key);
+                const simName = simCol >= 0 ? String(row?.[simCol] || '').trim() : '';
+                existing.add(simName ? `${carModel.toUpperCase()}||${simName.toUpperCase()}` : _baseNameKey(carModel, partName));
                 if (lineCol >= 0 && row && !row[lineCol]) row[lineCol] = targetProcess;
             });
+            // 병합 시 숨겨서 보관해둔 원본 품명들도 "이미 표에 있음"으로 인식해야
+            // 색상별 원래 제품이 다시 개별 행으로 재등장하지 않는다.
+            if (section.origNames && typeof section.origNames === 'object') {
+                Object.keys(section.origNames).forEach(groupKey => {
+                    const carModel = String(groupKey.split('||')[0] || '');
+                    (section.origNames[groupKey] || []).forEach(origName => {
+                        existing.add(`${carModel}||${String(origName || '').trim().toUpperCase()}`);
+                    });
+                });
+            }
             uniqueProducts.forEach(product => {
                 const key = `${product.carModel.toUpperCase()}||${product.partName.toUpperCase()}`;
-                if (existing.has(key)) return;
+                const baseKey = _baseNameKey(product.carModel, product.partName);
+                if (existing.has(key) || existing.has(baseKey)) return;
                 const row = Array(cols).fill('');
                 if (lineCol >= 0) row[lineCol] = targetProcess;
                 row[carCol] = product.carModel;
                 row[partCol] = product.partName;
                 section.rows.push(row);
                 existing.add(key);
+                existing.add(baseKey);
                 added++;
             });
+            // 차종별로 묶고, 같은 차종 안에서는 양산품 → A/S품 → 개발품 순으로 재정렬.
+            // 병합된 행은 표시 품명이 실제 제품과 다르므로, 숨은 원본 품명 목록에서 구분을 찾는다.
+            const rowItemType = (carModel, partName) => {
+                const exactKey = `${carModel.toUpperCase()}||${partName.toUpperCase()}`;
+                if (itemTypeMap.has(exactKey)) return itemTypeMap.get(exactKey);
+                const origList = (section.origNames && section.origNames[exactKey]) || [];
+                for (const n of origList) {
+                    const k = `${carModel.toUpperCase()}||${String(n || '').trim().toUpperCase()}`;
+                    if (itemTypeMap.has(k)) return itemTypeMap.get(k);
+                }
+                return '';
+            };
+            section.rows.sort((rowA, rowB) => {
+                const carA = String(rowA?.[carCol] || '').trim();
+                const carB = String(rowB?.[carCol] || '').trim();
+                const carCmp = carA.localeCompare(carB, 'ko');
+                if (carCmp !== 0) return carCmp;
+                const partA = String(rowA?.[partCol] || '').trim();
+                const partB = String(rowB?.[partCol] || '').trim();
+                return _itemTypeRank(rowItemType(carA, partA)) - _itemTypeRank(rowItemType(carB, partB));
+            });
         });
-        return added;
+        return { added, removed };
+    }
+
+    // 다른 페이지에서 정확한 차종+품명으로 WEB 기준서 표의 값(셋팅값/허용/도장사양 등)을
+    // 조회할 수 있는 공개 API. 유사 품목 병합으로 표시 품명이 축약된 행이라도, 병합 시
+    // 숨겨서 보관해둔 원본 품명(section.origNames)까지 확인해 정확히 찾아준다.
+    // 반환값: { docId, docTitle, 헤더명1: 값1, 헤더명2: 값2, ... } 또는 못 찾으면 null
+    async function findWebStdSpecByProduct(carModel, partName) {
+        const cm = String(carModel || '').trim().toUpperCase();
+        const pn = String(partName || '').trim().toUpperCase();
+        if (!cm || !pn) return null;
+
+        let defs = _customStdDefs;
+        if (!Array.isArray(defs) || !defs.length) {
+            try {
+                const saved = await Storage.getConfigValue(CUSTOM_STD_DEFS_KEY);
+                if (Array.isArray(saved)) defs = saved;
+            } catch (e) { defs = []; }
+        }
+
+        for (const def of (defs || [])) {
+            const kind = def.linkKind || (def.templateId || '').split(':')[0];
+            if (kind !== 'custom-web') continue;
+            let content;
+            try {
+                content = await Storage.getConfigValue('custom_std_content_' + def.id);
+            } catch (e) { continue; }
+            const sections = Array.isArray(content) ? content : [];
+            for (const section of sections) {
+                if (section.type !== 'table') continue;
+                const headers = section.headers || [];
+                const carCol = headers.findIndex(h => String(h || '').replace(/\s/g, '') === '차종');
+                const partCol = headers.findIndex(h => String(h || '').replace(/\s/g, '') === '품명');
+                if (carCol < 0 || partCol < 0) continue;
+                for (const row of (section.rows || [])) {
+                    const rowCar = String(row?.[carCol] || '').trim().toUpperCase();
+                    if (rowCar !== cm) continue;
+                    const rowPart = String(row?.[partCol] || '').trim().toUpperCase();
+                    let matched = rowPart === pn;
+                    if (!matched) {
+                        const origList = (section.origNames && section.origNames[`${rowCar}||${rowPart}`]) || [];
+                        matched = origList.some(n => String(n || '').trim().toUpperCase() === pn);
+                    }
+                    if (!matched) continue;
+                    const spec = { docId: def.id, docTitle: def.title || '' };
+                    headers.forEach((h, i) => {
+                        const key = String(h || '').trim();
+                        if (!key || _webStdIsSimNameHeader(key)) return;
+                        spec[key] = row[i] || '';
+                    });
+                    return spec;
+                }
+            }
+        }
+        return null;
+    }
+
+    function _webStdEscRegex(s) {
+        return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    // "유사품명" 열 — 편집 모드에서만 보이는 수동 병합 기준 입력 열. 값이 있으면 이 값을 그대로
+    // 병합 기준으로 쓰고, 없는 행은 컬러 기반 자동 판단(_webStdBaseName)으로 대체한다.
+    function _webStdIsSimNameHeader(header) {
+        return String(header || '').replace(/\s/g, '') === '유사품명';
+    }
+
+    // 품명에서 컬러 코드가 시작되는 지점부터 뒤쪽을 모두 잘라 "컬러 무관 기준 품명"을 만든다.
+    // 컬러 뒤에 붙는 스펙/지역 표기(예: "-북미사양")까지 함께 정리되어, 괄호/대괄호 표기가
+    // 섞여 있어도 앞부분 글자를 기준으로 안정적으로 묶인다.
+    // 예: "COVER [EC] 6PS 레이저인쇄" (컬러=6PS) → "COVER [EC]"
+    //     "knob LH (BK J71E02) -북미사양" (컬러=BK J71E02) → "knob LH"
+    function _webStdBaseName(partName, color) {
+        if (!color) return partName;
+        const re = new RegExp(`\\b${_webStdEscRegex(color)}\\b`, 'i');
+        const m = re.exec(partName);
+        if (!m) return partName;
+        const truncated = partName.slice(0, m.index)
+            .replace(/[\[\(]\s*$/, '')   // 컬러 앞의 여는 괄호 정리
+            .replace(/[-_/]\s*$/, '')    // 컬러 앞의 구분자(-, _, /) 정리
+            .trim();
+        return truncated || partName;
+    }
+
+    // 컬러만 다른 유사 품목(같은 차종 + 컬러 제외 품명)을 한 행으로 병합한다.
+    // 컨베이어 속도처럼 컬러와 무관한 기준서를 간략하게 정리할 때 사용.
+    function _webStdMergeSimilarRows(secIdx) {
+        _webStdSyncEditorState();
+        const section = _webStdEditorSections[secIdx];
+        if (!section || section.type !== 'table') return;
+        const headers = section.headers || [];
+        const carCol = headers.findIndex(h => String(h || '').replace(/\s/g, '') === '차종');
+        const partCol = headers.findIndex(h => String(h || '').replace(/\s/g, '') === '품명');
+        const simCol = headers.findIndex(h => _webStdIsSimNameHeader(h));
+        if (carCol < 0 || partCol < 0) {
+            UIUtils.toast('차종·품명 열이 있는 표에서만 사용할 수 있습니다.', 'warning');
+            return;
+        }
+
+        const colorMap = new Map(); // carModel||partName(upper) → color
+        (Storage.getAll(DB.STORES.PRODUCTS) || []).forEach(p => {
+            const cm = String(p.carModel || '').trim();
+            const pn = String(p.partName || '').trim();
+            if (cm && pn) colorMap.set(`${cm.toUpperCase()}||${pn.toUpperCase()}`, String(p.color || '').trim());
+        });
+        // "유사품명" 열에 값을 직접 입력한 행은 그 값을 그대로 병합 기준·표시명으로 사용하고,
+        // 비어 있는 행만 컬러 기반 자동 판단으로 대체한다.
+        const baseNameOf = (carModel, partName, simName) => {
+            const manual = String(simName || '').trim();
+            if (manual) return manual;
+            const color = colorMap.get(`${carModel.toUpperCase()}||${partName.toUpperCase()}`) || '';
+            return _webStdBaseName(partName, color);
+        };
+
+        // 병합 전 원래 차종/품명은 화면에는 안 보이지만, 다른 페이지에서 정확한 차종+품명으로
+        // 이 표의 값(셋팅값/허용 등)을 조회할 수 있도록 section.origNames에 숨겨서 보관한다.
+        // { "차종||병합후품명" : ["원본품명1", "원본품명2", ...] }
+        if (!section.origNames || typeof section.origNames !== 'object') section.origNames = {};
+
+        const groups = new Map(); // carModel||baseName(upper) → merged row
+        const order = [];
+        (section.rows || []).forEach(row => {
+            const carModel = String(row?.[carCol] || '').trim();
+            const partName = String(row?.[partCol] || '').trim();
+            if (!carModel || !partName) return;
+            const simName = simCol >= 0 ? row?.[simCol] : '';
+            const baseName = baseNameOf(carModel, partName, simName);
+            const groupKey = `${carModel.toUpperCase()}||${baseName.toUpperCase()}`;
+            const rowOwnKey = `${carModel.toUpperCase()}||${partName.toUpperCase()}`;
+            // 이 행이 이미 이전에 병합된 행이면(자기 자신의 현재 품명 아래 저장된 원본 목록이 있으면)
+            // 그 목록을 이어받고, 아직 개별 제품 행이면 지금의 품명 자체를 원본으로 취급한다.
+            // 주의: groupKey로도 조회하면 같은 병합 묶음의 "다른" 행이 방금 채워넣은 목록을
+            // 자기 것으로 잘못 물려받아 자신의 원본 품명이 누락되는 버그가 생기므로 쓰지 않는다.
+            const priorOrig = section.origNames[rowOwnKey] || [];
+            const candidateOrigs = priorOrig.length ? priorOrig : [partName];
+            if (!groups.has(groupKey)) {
+                const merged = row.slice();
+                merged[partCol] = baseName;
+                groups.set(groupKey, merged);
+                order.push(groupKey);
+                section.origNames[groupKey] = [...candidateOrigs];
+            } else {
+                const merged = groups.get(groupKey);
+                row.forEach((val, ci) => {
+                    if (ci === carCol || ci === partCol) return;
+                    if (!String(merged[ci] || '').trim() && String(val || '').trim()) merged[ci] = val;
+                });
+                const list = section.origNames[groupKey] || (section.origNames[groupKey] = []);
+                candidateOrigs.forEach(n => { if (!list.includes(n)) list.push(n); });
+            }
+        });
+
+        const before = (section.rows || []).length;
+        section.rows = order.map(key => groups.get(key));
+        const removed = before - section.rows.length;
+        _webStdRenderSections();
+        UIUtils.toast(
+            removed > 0 ? `유사 품목 ${removed}건을 병합했습니다. (컬러 무관 항목 통합)` : '병합할 유사 품목이 없습니다.',
+            removed > 0 ? 'success' : 'info'
+        );
     }
 
     function _webStdIsMainValueHeader(header) {
@@ -2286,11 +2556,13 @@ var ProdStandardsModule = (function() {
                 const headerCells = (sec.headers || Array(cols).fill('')).map((h, ci) => {
                     const key = String(h || '').replace(/\s/g, '');
                     const main = _webStdIsMainValueHeader(key);
-                    return `<th style="border:1px solid #cbd5e1;padding:0;background:${main ? '#dbeafe' : '#f1f5f9'};">
+                    const isSimName = _webStdIsSimNameHeader(key);
+                    return `<th style="border:1px solid #cbd5e1;padding:0;background:${isSimName ? '#fef3c7' : main ? '#dbeafe' : '#f1f5f9'};">
                         <input data-sec-idx="${idx}" data-row="-1" data-col="${ci}" value="${_esc(h)}" placeholder="헤더${ci+1}"
                                onchange="ProdStandardsModule._webStdHeaderChanged()"
+                               title="${isSimName ? '이 열은 편집 화면에서만 보이고 완성 문서(보기 모드)에는 표시되지 않습니다.' : ''}"
                                style="width:100%;border:none;background:transparent;padding:6px 7px;font-size:${main ? '.84rem' : '.78rem'};
-                                      font-weight:${main ? '900' : '700'};color:${main ? '#1d4ed8' : 'inherit'};
+                                      font-weight:${main ? '900' : '700'};color:${isSimName ? '#92400e' : main ? '#1d4ed8' : 'inherit'};
                                       text-align:center;outline:none;box-sizing:border-box;">
                     </th>`;
                 }).join('');
@@ -2305,12 +2577,21 @@ var ProdStandardsModule = (function() {
                         `<td style="border:1px solid #e2e8f0;padding:0;">${_webStdTableCellEditor(sec, idx, ri, ci, cell)}</td>`
                     ).join('')}</tr>`
                 ).join('');
+                const _hdrKeys = (sec.headers || []).map(h => String(h || '').replace(/\s/g, ''));
+                const mergeBtn = (_hdrKeys.includes('차종') && _hdrKeys.includes('품명'))
+                    ? `<button type="button" onclick="ProdStandardsModule._webStdMergeSimilarRows(${idx})" title="컬러만 다른 유사 품목을 한 행으로 병합"
+                           style="font-size:.7rem;padding:2px 7px;border:1px solid #93c5fd;border-radius:4px;background:#eff6ff;color:#1d4ed8;cursor:pointer;line-height:1.4;">유사 품목 병합</button>`
+                    : '';
                 return `<div style="border:1px solid #e2e8f0;border-radius:6px;overflow:hidden;">
-                    <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 8px;background:#f1f5f9;border-bottom:1px solid #e2e8f0;">
-                        <span style="font-size:.75rem;font-weight:700;color:#64748b;display:flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:13px;">table</span>표 (${cols}열)</span>
+                    <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 8px;background:#f1f5f9;border-bottom:1px solid #e2e8f0;flex-wrap:wrap;gap:4px;">
+                        <span style="font-size:.75rem;font-weight:700;color:#64748b;display:flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:13px;">table</span>표 (${cols}열)
+                            <span data-sel-hint="${idx}" style="font-weight:400;color:#94a3b8;">· 드래그 또는 Ctrl+클릭으로 여러 셀 선택 후 Ctrl+C / Ctrl+V</span>
+                        </span>
                         <div style="display:flex;align-items:center;gap:4px;">
+                            ${mergeBtn}
                             <button type="button" onclick="ProdStandardsModule._webStdTableAddRow(${idx})" style="font-size:.7rem;padding:2px 7px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;cursor:pointer;line-height:1.4;">+ 행</button>
                             <button type="button" onclick="ProdStandardsModule._webStdTableRemoveRow(${idx})" style="font-size:.7rem;padding:2px 7px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;cursor:pointer;line-height:1.4;">- 행</button>
+                            <button type="button" onclick="ProdStandardsModule._webStdTableAddCol(${idx})" style="font-size:.7rem;padding:2px 7px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;cursor:pointer;line-height:1.4;">+ 열</button>
                             <button type="button" onclick="ProdStandardsModule._webStdTableRemoveCol(${idx})" style="font-size:.7rem;padding:2px 7px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;cursor:pointer;line-height:1.4;">- 열</button>
                             <div style="width:1px;height:14px;background:#e2e8f0;"></div>
                             ${controls}
@@ -2334,6 +2615,11 @@ var ProdStandardsModule = (function() {
             const normalized = _pfmeaNormalizeProcess(value);
             return `<input ${common} value="${_esc(normalized)}" readonly
                            style="${style}background:#f8fafc;color:#475569;font-weight:700;">`;
+        }
+        if (_webStdIsSimNameHeader(header)) {
+            return `<input ${common} value="${_esc(value || '')}" placeholder="병합 기준 품명 입력"
+                           title="편집 화면에서만 보이는 병합 기준 입력 열입니다. 값을 입력하면 유사 품목 병합 시 이 값 기준으로 묶입니다."
+                           style="${style}background:#fffbeb;color:#92400e;">`;
         }
         if (header !== '차종' && header !== '품명') {
             return `<input ${common} value="${_esc(value || '')}" style="${style}">`;
@@ -2431,21 +2717,27 @@ var ProdStandardsModule = (function() {
                 return `<p style="white-space:pre-wrap;font-size:.84rem;line-height:1.72;color:var(--text-primary);margin-bottom:12px;">${_esc(sec.text)}</p>`;
             }
             if (sec.type === 'table') {
-                const headers = (sec.headers || []).map(h => {
+                // "유사품명" 열은 편집 시 병합 기준을 입력하기 위한 보조 열이라 완성 문서(보기 모드)에는 숨긴다.
+                const visibleCols = (sec.headers || [])
+                    .map((h, i) => i)
+                    .filter(i => !_webStdIsSimNameHeader(sec.headers[i]));
+                const headers = visibleCols.map(i => {
+                    const h = sec.headers[i];
                     const key = String(h || '').replace(/\s/g, '');
                     const main = _webStdIsMainValueHeader(key);
                     return `<th style="border:1px solid #cbd5e1;padding:7px 10px;background:${main ? '#dbeafe' : '#f1f5f9'};
                                 color:${main ? '#1d4ed8' : 'inherit'};font-size:${main ? '.86rem' : '.8rem'};
                                 font-weight:${main ? '900' : '700'};text-align:center;white-space:nowrap;">${_esc(h)}</th>`;
                 }).join('');
-                const colgroup = `<colgroup>${(sec.headers || []).map(header => {
-                    const key = String(header || '').replace(/\s/g, '');
+                const colgroup = `<colgroup>${visibleCols.map(i => {
+                    const key = String(sec.headers[i] || '').replace(/\s/g, '');
                     const width = _webStdIsMainValueHeader(key) ? '22%'
                         : key === '품명' ? '28%' : key === '차종' ? '16%' : '12%';
                     return `<col style="width:${width};">`;
                 }).join('')}</colgroup>`;
                 const rows = (sec.rows || []).map(row =>
-                    `<tr>${(row || []).map((cell, colIdx) => {
+                    `<tr>${visibleCols.map(colIdx => {
+                        const cell = (row || [])[colIdx];
                         const header = String((sec.headers || [])[colIdx] || '').replace(/\s/g, '');
                         const centered = _webStdIsCenteredHeader(header);
                         return `<td style="border:1px solid #e2e8f0;padding:6px 10px;background:${centered ? '#eff6ff' : 'transparent'};
@@ -2505,9 +2797,34 @@ var ProdStandardsModule = (function() {
             const field = fieldOf(td);
             return field ? `${field.dataset.secIdx}:${field.dataset.row}:${field.dataset.col}` : '';
         };
-        const paint = () => cells.forEach(td => {
-            td.style.boxShadow = selected.has(keyOf(td)) ? 'inset 0 0 0 2px #2563eb' : '';
-        });
+        const paint = () => {
+            cells.forEach(td => {
+                const isSel = selected.has(keyOf(td));
+                // box-shadow는 background를 건드리지 않아 셀 안쪽 컬러 값 입력칸(연한 파란 배경)과도
+                // 겹쳐서 잘 보이도록 두 겹(테두리 + 반투명 채움)으로 표시한다.
+                const shadow = isSel ? 'inset 0 0 0 2px #2563eb, inset 0 0 0 999px rgba(37,99,235,0.16)' : '';
+                td.style.boxShadow = shadow;
+                const field = fieldOf(td);
+                if (field) field.style.boxShadow = shadow;
+            });
+            const countBySec = {};
+            selected.forEach(key => {
+                const secIdx = key.split(':')[0];
+                countBySec[secIdx] = (countBySec[secIdx] || 0) + 1;
+            });
+            container.querySelectorAll('[data-sel-hint]').forEach(hintEl => {
+                const count = countBySec[hintEl.getAttribute('data-sel-hint')] || 0;
+                if (count > 1) {
+                    hintEl.textContent = `· ${count}개 셀 선택됨 — Ctrl+C 복사 / Ctrl+V 붙여넣기`;
+                    hintEl.style.color = '#1d4ed8';
+                    hintEl.style.fontWeight = '700';
+                } else {
+                    hintEl.textContent = '· 드래그 또는 Ctrl+클릭으로 여러 셀 선택 후 Ctrl+C / Ctrl+V';
+                    hintEl.style.color = '#94a3b8';
+                    hintEl.style.fontWeight = '400';
+                }
+            });
+        };
         cells.forEach(td => {
             td.onmousedown = event => {
                 const key = keyOf(td);
@@ -2524,7 +2841,9 @@ var ProdStandardsModule = (function() {
                 paint();
             };
         });
-        document.addEventListener('mouseup', () => { dragging = false; }, { once: true });
+        if (_webStdMouseUpHandler) document.removeEventListener('mouseup', _webStdMouseUpHandler);
+        _webStdMouseUpHandler = () => { dragging = false; };
+        document.addEventListener('mouseup', _webStdMouseUpHandler);
         container.oncopy = event => {
             if (!selected.size) return;
             const fields = [...container.querySelectorAll('tbody [data-sec-idx][data-row][data-col]')]
@@ -2551,16 +2870,28 @@ var ProdStandardsModule = (function() {
             if (!active || !text) return;
             event.preventDefault();
             const secIdx = Number(active.dataset.secIdx);
-            const startRow = Number(active.dataset.row);
-            const startCol = Number(active.dataset.col);
-            text.replace(/\r/g, '').split('\n').forEach((line, rowOffset) => {
-                line.split('\t').forEach((value, colOffset) => {
-                    const field = container.querySelector(`[data-sec-idx="${secIdx}"][data-row="${startRow + rowOffset}"][data-col="${startCol + colOffset}"]`);
-                    if (!field) return;
-                    if (field.tagName === 'SELECT' && ![...field.options].some(option => option.value === value)) return;
-                    field.value = value;
+            const clipLines = text.replace(/\r/g, '').split('\n');
+            const isSingleValue = clipLines.length === 1 && !clipLines[0].includes('\t');
+            const setField = (field, value) => {
+                if (!field) return;
+                if (field.tagName === 'SELECT' && ![...field.options].some(option => option.value === value)) return;
+                field.value = value;
+            };
+            // 여러 셀이 선택된 상태에서 단일 값을 붙여넣으면 선택 영역 전체를 같은 값으로 채운다 (엑셀 방식)
+            if (isSingleValue && selected.size > 1) {
+                [...container.querySelectorAll('tbody [data-sec-idx][data-row][data-col]')]
+                    .filter(field => selected.has(`${field.dataset.secIdx}:${field.dataset.row}:${field.dataset.col}`))
+                    .forEach(field => setField(field, clipLines[0]));
+            } else {
+                const startRow = Number(active.dataset.row);
+                const startCol = Number(active.dataset.col);
+                clipLines.forEach((line, rowOffset) => {
+                    line.split('\t').forEach((value, colOffset) => {
+                        const field = container.querySelector(`[data-sec-idx="${secIdx}"][data-row="${startRow + rowOffset}"][data-col="${startCol + colOffset}"]`);
+                        setField(field, value);
+                    });
                 });
-            });
+            }
             _webStdSyncEditorState();
             _webStdRenderSections();
         };
@@ -2617,6 +2948,19 @@ var ProdStandardsModule = (function() {
         _webStdRenderSections();
     }
 
+    function _webStdTableAddCol(secIdx) {
+        _webStdSyncEditorState();
+        const sec = _webStdEditorSections[secIdx];
+        if (!sec || sec.type !== 'table') return;
+        const cols = (sec.headers || []).length || 2;
+        if (!Array.isArray(sec.headers)) sec.headers = [];
+        sec.headers.push(`항목${cols + 1}`);
+        (sec.rows || []).forEach(row => {
+            if (Array.isArray(row)) row.push('');
+        });
+        _webStdRenderSections();
+    }
+
     function _webStdTableRemoveCol(secIdx) {
         _webStdSyncEditorState();
         const sec = _webStdEditorSections[secIdx];
@@ -2634,7 +2978,7 @@ var ProdStandardsModule = (function() {
 
     async function _saveCurrentWebStdContent() {
         _webStdSyncEditorState();
-        _webStdSyncAllProducts(_webStdEditorId);
+        const syncResult = _webStdSyncAllProducts(_webStdEditorId);
         await Storage.setConfigValue('custom_std_content_' + _webStdEditorId, _webStdEditorSections);
         const heading = _webStdEditorSections.find(section => section.type === 'heading' && String(section.text || '').trim());
         const def = _customStdDefs.find(item => item.id === _webStdEditorId);
@@ -2643,8 +2987,13 @@ var ProdStandardsModule = (function() {
             await _saveCustomStdDefs();
             _refreshProcessStandardStatus();
         }
-        UIUtils.closeModal();
-        UIUtils.toast('기준서 내용이 저장되었습니다.', 'success');
+        // 저장 후에도 창을 닫지 않고 계속 편집·확인할 수 있게 유지한다.
+        // (병합/정렬 결과가 저장 후에도 그대로인지 바로 확인 가능)
+        _webStdRenderSections();
+        const parts = [];
+        if (syncResult?.added) parts.push(`${syncResult.added}개 추가`);
+        if (syncResult?.removed) parts.push(`${syncResult.removed}개 제거`);
+        UIUtils.toast(`기준서 내용이 저장되었습니다.${parts.length ? ' (' + parts.join(', ') + ')' : ''}`, 'success');
     }
 
     function _openNewCustomStdForm(process, station, defaultKind) {
@@ -12088,8 +12437,12 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         _webStdMoveSection,
         _webStdTableAddRow,
         _webStdTableRemoveRow,
+        _webStdTableAddCol,
         _webStdTableRemoveCol,
         _webStdProductCarChanged,
+        _webStdMergeSimilarRows,
+        _webStdRefreshFromProducts,
+        findWebStdSpecByProduct,
         _webStdLineChanged,
         _webStdDocumentLineChanged,
         _webStdHeaderChanged,
@@ -12219,6 +12572,7 @@ var ProdConditionsModule = (function() {
     // ── C/S 프리셋 & 탭 상태 ──────────────────────────────────────────
     let _csPresets = [];
     let _csTemplateOverrides = {};
+    let _csTemplateDefaults = {};
     let _pcTab = 'cs-form'; // 'cs-form' | 'records' | 'presets'
     let _inlinePartOutsideBound = false;
     const CS_TPL_LABELS = { 'A-KNOB': 'A라인 KNOB', 'A-COVER': 'A라인 COVER', 'B-LINE': 'B라인' };
@@ -12259,13 +12613,16 @@ var ProdConditionsModule = (function() {
 
     async function _loadPresets() {
         try {
-            const [saved, templateOverrides] = await Promise.all([
+            const [saved, templateOverrides, templateDefaults] = await Promise.all([
                 Storage.getConfigValue('csPresets'),
-                Storage.getConfigValue('csTemplateItems')
+                Storage.getConfigValue('csTemplateItems'),
+                Storage.getConfigValue('csTemplateDefaults')
             ]);
             _csPresets = _normalizedCsPresets(saved);
             _csTemplateOverrides = (templateOverrides && typeof templateOverrides === 'object')
                 ? templateOverrides : {};
+            _csTemplateDefaults = (templateDefaults && typeof templateDefaults === 'object')
+                ? templateDefaults : {};
         } catch(e) {}
     }
     async function _savePresets() {
@@ -12292,10 +12649,14 @@ var ProdConditionsModule = (function() {
         ['도료 공급', 'Paint Supply', '필터 / 잔량 / Pot life', 'OK / NG 또는 수치', 'text'],
         ['배합실', 'Mix Room', '교반 시간 / 점도 / 보관 온도', '수치 입력', 'text']
     ];
-    const CSHEET_ROBOT_A = [1, 2, 3, 4, 5, 6].flatMap(n => ([
-        [`Robot #${n}`, `Robot #${n}`, '로봇 P.G / 도조건 P.G', '프로그램 확인', 'text'],
-        [`Robot #${n}`, `Robot #${n}`, '무하압력 / 패턴압력 / AOPR', '수치 입력', 'text'],
-        [`Robot #${n}`, `Robot #${n}`, 'Gear Pump / 회전드라이빙', '수치 입력', 'text']
+    const CSHEET_ROBOT_A = [1, 2, 3, 4, 5].flatMap(n => ([
+        [`Robot #${n}`, `Robot #${n}`, '로봇 P.G', '<로봇 프로그램 기준서>', 'text'],
+        [`Robot #${n}`, `Robot #${n}`, '도조건 P.G', '<로봇 프로그램기준서>', 'text'],
+        [`Robot #${n}`, `Robot #${n}`, '무하 압력 (전공)', 'AGB-50 (LVMP) :1.5~3 BAR', 'text'],
+        [`Robot #${n}`, `Robot #${n}`, '패턴압력 (전공)', 'AGB-50 (LVMP) :1.5~3 BAR', 'text'],
+        [`Robot #${n}`, `Robot #${n}`, 'AOPR (전공)', 'R4 : 0.5~2 bar', 'text'],
+        [`Robot #${n}`, `Robot #${n}`, 'Gear Pump', '2.0~5.0 Rev (도료컨트롤러-도료값)', 'text'],
+        [`Robot #${n}`, `Robot #${n}`, '회전드라이빙', '<로봇 프로그램 기준서> 회전값 (P4-1)', 'text']
     ]));
     const CSHEET_BOOTH_A = [1, 2, 3, 4, 5].flatMap(n => ([
         [`Booth #${n}`, `Booth #${n}`, '수위 및 물 순환 상태', 'OK / NG', 'check'],
@@ -12330,9 +12691,55 @@ var ProdConditionsModule = (function() {
 
     function _activeTemplateRows(key) {
         const custom = _csTemplateOverrides[key];
-        return Array.isArray(custom) && custom.length
+        const rows = Array.isArray(custom) && custom.length
             ? custom
+            : _defaultTemplateRows(key);
+        return key === 'A-KNOB' || key === 'A-COVER'
+            ? _syncRobotRowsOneToFive(rows)
+            : rows;
+    }
+
+    function _defaultTemplateRows(key) {
+        const savedDefault = _csTemplateDefaults[key];
+        const rows = Array.isArray(savedDefault) && savedDefault.length
+            ? savedDefault
             : (CSHEET_TEMPLATES[key] || CSHEET_TEMPLATES['A-KNOB']).items;
+        return key === 'A-KNOB' || key === 'A-COVER'
+            ? _syncRobotRowsOneToFive(rows)
+            : rows;
+    }
+
+    function _robotProcessNumber(value) {
+        const match = String(value || '').trim().replace(/\s+/g, '').match(/^ROBOT#([1-6])$/i);
+        return match ? Number(match[1]) : 0;
+    }
+
+    function _syncRobotRowsOneToFive(rows) {
+        const sourceRows = (rows || []).map(row => [...row]);
+        const robotOneRows = sourceRows.filter(row => _robotProcessNumber(row[1]) === 1);
+        if (!robotOneRows.length) return sourceRows;
+
+        const normalized = sourceRows.filter(row => {
+            const robotNo = _robotProcessNumber(row[1]);
+            return robotNo < 2 || robotNo > 6;
+        });
+        const insertAfter = normalized.reduce(
+            (last, row, idx) => _robotProcessNumber(row[1]) === 1 ? idx : last,
+            -1
+        );
+        if (insertAfter < 0) return normalized;
+
+        const copies = [2, 3, 4, 5].flatMap(robotNo =>
+            robotOneRows.map(row => [
+                `Robot #${robotNo}`,
+                `Robot #${robotNo}`,
+                row[2],
+                row[3],
+                row[4]
+            ])
+        );
+        normalized.splice(insertAfter + 1, 0, ...copies);
+        return normalized;
     }
 
     function _esc(v) {
@@ -13643,12 +14050,12 @@ var ProdConditionsModule = (function() {
                             <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
                                 <span style="font-weight:800;font-size:0.95rem;color:var(--accent-blue);">${g.label}</span>
                                 <span style="font-size:0.78rem;color:var(--text-muted);">연결 ${g.mappings.length}건</span>
-                                <button type="button" class="btn btn-outline btn-sm"
+                                ${_isAdmin() ? `<button type="button" class="btn btn-outline btn-sm"
                                         onclick="ProdConditionsModule.openTemplateItemsModal('${jsKey}')"
                                         style="margin-left:auto;">
                                     <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">edit_note</span>
                                     양식 항목 수정
-                                </button>
+                                </button>` : ''}
                             </div>
                             <div style="display:flex;flex-wrap:wrap;gap:6px;min-height:28px;margin-bottom:12px;">
                                 ${g.mappings.length === 0
@@ -13760,28 +14167,59 @@ var ProdConditionsModule = (function() {
                     </select>
                 </td>
                 <td style="text-align:center;">
-                    <button type="button" class="btn btn-sm" title="삭제"
-                            onclick="this.closest('tr').remove()"
-                            style="color:#dc2626;background:#fee2e2;border:1px solid #fecaca;">×</button>
+                    <div style="display:flex;align-items:center;justify-content:center;gap:4px;">
+                        <button type="button" class="btn btn-outline btn-sm" title="이 행 아래에 항목 추가"
+                                onclick="ProdConditionsModule.insertTemplateItemRowAfter(this)"
+                                style="white-space:nowrap;padding:4px 7px;">＋ 아래 추가</button>
+                        <button type="button" class="btn btn-sm" title="삭제"
+                                onclick="ProdConditionsModule.removeTemplateItemRow(this)"
+                                style="color:#dc2626;background:#fee2e2;border:1px solid #fecaca;">×</button>
+                    </div>
                 </td>
             </tr>`;
     }
 
     function openTemplateItemsModal(csType) {
+        if (!_isAdmin()) {
+            UIUtils.toast('양식 항목 수정은 관리자만 가능합니다.', 'warning');
+            return;
+        }
         if (!CSHEET_TEMPLATES[csType]) return;
         const rows = _activeTemplateRows(csType);
+        const importOptions = Object.entries(CS_TPL_LABELS)
+            .filter(([key]) => key !== csType)
+            .map(([key, label]) => `<option value="${_esc(key)}">${_esc(label)} 기본 양식</option>`)
+            .join('');
         UIUtils.showModal(
             `${CS_TPL_LABELS[csType]} 양식 항목 수정`,
             `<div style="max-height:65vh;overflow:auto;">
                 <p style="margin:0 0 12px;color:var(--text-muted);font-size:0.82rem;">
                     공정 조건 C/S에 표시할 항목과 입력방식을 수정합니다. 위에서부터 입력 순서대로 표시됩니다.
                 </p>
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;
+                            padding:10px 12px;border:1px solid rgba(37,99,235,0.25);border-radius:8px;
+                            background:rgba(37,99,235,0.05);">
+                    <span style="font-size:0.8rem;font-weight:700;color:var(--accent-blue);">다른 기본 양식에서 불러오기</span>
+                    <select class="form-select" id="csTemplateImportSource" style="width:210px;">
+                        <option value="">기본 양식 선택</option>
+                        ${importOptions}
+                    </select>
+                    <button type="button" class="btn btn-outline btn-sm"
+                            onclick="ProdConditionsModule.importTemplateRowsFromDefault('${csType}')">
+                        <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">sync</span>
+                        같은 항목 자동 불러오기
+                    </button>
+                    <span style="font-size:0.74rem;color:var(--text-muted);">
+                        공정명과 관리항목이 모두 같은 행의 점검기준·입력방식을 자동 반영합니다.
+                    </span>
+                </div>
                 <table class="data-table" style="min-width:760px;">
                     <thead><tr>
-                        <th style="width:20%;">공정명</th>
-                        <th style="width:31%;">관리항목</th>
-                        <th style="width:31%;">점검사항(기준)</th>
-                        <th style="width:14%;">입력 방식</th><th style="width:4%;"></th>
+                        <th style="width:18%;">공정명</th>
+                        <th style="width:27%;">관리항목</th>
+                        <th style="width:27%;">점검사항(기준)</th>
+                        <th style="width:13%;">입력 방식</th>
+                        <th style="width:15%;">행 작업</th>
                     </tr></thead>
                     <tbody id="csTemplateEditorRows">
                         ${rows.map(_templateEditorRowHtml).join('')}
@@ -13793,6 +14231,7 @@ var ProdConditionsModule = (function() {
                 </button>
             </div>`,
             `<button class="btn btn-outline" onclick="ProdConditionsModule.resetTemplateItems('${csType}')">기본값 복원</button>
+             <button class="btn btn-outline" onclick="ProdConditionsModule.saveTemplateItemsAsDefault('${csType}')">현재 항목을 기본 양식으로 저장</button>
              <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
              <button class="btn btn-primary" onclick="ProdConditionsModule.saveTemplateItems('${csType}')">저장</button>`,
             'xl'
@@ -13800,12 +14239,84 @@ var ProdConditionsModule = (function() {
     }
 
     function addTemplateItemRow() {
+        if (!_isAdmin()) {
+            UIUtils.toast('양식 항목 추가는 관리자만 가능합니다.', 'warning');
+            return;
+        }
         const tbody = document.getElementById('csTemplateEditorRows');
         if (tbody) tbody.insertAdjacentHTML('beforeend', _templateEditorRowHtml());
     }
 
-    async function saveTemplateItems(csType) {
-        const rows = [...document.querySelectorAll('#csTemplateEditorRows .cs-template-edit-row')]
+    function insertTemplateItemRowAfter(button) {
+        if (!_isAdmin()) {
+            UIUtils.toast('양식 항목 추가는 관리자만 가능합니다.', 'warning');
+            return;
+        }
+        const currentRow = button?.closest('.cs-template-edit-row');
+        if (!currentRow) return;
+        const process = currentRow.querySelector('.cs-tpl-process')?.value.trim() || '';
+        const section = currentRow.dataset.section || process;
+        currentRow.insertAdjacentHTML(
+            'afterend',
+            _templateEditorRowHtml([section, process, '', '', 'text'])
+        );
+        const newRow = currentRow.nextElementSibling;
+        newRow?.querySelector('.cs-tpl-item')?.focus();
+    }
+
+    function removeTemplateItemRow(button) {
+        if (!_isAdmin()) {
+            UIUtils.toast('양식 항목 삭제는 관리자만 가능합니다.', 'warning');
+            return;
+        }
+        button?.closest('.cs-template-edit-row')?.remove();
+    }
+
+    function _templateProcessKey(value) {
+        return String(value || '').trim().replace(/\s+/g, ' ').toUpperCase();
+    }
+
+    function _templateItemKey(process, item) {
+        return `${_templateProcessKey(process)}||${String(item || '').trim().replace(/\s+/g, ' ').toUpperCase()}`;
+    }
+
+    function importTemplateRowsFromDefault(targetCsType) {
+        if (!_isAdmin()) {
+            UIUtils.toast('다른 기본 양식 불러오기는 관리자만 가능합니다.', 'warning');
+            return;
+        }
+        const sourceCsType = (document.getElementById('csTemplateImportSource') || {}).value || '';
+        if (!sourceCsType || !CSHEET_TEMPLATES[sourceCsType]) {
+            UIUtils.toast('불러올 기본 양식을 선택하세요.', 'warning');
+            return;
+        }
+
+        const sourceMap = new Map();
+        _defaultTemplateRows(sourceCsType).forEach(row => {
+            const key = _templateItemKey(row[1], row[2]);
+            if (key !== '||' && !sourceMap.has(key)) sourceMap.set(key, row);
+        });
+
+        let matched = 0;
+        document.querySelectorAll('#csTemplateEditorRows .cs-template-edit-row').forEach(rowEl => {
+            const process = rowEl.querySelector('.cs-tpl-process')?.value || '';
+            const item = rowEl.querySelector('.cs-tpl-item')?.value || '';
+            const sourceRow = sourceMap.get(_templateItemKey(process, item));
+            if (!sourceRow) return;
+            rowEl.querySelector('.cs-tpl-spec').value = sourceRow[3] || '';
+            rowEl.querySelector('.cs-tpl-type').value = sourceRow[4] === 'check' ? 'check' : 'text';
+            matched++;
+        });
+
+        if (!matched) {
+            UIUtils.toast('공정명과 관리항목이 모두 같은 행을 찾지 못했습니다.', 'warning');
+            return;
+        }
+        UIUtils.toast(`${CS_TPL_LABELS[sourceCsType]}에서 같은 항목 ${matched}개를 자동 반영했습니다.`, 'success');
+    }
+
+    function _collectTemplateEditorRows() {
+        return [...document.querySelectorAll('#csTemplateEditorRows .cs-template-edit-row')]
             .map(row => [
                 row.dataset.section || row.querySelector('.cs-tpl-process')?.value.trim() || '',
                 row.querySelector('.cs-tpl-process')?.value.trim() || '',
@@ -13814,6 +14325,14 @@ var ProdConditionsModule = (function() {
                 row.querySelector('.cs-tpl-type')?.value === 'check' ? 'check' : 'text'
             ])
             .filter(row => row[2]);
+    }
+
+    async function saveTemplateItems(csType) {
+        if (!_isAdmin()) {
+            UIUtils.toast('양식 항목 수정은 관리자만 가능합니다.', 'warning');
+            return;
+        }
+        const rows = _collectTemplateEditorRows();
         if (!rows.length) {
             UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning');
             return;
@@ -13824,12 +14343,38 @@ var ProdConditionsModule = (function() {
         UIUtils.toast(`${CS_TPL_LABELS[csType]} 양식 항목이 저장되었습니다.`, 'success');
     }
 
+    function saveTemplateItemsAsDefault(csType) {
+        if (!_isAdmin()) {
+            UIUtils.toast('기본 양식 저장은 관리자만 가능합니다.', 'warning');
+            return;
+        }
+        const rows = _collectTemplateEditorRows();
+        if (!rows.length) {
+            UIUtils.toast('기본 양식으로 저장할 관리항목을 1개 이상 입력하세요.', 'warning');
+            return;
+        }
+        UIUtils.confirm(`현재 항목을 ${CS_TPL_LABELS[csType]}의 기본 양식으로 저장하시겠습니까?`, async () => {
+            _csTemplateDefaults[csType] = rows;
+            delete _csTemplateOverrides[csType];
+            await Promise.all([
+                Storage.setConfigValue('csTemplateDefaults', _csTemplateDefaults),
+                Storage.setConfigValue('csTemplateItems', _csTemplateOverrides)
+            ]);
+            UIUtils.toast(`${CS_TPL_LABELS[csType]} 기본 양식이 저장되었습니다.`, 'success');
+            openTemplateItemsModal(csType);
+        });
+    }
+
     function resetTemplateItems(csType) {
+        if (!_isAdmin()) {
+            UIUtils.toast('기본값 복원은 관리자만 가능합니다.', 'warning');
+            return;
+        }
         UIUtils.confirm(`${CS_TPL_LABELS[csType]} 양식 항목을 기본값으로 복원하시겠습니까?`, async () => {
             delete _csTemplateOverrides[csType];
             await Storage.setConfigValue('csTemplateItems', _csTemplateOverrides);
-            UIUtils.closeModal();
             UIUtils.toast('기본 양식으로 복원되었습니다.', 'success');
+            openTemplateItemsModal(csType);
         });
     }
 
@@ -14184,6 +14729,10 @@ var ProdConditionsModule = (function() {
         openTemplateItemsModal,
         addTemplateItemRow,
         saveTemplateItems,
+        saveTemplateItemsAsDefault,
+        importTemplateRowsFromDefault,
+        insertTemplateItemRowAfter,
+        removeTemplateItemRow,
         resetTemplateItems,
         _addPresetProductRow,
         _toggleInlinePartDropdown,
@@ -15675,6 +16224,10 @@ var PaintMixModule = (function() {
             <div class="card-header">
                 <h4><span class="material-symbols-outlined">format_paint</span> 도장 완료 실적 — 도료사용등록 대상</h4>
                 <span style="font-size:0.78rem;color:var(--text-muted);">미등록: 파란 버튼 / 부분등록: 노란 테두리 / 전체등록 완료: 회색 버튼</span>
+                ${_isAdmin() ? `
+                <button class="btn btn-sm btn-danger" style="margin-left:auto;" onclick="PaintMixModule.removeAllWork()">
+                    <span class="material-symbols-outlined" style="font-size:16px;">delete_sweep</span> 전체 삭제
+                </button>` : ''}
             </div>
             <div class="card-body" style="padding:0;">
                 <div class="data-table-wrapper">
@@ -15757,7 +16310,10 @@ var PaintMixModule = (function() {
         `;
     }
 
+    let _curWorks = [];
+
     function renderWorkTable(works, regMap) {
+        _curWorks = works || [];
         const tbody = document.getElementById('pmixWorkBody');
         if (!tbody) return;
         if (!works.length) {
@@ -15805,9 +16361,30 @@ var PaintMixModule = (function() {
                     <td style="white-space:nowrap;">
                         ${statusBadge}
                         <button class="btn btn-sm ${btnClass}" onclick="PaintMixModule.openFromWork('${_js(w.id)}')">${btnLabel}</button>
+                        ${_isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="PaintMixModule.removeWork('${_js(w.id)}')">삭제</button>` : ''}
                     </td>
                 </tr>`;
         }).join('');
+    }
+
+    function removeWork(id) {
+        if (!_isAdmin()) return;
+        UIUtils.confirm('이 도장 완료 실적을 삭제하시겠습니까?\n도장 작업일지에서도 함께 삭제됩니다.', async () => {
+            await Storage.remove(PAINT_WORK_STORE, id);
+            UIUtils.toast('삭제되었습니다.', 'success');
+            search();
+        });
+    }
+
+    function removeAllWork() {
+        if (!_isAdmin()) return;
+        const list = _curWorks || [];
+        if (!list.length) { UIUtils.toast('삭제할 도장 완료 실적이 없습니다.', 'warning'); return; }
+        UIUtils.confirm(`조회된 도장 완료 실적 ${list.length}건을 모두 삭제하시겠습니까?\n도장 작업일지에서도 함께 삭제되며, 되돌릴 수 없습니다.`, async () => {
+            await Storage.executeTransaction(list.map(w => ({ store: PAINT_WORK_STORE, op: 'remove', id: w.id })));
+            UIUtils.toast(`${list.length}건이 삭제되었습니다.`, 'success');
+            search();
+        });
     }
 
     function renderMixTable(mixes) {
@@ -15920,9 +16497,112 @@ var PaintMixModule = (function() {
             });
         });
 
+        // ③ 관리자 실사 조정 (배합실 잔량 신규 등록/수정)
+        _residualAdjustments().forEach(a => {
+            const matId = a.materialId || '';
+            const mat   = mats.find(x => x.id === matId);
+            if (!mat) return;
+            const lotNo = a.lotNo || '미기입';
+            const key   = `${matId}__${lotNo}`;
+            if (!map[key]) {
+                map[key] = {
+                    materialId: matId,
+                    lotNo,
+                    paintName:    mat.name || '',
+                    supplier:     mat.supplier || '',
+                    manufacturer: mat.manufacturer || '',
+                    packUnit:     Number(mat.packUnit) || 0,
+                    usageType:    '',
+                    totalWithdrawG: 0,
+                    totalUsedG:     0,
+                    residualG:      0,
+                    withdrawDetail: []
+                };
+            }
+            map[key].totalWithdrawG += (Number(a.adjustG) || 0);
+            map[key].residualG = map[key].totalWithdrawG - map[key].totalUsedG;
+        });
+
         return Object.values(map)
             .filter(r => r.residualG > 0)
             .sort((a, b) => (a.paintName||'').localeCompare(b.paintName||'', 'ko'));
+    }
+
+    function _residualAdjustments() {
+        return (Storage.getAll(STORE) || []).filter(d => d._docKind === 'paint_residual_adjust');
+    }
+
+    /* ── 배합실 잔량 신규 등록/조정 (관리자 전용) ── */
+    function openMixResidualAdjust(materialId, lotNo) {
+        if (!_isAdmin()) { UIUtils.toast('관리자만 조정할 수 있습니다.', 'warning'); return; }
+        const isNew = !materialId;
+        const mats = Storage.getAll(PAINT_MAT_STORE) || [];
+        const current = isNew ? null : _calcMixingRoomResiduals().find(r => r.materialId === materialId && r.lotNo === lotNo);
+        const matOptions = mats.map(m => `<option value="${_esc(m.id)}">${_esc(m.name)}</option>`).join('');
+        UIUtils.showModal(isNew ? '배합실 잔량 신규 등록' : '배합실 잔량 조정', `
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">도료 <span style="color:var(--accent-red)">*</span></label>
+                    ${isNew
+                        ? `<select class="form-select" id="pmixResMatId"><option value="">선택</option>${matOptions}</select>`
+                        : `<input type="text" class="form-input" value="${_esc(current ? current.paintName : '')}" readonly style="background:var(--bg-secondary);">`}
+                </div>
+                <div class="form-group">
+                    <label class="form-label">제조 LOT</label>
+                    <input type="text" class="form-input" id="pmixResLotNo" value="${_esc(lotNo || '')}"
+                        placeholder="예: 미기입" ${isNew ? '' : 'readonly style="background:var(--bg-secondary);"'}>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">현재 전산 잔량</label>
+                    <input type="text" class="form-input" value="${current ? UIUtils.formatNumber(current.residualG) + ' g' : '0 g (신규)'}" readonly style="background:var(--bg-secondary);">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">실사 잔량(g) <span style="color:var(--accent-red)">*</span></label>
+                    <input type="number" class="form-input" id="pmixResActualG" value="${current ? current.residualG : ''}" min="0" step="1" style="text-align:right;">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">조정일자</label>
+                    <input type="date" class="form-input" id="pmixResDate" value="${UIUtils.today()}">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">사유</label>
+                <input type="text" class="form-input" id="pmixResNote" placeholder="예: 배합실 실사 결과 반영">
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="PaintMixModule.saveMixResidualAdjust(${isNew ? 'null' : `'${_js(materialId)}'`},'${_js(lotNo || '')}')">저장</button>
+        `, 'lg');
+    }
+
+    async function saveMixResidualAdjust(materialId, lotNo) {
+        if (!_isAdmin()) return;
+        const matId = materialId || document.getElementById('pmixResMatId')?.value || '';
+        if (!matId) { UIUtils.toast('도료를 선택하세요.', 'warning'); return; }
+        const finalLotNo = (document.getElementById('pmixResLotNo')?.value || '').trim() || '미기입';
+        const actual = Number(document.getElementById('pmixResActualG')?.value);
+        if (!Number.isFinite(actual) || actual < 0) { UIUtils.toast('실사 잔량을 올바르게 입력하세요.', 'warning'); return; }
+
+        const current = _calcMixingRoomResiduals().find(r => r.materialId === matId && r.lotNo === finalLotNo);
+        const currentG = current ? current.residualG : 0;
+        const delta = Math.round(actual - currentG);
+        if (delta === 0) { UIUtils.toast('조정할 차이가 없습니다.', 'info'); UIUtils.closeModal(); return; }
+
+        const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? AuthModule.getCurrentUser() : null;
+        await Storage.add(STORE, {
+            _docKind: 'paint_residual_adjust',
+            materialId: matId,
+            lotNo: finalLotNo,
+            adjustG: delta,
+            date: document.getElementById('pmixResDate')?.value || UIUtils.today(),
+            note: document.getElementById('pmixResNote')?.value.trim() || '',
+            operator: user ? (user.name || '') : ''
+        });
+        UIUtils.closeModal();
+        UIUtils.toast('배합실 잔량이 조정되었습니다.', 'success');
+        renderResidualTab();
     }
 
     function renderResidualTab() {
@@ -15962,9 +16642,15 @@ var PaintMixModule = (function() {
             <div class="card" style="margin-bottom:14px;">
                 <div class="card-header">
                     <h4><span class="material-symbols-outlined">inventory_2</span> 도료별 잔량 요약</h4>
-                    <button class="btn btn-sm btn-outline" onclick="PaintMixModule.renderResidualTab()">
-                        <span class="material-symbols-outlined" style="font-size:16px;">refresh</span>
-                    </button>
+                    <div style="display:flex;gap:6px;">
+                        ${_isAdmin() ? `
+                        <button class="btn btn-sm btn-outline" onclick="PaintMixModule.openMixResidualAdjust(null,'')">
+                            <span class="material-symbols-outlined" style="font-size:16px;">add</span> 잔량 신규 등록
+                        </button>` : ''}
+                        <button class="btn btn-sm btn-outline" onclick="PaintMixModule.renderResidualTab()">
+                            <span class="material-symbols-outlined" style="font-size:16px;">refresh</span>
+                        </button>
+                    </div>
                 </div>
                 <div class="card-body" style="padding:0;">
                     ${mixResiduals.length ? `
@@ -15975,6 +16661,7 @@ var PaintMixModule = (function() {
                                 <th style="text-align:right;">총 입고(g)</th>
                                 <th style="text-align:right;">총 사용(g)</th>
                                 <th style="text-align:right;">잔량(g)</th>
+                                ${_isAdmin() ? '<th>관리</th>' : ''}
                             </tr></thead>
                             <tbody>
                                 ${mixResiduals.map(r => {
@@ -15989,6 +16676,7 @@ var PaintMixModule = (function() {
                                         <td style="text-align:right;">${UIUtils.formatNumber(r.totalWithdrawG)}</td>
                                         <td style="text-align:right;">${UIUtils.formatNumber(r.totalUsedG)}</td>
                                         <td style="text-align:right;font-weight:700;color:${color};">${UIUtils.formatNumber(r.residualG)}</td>
+                                        ${_isAdmin() ? `<td style="white-space:nowrap;"><button class="btn btn-sm btn-outline" onclick="PaintMixModule.openMixResidualAdjust('${_js(r.materialId)}','${_js(r.lotNo)}')">조정</button></td>` : ''}
                                     </tr>`;
                                 }).join('')}
                             </tbody>
@@ -17250,11 +17938,12 @@ var PaintMixModule = (function() {
         _addPrimerRow, _delPrimerRow, _addColorRow, _delColorRow,
         _onFormulaModalCarChange, viewControlPlan, showFormulaValidation,
         renderHistoryTab, renderResidualTab, renderMixHistTab, search, searchMixHist,
-        openFromWork, openManualModal,
+        openFromWork, openManualModal, removeWork, removeAllWork,
         _onResidualLotChange, _onWarehouseLotChange, _onRowCalc,
         _onCanOpenToggle, _onCanCountChange,
         _validateRow, _validateAllRows,
         renderResidualStock, filterResidualStock, exportResidualData, openResidualAdjust, saveResidualAdjust,
+        openMixResidualAdjust, saveMixResidualAdjust,
         saveNew, edit, saveEdit, remove, exportData,
         renderFormulaAsStandard, renderUsageAsStandard
     };

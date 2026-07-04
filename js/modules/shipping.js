@@ -1877,16 +1877,17 @@ const ProductWarehouseModule = (function() {
                             placeholder="엑셀에서 복사한 내용을 여기에 붙여넣으세요 (Ctrl+V)"
                             style="height:180px;font-family:monospace;font-size:0.78rem;resize:vertical;"
                             oninput="document.getElementById('bulkPreviewWrap').innerHTML='';
-                                     var s=document.getElementById('bulkSaveBtn');if(s)s.style.display='none';"></textarea>
+                                     var s=document.getElementById('bulkSaveBtn');if(s)s.disabled=true;"></textarea>
                         <div id="bulkPreviewWrap" style="margin-top:12px;"></div>
                         <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
                             <button class="btn btn-secondary"
                                 onclick="ProductWarehouseModule.render(document.getElementById('contentArea'))">
                                 취소
                             </button>
-                            <button class="btn btn-primary" id="bulkSaveBtn" style="display:none;"
+                            <button class="btn btn-primary" id="bulkSaveBtn" disabled
+                                title="미리보기로 데이터를 확인하면 등록할 수 있습니다."
                                 onclick="ProductWarehouseModule._bulkSave()">
-                                <span class="material-symbols-outlined">save</span> 전체 교체 저장
+                                <span class="material-symbols-outlined">save</span> 등록 실행
                             </button>
                         </div>
                     </div>
@@ -1904,7 +1905,7 @@ const ProductWarehouseModule = (function() {
         const records = _parseBulkRows(raw);
         if (!records.length) {
             wrap.innerHTML = '<p style="color:var(--accent-red);font-size:0.83rem;">붙여넣은 내용이 없습니다.</p>';
-            if (saveBtn) saveBtn.style.display = 'none';
+            if (saveBtn) saveBtn.disabled = true;
             return;
         }
 
@@ -1979,7 +1980,12 @@ const ProductWarehouseModule = (function() {
             });
             input.addEventListener('change', _bulkRenderPreview);
         });
-        if (saveBtn) saveBtn.style.display = hasDuplicates ? 'none' : '';
+        if (saveBtn) {
+            saveBtn.disabled = hasDuplicates;
+            saveBtn.title = hasDuplicates
+                ? '중복 항목을 수정하거나 제외한 뒤 등록할 수 있습니다.'
+                : '미리보기 내용으로 제품창고 재고를 등록합니다.';
+        }
     }
 
     function _bulkRenderPreview() {
@@ -1991,7 +1997,7 @@ const ProductWarehouseModule = (function() {
         if (!wrap) return;
         if (!records.length) {
             wrap.innerHTML = '<p style="color:var(--text-muted);font-size:0.83rem;">미리보기 데이터가 없습니다.</p>';
-            if (saveBtn) saveBtn.style.display = 'none';
+            if (saveBtn) saveBtn.disabled = true;
             return;
         }
         const currentMap = _getCurrentStockMap();
@@ -2061,13 +2067,87 @@ const ProductWarehouseModule = (function() {
             });
             input.addEventListener('change', _bulkRenderPreview);
         });
-        if (saveBtn) saveBtn.style.display = hasDuplicates ? 'none' : '';
+        if (saveBtn) {
+            saveBtn.disabled = hasDuplicates;
+            saveBtn.title = hasDuplicates
+                ? '중복 항목을 수정하거나 제외한 뒤 등록할 수 있습니다.'
+                : '미리보기 내용으로 제품창고 재고를 등록합니다.';
+        }
     }
 
     function _bulkRemoveRow(idx) {
         if (!ProductWarehouseModule._bulkRecords) return;
         ProductWarehouseModule._bulkRecords.splice(idx, 1);
         _bulkRenderPreview();
+    }
+
+    function _showBulkSaveResult(rows, date) {
+        const increased = rows.filter(row => row.diff > 0).length;
+        const decreased = rows.filter(row => row.diff < 0).length;
+        const unchanged = rows.filter(row => row.diff === 0).length;
+        const totalQty = rows.reduce((sum, row) => sum + row.targetQty, 0);
+        const rowsHtml = rows.map(row => {
+            const diffColor = row.diff > 0
+                ? 'var(--accent-green)'
+                : row.diff < 0 ? 'var(--accent-red)' : 'var(--text-muted)';
+            const diffLabel = row.diff > 0
+                ? `+${UIUtils.formatNumber(row.diff)}`
+                : UIUtils.formatNumber(row.diff);
+            return `
+                <tr style="border-bottom:1px solid var(--border-color);">
+                    <td style="padding:7px 9px;">${_escapeHtml(row.carModel)}</td>
+                    <td style="padding:7px 9px;">${_escapeHtml(row.partName)}</td>
+                    <td style="padding:7px 9px;">${_escapeHtml(row.color || '-')}</td>
+                    <td style="padding:7px 9px;text-align:right;color:var(--text-muted);">${UIUtils.formatNumber(row.currentQty)}</td>
+                    <td style="padding:7px 9px;text-align:right;font-weight:700;">${UIUtils.formatNumber(row.targetQty)}</td>
+                    <td style="padding:7px 9px;text-align:right;font-weight:700;color:${diffColor};">${diffLabel}</td>
+                </tr>`;
+        }).join('');
+
+        UIUtils.showModal('제품창고 일괄 등록 결과', `
+            <div style="padding:12px 14px;margin-bottom:14px;border:1px solid rgba(34,197,94,0.3);
+                        border-radius:8px;background:rgba(34,197,94,0.07);display:flex;align-items:center;gap:9px;">
+                <span class="material-symbols-outlined" style="color:var(--accent-green);">check_circle</span>
+                <div>
+                    <div style="font-weight:700;color:var(--accent-green);">등록이 완료되었습니다.</div>
+                    <div style="font-size:0.78rem;color:var(--text-secondary);margin-top:2px;">기준일자 ${_escapeHtml(date)}</div>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:14px;">
+                ${[
+                    ['등록 품목', `${rows.length}건`, 'var(--accent-blue)'],
+                    ['총 재고', `${UIUtils.formatNumber(totalQty)}개`, 'var(--text-primary)'],
+                    ['증가', `${increased}건`, 'var(--accent-green)'],
+                    ['감소', `${decreased}건`, 'var(--accent-red)'],
+                    ['동일', `${unchanged}건`, 'var(--text-muted)']
+                ].map(item => `
+                    <div style="padding:10px;border:1px solid var(--border-color);border-radius:8px;text-align:center;background:var(--bg-secondary);">
+                        <div style="font-size:0.72rem;color:var(--text-muted);">${item[0]}</div>
+                        <div style="margin-top:3px;font-size:1rem;font-weight:800;color:${item[2]};">${item[1]}</div>
+                    </div>`).join('')}
+            </div>
+            <div style="max-height:320px;overflow:auto;border:1px solid var(--border-color);border-radius:8px;">
+                <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+                    <thead style="position:sticky;top:0;background:var(--bg-secondary);z-index:1;">
+                        <tr>
+                            <th style="padding:7px 9px;text-align:left;">차종</th>
+                            <th style="padding:7px 9px;text-align:left;">품명</th>
+                            <th style="padding:7px 9px;text-align:left;">컬러</th>
+                            <th style="padding:7px 9px;text-align:right;">기존 재고</th>
+                            <th style="padding:7px 9px;text-align:right;">등록 재고</th>
+                            <th style="padding:7px 9px;text-align:right;">변경</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+            <button class="btn btn-primary"
+                onclick="UIUtils.closeModal();ProductWarehouseModule.render(document.getElementById('contentArea'))">
+                재고 현황 보기
+            </button>
+        `, 'lg');
     }
 
     async function _bulkSave() {
@@ -2088,7 +2168,9 @@ const ProductWarehouseModule = (function() {
         }
         const date = (document.getElementById('bulkInvDate') || {}).value || UIUtils.today();
         const nowIso = new Date().toISOString();
+        const currentMap = _getCurrentStockMap();
         const newItems = [];
+        const resultRows = [];
 
         for (const r of records) {
             const carModel = _normalizeText(r.carModel);
@@ -2096,6 +2178,7 @@ const ProductWarehouseModule = (function() {
             const color = _normalizeText(r.color);
             const targetQty = Math.max(0, Math.round(Number(r.quantity) || 0));
             if (!carModel || !partName) continue;
+            const currentQty = currentMap[`${carModel}||${partName}||${color}`] || 0;
 
             newItems.push({
                 id: Storage.generateId ? Storage.generateId() : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`,
@@ -2108,6 +2191,14 @@ const ProductWarehouseModule = (function() {
                 quantity: targetQty,
                 source: '일괄 등록 및 수정'
             });
+            resultRows.push({
+                carModel,
+                partName,
+                color,
+                currentQty,
+                targetQty,
+                diff: targetQty - currentQty
+            });
         }
 
         if (!newItems.length) {
@@ -2117,9 +2208,8 @@ const ProductWarehouseModule = (function() {
 
         await Storage.saveAll(STORE, newItems);
         ProductWarehouseModule._bulkRecords = [];
-        UIUtils.closeModal();
         UIUtils.toast(`기존 제품창고 재고 삭제 후 ${newItems.length}건 등록 완료`, 'success');
-        loadData();
+        _showBulkSaveResult(resultRows, date);
     }
 
     function openAddModal() {

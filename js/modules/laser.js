@@ -3254,6 +3254,64 @@ var LaserStandbyModule = (function() {
     const MANUAL_OVERRIDE_KEY = 'laser_standby_stock_overrides_v1';
     let _manualOverrides = [];
     let _manualOverridesLoaded = false;
+    let _bulkRecords = [];
+
+    function _escapeHtml(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function _normalizeBulkText(value) {
+        return String(value == null ? '' : value).trim().replace(/\s+/g, ' ');
+    }
+
+    function _isBulkQty(value) {
+        const text = String(value == null ? '' : value).trim().replace(/,/g, '');
+        return text === '-' || /^\d+$/.test(text);
+    }
+
+    function _parseBulkQty(value) {
+        const text = String(value == null ? '' : value).trim().replace(/,/g, '');
+        return text === '-' ? 0 : Math.max(0, parseInt(text, 10) || 0);
+    }
+
+    function _parseBulkRows(text) {
+        return String(text || '')
+            .replace(/\r\n/g, '\n')
+            .replace(/\r/g, '\n')
+            .split('\n')
+            .map(line => line.split('\t').map(_normalizeBulkText))
+            .filter(row => row.some(Boolean))
+            .filter(row => row.length >= 3)
+            .filter(row => _isBulkQty(row.length >= 4 ? row[3] : row[2]))
+            .map(row => ({
+                carModel: row[0] || '',
+                partName: row[1] || '',
+                color: row.length >= 4 ? row[2] || '' : '',
+                quantity: row.length >= 4 ? _parseBulkQty(row[3]) : _parseBulkQty(row[2])
+            }))
+            .filter(row => row.carModel && row.partName);
+    }
+
+    function _bulkKey(row) {
+        return [
+            _normalizeBulkText(row.carModel).toUpperCase(),
+            _normalizeBulkText(row.partName).toUpperCase(),
+            _normalizeBulkText(row.color).toUpperCase()
+        ].join('||');
+    }
+
+    function _bulkDuplicateCounts(records) {
+        return (records || []).reduce((counts, row) => {
+            const key = _bulkKey(row);
+            counts[key] = (counts[key] || 0) + 1;
+            return counts;
+        }, {});
+    }
 
     function render(container) {
         container.innerHTML = `
@@ -4656,98 +4714,243 @@ var LaserStandbyModule = (function() {
     // ── 일괄 등록 (교체) ────────────────────────────────────────────────
     async function openBulkModal() {
         await _ensureManualOverridesLoaded();
-
-        const products = _getLaserTargetProducts()
-            .slice()
-            .sort((a, b) => String(a.carModel || '').localeCompare(String(b.carModel || ''), 'ko') ||
-                            String(a.partName  || '').localeCompare(String(b.partName  || ''), 'ko'));
-        const { inventoryMap } = _buildInventorySnapshot();
+        _bulkRecords = [];
 
         UIUtils.showModal('레이져 대기품 일괄 등록 (교체)', `
             <div style="background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.2);border-radius:8px;
                         padding:10px 14px;margin-bottom:14px;font-size:0.82rem;color:var(--accent-red);display:flex;align-items:flex-start;gap:6px;">
                 <span class="material-symbols-outlined" style="font-size:1rem;flex-shrink:0;">warning</span>
-                <span>저장 시 기존 수기 등록 내역이 모두 초기화되고 입력한 수량으로 교체됩니다. 수량을 비워두면 해당 품목은 재고 0으로 초기화됩니다.</span>
+                <span>등록 실행 시 기존 수기 등록 내역이 모두 초기화되고 붙여넣은 목록으로 교체됩니다.</span>
             </div>
-            <div style="max-height:420px;overflow-y:auto;border-radius:8px;border:1px solid var(--border-color);">
-                <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
-                    <thead style="position:sticky;top:0;z-index:1;background:linear-gradient(180deg,#f1f5f9,#e8ecf1);">
+            <div style="padding:10px 14px;margin-bottom:12px;background:rgba(59,130,246,0.07);
+                        border:1px solid rgba(59,130,246,0.25);border-radius:8px;font-size:0.82rem;
+                        color:var(--text-secondary);line-height:1.7;">
+                <b style="color:var(--accent-blue);">붙여넣기 방법</b><br>
+                엑셀에서 <b>차종 / 품명 / 컬러 / 재고</b> 4열을 복사해 아래 입력창에 붙여넣고 <b>미리보기</b>를 누르세요.<br>
+                <span style="font-size:0.78rem;color:var(--text-muted);">
+                    • 헤더가 있어도 자동으로 제외됩니다<br>
+                    • 컬러가 없는 3열 형식(<b>차종 / 품명 / 재고</b>)도 인식합니다<br>
+                    • <b>-</b>는 재고 0으로 인식하며, 같은 차종+품명+컬러가 중복되면 등록할 수 없습니다
+                </span>
+            </div>
+            <div style="margin-bottom:10px;padding:8px 10px;background:var(--bg-secondary);border-radius:6px;
+                        font-family:Consolas,monospace;font-size:0.78rem;line-height:1.45;color:var(--text-secondary);">
+                차종&nbsp;&nbsp;&nbsp;&nbsp;품명&nbsp;&nbsp;&nbsp;&nbsp;컬러&nbsp;&nbsp;&nbsp;&nbsp;재고<br>
+                A3&nbsp;&nbsp;&nbsp;&nbsp;COVER [EC] 6PS 레이저인쇄&nbsp;&nbsp;&nbsp;&nbsp;6PS&nbsp;&nbsp;&nbsp;&nbsp;1,500<br>
+                T1XX&nbsp;&nbsp;&nbsp;&nbsp;PARK&nbsp;&nbsp;&nbsp;&nbsp;BK&nbsp;&nbsp;&nbsp;&nbsp;-
+            </div>
+            <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+                <button class="btn btn-outline" onclick="LaserStandbyModule.previewBulkModal()">
+                    <span class="material-symbols-outlined">preview</span> 미리보기
+                </button>
+            </div>
+            <textarea id="lsbBulkPasteArea" class="form-textarea"
+                placeholder="엑셀에서 복사한 내용을 여기에 붙여넣으세요 (Ctrl+V)"
+                style="height:160px;font-family:monospace;font-size:0.78rem;resize:vertical;"
+                oninput="document.getElementById('lsbBulkPreview').innerHTML='';
+                         var b=document.getElementById('lsbBulkSaveBtn');if(b)b.disabled=true;"></textarea>
+            <div id="lsbBulkPreview" style="margin-top:12px;"></div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" id="lsbBulkSaveBtn" disabled
+                title="미리보기로 데이터를 확인하면 등록할 수 있습니다."
+                style="background:var(--accent-red);border-color:var(--accent-red);"
+                onclick="LaserStandbyModule.saveBulkModal()">등록 실행</button>
+        `, 'lg');
+    }
+
+    function previewBulkModal() {
+        _bulkRecords = _parseBulkRows(document.getElementById('lsbBulkPasteArea')?.value || '');
+        _renderBulkPreview();
+    }
+
+    function _renderBulkPreview() {
+        const wrap = document.getElementById('lsbBulkPreview');
+        const saveBtn = document.getElementById('lsbBulkSaveBtn');
+        if (!wrap) return;
+        if (!_bulkRecords.length) {
+            wrap.innerHTML = '<p style="color:var(--accent-red);font-size:0.83rem;">등록할 데이터를 인식하지 못했습니다. 탭으로 구분된 3열 또는 4열 데이터를 붙여넣으세요.</p>';
+            if (saveBtn) saveBtn.disabled = true;
+            return;
+        }
+
+        const counts = _bulkDuplicateCounts(_bulkRecords);
+        const duplicateRows = _bulkRecords.filter((row, idx, rows) =>
+            counts[_bulkKey(row)] > 1 && rows.findIndex(item => _bulkKey(item) === _bulkKey(row)) === idx
+        );
+        const hasDuplicates = duplicateRows.length > 0;
+        const { inventoryMap } = _buildInventorySnapshot();
+        const rowsHtml = _bulkRecords.map((row, idx) => {
+            const key = _itemKey(row.carModel, row.partName, row.color);
+            const item = inventoryMap[key];
+            const current = item ? Math.max(0, item.inQty - item.outQty) : 0;
+            const isDuplicate = counts[_bulkKey(row)] > 1;
+            return `
+                <tr style="border-bottom:1px solid var(--border-color);${isDuplicate ? 'background:rgba(239,68,68,0.06);' : ''}">
+                    <td style="padding:6px 8px;">${_escapeHtml(row.carModel)}</td>
+                    <td style="padding:6px 8px;">${_escapeHtml(row.partName)}</td>
+                    <td style="padding:6px 8px;">${_escapeHtml(row.color || '-')}</td>
+                    <td style="padding:6px 8px;text-align:right;color:var(--text-muted);">${UIUtils.formatNumber(current)}</td>
+                    <td style="padding:6px 8px;text-align:right;font-weight:700;">${UIUtils.formatNumber(row.quantity)}</td>
+                    <td style="padding:6px 8px;text-align:center;">
+                        ${isDuplicate ? '<span style="color:var(--accent-red);font-size:0.72rem;font-weight:700;margin-right:5px;">중복</span>' : ''}
+                        <button class="btn btn-sm btn-outline" onclick="LaserStandbyModule.removeBulkRow(${idx})">제외</button>
+                    </td>
+                </tr>`;
+        }).join('');
+
+        wrap.innerHTML = `
+            <div style="margin-bottom:8px;font-size:0.85rem;font-weight:600;color:${hasDuplicates ? 'var(--accent-red)' : 'var(--accent-green)'};">
+                ${hasDuplicates
+                    ? `중복 품목 ${duplicateRows.length}개가 있습니다. 중복 행을 제외한 뒤 등록하세요.`
+                    : `${_bulkRecords.length}건을 인식했습니다. 내용을 확인한 뒤 교체 등록하세요.`}
+            </div>
+            <div style="max-height:260px;overflow:auto;border:1px solid var(--border-color);border-radius:8px;">
+                <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+                    <thead style="position:sticky;top:0;background:var(--bg-secondary);z-index:1;">
                         <tr>
-                            <th style="padding:8px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">차종</th>
-                            <th style="padding:8px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">품명</th>
-                            <th style="padding:8px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">컬러</th>
-                            <th style="padding:8px 12px;text-align:right;font-weight:600;color:var(--text-muted);white-space:nowrap;">현재고</th>
-                            <th style="padding:8px 12px;text-align:right;font-weight:600;color:var(--accent-blue);white-space:nowrap;">등록 수량</th>
+                            <th style="padding:6px 8px;text-align:left;">차종</th>
+                            <th style="padding:6px 8px;text-align:left;">품명</th>
+                            <th style="padding:6px 8px;text-align:left;">컬러</th>
+                            <th style="padding:6px 8px;text-align:right;">현재고</th>
+                            <th style="padding:6px 8px;text-align:right;">등록 재고</th>
+                            <th style="padding:6px 8px;text-align:center;">작업</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        ${products.map(p => {
-                            const key  = _itemKey(p.carModel, p.partName, p.color || '');
-                            const item = inventoryMap[key];
-                            const stock = item ? Math.max(0, item.inQty - item.outQty) : 0;
-                            return `<tr style="border-bottom:1px solid var(--border-color);"
-                                        onmouseover="this.style.background='rgba(66,133,244,0.04)'"
-                                        onmouseout="this.style.background=''">
-                                <td style="padding:6px 12px;font-weight:600;">${p.carModel || '-'}</td>
-                                <td style="padding:6px 12px;">${p.partName || '-'}</td>
-                                <td style="padding:6px 12px;">${p.color || '-'}</td>
-                                <td style="padding:6px 12px;text-align:right;color:var(--text-muted);">${UIUtils.formatNumber(stock)}</td>
-                                <td style="padding:6px 12px;text-align:right;">
-                                    <input type="number" class="form-input lsb-bulk-qty"
-                                        data-car="${(p.carModel||'').replace(/"/g,'&quot;')}"
-                                        data-part="${(p.partName||'').replace(/"/g,'&quot;')}"
-                                        data-color="${(p.color||'').replace(/"/g,'&quot;')}"
-                                        placeholder="${stock > 0 ? stock : '0'}"
-                                        min="0"
-                                        style="width:90px;text-align:right;padding:4px 8px;">
-                                </td>
-                            </tr>`;
-                        }).join('')}
-                    </tbody>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            </div>`;
+        if (saveBtn) {
+            saveBtn.disabled = hasDuplicates;
+            saveBtn.title = hasDuplicates
+                ? '중복 항목을 제외한 뒤 등록할 수 있습니다.'
+                : '미리보기 내용으로 레이져 대기품 재고를 교체 등록합니다.';
+        }
+    }
+
+    function removeBulkRow(index) {
+        _bulkRecords.splice(index, 1);
+        _renderBulkPreview();
+    }
+
+    function _showBulkSaveResult(rows) {
+        const increased = rows.filter(row => row.diff > 0).length;
+        const decreased = rows.filter(row => row.diff < 0).length;
+        const unchanged = rows.filter(row => row.diff === 0).length;
+        const totalQty = rows.reduce((sum, row) => sum + row.targetQty, 0);
+        const rowsHtml = rows.map(row => {
+            const diffColor = row.diff > 0
+                ? 'var(--accent-green)'
+                : row.diff < 0 ? 'var(--accent-red)' : 'var(--text-muted)';
+            const diffLabel = row.diff > 0
+                ? `+${UIUtils.formatNumber(row.diff)}`
+                : UIUtils.formatNumber(row.diff);
+            return `
+                <tr style="border-bottom:1px solid var(--border-color);">
+                    <td style="padding:7px 9px;">${_escapeHtml(row.carModel)}</td>
+                    <td style="padding:7px 9px;">${_escapeHtml(row.partName)}</td>
+                    <td style="padding:7px 9px;">${_escapeHtml(row.color || '-')}</td>
+                    <td style="padding:7px 9px;text-align:right;color:var(--text-muted);">${UIUtils.formatNumber(row.currentQty)}</td>
+                    <td style="padding:7px 9px;text-align:right;font-weight:700;">${UIUtils.formatNumber(row.targetQty)}</td>
+                    <td style="padding:7px 9px;text-align:right;font-weight:700;color:${diffColor};">${diffLabel}</td>
+                </tr>`;
+        }).join('');
+
+        UIUtils.showModal('레이져 대기품 일괄 등록 결과', `
+            <div style="padding:12px 14px;margin-bottom:14px;border:1px solid rgba(34,197,94,0.3);
+                        border-radius:8px;background:rgba(34,197,94,0.07);display:flex;align-items:center;gap:9px;">
+                <span class="material-symbols-outlined" style="color:var(--accent-green);">check_circle</span>
+                <div style="font-weight:700;color:var(--accent-green);">등록이 완료되었습니다.</div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:14px;">
+                ${[
+                    ['등록 품목', `${rows.length}건`, 'var(--accent-blue)'],
+                    ['총 재고', `${UIUtils.formatNumber(totalQty)}개`, 'var(--text-primary)'],
+                    ['증가', `${increased}건`, 'var(--accent-green)'],
+                    ['감소', `${decreased}건`, 'var(--accent-red)'],
+                    ['동일', `${unchanged}건`, 'var(--text-muted)']
+                ].map(item => `
+                    <div style="padding:10px;border:1px solid var(--border-color);border-radius:8px;text-align:center;background:var(--bg-secondary);">
+                        <div style="font-size:0.72rem;color:var(--text-muted);">${item[0]}</div>
+                        <div style="margin-top:3px;font-size:1rem;font-weight:800;color:${item[2]};">${item[1]}</div>
+                    </div>`).join('')}
+            </div>
+            <div style="max-height:320px;overflow:auto;border:1px solid var(--border-color);border-radius:8px;">
+                <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+                    <thead style="position:sticky;top:0;background:var(--bg-secondary);z-index:1;">
+                        <tr>
+                            <th style="padding:7px 9px;text-align:left;">차종</th>
+                            <th style="padding:7px 9px;text-align:left;">품명</th>
+                            <th style="padding:7px 9px;text-align:left;">컬러</th>
+                            <th style="padding:7px 9px;text-align:right;">기존 재고</th>
+                            <th style="padding:7px 9px;text-align:right;">등록 재고</th>
+                            <th style="padding:7px 9px;text-align:right;">변경</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rowsHtml}</tbody>
                 </table>
             </div>
         `, `
-            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" style="background:var(--accent-red);border-color:var(--accent-red);"
-                onclick="LaserStandbyModule.saveBulkModal()">교체 등록</button>
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+            <button class="btn btn-primary"
+                onclick="UIUtils.closeModal();LaserStandbyModule.refresh()">
+                대기품 현황 보기
+            </button>
         `, 'lg');
     }
 
     async function saveBulkModal() {
         await _ensureManualOverridesLoaded();
 
-        const inputs = document.querySelectorAll('.lsb-bulk-qty');
-        const now = new Date().toISOString();
-        const newOverrides = [];
+        if (!_bulkRecords.length) {
+            UIUtils.toast('등록할 데이터가 없습니다. 먼저 미리보기를 실행하세요.', 'warning');
+            return;
+        }
+        const duplicateCounts = _bulkDuplicateCounts(_bulkRecords);
+        if (_bulkRecords.some(row => duplicateCounts[_bulkKey(row)] > 1)) {
+            UIUtils.toast('중복 품목이 있어 등록할 수 없습니다.', 'warning');
+            _renderBulkPreview();
+            return;
+        }
 
-        inputs.forEach(input => {
-            const val = input.value.trim();
-            if (val === '') return;
-            const qty = parseInt(val, 10);
-            if (isNaN(qty) || qty < 0) return;
-            const carModel = input.dataset.car  || '';
-            const partName = input.dataset.part || '';
-            const color    = input.dataset.color || '';
-            if (!carModel || !partName) return;
-            newOverrides.push({
-                id: Storage.generateId(),
+        const now = new Date().toISOString();
+        const { inventoryMap } = _buildInventorySnapshot();
+        const resultRows = _bulkRecords.map(row => {
+            const carModel = _normalizeBulkText(row.carModel);
+            const partName = _normalizeBulkText(row.partName);
+            const color = _normalizeBulkText(row.color);
+            const item = inventoryMap[_itemKey(carModel, partName, color)];
+            const currentQty = item ? Math.max(0, item.inQty - item.outQty) : 0;
+            const targetQty = Math.max(0, Number(row.quantity) || 0);
+            return {
                 carModel,
                 partName,
                 color,
-                actualQty: qty,
+                currentQty,
+                targetQty,
+                diff: targetQty - currentQty
+            };
+        });
+        const newOverrides = _bulkRecords.map(row => ({
+                id: Storage.generateId(),
+                carModel: _normalizeBulkText(row.carModel),
+                partName: _normalizeBulkText(row.partName),
+                color: _normalizeBulkText(row.color),
+                actualQty: Math.max(0, Number(row.quantity) || 0),
                 paintLot: '',
                 injectionLot: '',
                 manualType: 'bulk',
                 updatedAt: now
-            });
-        });
+            }));
 
         _manualOverrides = newOverrides;
         await _saveManualOverrides();
+        _bulkRecords = [];
 
         UIUtils.closeModal();
         renderAll();
         UIUtils.toast(`일괄 등록 완료 — ${newOverrides.length}건 교체됨`, 'success');
+        _showBulkSaveResult(resultRows);
     }
 
     async function deleteFlowRecord(kind, sourceTypeEnc, sourceIdEnc) {
@@ -4804,6 +5007,8 @@ var LaserStandbyModule = (function() {
         onStandbyOutPartChange,
         saveStandbyOutModal,
         openBulkModal,
+        previewBulkModal,
+        removeBulkRow,
         saveBulkModal,
         deleteFlowRecord,
         _showItemDetail

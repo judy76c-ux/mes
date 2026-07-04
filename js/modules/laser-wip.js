@@ -10,6 +10,11 @@ var LaserWipModule = (function() {
 
     let _activeTab = 'standby'; // 'standby' | 'after-laser' | 'after-laser-residual'
 
+    function _isAdmin() {
+        const u = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? AuthModule.getCurrentUser() : null;
+        return !!(u && u.role === 'admin');
+    }
+
     const TABS = [
         { id: 'standby',     label: '레이져 대기품 현황',    icon: 'hourglass_top' },
         { id: 'after-laser', label: '레이져 후 재공품 현황', icon: 'bolt' },
@@ -33,12 +38,12 @@ var LaserWipModule = (function() {
             ${_actionBtn('수동입고', 'arrow_downward', "LaserWipModule.openManualInput()", 'var(--accent-green)')}
             ${_actionBtn('수동출고', 'arrow_upward',   "LaserStandbyModule.openStandbyOutModal()", 'var(--accent-red)')}
             ${_actionBtn('일괄등록', 'table_rows', "LaserStandbyModule.openBulkModal()", 'var(--accent-blue)')}`;
-        const afterActions = `
+        const afterActions = _isAdmin() ? `
             ${_actionBtn('수동입고', 'arrow_downward', "LaserWipModule.openAfterLaserInput()", 'var(--accent-green)')}
-            ${_actionBtn('수동출고', 'arrow_upward',   "LaserWipModule.openAfterLaserOut()", 'var(--accent-red)')}`;
-        const residualActions = `
+            ${_actionBtn('수동출고', 'arrow_upward',   "LaserWipModule.openAfterLaserOut()", 'var(--accent-red)')}` : '';
+        const residualActions = _isAdmin() ? `
             ${_actionBtn('수동입고', 'arrow_downward', "LaserWipModule.openResidualInput()", 'var(--accent-green)')}
-            ${_actionBtn('수동출고', 'arrow_upward',   "LaserWipModule.openResidualOut()", 'var(--accent-red)')}`;
+            ${_actionBtn('수동출고', 'arrow_upward',   "LaserWipModule.openResidualOut()", 'var(--accent-red)')}` : '';
         const currentActions = _activeTab === 'standby' ? standbyActions
             : (_activeTab === 'after-laser' ? afterActions : residualActions);
         return `
@@ -245,7 +250,135 @@ var LaserWipModule = (function() {
                         </tbody>
                     </table>
                 </div>
-            </div>`;
+            </div>
+            ${_isAdmin() ? `
+            <div class="card" style="margin-top:20px;">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">edit_note</span> 수기 입출고 내역 관리
+                        <span style="font-size:0.78rem;color:var(--text-muted);font-weight:400;">(관리자 전용)</span>
+                    </h4>
+                    ${_actionBtn('신규 등록', 'add', "LaserWipModule.openAfterLaserInput()", 'var(--accent-green)')}
+                </div>
+                <div class="card-body" style="padding:0;">
+                    ${_manualEntriesTableHtml()}
+                </div>
+            </div>` : ''}`;
+    }
+
+    // ── 레이져 후 재공품 수기 입출고 내역 관리 (관리자 전용) ──────────────
+    function _afterLaserManualEntries() {
+        return (Storage.getAll(STORE_LASER) || [])
+            .filter(w => w.isManual && !w.isResidualManualIn && !w.isResidualManualOut)
+            .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    }
+
+    function _manualEntriesTableHtml() {
+        const entries = _afterLaserManualEntries();
+        if (!entries.length) {
+            return `<div style="text-align:center;padding:24px;color:var(--text-muted);">등록된 수기 입출고 내역이 없습니다.</div>`;
+        }
+        return `
+        <div class="data-table-wrapper">
+            <table class="data-table" style="font-size:0.83rem;">
+                <thead><tr>
+                    <th>날짜</th><th>구분</th><th>차종</th><th>품명</th><th>컬러</th>
+                    <th style="text-align:right;">수량(EA)</th><th>비고</th><th>관리</th>
+                </tr></thead>
+                <tbody>
+                    ${entries.map(w => {
+                        const isOut = !!w.isManualOut;
+                        const badge = isOut
+                            ? `<span style="color:var(--accent-red);font-weight:700;">출고</span>`
+                            : `<span style="color:var(--accent-green);font-weight:700;">입고</span>`;
+                        return `<tr>
+                            <td style="white-space:nowrap;">${_esc(w.date || '-')}</td>
+                            <td>${badge}</td>
+                            <td>${_esc(w.carModel || '-')}</td>
+                            <td>${_esc(w.partName || '-')}</td>
+                            <td>${_esc(w.color || '-')}</td>
+                            <td style="text-align:right;">${UIUtils.formatNumber(w.quantity || 0)}</td>
+                            <td style="font-size:0.8rem;color:var(--text-muted);">${_esc(w.note || '-')}</td>
+                            <td style="white-space:nowrap;">
+                                <button class="btn btn-sm btn-outline" onclick="LaserWipModule.openEditManualEntry('${w.id}')">수정</button>
+                                <button class="btn btn-sm btn-danger" onclick="LaserWipModule.removeManualEntry('${w.id}')">삭제</button>
+                            </td>
+                        </tr>`;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>`;
+    }
+
+    function openEditManualEntry(id) {
+        if (!_isAdmin()) { UIUtils.toast('관리자만 수정할 수 있습니다.', 'warning'); return; }
+        const entry = (Storage.getAll(STORE_LASER) || []).find(w => w.id === id);
+        if (!entry) { UIUtils.toast('내역을 찾을 수 없습니다.', 'warning'); return; }
+        const isOut = !!entry.isManualOut;
+
+        UIUtils.showModal(`레이져 후 재공품 수기 ${isOut ? '출고' : '입고'} 수정`, `
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">날짜</label>
+                    <input type="date" class="form-input" id="lwEditDate" value="${_esc(entry.date || '')}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">차종</label>
+                    <input type="text" class="form-input" id="lwEditCarModel" value="${_esc(entry.carModel || '')}">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">품명</label>
+                    <input type="text" class="form-input" id="lwEditPartName" value="${_esc(entry.partName || '')}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">컬러</label>
+                    <input type="text" class="form-input" id="lwEditColor" value="${_esc(entry.color || '')}">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">수량 (EA)</label>
+                    <input type="number" class="form-input" id="lwEditQty" min="1" value="${_esc(entry.quantity || 0)}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">비고</label>
+                    <input type="text" class="form-input" id="lwEditNote" value="${_esc(entry.note || '')}">
+                </div>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="LaserWipModule.saveEditManualEntry('${id}')">저장</button>
+        `, 'lg');
+    }
+
+    async function saveEditManualEntry(id) {
+        if (!_isAdmin()) return;
+        const date     = (document.getElementById('lwEditDate')     || {}).value || '';
+        const carModel = (document.getElementById('lwEditCarModel') || {}).value.trim() || '';
+        const partName = (document.getElementById('lwEditPartName') || {}).value.trim() || '';
+        const color    = (document.getElementById('lwEditColor')    || {}).value.trim() || '';
+        const quantity = parseInt((document.getElementById('lwEditQty') || {}).value || '0', 10);
+        const note     = (document.getElementById('lwEditNote')     || {}).value.trim() || '';
+
+        if (!date || !carModel || !partName || !quantity || quantity <= 0) {
+            UIUtils.toast('날짜, 차종, 품명, 수량(1 이상)은 필수입니다.', 'warning');
+            return;
+        }
+
+        await Storage.update(STORE_LASER, id, { date, carModel, partName, color, quantity, note });
+        UIUtils.closeModal();
+        UIUtils.toast('수기 내역이 수정되었습니다.', 'success');
+        refresh();
+    }
+
+    function removeManualEntry(id) {
+        if (!_isAdmin()) { UIUtils.toast('관리자만 삭제할 수 있습니다.', 'warning'); return; }
+        UIUtils.confirm('이 수기 등록 내역을 삭제하시겠습니까?', async () => {
+            await Storage.remove(STORE_LASER, id);
+            UIUtils.toast('삭제되었습니다.', 'success');
+            refresh();
+        });
     }
 
     function _summaryCard(label, value, icon, color) {
@@ -393,7 +526,135 @@ var LaserWipModule = (function() {
                         </tbody>
                     </table>
                 </div>
-            </div>`;
+            </div>
+            ${_isAdmin() ? `
+            <div class="card" style="margin-top:20px;">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">edit_note</span> 잔량 수기 입출고 내역 관리
+                        <span style="font-size:0.78rem;color:var(--text-muted);font-weight:400;">(관리자 전용)</span>
+                    </h4>
+                    ${_actionBtn('신규 등록', 'add', "LaserWipModule.openResidualInput()", 'var(--accent-green)')}
+                </div>
+                <div class="card-body" style="padding:0;">
+                    ${_residualManualEntriesTableHtml()}
+                </div>
+            </div>` : ''}`;
+    }
+
+    // ── 레이져 후 잔량 수기 입출고 내역 관리 (관리자 전용) ────────────────
+    function _residualManualEntries() {
+        return (Storage.getAll(STORE_LASER) || [])
+            .filter(w => w.isResidualManualIn || w.isResidualManualOut)
+            .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    }
+
+    function _residualManualEntriesTableHtml() {
+        const entries = _residualManualEntries();
+        if (!entries.length) {
+            return `<div style="text-align:center;padding:24px;color:var(--text-muted);">등록된 수기 입출고 내역이 없습니다.</div>`;
+        }
+        return `
+        <div class="data-table-wrapper">
+            <table class="data-table" style="font-size:0.83rem;">
+                <thead><tr>
+                    <th>날짜</th><th>구분</th><th>차종</th><th>품명</th><th>컬러</th>
+                    <th style="text-align:right;">수량(EA)</th><th>비고</th><th>관리</th>
+                </tr></thead>
+                <tbody>
+                    ${entries.map(w => {
+                        const isOut = !!w.isResidualManualOut;
+                        const badge = isOut
+                            ? `<span style="color:var(--accent-red);font-weight:700;">출고</span>`
+                            : `<span style="color:var(--accent-green);font-weight:700;">입고</span>`;
+                        return `<tr>
+                            <td style="white-space:nowrap;">${_esc(w.date || '-')}</td>
+                            <td>${badge}</td>
+                            <td>${_esc(w.carModel || '-')}</td>
+                            <td>${_esc(w.partName || '-')}</td>
+                            <td>${_esc(w.color || '-')}</td>
+                            <td style="text-align:right;">${UIUtils.formatNumber(w.quantity || 0)}</td>
+                            <td style="font-size:0.8rem;color:var(--text-muted);">${_esc(w.note || '-')}</td>
+                            <td style="white-space:nowrap;">
+                                <button class="btn btn-sm btn-outline" onclick="LaserWipModule.openEditResidualManualEntry('${w.id}')">수정</button>
+                                <button class="btn btn-sm btn-danger" onclick="LaserWipModule.removeResidualManualEntry('${w.id}')">삭제</button>
+                            </td>
+                        </tr>`;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>`;
+    }
+
+    function openEditResidualManualEntry(id) {
+        if (!_isAdmin()) { UIUtils.toast('관리자만 수정할 수 있습니다.', 'warning'); return; }
+        const entry = (Storage.getAll(STORE_LASER) || []).find(w => w.id === id);
+        if (!entry) { UIUtils.toast('내역을 찾을 수 없습니다.', 'warning'); return; }
+        const isOut = !!entry.isResidualManualOut;
+
+        UIUtils.showModal(`레이져 후 잔량 수기 ${isOut ? '출고' : '입고'} 수정`, `
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">날짜</label>
+                    <input type="date" class="form-input" id="lwResEditDate" value="${_esc(entry.date || '')}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">차종</label>
+                    <input type="text" class="form-input" id="lwResEditCarModel" value="${_esc(entry.carModel || '')}">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">품명</label>
+                    <input type="text" class="form-input" id="lwResEditPartName" value="${_esc(entry.partName || '')}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">컬러</label>
+                    <input type="text" class="form-input" id="lwResEditColor" value="${_esc(entry.color || '')}">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">수량 (EA)</label>
+                    <input type="number" class="form-input" id="lwResEditQty" min="1" value="${_esc(entry.quantity || 0)}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">비고</label>
+                    <input type="text" class="form-input" id="lwResEditNote" value="${_esc(entry.note || '')}">
+                </div>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="LaserWipModule.saveEditResidualManualEntry('${id}')">저장</button>
+        `, 'lg');
+    }
+
+    async function saveEditResidualManualEntry(id) {
+        if (!_isAdmin()) return;
+        const date     = (document.getElementById('lwResEditDate')     || {}).value || '';
+        const carModel = (document.getElementById('lwResEditCarModel') || {}).value.trim() || '';
+        const partName = (document.getElementById('lwResEditPartName') || {}).value.trim() || '';
+        const color    = (document.getElementById('lwResEditColor')    || {}).value.trim() || '';
+        const quantity = parseInt((document.getElementById('lwResEditQty') || {}).value || '0', 10);
+        const note     = (document.getElementById('lwResEditNote')     || {}).value.trim() || '';
+
+        if (!date || !carModel || !partName || !quantity || quantity <= 0) {
+            UIUtils.toast('날짜, 차종, 품명, 수량(1 이상)은 필수입니다.', 'warning');
+            return;
+        }
+
+        await Storage.update(STORE_LASER, id, { date, carModel, partName, color, quantity, note });
+        UIUtils.closeModal();
+        UIUtils.toast('수기 내역이 수정되었습니다.', 'success');
+        refresh();
+    }
+
+    function removeResidualManualEntry(id) {
+        if (!_isAdmin()) { UIUtils.toast('관리자만 삭제할 수 있습니다.', 'warning'); return; }
+        UIUtils.confirm('이 수기 등록 내역을 삭제하시겠습니까?', async () => {
+            await Storage.remove(STORE_LASER, id);
+            UIUtils.toast('삭제되었습니다.', 'success');
+            refresh();
+        });
     }
 
     function _calcLaserResidualWip() {
@@ -1479,7 +1740,9 @@ var LaserWipModule = (function() {
     return { init, render, refresh, switchTab, openTab, _activeTabId, isAfterLaserDrainProduct, openManualInput,
              openAfterLaserInput, onAfterCarChange, onAfterPartChange, saveAfterLaserInput,
              openAfterLaserOut, onOutCarChange, onOutPartChange, saveAfterLaserOut,
+             openEditManualEntry, saveEditManualEntry, removeManualEntry,
              openResidualInput, onResidualInCarChange, onResidualInPartChange, saveResidualInput,
              openResidualOut, onResidualOutCarChange, onResidualOutPartChange, saveResidualOut,
+             openEditResidualManualEntry, saveEditResidualManualEntry, removeResidualManualEntry,
              getWipStock, _calcWip, showWipDetail, showResidualDetail };
 })();

@@ -1535,7 +1535,7 @@ const PaintInventoryModule = (function() {
             textarea.focus();
         }
         if (wrap) wrap.innerHTML = '';
-        if (saveBtn) saveBtn.style.display = 'none';
+        if (saveBtn) saveBtn.disabled = true;
         PaintInventoryModule._bulkRecords = [];
     }
 
@@ -1588,14 +1588,15 @@ const PaintInventoryModule = (function() {
                 placeholder="엑셀에서 복사한 도료 재고 마스터 시트 내용을 여기에 붙여넣으세요."
                 style="height:190px;font-family:Consolas,monospace;font-size:0.78rem;resize:vertical;"
                 oninput="document.getElementById('paintBulkPreviewWrap').innerHTML='';
-                         var s=document.getElementById('paintBulkSaveBtn');if(s)s.style.display='none';">${_escapeHtml(masterTemplate)}</textarea>
+                         var s=document.getElementById('paintBulkSaveBtn');if(s)s.disabled=true;">${_escapeHtml(masterTemplate)}</textarea>
             <div id="paintBulkPreviewWrap" style="margin-top:12px;"></div>
         `,
             footer: `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" id="paintBulkSaveBtn" style="display:none;"
+            <button class="btn btn-primary" id="paintBulkSaveBtn" disabled
+                title="미리보기로 데이터를 확인하면 등록할 수 있습니다."
                 onclick="PaintInventoryModule._bulkSave()">
-                <span class="material-symbols-outlined">save</span> 전체 교체 저장
+                <span class="material-symbols-outlined">save</span> 등록 실행
             </button>
         `
         });
@@ -1615,7 +1616,7 @@ const PaintInventoryModule = (function() {
         if (!wrap) return;
         if (!records.length) {
             wrap.innerHTML = '<p style="color:var(--accent-red);font-size:0.83rem;">붙여넣기 입력에서 등록할 도료 재고를 찾을 수 없습니다.</p>';
-            if (saveBtn) saveBtn.style.display = 'none';
+            if (saveBtn) saveBtn.disabled = true;
             return;
         }
 
@@ -1699,7 +1700,12 @@ const PaintInventoryModule = (function() {
             </div>
         `;
 
-        if (saveBtn) saveBtn.style.display = hasBlockers ? 'none' : '';
+        if (saveBtn) {
+            saveBtn.disabled = hasBlockers;
+            saveBtn.title = hasBlockers
+                ? '중복, LOT 합계 불일치 또는 마스터 누락 항목을 확인하세요.'
+                : '미리보기 내용으로 도료 창고 재고를 교체 등록합니다.';
+        }
     }
 
     function _bulkRemoveRow(idx) {
