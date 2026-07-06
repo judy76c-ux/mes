@@ -227,6 +227,17 @@ var LaserWorkModule = (function() {
         }
     }
 
+    // 레이져 작업이력 수정 권한: 관리자 또는 '레이져 공정 입력'(laser-work write) 권한 보유자
+    function _canWriteLaserWork() {
+        try {
+            if (_isAdminUser()) return true;
+            if (typeof AuthModule !== 'undefined' && typeof AuthModule.canWritePage === 'function') {
+                return AuthModule.canWritePage('laser-work');
+            }
+        } catch (e) { /* 무시 */ }
+        return true; // 권한 판단 불가 시 기존 동작(표시) 유지
+    }
+
     function _normalizeFlowKey(value) {
         return String(value || '').trim().replace(/\s+/g, '').replace(/[-_]/g, '');
     }
@@ -801,6 +812,7 @@ var LaserWorkModule = (function() {
         const tbody = document.getElementById('lwInProgressTableBody');
         if (!tbody) return;
         const isAdmin = _isAdminUser();
+        const canEdit = _canWriteLaserWork();
         if (data.length === 0) {
             tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text-muted);">작업중인 항목이 없습니다.</td></tr>`;
             return;
@@ -821,7 +833,7 @@ var LaserWorkModule = (function() {
                     <td><span class="badge badge-warning" style="font-size:0.72rem;padding:2px 6px;">${remain.length ? remain.join('/') + ' 입력 필요' : '작업완료 처리 필요'}</span></td>
                     <td style="white-space:nowrap;">
                         <div style="display:flex;gap:4px;align-items:center;justify-content:flex-start;white-space:nowrap;">
-                            <button class="btn btn-sm btn-primary" onclick="LaserWorkModule.edit('${d.id}')">이어서 입력</button>
+                            ${canEdit ? `<button class="btn btn-sm btn-primary" onclick="LaserWorkModule.edit('${d.id}')">이어서 입력</button>` : ''}
                             ${isAdmin ? `<button class="btn btn-sm btn-danger" onclick="LaserWorkModule.remove('${d.id}')">삭제</button>` : ''}
                         </div>
                     </td>
@@ -863,6 +875,7 @@ var LaserWorkModule = (function() {
     function renderTable(data) {
         const tbody = document.getElementById('lwTableBody');
         const isAdmin = _isAdminUser();
+        const canEdit = _canWriteLaserWork();
         if (data.length === 0) {
             tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:40px;color:var(--text-muted);">기록이 없습니다.</td></tr>`;
             return;
@@ -890,7 +903,7 @@ var LaserWorkModule = (function() {
                 <td style="font-size:0.8rem;white-space:nowrap;">${[d.worker1, d.worker2, d.worker3].filter(Boolean).join(', ') || '-'}</td>
                 <td style="white-space:nowrap;">
                     <div style="display:flex;gap:4px;align-items:center;justify-content:flex-start;white-space:nowrap;">
-                        <button class="btn btn-sm btn-outline" onclick="LaserWorkModule.edit('${d.id}')">수정</button>
+                        ${canEdit ? `<button class="btn btn-sm btn-outline" onclick="LaserWorkModule.edit('${d.id}')">수정</button>` : ''}
                         ${isAdmin ? `<button class="btn btn-sm btn-danger" onclick="LaserWorkModule.remove('${d.id}')">삭제</button>` : ''}
                     </div>
                 </td>
@@ -1107,9 +1120,9 @@ var LaserWorkModule = (function() {
                         const firstDone  = !!(d.qcFirstQuality  && d.qcFirstPosition  && d.qcFirstPhoto);
                         const middleDone = !!(d.qcMiddleQuality && d.qcMiddlePosition && d.qcMiddlePhoto);
                         return [
-                        ['lwQcFirst',  'lwQcFirstLoss',  '초품', 'First',  d.qcFirstLoss  ?? 0, d.qcFirstQuality,  d.qcFirstPosition,  d.qcFirstPhoto,  d.qcFirstPhotoUrl  || '', true       ],
-                        ['lwQcMiddle', 'lwQcMiddleLoss', '중품', 'Middle', d.qcMiddleLoss ?? 0, d.qcMiddleQuality, d.qcMiddlePosition, d.qcMiddlePhoto, d.qcMiddlePhotoUrl || '', firstDone  ],
-                        ['lwQcLast',   'lwQcLastLoss',   '종품', 'Last',   d.qcLastLoss   ?? 0, d.qcLastQuality,   d.qcLastPosition,   d.qcLastPhoto,   d.qcLastPhotoUrl   || '', middleDone ]
+                        ['lwQcFirst',  'lwQcFirstLoss',  '초품', 'First',  d.qcFirstLoss  ?? '', d.qcFirstQuality,  d.qcFirstPosition,  d.qcFirstPhoto,  d.qcFirstPhotoUrl  || '', true       ],
+                        ['lwQcMiddle', 'lwQcMiddleLoss', '중품', 'Middle', d.qcMiddleLoss ?? '', d.qcMiddleQuality, d.qcMiddlePosition, d.qcMiddlePhoto, d.qcMiddlePhotoUrl || '', firstDone  ],
+                        ['lwQcLast',   'lwQcLastLoss',   '종품', 'Last',   d.qcLastLoss   ?? '', d.qcLastQuality,   d.qcLastPosition,   d.qcLastPhoto,   d.qcLastPhotoUrl   || '', middleDone ]
                         ];
                     })().map(([cbId, inId, label, type, lossVal, ckQual, ckPos, ckPhoto, photoUrl, enabled]) => {
                         const previewSrc = photoUrl ? (typeof ApiClient !== 'undefined' ? ApiClient.photoUrl(photoUrl) : photoUrl) : '';
@@ -1263,11 +1276,20 @@ var LaserWorkModule = (function() {
                 </button>
             </div>
         ` : `
-            <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;padding:8px 10px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);">
+            <div style="display:flex;gap:10px;align-items:center;margin-bottom:6px;padding:10px 12px;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary);">
                 <span style="font-size:0.75rem;color:var(--text-muted);min-width:18px;text-align:center;font-weight:700;">${i + 1}</span>
-                <span style="flex:0 0 132px;font-size:0.86rem;font-weight:700;color:var(--text-primary);">${l.paintDate || '-'}</span>
-                <span style="flex:1;font-size:0.86rem;font-weight:700;color:var(--text-primary);">${l.lotNo || '-'}</span>
-                <span style="flex:0 0 112px;text-align:right;font-size:0.9rem;font-weight:800;color:var(--accent-blue);">${UIUtils.formatNumber(Number(l.qty) || 0)} EA</span>
+                <div style="flex:0 0 138px;display:flex;flex-direction:column;gap:2px;">
+                    <span style="font-size:0.68rem;color:var(--text-muted);font-weight:600;">도장LOT</span>
+                    <span style="font-size:0.88rem;font-weight:800;color:var(--text-primary);">${l.paintDate || '-'}</span>
+                </div>
+                <div style="flex:1;display:flex;flex-direction:column;gap:2px;">
+                    <span style="font-size:0.68rem;color:var(--text-muted);font-weight:600;">사출LOT</span>
+                    <span style="font-size:0.88rem;font-weight:800;color:var(--text-primary);">${l.lotNo || '-'}</span>
+                </div>
+                <div style="flex:0 0 118px;display:flex;flex-direction:column;gap:2px;text-align:right;">
+                    <span style="font-size:0.68rem;color:var(--text-muted);font-weight:600;">작업수량</span>
+                    <span style="font-size:0.92rem;font-weight:800;color:var(--accent-blue);">${UIUtils.formatNumber(Number(l.qty) || 0)} EA</span>
+                </div>
                 <button type="button" class="btn btn-sm btn-danger" onclick="LaserWorkModule.removeLotRow(${i})"
                         style="padding:4px 8px;flex-shrink:0;">
                     <span class="material-symbols-outlined" style="font-size:0.9rem;">close</span>
@@ -1623,7 +1645,7 @@ var LaserWorkModule = (function() {
                 if (el) el.checked = false;
             });
             const loss = document.getElementById(`${prefix}Loss`);
-            if (loss) loss.value = 0;
+            if (loss) loss.value = '';
         }
 
         function setCardEnabled(prefix, enabled, isRequired = true) {
