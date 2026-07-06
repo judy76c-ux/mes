@@ -986,7 +986,7 @@ var LaserWorkModule = (function() {
                         </select>
                     </div>
                     <div class="form-group" style="margin:0;"><label class="form-label">수량 <span style="color:var(--accent-red)">*</span></label>
-                        <input type="number" class="form-input" id="lwQuantity" value="${d.quantity || ''}" placeholder="0" oninput="LaserWorkModule.calcCompletedQty()">
+                        <input type="number" class="form-input" id="lwQuantity" value="${d.quantity || ''}" placeholder="0" inputmode="numeric" enterkeyhint="done" oninput="LaserWorkModule.calcCompletedQty()">
                     </div>
                 </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
@@ -1061,7 +1061,7 @@ var LaserWorkModule = (function() {
                 </div>
                 ${isEditMode ? `<div class="form-group" style="margin:0;">
                     <label class="form-label">수량 <span style="color:var(--accent-red)">*</span></label>
-                    <input type="number" class="form-input" id="lwQuantity" value="${d.quantity || ''}" placeholder="0" oninput="LaserWorkModule.calcCompletedQty()">
+                    <input type="number" class="form-input" id="lwQuantity" value="${d.quantity || ''}" placeholder="0" inputmode="numeric" enterkeyhint="done" oninput="LaserWorkModule.calcCompletedQty()">
                 </div>` : ''}
             </div>
             <div id="lwOvertimeReasonWrap" style="display:none;margin:-2px 0 8px 0;padding:10px 12px;border:1px solid rgba(239,68,68,0.28);border-radius:8px;background:rgba(239,68,68,0.06);">
@@ -1267,7 +1267,7 @@ var LaserWorkModule = (function() {
                        oninput="LaserWorkModule.updateLot(${i}, 'lotNo', this.value)">
                 <input type="number" class="form-input" value="${l.qty || ''}"
                        placeholder="작업수량"
-                       min="0"
+                       min="0" inputmode="numeric" enterkeyhint="done"
                        style="flex:0 0 110px; text-align:right;"
                        oninput="LaserWorkModule.updateLot(${i}, 'qty', this.value)">
                 <button type="button" class="btn btn-sm btn-danger" onclick="LaserWorkModule.removeLotRow(${i})"
@@ -1447,7 +1447,7 @@ var LaserWorkModule = (function() {
                                 <td style="padding:5px 8px; text-align:right; font-weight:700; color:var(--accent-blue); white-space:nowrap;">${UIUtils.formatNumber(lot.qty || 0)}</td>
                                 <td style="padding:5px 8px; font-family:monospace; font-size:0.8rem; white-space:nowrap;">${lot.lotNo || '-'}</td>
                                 <td style="padding:5px 8px; text-align:right;">
-                                    <input id="${inputId}" type="number" class="form-input" min="1" max="${Number(lot.qty) || 0}" value="" placeholder="입력" style="height:30px;text-align:right;padding:4px 8px;"
+                                    <input id="${inputId}" type="number" class="form-input" min="1" max="${Number(lot.qty) || 0}" value="" placeholder="입력" inputmode="numeric" enterkeyhint="done" style="height:30px;text-align:right;padding:4px 8px;"
                                            oninput="LaserWorkModule.previewStandbyQty(${globalIdx}, ${lotIdx}, this.value)">
                                 </td>
                                 <td style="padding:5px 8px; text-align:center; white-space:nowrap;">
