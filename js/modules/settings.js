@@ -1524,14 +1524,12 @@ const SettingsModule = (function() {
                         <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.84rem;font-weight:600;">
                             <input type="radio" name="${idPrefix}AppearanceInspType" value="외관 검사"
                                 ${_defaultInspType === '외관 검사' ? 'checked' : ''}
-                                onchange="(function(p){var w=document.getElementById(p+'AppearanceWorkers');if(w&&!w.value)w.value='';}('${idPrefix}'))"
                                 style="accent-color:var(--accent-green);width:15px;height:15px;cursor:pointer;">
                             외관 검사
                         </label>
                         <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.84rem;font-weight:600;color:#7c3aed;">
                             <input type="radio" name="${idPrefix}AppearanceInspType" value="외관+각인 검사"
                                 ${_defaultInspType === '외관+각인 검사' ? 'checked' : ''}
-                                onchange="(function(p){var w=document.getElementById(p+'AppearanceWorkers');if(w&&!w.value)w.value='1';}('${idPrefix}'))"
                                 style="accent-color:#7c3aed;width:15px;height:15px;cursor:pointer;">
                             외관+각인 검사
                         </label>
@@ -1549,8 +1547,8 @@ const SettingsModule = (function() {
                     </div>
                     <div style="display:flex;align-items:center;gap:8px;flex:0 0 200px;">
                         <label class="form-label" style="white-space:nowrap;margin-bottom:0;width:70px;">검사 인원</label>
-                        <input type="text" class="form-input" id="${idPrefix}AppearanceWorkers" placeholder="0" value="${v('appearanceWorkers') || (_defaultInspType === '외관+각인 검사' ? '1' : '')}" style="margin-top:0;">
-                        <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">명</span>
+                        <span style="font-weight:700;">1</span>
+                        <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">명 (1인 기준 CVT/C.TIME)</span>
                     </div>
                 </div>
             </div>
@@ -1761,10 +1759,65 @@ const SettingsModule = (function() {
         `;
     }
 
+    // 품명/차종/컬러 입력 시 제품코드를 자동 생성하는 리스너를 연결한다. (추가/템플릿 불러오기 공용)
+    function _wireProductCodeGen(idPrefix) {
+        const upd = () => {
+            const cm = (document.getElementById(`${idPrefix}CarModel`) || {}).value.trim();
+            const pn = (document.getElementById(`${idPrefix}PartName`) || {}).value.trim();
+            const cl = (document.getElementById(`${idPrefix}Color`) || {}).value.trim();
+            const codeEl = document.getElementById(`${idPrefix}Code`);
+            if (codeEl) codeEl.value = (cm && pn && cl) ? generateProductCode(cm, pn, cl) : '';
+        };
+        [`${idPrefix}CarModel`, `${idPrefix}PartName`, `${idPrefix}Color`].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('input', upd);
+        });
+        return upd;
+    }
+
+    // 템플릿 불러오기용 "품명" select의 옵션 HTML — 선택된 차종에 속한 제품만 나열
+    function _templatePartNameOptionsHtml(carModel) {
+        if (!carModel) return `<option value="">-- 차종 먼저 선택 --</option>`;
+        const list = (Storage.getAll(PRODUCTS_STORE) || [])
+            .filter(pr => (pr.carModel || '') === carModel)
+            .sort((a, b) => (a.partName || '').localeCompare(b.partName || '', 'ko') || (a.color || '').localeCompare(b.color || '', 'ko'));
+        if (list.length === 0) return `<option value="">-- 해당 차종의 제품 없음 --</option>`;
+        return `<option value="">-- 품명 선택 --</option>` +
+            list.map(pr => `<option value="${pr.id}">${pr.partName || '-'}${pr.color ? ' · ' + pr.color : ''}</option>`).join('');
+    }
+
+    // 템플릿 불러오기: 차종 select 변경 시 품명 select 옵션을 다시 채운다.
+    function onTemplateCarModelChange(idPrefix) {
+        const carSel = document.getElementById(`${idPrefix}TemplateCarModel`);
+        const partSel = document.getElementById(`${idPrefix}TemplatePartName`);
+        if (!carSel || !partSel) return;
+        partSel.innerHTML = _templatePartNameOptionsHtml(carSel.value);
+    }
+
     // prefill: { carModel, partName, color } — 선택적으로 초기값 주입
     function openAddProductModal(prefill) {
         const init = prefill || {};
-        UIUtils.showModal({ title: '제품 추가', body: _productFormHTML({}, 'addProd'), footer: `
+        const _templateCarModels = [...new Set((Storage.getAll(PRODUCTS_STORE) || []).map(pr => pr.carModel).filter(Boolean))]
+            .sort((a, b) => a.localeCompare(b, 'ko'));
+        const _templateCarModelOptions = _templateCarModels.map(cm => `<option value="${cm}">${cm}</option>`).join('');
+
+        const templateBarHtml = `
+            <div style="background:#eff6ff;border:1px solid var(--accent-blue);border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <span class="material-symbols-outlined" style="color:var(--accent-blue);font-size:20px;">content_copy</span>
+                <span style="font-size:0.82rem;font-weight:600;white-space:nowrap;">다른 제품 정보 불러오기</span>
+                <select class="form-select" id="addProdTemplateCarModel" style="width:150px;height:32px;" onchange="SettingsModule.onTemplateCarModelChange('addProd')">
+                    <option value="">-- 차종 선택 --</option>
+                    ${_templateCarModelOptions}
+                </select>
+                <select class="form-select" id="addProdTemplatePartName" style="flex:1;min-width:200px;height:32px;">
+                    <option value="">-- 차종 먼저 선택 --</option>
+                </select>
+                <button type="button" class="btn btn-sm btn-primary" onclick="SettingsModule.loadProductTemplate('addProd')">불러오기</button>
+                <span style="font-size:0.7rem;color:var(--text-muted);width:100%;">차종·품명은 그대로 두고, 나머지 항목만 선택한 제품 값으로 채워집니다.</span>
+            </div>
+        `;
+
+        UIUtils.showModal({ title: '제품 추가', body: templateBarHtml + `<div id="addProdFormBody">${_productFormHTML({}, 'addProd')}</div>`, footer: `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="SettingsModule.saveProduct()">추가</button>
         `, size: 'xxxl', noBackdropClose: true });
@@ -1779,15 +1832,7 @@ const SettingsModule = (function() {
                 if (init.color)    { const el = document.getElementById('addProdColor');    if (el) el.value = init.color; }
             }
 
-            const upd = () => {
-                const cm = document.getElementById('addProdCarModel').value.trim();
-                const pn = document.getElementById('addProdPartName').value.trim();
-                const cl = document.getElementById('addProdColor').value.trim();
-                document.getElementById('addProdCode').value = (cm && pn && cl) ? generateProductCode(cm, pn, cl) : '';
-            };
-            ['addProdCarModel', 'addProdPartName', 'addProdColor'].forEach(id => {
-                document.getElementById(id).addEventListener('input', upd);
-            });
+            const upd = _wireProductCodeGen('addProd');
             if (!fromInjMat && (init.carModel || init.partName || init.color)) upd();
             if (!fromInjMat && init.partName) SettingsModule.checkPartNameDuplicate('addProd');
 
@@ -1804,6 +1849,42 @@ const SettingsModule = (function() {
                 if (clEl && init.injColor)    clEl.value = init.injColor;
             }
         }, 100);
+    }
+
+    // 다른 제품의 정보를 "제품 추가" 폼에 템플릿으로 불러온다.
+    // 차종/품명은 현재 입력값을 그대로 유지하고, 나머지 항목(컬러·가격·제조공정·도료 등)만 선택한 제품 값으로 채운다.
+    // id/code/생성일시는 제외해 새 제품으로 저장되게 한다.
+    function loadProductTemplate(idPrefix) {
+        const partSel = document.getElementById(`${idPrefix}TemplatePartName`);
+        const srcId = partSel ? partSel.value : '';
+        if (!srcId) { UIUtils.toast('불러올 품명을 선택하세요.', 'warning'); return; }
+
+        const src = Storage.getById(PRODUCTS_STORE, srcId);
+        if (!src) { UIUtils.toast('제품 정보를 찾을 수 없습니다.', 'error'); return; }
+
+        // 주의: UIUtils.confirm()은 이 모달과 같은 단일 오버레이를 재사용해 accept 시 closeModal()을 호출하므로,
+        // 이 모달(제품 추가) 안에서 사용하면 모달 자체가 닫혀버린다. 별도 확인 없이 바로 불러온다.
+        const curCarModel = (document.getElementById(`${idPrefix}CarModel`) || {}).value || '';
+        const curPartName = (document.getElementById(`${idPrefix}PartName`) || {}).value || '';
+
+        const clone = { ...src };
+        delete clone.id;
+        delete clone.code;
+        delete clone.createdAt;
+        delete clone.updatedAt;
+        clone.carModel = curCarModel;
+        clone.partName = curPartName;
+
+        const body = document.getElementById(`${idPrefix}FormBody`);
+        if (body) {
+            body.innerHTML = _productFormHTML(clone, idPrefix);
+
+            const upd = _wireProductCodeGen(idPrefix);
+            upd();
+            if (curPartName) SettingsModule.checkPartNameDuplicate(idPrefix);
+
+            UIUtils.toast('제품 정보를 불러왔습니다. 차종·품명을 입력한 뒤 저장하세요.', 'success');
+        }
     }
 
     // ─── 도료 다중 선택 헬퍼 ───────────────────────────────────────
@@ -2516,7 +2597,7 @@ const SettingsModule = (function() {
             worker4: _normalizeProcess(g(`${prefix}Process4`).trim()) ? g(`${prefix}Worker4`).trim() : '',
             appearanceCvt: g(`${prefix}AppearanceCvt`).trim(),
             appearanceCt: g(`${prefix}AppearanceCt`).trim(),
-            appearanceWorkers: g(`${prefix}AppearanceWorkers`).trim(),
+            appearanceWorkers: '1', // 외관검사 CVT/C.TIME은 항상 1인 기준
             appearanceInspType: (() => { const r = document.querySelector(`input[name="${prefix}AppearanceInspType"]:checked`); return r ? r.value : '외관 검사'; })(),
             code: g(`${prefix}Code`).trim(),
             linkedProductId: g(`${prefix}LinkedProductId`).trim() || null,
@@ -12392,6 +12473,8 @@ const SettingsModule = (function() {
         onRolePermSelect, onGroupPermChange, toggleAllGroupPerm, openRoleModal, saveRole, deleteRole,
         switchTab,
         openAddProductModal,
+        loadProductTemplate,
+        onTemplateCarModelChange,
         saveProduct,
         editProduct,
         updateProduct,

@@ -1354,6 +1354,72 @@ var JigModule = (function () {
         if (sel) sel.innerHTML = _partNameOptions(car);
     }
 
+    function _masterPhotoBox(targetId, title, src) {
+        return `
+            <div style="border:1px solid var(--border-color);border-radius:10px;padding:10px;background:var(--bg-secondary);">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+                    <strong style="font-size:0.84rem;">${title}</strong>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                        <label class="btn btn-sm btn-outline" style="cursor:pointer;">
+                            파일 선택
+                            <input type="file" accept="image/*" style="display:none;" onchange="JigModule.readJigMasterPhoto(this, '${targetId}')">
+                        </label>
+                        <button type="button" class="btn btn-sm btn-outline" onclick="JigModule.pasteJigMasterPhoto('${targetId}')">붙여넣기</button>
+                        <button type="button" class="btn btn-sm btn-danger" onclick="JigModule.clearJigMasterPhoto('${targetId}')">삭제</button>
+                    </div>
+                </div>
+                <input type="hidden" id="${targetId}Data" value="${_esc(src || '')}">
+                <img id="${targetId}Preview" src="${src || ''}" alt="" style="width:100%;height:180px;object-fit:contain;background:#fff;border:1px solid var(--border-color);border-radius:8px;display:${src ? 'block' : 'none'};">
+                <div style="font-size:0.74rem;color:var(--text-muted);margin-top:6px;">파일 선택 또는 Ctrl+V 붙여넣기를 사용할 수 있습니다.</div>
+            </div>`;
+    }
+
+    function _masterFormHtml(d = {}) {
+        const jigPhotos = Array.isArray(d.jigPhotos) ? d.jigPhotos : [];
+        const fitPhotos = Array.isArray(d.productFitPhotos) ? d.productFitPhotos : [];
+        return `
+            <div style="margin-bottom:12px;padding:8px 12px;background:rgba(99,102,241,0.07);
+                        border:1px solid rgba(99,102,241,0.3);border-radius:6px;
+                        font-size:0.8rem;color:var(--text-secondary);display:flex;align-items:center;gap:6px;">
+                <span class="material-symbols-outlined" style="font-size:16px;color:#6366f1;">info</span>
+                도장 공정에 연결된 제품만 선택할 수 있으며, 대장 수정 시 기존 사진도 함께 유지됩니다.
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">차종 <span style="color:var(--accent-red)">*</span></label>
+                    <select class="form-select" id="jigMasterCarModel" onchange="JigModule.onMasterCarModelChange()">${_carModelOptions(d.carModel || '')}</select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">품명 <span style="color:var(--accent-red)">*</span></label>
+                    <select class="form-select" id="jigMasterPartName">${_partNameOptions(d.carModel || '', d.partName || '')}</select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">수명 횟수 <span style="color:var(--accent-red)">*</span></label>
+                    <input type="number" class="form-input" id="jigMasterMaxCount" value="${d.maxCount || ''}" min="1" placeholder="예: 10000">
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">재질</label>
+                    <input type="text" class="form-input" id="jigMasterMaterial" value="${_esc(d.material || '')}" placeholder="예: SUS, AL">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">규격</label>
+                    <input type="text" class="form-input" id="jigMasterSpec" value="${_esc(d.spec || '')}" placeholder="규격 입력">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">제작일</label>
+                    <input type="date" class="form-input" id="jigMasterMadeDate" value="${d.madeDate || d.registDate || _today()}">
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px;">
+                ${_masterPhotoBox('jigPhoto0', '지그 사진 1', jigPhotos[0] || '')}
+                ${_masterPhotoBox('jigPhoto1', '지그 사진 2', jigPhotos[1] || '')}
+                ${_masterPhotoBox('productFitPhoto0', '제품 결합 사진 1', fitPhotos[0] || '')}
+                ${_masterPhotoBox('productFitPhoto1', '제품 결합 사진 2', fitPhotos[1] || '')}
+            </div>`;
+    }
+
     function _collectMasterForm(id) {
         const carModel = document.getElementById('jigMasterCarModel')?.value.trim();
         const partName = document.getElementById('jigMasterPartName')?.value.trim();

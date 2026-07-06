@@ -12,7 +12,8 @@ var LaserWipModule = (function() {
 
     function _isAdmin() {
         const u = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? AuthModule.getCurrentUser() : null;
-        return !!(u && u.role === 'admin');
+        const roles = Array.isArray(u && u.roles) ? u.roles : [u && u.role];
+        return roles.some(role => String(role || '') === 'admin');
     }
 
     const TABS = [
@@ -34,10 +35,10 @@ var LaserWipModule = (function() {
     }
 
     function _tabNav() {
-        const standbyActions = `
+        const standbyActions = _isAdmin() ? `
             ${_actionBtn('수동입고', 'arrow_downward', "LaserWipModule.openManualInput()", 'var(--accent-green)')}
             ${_actionBtn('수동출고', 'arrow_upward',   "LaserStandbyModule.openStandbyOutModal()", 'var(--accent-red)')}
-            ${_actionBtn('일괄등록', 'table_rows', "LaserStandbyModule.openBulkModal()", 'var(--accent-blue)')}`;
+            ${_actionBtn('일괄등록', 'table_rows', "LaserStandbyModule.openBulkModal()", 'var(--accent-blue)')}` : '';
         const afterActions = _isAdmin() ? `
             ${_actionBtn('수동입고', 'arrow_downward', "LaserWipModule.openAfterLaserInput()", 'var(--accent-green)')}
             ${_actionBtn('수동출고', 'arrow_upward',   "LaserWipModule.openAfterLaserOut()", 'var(--accent-red)')}` : '';
@@ -470,7 +471,7 @@ var LaserWipModule = (function() {
             <div class="stat-cards" style="margin-bottom:16px;">
                 <div class="stat-card orange">
                     <div class="stat-card-value">${UIUtils.formatNumber(totalResidual)}</div>
-                    <div class="stat-card-label">총 잔량 (EA)</div>
+                    <div class="stat-card-label">총 재고 (EA)</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-card-value">${rows.length}</div>
@@ -1078,12 +1079,12 @@ var LaserWipModule = (function() {
 
         const visibleLots = lotRows.filter(function(l){return l.balance>0;});
         const lotTableHtml = visibleLots.length === 0
-            ? '<div style="color:var(--text-muted);font-size:0.82rem;padding:6px 0;">잔량 없음</div>'
+            ? '<div style="color:var(--text-muted);font-size:0.82rem;padding:6px 0;">재고 없음</div>'
             : `<table style="width:100%;border-collapse:collapse;">
                 <thead><tr style="background:rgba(139,92,246,0.07);">
                     <th style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">도장 LOT</th>
                     <th style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">사출 LOT</th>
-                    <th style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:right;border-bottom:1px solid var(--border-color);">잔량 (EA)</th>
+                    <th style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:right;border-bottom:1px solid var(--border-color);">재고 (EA)</th>
                 </tr></thead>
                 <tbody>${visibleLots.map(function(l){
                     return `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
@@ -1192,7 +1193,7 @@ var LaserWipModule = (function() {
                 <thead><tr style="background:rgba(245,158,11,0.07);">
                     <th style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">도장 LOT</th>
                     <th style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">사출 LOT</th>
-                    <th style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:right;border-bottom:1px solid var(--border-color);">잔량 (EA)</th>
+                    <th style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:right;border-bottom:1px solid var(--border-color);">재고 (EA)</th>
                 </tr></thead>
                 <tbody>
                     ${lotEntries.map(function(e){
@@ -1508,6 +1509,10 @@ var LaserWipModule = (function() {
     }
 
     function openManualInput() {
+        if (!_isAdmin()) {
+            UIUtils.toast('관리자만 레이져 대기품 수량을 수정할 수 있습니다.', 'warning');
+            return;
+        }
         if (typeof LaserStandbyModule === 'undefined' || typeof LaserStandbyModule.openAdjustModal !== 'function') {
             UIUtils.toast('레이저 대기 재공품 추가 화면을 열 수 없습니다.', 'warning');
             return;

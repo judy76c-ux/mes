@@ -9,6 +9,39 @@ const UIUtils = (function () {
 
     let modalDragObserverInitialized = false;
 
+    // ── 태블릿/모바일 뒤로가기(<) 가드 ──────────────────────────────────
+    // 입력 창(모달)이 열려 있을 때 하드웨어 뒤로가기 버튼을 누르면 창이 닫히거나
+    // 페이지가 이동해 입력값이 사라지는 것을 막는다. 모달이 열리면 히스토리 상태를
+    // 하나 쌓아 두고, 뒤로가기가 눌리면 그 상태만 소비시켜 입력 창을 그대로 유지한다.
+    let modalBackGuardArmed = false;
+
+    function _armModalBackGuard() {
+        if (modalBackGuardArmed) return;
+        try {
+            history.pushState({ __mesModalGuard: true }, '');
+            modalBackGuardArmed = true;
+        } catch (e) { /* history 미지원 환경 무시 */ }
+    }
+
+    function _releaseModalBackGuard() {
+        // 정상 닫기(X·취소·저장 완료 등)로 닫힌 경우, 쌓아 둔 가드 상태를 정리한다.
+        if (!modalBackGuardArmed) return;
+        modalBackGuardArmed = false;
+        try { history.back(); } catch (e) { /* 무시 */ }
+    }
+
+    if (typeof window !== 'undefined') {
+        window.addEventListener('popstate', function () {
+            const overlay = document.getElementById('modal');
+            const modalOpen = !!(overlay && overlay.classList.contains('active'));
+            modalBackGuardArmed = false; // 방금 우리가 쌓아 둔 가드 상태가 소비됨
+            if (modalOpen) {
+                // 입력 창을 그대로 둔다 — 뒤로가기를 무효화하고 가드를 다시 건다.
+                _armModalBackGuard();
+            }
+        });
+    }
+
     // ── 날짜 유틸 ────────────────────────────────────────────────────────
     function today() {
         return new Date().toISOString().split('T')[0];
@@ -252,6 +285,7 @@ const UIUtils = (function () {
         }
 
         overlay.classList.add('active');
+        _armModalBackGuard();
         makeDraggableModal(container, header);
 
         // 닫기 버튼
@@ -283,6 +317,7 @@ const UIUtils = (function () {
                 _resetModalPosition(container);
             }
         }
+        _releaseModalBackGuard();
     }
 
     // showModal: 객체 형식({ title, body, footer, size }) 또는 위치 인자(title, body, footer, size) 모두 지원

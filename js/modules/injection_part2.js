@@ -547,7 +547,12 @@ var InjectionWarehouseModule = (function() {
             .filter(item => item.qty > 0)
             .sort((a, b) => (b.date || '').localeCompare(a.date || '') || a.lot.localeCompare(b.lot));
 
+        const _cmJs = carModel.replace(/'/g, "\\'");
+        const _pnJs = partName.replace(/'/g, "\\'");
+        const _clJs = (color || '').replace(/'/g, "\\'");
+
         const rows = currentLots.map(d => {
+            const _lotJs = d.lot.replace(/'/g, "\\'");
             return `
                 <tr>
                     <td style="white-space:nowrap;">${d.date || '-'}</td>
@@ -556,13 +561,15 @@ var InjectionWarehouseModule = (function() {
                     <td style="text-align:right; color:var(--accent-green); font-weight:600;">
                         ${UIUtils.formatNumber(d.qty)}
                     </td>
+                    <td style="text-align:center;">
+                        <button class="btn btn-sm btn-outline" style="font-size:0.72rem;padding:2px 8px;"
+                            onclick="InjectionWarehouseModule.openLotRenameModal('${_cmJs}','${_pnJs}','${_clJs}','${_lotJs}')">
+                            LOT 수정
+                        </button>
+                    </td>
                 </tr>
             `;
         }).join('');
-
-        const _cmJs = carModel.replace(/'/g, "\\'");
-        const _pnJs = partName.replace(/'/g, "\\'");
-        const _clJs = (color || '').replace(/'/g, "\\'");
 
         UIUtils.showModal(
             `📦 ${carModel} · ${partName}${color ? ' · ' + color : ''}`,
@@ -607,10 +614,11 @@ var InjectionWarehouseModule = (function() {
                             <th>LOT번호</th>
                             <th>생산처</th>
                             <th style="text-align:right;">현재 수량</th>
+                            <th></th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${rows || `<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--text-muted);">현재 보관중인 LOT가 없습니다.</td></tr>`}
+                        ${rows || `<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted);">현재 보관중인 LOT가 없습니다.</td></tr>`}
                     </tbody>
                 </table>
             </div>
@@ -618,6 +626,81 @@ var InjectionWarehouseModule = (function() {
             `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`,
             'md'
         );
+    }
+
+    // LOT번호 수정 모달 — 동일 (차종/품명/컬러) 내 특정 LOT의 번호를 일괄 변경한다.
+    function openLotRenameModal(carModel, partName, color, oldLot) {
+        const _cmJs = carModel.replace(/'/g, "\\'");
+        const _pnJs = partName.replace(/'/g, "\\'");
+        const _clJs = (color || '').replace(/'/g, "\\'");
+        const _olJs = oldLot.replace(/'/g, "\\'");
+        const displayLot = oldLot === '무표기' ? '' : oldLot;
+
+        UIUtils.showModal(
+            'LOT번호 수정',
+            `
+            <div style="padding:10px 12px;background:var(--bg-secondary);border-radius:8px;margin-bottom:14px;font-size:0.85rem;">
+                <div><strong>${carModel}</strong> · ${partName}${color ? ' · ' + color : ''}</div>
+                <div style="margin-top:4px;color:var(--text-muted);">기존 LOT번호: <strong>${oldLot === '무표기' ? '(미표기)' : oldLot}</strong></div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">새 LOT번호 (YYMMDD) <span style="color:var(--accent-red)">*</span></label>
+                <input type="text" class="form-input" id="lotRenameInput" value="${displayLot}" maxlength="6"
+                    placeholder="예: 250625" style="font-family:monospace; letter-spacing:1px;"
+                    oninput="InjectionWarehouseModule.onLotInput(this, 'lotRenameMsg')">
+                <div id="lotRenameMsg" style="margin-top:6px;font-size:0.8rem;"></div>
+            </div>
+            `,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+             <button class="btn btn-primary" onclick="InjectionWarehouseModule.saveLotRename('${_cmJs}','${_pnJs}','${_clJs}','${_olJs}')">저장</button>`,
+            'sm'
+        );
+    }
+
+    async function saveLotRename(carModel, partName, color, oldLot) {
+        const input = document.getElementById('lotRenameInput');
+        const newLot = ((input || {}).value || '').trim();
+
+        if (!/^\d{6}$/.test(newLot)) {
+            UIUtils.toast('LOT번호는 YYMMDD 형식으로 6자리 숫자를 입력하세요.', 'warning');
+            if (input) input.focus();
+            return;
+        }
+
+        if (newLot === oldLot) {
+            UIUtils.closeModal();
+            return;
+        }
+
+        const data = Storage.getAll(STORE);
+        const targets = data.filter(d =>
+            d.carModel === carModel &&
+            d.partName === partName &&
+            (d.color || '') === (color || '') &&
+            (d.lotNo || '무표기') === oldLot
+        );
+
+        if (targets.length === 0) {
+            UIUtils.toast('변경할 재고 기록을 찾을 수 없습니다.', 'error');
+            return;
+        }
+
+        try {
+            for (const d of targets) {
+                const updates = { lotNo: newLot };
+                if (Array.isArray(d.lots) && d.lots.length > 0) {
+                    updates.lots = d.lots.map(l => (l.lotNo === oldLot ? { ...l, lotNo: newLot } : l));
+                }
+                await Storage.update(STORE, d.id, updates);
+            }
+            UIUtils.closeModal();
+            UIUtils.toast(`LOT번호가 ${newLot}(으)로 변경되었습니다.`, 'success');
+            loadData();
+            showPartDetail(carModel, partName, color);
+        } catch (e) {
+            console.error('LOT번호 수정 실패:', e);
+            UIUtils.toast('LOT번호 수정 실패: ' + e.message, 'error');
+        }
     }
 
     function _openAddModalForPart(type, carModel, partName, color) {
@@ -1483,7 +1566,114 @@ var InjectionWarehouseModule = (function() {
         }
     }
 
+    function _decorateInvModalStockArea() {
+        const stockDisplay = document.getElementById('addInvCurrentStock');
+        const lotRowsWrap = document.getElementById('invLotRows');
+        if (stockDisplay) {
+            stockDisplay.style.fontSize = '0.98rem';
+            stockDisplay.style.fontWeight = '600';
+            if (!stockDisplay.style.color || stockDisplay.style.color === 'var(--accent-blue)') {
+                stockDisplay.style.color = 'var(--text-secondary)';
+            }
+        }
+        if (lotRowsWrap && lotRowsWrap.parentElement) {
+            lotRowsWrap.parentElement.style.background = 'rgba(37,99,235,0.04)';
+            lotRowsWrap.parentElement.style.border = '1px solid rgba(37,99,235,0.24)';
+            lotRowsWrap.parentElement.style.borderRadius = '10px';
+        }
+    }
+
+    function updateLotStockList(carModel, partName) {
+        const stockArea = document.getElementById('addInvStockArea');
+        const stockDisplay = document.getElementById('addInvCurrentStock');
+        const lotList = document.getElementById('lotStockList');
+        const typeEl = document.getElementById('addInvType');
+        const type = typeEl ? typeEl.value : '입고';
+
+        const color = (document.getElementById('addInvColor') || {}).value || '';
+        const allStock = Storage.getAll(STORE) || [];
+        const filteredStock = allStock.filter(function(s) {
+            return s.carModel === carModel &&
+                s.partName === partName &&
+                (!color || (s.color || '') === color);
+        });
+
+        const stockMap = {};
+        let totalQty = 0;
+
+        filteredStock.forEach(function(s) {
+            const lot = s.lotNo || '미표기';
+            const qty = Number(s.quantity) || 0;
+            if (!stockMap[lot]) stockMap[lot] = 0;
+
+            if (s.type === '출고') {
+                stockMap[lot] -= qty;
+                totalQty -= qty;
+            } else {
+                stockMap[lot] += qty;
+                totalQty += qty;
+            }
+        });
+
+        _decorateInvModalStockArea();
+
+        if (stockDisplay) {
+            stockDisplay.textContent = UIUtils.formatNumber(totalQty) + ' EA';
+            stockDisplay.style.color = (type === '출고' && totalQty <= 0) ? 'var(--accent-red)' : 'var(--text-secondary)';
+        }
+
+        let displayLots = Object.keys(stockMap).map(function(lot) {
+            return { lot: lot, qty: stockMap[lot] };
+        }).filter(function(item) {
+            return item.qty > 0;
+        });
+
+        displayLots.sort(function(a, b) {
+            return String(a.lot || '').localeCompare(String(b.lot || ''));
+        });
+
+        if (lotList) {
+            if (!displayLots.length) {
+                lotList.innerHTML = '<div style="padding:10px; color:var(--text-muted); text-align:center; font-size:0.8rem;">기존 재고 기록이 없습니다.</div>';
+            } else {
+                lotList.innerHTML = displayLots.map(function(item) {
+                    const isSelectable = type === '출고';
+                    const cursor = isSelectable ? 'cursor:pointer;' : 'cursor:default;';
+                    const hover = isSelectable ? 'onmouseover="this.style.background=\'var(--bg-secondary)\'" onmouseout="this.style.background=\'white\'"' : '';
+                    const click = isSelectable ? `onclick="InjectionWarehouseModule.onLotItemSelect('${item.lot}', ${item.qty})"` : '';
+                    return `
+                        <div ${click} ${hover} style="display:flex; justify-content:space-between; padding:8px 12px; border-bottom:1px solid var(--border); ${cursor} font-size:0.82rem;">
+                            <span style="font-weight:600;">LOT: ${item.lot}</span>
+                            <span style="color:var(--accent-blue); font-weight:700;">${UIUtils.formatNumber(item.qty)} EA</span>
+                        </div>`;
+                }).join('');
+            }
+        }
+
+        if (stockArea) stockArea.style.display = 'block';
+    }
+
     function addInvLotRow() {
+        const container = document.getElementById('invLotRows');
+        if (!container) return;
+        _decorateInvModalStockArea();
+        const div = document.createElement('div');
+        div.className = 'inv-lot-row';
+        div.style.cssText = 'display:grid; grid-template-columns:118px 1fr 34px; gap:8px; align-items:center; margin-bottom:8px; padding:8px 10px; border:1px solid rgba(37,99,235,0.18); border-radius:10px; background:#fff; box-shadow:0 1px 3px rgba(37,99,235,0.06);';
+        div.innerHTML = '<input type="text" class="form-input inv-lot-no" placeholder="YYMMDD (필수)" maxlength="6"'
+            + ' style="font-family:monospace; letter-spacing:1px; font-weight:800; font-size:1rem; color:var(--text-primary); background:rgba(37,99,235,0.04);"'
+            + ' oninput="this.value=this.value.replace(/[^0-9]/g,\'\'); this.style.borderColor=this.value?\'\':\'\' ;">'
+            + '<input type="number" class="form-input inv-lot-qty" min="0" placeholder="0"'
+            + ' style="text-align:right; font-weight:800; font-size:1rem; color:var(--accent-blue); background:rgba(37,99,235,0.04);"'
+            + ' oninput="InjectionWarehouseModule.calcInvLotTotal()">'
+            + '<button type="button" onclick="InjectionWarehouseModule.removeInvLotRow(this)"'
+            + ' style="background:none;border:none;cursor:pointer;color:var(--accent-red);padding:4px;display:flex;align-items:center;justify-content:center;" title="행 삭제">'
+            + '<span class="material-symbols-outlined" style="font-size:1.2rem;">remove_circle</span>'
+            + '</button>';
+        container.appendChild(div);
+    }
+
+    function _legacyAddInvLotRow() {
         const container = document.getElementById('invLotRows');
         if (!container) return;
         const div = document.createElement('div');
@@ -2679,6 +2869,8 @@ var InjectionWarehouseModule = (function() {
         filterTransactions,
         onTxCarChange,
         showPartDetail,
+        openLotRenameModal,
+        saveLotRename,
         _openAddModalForPart,
         openAddModal,
         openAddFromInspection,

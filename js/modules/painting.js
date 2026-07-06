@@ -289,6 +289,27 @@ const PaintingIncomingModule = (function() {
         });
     }
 
+    // 제품 마스터의 process1~4 중 실제 작업 라인(도장-A/도장-B)과 정확히 일치하는 슬롯의 CVT를 우선 조회.
+    // 일치하는 슬롯이 없으면(구버전 데이터 등) 기존 방식대로 '도장'이 포함된 첫 슬롯 → cvt1 순으로 폴백한다.
+    function _getProductCvtForLine(prod, lineName) {
+        if (!prod) return 0;
+        if (lineName) {
+            for (let i = 1; i <= 4; i++) {
+                if ((prod['process' + i] || '') === lineName) {
+                    const v = Number(prod['cvt' + i]) || 0;
+                    if (v) return v;
+                }
+            }
+        }
+        for (let i = 1; i <= 4; i++) {
+            if ((prod['process' + i] || '').includes('도장')) {
+                const v = Number(prod['cvt' + i]) || 0;
+                if (v) return v;
+            }
+        }
+        return Number(prod.cvt1) || 0;
+    }
+
     function renderWorkList() {
         let data = Storage.getByDateRange(
             STORE,
@@ -368,17 +389,7 @@ const PaintingIncomingModule = (function() {
 
             const _products = Storage.getAll(DB.STORES.PRODUCTS) || [];
             const _prod = _products.find(p => p.carModel === d.carModel && p.partName === d.partName);
-            let _cvt = 0;
-            if (_prod) {
-                for (let i = 1; i <= 4; i++) {
-                    const proc = (_prod['process' + i] || '').toLowerCase();
-                    if (proc.includes('?꾩옣')) {
-                        _cvt = Number(_prod['cvt' + i]) || 0;
-                        break;
-                    }
-                }
-                if (!_cvt) _cvt = Number(_prod.cvt1) || 0;
-            }
+            const _cvt = _getProductCvtForLine(_prod, d.line);
 
             const inputQty = Number(d.inputQty) || 0;
             const productionQty = Number(d.productionQty) || 0;
@@ -507,6 +518,26 @@ const PaintingWorkModule = (function() {
     let _currentDate = '';
     let _currentLine = '도장-A';
 
+    // 제품 마스터의 process1~4 중 실제 작업 라인(도장-A/도장-B)과 정확히 일치하는 슬롯의 CVT를 우선 조회.
+    // 일치하는 슬롯이 없으면(구버전 데이터 등) 기존 방식대로 '도장'이 포함된 첫 슬롯 → cvt1 순으로 폴백한다.
+    function _getProductCvtForLine(prod, lineName) {
+        if (!prod) return 0;
+        if (lineName) {
+            for (let i = 1; i <= 4; i++) {
+                if ((prod['process' + i] || '') === lineName) {
+                    const v = Number(prod['cvt' + i]) || 0;
+                    if (v) return v;
+                }
+            }
+        }
+        for (let i = 1; i <= 4; i++) {
+            if ((prod['process' + i] || '').includes('도장')) {
+                const v = Number(prod['cvt' + i]) || 0;
+                if (v) return v;
+            }
+        }
+        return Number(prod.cvt1) || 0;
+    }
 
     function _getNotifyUsersByRole() {
         if (typeof AuthModule === 'undefined' || typeof AuthModule.getUsers !== 'function') return [];
@@ -740,7 +771,7 @@ const PaintingWorkModule = (function() {
                             <span style="color:var(--text-muted);">~</span>
                             <input type="date" class="form-input" id="pwEnd" value="${_currentDate}" style="width:130px;">
                             <label class="form-label" style="margin:0 0 0 8px; font-size:0.82rem; white-space:nowrap;">차종</label>
-                            <select class="form-select" id="pwFilterCarModel" style="width:120px; font-size:0.82rem;">
+                            <select class="form-select" id="pwFilterCarModel" onchange="PaintingWorkModule.updateWorkPartFilter(true)" style="width:120px; font-size:0.82rem;">
                                 <option value="">전체</option>
                             </select>
                             <label class="form-label" style="margin:0 0 0 8px; font-size:0.82rem; white-space:nowrap;">품명</label>
@@ -980,14 +1011,13 @@ const PaintingWorkModule = (function() {
     // ──────────────────────────────────────────────
     // 작업 실적 목록 렌더링
     // ──────────────────────────────────────────────
-    function renderWorkList() {
+    function _getWorkListBaseData() {
         const startEl = document.getElementById('pwStart');
         const endEl = document.getElementById('pwEnd');
         const start = startEl ? startEl.value : _currentDate;
         const end = endEl ? endEl.value : _currentDate;
 
-        // 등록일(registeredAt) 기준 필터 — 없는 구 데이터는 작업일로 대체
-        let data = Storage.getAll(STORE)
+        return Storage.getAll(STORE)
             .filter(d => {
                 const regDate = d.registeredAt ? d.registeredAt.slice(0, 10) : (d.date || '');
                 return regDate >= start && regDate <= end;
@@ -996,17 +1026,44 @@ const PaintingWorkModule = (function() {
                 const aReg = a.registeredAt || '';
                 const bReg = b.registeredAt || '';
                 if (aReg && bReg) return bReg.localeCompare(aReg);
-                if (bReg) return 1;   // b만 등록일 있음 → b 위로
-                if (aReg) return -1;  // a만 등록일 있음 → a 위로
-                // 둘 다 없으면 작업일 내림차순
-                const dc = b.date.localeCompare(a.date);
+                if (bReg) return 1;
+                if (aReg) return -1;
+                const dc = (b.date || '').localeCompare(a.date || '');
                 return dc !== 0 ? dc : (b.startTime || '').localeCompare(a.startTime || '');
             });
+    }
+
+    function updateWorkPartFilter(shouldRenderList) {
+        const carModelSel = document.getElementById('pwFilterCarModel');
+        const partNameSel = document.getElementById('pwFilterPartName');
+        if (!partNameSel) {
+            if (shouldRenderList) renderWorkList();
+            return;
+        }
+
+        const allData = _getWorkListBaseData();
+        const selectedCarModel = carModelSel ? carModelSel.value : '';
+        const currentPartName = partNameSel.value;
+        const filteredForPart = selectedCarModel
+            ? allData.filter(d => d.carModel === selectedCarModel)
+            : allData;
+        const uniquePartNames = [...new Set(filteredForPart.map(d => d.partName).filter(Boolean))].sort();
+
+        partNameSel.innerHTML = '<option value="">전체</option>' +
+            uniquePartNames.map(p => `<option value="${p}" ${currentPartName === p ? 'selected' : ''}>${p}</option>`).join('');
+
+        if (currentPartName && !uniquePartNames.includes(currentPartName)) {
+            partNameSel.value = '';
+        }
+
+        if (shouldRenderList) renderWorkList();
+    }
+
+    function renderWorkList() {
+        let data = _getWorkListBaseData();
 
         // 차종·품명 드롭다운 초기화 (unique 값 수집)
         const uniqueCarModels = UIUtils.sortCarModels(data.map(d => d.carModel));
-        const uniquePartNames = [...new Set(data.map(d => d.partName).filter(Boolean))].sort();
-
         const carModelSel = document.getElementById('pwFilterCarModel');
         const partNameSel = document.getElementById('pwFilterPartName');
 
@@ -1016,11 +1073,7 @@ const PaintingWorkModule = (function() {
                 uniqueCarModels.map(m => `<option value="${m}" ${currentCarModel === m ? 'selected' : ''}>${m}</option>`).join('');
         }
 
-        if (partNameSel) {
-            const currentPartName = partNameSel.value;
-            partNameSel.innerHTML = '<option value="">전체</option>' +
-                uniquePartNames.map(p => `<option value="${p}" ${currentPartName === p ? 'selected' : ''}>${p}</option>`).join('');
-        }
+        updateWorkPartFilter(false);
 
         // 필터 값 읽기
         const filterCarModel = carModelSel ? carModelSel.value : '';
@@ -1087,20 +1140,10 @@ const PaintingWorkModule = (function() {
                 return '<span style="font-weight:700;color:' + color + ';">' + eff + '%</span>';
             })();
 
-            // CVT: 제품 마스터에서 도장 공정 슬롯의 cvt 값 조회
+            // CVT: 제품 마스터에서 실제 작업 라인과 일치하는 도장 공정 슬롯의 cvt 값 조회
             const _products = Storage.getAll(DB.STORES.PRODUCTS) || [];
             const _prod = _products.find(p => p.carModel === d.carModel && p.partName === d.partName);
-            let _cvt = 0;
-            if (_prod) {
-                for (let i = 1; i <= 4; i++) {
-                    const proc = (_prod['process' + i] || '').toLowerCase();
-                    if (proc.includes('도장')) {
-                        _cvt = Number(_prod['cvt' + i]) || 0;
-                        break;
-                    }
-                }
-                if (!_cvt) _cvt = Number(_prod.cvt1) || 0; // 폴백: 첫번째 슬롯
-            }
+            const _cvt = _getProductCvtForLine(_prod, d.line);
             const _inputQty  = Number(d.inputQty) || 0;
             const _spindle   = (_cvt > 0 && _inputQty > 0) ? Math.ceil(_inputQty / _cvt) : 0;
             const cvtStr     = _cvt > 0
@@ -2450,22 +2493,12 @@ const PaintingWorkModule = (function() {
             ? '<span style="color:var(--accent-blue);font-weight:700;">' + baseCTSec.toFixed(1) + '초/EA</span>'
             : '<span style="color:var(--text-muted);">-</span>';
 
-        // ③-1 CVT 조회 (제품 마스터 → 도장 공정 슬롯)
-        var _planCvt = 0;
+        // ③-1 CVT 조회 (제품 마스터 → 실제 작업 라인과 일치하는 도장 공정 슬롯)
         var _masterProds = Storage.getAll(DB.STORES.PRODUCTS) || [];
         var _masterProd = _masterProds.find(function(mp) {
             return mp.carModel === carModel && mp.partName === partName;
         });
-        if (_masterProd) {
-            for (var _ci = 1; _ci <= 4; _ci++) {
-                var _proc = (_masterProd['process' + _ci] || '').toLowerCase();
-                if (_proc.includes('도장')) {
-                    _planCvt = Number(_masterProd['cvt' + _ci]) || 0;
-                    break;
-                }
-            }
-            if (!_planCvt) _planCvt = Number(_masterProd.cvt1) || 0;
-        }
+        var _planCvt = _getProductCvtForLine(_masterProd, effectiveLine);
         var cvtInfoLabel = _planCvt > 0
             ? '<span style="color:var(--accent-green);font-weight:700;">' + _planCvt + ' EA</span>'
             : '<span style="color:var(--text-muted);">-</span>';
@@ -4033,6 +4066,7 @@ const PaintingWorkModule = (function() {
         renderPlanSummary,
         renderUnenteredPlans,
         renderWorkList,
+        updateWorkPartFilter,
         openAddModal,
         openAddModalFromPlan,
         addLotRow,

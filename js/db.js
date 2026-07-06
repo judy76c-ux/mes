@@ -550,7 +550,7 @@ const DB = (function() {
         [STORES.INJECTION_WORK_LOG]:         { remove: 'operator', clear: 'manager'},
         [STORES.MOLD_CHANGE_LOG]:            { remove: 'operator', clear: 'manager'},
         [STORES.RAW_MAT_CHANGE_LOG]:         { remove: 'operator', clear: 'manager'},
-        [STORES.LASER_WORK_LOG]:             { remove: 'operator', clear: 'manager'},
+        [STORES.LASER_WORK_LOG]:             { remove: 'admin',    clear: 'admin'  },
         // ── 생산 관리 ──────────────────────────────────────────────
         [STORES.PROD_CONDITIONS]:            { remove: 'operator', clear: 'manager'},
         [STORES.PROD_QUALITY_CHECK]:         { remove: 'operator', clear: 'manager'},
