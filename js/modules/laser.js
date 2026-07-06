@@ -227,23 +227,28 @@ var LaserWorkModule = (function() {
         }
     }
 
-    // 레이져 작업이력 수정 권한:
-    //  - 관리자(admin)
-    //  - 레이져 운영자(laser_op) — 저장된 페이지 권한 설정과 무관하게 항상 수정 가능
-    //  - 그 외 '레이져 공정 입력'(laser-work write) 권한 보유자
+    // 레이져 작업이력 수정 버튼 노출 대상: 관리자(admin) 또는 레이져 운영자만.
+    // 계정 역할이 기본 키('laser_op')가 아닌 커스텀 역할일 수 있어, 역할 키와 라벨('레이져운영자')을 함께 매칭한다.
     function _canWriteLaserWork() {
         try {
             if (_isAdminUser()) return true;
             const user = (typeof AuthModule !== 'undefined' && typeof AuthModule.getCurrentUser === 'function')
                 ? AuthModule.getCurrentUser()
                 : null;
-            const roles = Array.isArray(user && user.roles) ? user.roles : [user && user.role];
-            if (roles.some(role => String(role || '') === 'laser_op')) return true;
-            if (typeof AuthModule !== 'undefined' && typeof AuthModule.canWritePage === 'function') {
-                return AuthModule.canWritePage('laser-work');
-            }
+            if (!user) return false;
+            const roleKeys = Array.isArray(user.roles) ? user.roles.slice() : [];
+            if (user.role) roleKeys.push(user.role);
+            const roleDefs = (typeof AuthModule !== 'undefined' && Array.isArray(AuthModule.ROLES)) ? AuthModule.ROLES : [];
+            return roleKeys.some(function(rk) {
+                const key = String(rk || '');
+                if (key === 'laser_op') return true;
+                const def = roleDefs.find(function(d) { return d.key === key; });
+                const label = String((def && def.label) || key).replace(/\s/g, '');
+                // '레이져운영자' / '레이저운영자' 등 라벨 매칭
+                return /레이[져저].*운영/.test(label);
+            });
         } catch (e) { /* 무시 */ }
-        return true; // 권한 판단 불가 시 기존 동작(표시) 유지
+        return false;
     }
 
     function _normalizeFlowKey(value) {

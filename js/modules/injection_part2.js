@@ -550,6 +550,7 @@ var InjectionWarehouseModule = (function() {
         const _cmJs = carModel.replace(/'/g, "\\'");
         const _pnJs = partName.replace(/'/g, "\\'");
         const _clJs = (color || '').replace(/'/g, "\\'");
+        const canEditLot = _canEditWarehouseLot();
 
         const rows = currentLots.map(d => {
             const _lotJs = d.lot.replace(/'/g, "\\'");
@@ -561,12 +562,12 @@ var InjectionWarehouseModule = (function() {
                     <td style="text-align:right; color:var(--accent-green); font-weight:600;">
                         ${UIUtils.formatNumber(d.qty)}
                     </td>
-                    <td style="text-align:center;">
+                    ${canEditLot ? `<td style="text-align:center;">
                         <button class="btn btn-sm btn-outline" style="font-size:0.72rem;padding:2px 8px;"
-                            onclick="InjectionWarehouseModule.openLotRenameModal('${_cmJs}','${_pnJs}','${_clJs}','${_lotJs}')">
-                            LOT 수정
+                            onclick="InjectionWarehouseModule.openLotEditModal('${_cmJs}','${_pnJs}','${_clJs}','${_lotJs}',${Number(d.qty) || 0})">
+                            수정
                         </button>
-                    </td>
+                    </td>` : ''}
                 </tr>
             `;
         }).join('');
@@ -614,11 +615,11 @@ var InjectionWarehouseModule = (function() {
                             <th>LOT번호</th>
                             <th>생산처</th>
                             <th style="text-align:right;">현재 수량</th>
-                            <th></th>
+                            ${canEditLot ? '<th></th>' : ''}
                         </tr>
                     </thead>
                     <tbody>
-                        ${rows || `<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted);">현재 보관중인 LOT가 없습니다.</td></tr>`}
+                        ${rows || `<tr><td colspan="${canEditLot ? 5 : 4}" style="text-align:center;padding:20px;color:var(--text-muted);">현재 보관중인 LOT가 없습니다.</td></tr>`}
                     </tbody>
                 </table>
             </div>
@@ -700,6 +701,138 @@ var InjectionWarehouseModule = (function() {
         } catch (e) {
             console.error('LOT번호 수정 실패:', e);
             UIUtils.toast('LOT번호 수정 실패: ' + e.message, 'error');
+        }
+    }
+
+    // LOT 정보 전체 수정 모달 — 입고일·생산처·LOT번호·현재 수량을 함께 편집한다.
+    function openLotEditModal(carModel, partName, color, oldLot, currentQty) {
+        const _cmJs = carModel.replace(/'/g, "\\'");
+        const _pnJs = partName.replace(/'/g, "\\'");
+        const _clJs = (color || '').replace(/'/g, "\\'");
+        const _olJs = oldLot.replace(/'/g, "\\'");
+        const displayLot = oldLot === '무표기' ? '' : oldLot;
+
+        // 이 LOT의 대표 입고 기록에서 입고일·생산처 기본값 조회
+        const recs = (Storage.getAll(STORE) || []).filter(d =>
+            d.carModel === carModel && d.partName === partName &&
+            (d.color || '') === (color || '') && (d.lotNo || '무표기') === oldLot && d.type !== '출고');
+        recs.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        const primary = recs[0] || {};
+        const dateOnly = String(primary.date || '').slice(0, 10);
+        const supplier = String(primary.supplier || '').replace(/"/g, '&quot;');
+
+        UIUtils.showModal(
+            'LOT 정보 수정',
+            `
+            <div style="padding:10px 12px;background:var(--bg-secondary);border-radius:8px;margin-bottom:14px;font-size:0.85rem;">
+                <div><strong>${carModel}</strong> · ${partName}${color ? ' · ' + color : ''}</div>
+                <div style="margin-top:4px;color:var(--text-muted);">기존 LOT번호: <strong>${oldLot === '무표기' ? '(미표기)' : oldLot}</strong></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">입고일</label>
+                    <input type="date" class="form-input" id="lotEditDate" value="${dateOnly}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">생산처</label>
+                    <input type="text" class="form-input" id="lotEditSupplier" value="${supplier}" placeholder="예: 알리">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">LOT번호 (YYMMDD) <span style="color:var(--accent-red)">*</span></label>
+                    <input type="text" class="form-input" id="lotEditLot" value="${displayLot}" maxlength="6"
+                        placeholder="예: 250625" style="font-family:monospace;letter-spacing:1px;"
+                        oninput="InjectionWarehouseModule.onLotInput(this, 'lotEditMsg')">
+                    <div id="lotEditMsg" style="margin-top:6px;font-size:0.8rem;"></div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">현재 수량 (EA) <span style="color:var(--accent-red)">*</span></label>
+                    <input type="number" class="form-input" id="lotEditQty" value="${Number(currentQty) || 0}" min="0"
+                        inputmode="numeric" enterkeyhint="done" style="text-align:right;">
+                </div>
+            </div>
+            <div style="font-size:0.75rem;color:var(--text-muted);margin-top:2px;">※ 수량을 변경하면 차이만큼 재고 보정 입·출고가 자동으로 기록됩니다.</div>
+            `,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+             <button class="btn btn-primary" onclick="InjectionWarehouseModule.saveLotEdit('${_cmJs}','${_pnJs}','${_clJs}','${_olJs}',${Number(currentQty) || 0})">저장</button>`,
+            'md'
+        );
+    }
+
+    async function saveLotEdit(carModel, partName, color, oldLot, oldQty) {
+        const newLot      = ((document.getElementById('lotEditLot')      || {}).value || '').trim();
+        const newDate     = ((document.getElementById('lotEditDate')     || {}).value || '').trim();
+        const newSupplier = ((document.getElementById('lotEditSupplier') || {}).value || '').trim();
+        const newQty      = Number((document.getElementById('lotEditQty') || {}).value);
+
+        if (!/^\d{6}$/.test(newLot)) {
+            UIUtils.toast('LOT번호는 YYMMDD 형식 6자리 숫자로 입력하세요.', 'warning');
+            return;
+        }
+        if (isNaN(newQty) || newQty < 0) {
+            UIUtils.toast('현재 수량을 0 이상으로 입력하세요.', 'warning');
+            return;
+        }
+
+        const all = Storage.getAll(STORE) || [];
+        const targets = all.filter(d =>
+            d.carModel === carModel && d.partName === partName &&
+            (d.color || '') === (color || '') && (d.lotNo || '무표기') === oldLot);
+
+        if (targets.length === 0) {
+            UIUtils.toast('변경할 재고 기록을 찾을 수 없습니다.', 'error');
+            return;
+        }
+
+        try {
+            for (const d of targets) {
+                const updates = {};
+                // LOT번호 변경 — 입고/출고 기록 모두 반영
+                if (newLot !== oldLot) {
+                    updates.lotNo = newLot;
+                    if (Array.isArray(d.lots) && d.lots.length > 0) {
+                        updates.lots = d.lots.map(l => (l.lotNo === oldLot ? { ...l, lotNo: newLot } : l));
+                    }
+                }
+                // 입고일·생산처는 입고 기록에만 반영
+                if (d.type !== '출고') {
+                    if (newDate) {
+                        const timePart = String(d.date || '').slice(10); // " HH:MM" 시간부 보존
+                        updates.date = (newDate + timePart).trim();
+                    }
+                    updates.supplier = newSupplier;
+                }
+                if (Object.keys(updates).length > 0) await Storage.update(STORE, d.id, updates);
+            }
+
+            // 수량 보정 — 차이만큼 입/출고 기록을 추가해 재고에 반영 (기존 기록 무손상)
+            const delta = newQty - (Number(oldQty) || 0);
+            if (delta !== 0) {
+                const adjQty = Math.abs(delta);
+                const nowStr = (UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' '));
+                await Storage.add(STORE, {
+                    date: nowStr,
+                    type: delta > 0 ? '입고' : '출고',
+                    carModel: carModel,
+                    partName: partName,
+                    color: color || '',
+                    supplier: newSupplier,
+                    lotNo: newLot,
+                    lots: [{ lotNo: newLot, qty: adjQty }],
+                    quantity: adjQty,
+                    unit: 'EA',
+                    source: '재고 수정 보정'
+                });
+            }
+
+            UIUtils.closeModal();
+            UIUtils.toast('LOT 정보가 수정되었습니다.', 'success');
+            loadData();
+            showPartDetail(carModel, partName, color);
+        } catch (e) {
+            console.error('LOT 정보 수정 실패:', e);
+            UIUtils.toast('LOT 정보 수정 실패: ' + e.message, 'error');
         }
     }
 
@@ -1929,6 +2062,17 @@ var InjectionWarehouseModule = (function() {
         return !!(user && user.role === 'admin');
     }
 
+    // LOT 정보 수정 권한: 관리자, 또는 자재창고(injection-warehouse)+완제품창고(product-warehouse) 입력 권한을 모두 가진 사용자(물류작업자 등)
+    function _canEditWarehouseLot() {
+        try {
+            if (_isAdminUser()) return true;
+            if (typeof AuthModule !== 'undefined' && typeof AuthModule.canWritePage === 'function') {
+                return AuthModule.canWritePage('injection-warehouse') && AuthModule.canWritePage('product-warehouse');
+            }
+        } catch (e) { /* 무시 */ }
+        return false;
+    }
+
     function _requireBulkAdmin(onPass) {
         if (_isAdminUser()) {
             onPass();
@@ -2871,6 +3015,8 @@ var InjectionWarehouseModule = (function() {
         showPartDetail,
         openLotRenameModal,
         saveLotRename,
+        openLotEditModal,
+        saveLotEdit,
         _openAddModalForPart,
         openAddModal,
         openAddFromInspection,
