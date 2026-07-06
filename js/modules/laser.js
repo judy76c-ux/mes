@@ -227,10 +227,18 @@ var LaserWorkModule = (function() {
         }
     }
 
-    // 레이져 작업이력 수정 권한: 관리자 또는 '레이져 공정 입력'(laser-work write) 권한 보유자
+    // 레이져 작업이력 수정 권한:
+    //  - 관리자(admin)
+    //  - 레이져 운영자(laser_op) — 저장된 페이지 권한 설정과 무관하게 항상 수정 가능
+    //  - 그 외 '레이져 공정 입력'(laser-work write) 권한 보유자
     function _canWriteLaserWork() {
         try {
             if (_isAdminUser()) return true;
+            const user = (typeof AuthModule !== 'undefined' && typeof AuthModule.getCurrentUser === 'function')
+                ? AuthModule.getCurrentUser()
+                : null;
+            const roles = Array.isArray(user && user.roles) ? user.roles : [user && user.role];
+            if (roles.some(role => String(role || '') === 'laser_op')) return true;
             if (typeof AuthModule !== 'undefined' && typeof AuthModule.canWritePage === 'function') {
                 return AuthModule.canWritePage('laser-work');
             }

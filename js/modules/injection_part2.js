@@ -928,10 +928,10 @@ var InjectionWarehouseModule = (function() {
                 <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
                     <h4 style="display:flex;align-items:center;gap:8px;color:var(--accent-red);">
                         <span class="material-symbols-outlined">warning</span>
-                        창고 누락 의심 LOT
+                        창고 입고 대기 LOT
                         <span style="font-size:0.78rem;background:var(--accent-red);color:#fff;padding:2px 8px;border-radius:12px;font-weight:600;">${missing.length}건</span>
                     </h4>
-                    <span style="font-size:0.8rem;color:var(--text-muted);">수입검사 수량 > 0 이지만 창고 재고가 0인 LOT</span>
+                    <span style="font-size:0.8rem;color:var(--text-muted);">수입검사는 완료됐지만 아직 사출 창고에 입고되지 않은 LOT</span>
                 </div>
                 <div class="card-body" style="padding:0;">
                     <div class="data-table-wrapper">
