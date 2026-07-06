@@ -999,7 +999,7 @@ var LaserWorkModule = (function() {
                         </select>
                     </div>
                     <div class="form-group" style="margin:0;"><label class="form-label">수량 <span style="color:var(--accent-red)">*</span></label>
-                        <input type="number" class="form-input" id="lwQuantity" value="${d.quantity || ''}" placeholder="0" inputmode="numeric" enterkeyhint="done" oninput="LaserWorkModule.calcCompletedQty()">
+                        <input type="text" class="form-input" id="lwQuantity" value="${d.quantity || ''}" placeholder="0" inputmode="numeric" enterkeyhint="done" data-ime-dismiss="true" oninput="this.value=this.value.replace(/[^0-9]/g,'');LaserWorkModule.calcCompletedQty()">
                     </div>
                 </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
@@ -1074,7 +1074,7 @@ var LaserWorkModule = (function() {
                 </div>
                 ${isEditMode ? `<div class="form-group" style="margin:0;">
                     <label class="form-label">수량 <span style="color:var(--accent-red)">*</span></label>
-                    <input type="number" class="form-input" id="lwQuantity" value="${d.quantity || ''}" placeholder="0" inputmode="numeric" enterkeyhint="done" oninput="LaserWorkModule.calcCompletedQty()">
+                    <input type="text" class="form-input" id="lwQuantity" value="${d.quantity || ''}" placeholder="0" inputmode="numeric" enterkeyhint="done" data-ime-dismiss="true" oninput="this.value=this.value.replace(/[^0-9]/g,'');LaserWorkModule.calcCompletedQty()">
                 </div>` : ''}
             </div>
             <div id="lwOvertimeReasonWrap" style="display:none;margin:-2px 0 8px 0;padding:10px 12px;border:1px solid rgba(239,68,68,0.28);border-radius:8px;background:rgba(239,68,68,0.06);">
@@ -1278,11 +1278,11 @@ var LaserWorkModule = (function() {
                        placeholder="사출 LOT 번호"
                        style="flex:1;"
                        oninput="LaserWorkModule.updateLot(${i}, 'lotNo', this.value)">
-                <input type="number" class="form-input" value="${l.qty || ''}"
+                <input type="text" class="form-input" value="${l.qty || ''}"
                        placeholder="작업수량"
-                       min="0" inputmode="numeric" enterkeyhint="done"
+                       inputmode="numeric" enterkeyhint="done" data-ime-dismiss="true"
                        style="flex:0 0 110px; text-align:right;"
-                       oninput="LaserWorkModule.updateLot(${i}, 'qty', this.value)">
+                       oninput="this.value=this.value.replace(/[^0-9]/g,'');LaserWorkModule.updateLot(${i}, 'qty', this.value)">
                 <button type="button" class="btn btn-sm btn-danger" onclick="LaserWorkModule.removeLotRow(${i})"
                         style="padding:4px 8px; flex-shrink:0;">
                     <span class="material-symbols-outlined" style="font-size:0.9rem;">close</span>
@@ -1460,8 +1460,8 @@ var LaserWorkModule = (function() {
                                 <td style="padding:5px 8px; text-align:right; font-weight:700; color:var(--accent-blue); white-space:nowrap;">${UIUtils.formatNumber(lot.qty || 0)}</td>
                                 <td style="padding:5px 8px; font-family:monospace; font-size:0.8rem; white-space:nowrap;">${lot.lotNo || '-'}</td>
                                 <td style="padding:5px 8px; text-align:right;">
-                                    <input id="${inputId}" type="number" class="form-input" min="1" max="${Number(lot.qty) || 0}" value="" placeholder="입력" inputmode="numeric" enterkeyhint="done" style="height:30px;text-align:right;padding:4px 8px;"
-                                           oninput="LaserWorkModule.previewStandbyQty(${globalIdx}, ${lotIdx}, this.value)">
+                                    <input id="${inputId}" type="text" class="form-input" inputmode="numeric" enterkeyhint="done" data-ime-dismiss="true" value="" placeholder="입력" style="height:30px;text-align:right;padding:4px 8px;"
+                                           oninput="this.value=this.value.replace(/[^0-9]/g,'');LaserWorkModule.previewStandbyQty(${globalIdx}, ${lotIdx}, this.value)">
                                 </td>
                                 <td style="padding:5px 8px; text-align:center; white-space:nowrap;">
                                     <button class="btn btn-sm btn-primary" onclick="LaserWorkModule.selectStandbyItem(${globalIdx}, ${lotIdx}, '${inputId}')">LOT 선택</button>
@@ -2019,7 +2019,9 @@ var LaserWorkModule = (function() {
         if (!validateWorkRequired(data, { strict: false })) return;
         if (!_checkLotQtyMatch(data)) return;
 
-        data.status = _isFullyQcComplete(data.quantity) ? 'completed' : 'in_progress';
+        // 등록은 항상 '작업중' 상태 — 완료 처리는 오직 '작업완료' 버튼으로만 한다.
+        // (초품만 필요한 소량 작업도 등록 시점엔 작업중으로 두고, 명시적 완료를 거쳐 이력으로 이동)
+        data.status = 'in_progress';
 
         // 분할 등록: 연결 제품이 있고 분할 수량이 입력된 경우
         const splitPanel = document.getElementById('lwSplitPanel');
@@ -2054,7 +2056,7 @@ var LaserWorkModule = (function() {
 
         await Storage.add(STORE, data);
         UIUtils.closeModal();
-        UIUtils.toast(data.status === 'completed' ? '등록되었습니다.' : '등록되었습니다. 중품/종품 입력 후 "작업완료" 처리하세요. (레이져 작업중 목록에서 확인 가능)', 'success');
+        UIUtils.toast('작업중으로 등록되었습니다. 중품/종품 입력 후 "작업완료" 버튼을 눌러야 작업 이력으로 이동합니다. (레이져 작업중 목록에서 확인)', 'success');
         search();
     }
 
@@ -2088,11 +2090,11 @@ var LaserWorkModule = (function() {
     }
 
     // 저장: 중품/종품이 아직 없어도 진행 중인 내용을 그대로 저장한다 (완료 처리는 아님).
+    // status는 건드리지 않아 기존 상태(작업중/완료)를 그대로 유지한다 — 완료 전환은 '작업완료' 버튼에서만.
     async function saveEdit(id) {
         const data = collectData();
         if (!validateWorkRequired(data, { strict: false })) return;
         if (!_checkLotQtyMatch(data)) return;
-        data.status = _isFullyQcComplete(data.quantity) ? 'completed' : 'in_progress';
         await Storage.update(STORE, id, data);
         UIUtils.closeModal();
         UIUtils.toast('저장되었습니다.', 'success');

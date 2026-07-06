@@ -2330,8 +2330,8 @@ const PaintingWorkModule = (function() {
     // ──────────────────────────────────────────────
     // 작업 등록 모달 (lg 크기, 계획 연동)
     // ──────────────────────────────────────────────
-    // 실적 입력 가능 역할
-    var WORK_INPUT_ROLES = ['admin', 'prod_manager', 'line_manager'];
+    // 실적 입력 가능 역할 (도장라인운영자=paint_line_op, 생산관리자=prod_manager, 관리자=admin)
+    var WORK_INPUT_ROLES = ['admin', 'prod_manager', 'paint_line_op'];
 
     function _checkWorkAuth() {
         var user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
@@ -2340,7 +2340,19 @@ const PaintingWorkModule = (function() {
             UIUtils.toast('로그인 후 실적을 입력할 수 있습니다.', 'warning');
             return false;
         }
-        if (!WORK_INPUT_ROLES.includes(String(user.role || ''))) {
+        // 사용자의 모든 역할(roles 배열 + 대표 role)을 검사한다. 키가 커스텀이어도 라벨로 보조 매칭.
+        var roleKeys = Array.isArray(user.roles) ? user.roles.slice() : [];
+        if (user.role) roleKeys.push(user.role);
+        var roleDefs = (typeof AuthModule !== 'undefined' && Array.isArray(AuthModule.ROLES)) ? AuthModule.ROLES : [];
+        var allowed = roleKeys.some(function (rk) {
+            var key = String(rk || '');
+            if (WORK_INPUT_ROLES.indexOf(key) >= 0) return true;
+            var def = roleDefs.find(function (d) { return d.key === key; });
+            var label = String((def && def.label) || key).replace(/\s/g, '');
+            // '도장라인운영자' / '생산관리자' 라벨 매칭
+            return /도장.*운영/.test(label) || /생산.*관리/.test(label);
+        });
+        if (!allowed) {
             UIUtils.toast('실적 입력 권한이 없습니다. (도장라인운영자·생산관리자만 가능)', 'warning');
             return false;
         }
