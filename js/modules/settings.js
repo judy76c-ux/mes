@@ -9831,6 +9831,28 @@ const SettingsModule = (function() {
         { name: '개선활동',        subdir: 'improvement' }
     ];
 
+    // 실제 코드에서 각 폴더(subdir)에 사진을 업로드하는 입력 페이지 위치
+    // (ApiClient.uploadPhoto 호출부 기준으로 확인된 값 — 코드 변경 시 함께 갱신 필요)
+    const PHOTO_PAGE_USAGE = {
+        'paint-inspections': '수입검사 › 도료 수입검사 (명판/성적서 사진)',
+        'inj-inspections':   '수입검사 › 사출 수입검사',
+        'laser':             '레이저 공정 (작업 사진)',
+        'improvement':       '개선활동',
+        'MSDS':              '안전관리 › MSDS 등록대장',
+        'TDS':               '제조 관리 표준 › 도료 TDS 파일 첨부',
+        'paint_jig':         '도장지그 › 도장 지그 대장'
+    };
+    function _photoPageUsage(subdir) {
+        if (subdir === 'product-sampleing') {
+            return `<span style="color:#b91c1c;">미연결</span>
+                <span style="font-size:.66rem;color:var(--text-muted);display:block;">(초중종물 관리는 실제로 quality-checksheet 폴더 사용)</span>`;
+        }
+        const label = PHOTO_PAGE_USAGE[subdir];
+        return label
+            ? _esc(label)
+            : `<span style="color:var(--text-muted);">사용처 없음(업로드 기능 미연결)</span>`;
+    }
+
     const PHOTO_USER_DIRS_KEY = 'photo_user_processes';
     async function _loadUserPhotoDirs() {
         try {
@@ -9983,12 +10005,13 @@ const SettingsModule = (function() {
             (stats.results || []).forEach(r => { statsMap[r.subdir] = r; });
         } catch (e) { console.warn('photo stats fetch failed:', e); }
 
-        const cols = 'minmax(110px,150px) minmax(120px,160px) minmax(0,1.4fr) 70px 90px 110px 110px';
+        const cols = 'minmax(110px,150px) minmax(120px,160px) minmax(0,1.2fr) minmax(160px,1.4fr) 70px 90px 110px 110px';
         const gridHeader = `
             <div style="display:grid;grid-template-columns:${cols};gap:0;border-bottom:2px solid var(--border-color);background:var(--bg-tertiary);">
                 <div style="padding:6px 10px;font-size:.72rem;font-weight:700;color:var(--text-muted);border-right:1px solid var(--border-color);">공정명</div>
                 <div style="padding:6px 10px;font-size:.72rem;font-weight:700;color:var(--text-muted);border-right:1px solid var(--border-color);">폴더명</div>
                 <div style="padding:6px 10px;font-size:.72rem;font-weight:700;color:var(--text-muted);border-right:1px solid var(--border-color);">전체 경로</div>
+                <div style="padding:6px 10px;font-size:.72rem;font-weight:700;color:var(--text-muted);border-right:1px solid var(--border-color);">입력 페이지 위치</div>
                 <div style="padding:6px 6px;font-size:.72rem;font-weight:700;color:var(--text-muted);text-align:center;border-right:1px solid var(--border-color);">상태</div>
                 <div style="padding:6px 6px;font-size:.72rem;font-weight:700;color:var(--text-muted);text-align:right;border-right:1px solid var(--border-color);">파일수</div>
                 <div style="padding:6px 10px;font-size:.72rem;font-weight:700;color:var(--text-muted);text-align:right;border-right:1px solid var(--border-color);">크기</div>
@@ -10011,6 +10034,7 @@ const SettingsModule = (function() {
                 <div style="padding:7px 10px;font-size:.78rem;font-weight:600;color:var(--text-primary);background:${p.builtin?'var(--bg-secondary)':'rgba(59,130,246,0.04)'};border-right:1px solid var(--border-color);">${_esc(p.name)}${p.builtin?'':'<span style=\"font-size:.6rem;color:#2563eb;margin-left:4px;\">추가</span>'}</div>
                 <div style="padding:7px 10px;font-size:.76rem;font-family:monospace;color:var(--accent-blue);background:${p.builtin?'var(--bg-secondary)':'rgba(59,130,246,0.04)'};border-right:1px solid var(--border-color);">${_esc(p.subdir)}</div>
                 <div style="padding:7px 10px;font-size:.74rem;font-family:monospace;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-right:1px solid var(--border-color);" title="${_esc(fullPath)}">${_esc(fullPath)}</div>
+                <div style="padding:7px 10px;font-size:.75rem;color:var(--text-secondary);line-height:1.4;border-right:1px solid var(--border-color);">${_photoPageUsage(p.subdir)}</div>
                 <div style="padding:7px 6px;text-align:center;border-right:1px solid var(--border-color);">${statusBadge}</div>
                 <div style="padding:7px 6px;text-align:right;font-size:.76rem;font-family:monospace;border-right:1px solid var(--border-color);">${fileCount}</div>
                 <div style="padding:7px 10px;text-align:right;font-size:.74rem;font-family:monospace;color:var(--text-secondary);border-right:1px solid var(--border-color);">${sizeText}</div>
