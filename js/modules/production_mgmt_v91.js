@@ -20208,6 +20208,24 @@ var ProdQualityModule = (function() {
         return v === 0 ? '0' : String(v ?? '');
     }
 
+    // 도막두께(film)는 항상 소수점 첫째 자리까지 고정 표시(예: 10.1) — 그 외 그룹은 기존 표시 유지
+    function _formatMeasureValueForGroup(v, group) {
+        if (v === '' || v === undefined || v === null) return '';
+        if (group === 'film') {
+            const n = Number(v);
+            if (Number.isFinite(n)) return n.toFixed(1);
+        }
+        return _formatMeasureValue(v);
+    }
+
+    function _formatFilmValue(el) {
+        const raw = String(el.value || '').trim();
+        if (raw === '') return;
+        const n = Number(raw);
+        if (!Number.isFinite(n)) return;
+        el.value = n.toFixed(1);
+    }
+
     function _formatPrintDateTime(v) {
         const text = String(v || '').replace('T', ' ');
         return text ? text.slice(0, 16) : '-';
@@ -20241,7 +20259,7 @@ var ProdQualityModule = (function() {
         const valueOf = (item, type) => {
             const key = String(item.key || item.label || '');
             const saved = storedItems.find(row => String(row.key || '') === key);
-            return _formatMeasureValue(saved?.values?.[type]);
+            return _formatMeasureValueForGroup(saved?.values?.[type], item.measureGroup);
         };
         const noteOf = item => {
             const key = String(item.key || item.label || '');
@@ -20263,7 +20281,7 @@ var ProdQualityModule = (function() {
                     <td style="font-size:0.82rem;">${_esc(_composeRangeSpec(item) || item.spec || '-')}</td>
                     <td style="text-align:center;">${_esc(item.unit || '-')}</td>
                     ${typeOrder.map(type => typeHeaders.includes(type)
-                        ? `<td><input type="number" step="${_measureStep(group)}" class="form-input pq-data-val" data-type="${_esc(type)}" value="${_esc(valueOf(item, type))}" style="height:38px;text-align:right;font-weight:700;"></td>`
+                        ? `<td><input type="number" step="${_measureStep(group)}" class="form-input pq-data-val" data-type="${_esc(type)}" value="${_esc(valueOf(item, type))}" style="height:38px;text-align:right;font-weight:700;"${group === 'film' ? ' onblur="ProdQualityModule._formatFilmValue(this)"' : ''}></td>`
                         : `<td style="background:#f8fafc;color:var(--text-muted);text-align:center;">-</td>`).join('')}
                     <td><input type="text" class="form-input pq-data-note" value="${_esc(noteOf(item))}" placeholder="비고" style="height:38px;"></td>
                 </tr>`;
@@ -20601,9 +20619,9 @@ var ProdQualityModule = (function() {
                     <td style="font-family:monospace;font-size:0.78rem;">${_esc(record.lotNo || '-')}</td>
                     <td><span class="badge badge-info">${_esc(item.groupLabel || _measureGroupLabel(item.group))}</span> ${_esc(item.label || '-')}</td>
                     <td>${_esc(item.spec || '-')}</td>
-                    <td style="text-align:right;font-weight:700;">${_esc(_formatMeasureValue(values['초물']) || '-')}</td>
-                    <td style="text-align:right;font-weight:700;">${_esc(_formatMeasureValue(values['중물']) || '-')}</td>
-                    <td style="text-align:right;font-weight:700;">${_esc(_formatMeasureValue(values['종물']) || '-')}</td>
+                    <td style="text-align:right;font-weight:700;">${_esc(_formatMeasureValueForGroup(values['초물'], item.group) || '-')}</td>
+                    <td style="text-align:right;font-weight:700;">${_esc(_formatMeasureValueForGroup(values['중물'], item.group) || '-')}</td>
+                    <td style="text-align:right;font-weight:700;">${_esc(_formatMeasureValueForGroup(values['종물'], item.group) || '-')}</td>
                     <td style="text-align:center;">${_esc(item.unit || '-')}</td>
                     <td style="font-size:0.76rem;color:var(--text-muted);">${_esc(_formatPrintDateTime(record.updatedAt || record.createdAt))}</td>
                 </tr>`;
@@ -22893,6 +22911,7 @@ window.addEventListener('afterprint', () => {
         ,openDataView
         ,addPqDataPhotos
         ,removePqDataPhoto
+        ,_formatFilmValue
         ,saveMeasureRecord
         ,openMeasureHistory
         ,renderMeasureHistoryTable
