@@ -5,6 +5,10 @@
 
 const App = (function() {
     const API_BASE_CONFIG_KEY = 'mes_api_base';
+    const MIGRATION_FLAGS = {
+        CAR_MODEL_UPPERCASE: 'mig_carModelUppercase_done_v1',
+        PAINT_PROCESS_ALIAS: 'mig_paintProcessAlias_done_v1'
+    };
 
     function installImeDoneBlurHandler() {
         if (window.__MES_IME_DONE_BLUR_INSTALLED__) return;
@@ -60,10 +64,10 @@ const App = (function() {
             await AuthModule.init();
 
             // 2-1. 기존 차종(carModel) 데이터 대문자 변환 (최초 1회)
-            await _migrateCarModelUppercase();
+            await _runOnceMigration(MIGRATION_FLAGS.CAR_MODEL_UPPERCASE, _migrateCarModelUppercase);
 
             // 2-2. 제품 제조공정 '도장(A)'/'도장(B)' 오표기 → '도장-A'/'도장-B' 자동 교정
-            await _migratePaintProcessAlias();
+            await _runOnceMigration(MIGRATION_FLAGS.PAINT_PROCESS_ALIAS, _migratePaintProcessAlias);
 
             // 3. 모듈 등록
             registerModules();
@@ -208,6 +212,28 @@ const App = (function() {
                 </div>
             `;
         }
+    }
+
+    async function _runOnceMigration(flagKey, fn) {
+        try {
+            // Storage.init()에서 DB.init()을 이미 수행하지만, 혹시를 대비해 보장
+            await DB.init().catch(() => {});
+            const done = await DB.getConfig(flagKey).catch(() => null);
+            if (done) return;
+        } catch (_) {
+            // 플래그 확인 실패 시에도 본 기능은 계속 진행 (마이그레이션은 best-effort)
+        }
+
+        try {
+            await fn();
+        } catch (e) {
+            console.warn('[Migration] failed (ignored):', e);
+            return;
+        }
+
+        try {
+            await DB.setConfig(flagKey, true);
+        } catch (_) {}
     }
 
     // 모든 모듈을 라우터에 등록

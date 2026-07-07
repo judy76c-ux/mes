@@ -6,6 +6,39 @@
 const DashboardModule = (function() {
     const STORE = DB.STORES;
 
+    // background cache warm → 대시보드 1회 재렌더 (토스트/과도한 반복 방지)
+    let _cacheWarmUnsub = null;
+    let _cacheWarmRefreshTimer = null;
+    function _bindCacheWarmRefreshOnce() {
+        if (typeof Storage === 'undefined' || typeof Storage.onCacheWarm !== 'function') return;
+        if (_cacheWarmUnsub) return;
+
+        const watch = new Set([
+            STORE.PRODUCTION_PLANS,
+            STORE.INJECTION_INVENTORY,
+            STORE.INJECTION_INSPECTIONS,
+            STORE.PAINTING_INCOMING,
+            STORE.PAINTING_WORK,
+            STORE.PAINTING_INSPECTIONS,
+            STORE.SHIPPING_STANDBY,
+            STORE.PRODUCT_INVENTORY,
+            STORE.PRODUCT_OUTGOING
+        ].filter(Boolean));
+
+        _cacheWarmUnsub = Storage.onCacheWarm(function(storeName, meta) {
+            // 현재 화면이 대시보드일 때만 (컨테이너 존재로 판단)
+            if (!document.getElementById('dashProdTiles')) return;
+            if (storeName !== '*' && !watch.has(storeName)) return;
+
+            // 과도한 리렌더 방지: 1회만, 약간 지연
+            if (_cacheWarmRefreshTimer) return;
+            _cacheWarmRefreshTimer = setTimeout(function() {
+                _cacheWarmRefreshTimer = null;
+                try { DashboardModule.refresh(true); } catch (e) {}
+            }, 250);
+        });
+    }
+
     const FPROOF_ITEMS = [
         { key:'fp01', name:'부스 온습도/IR 모니터링' },
         { key:'fp02', name:'세척용 카운터' },
@@ -177,10 +210,26 @@ const DashboardModule = (function() {
         renderShippingStandby();
         renderPaintPending();
         renderAlertRow();
-        renderMonitorTiles();   // async
+        _scheduleIdleWork(renderMonitorTiles);   // async + config fetch
         renderImprovementTiles();
         renderBoardSection();
-        renderCharts();
+        _scheduleIdleWork(renderCharts);
+        _bindCacheWarmRefreshOnce();
+    }
+
+    function _scheduleIdleWork(fn, timeoutMs) {
+        const t = Number(timeoutMs) || 1200;
+        try {
+            if ('requestIdleCallback' in window) {
+                window.requestIdleCallback(() => {
+                    try { fn(); } catch (e) { console.warn('[Dashboard idle work]', e); }
+                }, { timeout: t });
+                return;
+            }
+        } catch (_) {}
+        setTimeout(() => {
+            try { fn(); } catch (e) { console.warn('[Dashboard deferred work]', e); }
+        }, 0);
     }
 
     /* ══════════════════════════════════════════════════════════
@@ -1120,10 +1169,10 @@ const DashboardModule = (function() {
         `, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'xl');
     }
 
-    function refresh() {
+    function refresh(silent) {
         const container = document.getElementById('contentArea');
         render(container);
-        UIUtils.toast('대시보드를 새로고침했습니다.', 'success');
+        if (!silent) UIUtils.toast('대시보드를 새로고침했습니다.', 'success');
     }
 
     /* ══════════════════════════════════════════════════════════

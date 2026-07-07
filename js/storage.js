@@ -13,6 +13,67 @@ const Storage = (function() {
   // DB.STORES 참조 (모든 스토어 이름 공유)
   const STORES = DB.STORES;
 
+  // ── 캐시 워밍 이벤트 (대시보드/페이지 재렌더 트리거용) ────────────────
+  const _cacheWarmListeners = new Set();
+  function _emitCacheWarm(storeName, meta) {
+    try {
+      _cacheWarmListeners.forEach(fn => {
+        try { fn(storeName, meta || {}); } catch (e) {}
+      });
+    } catch (e) {}
+    try {
+      if (typeof window !== 'undefined' && window.dispatchEvent) {
+        window.dispatchEvent(new CustomEvent('storage:cacheWarm', {
+          detail: { storeName, ...(meta || {}) }
+        }));
+      }
+    } catch (e) {}
+  }
+
+  function onCacheWarm(listener) {
+    if (typeof listener !== 'function') return () => {};
+    _cacheWarmListeners.add(listener);
+    return () => _cacheWarmListeners.delete(listener);
+  }
+
+  // ── idle 스케줄러 (requestIdleCallback 없으면 setTimeout) ────────────
+  function _scheduleIdle(fn, timeoutMs) {
+    const t = Number(timeoutMs) || 1500;
+    try {
+      if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+        return window.requestIdleCallback(fn, { timeout: t });
+      }
+    } catch (e) {}
+    return setTimeout(() => fn({ timeRemaining: () => 0, didTimeout: true }), 0);
+  }
+
+  // 모든 스토어에 대해 cache[store]=[] 기본값 보장
+  function _ensureCacheDefaults() {
+    const storeList = Object.values(STORES).filter(s => s !== 'config');
+    storeList.forEach(name => { if (!Array.isArray(cache[name])) cache[name] = []; });
+  }
+
+  // 대시보드 첫 화면 우선 로드 스토어 (필요 최소)
+  // - v19 마이그레이션을 위해 PRODUCTS/INJECTION_MATERIALS/INJECTION_INVENTORY/PRODUCTION_PLANS 포함
+  const DEFAULT_PRIORITY_STORES = [
+    STORES.PRODUCTS,
+    STORES.PRODUCTION_PLANS,
+    STORES.INJECTION_MATERIALS,
+    STORES.INJECTION_INVENTORY,
+    STORES.INJECTION_INSPECTIONS,
+    STORES.PAINTING_INCOMING,
+    STORES.PAINTING_WORK,
+    STORES.PAINTING_INSPECTIONS,
+    STORES.SHIPPING_STANDBY,
+    STORES.PRODUCT_INVENTORY,
+    STORES.PRODUCT_OUTGOING,
+  ].filter(Boolean);
+
+  function _uniqueStores(list) {
+    const seen = new Set();
+    return (Array.isArray(list) ? list : []).filter(s => s && !seen.has(s) && (seen.add(s), true));
+  }
+
   // ── 로컬 전용 스토어 (NAS API 연동 제외, IndexedDB에만 저장) ──────────
   // base64 이미지 등 대용량 데이터는 NAS MariaDB 대신 IndexedDB에 직접 저장
   const LOCAL_ONLY_STORES = new Set([
@@ -40,6 +101,7 @@ const Storage = (function() {
   // file:// 로컬 실행 시에도 NAS API를 먼저 읽고, 실패 시 IndexedDB 로컬 모드
   // API 서버 실패 시 → IndexedDB 백업 캐시로 폴백 (오프라인 모드 + 배너)
   async function init() {
+    _ensureCacheDefaults();
 
     // ── 로컬 파일 실행: NAS API 우선, 실패 시 IndexedDB 단독 모드 ─────────
     if (_isLocalFileMode()) {
@@ -47,21 +109,23 @@ const Storage = (function() {
       try {
         await ApiClient.init();
         await DB.init().catch(() => {});
-        await loadAllToCache();
-        initialized = true;
         offlineMode = false;
         localMode   = false;
+        await loadPriorityToCache(DEFAULT_PRIORITY_STORES, { useRemote: true });
         await _runSchemaMigration();
+        initialized = true;
+        warmRemainingStoresAsync(_getRemainingStores(DEFAULT_PRIORITY_STORES), { useRemote: true });
         console.log('[Storage] file:// mode connected to API server');
         return;
       } catch (apiError) {
         console.warn('[Storage] file:// API connection failed. Falling back to IndexedDB:', apiError.message);
         await DB.init();
-        await loadAllFromIndexedDB();
-        initialized = true;
         offlineMode = true;
         localMode   = true;
+        await loadPriorityToCache(DEFAULT_PRIORITY_STORES, { useRemote: false });
         await _runSchemaMigration();
+        initialized = true;
+        warmRemainingStoresAsync(_getRemainingStores(DEFAULT_PRIORITY_STORES), { useRemote: false });
         setTimeout(() => _showNasDisconnectedBanner(apiError.message), 800);
         console.log('[Storage] file:// mode started with IndexedDB fallback');
         return;
@@ -72,10 +136,12 @@ const Storage = (function() {
     try {
       await ApiClient.init();
       await DB.init().catch(() => {});
-      await loadAllToCache();
-      initialized = true;
       offlineMode = false;
-      await _runSchemaMigration(); // v19 데이터 마이그레이션
+      localMode   = false;
+      await loadPriorityToCache(DEFAULT_PRIORITY_STORES, { useRemote: true });
+      await _runSchemaMigration(); // v19 데이터 마이그레이션 (우선 로드 후)
+      initialized = true;
+      warmRemainingStoresAsync(_getRemainingStores(DEFAULT_PRIORITY_STORES), { useRemote: true });
       console.log('✅ 스토리지 초기화 완료 (API 서버 연동)');
     } catch (apiError) {
       console.warn('⚠️ NAS 서버 연결 실패 → IndexedDB 백업 캐시로 폴백 시도:', apiError.message);
@@ -83,10 +149,12 @@ const Storage = (function() {
       // ── 폴백: IndexedDB 로컬 캐시 사용 (오프라인 모드) ──
       try {
         await DB.init();
-        await loadAllFromIndexedDB();
-        initialized = true;
         offlineMode = true;
-        await _runSchemaMigration(); // v19 데이터 마이그레이션
+        localMode   = false;
+        await loadPriorityToCache(DEFAULT_PRIORITY_STORES, { useRemote: false });
+        await _runSchemaMigration(); // v19 데이터 마이그레이션 (우선 로드 후)
+        initialized = true;
+        warmRemainingStoresAsync(_getRemainingStores(DEFAULT_PRIORITY_STORES), { useRemote: false });
         console.log('✅ 오프라인 모드로 시작 (IndexedDB 백업 캐시)');
 
         // 사용자에게 NAS 연결 불가 전용 배너 표시 (UI 준비 후)
@@ -103,6 +171,16 @@ const Storage = (function() {
         throw combined;
       }
     }
+  }
+
+  function _getAllStoreList() {
+    return Object.values(STORES).filter(s => s !== 'config');
+  }
+
+  function _getRemainingStores(priorityStores) {
+    const all = _getAllStoreList();
+    const pri = new Set(_uniqueStores(priorityStores));
+    return all.filter(s => !pri.has(s));
   }
 
   // ── NAS 연결 불가 전용 상단 배너 ─────────────────────────────────
@@ -167,41 +245,99 @@ const Storage = (function() {
     console.warn('[NAS Disconnect] 상단 배너 표시:', detailMsg);
   }
 
-  // 모든 스토어 캐시 로드 (API 서버에서)
-  // 추가 효과: 성공한 데이터를 IndexedDB에 백업하여 다음 오프라인 시점에 사용
-  async function loadAllToCache() {
-    const storeList = Object.values(STORES).filter(s => s !== 'config');
-    await Promise.allSettled(
-      storeList.map(async (storeName) => {
-        try {
-          // ── 로컬 전용 스토어: NAS API 호출 없이 IndexedDB에서만 로드 ──
-          if (LOCAL_ONLY_STORES.has(storeName)) {
-            cache[storeName] = await _loadIndexedBackupStore(storeName);
-            return;
-          }
+  async function _loadOneStoreToCache(storeName, { useRemote }) {
+    try {
+      if (!storeName) return [];
+      if (!Array.isArray(cache[storeName])) cache[storeName] = [];
 
-          const remoteItems = await ApiClient.getAll(storeName);
-          if (Array.isArray(remoteItems) && remoteItems.length > 0) {
-            cache[storeName] = remoteItems;
-            _backupToIndexedDB(storeName, remoteItems);
-            return;
-          }
+      // ── 로컬 전용 스토어: NAS API 호출 없이 IndexedDB에서만 로드 ──
+      if (LOCAL_ONLY_STORES.has(storeName)) {
+        const rows = await _loadIndexedBackupStore(storeName);
+        cache[storeName] = rows;
+        return rows;
+      }
 
-          const localItems = await _loadIndexedBackupStore(storeName);
-          if (localItems.length > 0) {
-            cache[storeName] = localItems;
-            _restoreEmptyRemoteStore(storeName, localItems);
-            return;
-          }
+      // 오프라인/로컬 모드: IndexedDB만 사용
+      if (!useRemote) {
+        const rows = await _loadIndexedBackupStore(storeName);
+        cache[storeName] = rows;
+        return rows;
+      }
 
-          cache[storeName] = [];
-          // IndexedDB 백업 (비동기, 실패 무시)
-          _backupToIndexedDB(storeName, cache[storeName]);
-        } catch (e) {
-          cache[storeName] = [];
-        }
-      })
-    );
+      // 온라인: Remote → (비었으면) IndexedDB → (있으면) Remote 복원
+      const remoteItems = await ApiClient.getAll(storeName);
+      if (Array.isArray(remoteItems) && remoteItems.length > 0) {
+        cache[storeName] = remoteItems;
+        _backupToIndexedDB(storeName, remoteItems);
+        return remoteItems;
+      }
+
+      const localItems = await _loadIndexedBackupStore(storeName);
+      if (localItems.length > 0) {
+        cache[storeName] = localItems;
+        _restoreEmptyRemoteStore(storeName, localItems);
+        return localItems;
+      }
+
+      cache[storeName] = [];
+      _backupToIndexedDB(storeName, cache[storeName]);
+      return cache[storeName];
+    } catch (e) {
+      cache[storeName] = [];
+      return cache[storeName];
+    }
+  }
+
+  // 우선 스토어 캐시 로드 (init에서 await)
+  async function loadPriorityToCache(priorityStores, { useRemote } = {}) {
+    const list = _uniqueStores(priorityStores);
+    if (!list.length) return;
+    console.debug('[Storage] priority preload:', list.length);
+    await Promise.allSettled(list.map(storeName => _loadOneStoreToCache(storeName, { useRemote })));
+    list.forEach(storeName => _emitCacheWarm(storeName, { phase: 'priority' }));
+  }
+
+  // 나머지 스토어 백그라운드 워밍 (init에서 non-await)
+  function warmRemainingStoresAsync(remainingStores, { useRemote } = {}) {
+    const list = _uniqueStores(remainingStores);
+    if (!list.length) return;
+
+    console.debug('[Storage] background warm scheduled:', list.length);
+
+    let idx = 0;
+    const total = list.length;
+
+    const pump = async (deadline) => {
+      const hasBudget = () => {
+        try { return deadline && typeof deadline.timeRemaining === 'function' && deadline.timeRemaining() > 6; }
+        catch (e) { return false; }
+      };
+
+      // requestIdleCallback budget 내에서 여러 개 처리, 없으면 1개씩 쪼개기
+      let processed = 0;
+      while (idx < total && (hasBudget() || processed === 0)) {
+        const storeName = list[idx++];
+        await _loadOneStoreToCache(storeName, { useRemote });
+        _emitCacheWarm(storeName, { phase: 'background', index: idx, total });
+        processed++;
+      }
+
+      if (idx < total) {
+        _scheduleIdle(pump, 1500);
+      } else {
+        console.debug('[Storage] background warm done');
+        _emitCacheWarm('*', { phase: 'done', total });
+      }
+    };
+
+    _scheduleIdle(pump, 1500);
+  }
+
+  // 모든 스토어 캐시 로드 (API/IndexedDB) — refresh(full) 용 (await)
+  async function loadAllToCache({ useRemote } = {}) {
+    const storeList = _getAllStoreList();
+    await Promise.allSettled(storeList.map(storeName => _loadOneStoreToCache(storeName, { useRemote })));
+    storeList.forEach(storeName => _emitCacheWarm(storeName, { phase: 'full' }));
   }
 
   // IndexedDB에서 모든 스토어 로드 (오프라인 폴백)
@@ -820,9 +956,13 @@ const Storage = (function() {
   async function refresh(storeName) {
     try {
       if (storeName) {
-        cache[storeName] = await ApiClient.getAll(storeName);
+        if (!Array.isArray(cache[storeName])) cache[storeName] = [];
+        const useRemote = !offlineMode && !localMode && !LOCAL_ONLY_STORES.has(storeName);
+        await _loadOneStoreToCache(storeName, { useRemote });
+        _emitCacheWarm(storeName, { phase: 'refresh' });
       } else {
-        await loadAllToCache();
+        const useRemote = !offlineMode && !localMode;
+        await loadAllToCache({ useRemote });
       }
     } catch (err) {
       console.error('캐시 새로고침 실패:', err);
@@ -853,6 +993,7 @@ const Storage = (function() {
     setConfigValue,
     refresh,
     executeTransaction,
-    getAllPaged             // 페이징 조회 (동기, 캐시 기반)
+    getAllPaged,            // 페이징 조회 (동기, 캐시 기반)
+    onCacheWarm             // 캐시 워밍 이벤트 구독
   };
 })();
