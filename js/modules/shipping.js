@@ -169,7 +169,7 @@ const ShippingStandbyModule = (function() {
     // ── 대기 목록 ────────────────────────────────────────────────────
     function loadData() {
         const sbData  = Storage.getAll(SB_STORE);
-        sbData.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        sbData.sort((a, b) => (b.laserWorkDate || '').localeCompare(a.laserWorkDate || ''));
         const waiting = sbData.filter(d => d.status === '대기');
 
         // 이력에서 통계
