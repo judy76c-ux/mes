@@ -3613,12 +3613,21 @@ var LaserStandbyModule = (function() {
             .map(line => line.split('\t').map(_normalizeBulkText))
             .filter(row => row.some(Boolean))
             .filter(row => row.length >= 3)
-            .filter(row => _isBulkQty(row.length >= 4 ? row[3] : row[2]))
+            .filter(row => {
+                // 5열: 차종/품명/컬러/도장LOT/재고
+                if (row.length >= 5) return _isBulkQty(row[4]);
+                // 4열: 차종/품명/도장LOT/재고 (색상 없음)
+                if (row.length === 4) return _isBulkQty(row[3]);
+                // 3열: 차종/품명/재고 (색상, 도장LOT 없음)
+                if (row.length === 3) return _isBulkQty(row[2]);
+                return false;
+            })
             .map(row => ({
                 carModel: row[0] || '',
                 partName: row[1] || '',
-                color: row.length >= 4 ? row[2] || '' : '',
-                quantity: row.length >= 4 ? _parseBulkQty(row[3]) : _parseBulkQty(row[2])
+                color: row.length >= 5 ? row[2] || '' : (row.length === 4 ? '' : row.length === 3 ? '' : ''),
+                paintDate: row.length >= 5 ? (row[3] || '') : (row.length === 4 ? (row[2] || '') : ''),
+                quantity: row.length >= 5 ? _parseBulkQty(row[4]) : (row.length === 4 ? _parseBulkQty(row[3]) : _parseBulkQty(row[2]))
             }))
             .filter(row => row.carModel && row.partName);
     }
@@ -5152,18 +5161,19 @@ var LaserStandbyModule = (function() {
                         border:1px solid rgba(59,130,246,0.25);border-radius:8px;font-size:0.82rem;
                         color:var(--text-secondary);line-height:1.7;">
                 <b style="color:var(--accent-blue);">붙여넣기 방법</b><br>
-                엑셀에서 <b>차종 / 품명 / 컬러 / 재고</b> 4열을 복사해 아래 입력창에 붙여넣고 <b>미리보기</b>를 누르세요.<br>
+                엑셀에서 다음 중 하나의 형식을 복사해 아래 입력창에 붙여넣고 <b>미리보기</b>를 누르세요.<br>
                 <span style="font-size:0.78rem;color:var(--text-muted);">
-                    • 헤더가 있어도 자동으로 제외됩니다<br>
-                    • 컬러가 없는 3열 형식(<b>차종 / 품명 / 재고</b>)도 인식합니다<br>
-                    • <b>-</b>는 재고 0으로 인식하며, 같은 차종+품명+컬러가 중복되면 등록할 수 없습니다
+                    • <b>5열</b> (권장): 차종 / 품명 / 컬러 / 도장LOT / 재고<br>
+                    • <b>4열</b>: 차종 / 품명 / 도장LOT / 재고 (색상 없음)<br>
+                    • <b>3열</b>: 차종 / 품명 / 재고 (색상, 도장LOT 없음)<br>
+                    • 헤더가 있어도 자동으로 제외됩니다 • <b>-</b>는 재고 0으로 인식 • 중복 항목은 등록 불가
                 </span>
             </div>
             <div style="margin-bottom:10px;padding:8px 10px;background:var(--bg-secondary);border-radius:6px;
                         font-family:Consolas,monospace;font-size:0.78rem;line-height:1.45;color:var(--text-secondary);">
-                차종&nbsp;&nbsp;&nbsp;&nbsp;품명&nbsp;&nbsp;&nbsp;&nbsp;컬러&nbsp;&nbsp;&nbsp;&nbsp;재고<br>
-                A3&nbsp;&nbsp;&nbsp;&nbsp;COVER [EC] 6PS 레이저인쇄&nbsp;&nbsp;&nbsp;&nbsp;6PS&nbsp;&nbsp;&nbsp;&nbsp;1,500<br>
-                T1XX&nbsp;&nbsp;&nbsp;&nbsp;PARK&nbsp;&nbsp;&nbsp;&nbsp;BK&nbsp;&nbsp;&nbsp;&nbsp;-
+                차종&nbsp;&nbsp;&nbsp;&nbsp;품명&nbsp;&nbsp;&nbsp;&nbsp;컬러&nbsp;&nbsp;&nbsp;&nbsp;도장LOT&nbsp;&nbsp;&nbsp;&nbsp;재고<br>
+                A3&nbsp;&nbsp;&nbsp;&nbsp;COVER [EC] 6PS 레이저인쇄&nbsp;&nbsp;&nbsp;&nbsp;6PS&nbsp;&nbsp;&nbsp;&nbsp;260627&nbsp;&nbsp;&nbsp;&nbsp;1,500<br>
+                T1XX&nbsp;&nbsp;&nbsp;&nbsp;PARK&nbsp;&nbsp;&nbsp;&nbsp;BK&nbsp;&nbsp;&nbsp;&nbsp;260630&nbsp;&nbsp;&nbsp;&nbsp;-
             </div>
             <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
                 <button class="btn btn-outline" onclick="LaserStandbyModule.previewBulkModal()">
@@ -5216,6 +5226,7 @@ var LaserStandbyModule = (function() {
                     <td style="padding:6px 8px;">${_escapeHtml(row.carModel)}</td>
                     <td style="padding:6px 8px;">${_escapeHtml(row.partName)}</td>
                     <td style="padding:6px 8px;">${_escapeHtml(row.color || '-')}</td>
+                    <td style="padding:6px 8px;font-family:monospace;color:var(--text-secondary);">${_escapeHtml(row.paintDate || '-')}</td>
                     <td style="padding:6px 8px;text-align:right;color:var(--text-muted);">${UIUtils.formatNumber(current)}</td>
                     <td style="padding:6px 8px;text-align:right;font-weight:700;">${UIUtils.formatNumber(row.quantity)}</td>
                     <td style="padding:6px 8px;text-align:center;">
@@ -5238,6 +5249,7 @@ var LaserStandbyModule = (function() {
                             <th style="padding:6px 8px;text-align:left;">차종</th>
                             <th style="padding:6px 8px;text-align:left;">품명</th>
                             <th style="padding:6px 8px;text-align:left;">컬러</th>
+                            <th style="padding:6px 8px;text-align:left;">도장LOT</th>
                             <th style="padding:6px 8px;text-align:right;">현재고</th>
                             <th style="padding:6px 8px;text-align:right;">등록 재고</th>
                             <th style="padding:6px 8px;text-align:center;">작업</th>
@@ -5276,6 +5288,7 @@ var LaserStandbyModule = (function() {
                     <td style="padding:7px 9px;">${_escapeHtml(row.carModel)}</td>
                     <td style="padding:7px 9px;">${_escapeHtml(row.partName)}</td>
                     <td style="padding:7px 9px;">${_escapeHtml(row.color || '-')}</td>
+                    <td style="padding:7px 9px;font-family:monospace;font-size:0.75rem;">${_escapeHtml(row.paintDate || '-')}</td>
                     <td style="padding:7px 9px;text-align:right;color:var(--text-muted);">${UIUtils.formatNumber(row.currentQty)}</td>
                     <td style="padding:7px 9px;text-align:right;font-weight:700;">${UIUtils.formatNumber(row.targetQty)}</td>
                     <td style="padding:7px 9px;text-align:right;font-weight:700;color:${diffColor};">${diffLabel}</td>
@@ -5308,6 +5321,7 @@ var LaserStandbyModule = (function() {
                             <th style="padding:7px 9px;text-align:left;">차종</th>
                             <th style="padding:7px 9px;text-align:left;">품명</th>
                             <th style="padding:7px 9px;text-align:left;">컬러</th>
+                            <th style="padding:7px 9px;text-align:left;">도장LOT</th>
                             <th style="padding:7px 9px;text-align:right;">기존 재고</th>
                             <th style="padding:7px 9px;text-align:right;">등록 재고</th>
                             <th style="padding:7px 9px;text-align:right;">변경</th>
@@ -5356,6 +5370,7 @@ var LaserStandbyModule = (function() {
                 carModel,
                 partName,
                 color,
+                paintDate: row.paintDate || '',
                 currentQty,
                 targetQty,
                 diff: targetQty - currentQty
@@ -5367,7 +5382,7 @@ var LaserStandbyModule = (function() {
                 partName: _normalizeBulkText(row.partName),
                 color: _normalizeBulkText(row.color),
                 actualQty: Math.max(0, Number(row.quantity) || 0),
-                paintLot: '',
+                paintLot: _normalizeBulkText(row.paintDate || ''),
                 injectionLot: '',
                 manualType: 'bulk',
                 updatedAt: now
