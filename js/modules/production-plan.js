@@ -2937,14 +2937,24 @@ const ProductionPlanModule = (function() {
             }
             if (m.mfgProductName)  planPartNames.add(m.mfgProductName.trim());
             if (m.mfgProductName2) planPartNames.add(m.mfgProductName2.trim());
-            if (m.injColor) {
-                m.injColor.split(/[,，\/]/).map(c => _normalizeColorName(c)).filter(Boolean)
-                    .forEach(c => planColors.add(c));
-            }
         });
 
         if (planPartNames.size === 0) {
             return { pendingPlans: [], inProgressPlans: [], pendingTotal: 0, inProgressTotal: 0 };
+        }
+
+        // ★ _calcInjPlanReserved와 동일한 규칙: 매칭된 자재의 injColor가
+        //   2종 이상으로 갈릴 때만 색상 필터를 활성화 (배지 집계와 일치시킴)
+        const _distinctInjColors = new Set(
+            _matchedMats.map(m => _normalizeColorName(m.injColor || '')).filter(Boolean)
+        );
+        if (_distinctInjColors.size > 1) {
+            _matchedMats.forEach(m => {
+                if (m.injColor) {
+                    m.injColor.split(/[,，\/]/).map(c => _normalizeColorName(c)).filter(Boolean)
+                        .forEach(c => planColors.add(c));
+                }
+            });
         }
 
         const workedPlanIds = new Set(
@@ -2973,7 +2983,8 @@ const ProductionPlanModule = (function() {
             const byId   = p.productId && _productIdSet.has(p.productId);
             const byName = !byId && planPartNames.has((p.partName || '').trim());
             if (!byId && !byName) return;
-            if (!_colorOk(p.color)) return;
+            // ★ ID 매칭 시에는 색상 필터 제외(도장 컬러 ≠ 사출 컬러) — _calcInjPlanReserved와 동일
+            if (!byId && !_colorOk(p.color)) return;
 
             const qty  = Number(p.planQty) || 0;
             const info = { id: p.id, date: p.date || '', partName: p.partName || '', color: p.color || '',
