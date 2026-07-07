@@ -909,7 +909,39 @@ app.post('/api/photos/mkdirs', async (req, res) => {
   res.json({ baseDir, created: results.filter(r => r.ok).length, total: results.length, results });
 });
 
-// 폴더별 상태(존재/파일수/총크기/최근수정) 조회
+// 디렉토리를 재귀적으로 훑어 파일수/총크기/최근수정시각을 집계
+// (uploadPhoto가 subdir/YYYY-MM/파일명 형태로 월별 하위 폴더에 저장하므로 재귀 필요)
+async function _scanDirStats(dir, depth = 0) {
+  if (depth > 6) return { fileCount: 0, totalSize: 0, latestMtime: 0 }; // 무한 재귀 방지
+  let fileCount = 0;
+  let totalSize = 0;
+  let latestMtime = 0;
+  let entries;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return { fileCount, totalSize, latestMtime };
+  }
+  for (const entry of entries) {
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const sub = await _scanDirStats(entryPath, depth + 1);
+      fileCount += sub.fileCount;
+      totalSize += sub.totalSize;
+      if (sub.latestMtime > latestMtime) latestMtime = sub.latestMtime;
+    } else if (entry.isFile()) {
+      try {
+        const st = await fs.stat(entryPath);
+        fileCount += 1;
+        totalSize += st.size;
+        if (st.mtimeMs > latestMtime) latestMtime = st.mtimeMs;
+      } catch {}
+    }
+  }
+  return { fileCount, totalSize, latestMtime };
+}
+
+// 폴더별 상태(존재/파일수/총크기/최근수정) 조회 — 월별 하위 폴더까지 재귀 집계
 app.post('/api/photos/stats', async (req, res) => {
   const { subdirs = [] } = req.body || {};
   const baseDir = getPhotoDir();
@@ -924,19 +956,7 @@ app.post('/api/photos/stats', async (req, res) => {
         results.push({ subdir: safeSub, exists: false, error: 'not a directory' });
         continue;
       }
-      const entries = await fs.readdir(dir, { withFileTypes: true });
-      let fileCount = 0;
-      let totalSize = 0;
-      let latestMtime = 0;
-      for (const entry of entries) {
-        if (!entry.isFile()) continue;
-        try {
-          const st = await fs.stat(path.join(dir, entry.name));
-          fileCount += 1;
-          totalSize += st.size;
-          if (st.mtimeMs > latestMtime) latestMtime = st.mtimeMs;
-        } catch {}
-      }
+      const { fileCount, totalSize, latestMtime } = await _scanDirStats(dir);
       results.push({
         subdir: safeSub,
         path: dir,
