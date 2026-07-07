@@ -17445,7 +17445,12 @@ var PaintMixModule = (function() {
             <div class="form-row">
                 <div class="form-group"><label class="form-label">배합일자</label><input type="date" class="form-input" id="pmixDate" value="${_esc(data.date || UIUtils.today())}" readonly style="background:var(--bg-secondary);color:var(--text-muted);"></div>
                 <div class="form-group"><label class="form-label">라인</label><input type="text" class="form-input" id="pmixLine" value="${_esc(data.line || '')}" readonly style="background:var(--bg-secondary);color:var(--text-muted);"></div>
-                <div class="form-group"><label class="form-label">작업자</label><select class="form-select" id="pmixOperator">${(() => { const ops = Storage.getAll(DB.STORES.OPERATORS) || []; return '<option value="">선택</option>' + ops.map(o => `<option value="${_esc(o.name || o.id)}" ${(o.name || o.id) === (data.operator || '') ? 'selected' : ''}>${_esc(o.name || o.id)}</option>`).join(''); })()}</select></div>
+                <div class="form-group"><label class="form-label">작업자</label><select class="form-select" id="pmixOperator">${(() => {
+                    const ops = Storage.getAll(DB.STORES.OPERATORS) || [];
+                    const loginUser = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? (AuthModule.getCurrentUser() || {}) : {};
+                    const defaultOperator = data.operator || loginUser.name || '';
+                    return '<option value="">선택</option>' + ops.map(o => `<option value="${_esc(o.name || o.id)}" ${(o.name || o.id) === defaultOperator ? 'selected' : ''}>${_esc(o.name || o.id)}</option>`).join('');
+                })()}</select></div>
             </div>
             <div class="form-row">
                 <div class="form-group"><label class="form-label">차종</label><input type="text" class="form-input" id="pmixCarModel" value="${_esc(data.carModel || '')}" readonly style="background:var(--bg-secondary);color:var(--text-muted);"></div>
