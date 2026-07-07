@@ -9834,19 +9834,16 @@ const SettingsModule = (function() {
     // 실제 코드에서 각 폴더(subdir)에 사진을 업로드하는 입력 페이지 위치
     // (ApiClient.uploadPhoto 호출부 기준으로 확인된 값 — 코드 변경 시 함께 갱신 필요)
     const PHOTO_PAGE_USAGE = {
-        'paint-inspections': '수입검사 › 도료 수입검사 (명판/성적서 사진)',
-        'inj-inspections':   '수입검사 › 사출 수입검사',
-        'laser':             '레이저 공정 (작업 사진)',
-        'improvement':       '개선활동',
-        'MSDS':              '안전관리 › MSDS 등록대장',
-        'TDS':               '제조 관리 표준 › 도료 TDS 파일 첨부',
-        'paint_jig':         '도장지그 › 도장 지그 대장'
+        'paint-inspections':  '수입검사 › 도료 수입검사 (명판/성적서 사진)',
+        'inj-inspections':    '수입검사 › 사출 수입검사',
+        'laser':              '레이저 공정 (작업 사진)',
+        'improvement':        '개선활동',
+        'MSDS':               '안전관리 › MSDS 등록대장',
+        'TDS':                '제조 관리 표준 › 도료 TDS 파일 첨부',
+        'paint_jig':          '도장지그 › 도장 지그 대장',
+        'quality-checksheet': '초중종물 관리 (체크시트 사진, 연/월 하위 폴더)'
     };
     function _photoPageUsage(subdir) {
-        if (subdir === 'product-sampleing') {
-            return `<span style="color:#b91c1c;">미연결</span>
-                <span style="font-size:.66rem;color:var(--text-muted);display:block;">(초중종물 관리는 실제로 quality-checksheet 폴더 사용)</span>`;
-        }
         const label = PHOTO_PAGE_USAGE[subdir];
         return label
             ? _esc(label)
@@ -9857,7 +9854,19 @@ const SettingsModule = (function() {
     async function _loadUserPhotoDirs() {
         try {
             const v = await Storage.getConfigValue(PHOTO_USER_DIRS_KEY);
-            return Array.isArray(v) ? v : [];
+            let list = Array.isArray(v) ? v : [];
+            // 초중종물 관리 코드는 실제로 quality-checksheet 폴더를 사용하므로
+            // 예전에 잘못 등록된 product-sampleing 항목을 실제 경로로 자동 교정
+            let fixed = false;
+            list = list.map(p => {
+                if (p && p.subdir === 'product-sampleing') {
+                    fixed = true;
+                    return { ...p, subdir: 'quality-checksheet' };
+                }
+                return p;
+            });
+            if (fixed) await _saveUserPhotoDirs(list);
+            return list;
         } catch { return []; }
     }
     async function _saveUserPhotoDirs(list) {
