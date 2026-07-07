@@ -278,6 +278,15 @@ var LaserWorkModule = (function() {
         return key === '레이저' || key === '레이져' || lower.includes('laser');
     }
 
+    // 제품 공정(process1~4)에 도장 공정이 포함되는지 검사 (사출→레이저 직결 품목은 도장 LOT가 없음)
+    function _hasPaintingProcess(prod) {
+        if (!prod) return true; // 제품 미확인 시 기존 동작 유지(도장LOT 필수)
+        return [prod.process1, prod.process2, prod.process3, prod.process4].some(v => {
+            const s = String(v || '').replace(/\s+/g, '');
+            return s.includes('도장') || s.toUpperCase().includes('PAINT');
+        });
+    }
+
     function _firstFilled(obj, keys) {
         for (const key of keys) {
             const value = obj && obj[key];
@@ -618,6 +627,18 @@ var LaserWorkModule = (function() {
         if (label) label.textContent = `1cycle = ${sec || '00'} sec`;
         if (input && (forceValue || !input.value) && sec) input.value = sec;
         _updateLaserCycleEstimate(spec);
+        _updateManualPaintLotVisibility(_selectedCarModel, _selectedPartName, _selectedColor);
+    }
+
+    // 사출→레이저 직결 품목(도장 공정 없음)은 수기 등록 시 도장LOT 입력을 감춘다.
+    function _updateManualPaintLotVisibility(carModel, partName, color) {
+        const wrap = document.getElementById('lwManualPaintLotWrap');
+        const input = document.getElementById('lwManualPaintLot');
+        if (!wrap || !input) return;
+        const prod = _findProductForWork(carModel, partName, color);
+        const needsPaint = _hasPaintingProcess(prod);
+        wrap.style.display = needsPaint ? '' : 'none';
+        if (!needsPaint) input.value = '';
     }
 
     // 각인 시간(실제 입력값) 변경 시 완료시간 예상치/표준완료시간을 다시 계산
@@ -1003,7 +1024,7 @@ var LaserWorkModule = (function() {
                     </div>
                 </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-                    <div class="form-group" style="margin:0;"><label class="form-label">도장LOT <span style="color:var(--accent-red)">*</span></label>
+                    <div class="form-group" id="lwManualPaintLotWrap" style="margin:0;"><label class="form-label">도장LOT <span style="color:var(--accent-red)">*</span></label>
                         <input type="text" class="form-input" id="lwManualPaintLot" value="${d.paintDate || ''}" placeholder="도장 LOT">
                     </div>
                     <div class="form-group" style="margin:0;"><label class="form-label">사출LOT <span style="color:var(--accent-red)">*</span></label>
@@ -1875,7 +1896,9 @@ var LaserWorkModule = (function() {
         if (!data.quantity || Number(data.quantity) <= 0) add('작업수량', 'lwQuantity');
 
         if (manualEnabled && _selectedLots.length === 0) {
-            if (!_inputValue('lwManualPaintLot')) add('도장 LOT', 'lwManualPaintLot');
+            const paintLotWrap = document.getElementById('lwManualPaintLotWrap');
+            const paintLotNeeded = !paintLotWrap || paintLotWrap.style.display !== 'none';
+            if (paintLotNeeded && !_inputValue('lwManualPaintLot')) add('도장 LOT', 'lwManualPaintLot');
             if (!_inputValue('lwManualInjLot')) add('사출 LOT', 'lwManualInjLot');
         } else {
             if (!_selectedLots.length) add('작업 LOT 선택', 'lwSbCar');
