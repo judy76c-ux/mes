@@ -870,21 +870,16 @@ var InjectionWarehouseModule = (function() {
 
         // 창고 입고 기록: partName + lotNo 기준 Set (qty > 0인 LOT만 입고 완료로 인정)
         const inStockSet = new Set();
-        const lotQtyMap  = {}; // partName||lotNo → 실제 창고 수량 합계
         inventory.filter(i => i.type === '입고').forEach(i => {
             if (i.lots && i.lots.length > 0) {
                 i.lots.forEach(function(lot) {
                     if (!lot.lotNo) return;
                     const k = `${i.partName}||${lot.lotNo}`;
-                    const q = Number(lot.qty) || 0;
-                    lotQtyMap[k] = (lotQtyMap[k] || 0) + q;
-                    if (q > 0) inStockSet.add(k);
+                    if ((Number(lot.qty) || 0) > 0) inStockSet.add(k);
                 });
             } else if (i.lotNo) {
                 const k = `${i.partName}||${i.lotNo}`;
-                const q = Number(i.quantity) || 0;
-                lotQtyMap[k] = (lotQtyMap[k] || 0) + q;
-                if (q > 0) inStockSet.add(k);
+                if ((Number(i.quantity) || 0) > 0) inStockSet.add(k);
             }
         });
 
@@ -1016,88 +1011,6 @@ var InjectionWarehouseModule = (function() {
                     </tbody>
                 </table>
             </div>`;
-
-        // ── 누락 검증: 검사 qty > 0 인데 창고 qty = 0 인 LOT ──────────
-        _renderMissingValidation(inspections, lotQtyMap, card);
-    }
-
-    function _renderMissingValidation(inspections, lotQtyMap, parentCard) {
-        // 이미 있는 누락 카드 제거
-        const prev = document.getElementById('injMissingValidationCard');
-        if (prev) prev.remove();
-
-        const missing = [];
-        inspections
-            .filter(i => !_isTestInspection(i))
-            .forEach(insp => {
-                const lots = (insp.lots && insp.lots.length > 0)
-                    ? insp.lots
-                    : (insp.lotNo ? [{ lotNo: insp.lotNo, qty: insp.passQty || 0 }] : []);
-                lots.forEach(lot => {
-                    if ((Number(lot.qty) || 0) <= 0) return;
-                    const k = `${insp.partName}||${lot.lotNo}`;
-                    const wQty = lotQtyMap[k] || 0;
-                    if (wQty <= 0) {
-                        missing.push({
-                            date:       (insp.date || '').slice(0, 10),
-                            carModel:   insp.carModel,
-                            partName:   insp.partName,
-                            color:      insp.color,
-                            lotNo:      lot.lotNo,
-                            inspQty:    lot.qty,
-                            warehouseQty: wQty,
-                            inspId:     insp.id
-                        });
-                    }
-                });
-            });
-
-        if (!missing.length) return;
-
-        const div = document.createElement('div');
-        div.id = 'injMissingValidationCard';
-        div.innerHTML = `
-            <div class="card" style="margin-top:16px;border-left:3px solid var(--accent-red);">
-                <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
-                    <h4 style="display:flex;align-items:center;gap:8px;color:var(--accent-red);">
-                        <span class="material-symbols-outlined">warning</span>
-                        창고 입고 대기 LOT
-                        <span style="font-size:0.78rem;background:var(--accent-red);color:#fff;padding:2px 8px;border-radius:12px;font-weight:600;">${missing.length}건</span>
-                    </h4>
-                    <span style="font-size:0.8rem;color:var(--text-muted);">수입검사는 완료됐지만 아직 사출 창고에 입고되지 않은 LOT</span>
-                </div>
-                <div class="card-body" style="padding:0;">
-                    <div class="data-table-wrapper">
-                        <table class="data-table">
-                            <thead><tr>
-                                <th>검사일</th><th>차종</th><th>품명</th><th>컬러</th>
-                                <th style="font-family:monospace;">LOT번호</th>
-                                <th style="text-align:right;">검사 수량</th>
-                                <th style="text-align:right;">창고 수량</th>
-                                <th></th>
-                            </tr></thead>
-                            <tbody>
-                                ${missing.map(r => `
-                                <tr style="background:rgba(239,68,68,0.04);">
-                                    <td style="font-size:0.82rem;">${r.date}</td>
-                                    <td>${r.carModel || '-'}</td>
-                                    <td><strong>${r.partName}</strong></td>
-                                    <td>${r.color || '-'}</td>
-                                    <td style="font-family:monospace;font-weight:600;color:var(--accent-red);">${r.lotNo}</td>
-                                    <td style="text-align:right;font-weight:700;">${UIUtils.formatNumber(r.inspQty)}</td>
-                                    <td style="text-align:right;color:var(--accent-red);font-weight:700;">${UIUtils.formatNumber(r.warehouseQty)}</td>
-                                    <td>
-                                        <button class="btn btn-sm btn-primary" onclick="InjectionWarehouseModule.openAddFromInspection('${r.inspId}','${r.lotNo}')">
-                                            <span class="material-symbols-outlined" style="font-size:0.9rem;">add_circle</span> 입고
-                                        </button>
-                                    </td>
-                                </tr>`).join('')}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>`;
-        parentCard.after(div);
     }
 
     // DEV 테스트 시드 검사 기록 판별 ([DEV] 표기 또는 LOT 260101 + 테스트 검사자)
