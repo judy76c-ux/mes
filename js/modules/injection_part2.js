@@ -5,6 +5,62 @@ var InjectionWarehouseModule = (function() {
     const STORE = DB.STORES.INJECTION_INVENTORY;
     let _pendingInspDate = '';
 
+    // key/표시용 문자열 정규화 (콤마/공백/트림)
+    function _normKeyStr(v) {
+        return String(v || '')
+            .replace(/[，]/g, ',')         // 전각 콤마 → 반각
+            .replace(/\s*,\s*/g, ',')     // 콤마 전후 공백 정리
+            .replace(/\s+/g, ' ')         // 연속 공백 정리
+            .trim();
+    }
+
+    // 타일/목록 표시에서만 제외할 "명백한" 컬러 오입력(숫자형 LOT)
+    function _isDisplayInvalidColor(color) {
+        const c = _normKeyStr(color);
+        if (/^\d[\d,.\s]*$/.test(c)) return true;
+        return false;
+    }
+
+    function _matHasMfgMapping(mat) {
+        if (!mat) return false;
+        const n1 = _normKeyStr(mat.mfgProductName);
+        const n2 = _normKeyStr(mat.mfgProductName2);
+        const hasIds = Array.isArray(mat.productIds) && mat.productIds.length > 0;
+        // v19: productIds가 비어 있어도 mfgProductName/2가 있으면 "설정됨"으로 간주 (하위호환)
+        return Boolean(n1 || n2 || hasIds);
+    }
+
+    function _findMatEntryForTile(allMats, carModel, itemPartName, itemColor) {
+        const mats = allMats || [];
+        const cCar  = _normKeyStr(carModel);
+        const cPart = _normKeyStr(itemPartName);
+        const cCol  = _normKeyStr(itemColor);
+
+        // 1) 차종+품명(+컬러) 정규화 기반 매칭 (가능하면 컬러까지)
+        let candidates = mats.filter(m =>
+            _normKeyStr(m.carModel) === cCar &&
+            _normKeyStr(m.injPartName || m.partName) === cPart
+        );
+
+        if (candidates.length > 1 && cCol) {
+            const byColor = candidates.filter(m => {
+                const mCol = _normKeyStr(m.injColor || m.color);
+                if (!mCol) return false;
+                return mCol
+                    .split(/[,/·|]/)
+                    .map(v => _normKeyStr(v))
+                    .filter(Boolean)
+                    .includes(cCol);
+            });
+            if (byColor.length === 1) return byColor[0];
+            if (byColor.length > 1) candidates = byColor;
+        }
+        if (candidates.length === 1) return candidates[0];
+
+        // 2) 차종 없이 품명만(레거시) — 마지막 fallback
+        return mats.find(m => _normKeyStr(m.injPartName || m.partName) === cPart) || null;
+    }
+
     function _hasRole(user, roleKey) {
         if (!user || !roleKey) return false;
         const keys = [];
@@ -123,17 +179,50 @@ var InjectionWarehouseModule = (function() {
         const data = Storage.getAll(STORE);
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS);
 
-        // ── 재고 집계: 차종+품명+컬러 키 ──────────────────────────
-        const stockMap = {}; // key: carModel||partName||color
+        // ── 재고 집계: "마스터 전체 품목" 기준으로 seed 후, 입출고를 조인 ──
+        // key: carModel||partName||color
+        const stockMap = {};
         let totalValue = 0;
-        data.forEach(d => {
+
+        // 1) 마스터(사출 품목) 기준으로 전체 리스트 구성 (재고 0도 포함)
+        (materials || []).forEach(m => {
+            const carModel = _normKeyStr(m.carModel);
+            const partName = _normKeyStr(m.injPartName || m.partName);
+            const color = _normKeyStr(m.injColor || m.color);
+            if (!carModel && !partName && !color) return;
+            const key = `${carModel}||${partName}||${color}`;
+            if (!stockMap[key]) {
+                stockMap[key] = {
+                    carModel,
+                    partName,
+                    color,
+                    stock: 0,
+                    price: Number(m.unitPrice) || 0
+                };
+            } else if (!stockMap[key].price) {
+                stockMap[key].price = Number(m.unitPrice) || 0;
+            }
+        });
+
+        // 2) 재고(입출고)에서 품목별 현재고 합계 계산하여 조인 (없으면 0 유지)
+        (data || []).forEach(d => {
             // v19: injMaterialId 있으면 ID 직접 조회, 없으면 carModel+partName 텍스트 Fallback
+            const dCar  = _normKeyStr(d.carModel);
+            const dPart = _normKeyStr(d.partName);
             const mat = (d.injMaterialId && materials.find(m => m.id === d.injMaterialId))
-                     || materials.find(m => m.carModel === d.carModel && m.injPartName === d.partName);
-            const price = Number(mat ? mat.unitPrice : 0) || 0;
+                     || materials.find(m => _normKeyStr(m.carModel) === dCar && _normKeyStr(m.injPartName) === dPart);
+
+            // 가능한 경우 마스터 값을 canonical key로 사용 (partName=injPartName)
+            const carModel = _normKeyStr((mat && mat.carModel) || d.carModel);
+            const partName = _normKeyStr((mat && (mat.injPartName || mat.partName)) || d.partName);
+            const color = _normKeyStr((mat && (mat.injColor || mat.color)) || d.color);
+
+            const price = Number(mat ? mat.unitPrice : (stockMap[`${carModel}||${partName}||${color}`]?.price || 0)) || 0;
             const qty = Number(d.quantity) || 0;
-            const key = `${d.carModel||''}||${d.partName||''}||${d.color||''}`;
-            if (!stockMap[key]) stockMap[key] = { carModel: d.carModel||'', partName: d.partName||'', color: d.color||'', stock: 0, price };
+            const key = `${carModel}||${partName}||${color}`;
+
+            if (!stockMap[key]) stockMap[key] = { carModel, partName, color, stock: 0, price };
+
             if (d.type === '출고') {
                 stockMap[key].stock -= qty;
                 totalValue -= qty * price;
@@ -148,7 +237,7 @@ var InjectionWarehouseModule = (function() {
 
 
         // ── 차종 드롭다운 채우기 ───────────────────────────────────
-        const carModels = UIUtils.sortCarModels(data.map(d => d.carModel));
+        const carModels = UIUtils.sortCarModels(Object.values(stockMap).map(v => v.carModel));
         ['injTileCarFilter','injTxCar'].forEach(id => {
             const sel = document.getElementById(id);
             if (!sel) return;
@@ -186,12 +275,10 @@ var InjectionWarehouseModule = (function() {
                 const available  = item.stock - reserved;
 
                 // ── 제작품목 미설정 경고 뱃지 ──────────────────────────
-                // ★ .trim() 비교 + productIds 포함 여부도 확인 (v19 드롭다운 등록 지원)
-                const _matEntry = _allMats.find(m =>
-                    (m.injPartName || '').trim() === (item.partName || '').trim());
-                const _hasMfgMapping = _matEntry && (
-                    _matEntry.mfgProductName || _matEntry.mfgProductName2 ||
-                    (_matEntry.productIds && _matEntry.productIds.length > 0));
+                // v19+: 타일 쪽 partName은 _normKeyStr()로 canonicalize 될 수 있어 .trim() 단독 비교는 매칭 실패 가능
+                //      → 차종+품명(+컬러) 정규화 키로 사출자재 마스터를 찾는다.
+                const _matEntry = _findMatEntryForTile(_allMats, carModel, item.partName, item.color);
+                const _hasMfgMapping = _matHasMfgMapping(_matEntry);
                 const _noMappingBadge = (!_hasMfgMapping)
                     ? `<span title="설정 > 사출자재에서 제작품목1/2를 입력해야 예약 수량이 표시됩니다"
                              style="font-size:0.62rem;background:rgba(234,179,8,0.15);color:#b45309;
@@ -226,6 +313,14 @@ var InjectionWarehouseModule = (function() {
                         </div>`;
                 } else {
                     stockHtml = `<span style="font-size:0.85rem;font-weight:700;color:${item.stock > 0 ? 'var(--accent-blue)' : 'var(--accent-red)'};">${UIUtils.formatNumber(item.stock)} EA</span>`;
+                }
+
+                // 재고 마이너스는 데이터(입출고 기록) 오류 — 숨기지 않고 경고 뱃지로 노출
+                if (item.stock < 0) {
+                    stockHtml += `<span title="입출고 합계가 마이너스입니다. 최근 입고/출고/LOT 수정 기록을 확인하세요."
+                        style="display:inline-block;margin-left:4px;font-size:0.6rem;font-weight:700;background:rgba(220,38,38,0.12);
+                               color:#b91c1c;border:1px solid rgba(220,38,38,0.4);border-radius:3px;padding:0 4px;
+                               vertical-align:middle;cursor:help;white-space:nowrap;">⚠ 재고 오류</span>`;
                 }
 
                 return `
@@ -320,11 +415,16 @@ var InjectionWarehouseModule = (function() {
         const stockMap = stockMapArg || (() => {
             const m = {};
             data.forEach(d => {
-                const mat = materials.find(x => x.carModel === d.carModel && x.injPartName === d.partName);
+                const dCar  = _normKeyStr(d.carModel);
+                const dPart = _normKeyStr(d.partName);
+                const mat = materials.find(x => _normKeyStr(x.carModel) === dCar && _normKeyStr(x.injPartName) === dPart);
                 const price = Number(mat ? mat.unitPrice : 0) || 0;
                 const qty = Number(d.quantity) || 0;
-                const key = `${d.carModel||''}||${d.partName||''}||${d.color||''}`;
-                if (!m[key]) m[key] = { carModel: d.carModel||'', partName: d.partName||'', color: d.color||'', stock: 0, price };
+                const carModel = _normKeyStr(d.carModel);
+                const partName = _normKeyStr(d.partName);
+                const color = _normKeyStr(d.color);
+                const key = `${carModel}||${partName}||${color}`;
+                if (!m[key]) m[key] = { carModel, partName, color, stock: 0, price };
                 if (d.type === '출고') m[key].stock -= qty; else m[key].stock += qty;
             });
             return m;
@@ -333,12 +433,16 @@ var InjectionWarehouseModule = (function() {
         // ── 마스터에 등록됐지만 입출고 이력 없는 품목도 재고 0으로 포함 ──
         const mergedMap = Object.assign({}, stockMap);
         materials.forEach(mat => {
-            const key = `${mat.carModel||''}||${mat.injPartName||''}||${mat.injColor||''}`;
-            if (!mergedMap[key] && mat.carModel && mat.injPartName) {
+            const carModel = _normKeyStr(mat.carModel);
+            const partName = _normKeyStr(mat.injPartName);
+            const color = _normKeyStr(mat.injColor);
+            const key = `${carModel}||${partName}||${color}`;
+            // carModel/컬러가 비어도(미설정) 마스터 품목은 목록에 포함한다
+            if (!mergedMap[key] && partName) {
                 mergedMap[key] = {
-                    carModel: mat.carModel   || '',
-                    partName: mat.injPartName || '',
-                    color:    mat.injColor    || '',
+                    carModel,
+                    partName,
+                    color,
                     stock:    0,
                     price:    Number(mat.unitPrice) || 0
                 };
@@ -351,11 +455,13 @@ var InjectionWarehouseModule = (function() {
         const byCarModel = {};
         Object.values(mergedMap).forEach(item => {
             if (filterCar && item.carModel !== filterCar) return;
-            if (!item.carModel) return;
-            if (item.stock < 0) return;              // 마이너스 재고는 데이터 오류 — 표시 제외
-            if (_isInvalidColor(item.color)) return; // 컬러 미설정·숫자형 컬러 제외
-            if (!byCarModel[item.carModel]) byCarModel[item.carModel] = [];
-            byCarModel[item.carModel].push(item);
+            // ★ 마이너스 재고도 숨기지 않고 표시한다 — 입출고 기록 오류를 감추면
+            //   품목이 통째로 사라져 보여 문제를 알아채기 더 어려워진다.
+            //   (표시 시 "⚠ 재고 오류" 뱃지로 강조 — _buildCarCard 참고)
+            if (_isDisplayInvalidColor(item.color)) return; // 숫자형 컬러(LOT 오입력)만 제외
+            const groupKey = item.carModel || '(차종 미설정)';
+            if (!byCarModel[groupKey]) byCarModel[groupKey] = [];
+            byCarModel[groupKey].push(item);
         });
 
         const entries = Object.entries(byCarModel);
@@ -785,6 +891,35 @@ var InjectionWarehouseModule = (function() {
             return;
         }
 
+        const delta = newQty - (Number(oldQty) || 0);
+
+        // ★ 이 보정을 적용했을 때 해당 품목의 전체 재고(모든 LOT 합산)가
+        //   마이너스가 되면 그대로 진행하지 않고 먼저 확인을 받는다.
+        //   (LOT 하나만 보고 수정하면 다른 LOT과 합산한 실제 재고가 이미
+        //    부족한 상태를 놓쳐 마이너스 재고 오류로 이어질 수 있음)
+        if (delta !== 0) {
+            let currentTotal = 0;
+            (all || []).forEach(d => {
+                if (d.carModel === carModel && d.partName === partName && (d.color || '') === (color || '')) {
+                    const q = Number(d.quantity) || 0;
+                    currentTotal += (d.type === '출고') ? -q : q;
+                }
+            });
+            const projected = currentTotal + delta;
+            if (projected < 0) {
+                UIUtils.confirm(
+                    `이 수정을 적용하면 "${partName}"의 전체 재고가 ${UIUtils.formatNumber(projected)} EA(마이너스)가 됩니다.\n` +
+                    `다른 LOT의 실제 재고나 이전 입출고 기록을 다시 확인해 주세요.\n\n그래도 계속하시겠습니까?`,
+                    () => _commitLotEdit(carModel, partName, color, oldLot, newLot, newDate, newSupplier, targets, delta)
+                );
+                return;
+            }
+        }
+
+        await _commitLotEdit(carModel, partName, color, oldLot, newLot, newDate, newSupplier, targets, delta);
+    }
+
+    async function _commitLotEdit(carModel, partName, color, oldLot, newLot, newDate, newSupplier, targets, delta) {
         try {
             for (const d of targets) {
                 const updates = {};
@@ -807,7 +942,6 @@ var InjectionWarehouseModule = (function() {
             }
 
             // 수량 보정 — 차이만큼 입/출고 기록을 추가해 재고에 반영 (기존 기록 무손상)
-            const delta = newQty - (Number(oldQty) || 0);
             if (delta !== 0) {
                 const adjQty = Math.abs(delta);
                 const nowStr = (UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' '));
@@ -2640,13 +2774,17 @@ var InjectionWarehouseModule = (function() {
         // 차종+품명 기준으로 현재고 + LOT + 재공금액 집계
         const stockMap = {};
         data.forEach(d => {
-            const color = d.color || '-';
-            const key = `${d.carModel}_${d.partName}_${color}`;
+            const carModel = _normKeyStr(d.carModel) || '-';
+            const partName = _normKeyStr(d.partName) || '-';
+            const color = _normKeyStr(d.color) || '-';
+            const key = `${carModel}_${partName}_${color}`;
             if (!stockMap[key]) {
-                const mat = materials.find(m => m.carModel === d.carModel && m.injPartName === d.partName);
+                const mat = materials.find(m =>
+                    _normKeyStr(m.carModel) === carModel && _normKeyStr(m.injPartName) === partName
+                );
                 stockMap[key] = {
-                    carModel: d.carModel || '-',
-                    partName: d.partName || '-',
+                    carModel,
+                    partName,
                     color: color,
                     supplier: d.supplier || '-',
                     unit: d.unit || 'EA',
@@ -2667,12 +2805,14 @@ var InjectionWarehouseModule = (function() {
         // 마스터에 등록됐지만 입출고 이력 없는 품목도 재고 0으로 포함
         materials.forEach(mat => {
             if (!mat.carModel || !mat.injPartName) return;
-            const color = mat.injColor || '-';
-            const key = `${mat.carModel}_${mat.injPartName}_${color}`;
+            const carModel = _normKeyStr(mat.carModel) || '-';
+            const partName = _normKeyStr(mat.injPartName) || '-';
+            const color = _normKeyStr(mat.injColor) || '-';
+            const key = `${carModel}_${partName}_${color}`;
             if (!stockMap[key]) {
                 stockMap[key] = {
-                    carModel: mat.carModel,
-                    partName: mat.injPartName,
+                    carModel,
+                    partName,
                     color:    color,
                     supplier: '-',
                     unit:     'EA',
@@ -2692,7 +2832,8 @@ var InjectionWarehouseModule = (function() {
 
         const tableRows = rows.length === 0 ?
             `<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text-muted);">재고 데이터가 없습니다.</td></tr>` :
-            rows.filter(r => r.qty >= 0 && !_isInvalidColor(r.color)).map(r => {
+            // 표시 단계에서는 '-'(미설정) 컬러도 노출하고, 숫자형 컬러(LOT 오입력)만 제외
+            rows.filter(r => r.qty >= 0 && !_isDisplayInvalidColor(r.color)).map(r => {
                 const qtyColor = r.qty === 0 ? 'var(--accent-red)' : 'var(--accent-blue)';
                 const lotBadges = r.lots.length > 0 ?
                     r.lots.map(l => `<span class="lot-badge-sm">${l}</span>`).join('') :
