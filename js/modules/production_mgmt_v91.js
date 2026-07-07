@@ -14861,7 +14861,7 @@ var PaintMixModule = (function() {
                     <table class="data-table">
                         <thead><tr>
                             <th>No</th><th>도장작업일</th><th>라인</th><th>차종 / 품명</th><th>생산 LOT</th>
-                            <th>사용 도료</th><th style="text-align:right;">총 사용(g)</th><th>작업자</th><th>작업</th>
+                            <th>사용 도료</th><th>도료 창고 출고</th><th style="text-align:right;">총 사용(g)</th><th>작업자</th><th>작업</th>
                         </tr></thead>
                         <tbody id="pmixHistBody"></tbody>
                     </table>
@@ -14893,7 +14893,7 @@ var PaintMixModule = (function() {
         const tbody = document.getElementById('pmixHistBody');
         if (!tbody) return;
         if (!mixes.length) {
-            tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:30px;color:var(--text-muted);">배합 기록이 없습니다.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--text-muted);">배합 기록이 없습니다.</td></tr>`;
             return;
         }
         tbody.innerHTML = mixes.map((m, i) => {
@@ -14906,6 +14906,9 @@ var PaintMixModule = (function() {
                 if (residG > 0) parts.push(`<span style="color:#f59e0b;">잔량 ${UIUtils.formatNumber(residG)}g</span>`);
                 return `<span style="font-size:0.78rem;">[${_esc(u.usageType||'-')}] ${_esc(u.paintName||'-')}${parts.length?' ('+parts.join(', ')+')':''}</span>`;
             }).join('<br>');
+            const warehouseOutSummary = (m.usages||[]).filter(u => Number(u.warehouseCans) > 0).map(u =>
+                `<span style="font-size:0.78rem;">${_esc(u.paintName||'-')}: <strong style="color:#ea580c;">${UIUtils.formatNumber(u.warehouseCans)}캔</strong></span>`
+            ).join('<br>');
             const _mhd = (m.date||'').split(' ')[0]; const _mht = (m.date||'').split(' ')[1]||m.startTime||'';
             const _mhp = _mhd.split('-'); const _mhDateFmt = _mhd ? `<span style="font-size:0.72rem;color:var(--text-muted);">${_mhp[0]||''}</span><br><strong>${(_mhp[1]||'')+'-'+(_mhp[2]||'')}</strong>${_mht?`<br><span style="font-size:0.72rem;color:var(--text-muted);">${_mht}</span>`:''}` : '-';
             return `<tr>
@@ -14915,6 +14918,7 @@ var PaintMixModule = (function() {
                 <td><strong>${_esc(m.carModel||'-')}</strong><br><span style="font-size:0.78rem;color:var(--text-muted);">${_esc(m.partName||'-')}</span></td>
                 <td style="font-family:monospace;font-size:0.8rem;">${_esc(m.productionLot||'-')}</td>
                 <td style="font-size:0.8rem;line-height:1.7;">${summary||'-'}</td>
+                <td style="font-size:0.8rem;line-height:1.7;">${warehouseOutSummary || '<span style="color:var(--text-muted);">-</span>'}</td>
                 <td style="text-align:right;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(totalG)}g</td>
                 <td>${_esc(m.operator||'-')}</td>
                 <td>
