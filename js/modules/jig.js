@@ -1053,7 +1053,7 @@ var JigModule = (function () {
         return `<div style="display:flex;gap:6px;justify-content:center;">${photos.map((src, idx) => `
             <button type="button" class="btn btn-outline btn-sm" style="padding:2px;border-radius:6px;"
                 onclick="JigModule.viewJigPhoto('${_js(jig.id)}','${_js(key)}',${idx})">
-                <img src="${src}" alt="" style="width:42px;height:32px;object-fit:cover;border-radius:4px;display:block;">
+                <img src="${_esc(_jigPhotoSrc(src))}" alt="" style="width:42px;height:32px;object-fit:cover;border-radius:4px;display:block;">
             </button>
         `).join('')}</div>`;
     }
@@ -1365,6 +1365,13 @@ var JigModule = (function () {
         if (sel) sel.innerHTML = _partNameOptions(car);
     }
 
+    // 지그 대장 사진: 신규 저장분은 NAS 상대경로, 과거 저장분은 data: base64가 섞여 있을 수 있음
+    function _jigPhotoSrc(src) {
+        if (!src) return '';
+        if (src.startsWith('data:') || src.startsWith('http')) return src;
+        return (typeof ApiClient !== 'undefined' && ApiClient.photoUrl) ? ApiClient.photoUrl(src) : src;
+    }
+
     function _masterPhotoBox(targetId, title, src) {
         return `
             <div style="border:1px solid var(--border-color);border-radius:10px;padding:10px;background:var(--bg-secondary);">
@@ -1380,7 +1387,7 @@ var JigModule = (function () {
                     </div>
                 </div>
                 <input type="hidden" id="${targetId}Data" value="${_esc(src || '')}">
-                <img id="${targetId}Preview" src="${src || ''}" alt="" style="width:100%;height:180px;object-fit:contain;background:#fff;border:1px solid var(--border-color);border-radius:8px;display:${src ? 'block' : 'none'};">
+                <img id="${targetId}Preview" src="${_esc(_jigPhotoSrc(src))}" alt="" style="width:100%;height:180px;object-fit:contain;background:#fff;border:1px solid var(--border-color);border-radius:8px;display:${src ? 'block' : 'none'};">
                 <div style="font-size:0.74rem;color:var(--text-muted);margin-top:6px;">파일 선택 또는 Ctrl+V 붙여넣기를 사용할 수 있습니다.</div>
             </div>`;
     }
@@ -1477,47 +1484,17 @@ var JigModule = (function () {
         renderJigMaster();
     }
 
-    function _compressJigImage(fileOrBlob, options = {}) {
-        const maxSize = options.maxSize || 1280;
-        const quality = options.quality || 0.78;
-        return new Promise((resolve, reject) => {
-            if (!fileOrBlob) {
-                resolve('');
-                return;
-            }
-            const reader = new FileReader();
-            reader.onerror = () => reject(reader.error || new Error('이미지 파일을 읽을 수 없습니다.'));
-            reader.onload = () => {
-                const img = new Image();
-                img.onerror = () => reject(new Error('이미지를 불러올 수 없습니다.'));
-                img.onload = () => {
-                    const ratio = Math.min(1, maxSize / Math.max(img.width || 1, img.height || 1));
-                    const width = Math.max(1, Math.round((img.width || 1) * ratio));
-                    const height = Math.max(1, Math.round((img.height || 1) * ratio));
-                    const canvas = document.createElement('canvas');
-                    canvas.width = width;
-                    canvas.height = height;
-                    const ctx = canvas.getContext('2d');
-                    ctx.fillStyle = '#fff';
-                    ctx.fillRect(0, 0, width, height);
-                    ctx.drawImage(img, 0, 0, width, height);
-                    resolve(canvas.toDataURL('image/jpeg', quality));
-                };
-                img.src = reader.result || '';
-            };
-            reader.readAsDataURL(fileOrBlob);
-        });
-    }
-
     async function readJigMasterPhoto(input, targetId) {
         const file = input?.files?.[0];
         if (!file) return;
         try {
-            _setJigMasterPhoto(targetId, await _compressJigImage(file));
-            UIUtils.toast('사진을 압축하여 등록했습니다.', 'success');
+            UIUtils.toast('사진 업로드 중...', 'info');
+            const url = await ApiClient.uploadPhoto(file, 'paint_jig');
+            _setJigMasterPhoto(targetId, url);
+            UIUtils.toast('사진이 NAS에 등록되었습니다.', 'success');
         } catch (e) {
-            UIUtils.toast('사진 압축에 실패했습니다.', 'error');
-            console.warn('[JigModule] image compression failed:', e);
+            UIUtils.toast('사진 업로드에 실패했습니다: ' + e.message, 'error');
+            console.warn('[JigModule] photo upload failed:', e);
         }
     }
 
@@ -1526,7 +1503,7 @@ var JigModule = (function () {
         const preview = document.getElementById(`${targetId}Preview`);
         if (hidden) hidden.value = src || '';
         if (preview) {
-            preview.src = src || '';
+            preview.src = _jigPhotoSrc(src);
             preview.style.display = src ? 'block' : 'none';
         }
     }
@@ -1534,12 +1511,14 @@ var JigModule = (function () {
     async function _readJigImageBlob(targetId, blob) {
         if (!targetId || !blob) return false;
         try {
-            _setJigMasterPhoto(targetId, await _compressJigImage(blob));
-            UIUtils.toast('스크린샷이 등록되었습니다.', 'success');
+            UIUtils.toast('사진 업로드 중...', 'info');
+            const url = await ApiClient.uploadPhoto(blob, 'paint_jig');
+            _setJigMasterPhoto(targetId, url);
+            UIUtils.toast('스크린샷이 NAS에 등록되었습니다.', 'success');
             return true;
         } catch (e) {
-            UIUtils.toast('이미지 압축에 실패했습니다.', 'error');
-            console.warn('[JigModule] paste image compression failed:', e);
+            UIUtils.toast('스크린샷 업로드에 실패했습니다: ' + e.message, 'error');
+            console.warn('[JigModule] paste photo upload failed:', e);
             return false;
         }
     }
@@ -1663,7 +1642,7 @@ var JigModule = (function () {
         const jig = Storage.getById(STORE, id);
         const src = jig && Array.isArray(jig[key]) ? jig[key][idx] : '';
         if (!src) return;
-        UIUtils.showModal('사진 보기', `<div style="text-align:center;"><img src="${src}" alt="" style="max-width:100%;max-height:72vh;object-fit:contain;border-radius:8px;"></div>`, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'lg');
+        UIUtils.showModal('사진 보기', `<div style="text-align:center;"><img src="${_esc(_jigPhotoSrc(src))}" alt="" style="max-width:100%;max-height:72vh;object-fit:contain;border-radius:8px;"></div>`, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'lg');
     }
 
     function viewResetPhoto(photoUrl) {
