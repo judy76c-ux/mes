@@ -63,7 +63,7 @@ var JigModule = (function () {
         { id: 'jig-master', label: '도장 지그대장', icon: 'fact_check' },
         { id: 'jig-layout', label: '지그창고 레이아웃', icon: 'map' },
         { id: 'jig-disposal', label: '지그 폐기 대장', icon: 'delete_sweep' },
-        { id: 'jig-cleaning', label: '세척 이력', icon: 'cleaning_services' },
+        { id: 'jig-ordering', label: '지그 발주 관리', icon: 'shopping_cart' },
         { id: 'jig-change-history', label: '조치 이력', icon: 'sync_alt' },
         { id: 'jig-repair-history', label: '지그수리 개선 이력', icon: 'build_circle' }
     ];
@@ -478,6 +478,12 @@ var JigModule = (function () {
             groups[car].push(j);
         });
 
+        const orderings = Storage.getAll(DB.STORES.JIG_ORDERING) || [];
+        const orderingByJigId = {};
+        orderings.forEach(o => {
+            if (o.jigId) orderingByJigId[o.jigId] = o;
+        });
+
         const thStyle = 'padding:6px 10px;text-align:center;font-size:0.72rem;color:var(--text-muted);font-weight:600;border-bottom:2px solid var(--border-color);white-space:nowrap;overflow:hidden;';
         const colgroup = `<colgroup>
             <col style="width:5%">
@@ -530,7 +536,12 @@ var JigModule = (function () {
                         <span style="font-size:0.75rem;font-weight:700;color:${barColor};flex-shrink:0;">${pct.toFixed(0)}%</span>
                     </div>
                 </td>
-                <td style="${tdn}text-align:center;color:var(--text-muted);">${j.lastResetDate || j.registDate || '-'}</td>
+                <td style="${td}text-align:center;font-size:0.78rem;">
+                    <div style="color:var(--text-muted);">${j.lastResetDate || j.registDate || '-'}</div>
+                    ${orderingByJigId[j.id] ? `<div style="margin-top:4px;padding:3px 6px;background:var(--accent-blue);color:#fff;border-radius:4px;font-size:0.70rem;font-weight:600;">
+                        발주: ${_esc(orderingByJigId[j.id].orderDate || '-')}
+                    </div>` : ''}
+                </td>
                 <td style="${tdn}text-align:center;"><span style="background:${status[1]};color:#fff;padding:1px 7px;border-radius:4px;font-size:0.68rem;">${status[0]}</span></td>
                 <td style="${td}text-align:center;">
                     <button class="btn btn-sm btn-outline" onclick="JigModule.resetCount('${_js(j.id)}')" style="padding:2px 8px;font-size:0.78rem;" title="조치 초기화">
@@ -1137,9 +1148,9 @@ var JigModule = (function () {
         const aCount = jigs.filter(j => j.line === 'A라인').length;
         const bCount = jigs.filter(j => j.line === 'B라인').length;
         const disposal = await _loadConfigList(DISPOSAL_KEY);
-        const cleaning = await _loadConfigList(CLEANING_KEY);
         const repair = await _loadConfigList(REPAIR_KEY);
         const changeLogs = (Storage.getAll(LOG_STORE) || []).filter(l => _isResetWorkType(l.workType));
+        const ordering = Storage.getAll(DB.STORES.JIG_ORDERING) || [];
 
         container.innerHTML = `
             <div class="fade-in-up jig-page">
@@ -1160,7 +1171,7 @@ var JigModule = (function () {
                             ${_homeCard('도장 지그대장', '차종, 품명, 수명 횟수, 사진 등 지그 기본 정보를 등록합니다.', 'fact_check', `${total}건`, 'jig-master', 'green')}
                             ${_homeCard('지그창고 레이아웃', '지그 보관 위치를 시각적으로 배치하고 확인합니다.', 'map', '배치도', 'jig-layout', 'purple')}
                             ${_homeCard('지그 폐기 대장', '폐기된 지그의 일자, 사유, 담당자 이력을 남깁니다.', 'delete_sweep', `${disposal.length}건`, 'jig-disposal', 'red')}
-                            ${_homeCard('세척 이력', '세척 일자, 방법, 담당자, 비고를 기록합니다.', 'cleaning_services', `${cleaning.length}건`, 'jig-cleaning', 'cyan')}
+                            ${_homeCard('지그 발주 관리', '지그 발주 일자, 납기일, 상태를 관리합니다.', 'shopping_cart', `${ordering.length}건`, 'jig-ordering', 'blue')}
                             ${_homeCard('조치 이력', '수명 초기화 및 교체/박리 세척 기록을 확인합니다.', 'sync_alt', `${changeLogs.length}건`, 'jig-change-history', 'orange')}
                             ${_homeCard('지그수리/개선 이력', '수리, 개선, 보완 작업 내역과 진행 상태를 관리합니다.', 'build_circle', `${repair.length}건`, 'jig-repair-history', 'red')}
                         </div>
@@ -1664,7 +1675,6 @@ var JigModule = (function () {
     function _historyMeta(type) {
         return {
             disposal: { key: DISPOSAL_KEY, route: 'jig-disposal', title: '지그 폐기 대장', action: '폐기', icon: 'delete_sweep' },
-            cleaning: { key: CLEANING_KEY, route: 'jig-cleaning', title: '세척 이력', action: '세척', icon: 'cleaning_services' },
             repair: { key: REPAIR_KEY, route: 'jig-repair-history', title: '지그수리/개선 이력', action: '수리/개선', icon: 'build_circle' }
         }[type];
     }
@@ -1731,6 +1741,107 @@ var JigModule = (function () {
                     </table>
                 </div></div>
             </div>`;
+    }
+
+    async function renderOrderingPage(container) {
+        const orderings = Storage.getAll(DB.STORES.JIG_ORDERING) || [];
+        const jigs = Storage.getAll(STORE) || [];
+        const jigMap = {};
+        jigs.forEach(j => { jigMap[j.id] = j; });
+
+        container.innerHTML = `
+            <div class="fade-in-up jig-page">
+                ${renderMenu('jig-ordering', '지그 발주 관리', '지그 발주 일자, 납기일, 상태를 관리합니다.')}
+                <div class="page-header">
+                    <div class="page-actions">
+                        <button class="btn btn-primary btn-sm" onclick="JigModule.openOrderingModal()">
+                            <span class="material-symbols-outlined">add</span> 발주 등록
+                        </button>
+                    </div>
+                </div>
+                <div class="card"><div class="card-body">
+                    <table class="data-table">
+                        <thead><tr><th>발주일</th><th>납기일</th><th>차종</th><th>품명</th><th>라인</th><th>상태</th><th>비고</th><th>작업</th></tr></thead>
+                        <tbody>
+                            ${orderings.length ? orderings.sort((a, b) => (b.orderDate || '').localeCompare(a.orderDate || '')).map(row => {
+                                const jig = jigMap[row.jigId] || {};
+                                return `<tr>
+                                    <td>${_esc(row.orderDate || '-')}</td>
+                                    <td>${_esc(row.dueDate || '-')}</td>
+                                    <td>${_esc(jig.carModel || '-')}</td>
+                                    <td>${_esc(jig.partName || '-')}</td>
+                                    <td>${_esc(jig.line || '-')}</td>
+                                    <td><span style="background:${row.status === '완료' ? 'var(--accent-green)' : row.status === '진행중' ? 'var(--accent-blue)' : 'var(--accent-orange)'};color:#fff;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:600;">${_esc(row.status || '대기')}</span></td>
+                                    <td style="color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;" title="${_esc(row.note || '')}">${_esc(row.note || '')}</td>
+                                    <td><button class="btn btn-sm btn-outline" onclick="JigModule.editOrdering('${_js(row.id)}')">수정</button> <button class="btn btn-sm btn-danger" onclick="JigModule.removeOrdering('${_js(row.id)}')">삭제</button></td>
+                                </tr>`;
+                            }).join('') : `<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--text-muted);">등록된 발주가 없습니다.</td></tr>`}
+                        </tbody>
+                    </table>
+                </div></div>
+            </div>`;
+    }
+
+    function openOrderingModal(id) {
+        const orderings = Storage.getAll(DB.STORES.JIG_ORDERING) || [];
+        const jigs = (Storage.getAll(STORE) || []).sort((a, b) => (a.carModel || '').localeCompare(b.carModel || '', 'ko') || (a.partName || '').localeCompare(b.partName || '', 'ko'));
+        const existing = id ? orderings.find(o => o.id === id) : null;
+        const title = existing ? '발주 수정' : '발주 등록';
+
+        UIUtils.showModal(title, `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="form-group"><label class="form-label">지그</label><select class="form-select" id="orderingJigId"><option value="">선택</option>${jigs.map(j => `<option value="${_esc(j.id)}" ${existing && existing.jigId === j.id ? 'selected' : ''}>[${_esc(j.carModel || '-')}] ${_esc(j.partName || '-')}${j.line ? ' (' + _esc(j.line) + ')' : ''}</option>`).join('')}</select></div>
+                <div class="form-group"><label class="form-label">발주일</label><input type="date" class="form-input" id="orderingOrderDate" value="${existing?.orderDate || _today()}"></div>
+                <div class="form-group"><label class="form-label">납기일</label><input type="date" class="form-input" id="orderingDueDate" value="${existing?.dueDate || ''}"></div>
+                <div class="form-group"><label class="form-label">상태</label><select class="form-select" id="orderingStatus"><option ${!existing || existing.status === '대기' ? 'selected' : ''}>대기</option><option ${existing?.status === '진행중' ? 'selected' : ''}>진행중</option><option ${existing?.status === '완료' ? 'selected' : ''}>완료</option></select></div>
+            </div>
+            <div class="form-group"><label class="form-label">비고</label><textarea class="form-textarea" id="orderingNote" rows="2">${existing?.note || ''}</textarea></div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="JigModule.saveOrdering('${id || ''}')">저장</button>`,
+            'lg'
+        );
+    }
+
+    function editOrdering(id) {
+        openOrderingModal(id);
+    }
+
+    async function saveOrdering(id) {
+        const jigId = document.getElementById('orderingJigId')?.value?.trim() || '';
+        const orderDate = document.getElementById('orderingOrderDate')?.value?.trim() || '';
+        const dueDate = document.getElementById('orderingDueDate')?.value?.trim() || '';
+        const status = document.getElementById('orderingStatus')?.value?.trim() || '대기';
+        const note = document.getElementById('orderingNote')?.value?.trim() || '';
+
+        if (!jigId || !orderDate) {
+            UIUtils.toast('지그와 발주일을 입력하세요.', 'warning');
+            return;
+        }
+
+        const data = { jigId, orderDate, dueDate, status, note };
+        try {
+            if (id) {
+                await Storage.update(DB.STORES.JIG_ORDERING, id, data);
+            } else {
+                await Storage.add(DB.STORES.JIG_ORDERING, data);
+            }
+            UIUtils.closeModal();
+            UIUtils.toast(id ? '수정되었습니다.' : '등록되었습니다.', 'success');
+            renderOrderingPage(document.getElementById('contentArea'));
+        } catch (e) {
+            UIUtils.toast('저장 실패: ' + e.message, 'error');
+        }
+    }
+
+    async function removeOrdering(id) {
+        UIUtils.confirm('발주를 삭제하시겠습니까?', async () => {
+            try {
+                await Storage.remove(DB.STORES.JIG_ORDERING, id);
+                UIUtils.toast('삭제되었습니다.', 'success');
+                renderOrderingPage(document.getElementById('contentArea'));
+            } catch (e) {
+                UIUtils.toast('삭제 실패: ' + e.message, 'error');
+            }
+        });
     }
 
     function openHistoryModal(type) {
@@ -2038,6 +2149,7 @@ var JigModule = (function () {
         render,
         renderMasterPage,
         renderHistoryPage,
+        renderOrderingPage,
         switchView,
         loadAll,
         filterLine,
@@ -2075,6 +2187,10 @@ var JigModule = (function () {
         openHistoryModal,
         saveHistory,
         removeHistory,
+        openOrderingModal,
+        editOrdering,
+        saveOrdering,
+        removeOrdering,
         remove,
         removeLog,
         resetCount,

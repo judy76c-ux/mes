@@ -268,9 +268,9 @@ const App = (function() {
                 JigModule.renderHistoryPage(container, 'disposal');
             }
         });
-        Router.registerModule('jig-cleaning', {
+        Router.registerModule('jig-ordering', {
             render: function(container) {
-                JigModule.renderHistoryPage(container, 'cleaning');
+                JigModule.renderOrderingPage(container);
             }
         });
         Router.registerModule('jig-change-history', {

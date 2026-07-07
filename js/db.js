@@ -62,6 +62,7 @@ const DB = (function() {
         // JIG 수명 관리
         JIG_MASTER: 'jig_master', // JIG 마스터 (모델명, 도입일, 수명 주기)
         JIG_LOG: 'jig_log',       // JIG 사용/이력 로그
+        JIG_ORDERING: 'jig_ordering', // JIG 발주 관리
 
         // 생산 관리
         PROD_STANDARDS: 'prod_standards', // 제조 관리 표준 (NEW)
