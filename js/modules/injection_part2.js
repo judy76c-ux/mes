@@ -2781,6 +2781,25 @@ var InjectionWarehouseModule = (function() {
 
         const { pendingPlans, inProgressPlans, pendingTotal, inProgressTotal } = detail;
         const totalReserved = pendingTotal + inProgressTotal;
+        const isAdmin = _isAdminUser();
+
+        // 관리자 전용 예약 수정/삭제 버튼 (생산계획 레코드 직접 수정)
+        function _adminButtons(p) {
+            if (!isAdmin) return '';
+            return `
+                <span style="display:flex;gap:2px;margin-left:2px;flex-shrink:0;">
+                    <button type="button" title="수량 수정"
+                        onclick="event.stopPropagation();InjectionWarehouseModule.editReservedPlan('${p.id}', ${Number(p.planQty) || 0})"
+                        style="border:none;background:none;cursor:pointer;padding:1px;color:var(--accent-blue);display:flex;">
+                        <span class="material-symbols-outlined" style="font-size:14px;">edit</span>
+                    </button>
+                    <button type="button" title="삭제"
+                        onclick="event.stopPropagation();InjectionWarehouseModule.removeReservedPlan('${p.id}')"
+                        style="border:none;background:none;cursor:pointer;padding:1px;color:var(--accent-red);display:flex;">
+                        <span class="material-symbols-outlined" style="font-size:14px;">delete</span>
+                    </button>
+                </span>`;
+        }
 
         // 계획 목록 행 생성
         function _rows(plans, color) {
@@ -2791,6 +2810,7 @@ var InjectionWarehouseModule = (function() {
                     <span style="flex:1;color:var(--text-secondary);">${p.line || '-'}</span>
                     <span style="font-weight:700;white-space:nowrap;">${UIUtils.formatNumber(p.planQty)} 개</span>
                     <span style="font-size:0.68rem;background:${color};border-radius:3px;padding:0 4px;white-space:nowrap;">${p.status}</span>
+                    ${_adminButtons(p)}
                 </div>`).join('');
         }
 
@@ -2810,6 +2830,7 @@ var InjectionWarehouseModule = (function() {
                     <span style="flex:1;color:var(--text-secondary);">${p.line || '-'}</span>
                     <span style="font-weight:700;white-space:nowrap;">${UIUtils.formatNumber(p.planQty)} 개</span>
                     <span style="font-size:0.68rem;background:${bgColor};border-radius:3px;padding:0 4px;white-space:nowrap;">${p.status}</span>
+                    ${_adminButtons(p)}
                 </div>`).join('');
         }
 
@@ -2917,6 +2938,59 @@ var InjectionWarehouseModule = (function() {
         }
     }
 
+    // ── 예약(생산계획) 수량 수정/삭제 — 관리자 전용 ──────────────────
+    function editReservedPlan(id, currentQty) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('예약 수정은 관리자만 가능합니다.', 'warning');
+            return;
+        }
+        UIUtils.showModal('예약 수량 수정', `
+            <div class="form-group">
+                <label class="form-label">계획 수량</label>
+                <input type="number" class="form-input" id="reservePlanQtyInput" value="${Number(currentQty) || 0}" min="0">
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="InjectionWarehouseModule._saveReservedPlanQty('${id}')">저장</button>
+        `);
+    }
+
+    async function _saveReservedPlanQty(id) {
+        const qty = Number(document.getElementById('reservePlanQtyInput')?.value) || 0;
+        if (qty <= 0) {
+            UIUtils.toast('수량을 입력하세요.', 'warning');
+            return;
+        }
+        try {
+            await Storage.update(DB.STORES.PRODUCTION_PLANS, id, { planQty: qty });
+            UIUtils.closeModal();
+            const popup = document.getElementById('injReserveDetailPopup');
+            if (popup) popup.remove();
+            UIUtils.toast('예약 수량이 수정되었습니다.', 'success');
+            loadData();
+        } catch (e) {
+            UIUtils.toast('수정 실패: ' + e.message, 'error');
+        }
+    }
+
+    function removeReservedPlan(id) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('예약 삭제는 관리자만 가능합니다.', 'warning');
+            return;
+        }
+        UIUtils.confirm('해당 예약(생산계획)을 삭제하시겠습니까?\n삭제 후에는 되돌릴 수 없습니다.', async () => {
+            try {
+                await Storage.remove(DB.STORES.PRODUCTION_PLANS, id);
+                const popup = document.getElementById('injReserveDetailPopup');
+                if (popup) popup.remove();
+                UIUtils.toast('삭제되었습니다.', 'success');
+                loadData();
+            } catch (e) {
+                UIUtils.toast('삭제 실패: ' + e.message, 'error');
+            }
+        });
+    }
+
     return {
         render,
         loadData,
@@ -2958,6 +3032,9 @@ var InjectionWarehouseModule = (function() {
         deleteInvalidColorRecords,
         filterStock,
         showReserveDetailPopup,
-        _goToPlan
+        _goToPlan,
+        editReservedPlan,
+        _saveReservedPlanQty,
+        removeReservedPlan
     };
 })();
