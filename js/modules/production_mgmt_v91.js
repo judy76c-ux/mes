@@ -14918,8 +14918,9 @@ var PaintMixModule = (function() {
                 <td style="text-align:right;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(totalG)}g</td>
                 <td>${_esc(m.operator||'-')}</td>
                 <td>
+                    ${_isAdmin() ? `
                     <button class="btn btn-sm btn-outline" onclick="PaintMixModule.edit('${_js(m.id)}')">수정</button>
-                    ${_isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="PaintMixModule.remove('${_js(m.id)}')">삭제</button>` : ''}
+                    <button class="btn btn-sm btn-danger" onclick="PaintMixModule.remove('${_js(m.id)}')">삭제</button>` : '-'}
                 </td>
             </tr>`;
         }).join('');
@@ -16418,8 +16419,9 @@ var PaintMixModule = (function() {
                     <td style="text-align:right;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(totalG)}g${totalCans > 0 ? `<br><span style="font-size:0.75rem;color:var(--text-muted);">출고 ${totalCans}캔</span>` : ''}</td>
                     <td>${_esc(m.operator || '-')}</td>
                     <td style="white-space:nowrap;">
+                        ${_isAdmin() ? `
                         <button class="btn btn-sm btn-outline" onclick="PaintMixModule.edit('${_js(m.id)}')">수정</button>
-                        ${_isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="PaintMixModule.remove('${_js(m.id)}')">삭제</button>` : ''}
+                        <button class="btn btn-sm btn-danger" onclick="PaintMixModule.remove('${_js(m.id)}')">삭제</button>` : '-'}
                     </td>
                 </tr>`;
         }).join('');
@@ -17871,6 +17873,7 @@ var PaintMixModule = (function() {
     }
 
     function edit(id) {
+        if (!_isAdmin()) { UIUtils.toast('관리자만 수정할 수 있습니다.', 'warning'); return; }
         const data = Storage.getById(STORE, id);
         if (!data) return;
         UIUtils.showModal('도료 배합 수정', _formHtml(data, data.usages || []), `
@@ -17895,6 +17898,7 @@ var PaintMixModule = (function() {
     }
 
     function remove(id) {
+        if (!_isAdmin()) { UIUtils.toast('관리자만 삭제할 수 있습니다.', 'warning'); return; }
         UIUtils.confirm('도료 배합 기록을 삭제하시겠습니까?\n연결된 도료 LOT 출고 이력도 함께 삭제됩니다.', async () => {
             await Storage.executeTransaction([
                 ..._inventoryOutRemoveOps(id),

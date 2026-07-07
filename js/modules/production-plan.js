@@ -1307,6 +1307,21 @@ const ProductionPlanModule = (function() {
             );
     }
 
+    // 도장-A → 레이저 → 도장-B 처럼 레이저 공정 이후에 다시 도장(2차)을 타는 제품인지 판정
+    // 이 경우 도장-B 계획은 사출 재고가 아니라 레이저 재공품(WIP)에서 소진되는 것이므로
+    // 사출 재고 예약 집계에서 제외해야 한다.
+    function _isPostLaserRepaintPlan(p, allProducts) {
+        if (!p || p.line !== '도장-B') return false;
+        const prod = p.productId
+            ? allProducts.find(pr => pr.id === p.productId)
+            : allProducts.find(pr => pr.partName === p.partName && (!p.carModel || pr.carModel === p.carModel));
+        if (!prod) return false;
+        const procs = [prod.process1, prod.process2, prod.process3, prod.process4].filter(Boolean);
+        const bIdx = procs.indexOf('도장-B');
+        if (bIdx <= 0) return false;
+        return procs.slice(0, bIdx).some(v => v === '레이저' || v === '레이져');
+    }
+
     // 사출 자재명(injPartName) 기준으로 생산계획 예약 수량 집계
     // - 대기/진행: 예약으로 계산
     // - 완료: 도장 작업실적이 없으면 아직 재고가 차감되지 않은 것이므로 예약으로 포함
@@ -1459,6 +1474,8 @@ const ProductionPlanModule = (function() {
             // ★ 컬러 필터: ID 매칭 시 건너뜀 (도장 컬러 ≠ 사출 컬러, 다른 색상 체계)
             //              이름 매칭 시에만 적용 (같은 품명·다른 사출 컬러 자재 구분용)
             if (!matchById && !_colorMatches(p.color)) return;
+            // ★ 도장-A → 레이저 → 도장-B 제품의 도장-B 계획은 레이저 재공품에서 소진되므로 제외
+            if (_isPostLaserRepaintPlan(p, _allProducts)) return;
             const qty = Number(p.planQty) || 0;
             if (p.status === '대기')  { pending    += qty; return; }
             if (p.status === '진행') { inProgress += qty; return; }
@@ -2985,6 +3002,8 @@ const ProductionPlanModule = (function() {
             if (!byId && !byName) return;
             // ★ ID 매칭 시에는 색상 필터 제외(도장 컬러 ≠ 사출 컬러) — _calcInjPlanReserved와 동일
             if (!byId && !_colorOk(p.color)) return;
+            // ★ 도장-A → 레이저 → 도장-B 제품의 도장-B 계획은 레이저 재공품에서 소진되므로 제외
+            if (_isPostLaserRepaintPlan(p, _allProducts)) return;
 
             const qty  = Number(p.planQty) || 0;
             const info = { id: p.id, date: p.date || '', partName: p.partName || '', color: p.color || '',
