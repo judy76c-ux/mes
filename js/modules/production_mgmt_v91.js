@@ -18733,6 +18733,51 @@ var ProdQualityModule = (function() {
         { key: 'preset',     label: '프레셋',         icon: 'bookmarks',     subtitle: '측정 프레셋',       accent: '#64748b', onClick: "ProdQualityModule.openPresetMgmtModal()" },
         { key: 'itemList',   label: '관리 항목',      icon: 'list_alt',      subtitle: '초중종 항목 목록',  accent: '#475569', onClick: "ProdQualityModule.openItemListModal()" }
     ];
+    const STD_FILTER_KEY = 'prod_quality_standard_filters_v1';
+    let _stdFilterState = null;
+
+    function _getStdFilterState() {
+        if (_stdFilterState) return { ..._stdFilterState };
+        try {
+            _stdFilterState = JSON.parse(sessionStorage.getItem(STD_FILTER_KEY) || '{}') || {};
+        } catch (e) {
+            _stdFilterState = {};
+        }
+        return { ..._stdFilterState };
+    }
+
+    function _saveStdFilterState(state) {
+        _stdFilterState = {
+            car: _normText(state?.car || ''),
+            color: _normText(state?.color || ''),
+            line: _normText(state?.line || '')
+        };
+        try { sessionStorage.setItem(STD_FILTER_KEY, JSON.stringify(_stdFilterState)); } catch (e) {}
+        return { ..._stdFilterState };
+    }
+
+    function _captureStdFilterState() {
+        const carEl = document.getElementById('pqStdFilterCar');
+        const colorEl = document.getElementById('pqStdFilterColor');
+        const lineEl = document.getElementById('pqStdFilterLine');
+        if (!carEl && !colorEl && !lineEl) return _getStdFilterState();
+        return _saveStdFilterState({
+            car: carEl ? carEl.value : _getStdFilterState().car,
+            color: colorEl ? colorEl.value : _getStdFilterState().color,
+            line: lineEl ? lineEl.value : _getStdFilterState().line
+        });
+    }
+
+    function _stdColorOptions(carModel, selected = '') {
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const car = _normText(carModel);
+        const colors = [...new Set(products
+            .filter(p => _normText(p.carModel))
+            .filter(p => !car || _normText(p.carModel) === car)
+            .map(p => _normText(p.color || p.paintColor || p.paint || p.drawingColor || ''))
+            .filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+        return colors.map(c => `<option value="${_esc(c)}" ${c === selected ? 'selected' : ''}>${_esc(c)}</option>`).join('');
+    }
 
     function _qualityNav(activeKey) {
         return '<div class="mes-apple-menu-hero">' +
@@ -18740,6 +18785,15 @@ var ProdQualityModule = (function() {
                 return { label: m.label, icon: m.icon, subtitle: m.subtitle, accent: m.accent, active: m.key === activeKey, onClick: m.onClick };
             })) +
             '</div>';
+    }
+
+    function _dateDaysAgo(days) {
+        const d = new Date();
+        d.setDate(d.getDate() - Number(days || 0));
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
     }
 
     function render(container) {
@@ -18751,7 +18805,7 @@ var ProdQualityModule = (function() {
                 <div class="filter-bar" style="flex-wrap:wrap; gap:10px;">
                     <div class="form-group">
                         <label class="form-label">시작일</label>
-                        <input type="date" class="form-input" id="pqFilterStart" value="${UIUtils.today()}">
+                        <input type="date" class="form-input" id="pqFilterStart" value="${_dateDaysAgo(7)}">
                     </div>
                     <div class="form-group">
                         <label class="form-label">종료일</label>
@@ -18825,6 +18879,7 @@ var ProdQualityModule = (function() {
         const container = _rootContainer || document.getElementById('contentArea');
         if (!container) return;
         _rootContainer = container;
+        const savedFilters = _getStdFilterState();
         container.innerHTML = `
             <div class="fade-in-up">
                 ${_qualityNav('items')}
@@ -18837,15 +18892,16 @@ var ProdQualityModule = (function() {
                 <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
                     <select class="form-select" id="pqStdFilterCar" style="height:42px;min-width:160px;max-width:220px;font-size:0.95rem;" onchange="ProdQualityModule.onStdFilterCarChange()">
                         <option value="">전체 차종</option>
-                        ${_carOptions('')}
+                        ${_carOptions(savedFilters.car || '')}
                     </select>
                     <select class="form-select" id="pqStdFilterColor" style="height:42px;min-width:140px;max-width:220px;font-size:0.95rem;" onchange="ProdQualityModule.renderStandardsCard()">
                         <option value="">전체 컬러</option>
+                        ${_stdColorOptions(savedFilters.car || '', savedFilters.color || '')}
                     </select>
                     <select class="form-select" id="pqStdFilterLine" style="height:42px;min-width:120px;max-width:160px;font-size:0.95rem;" onchange="ProdQualityModule.renderStandardsCard()">
                         <option value="">전체 라인</option>
-                        <option value="도장-A">도장-A</option>
-                        <option value="도장-B">도장-B</option>
+                        <option value="도장-A" ${savedFilters.line === '도장-A' ? 'selected' : ''}>도장-A</option>
+                        <option value="도장-B" ${savedFilters.line === '도장-B' ? 'selected' : ''}>도장-B</option>
                     </select>
                 </div>
 
@@ -18997,15 +19053,9 @@ var ProdQualityModule = (function() {
         const filterCar = document.getElementById('pqStdFilterCar')?.value || '';
         const colorSel = document.getElementById('pqStdFilterColor');
         if (colorSel) {
-            const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-            const colors = [...new Set(products
-                .filter(p => _normText(p.carModel))
-                .filter(p => !filterCar || _normText(p.carModel) === filterCar)
-                .map(p => _normText(p.color || p.paintColor || p.paint || p.drawingColor || ''))
-                .filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
-            colorSel.innerHTML = `<option value="">전체 컬러</option>` +
-                colors.map(c => `<option value="${_esc(c)}">${_esc(c)}</option>`).join('');
+            colorSel.innerHTML = `<option value="">전체 컬러</option>` + _stdColorOptions(filterCar, '');
         }
+        _captureStdFilterState();
         renderStandardsCard();
     }
 
@@ -19016,18 +19066,12 @@ var ProdQualityModule = (function() {
         const filterCar = document.getElementById('pqStdFilterCar')?.value || '';
         const filterColor = document.getElementById('pqStdFilterColor')?.value || '';
         const filterLine = document.getElementById('pqStdFilterLine')?.value || '';
+        _saveStdFilterState({ car: filterCar, color: filterColor, line: filterLine });
 
         // 컬러 옵션이 비어있으면 (최초 렌더) 차종 기준으로 채움
         const colorSel = document.getElementById('pqStdFilterColor');
         if (colorSel && colorSel.options.length <= 1) {
-            const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-            const colors = [...new Set(products
-                .filter(p => _normText(p.carModel))
-                .filter(p => !filterCar || _normText(p.carModel) === filterCar)
-                .map(p => _normText(p.color || p.paintColor || p.paint || p.drawingColor || ''))
-                .filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
-            colorSel.innerHTML = `<option value="">전체 컬러</option>` +
-                colors.map(c => `<option value="${_esc(c)}" ${c === filterColor ? 'selected' : ''}>${_esc(c)}</option>`).join('');
+            colorSel.innerHTML = `<option value="">전체 컬러</option>` + _stdColorOptions(filterCar, filterColor);
         }
 
         const _hasPaintProcess = (p) => {
@@ -19398,6 +19442,7 @@ var ProdQualityModule = (function() {
 
     // ── 품목 기준값 보기/수정 페이지 (전체 페이지) ─────────────────────────────
     function openSpecPage(productId, mode = 'view', paintProcess = '') {
+        _captureStdFilterState();
         const container = _rootContainer || document.getElementById('contentArea');
         if (!container) return;
         const allProducts = Storage.getAll(DB.STORES.PRODUCTS) || [];
@@ -19439,6 +19484,30 @@ var ProdQualityModule = (function() {
                     ${userPresets.map(p=>`<option value="${_esc(p.id)}">${_esc(p.name)} (${(p.items||[]).length}항목)</option>`).join('')}
                 </select>
                 <button type="button" class="btn btn-outline btn-sm" onclick="ProdQualityModule.applyPresetToSpec()">적용</button>
+            </div>` : '';
+
+        // 컬러/차종 상관없이 전체 품목에서 기준값을 불러올 수 있는 후보 목록
+        const anyItemCandidates = _allTemplateCandidatesForSpec(productId);
+        const anyItemCarModels = [...new Set(anyItemCandidates.map(c => c.carModel).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+        const anyItemLoadPanel = !viewOnly && anyItemCandidates.length ? `
+            <div class="card" style="margin-bottom:14px;border-left:3px solid #2563eb;">
+                <div class="card-body" style="padding:12px 16px;">
+                    <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;flex-wrap:wrap;">
+                        <span class="material-symbols-outlined" style="font-size:1rem;color:#2563eb;">content_copy</span>
+                        <span style="font-weight:700;font-size:0.88rem;">다른 품목에서 기준값 불러오기</span>
+                        <span style="font-size:0.74rem;font-weight:400;color:var(--text-muted);">차종·컬러 상관없이 전체 품목에서 불러올 수 있습니다</span>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <select class="form-select" id="pqSpecLoadAnyCarModel" style="width:160px;" onchange="ProdQualityModule.onSpecLoadAnyCarModelChange('${_js(productId)}')">
+                            <option value="">-- 차종 선택 --</option>
+                            ${anyItemCarModels.map(cm => `<option value="${_esc(cm)}">${_esc(cm)}</option>`).join('')}
+                        </select>
+                        <select class="form-select" id="pqSpecLoadAnyItem" style="flex:1;min-width:260px;">
+                            <option value="">-- 차종 먼저 선택 --</option>
+                        </select>
+                        <button type="button" class="btn btn-outline btn-sm" onclick="ProdQualityModule.applyAnyTemplateToSpec()">불러와 적용</button>
+                    </div>
+                </div>
             </div>` : '';
 
         const sameColorLoadPanel = !viewOnly && color && sameColorTemplateCandidates.length ? `
@@ -19551,6 +19620,7 @@ var ProdQualityModule = (function() {
 
                 ${sameColorPanel}
                 ${sameColorLoadPanel}
+                ${anyItemLoadPanel}
                 ${presetRow}
 
                 ${!viewOnly ? `<div id="pqPresetDetectionPanel" style="margin-bottom:10px;"></div>` : ''}
@@ -19582,7 +19652,7 @@ var ProdQualityModule = (function() {
 
                 ${viewOnly ? '' : `
                     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
-                        <button class="btn btn-secondary" onclick="ProdQualityModule.openSpecPage('${_js(productId)}','view')">취소</button>
+                        <button class="btn btn-secondary" onclick="ProdQualityModule.openSpecPage('${_js(productId)}','view','${_js(proc)}')">취소</button>
                         <button class="btn btn-primary" onclick="ProdQualityModule.saveSpecPage()">
                             <span class="material-symbols-outlined">save</span> 저장
                         </button>
@@ -19634,6 +19704,55 @@ var ProdQualityModule = (function() {
                 if (b.totalCount !== a.totalCount) return b.totalCount - a.totalCount;
                 return `${a.carModel} ${a.partName}`.localeCompare(`${b.carModel} ${b.partName}`, 'ko');
             });
+    }
+
+    // 차종·컬러 상관없이, 기준값이 채워진(items가 있는) 다른 전 품목 목록을 반환한다.
+    function _allTemplateCandidatesForSpec(productId) {
+        return (_templates() || [])
+            .filter(t => t.productId !== productId)
+            .filter(t => Array.isArray(t.items) && t.items.length)
+            .map(t => ({
+                id: t.id,
+                carModel: _normText(t.carModel),
+                partName: _normText(t.partName || ''),
+                color: _normText(t.color || ''),
+                paintProcess: _normText(t.paintProcess || ''),
+                totalCount: t.items.length,
+                filledCount: t.items.filter(_hasSpecValue).length
+            }))
+            .sort((a, b) => a.partName.localeCompare(b.partName, 'ko') || (a.color || '').localeCompare(b.color || '', 'ko'));
+    }
+
+    // 다른 품목 불러오기: 차종 선택 시 해당 차종의 품목 select 옵션을 채운다.
+    function _specLoadAnyItemOptionsHtml(productId, carModel) {
+        if (!carModel) return `<option value="">-- 차종 먼저 선택 --</option>`;
+        const list = _allTemplateCandidatesForSpec(productId).filter(c => c.carModel === carModel);
+        if (!list.length) return `<option value="">-- 해당 차종의 등록된 기준값 없음 --</option>`;
+        return `<option value="">-- 품목 선택 --</option>` + list.map(c =>
+            `<option value="${_esc(c.id)}">${_esc(c.partName || '-')}${c.color ? ' · ' + _esc(c.color) : ''}${c.paintProcess ? ' · ' + _esc(c.paintProcess) : ''} (${c.filledCount}/${c.totalCount})</option>`
+        ).join('');
+    }
+
+    function onSpecLoadAnyCarModelChange(productId) {
+        const carSel = document.getElementById('pqSpecLoadAnyCarModel');
+        const itemSel = document.getElementById('pqSpecLoadAnyItem');
+        if (!carSel || !itemSel) return;
+        itemSel.innerHTML = _specLoadAnyItemOptionsHtml(productId, carSel.value);
+    }
+
+    function applyAnyTemplateToSpec() {
+        const sourceId = document.getElementById('pqSpecLoadAnyItem')?.value || '';
+        if (!sourceId) {
+            UIUtils.toast('불러올 품목을 선택하세요.', 'warning');
+            return;
+        }
+        const source = (_templates() || []).find(t => t.id === sourceId);
+        if (!source || !Array.isArray(source.items) || !source.items.length) {
+            UIUtils.toast('선택한 품목의 기준값을 찾을 수 없습니다.', 'error');
+            return;
+        }
+        _renderSpecItemsToPage(source.items);
+        UIUtils.toast(`[${_normText(source.carModel)} / ${_normText(source.partName || '')}${source.color ? ' · ' + _normText(source.color) : ''}] 기준값을 불러와 적용했습니다.`, 'success');
     }
 
     function _renderSpecItemsToPage(items) {
@@ -22793,6 +22912,8 @@ window.addEventListener('afterprint', () => {
         ,_checkAllSameColor
         ,applyPresetToSpec
         ,applySameColorTemplateToSpec
+        ,onSpecLoadAnyCarModelChange
+        ,applyAnyTemplateToSpec
         ,_pqRemoveSpecItem
         ,_pqSpecDragStart
         ,_pqSpecDragOver

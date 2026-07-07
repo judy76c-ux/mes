@@ -256,11 +256,10 @@ const SettingsModule = (function() {
 
         rows.forEach(row => {
             const modelCell = row.cells[1];
-            const customerCell = row.cells[6];
             if (!modelCell) return;
 
-            const rowModel = modelCell.textContent.trim();
-            const rowCustomer = customerCell ? customerCell.textContent.trim() : '';
+            const rowModel = (row.dataset.carModel || modelCell.textContent || '').trim();
+            const rowCustomer = (row.dataset.customer || '').trim();
 
             const modelMatch = selectedModel === '' || rowModel === selectedModel;
             const customerMatch = selectedCustomer === '' || rowCustomer === selectedCustomer;
@@ -775,11 +774,11 @@ const SettingsModule = (function() {
                         <h4 style="margin:0;"><span class="material-symbols-outlined">category</span> 제품 목록 (<span id="productCount">${products.length}</span>건)</h4>
                         <select id="carModelFilter" class="form-input" style="width: 140px; padding: 4px 8px;" onchange="SettingsModule.filterProductList()">
                             <option value="">전체 차종</option>
-                            ${uniqueCarModels.map(model => `<option value="${model}">${model}</option>`).join('')}
+                            ${uniqueCarModels.map(model => `<option value="${_esc(model)}">${_esc(model)}</option>`).join('')}
                         </select>
                         <select id="customerFilter" class="form-input" style="width: 140px; padding: 4px 8px;" onchange="SettingsModule.filterProductList()">
                             <option value="">전체 납품처</option>
-                            ${uniqueCustomers.map(c => `<option value="${c}">${c}</option>`).join('')}
+                            ${uniqueCustomers.map(c => `<option value="${_esc(c)}">${_esc(c)}</option>`).join('')}
                         </select>
                     </div>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -896,7 +895,7 @@ const SettingsModule = (function() {
                         : '<span style="color:var(--text-muted);font-size:0.75rem;">-</span>';
 
                     return `
-                                    <tr>
+                                    <tr data-car-model="${_esc(p.carModel || '')}" data-customer="${_esc(p.customer || '')}">
                                         <td style="text-align:center;">${i + 1}</td>
                                         <td style="white-space:nowrap;font-size:.78rem;max-width:56px;overflow:hidden;text-overflow:ellipsis;" title="${p.carModel || ''}">${p.carModel || '-'}</td>
                                         <td style="width:${window.__productPartNameColW || 260}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
@@ -1200,6 +1199,24 @@ const SettingsModule = (function() {
         const uniquePaintSuppliers = [...new Set(allPaints.map(p => p.supplier).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
         const initialPaintTableHtml = _paintTableHtml(idPrefix, initialPaintRows, allPaints, '', _paintProcessTags);
 
+        // 기존 제품에서 뽑은 고유 값 목록 — 기본정보 입력란(차종·품명·컬러·납품처)에 datalist로 제공해
+        // 기존 값을 먼저 선택하도록 유도하고(오타·표기 불일치 방지), 없으면 직접 입력할 수 있게 한다.
+        const _allProdsForLists = Storage.getAll(PRODUCTS_STORE) || [];
+        const _distinctVals = (key) => [...new Set(_allProdsForLists
+            .map(pr => String(pr[key] == null ? '' : pr[key]).trim())
+            .filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+        const _optsHtml = (items) => items.map(x => `<option value="${String(x).replace(/"/g, '&quot;')}"></option>`).join('');
+        const _carModelListId = `${idPrefix}CarModelList`;
+        const _partNameListId = `${idPrefix}PartNameList`;
+        const _colorListId    = `${idPrefix}ColorList`;
+        const _customerListId = `${idPrefix}CustomerList`;
+        const _basicDatalists = `
+            <datalist id="${_carModelListId}">${_optsHtml(_distinctVals('carModel'))}</datalist>
+            <datalist id="${_partNameListId}">${_optsHtml(_distinctVals('partName'))}</datalist>
+            <datalist id="${_colorListId}">${_optsHtml(_distinctVals('color'))}</datalist>
+            <datalist id="${_customerListId}">${_optsHtml(_distinctVals('customer'))}</datalist>
+        `;
+
         return `
             <style>
                 #modalBody .form-row {
@@ -1261,21 +1278,25 @@ const SettingsModule = (function() {
                 <span class="material-symbols-outlined" style="vertical-align:middle;font-size:18px;">category</span>
                 기본 정보
             </div>
+            ${_basicDatalists}
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">차종</label>
+                    <label class="form-label">차종 <span style="font-size:0.66rem;font-weight:400;color:var(--text-muted);">(기존 목록에서 선택 · 없으면 입력)</span></label>
                     <input type="text" class="form-input" id="${idPrefix}CarModel" placeholder="예: HMG-A" value="${v('carModel')}"
+                        list="${_carModelListId}" autocomplete="off"
                         oninput="SettingsModule.updateLinkedProductOptions('${idPrefix}')">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">품명 <span style="color:var(--accent-red)">*</span></label>
+                    <label class="form-label">품명 <span style="color:var(--accent-red)">*</span> <span style="font-size:0.66rem;font-weight:400;color:var(--text-muted);">(기존 목록에서 선택 · 없으면 입력)</span></label>
                     <input type="text" class="form-input" id="${idPrefix}PartName" placeholder="예: 프론트 범퍼" value="${v('partName')}"
+                        list="${_partNameListId}" autocomplete="off"
                         oninput="SettingsModule.updateProductInjInfo('${idPrefix}'); SettingsModule.checkPartNameDuplicate('${idPrefix}');">
                     <div id="${idPrefix}PartNameHint" style="margin-top:4px;font-size:0.76rem;min-height:18px;"></div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">도장 컬러 <span style="font-size:0.68rem;font-weight:400;color:var(--text-muted);">(공통 기본값)</span></label>
-                    <input type="text" class="form-input" id="${idPrefix}Color" placeholder="예: 화이트" value="${v('color')}">
+                    <label class="form-label">도장 컬러 <span style="font-size:0.68rem;font-weight:400;color:var(--text-muted);">(공통 기본값 · 기존 목록 선택 가능)</span></label>
+                    <input type="text" class="form-input" id="${idPrefix}Color" placeholder="예: 화이트" value="${v('color')}"
+                        list="${_colorListId}" autocomplete="off">
                 </div>
             </div>
             <div id="${idPrefix}PaintColorRow" class="form-row" style="margin-top:0;display:${_showPaintColorRow ? '' : 'none'};">
@@ -1312,8 +1333,9 @@ const SettingsModule = (function() {
                     <input type="text" class="form-input" id="${idPrefix}PackUnit" placeholder="예: 1EA/BOX" value="${v('packUnit')}">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">납품처</label>
-                    <input type="text" class="form-input" id="${idPrefix}Customer" placeholder="예: 현대모비스" value="${v('customer')}">
+                    <label class="form-label">납품처 <span style="font-size:0.66rem;font-weight:400;color:var(--text-muted);">(기존 목록에서 선택 · 없으면 입력)</span></label>
+                    <input type="text" class="form-input" id="${idPrefix}Customer" placeholder="예: 현대모비스" value="${v('customer')}"
+                        list="${_customerListId}" autocomplete="off">
                 </div>
             </div>
 

@@ -79,6 +79,7 @@ var InjectionIncomingModule = (function() {
                                         <th>판정</th>
                                         <th>검사자</th>
                                         <th>비고</th>
+                                        <th>조치 사항</th>
                                         <th>작업</th>
                                     </tr>
                                 </thead>
@@ -386,6 +387,13 @@ var InjectionIncomingModule = (function() {
                         ${d.note || '-'}
 
                     </td>
+                    ${isFifoViolation ? `
+                    <td>
+                        <input type="text" class="form-input" value="${(d.fifoMeasure || '').replace(/"/g, '&quot;')}"
+                               placeholder="조치 사항 입력" style="font-size:0.78rem;padding:4px 6px;min-width:140px;"
+                               onchange="InjectionIncomingModule.saveFifoMeasure('${d.id}', this.value)">
+                    </td>
+                    ` : '<td>-</td>'}
                     <td>
                         <button class="btn btn-sm btn-outline" onclick="InjectionIncomingModule.view('${d.id}')">
                             <span class="material-symbols-outlined" style="font-size:15px;vertical-align:-3px;">visibility</span> 보기
@@ -394,6 +402,21 @@ var InjectionIncomingModule = (function() {
                 </tr>
             `;
         }).join('');
+    }
+
+    // FIFO 위반 조치 사항 저장
+    async function saveFifoMeasure(id, measure) {
+        const record = Storage.getById(STORE, id);
+        if (!record) {
+            UIUtils.toast('기록을 찾을 수 없습니다.', 'error');
+            return;
+        }
+        try {
+            await Storage.update(STORE, id, { fifoMeasure: measure.trim() });
+            UIUtils.toast('조치 사항이 저장되었습니다.', 'success');
+        } catch (e) {
+            UIUtils.toast('저장 실패: ' + e.message, 'error');
+        }
     }
 
     function openAddModal() {
@@ -452,6 +475,19 @@ var InjectionIncomingModule = (function() {
                 <div class="form-group">
                     <label class="form-label">사출처</label>
                     <input type="text" class="form-input" id="addInjSupplier" placeholder="자동 입력" readonly style="background:var(--bg-secondary);">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">조치 사항</label>
+                    <select class="form-select" id="addInjMeasure">
+                        <option value="">-- 조치 사항 선택 --</option>
+                        <option value="사출처 통보">사출처 통보</option>
+                        <option value="반품">반품</option>
+                        <option value="부분 반품">부분 반품</option>
+                        <option value="조정">조정</option>
+                        <option value="폐기">폐기</option>
+                    </select>
                 </div>
             </div>
             <!-- 수입검사 기준서 버튼 -->
@@ -1055,7 +1091,7 @@ var InjectionIncomingModule = (function() {
             color: document.getElementById('addInjColor').value.trim(),
             incomingQty: incomingQty,
             lots: certState.lots,
-            lotNo: certState.lots.length > 0 ? certState.lots[0].lotNo : '',
+            lotNo: certState.representativeLotNo || (certState.lots.length > 0 ? certState.lots[0].lotNo : ''),
             certRepresentativeLotNo: certState.representativeLotNo,
             sampleCode: document.getElementById('injSampleCode') ?.textContent.trim() || '',
             acCriteria: document.getElementById('injSampleAc') ?.textContent.trim() !== '' ?
@@ -1069,7 +1105,8 @@ var InjectionIncomingModule = (function() {
             defectDetails: {},
             supplierName: document.getElementById('addInjSupplier').value.trim(),
             note: document.getElementById('addInjNote').value.trim(),
-            certPhotoUrl: certPhotoUrl
+            certPhotoUrl: certPhotoUrl,
+            measure: document.getElementById('addInjMeasure')?.value || '사출처 통보'
         };
 
         const defectInputs = document.querySelectorAll('.defect-input-new');
@@ -1173,6 +1210,18 @@ var InjectionIncomingModule = (function() {
                 <div class="form-group">
                     <label class="form-label">사출처</label>
                     <input type="text" class="form-input" id="editInjSupplier" placeholder="자동 입력" readonly style="background:var(--bg-secondary);">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">조치 사항</label>
+                    <select class="form-input" id="editInjMeasure">
+                        <option value="사출처 통보" ${d.measure === '사출처 통보' ? 'selected' : ''}>사출처 통보</option>
+                        <option value="반품" ${d.measure === '반품' ? 'selected' : ''}>반품</option>
+                        <option value="부분 반품" ${d.measure === '부분 반품' ? 'selected' : ''}>부분 반품</option>
+                        <option value="조정" ${d.measure === '조정' ? 'selected' : ''}>조정</option>
+                        <option value="폐기" ${d.measure === '폐기' ? 'selected' : ''}>폐기</option>
+                    </select>
                 </div>
             </div>
             <div style="margin-bottom:16px;">
@@ -1451,6 +1500,7 @@ var InjectionIncomingModule = (function() {
             defectDetails: {},
             supplierName: document.getElementById('editInjSupplier').value.trim(),
             note: document.getElementById('editInjNote').value.trim(),
+            measure: document.getElementById('editInjMeasure')?.value || '사출처 통보',
             certPhotoUrl: certPhotoUrl
         };
 
@@ -2034,6 +2084,7 @@ var InjectionIncomingModule = (function() {
         exportData,
         onLotInput,
         checkFifoWarning,
+        saveFifoMeasure,
         markCertReceived,
         confirmCertReceived,
         /* 수입검사 표준 */
