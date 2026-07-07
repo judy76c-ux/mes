@@ -3527,6 +3527,10 @@ var LaserInspectionModule = (function() {
                     <div style="padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;background:#fff;line-height:1.45;">${_viewText(defect.description)}</div>
                 </div>
                 <div>
+                    <div class="form-label">예시 사진</div>
+                    ${_viewImages(defect)}
+                </div>
+                <div>
                     <div class="form-label">4M 불량 원인</div>
                     <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;">
                         <div style="padding:10px;border:1px solid var(--border-color);border-radius:8px;"><strong style="color:#2563eb;">Machine (기계/설비)</strong><div style="margin-top:6px;line-height:1.45;">${_viewText(causes.machine || defect.machineCause)}</div></div>
@@ -3538,10 +3542,6 @@ var LaserInspectionModule = (function() {
                 <div>
                     <div class="form-label">조치 방법</div>
                     <div style="padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;background:#fff;line-height:1.45;">${_viewText(defect.countermeasure || defect.actionMethod)}</div>
-                </div>
-                <div>
-                    <div class="form-label">예시 사진</div>
-                    ${_viewImages(defect)}
                 </div>
             </div>
         `);
