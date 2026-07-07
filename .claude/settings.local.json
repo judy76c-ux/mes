@@ -79,7 +79,8 @@
       "Bash(pip install *)",
       "Bash(node --input-type=module)",
       "Bash(git add *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(node --check js/modules/injection_part2.js)"
     ]
   }
 }
