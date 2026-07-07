@@ -1080,7 +1080,7 @@ var JigModule = (function () {
                                     <th>품명</th>
                                     <th>수명 횟수</th>
                                     <th>재질</th>
-                                    <th>규격</th>
+                                    <th>구매처</th>
                                     <th>제작일</th>
                                     <th>지그 사진</th>
                                     <th>제품결합 사진</th>
@@ -1094,7 +1094,7 @@ var JigModule = (function () {
                                         <td>${_esc(j.partName || '-')}</td>
                                         <td style="text-align:right;">${_fmt(j.maxCount || 0)}</td>
                                         <td>${_esc(j.material || '-')}</td>
-                                        <td>${_esc(j.spec || '-')}</td>
+                                        <td>${_esc(j.supplier || '-')}</td>
                                         <td>${_esc(j.madeDate || j.registDate || '-')}</td>
                                         <td>${_photoThumbs(j, 'jigPhotos')}</td>
                                         <td>${_photoThumbs(j, 'productFitPhotos')}</td>
@@ -1415,8 +1415,8 @@ var JigModule = (function () {
                     <input type="text" class="form-input" id="jigMasterMaterial" value="${_esc(d.material || '')}" placeholder="예: SUS, AL">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">규격</label>
-                    <input type="text" class="form-input" id="jigMasterSpec" value="${_esc(d.spec || '')}" placeholder="규격 입력">
+                    <label class="form-label">구매처</label>
+                    <input type="text" class="form-input" id="jigMasterSupplier" value="${_esc(d.supplier || '')}" placeholder="구매처 입력">
                 </div>
                 <div class="form-group">
                     <label class="form-label">제작일</label>
@@ -1447,7 +1447,7 @@ var JigModule = (function () {
             line: prev.line || _lineForMaster(carModel, partName),
             maxCount,
             material: document.getElementById('jigMasterMaterial')?.value.trim() || '',
-            spec: document.getElementById('jigMasterSpec')?.value.trim() || '',
+            supplier: document.getElementById('jigMasterSupplier')?.value.trim() || '',
             madeDate,
             registDate: prev.registDate || madeDate,
             jigPhotos: [0, 1].map(i => document.getElementById(`jigPhoto${i}Data`)?.value || '').filter(Boolean),
