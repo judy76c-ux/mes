@@ -1023,23 +1023,25 @@ var InjectionWarehouseModule = (function() {
         const inspections = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
         const inventory   = Storage.getAll(DB.STORES.INJECTION_INVENTORY)   || [];
 
-        // 창고 입고 기록: partName + lotNo + 검사일시(inspDate) 기준 Set
-        // (LOT 번호는 생산일자 기준으로 매겨져 서로 다른 검사건이 같은 LOT 번호를 쓰는 경우가 있어,
-        //  단순 partName+lotNo만으로 매칭하면 무관한 건(예: 일괄 재고 보정)이 실제 미입고 검사건을
-        //  "이미 입고됨"으로 잘못 가려버릴 수 있다. inspDate가 없는 기록(검사 연동 없이 등록된
-        //  수동 입고/재고 보정)은 어떤 검사건과도 매칭시키지 않는다 — 미입고 항목이 숨는 것보다
-        //  중복으로 보이는 편이 안전하다.)
+        // 창고 입고 기록: partName + lotNo 기준이되, "수량까지 같거나" "검사일시(inspDate)가 같을 때"만
+        // 이미 입고된 것으로 인정한다. LOT 번호는 생산일자 기준으로 매겨져 서로 다른 건이 같은 번호를
+        // 쓰는 경우가 있는데, 그럴 때 수량까지 우연히 같을 확률은 매우 낮으므로 오탐을 막을 수 있다.
+        // (inspDate가 없는 옛날 수동 입고 기록도 수량이 맞으면 정상적으로 "입고됨"으로 인식된다.)
         const inStockSet = new Set();
-        inventory.filter(i => i.type === '입고' && i.inspDate).forEach(i => {
+        inventory.filter(i => i.type === '입고').forEach(i => {
             if (i.lots && i.lots.length > 0) {
                 i.lots.forEach(function(lot) {
                     if (!lot.lotNo) return;
-                    const k = `${i.partName}||${lot.lotNo}||${i.inspDate}`;
-                    if ((Number(lot.qty) || 0) > 0) inStockSet.add(k);
+                    const qty = Number(lot.qty) || 0;
+                    if (qty <= 0) return;
+                    inStockSet.add(`${i.partName}||${lot.lotNo}||qty:${qty}`);
+                    if (i.inspDate) inStockSet.add(`${i.partName}||${lot.lotNo}||insp:${i.inspDate}`);
                 });
             } else if (i.lotNo) {
-                const k = `${i.partName}||${i.lotNo}||${i.inspDate}`;
-                if ((Number(i.quantity) || 0) > 0) inStockSet.add(k);
+                const qty = Number(i.quantity) || 0;
+                if (qty <= 0) return;
+                inStockSet.add(`${i.partName}||${i.lotNo}||qty:${qty}`);
+                if (i.inspDate) inStockSet.add(`${i.partName}||${i.lotNo}||insp:${i.inspDate}`);
             }
         });
 
@@ -1084,7 +1086,8 @@ var InjectionWarehouseModule = (function() {
         // 입고 대기 중인 항목만 필터링 (입고 완료된 항목 + 관리자가 삭제(숨김)한 항목 제외)
         const dismissedSet = new Set(_dismissedPending.map(d => _dismissedPendingKey(d.inspId, d.lotNo)));
         const pendingRows = rows.filter(r =>
-            !inStockSet.has(`${r.partName}||${r.lotNo}||${r.date}`) &&
+            !inStockSet.has(`${r.partName}||${r.lotNo}||qty:${Number(r.qty) || 0}`) &&
+            !inStockSet.has(`${r.partName}||${r.lotNo}||insp:${r.date}`) &&
             !dismissedSet.has(_dismissedPendingKey(r.inspId, r.lotNo))
         );
 
@@ -1194,6 +1197,10 @@ var InjectionWarehouseModule = (function() {
                                 </td>
                                 <td style="white-space:nowrap;">
                                     <div style="display:flex; gap:4px; align-items:center;">
+                                        <button class="btn btn-sm btn-outline" title="이 항목의 수입검사 상세 내용을 확인합니다."
+                                                onclick="InjectionIncomingModule.view('${r.inspId}')">
+                                            <span class="material-symbols-outlined" style="font-size:0.9rem;">visibility</span> 보기
+                                        </button>
                                         <button class="btn btn-sm btn-primary" onclick="InjectionWarehouseModule.openAddFromInspection('${r.inspId}', '${r.lotNo}')">
                                             <span class="material-symbols-outlined" style="font-size:0.9rem;">add_circle</span> 입고
                                         </button>
@@ -1292,22 +1299,26 @@ var InjectionWarehouseModule = (function() {
         renderInspStandby();
     }
 
-    // 현재 창고(INJECTION_INVENTORY)에 이미 입고된 LOT 키(partName||lotNo||inspDate) 집합
-    // LOT 번호는 생산일자 기준으로 매겨져 서로 다른 검사건이 같은 번호를 쓸 수 있으므로
-    // inspDate가 없는(검사 연동 없이 등록된 수동 입고/재고 보정) 기록은 매칭 대상에서 제외한다.
+    // 현재 창고(INJECTION_INVENTORY)에 이미 입고된 LOT 키(partName||lotNo||수량 또는 검사일시) 집합
+    // LOT 번호는 생산일자 기준으로 매겨져 서로 다른 검사건이 같은 번호를 쓸 수 있으므로,
+    // 수량까지 같거나 검사일시(inspDate)까지 같을 때만 "이미 입고됨"으로 인정한다.
     function _buildInStockLotSet() {
         const inventory = Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [];
         const inStockSet = new Set();
-        inventory.filter(i => i.type === '입고' && i.inspDate).forEach(i => {
+        inventory.filter(i => i.type === '입고').forEach(i => {
             if (i.lots && i.lots.length > 0) {
                 i.lots.forEach(function(lot) {
                     if (!lot.lotNo) return;
-                    const k = `${i.partName}||${lot.lotNo}||${i.inspDate}`;
-                    if ((Number(lot.qty) || 0) > 0) inStockSet.add(k);
+                    const qty = Number(lot.qty) || 0;
+                    if (qty <= 0) return;
+                    inStockSet.add(`${i.partName}||${lot.lotNo}||qty:${qty}`);
+                    if (i.inspDate) inStockSet.add(`${i.partName}||${lot.lotNo}||insp:${i.inspDate}`);
                 });
             } else if (i.lotNo) {
-                const k = `${i.partName}||${i.lotNo}||${i.inspDate}`;
-                if ((Number(i.quantity) || 0) > 0) inStockSet.add(k);
+                const qty = Number(i.quantity) || 0;
+                if (qty <= 0) return;
+                inStockSet.add(`${i.partName}||${i.lotNo}||qty:${qty}`);
+                if (i.inspDate) inStockSet.add(`${i.partName}||${i.lotNo}||insp:${i.inspDate}`);
             }
         });
         return inStockSet;
@@ -1318,7 +1329,13 @@ var InjectionWarehouseModule = (function() {
         const sourceLots = (insp.lots && insp.lots.length > 0)
             ? insp.lots
             : (insp.lotNo ? [{ lotNo: insp.lotNo, qty: insp.passQty }] : []);
-        return sourceLots.filter(l => (Number(l.qty) || 0) > 0 && !inStockSet.has(`${insp.partName}||${l.lotNo}||${insp.date}`));
+        return sourceLots.filter(l => {
+            const qty = Number(l.qty) || 0;
+            if (qty <= 0) return false;
+            if (inStockSet.has(`${insp.partName}||${l.lotNo}||qty:${qty}`)) return false;
+            if (inStockSet.has(`${insp.partName}||${l.lotNo}||insp:${insp.date}`)) return false;
+            return true;
+        });
     }
 
     // 검사 1건의 미입고 LOT 전체를 사출 창고(INJECTION_INVENTORY) 입고 레코드 1건으로 반영

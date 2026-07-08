@@ -3866,10 +3866,17 @@ var LaserStandbyModule = (function() {
         _initStandbyView();
     }
 
-    function _initStandbyView() {
-        renderAll();
-        _ensureManualOverridesLoaded().then(renderAll).catch(() => {});
+    async function _initStandbyView() {
         _bindCacheWarmRefreshOnce();
+        if (!_requiredStoresReady()) {
+            _renderNotReadyState();
+        }
+        try {
+            await _ensureManualOverridesLoaded();
+        } catch (e) {
+            console.warn('[LaserStandbyModule] CONFIG 수기조정 로드 실패:', e);
+        }
+        renderAll();
     }
 
     // 제품 조회 헬퍼 (carModel + partName + color 우선, 없으면 carModel + partName)
