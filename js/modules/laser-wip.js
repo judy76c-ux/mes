@@ -16,6 +16,27 @@ var LaserWipModule = (function() {
         return roles.some(role => String(role || '') === 'admin');
     }
 
+    // 수량 수정(수기 입고/출고/조정) 권한: 관리자(admin) 또는 레이져운영자(laser_op).
+    // 커스텀 역할일 수 있어 역할 키('laser_op')와 라벨('레이져운영자')을 함께 매칭한다. (삭제는 관리자 전용 유지)
+    function _canEditWip() {
+        try {
+            if (_isAdmin()) return true;
+            const u = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? AuthModule.getCurrentUser() : null;
+            if (!u) return false;
+            const roleKeys = Array.isArray(u.roles) ? u.roles.slice() : [];
+            if (u.role) roleKeys.push(u.role);
+            const roleDefs = (typeof AuthModule !== 'undefined' && Array.isArray(AuthModule.ROLES)) ? AuthModule.ROLES : [];
+            return roleKeys.some(function(rk) {
+                const key = String(rk || '');
+                if (key === 'laser_op') return true;
+                const def = roleDefs.find(function(d) { return d.key === key; });
+                const label = String((def && def.label) || key).replace(/\s/g, '');
+                return /레이[져저].*운영/.test(label);
+            });
+        } catch (e) { /* 무시 */ }
+        return false;
+    }
+
     const TABS = [
         { id: 'standby',     label: '레이져 대기품 현황',    icon: 'hourglass_top' },
         { id: 'after-laser', label: '레이져 후 재공품 현황', icon: 'bolt' },
@@ -35,14 +56,14 @@ var LaserWipModule = (function() {
     }
 
     function _tabNav() {
-        const standbyActions = _isAdmin() ? `
+        const standbyActions = _canEditWip() ? `
             ${_actionBtn('수동입고', 'arrow_downward', "LaserWipModule.openManualInput()", 'var(--accent-green)')}
             ${_actionBtn('수동출고', 'arrow_upward',   "LaserStandbyModule.openStandbyOutModal()", 'var(--accent-red)')}
             ${_actionBtn('일괄등록', 'table_rows', "LaserStandbyModule.openBulkModal()", 'var(--accent-blue)')}` : '';
-        const afterActions = _isAdmin() ? `
+        const afterActions = _canEditWip() ? `
             ${_actionBtn('수동입고', 'arrow_downward', "LaserWipModule.openAfterLaserInput()", 'var(--accent-green)')}
             ${_actionBtn('수동출고', 'arrow_upward',   "LaserWipModule.openAfterLaserOut()", 'var(--accent-red)')}` : '';
-        const residualActions = _isAdmin() ? `
+        const residualActions = _canEditWip() ? `
             ${_actionBtn('수동입고', 'arrow_downward', "LaserWipModule.openResidualInput()", 'var(--accent-green)')}
             ${_actionBtn('수동출고', 'arrow_upward',   "LaserWipModule.openResidualOut()", 'var(--accent-red)')}` : '';
         const currentActions = _activeTab === 'standby' ? standbyActions
@@ -252,11 +273,11 @@ var LaserWipModule = (function() {
                     </table>
                 </div>
             </div>
-            ${_isAdmin() ? `
+            ${_canEditWip() ? `
             <div class="card" style="margin-top:20px;">
                 <div class="card-header">
                     <h4><span class="material-symbols-outlined">edit_note</span> 수기 입출고 내역 관리
-                        <span style="font-size:0.78rem;color:var(--text-muted);font-weight:400;">(관리자 전용)</span>
+                        <span style="font-size:0.78rem;color:var(--text-muted);font-weight:400;">(관리자·레이져운영자 전용)</span>
                     </h4>
                     ${_actionBtn('신규 등록', 'add', "LaserWipModule.openAfterLaserInput()", 'var(--accent-green)')}
                 </div>
@@ -301,7 +322,7 @@ var LaserWipModule = (function() {
                             <td style="font-size:0.8rem;color:var(--text-muted);">${_esc(w.note || '-')}</td>
                             <td style="white-space:nowrap;">
                                 <button class="btn btn-sm btn-outline" onclick="LaserWipModule.openEditManualEntry('${w.id}')">수정</button>
-                                <button class="btn btn-sm btn-danger" onclick="LaserWipModule.removeManualEntry('${w.id}')">삭제</button>
+                                ${_isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="LaserWipModule.removeManualEntry('${w.id}')">삭제</button>` : ''}
                             </td>
                         </tr>`;
                     }).join('')}
@@ -311,7 +332,7 @@ var LaserWipModule = (function() {
     }
 
     function openEditManualEntry(id) {
-        if (!_isAdmin()) { UIUtils.toast('관리자만 수정할 수 있습니다.', 'warning'); return; }
+        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수정할 수 있습니다.', 'warning'); return; }
         const entry = (Storage.getAll(STORE_LASER) || []).find(w => w.id === id);
         if (!entry) { UIUtils.toast('내역을 찾을 수 없습니다.', 'warning'); return; }
         const isOut = !!entry.isManualOut;
@@ -354,7 +375,7 @@ var LaserWipModule = (function() {
     }
 
     async function saveEditManualEntry(id) {
-        if (!_isAdmin()) return;
+        if (!_canEditWip()) return;
         const date     = (document.getElementById('lwEditDate')     || {}).value || '';
         const carModel = (document.getElementById('lwEditCarModel') || {}).value.trim() || '';
         const partName = (document.getElementById('lwEditPartName') || {}).value.trim() || '';
@@ -528,11 +549,11 @@ var LaserWipModule = (function() {
                     </table>
                 </div>
             </div>
-            ${_isAdmin() ? `
+            ${_canEditWip() ? `
             <div class="card" style="margin-top:20px;">
                 <div class="card-header">
                     <h4><span class="material-symbols-outlined">edit_note</span> 잔량 수기 입출고 내역 관리
-                        <span style="font-size:0.78rem;color:var(--text-muted);font-weight:400;">(관리자 전용)</span>
+                        <span style="font-size:0.78rem;color:var(--text-muted);font-weight:400;">(관리자·레이져운영자 전용)</span>
                     </h4>
                     ${_actionBtn('신규 등록', 'add', "LaserWipModule.openResidualInput()", 'var(--accent-green)')}
                 </div>
@@ -577,7 +598,7 @@ var LaserWipModule = (function() {
                             <td style="font-size:0.8rem;color:var(--text-muted);">${_esc(w.note || '-')}</td>
                             <td style="white-space:nowrap;">
                                 <button class="btn btn-sm btn-outline" onclick="LaserWipModule.openEditResidualManualEntry('${w.id}')">수정</button>
-                                <button class="btn btn-sm btn-danger" onclick="LaserWipModule.removeResidualManualEntry('${w.id}')">삭제</button>
+                                ${_isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="LaserWipModule.removeResidualManualEntry('${w.id}')">삭제</button>` : ''}
                             </td>
                         </tr>`;
                     }).join('')}
@@ -587,7 +608,7 @@ var LaserWipModule = (function() {
     }
 
     function openEditResidualManualEntry(id) {
-        if (!_isAdmin()) { UIUtils.toast('관리자만 수정할 수 있습니다.', 'warning'); return; }
+        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수정할 수 있습니다.', 'warning'); return; }
         const entry = (Storage.getAll(STORE_LASER) || []).find(w => w.id === id);
         if (!entry) { UIUtils.toast('내역을 찾을 수 없습니다.', 'warning'); return; }
         const isOut = !!entry.isResidualManualOut;
@@ -630,7 +651,7 @@ var LaserWipModule = (function() {
     }
 
     async function saveEditResidualManualEntry(id) {
-        if (!_isAdmin()) return;
+        if (!_canEditWip()) return;
         const date     = (document.getElementById('lwResEditDate')     || {}).value || '';
         const carModel = (document.getElementById('lwResEditCarModel') || {}).value.trim() || '';
         const partName = (document.getElementById('lwResEditPartName') || {}).value.trim() || '';
@@ -1509,8 +1530,8 @@ var LaserWipModule = (function() {
     }
 
     function openManualInput() {
-        if (!_isAdmin()) {
-            UIUtils.toast('관리자만 레이져 대기품 수량을 수정할 수 있습니다.', 'warning');
+        if (!_canEditWip()) {
+            UIUtils.toast('관리자·레이져운영자만 레이져 대기품 수량을 수정할 수 있습니다.', 'warning');
             return;
         }
         if (typeof LaserStandbyModule === 'undefined' || typeof LaserStandbyModule.openAdjustModal !== 'function') {

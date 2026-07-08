@@ -4087,6 +4087,29 @@ var LaserStandbyModule = (function() {
         }
     }
 
+    // 수량 수정(재공 조정/출고/일괄등록) 권한: 관리자(admin) 또는 레이져운영자(laser_op).
+    // 커스텀 역할일 수 있어 역할 키('laser_op')와 라벨('레이져운영자')을 함께 매칭한다. (삭제는 관리자 전용 유지)
+    function _canEditStandby() {
+        try {
+            if (_isAdminUser()) return true;
+            const user = (typeof AuthModule !== 'undefined' && typeof AuthModule.getCurrentUser === 'function')
+                ? AuthModule.getCurrentUser()
+                : null;
+            if (!user) return false;
+            const roleKeys = Array.isArray(user.roles) ? user.roles.slice() : [];
+            if (user.role) roleKeys.push(user.role);
+            const roleDefs = (typeof AuthModule !== 'undefined' && Array.isArray(AuthModule.ROLES)) ? AuthModule.ROLES : [];
+            return roleKeys.some(function(rk) {
+                const key = String(rk || '');
+                if (key === 'laser_op') return true;
+                const def = roleDefs.find(function(d) { return d.key === key; });
+                const label = String((def && def.label) || key).replace(/\s/g, '');
+                return /레이[져저].*운영/.test(label);
+            });
+        } catch (e) { /* 무시 */ }
+        return false;
+    }
+
     function _deleteButton(row, kind) {
         if (!_isAdminUser() || !row.sourceType || !row.sourceId) return '';
         const label = kind === 'in' ? '입고' : '출고';
@@ -4933,7 +4956,7 @@ var LaserStandbyModule = (function() {
             }, 0);
         };
 
-        const adjustBtnHtml = _isAdminUser()
+        const adjustBtnHtml = _canEditStandby()
             ? `<button type="button" onclick="event.stopPropagation();LaserStandbyModule.openAdjustModal('${encodeURIComponent(key)}')"
                     style="background:rgba(255,255,255,0.2);border:none;border-radius:6px;color:#fff;padding:4px 8px;cursor:pointer;font-size:0.78rem;font-family:inherit;">수량 수정</button>`
             : '';
@@ -5024,8 +5047,8 @@ var LaserStandbyModule = (function() {
     }
 
     async function openAdjustModal(keyEnc = '', isAddMode = false) {
-        if (!_isAdminUser()) {
-            UIUtils.toast('관리자만 레이져 대기품 수량을 수정할 수 있습니다.', 'warning');
+        if (!_canEditStandby()) {
+            UIUtils.toast('관리자·레이져운영자만 레이져 대기품 수량을 수정할 수 있습니다.', 'warning');
             return;
         }
         await _ensureManualOverridesLoaded();
@@ -5099,8 +5122,8 @@ var LaserStandbyModule = (function() {
     }
 
     async function saveAdjustModal(keyEnc = '', isAddMode = false) {
-        if (!_isAdminUser()) {
-            UIUtils.toast('관리자만 레이져 대기품 수량을 수정할 수 있습니다.', 'warning');
+        if (!_canEditStandby()) {
+            UIUtils.toast('관리자·레이져운영자만 레이져 대기품 수량을 수정할 수 있습니다.', 'warning');
             return;
         }
         await _ensureManualOverridesLoaded();
@@ -5325,7 +5348,7 @@ var LaserStandbyModule = (function() {
         popup.style.top = top + 'px';
         popup.style.left = left + 'px';
 
-        const adjustBtnHtml2 = _isAdminUser()
+        const adjustBtnHtml2 = _canEditStandby()
             ? `<button type="button" onclick="event.stopPropagation();LaserStandbyModule.openAdjustModal('${encodeURIComponent(key)}')"
                     style="background:rgba(255,255,255,0.2);border:none;border-radius:6px;color:#fff;padding:4px 8px;cursor:pointer;font-size:0.78rem;font-family:inherit;">수량 수정</button>`
             : '';
@@ -5375,8 +5398,8 @@ var LaserStandbyModule = (function() {
 
     // ── 레이져 대기품 출고 ──────────────────────────────────────────────
     async function openStandbyOutModal() {
-        if (!_isAdminUser()) {
-            UIUtils.toast('관리자만 레이져 대기품 수량을 수정할 수 있습니다.', 'warning');
+        if (!_canEditStandby()) {
+            UIUtils.toast('관리자·레이져운영자만 레이져 대기품 수량을 수정할 수 있습니다.', 'warning');
             return;
         }
         await _ensureManualOverridesLoaded();
@@ -5474,8 +5497,8 @@ var LaserStandbyModule = (function() {
     }
 
     async function saveStandbyOutModal() {
-        if (!_isAdminUser()) {
-            UIUtils.toast('관리자만 레이져 대기품 수량을 수정할 수 있습니다.', 'warning');
+        if (!_canEditStandby()) {
+            UIUtils.toast('관리자·레이져운영자만 레이져 대기품 수량을 수정할 수 있습니다.', 'warning');
             return;
         }
         await _ensureManualOverridesLoaded();
@@ -5527,8 +5550,8 @@ var LaserStandbyModule = (function() {
 
     // ── 일괄 등록 (교체) ────────────────────────────────────────────────
     async function openBulkModal() {
-        if (!_isAdminUser()) {
-            UIUtils.toast('관리자만 레이져 대기품 수량을 수정할 수 있습니다.', 'warning');
+        if (!_canEditStandby()) {
+            UIUtils.toast('관리자·레이져운영자만 레이져 대기품 수량을 수정할 수 있습니다.', 'warning');
             return;
         }
         await _ensureManualOverridesLoaded();
@@ -5723,8 +5746,8 @@ var LaserStandbyModule = (function() {
     }
 
     async function saveBulkModal() {
-        if (!_isAdminUser()) {
-            UIUtils.toast('관리자만 레이져 대기품 수량을 수정할 수 있습니다.', 'warning');
+        if (!_canEditStandby()) {
+            UIUtils.toast('관리자·레이져운영자만 레이져 대기품 수량을 수정할 수 있습니다.', 'warning');
             return;
         }
         await _ensureManualOverridesLoaded();
