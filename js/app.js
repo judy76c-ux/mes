@@ -5,6 +5,7 @@
 
 const App = (function() {
     const API_BASE_CONFIG_KEY = 'mes_api_base';
+    const API_BASE_LS_KEY = '__mes_api_base__';
     const MIGRATION_FLAGS = {
         CAR_MODEL_UPPERCASE: 'mig_carModelUppercase_done_v1',
         PAINT_PROCESS_ALIAS: 'mig_paintProcessAlias_done_v1'
@@ -32,10 +33,9 @@ const App = (function() {
         }, true);
     }
 
-    async function primeApiBaseOverride() {
+    function primeApiBaseOverride() {
         try {
-            await DB.init();
-            const saved = await DB.getConfig(API_BASE_CONFIG_KEY);
+            const saved = localStorage.getItem(API_BASE_LS_KEY);
             if (saved && String(saved).trim()) {
                 window.__MES_API_BASE__ = String(saved).trim().replace(/\/$/, '');
             } else {
@@ -52,7 +52,7 @@ const App = (function() {
         console.log('🏭 생산 공정 관리 시스템 (MES) 시작...');
 
         try {
-            // 1. 스토리지 초기화 (IndexedDB)
+            // 1. 스토리지 초기화 (MariaDB API)
             await Storage.init();
             console.log('✅ 스토리지 초기화 완료');
 
@@ -112,14 +112,11 @@ const App = (function() {
 
             const msg = (error && error.message) || String(error);
 
-            // ── 케이스 분기: NAS 전용 / IndexedDB / 기타 ──────────────
-            // Storage.init이 던진 에러는 isNasError 플래그로 표시됨 (NAS + IndexedDB 모두 실패)
-            // 그 외 메시지 패턴은 휴리스틱으로 분류
-            const isNasError = (error && error.isNasError) ||
-                               /NAS|API 서버|연결 실패|연결 시간 초과|fetch/i.test(msg);
-            const isDbErr    = !isNasError && /IndexedDB|DB 연결|버전|version/i.test(msg);
+            // ── API 서버 연결 실패 ──────────────────────────────────
+            const isApiError = (error && (error.isApiError || error.isNasError)) ||
+                               /API 서버|연결 실패|연결 시간 초과|fetch/i.test(msg);
 
-            if (isNasError) {
+            if (isApiError) {
                 const apiBase = (typeof ApiClient !== 'undefined' && ApiClient.getBase)
                     ? ApiClient.getBase() : '';
                 const healthUrl = apiBase ? apiBase + '/health' : '';
@@ -137,7 +134,7 @@ const App = (function() {
                         <h2 style="margin:0 0 8px;color:#ff6b35;">API 서버 연결 불가</h2>
                         <p style="color:var(--text-secondary);max-width:520px;text-align:center;margin:0 0 20px;">
                             MES API 서버${apiBase ? `(<code style="background:var(--bg-secondary);padding:2px 6px;border-radius:4px;">${apiBase}</code>)` : ''}에<br>
-                            연결할 수 없고, 로컬 백업 캐시(IndexedDB)도 사용할 수 없습니다.
+                            연결할 수 없습니다. MariaDB 데이터를 불러올 수 없어 앱을 시작할 수 없습니다.
                         </p>
 
                         <div style="
@@ -180,18 +177,12 @@ const App = (function() {
                 return;
             }
 
-            // ── 기타 에러 (IndexedDB 등) ────────────────────────────
-            const troubleshooting = isDbErr
-                ? `<strong>💡 IndexedDB 문제로 보입니다:</strong><br>
-                   1. 이 앱이 열린 <strong>모든 탭을 닫고</strong> 새 탭에서 열기<br>
-                   2. 그래도 안 되면 <strong>Ctrl+Shift+R</strong> (강제 새로고침)<br>
-                   3. 위 방법이 모두 실패하면 <strong>DB 초기화</strong> 클릭<br>
-                   <br>⚠️ <em>DB 초기화 시 로컬 백업 캐시가 삭제됩니다.</em>`
-                : `<strong>💡 해결 방법:</strong><br>
-                   1. 이 앱이 열린 <strong>모든 탭을 닫고</strong> 새 탭에서 열기<br>
-                   2. 그래도 안 되면 <strong>Ctrl+Shift+R</strong> (강제 새로고침)<br>
-                   3. 위 방법이 모두 실패하면 <strong>DB 초기화</strong> 클릭
-                   <br><br>⚠️ <em>DB 초기화 시 기존 데이터가 삭제됩니다.</em>`;
+            // ── 기타 에러 ────────────────────────────────────────────
+            const troubleshooting = `<strong>💡 해결 방법:</strong><br>
+                   1. MES API 서버(Node.js)가 실행 중인지 확인<br>
+                   2. 같은 사내 네트워크에 연결되어 있는지 확인<br>
+                   3. 관리/설정 > 시스템 탭에서 <strong>API 서버 URL</strong> 확인<br>
+                   4. <strong>Ctrl+Shift+R</strong> (강제 새로고침) 후 재시도`;
 
             contentArea.innerHTML = `
                 <div class="empty-state" style="margin-top:80px;">
@@ -201,9 +192,6 @@ const App = (function() {
                     <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:20px;">
                         <button class="btn btn-primary" onclick="location.reload()">
                             <span class="material-symbols-outlined">refresh</span> 새로고침
-                        </button>
-                        <button class="btn btn-danger" onclick="App.resetDB()">
-                            <span class="material-symbols-outlined">delete_forever</span> DB 초기화
                         </button>
                     </div>
                     <div style="margin-top:24px;padding:16px;background:var(--bg-secondary);border-radius:8px;max-width:480px;font-size:0.82rem;color:var(--text-muted);text-align:left;">
@@ -216,9 +204,7 @@ const App = (function() {
 
     async function _runOnceMigration(flagKey, fn) {
         try {
-            // Storage.init()에서 DB.init()을 이미 수행하지만, 혹시를 대비해 보장
-            await DB.init().catch(() => {});
-            const done = await DB.getConfig(flagKey).catch(() => null);
+            const done = await Storage.getConfigValue(flagKey).catch(() => null);
             if (done) return;
         } catch (_) {
             // 플래그 확인 실패 시에도 본 기능은 계속 진행 (마이그레이션은 best-effort)
@@ -232,7 +218,7 @@ const App = (function() {
         }
 
         try {
-            await DB.setConfig(flagKey, true);
+            await Storage.setConfigValue(flagKey, true);
         } catch (_) {}
     }
 

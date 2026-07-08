@@ -19272,9 +19272,24 @@ var ProdQualityModule = (function() {
                         const procBadge = p.paintProcess
                             ? `<span style="font-size:0.68rem;font-weight:700;background:rgba(124,58,237,0.1);color:#7c3aed;border:1px solid rgba(124,58,237,0.3);border-radius:4px;padding:1px 5px;margin-left:4px;">${_esc(p.paintProcess)}</span>`
                             : '';
+
+                        // 이 품목(차종+컬러)에 연결된 기준 문서가 실제로 어떤 프리셋에서 왔는지 표시.
+                        // 기준 자체가 없으면(status==='none') 빈 칸, 있는데 프리셋 연결이 없으면 경고 뱃지.
+                        const linkedTmpl = _exactTemplateFor(p.carModel, p.color);
+                        const presetCellHtml = status === 'none'
+                            ? `<span style="color:var(--text-muted);font-size:0.78rem;">-</span>`
+                            : (linkedTmpl && linkedTmpl.presetName
+                                ? `<span style="font-size:0.72rem;font-weight:600;color:#2563eb;background:rgba(37,99,235,0.08);border:1px solid rgba(37,99,235,0.25);border-radius:4px;padding:1px 6px;white-space:nowrap;">
+                                        <span class="material-symbols-outlined" style="font-size:0.8rem;vertical-align:-1px;">bookmark</span> ${_esc(linkedTmpl.presetName)}
+                                   </span>`
+                                : `<span title="프리셋 없이 수동으로 구성된 기준입니다." style="font-size:0.72rem;font-weight:700;color:#b45309;background:rgba(251,146,60,0.1);border:1px solid rgba(251,146,60,0.35);border-radius:4px;padding:1px 6px;white-space:nowrap;cursor:help;">
+                                        ⚠ 프리셋 미적용
+                                   </span>`);
+
                         return `<tr style="${rowBg}">
                             <td style="font-size:0.83rem;font-weight:600;">${_esc(p.partName)}${procBadge}</td>
                             <td style="font-size:0.82rem;">${_esc(p.color)||'<span style="color:var(--text-muted);">-</span>'}</td>
+                            <td>${presetCellHtml}</td>
                             ${specCells}
                             <td style="text-align:center;padding:6px;">
                                 <div style="display:flex;flex-direction:column;align-items:center;gap:5px;">
@@ -19315,6 +19330,7 @@ var ProdQualityModule = (function() {
                                 <tr>
                                     <th style="min-width:110px;">품명</th>
                                     <th style="min-width:80px;">컬러</th>
+                                    <th style="min-width:110px;">적용 프리셋</th>
                                     ${headerCols}
                                     <th style="text-align:center;min-width:80px;">작업</th>
                                 </tr>
@@ -21709,14 +21725,26 @@ var ProdQualityModule = (function() {
             ? _normalizeQualityItems(tmpl.items)
             : _masterItems().map(item => ({ ...item, selected: true })));
         UIUtils.showModal('차종/컬러별 초중종물 기준설정',
-            _templateFormHtml(selectedCar, selectedColor, items, hasTemplate), `
+            _templateFormHtml(selectedCar, selectedColor, items, hasTemplate, tmpl), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="ProdQualityModule.saveTemplate()">저장</button>
         `, 'xl');
     }
 
+    // 현재 적용된 프리셋 여부에 따른 안내 라벨 HTML
+    function _currentPresetLabelHtml(tmpl) {
+        const presetId = tmpl && tmpl.presetId || '';
+        const presetName = tmpl && tmpl.presetName || '';
+        if (presetId && presetName) {
+            return `<span class="material-symbols-outlined" style="font-size:0.85rem;vertical-align:middle;color:var(--accent-green);">check_circle</span>
+                &nbsp;현재 적용된 프리셋: <strong style="color:var(--text-primary);">${_esc(presetName)}</strong>`;
+        }
+        return `<span class="material-symbols-outlined" style="font-size:0.85rem;vertical-align:middle;color:var(--accent-orange,#f59e0b);">warning</span>
+            &nbsp;<strong style="color:#b45309;">⚠ 프리셋 미적용</strong> — 프리셋 없이 수동으로 구성된 기준입니다.`;
+    }
+
     // hasTemplate: 현재 차종에 저장된 기준이 있는지 여부
-    function _templateFormHtml(carModel, color, items, hasTemplate) {
+    function _templateFormHtml(carModel, color, items, hasTemplate, tmpl = null) {
         const userPresets = (Storage.getAll(STORE) || []).filter(d => d._docKind === PRESET_KIND);
 
         // ── 프레셋 선택 드롭다운 ──
@@ -21760,6 +21788,10 @@ var ProdQualityModule = (function() {
             </div>
 
             ${presetRow}
+
+            <input type="hidden" id="pqAppliedPresetId" value="${_esc(tmpl && tmpl.presetId || '')}">
+            <input type="hidden" id="pqAppliedPresetName" value="${_esc(tmpl && tmpl.presetName || '')}">
+            <div id="pqCurrentPresetLabel" style="font-size:0.8rem;margin-bottom:10px;">${_currentPresetLabelHtml(tmpl)}</div>
 
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
                 <span style="font-size:0.8rem;color:var(--text-muted);">
@@ -21821,6 +21853,7 @@ var ProdQualityModule = (function() {
         body.insertAdjacentHTML('beforeend', _templateItemRowHtml({ selected: true }));
         const last = body.querySelector('tr:last-child .pq-tpl-label');
         if (last) last.focus();
+        _clearAppliedPresetLink();
     }
 
     function deleteCheckedTemplateItems() {
@@ -21836,6 +21869,7 @@ var ProdQualityModule = (function() {
         }
         targets.forEach(row => row.remove());
         UIUtils.toast(`${targets.length}개 관리항목을 삭제했습니다. 저장을 눌러 반영하세요.`, 'success');
+        _clearAppliedPresetLink();
     }
 
     function moveTemplateItemRow(button, direction) {
@@ -22264,12 +22298,24 @@ var ProdQualityModule = (function() {
 
         UIUtils.toast(`"${_esc(userPreset.name)}" 프레셋이 적용됐습니다. 기준값을 확인 후 저장하세요.`, 'success');
 
-        // 현재 적용 프레셋 이름 표시
+        // 현재 적용 프레셋을 기억해 두었다가 저장 시 함께 기록한다
+        const idEl = document.getElementById('pqAppliedPresetId');
+        const nameEl = document.getElementById('pqAppliedPresetName');
+        if (idEl) idEl.value = userPreset.id;
+        if (nameEl) nameEl.value = userPreset.name;
+
         const labelEl = document.getElementById('pqCurrentPresetLabel');
-        if (labelEl) {
-            labelEl.innerHTML = `<span class="material-symbols-outlined" style="font-size:0.85rem;vertical-align:middle;color:var(--accent-green);">check_circle</span>
-                &nbsp;현재 적용된 프레셋: <strong style="color:var(--text-primary);">${_esc(userPreset.name)}</strong>`;
-        }
+        if (labelEl) labelEl.innerHTML = _currentPresetLabelHtml({ presetId: userPreset.id, presetName: userPreset.name });
+    }
+
+    // 프리셋 적용 후 항목을 수동으로 추가/삭제하면 더 이상 그 프리셋과 동일하지 않으므로 연결을 해제한다
+    function _clearAppliedPresetLink() {
+        const idEl = document.getElementById('pqAppliedPresetId');
+        const nameEl = document.getElementById('pqAppliedPresetName');
+        if (idEl) idEl.value = '';
+        if (nameEl) nameEl.value = '';
+        const labelEl = document.getElementById('pqCurrentPresetLabel');
+        if (labelEl) labelEl.innerHTML = _currentPresetLabelHtml(null);
     }
 
     // ── 현재 관리항목 설정을 프레셋으로 저장 ─────────────────────────────
@@ -22357,7 +22403,9 @@ var ProdQualityModule = (function() {
             selected: !!row.querySelector('.pq-tpl-selected')?.checked
         })).map(item => _isRangeSpecItem(item) ? { ...item, spec: _composeRangeSpec(item) } : item).filter(item => item.label));
         const existing = _exactTemplateFor(carModel, color);
-        const payload = { _docKind: TEMPLATE_KIND, carModel, color, items, updatedAt: UIUtils.now() };
+        const presetId = document.getElementById('pqAppliedPresetId')?.value || '';
+        const presetName = document.getElementById('pqAppliedPresetName')?.value || '';
+        const payload = { _docKind: TEMPLATE_KIND, carModel, color, items, presetId, presetName, updatedAt: UIUtils.now() };
         if (existing) await Storage.update(STORE, existing.id, payload);
         else await Storage.add(STORE, payload);
         UIUtils.closeModal();

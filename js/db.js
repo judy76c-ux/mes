@@ -1431,8 +1431,11 @@ const DB = (function() {
         });
     }
 
-    // 설정 전용
+    // 설정 전용 — USE_INDEXEDDB=false 시 MariaDB app_config 경유
     async function getConfig(key) {
+        if (typeof Storage !== 'undefined' && Storage.USE_INDEXEDDB === false) {
+            return Storage.getConfigValue(key);
+        }
         await ensureDB();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(STORES.CONFIG, 'readonly');
@@ -1444,6 +1447,10 @@ const DB = (function() {
     }
 
     async function setConfig(key, value) {
+        if (typeof Storage !== 'undefined' && Storage.USE_INDEXEDDB === false) {
+            await Storage.setConfigValue(key, value);
+            return;
+        }
         await save(STORES.CONFIG, {
             key,
             value

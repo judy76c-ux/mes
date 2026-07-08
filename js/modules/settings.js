@@ -13,6 +13,7 @@ const SettingsModule = (function() {
     const SETTINGS_TAB_KEY = 'mes_settings_tab';
     const DOCUMENT_DESIGN_KEY = 'mes_document_designs_v1';
     const API_BASE_CONFIG_KEY = 'mes_api_base';
+    const API_BASE_LS_KEY = '__mes_api_base__';
     let currentTab = (() => {
         try { return sessionStorage.getItem(SETTINGS_TAB_KEY) || 'products'; } catch(e) { return 'products'; }
     })();
@@ -7912,13 +7913,13 @@ const SettingsModule = (function() {
                     </div>
                     <div style="background:rgba(255,255,255,0.12);border-radius:8px;padding:12px;">
                         <div style="font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:6px;">
-                            <span class="material-symbols-outlined" style="font-size:16px;">computer</span>
-                            브라우저 캐시
+                            <span class="material-symbols-outlined" style="font-size:16px;">memory</span>
+                            브라우저 메모리 캐시
                         </div>
                         <div style="color:rgba(255,255,255,0.8);line-height:1.55;">
-                            IndexedDB는 <b>오프라인 조회용 캐시</b><br>
-                            서버 장애 시 최근 데이터 확인<br>
-                            저장·수정은 서버 연결 필요
+                            API에서 받은 데이터의 <b>세션 캐시</b><br>
+                            서버 연결 없이는 앱 시작 불가<br>
+                            새로고침 시 MariaDB에서 다시 로드
                         </div>
                     </div>
                     <div style="background:rgba(255,255,255,0.12);border-radius:8px;padding:12px;">
@@ -7971,7 +7972,7 @@ const SettingsModule = (function() {
                                 • 서버 자동 백업 외에 파일을 따로 보관할 때<br>
                                 • 작업 전후 수동 스냅샷이 필요할 때<br>
                                 • 다른 PC나 테스트 환경으로 자료를 옮길 때<br>
-                                • 서버 연결이 불안정해 임시 보관이 필요할 때<br>
+                                • 서버 연결이 불안정해 임시 스냅샷이 필요할 때<br>
                                 • 정식 장애 대비는 서버/NAS 백업 사용
                             </div>
                         </div>
@@ -8006,7 +8007,7 @@ const SettingsModule = (function() {
                         <div style="padding:10px 12px;border-radius:8px;background:#fef2f2;border:1px solid #fca5a5;">
                             <div style="font-size:.75rem;font-weight:700;color:#991b1b;margin-bottom:6px;">⚠️ 주의사항</div>
                             <div style="font-size:.78rem;color:#991b1b;line-height:1.65;">
-                                이 복원은 <b>브라우저 캐시</b>를 파일 내용으로 교체합니다.<br>
+                                이 복원은 <b>메모리 캐시</b>를 파일 내용으로 교체하고 MariaDB에 반영합니다.<br>
                                 서버 운영 DB 복구는 위 <b>서버 자동 백업</b>의 복원을 사용하세요.<br>
                                 실행 전 현재 서버 상태와 백업 시점을 확인하세요.
                             </div>
@@ -8014,9 +8015,8 @@ const SettingsModule = (function() {
                         <div style="padding:10px 12px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;">
                             <div style="font-size:.75rem;font-weight:700;color:#9a3412;margin-bottom:6px;">💡 언제 사용하나요?</div>
                             <div style="font-size:.78rem;color:#9a3412;line-height:1.65;">
-                                • 파일로 내려받은 자료를 임시 확인할 때<br>
-                                • 오프라인 캐시를 특정 시점으로 되돌릴 때<br>
-                                • 다른 PC 브라우저에 자료를 옮길 때<br>
+                                • JSON 스냅샷을 MariaDB에 업로드할 때<br>
+                                • 다른 PC에서 내려받은 자료를 서버에 반영할 때<br>
                                 • 운영 DB 복구 목적이면 서버/NAS 복원 사용
                             </div>
                         </div>
@@ -8118,13 +8118,12 @@ const SettingsModule = (function() {
                     const stores = Object.entries(DB.STORES).filter(([k, v]) => v !== 'config');
                     for (const [key, storeName] of stores) {
                         if (data[storeName] && Array.isArray(data[storeName])) {
-                            await DB.clear(storeName);
-                            await DB.saveAll(storeName, data[storeName]);
+                            await Storage.saveAll(storeName, data[storeName]);
                         }
                     }
 
                     // 캐시 재로드
-                    await Storage.init();
+                    await Storage.refresh();
 
                     UIUtils.toast('데이터 복원이 완료되었습니다!', 'success');
                     renderTabContent();
@@ -9795,7 +9794,9 @@ const SettingsModule = (function() {
         setTimeout(async () => {
             const apiBase = (typeof ApiClient !== 'undefined' && ApiClient.getBase)
                 ? ApiClient.getBase() : '';
-            const saved = await DB.getConfig(API_BASE_CONFIG_KEY).catch(() => '');
+            const saved = (() => {
+                try { return localStorage.getItem(API_BASE_LS_KEY) || ''; } catch (e) { return ''; }
+            })();
 
             const displayEl = document.getElementById('sysApiBaseDisplay');
             if (displayEl) {
@@ -10280,11 +10281,11 @@ const SettingsModule = (function() {
         const val = (inputEl ? inputEl.value : '').trim().replace(/\/$/, '');
         try {
             if (val) {
-                await DB.setConfig(API_BASE_CONFIG_KEY, val);
+                localStorage.setItem(API_BASE_LS_KEY, val);
                 window.__MES_API_BASE__ = val;
                 UIUtils.toast(`API 서버 URL이 저장되었습니다. 새로고침합니다…`, 'success');
             } else {
-                await DB.setConfig(API_BASE_CONFIG_KEY, '');
+                localStorage.removeItem(API_BASE_LS_KEY);
                 delete window.__MES_API_BASE__;
                 UIUtils.toast('API 서버 URL이 초기화되었습니다(자동). 새로고침합니다…', 'success');
             }
@@ -10295,7 +10296,7 @@ const SettingsModule = (function() {
     }
 
     function clearApiBase() {
-        DB.setConfig(API_BASE_CONFIG_KEY, '').catch(() => {});
+        try { localStorage.removeItem(API_BASE_LS_KEY); } catch (e) {}
         delete window.__MES_API_BASE__;
         const inputEl = document.getElementById('sysApiBaseInput');
         if (inputEl) inputEl.value = '';
@@ -11104,9 +11105,9 @@ const SettingsModule = (function() {
         UIUtils.confirm('⚠️ 정말로 모든 데이터를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.', async () => {
             const stores = Object.values(DB.STORES).filter(s => s !== 'config');
             for (const storeName of stores) {
-                await DB.clear(storeName);
+                await Storage.saveAll(storeName, []);
             }
-            await Storage.init();
+            await Storage.refresh();
             UIUtils.toast('모든 데이터가 초기화되었습니다.', 'success');
             renderTabContent();
         });

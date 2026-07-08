@@ -1629,6 +1629,9 @@ var InjectionIncomingModule = (function() {
         );
     }
 
+    // 삭제 확인창(관리자 인증) 이후 → 창고 반영 여부 확인 전까지 보관하는 임시 컨텍스트
+    let _pendingDeleteCtx = null;
+
     async function _doDelete(id) {
         const reason = (document.getElementById('deleteReasonInput') || {}).value || '';
         if (!reason.trim()) { UIUtils.toast('삭제 사유를 입력하세요.', 'warning'); return; }
@@ -1636,23 +1639,77 @@ var InjectionIncomingModule = (function() {
         if (!d) { UIUtils.toast('레코드를 찾을 수 없습니다.', 'error'); return; }
         UIUtils.closeModal();
         AuthModule.checkSettingsAuth(async function() {
-            const user = AuthModule.getCurrentUser();
-            const logEntry = {
-                id: Storage.generateId(),
-                type: 'injection',
-                typeLabel: '사출 수입검사',
-                deletedAt: new Date().toISOString(),
-                deletedBy: user ? user.displayName : '알 수 없음',
-                reason: reason,
-                originalId: id,
-                originalData: Object.assign({}, d),
-                summary: `${d.date || ''} / ${d.carModel || ''} ${d.partName || ''} / 입고${UIUtils.formatNumber(d.incomingQty)}EA`,
-            };
-            await Storage.add(DB.STORES.INSPECTION_DELETE_LOGS, logEntry);
-            await Storage.remove(STORE, id);
-            UIUtils.toast('삭제 완료. 이력이 기록되었습니다.', 'success');
-            search();
+            const linked = (typeof InjectionWarehouseModule !== 'undefined' && InjectionWarehouseModule.getLinkedInventoryForInspection)
+                ? InjectionWarehouseModule.getLinkedInventoryForInspection(d)
+                : [];
+            _pendingDeleteCtx = { id, reason, d, linked };
+
+            if (linked.length === 0) {
+                await _finalizeDeleteInspection(id, false);
+            } else {
+                _showLinkedInventoryDeleteChoice();
+            }
         });
+    }
+
+    // 삭제하려는 검사건이 이미 사출 창고에 입고 처리돼 있을 때 — 창고 기록도 함께 지울지 확인
+    function _showLinkedInventoryDeleteChoice() {
+        const ctx = _pendingDeleteCtx;
+        if (!ctx) return;
+        const anyConsumed = ctx.linked.some(l => l.consumed);
+        const lines = ctx.linked.map(l =>
+            `${l.lotNo} · ${UIUtils.formatNumber(l.qty)} EA${l.consumed ? ' <span style="color:var(--accent-red);font-weight:600;">— 이미 출고(사용)됨</span>' : ''}`
+        ).join('<br>');
+
+        UIUtils.showModal('이미 창고에 입고된 검사건입니다',
+            `<div style="padding:8px 0;">
+                <div style="padding:12px 14px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;margin-bottom:14px;font-size:0.85rem;line-height:1.7;">
+                    이 수입검사 건은 이미 사출 창고(자재 입고)에 반영되어 있습니다:<br>
+                    <div style="margin-top:6px;font-family:monospace;">${lines}</div>
+                </div>
+                <div style="font-size:0.85rem;color:var(--text-secondary);">
+                    ${anyConsumed
+                        ? '일부 LOT은 이미 다른 공정에 출고되어 사용 중이므로, 재고 불일치를 막기 위해 창고 기록은 남겨두고 검사 기록만 삭제합니다.'
+                        : '검사 기록만 삭제하면 창고 재고는 그대로 남아 실제 검사 이력과 어긋나게 됩니다. 창고 기록도 함께 삭제할지 선택하세요.'}
+                </div>
+            </div>`,
+            anyConsumed
+                ? `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+                   <button class="btn" style="background:#dc2626;color:#fff;" onclick="InjectionIncomingModule._finalizeDeleteInspection('${ctx.id}', false)">검사 기록만 삭제</button>`
+                : `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+                   <button class="btn btn-outline" onclick="InjectionIncomingModule._finalizeDeleteInspection('${ctx.id}', false)">검사 기록만 삭제</button>
+                   <button class="btn" style="background:#dc2626;color:#fff;" onclick="InjectionIncomingModule._finalizeDeleteInspection('${ctx.id}', true)">검사+창고 기록 함께 삭제</button>`,
+            '560px'
+        );
+    }
+
+    async function _finalizeDeleteInspection(id, alsoDeleteInventory) {
+        const ctx = _pendingDeleteCtx;
+        if (!ctx || ctx.id !== id) { UIUtils.toast('삭제 요청이 만료되었습니다. 다시 시도하세요.', 'error'); return; }
+
+        const user = AuthModule.getCurrentUser();
+        const logEntry = {
+            id: Storage.generateId(),
+            type: 'injection',
+            typeLabel: '사출 수입검사',
+            deletedAt: new Date().toISOString(),
+            deletedBy: user ? user.displayName : '알 수 없음',
+            reason: ctx.reason,
+            originalId: id,
+            originalData: Object.assign({}, ctx.d),
+            summary: `${ctx.d.date || ''} / ${ctx.d.carModel || ''} ${ctx.d.partName || ''} / 입고${UIUtils.formatNumber(ctx.d.incomingQty)}EA`,
+            linkedInventoryDeleted: !!alsoDeleteInventory
+        };
+        await Storage.add(DB.STORES.INSPECTION_DELETE_LOGS, logEntry);
+        await Storage.remove(STORE, id);
+        if (alsoDeleteInventory && ctx.linked.length > 0 && typeof InjectionWarehouseModule !== 'undefined') {
+            await InjectionWarehouseModule.removeLinkedInventoryRecords(ctx.linked.map(l => l.invId));
+        }
+        UIUtils.closeModal();
+        _pendingDeleteCtx = null;
+        UIUtils.toast(alsoDeleteInventory ? '검사 기록과 창고 입고 기록이 함께 삭제되었습니다.' : '삭제 완료. 이력이 기록되었습니다.', 'success');
+        search();
+        try { if (typeof InjectionWarehouseModule !== 'undefined') InjectionWarehouseModule.renderInspStandby(); } catch (e) {}
     }
 
     function remove(id) {
@@ -2081,6 +2138,7 @@ var InjectionIncomingModule = (function() {
         remove,
         confirmDelete,
         _doDelete,
+        _finalizeDeleteInspection,
         exportData,
         onLotInput,
         checkFifoWarning,

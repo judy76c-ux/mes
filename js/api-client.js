@@ -1,33 +1,37 @@
 /**
  * MES API 클라이언트
- * NAS MariaDB REST API 연동 레이어
- * DB(IndexedDB) 인터페이스와 동일한 메서드 제공
+ * Express API 서버 → MariaDB 연동 레이어
  */
 
 const ApiClient = (function() {
+  const API_BASE_LS_KEY = '__mes_api_base__';
+  const DEFAULT_FILE_API_BASE = 'http://192.168.10.2:3000';
+
   // API 서버 주소 결정 우선순위:
   //   1) window.__MES_API_BASE__ override
-  //   2) HTTP/HTTPS 접속 시 → 같은 호스트의 :3000 포트
-  //   3) file:// 직접 열기 → IndexedDB 설정 필요
+  //   2) localStorage __mes_api_base__
+  //   3) HTTP/HTTPS 접속 시 → 같은 호스트의 :3000 포트
+  //   4) file:// 직접 열기 → DEFAULT_FILE_API_BASE (192.168.10.2:3000)
   function resolveApiBase() {
     try {
       const saved = window.__MES_API_BASE__;
       if (saved && String(saved).trim()) return String(saved).trim().replace(/\/$/, '');
     } catch (e) {}
 
+    try {
+      const lsBase = localStorage.getItem(API_BASE_LS_KEY);
+      if (lsBase && lsBase.trim()) return lsBase.trim().replace(/\/$/g, '');
+    } catch (e) {}
+
     if (typeof location !== 'undefined' && location.protocol && location.hostname) {
       if (location.protocol === 'http:' || location.protocol === 'https:') {
         const h = location.hostname;
-        // 포트가 명시된 경우(예: :8080 서빙) — 동일 호스트 :3000 사용
         return `${location.protocol}//${h}:3000`;
       }
+      if (location.protocol === 'file:') {
+        return DEFAULT_FILE_API_BASE;
+      }
     }
-    // localStorage 체크 (로컬 개발: file:// 에서도 서버 연결 가능)
-    try {
-      const lsBase = localStorage.getItem('__mes_api_base__');
-      if (lsBase && lsBase.trim()) return lsBase.trim().replace(/\/$/g, '');
-    } catch (e) {}
-    // file:// 등 — override 미설정 시 빈 문자열(헬스체크 실패 → 오프라인 모드)
     return '';
   }
 

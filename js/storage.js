@@ -1,21 +1,20 @@
 /**
- * 스토리지 모듈 (API 서버 연동)
- * IndexedDB 대신 NAS MariaDB REST API 사용
- * 모듈 인터페이스는 동일하게 유지
+ * 스토리지 모듈 (MES API → MariaDB)
+ * 운영 데이터는 MariaDB만 사용. IndexedDB 폴백/백업 없음.
+ * NAS는 사진·백업 파일 저장소 역할만 (api-server 경유).
  */
 
 const Storage = (function() {
+  /** false: IndexedDB 읽기/쓰기/백업 전부 비활성 (MariaDB API 필수) */
+  const USE_INDEXEDDB = false;
+
   let cache = {};
   let initialized = false;
-  let offlineMode = false;   // NAS API 서버 연결 실패 시 true (읽기 전용 캐시 모드)
-  let localMode   = false;   // file:// 로컬 실행 시 true (IndexedDB 단독 읽기+쓰기)
+  let offlineMode = false;   // 세션 중 API 쓰기 실패 시 true (조회만 가능)
 
   // ── 스토어 준비 상태 추적 ────────────────────────────────────────────
-  // 어떤 스토어가 "권위 있는 소스(원격 성공 응답 또는 백업 데이터)"로부터
-  // 최소 1회 로드되었는지 기록한다. 준비되지 않은 스토어를 대상으로 재고/재공을
-  // 0 으로 계산해 화면에 표시하는 사고(데이터가 사라져 보이는 현상)를 막기 위함.
+  // 어떤 스토어가 API(원격)로부터 최소 1회 로드되었는지 기록
   //   - 원격 성공(데이터 유무 무관) → ready
-  //   - IndexedDB 백업에서 데이터 로드 → ready
   //   - 예외/네트워크 실패로 데이터를 못 받고 캐시도 비어있음 → NOT ready
   const _readyStores = new Set();
   function _markStoreReady(storeName) {
@@ -95,102 +94,25 @@ const Storage = (function() {
     return (Array.isArray(list) ? list : []).filter(s => s && !seen.has(s) && (seen.add(s), true));
   }
 
-  // ── 로컬 전용 스토어 (NAS API 연동 제외, IndexedDB에만 저장) ──────────
-  // base64 이미지 등 대용량 데이터는 NAS MariaDB 대신 IndexedDB에 직접 저장
-  const LOCAL_ONLY_STORES = new Set([
-    STORES.INJ_INSP_STANDARDS,        // 수입검사 기준 사진 (base64 이미지)
-    STORES.INJECT_COLOR_STD,          // 사출컬러 기준서 파일 (Blob — NAS 전송 불가)
-    STORES.ROBOT_PG_STD_DATA,         // 로봇 프로그램 기준서 (v45)
-    STORES.DRYING_STD_DATA,           // 건조 및 셋팅룸 온도 기준서 (v46)
-  ]);
-
-  // ── 로컬(파일) 실행 여부 판단 ─────────────────────────────────────────
-  // file:// 프로토콜이거나, 로컬 IP(192.168.x.x / 10.x.x.x)에서 직접 열기
-  function _isLocalFileMode() {
-    try {
-      const proto = location.protocol;
-      const host  = location.hostname;
-      // file:// → 완전 로컬
-      if (proto === 'file:') return true;
-      // 사내망 PC에서 직접 HTML을 http-server 등으로 열 때
-      if (host === 'localhost' || host === '127.0.0.1') return false; // localhost는 개발 서버 가능
-    } catch (e) {}
-    return false;
-  }
-
-  // 초기화: API 서버에서 모든 데이터 로드
-  // file:// 로컬 실행 시에도 NAS API를 먼저 읽고, 실패 시 IndexedDB 로컬 모드
-  // API 서버 실패 시 → IndexedDB 백업 캐시로 폴백 (오프라인 모드 + 배너)
+  // 초기화: MES API(MariaDB) 연결 필수 — file://·http 모두 동일 경로
   async function init() {
     _ensureCacheDefaults();
 
-    // ── 로컬 파일 실행: NAS API 우선, 실패 시 IndexedDB 단독 모드 ─────────
-    if (_isLocalFileMode()) {
-      // file://로 열어도 NAS API를 먼저 사용한다. 실패하면 기존 IndexedDB 로컬 모드로 폴백한다.
-      try {
-        await ApiClient.init();
-        await DB.init().catch(() => {});
-        offlineMode = false;
-        localMode   = false;
-        await loadPriorityToCache(DEFAULT_PRIORITY_STORES, { useRemote: true });
-        await _runSchemaMigration();
-        initialized = true;
-        warmRemainingStoresAsync(_getRemainingStores(DEFAULT_PRIORITY_STORES), { useRemote: true });
-        console.log('[Storage] file:// mode connected to API server');
-        return;
-      } catch (apiError) {
-        console.warn('[Storage] file:// API connection failed. Falling back to IndexedDB:', apiError.message);
-        await DB.init();
-        offlineMode = true;
-        localMode   = true;
-        await loadPriorityToCache(DEFAULT_PRIORITY_STORES, { useRemote: false });
-        await _runSchemaMigration();
-        initialized = true;
-        warmRemainingStoresAsync(_getRemainingStores(DEFAULT_PRIORITY_STORES), { useRemote: false });
-        setTimeout(() => _showNasDisconnectedBanner(apiError.message), 800);
-        console.log('[Storage] file:// mode started with IndexedDB fallback');
-        return;
-      }
-    }
-
-    // ── NAS 연결 시도 (http/https 접근 시) ──────────────────────────────
     try {
       await ApiClient.init();
-      await DB.init().catch(() => {});
       offlineMode = false;
-      localMode   = false;
       await loadPriorityToCache(DEFAULT_PRIORITY_STORES, { useRemote: true });
-      await _runSchemaMigration(); // v19 데이터 마이그레이션 (우선 로드 후)
+      await _runSchemaMigration();
       initialized = true;
       warmRemainingStoresAsync(_getRemainingStores(DEFAULT_PRIORITY_STORES), { useRemote: true });
-      console.log('✅ 스토리지 초기화 완료 (API 서버 연동)');
+      console.log('✅ 스토리지 초기화 완료 (MariaDB API)');
     } catch (apiError) {
-      console.warn('⚠️ NAS 서버 연결 실패 → IndexedDB 백업 캐시로 폴백 시도:', apiError.message);
-
-      // ── 폴백: IndexedDB 로컬 캐시 사용 (오프라인 모드) ──
-      try {
-        await DB.init();
-        offlineMode = true;
-        localMode   = false;
-        await loadPriorityToCache(DEFAULT_PRIORITY_STORES, { useRemote: false });
-        await _runSchemaMigration(); // v19 데이터 마이그레이션 (우선 로드 후)
-        initialized = true;
-        warmRemainingStoresAsync(_getRemainingStores(DEFAULT_PRIORITY_STORES), { useRemote: false });
-        console.log('✅ 오프라인 모드로 시작 (IndexedDB 백업 캐시)');
-
-        // 사용자에게 NAS 연결 불가 전용 배너 표시 (UI 준비 후)
-        setTimeout(() => _showNasDisconnectedBanner(apiError.message), 800);
-      } catch (dbError) {
-        // IndexedDB 폴백도 실패 → 최종 실패 (NAS 전용 에러 표시는 app.js에서 처리)
-        console.error('❌ 스토리지 초기화 실패 (NAS 및 IndexedDB 모두 실패):', dbError);
-        const combined = new Error(
-          `${apiError.message}\n(IndexedDB 폴백도 실패: ${dbError.message})`
-        );
-        combined.isNasError = true;     // app.js에서 분기 처리용 플래그
-        combined.apiError = apiError;
-        combined.dbError = dbError;
-        throw combined;
-      }
+      console.error('❌ MES API 서버 연결 실패:', apiError.message);
+      const err = new Error(apiError.message);
+      err.isApiError = true;
+      err.isNasError = true; // app.js 호환
+      err.apiError = apiError;
+      throw err;
     }
   }
 
@@ -225,9 +147,9 @@ const Storage = (function() {
       <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">
         <span class="material-symbols-outlined" style="font-size:22px;">cloud_off</span>
         <div style="display:flex;flex-direction:column;line-height:1.3;min-width:0;">
-          <strong style="font-size:0.95rem;">API 서버 연결 불가 — 오프라인 모드</strong>
+          <strong style="font-size:0.95rem;">MES API 서버 연결 불가</strong>
           <span style="font-size:0.78rem;opacity:0.92;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-            마지막으로 저장된 로컬 데이터로 조회만 가능 · 변경사항은 서버에 동기화되지 않습니다
+            MariaDB에 연결할 수 없습니다 · 저장 불가 · 서버 복구 후 새로고침하세요
           </span>
         </div>
       </div>
@@ -243,7 +165,7 @@ const Storage = (function() {
         <button id="nasBannerCloseBtn" style="
           background:transparent;color:#fff;border:none;cursor:pointer;
           padding:4px 8px;display:flex;align-items:center;
-        " title="배너 숨기기 (오프라인 모드는 유지)">
+        " title="배너 숨기기">
           <span class="material-symbols-outlined" style="font-size:20px;">close</span>
         </button>
       </div>
@@ -271,47 +193,24 @@ const Storage = (function() {
       if (!storeName) return [];
       if (!Array.isArray(cache[storeName])) cache[storeName] = [];
 
-      // ── 로컬 전용 스토어: NAS API 호출 없이 IndexedDB에서만 로드 ──
-      if (LOCAL_ONLY_STORES.has(storeName)) {
-        const rows = await _loadIndexedBackupStore(storeName);
-        cache[storeName] = rows;
-        _markStoreReady(storeName);
-        return rows;
-      }
-
-      // 오프라인/로컬 모드: IndexedDB만 사용
       if (!useRemote) {
-        const rows = await _loadIndexedBackupStore(storeName);
-        cache[storeName] = rows;
         _markStoreReady(storeName);
-        return rows;
+        return cache[storeName];
       }
 
-      // 온라인: Remote → (비었으면) IndexedDB → (있으면) Remote 복원
       const remoteItems = await ApiClient.getAll(storeName);
       if (Array.isArray(remoteItems) && remoteItems.length > 0) {
         cache[storeName] = remoteItems;
         _markStoreReady(storeName);
-        _backupToIndexedDB(storeName, remoteItems);
         return remoteItems;
       }
 
-      const localItems = await _loadIndexedBackupStore(storeName);
-      if (localItems.length > 0) {
-        cache[storeName] = localItems;
-        _markStoreReady(storeName);
-        _restoreEmptyRemoteStore(storeName, localItems);
-        return localItems;
-      }
-
       // ── 방어 가드: "의심스러운 빈 응답" ─────────────────────────────
-      // 원격이 빈 배열([])을 돌려주고 IndexedDB 백업도 비어 있지만,
-      // 메모리 캐시에는 이미 데이터가 있는 경우 → 서버/쿼리 일시 오류일 가능성이 높다.
-      // 이때 캐시를 []로 덮어쓰면 DB에는 이력이 남아 있는데도 화면에서 사라진다.
-      // 마지막 정상 데이터(last-known-good)를 유지하고 이상을 기록한다.
+      // 원격이 빈 배열([])을 돌려주지만 메모리 캐시에 이미 데이터가 있는 경우
+      // → 서버/쿼리 일시 오류일 가능성이 높다. 캐시를 []로 덮어쓰지 않는다.
       if (Array.isArray(cache[storeName]) && cache[storeName].length > 0) {
         console.warn(
-          `[Storage][anomaly] 원격/백업이 모두 비어있으나 캐시에 ${cache[storeName].length}건 존재 → ` +
+          `[Storage][anomaly] 원격이 비어있으나 캐시에 ${cache[storeName].length}건 존재 → ` +
           `기존 데이터 유지(의심스러운 빈 응답 방어): ${storeName}`
         );
         _markStoreReady(storeName);
@@ -319,10 +218,8 @@ const Storage = (function() {
         return cache[storeName];
       }
 
-      // 원격 성공 + 백업/캐시 모두 없음 → 진짜로 빈 스토어. 준비 완료로 간주.
       cache[storeName] = [];
       _markStoreReady(storeName);
-      _backupToIndexedDB(storeName, cache[storeName]);
       return cache[storeName];
     } catch (e) {
       // 예외(네트워크/서버 오류)로 데이터를 받지 못함.
@@ -381,66 +278,11 @@ const Storage = (function() {
     _scheduleIdle(pump, 1500);
   }
 
-  // 모든 스토어 캐시 로드 (API/IndexedDB) — refresh(full) 용 (await)
+  // 모든 스토어 캐시 로드 (API) — refresh(full) 용 (await)
   async function loadAllToCache({ useRemote } = {}) {
     const storeList = _getAllStoreList();
     await Promise.allSettled(storeList.map(storeName => _loadOneStoreToCache(storeName, { useRemote })));
     storeList.forEach(storeName => _emitCacheWarm(storeName, { phase: 'full' }));
-  }
-
-  // IndexedDB에서 모든 스토어 로드 (오프라인 폴백)
-  async function _loadIndexedBackupStore(storeName) {
-    try {
-      if (typeof DB === 'undefined' || !DB.getAll) return [];
-      const rows = await DB.getAll(storeName);
-      return Array.isArray(rows) ? rows.filter(r => r && r.id) : [];
-    } catch (e) {
-      return [];
-    }
-  }
-
-  function _restoreEmptyRemoteStore(storeName, items) {
-    if (!Array.isArray(items) || items.length === 0) return;
-    setTimeout(async () => {
-      try {
-        await ApiClient.saveAll(storeName, items);
-        console.warn(`[MES restore] Empty API store restored from IndexedDB backup: ${storeName} (${items.length})`);
-      } catch (e) {
-        console.warn(`[MES restore] Failed to restore API store from IndexedDB backup: ${storeName}`, e);
-      }
-    }, 0);
-  }
-
-  async function loadAllFromIndexedDB() {
-    const storeList = Object.values(STORES).filter(s => s !== 'config');
-    await Promise.allSettled(
-      storeList.map(async (storeName) => {
-        try {
-          cache[storeName] = await DB.getAll(storeName);
-        } catch (e) {
-          cache[storeName] = [];
-        }
-      })
-    );
-  }
-
-  // IndexedDB 백업 (비동기, 실패 무시) — 다음 오프라인 시점에 사용
-  function _backupToIndexedDB(storeName, items) {
-    if (!Array.isArray(items) || items.length === 0) return;
-    if (typeof DB === 'undefined' || !DB.saveAll) return;
-    // 비동기 — UI 차단 방지
-    setTimeout(async () => {
-      try {
-        // DB.saveAll이 있다면 사용, 없으면 개별 save
-        if (DB.saveAll) {
-          await DB.saveAll(storeName, items);
-        } else if (DB.save) {
-          for (const item of items) await DB.save(storeName, item);
-        }
-      } catch (e) {
-        // 백업 실패는 조용히 무시 (스토어가 IndexedDB에 없을 수도 있음)
-      }
-    }, 0);
   }
 
   function _setOfflineAfterWriteFailure(err) {
@@ -455,27 +297,16 @@ const Storage = (function() {
   }
 
   function _offlineWriteError() {
-    return new Error('API 서버가 연결되지 않아 저장할 수 없습니다. 오프라인 모드는 조회 전용입니다. 서버 연결 후 새로고침하고 다시 저장하세요.');
+    return new Error('MES API 서버가 연결되지 않아 저장할 수 없습니다. 서버 연결 후 새로고침하고 다시 저장하세요.');
   }
 
   function _assertWritable() {
-    if (!offlineMode) return;       // NAS 연결 정상 또는 로컬 모드
-    if (localMode) return;          // 로컬 모드: IndexedDB에 직접 쓰기 허용
+    if (!offlineMode) return;
     const err = _offlineWriteError();
     if (typeof UIUtils !== 'undefined' && UIUtils.toast) {
       UIUtils.toast(err.message, 'warning');
     }
     throw err;
-  }
-
-  function _persistOneToIndexedDB(storeName, item) {
-    if (typeof DB === 'undefined' || !DB.save || !item) return;
-    setTimeout(() => DB.save(storeName, item).catch(() => {}), 0);
-  }
-
-  function _removeOneFromIndexedDB(storeName, id) {
-    if (typeof DB === 'undefined' || !DB.remove) return;
-    setTimeout(() => DB.remove(storeName, id).catch(() => {}), 0);
   }
 
   // ── v19 스키마 마이그레이션 ────────────────────────────────────────────
@@ -569,7 +400,7 @@ const Storage = (function() {
     }
   }
 
-  // 오프라인 모드 여부 (UI/모듈에서 쓰기 차단용)
+  // 오프라인 모드 여부 (세션 중 API 쓰기 실패 시 true — init 실패와 별개)
   function isOffline() {
     return offlineMode;
   }
@@ -586,15 +417,6 @@ const Storage = (function() {
 
   // 추가
   async function add(storeName, data) {
-    // ── 로컬 전용 스토어: IndexedDB에만 저장 (NAS API 호출 없음) ──
-    if (LOCAL_ONLY_STORES.has(storeName)) {
-      const newItem = { id: generateId(), createdAt: new Date().toISOString(), ...data };
-      await DB.save(storeName, newItem);
-      if (!cache[storeName]) cache[storeName] = [];
-      cache[storeName].push(newItem);
-      return newItem;
-    }
-
     _assertWritable();
 
     const newItem = {
@@ -602,14 +424,6 @@ const Storage = (function() {
       createdAt: new Date().toISOString(),
       ...data
     };
-
-    // ── 로컬 모드: IndexedDB 직접 저장 ──
-    if (localMode) {
-      await DB.save(storeName, newItem);
-      if (!cache[storeName]) cache[storeName] = [];
-      cache[storeName].push(newItem);
-      return newItem;
-    }
 
     try {
       await ApiClient.save(storeName, newItem);
@@ -621,7 +435,6 @@ const Storage = (function() {
 
     if (!cache[storeName]) cache[storeName] = [];
     cache[storeName].push(newItem);
-    _persistOneToIndexedDB(storeName, newItem);
     return newItem;
   }
 
@@ -640,13 +453,6 @@ const Storage = (function() {
       updatedAt: new Date().toISOString()
     };
 
-    // ── 로컬 모드: IndexedDB 직접 수정 ──
-    if (localMode) {
-      await DB.save(storeName, updated);
-      items[index] = updated;
-      return updated;
-    }
-
     try {
       await ApiClient.save(storeName, updated);
     } catch (err) {
@@ -656,52 +462,23 @@ const Storage = (function() {
     }
 
     items[index] = updated;
-    _persistOneToIndexedDB(storeName, updated);
     return updated;
   }
 
-  // 업서트 — 동일 id 레코드가 있으면 덮어쓰기, 없으면 추가 (주로 LOCAL_ONLY_STORES 용)
+  // 업서트 — 동일 id 레코드가 있으면 덮어쓰기, 없으면 추가
   async function put(storeName, data) {
     if (!data || !data.id) throw new Error('[Storage.put] id 필드가 필요합니다.');
-    if (LOCAL_ONLY_STORES.has(storeName)) {
-      await DB.save(storeName, data);
-      if (!cache[storeName]) cache[storeName] = [];
-      const idx = cache[storeName].findIndex(r => r.id === data.id);
-      if (idx >= 0) cache[storeName][idx] = data;
-      else cache[storeName].push(data);
-      return data;
-    }
-    // 일반 스토어: 기존 레코드 있으면 update, 없으면 add
     const exists = (cache[storeName] || []).some(r => r.id === data.id);
     if (exists) {
       return update(storeName, data.id, data);
-    } else {
-      const { id, ...rest } = data;
-      return add(storeName, { id, ...rest });
     }
+    const { id, ...rest } = data;
+    return add(storeName, { id, ...rest });
   }
 
   // 삭제
   async function remove(storeName, id) {
-    // ── 로컬 전용 스토어: IndexedDB에서만 삭제 (NAS API 호출 없음) ──
-    if (LOCAL_ONLY_STORES.has(storeName)) {
-      await DB.remove(storeName, id);
-      if (cache[storeName]) {
-        cache[storeName] = cache[storeName].filter(item => item.id !== id);
-      }
-      return;
-    }
-
     _assertWritable();
-
-    // ── 로컬 모드: IndexedDB 직접 삭제 ──
-    if (localMode) {
-      await DB.remove(storeName, id);
-      if (cache[storeName]) {
-        cache[storeName] = cache[storeName].filter(item => item.id !== id);
-      }
-      return;
-    }
 
     try {
       await ApiClient.remove(storeName, id);
@@ -714,19 +491,11 @@ const Storage = (function() {
     if (cache[storeName]) {
       cache[storeName] = cache[storeName].filter(item => item.id !== id);
     }
-    _removeOneFromIndexedDB(storeName, id);
   }
 
   // 배치 저장 (await 가능 — 호출측에서 await 사용 권장)
   async function saveAll(storeName, dataArray) {
     _assertWritable();
-
-    // ── 로컬 모드: IndexedDB 직접 배치 저장 ──
-    if (localMode) {
-      for (const item of dataArray) await DB.save(storeName, item);
-      cache[storeName] = dataArray;
-      return;
-    }
 
     try {
       await ApiClient.saveAll(storeName, dataArray);
@@ -736,7 +505,6 @@ const Storage = (function() {
       throw err;
     }
     cache[storeName] = dataArray;
-    _backupToIndexedDB(storeName, dataArray);
   }
 
   // 날짜 범위 필터
@@ -938,7 +706,6 @@ const Storage = (function() {
         await call();
       }
 
-      affectedStores.forEach(storeName => _backupToIndexedDB(storeName, cache[storeName] || []));
       return results;
 
     } catch (err) {
@@ -1005,11 +772,11 @@ const Storage = (function() {
     try {
       if (storeName) {
         if (!Array.isArray(cache[storeName])) cache[storeName] = [];
-        const useRemote = !offlineMode && !localMode && !LOCAL_ONLY_STORES.has(storeName);
+        const useRemote = !offlineMode;
         await _loadOneStoreToCache(storeName, { useRemote });
         _emitCacheWarm(storeName, { phase: 'refresh' });
       } else {
-        const useRemote = !offlineMode && !localMode;
+        const useRemote = !offlineMode;
         await loadAllToCache({ useRemote });
       }
     } catch (err) {
@@ -1018,6 +785,7 @@ const Storage = (function() {
   }
 
   return {
+    USE_INDEXEDDB,
     STORES,
     init,
     getAll,
@@ -1036,7 +804,7 @@ const Storage = (function() {
     isInitialized,
     isStoreReady,           // 특정 스토어가 권위 있는 소스에서 1회 이상 로드됐는지
     areStoresReady,         // 여러 스토어가 모두 준비됐는지
-    isOffline,              // 오프라인 모드 여부 (API 서버 연결 실패 시 true)
+    isOffline,              // 세션 중 API 쓰기 실패 시 true
     getConfig,
     saveConfig,
     getConfigValue,

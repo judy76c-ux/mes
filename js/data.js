@@ -13,7 +13,7 @@ const DataManager = (function() {
 
     async function init() {
         try {
-            const saved = await DB.getConfig(LEGACY_RECORDS_KEY);
+            const saved = await Storage.getConfigValue(LEGACY_RECORDS_KEY);
             legacyRecordsCache = Array.isArray(saved) ? saved : [];
         } catch (e) {
             legacyRecordsCache = [];
@@ -26,7 +26,7 @@ const DataManager = (function() {
 
     function saveLegacyRecords(records) {
         legacyRecordsCache = Array.isArray(records) ? records : [];
-        DB.setConfig(LEGACY_RECORDS_KEY, legacyRecordsCache).catch(() => {});
+        Storage.setConfigValue(LEGACY_RECORDS_KEY, legacyRecordsCache).catch(() => {});
     }
 
     function getDisplayName(product) {

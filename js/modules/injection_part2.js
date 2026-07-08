@@ -223,11 +223,22 @@ var InjectionWarehouseModule = (function() {
 
         // 2) 재고(입출고)에서 품목별 현재고 합계 계산하여 조인 (없으면 0 유지)
         (data || []).forEach(d => {
-            // v19: injMaterialId 있으면 ID 직접 조회, 없으면 carModel+partName 텍스트 Fallback
+            // v19: injMaterialId 있으면 ID 직접 조회, 없으면 carModel+partName(+컬러) 텍스트 Fallback
+            // 컬러를 무시하고 매칭하면(차종+품명만 일치) 컬러가 다른 자재와 잘못 연결되어
+            // 서로 다른 컬러의 거래 수량이 한 재고 키로 섞여버리는 오류가 생긴다. 컬러까지
+            // 일치할 때만 마스터 값을 신뢰하고, 그렇지 않으면 거래 기록 원본 값을 그대로 쓴다.
             const dCar  = _normKeyStr(d.carModel);
             const dPart = _normKeyStr(d.partName);
-            const mat = (d.injMaterialId && materials.find(m => m.id === d.injMaterialId))
-                     || materials.find(m => _normKeyStr(m.carModel) === dCar && _normKeyStr(m.injPartName) === dPart);
+            const dColor = _normKeyStr(d.color);
+
+            let mat = d.injMaterialId && materials.find(m => m.id === d.injMaterialId);
+            if (!mat) {
+                const sameCarPart = materials.filter(m => _normKeyStr(m.carModel) === dCar && _normKeyStr(m.injPartName) === dPart);
+                mat = sameCarPart.find(m => _normKeyStr(m.injColor || m.color) === dColor)
+                    || (sameCarPart.length === 1 ? sameCarPart[0] : null);
+            }
+            // injMaterialId로 찾은 자재라도 컬러가 실제 거래와 다르면(잘못 연결된 기록) 신뢰하지 않는다
+            if (mat && dColor && _normKeyStr(mat.injColor || mat.color) !== dColor) mat = null;
 
             // 가능한 경우 마스터 값을 canonical key로 사용 (partName=injPartName)
             const carModel = _normKeyStr((mat && mat.carModel) || d.carModel);
@@ -333,11 +344,16 @@ var InjectionWarehouseModule = (function() {
                 }
 
                 // 재고 마이너스는 데이터(입출고 기록) 오류 — 숨기지 않고 경고 뱃지로 노출
+                // 관리자는 뱃지를 클릭하면 아래 "입출고 조회"로 바로 이동해 원인 기록을 찾아 삭제할 수 있다.
                 if (item.stock < 0) {
-                    stockHtml += `<span title="입출고 합계가 마이너스입니다. 최근 입고/출고/LOT 수정 기록을 확인하세요."
+                    const badgeClick = _isAdminUser()
+                        ? `event.stopPropagation();InjectionWarehouseModule.jumpToTxHistory('${_em}','${_ep}','${_ec}');`
+                        : '';
+                    stockHtml += `<span title="입출고 합계가 마이너스입니다.${_isAdminUser() ? ' 클릭하면 입출고 조회에서 원인 기록을 확인/삭제할 수 있습니다.' : ' 최근 입고/출고/LOT 수정 기록을 확인하세요.'}"
+                        onclick="${badgeClick}"
                         style="display:inline-block;margin-left:4px;font-size:0.6rem;font-weight:700;background:rgba(220,38,38,0.12);
                                color:#b91c1c;border:1px solid rgba(220,38,38,0.4);border-radius:3px;padding:0 4px;
-                               vertical-align:middle;cursor:help;white-space:nowrap;">⚠ 재고 오류</span>`;
+                               vertical-align:middle;${_isAdminUser() ? 'cursor:pointer;' : 'cursor:help;'}white-space:nowrap;">⚠ 재고 오류</span>`;
                 }
 
                 return `
@@ -548,6 +564,32 @@ var InjectionWarehouseModule = (function() {
             parts.map(p => `<option value="${p}">${p}</option>`).join('');
     }
 
+    // 재고 오류(마이너스) 뱃지 클릭 → 입출고 조회를 해당 품목으로 필터링해 원인 기록을 바로 찾게 함 (관리자 전용)
+    function jumpToTxHistory(carModel, partName, color) {
+        if (!_isAdminUser()) return;
+        const cm = decodeURIComponent(carModel || '');
+        const pn = decodeURIComponent(partName || '');
+
+        // 오래된 원인 기록도 놓치지 않도록 조회 기간을 전체로 넓힌다
+        const startEl = document.getElementById('injTxStart');
+        const endEl   = document.getElementById('injTxEnd');
+        if (startEl) startEl.value = '2000-01-01';
+        if (endEl) endEl.value = UIUtils.today ? UIUtils.today() : '';
+
+        const carSel = document.getElementById('injTxCar');
+        if (carSel) carSel.value = cm;
+        onTxCarChange();
+
+        setTimeout(() => {
+            const partSel = document.getElementById('injTxPart');
+            if (partSel) partSel.value = pn;
+            filterTransactions();
+            const tbody = document.getElementById('injInvTableBody');
+            const card = tbody && tbody.closest('.card');
+            if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 30);
+    }
+
     // 입출고 테이블 렌더링
     function renderTxTable(data, materials) {
         const tbody = document.getElementById('injInvTableBody');
@@ -597,8 +639,12 @@ var InjectionWarehouseModule = (function() {
                         ${d.outgoingType === '반출' ? `<span style="margin-left:4px;font-size:0.72rem;background:#f59e0b;color:#fff;padding:1px 6px;border-radius:10px;">반출</span>` : ''}
                         ${d.returnReason ? `<div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">사유: ${d.returnReason}</div>` : ''}
                     </td>
-                    <td>
+                    <td style="white-space:nowrap;">
                         <button class="btn btn-sm btn-outline" onclick="InjectionWarehouseModule.openEditModal('${d.id}')">수정</button>
+                        ${_isAdminUser() ? `
+                        <button class="btn btn-sm btn-outline" style="color:#dc2626;border-color:#fca5a5;margin-left:4px;"
+                                title="이 입출고 기록을 삭제합니다. 재고 오류(마이너스 재고) 수정 시 사용하세요."
+                                onclick="InjectionWarehouseModule.remove('${d.id}')">삭제</button>` : ''}
                     </td>
                 </tr>
             `;
@@ -1299,6 +1345,53 @@ var InjectionWarehouseModule = (function() {
         renderInspStandby();
     }
 
+    // 수입검사 1건의 LOT들이 이미 사출 창고(INJECTION_INVENTORY)에 입고 처리된 기록을 찾아 반환.
+    // 각 항목에 consumed(이미 다른 출고 기록에서 사용됐는지)를 표시 — 수입검사 삭제 시
+    // 창고 재고와의 정합성을 확인하는 용도로 사용한다(InjectionIncomingModule.remove에서 호출).
+    function getLinkedInventoryForInspection(insp) {
+        if (!insp) return [];
+        const inventory = Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [];
+        const sourceLots = (insp.lots && insp.lots.length > 0)
+            ? insp.lots
+            : (insp.lotNo ? [{ lotNo: insp.lotNo, qty: insp.passQty }] : []);
+
+        const linked = [];
+        sourceLots.forEach(lot => {
+            if (!lot.lotNo) return;
+            const qty = Number(lot.qty) || 0;
+            if (qty <= 0) return;
+
+            inventory.forEach(inv => {
+                if (inv.type !== '입고' || inv.partName !== insp.partName) return;
+                const invLots = (inv.lots && inv.lots.length > 0)
+                    ? inv.lots
+                    : (inv.lotNo ? [{ lotNo: inv.lotNo, qty: inv.quantity }] : []);
+                invLots.forEach(invLot => {
+                    if (invLot.lotNo !== lot.lotNo) return;
+                    const invQty = Number(invLot.qty) || 0;
+                    const matchesQty = invQty === qty;
+                    const matchesInsp = !!inv.inspDate && inv.inspDate === insp.date;
+                    if (!matchesQty && !matchesInsp) return;
+
+                    const consumed = inventory.some(o =>
+                        o.type === '출고' && o.partName === insp.partName &&
+                        (o.lotNo === lot.lotNo || (o.lots || []).some(l2 => l2.lotNo === lot.lotNo))
+                    );
+                    linked.push({ invId: inv.id, lotNo: lot.lotNo, qty: invQty, consumed });
+                });
+            });
+        });
+        return linked;
+    }
+
+    // linked 창고 입고 기록 삭제 — 위 함수로 확인된, 아직 소비되지 않은 레코드만 넘겨야 함
+    async function removeLinkedInventoryRecords(ids) {
+        for (const id of (ids || [])) {
+            try { await Storage.remove(DB.STORES.INJECTION_INVENTORY, id); }
+            catch (e) { console.warn('[removeLinkedInventoryRecords] 실패:', id, e); }
+        }
+    }
+
     // 현재 창고(INJECTION_INVENTORY)에 이미 입고된 LOT 키(partName||lotNo||수량 또는 검사일시) 집합
     // LOT 번호는 생산일자 기준으로 매겨져 서로 다른 검사건이 같은 번호를 쓸 수 있으므로,
     // 수량까지 같거나 검사일시(inspDate)까지 같을 때만 "이미 입고됨"으로 인정한다.
@@ -1341,8 +1434,12 @@ var InjectionWarehouseModule = (function() {
     // 검사 1건의 미입고 LOT 전체를 사출 창고(INJECTION_INVENTORY) 입고 레코드 1건으로 반영
     async function _commitInspectionInbound(insp, pendingLots, allMats) {
         const totalQty = pendingLots.reduce((s, l) => s + (Number(l.qty) || 0), 0);
-        const _matMatch = (allMats || []).find(m => m.injPartName === insp.partName && m.carModel === insp.carModel)
-            || (allMats || []).find(m => m.injPartName === insp.partName);
+        // 차종+품명만으로 매칭하면 컬러가 다른 자재(마스터)와 잘못 연결되어 재고 집계 시
+        // 서로 다른 컬러의 수량이 섞이는 오류가 생긴다. 컬러까지 일치하는 자재를 우선 사용하고,
+        // 차종+품명 조합에 자재가 하나뿐일 때만(컬러 구분 없음) 컬러 무시 매칭으로 넘어간다.
+        const _sameCarPart = (allMats || []).filter(m => m.injPartName === insp.partName && m.carModel === insp.carModel);
+        const _matMatch = _sameCarPart.find(m => (m.injColor || m.color || '') === (insp.color || ''))
+            || (_sameCarPart.length === 1 ? _sameCarPart[0] : null);
 
         await Storage.add(DB.STORES.INJECTION_INVENTORY, {
             date: `${UIUtils.today()} ${new Date().toTimeString().slice(0, 5)}`,
@@ -2657,14 +2754,18 @@ var InjectionWarehouseModule = (function() {
 
         const _invCarModel = document.getElementById('addInvCarModel').value;
         const _invPartName = document.getElementById('addInvPart').value;
+        const _invColor = (document.getElementById('addInvColor') || {}).value || '';
 
-        // v19: injMaterialId — injection_materials에서 carModel+injPartName으로 ID 조회
+        // v19: injMaterialId — injection_materials에서 carModel+injPartName(+컬러)으로 ID 조회
+        // 컬러까지 일치하는 자재를 우선 사용 — 컬러 무시 매칭은 서로 다른 컬러의 자재와 잘못
+        // 연결되어(예: GRAY 거래가 WHITE 자재로 연결) 재고 집계 시 수량이 섞이는 오류로 이어진다.
         var _allMats = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
-        var _matMatch = _allMats.find(function(m) {
+        var _sameCarPart = _allMats.filter(function(m) {
             return m.injPartName === _invPartName && m.carModel === _invCarModel;
-        }) || _allMats.find(function(m) {
-            return m.injPartName === _invPartName;
         });
+        var _matMatch = _sameCarPart.find(function(m) {
+            return (m.injColor || m.color || '') === _invColor;
+        }) || (_sameCarPart.length === 1 ? _sameCarPart[0] : null);
         var _injMaterialId = _matMatch ? _matMatch.id : '';
 
         const _type = document.getElementById('addInvType').value;
@@ -2750,6 +2851,7 @@ var InjectionWarehouseModule = (function() {
     }
 
     function remove(id) {
+        if (!_isAdminUser()) { UIUtils.toast('관리자만 삭제할 수 있습니다.', 'warning'); return; }
         UIUtils.confirm('이 재고 기록을 삭제하시겠습니까? (삭제 시 실제 재고량에 직접 반영됩니다.)', async () => {
             await Storage.remove(STORE, id);
             UIUtils.toast('삭제되었습니다.', 'success');
@@ -3416,6 +3518,7 @@ var InjectionWarehouseModule = (function() {
         renderCarTiles,
         filterTransactions,
         onTxCarChange,
+        jumpToTxHistory,
         showPartDetail,
         openLotRenameModal,
         saveLotRename,
@@ -3429,6 +3532,8 @@ var InjectionWarehouseModule = (function() {
         dismissPendingLot,
         openDismissedPendingModal,
         restoreDismissedPendingLot,
+        getLinkedInventoryForInspection,
+        removeLinkedInventoryRecords,
         onModalCarModelChange,
         onModalPartChange,
         onModalColorChange,
