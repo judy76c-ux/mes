@@ -4267,69 +4267,7 @@ var LaserStandbyModule = (function() {
             }));
     }
 
-    // 레이저 대기품 재고 계산에 반드시 필요한 스토어
-    //   PAINTING_WORK  : 입고(도장완료) 소스
-    //   LASER_WORK_LOG : 출고(레이저처리) 소스
-    //   PRODUCTS       : 공정 라우팅(도장→레이저) 판별
-    const _REQUIRED_STORES = [
-        DB.STORES.PAINTING_WORK,
-        DB.STORES.LASER_WORK_LOG,
-        DB.STORES.PRODUCTS
-    ].filter(Boolean);
-
-    // 필수 스토어가 모두 "권위 있는 소스"에서 로드됐는지 확인.
-    // Storage.isStoreReady 가 없으면(구버전) 캐시 존재 여부로 안전하게 폴백.
-    function _requiredStoresReady() {
-        if (typeof Storage.areStoresReady === 'function') {
-            return Storage.areStoresReady(_REQUIRED_STORES);
-        }
-        if (typeof Storage.isStoreReady === 'function') {
-            return _REQUIRED_STORES.every(s => Storage.isStoreReady(s));
-        }
-        return true; // 준비 상태 API가 없으면 기존 동작 유지
-    }
-
-    // 필수 스토어가 아직 준비되지 않았을 때 "재고 0" 대신 로딩 상태를 표시한다.
-    // (DB 이력은 남아 있는데 화면에서 사라져 보이는 사고 방지)
-    function _renderNotReadyState() {
-        const statsEl = document.getElementById('lsbStats');
-        if (statsEl) {
-            statsEl.innerHTML = `
-                <div class="stat-card"><div class="stat-card-value">–</div><div class="stat-card-label">재공 품목 수</div></div>
-                <div class="stat-card"><div class="stat-card-value">–</div><div class="stat-card-label">총 재공 재고 (EA)</div></div>
-                <div class="stat-card"><div class="stat-card-value">–</div><div class="stat-card-label">총 입고 (도장완료)</div></div>
-                <div class="stat-card"><div class="stat-card-value">–</div><div class="stat-card-label">총 출고 (레이져처리)</div></div>`;
-        }
-        const invEl = document.getElementById('lsbInventory');
-        if (invEl) {
-            invEl.innerHTML = `
-                <div style="text-align:center;padding:40px;color:var(--text-muted);">
-                    <span class="material-symbols-outlined" style="font-size:2.5rem;display:block;opacity:0.4;margin-bottom:8px;">sync</span>
-                    재고 데이터를 불러오는 중입니다...
-                    <div style="margin-top:8px;font-size:0.78rem;color:var(--text-secondary);line-height:1.5;">
-                        서버에서 도장/레이저 이력을 로드하고 있습니다. 잠시만 기다려 주세요.<br>
-                        데이터가 준비되면 자동으로 갱신됩니다.
-                    </div>
-                </div>`;
-        }
-        const detEl = document.getElementById('lsbDetail');
-        if (detEl) {
-            detEl.innerHTML = `
-                <div style="text-align:center;padding:24px;color:var(--text-muted);font-size:0.85rem;">
-                    입출고 내역을 불러오는 중입니다...
-                </div>`;
-        }
-    }
-
     function renderAll() {
-        // ── 게이트: 필수 스토어가 준비되지 않았으면 계산/렌더를 보류 ──
-        // 캐시가 아직 안 찬 상태에서 재고를 0으로 계산해 표시하면
-        // "DB 이력은 있는데 화면에서 사라지는" 사고가 발생한다.
-        // 준비되면 캐시 워밍 이벤트가 renderAll 을 다시 호출한다.
-        if (!_requiredStoresReady()) {
-            _renderNotReadyState();
-            return;
-        }
         const { allItems, stockItems } = _buildInventorySnapshot();
         renderStats(stockItems, allItems);
         renderInventoryBlocks(stockItems);
@@ -4362,32 +4300,6 @@ var LaserStandbyModule = (function() {
         `;
     }
 
-    // 입고 이력은 있는데 재고가 0으로 계산된 이상 징후 감지 (데이터 소실 방어)
-    function _detectInboundStockAnomaly() {
-        const paintingWorks = Storage.getAll(DB.STORES.PAINTING_WORK) || [];
-        const laserWorks = Storage.getAll(DB.STORES.LASER_WORK_LOG) || [];
-        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-        let inboundQty = 0;
-        let inboundRecords = 0;
-        paintingWorks.forEach(w => {
-            const prod = findProduct(products, w);
-            if (!_isPaintingWorkLaserStandbyInbound(w, prod)) return;
-            const qty = Number(w.productionQty) || 0;
-            if (qty <= 0) return;
-            inboundQty += qty;
-            inboundRecords += 1;
-        });
-        const outQty = laserWorks.reduce((s, w) => s + (Number(w.quantity) || 0), 0);
-        const hasManualStock = _manualOverrides.some(o => _normalizeQty(o.actualQty) > 0);
-        const suspicious = inboundRecords > 0 && inboundQty > 0 && outQty === 0 && !hasManualStock;
-        if (suspicious) {
-            console.warn('[LaserStandby][anomaly] 도장 입고 이력은 있으나 재공 재고가 0 — 데이터 불일치', {
-                inboundRecords, inboundQty, outQty
-            });
-        }
-        return { suspicious, inboundRecords, inboundQty };
-    }
-
     function renderInventoryBlocks(items) {
         const el = document.getElementById('lsbInventory');
         if (!el) return;
@@ -4398,22 +4310,6 @@ var LaserStandbyModule = (function() {
                 const stock = i.stockQty != null ? i.stockQty : ((i.inQty || 0) - (i.outQty || 0));
                 return (i.inQty || 0) > 0 && stock <= 0;
             });
-            const anomaly = _detectInboundStockAnomaly();
-            const anomalyBanner = anomaly.suspicious
-                ? `<div style="margin-top:16px;padding:12px 16px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.35);border-radius:8px;text-align:left;font-size:0.82rem;color:var(--text-primary);line-height:1.5;">
-                    <strong style="color:var(--accent-red);display:flex;align-items:center;gap:4px;">
-                        <span class="material-symbols-outlined" style="font-size:1rem;">warning</span> 데이터 불일치 감지
-                    </strong>
-                    <div style="margin-top:6px;">
-                        도장 완료 입고 이력 <strong>${anomaly.inboundRecords}건</strong>
-                        (${UIUtils.formatNumber(anomaly.inboundQty)} EA)이 있으나 재공 재고가 0으로 표시됩니다.
-                        레이저 출고 이력이 없는 상태입니다. 페이지를 새로고침하거나, 계속되면 관리자에게 문의하세요.
-                    </div>
-                    <button class="btn btn-sm btn-secondary" style="margin-top:8px;" onclick="LaserStandbyModule.refresh()">
-                        <span class="material-symbols-outlined" style="font-size:0.9rem;">refresh</span> 새로고침
-                    </button>
-                   </div>`
-                : '';
             const depletedHint = depleted.length > 0
                 ? `<div style="margin-top:12px;font-size:0.8rem;color:var(--text-secondary);line-height:1.5;">
                     최근 레이저 작업·출고로 재고가 소진된 품목 <strong>${depleted.length}건</strong>이 있습니다.
@@ -4422,11 +4318,8 @@ var LaserStandbyModule = (function() {
                 : '';
             el.innerHTML = `
                 <div style="text-align:center;padding:40px;color:var(--text-muted);">
-                    <span class="material-symbols-outlined" style="font-size:2.5rem;display:block;opacity:0.3;margin-bottom:8px;">${anomaly.suspicious ? 'warning' : 'check_circle'}</span>
-                    ${anomaly.suspicious
-                        ? '재공 재고를 계산할 수 없습니다.'
-                        : '현재 레이져 공정 대기 재공품이 없습니다.'}
-                    ${anomalyBanner}
+                    <span class="material-symbols-outlined" style="font-size:2.5rem;display:block;opacity:0.3;margin-bottom:8px;">check_circle</span>
+                    현재 레이져 공정 대기 재공품이 없습니다.
                     ${depletedHint}
                 </div>`;
             return;
@@ -5129,7 +5022,6 @@ var LaserStandbyModule = (function() {
     }
 
     async function refresh() {
-        await Promise.allSettled(_REQUIRED_STORES.map(s => Storage.refresh(s)));
         await _ensureManualOverridesLoaded(true);
         renderAll();
         UIUtils.toast('재고 현황을 새로고침했습니다.', 'info');

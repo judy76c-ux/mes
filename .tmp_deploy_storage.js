@@ -10,26 +10,6 @@ const Storage = (function() {
   let offlineMode = false;   // NAS API 서버 연결 실패 시 true (읽기 전용 캐시 모드)
   let localMode   = false;   // file:// 로컬 실행 시 true (IndexedDB 단독 읽기+쓰기)
 
-  // ── 스토어 준비 상태 추적 ────────────────────────────────────────────
-  // 어떤 스토어가 "권위 있는 소스(원격 성공 응답 또는 백업 데이터)"로부터
-  // 최소 1회 로드되었는지 기록한다. 준비되지 않은 스토어를 대상으로 재고/재공을
-  // 0 으로 계산해 화면에 표시하는 사고(데이터가 사라져 보이는 현상)를 막기 위함.
-  //   - 원격 성공(데이터 유무 무관) → ready
-  //   - IndexedDB 백업에서 데이터 로드 → ready
-  //   - 예외/네트워크 실패로 데이터를 못 받고 캐시도 비어있음 → NOT ready
-  const _readyStores = new Set();
-  function _markStoreReady(storeName) {
-    if (storeName) _readyStores.add(storeName);
-  }
-  function isStoreReady(storeName) {
-    return _readyStores.has(storeName);
-  }
-  function areStoresReady(storeNames) {
-    return (Array.isArray(storeNames) ? storeNames : [storeNames])
-      .filter(Boolean)
-      .every(s => _readyStores.has(s));
-  }
-
   // DB.STORES 참조 (모든 스토어 이름 공유)
   const STORES = DB.STORES;
 
@@ -275,7 +255,6 @@ const Storage = (function() {
       if (LOCAL_ONLY_STORES.has(storeName)) {
         const rows = await _loadIndexedBackupStore(storeName);
         cache[storeName] = rows;
-        _markStoreReady(storeName);
         return rows;
       }
 
@@ -283,7 +262,6 @@ const Storage = (function() {
       if (!useRemote) {
         const rows = await _loadIndexedBackupStore(storeName);
         cache[storeName] = rows;
-        _markStoreReady(storeName);
         return rows;
       }
 
@@ -291,7 +269,6 @@ const Storage = (function() {
       const remoteItems = await ApiClient.getAll(storeName);
       if (Array.isArray(remoteItems) && remoteItems.length > 0) {
         cache[storeName] = remoteItems;
-        _markStoreReady(storeName);
         _backupToIndexedDB(storeName, remoteItems);
         return remoteItems;
       }
@@ -299,39 +276,16 @@ const Storage = (function() {
       const localItems = await _loadIndexedBackupStore(storeName);
       if (localItems.length > 0) {
         cache[storeName] = localItems;
-        _markStoreReady(storeName);
         _restoreEmptyRemoteStore(storeName, localItems);
         return localItems;
       }
 
-      // ── 방어 가드: "의심스러운 빈 응답" ─────────────────────────────
-      // 원격이 빈 배열([])을 돌려주고 IndexedDB 백업도 비어 있지만,
-      // 메모리 캐시에는 이미 데이터가 있는 경우 → 서버/쿼리 일시 오류일 가능성이 높다.
-      // 이때 캐시를 []로 덮어쓰면 DB에는 이력이 남아 있는데도 화면에서 사라진다.
-      // 마지막 정상 데이터(last-known-good)를 유지하고 이상을 기록한다.
-      if (Array.isArray(cache[storeName]) && cache[storeName].length > 0) {
-        console.warn(
-          `[Storage][anomaly] 원격/백업이 모두 비어있으나 캐시에 ${cache[storeName].length}건 존재 → ` +
-          `기존 데이터 유지(의심스러운 빈 응답 방어): ${storeName}`
-        );
-        _markStoreReady(storeName);
-        _emitCacheWarm(storeName, { phase: 'suspiciousEmptyGuarded', kept: cache[storeName].length });
-        return cache[storeName];
-      }
-
-      // 원격 성공 + 백업/캐시 모두 없음 → 진짜로 빈 스토어. 준비 완료로 간주.
       cache[storeName] = [];
-      _markStoreReady(storeName);
       _backupToIndexedDB(storeName, cache[storeName]);
       return cache[storeName];
     } catch (e) {
-      // 예외(네트워크/서버 오류)로 데이터를 받지 못함.
-      // 기존 캐시가 있으면 그대로 유지(절대 비우지 않음). 없으면 [] 기본값만 둔다.
-      // 캐시가 비어있는 상태로 실패한 경우 ready로 표시하지 않아, UI가 "0"이 아닌
-      // "로딩/오류" 상태를 보여줄 수 있게 한다.
       console.warn(`[Storage] ${_loadOneStoreToCache.name} failed for ${storeName}:`, e);
       if (!Array.isArray(cache[storeName])) cache[storeName] = [];
-      if (cache[storeName].length > 0) _markStoreReady(storeName);
       return cache[storeName];
     }
   }
@@ -1034,8 +988,6 @@ const Storage = (function() {
     exportJSON,
     today,
     isInitialized,
-    isStoreReady,           // 특정 스토어가 권위 있는 소스에서 1회 이상 로드됐는지
-    areStoresReady,         // 여러 스토어가 모두 준비됐는지
     isOffline,              // 오프라인 모드 여부 (API 서버 연결 실패 시 true)
     getConfig,
     saveConfig,

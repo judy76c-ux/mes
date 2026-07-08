@@ -5,6 +5,23 @@ var InjectionWarehouseModule = (function() {
     const STORE = DB.STORES.INJECTION_INVENTORY;
     let _pendingInspDate = '';
 
+    // ── 사출 창고 입고 대기품 목록에서만 숨기는 항목(관리자 전용) ─────────
+    // 검사 기록(INJECTION_INSPECTIONS)이나 창고 재고(INJECTION_INVENTORY)는 전혀 건드리지 않고,
+    // "입고 대기" 화면에 다시 뜨지 않도록 표시만 남긴다.
+    const DISMISSED_PENDING_KEY = 'injection_inbound_pending_dismissed_v1';
+    let _dismissedPending = [];
+    let _dismissedPendingLoaded = false;
+
+    function _dismissedPendingKey(inspId, lotNo) { return `${inspId}||${lotNo}`; }
+
+    async function _ensureDismissedPendingLoaded(forceReload) {
+        if (_dismissedPendingLoaded && !forceReload) return _dismissedPending;
+        const rows = await Storage.getConfigValue(DISMISSED_PENDING_KEY);
+        _dismissedPending = Array.isArray(rows) ? rows : [];
+        _dismissedPendingLoaded = true;
+        return _dismissedPending;
+    }
+
     // key/표시용 문자열 정규화 (콤마/공백/트림)
     function _normKeyStr(v) {
         return String(v || '')
@@ -999,20 +1016,29 @@ var InjectionWarehouseModule = (function() {
         const card = document.getElementById('injInspStandbyCard');
         if (!card) return;
 
+        if (!_dismissedPendingLoaded) {
+            _ensureDismissedPendingLoaded().then(renderInspStandby).catch(() => {});
+        }
+
         const inspections = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
         const inventory   = Storage.getAll(DB.STORES.INJECTION_INVENTORY)   || [];
 
-        // 창고 입고 기록: partName + lotNo 기준 Set (qty > 0인 LOT만 입고 완료로 인정)
+        // 창고 입고 기록: partName + lotNo + 검사일시(inspDate) 기준 Set
+        // (LOT 번호는 생산일자 기준으로 매겨져 서로 다른 검사건이 같은 LOT 번호를 쓰는 경우가 있어,
+        //  단순 partName+lotNo만으로 매칭하면 무관한 건(예: 일괄 재고 보정)이 실제 미입고 검사건을
+        //  "이미 입고됨"으로 잘못 가려버릴 수 있다. inspDate가 없는 기록(검사 연동 없이 등록된
+        //  수동 입고/재고 보정)은 어떤 검사건과도 매칭시키지 않는다 — 미입고 항목이 숨는 것보다
+        //  중복으로 보이는 편이 안전하다.)
         const inStockSet = new Set();
-        inventory.filter(i => i.type === '입고').forEach(i => {
+        inventory.filter(i => i.type === '입고' && i.inspDate).forEach(i => {
             if (i.lots && i.lots.length > 0) {
                 i.lots.forEach(function(lot) {
                     if (!lot.lotNo) return;
-                    const k = `${i.partName}||${lot.lotNo}`;
+                    const k = `${i.partName}||${lot.lotNo}||${i.inspDate}`;
                     if ((Number(lot.qty) || 0) > 0) inStockSet.add(k);
                 });
             } else if (i.lotNo) {
-                const k = `${i.partName}||${i.lotNo}`;
+                const k = `${i.partName}||${i.lotNo}||${i.inspDate}`;
                 if ((Number(i.quantity) || 0) > 0) inStockSet.add(k);
             }
         });
@@ -1055,8 +1081,19 @@ var InjectionWarehouseModule = (function() {
                 }
             });
 
-        // 입고 대기 중인 항목만 필터링 (입고 완료된 항목 제외)
-        const pendingRows = rows.filter(r => !inStockSet.has(`${r.partName}||${r.lotNo}`));
+        // 입고 대기 중인 항목만 필터링 (입고 완료된 항목 + 관리자가 삭제(숨김)한 항목 제외)
+        const dismissedSet = new Set(_dismissedPending.map(d => _dismissedPendingKey(d.inspId, d.lotNo)));
+        const pendingRows = rows.filter(r =>
+            !inStockSet.has(`${r.partName}||${r.lotNo}||${r.date}`) &&
+            !dismissedSet.has(_dismissedPendingKey(r.inspId, r.lotNo))
+        );
+
+        const dismissedCountBadge = _isAdminUser() && _dismissedPending.length > 0 ? `
+            <button class="btn btn-sm btn-outline" onclick="InjectionWarehouseModule.openDismissedPendingModal()"
+                style="font-size:0.78rem;color:var(--text-muted);">
+                <span class="material-symbols-outlined" style="font-size:0.9rem;">visibility_off</span>
+                숨김 항목 (${_dismissedPending.length})
+            </button>` : '';
 
         if (pendingRows.length === 0) {
             card.innerHTML = `
@@ -1067,11 +1104,14 @@ var InjectionWarehouseModule = (function() {
                     <span class="material-symbols-outlined" style="font-size:1.1rem;">check_circle</span>
                     <span style="font-weight:600;">사출 창고 입고 대기품</span>
                     <span style="color:var(--text-muted); font-size:0.8rem;">(수입 검사 완료품)</span>
-                    <span style="margin-left:auto; color:var(--text-muted); font-size:0.82rem;">입고 대기 없음</span>
-                    <button class="btn btn-sm btn-outline" onclick="InjectionWarehouseModule.renderInspStandby()"
-                        style="padding:2px 8px; font-size:0.78rem;">
-                        <span class="material-symbols-outlined" style="font-size:0.9rem;">refresh</span>
-                    </button>
+                    <span style="margin-left:auto; display:flex; align-items:center; gap:6px;">
+                        <span style="color:var(--text-muted); font-size:0.82rem;">입고 대기 없음</span>
+                        ${dismissedCountBadge}
+                        <button class="btn btn-sm btn-outline" onclick="InjectionWarehouseModule.renderInspStandby()"
+                            style="padding:2px 8px; font-size:0.78rem;">
+                            <span class="material-symbols-outlined" style="font-size:0.9rem;">refresh</span>
+                        </button>
+                    </span>
                 </div>`;
             return;
         }
@@ -1099,6 +1139,7 @@ var InjectionWarehouseModule = (function() {
                             <span class="material-symbols-outlined" style="font-size:1rem;">done_all</span>
                             전체 일괄 입고 (${pendingRows.length}건)
                         </button>` : ''}
+                        ${dismissedCountBadge}
                         <button class="btn btn-sm btn-outline" onclick="InjectionWarehouseModule.renderInspStandby()">
                             <span class="material-symbols-outlined" style="font-size:1rem;">refresh</span>
                         </button>
@@ -1161,6 +1202,12 @@ var InjectionWarehouseModule = (function() {
                                                 onclick="InjectionWarehouseModule.addAllFromInspection('${r.inspId}')">
                                             <span class="material-symbols-outlined" style="font-size:0.9rem;">done_all</span> 전체입고(${groupCount})
                                         </button>` : ''}
+                                        ${_isAdminUser() ? `
+                                        <button class="btn btn-sm btn-outline" style="color:#dc2626;border-color:#fca5a5;"
+                                                title="이 항목을 대기 목록에서만 삭제(숨김)합니다. 수입검사 기록과 창고 재고에는 영향 없음."
+                                                onclick="InjectionWarehouseModule.dismissPendingLot('${r.inspId}', '${encodeURIComponent(r.lotNo || '')}')">
+                                            <span class="material-symbols-outlined" style="font-size:0.9rem;">delete</span>
+                                        </button>` : ''}
                                     </div>
                                 </td>
                             </tr>`;
@@ -1170,19 +1217,96 @@ var InjectionWarehouseModule = (function() {
             </div>`;
     }
 
-    // 현재 창고(INJECTION_INVENTORY)에 이미 입고된 LOT 키(partName||lotNo) 집합
+    // 대기 목록에서 특정 LOT을 삭제(숨김) — 검사 기록/창고 재고는 전혀 건드리지 않음 (관리자 전용)
+    async function dismissPendingLot(inspId, encodedLotNo) {
+        if (!_isAdminUser()) { UIUtils.toast('관리자만 삭제할 수 있습니다.', 'warning'); return; }
+        const lotNo = decodeURIComponent(encodedLotNo || '');
+        const insp = Storage.getById(DB.STORES.INJECTION_INSPECTIONS, inspId);
+        const label = insp ? `${insp.carModel || ''} ${insp.partName || ''} (${insp.color || '-'})` : '';
+
+        UIUtils.confirm(
+            `${label} · LOT ${lotNo}\n` +
+            `이 항목을 "사출 창고 입고 대기품" 목록에서만 삭제합니다.\n` +
+            `수입검사 기록이나 실제 창고 재고는 전혀 변경되지 않으며, 화면 목록에서만 숨겨집니다.\n계속하시겠습니까?`,
+            async () => {
+                await _ensureDismissedPendingLoaded();
+                const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? AuthModule.getCurrentUser() : null;
+                _dismissedPending.push({
+                    inspId,
+                    lotNo,
+                    carModel: insp ? insp.carModel : '',
+                    partName: insp ? insp.partName : '',
+                    color: insp ? insp.color : '',
+                    dismissedAt: new Date().toISOString(),
+                    dismissedBy: (user && (user.displayName || user.username)) || ''
+                });
+                await Storage.setConfigValue(DISMISSED_PENDING_KEY, _dismissedPending);
+                UIUtils.toast('대기 목록에서 삭제되었습니다. (검사기록/재고는 영향 없음)', 'success');
+                renderInspStandby();
+            }
+        );
+    }
+
+    // 숨김 처리된 항목 목록 (관리자 전용) — 실수로 삭제한 경우 복원 가능
+    function openDismissedPendingModal() {
+        if (!_isAdminUser()) { UIUtils.toast('관리자만 볼 수 있습니다.', 'warning'); return; }
+        const rows = _dismissedPending.map((d, idx) => `
+            <tr>
+                <td style="font-size:0.82rem;">${d.carModel || '-'}</td>
+                <td><strong>${d.partName || '-'}</strong></td>
+                <td>${d.color || '-'}</td>
+                <td style="font-family:monospace;">${d.lotNo || '-'}</td>
+                <td style="font-size:0.78rem;color:var(--text-muted);">${(d.dismissedAt || '').slice(0, 16).replace('T', ' ')}</td>
+                <td style="font-size:0.78rem;">${d.dismissedBy || '-'}</td>
+                <td style="text-align:center;">
+                    <button class="btn btn-sm btn-outline" onclick="InjectionWarehouseModule.restoreDismissedPendingLot(${idx})">
+                        <span class="material-symbols-outlined" style="font-size:0.9rem;">restore</span> 복원
+                    </button>
+                </td>
+            </tr>`).join('');
+
+        UIUtils.showModal('숨김 처리된 입고 대기 항목', `
+            <div class="data-table-wrapper">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>차종</th><th>사출명</th><th>컬러</th><th>LOT번호</th>
+                            <th>삭제일시</th><th>삭제자</th><th></th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows || `<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted);">숨김 처리된 항목이 없습니다.</td></tr>`}</tbody>
+                </table>
+            </div>
+        `, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, '900px');
+    }
+
+    // 숨김 처리 취소 — 대기 목록에 다시 노출
+    async function restoreDismissedPendingLot(idx) {
+        if (!_isAdminUser()) { UIUtils.toast('관리자만 복원할 수 있습니다.', 'warning'); return; }
+        if (idx < 0 || idx >= _dismissedPending.length) return;
+        _dismissedPending.splice(idx, 1);
+        await Storage.setConfigValue(DISMISSED_PENDING_KEY, _dismissedPending);
+        UIUtils.toast('복원되었습니다.', 'success');
+        UIUtils.closeModal();
+        openDismissedPendingModal();
+        renderInspStandby();
+    }
+
+    // 현재 창고(INJECTION_INVENTORY)에 이미 입고된 LOT 키(partName||lotNo||inspDate) 집합
+    // LOT 번호는 생산일자 기준으로 매겨져 서로 다른 검사건이 같은 번호를 쓸 수 있으므로
+    // inspDate가 없는(검사 연동 없이 등록된 수동 입고/재고 보정) 기록은 매칭 대상에서 제외한다.
     function _buildInStockLotSet() {
         const inventory = Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [];
         const inStockSet = new Set();
-        inventory.filter(i => i.type === '입고').forEach(i => {
+        inventory.filter(i => i.type === '입고' && i.inspDate).forEach(i => {
             if (i.lots && i.lots.length > 0) {
                 i.lots.forEach(function(lot) {
                     if (!lot.lotNo) return;
-                    const k = `${i.partName}||${lot.lotNo}`;
+                    const k = `${i.partName}||${lot.lotNo}||${i.inspDate}`;
                     if ((Number(lot.qty) || 0) > 0) inStockSet.add(k);
                 });
             } else if (i.lotNo) {
-                const k = `${i.partName}||${i.lotNo}`;
+                const k = `${i.partName}||${i.lotNo}||${i.inspDate}`;
                 if ((Number(i.quantity) || 0) > 0) inStockSet.add(k);
             }
         });
@@ -1194,7 +1318,7 @@ var InjectionWarehouseModule = (function() {
         const sourceLots = (insp.lots && insp.lots.length > 0)
             ? insp.lots
             : (insp.lotNo ? [{ lotNo: insp.lotNo, qty: insp.passQty }] : []);
-        return sourceLots.filter(l => (Number(l.qty) || 0) > 0 && !inStockSet.has(`${insp.partName}||${l.lotNo}`));
+        return sourceLots.filter(l => (Number(l.qty) || 0) > 0 && !inStockSet.has(`${insp.partName}||${l.lotNo}||${insp.date}`));
     }
 
     // 검사 1건의 미입고 LOT 전체를 사출 창고(INJECTION_INVENTORY) 입고 레코드 1건으로 반영
@@ -3285,6 +3409,9 @@ var InjectionWarehouseModule = (function() {
         openAddFromInspection,
         addAllFromInspection,
         addAllPendingInspections,
+        dismissPendingLot,
+        openDismissedPendingModal,
+        restoreDismissedPendingLot,
         onModalCarModelChange,
         onModalPartChange,
         onModalColorChange,
