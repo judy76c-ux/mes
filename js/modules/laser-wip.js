@@ -37,6 +37,46 @@ var LaserWipModule = (function() {
         return false;
     }
 
+    // 수기 입/출고 모달을 열 때 팝업에서 넘어온 품목을 드롭다운에 자동 선택한다.
+    // 제품 목록(도장-B/잔량 대상)에 없는 품목이면 조용히 무시되고 수동 선택으로 진행 가능.
+    function _applyPrefillSelects(prefill, carId, partId, colorId, onCarChange, onPartChange) {
+        if (!prefill) return;
+        setTimeout(function() {
+            const carEl = document.getElementById(carId);
+            if (carEl && prefill.carModel) {
+                carEl.value = prefill.carModel;
+                if (typeof onCarChange === 'function') { try { onCarChange(); } catch (e) {} }
+            }
+            setTimeout(function() {
+                const partEl = document.getElementById(partId);
+                if (partEl && prefill.partName) {
+                    partEl.value = prefill.partName;
+                    if (typeof onPartChange === 'function') { try { onPartChange(); } catch (e) {} }
+                }
+                setTimeout(function() {
+                    const colEl = document.getElementById(colorId);
+                    if (colEl && prefill.color) colEl.value = prefill.color;
+                }, 0);
+            }, 0);
+        }, 0);
+    }
+
+    // 재공/잔량 상세 팝업의 '수량 수정'(수동입고/출고) 진입 — 관리자·레이져운영자만
+    function adjustAfterLaserFromPopup(keyEnc, mode) {
+        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
+        _closeDetailPopup();
+        const parts = decodeURIComponent(keyEnc || '').split('||');
+        const prefill = { carModel: parts[0] || '', partName: parts[1] || '', color: parts[2] || '' };
+        if (mode === 'out') openAfterLaserOut(prefill); else openAfterLaserInput(prefill);
+    }
+    function adjustResidualFromPopup(keyEnc, mode) {
+        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
+        _closeDetailPopup();
+        const parts = decodeURIComponent(keyEnc || '').split('||');
+        const prefill = { carModel: parts[0] || '', partName: parts[1] || '', color: parts[2] || '' };
+        if (mode === 'out') openResidualOut(prefill); else openResidualInput(prefill);
+    }
+
     const TABS = [
         { id: 'standby',     label: '레이져 대기품 현황',    icon: 'hourglass_top' },
         { id: 'after-laser', label: '레이져 후 재공품 현황', icon: 'bolt' },
@@ -758,7 +798,7 @@ var LaserWipModule = (function() {
         return _getPaintBProducts();
     }
 
-    function openResidualInput() {
+    function openResidualInput(prefill) {
         const products = _getResidualProducts();
         const carModels = [...new Set(products.map(p => p.carModel).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'ko'));
         const today = new Date().toISOString().slice(0, 10);
@@ -808,6 +848,7 @@ var LaserWipModule = (function() {
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="LaserWipModule.saveResidualInput()">등록</button>
         `, 'lg');
+        _applyPrefillSelects(prefill, 'lwResidualInCarModel', 'lwResidualInPartName', 'lwResidualInColor', onResidualInCarChange, onResidualInPartChange);
     }
 
     function onResidualInCarChange() {
@@ -851,7 +892,7 @@ var LaserWipModule = (function() {
         refresh();
     }
 
-    function openResidualOut() {
+    function openResidualOut(prefill) {
         const rows = _calcLaserResidualWip().filter(r => r.residualQty > 0);
         const carModels = [...new Set(rows.map(r => r.carModel).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'ko'));
         const today = new Date().toISOString().slice(0, 10);
@@ -902,6 +943,7 @@ var LaserWipModule = (function() {
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" style="background:var(--accent-red);border-color:var(--accent-red);" onclick="LaserWipModule.saveResidualOut()">출고 등록</button>
         `, 'lg');
+        _applyPrefillSelects(prefill, 'lwResidualOutCarModel', 'lwResidualOutPartName', 'lwResidualOutColor', onResidualOutCarChange, onResidualOutPartChange);
     }
 
     function onResidualOutCarChange() {
@@ -1140,6 +1182,15 @@ var LaserWipModule = (function() {
                 </div>
                 ${lotTableHtml}
             </div>
+            ${_canEditWip() ? `
+            <div style="padding:0 12px 8px;display:flex;gap:6px;">
+                <button onclick="LaserWipModule.adjustAfterLaserFromPopup('${keyEnc}','in')" style="flex:1;font-size:0.78rem;padding:5px 10px;border:1px solid var(--accent-green);border-radius:6px;background:#fff;color:var(--accent-green);cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:3px;">
+                    <span class="material-symbols-outlined" style="font-size:14px;">arrow_downward</span>수동입고
+                </button>
+                <button onclick="LaserWipModule.adjustAfterLaserFromPopup('${keyEnc}','out')" style="flex:1;font-size:0.78rem;padding:5px 10px;border:1px solid var(--accent-red);border-radius:6px;background:#fff;color:var(--accent-red);cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:3px;">
+                    <span class="material-symbols-outlined" style="font-size:14px;">arrow_upward</span>수동출고
+                </button>
+            </div>` : ''}
             <div style="padding:0 12px 10px;display:flex;align-items:center;gap:8px;">
                 <button onclick="(function(btn){
                     const el=document.getElementById('lwDetailHistArea');
@@ -1285,6 +1336,15 @@ var LaserWipModule = (function() {
                 ${lotTableHtml}
                 ${r.packUnit ? `<div style="margin-top:6px;font-size:0.74rem;color:var(--text-muted);">포장단위: <strong style="color:var(--text-primary);">${UIUtils.formatNumber(r.packUnit)}</strong> / 출하가능: <strong style="color:var(--accent-green);">${UIUtils.formatNumber(r.fullBoxQty)} EA</strong></div>` : ''}
             </div>
+            ${_canEditWip() ? `
+            <div style="padding:0 12px 8px;display:flex;gap:6px;">
+                <button onclick="LaserWipModule.adjustResidualFromPopup('${keyEnc}','in')" style="flex:1;font-size:0.78rem;padding:5px 10px;border:1px solid var(--accent-green);border-radius:6px;background:#fff;color:var(--accent-green);cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:3px;">
+                    <span class="material-symbols-outlined" style="font-size:14px;">arrow_downward</span>수동입고
+                </button>
+                <button onclick="LaserWipModule.adjustResidualFromPopup('${keyEnc}','out')" style="flex:1;font-size:0.78rem;padding:5px 10px;border:1px solid var(--accent-red);border-radius:6px;background:#fff;color:var(--accent-red);cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:3px;">
+                    <span class="material-symbols-outlined" style="font-size:14px;">arrow_upward</span>수동출고
+                </button>
+            </div>` : ''}
             <div style="padding:0 12px 10px;display:flex;align-items:center;gap:8px;">
                 <button onclick="(function(btn){
                     const el=document.getElementById('lwDetailHistArea');
@@ -1554,7 +1614,7 @@ var LaserWipModule = (function() {
         });
     }
 
-    function openAfterLaserInput() {
+    function openAfterLaserInput(prefill) {
         const products  = _getPaintBProducts();
         const carModels = [...new Set(products.map(p => p.carModel).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'ko'));
         const today     = new Date().toISOString().slice(0, 10);
@@ -1605,6 +1665,7 @@ var LaserWipModule = (function() {
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="LaserWipModule.saveAfterLaserInput()">등록</button>
         `, 'lg');
+        _applyPrefillSelects(prefill, 'lwAfterCarModel', 'lwAfterPartName', 'lwAfterColor', onAfterCarChange, onAfterPartChange);
     }
 
     function onAfterCarChange() {
@@ -1649,7 +1710,7 @@ var LaserWipModule = (function() {
 
     // ── 레이져 후 재공품 출고 ───────────────────────────────────────────
 
-    function openAfterLaserOut() {
+    function openAfterLaserOut(prefill) {
         const rows      = _calcWip().filter(r => r.wip > 0);
         const carModels = [...new Set(rows.map(r => r.carModel).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'ko'));
         const today     = new Date().toISOString().slice(0, 10);
@@ -1702,6 +1763,7 @@ var LaserWipModule = (function() {
             <button class="btn btn-primary" style="background:var(--accent-red);border-color:var(--accent-red);"
                 onclick="LaserWipModule.saveAfterLaserOut()">출고 등록</button>
         `, 'lg');
+        _applyPrefillSelects(prefill, 'lwOutCarModel', 'lwOutPartName', 'lwOutColor', onOutCarChange, onOutPartChange);
     }
 
     function onOutCarChange() {
@@ -1770,5 +1832,6 @@ var LaserWipModule = (function() {
              openResidualInput, onResidualInCarChange, onResidualInPartChange, saveResidualInput,
              openResidualOut, onResidualOutCarChange, onResidualOutPartChange, saveResidualOut,
              openEditResidualManualEntry, saveEditResidualManualEntry, removeResidualManualEntry,
-             getWipStock, _calcWip, showWipDetail, showResidualDetail };
+             getWipStock, _calcWip, showWipDetail, showResidualDetail,
+             adjustAfterLaserFromPopup, adjustResidualFromPopup };
 })();
