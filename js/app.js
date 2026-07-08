@@ -38,8 +38,13 @@ const App = (function() {
             const saved = localStorage.getItem(API_BASE_LS_KEY);
             if (saved && String(saved).trim()) {
                 window.__MES_API_BASE__ = String(saved).trim().replace(/\/$/, '');
-            } else {
-                delete window.__MES_API_BASE__;
+                return;
+            }
+            delete window.__MES_API_BASE__;
+            // localStorage 미설정 시 file://·http 등 protocol별 기본 URL을 부트스트랩 전에 확정
+            if (typeof ApiClient !== 'undefined' && ApiClient.getBase) {
+                const resolved = ApiClient.getBase();
+                if (resolved) window.__MES_API_BASE__ = resolved;
             }
         } catch (error) {
             console.warn('[App] API base override preload skipped:', error);
@@ -47,7 +52,7 @@ const App = (function() {
     }
 
     async function init() {
-        await primeApiBaseOverride();
+        primeApiBaseOverride();
         installImeDoneBlurHandler();
         console.log('🏭 생산 공정 관리 시스템 (MES) 시작...');
 
@@ -76,7 +81,7 @@ const App = (function() {
             Router.registerLazy(
                 ['prod-standards', 'prod-conditions', 'paint-mix', 'prod-sub-materials',
                  'prod-quality', 'quality-performance', 'limit-samples', 'prod-spc', 'prod-equipment'],
-                'js/modules/production_mgmt_v91.js?v=208',
+                'js/modules/production_mgmt_v91.js?v=209',
                 function() {
                     Router.registerModule('prod-standards',
                         (typeof ProdStandardsModule !== 'undefined') ? ProdStandardsModule

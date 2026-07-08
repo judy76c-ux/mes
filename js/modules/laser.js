@@ -685,8 +685,21 @@ var LaserWorkModule = (function() {
         const laserWorks    = Storage.getAll(DB.STORES.LASER_WORK_LOG) || [];
         const products      = Storage.getAll(DB.STORES.PRODUCTS) || [];
 
+        // 차종+품명(+컬러)이 정확히 일치하는 제품을 우선 사용한다. _findProductForWork()는 유사도
+        // 점수제라 품명에 특수문자/긴 수식어가 붙으면 기준 점수를 못 넘겨 매칭 실패로 처리되는데,
+        // 그 경우 "재공 재고 현황"(WIP) 화면에는 보이는 항목이 이 목록에서만 통째로 빠지는 문제가 있었다.
+        const _exactProductFor = (carModel, partName, color) => {
+            const car = String(carModel || '').trim();
+            const part = String(partName || '').trim();
+            const clr = String(color || '').trim();
+            const match = (p) => String(p.carModel || '').trim() === car && String(p.partName || '').trim() === part;
+            return products.find(p => match(p) && String(p.color || '').trim() === clr)
+                || products.find(p => match(p))
+                || null;
+        };
+
         const laserPaintWorks = paintingWorks.filter(w => {
-            const prod = _findProductForWork(w.carModel, w.partName, w.color);
+            const prod = _exactProductFor(w.carModel, w.partName, w.color) || _findProductForWork(w.carModel, w.partName, w.color);
             if (!prod || !_hasLaserProcess(prod)) return false;
             // 이 작업의 도장 라인 이후에 레이저가 있을 때만 레이저 대기에 포함
             // (도장-B가 레이저 뒤에 있으면 도장-B 완료품은 레이저 대기 대상 아님)
@@ -730,7 +743,7 @@ var LaserWorkModule = (function() {
         });
 
         // 각 도장 작업 레코드의 잔여 수량 계산 → 잔여 > 0인 것만 반환
-        return laserPaintWorks.map(w => {
+        const result = laserPaintWorks.map(w => {
             const k = `${w.carModel}||${w.partName}||${w.color || ''}||${w.date || ''}`;
             const used = outByDate[k] || 0;
             let lots = _workLots(w).map(lot => {
@@ -756,7 +769,40 @@ var LaserWorkModule = (function() {
             return { ...w, productionQty: remainingQty, lots };
         }).filter(w => {
             return (Number(w.productionQty) || 0) > 0;
-        }).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        });
+
+        // 도장 작업일지 없이 "재공품 현황" 화면에서 수기 등록/일괄 등록된 재고는 위 로직에 전혀
+        // 반영되지 않아 이 목록(작업 등록 드롭다운)에서 보이지 않는 문제가 있었다. 그 재고 중
+        // 아직 위 목록으로 커버되지 않는 만큼을 보충 항목으로 추가한다.
+        try {
+            if (typeof LaserStandbyModule !== 'undefined' && LaserStandbyModule.getStockSnapshotSync) {
+                const coveredQtyByKey = {};
+                result.forEach(w => {
+                    const k2 = `${w.carModel}||${w.partName}||${w.color || ''}`;
+                    coveredQtyByKey[k2] = (coveredQtyByKey[k2] || 0) + (Number(w.productionQty) || 0);
+                });
+                (LaserStandbyModule.getStockSnapshotSync() || []).forEach(item => {
+                    const color = item.color === '-' ? '' : (item.color || '');
+                    const k2 = `${item.carModel}||${item.partName}||${color}`;
+                    const already = coveredQtyByKey[k2] || 0;
+                    const shortfall = (Number(item.stockQty) || 0) - already;
+                    if (shortfall <= 0) return;
+                    const ov = item.manualOverride;
+                    result.push({
+                        carModel: item.carModel,
+                        partName: item.partName,
+                        color,
+                        date: '',
+                        productionQty: shortfall,
+                        lots: (ov && (ov.paintLot || ov.injectionLot))
+                            ? [{ paintDate: ov.paintLot || '', lotNo: ov.injectionLot || '', qty: shortfall }]
+                            : []
+                    });
+                });
+            }
+        } catch (e) { /* 수기 재고 병합 실패 시 도장 작업일지 기준 목록만 표시 */ }
+
+        return result.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     }
 
     function render(container) {
@@ -2000,7 +2046,14 @@ var LaserWorkModule = (function() {
         return true;
     }
 
-    function openAddModal(prefill) {
+    async function openAddModal(prefill) {
+        // 대기품 목록에 수기 등록 재고까지 반영되도록, 모달을 열기 전에 로드를 보장한다.
+        try {
+            if (typeof LaserStandbyModule !== 'undefined' && LaserStandbyModule.ensureManualOverridesLoadedForWork) {
+                await LaserStandbyModule.ensureManualOverridesLoadedForWork();
+            }
+        } catch (e) { /* 무시 — 실패해도 도장 작업일지 기준 목록은 정상 표시 */ }
+
         const p = prefill || null;
         _selectedLots = [];
         _selectedCarModel = '';
@@ -3979,6 +4032,16 @@ var LaserStandbyModule = (function() {
         await Storage.setConfigValue(MANUAL_OVERRIDE_KEY, _manualOverrides);
     }
 
+    // 레이져 작업 등록(LaserWorkModule) 화면에서 수기 등록 재고를 대기품 목록에 반영하기 위해 사용
+    async function ensureManualOverridesLoadedForWork() {
+        return _ensureManualOverridesLoaded();
+    }
+
+    // 현재 캐시된(비동기 로드 완료된) 재공 재고 스냅샷 — 동기 함수라 로드 전에 호출하면 빈 값일 수 있음
+    function getStockSnapshotSync() {
+        return _buildInventorySnapshot().stockItems;
+    }
+
     function _parseManualLotPair(value) {
         const text = String(value || '').trim();
         if (!text) return { paintLot: '', injectionLot: '' };
@@ -5776,6 +5839,8 @@ var LaserStandbyModule = (function() {
         removeBulkRow,
         saveBulkModal,
         deleteFlowRecord,
-        _showItemDetail
+        _showItemDetail,
+        ensureManualOverridesLoadedForWork,
+        getStockSnapshotSync
     };
 })();

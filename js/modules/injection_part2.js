@@ -125,12 +125,15 @@ var InjectionWarehouseModule = (function() {
 
                 <!-- 차종별 재고 타일 -->
                 <div class="card" style="margin-bottom:20px;">
-                    <div class="card-header">
+                    <div class="card-header" style="flex-wrap:wrap;gap:8px;">
                         <h4><span class="material-symbols-outlined">grid_view</span> 차종별 재고 현황</h4>
-                        <select id="injTileCarFilter" class="form-select" style="width:140px;"
-                            onchange="InjectionWarehouseModule.renderCarTiles()">
-                            <option value="">전체 차종</option>
-                        </select>
+                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-left:auto;">
+                            <div id="injStockErrorAdminBar"></div>
+                            <select id="injTileCarFilter" class="form-select" style="width:140px;"
+                                onchange="InjectionWarehouseModule.renderCarTiles()">
+                                <option value="">전체 차종</option>
+                            </select>
+                        </div>
                     </div>
                     <div class="card-body">
                         <div id="injCarTiles" style="display:flex; gap:12px; align-items:flex-start;"></div>
@@ -349,11 +352,20 @@ var InjectionWarehouseModule = (function() {
                     const badgeClick = _isAdminUser()
                         ? `event.stopPropagation();InjectionWarehouseModule.jumpToTxHistory('${_em}','${_ep}','${_ec}');`
                         : '';
+                    const resetBtn = _isAdminUser()
+                        ? `<button type="button"
+                                onclick="event.stopPropagation();InjectionWarehouseModule.openResetStockErrorModal('${_em}','${_ep}','${_ec}',${item.stock})"
+                                title="보정 입고로 재고를 0 EA로 초기화"
+                                style="display:inline-block;margin-left:4px;font-size:0.58rem;font-weight:700;background:#dc2626;
+                                       color:#fff;border:none;border-radius:3px;padding:1px 6px;cursor:pointer;vertical-align:middle;white-space:nowrap;">
+                                초기화
+                           </button>`
+                        : '';
                     stockHtml += `<span title="입출고 합계가 마이너스입니다.${_isAdminUser() ? ' 클릭하면 입출고 조회에서 원인 기록을 확인/삭제할 수 있습니다.' : ' 최근 입고/출고/LOT 수정 기록을 확인하세요.'}"
                         onclick="${badgeClick}"
                         style="display:inline-block;margin-left:4px;font-size:0.6rem;font-weight:700;background:rgba(220,38,38,0.12);
                                color:#b91c1c;border:1px solid rgba(220,38,38,0.4);border-radius:3px;padding:0 4px;
-                               vertical-align:middle;${_isAdminUser() ? 'cursor:pointer;' : 'cursor:help;'}white-space:nowrap;">⚠ 재고 오류</span>`;
+                               vertical-align:middle;${_isAdminUser() ? 'cursor:pointer;' : 'cursor:help;'}white-space:nowrap;">⚠ 재고 오류</span>${resetBtn}`;
                 }
 
                 return `
@@ -526,6 +538,35 @@ var InjectionWarehouseModule = (function() {
                 ${colCards.map(([carModel, items]) => _buildCarCard(carModel, items)).join('')}
             </div>
         `).join('');
+
+        _renderStockErrorAdminBar(mergedMap);
+    }
+
+    function _getNegativeStockItems(stockMap) {
+        return Object.values(stockMap || {})
+            .filter(item => (Number(item.stock) || 0) < 0)
+            .sort((a, b) => (Number(a.stock) || 0) - (Number(b.stock) || 0));
+    }
+
+    function _renderStockErrorAdminBar(stockMap) {
+        const bar = document.getElementById('injStockErrorAdminBar');
+        if (!bar) return;
+        if (!_isAdminUser()) {
+            bar.innerHTML = '';
+            return;
+        }
+        const negatives = _getNegativeStockItems(stockMap);
+        if (!negatives.length) {
+            bar.innerHTML = '';
+            return;
+        }
+        bar.innerHTML = `
+            <button class="btn btn-sm" style="background:#dc2626;color:#fff;border-color:#dc2626;"
+                onclick="InjectionWarehouseModule.openBulkResetStockErrorsModal()"
+                title="마이너스 재고 품목을 보정 입고로 0 EA로 맞춥니다">
+                <span class="material-symbols-outlined" style="font-size:15px;">warning</span>
+                재고 오류 초기화 (${negatives.length})
+            </button>`;
     }
 
     // 입출고 조회 필터 적용
@@ -2713,6 +2754,276 @@ var InjectionWarehouseModule = (function() {
         }
     }
 
+    async function _applyStockErrorCorrection(carModel, partName, color, reason, targetQty) {
+        const target = Math.max(0, Math.round(Number(targetQty) || 0));
+        const currentMap = _getCurrentStockMap();
+        const key = `${carModel || ''}||${partName || ''}||${color || ''}`;
+        const current = currentMap[key] || 0;
+        if (current >= 0) return { skipped: true, reason: 'not_negative' };
+
+        const diff = target - current;
+        if (diff === 0) return { skipped: true, reason: 'no_change' };
+
+        const material = _findInjectionMaterial(carModel, partName, color);
+        const today = UIUtils.today ? UIUtils.today() : new Date().toISOString().slice(0, 10);
+        const nowTime = new Date().toTimeString().slice(0, 5);
+        const lotNo = `RST${today.slice(2).replace(/-/g, '')}${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`;
+        const record = {
+            date: `${today} ${nowTime}`,
+            type: diff > 0 ? '입고' : '출고',
+            carModel: carModel,
+            partName: partName,
+            color: color || '',
+            supplier: material ? (material.supplier || '') : '',
+            lots: [{ lotNo: lotNo, qty: Math.abs(diff) }],
+            lotNo: lotNo,
+            quantity: Math.abs(diff),
+            unit: 'EA',
+            source: `재고 오류 초기화 (${UIUtils.formatNumber(current)} → ${UIUtils.formatNumber(target)} EA)`,
+            note: reason,
+            injMaterialId: material ? material.id : undefined
+        };
+        const added = await Storage.add(STORE, record);
+
+        const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
+            ? AuthModule.getCurrentUser()
+            : null;
+        await Storage.add(DB.STORES.INSPECTION_DELETE_LOGS, {
+            id: Storage.generateId(),
+            type: 'injection_inventory_reset',
+            typeLabel: '사출 창고 재고 오류 초기화',
+            deletedAt: new Date().toISOString(),
+            deletedBy: user ? (user.displayName || user.name || user.id || '알 수 없음') : '알 수 없음',
+            reason: reason,
+            originalId: added && added.id ? added.id : undefined,
+            originalData: {
+                carModel: carModel,
+                partName: partName,
+                color: color || '',
+                beforeStock: current,
+                targetStock: target,
+                correctionQty: Math.abs(diff),
+                correctionType: record.type,
+                correctionRecord: record
+            },
+            summary: `${carModel} / ${partName} ${color || ''} / ${UIUtils.formatNumber(current)} → ${UIUtils.formatNumber(target)} EA`
+        });
+
+        return { skipped: false, before: current, after: target, correctionQty: Math.abs(diff) };
+    }
+
+    function openResetStockErrorModal(carModelEnc, partNameEnc, colorEnc, currentStock) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 재고 오류를 초기화할 수 있습니다.', 'warning');
+            return;
+        }
+        const carModel = decodeURIComponent(carModelEnc || '');
+        const partName = decodeURIComponent(partNameEnc || '');
+        const color = decodeURIComponent(colorEnc || '');
+        const stock = Number(currentStock) || 0;
+        if (stock >= 0) {
+            UIUtils.toast('마이너스 재고가 아닙니다.', 'info');
+            return;
+        }
+
+        UIUtils.showModal('재고 오류 초기화', `
+            <div style="background:rgba(220,38,38,0.06);border:1px solid rgba(220,38,38,0.2);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:0.86rem;line-height:1.6;">
+                <div><strong>${_escapeHtml(carModel)}</strong> / <strong>${_escapeHtml(partName)}</strong>${color ? ` / <strong>${_escapeHtml(color)}</strong>` : ''}</div>
+                <div style="margin-top:6px;">현재 재고: <strong style="color:var(--accent-red);">${UIUtils.formatNumber(stock)} EA</strong></div>
+                <div style="color:var(--text-secondary);margin-top:6px;">보정 입고를 등록해 재고를 <strong>0 EA</strong>로 맞춥니다. 기존 입출고 기록은 삭제하지 않습니다.</div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">초기화 사유 <span style="color:var(--accent-red)">*</span></label>
+                <textarea id="injStockResetReason" class="form-textarea" rows="3" placeholder="오류 원인 및 초기화 사유를 입력하세요"></textarea>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" style="background:#dc2626;border-color:#dc2626;"
+                onclick="InjectionWarehouseModule.confirmResetStockError('${carModelEnc}','${partNameEnc}','${colorEnc}')">
+                초기화 실행
+            </button>
+        `, 'md');
+
+        setTimeout(function() {
+            const el = document.getElementById('injStockResetReason');
+            if (el) el.focus();
+        }, 100);
+    }
+
+    async function confirmResetStockError(carModelEnc, partNameEnc, colorEnc) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 재고 오류를 초기화할 수 있습니다.', 'warning');
+            return;
+        }
+        const reasonEl = document.getElementById('injStockResetReason');
+        const reason = reasonEl ? reasonEl.value.trim() : '';
+        if (!reason) {
+            UIUtils.toast('초기화 사유를 입력해주세요.', 'warning');
+            if (reasonEl) reasonEl.focus();
+            return;
+        }
+
+        const carModel = decodeURIComponent(carModelEnc || '');
+        const partName = decodeURIComponent(partNameEnc || '');
+        const color = decodeURIComponent(colorEnc || '');
+
+        try {
+            const result = await _applyStockErrorCorrection(carModel, partName, color, reason, 0);
+            if (result.skipped) {
+                UIUtils.toast(
+                    result.reason === 'not_negative' ? '이미 마이너스 재고가 아닙니다.' : '변경할 내용이 없습니다.',
+                    'info'
+                );
+                return;
+            }
+            UIUtils.closeModal();
+            UIUtils.toast(`재고 오류 초기화 완료 (${UIUtils.formatNumber(result.before)} → 0 EA)`, 'success');
+            loadData();
+        } catch (e) {
+            console.error('재고 오류 초기화 실패:', e);
+            UIUtils.toast('초기화 실패: ' + e.message, 'error');
+        }
+    }
+
+    function openBulkResetStockErrorsModal() {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 재고 오류를 초기화할 수 있습니다.', 'warning');
+            return;
+        }
+
+        const currentMap = _getCurrentStockMap();
+        const items = Object.entries(currentMap)
+            .filter(function(entry) { return (Number(entry[1]) || 0) < 0; })
+            .map(function(entry) {
+                const parts = entry[0].split('||');
+                return {
+                    carModel: parts[0] || '',
+                    partName: parts[1] || '',
+                    color: parts[2] || '',
+                    stock: Number(entry[1]) || 0
+                };
+            })
+            .sort(function(a, b) { return a.stock - b.stock; });
+
+        if (!items.length) {
+            UIUtils.toast('마이너스 재고 품목이 없습니다.', 'info');
+            return;
+        }
+
+        window._injStockResetItems = items;
+        UIUtils.showModal('재고 오류 일괄 초기화', `
+            <div style="background:rgba(220,38,38,0.06);border:1px solid rgba(220,38,38,0.2);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:0.86rem;line-height:1.6;">
+                <div style="font-weight:700;margin-bottom:4px;">마이너스 재고 <span id="injBulkStockResetCount">${items.length}</span>건을 0 EA로 보정합니다.</div>
+                <div style="color:var(--text-secondary);">각 품목에 보정 입고가 등록되며, 기존 입출고 기록은 삭제하지 않습니다.</div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">초기화 사유 <span style="color:var(--accent-red)">*</span></label>
+                <textarea id="injBulkStockResetReason" class="form-textarea" rows="3" placeholder="일괄 초기화 사유를 입력하세요"></textarea>
+            </div>
+            <div class="data-table-wrapper" style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:8px;">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>차종</th>
+                            <th>품명</th>
+                            <th>컬러</th>
+                            <th style="text-align:right;">현재고</th>
+                            <th style="text-align:right;">초기화 후</th>
+                            <th style="text-align:center;">작업</th>
+                        </tr>
+                    </thead>
+                    <tbody id="injBulkStockResetBody"></tbody>
+                </table>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" id="injBulkStockResetConfirmBtn" style="background:#dc2626;border-color:#dc2626;"
+                onclick="InjectionWarehouseModule.confirmBulkResetStockErrors()">
+                ${items.length}건 일괄 초기화
+            </button>
+        `, 'xl');
+
+        _renderBulkResetPreviewTable();
+
+        setTimeout(function() {
+            const el = document.getElementById('injBulkStockResetReason');
+            if (el) el.focus();
+        }, 100);
+    }
+
+    function _renderBulkResetPreviewTable() {
+        const items = window._injStockResetItems || [];
+        const tbody = document.getElementById('injBulkStockResetBody');
+        if (!tbody) return;
+        if (!items.length) {
+            UIUtils.closeModal();
+            window._injStockResetItems = null;
+            UIUtils.toast('초기화 대상이 없습니다.', 'info');
+            return;
+        }
+        const countEl = document.getElementById('injBulkStockResetCount');
+        if (countEl) countEl.textContent = String(items.length);
+        const confirmBtn = document.getElementById('injBulkStockResetConfirmBtn');
+        if (confirmBtn) confirmBtn.textContent = `${items.length}건 일괄 초기화`;
+
+        tbody.innerHTML = items.map(function(item, idx) {
+            return `
+                <tr>
+                    <td>${_escapeHtml(item.carModel)}</td>
+                    <td>${_escapeHtml(item.partName)}</td>
+                    <td>${_escapeHtml(item.color || '-')}</td>
+                    <td style="text-align:right;font-weight:700;color:var(--accent-red);">${UIUtils.formatNumber(item.stock)} EA</td>
+                    <td style="text-align:right;color:var(--accent-green);font-weight:700;">0 EA</td>
+                    <td style="text-align:center;">
+                        <button class="btn btn-sm btn-outline" onclick="InjectionWarehouseModule.removeBulkResetPreviewRow(${idx})">제외</button>
+                    </td>
+                </tr>`;
+        }).join('');
+    }
+
+    function removeBulkResetPreviewRow(idx) {
+        if (!window._injStockResetItems) return;
+        window._injStockResetItems.splice(idx, 1);
+        _renderBulkResetPreviewTable();
+    }
+
+    async function confirmBulkResetStockErrors() {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 재고 오류를 초기화할 수 있습니다.', 'warning');
+            return;
+        }
+        const reasonEl = document.getElementById('injBulkStockResetReason');
+        const reason = reasonEl ? reasonEl.value.trim() : '';
+        if (!reason) {
+            UIUtils.toast('초기화 사유를 입력해주세요.', 'warning');
+            if (reasonEl) reasonEl.focus();
+            return;
+        }
+
+        const items = (window._injStockResetItems || []).slice();
+        if (!items.length) {
+            UIUtils.toast('초기화 대상이 없습니다.', 'warning');
+            return;
+        }
+
+        try {
+            let done = 0;
+            let skipped = 0;
+            for (const item of items) {
+                const result = await _applyStockErrorCorrection(item.carModel, item.partName, item.color, reason, 0);
+                if (result.skipped) skipped++;
+                else done++;
+            }
+            UIUtils.closeModal();
+            window._injStockResetItems = null;
+            UIUtils.toast(`재고 오류 일괄 초기화 완료 (${done}건${skipped ? `, 제외 ${skipped}건` : ''})`, 'success');
+            loadData();
+        } catch (e) {
+            console.error('재고 오류 일괄 초기화 실패:', e);
+            UIUtils.toast('일괄 초기화 실패: ' + e.message, 'error');
+        }
+    }
+
     async function saveNew() {
         const dateVal = document.getElementById('addInvDate').value;
         const timeVal = document.getElementById('addInvTime').value;
@@ -3519,6 +3830,11 @@ var InjectionWarehouseModule = (function() {
         filterTransactions,
         onTxCarChange,
         jumpToTxHistory,
+        openResetStockErrorModal,
+        confirmResetStockError,
+        openBulkResetStockErrorsModal,
+        removeBulkResetPreviewRow,
+        confirmBulkResetStockErrors,
         showPartDetail,
         openLotRenameModal,
         saveLotRename,

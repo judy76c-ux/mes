@@ -23,13 +23,14 @@ const ApiClient = (function() {
       if (lsBase && lsBase.trim()) return lsBase.trim().replace(/\/$/g, '');
     } catch (e) {}
 
-    if (typeof location !== 'undefined' && location.protocol && location.hostname) {
-      if (location.protocol === 'http:' || location.protocol === 'https:') {
-        const h = location.hostname;
-        return `${location.protocol}//${h}:3000`;
-      }
+    if (typeof location !== 'undefined' && location.protocol) {
+      // file:// — hostname 없음(빈 문자열)이므로 protocol만으로 판별
       if (location.protocol === 'file:') {
         return DEFAULT_FILE_API_BASE;
+      }
+      if (location.protocol === 'http:' || location.protocol === 'https:') {
+        const h = location.hostname;
+        if (h) return `${location.protocol}//${h}:3000`;
       }
     }
     return '';
