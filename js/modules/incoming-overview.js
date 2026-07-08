@@ -377,6 +377,7 @@ var IncomingDeleteLogModule = (function () {
                             <option value="">전체 유형</option>
                             <option value="injection">사출 수입검사</option>
                             <option value="paint">도료 수입검사</option>
+                            <option value="laser_work">레이저 작업(검사대기)</option>
                         </select>
                         <button class="btn btn-outline" onclick="IncomingDeleteLogModule.search()">
                             <span class="material-symbols-outlined">search</span> 조회
@@ -421,9 +422,11 @@ var IncomingDeleteLogModule = (function () {
         }
         tbody.innerHTML = logs.map(l => {
             const deletedAt = l.deletedAt ? l.deletedAt.replace('T', ' ').slice(0, 19) : '-';
-            const typeLabel = l.typeLabel || (l.type === 'injection' ? '사출 수입검사' : '도료 수입검사');
+            const typeLabel = l.typeLabel || (l.type === 'injection' ? '사출 수입검사' : l.type === 'laser_work' ? '레이저 작업(검사대기)' : '도료 수입검사');
             const typeBadge = l.type === 'injection'
                 ? `<span style="background:#dbeafe;color:#2563eb;border-radius:4px;padding:2px 8px;font-size:0.78rem;font-weight:700;">사출</span>`
+                : l.type === 'laser_work'
+                ? `<span style="background:#fee2e2;color:#dc2626;border-radius:4px;padding:2px 8px;font-size:0.78rem;font-weight:700;">레이저</span>`
                 : `<span style="background:#ede9fe;color:#7c3aed;border-radius:4px;padding:2px 8px;font-size:0.78rem;font-weight:700;">도료</span>`;
             return `<tr>
                 <td style="font-size:0.82rem;color:var(--text-muted);">${deletedAt}</td>
@@ -444,7 +447,7 @@ var IncomingDeleteLogModule = (function () {
         const log = Storage.getById(LOG_STORE, logId);
         if (!log) return;
         const d = log.originalData || {};
-        const typeLabel = log.typeLabel || (log.type === 'injection' ? '사출 수입검사' : '도료 수입검사');
+        const typeLabel = log.typeLabel || (log.type === 'injection' ? '사출 수입검사' : log.type === 'laser_work' ? '레이저 작업(검사대기)' : '도료 수입검사');
         const deletedAt = log.deletedAt ? log.deletedAt.replace('T', ' ').slice(0, 19) : '-';
 
         const row = (label, value) =>
@@ -461,6 +464,13 @@ var IncomingDeleteLogModule = (function () {
             row('합격수량', UIUtils.formatNumber(d.passQty)),
             row('불합격수량', UIUtils.formatNumber(d.failQty)),
             row('합격 판정', d.verdict), row('비고', d.note),
+        ] : log.type === 'laser_work' ? [
+            row('작업일자', d.date), row('시작시간', d.startTime), row('종료시간', d.endTime),
+            row('장비', d.machine),
+            row('작업자', [d.worker1, d.worker2, d.worker3].filter(Boolean).join(', ')),
+            row('차종', d.carModel), row('품명', d.partName), row('컬러', d.color),
+            row('작업수량', UIUtils.formatNumber(d.quantity) + ' EA'),
+            row('도장/사출 LOT', d.paintLot), row('비고', d.note),
         ] : [
             row('검사일자', d.date), row('검사자', d.inspector), row('구매처', d.supplier),
             row('도료품명', d.paintName), row('제조사 표기 LOT', d.lotNo),

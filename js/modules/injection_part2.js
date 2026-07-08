@@ -1093,6 +1093,12 @@ var InjectionWarehouseModule = (function() {
                             <span class="material-symbols-outlined" style="font-size:1rem;">delete_sweep</span>
                             테스트 데이터 정리 (${_testInspections().length})
                         </button>` : ''}
+                        ${pendingRows.length > 0 ? `
+                        <button class="btn btn-sm btn-danger" onclick="InjectionWarehouseModule.addAllPendingInspections()"
+                            title="현재 대기 중인 모든 검사건의 미입고 LOT을 성적서 접수 여부와 무관하게 합격수량 전체 일괄 입고 처리합니다.">
+                            <span class="material-symbols-outlined" style="font-size:1rem;">done_all</span>
+                            전체 일괄 입고 (${pendingRows.length}건)
+                        </button>` : ''}
                         <button class="btn btn-sm btn-outline" onclick="InjectionWarehouseModule.renderInspStandby()">
                             <span class="material-symbols-outlined" style="font-size:1rem;">refresh</span>
                         </button>
@@ -1100,6 +1106,11 @@ var InjectionWarehouseModule = (function() {
                 </div>
                 <div class="card-body" id="injInspStandbyBody" style="padding:0;"></div>
             </div>`;
+        // 검사 1건(inspId)에 몰려있는 미입고 LOT 개수 — 2건 이상이면 "전체입고" 버튼 노출
+        const inspGroupCount = {};
+        pendingRows.forEach(r => { inspGroupCount[r.inspId] = (inspGroupCount[r.inspId] || 0) + 1; });
+        const inspGroupSeen = new Set();
+
         const body = card.querySelector('#injInspStandbyBody');
         body.innerHTML = `
             <div class="data-table-wrapper">
@@ -1119,7 +1130,11 @@ var InjectionWarehouseModule = (function() {
                         </tr>
                     </thead>
                     <tbody>
-                        ${pendingRows.map(r => `
+                        ${pendingRows.map(r => {
+                            const groupCount = inspGroupCount[r.inspId] || 1;
+                            const isFirstOfGroup = groupCount > 1 && !inspGroupSeen.has(r.inspId);
+                            if (isFirstOfGroup) inspGroupSeen.add(r.inspId);
+                            return `
                             <tr style="background:rgba(245,158,11,0.06);">
                                 <td style="font-size:0.82rem;">${(r.date || '').slice(0, 10)}</td>
                                 <td>${r.carModel || '-'}</td>
@@ -1136,15 +1151,135 @@ var InjectionWarehouseModule = (function() {
                                 <td style="text-align:center;">
                                     <span class="badge badge-warning" style="background:var(--accent-orange,#f59e0b);color:#fff;">입고대기</span>
                                 </td>
-                                <td>
-                                    <button class="btn btn-sm btn-primary" onclick="InjectionWarehouseModule.openAddFromInspection('${r.inspId}', '${r.lotNo}')">
-                                        <span class="material-symbols-outlined" style="font-size:0.9rem;">add_circle</span> 입고
-                                    </button>
+                                <td style="white-space:nowrap;">
+                                    <div style="display:flex; gap:4px; align-items:center;">
+                                        <button class="btn btn-sm btn-primary" onclick="InjectionWarehouseModule.openAddFromInspection('${r.inspId}', '${r.lotNo}')">
+                                            <span class="material-symbols-outlined" style="font-size:0.9rem;">add_circle</span> 입고
+                                        </button>
+                                        ${isFirstOfGroup ? `
+                                        <button class="btn btn-sm btn-danger" title="이 검사건의 미입고 LOT ${groupCount}건을 합격수량 전체(성적서 접수 여부와 무관) 한 번에 입고 처리합니다."
+                                                onclick="InjectionWarehouseModule.addAllFromInspection('${r.inspId}')">
+                                            <span class="material-symbols-outlined" style="font-size:0.9rem;">done_all</span> 전체입고(${groupCount})
+                                        </button>` : ''}
+                                    </div>
                                 </td>
-                            </tr>`).join('')}
+                            </tr>`;
+                        }).join('')}
                     </tbody>
                 </table>
             </div>`;
+    }
+
+    // 현재 창고(INJECTION_INVENTORY)에 이미 입고된 LOT 키(partName||lotNo) 집합
+    function _buildInStockLotSet() {
+        const inventory = Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [];
+        const inStockSet = new Set();
+        inventory.filter(i => i.type === '입고').forEach(i => {
+            if (i.lots && i.lots.length > 0) {
+                i.lots.forEach(function(lot) {
+                    if (!lot.lotNo) return;
+                    const k = `${i.partName}||${lot.lotNo}`;
+                    if ((Number(lot.qty) || 0) > 0) inStockSet.add(k);
+                });
+            } else if (i.lotNo) {
+                const k = `${i.partName}||${i.lotNo}`;
+                if ((Number(i.quantity) || 0) > 0) inStockSet.add(k);
+            }
+        });
+        return inStockSet;
+    }
+
+    // 검사 1건의 미입고 LOT 목록(성적서 접수 여부 무관, qty>0, 아직 창고 미반영) 반환
+    function _pendingLotsForInspection(insp, inStockSet) {
+        const sourceLots = (insp.lots && insp.lots.length > 0)
+            ? insp.lots
+            : (insp.lotNo ? [{ lotNo: insp.lotNo, qty: insp.passQty }] : []);
+        return sourceLots.filter(l => (Number(l.qty) || 0) > 0 && !inStockSet.has(`${insp.partName}||${l.lotNo}`));
+    }
+
+    // 검사 1건의 미입고 LOT 전체를 사출 창고(INJECTION_INVENTORY) 입고 레코드 1건으로 반영
+    async function _commitInspectionInbound(insp, pendingLots, allMats) {
+        const totalQty = pendingLots.reduce((s, l) => s + (Number(l.qty) || 0), 0);
+        const _matMatch = (allMats || []).find(m => m.injPartName === insp.partName && m.carModel === insp.carModel)
+            || (allMats || []).find(m => m.injPartName === insp.partName);
+
+        await Storage.add(DB.STORES.INJECTION_INVENTORY, {
+            date: `${UIUtils.today()} ${new Date().toTimeString().slice(0, 5)}`,
+            type: '입고',
+            carModel: insp.carModel || '',
+            partName: insp.partName || '',
+            color: insp.color || '',
+            supplier: insp.supplierName || '',
+            lots: pendingLots.map(l => ({ lotNo: l.lotNo, qty: Number(l.qty) || 0 })),
+            lotNo: pendingLots[0].lotNo || '',
+            quantity: totalQty,
+            unit: 'EA',
+            source: '수입검사 합격수량 전체입고',
+            injMaterialId: _matMatch ? _matMatch.id : undefined,
+            inspDate: insp.date || undefined
+        });
+        return totalQty;
+    }
+
+    // 검사 1건에 남아있는 미입고 LOT을 전부 한 번에 창고 입고 처리 (성적서 접수 여부 무관, 합격수량 전체 반영)
+    async function addAllFromInspection(inspId) {
+        const insp = Storage.getById(DB.STORES.INJECTION_INSPECTIONS, inspId);
+        if (!insp) { UIUtils.toast('검사 정보를 찾을 수 없습니다.', 'error'); return; }
+
+        const pendingLots = _pendingLotsForInspection(insp, _buildInStockLotSet());
+        if (pendingLots.length === 0) {
+            UIUtils.toast('이미 모두 입고 처리되었습니다.', 'info');
+            renderInspStandby();
+            return;
+        }
+
+        const totalQty = pendingLots.reduce((s, l) => s + (Number(l.qty) || 0), 0);
+
+        UIUtils.confirm(
+            `${insp.carModel || ''} ${insp.partName || ''} (${insp.color || '-'})\n` +
+            `미입고 LOT ${pendingLots.length}건 · 합계 ${UIUtils.formatNumber(totalQty)} EA를 사출 창고에 전체 입고 처리하시겠습니까?`,
+            async () => {
+                const allMats = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+                await _commitInspectionInbound(insp, pendingLots, allMats);
+                UIUtils.toast(`${pendingLots.length}건 · ${UIUtils.formatNumber(totalQty)} EA 입고 처리 완료되었습니다.`, 'success');
+                renderInspStandby();
+                if (typeof loadData === 'function') { try { loadData(); } catch (e) {} }
+            }
+        );
+    }
+
+    // 현재 대기 중인 모든 검사건의 미입고 LOT을 일괄 창고 입고 처리 (성적서 접수 여부 무관, 합격수량 전체 반영)
+    async function addAllPendingInspections() {
+        const inspections = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
+        const inStockSet = _buildInStockLotSet();
+
+        const groups = inspections
+            .map(insp => ({ insp, pendingLots: _pendingLotsForInspection(insp, inStockSet) }))
+            .filter(g => g.pendingLots.length > 0);
+
+        if (groups.length === 0) {
+            UIUtils.toast('입고 대기 중인 항목이 없습니다.', 'info');
+            renderInspStandby();
+            return;
+        }
+
+        const totalLots = groups.reduce((s, g) => s + g.pendingLots.length, 0);
+        const totalQty = groups.reduce((s, g) => s + g.pendingLots.reduce((s2, l) => s2 + (Number(l.qty) || 0), 0), 0);
+
+        UIUtils.confirm(
+            `검사 ${groups.length}건 · 미입고 LOT ${totalLots}건 · 합계 ${UIUtils.formatNumber(totalQty)} EA를\n` +
+            `성적서 접수 여부와 무관하게 사출 창고에 전체 일괄 입고 처리하시겠습니까?`,
+            async () => {
+                const allMats = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+                for (const g of groups) {
+                    try { await _commitInspectionInbound(g.insp, g.pendingLots, allMats); }
+                    catch (e) { console.warn('[addAllPendingInspections] 실패:', g.insp.id, e); }
+                }
+                UIUtils.toast(`${groups.length}건 · ${UIUtils.formatNumber(totalQty)} EA 일괄 입고 처리 완료되었습니다.`, 'success');
+                renderInspStandby();
+                if (typeof loadData === 'function') { try { loadData(); } catch (e) {} }
+            }
+        );
     }
 
     // DEV 테스트 시드 검사 기록 판별 ([DEV] 표기 또는 LOT 260101 + 테스트 검사자)
@@ -3148,6 +3283,8 @@ var InjectionWarehouseModule = (function() {
         _openAddModalForPart,
         openAddModal,
         openAddFromInspection,
+        addAllFromInspection,
+        addAllPendingInspections,
         onModalCarModelChange,
         onModalPartChange,
         onModalColorChange,

@@ -63,6 +63,7 @@ const Storage = (function() {
     STORES.INJECTION_INSPECTIONS,
     STORES.PAINTING_INCOMING,
     STORES.PAINTING_WORK,
+    STORES.LASER_WORK_LOG,   // 레이저 대기품 재고(도장입고−레이저출고) 계산에 필수
     STORES.PAINTING_INSPECTIONS,
     STORES.SHIPPING_STANDBY,
     STORES.PRODUCT_INVENTORY,
@@ -283,7 +284,8 @@ const Storage = (function() {
       _backupToIndexedDB(storeName, cache[storeName]);
       return cache[storeName];
     } catch (e) {
-      cache[storeName] = [];
+      console.warn(`[Storage] ${_loadOneStoreToCache.name} failed for ${storeName}:`, e);
+      if (!Array.isArray(cache[storeName])) cache[storeName] = [];
       return cache[storeName];
     }
   }

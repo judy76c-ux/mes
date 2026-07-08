@@ -13,6 +13,33 @@ var LaserWorkModule = (function() {
     let _externalWorkers = [];
     let _qcPhotos = { First: null, Middle: null, Last: null }; // { name, url }
 
+    // background cache warm → 레이져 작업 화면 1회 재렌더 (뒤늦게 로드되는 스토어 반영)
+    let _cacheWarmUnsub = null;
+    let _cacheWarmRefreshTimer = null;
+    function _bindCacheWarmRefreshOnce() {
+        if (typeof Storage === 'undefined' || typeof Storage.onCacheWarm !== 'function') return;
+        if (_cacheWarmUnsub) return;
+
+        const watch = new Set([
+            DB.STORES.PRODUCTS,
+            DB.STORES.PAINTING_WORK,
+            DB.STORES.LASER_WORK_LOG
+        ].filter(Boolean));
+
+        _cacheWarmUnsub = Storage.onCacheWarm(function(storeName) {
+            // 현재 화면이 레이져 작업일지일 때만 (컨테이너 존재로 판단)
+            if (!document.getElementById('lwInProgressTableBody')) return;
+            if (storeName !== '*' && !watch.has(storeName)) return;
+
+            // 과도한 리렌더 방지: 디바운스 (마지막 워밍 이벤트 기준)
+            clearTimeout(_cacheWarmRefreshTimer);
+            _cacheWarmRefreshTimer = setTimeout(function() {
+                _cacheWarmRefreshTimer = null;
+                try { search(); } catch (e) {}
+            }, 250);
+        });
+    }
+
     // ── 관리자 통보 헬퍼 (painting.js와 동일 패턴) ──────────────────────
     function _getNotifyUsersByRole() {
         if (typeof AuthModule === 'undefined' || typeof AuthModule.getUsers !== 'function') return [];
@@ -817,6 +844,7 @@ var LaserWorkModule = (function() {
             </div>
         `;
         search();
+        _bindCacheWarmRefreshOnce();
     }
 
     // 작업완료 여부 판단: status가 명시적으로 'in_progress'가 아니면 완료로 취급 (구버전 데이터 호환)
@@ -2278,6 +2306,11 @@ var LaserInspectionModule = (function() {
         return roles.some(role => STANDARD_UPLOAD_ROLES.includes(String(role || '')));
     }
 
+    function _isAdminUser() {
+        const user = _currentUser();
+        return !!(user && (user.role === 'admin' || (Array.isArray(user.roles) && user.roles.includes('admin'))));
+    }
+
     async function _loadNonconformStandardImage() {
         try {
             return await Storage.getConfigValue(NONCONFORM_STANDARD_IMAGE_KEY) || null;
@@ -2455,6 +2488,8 @@ var LaserInspectionModule = (function() {
             return;
         }
 
+        const isAdmin = _isAdminUser();
+
         body.innerHTML = `
             <div class="data-table-wrapper">
                 <table class="data-table" style="min-width:820px;table-layout:fixed;">
@@ -2468,7 +2503,7 @@ var LaserInspectionModule = (function() {
                             <th style="width:72px;text-align:right;">작업수량</th>
                             <th style="width:90px;">도장LOT</th>
                             <th style="width:140px;">사출LOT</th>
-                            <th style="width:90px;"></th>
+                            <th style="${isAdmin ? 'width:150px;' : 'width:90px;'}"></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -2484,10 +2519,13 @@ var LaserInspectionModule = (function() {
                                 <td style="text-align:right; font-weight:700; color:var(--accent-blue);">${UIUtils.formatNumber(w.quantity || 0)}</td>
                                 <td>${_dateListHtml(info.paintDates)}</td>
                                 <td>${_lotListHtml(info.injectionLots)}</td>
-                                <td>
+                                <td style="white-space:nowrap;">
                                     <button class="btn btn-sm btn-primary" onclick="LaserInspectionModule.openInspFromWork('${w.id}')">
                                         <span class="material-symbols-outlined" style="font-size:0.9rem;">add_task</span> 검사 등록
-                                    </button>
+                                    </button>${isAdmin ? `
+                                    <button class="btn btn-sm btn-danger" onclick="LaserInspectionModule._deleteStandbyWork('${w.id}')" style="margin-left:4px;">
+                                        <span class="material-symbols-outlined" style="font-size:0.9rem;">delete</span> 삭제
+                                    </button>` : ''}
                                 </td>
                             </tr>`;
                         }).join('')}
@@ -3558,8 +3596,113 @@ var LaserInspectionModule = (function() {
         });
     }
 
+    // 검사 대기 항목(레이져 작업 기록) 삭제 요청 — 사유 입력 모달 표시 (관리자 전용)
+    function _deleteStandbyWork(workId) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 삭제할 수 있습니다.', 'warning');
+            return false;
+        }
+        const work = Storage.getById(DB.STORES.LASER_WORK_LOG, workId);
+        if (!work) {
+            UIUtils.toast('작업 기록을 찾을 수 없습니다.', 'error');
+            return false;
+        }
+        if (getInspectedWorkIds().has(workId)) {
+            UIUtils.toast('이미 검사가 등록된 작업입니다. 검사 이력에서 삭제하세요.', 'warning');
+            return false;
+        }
+
+        const label = `${work.date || ''} / ${work.machine || '-'} / ${work.carModel || ''} ${work.partName || ''} / ${UIUtils.formatNumber(work.quantity || 0)}EA`;
+        UIUtils.showModal(
+            '<span class="material-symbols-outlined" style="vertical-align:middle;color:var(--accent-red);margin-right:4px;">delete_outline</span> 검사 대기 삭제',
+            `
+                <div style="padding:4px 0;">
+                    <div style="display:flex;align-items:center;gap:10px;padding:14px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;margin-bottom:16px;">
+                        <span class="material-symbols-outlined" style="color:#ea580c;font-size:28px;">warning</span>
+                        <div>
+                            <div style="font-weight:700;margin-bottom:2px;">검사 대기 항목(레이져 작업 기록)을 삭제합니다.</div>
+                            <div style="font-size:0.85rem;color:var(--text-secondary);">${label}</div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">삭제 사유 <span style="color:var(--accent-red)">*</span></label>
+                        <textarea class="form-input" id="laserStandbyDeleteReason" placeholder="삭제 사유를 입력하세요 (예: 중복 등록, 오입력, 계획 변경 등)" style="resize:vertical;min-height:80px;"></textarea>
+                    </div>
+                    <div style="font-size:0.82rem;color:var(--text-muted);margin-top:8px;">
+                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">info</span>
+                        삭제 후 복구할 수 없으며, 삭제 이력이 기록됩니다.
+                    </div>
+                </div>
+            `,
+            `
+                <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+                <button class="btn btn-danger" onclick="LaserInspectionModule._confirmDeleteStandbyWork('${workId}')">
+                    <span class="material-symbols-outlined" style="vertical-align:middle;font-size:16px;">delete</span> 삭제
+                </button>
+            `,
+            '520px'
+        );
+
+        setTimeout(() => {
+            const el = document.getElementById('laserStandbyDeleteReason');
+            if (el) el.focus();
+        }, 100);
+        return true;
+    }
+
+    // 검사 대기 삭제 확정 — 사유 검증 후 감사 로그 기록 + LASER_WORK_LOG 삭제
+    async function _confirmDeleteStandbyWork(workId) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 삭제할 수 있습니다.', 'warning');
+            return false;
+        }
+        const reasonInput = document.getElementById('laserStandbyDeleteReason');
+        const reason = reasonInput ? reasonInput.value.trim() : '';
+        if (!reason) {
+            UIUtils.toast('삭제 사유를 입력해주세요.', 'warning');
+            if (reasonInput) reasonInput.focus();
+            return false;
+        }
+
+        const work = Storage.getById(DB.STORES.LASER_WORK_LOG, workId);
+        if (!work) {
+            UIUtils.toast('작업 기록을 찾을 수 없습니다.', 'error');
+            return false;
+        }
+        if (getInspectedWorkIds().has(workId)) {
+            UIUtils.toast('이미 검사가 등록된 작업입니다. 검사 이력에서 삭제하세요.', 'warning');
+            return false;
+        }
+
+        try {
+            const user = _currentUser();
+            const logEntry = {
+                id: Storage.generateId(),
+                type: 'laser_work',
+                typeLabel: '레이저 작업(검사대기)',
+                deletedAt: new Date().toISOString(),
+                deletedBy: user ? (user.displayName || user.name || user.id || '알 수 없음') : '알 수 없음',
+                reason: reason,
+                originalId: workId,
+                originalData: Object.assign({}, work),
+                summary: `${work.date || ''} / ${work.machine || '-'} / ${work.carModel || ''} ${work.partName || ''} / ${UIUtils.formatNumber(work.quantity || 0)}EA`,
+            };
+            await Storage.add(DB.STORES.INSPECTION_DELETE_LOGS, logEntry);
+            await Storage.remove(DB.STORES.LASER_WORK_LOG, workId);
+            UIUtils.closeModal();
+            UIUtils.toast('삭제 완료. 이력이 기록되었습니다.', 'success');
+            renderStandby();
+            return true;
+        } catch (error) {
+            console.error('[LaserInspectionModule] 검사 대기 삭제 오류:', error);
+            UIUtils.toast('삭제 중 오류가 발생했습니다.', 'error');
+            return false;
+        }
+    }
+
     return {
         render, openAddModal, openInspFromWork, search, renderStandby, onCarModelChange, edit, remove,
+        _deleteStandbyWork, _confirmDeleteStandbyWork,
         _closeModal, _saveInspection, _showDetail,
         showDefectTypeView, closeDefectTypeView,
         showNonconformStandardPage, showInspectionPage,
@@ -3581,6 +3724,33 @@ var LaserStandbyModule = (function() {
     let _manualOverrides = [];
     let _manualOverridesLoaded = false;
     let _bulkRecords = [];
+
+    // background cache warm → 레이져 대기품 화면 1회 재렌더 (뒤늦게 로드되는 스토어 반영)
+    let _cacheWarmUnsub = null;
+    let _cacheWarmRefreshTimer = null;
+    function _bindCacheWarmRefreshOnce() {
+        if (typeof Storage === 'undefined' || typeof Storage.onCacheWarm !== 'function') return;
+        if (_cacheWarmUnsub) return;
+
+        const watch = new Set([
+            DB.STORES.PRODUCTS,
+            DB.STORES.PAINTING_WORK,
+            DB.STORES.LASER_WORK_LOG
+        ].filter(Boolean));
+
+        _cacheWarmUnsub = Storage.onCacheWarm(function(storeName) {
+            // 현재 화면이 레이져 대기품 현황일 때만 (컨테이너 존재로 판단)
+            if (!document.getElementById('lsbInventory')) return;
+            if (storeName !== '*' && !watch.has(storeName)) return;
+
+            // 마지막 워밍 이벤트 기준 디바운스 (중간 이벤트만 스킵하지 않음)
+            clearTimeout(_cacheWarmRefreshTimer);
+            _cacheWarmRefreshTimer = setTimeout(function() {
+                _cacheWarmRefreshTimer = null;
+                try { renderAll(); } catch (e) {}
+            }, 250);
+        });
+    }
 
     function _escapeHtml(value) {
         return String(value == null ? '' : value)
@@ -3693,15 +3863,23 @@ var LaserStandbyModule = (function() {
 
             </div>
         `;
+        _initStandbyView();
+    }
+
+    function _initStandbyView() {
         renderAll();
         _ensureManualOverridesLoaded().then(renderAll).catch(() => {});
-        _ensureManualOverridesLoaded().then(renderAll).catch(() => {});
+        _bindCacheWarmRefreshOnce();
     }
 
     // 제품 조회 헬퍼 (carModel + partName + color 우선, 없으면 carModel + partName)
     function findProduct(products, w) {
-        return products.find(p => p.carModel === w.carModel && p.partName === w.partName && p.color === w.color)
-            || products.find(p => p.carModel === w.carModel && p.partName === w.partName);
+        const car = String(w.carModel || '').trim();
+        const part = String(w.partName || '').trim();
+        const color = String(w.color || '').trim();
+        const match = (p) => String(p.carModel || '').trim() === car && String(p.partName || '').trim() === part;
+        return products.find(p => match(p) && String(p.color || '').trim() === color)
+            || products.find(p => match(p));
     }
 
     function _itemKey(carModel, partName, color) {
@@ -3737,11 +3915,35 @@ var LaserStandbyModule = (function() {
         return idxPaint < idxLaser;
     }
 
+    function _isLaserProcessName(value) {
+        const key = _normalizeFlowKey(value);
+        const lower = String(value || '').trim().toLowerCase();
+        return key === '레이저' || key === '레이져' || lower.includes('laser');
+    }
+
+    function _normalizePaintLine(value) {
+        const raw = String(value || '').trim();
+        const alias = { '도장(A)': '도장-A', '도장(B)': '도장-B' };
+        return alias[raw] || raw;
+    }
+
     function _hasLaserProcess(prod) {
         if (!prod) return false;
         return [prod.process1, prod.process2, prod.process3, prod.process4]
-            .map(_normalizeFlowKey)
-            .some(v => v === '레이저' || v === '레이져');
+            .some(_isLaserProcessName);
+    }
+
+    // 도장 작업 완료품이 레이저 대기 재고에 포함되는지 (LaserWorkModule.getLaserStandbyItems와 동일 기준)
+    function _isPaintingWorkLaserStandbyInbound(paintingWork, prod) {
+        if (!prod || !_hasLaserProcess(prod)) return false;
+        const procs = [prod.process1, prod.process2, prod.process3, prod.process4]
+            .map(p => String(p || '').trim());
+        const paintLine = _normalizePaintLine(paintingWork.line || '');
+        const paintIdx = procs.indexOf(paintLine);
+        const laserIdx = procs.findIndex(p => p.includes('레이저') || p.includes('레이져'));
+        if (laserIdx < 0) return false;
+        if (!paintLine || paintIdx < 0) return true;
+        return laserIdx > paintIdx;
     }
 
     function _getLaserRelatedProducts() {
@@ -3834,16 +4036,7 @@ var LaserStandbyModule = (function() {
 
         const laserPaintWorks = paintingWorks.filter(w => {
             const prod = findProduct(products, w);
-            if (!prod || !_hasLaserProcess(prod)) return false;
-            // 완료된 도장 라인 바로 다음 공정이 레이저일 때만 레이저 대기에 포함
-            const procs = [prod.process1, prod.process2, prod.process3, prod.process4]
-                .map(_normalizeFlowKey).filter(Boolean);
-            const paintLine = _normalizeFlowKey(w.line || '');
-            if (!paintLine) return false; // 라인 정보 없으면 제외
-            const paintIdx = procs.indexOf(paintLine);
-            if (paintIdx < 0 || paintIdx >= procs.length - 1) return false; // 못 찾거나 마지막 공정이면 제외
-            const nextProc = procs[paintIdx + 1];
-            return nextProc === '레이저' || nextProc === '레이져';
+            return _isPaintingWorkLaserStandbyInbound(w, prod);
         });
 
         laserPaintWorks.forEach(w => {
@@ -4112,10 +4305,22 @@ var LaserStandbyModule = (function() {
         if (!el) return;
 
         if (items.length === 0) {
+            const { allItems } = _buildInventorySnapshot();
+            const depleted = allItems.filter(i => {
+                const stock = i.stockQty != null ? i.stockQty : ((i.inQty || 0) - (i.outQty || 0));
+                return (i.inQty || 0) > 0 && stock <= 0;
+            });
+            const depletedHint = depleted.length > 0
+                ? `<div style="margin-top:12px;font-size:0.8rem;color:var(--text-secondary);line-height:1.5;">
+                    최근 레이저 작업·출고로 재고가 소진된 품목 <strong>${depleted.length}건</strong>이 있습니다.
+                    아래 <b>분출 현황</b>에서 입·출고 내역을 확인하세요.
+                   </div>`
+                : '';
             el.innerHTML = `
                 <div style="text-align:center;padding:40px;color:var(--text-muted);">
                     <span class="material-symbols-outlined" style="font-size:2.5rem;display:block;opacity:0.3;margin-bottom:8px;">check_circle</span>
                     현재 레이져 공정 대기 재공품이 없습니다.
+                    ${depletedHint}
                 </div>`;
             return;
         }
@@ -4813,7 +5018,7 @@ var LaserStandbyModule = (function() {
                 </div>
                 <div class="card-body" id="lsbDetail" style="padding:0;"></div>
             </div>`;
-        renderAll();
+        _initStandbyView();
     }
 
     async function refresh() {

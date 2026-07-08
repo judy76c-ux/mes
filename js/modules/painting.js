@@ -6905,7 +6905,7 @@ const PaintingInspectionModule = (function() {
 
             ${(() => {
                 const _cu = AuthModule && AuthModule.getCurrentUser ? AuthModule.getCurrentUser() : null;
-                const _isAdmin = _cu && _cu.role === 'admin';
+                const _isAdmin = !!(_cu && (_cu.role === 'admin' || (Array.isArray(_cu.roles) && _cu.roles.includes('admin'))));
                 if (!_isAdmin) return '';
                 return `<div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
                     <button class="btn btn-sm btn-primary" onclick="document.getElementById('${popupId}').remove();PaintingInspectionModule.openEditInspectionModal('${d.id}')">
@@ -7671,6 +7671,12 @@ const PaintingInspectionModule = (function() {
 
     // 검사 실적 삭제
     async function _deleteInspection(inspectionId) {
+        const _cu = AuthModule && AuthModule.getCurrentUser ? AuthModule.getCurrentUser() : null;
+        const _isAdmin = !!(_cu && (_cu.role === 'admin' || (Array.isArray(_cu.roles) && _cu.roles.includes('admin'))));
+        if (!_isAdmin) {
+            UIUtils.toast('관리자만 삭제할 수 있습니다.', 'warning');
+            return false;
+        }
         if (!confirm('이 검사 실적을 삭제하시겠습니까? 삭제 후 복구할 수 없습니다.')) {
             return false;
         }

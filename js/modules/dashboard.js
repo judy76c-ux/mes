@@ -147,6 +147,9 @@ const DashboardModule = (function() {
             <!-- 관리자 보고 누락 -->
             <div id="dashManagerAlerts"></div>
 
+            <!-- 도장 작업일지 기준 발행 누락(초중종물) -->
+            <div id="dashQualityStdWarnings"></div>
+
             <!-- 출하검사 대기 목록 -->
             <div id="dashShippingStandby"></div>
 
@@ -207,6 +210,7 @@ const DashboardModule = (function() {
 
         renderProductionTiles();
         renderManagerAlerts();
+        renderQualityStdWarnings();
         renderShippingStandby();
         renderPaintPending();
         renderAlertRow();
@@ -573,6 +577,121 @@ const DashboardModule = (function() {
             '</tr></thead>' +
             '<tbody>' + rows + '</tbody>' +
             '</table></div></div>';
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       도장 작업일지 기준 발행 누락(초중종물) 경고 섹션
+       - 대상: PROD_QUALITY_CHECK의 quality_template가 존재하는 도장 작업일지
+       - 미발행: quality_issue(workId=work.id) 레코드가 없거나 printedAt 없음
+    ══════════════════════════════════════════════════════════ */
+    function renderQualityStdWarnings() {
+        const el = document.getElementById('dashQualityStdWarnings');
+        if (!el) return;
+
+        const WORK_STORE = DB.STORES.PAINTING_WORK;
+        const Q_STORE    = DB.STORES.PROD_QUALITY_CHECK;
+        if (!WORK_STORE || !Q_STORE) { el.innerHTML = ''; return; }
+
+        const works = Storage.getAll(WORK_STORE) || [];
+        const qAll  = Storage.getAll(Q_STORE)    || [];
+
+        const ISSUE_KIND    = 'quality_issue';
+        const TEMPLATE_KIND = 'quality_template';
+
+        function _normText(v) { return String(v || '').trim(); }
+        function _templates() { return qAll.filter(d => d && d._docKind === TEMPLATE_KIND); }
+        function _issues()    { return qAll.filter(d => d && (d._docKind || ISSUE_KIND) === ISSUE_KIND); }
+
+        function _templateFor(carModel, color) {
+            const car = _normText(carModel);
+            const clr = _normText(color);
+            const rows = _templates().filter(t => _normText(t.carModel) === car);
+            if (clr) {
+                const exact = rows.find(t => _normText(t.color) === clr);
+                if (exact) return exact;
+            }
+            return rows.find(t => !_normText(t.color)) || rows[0] || null;
+        }
+
+        const issueMap = new Map(_issues().filter(i => i.workId).map(i => [i.workId, i]));
+        const today = UIUtils.today();
+
+        const missing = works
+            .filter(function(w) {
+                if (!w || !w.id) return false;
+                const tmpl = _templateFor(w.carModel, w.color);
+                if (!tmpl) return false;
+                const issue = issueMap.get(w.id);
+                if (!issue) return true;
+                return !issue.printedAt;
+            })
+            .sort(function(a, b) {
+                return (b.date || '').localeCompare(a.date || '') ||
+                       String(b.registeredAt || b.createdAt || '').localeCompare(String(a.registeredAt || a.createdAt || ''));
+            });
+
+        if (!missing.length) { el.innerHTML = ''; return; }
+
+        const show = missing.slice(0, 20);
+
+        function _badge(text, color, bg, icon) {
+            return `<span style="display:inline-flex;align-items:center;gap:4px;
+                        border:1px solid ${color}44;background:${bg};color:${color};
+                        border-radius:999px;padding:2px 8px;font-size:0.72rem;font-weight:800;white-space:nowrap;">
+                        <span class="material-symbols-outlined" style="font-size:13px;">${icon}</span>${_esc(text)}</span>`;
+        }
+
+        const rows = show.map(function(w) {
+            const issue = issueMap.get(w.id);
+            const statusText = issue ? (issue.printedAt ? '발행완료' : '발행대기') : '미발행';
+            const overdue = w.date && w.date < today;
+            const warnBadge = overdue
+                ? _badge('전일 이전 미발행', '#dc2626', 'rgba(239,68,68,.08)', 'error')
+                : _badge('기준 발행 필요', '#f59e0b', 'rgba(245,158,11,.10)', 'warning');
+
+            return `
+                <tr style="cursor:pointer;"
+                    onclick="DashboardModule.openQualityIssueFromWork('${_esc(w.id)}')"
+                    onmouseover="this.style.background='var(--bg-secondary)'"
+                    onmouseout="this.style.background=''">
+                    <td style="padding:6px 10px;white-space:nowrap;color:var(--text-muted);font-size:0.8rem;">${_esc(w.date || '-')}</td>
+                    <td style="padding:6px 8px;white-space:nowrap;font-size:0.78rem;color:#0891b2;font-weight:700;">${_esc(w.line || '-')}</td>
+                    <td style="padding:6px 8px;font-weight:700;">${_esc(w.carModel || '-')}</td>
+                    <td style="padding:6px 8px;font-weight:600;">${_esc(w.partName || '-')}</td>
+                    <td style="padding:6px 8px;font-size:0.78rem;color:var(--text-muted);">${_esc(w.color || '-')}</td>
+                    <td style="padding:6px 8px;">${warnBadge}</td>
+                    <td style="padding:6px 10px;white-space:nowrap;font-size:0.78rem;color:var(--text-secondary);">${_esc(statusText)}</td>
+                </tr>`;
+        }).join('');
+
+        el.innerHTML = `
+            <div class="card" style="margin-bottom:0;border-left:3px solid #f59e0b;">
+                <div style="padding:10px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);gap:12px;flex-wrap:wrap;">
+                    <div style="display:flex;align-items:center;gap:7px;">
+                        <span class="material-symbols-outlined" style="font-size:18px;color:#f59e0b;">checklist</span>
+                        <span style="font-weight:700;font-size:0.88rem;color:#b45309;">도장 작업일지 기준 발행 누락</span>
+                        <span style="background:#f59e0b;color:#fff;border-radius:10px;padding:0 7px;font-size:0.73rem;font-weight:800;">${missing.length}</span>
+                    </div>
+                    <span style="font-size:0.75rem;color:var(--text-muted);">초중종물(품질체크) 기준 양식 미발행/미완료 · 클릭하여 발행 화면 열기</span>
+                </div>
+                <div style="overflow-x:auto;">
+                    <table style="width:100%;border-collapse:collapse;font-size:0.84rem;">
+                        <thead>
+                            <tr style="background:var(--bg-secondary);">
+                                <th style="padding:6px 10px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;white-space:nowrap;">작업일</th>
+                                <th style="padding:6px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;white-space:nowrap;">라인</th>
+                                <th style="padding:6px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;white-space:nowrap;">차종</th>
+                                <th style="padding:6px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;white-space:nowrap;">품명</th>
+                                <th style="padding:6px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;white-space:nowrap;">컬러</th>
+                                <th style="padding:6px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;white-space:nowrap;">경고</th>
+                                <th style="padding:6px 10px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;white-space:nowrap;">상태</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+            </div>
+        `;
     }
 
     /* ══════════════════════════════════════════════════════════
@@ -1134,6 +1253,40 @@ const DashboardModule = (function() {
         Router.navigate('prod-equipment');
     }
 
+    // 대시보드 → 초중종물(기준 발행) 화면 오픈
+    function openQualityIssueFromWork(workId) {
+        try {
+            // 도장 작업 실적 상세가 있으면 먼저 열기 (사용자 컨텍스트 유지)
+            if (typeof PaintingWorkModule !== 'undefined' && typeof PaintingWorkModule.openWorkViewPage === 'function') {
+                try { PaintingWorkModule.openWorkViewPage(workId); } catch (e) {}
+            }
+
+            // prod-quality 페이지로 이동 후 해당 workId로 발행 모달 열기
+            try { sessionStorage.setItem('dash_prodQuality_workId', String(workId || '')); } catch (e) {}
+            Router.navigate('prod-quality');
+
+            let retry = 0;
+            const timer = setInterval(function() {
+                retry += 1;
+                let id = '';
+                try { id = sessionStorage.getItem('dash_prodQuality_workId') || ''; } catch (e) {}
+                if (!id) { clearInterval(timer); return; }
+
+                if (window.ProdQualityModule && typeof window.ProdQualityModule.openWriteFromWork === 'function') {
+                    try {
+                        window.ProdQualityModule.openWriteFromWork(id);
+                        try { sessionStorage.removeItem('dash_prodQuality_workId'); } catch (e) {}
+                        clearInterval(timer);
+                        return;
+                    } catch (e) {}
+                }
+                if (retry >= 20) clearInterval(timer);
+            }, 120);
+        } catch (e) {
+            Router.navigate('prod-quality');
+        }
+    }
+
     async function openProductAdjustLogs() {
         const logs = (await Storage.getConfigValue('product_inventory_adjust_logs').catch(() => [])) || [];
         const rows = logs.slice(0, 50).map(log => `
@@ -1258,6 +1411,7 @@ const DashboardModule = (function() {
         openIlluminationCheck,
         openFProof,
         openEquipMode,
+        openQualityIssueFromWork,
         openProductAdjustLogs,
         openNotifyModal,
         _doSendNotify
