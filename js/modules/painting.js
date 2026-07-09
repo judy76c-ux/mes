@@ -3271,10 +3271,117 @@ const PaintingWorkModule = (function() {
 
     function removeWork(id) {
         UIUtils.confirm('이 도장 작업 실적을 삭제하시겠습니까?', async () => {
-            await Storage.remove(PAINTING_WORK_STORE, id);
+            await Storage.remove(STORE, id);
             UIUtils.toast('삭제되었습니다.', 'success');
             renderWorkList();
         });
+    }
+
+    // 작업 실적에서 사출명/사출컬러 메타 추출 (보기·수정 화면용)
+    function _getInjectionMetaForWork(work) {
+        if (!work) {
+            return { partNames: [], colors: [], partNameText: '-', colorText: '-' };
+        }
+        var partSeen = {};
+        var colorSeen = {};
+        var partNames = [];
+        var colors = [];
+
+        if (Array.isArray(work.lots) && work.lots.length > 0) {
+            work.lots.forEach(function(lot) {
+                if (!lot) return;
+                var partName = String(lot.partName || '').trim();
+                var color = String(lot.color || '').trim();
+                if (partName) {
+                    var partKey = partName.toLowerCase();
+                    if (!partSeen[partKey]) {
+                        partSeen[partKey] = true;
+                        partNames.push(partName);
+                    }
+                }
+                if (color) {
+                    String(color)
+                        .split(/[,，、\/|]/)
+                        .map(function(entry) { return entry.trim(); })
+                        .filter(Boolean)
+                        .forEach(function(entry) {
+                            var colorKey = entry.toLowerCase();
+                            if (colorSeen[colorKey]) return;
+                            colorSeen[colorKey] = true;
+                            colors.push(entry);
+                        });
+                }
+            });
+        }
+
+        if (!partNames.length && work.injPartName) {
+            partNames = String(work.injPartName).split(',').map(function(name) { return name.trim(); }).filter(Boolean);
+        }
+        if (!colors.length && work.injColor) {
+            colors = String(work.injColor).split(',').map(function(color) { return color.trim(); }).filter(Boolean);
+        }
+
+        if (!partNames.length || !colors.length) {
+            var inventory = Storage.getAll(INJ_INV_STORE) || [];
+            var injectionPartCandidates = [];
+            var lotNos = [];
+            if (Array.isArray(work.lots) && work.lots.length > 0) {
+                lotNos = work.lots.map(function(lot) { return String(lot && lot.lotNo || '').trim(); }).filter(Boolean);
+            } else if (work.lotNo) {
+                lotNos = String(work.lotNo).split(',').map(function(lotNo) { return lotNo.trim(); }).filter(Boolean);
+            }
+            if (work.injPartName) {
+                injectionPartCandidates = String(work.injPartName)
+                    .split(',')
+                    .map(function(name) { return name.trim(); })
+                    .filter(Boolean);
+            } else {
+                var materialCandidates = Storage.getAll(INJECTMAT_STORE) || [];
+                injectionPartCandidates = materialCandidates
+                    .filter(function(item) {
+                        if (!item) return false;
+                        var nameMatch = item.mfgProductName === (work.partName || '') || item.mfgProductName2 === (work.partName || '');
+                        var modelMatch = !work.carModel || !item.carModel || item.carModel === work.carModel;
+                        return nameMatch && modelMatch && item.injPartName;
+                    })
+                    .map(function(item) { return String(item.injPartName || '').trim(); })
+                    .filter(Boolean);
+            }
+            var candidateKeySet = {};
+            injectionPartCandidates.forEach(function(name) {
+                candidateKeySet[String(name).toLowerCase()] = true;
+            });
+            inventory.forEach(function(item) {
+                if (!item || !item.lotNo) return;
+                if (lotNos.indexOf(String(item.lotNo).trim()) < 0) return;
+                var partName = String(item.partName || item.injPartName || '').trim();
+                if (injectionPartCandidates.length && (!partName || !candidateKeySet[String(partName).toLowerCase()])) return;
+                var color = String(item.color || item.injColor || '').trim();
+                if (partName && !partSeen[partName.toLowerCase()]) {
+                    partSeen[partName.toLowerCase()] = true;
+                    partNames.push(partName);
+                }
+                if (color) {
+                    String(color)
+                        .split(/[,，、\/|]/)
+                        .map(function(entry) { return entry.trim(); })
+                        .filter(Boolean)
+                        .forEach(function(entry) {
+                            var colorKey = entry.toLowerCase();
+                            if (colorSeen[colorKey]) return;
+                            colorSeen[colorKey] = true;
+                            colors.push(entry);
+                        });
+                }
+            });
+        }
+
+        return {
+            partNames: partNames,
+            colors: colors,
+            partNameText: partNames.length ? partNames.join(', ') : '-',
+            colorText: colors.length ? colors.join(', ') : '-'
+        };
     }
 
     // 보기 페이지 진입점: 부모창이면 팝업 열기, 팝업창이면 contentArea에 바로 렌더링
@@ -3372,7 +3479,7 @@ const PaintingWorkModule = (function() {
             '<div style="display:flex;flex-wrap:wrap;gap:20px 36px;">' +
             vf('시작시간', d.startTime || '-') +
             vf('완료시간', d.endTime || '-') +
-            vf('작업C.T', d.avgCT > 0 ? d.avgCT.toFixed(1) + '초' : '-', 'var(--accent-blue)') +
+            vf('작업C.T', (Number(d.avgCT) || 0) > 0 ? Number(d.avgCT).toFixed(1) + '초' : '-', 'var(--accent-blue)') +
             '</div></div></div>' +
             '</div>' +
 

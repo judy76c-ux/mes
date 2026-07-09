@@ -19274,13 +19274,19 @@ var ProdQualityModule = (function() {
                             : '';
 
                         // 이 품목의 관리항목 구성이 어떤 프리셋과 일치하는지 표시.
-                        // 스펙 편집 화면(openSpecPage)의 감지 로직(_pqUpdatePresetDetection)과 동일하게
-                        // "관리항목 key 집합"을 프리셋과 비교한다 — 별도 presetId 저장에 의존하지 않으므로
-                        // 어느 경로(스펙 편집/일괄 등록)로 저장했든 일관되게 매칭된다.
-                        // 기준 자체가 없으면(status==='none') 빈 칸, 어떤 프리셋과도 일치하지 않으면 경고 뱃지.
+                        // 1) 템플릿에 저장된 presetId/presetName 우선
+                        // 2) 없으면 관리항목 key 집합을 프리셋과 비교
+                        let tmplForPreset = _templateForProduct(p.carModel, p.partName, p.color, p.paintProcess || '');
+                        if (!tmplForPreset && p.paintProcess) {
+                            tmplForPreset = (_templates() || []).find(t =>
+                                _normText(t.carModel) === _normText(p.carModel) &&
+                                _normText(t.partName || '') === _normText(p.partName) &&
+                                _normText(t.paintProcess || '') === _normText(p.paintProcess)
+                            ) || null;
+                        }
                         const matchedPresetName = status === 'none'
                             ? null
-                            : _matchedPresetNameForKeys(specItems.map(i => i.key));
+                            : _presetNameForTemplate(tmplForPreset, specItems);
                         const presetCellHtml = status === 'none'
                             ? `<span style="color:var(--text-muted);font-size:0.78rem;">-</span>`
                             : (matchedPresetName
@@ -19490,12 +19496,12 @@ var ProdQualityModule = (function() {
         }
         const carModel = _normText(product.carModel);
         const partName = _normText(product.partName||'');
-        const color    = _normText(product.color||product.paintColor||product.paint||product.drawingColor||'');
         const proc     = _normText(paintProcess || '');
+        const color    = _resolveProductColor(product, proc);
 
-        // 동일 컬러의 다른 품목 (차종 무관)
+        // 동일 컬러의 다른 품목 (차종 무관) — 공정별 컬러 기준으로 비교
         const sameColorProducts = allProducts.filter(p => {
-            const pc = _normText(p.color||p.paintColor||p.paint||p.drawingColor||'');
+            const pc = _resolveProductColor(p, proc);
             return p.id !== productId
                 && pc === color;
         });
@@ -19587,7 +19593,8 @@ var ProdQualityModule = (function() {
                         ${sameColorProducts.map(p => {
                             const pn = _normText(p.partName||'');
                             const pcm = _normText(p.carModel||'');
-                            const pt = _templateForProduct(_normText(p.carModel), pn, _normText(p.color||p.paintColor||p.paint||p.drawingColor||''), { paintProcess: proc });
+                            const pColorResolved = _resolveProductColor(p, proc);
+                            const pt = _templateForProduct(_normText(p.carModel), pn, pColorResolved, proc);
                             const ps = pt && Array.isArray(pt.items) ? pt.items : [];
                             const pFilled = ps.filter(_hasSpecValue).length;
                             const pTotal  = ps.length;
@@ -19848,19 +19855,64 @@ var ProdQualityModule = (function() {
         // 저장할 제품 목록 (기본: 현재 제품 + 체크된 품목)
         const saveTargets = [product, ...checkedIds.map(id => allProducts.find(p=>p.id===id)).filter(Boolean)];
 
+        const appliedPresetId = document.getElementById('pqSpecPresetSel')?.value || '';
+        const appliedPreset = appliedPresetId
+            ? (Storage.getAll(STORE) || []).find(d => d._docKind === PRESET_KIND && d.id === appliedPresetId)
+            : null;
+        // 드롭다운 미선택이어도 현재 항목 key 집합이 프리셋과 일치하면 그 이름을 기록
+        const matchedPresetName = (appliedPreset && appliedPreset.name)
+            || _matchedPresetNameForKeys(items.map(i => i.key));
+        const matchedPreset = matchedPresetName
+            ? (appliedPreset || (Storage.getAll(STORE) || []).find(d => d._docKind === PRESET_KIND && d.name === matchedPresetName))
+            : null;
+
         try {
             for (const p of saveTargets) {
                 const cm  = _normText(p.carModel);
                 const pn  = _normText(p.partName||'');
-                const col = _normText(p.color||p.paintColor||p.paint||p.drawingColor||'');
-                const existing = _templates().find(t =>
-                    _normText(t.carModel)===cm &&
-                    _normText(t.partName||'')===pn &&
-                    _normText(t.color||'')===col &&
-                    _normText(t.paintProcess||'')===paintProcess
-                );
-                const payload = { _docKind: TEMPLATE_KIND, carModel: cm, partName: pn, color: col, productId: p.id, items, updatedAt: UIUtils.now() };
+                // 목록과 동일한 공정별 컬러로 저장해야 품목별 기준에서 조회된다
+                const col = _resolveProductColor(p, paintProcess);
+                const colorCandidates = [...new Set([
+                    col,
+                    _normText(p.color || p.paintColor || p.paint || p.drawingColor || ''),
+                    _normText(p.paintColorA || ''),
+                    _normText(p.paintColorB || '')
+                ].filter(Boolean))];
+                // 구버전: product.color로 저장된 레코드도 찾아 동일 id로 갱신(컬러 키 마이그레이션)
+                let existing = null;
+                for (const c of colorCandidates) {
+                    existing = _templates().find(t =>
+                        _normText(t.carModel) === cm &&
+                        _normText(t.partName || '') === pn &&
+                        _normText(t.color || '') === c &&
+                        _normText(t.paintProcess || '') === paintProcess
+                    );
+                    if (existing) break;
+                }
+                if (!existing && paintProcess) {
+                    existing = _templates().find(t =>
+                        _normText(t.carModel) === cm &&
+                        _normText(t.partName || '') === pn &&
+                        _normText(t.paintProcess || '') === paintProcess
+                    ) || null;
+                }
+                const payload = {
+                    _docKind: TEMPLATE_KIND,
+                    carModel: cm,
+                    partName: pn,
+                    color: col,
+                    productId: p.id,
+                    items,
+                    updatedAt: UIUtils.now()
+                };
                 if (paintProcess) payload.paintProcess = paintProcess;
+                if (matchedPreset) {
+                    payload.presetId = matchedPreset.id;
+                    payload.presetName = matchedPreset.name;
+                } else {
+                    payload.presetId = '';
+                    payload.presetName = '';
+                }
                 if (existing) await Storage.update(STORE, existing.id, payload);
                 else await Storage.add(STORE, payload);
             }
@@ -19897,15 +19949,24 @@ var ProdQualityModule = (function() {
             });
         });
 
-        const presetKeys = new Set((preset.items||[]).map(i=>i.key));
-        const items = _masterItems().filter(mi=>presetKeys.has(mi.key)).map(mi=>({
-            ...mi, ...(current.get(mi.key)||{})
-        }));
+        // 마스터에 없는 커스텀 항목도 프리셋 정의를 그대로 유지한다.
+        // (기존: _masterItems()만 필터 → 커스텀 key가 전부 사라져 '미적용'으로 보임)
+        const masterByKey = new Map(_masterItems().map(mi => [mi.key, mi]));
+        const items = (preset.items || []).map(pi => {
+            const master = masterByKey.get(pi.key) || {};
+            const preserved = current.get(pi.key) || {};
+            return _normalizeItemForEdit({
+                ...master,
+                ...pi,
+                ...preserved,
+                selected: true
+            });
+        }).filter(i => i.key);
 
         const isEditMode = document.getElementById('pqSpecMode')?.value === 'edit';
         document.getElementById('pqSpecItemsBody').innerHTML = items.map(i=>_specItemRowHtml(i, { showDelete: isEditMode })).join('');
         _pqUpdatePresetDetection();
-        UIUtils.toast(`"${_esc(preset.name)}" 프레셋이 적용됐습니다.`, 'success');
+        UIUtils.toast(`"${_esc(preset.name)}" 프리셋이 적용됐습니다.`, 'success');
     }
 
     function _pqRemoveSpecItem(key) {
@@ -20008,17 +20069,30 @@ var ProdQualityModule = (function() {
         const norm = (keys || []).filter(Boolean).slice().sort().join(',');
         if (!norm) return null;
         const presets = (Storage.getAll(STORE) || []).filter(d => d._docKind === PRESET_KIND);
-        const matched = presets.find(p => (p.items || []).map(i => i.key).slice().sort().join(',') === norm);
+        const matched = presets.find(p => (p.items || []).map(i => i.key).filter(Boolean).slice().sort().join(',') === norm);
         return matched ? matched.name : null;
+    }
+
+    // 품목 템플릿에 저장된 presetId/presetName을 우선 사용하고,
+    // 없으면 key 집합 비교로 폴백한다. (저장 직후·구버전 데이터 모두 대응)
+    function _presetNameForTemplate(tmpl, specItems) {
+        if (tmpl) {
+            if (tmpl.presetId) {
+                const byId = (Storage.getAll(STORE) || []).find(d => d._docKind === PRESET_KIND && d.id === tmpl.presetId);
+                if (byId) return byId.name;
+            }
+            if (tmpl.presetName) return tmpl.presetName;
+        }
+        return _matchedPresetNameForKeys((specItems || []).map(i => i.key));
     }
 
     function _pqUpdatePresetDetection() {
         const panel = document.getElementById('pqPresetDetectionPanel');
         if (!panel) return;
-        const currentKeys = [...document.querySelectorAll('.pq-spec-item-row')].map(r => r.dataset.key).sort().join(',');
+        const currentKeys = [...document.querySelectorAll('.pq-spec-item-row')].map(r => r.dataset.key).filter(Boolean).sort().join(',');
         if (!currentKeys) { panel.innerHTML = ''; return; }
         const presets = (Storage.getAll(STORE)||[]).filter(d => d._docKind === PRESET_KIND);
-        const matched = presets.find(p => (p.items||[]).map(i=>i.key).sort().join(',') === currentKeys);
+        const matched = presets.find(p => (p.items||[]).map(i=>i.key).filter(Boolean).sort().join(',') === currentKeys);
         if (matched) {
             panel.innerHTML = `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;margin-bottom:10px;background:rgba(22,163,74,.06);border:1px solid rgba(22,163,74,.25);border-radius:8px;">
                 <span class="material-symbols-outlined" style="font-size:1rem;color:#16a34a;">check_circle</span>
@@ -20677,6 +20751,20 @@ var ProdQualityModule = (function() {
         return String(v || '').trim();
     }
 
+    // 도장 공정별 컬러 해석: 목록(_expandDualProcess)과 동일하게 paintColorA/B를 우선 사용.
+    // openSpecPage/saveSpecPage가 product.color만 쓰면 목록 조회 키와 어긋나
+    // 저장한 프리셋이 품목별 목록에서 '미적용'으로 보일 수 있다.
+    function _resolveProductColor(product, paintProcess = '') {
+        if (!product) return '';
+        const proc = _normText(paintProcess);
+        const colorA = _normText(product.paintColorA || '');
+        const colorB = _normText(product.paintColorB || '');
+        const base = _normText(product.color || product.paintColor || product.paint || product.drawingColor || '');
+        if (proc === '도장-A') return colorA || base;
+        if (proc === '도장-B') return colorB || base;
+        return base || colorA || colorB;
+    }
+
     function _templateFor(carModel, color = '') {
         const car = _normText(carModel);
         const clr = _normText(color);
@@ -20745,6 +20833,17 @@ var ProdQualityModule = (function() {
                 tmpl = _templateForProduct(carModel, partName, fc, paintProcess);
                 if (tmpl) break;
             }
+        }
+        // 공정별 컬러(paintColorA/B)와 product.color가 달랐던 구버전 저장분 복구
+        if (!tmpl && paintProcess) {
+            const car = _normText(carModel);
+            const part = _normText(partName);
+            const proc = _normText(paintProcess);
+            tmpl = (_templates() || []).find(t =>
+                _normText(t.carModel) === car &&
+                _normText(t.partName || '') === part &&
+                _normText(t.paintProcess || '') === proc
+            ) || null;
         }
         const items = tmpl && Array.isArray(tmpl.items) && tmpl.items.length
             ? _normalizeQualityItems(tmpl.items.map(item => ({ ...item })))

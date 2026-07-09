@@ -7,6 +7,9 @@ const PaintInventoryModule = (function() {
     const STORE          = DB.STORES.PAINT_INVENTORY;
     const MATERIALS_STORE = DB.STORES.PAINT_MATERIALS;
 
+    // 이 페이지의 작성 책임자(작성 담당자) — 서버 config에 사용자 id 배열로 저장
+    const AUTHOR_CONFIG_KEY = 'page_authors_paint-inventory';
+
     // ── 페이지네이션 상태 ──────────────────────────────────────────
     let _page     = 1;
     let _pageSize = 50;
@@ -65,6 +68,7 @@ const PaintInventoryModule = (function() {
     function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
+                <div id="paintInvAuthorBar" style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;padding:8px 12px;background:var(--bg-secondary);border-radius:8px;border:1px solid var(--border-color);"></div>
                 <div style="display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap;margin-bottom:14px;">
                     <button class="btn btn-primary btn-sm" onclick="PaintInventoryModule.openIncomingModal()"><span class="material-symbols-outlined">login</span> 도료 입고</button>
                     <button class="btn btn-danger btn-sm" onclick="PaintInventoryModule.openOutgoingModal()"><span class="material-symbols-outlined">logout</span> 도료 출고</button>
@@ -131,7 +135,102 @@ const PaintInventoryModule = (function() {
                 </div>
             </div>
         `;
+        renderAuthorBar();
         loadData();
+    }
+
+    // ── 작성 담당자(작성 책임자) 표시 바 ──────────────────────────────
+    function _authorAvatar(u, size) {
+        const s = size || 24;
+        if (u && u.photo) {
+            return `<img src="${u.photo}" style="width:${s}px;height:${s}px;border-radius:50%;object-fit:cover;border:1px solid var(--border-color);flex-shrink:0;">`;
+        }
+        return `<span style="width:${s}px;height:${s}px;border-radius:50%;background:var(--bg-primary);border:1px solid var(--border-color);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">
+                    <span class="material-symbols-outlined" style="font-size:${Math.round(s * 0.7)}px;color:var(--text-muted);">person</span>
+                </span>`;
+    }
+
+    function _authorChip(u) {
+        return `<span style="display:inline-flex;align-items:center;gap:5px;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:999px;padding:2px 10px 2px 3px;">
+            ${_authorAvatar(u, 24)}
+            <span style="font-size:0.83rem;font-weight:600;color:var(--text-primary);white-space:nowrap;">${_escapeHtml(u.displayName || u.username || '')}</span>
+        </span>`;
+    }
+
+    async function renderAuthorBar() {
+        const el = document.getElementById('paintInvAuthorBar');
+        if (!el) return;
+
+        let ids = [];
+        try { ids = await Storage.getConfigValue(AUTHOR_CONFIG_KEY) || []; } catch (e) { ids = []; }
+        if (!Array.isArray(ids)) ids = [];
+
+        const users = (typeof AuthModule !== 'undefined' && AuthModule.getUsers) ? AuthModule.getUsers() : [];
+        const selected = ids.map(id => users.find(u => String(u.id) === String(id))).filter(Boolean);
+
+        const chips = selected.length
+            ? selected.map(u => _authorChip(u)).join('')
+            : `<span style="color:var(--text-muted);font-size:0.85rem;">미지정</span>`;
+
+        const editBtn = _isAdminUser()
+            ? `<button class="btn btn-sm btn-outline" style="margin-left:auto;" onclick="PaintInventoryModule.openAuthorModal()">
+                   <span class="material-symbols-outlined" style="font-size:0.95rem;">manage_accounts</span> 담당자 지정
+               </button>`
+            : '';
+
+        el.innerHTML = `
+            <span style="display:inline-flex;align-items:center;gap:5px;font-weight:700;font-size:0.85rem;color:var(--text-primary);white-space:nowrap;">
+                <span class="material-symbols-outlined" style="font-size:1.05rem;color:var(--accent-blue);">edit_note</span>작성 담당자
+            </span>
+            <span style="color:var(--text-muted);">:</span>
+            <span style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">${chips}</span>
+            ${editBtn}`;
+    }
+
+    async function openAuthorModal() {
+        if (!_isAdminUser()) { UIUtils.toast('작성 담당자 지정은 관리자만 가능합니다.', 'warning'); return; }
+
+        let ids = [];
+        try { ids = await Storage.getConfigValue(AUTHOR_CONFIG_KEY) || []; } catch (e) { ids = []; }
+        if (!Array.isArray(ids)) ids = [];
+        const idSet = new Set(ids.map(String));
+
+        const users = ((typeof AuthModule !== 'undefined' && AuthModule.getUsers) ? AuthModule.getUsers() : [])
+            .filter(u => u.active !== false);
+
+        if (!users.length) { UIUtils.toast('등록된 사용자가 없습니다.', 'warning'); return; }
+
+        const rows = users.map(u => `
+            <label style="display:flex;align-items:center;gap:10px;padding:7px 10px;border:1px solid var(--border-color);border-radius:8px;cursor:pointer;">
+                <input type="checkbox" class="paintAuthorChk" value="${_escapeHtml(String(u.id))}" ${idSet.has(String(u.id)) ? 'checked' : ''} style="width:16px;height:16px;flex-shrink:0;">
+                ${_authorAvatar(u, 30)}
+                <span style="display:flex;flex-direction:column;line-height:1.2;min-width:0;">
+                    <span style="font-weight:600;font-size:0.88rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_escapeHtml(u.displayName || u.username || '')}</span>
+                    <span style="font-size:0.72rem;color:var(--text-muted);">${_escapeHtml(u.username || '')}</span>
+                </span>
+            </label>`).join('');
+
+        UIUtils.showModal(
+            '<span class="material-symbols-outlined" style="vertical-align:middle;color:var(--accent-blue);">manage_accounts</span> 작성 담당자 지정',
+            `<p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:10px;">이 페이지의 작성을 책임지는 담당자를 선택하세요. 상단에 이름과 사진이 표시됩니다.</p>
+             <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;max-height:320px;overflow-y:auto;">${rows}</div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+             <button class="btn btn-primary" onclick="PaintInventoryModule.saveAuthors()">저장</button>`
+        );
+    }
+
+    async function saveAuthors() {
+        if (!_isAdminUser()) { UIUtils.toast('작성 담당자 지정은 관리자만 가능합니다.', 'warning'); return; }
+        const ids = [...document.querySelectorAll('.paintAuthorChk:checked')].map(c => c.value);
+        try {
+            await Storage.setConfigValue(AUTHOR_CONFIG_KEY, ids);
+        } catch (e) {
+            UIUtils.toast('저장 중 오류가 발생했습니다.', 'error');
+            return;
+        }
+        UIUtils.toast('작성 담당자가 저장되었습니다.', 'success');
+        UIUtils.closeModal();
+        renderAuthorBar();
     }
 
     function loadData() {
@@ -478,6 +577,8 @@ const PaintInventoryModule = (function() {
         const mat = materials.find(m => m.id === matId);
         if (!mat) { UIUtils.toast('도료 정보를 찾을 수 없습니다.', 'error'); return; }
 
+        const isAdmin = _isAdminUser();
+
         const data = Storage.getAll(STORE);
         const records = data
             .filter(d => d.materialId === matId)
@@ -526,6 +627,11 @@ const PaintInventoryModule = (function() {
                 }
                 const prodLotEsc = (l.prodLot || '').replace(/'/g, "\\'");
                 const lotNoEsc   = (l.lotNo   || '').replace(/'/g, "\\'");
+                const adjustBtn = isAdmin
+                    ? `<button type="button" title="재고 수량 수정 (관리자)"
+                            onclick="event.stopPropagation(); PaintInventoryModule._openDetailAdjust('${matId}','${prodLotEsc}','${lotNoEsc}',${l.qty})"
+                            style="font-size:0.7rem;border:1px solid var(--border-color);border-radius:4px;padding:2px 6px;margin-right:4px;background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;">수정</button>`
+                    : '';
                 return `
                     <tr style="cursor:pointer;" title="클릭하여 출고 등록"
                         onclick="PaintInventoryModule._openDetailOutgoing('${matId}','${prodLotEsc}','${lotNoEsc}',${l.qty})"
@@ -536,8 +642,8 @@ const PaintInventoryModule = (function() {
                         <td style="text-align:center;">${l.mfgDate || '-'}</td>
                         <td>${expHtml}</td>
                         <td style="text-align:right;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(l.qty)}</td>
-                        <td style="text-align:center;padding:4px 8px;">
-                            <span style="font-size:0.7rem;background:#fee2e2;color:#dc2626;border-radius:4px;padding:2px 6px;white-space:nowrap;">출고</span>
+                        <td style="text-align:center;padding:4px 8px;white-space:nowrap;">
+                            ${adjustBtn}<span style="font-size:0.7rem;background:#fee2e2;color:#dc2626;border-radius:4px;padding:2px 6px;white-space:nowrap;">출고</span>
                         </td>
                     </tr>`;
             }).join('')
@@ -729,6 +835,105 @@ const PaintInventoryModule = (function() {
         UIUtils.toast('출고 등록되었습니다.', 'success');
         // 출고 모달 닫기 → 상위 상세 팝업도 닫고 최신 상태로 다시 열기
         UIUtils.closeModal(); // 출고 등록 모달
+        UIUtils.closeModal(); // 상세 팝업
+        loadData();
+        setTimeout(() => showPaintDetail(matId), 150);
+    }
+
+    // ── 도료 상세 팝업에서 LOT 재고 수량 수정 (관리자 전용) ──────────
+    // 실제 재고 값을 관리자가 직접 보정한다. 입력한 값과 현재 재고의 차이를
+    // 조정(입고/출고) 레코드로 기록해 이력을 보존한다.
+    function _openDetailAdjust(matId, prodLot, lotNo, currentQty) {
+        if (!_isAdminUser()) { UIUtils.toast('재고 수정은 관리자만 가능합니다.', 'warning'); return; }
+        const materials = Storage.getAll(MATERIALS_STORE);
+        const mat = materials.find(m => m.id === matId);
+        if (!mat) { UIUtils.toast('도료 정보를 찾을 수 없습니다.', 'error'); return; }
+
+        const todayStr = UIUtils.today();
+        const qtyNow   = Number(currentQty) || 0;
+        const lotLabel = prodLot || lotNo || '-';
+
+        UIUtils.showModal(
+            `<span class="material-symbols-outlined" style="vertical-align:middle;color:var(--accent-blue);">edit</span> 도료 재고 수정 <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(관리자)</span>`,
+            `<div style="margin-bottom:12px;padding:10px 14px;background:var(--bg-secondary);border-radius:8px;font-size:0.85rem;">
+                <span style="font-weight:700;">${mat.name}</span>
+                <span style="color:var(--text-muted);margin:0 8px;">|</span>
+                <span>제조 LOT: <strong style="font-family:monospace;">${lotLabel}</strong></span>
+                <span style="color:var(--text-muted);margin:0 8px;">|</span>
+                <span>현재 재고: <strong style="color:var(--accent-blue);">${UIUtils.formatNumber(qtyNow)} 개</strong></span>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">수정 일자 <span style="color:var(--accent-red)">*</span></label>
+                    <input type="date" class="form-input" id="detailAdjDate" value="${todayStr}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">수정 후 재고 수량 <span style="color:var(--accent-red)">*</span></label>
+                    <input type="number" class="form-input" id="detailAdjQty" min="0" value="${qtyNow}"
+                           oninput="this.value=Math.max(this.value,0)">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">사유 (선택)</label>
+                <input type="text" class="form-input" id="detailAdjMemo" placeholder="예: 실사 보정, 파손 폐기 등">
+            </div>
+            <div style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;">
+                * 현재 재고와의 차이만큼 조정 내역(입고/출고)이 자동 기록됩니다.
+            </div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+             <button class="btn btn-primary" onclick="PaintInventoryModule._saveDetailAdjust('${matId}','${prodLot}','${lotNo}')">저장</button>`
+        );
+
+        setTimeout(() => {
+            const qtyInput = document.getElementById('detailAdjQty');
+            if (qtyInput) { qtyInput.focus(); qtyInput.select(); }
+        }, 100);
+    }
+
+    async function _saveDetailAdjust(matId, prodLot, lotNo) {
+        if (!_isAdminUser()) { UIUtils.toast('재고 수정은 관리자만 가능합니다.', 'warning'); return; }
+        const date   = (document.getElementById('detailAdjDate') || {}).value || '';
+        const newQty = Number((document.getElementById('detailAdjQty') || {}).value);
+        const memo   = (document.getElementById('detailAdjMemo') || {}).value?.trim() || '';
+
+        if (!date) { UIUtils.toast('수정 일자를 선택하세요.', 'warning'); return; }
+        if (!Number.isFinite(newQty) || newQty < 0) { UIUtils.toast('수정 후 재고 수량을 올바르게 입력하세요.', 'warning'); return; }
+
+        // 현재 재고(해당 LOT) 재계산
+        const allLogs = Storage.getAll(STORE);
+        const lotLogs = allLogs.filter(l =>
+            l.materialId === matId &&
+            (l.prodLot || l.lotNo) === (prodLot || lotNo)
+        );
+        const stockIn  = lotLogs.filter(l => l.type === '입고').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
+        const stockOut = lotLogs.filter(l => l.type === '출고').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
+        const available = stockIn - stockOut;
+
+        const diff = newQty - available;
+        if (diff === 0) { UIUtils.toast('변경된 수량이 없습니다.', 'info'); return; }
+
+        // 입고 조정 시 LOT의 제조/유효기한을 기존 입고 기록에서 승계
+        const refIn = lotLogs.find(l => l.type === '입고') || {};
+
+        const data = {
+            date:       date,
+            type:       diff > 0 ? '입고' : '출고',
+            materialId: matId,
+            prodLot:    prodLot || '',
+            lotNo:      lotNo   || prodLot || '',
+            quantity:   Math.abs(diff),
+            mfgDate:    diff > 0 ? (refIn.mfgDate || '') : '',
+            expDate:    diff > 0 ? (refIn.expDate || '') : '',
+            memo:       '[재고수정] ' + (memo || `${UIUtils.formatNumber(available)} → ${UIUtils.formatNumber(newQty)}`),
+            adjust:     true,
+            sourceInspectionId: ''
+        };
+
+        await Storage.executeTransaction([
+            { store: STORE, op: 'add', data }
+        ]);
+        UIUtils.toast(`재고가 ${UIUtils.formatNumber(newQty)} 개로 수정되었습니다.`, 'success');
+        UIUtils.closeModal(); // 수정 모달
         UIUtils.closeModal(); // 상세 팝업
         loadData();
         setTimeout(() => showPaintDetail(matId), 150);
@@ -3746,6 +3951,9 @@ const PaintInventoryModule = (function() {
     return {
         render,
         loadData,
+        renderAuthorBar,
+        openAuthorModal,
+        saveAuthors,
         renderPaintInspStandby,
         cancelPaintInspectionStandby,
         cancelAllPaintInspectionStandby,
@@ -3753,6 +3961,8 @@ const PaintInventoryModule = (function() {
         showPaintDetail,
         _openDetailOutgoing,
         _saveDetailOutgoing,
+        _openDetailAdjust,
+        _saveDetailAdjust,
         openIncomingModal,
         openBulkModal,
         _bulkParse,
