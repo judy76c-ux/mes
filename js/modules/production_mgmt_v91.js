@@ -21052,13 +21052,18 @@ var ProdQualityModule = (function() {
     }
 
     function fillForm(d = {}) {
-        const resolvedColor = _resolveIssueColor(d.carModel || '', d.partName || '', d.color || '');
+        const resolvedColor = (() => {
+            const product = _findProductForQuality(d.carModel || '', d.partName || '', d.color || '');
+            if (product && d.line) return _resolveProductColor(product, d.line) || _resolveIssueColor(d.carModel || '', d.partName || '', d.color || '');
+            return _resolveIssueColor(d.carModel || '', d.partName || '', d.color || '');
+        })();
         const timeParts = _issueTimeParts(d);
         const duration = d.workHours || _durationHours(timeParts.startTime, timeParts.endTime);
         const shouldLoadItems = !!(d.carModel && d.partName);
         // 항상 현재 템플릿 기반으로 항목을 가져오고, 저장된 측정값(d.items)은 병합만 함
+        // 라인(도장-A/B)을 넘겨 품목별 항목 기준과 동일한 프리셋을 사용한다.
         const templateItems = shouldLoadItems
-            ? _issueItemsForProduct(d.carModel || '', d.partName || '', resolvedColor, [])
+            ? _issueItemsForProduct(d.carModel || '', d.partName || '', resolvedColor, [], d.line || '')
             : (d.items || []);
         const items = templateItems.length
             ? _sortItemsByMaster(_mergeIssueItems(templateItems, d.items || []).map(item => _normalizeItemForEdit({ ...item })))
@@ -21097,7 +21102,7 @@ var ProdQualityModule = (function() {
                 </div>
                 <div style="${compactField}">
                     <label style="${compactLabel}">라인</label>
-                    <select class="form-select" id="pqLine" style="${compactSelect}">
+                    <select class="form-select" id="pqLine" onchange="ProdQualityModule.onIssueLineChange()" style="${compactSelect}">
                         <option value="">라인 선택</option>
                         <option value="도장-A" ${(d.line || '') === '도장-A' ? 'selected' : ''}>도장-A</option>
                         <option value="도장-B" ${(d.line || '') === '도장-B' ? 'selected' : ''}>도장-B</option>
@@ -21245,9 +21250,18 @@ var ProdQualityModule = (function() {
         });
     }
 
-    function _issueItemsForProduct(carModel = '', partName = '', color = '', currentItems = []) {
-        const resolvedColor = _resolveIssueColor(carModel, partName, color);
-        const presetItems = _productSpecItems(carModel, partName, resolvedColor, { fallbackToMaster: false });
+    function _issueItemsForProduct(carModel = '', partName = '', color = '', currentItems = [], paintProcess = '') {
+        const proc = _normText(paintProcess);
+        const product = _findProductForQuality(carModel, partName, color);
+        // 라인(도장-A/B)이 있으면 공정별 컬러로 품목별 기준을 조회한다.
+        // (품목별 항목 기준은 paintProcess+paintColorA/B로 저장되므로 라인 없이 조회하면 기본 마스터 항목이 나옴)
+        const resolvedColor = product && proc
+            ? (_resolveProductColor(product, proc) || _resolveIssueColor(carModel, partName, color))
+            : _resolveIssueColor(carModel, partName, color);
+        const presetItems = _productSpecItems(carModel, partName, resolvedColor, {
+            fallbackToMaster: false,
+            paintProcess: proc
+        });
         const baseItems = presetItems.length
             ? presetItems
             : _itemsForCar(carModel, resolvedColor).map(item => _normalizeItemForEdit({ ...item }));
@@ -21505,7 +21519,7 @@ var ProdQualityModule = (function() {
             endTime: work.endTime || '',
             workHours: _durationHours(work.startTime || '', work.endTime || ''),
             time: _formatIssueTime(work.startTime || '', work.endTime || ''),
-            items: _issueItemsForProduct(work.carModel, work.partName, work.color, []).filter(item => item.selected !== false).map(item => ({ ...item })),
+            items: _issueItemsForProduct(work.carModel, work.partName, work.color, [], work.line || '').filter(item => item.selected !== false).map(item => ({ ...item })),
             status: '발행대기',
             inspector: '',
             writer: '',
@@ -21549,7 +21563,7 @@ var ProdQualityModule = (function() {
             printIssue(existing.id);
             return;
         }
-        const items = _issueItemsForProduct(work.carModel, work.partName, work.color, []).filter(item => item.selected !== false);
+        const items = _issueItemsForProduct(work.carModel, work.partName, work.color, [], work.line || '').filter(item => item.selected !== false);
         if (!items.length) {
             UIUtils.toast('해당 차종의 관리항목을 먼저 설정하세요.', 'warning');
             openTemplateModal(work.carModel || '', work.color || '');
@@ -21586,7 +21600,7 @@ var ProdQualityModule = (function() {
     async function issueFromWork(workId) {
         const work = Storage.getById(PAINT_WORK_STORE, workId);
         if (!work) return;
-        const items = _issueItemsForProduct(work.carModel, work.partName, work.color, []).filter(item => item.selected !== false);
+        const items = _issueItemsForProduct(work.carModel, work.partName, work.color, [], work.line || '').filter(item => item.selected !== false);
         if (!items.length) {
             UIUtils.toast('해당 차종의 관리항목을 먼저 선택하세요.', 'warning');
             openTemplateModal(work.carModel || '', work.color || '');
@@ -22656,13 +22670,7 @@ var ProdQualityModule = (function() {
         const colorInput = document.getElementById('pqColor');
         const color = _resolveIssueColor(car, part, colorInput?.value || '');
         if (colorInput) colorInput.value = color;
-        const itemsEl = document.getElementById('pqIssueItems');
-        if (itemsEl) {
-            const currentItems = _collectIssueItems();
-            itemsEl.innerHTML = car && part
-                ? _issueItemRows(_issueItemsForProduct(car, part, color, currentItems))
-                : _issueItemRows([]);
-        }
+        _reloadIssueItems();
     }
 
     function onIssuePartChange() {
@@ -22671,13 +22679,24 @@ var ProdQualityModule = (function() {
         const colorInput = document.getElementById('pqColor');
         const color = _resolveIssueColor(car, part, colorInput?.value || '');
         if (colorInput) colorInput.value = color;
+        _reloadIssueItems();
+    }
+
+    function onIssueLineChange() {
+        _reloadIssueItems();
+    }
+
+    function _reloadIssueItems() {
+        const car = document.getElementById('pqCarModel')?.value || '';
+        const part = document.getElementById('pqPartName')?.value || '';
+        const color = document.getElementById('pqColor')?.value || '';
+        const line = document.getElementById('pqLine')?.value || '';
         const itemsEl = document.getElementById('pqIssueItems');
-        if (itemsEl) {
-            const currentItems = _collectIssueItems();
-            itemsEl.innerHTML = car && part
-                ? _issueItemRows(_issueItemsForProduct(car, part, color, currentItems))
-                : _issueItemRows([]);
-        }
+        if (!itemsEl) return;
+        const currentItems = _collectIssueItems();
+        itemsEl.innerHTML = car && part
+            ? _issueItemRows(_issueItemsForProduct(car, part, color, currentItems, line))
+            : _issueItemRows([]);
     }
 
     function printIssue(id) {
@@ -22788,103 +22807,73 @@ var ProdQualityModule = (function() {
 <!doctype html><html><head><meta charset="utf-8"><title>초중종물 C/S</title>
 <style>
 *{box-sizing:border-box}
-body{font-family:Arial,'Malgun Gothic',sans-serif;margin:0;padding:20px 0;color:#111827;background:#eef2f7}
+html,body{margin:0;padding:0}
+body{font-family:Arial,'Malgun Gothic',sans-serif;color:#111827;background:#eef2f7}
 .print-toolbar{position:fixed;right:18px;top:12px;z-index:10;display:flex;flex-direction:column;align-items:stretch;gap:6px;background:#fff;border:1px solid #cbd5e1;border-radius:8px;padding:8px 10px;box-shadow:0 10px 24px rgba(15,23,42,.16);font-size:12px;color:#475569}
 .print-btn{padding:8px 14px;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:6px;cursor:pointer;font-weight:700}
 .print-close-btn{padding:6px 14px;border:1px solid #cbd5e1;background:#fff;color:#475569;border-radius:6px;cursor:pointer;font-weight:700}
 [contenteditable="true"]:focus{outline:2px solid #2563eb;outline-offset:-2px;background:#fff7d6}
-.print-page{width:100%;margin:0 auto}
-.sheet{width:1180px;max-width:calc(100% - 32px);margin:20px auto;page-break-inside:avoid;background:#fff;border:2px solid #111827;padding:12px;box-shadow:0 18px 44px rgba(15,23,42,.18),0 3px 10px rgba(15,23,42,.12)}
-.title-row{position:relative;display:flex;align-items:center;justify-content:center;min-height:62px;margin-bottom:8px;border:2px solid #111827;background:#fff}
-.title-logo{position:absolute;left:14px;top:50%;transform:translateY(-50%);width:190px;height:48px;display:flex;align-items:center;justify-content:flex-start;background:#fff}
-.title-logo img{display:block;max-width:100%;max-height:44px;object-fit:contain}
-.title-row:after{content:'PAINT PROCESS';position:absolute;right:14px;bottom:10px;font-size:10px;font-weight:800;letter-spacing:.8px;color:#64748b}
-h1{font-size:34px;letter-spacing:1px;text-align:center;margin:0;font-weight:900;color:#0f172a}
-.top-grid{display:grid;grid-template-columns:1fr 340px;justify-content:space-between;align-items:start;margin-bottom:8px;gap:8px}
+/* 화면 미리보기 = A4 가로 인쇄 영역과 동일 비율 */
+.print-page{width:297mm;height:210mm;margin:18px auto;overflow:hidden;background:#fff;box-shadow:0 18px 44px rgba(15,23,42,.18),0 3px 10px rgba(15,23,42,.12)}
+.sheet{width:100%;height:100%;margin:0;padding:2.5mm;background:#fff;border:1.6px solid #111827;display:flex;flex-direction:column;overflow:hidden;page-break-inside:avoid}
+.title-row{position:relative;display:flex;align-items:center;justify-content:center;min-height:12mm;margin-bottom:1.5mm;border:1.6px solid #111827;background:#fff;flex:0 0 auto}
+.title-logo{position:absolute;left:3mm;top:50%;transform:translateY(-50%);width:46mm;height:10mm;display:flex;align-items:center;justify-content:flex-start;background:#fff}
+.title-logo img{display:block;max-width:100%;max-height:9.5mm;object-fit:contain}
+.title-row:after{content:'PAINT PROCESS';position:absolute;right:3mm;bottom:1.5mm;font-size:8px;font-weight:800;letter-spacing:.8px;color:#64748b}
+h1{font-size:26px;letter-spacing:.6px;text-align:center;margin:0;font-weight:900;color:#0f172a}
+.top-grid{display:grid;grid-template-columns:1fr 82mm;justify-content:space-between;align-items:start;margin-bottom:1.5mm;gap:1.8mm;flex:0 0 auto}
 table{border-collapse:collapse;width:100%}
 .meta,.sign,.main{background:#fff}
-.meta th,.meta td,.sign th,.sign td{border:1.5px solid #111827;text-align:center;padding:5px 4px;font-size:12px;height:32px}
+.meta th,.meta td,.sign th,.sign td{border:1.2px solid #111827;text-align:center;padding:2px 2px;font-size:11px;height:7mm}
 .meta th,.sign th{background:#e8eef6;font-weight:900;color:#0f172a}
 .meta td,.sign td{font-weight:700;color:#111827}
-.meta .ko{display:block;font-size:12px}.meta .en{display:block;font-size:9px;color:#475569}
-.sign td{height:38px;background:#fff}
-.main{table-layout:fixed;border:2px solid #111827}
-.main th,.main td{border:1.2px solid #111827;text-align:center;vertical-align:middle;padding:4px 3px;font-size:12px}
+.meta .ko{display:block;font-size:11px}.meta .en{display:block;font-size:8px;color:#475569}
+.sign td{height:8mm;background:#fff}
+.main{table-layout:fixed;border:1.6px solid #111827;flex:1 1 auto;height:100%;width:100%}
+.main th,.main td{border:1px solid #111827;text-align:center;vertical-align:middle;padding:2px 2px;font-size:12px}
 .main th{background:#e8eef6;font-weight:900;color:#0f172a}
 .subhead th{background:#f8fafc;font-weight:900}
 .spec-head-upper,.spec-upper{border-right:none !important}
 .spec-head-lower,.spec-lower{border-left:none !important}
-.check-cell{width:38px}.check-box{display:inline-block;width:22px;height:22px;border:1.5px solid #9ca3af;background:#f8fafc}
+.check-cell{width:38px}.check-box{display:inline-block;width:18px;height:18px;border:1.5px solid #9ca3af;background:#f8fafc}
 .check-head{line-height:1.15;word-break:keep-all}
-.item-group{font-size:16px;font-weight:800;line-height:1.15;white-space:normal;word-break:keep-all}
-.item-group-sub{display:block;font-size:10px;font-weight:700;line-height:1.05}
-.item-detail{font-size:14px;font-weight:700;line-height:1.15}
-.item-sub-en{display:block;font-size:10px;font-weight:700;line-height:1.1}
-.spec-upper{font-size:16px;font-weight:900}.spec-lower,.spec-text{font-size:14px;line-height:1.25;font-weight:900}
+.item-group{font-size:14px;font-weight:800;line-height:1.15;white-space:normal;word-break:keep-all}
+.item-group-sub{display:block;font-size:9px;font-weight:700;line-height:1.05}
+.item-detail{font-size:13px;font-weight:700;line-height:1.15}
+.item-sub-en{display:block;font-size:9px;font-weight:700;line-height:1.1}
+.spec-upper{font-size:14px;font-weight:900}.spec-lower,.spec-text{font-size:12px;line-height:1.25;font-weight:900}
 .film-range-spec{text-align:center!important;vertical-align:middle!important;font-weight:900}
-.cycle-note{display:flex;align-items:center;gap:10px;min-height:34px;margin:0 0 8px;border:1.5px solid #111827;background:#f8fafc;padding:6px 10px;font-size:12px;font-weight:800;color:#0f172a}
-.cycle-note strong{display:inline-flex;align-items:center;align-self:stretch;padding:0 10px;margin:-6px 2px -6px -10px;background:#e8eef6;border-right:1.5px solid #111827;white-space:nowrap}
-.cycle-note span{display:inline-flex;align-items:center;padding:3px 8px;border:1px solid #cbd5e1;background:#fff;border-radius:4px;white-space:nowrap}
-.method-cell{font-size:12px;line-height:1.2}
-.measure-head{background:#dbeafe!important}.lot-head{background:#f8fafc!important;font-size:12px!important;font-weight:700!important}
-.measure-type{display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;font-weight:800;line-height:1}
-.lot-sub{margin-top:4px;font-size:11px;font-weight:700;letter-spacing:.2px}
-.type-check{width:18px;height:18px;border:1.5px solid #9ca3af;background:#fff;display:inline-flex;align-items:center;justify-content:center;color:#64748b;font-size:12px;line-height:1}
+.cycle-note{display:flex;align-items:center;gap:8px;min-height:7mm;margin:0 0 1.5mm;border:1.2px solid #111827;background:#f8fafc;padding:1mm 2mm;font-size:10.5px;font-weight:800;color:#0f172a;flex:0 0 auto}
+.cycle-note strong{display:inline-flex;align-items:center;align-self:stretch;padding:0 2mm;margin:-1mm 1mm -1mm -2mm;background:#e8eef6;border-right:1.2px solid #111827;white-space:nowrap}
+.cycle-note span{display:inline-flex;align-items:center;padding:1px 6px;border:1px solid #cbd5e1;background:#fff;border-radius:3px;white-space:nowrap}
+.method-cell{font-size:11px;line-height:1.2}
+.measure-head{background:#dbeafe!important}.lot-head{background:#f8fafc!important;font-size:11px!important;font-weight:700!important}
+.measure-type{display:flex;align-items:center;justify-content:center;gap:5px;font-size:12px;font-weight:800;line-height:1}
+.lot-sub{margin-top:2px;font-size:10px;font-weight:700;letter-spacing:.2px}
+.type-check{width:15px;height:15px;border:1.5px solid #9ca3af;background:#fff;display:inline-flex;align-items:center;justify-content:center;color:#64748b;font-size:10px;line-height:1}
 .type-check.checked{color:#334155}
-.measure-cell{height:78px}
-.measure-cell span{display:inline-flex;width:92px;height:64px;border:1.2px dashed #64748b;background:#fdfefe;align-items:center;justify-content:center;color:#7aa332;font-size:24px}
+.measure-cell{height:auto}
+.measure-cell span{display:inline-flex;width:78%;max-width:96px;height:70%;min-height:18mm;border:1.2px dashed #64748b;background:#fdfefe;align-items:center;justify-content:center;color:#7aa332;font-size:20px}
 .measure-cell.blank{background:#fff}
-.judge-cell{font-size:15px;color:#5f6b75}
-.main tr.color-row td{padding-top:2px;padding-bottom:2px}
-.main tr.color-row .item-group{font-size:15px}
-.main tr.color-row .item-detail{font-size:12px;line-height:1.02}
-.main tr.color-row .item-sub-en{font-size:9px}
-.main tr.color-row .spec-upper,.main tr.color-row .spec-lower{font-size:13px;line-height:1.05;font-weight:900}
-.main tr.color-row .method-cell,.main tr.color-row .judge-cell{font-size:11px}
-.main tr.color-row .measure-cell{height:44px}
-.main tr.color-row .measure-cell span{width:72px;height:30px;font-size:0}
-.main tr.gloss-row .measure-cell{height:52px}
+.judge-cell{font-size:13px;color:#5f6b75}
+.main tr.color-row td{padding-top:1px;padding-bottom:1px}
+.main tr.color-row .item-group{font-size:13px}
+.main tr.color-row .item-detail{font-size:11px;line-height:1.02}
+.main tr.color-row .item-sub-en{font-size:8px}
+.main tr.color-row .spec-upper,.main tr.color-row .spec-lower{font-size:12px;line-height:1.05;font-weight:900}
+.main tr.color-row .method-cell,.main tr.color-row .judge-cell{font-size:10px}
+.main tr.color-row .measure-cell span{min-height:10mm;width:72%;font-size:0}
 @media print{
-  @page{size:A4 landscape;margin:3mm}
-  html,body{width:291mm;height:204mm;overflow:hidden}
-  body{margin:0;padding:0;background:#fff;color:#000}
-  .print-toolbar{display:none}
-  .print-page{width:291mm;height:204mm;margin:0;overflow:hidden;position:relative;break-before:avoid;break-after:avoid;break-inside:avoid;page-break-after:avoid;page-break-before:avoid;page-break-inside:avoid}
-  .sheet{width:291mm;height:204mm;max-width:none;overflow:hidden;margin:0;padding:2mm;border:1.4px solid #111827;box-shadow:none;transform:none;transform-origin:top left;break-before:avoid;break-after:avoid;break-inside:avoid;page-break-after:avoid;page-break-before:avoid;page-break-inside:avoid}
-  .title-row{min-height:15mm;margin-bottom:1.5mm;border-width:1.4px}
-  .title-logo{left:3mm;width:46mm;height:12mm}
-  .title-logo img{max-height:11mm}
-  .title-row:after{font-size:8px}
-  h1{font-size:30px;margin:0;letter-spacing:.8px}
-  .top-grid{grid-template-columns:1fr 86mm;gap:2mm;margin-bottom:1.5mm}
-  .meta th,.meta td,.sign th,.sign td{font-size:11px;height:28px;padding:3px 2px;border-width:1.1px}
-  .meta .ko{font-size:11px}.meta .en{font-size:9px}
-  .sign td{height:30px}
-  .main{border-width:1.4px}
-  .main th,.main td{font-size:11px;padding:2px 2px;border-width:1px}
-  .item-group{font-size:14px}
-  .item-group-sub{font-size:9px}
-  .item-detail{font-size:12px}
-  .item-sub-en{font-size:8px}
-  .spec-upper{font-size:15px}.spec-lower,.spec-text{font-size:13px;font-weight:900}
-  .cycle-note{min-height:8mm;margin-bottom:1.5mm;padding:1mm 2mm;font-size:10.5px;border-width:1.1px}
-  .cycle-note strong{padding:0 2mm;margin:-1mm 1mm -1mm -2mm;border-right-width:1.1px}
-  .cycle-note span{padding:1px 5px;border-radius:2px}
-  .method-cell,.lot-head,.measure-type,.judge-cell{font-size:11px}
-  .lot-sub{font-size:10px}
-  .type-check{width:15px;height:15px;font-size:10px}
-  .measure-cell{height:68px}
-  .measure-cell span{width:84px;height:56px;font-size:21px}
-  .check-box{width:20px;height:20px}
-  .main tr.color-row td{padding-top:1px;padding-bottom:1px}
-  .main tr.color-row .item-group{font-size:13px}
-  .main tr.color-row .item-detail{font-size:11px}
-  .main tr.color-row .item-sub-en{font-size:7px}
-  .main tr.color-row .spec-upper,.main tr.color-row .spec-lower{font-size:12px;font-weight:900}
-  .main tr.color-row .method-cell,.main tr.color-row .judge-cell{font-size:10px}
-  .main tr.color-row .measure-cell{height:34px}
-  .main tr.color-row .measure-cell span{width:68px;height:22px}
-  .main tr.gloss-row .measure-cell{height:42px}
+  @page{size:A4 landscape;margin:0}
+  html,body{width:297mm;height:210mm;overflow:hidden;background:#fff!important;color:#000}
+  body{margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .print-toolbar{display:none!important}
+  .print-page{width:297mm;height:210mm;margin:0;overflow:hidden;box-shadow:none;position:relative;break-inside:avoid;page-break-inside:avoid}
+  .sheet{width:297mm;height:210mm;max-width:none;min-height:0;overflow:hidden;margin:0;padding:2.5mm;border:1.4px solid #111827;box-shadow:none;transform:none;transform-origin:top left;display:flex;flex-direction:column;break-inside:avoid;page-break-inside:avoid}
+  .title-row,.top-grid,.cycle-note{flex:0 0 auto}
+  .main{flex:1 1 auto;height:100%;width:100%}
+  .measure-cell{height:auto;min-height:0}
+  .measure-cell span{min-height:0}
 }
 </style></head><body>
 <div class="print-toolbar">
@@ -22929,7 +22918,7 @@ table{border-collapse:collapse;width:100%}
     </div>
     <table class="main">
     <colgroup>
-      <col style="width:42px"><col style="width:86px"><col style="width:138px"><col style="width:90px"><col style="width:122px"><col style="width:112px"><col style="width:100px"><col style="width:100px"><col style="width:100px"><col style="width:82px">
+      <col style="width:4%"><col style="width:8%"><col style="width:14%"><col style="width:8%"><col style="width:12%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:10%">
     </colgroup>
     <thead>
       <tr>
@@ -22962,60 +22951,93 @@ document.querySelectorAll('.check-box,.type-check').forEach(el => {
     el.textContent = el.textContent.trim() ? '' : '\\u2713';
   });
 });
+
+/** A4 가로(297×210mm)에 시트를 맞추고, 항목 수와 무관하게 본문 행 높이를 남은 공간에 균등 분배 */
 function fitOnePage() {
   const page = document.querySelector('.print-page');
   const sheet = document.querySelector('.sheet');
   if (!page || !sheet) return;
   const main = document.querySelector('.main');
-  const rows = main ? Array.from(main.tBodies[0]?.rows || []) : [];
+  const tbody = main ? main.tBodies[0] : null;
+  const rows = tbody ? Array.from(tbody.rows || []) : [];
+  const mm = (v) => Math.round(v * 96 / 25.4);
+
+  // 인라인 스타일 초기화
   sheet.style.transform = '';
-  if (main) main.style.height = '';
+  sheet.style.transformOrigin = '';
+  sheet.style.height = '';
+  sheet.style.width = '';
+  if (main) { main.style.height = ''; main.style.minHeight = ''; }
   rows.forEach(row => {
     row.style.height = '';
-    Array.from(row.cells || []).forEach(cell => { cell.style.height = ''; });
+    Array.from(row.cells || []).forEach(cell => { cell.style.height = ''; cell.style.minHeight = ''; });
+  });
+  document.querySelectorAll('.measure-cell span').forEach(el => {
+    el.style.width = ''; el.style.height = ''; el.style.minHeight = ''; el.style.fontSize = '';
   });
 
+  // 인쇄/미리보기 모두 A4 가로 고정 영역
+  const pageW = mm(297);
+  const pageH = mm(210);
+  page.style.width = pageW + 'px';
+  page.style.height = pageH + 'px';
+  sheet.style.width = pageW + 'px';
+  sheet.style.height = pageH + 'px';
+
   if (main && rows.length) {
+    // 헤더(타이틀/메타/주기) 높이를 반영해 본표에 남은 세로 공간 계산
+    void sheet.offsetHeight;
     const sheetRect = sheet.getBoundingClientRect();
     const mainRect = main.getBoundingClientRect();
-    const sheetStyle = getComputedStyle(sheet);
-    const paddingBottom = parseFloat(sheetStyle.paddingBottom) || 0;
-    const availableMainH = Math.max(0, sheet.clientHeight - (mainRect.top - sheetRect.top) - paddingBottom - 2);
+    const padB = parseFloat(getComputedStyle(sheet).paddingBottom) || 0;
+    const availableMainH = Math.max(140, Math.floor(pageH - (mainRect.top - sheetRect.top) - padB - 1));
     const headH = Array.from(main.tHead?.rows || []).reduce((sum, row) => sum + row.getBoundingClientRect().height, 0);
-    const rowHeights = rows.map(row => row.getBoundingClientRect().height);
-    const bodyH = rowHeights.reduce((sum, height) => sum + height, 0);
-    const targetBodyH = Math.max(bodyH, availableMainH - headH);
+    const bodyTarget = Math.max(100, availableMainH - headH);
 
-    if (availableMainH > 0) main.style.height = Math.floor(availableMainH) + 'px';
-    if (targetBodyH > bodyH + 1 && bodyH > 0) {
-      const extra = targetBodyH - bodyH;
-      rows.forEach((row, idx) => {
-        const weight = rowHeights[idx] / bodyH;
-        const height = Math.floor(rowHeights[idx] + (extra * weight));
-        row.style.height = height + 'px';
-        Array.from(row.cells || []).forEach(cell => { cell.style.height = height + 'px'; });
+    // 자연 높이 비율 유지하며 남은 공간 채움 (항목 적으면 행이 커지고, 많으면 줄어듦)
+    const naturalHeights = rows.map(row => Math.max(28, row.getBoundingClientRect().height));
+    const naturalBody = naturalHeights.reduce((s, h) => s + h, 0) || (rows.length * 40);
+    const scaleY = bodyTarget / naturalBody;
+    const minRow = rows.length <= 4 ? 48 : (rows.length <= 6 ? 36 : 28);
+
+    main.style.height = availableMainH + 'px';
+    let used = 0;
+    rows.forEach((row, idx) => {
+      let h = Math.max(minRow, Math.floor(naturalHeights[idx] * scaleY));
+      if (idx === rows.length - 1) h = Math.max(minRow, bodyTarget - used);
+      used += h;
+      row.style.height = h + 'px';
+      Array.from(row.cells || []).forEach(cell => {
+        cell.style.height = h + 'px';
+        cell.style.minHeight = h + 'px';
       });
-    }
+      row.querySelectorAll('.measure-cell span').forEach(box => {
+        const boxH = Math.max(22, Math.floor(h * 0.68));
+        const boxW = Math.max(42, Math.min(Math.floor(h * 0.95), Math.floor(pageW * 0.08)));
+        box.style.height = boxH + 'px';
+        box.style.minHeight = boxH + 'px';
+        box.style.width = boxW + 'px';
+        if (box.textContent && box.textContent.trim()) {
+          box.style.fontSize = Math.max(12, Math.min(24, Math.floor(boxH * 0.42))) + 'px';
+        }
+      });
+    });
   }
 
-  const pageW = page.clientWidth || 1100;
-  const pageH = page.clientHeight || 770;
+  // 가로/세로 오버플로 시에만 축소 (여백이 남지 않도록 확대는 행 분배로 처리)
+  void sheet.offsetHeight;
   const sheetW = sheet.scrollWidth || pageW;
   const sheetH = sheet.scrollHeight || pageH;
   const scale = Math.min(1, pageW / sheetW, pageH / sheetH);
-  sheet.style.transform = scale < 0.999 ? 'scale(' + Math.max(0.86, scale - 0.006).toFixed(3) + ')' : 'none';
+  if (scale < 0.998) {
+    sheet.style.transformOrigin = 'top left';
+    sheet.style.transform = 'scale(' + Math.max(0.82, scale).toFixed(4) + ')';
+  }
 }
 window.addEventListener('beforeprint', fitOnePage);
+window.addEventListener('load', () => setTimeout(fitOnePage, 60));
+window.addEventListener('resize', () => setTimeout(fitOnePage, 40));
 window.addEventListener('afterprint', () => {
-  const sheet = document.querySelector('.sheet');
-  const main = document.querySelector('.main');
-  const rows = main ? Array.from(main.tBodies[0]?.rows || []) : [];
-  if (sheet) sheet.style.transform = '';
-  if (main) main.style.height = '';
-  rows.forEach(row => {
-    row.style.height = '';
-    Array.from(row.cells || []).forEach(cell => { cell.style.height = ''; });
-  });
   if (window.opener && window.opener.ProdQualityModule && window.opener.ProdQualityModule.markIssuePrinted) {
     window.opener.ProdQualityModule.markIssuePrinted('${_js(id)}');
   }
@@ -23062,6 +23084,7 @@ window.addEventListener('afterprint', () => {
         ,reloadTemplateForCar
         ,onIssueCarChange
         ,onIssuePartChange
+        ,onIssueLineChange
         ,onIssueTimeChange
         ,printIssue
         ,markIssuePrinted

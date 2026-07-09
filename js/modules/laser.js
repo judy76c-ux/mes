@@ -2910,6 +2910,12 @@ var LaserInspectionModule = (function() {
                 <span style="font-weight:700;font-size:0.98rem;color:${parseFloat(failRate) > 0 ? 'var(--accent-red)' : 'var(--accent-green)'};">${failRate}%</span>
             </div>
 
+            ${(Array.isArray(d.inspectors) && d.inspectors.length) ? `
+            <div style="background:var(--bg-secondary);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:0.82rem;">
+                <span style="color:var(--text-muted);">검사자</span>
+                <strong style="margin-left:6px;color:var(--text-primary);">${d.inspectors.join(', ')}</strong>
+            </div>` : ''}
+
             <!-- 포장 정보 -->
             ${(d.packQty > 0 || d.residualQty > 0) ? `
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;text-align:center;border-top:1px solid var(--border);padding-top:8px;">
@@ -3093,6 +3099,106 @@ var LaserInspectionModule = (function() {
         </div>`;
     }
 
+    // 검사자 선택 카드 (도장 검사와 동일 패턴)
+    function _buildInspectorCard() {
+        return `
+        <div class="card">
+            <div class="card-body" style="padding:12px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                    <h5 style="margin:0;font-size:0.85rem;color:var(--text-primary);">검사자</h5>
+                    <button type="button" class="btn btn-sm btn-primary" id="liAddInspectorBtn"
+                        onclick="LaserInspectionModule._addInspectorField()"
+                        style="gap:4px;padding:4px 8px;font-size:0.78rem;">
+                        <span class="material-symbols-outlined" style="font-size:14px;">add</span> 추가
+                    </button>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;" id="liInspectorContainer"></div>
+            </div>
+        </div>`;
+    }
+
+    function _addInspectorField(isFirst = false, selectedName = '') {
+        const container = document.getElementById('liInspectorContainer');
+        if (!container) return;
+
+        const inspectors = Storage.getAll(DB.STORES.INSPECTORS) || [];
+        if (!container.inspectorCount) {
+            container.inspectorCount = container.querySelectorAll('[id^="liInspector"]').length;
+        }
+        if (!isFirst && container.inspectorCount >= 5) {
+            UIUtils.toast('검사자는 최대 5명까지 추가할 수 있습니다.', 'warning');
+            return;
+        }
+
+        container.inspectorCount++;
+        const idx = container.inspectorCount;
+        const selectedId = selectedName
+            ? (inspectors.find(insp => (insp.name || insp.id) === selectedName)?.id || '')
+            : '';
+
+        container.insertAdjacentHTML('beforeend', `
+            <div class="form-group" id="liInspectorGroup${idx}" style="margin:0;">
+                <label class="form-label" style="font-size:0.72rem;">검사자${idx}</label>
+                <select id="liInspector${idx}" class="form-select"
+                    style="padding:5px 6px;border:1px solid var(--border);font-size:0.85rem;"
+                    onchange="LaserInspectionModule._syncInspectorOptions()">
+                    <option value="">선택 안함</option>
+                    ${inspectors.map(insp => {
+                        const id = insp.id || '';
+                        const name = insp.name || insp.id || '';
+                        return `<option value="${id}" ${id === selectedId ? 'selected' : ''}>${name}</option>`;
+                    }).join('')}
+                </select>
+            </div>
+        `);
+        _syncInspectorOptions();
+
+        const addBtn = document.getElementById('liAddInspectorBtn');
+        if (addBtn) addBtn.disabled = container.inspectorCount >= 5;
+    }
+
+    function _syncInspectorOptions() {
+        const container = document.getElementById('liInspectorContainer');
+        if (!container) return;
+        const selects = Array.from(container.querySelectorAll('select[id^="liInspector"]'));
+        const selectedValues = selects.map(s => s.value).filter(Boolean);
+        selects.forEach(sel => {
+            Array.from(sel.options).forEach(opt => {
+                if (!opt.value || opt.value === sel.value) opt.disabled = false;
+                else opt.disabled = selectedValues.includes(opt.value);
+            });
+        });
+    }
+
+    function _initInspectorFields(selectedInspectors = []) {
+        const container = document.getElementById('liInspectorContainer');
+        if (!container) return;
+        container.innerHTML = '';
+        container.inspectorCount = 0;
+        const names = Array.isArray(selectedInspectors)
+            ? selectedInspectors.filter(Boolean)
+            : [];
+        const count = Math.max(2, Math.min(5, names.length || 2));
+        for (let i = 0; i < count; i++) {
+            _addInspectorField(i === 0, names[i] || '');
+        }
+    }
+
+    function _collectInspectors() {
+        const inspectors = [];
+        for (let i = 1; i <= 5; i++) {
+            const el = document.getElementById(`liInspector${i}`);
+            if (!el || !el.value) continue;
+            if (el.tagName === 'SELECT') {
+                const opt = el.options[el.selectedIndex];
+                if (opt && opt.text && opt.text !== '선택 안함') inspectors.push(opt.text);
+            } else if (el.value) {
+                inspectors.push(el.value);
+            }
+        }
+        return inspectors;
+    }
+
     // 검사 수량 카드 (좌측)
     function _buildQtyCard(d = {}, autoInspQty = 0) {
         const failQty = d.failQty || 0;
@@ -3193,7 +3299,7 @@ var LaserInspectionModule = (function() {
     }
 
     function buildFormHTML(d = {}) {
-        const left = _buildSelectCard(d) + _buildInspInfoCard(d) + _buildQtyCard(d);
+        const left = _buildSelectCard(d) + _buildInspInfoCard(d) + _buildQtyCard(d) + _buildInspectorCard();
         return _build2Col(left, _buildDefectCard(d.defectDetails||{}));
     }
 
@@ -3201,8 +3307,9 @@ var LaserInspectionModule = (function() {
     function openAddModal() {
         _liCarModel = ''; _liPartName = ''; _liColor = ''; _liWorkId = null;
         const left = _buildSelectCard() + _buildInspInfoCard() + _buildQtyCard() +
-            _buildPackagingCard() + _buildBtns('LaserInspectionModule._saveInspection()');
+            _buildPackagingCard() + _buildInspectorCard() + _buildBtns('LaserInspectionModule._saveInspection()');
         _openModal('레이져 검사 등록', _build2Col(left, _buildDefectCard()));
+        setTimeout(() => _initInspectorFields(), 50);
     }
 
     function openInspFromWork(workId) {
@@ -3215,10 +3322,14 @@ var LaserInspectionModule = (function() {
         const initGoodQty = w.quantity || 0;
         const left = _buildInspInfoCard({}, w) + _buildQtyCard({}, w.quantity||0) +
             _buildPackagingCard({}, prevResidualQty, packUnit, initGoodQty) +
+            _buildInspectorCard() +
             _buildBtns('LaserInspectionModule._saveInspection()');
         _openModal(`레이져 검사 등록 — ${w.partName||''}`,
             _buildWorkBanner(w) + _build2Col(left, _buildDefectCard()));
-        setTimeout(_calculateInspectionTime, 0);
+        setTimeout(() => {
+            _calculateInspectionTime();
+            _initInspectorFields();
+        }, 0);
     }
 
     function edit(id) {
@@ -3234,11 +3345,15 @@ var LaserInspectionModule = (function() {
         const left = (workRef ? '' : _buildSelectCard(d)) +
             _buildInspInfoCard(d) + _buildQtyCard(d) +
             _buildPackagingCard(d, prevResidualQty, packUnit) +
+            _buildInspectorCard() +
             _buildBtns(`LaserInspectionModule._saveInspection('${id}')`);
         _openModal('레이져 검사 수정',
             (workRef ? _buildWorkBanner(workRef) : '') +
             _build2Col(left, _buildDefectCard(d.defectDetails||{})));
-        if (!workRef) setTimeout(() => onCarModelChange(d.partName), 50);
+        setTimeout(() => {
+            _initInspectorFields(d.inspectors || []);
+            if (!workRef) onCarModelChange(d.partName);
+        }, 50);
     }
 
     function _validateFailQty(data) {
@@ -3366,6 +3481,7 @@ var LaserInspectionModule = (function() {
             inspQty, goodQty, failQty,
             failRate           : inspQty > 0 ? (failQty / inspQty * 100) : 0,
             defectDetails,
+            inspectors         : _collectInspectors(),
             prevResidualQty, packUnit, packBoxCount, packQty, residualQty
         };
     }
@@ -3762,6 +3878,7 @@ var LaserInspectionModule = (function() {
         focusNonconformStandardPasteZone, handleNonconformStandardPaste, printNonconformStandardPage,
         _updateDefectTotal, _updateDefectQty, _updateGoodQty, _calculateInspectionTime,
         _updatePackagingCalc, _autoBoxCount,
+        _addInspectorField, _syncInspectorOptions,
     };
 })();
 
@@ -5009,6 +5126,28 @@ var LaserStandbyModule = (function() {
     }
 
     // 페이지 헤더 없이 내용만 렌더링 (통합 재공품 현황 탭에서 호출)
+    function _escapeAttr(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function _ensureSelectOption(selectEl, value, label) {
+        if (!selectEl) return;
+        const v = String(value ?? '');
+        if (!v) return;
+        const exists = Array.from(selectEl.options).some(opt => opt.value === v);
+        if (!exists) {
+            const opt = document.createElement('option');
+            opt.value = v;
+            opt.textContent = label != null ? String(label) : (v || '-');
+            selectEl.appendChild(opt);
+        }
+        selectEl.value = v;
+    }
+
     function onAdjustCarChange(selectedPartName = '', selectedColor = '') {
         const carModelEl = document.getElementById('lsbAdjustCarModel');
         const partEl = document.getElementById('lsbAdjustPartName');
@@ -5016,15 +5155,20 @@ var LaserStandbyModule = (function() {
         if (!carModelEl || !partEl || !colorEl) return;
 
         const carModel = carModelEl.value || '';
-        const products = _getLaserTargetProducts();
+        // 대기 재고는 레이저 공정 제품 기준으로 쌓일 수 있어, 드롭다운은 관련 제품 전체에서 구성
+        const products = _getLaserRelatedProducts();
         const partNames = [...new Set(products
             .filter(prod => !carModel || prod.carModel === carModel)
             .map(prod => prod.partName)
-            .filter(Boolean))]
-            .sort((a, b) => String(a).localeCompare(String(b), 'ko'));
+            .filter(Boolean))];
+        if (selectedPartName && !partNames.includes(selectedPartName)) {
+            partNames.push(selectedPartName);
+        }
+        partNames.sort((a, b) => String(a).localeCompare(String(b), 'ko'));
 
         partEl.innerHTML = '<option value="">-- 품명 선택 --</option>' +
-            partNames.map(name => `<option value="${name}" ${name === selectedPartName ? 'selected' : ''}>${name}</option>`).join('');
+            partNames.map(name => `<option value="${_escapeAttr(name)}">${_escapeAttr(name)}</option>`).join('');
+        if (selectedPartName) partEl.value = selectedPartName;
 
         onAdjustPartChange(selectedColor);
     }
@@ -5035,15 +5179,23 @@ var LaserStandbyModule = (function() {
         const colorEl = document.getElementById('lsbAdjustColor');
         if (!colorEl) return;
 
-        const products = _getLaserTargetProducts();
+        const products = _getLaserRelatedProducts();
         const colors = [...new Set(products
             .filter(prod => (!carModel || prod.carModel === carModel) && (!partName || prod.partName === partName))
             .map(prod => prod.color || '')
-            .filter(Boolean))]
-            .sort((a, b) => String(a).localeCompare(String(b), 'ko'));
+            .filter(Boolean))];
+        if (selectedColor && !colors.includes(selectedColor)) {
+            colors.push(selectedColor);
+        }
+        colors.sort((a, b) => String(a).localeCompare(String(b), 'ko'));
 
         colorEl.innerHTML = '<option value="">-- 컬러 선택 --</option>' +
-            colors.map(color => `<option value="${color}" ${color === selectedColor ? 'selected' : ''}>${color || '-'}</option>`).join('');
+            colors.map(color => `<option value="${_escapeAttr(color)}">${_escapeAttr(color || '-')}</option>`).join('');
+        if (selectedColor) colorEl.value = selectedColor;
+        else if (selectedColor === '' && partName) {
+            // 컬러 없는 재고 키도 유지 (빈 값 선택 상태)
+            colorEl.value = '';
+        }
     }
 
     async function openAdjustModal(keyEnc = '', isAddMode = false) {
@@ -5058,11 +5210,24 @@ var LaserStandbyModule = (function() {
         const snapshot = key ? _getDetailSnapshot(key) : { item: null, stock: 0 };
         const item = snapshot.item;
         const override = key ? _getOverrideByKey(key) : null;
-        const [carModel = '', partName = '', color = ''] = key ? key.split('||') : ['', '', ''];
+        const [keyCar = '', keyPart = '', keyColor = ''] = key ? key.split('||') : ['', '', ''];
+        // 재고 키(차종||품명||컬러)를 우선 — item.color의 표시용 '-'가 실제 값을 덮지 않도록
+        const displayOr = (v) => {
+            const s = String(v ?? '').trim();
+            return s && s !== '-' ? s : '';
+        };
+        const carModel = String(override?.carModel || keyCar || displayOr(item?.carModel) || '').trim();
+        const partName = String(override?.partName || keyPart || displayOr(item?.partName) || '').trim();
+        const color = String(
+            override?.color != null && String(override.color).trim() !== ''
+                ? override.color
+                : (key ? keyColor : displayOr(item?.color))
+        ).trim();
         const currentStock = item ? snapshot.stock : 0;
-        const products = _getLaserTargetProducts();
-        const carModels = [...new Set(products.map(prod => prod.carModel).filter(Boolean))]
-            .sort((a, b) => String(a).localeCompare(String(b), 'ko'));
+        const products = _getLaserRelatedProducts();
+        const carModels = [...new Set(products.map(prod => prod.carModel).filter(Boolean))];
+        if (carModel && !carModels.includes(carModel)) carModels.push(carModel);
+        carModels.sort((a, b) => String(a).localeCompare(String(b), 'ko'));
         const latestInRecord = item && (item.inRecords || []).length > 0
             ? [...item.inRecords].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))[0]
             : null;
@@ -5070,18 +5235,14 @@ var LaserStandbyModule = (function() {
         const initialPaintLot = (override?.paintLot || (latestInRecord && latestInRecord.note === '수기조정' ? parsedLot.paintLot : '') || '').trim();
         const initialInjectionLot = (override?.injectionLot || parsedLot.injectionLot || '').trim();
 
-        UIUtils.showModal(addMode ? '레이저 대기 재공품 추가' : '레이저 대기 재공 수량 조정', `
-            <div style="background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.15);border-radius:8px;padding:12px 14px;margin-bottom:14px;">
-                <div style="font-size:0.82rem;color:var(--text-secondary);">
-                    현재 전산 재고 <strong style="color:var(--accent-blue);">${UIUtils.formatNumber(currentStock)} EA</strong>
-                </div>
-            </div>
+        // 기존 아이템 수량 수정: 차종/품명/컬러는 고정 표시 (제품 마스터 미등록이어도 누락되지 않음)
+        const identityFieldsHtml = addMode ? `
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">차종</label>
                     <select class="form-select" id="lsbAdjustCarModel" onchange="LaserStandbyModule.onAdjustCarChange()">
                         <option value="">-- 차종 선택 --</option>
-                        ${carModels.map(name => `<option value="${name}" ${name === (override?.carModel || carModel) ? 'selected' : ''}>${name}</option>`).join('')}
+                        ${carModels.map(name => `<option value="${_escapeAttr(name)}" ${name === carModel ? 'selected' : ''}>${_escapeAttr(name)}</option>`).join('')}
                     </select>
                 </div>
                 <div class="form-group">
@@ -5096,7 +5257,35 @@ var LaserStandbyModule = (function() {
                         <option value="">-- 컬러 선택 --</option>
                     </select>
                 </div>
+            </div>` : `
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">차종</label>
+                    <input type="text" class="form-input" value="${_escapeAttr(carModel || '-')}" readonly
+                        style="background:var(--bg-secondary, #f3f4f6);cursor:default;">
+                    <input type="hidden" id="lsbAdjustCarModel" value="${_escapeAttr(carModel)}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">품명</label>
+                    <input type="text" class="form-input" value="${_escapeAttr(partName || '-')}" readonly
+                        style="background:var(--bg-secondary, #f3f4f6);cursor:default;">
+                    <input type="hidden" id="lsbAdjustPartName" value="${_escapeAttr(partName)}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">컬러</label>
+                    <input type="text" class="form-input" value="${_escapeAttr(color || '-')}" readonly
+                        style="background:var(--bg-secondary, #f3f4f6);cursor:default;">
+                    <input type="hidden" id="lsbAdjustColor" value="${_escapeAttr(color)}">
+                </div>
+            </div>`;
+
+        UIUtils.showModal(addMode ? '레이저 대기 재공품 추가' : '레이저 대기 재공 수량 조정', `
+            <div style="background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.15);border-radius:8px;padding:12px 14px;margin-bottom:14px;">
+                <div style="font-size:0.82rem;color:var(--text-secondary);">
+                    현재 전산 재고 <strong style="color:var(--accent-blue);">${UIUtils.formatNumber(currentStock)} EA</strong>
+                </div>
             </div>
+            ${identityFieldsHtml}
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">${addMode ? '추가 수량' : '수량'}</label>
@@ -5104,11 +5293,11 @@ var LaserStandbyModule = (function() {
                 </div>
                 <div class="form-group">
                     <label class="form-label">도장 LOT - ${addMode ? '필수' : '임의입력'}</label>
-                    <input type="text" class="form-input" id="lsbAdjustPaintLot" value="${initialPaintLot}" placeholder="도장 LOT 입력">
+                    <input type="text" class="form-input" id="lsbAdjustPaintLot" value="${_escapeAttr(initialPaintLot)}" placeholder="도장 LOT 입력">
                 </div>
                 <div class="form-group">
                     <label class="form-label">사출 LOT - ${addMode ? '필수' : '임의입력'}</label>
-                    <input type="text" class="form-input" id="lsbAdjustInjectionLot" value="${initialInjectionLot}" placeholder="사출 LOT 입력">
+                    <input type="text" class="form-input" id="lsbAdjustInjectionLot" value="${_escapeAttr(initialInjectionLot)}" placeholder="사출 LOT 입력">
                 </div>
             </div>
         `, `
@@ -5116,9 +5305,13 @@ var LaserStandbyModule = (function() {
             <button class="btn btn-primary" onclick="LaserStandbyModule.saveAdjustModal('${encodeURIComponent(key)}', ${addMode ? 'true' : 'false'})">${addMode ? '등록' : '저장'}</button>
         `, 'lg');
 
-        setTimeout(() => {
-            onAdjustCarChange(override?.partName || partName, override?.color || color);
-        }, 0);
+        if (addMode) {
+            setTimeout(() => {
+                onAdjustCarChange(partName, color);
+                _ensureSelectOption(document.getElementById('lsbAdjustPartName'), partName, partName);
+                _ensureSelectOption(document.getElementById('lsbAdjustColor'), color, color || '-');
+            }, 0);
+        }
     }
 
     async function saveAdjustModal(keyEnc = '', isAddMode = false) {

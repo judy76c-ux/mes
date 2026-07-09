@@ -309,6 +309,12 @@ var SalesDeliveryModule = (function() {
         `;
     }
 
+    function _canEditDelivery() {
+        return typeof AuthModule !== 'undefined'
+            && typeof AuthModule.canWritePage === 'function'
+            && AuthModule.canWritePage('sales-delivery');
+    }
+
     function renderTable(data) {
         const tbody = document.getElementById('sdTableBody');
         tbody.innerHTML = data.length === 0 ? `<tr><td colspan="10" style="text-align:center;padding:30px;">기록이 없습니다.</td></tr>` :
@@ -316,16 +322,15 @@ var SalesDeliveryModule = (function() {
                 <tr>
                     <td>${data.length - i}</td>
                     <td>${d.date}</td>
-                    <td><strong>${d.customer}</strong></td>
-                    <td>${d.carModel}</td>
-                    <td>${d.partName}</td>
+                    <td><strong>${_esc(d.customer)}</strong></td>
+                    <td>${_esc(d.carModel)}</td>
+                    <td>${_esc(d.partName)}</td>
                     <td style="text-align:right;">${UIUtils.formatNumber(d.qty)}</td>
-                    <td style="text-align:right;">${UIUtils.formatNumber(d.unitPrice)}</td>
-                    <td style="text-align:right; font-weight:700; color:var(--accent-blue);">₩${UIUtils.formatNumber(d.amount)}</td>
-                    <td>${d.note || '-'}</td>
+                    <td style="text-align:right;">${d.unitPrice != null && d.unitPrice !== '' ? UIUtils.formatNumber(d.unitPrice) : '-'}</td>
+                    <td style="text-align:right; font-weight:700; color:var(--accent-blue);">₩${d.amount != null && d.amount !== '' ? UIUtils.formatNumber(d.amount) : '-'}</td>
+                    <td>${_esc(d.note || '-')}</td>
                     <td>
-                        <button class="btn btn-sm btn-outline" onclick="SalesDeliveryModule.edit('${d.id}')">수정</button>
-                        <button class="btn btn-sm btn-danger" onclick="SalesDeliveryModule.remove('${d.id}')">삭제</button>
+                        <button class="btn btn-sm btn-outline" onclick="SalesDeliveryModule.view('${d.id}')">보기</button>
                     </td>
                 </tr>
             `).join('');
@@ -616,12 +621,88 @@ var SalesDeliveryModule = (function() {
         search();
     }
 
-    function edit(id) {
+    function _viewField(label, value, valueStyle = '') {
+        const style = valueStyle ? ` style="${valueStyle}"` : '';
+        return `<div class="form-group" style="margin-bottom:10px;">
+            <label class="form-label" style="margin-bottom:2px;">${label}</label>
+            <div${style}>${value}</div>
+        </div>`;
+    }
+
+    function view(id) {
         const d = Storage.getById(STORE, id);
+        if (!d) {
+            UIUtils.toast('출고 내역을 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const lots = Array.isArray(d.lotAllocations) ? d.lotAllocations : [];
+        const lotHtml = lots.length
+            ? `<table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+                <thead><tr style="background:var(--bg-secondary);">
+                    <th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--border-color);">도장일자</th>
+                    <th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--border-color);">LOT</th>
+                    <th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--border-color);">컬러</th>
+                    <th style="padding:6px 8px;text-align:right;border-bottom:1px solid var(--border-color);">수량</th>
+                </tr></thead>
+                <tbody>${lots.map(l => `
+                    <tr>
+                        <td style="padding:6px 8px;">${_esc(l.paintingDate || '-')}</td>
+                        <td style="padding:6px 8px;font-family:monospace;">${_esc(l.lotNo || '-')}</td>
+                        <td style="padding:6px 8px;">${_esc(l.color || '-')}</td>
+                        <td style="padding:6px 8px;text-align:right;font-weight:600;">${UIUtils.formatNumber(l.quantity)} EA</td>
+                    </tr>`).join('')}
+                </tbody></table>`
+            : `<div style="color:var(--text-muted);font-size:0.82rem;">LOT 배분 정보가 없습니다.</div>`;
+
+        const body = `
+            <div class="form-row">
+                ${_viewField('출고일', _esc(d.date || '-'))}
+                ${_viewField('납품처', `<strong>${_esc(d.customer || '-')}</strong>`)}
+            </div>
+            <div class="form-row">
+                ${_viewField('차종', _esc(d.carModel || '-'))}
+                ${_viewField('품명', _esc(d.partName || '-'))}
+            </div>
+            <div class="form-row">
+                ${_viewField('수량', `${UIUtils.formatNumber(d.qty)} EA`, 'font-weight:700;')}
+                ${_viewField('단가', d.unitPrice != null && d.unitPrice !== '' ? UIUtils.formatNumber(d.unitPrice) : '-')}
+                ${_viewField('금액', `₩${d.amount != null && d.amount !== '' ? UIUtils.formatNumber(d.amount) : '-'}`, 'font-weight:700;color:var(--accent-blue);')}
+            </div>
+            ${_viewField('비고', _esc(d.note || '-'))}
+            <div style="margin-top:8px;border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
+                <div style="background:var(--accent-blue);color:#fff;padding:8px 14px;font-size:0.82rem;font-weight:600;">
+                    도장 LOT 배분
+                </div>
+                <div style="padding:10px 12px;">${lotHtml}</div>
+            </div>`;
+
+        const canEdit = _canEditDelivery();
+        const footer = `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+            ${canEdit ? `<button class="btn btn-outline" onclick="SalesDeliveryModule.edit('${id}')">수정</button>
+            <button class="btn btn-danger" onclick="SalesDeliveryModule.remove('${id}')">삭제</button>` : ''}`;
+
+        UIUtils.showModal('출고 상세', body, footer, 'lg');
+    }
+
+    function edit(id) {
+        if (!_canEditDelivery()) {
+            UIUtils.toast('출고 수정 권한이 없습니다.', 'warning');
+            return;
+        }
+        const d = Storage.getById(STORE, id);
+        if (!d) {
+            UIUtils.toast('출고 내역을 찾을 수 없습니다.', 'warning');
+            return;
+        }
         UIUtils.showModal('출고 수정', fillForm(d), `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="SalesDeliveryModule.saveEdit('${id}')">저장</button>`, 'lg');
     }
 
     async function saveEdit(id) {
+        if (!_canEditDelivery()) {
+            UIUtils.toast('출고 수정 권한이 없습니다.', 'warning');
+            return;
+        }
         const data = collectData();
         if (!data.date) { UIUtils.toast('출고일자를 입력하세요.', 'warning'); return; }
         if (!data.carModel) { UIUtils.toast('차종을 선택하세요.', 'warning'); return; }
@@ -642,9 +723,14 @@ var SalesDeliveryModule = (function() {
     }
 
     function remove(id) {
+        if (!_canEditDelivery()) {
+            UIUtils.toast('출고 삭제 권한이 없습니다.', 'warning');
+            return;
+        }
         UIUtils.confirm('삭제하시겠습니까?', async () => {
             await _removeInventoryOutRecords(id);
             await Storage.remove(STORE, id);
+            UIUtils.closeModal();
             UIUtils.toast('제품 출고가 삭제되었습니다.', 'success');
             search();
         });
@@ -662,6 +748,7 @@ var SalesDeliveryModule = (function() {
         search,
         openAddModal,
         saveNew,
+        view,
         edit,
         saveEdit,
         remove,

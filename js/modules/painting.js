@@ -4232,6 +4232,10 @@ const PaintingInspectionModule = (function() {
     const PLAN_STORE = DB.STORES.PRODUCTION_PLANS;
     const STANDARD_UPLOAD_ROLES = ['admin', 'prod_manager', 'quality_manager', 'paint_line_op'];
     const NONCONFORM_STANDARD_IMAGE_KEY = 'painting_nonconform_standard_image_v1';
+    // 외관 검사 중간 임시 저장 — 서버 config에 workId별로 보관
+    const INSPECTION_DRAFT_KEY = 'painting_inspection_drafts';
+    let _inspectionDraftCache = null;      // { [workId]: draftData }
+    let _currentInspectionExpectedSec = 0; // 현재 검사 모달의 예상 검사 시간(초)
 
     // 현재 카운팅 상태
     let state = {
@@ -4596,6 +4600,8 @@ const PaintingInspectionModule = (function() {
             renderInspectionWaitingList();
             renderDefectCounter();
             renderSummary();
+            // 임시 저장 목록 로드 후 대기품 배지 갱신
+            _refreshInspectionDrafts();
         } else if (state.currentTab === 'completion') {
             // 검사 완료 실적 탭
             showCompletionResults();
@@ -4950,18 +4956,23 @@ const PaintingInspectionModule = (function() {
             const waitKey = String(w.id || w.workId || [w.date || '', w.line || '', w.carModel || '', w.partName || '', w.color || '', index].join('::'));
             state.inspectionWaitingWorks[waitKey] = w;
 
+            const _draft = _inspectionDraftCache && _inspectionDraftCache[waitKey];
+            const draftBadge = _draft
+                ? `<span class="badge" title="임시 저장됨 (${_formatDraftTime(_draft.savedAt)})" style="background:var(--accent-orange);color:#fff;margin-left:6px;font-size:0.68rem;">임시저장</span>`
+                : '';
+
             return `
-                                <tr>
+                                <tr${_draft ? ' style="background:rgba(245,158,11,0.06);"' : ''}>
                                     <td style="line-height:1.3;">${_workDateHtml}</td>
                                     <td><span class="badge badge-info">${w.line || '-'}</span></td>
                                     <td>${w.carModel || '-'}</td>
-                                    <td><strong>${w.partName || '-'}</strong></td>
+                                    <td><strong>${w.partName || '-'}</strong>${draftBadge}</td>
                                     <td>${w.color || '-'}</td>
                                     <td style="font-family:monospace;font-size:0.85rem;">${lotDisplay}</td>
                                     <td style="text-align:right;font-weight:600;">${UIUtils.formatNumber(w.productionQty || 0)}</td>
                                     <td style="text-align:center;">
-                                        <button class="btn btn-sm btn-primary" type="button" data-open-painting-inspection="${waitKey}">
-                                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:2px;">edit</span>외관 검사
+                                        <button class="btn btn-sm ${_draft ? 'btn-outline' : 'btn-primary'}" type="button" data-open-painting-inspection="${waitKey}"${_draft ? ' style="color:var(--accent-orange);border-color:var(--accent-orange);"' : ''}>
+                                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:2px;">edit</span>${_draft ? '이어서 검사' : '외관 검사'}
                                         </button>
                                     </td>
                                 </tr>
@@ -5096,6 +5107,25 @@ const PaintingInspectionModule = (function() {
             const initPackQty     = packUnitVal * initBoxCount;
             const initNewResid    = prevResidualQty + initGoodQty - initPackQty;
 
+        // 표준 검사 시간 → 예상 검사 시간 계산 (제품 정보의 외관검사 C.TIME 기준)
+            const _stdPerEaSec    = _getInspectionStdPerEaSec(work);
+            const _inspQtyForEst  = work.productionQty || 0;
+            _currentInspectionExpectedSec = _stdPerEaSec * _inspQtyForEst;
+            const expectedTimeHtml = _stdPerEaSec > 0
+                ? `<div style="margin-top:2px;padding:8px 10px;background:rgba(37,99,235,0.06);border:1px solid rgba(37,99,235,0.25);border-radius:6px;">
+                        <div style="display:flex;justify-content:space-between;align-items:baseline;">
+                            <span style="font-size:0.72rem;color:var(--text-muted);">예상 검사 시간</span>
+                            <strong id="inspExpectedTimeVal" style="font-size:1rem;color:var(--accent-blue);">${_formatDurationSec(_currentInspectionExpectedSec)}</strong>
+                        </div>
+                        <div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">표준 ${_stdPerEaSec.toFixed(1)}초/EA × ${UIUtils.formatNumber(_inspQtyForEst)} EA</div>
+                        <div id="inspExpectedTimeCompare" style="font-size:0.7rem;margin-top:3px;color:var(--text-secondary);"></div>
+                   </div>`
+                : `<div style="margin-top:2px;padding:8px 10px;background:var(--bg-secondary);border:1px dashed var(--border);border-radius:6px;font-size:0.72rem;color:var(--text-muted);line-height:1.4;">
+                        예상 검사 시간 —
+                        <span style="color:var(--accent-orange);">제품 검사 표준시간 미등록</span><br>
+                        설정 › 제품 정보 › <strong>외관 검사 기초 정보(C.TIME)</strong>에서 입력하세요.
+                   </div>`;
+
         // 모달 HTML 작성
             let modalContent = `
             <div style="display:flex; flex-direction:column; gap:10px;">
@@ -5120,6 +5150,17 @@ const PaintingInspectionModule = (function() {
                     <span style="font-size:0.75rem; color:var(--text-muted);">작업수량&nbsp;<strong style="color:var(--accent-blue); font-size:0.95rem;">${UIUtils.formatNumber(work.productionQty || 0)} EA</strong>
                         <input type="hidden" id="inpInspectionQty" value="${work.productionQty || 0}">
                     </span>
+                </div>
+
+                <!-- 임시 저장 이어서 작성 안내 -->
+                <div id="inspDraftNotice" style="display:none; align-items:center; gap:10px; background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.4); border-radius:8px; padding:8px 14px;">
+                    <span class="material-symbols-outlined" style="color:var(--accent-orange); font-size:20px;">history</span>
+                    <span style="font-size:0.82rem; color:var(--text-primary);">
+                        임시 저장된 내용을 불러왔습니다. <span style="color:var(--text-muted);">(저장: <span id="inspDraftNoticeTime">-</span>)</span> 이어서 작성 후 <strong>저장</strong>을 누르면 완료됩니다.
+                    </span>
+                    <button class="btn btn-sm btn-outline" style="margin-left:auto;" onclick="PaintingInspectionModule._clearInspectionDraft('${workId}')">
+                        <span class="material-symbols-outlined" style="font-size:14px;">delete</span> 임시저장 삭제
+                    </button>
                 </div>
 
                 <!-- 2-컬럼 메인 레이아웃 -->
@@ -5151,6 +5192,7 @@ const PaintingInspectionModule = (function() {
                                         <label class="form-label" style="font-size:0.72rem;">소요시간</label>
                                         <input type="text" class="form-input" id="inpInspectionDuration" placeholder="자동계산" readonly style="background:var(--bg-secondary); font-weight:600; font-size:0.85rem; padding:6px 8px;">
                                     </div>
+                                    ${expectedTimeHtml}
                                 </div>
                             </div>
                         </div>
@@ -5222,7 +5264,7 @@ const PaintingInspectionModule = (function() {
                         <div class="card">
                             <div class="card-body" style="padding:12px;">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                                    <h5 style="margin:0; font-size:0.85rem; color:var(--text-primary);">검사자</h5>
+                                    <h5 style="margin:0; font-size:0.85rem; color:var(--text-primary);">검사자 <span style="color:var(--accent-red);">*</span> <span style="font-size:0.68rem; font-weight:400; color:var(--text-muted);">(자주검사자만 · 1명 이상 필수)</span></h5>
                                     <button class="btn btn-sm btn-primary" onclick="PaintingInspectionModule._addInspectorField()" id="addInspectorBtn" style="gap:4px; padding:4px 8px; font-size:0.78rem;">
                                         <span class="material-symbols-outlined" style="font-size:14px;">add</span> 추가
                                     </button>
@@ -5236,7 +5278,10 @@ const PaintingInspectionModule = (function() {
                         <!-- 버튼 -->
                         <div style="display:flex; flex-direction:column; gap:6px;">
                             <button class="btn btn-primary" onclick="PaintingInspectionModule._saveInspection('${workId}')" style="width:100%; justify-content:center;">
-                                <span class="material-symbols-outlined">save</span> 저장
+                                <span class="material-symbols-outlined">save</span> 저장 (검사 완료)
+                            </button>
+                            <button class="btn btn-outline" onclick="PaintingInspectionModule._saveInspectionDraft('${workId}')" style="width:100%; justify-content:center; color:var(--accent-orange); border-color:var(--accent-orange);">
+                                <span class="material-symbols-outlined" style="font-size:18px;">bookmark_add</span> 임시 저장 (이어서 작성)
                             </button>
                             <div style="display:flex; gap:6px;">
                                 <button class="btn btn-secondary" onclick="window.print()" style="flex:1; justify-content:center; font-size:0.85rem;">
@@ -5364,8 +5409,8 @@ const PaintingInspectionModule = (function() {
             // 부모 페이지 컨테이너 저장 (닫을 때 복귀하기 위해)
             modalEl.parentPageContainer = document.querySelector('[data-page="painting-inspection"]');
 
-        // 검사자 필드 초기화 (기본 4명)
-            setTimeout(() => {
+        // 검사자 필드 초기화 (기본 4명) + 임시 저장 복원
+            setTimeout(async () => {
                 const container = document.getElementById('inspectorContainer');
                 if (container) {
                     container.innerHTML = '';
@@ -5375,6 +5420,18 @@ const PaintingInspectionModule = (function() {
                     _addInspectorField();
                     _addInspectorField();
                 }
+                // 임시 저장된 내용이 있으면 자동 복원
+                try {
+                    const drafts = await _getInspectionDrafts();
+                    const draft = drafts[workId];
+                    if (draft) {
+                        _applyInspectionDraft(draft);
+                        const notice = document.getElementById('inspDraftNotice');
+                        const timeEl = document.getElementById('inspDraftNoticeTime');
+                        if (notice) notice.style.display = 'flex';
+                        if (timeEl) timeEl.textContent = _formatDraftTime(draft.savedAt);
+                    }
+                } catch (e) { /* 무시 */ }
             }, 100);
         } catch (error) {
             console.error('도장 검사 입력 모달 열기 실패', error);
@@ -5422,12 +5479,19 @@ const PaintingInspectionModule = (function() {
         });
     }
 
+    // 자주검사자만 반환 — 검사자 마스터에서 주요 공정에 '자주검사(self)'가 포함된 인원
+    function _getSelfInspectors() {
+        return (Storage.getAll(DB.STORES.INSPECTORS) || [])
+            .filter(insp => Array.isArray(insp.processes) && insp.processes.includes('self'));
+    }
+
     // 검사자 필드 동적 추가
     function _addInspectorField(isFirst = false) {
         const container = document.getElementById('inspectorContainer');
         if (!container) return;
 
-        const inspectors = Storage.getAll(DB.STORES.INSPECTORS) || [];
+        // 도장 외관 검사자는 '자주검사자'만 선택 가능
+        const inspectors = _getSelfInspectors();
 
         // 현재 개수 확인
         if (!container.inspectorCount) {
@@ -5448,7 +5512,9 @@ const PaintingInspectionModule = (function() {
                 <label class="form-label" style="font-size:0.72rem;">검사자${idx}</label>
                 <select id="inspector${idx}" class="form-select" style="padding:5px 6px; border:1px solid var(--border); font-size:0.85rem;" onchange="PaintingInspectionModule._syncInspectorOptions()">
                     <option value="">선택 안함</option>
-                    ${inspectors.map(insp => `<option value="${insp.id}">${insp.name || insp.id}</option>`).join('')}
+                    ${inspectors.length === 0
+                        ? `<option value="" disabled>자주검사자 미등록 (자격인증 관리 › 검사자 관리)</option>`
+                        : inspectors.map(insp => `<option value="${insp.id}">${insp.name || insp.id}</option>`).join('')}
                 </select>
             </div>
         `;
@@ -6027,6 +6093,149 @@ const PaintingInspectionModule = (function() {
         _autoPaintBoxCount();
     }
 
+    // ── 표준 검사 시간(외관검사 C.TIME) → 개당 초 ────────────────────
+    // 제품 정보의 외관 검사 C.TIME(초, 1인 기준)/CVT를 이용해 EA당 표준 검사 시간을 구한다.
+    function _getInspectionStdPerEaSec(work) {
+        if (!work) return 0;
+        const products = Storage.getAll(PRODUCTS_STORE) || [];
+        const prod = products.find(p => p.carModel === work.carModel && p.partName === work.partName && p.color === work.color)
+                  || products.find(p => p.carModel === work.carModel && p.partName === work.partName);
+        if (!prod) return 0;
+        const ct  = parseFloat(prod.appearanceCt)  || 0;   // 초 (CVT 단위당)
+        const cvt = parseFloat(prod.appearanceCvt) || 1;   // 1인 기준
+        if (ct <= 0) return 0;
+        return cvt > 0 ? ct / cvt : ct;
+    }
+
+    function _formatDurationSec(totalSec) {
+        totalSec = Math.max(0, Math.round(Number(totalSec) || 0));
+        const m = Math.floor(totalSec / 60);
+        const s = totalSec % 60;
+        if (m > 0 && s > 0) return `${m}분 ${s}초`;
+        if (m > 0) return `${m}분`;
+        return `${s}초`;
+    }
+
+    function _formatDraftTime(iso) {
+        try {
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return '';
+            const p = n => String(n).padStart(2, '0');
+            return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+        } catch (e) { return ''; }
+    }
+
+    // ── 외관 검사 임시 저장(draft) ────────────────────────────────────
+    async function _getInspectionDrafts(force) {
+        if (_inspectionDraftCache && !force) return _inspectionDraftCache;
+        let drafts = {};
+        try { drafts = await Storage.getConfigValue(INSPECTION_DRAFT_KEY) || {}; } catch (e) { drafts = {}; }
+        if (!drafts || typeof drafts !== 'object') drafts = {};
+        _inspectionDraftCache = drafts;
+        return drafts;
+    }
+
+    async function _refreshInspectionDrafts() {
+        await _getInspectionDrafts(true);
+        if (state.currentTab === 'inspection' && document.getElementById('inspectionWaitingList')) {
+            renderInspectionWaitingList();
+        }
+    }
+
+    // 현재 검사 모달의 입력값을 수집 (임시 저장 & 복원 공용)
+    function _collectInspectionFormData() {
+        const g = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+        const inspectorIds = [];
+        for (let i = 1; i <= 5; i++) {
+            const el = document.getElementById('inspector' + i);
+            inspectorIds.push(el ? (el.value || '') : '');
+        }
+        const defects = {};
+        document.querySelectorAll('[id^="inj-"],[id^="paint-"],[id^="plate-"]').forEach(el => {
+            const v = String(el.value || '').trim();
+            if (v !== '' && v !== '0') defects[el.id] = v;
+        });
+        return {
+            date:         g('inpInspectionDate'),
+            startTime:    g('inpInspectionStartTime'),
+            endTime:      g('inpInspectionEndTime'),
+            goodQty:      g('inpGoodQty'),
+            defectQty:    g('inpDefectQty'),
+            prevResidual: g('piPrevResidual'),
+            packUnit:     g('piPackUnit'),
+            packBoxCount: g('piPackBoxCount'),
+            inspectorIds,
+            defects
+        };
+    }
+
+    async function _saveInspectionDraft(workId) {
+        if (!workId) { UIUtils.toast('임시 저장할 검사 대상이 없습니다.', 'warning'); return; }
+        const data = _collectInspectionFormData();
+        data.savedAt = new Date().toISOString();
+        try {
+            const drafts = await _getInspectionDrafts();
+            drafts[workId] = data;
+            await Storage.setConfigValue(INSPECTION_DRAFT_KEY, drafts);
+            _inspectionDraftCache = drafts;
+            UIUtils.toast('임시 저장되었습니다. 나중에 이어서 작성할 수 있습니다.', 'success');
+            const notice = document.getElementById('inspDraftNotice');
+            const timeEl = document.getElementById('inspDraftNoticeTime');
+            if (notice) notice.style.display = 'flex';
+            if (timeEl) timeEl.textContent = _formatDraftTime(data.savedAt);
+        } catch (e) {
+            console.error('외관 검사 임시 저장 실패', e);
+            UIUtils.toast('임시 저장 중 오류가 발생했습니다.', 'error');
+        }
+    }
+
+    async function _clearInspectionDraft(workId, silent) {
+        if (!workId) return;
+        try {
+            const drafts = await _getInspectionDrafts();
+            if (drafts[workId]) {
+                delete drafts[workId];
+                await Storage.setConfigValue(INSPECTION_DRAFT_KEY, drafts);
+                _inspectionDraftCache = drafts;
+            }
+        } catch (e) { /* 무시 */ }
+        if (!silent) {
+            UIUtils.toast('임시 저장 내용을 삭제했습니다.', 'info');
+            const notice = document.getElementById('inspDraftNotice');
+            if (notice) notice.style.display = 'none';
+        }
+    }
+
+    // 임시 저장 내용을 현재 열린 검사 모달 폼에 채운다.
+    function _applyInspectionDraft(draft) {
+        if (!draft) return;
+        const setV = (id, val) => { const el = document.getElementById(id); if (el && val != null && val !== '') el.value = val; };
+        setV('inpInspectionDate',      draft.date);
+        setV('inpInspectionStartTime', draft.startTime);
+        setV('inpInspectionEndTime',   draft.endTime);
+        setV('piPrevResidual',         draft.prevResidual);
+        setV('piPackUnit',             draft.packUnit);
+        setV('piPackBoxCount',         draft.packBoxCount);
+        (draft.inspectorIds || []).forEach((val, idx) => {
+            const el = document.getElementById('inspector' + (idx + 1));
+            if (el && val) el.value = val;
+        });
+        if (typeof _syncInspectorOptions === 'function') _syncInspectorOptions();
+        Object.entries(draft.defects || {}).forEach(([id, val]) => {
+            const el = document.getElementById(id);
+            if (el) el.value = val;
+        });
+        // 불량 합계·양품수·소요시간·포장 재계산
+        _updateDefectTotal();
+        // 불량이 하나도 없으면 양품수는 저장값 유지
+        if (!draft.defects || Object.keys(draft.defects).length === 0) {
+            setV('inpGoodQty',   draft.goodQty);
+            setV('inpDefectQty', draft.defectQty);
+        }
+        _calculateInspectionTime();
+        if (typeof _updatePaintPackagingCalc === 'function') _updatePaintPackagingCalc();
+    }
+
     function _calculateInspectionTime() {
         // 신규 등록 or 편집 모달 — 둘 중 현재 열려 있는 것 사용
         const startTimeEl = document.getElementById('inpInspectionStartTime')
@@ -6052,6 +6261,20 @@ const PaintingInspectionModule = (function() {
 
         // 분 단위로 표시
         durationEl.value = `${duration}분`;
+
+        // 표준(예상) 검사 시간 대비 실제 소요시간 비교 표시
+        const cmpEl = document.getElementById('inspExpectedTimeCompare');
+        if (cmpEl && _currentInspectionExpectedSec > 0) {
+            const actualSec = duration * 60;
+            const diffPct = Math.round((actualSec - _currentInspectionExpectedSec) / _currentInspectionExpectedSec * 100);
+            if (diffPct > 0) {
+                cmpEl.innerHTML = `실제 ${duration}분 · 표준 대비 <strong style="color:var(--accent-red);">+${diffPct}%</strong>`;
+            } else if (diffPct < 0) {
+                cmpEl.innerHTML = `실제 ${duration}분 · 표준 대비 <strong style="color:var(--accent-green);">${diffPct}%</strong>`;
+            } else {
+                cmpEl.innerHTML = `실제 ${duration}분 · 표준과 동일`;
+            }
+        }
     }
 
     function _updateDefectTotal() {
@@ -6232,6 +6455,14 @@ const PaintingInspectionModule = (function() {
             }
         }
 
+        // 검사자 필수 검증 (1명 이상)
+        if (inspectors.length === 0) {
+            UIUtils.toast('검사자를 1명 이상 선택해 주세요. (검사자 등록 필수)', 'warning');
+            const firstInspector = document.getElementById('inspector1');
+            if (firstInspector) firstInspector.focus();
+            return;
+        }
+
         // 검사 날짜/시간 수집
         const inspectionDateEl = document.getElementById('inpInspectionDate');
         const inspectionStartTimeEl = document.getElementById('inpInspectionStartTime');
@@ -6315,6 +6546,9 @@ const PaintingInspectionModule = (function() {
             inspectors: inspectors,
             updatedAt: new Date().toISOString()
         });
+
+        // 검사 완료 시 임시 저장 내용 정리
+        await _clearInspectionDraft(workId, true);
 
         // ── 출하검사 대기 자동 등록 (레이져 공정 없는 제품만) ──────────
         const _products = Storage.getAll(DB.STORES.PRODUCTS) || [];
@@ -7863,6 +8097,8 @@ const PaintingInspectionModule = (function() {
         _updateDefectTotal,
         _calculateInspectionTime,
         _saveInspection,
+        _saveInspectionDraft,
+        _clearInspectionDraft,
         _updatePaintPackagingCalc,
         _autoPaintBoxCount,
         _addInspectorField,

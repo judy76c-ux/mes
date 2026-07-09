@@ -81,7 +81,7 @@ const App = (function() {
             Router.registerLazy(
                 ['prod-standards', 'prod-conditions', 'paint-mix', 'prod-sub-materials',
                  'prod-quality', 'quality-performance', 'limit-samples', 'prod-spc', 'prod-equipment'],
-                'js/modules/production_mgmt_v91.js?v=211',
+                'js/modules/production_mgmt_v91.js?v=214',
                 function() {
                     Router.registerModule('prod-standards',
                         (typeof ProdStandardsModule !== 'undefined') ? ProdStandardsModule
@@ -258,8 +258,12 @@ const App = (function() {
         Router.registerModule('laser-jig-disposal', LaserJigDisposalModule);
         Router.registerModule('laser-jig-cleaning', LaserJigCleaningModule);
         Router.registerModule('laser-equipment-history', LaserEquipmentHistoryModule);
+        Router.registerModule('shipping-overview', ShippingOverviewModule);
         Router.registerModule('shipping-standby', ShippingStandbyModule);
         Router.registerModule('shipping-inspection', ShippingInspectionModule);
+        Router.registerModule('shipping-reliability', ShippingReliabilityModule);
+        Router.registerModule('shipping-standard', ShippingStandardPageModule);
+        Router.registerModule('shipping-std-photo', ShippingStdPhotoModule);
         Router.registerModule('product-warehouse', ProductWarehouseModule);
         Router.registerModule('sales-delivery', SalesDeliveryModule);
         Router.registerModule('sales-delivery-plan', SalesDeliveryPlanModule);

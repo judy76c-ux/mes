@@ -1541,7 +1541,7 @@ const SettingsModule = (function() {
                     <div style="display:flex;align-items:center;gap:6px;color:var(--text-primary);font-weight:700;font-size:0.86rem;">
                         <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-green);">visibility</span>
                         외관 검사 기초 정보
-                        <span style="font-size:0.74rem;font-weight:400;color:var(--text-muted);">수동 검사 공정의 작업 효율 판단용</span>
+                        <span style="font-size:0.74rem;font-weight:400;color:var(--text-muted);">수동 검사 공정의 작업 효율 판단용 · 외관검사 <strong>예상 검사 시간</strong> 산출 기준</span>
                     </div>
                     <div style="display:flex;align-items:center;gap:14px;margin-left:8px;">
                         <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.84rem;font-weight:600;">

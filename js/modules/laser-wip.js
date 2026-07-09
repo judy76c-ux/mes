@@ -61,6 +61,164 @@ var LaserWipModule = (function() {
         }, 0);
     }
 
+    // 재공/잔량 상세 팝업의 '수량 수정'(절대 수량 지정) — 관리자·레이져운영자만
+    function openAdjustAfterLaserModal(keyEnc) {
+        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
+        _closeDetailPopup();
+        const parts = decodeURIComponent(keyEnc || '').split('||');
+        const carModel = parts[0] || '', partName = parts[1] || '', color = parts[2] || '';
+        const r = (_calcWip()).find(x => x.carModel === carModel && x.partName === partName && (x.color || '') === color);
+        const currentQty = r ? Math.max(0, Number(r.wip) || 0) : 0;
+        const today = new Date().toISOString().slice(0, 10);
+
+        UIUtils.showModal('레이져 후 재공품 수량 수정', `
+            <div style="background:rgba(139,92,246,0.06);border:1px solid rgba(139,92,246,0.15);border-radius:8px;padding:12px 14px;margin-bottom:14px;">
+                <div style="font-size:0.82rem;color:var(--text-secondary);">
+                    <strong>${_esc(carModel)}</strong> / ${_esc(partName)}${color ? ' / ' + _esc(color) : ''}
+                </div>
+                <div style="font-size:0.82rem;color:var(--text-secondary);margin-top:4px;">
+                    현재 재공품 <strong style="color:var(--accent-purple,#7c3aed);">${UIUtils.formatNumber(currentQty)} EA</strong>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">수정 기준일</label>
+                    <input type="date" class="form-input" id="lwAdjAfterDate" value="${today}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">수정 후 수량 (EA)</label>
+                    <input type="number" class="form-input" id="lwAdjAfterQty" value="${currentQty}" min="0" placeholder="0">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">비고</label>
+                <input type="text" class="form-input" id="lwAdjAfterNote" placeholder="수량 수정">
+            </div>
+            <div style="font-size:0.78rem;color:var(--text-muted);">
+                입력한 수량과 현재 재고의 차이만큼 수동입고/출고로 반영됩니다.
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="LaserWipModule.saveAdjustAfterLaserModal('${encodeURIComponent(keyEnc || '')}')">저장</button>
+        `, 'md');
+    }
+
+    async function saveAdjustAfterLaserModal(keyEnc) {
+        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
+        const parts = decodeURIComponent(keyEnc || '').split('||');
+        const carModel = parts[0] || '', partName = parts[1] || '', color = parts[2] || '';
+        if (!carModel || !partName) { UIUtils.toast('품목 정보가 없습니다.', 'warning'); return; }
+
+        const r = (_calcWip()).find(x => x.carModel === carModel && x.partName === partName && (x.color || '') === color);
+        const currentQty = r ? Math.max(0, Number(r.wip) || 0) : 0;
+        const targetQty = Math.max(0, parseInt((document.getElementById('lwAdjAfterQty') || {}).value || '0', 10) || 0);
+        const date = (document.getElementById('lwAdjAfterDate') || {}).value || new Date().toISOString().slice(0, 10);
+        const note = ((document.getElementById('lwAdjAfterNote') || {}).value || '').trim() || '수량 수정';
+        const diff = targetQty - currentQty;
+
+        if (diff === 0) {
+            UIUtils.closeModal();
+            UIUtils.toast('변경된 수량이 없습니다.', 'info');
+            return;
+        }
+
+        if (diff > 0) {
+            await Storage.add(STORE_LASER, {
+                date, carModel, partName, color, quantity: diff, machine: '', note,
+                isManual: true
+            });
+        } else {
+            await Storage.add(STORE_LASER, {
+                date, carModel, partName, color, quantity: Math.abs(diff), machine: '', note,
+                isManual: true, isManualOut: true
+            });
+        }
+
+        UIUtils.closeModal();
+        UIUtils.toast(`재공품 수량이 ${UIUtils.formatNumber(currentQty)} → ${UIUtils.formatNumber(targetQty)} EA로 수정되었습니다.`, 'success');
+        refresh();
+    }
+
+    function openAdjustResidualModal(keyEnc) {
+        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
+        _closeDetailPopup();
+        const parts = decodeURIComponent(keyEnc || '').split('||');
+        const carModel = parts[0] || '', partName = parts[1] || '', color = parts[2] || '';
+        const r = _calcLaserResidualWip().find(x => x.carModel === carModel && x.partName === partName && (x.color || '') === color);
+        const currentQty = r ? Math.max(0, Number(r.residualQty) || 0) : 0;
+        const packUnit = r ? Number(r.packUnit) || 0 : 0;
+        const today = new Date().toISOString().slice(0, 10);
+
+        UIUtils.showModal('레이져 잔량 수량 수정', `
+            <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.18);border-radius:8px;padding:12px 14px;margin-bottom:14px;">
+                <div style="font-size:0.82rem;color:var(--text-secondary);">
+                    <strong>${_esc(carModel)}</strong> / ${_esc(partName)}${color ? ' / ' + _esc(color) : ''}
+                </div>
+                <div style="font-size:0.82rem;color:var(--text-secondary);margin-top:4px;">
+                    현재 잔량 <strong style="color:var(--accent-orange,#f59e0b);">${UIUtils.formatNumber(currentQty)} EA</strong>
+                    ${packUnit ? `<span style="margin-left:8px;color:var(--text-muted);">포장단위 ${UIUtils.formatNumber(packUnit)}</span>` : ''}
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">수정 기준일</label>
+                    <input type="date" class="form-input" id="lwAdjResDate" value="${today}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">수정 후 잔량 (EA)</label>
+                    <input type="number" class="form-input" id="lwAdjResQty" value="${currentQty}" min="0" placeholder="0">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">비고</label>
+                <input type="text" class="form-input" id="lwAdjResNote" placeholder="수량 수정">
+            </div>
+            <div style="font-size:0.78rem;color:var(--text-muted);">
+                입력한 잔량과 현재 잔량의 차이만큼 수동입고/출고로 반영됩니다.
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="LaserWipModule.saveAdjustResidualModal('${encodeURIComponent(keyEnc || '')}')">저장</button>
+        `, 'md');
+    }
+
+    async function saveAdjustResidualModal(keyEnc) {
+        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
+        const parts = decodeURIComponent(keyEnc || '').split('||');
+        const carModel = parts[0] || '', partName = parts[1] || '', color = parts[2] || '';
+        if (!carModel || !partName) { UIUtils.toast('품목 정보가 없습니다.', 'warning'); return; }
+
+        const r = _calcLaserResidualWip().find(x => x.carModel === carModel && x.partName === partName && (x.color || '') === color);
+        const currentQty = r ? Math.max(0, Number(r.residualQty) || 0) : 0;
+        const packUnit = r ? Number(r.packUnit) || 0 : 0;
+        const targetQty = Math.max(0, parseInt((document.getElementById('lwAdjResQty') || {}).value || '0', 10) || 0);
+        const date = (document.getElementById('lwAdjResDate') || {}).value || new Date().toISOString().slice(0, 10);
+        const note = ((document.getElementById('lwAdjResNote') || {}).value || '').trim() || '수량 수정';
+        const diff = targetQty - currentQty;
+
+        if (diff === 0) {
+            UIUtils.closeModal();
+            UIUtils.toast('변경된 수량이 없습니다.', 'info');
+            return;
+        }
+
+        if (diff > 0) {
+            await Storage.add(STORE_LASER, {
+                date, carModel, partName, color, quantity: diff, note, packUnit,
+                isManual: true, isResidualManualIn: true
+            });
+        } else {
+            await Storage.add(STORE_LASER, {
+                date, carModel, partName, color, quantity: Math.abs(diff), note, packUnit,
+                isManual: true, isResidualManualOut: true
+            });
+        }
+
+        UIUtils.closeModal();
+        UIUtils.toast(`잔량이 ${UIUtils.formatNumber(currentQty)} → ${UIUtils.formatNumber(targetQty)} EA로 수정되었습니다.`, 'success');
+        refresh();
+    }
+
     // 재공/잔량 상세 팝업의 '수량 수정'(수동입고/출고) 진입 — 관리자·레이져운영자만
     function adjustAfterLaserFromPopup(keyEnc, mode) {
         if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
@@ -1165,15 +1323,23 @@ var LaserWipModule = (function() {
         popup.style.top = pos.top + 'px';
         popup.style.left = pos.left + 'px';
 
+        const adjustBtnHtml = _canEditWip()
+            ? `<button type="button" onclick="event.stopPropagation();LaserWipModule.openAdjustAfterLaserModal('${keyEnc}')"
+                    style="background:rgba(255,255,255,0.2);border:none;border-radius:6px;color:#fff;padding:4px 8px;cursor:pointer;font-size:0.78rem;font-family:inherit;">수량 수정</button>`
+            : '';
+
         popup.innerHTML = `
             <div style="background:var(--accent-purple,#7c3aed);color:#fff;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-radius:10px 10px 0 0;">
                 <div>
                     <div style="font-size:0.72rem;opacity:0.8;">${_esc(carModel)}</div>
                     <div style="font-weight:700;font-size:0.95rem;">${_esc(partName)} <span style="font-size:0.8rem;font-weight:400;">${color&&color!=='-'?'/ '+_esc(color):''}</span></div>
                 </div>
-                <div style="text-align:right;">
-                    <div style="font-size:0.7rem;opacity:0.8;">현재 재공품</div>
-                    <div style="font-size:1.3rem;font-weight:800;">${UIUtils.formatNumber(Math.max(0,r.wip))} <span style="font-size:0.75rem;font-weight:400;">EA</span></div>
+                <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+                    <div style="text-align:right;">
+                        <div style="font-size:0.7rem;opacity:0.8;">현재 재공품</div>
+                        <div style="font-size:1.3rem;font-weight:800;">${UIUtils.formatNumber(Math.max(0,r.wip))} <span style="font-size:0.75rem;font-weight:400;">EA</span></div>
+                    </div>
+                    ${adjustBtnHtml}
                 </div>
             </div>
             <div style="padding:10px 12px;">
@@ -1318,15 +1484,23 @@ var LaserWipModule = (function() {
         popup.style.top = pos.top + 'px';
         popup.style.left = pos.left + 'px';
 
+        const adjustBtnHtml = _canEditWip()
+            ? `<button type="button" onclick="event.stopPropagation();LaserWipModule.openAdjustResidualModal('${keyEnc}')"
+                    style="background:rgba(255,255,255,0.2);border:none;border-radius:6px;color:#fff;padding:4px 8px;cursor:pointer;font-size:0.78rem;font-family:inherit;">수량 수정</button>`
+            : '';
+
         popup.innerHTML = `
             <div style="background:var(--accent-orange,#f59e0b);color:#fff;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-radius:10px 10px 0 0;">
                 <div>
                     <div style="font-size:0.72rem;opacity:0.85;">${_esc(carModel)}</div>
                     <div style="font-weight:700;font-size:0.95rem;">${_esc(partName)} <span style="font-size:0.8rem;font-weight:400;">${color&&color!=='-'?'/ '+_esc(color):''}</span></div>
                 </div>
-                <div style="text-align:right;">
-                    <div style="font-size:0.7rem;opacity:0.85;">현재 잔량</div>
-                    <div style="font-size:1.3rem;font-weight:800;">${UIUtils.formatNumber(r.residualQty)} <span style="font-size:0.75rem;font-weight:400;">EA</span></div>
+                <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+                    <div style="text-align:right;">
+                        <div style="font-size:0.7rem;opacity:0.85;">현재 잔량</div>
+                        <div style="font-size:1.3rem;font-weight:800;">${UIUtils.formatNumber(r.residualQty)} <span style="font-size:0.75rem;font-weight:400;">EA</span></div>
+                    </div>
+                    ${adjustBtnHtml}
                 </div>
             </div>
             <div style="padding:10px 12px;">
@@ -1833,5 +2007,7 @@ var LaserWipModule = (function() {
              openResidualOut, onResidualOutCarChange, onResidualOutPartChange, saveResidualOut,
              openEditResidualManualEntry, saveEditResidualManualEntry, removeResidualManualEntry,
              getWipStock, _calcWip, showWipDetail, showResidualDetail,
-             adjustAfterLaserFromPopup, adjustResidualFromPopup };
+             adjustAfterLaserFromPopup, adjustResidualFromPopup,
+             openAdjustAfterLaserModal, saveAdjustAfterLaserModal,
+             openAdjustResidualModal, saveAdjustResidualModal };
 })();
