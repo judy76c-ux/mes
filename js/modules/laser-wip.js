@@ -1398,7 +1398,7 @@ var LaserWipModule = (function() {
         const lots = Object.values(lotMap)
             .map(function(l) { return { paintLot: l.paintLot, injLot: l.injLot, qty: Math.round(l.qty) }; })
             .filter(function(l) { return l.qty > 0; })
-            .sort(function(a, b) { return a.paintLot.localeCompare(b.paintLot) || a.injLot.localeCompare(b.injLot); });
+            .sort(function(a, b) { return String(a.paintLot || '').localeCompare(String(b.paintLot || '')) || String(a.injLot || '').localeCompare(String(b.injLot || '')); });
 
         return { lots: lots, manualAdj: manualAdj };
     }
@@ -1684,7 +1684,7 @@ var LaserWipModule = (function() {
 
         return Object.values(wipMap)
             .map(function(l){ return { lotNo: l.lotNo, paintLot: l.paintLot||'', balance: Math.round(l.balance) }; })
-            .sort(function(a,b){ return a.lotNo.localeCompare(b.lotNo); });
+            .sort(function(a,b){ return String(a.lotNo || '').localeCompare(String(b.lotNo || '')); });
     }
 
     // ── 레이져 후 재공품 상세 모달 ────────────────────────────────────────

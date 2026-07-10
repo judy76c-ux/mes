@@ -913,7 +913,7 @@ var LaserWorkModule = (function() {
 
         let data = Storage.getByDateRange(STORE, start, end);
         if (machine) data = data.filter(d => d.machine === machine);
-        data.sort((a, b) => b.date.localeCompare(a.date) || b.startTime.localeCompare(a.startTime));
+        data.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || String(b.startTime || '').localeCompare(String(a.startTime || '')));
 
         // 작업 이력(완료건)과 작업중(미완료건)을 분리해 각각 다른 섹션에 표시
         const completedData = data.filter(_isWorkCompleted);
@@ -4515,7 +4515,7 @@ var LaserStandbyModule = (function() {
 
         const allItems = Object.values(inventoryMap)
             .map(item => ({ ...item, stockQty: item.inQty - item.outQty }))
-            .sort((a, b) => a.carModel.localeCompare(b.carModel) || a.partName.localeCompare(b.partName));
+            .sort((a, b) => String(a.carModel || '').localeCompare(String(b.carModel || '')) || String(a.partName || '').localeCompare(String(b.partName || '')));
         const stockItems = allItems.filter(item => item.stockQty > 0);
 
         return { inventoryMap, allItems, stockItems };
@@ -4701,7 +4701,7 @@ var LaserStandbyModule = (function() {
 
         return Object.values(balanceMap)
             .filter(row => row.qty > 0.001)
-            .sort((a, b) => a.lotNo.localeCompare(b.lotNo))
+            .sort((a, b) => String(a.lotNo || '').localeCompare(String(b.lotNo || '')))
             .map(row => ({
                 lotNo: row.lotNo,
                 paintLot: row.paintLot || '-',
@@ -4891,7 +4891,7 @@ var LaserStandbyModule = (function() {
                 const totalOut   = carItems.reduce((s, i) => s + i.outQty, 0);
 
                 const rows = carItems
-                    .sort((a, b) => a.partName.localeCompare(b.partName, 'ko') || a.color.localeCompare(b.color))
+                    .sort((a, b) => String(a.partName || '').localeCompare(String(b.partName || ''), 'ko') || String(a.color || '').localeCompare(String(b.color || '')))
                     .map(item => {
                         const stock = item.stockQty != null ? item.stockQty : (item.inQty - item.outQty);
                         const stockColor = stock >= 100 ? 'var(--accent-blue)'
