@@ -2148,198 +2148,101 @@ const ProductWarehouseModule = (function() {
         blocksEl.innerHTML = html;
     }
 
-    // ── 이력 팝업 ─────────────────────────────────────────────────────
+    function _productInvRoute(d) {
+        const src = String((d && d.source) || '').trim();
+        if (d && d.type === '출고') {
+            return { label: '출고', color: '#dc2626', detail: src || '제품 출고' };
+        }
+        if (/출하검사|검사 합격/.test(src)) {
+            return { label: '출하검사', color: '#7c3aed', detail: src || '검사 합격 입고' };
+        }
+        if (/일괄|보정|수정/.test(src)) {
+            return { label: '보정', color: '#0891b2', detail: src || '재고 보정' };
+        }
+        return { label: '입고', color: '#16a34a', detail: src || '제품 입고' };
+    }
+
+    // ── 품목 상세 모달 (사출 창고 패턴) ─────────────────────────────────
     function _showHistory(keyEnc, event) {
+        if (event) event.stopPropagation();
+
         const key   = decodeURIComponent(keyEnc);
         const [car, part, color] = key.split('||');
 
-        const allData      = Storage.getAll(STORE);
-        const shippingInsp = Storage.getAll(DB.STORES.SHIPPING_INSPECTIONS) || [];
-        const paintInv     = Storage.getAll(DB.STORES.PAINT_INVENTORY)      || [];
-        const paintMats    = Storage.getAll(DB.STORES.PAINT_MATERIALS)      || [];
-
-        const records = allData
+        const records = (Storage.getAll(STORE) || [])
             .filter(d => {
                 const dCar   = d.carModel || '';
                 const dPart  = d.partName || '미분류';
                 const dColor = d.color    || '';
                 return dCar === car && dPart === part && dColor === color;
-            })
-            .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+            });
 
+        const balance = StockDetailUI.lotBalancesFromRecords(records);
+        const stock = balance.balance.total;
         const inQty  = records.filter(r => r.type !== '출고').reduce((s, r) => s + (Number(r.quantity) || 0), 0);
         const outQty = records.filter(r => r.type === '출고').reduce((s, r) => s + (Number(r.quantity) || 0), 0);
-        const stock  = inQty - outQty;
-        const stockColor = stock <= 0 ? 'var(--accent-red)' : 'var(--accent-green)';
+        const currentLots = balance.lots;
 
-        // ── LOT 조회 헬퍼 ──────────────────────────────────────────────
-        // 검사 LOT: SHIPPING_INSPECTIONS에서 동일 차종/품명/컬러/사출LOT/도장일 매칭
-        function _getInspLot(r) {
-            const found = shippingInsp.find(s =>
-                (s.carModel || '') === car &&
-                (s.partName || '') === part &&
-                (s.color    || '') === (color || '') &&
-                (s.lotNo    || '') === (r.lotNo || '') &&
-                (s.paintingDate || '') === (r.paintingDate || '')
-            );
-            return found ? found.date : '-';
-        }
+        const lotRows = currentLots.map(l => `
+            <tr>
+                <td style="white-space:nowrap;">${l.date || '-'}</td>
+                <td style="font-family:monospace;">${l.lotNo || '-'}</td>
+                <td style="text-align:right;font-weight:600;color:var(--accent-green);">
+                    ${UIUtils.formatNumber(l.qty)}
+                </td>
+            </tr>`).join('');
 
-        // 도료 LOT: 도장일에 출고된 도료 LOT 목록 (주제 우선)
-        function _getPaintLots(paintingDate) {
-            if (!paintingDate) return '-';
-            const used = paintInv.filter(p => p.date === paintingDate && p.type === '출고' && p.materialId);
-            if (!used.length) return '-';
-            // 중복 제거 (materialId+lot 기준)
-            const seen = new Set();
-            const lines = [];
-            used.forEach(p => {
-                const mat  = paintMats.find(m => m.id === p.materialId);
-                const lot  = p.prodLot || p.lotNo || '';
-                const key  = (p.materialId || '') + '||' + lot;
-                if (seen.has(key) || !lot) return;
-                seen.add(key);
-                const name = mat ? (mat.name || mat.paintName || '') : '';
-                lines.push(name ? `<span style="color:var(--text-muted)">${name}</span> ${lot}` : lot);
-            });
-            return lines.length ? lines.join('<br>') : '-';
-        }
-
-        // LOT 셀 공통 스타일
-        const lotCell = (content, mono) =>
-            `<td style="padding:5px 8px;font-size:0.75rem;vertical-align:top;border-bottom:1px solid var(--border-color);${mono ? 'font-family:monospace;' : ''}">${content}</td>`;
-
-        // ── 행 렌더 ────────────────────────────────────────────────────
-        const popupId = 'pwHistoryPopup';
-        const existing = document.getElementById(popupId);
-        if (existing) existing.remove();
-
-        const popup = document.createElement('div');
-        popup.id = popupId;
-        popup.style.cssText = `
-            position:fixed; z-index:9999;
-            background:var(--bg-primary); border:1px solid var(--border);
-            border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.22);
-            width:900px; max-width:96vw; max-height:82vh;
-            overflow:auto; font-size:0.88rem;
-        `;
-        popup.style.left = (event.clientX + 14) + 'px';
-        popup.style.top  = (event.clientY - 10) + 'px';
-
-        const TH = txt => `<th style="padding:6px 8px;text-align:left;font-size:0.7rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border);white-space:nowrap;">${txt}</th>`;
-
-        const rowsHtml = records.length
-            ? records.map(r => {
-                const isOut = r.type === '출고';
-                const injLot   = r.lotNo        || '-';
-                const paintLot = r.paintingDate  || '-';
-                const inspLot  = isOut ? '-' : _getInspLot(r);
-                const matLot   = isOut ? '-' : _getPaintLots(r.paintingDate);
-                return `
-                <tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
-                    <td style="white-space:nowrap;padding:5px 8px;border-bottom:1px solid var(--border-color);font-size:0.8rem;">${r.date || '-'}</td>
-                    <td style="padding:5px 8px;text-align:center;border-bottom:1px solid var(--border-color);">
-                        <span style="font-size:0.72rem;font-weight:600;
-                            color:${isOut ? 'var(--accent-red)' : 'var(--accent-green)'};
-                            border:1px solid ${isOut ? 'var(--accent-red)' : 'var(--accent-green)'};
-                            border-radius:4px;padding:1px 5px;">${r.type || '입고'}</span>
-                    </td>
-                    <td style="text-align:right;font-weight:700;padding:5px 8px;border-bottom:1px solid var(--border-color);
-                        color:${isOut ? 'var(--accent-red)' : 'var(--accent-green)'};">
-                        ${isOut ? '-' : '+'}${UIUtils.formatNumber(r.quantity || 0)}
-                    </td>
-                    ${lotCell(injLot, true)}
-                    ${lotCell(paintLot, true)}
-                    ${lotCell(matLot, false)}
-                    ${lotCell(inspLot, true)}
-                    <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">${r.source || '-'}</td>
-                </tr>`;
-            }).join('')
-            : `<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--text-muted);">이력 없음</td></tr>`;
-
-        popup.innerHTML = `
-            <div style="padding:14px 18px;border-bottom:1px solid var(--border);
-                        display:flex;align-items:center;justify-content:space-between;
-                        position:sticky;top:0;background:var(--bg-primary);z-index:1;">
-                <div>
-                    <div style="font-weight:700;font-size:1rem;">${part}</div>
-                    <div style="font-size:0.78rem;color:var(--text-muted);">
-                        ${car || '차종 미지정'}${color ? ' · ' + color : ''}
-                    </div>
-                </div>
-                <div style="display:flex;align-items:center;gap:10px;">
-                    <div style="text-align:right;">
-                        <div style="font-size:0.68rem;color:var(--text-muted);">현재 재고</div>
-                        <div style="font-size:1.4rem;font-weight:800;color:${stockColor};line-height:1.1;">
-                            ${UIUtils.formatNumber(stock)} <span style="font-size:0.7rem;font-weight:400;">EA</span>
-                        </div>
-                    </div>
-                    <button onclick="document.getElementById('${popupId}').remove()"
-                        style="background:none;border:none;cursor:pointer;color:var(--text-muted);
-                               font-size:1.3rem;line-height:1;padding:2px 4px;">✕</button>
-                </div>
-            </div>
-
-            <!-- 요약 바 -->
-            <div style="display:flex;gap:0;border-bottom:1px solid var(--border);">
-                <div style="flex:1;padding:8px 12px;text-align:center;border-right:1px solid var(--border);">
-                    <div style="font-size:0.65rem;color:var(--text-muted);">총 입고</div>
-                    <div style="font-weight:700;color:var(--accent-green);">${UIUtils.formatNumber(inQty)}</div>
-                </div>
-                <div style="flex:1;padding:8px 12px;text-align:center;border-right:1px solid var(--border);">
-                    <div style="font-size:0.65rem;color:var(--text-muted);">총 출고</div>
-                    <div style="font-weight:700;color:var(--accent-red);">${UIUtils.formatNumber(outQty)}</div>
-                </div>
-                <div style="flex:1;padding:8px 12px;text-align:center;">
-                    <div style="font-size:0.65rem;color:var(--text-muted);">이력 건수</div>
-                    <div style="font-weight:700;">${records.length}</div>
-                </div>
-            </div>
-
-            <!-- LOT 범례 -->
-            <div style="padding:8px 14px;background:#f8fafc;border-bottom:1px solid var(--border);
-                        display:flex;gap:16px;font-size:0.72rem;color:var(--text-muted);flex-wrap:wrap;">
-                <span><strong style="color:#1d4ed8;">사출 LOT</strong> 사출 수입검사 LOT 번호</span>
-                <span><strong style="color:#059669;">도장 LOT</strong> 도장 작업 날짜</span>
-                <span><strong style="color:#d97706;">도료 LOT</strong> 해당 도장일 도료 출고 LOT</span>
-                <span><strong style="color:#7c3aed;">검사 LOT</strong> 출하검사 날짜</span>
-            </div>
-
-            <!-- 이력 테이블 -->
-            <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
-                <thead>
-                    <tr style="background:var(--bg-secondary);">
-                        ${TH('날짜')}${TH('유형')}${TH('수량')}
-                        <th style="padding:6px 8px;font-size:0.7rem;font-weight:700;color:#1d4ed8;border-bottom:1px solid var(--border);white-space:nowrap;">사출 LOT</th>
-                        <th style="padding:6px 8px;font-size:0.7rem;font-weight:700;color:#059669;border-bottom:1px solid var(--border);white-space:nowrap;">도장 LOT</th>
-                        <th style="padding:6px 8px;font-size:0.7rem;font-weight:700;color:#d97706;border-bottom:1px solid var(--border);white-space:nowrap;">도료 LOT</th>
-                        <th style="padding:6px 8px;font-size:0.7rem;font-weight:700;color:#7c3aed;border-bottom:1px solid var(--border);white-space:nowrap;">검사 LOT</th>
-                        ${TH('출처/행선지')}
-                    </tr>
-                </thead>
-                <tbody>${rowsHtml}</tbody>
-            </table>
-        `;
-
-        document.body.appendChild(popup);
-
-        // 화면 밖 보정
-        requestAnimationFrame(() => {
-            const vw = window.innerWidth, vh = window.innerHeight;
-            const rect = popup.getBoundingClientRect();
-            if (rect.right  > vw - 8) popup.style.left = (vw - rect.width  - 8) + 'px';
-            if (rect.bottom > vh - 8) popup.style.top  = (vh - rect.height - 8) + 'px';
+        const lotSection = StockDetailUI.buildLotTableSection({
+            headers: ['입고일', 'LOT번호', '현재 수량'],
+            colSpan: 3,
+            rowsHtml: lotRows
         });
 
-        // 외부 클릭 닫기
-        setTimeout(() => {
-            document.addEventListener('click', function _c(e) {
-                if (!popup.contains(e.target)) {
-                    popup.remove();
-                    document.removeEventListener('click', _c);
-                }
-            });
-        }, 50);
+        const historySection = StockDetailUI.buildInvHistorySection(records, {
+            routeFn: _productInvRoute,
+            lotFn: function(d) {
+                const parts = [];
+                if (d.lotNo) parts.push(d.lotNo);
+                if (d.paintingDate) parts.push(d.paintingDate);
+                return parts.length ? parts.join(' / ') : '무표기';
+            },
+            whoFn: function(d) { return d.source || '-'; }
+        });
+
+        UIUtils.showModal(
+            `📦 ${part}${color ? ' · ' + color : ''}`,
+            `
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:10px 14px;
+                        background:var(--bg-secondary);border-radius:8px;font-size:0.85rem;flex-wrap:wrap;">
+                <span><strong>${_escapeHtml(car || '차종 미지정')}</strong></span>
+                <span style="color:var(--text-muted);">·</span>
+                <span><strong>${_escapeHtml(part)}</strong></span>
+                ${color ? `<span style="color:var(--text-muted);">·</span><span>${_escapeHtml(color)}</span>` : ''}
+            </div>
+            <div style="margin-bottom:16px;display:flex;gap:16px;flex-wrap:wrap;">
+                <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
+                    <div style="font-size:1.4rem;font-weight:700;color:${stock <= 0 ? 'var(--accent-red)' : 'var(--accent-blue)'};">${UIUtils.formatNumber(stock)}</div>
+                    <div style="font-size:0.8rem;color:var(--text-muted);">현재 재고 (EA)</div>
+                </div>
+                <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
+                    <div style="font-size:1.4rem;font-weight:700;color:var(--accent-green);">${UIUtils.formatNumber(inQty)}</div>
+                    <div style="font-size:0.8rem;color:var(--text-muted);">입고 합계 (EA)</div>
+                </div>
+                <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
+                    <div style="font-size:1.4rem;font-weight:700;color:var(--accent-red);">${UIUtils.formatNumber(outQty)}</div>
+                    <div style="font-size:0.8rem;color:var(--text-muted);">출고 합계 (EA)</div>
+                </div>
+                <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
+                    <div style="font-size:1.4rem;font-weight:700;">${currentLots.filter(l => l.qty > 0).length}</div>
+                    <div style="font-size:0.8rem;color:var(--text-muted);">보유 LOT 수</div>
+                </div>
+            </div>
+            ${lotSection}
+            ${historySection}
+            `,
+            '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>',
+            'lg'
+        );
     }
 
     function _escapeHtml(value) {

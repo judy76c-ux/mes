@@ -18544,19 +18544,44 @@ var ProdQualityModule = (function() {
     const _js = s => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ');
 
     function _isRangeSpecItem(item = {}) {
+        const mode = _specModeOf(item);
+        if (mode === 'deviation' || mode === 'range') return true;
         return ['film_under', 'film_top', 'color_l', 'color_a', 'color_b'].includes(String(item.key || ''));
     }
 
     function _isFilmSpecItem(item = {}) {
+        if (_specModeOf(item) === 'range') return true;
         return ['film_under', 'film_top'].includes(String(item.key || ''));
     }
 
     function _isColorSpecItem(item = {}) {
+        if (_specModeOf(item) === 'deviation') return true;
         return ['color_l', 'color_a', 'color_b'].includes(String(item.key || ''));
     }
 
     function _isGlossSpecItem(item = {}) {
-        return String(item.key || '') === 'gloss';
+        return _specModeOf(item) === 'target';
+    }
+
+    function _specModeOf(item = {}) {
+        const mode = String(item.specMode || '').trim();
+        if (mode) return mode;
+        const key = String(item.key || '');
+        if (key === 'gloss') return 'target';
+        if (['color_l', 'color_a', 'color_b'].includes(key)) return 'deviation';
+        if (['film_under', 'film_top'].includes(key)) return 'range';
+        return 'text';
+    }
+
+    function _specModeLabel(mode) {
+        return ({ text: '텍스트', deviation: '공차 관리', target: '기준값 관리', range: '상/하한' })[mode] || '텍스트';
+    }
+
+    function _specModeBadge(mode) {
+        if (mode === 'deviation') return '<span style="font-size:0.68rem;background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;border-radius:3px;padding:0 5px;margin-left:3px;">공차</span>';
+        if (mode === 'target') return '<span style="font-size:0.68rem;background:#fefce8;color:#a16207;border:1px solid #fde68a;border-radius:3px;padding:0 5px;margin-left:3px;">기준값</span>';
+        if (mode === 'range') return '<span style="font-size:0.68rem;background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;border-radius:3px;padding:0 5px;margin-left:3px;">상/하한</span>';
+        return '';
     }
 
     // 항목별 기준값 입력 여부 판단
@@ -18665,7 +18690,7 @@ var ProdQualityModule = (function() {
             const hi = upperSpec || '';
             return `하(${lo}) ~ 상(${hi}) ${unit}`.trim();
         }
-        if (_isColorSpecItem(item)) {
+        if (_specModeOf(item) === 'deviation' || _isColorSpecItem(item)) {
             const plus  = upperSpec !== '' ? `+${upperSpec}` : '+?';
             const minus = lowerSpec !== '' ? `−${lowerSpec}` : '−?';
             return `${plus} / ${minus}`;
@@ -18675,19 +18700,20 @@ var ProdQualityModule = (function() {
 
     function _rangeSpecEditor(prefix, item = {}, placeholderUpper = '상한', placeholderLower = '하한', opts = {}) {
         const { upperSpec, lowerSpec } = _rangeSpecValues(item);
-        const isColor = _isColorSpecItem(item);
-        const isFilm  = _isFilmSpecItem(item);
+        const mode = _specModeOf(item);
+        const isDeviation = mode === 'deviation';
+        const isFilm = mode === 'range';
         const readOnly = !!opts.readOnly;
-        const label1 = isColor ? '+공차' : isFilm ? '하' : '상';
-        const label2 = isColor ? '-공차' : isFilm ? '상' : '하';
-        const val1   = isColor ? upperSpec : isFilm ? lowerSpec : upperSpec;
-        const val2   = isColor ? lowerSpec : isFilm ? upperSpec : lowerSpec;
-        const ph1    = isColor ? '+공차값' : isFilm ? '하한값' : placeholderUpper;
-        const ph2    = isColor ? '-공차값' : isFilm ? '상한값' : placeholderLower;
-        const cls1   = isColor ? `${prefix}-upper` : isFilm ? `${prefix}-lower` : `${prefix}-upper`;
-        const cls2   = isColor ? `${prefix}-lower` : isFilm ? `${prefix}-upper` : `${prefix}-lower`;
-        const color1 = isColor ? '#16a34a' : 'var(--text-muted)';
-        const color2 = isColor ? '#dc2626' : 'var(--text-muted)';
+        const label1 = isDeviation ? '+공차' : isFilm ? '하' : '상';
+        const label2 = isDeviation ? '-공차' : isFilm ? '상' : '하';
+        const val1   = isDeviation ? upperSpec : isFilm ? lowerSpec : upperSpec;
+        const val2   = isDeviation ? lowerSpec : isFilm ? upperSpec : lowerSpec;
+        const ph1    = isDeviation ? '+공차값' : isFilm ? '하한값' : placeholderUpper;
+        const ph2    = isDeviation ? '-공차값' : isFilm ? '상한값' : placeholderLower;
+        const cls1   = isDeviation ? `${prefix}-upper` : isFilm ? `${prefix}-lower` : `${prefix}-upper`;
+        const cls2   = isDeviation ? `${prefix}-lower` : isFilm ? `${prefix}-upper` : `${prefix}-lower`;
+        const color1 = isDeviation ? '#16a34a' : 'var(--text-muted)';
+        const color2 = isDeviation ? '#dc2626' : 'var(--text-muted)';
         return `
             <div style="display:flex;gap:8px;flex-wrap:nowrap;align-items:center;max-width:380px;">
                 <div style="display:flex;align-items:center;gap:5px;flex:0 0 auto;">
@@ -18867,7 +18893,7 @@ var ProdQualityModule = (function() {
                             <table class="data-table">
                                 <thead>
                                     <tr>
-                                        <th>No</th><th>발행일</th><th>구분</th><th>라인</th><th>차종/품명</th><th>LOT</th><th>항목수</th><th>상태</th><th>발행완료</th><th>DATA</th><th>작업</th>
+                                        <th>시간</th><th>라인</th><th>차종</th><th>품명</th><th>항목수</th><th>DATA 입력</th><th>작업</th>
                                     </tr>
                                 </thead>
                                 <tbody id="pqTableBody"></tbody>
@@ -19390,7 +19416,7 @@ var ProdQualityModule = (function() {
                     ${dragHandle}
                     <div>
                         <strong style="font-size:0.85rem;">${_esc(item.label||'')}</strong>
-                        ${_isFilmSpecItem(item) ? '<span style="font-size:0.68rem;background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;border-radius:3px;padding:0 5px;margin-left:3px;">Range</span>' : _isColorSpecItem(item) ? '<span style="font-size:0.68rem;background:#f0fdf4;color:#16a34a;border:1px solid #bbf7d0;border-radius:3px;padding:0 5px;margin-left:3px;">Deviation</span>' : _isGlossSpecItem(item) ? '<span style="font-size:0.68rem;background:#fefce8;color:#a16207;border:1px solid #fde68a;border-radius:3px;padding:0 5px;margin-left:3px;">Tolerance</span>' : ''}
+                        ${_specModeBadge(_specModeOf(item))}
                         <div style="font-size:0.75rem;color:var(--text-muted);">${_esc(item.method||'')}</div>
                     </div>
                 </div>
@@ -20243,27 +20269,34 @@ var ProdQualityModule = (function() {
         }).join('');
     }
 
+    function _fmtIssueDateCell(d) {
+        const rawDate = String(d.date || '');
+        const rawPrinted = d.printedAt ? String(d.printedAt).replace('T', ' ') : '';
+        const datePart = (rawDate.split(/[ T]/)[0] || rawPrinted.split(/[ T]/)[0] || '');
+        const timePart = (rawPrinted.split(/[ T]/)[1] || rawDate.split(/[ T]/)[1] || '').slice(0, 5);
+        const p = datePart.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (!p) return _esc(datePart || '-');
+        return `<div style="text-align:center;line-height:1.3;white-space:nowrap;">
+            <div style="font-size:0.72rem;color:var(--text-muted);">${p[1]}</div>
+            <div style="font-weight:700;font-size:0.85rem;">${p[2]}-${p[3]}</div>
+            ${timePart ? `<div style="font-size:0.72rem;color:var(--text-muted);">${_esc(timePart)}</div>` : ''}
+        </div>`;
+    }
+
     function renderTable(data) {
         const tbody = document.getElementById('pqTableBody');
         const recordMap = new Map(_measureRecords().filter(r => r.issueId).map(r => [r.issueId, r]));
         const canDelete = _isAdminUser();
-        tbody.innerHTML = data.length === 0 ? `<tr><td colspan="11" style="text-align:center;padding:30px;">기록이 없습니다.</td></tr>` :
-            data.map((d, i) => {
+        tbody.innerHTML = data.length === 0 ? `<tr><td colspan="7" style="text-align:center;padding:30px;">기록이 없습니다.</td></tr>` :
+            data.map((d) => {
                 const record = recordMap.get(d.id);
-                const printedText = d.printedAt ? String(d.printedAt).replace('T', ' ').slice(0, 16) : '-';
-                const status = d.status || (d.printedAt ? '발행완료' : '발행대기');
-                const statusClass = status === '발행완료' ? 'badge-success' : 'badge-warning';
                 return `
                 <tr>
-                    <td>${data.length - i}</td>
-                    <td>${_esc(d.date || '')}</td>
-                    <td><span class="badge ${d.type === '초물' ? 'badge-info' : d.type === '중물' ? 'badge-warning' : 'badge-success'}">${d.type}</span></td>
+                    <td>${_fmtIssueDateCell(d)}</td>
                     <td>${_esc(d.line || '-')}</td>
-                    <td><strong>${_esc(d.carModel || '-')}</strong><br><span style="font-size:0.78rem;color:var(--text-muted);">${_esc(d.partName || '-')}</span></td>
-                    <td style="font-family:monospace;font-size:0.8rem;">${_esc(d.lotNo || '-')}</td>
-                    <td style="text-align:right;">${(d.items || []).length}</td>
-                    <td><span class="badge ${statusClass}">${_esc(status)}</span></td>
-                    <td style="font-size:0.78rem;color:var(--text-secondary);">${_esc(printedText)}</td>
+                    <td><strong>${_esc(d.carModel || '-')}</strong></td>
+                    <td>${_esc(d.partName || '-')}</td>
+                    <td style="text-align:center;">${(d.items || []).length}</td>
                     <td>${record ? '<span class="badge badge-success">입력완료</span>' : '<span class="badge badge-secondary">미입력</span>'}</td>
                     <td style="white-space:nowrap;">
                         ${record
@@ -21728,7 +21761,7 @@ var ProdQualityModule = (function() {
                 <table class="data-table" style="font-size:0.82rem;">
                     <thead>
                         <tr>
-                            <th style="width:36px;"></th><th style="width:44px;">삭제</th><th>초중종 관리 항목</th><th>기본 기준</th><th>측정방법</th>
+                            <th style="width:36px;"></th><th style="width:44px;">삭제</th><th>초중종 관리 항목</th><th style="width:120px;">기준 방식</th><th>기본 기준</th><th>측정방법</th>
                             <th style="width:90px;">단위</th><th style="width:110px;">입력유형</th>
                         </tr>
                     </thead>
@@ -21737,12 +21770,41 @@ var ProdQualityModule = (function() {
             </div>`;
     }
 
+    function _masterSpecEditorHtml(prefix, item = {}, opts = {}) {
+        const mode = _specModeOf(item);
+        if (mode === 'target') return _glossSpecEditor(prefix, item, opts);
+        if (mode === 'deviation' || mode === 'range') return _rangeSpecEditor(prefix, item, '상한', '하한', opts);
+        return `<input type="text" class="form-input ${prefix}-spec" value="${_esc(item.spec || '')}" placeholder="기본 기준">`;
+    }
+
+    function _masterSpecModeSelect(item = {}) {
+        const mode = _specModeOf(item);
+        return `<select class="form-select pq-master-spec-mode" onchange="ProdQualityModule.onMasterSpecModeChange(this)" style="font-size:0.8rem;min-width:108px;">
+            ${['text', 'deviation', 'target', 'range'].map(function(m) {
+                return `<option value="${m}" ${mode === m ? 'selected' : ''}>${_specModeLabel(m)}</option>`;
+            }).join('')}
+        </select>`;
+    }
+
+    function _readMasterRowItem(row) {
+        if (!row) return {};
+        return {
+            key: row.querySelector('.pq-master-key')?.value || Storage.generateId(),
+            label: row.querySelector('.pq-master-label')?.value || '',
+            spec: row.querySelector('.pq-master-spec')?.value || '',
+            method: row.querySelector('.pq-master-method')?.value || '',
+            unit: row.querySelector('.pq-master-unit')?.value || '',
+            inputType: row.querySelector('.pq-master-input-type')?.value || 'text',
+            upperSpec: row.querySelector('.pq-master-upper')?.value || '',
+            lowerSpec: row.querySelector('.pq-master-lower')?.value || '',
+            targetSpec: row.querySelector('.pq-master-gloss-target')?.value || '',
+            toleranceSpec: row.querySelector('.pq-master-gloss-tol')?.value || '',
+            specMode: row.querySelector('.pq-master-spec-mode')?.value || 'text'
+        };
+    }
+
     function _masterItemRowHtml(item = {}) {
-        const specEditor = _isGlossSpecItem(item)
-            ? _glossSpecEditor('pq-master', item)
-            : _isRangeSpecItem(item)
-            ? _rangeSpecEditor('pq-master', item)
-            : `<input type="text" class="form-input pq-master-spec" value="${_esc(item.spec || '')}" placeholder="기본 기준">`;
+        const specEditor = _masterSpecEditorHtml('pq-master', item);
         return `
             <tr class="pq-master-item-row" draggable="true">
                 <td style="text-align:center;cursor:grab;color:var(--text-muted);user-select:none;" class="pq-master-drag-handle" title="드래그하여 순서 변경">
@@ -21753,22 +21815,68 @@ var ProdQualityModule = (function() {
                     <input type="hidden" class="pq-master-key" value="${_esc(item.key || Storage.generateId())}">
                     <input type="text" class="form-input pq-master-label" value="${_esc(item.label || '')}" placeholder="관리항목명">
                 </td>
-                <td>${specEditor}</td>
+                <td>${_masterSpecModeSelect(item)}</td>
+                <td class="pq-master-spec-cell">${specEditor}</td>
                 <td><input type="text" class="form-input pq-master-method" value="${_esc(item.method || '')}" placeholder="측정방법"></td>
                 <td><input type="text" class="form-input pq-master-unit" value="${_esc(item.unit || '')}" placeholder="단위"></td>
                 <td>
                     <select class="form-select pq-master-input-type">
-                        ${['number','text','select'].map(v => `<option value="${v}" ${(item.inputType || 'text') === v ? 'selected' : ''}>${v === 'number' ? '숫자' : v === 'select' ? '합/불' : '텍스트'}</option>`).join('')}
+                        ${['number','text','select'].map(v => `<option value="${v}" ${(item.inputType || (_specModeOf(item) === 'text' ? 'text' : 'number')) === v ? 'selected' : ''}>${v === 'number' ? '숫자' : v === 'select' ? '합/불' : '텍스트'}</option>`).join('')}
                     </select>
                 </td>
             </tr>`;
     }
 
     function addMasterItemRow() {
+        UIUtils.showModal('초중종 관리 항목 추가', `
+            <p style="font-size:0.88rem;color:var(--text-secondary);margin:0 0 14px;">기준 입력 방식을 선택하세요. 추가 후에도 <strong>기준 방식</strong> 열에서 변경할 수 있습니다.</p>
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;">
+                <button type="button" class="btn btn-outline" style="height:auto;padding:14px 16px;text-align:left;align-items:flex-start;"
+                    onclick="ProdQualityModule._insertMasterItemRow('text')">
+                    <div style="font-weight:700;">텍스트</div>
+                    <div style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;line-height:1.45;">박리 없을 것 등 서술형 기준</div>
+                </button>
+                <button type="button" class="btn btn-outline" style="height:auto;padding:14px 16px;text-align:left;align-items:flex-start;border-color:#bbf7d0;background:#f8fff9;"
+                    onclick="ProdQualityModule._insertMasterItemRow('deviation')">
+                    <div style="font-weight:700;color:#16a34a;">공차 관리</div>
+                    <div style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;line-height:1.45;">+공차 / −공차 (색차 △L 등)</div>
+                </button>
+                <button type="button" class="btn btn-outline" style="height:auto;padding:14px 16px;text-align:left;align-items:flex-start;border-color:#fde68a;background:#fffef7;"
+                    onclick="ProdQualityModule._insertMasterItemRow('target')">
+                    <div style="font-weight:700;color:#a16207;">기준값 관리</div>
+                    <div style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;line-height:1.45;">기준값 ± 허용오차 (광택 등)</div>
+                </button>
+                <button type="button" class="btn btn-outline" style="height:auto;padding:14px 16px;text-align:left;align-items:flex-start;border-color:#bfdbfe;background:#f8fbff;"
+                    onclick="ProdQualityModule._insertMasterItemRow('range')">
+                    <div style="font-weight:700;color:#2563eb;">상/하한</div>
+                    <div style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;line-height:1.45;">하한 ~ 상한 (도막두께 등)</div>
+                </button>
+            </div>
+        `, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>`, 'md');
+    }
+
+    function _insertMasterItemRow(specMode) {
+        UIUtils.closeModal();
         const body = document.getElementById('pqMasterItemsBody');
         if (!body) return;
-        body.insertAdjacentHTML('beforeend', _masterItemRowHtml({ selected: true, inputType: 'text' }));
-        body.querySelector('tr:last-child .pq-master-label')?.focus();
+        const inputType = specMode === 'text' ? 'text' : (specMode === 'select' ? 'select' : 'number');
+        body.insertAdjacentHTML('beforeend', _masterItemRowHtml({ selected: true, inputType: inputType, specMode: specMode || 'text' }));
+        const row = body.querySelector('tr:last-child');
+        row?.querySelector('.pq-master-label')?.focus();
+    }
+
+    function onMasterSpecModeChange(selectEl) {
+        const row = selectEl?.closest('.pq-master-item-row');
+        if (!row) return;
+        const specCell = row.querySelector('.pq-master-spec-cell');
+        if (!specCell) return;
+        const item = _readMasterRowItem(row);
+        item.specMode = selectEl.value || 'text';
+        specCell.innerHTML = _masterSpecEditorHtml('pq-master', item);
+        const inputTypeSel = row.querySelector('.pq-master-input-type');
+        if (inputTypeSel && item.specMode !== 'text' && inputTypeSel.value === 'text') {
+            inputTypeSel.value = 'number';
+        }
     }
 
     function deleteCheckedMasterItems() {
@@ -21788,17 +21896,9 @@ var ProdQualityModule = (function() {
 
     async function saveItemMaster() {
         const items = [...document.querySelectorAll('.pq-master-item-row')].map(row => {
-            const obj = {
-                key: row.querySelector('.pq-master-key')?.value || Storage.generateId(),
-                label: row.querySelector('.pq-master-label')?.value.trim() || '',
-                spec: row.querySelector('.pq-master-spec')?.value.trim() || '',
-                method: row.querySelector('.pq-master-method')?.value.trim() || '',
-                unit: row.querySelector('.pq-master-unit')?.value.trim() || '',
-                upperSpec: row.querySelector('.pq-master-upper')?.value.trim() || '',
-                lowerSpec: row.querySelector('.pq-master-lower')?.value.trim() || '',
-                inputType: row.querySelector('.pq-master-input-type')?.value || 'text',
-                selected: true
-            };
+            const obj = _readMasterRowItem(row);
+            obj.label = obj.label.trim();
+            obj.selected = true;
             if (_isGlossSpecItem(obj)) _applyGlossSpec(obj, row, 'pq-master');
             else if (_isRangeSpecItem(obj)) obj.spec = _composeRangeSpec(obj);
             return obj;
@@ -21829,7 +21929,7 @@ var ProdQualityModule = (function() {
                 .filter(i => masterKeySet.has(i.key))
                 .map(i => {
                     const m = masterByKey[i.key];
-                    return { ...i, label: m.label, unit: m.unit, method: m.method, inputType: m.inputType };
+                    return { ...i, label: m.label, unit: m.unit, method: m.method, inputType: m.inputType, specMode: m.specMode || _specModeOf(m) };
                 }), newMasterItems);
 
         const presets   = allDocs.filter(d => d._docKind === PRESET_KIND);
@@ -22118,21 +22218,30 @@ var ProdQualityModule = (function() {
         const preset = presetId
             ? (Storage.getAll(STORE)||[]).find(d => d._docKind === PRESET_KIND && d.id === presetId)
             : null;
+        const isNewPreset = !preset;
         const rawPresetItems = preset && preset.items && preset.items.length
             ? preset.items
-            : _masterItems().map(i => ({ ...i, selected: true }));
+            : (isNewPreset ? [] : _masterItems().map(i => ({ ...i, selected: true })));
         const items = _sortItemsByMaster(rawPresetItems);
         const pickerOptions = _presetPickerOptions(items);
         const modalTitle = viewOnly
             ? `프리셋 보기 — ${preset ? preset.name : ''}`
             : (preset ? `프리셋 수정 — ${preset.name}` : '새 프리셋 추가');
-        const bodyHtml = `
+        const refLoadHtml = viewOnly ? '' : _presetRefSelectHtml(preset ? preset.id : '', isNewPreset);
+        const nameBlockHtml = `
             <div class="form-group" style="margin-bottom:12px;">
                 <label class="form-label">프리셋 이름 <span style="color:var(--accent-red)">*</span></label>
                 <input type="text" class="form-input" id="pqPresetEditName"
                     value="${_esc(preset ? preset.name : '')}"
-                    placeholder="예: 외장 공통 기준, T1XX 전용 기준" style="font-size:1rem;${viewOnly ? 'background:#f8fafc;cursor:not-allowed;' : ''}" ${viewOnly ? 'disabled' : ''} autofocus>
-            </div>
+                    placeholder="${isNewPreset ? '새 프리셋 이름을 입력하세요 (기존과 다르게)' : '예: 외장 공통 기준, T1XX 전용 기준'}"
+                    style="font-size:1rem;${viewOnly ? 'background:#f8fafc;cursor:not-allowed;' : ''}" ${viewOnly ? 'disabled' : ''} ${isNewPreset ? '' : 'autofocus'}>
+                ${isNewPreset ? `<div id="pqPresetRefHint" style="font-size:0.78rem;color:var(--text-muted);margin-top:6px;line-height:1.5;">
+                    비슷한 프리셋이 있으면 아래에서 <strong>먼저 불러온 뒤</strong> 이름·항목을 수정해 저장하세요.
+                </div>` : ''}
+            </div>`;
+        const bodyHtml = `
+            <input type="hidden" id="pqPresetEditId" value="${_esc(preset ? preset.id : '')}">
+            ${isNewPreset ? refLoadHtml + nameBlockHtml : nameBlockHtml + refLoadHtml}
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
                 <span style="font-size:0.85rem;font-weight:700;color:var(--text-primary);">
                     초중종 관리 항목 <span id="pqPresetEditCount" style="color:var(--accent-blue);">(${items.length}개)</span>
@@ -22158,7 +22267,9 @@ var ProdQualityModule = (function() {
                         <th style="width:76px;">단위</th>
                     </tr></thead>
                     <tbody id="pqPresetEditBody">
-                        ${items.map(item => _presetItemRowHtml(item, { readOnly: viewOnly })).join('')}
+                        ${items.length
+                            ? items.map(item => _presetItemRowHtml(item, { readOnly: viewOnly })).join('')
+                            : (viewOnly ? '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-muted);">항목 없음</td></tr>' : _presetEmptyBodyHtml())}
                     </tbody>
                 </table>
             </div>
@@ -22179,6 +22290,120 @@ var ProdQualityModule = (function() {
             `;
         UIUtils.showModal(modalTitle, bodyHtml, footerHtml, 'lg');
     }
+    function _clonePresetItems(items) {
+        return _sortItemsByMaster((items || []).map(function(item) {
+            return JSON.parse(JSON.stringify(item));
+        }));
+    }
+
+    function _presetEmptyBodyHtml() {
+        return `<tr class="pq-preset-empty-row">
+            <td colspan="6" style="text-align:center;padding:32px 16px;color:var(--text-muted);font-size:0.84rem;line-height:1.65;">
+                <span class="material-symbols-outlined" style="font-size:2rem;display:block;margin:0 auto 8px;opacity:.35;">playlist_add</span>
+                위에서 <strong>기존 프리셋을 불러오거나</strong><br>
+                <strong>관리항목 추가</strong>로 새 프리셋을 구성하세요.
+            </td>
+        </tr>`;
+    }
+
+    function _clearPresetEmptyRow() {
+        document.querySelector('#pqPresetEditBody .pq-preset-empty-row')?.remove();
+    }
+
+    function _ensurePresetEmptyRow() {
+        const body = document.getElementById('pqPresetEditBody');
+        if (!body) return;
+        if (body.querySelector('.pq-preset-item-row')) return;
+        if (body.querySelector('.pq-preset-empty-row')) return;
+        body.innerHTML = _presetEmptyBodyHtml();
+        _refreshPresetEditTools();
+    }
+
+    function _presetRefSelectHtml(excludePresetId, isNewPreset) {
+        const presets = (Storage.getAll(STORE) || []).filter(function(d) {
+            return d._docKind === PRESET_KIND && d.id !== excludePresetId;
+        });
+        if (!presets.length) {
+            return isNewPreset ? `
+                <div style="margin-bottom:14px;padding:12px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:0.82rem;color:#92400e;line-height:1.55;">
+                    저장된 프리셋이 없습니다. <strong>관리항목 추가</strong>로 직접 구성하세요.
+                </div>` : '';
+        }
+        const boxStyle = isNewPreset
+            ? 'margin-bottom:14px;padding:12px 14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;'
+            : 'margin-bottom:12px;padding:10px 12px;background:#f8fafc;border:1px solid var(--border-color);border-radius:8px;';
+        return `
+            <div style="${boxStyle}">
+                ${isNewPreset ? `
+                <div style="font-size:0.84rem;font-weight:700;color:#1e40af;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                    <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#2563eb;color:#fff;font-size:0.75rem;font-weight:800;">1</span>
+                    기존 프리셋 참조 (먼저 불러오기)
+                </div>
+                <div style="font-size:0.78rem;color:#1d4ed8;margin-bottom:10px;line-height:1.55;">
+                    비슷한 프리셋을 <strong>참고용으로 불러온 뒤</strong> 항목·이름을 바꿔 새 프리셋을 만드세요.
+                </div>` : `
+                <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-blue);vertical-align:middle;">download</span>
+                <span style="font-size:0.82rem;font-weight:600;">다른 프리셋 참조</span>`}
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;${isNewPreset ? '' : 'margin-top:8px;'}">
+                    <select class="form-select" id="pqPresetRefSelect" style="flex:1;min-width:180px;max-width:340px;font-size:0.85rem;">
+                        <option value="">-- 프리셋 선택 --</option>
+                        ${presets.map(function(p) {
+                            return `<option value="${_esc(p.id)}">${_esc(p.name)} (${(p.items || []).length}항목)</option>`;
+                        }).join('')}
+                    </select>
+                    <button type="button" class="btn ${isNewPreset ? 'btn-primary' : 'btn-outline'} btn-sm" onclick="ProdQualityModule.loadPresetReference()" style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+                        <span class="material-symbols-outlined" style="font-size:14px;">download</span> 불러오기
+                    </button>
+                </div>
+            </div>`;
+    }
+
+    function loadPresetReference() {
+        const refId = (document.getElementById('pqPresetRefSelect') || {}).value || '';
+        if (!refId) {
+            UIUtils.toast('불러올 프리셋을 선택하세요.', 'warning');
+            return;
+        }
+        const source = (Storage.getAll(STORE) || []).find(function(d) {
+            return d._docKind === PRESET_KIND && d.id === refId;
+        });
+        if (!source || !Array.isArray(source.items)) {
+            UIUtils.toast('프리셋을 찾을 수 없습니다.', 'error');
+            return;
+        }
+        const body = document.getElementById('pqPresetEditBody');
+        if (!body) return;
+
+        const applyRef = function() {
+            const items = _clonePresetItems(source.items);
+            body.innerHTML = items.map(function(item) { return _presetItemRowHtml(item); }).join('');
+            _refreshPresetEditTools();
+            const isNew = !(document.getElementById('pqPresetEditId') || {}).value;
+            const hintEl = document.getElementById('pqPresetRefHint');
+            if (hintEl) {
+                hintEl.innerHTML = `참조: <strong style="color:var(--text-primary);">${_esc(source.name)}</strong> — 항목을 확인·수정한 뒤 <strong>새 프리셋 이름</strong>으로 저장하세요.`;
+                hintEl.style.color = '#1d4ed8';
+            }
+            const nameEl = document.getElementById('pqPresetEditName');
+            if (nameEl && isNew) {
+                nameEl.placeholder = `예: ${_esc(source.name)} 변형`;
+                nameEl.focus();
+            }
+            UIUtils.toast(`"${source.name}" 프리셋을 참고용으로 불러왔습니다. 이름·항목을 수정한 뒤 저장하세요.`, 'success');
+        };
+
+        const existingRows = body.querySelectorAll('.pq-preset-item-row').length;
+        const isNew = !(document.getElementById('pqPresetEditId') || {}).value;
+        if (existingRows > 0) {
+            const msg = isNew
+                ? `이미 불러온 ${existingRows}개 항목을 "${source.name}" 프리셋 내용으로 다시 불러올까요?`
+                : `현재 ${existingRows}개 항목을 "${source.name}" 프리셋 내용으로 바꿔 불러올까요?`;
+            UIUtils.confirm(msg, applyRef);
+        } else {
+            applyRef();
+        }
+    }
+
     function _presetItemRowHtml(item = {}, opts = {}) {
         const readOnly = !!opts.readOnly;
         const specEditor = _isGlossSpecItem(item)
@@ -22258,6 +22483,7 @@ var ProdQualityModule = (function() {
             return;
         }
         body.insertAdjacentHTML('beforeend', _presetItemRowHtml({ ...item, selected: true }));
+        _clearPresetEmptyRow();
         _refreshPresetEditTools();
     }
 
@@ -22324,6 +22550,7 @@ var ProdQualityModule = (function() {
             body.insertAdjacentHTML('beforeend', _presetItemRowHtml({ ...item, selected: true }));
         });
         document.getElementById('pqPresetAddInlinePanel')?.remove();
+        _clearPresetEmptyRow();
         _refreshPresetEditTools();
         UIUtils.toast(`${checked.length}개 항목이 추가됐습니다.`, 'success');
     }
@@ -22381,6 +22608,7 @@ var ProdQualityModule = (function() {
         const targets = rows.filter(r => r.querySelector('.pq-preset-delete')?.checked);
         if (!targets.length) { UIUtils.toast('삭제할 항목을 체크하세요.', 'warning'); return; }
         targets.forEach(r => r.remove());
+        _ensurePresetEmptyRow();
         _refreshPresetEditTools();
     }
 
@@ -22702,7 +22930,22 @@ var ProdQualityModule = (function() {
     function printIssue(id) {
         const d = Storage.getById(STORE, id);
         if (!d) return;
-        const items = _sortItemsByMaster(_normalizeQualityItems(d.items || []));
+        // 발행 당시 저장된 items가 기본 마스터(색차·광택 등)여도,
+        // 인쇄/재인쇄는 현재 품목별 항목 기준(프리셋)을 우선 적용한다.
+        const product = _findProductForQuality(d.carModel || '', d.partName || '', d.color || '');
+        const resolvedColor = product && d.line
+            ? (_resolveProductColor(product, d.line) || _resolveIssueColor(d.carModel || '', d.partName || '', d.color || ''))
+            : _resolveIssueColor(d.carModel || '', d.partName || '', d.color || '');
+        const templateItems = (d.carModel && d.partName)
+            ? _issueItemsForProduct(d.carModel || '', d.partName || '', resolvedColor, [], d.line || '')
+                .filter(item => item.selected !== false)
+            : [];
+        const items = _sortItemsByMaster(
+            (templateItems.length
+                ? _mergeIssueItems(templateItems, d.items || [])
+                : _normalizeQualityItems(d.items || [])
+            ).map(item => _normalizeItemForEdit({ ...item }))
+        );
         const typeHeaders = (d.types && d.types.length ? d.types : ['초물', '중물', '종물']);
         const selectedTypes = new Set(typeHeaders);
         const measureCellMode = item => {
@@ -23069,6 +23312,8 @@ window.addEventListener('afterprint', () => {
         ,openItemListModal
         ,saveItemMaster
         ,addMasterItemRow
+        ,_insertMasterItemRow
+        ,onMasterSpecModeChange
         ,deleteCheckedMasterItems
         ,openTemplateModal
         ,openBulkTemplateModal
@@ -23130,6 +23375,7 @@ window.addEventListener('afterprint', () => {
         ,_pqSaveCurrentAsPreset
         ,openPresetMgmtModal
         ,openPresetEditModal
+        ,loadPresetReference
         ,addPresetItemRow
         ,addPresetItemFromPicker
         ,_pqShowPresetAddPanel

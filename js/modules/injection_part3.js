@@ -176,6 +176,7 @@ var PaintIncomingInspectionModule = (function() {
     function renderStats(data) {
         const total = data.length;
         const passCount = data.filter(d => d.verdict === '합격').length;
+        const specialCount = data.filter(d => d.verdict === '특채').length;
         const failCount = data.filter(d => d.verdict === '불합격').length;
         const totalQty = data.reduce((s, d) => s + (Number(d.incomingQty) || 0), 0);
 
@@ -192,6 +193,10 @@ var PaintIncomingInspectionModule = (function() {
                 <div class="stat-card-value">${passCount}</div>
                 <div class="stat-card-label">합격</div>
             </div>
+            <div class="stat-card orange">
+                <div class="stat-card-value">${specialCount}</div>
+                <div class="stat-card-label">특채</div>
+            </div>
             <div class="stat-card red">
                 <div class="stat-card-value">${failCount}</div>
                 <div class="stat-card-label">불합격</div>
@@ -207,10 +212,16 @@ var PaintIncomingInspectionModule = (function() {
         }
 
         tbody.innerHTML = data.map(d => {
-            const verdictType = d.verdict === '합격' ? 'success' : 'danger';
-            const containerType = d.containerStatus === '합격' ? 'success' : (d.containerStatus === '불합격' ? 'danger' : '');
-            const expType = d.expDateCheck === '합격' ? 'success' : (d.expDateCheck === '불합격' ? 'danger' : '');
-            const certType = d.certCheck === '합격' ? 'success' : (d.certCheck === '불합격' ? 'danger' : '');
+            const verdictType = d.verdict === '합격' ? 'success'
+                : d.verdict === '특채' ? 'warning'
+                : 'danger';
+            const containerType = (d.containerStatus === '양호' || d.containerStatus === '합격') ? 'success'
+                : (d.containerStatus === '불량' || d.containerStatus === '불합격') ? 'danger' : '';
+            const expType = (d.expDateCheck === '3개월 미만' || d.expDateCheck === '합격') ? 'success'
+                : (d.expDateCheck === '6개월 미만') ? 'info'
+                : (d.expDateCheck === '불합격' || d.expDateCheck === '6개월 이상') ? 'danger' : '';
+            const certType = d.certCheck === '합격' || d.certCheck === '접수완료' ? 'success'
+                : (d.certCheck === '불합격' || d.certCheck === '접수대기') ? 'danger' : '';
             const _dsp = (d.date || '').split(' ');
             const _dpp = (_dsp[0] || '').split('-');
             const _dtt = _dsp[1] ? _dsp[1].slice(0,5) : '';
@@ -458,10 +469,14 @@ var PaintIncomingInspectionModule = (function() {
                         <td style="padding:10px 14px;text-align:center;">
                             <div style="display:flex;gap:20px;justify-content:center;">
                                 <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.875rem;">
-                                    <input type="radio" name="piContainer" value="합격" ${d.containerStatus === '합격' ? 'checked' : ''}> 합격
+                                    <input type="radio" name="piContainer" value="양호"
+                                        ${d.containerStatus === '양호' || d.containerStatus === '합격' ? 'checked' : ''}
+                                        onchange="PaintIncomingInspectionModule.onContainerStatusChange()"> 양호
                                 </label>
                                 <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.875rem;">
-                                    <input type="radio" name="piContainer" value="불합격" ${d.containerStatus === '불합격' ? 'checked' : ''}> 불합격
+                                    <input type="radio" name="piContainer" value="불량"
+                                        ${d.containerStatus === '불량' || d.containerStatus === '불합격' ? 'checked' : ''}
+                                        onchange="PaintIncomingInspectionModule.onContainerStatusChange()"> 불량
                                 </label>
                             </div>
                         </td>
@@ -470,19 +485,45 @@ var PaintIncomingInspectionModule = (function() {
                         </td>
                     </tr>
                     <tr style="border-bottom:1px solid var(--border);">
-                        <td style="padding:10px 14px;color:var(--text-primary);font-weight:500;">유효기간 확인</td>
+                        <td style="padding:10px 14px;color:var(--text-primary);font-weight:500;">유효기간 확인
+                            <div style="font-size:0.72rem;color:var(--text-muted);font-weight:400;margin-top:2px;">제조일 기준 자동 판정 · 6개월 이상은 생산 확인 후 입고</div>
+                        </td>
                         <td style="padding:10px 14px;text-align:center;">
-                            <div style="display:flex;gap:20px;justify-content:center;">
-                                <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.875rem;">
-                                    <input type="radio" name="piExpCheck" value="합격" ${d.expDateCheck === '합격' ? 'checked' : ''}> 합격
+                            <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-start;justify-content:center;max-width:260px;margin:0 auto;">
+                                <div style="font-size:0.82rem;font-weight:600;color:var(--text-secondary);">제조일로부터 <span style="font-weight:400;color:var(--text-muted);">(자동)</span></div>
+                                <label style="display:flex;align-items:center;gap:6px;font-size:0.875rem;opacity:0.95;">
+                                    <input type="radio" name="piExpCheck" value="3개월 미만" disabled
+                                        ${d.expDateCheck === '3개월 미만' || d.expDateCheck === '합격' ? 'checked' : ''}> 3개월 미만
                                 </label>
-                                <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.875rem;">
-                                    <input type="radio" name="piExpCheck" value="불합격" ${d.expDateCheck === '불합격' ? 'checked' : ''}> 불합격
+                                <label style="display:flex;align-items:center;gap:6px;font-size:0.875rem;opacity:0.95;">
+                                    <input type="radio" name="piExpCheck" value="6개월 미만" disabled
+                                        ${d.expDateCheck === '6개월 미만' ? 'checked' : ''}> 6개월 미만
                                 </label>
+                                <label style="display:flex;align-items:center;gap:6px;font-size:0.875rem;color:var(--accent-red);font-weight:600;opacity:0.95;">
+                                    <input type="radio" name="piExpCheck" value="6개월 이상" disabled
+                                        ${d.expDateCheck === '6개월 이상' ? 'checked' : ''}> 6개월 이상
+                                </label>
+                                <input type="hidden" id="piExpCheckValue" value="${d.expDateCheck === '합격' ? '3개월 미만' : (d.expDateCheck || '')}">
                             </div>
+                            <div id="piExpAgeHint" style="display:none;margin-top:8px;font-size:0.78rem;color:var(--accent-red);font-weight:600;"></div>
                         </td>
                         <td style="padding:8px 14px;">
                             <input type="text" class="form-input" id="piExpCheckNote" placeholder="특이사항" value="${d.expDateCheckNote || ''}" style="margin:0;padding:6px 10px;">
+                        </td>
+                    </tr>
+                    <tr id="piOver6NotifyRow" style="border-bottom:1px solid var(--border);${d.expDateCheck === '6개월 이상' ? '' : 'display:none;'}">
+                        <td colspan="3" style="padding:12px 14px;background:#fff7ed;">
+                            <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px;padding:10px 12px;border:1px solid #fdba74;border-radius:8px;background:#fff;">
+                                <span class="material-symbols-outlined" style="color:#ea580c;font-size:22px;">verified</span>
+                                <div>
+                                    <div style="font-weight:700;color:#c2410c;margin-bottom:2px;">6개월 이상 — 특채 · 생산 확인 후 입고</div>
+                                    <div style="font-size:0.82rem;color:var(--text-secondary);">
+                                        원칙상 입고 불가입니다. <strong>특채</strong>로 등록되며 품질·생산 관리자에게 통보됩니다.
+                                        생산 일정에 소모 가능한지 확인 후 창고 입고 처리됩니다.
+                                    </div>
+                                </div>
+                            </div>
+                            <input type="hidden" id="piOver6Notified" value="${d.over6Notified ? '1' : ''}">
                         </td>
                     </tr>
                     <tr style="border-bottom:1px solid var(--border);">
@@ -530,9 +571,10 @@ var PaintIncomingInspectionModule = (function() {
             <div class="form-row" style="margin-top:20px;">
                 <div class="form-group">
                     <label class="form-label">최종 판정 <span style="color:var(--accent-red)">*</span></label>
-                    <select class="form-select" id="piVerdict">
+                    <select class="form-select" id="piVerdict" onchange="PaintIncomingInspectionModule.onVerdictChange()">
                         <option value="">-- 선택 --</option>
                         <option value="합격" ${d.verdict === '합격' ? 'selected' : ''}>✅ 합격</option>
+                        <option value="특채" ${d.verdict === '특채' ? 'selected' : ''}>⚠ 특채 (예외 입고)</option>
                         <option value="불합격" ${d.verdict === '불합격' ? 'selected' : ''}>❌ 불합격</option>
                     </select>
                 </div>
@@ -541,12 +583,37 @@ var PaintIncomingInspectionModule = (function() {
                     <input type="text" class="form-input" id="piNote" placeholder="비고" value="${d.note || ''}">
                 </div>
             </div>
+            <div id="piSpecialApprovalRow" style="margin-top:12px;${d.verdict === '특채' || d.expDateCheck === '6개월 이상' ? '' : 'display:none;'}">
+                <div style="padding:12px 14px;border:1px solid #fbbf24;border-radius:8px;background:#fffbeb;">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                        <span class="material-symbols-outlined" style="color:#d97706;">verified</span>
+                        <strong style="color:#b45309;">특채 — 생산 일정 확인 후 입고</strong>
+                    </div>
+                    <div style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:10px;">
+                        6개월 이상 도료는 특채로 등록됩니다. 생산관리자·품질관리자가 일정 소모 가능 여부를 확인한 후 창고 입고가 가능합니다.
+                    </div>
+                    <div class="form-group" style="margin:0 0 10px;">
+                        <label class="form-label">특채 사유 <span style="color:var(--accent-red)">*</span></label>
+                        <input type="text" class="form-input" id="piSpecialReason"
+                            placeholder="특채 사유 (예: 생산 긴급 투입, 품질 확인 후 사용 등)"
+                            value="${d.specialReason || (d.expDateCheck === '6개월 이상' ? '제조일로부터 6개월 이상 — 특채 입고' : '')}">
+                    </div>
+                    <div id="piSpecialNotifyWrap">
+                        ${_buildProdNotifySelectorHtml(
+                            d.specialNotifyRecipients || d.over6NotifyRecipients || _defaultNotifyRecipientIds(),
+                            'pi-special-notify-user'
+                        )}
+                    </div>
+                </div>
+            </div>
         `;
     }
 
     function collectFormData() {
         const dateVal = document.getElementById('piDate').value;
         const timeVal = document.getElementById('piTime').value;
+        const expHidden = (document.getElementById('piExpCheckValue') || {}).value || '';
+        const expRadio = (document.querySelector('input[name="piExpCheck"]:checked') || {}).value || '';
         return {
             date: `${dateVal} ${timeVal}`.trim(),
             inspector: document.getElementById('piInspector').value.trim(),
@@ -560,7 +627,7 @@ var PaintIncomingInspectionModule = (function() {
             lotNo: document.getElementById('piLotNo').value.trim(),
             containerStatus: (document.querySelector('input[name="piContainer"]:checked') || {}).value || '',
             containerNote: document.getElementById('piContainerNote').value.trim(),
-            expDateCheck: (document.querySelector('input[name="piExpCheck"]:checked') || {}).value || '',
+            expDateCheck: expHidden || expRadio,
             expDateCheckNote: document.getElementById('piExpCheckNote').value.trim(),
             certCheck: (document.querySelector('input[name="piCert"]:checked') || {}).value || '',
             certNote: document.getElementById('piCertNote').value.trim(),
@@ -568,14 +635,279 @@ var PaintIncomingInspectionModule = (function() {
             nameplatePhotoUrl: (document.getElementById('piNameplatePhotoUrl') || {}).value || '',
             lotCheck: document.getElementById('piLotCheckValue')?.value || '',
             verdict: document.getElementById('piVerdict').value,
-            note: document.getElementById('piNote').value.trim()
+            note: document.getElementById('piNote').value.trim(),
+            specialReason: (document.getElementById('piSpecialReason') || {}).value
+                ? document.getElementById('piSpecialReason').value.trim() : '',
+            specialNotifyRecipients: _getSelectedProdNotifyUsers('pi-special-notify-user'),
+            over6NotifyRecipients: _getSelectedProdNotifyUsers('pi-over6-notify-user'),
+            over6Notified: (document.getElementById('piOver6Notified') || {}).value === '1'
         };
+    }
+
+    // ── 생산 통보 (6개월 이상 / 특채) ────────────────────────────────
+    function _getProdNotifyUsers() {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.getUsers !== 'function') return [];
+        const users = AuthModule.getUsers() || [];
+        const roleMap = (AuthModule.ROLES || []).reduce((map, role) => {
+            map[role.key] = role;
+            return map;
+        }, {});
+        const preferRoles = new Set(['prod_manager', 'quality_manager']);
+        return users
+            .filter(u => u && u.active !== false)
+            .map(u => {
+                const roles = [...(Array.isArray(u.roles) ? u.roles : []), u.role].filter(Boolean).map(String);
+                const primary = roles.find(r => preferRoles.has(r)) || '';
+                if (!primary) return null;
+                const role = roleMap[primary] || null;
+                return {
+                    id: String(u.id || ''),
+                    name: String(u.displayName || u.username || u.id || ''),
+                    role: primary,
+                    roleLabel: role ? role.label : primary,
+                    roleColor: role ? role.color : 'var(--text-muted)',
+                    preferred: true
+                };
+            })
+            .filter(u => u && u.id)
+            .sort((a, b) => a.roleLabel.localeCompare(b.roleLabel, 'ko') || a.name.localeCompare(b.name, 'ko'));
+    }
+
+    function _defaultNotifyRecipientIds() {
+        return _getProdNotifyUsers().map(u => u.id);
+    }
+
+    function _autoSelectNotifyUsers(checkboxClass) {
+        const checks = Array.from(document.querySelectorAll('.' + (checkboxClass || 'pi-special-notify-user')));
+        checks.forEach(check => { check.checked = true; });
+    }
+
+    function _buildProdNotifySelectorHtml(selectedIds, checkboxClass) {
+        const cls = checkboxClass || 'pi-special-notify-user';
+        const users = _getProdNotifyUsers();
+        const selected = new Set(
+            (selectedIds && selectedIds.length ? selectedIds : users.map(u => u.id)).map(String)
+        );
+        if (!users.length) {
+            return '<div style="padding:10px 12px;border:1px dashed rgba(239,68,68,0.35);border-radius:6px;font-size:0.8rem;color:var(--text-muted);">선택 가능한 품질/생산 관리자가 없습니다.</div>';
+        }
+        const groups = {};
+        users.forEach(user => {
+            const key = user.role || '__none__';
+            if (!groups[key]) groups[key] = { label: user.roleLabel, color: user.roleColor, items: [] };
+            groups[key].items.push(user);
+        });
+        const roleBlocks = Object.keys(groups).map(key => {
+            const group = groups[key];
+            return `<div style="display:flex;flex-direction:column;gap:8px;">
+                <div style="font-size:0.78rem;font-weight:700;color:${group.color};">${group.label}</div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;">
+                    ${group.items.map(user => `
+                        <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid rgba(239,68,68,0.18);border-radius:8px;background:#fff;cursor:pointer;">
+                            <input type="checkbox" class="${cls}" value="${user.id}"
+                                ${selected.has(user.id) ? 'checked' : ''}
+                                style="width:16px;height:16px;accent-color:#dc2626;">
+                            <span style="font-size:0.82rem;color:var(--text-primary);font-weight:600;">${user.name}</span>
+                        </label>`).join('')}
+                </div>
+            </div>`;
+        }).join('');
+        return `<div style="border:1px solid rgba(239,68,68,0.25);border-radius:8px;background:#fff;padding:10px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+                <div style="font-size:0.8rem;font-weight:700;color:#dc2626;">생산 통보 수신자 지정</div>
+                <button type="button" class="btn btn-outline btn-sm" onclick="PaintIncomingInspectionModule.toggleOver6NotifyUsers(true, '${cls}')">전체 선택</button>
+            </div>
+            <div style="font-size:0.76rem;color:var(--text-muted);margin-bottom:10px;">품질 관리자·생산 관리자 중 통보받을 담당자를 선택하세요.</div>
+            <div style="display:flex;flex-direction:column;gap:12px;max-height:180px;overflow:auto;">${roleBlocks}</div>
+        </div>`;
+    }
+
+    function _getSelectedProdNotifyUsers(checkboxClass) {
+        const cls = checkboxClass || 'pi-over6-notify-user';
+        return Array.from(document.querySelectorAll('.' + cls + ':checked'))
+            .map(el => String(el.value || '').trim())
+            .filter(Boolean);
+    }
+
+    function toggleOver6NotifyUsers(forceCheck, checkboxClass) {
+        const cls = checkboxClass || 'pi-over6-notify-user';
+        const checks = Array.from(document.querySelectorAll('.' + cls));
+        if (!checks.length) return;
+        const shouldCheck = typeof forceCheck === 'boolean'
+            ? forceCheck
+            : checks.some(check => !check.checked);
+        checks.forEach(check => { check.checked = shouldCheck; });
+    }
+
+    function _sendOver6ProdNotification(data, recipientIds, opts) {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return false;
+        if (!Array.isArray(recipientIds) || !recipientIds.length) return false;
+        const months = _monthsSinceMfg(data.mfgDate, (data.date || '').split(' ')[0] || UIUtils.today());
+        const isSpecial = !!(opts && opts.special);
+        return AuthModule.sendInternalMessage({
+            targetType: 'user',
+            targetIds: recipientIds,
+            title: isSpecial
+                ? '도료 수입검사 — 특채(생산 확인 후 입고) 통보'
+                : '도료 수입검사 — 6개월 이상 입고 불가 통보',
+            body: [
+                isSpecial
+                    ? '제조일로부터 6개월 이상 경과 도료를 특채로 등록했습니다. 생산 일정에 소모 가능한지 확인해 주세요.'
+                    : '제조일로부터 6개월 이상 경과한 도료가 수입검사에서 확인되었습니다.',
+                isSpecial
+                    ? '특채 사유를 확인하고, 생산 일정 소모 가능 여부 확인 후 입고 처리하세요.'
+                    : '입고 불가(불합격) 처리되며 생산 측에 통보합니다.',
+                '',
+                `검사일: ${data.date || '-'}`,
+                `구매처: ${data.supplier || '-'}`,
+                `원료명: ${data.paintName || '-'}`,
+                `제조일자: ${data.mfgDate || '-'}`,
+                `경과: ${months != null ? months + '개월' : '-'}`,
+                `제조사 LOT: ${data.lotNo || '-'}`,
+                `입고수량: ${UIUtils.formatNumber(data.incomingQty)}`,
+                `용기 상태: ${data.containerStatus || '-'}`,
+                `유효기간 확인: ${data.expDateCheck || '-'}`,
+                `최종 판정: ${data.verdict || '-'}`,
+                isSpecial && data.specialReason ? `특채 사유: ${data.specialReason}` : '',
+                `검사자: ${data.inspector || '-'}`,
+                data.expDateCheckNote ? `특이사항: ${data.expDateCheckNote}` : '',
+                data.note ? `비고: ${data.note}` : ''
+            ].filter(Boolean).join('\n'),
+            category: isSpecial ? 'paint_incoming_special' : 'paint_incoming_over6',
+            priority: 'high'
+        });
     }
 
     // ── 사진 이벤트 핸들러 ──────────────────────────────────────────
     function onCertCheckChange(radio) {
         const row = document.getElementById('piCertPhotoRow');
         if (row) row.style.display = radio.value === '접수완료' ? '' : 'none';
+    }
+
+    // 제조일 기준 경과 개월 수 (검사일 또는 오늘 기준)
+    function _monthsSinceMfg(mfgDate, baseDate) {
+        if (!mfgDate) return null;
+        const mfg = new Date(mfgDate);
+        const base = new Date(baseDate || UIUtils.today());
+        if (Number.isNaN(mfg.getTime()) || Number.isNaN(base.getTime())) return null;
+        let months = (base.getFullYear() - mfg.getFullYear()) * 12 + (base.getMonth() - mfg.getMonth());
+        if (base.getDate() < mfg.getDate()) months -= 1;
+        return months;
+    }
+
+    function _mfgAgeCategory(mfgDate, baseDate) {
+        const months = _monthsSinceMfg(mfgDate, baseDate);
+        if (months == null) return null;
+        if (months < 0) return 'future';
+        if (months < 3) return 'under3';
+        if (months < 6) return 'under6';
+        return 'over6';
+    }
+
+    function _syncExpCheckFromMfg() {
+        const mfgEl = document.getElementById('piMfgDate');
+        const inspEl = document.getElementById('piDate');
+        const hintEl = document.getElementById('piExpAgeHint');
+        const hiddenEl = document.getElementById('piExpCheckValue');
+        const radios = document.querySelectorAll('input[name="piExpCheck"]');
+        if (!mfgEl || !mfgEl.value) {
+            if (hintEl) { hintEl.style.display = 'none'; hintEl.textContent = ''; }
+            if (hiddenEl) hiddenEl.value = '';
+            radios.forEach(r => { r.checked = false; });
+            _updateOver6NotifyRow();
+            onVerdictChange();
+            return;
+        }
+        const cat = _mfgAgeCategory(mfgEl.value, inspEl ? inspEl.value : UIUtils.today());
+        let value = '';
+        if (cat === 'under3') {
+            value = '3개월 미만';
+            if (hintEl) { hintEl.style.display = 'block'; hintEl.style.color = 'var(--accent-green)'; hintEl.textContent = '✓ 자동 판정: 제조일로부터 3개월 미만 — 입고 가능'; }
+        } else if (cat === 'under6') {
+            value = '6개월 미만';
+            if (hintEl) { hintEl.style.display = 'block'; hintEl.style.color = 'var(--accent-orange)'; hintEl.textContent = '✓ 자동 판정: 제조일로부터 6개월 미만 — 입고 가능'; }
+        } else if (cat === 'over6') {
+            value = '6개월 이상';
+            if (hintEl) { hintEl.style.display = 'block'; hintEl.style.color = 'var(--accent-red)'; hintEl.textContent = '⚠ 자동 판정: 6개월 이상 — 특채 등록 · 생산 확인 후 입고'; }
+        } else if (cat === 'future') {
+            value = '';
+            if (hintEl) { hintEl.style.display = 'block'; hintEl.style.color = 'var(--accent-red)'; hintEl.textContent = '⛔ 제조일자가 미래입니다.'; }
+        } else if (hintEl) {
+            hintEl.style.display = 'none';
+            hintEl.textContent = '';
+        }
+        radios.forEach(r => { r.checked = r.value === value; });
+        if (hiddenEl) hiddenEl.value = value;
+        _updateOver6NotifyRow();
+        _syncVerdictFromChecks();
+        onVerdictChange();
+        if (value === '6개월 이상') {
+            const reasonEl = document.getElementById('piSpecialReason');
+            if (reasonEl && !reasonEl.value.trim()) {
+                reasonEl.value = '제조일로부터 6개월 이상 — 특채 입고';
+            }
+            _autoSelectNotifyUsers('pi-special-notify-user');
+        }
+    }
+
+    function _updateOver6NotifyRow() {
+        const row = document.getElementById('piOver6NotifyRow');
+        const expCheck = (document.getElementById('piExpCheckValue') || {}).value
+            || (document.querySelector('input[name="piExpCheck"]:checked') || {}).value || '';
+        const show = expCheck === '6개월 이상';
+        if (row) row.style.display = show ? '' : 'none';
+        if (!show) {
+            const notified = document.getElementById('piOver6Notified');
+            if (notified) notified.value = '';
+        }
+    }
+
+    function onExpCheckChange() {
+        _updateOver6NotifyRow();
+        _syncVerdictFromChecks();
+        onVerdictChange();
+    }
+
+    function onContainerStatusChange() {
+        _syncVerdictFromChecks();
+        onVerdictChange();
+    }
+
+    function onVerdictChange() {
+        const verdictEl = document.getElementById('piVerdict');
+        const verdict = (verdictEl || {}).value || '';
+        const expCheck = (document.getElementById('piExpCheckValue') || {}).value
+            || (document.querySelector('input[name="piExpCheck"]:checked') || {}).value || '';
+        const specialRow = document.getElementById('piSpecialApprovalRow');
+        const showSpecial = verdict === '특채' || expCheck === '6개월 이상';
+        if (specialRow) specialRow.style.display = showSpecial ? '' : 'none';
+        if (showSpecial) _autoSelectNotifyUsers('pi-special-notify-user');
+    }
+
+    function _syncVerdictFromChecks() {
+        const verdictEl = document.getElementById('piVerdict');
+        if (!verdictEl) return;
+        const container = (document.querySelector('input[name="piContainer"]:checked') || {}).value || '';
+        const expCheck = (document.getElementById('piExpCheckValue') || {}).value
+            || (document.querySelector('input[name="piExpCheck"]:checked') || {}).value || '';
+        const mfgEl = document.getElementById('piMfgDate');
+        const inspEl = document.getElementById('piDate');
+        const cat = mfgEl && mfgEl.value
+            ? _mfgAgeCategory(mfgEl.value, inspEl ? inspEl.value : UIUtils.today())
+            : null;
+
+        if (container === '불량' || cat === 'future') {
+            verdictEl.value = '불합격';
+            return;
+        }
+        // 6개월 이상 → 특채 자동
+        if (expCheck === '6개월 이상' || cat === 'over6') {
+            verdictEl.value = '특채';
+            return;
+        }
+        if (container === '양호' && (expCheck === '3개월 미만' || expCheck === '6개월 미만')) {
+            verdictEl.value = '합격';
+        }
     }
 
     function onNameplateFileChange(input) {
@@ -645,6 +977,58 @@ var PaintIncomingInspectionModule = (function() {
         if (!data.expDateCheck) { UIUtils.toast('검사항목 — 유효기간 확인을 선택하세요.', 'warning'); return false; }
         if (!data.certCheck) { UIUtils.toast('검사항목 — 성적서 접수 확인을 선택하세요.', 'warning'); return false; }
         if (!data.verdict) { UIUtils.toast('최종 판정을 선택하세요.', 'warning'); return false; }
+
+        const ageCat = _mfgAgeCategory(data.mfgDate, (data.date || '').split(' ')[0] || UIUtils.today());
+        if (ageCat === 'future') {
+            UIUtils.toast('제조일자는 오늘 날짜보다 미래일 수 없습니다.', 'warning');
+            return false;
+        }
+        if (data.containerStatus === '불량' && (data.verdict === '합격' || data.verdict === '특채')) {
+            UIUtils.toast('용기 상태가 불량이면 합격/특채 판정할 수 없습니다.', 'warning');
+            return false;
+        }
+
+        // 6개월 이상: 특채 자동 처리 + 품질/생산 관리자 통보
+        if (data.expDateCheck === '6개월 이상' || ageCat === 'over6') {
+            if (data.verdict !== '특채') {
+                UIUtils.toast('6개월 이상 도료는 특채 자동 처리됩니다. 최종 판정을 확인하세요.', 'warning');
+                return false;
+            }
+            if (!data.specialReason) {
+                UIUtils.toast('특채 사유를 입력하세요.', 'warning');
+                return false;
+            }
+            const recipients = (data.specialNotifyRecipients && data.specialNotifyRecipients.length)
+                ? data.specialNotifyRecipients
+                : _defaultNotifyRecipientIds();
+            if (!recipients.length) {
+                UIUtils.toast('통보할 품질/생산 관리자가 없습니다. 사용자 역할을 확인하세요.', 'warning');
+                return false;
+            }
+            data.specialNotifyRecipients = recipients;
+            return true;
+        }
+
+        if (data.verdict === '특채') {
+            if (!data.specialReason) {
+                UIUtils.toast('특채 사유를 입력하세요.', 'warning');
+                return false;
+            }
+            const recipients = (data.specialNotifyRecipients && data.specialNotifyRecipients.length)
+                ? data.specialNotifyRecipients
+                : _defaultNotifyRecipientIds();
+            if (!recipients.length) {
+                UIUtils.toast('특채 시 품질/생산 관리자 통보 대상이 없습니다.', 'warning');
+                return false;
+            }
+            data.specialNotifyRecipients = recipients;
+            return true;
+        }
+
+        if (data.verdict === '합격' && data.expDateCheck !== '3개월 미만' && data.expDateCheck !== '6개월 미만') {
+            UIUtils.toast('유효기간 확인(3개월 미만 / 6개월 미만)이 자동 판정되어야 합격 입고할 수 있습니다.', 'warning');
+            return false;
+        }
         return true;
     }
 
@@ -919,16 +1303,22 @@ var PaintIncomingInspectionModule = (function() {
             if (mfgDateInput) mfgDateInput.addEventListener('change', () => {
                 calcExpDate();
                 checkLotStatus();
+                _syncExpCheckFromMfg();
             });
             if (shelfLifeInput) shelfLifeInput.addEventListener('change', calcExpDate);
             // 유효기간 직접 수정 시 경고 체크
             if (expDateInput) expDateInput.addEventListener('change', checkExpDateWarning);
             // 검사일 변경 시 경고 재체크
             const inspDateEl = document.getElementById('piDate');
-            if (inspDateEl) inspDateEl.addEventListener('change', checkExpDateWarning);
+            if (inspDateEl) inspDateEl.addEventListener('change', () => {
+                checkExpDateWarning();
+                _syncExpCheckFromMfg();
+            });
 
             checkLotStatus();
             checkExpDateWarning();
+            _syncExpCheckFromMfg();
+            onVerdictChange();
             updateInventoryDisplay();
         }, 100);
     }
@@ -956,9 +1346,47 @@ var PaintIncomingInspectionModule = (function() {
             await _uploadPendingPhotos();
         } catch (e) { return; }
         const finalData = collectFormData();
+        // 저장 직전 자동 판정 재동기화
+        if (finalData.mfgDate) {
+            const ageCat = _mfgAgeCategory(finalData.mfgDate, (finalData.date || '').split(' ')[0] || UIUtils.today());
+            if (ageCat === 'under3') finalData.expDateCheck = '3개월 미만';
+            else if (ageCat === 'under6') finalData.expDateCheck = '6개월 미만';
+            else if (ageCat === 'over6') {
+                finalData.expDateCheck = '6개월 이상';
+                finalData.verdict = '특채';
+                if (!finalData.specialReason) finalData.specialReason = '제조일로부터 6개월 이상 — 특채 입고';
+            }
+        }
+        if (finalData.verdict === '특채' || finalData.expDateCheck === '6개월 이상') {
+            const recipients = (finalData.specialNotifyRecipients && finalData.specialNotifyRecipients.length)
+                ? finalData.specialNotifyRecipients
+                : _defaultNotifyRecipientIds();
+            if (!recipients.length) {
+                UIUtils.toast('통보할 품질/생산 관리자가 없습니다.', 'error');
+                return;
+            }
+            finalData.verdict = '특채';
+            finalData.specialNotifyRecipients = recipients;
+            finalData.over6NotifyRecipients = recipients;
+            const ok = _sendOver6ProdNotification(finalData, recipients, { special: true });
+            if (!ok) {
+                UIUtils.toast('특채 통보 전송에 실패했습니다. 로그인 상태를 확인하세요.', 'error');
+                return;
+            }
+            finalData.over6Notified = true;
+            finalData.over6NotifiedAt = new Date().toISOString();
+            finalData.specialNotified = true;
+            finalData.specialNotifiedAt = finalData.over6NotifiedAt;
+            finalData.prodConfirmed = false;
+        }
         await Storage.add(STORE, finalData);
         UIUtils.closeModal();
-        UIUtils.toast('도료 수입검사가 등록되었습니다.', 'success');
+        UIUtils.toast(
+            finalData.verdict === '특채'
+                ? '특채 등록 및 통보 완료. 생산 일정 확인 후 입고 처리하세요.'
+                : '도료 수입검사가 등록되었습니다.',
+            finalData.verdict === '특채' ? 'warning' : 'success'
+        );
         search();
         if (typeof PaintInventoryModule !== 'undefined' && PaintInventoryModule.renderPaintInspStandby) {
             PaintInventoryModule.renderPaintInspStandby();
@@ -990,6 +1418,61 @@ var PaintIncomingInspectionModule = (function() {
             await _uploadPendingPhotos();
         } catch (e) { return; }
         const finalData = collectFormData();
+        const prev = Storage.getById(STORE, id) || {};
+        if (finalData.mfgDate) {
+            const ageCat = _mfgAgeCategory(finalData.mfgDate, (finalData.date || '').split(' ')[0] || UIUtils.today());
+            if (ageCat === 'under3') finalData.expDateCheck = '3개월 미만';
+            else if (ageCat === 'under6') finalData.expDateCheck = '6개월 미만';
+            else if (ageCat === 'over6') {
+                finalData.expDateCheck = '6개월 이상';
+                finalData.verdict = '특채';
+                if (!finalData.specialReason) finalData.specialReason = '제조일로부터 6개월 이상 — 특채 입고';
+            }
+        }
+        if ((finalData.verdict === '특채' || finalData.expDateCheck === '6개월 이상') && !prev.specialNotified && !prev.over6Notified) {
+            const recipients = (finalData.specialNotifyRecipients && finalData.specialNotifyRecipients.length)
+                ? finalData.specialNotifyRecipients
+                : _defaultNotifyRecipientIds();
+            if (!recipients.length) {
+                UIUtils.toast('통보할 품질/생산 관리자가 없습니다.', 'error');
+                return;
+            }
+            finalData.verdict = '특채';
+            finalData.specialNotifyRecipients = recipients;
+            finalData.over6NotifyRecipients = recipients;
+            const ok = _sendOver6ProdNotification(finalData, recipients, { special: true });
+            if (!ok) {
+                UIUtils.toast('특채 통보 전송에 실패했습니다. 로그인 상태를 확인하세요.', 'error');
+                return;
+            }
+            finalData.over6Notified = true;
+            finalData.over6NotifiedAt = new Date().toISOString();
+            finalData.specialNotified = true;
+            finalData.specialNotifiedAt = finalData.over6NotifiedAt;
+            finalData.prodConfirmed = false;
+        } else if (prev.over6Notified || prev.specialNotified) {
+            finalData.over6Notified = true;
+            finalData.over6NotifiedAt = prev.over6NotifiedAt || prev.specialNotifiedAt || '';
+            finalData.specialNotified = !!prev.specialNotified || finalData.verdict === '특채';
+            finalData.specialNotifiedAt = prev.specialNotifiedAt || '';
+            if (prev.prodConfirmed) {
+                finalData.prodConfirmed = true;
+                finalData.prodConfirmedAt = prev.prodConfirmedAt || '';
+                finalData.prodConfirmedBy = prev.prodConfirmedBy || '';
+                finalData.prodConfirmNote = prev.prodConfirmNote || '';
+            } else if (finalData.verdict === '특채') {
+                finalData.prodConfirmed = false;
+            }
+            if (!finalData.over6NotifyRecipients.length && prev.over6NotifyRecipients) {
+                finalData.over6NotifyRecipients = prev.over6NotifyRecipients;
+            }
+            if (!finalData.specialNotifyRecipients.length && prev.specialNotifyRecipients) {
+                finalData.specialNotifyRecipients = prev.specialNotifyRecipients;
+            }
+            if (!finalData.specialReason && prev.specialReason) {
+                finalData.specialReason = prev.specialReason;
+            }
+        }
         await Storage.update(STORE, id, finalData);
         UIUtils.closeModal();
         UIUtils.toast('수정되었습니다.', 'success');
@@ -1003,7 +1486,10 @@ var PaintIncomingInspectionModule = (function() {
         const d = Storage.getById(STORE, id);
         if (!d) return;
         const verdictText = d.verdict || '-';
-        const verdictColor = d.verdict === '합격' ? 'var(--accent-green)' : d.verdict === '불합격' ? 'var(--accent-red)' : 'var(--text-muted)';
+        const verdictColor = d.verdict === '합격' ? 'var(--accent-green)'
+            : d.verdict === '특채' ? 'var(--accent-orange)'
+            : d.verdict === '불합격' ? 'var(--accent-red)'
+            : 'var(--text-muted)';
 
         const row = (label, value) =>
             `<div style="display:flex;gap:0;border-bottom:1px solid var(--border);">
@@ -1024,6 +1510,14 @@ var PaintIncomingInspectionModule = (function() {
                 ${row('LOT 구분', d.lotCheck || '-')}
                 ${row('용기 상태', d.containerStatus || '-')}
                 ${row('유효기간 확인', d.expDateCheck || '-')}
+                ${d.verdict === '특채' ? row('특채 사유', d.specialReason || '-') : ''}
+                ${(d.expDateCheck === '6개월 이상' || d.verdict === '특채') ? row('생산 통보', (d.over6Notified || d.specialNotified)
+                    ? `✓ 통보 완료${((d.specialNotifyRecipients || d.over6NotifyRecipients || []).length) ? ` (${(d.specialNotifyRecipients || d.over6NotifyRecipients || []).length}명)` : ''}`
+                    : '미통보') : ''}
+                ${d.verdict === '특채' ? row('생산 확인', d.prodConfirmed
+                    ? `✓ 확인 완료 (${d.prodConfirmedBy || '-'}${d.prodConfirmedAt ? ' / ' + String(d.prodConfirmedAt).slice(0, 10) : ''})`
+                    : '생산 일정 소모 확인 대기') : ''}
+                ${d.verdict === '특채' && d.prodConfirmNote ? row('생산 확인 비고', d.prodConfirmNote) : ''}
                 ${row('성적서 접수', d.certCheck || '-')}
                 ${d.certPhotoUrl ? row('성적서 사진', `<a href="${ApiClient.photoUrl(d.certPhotoUrl)}" target="_blank"><img src="${ApiClient.photoUrl(d.certPhotoUrl)}" style="max-height:80px;border-radius:6px;border:1px solid var(--border);cursor:pointer;"></a>`) : ''}
                 ${d.nameplatePhotoUrl ? row('명판 사진', `<a href="${ApiClient.photoUrl(d.nameplatePhotoUrl)}" target="_blank"><img src="${ApiClient.photoUrl(d.nameplatePhotoUrl)}" style="max-height:80px;border-radius:6px;border:1px solid var(--border);cursor:pointer;"></a>`) : ''}
@@ -1284,6 +1778,10 @@ var PaintIncomingInspectionModule = (function() {
         _doDelete,
         exportData,
         onCertCheckChange,
+        onContainerStatusChange,
+        onExpCheckChange,
+        onVerdictChange,
+        toggleOver6NotifyUsers,
         onNameplateFileChange,
         onCertFileChange,
         markCertReceived,

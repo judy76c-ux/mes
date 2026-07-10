@@ -13858,7 +13858,7 @@ var ProdQualityModule = (function() {
                             <table class="data-table">
                                 <thead>
                                     <tr>
-                                        <th>No</th><th>발행일</th><th>구분</th><th>라인</th><th>차종/품명</th><th>LOT</th><th>항목수</th><th>상태</th><th>발행완료</th><th>DATA</th><th>작업</th>
+                                        <th>시간</th><th>라인</th><th>차종</th><th>품명</th><th>항목수</th><th>DATA 입력</th><th>작업</th>
                                     </tr>
                                 </thead>
                                 <tbody id="pqTableBody"></tbody>
@@ -14902,27 +14902,34 @@ var ProdQualityModule = (function() {
         }).join('');
     }
 
+    function _fmtIssueDateCell(d) {
+        const rawDate = String(d.date || '');
+        const rawPrinted = d.printedAt ? String(d.printedAt).replace('T', ' ') : '';
+        const datePart = (rawDate.split(/[ T]/)[0] || rawPrinted.split(/[ T]/)[0] || '');
+        const timePart = (rawPrinted.split(/[ T]/)[1] || rawDate.split(/[ T]/)[1] || '').slice(0, 5);
+        const p = datePart.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (!p) return _esc(datePart || '-');
+        return `<div style="text-align:center;line-height:1.3;white-space:nowrap;">
+            <div style="font-size:0.72rem;color:var(--text-muted);">${p[1]}</div>
+            <div style="font-weight:700;font-size:0.85rem;">${p[2]}-${p[3]}</div>
+            ${timePart ? `<div style="font-size:0.72rem;color:var(--text-muted);">${_esc(timePart)}</div>` : ''}
+        </div>`;
+    }
+
     function renderTable(data) {
         const tbody = document.getElementById('pqTableBody');
         const recordMap = new Map(_measureRecords().filter(r => r.issueId).map(r => [r.issueId, r]));
         const canDelete = _isAdminUser();
-        tbody.innerHTML = data.length === 0 ? `<tr><td colspan="11" style="text-align:center;padding:30px;">기록이 없습니다.</td></tr>` :
-            data.map((d, i) => {
+        tbody.innerHTML = data.length === 0 ? `<tr><td colspan="7" style="text-align:center;padding:30px;">기록이 없습니다.</td></tr>` :
+            data.map((d) => {
                 const record = recordMap.get(d.id);
-                const printedText = d.printedAt ? String(d.printedAt).replace('T', ' ').slice(0, 16) : '-';
-                const status = d.status || (d.printedAt ? '발행완료' : '발행대기');
-                const statusClass = status === '발행완료' ? 'badge-success' : 'badge-warning';
                 return `
                 <tr>
-                    <td>${data.length - i}</td>
-                    <td>${_esc(d.date || '')}</td>
-                    <td><span class="badge ${d.type === '초물' ? 'badge-info' : d.type === '중물' ? 'badge-warning' : 'badge-success'}">${d.type}</span></td>
+                    <td>${_fmtIssueDateCell(d)}</td>
                     <td>${_esc(d.line || '-')}</td>
-                    <td><strong>${_esc(d.carModel || '-')}</strong><br><span style="font-size:0.78rem;color:var(--text-muted);">${_esc(d.partName || '-')}</span></td>
-                    <td style="font-family:monospace;font-size:0.8rem;">${_esc(d.lotNo || '-')}</td>
-                    <td style="text-align:right;">${(d.items || []).length}</td>
-                    <td><span class="badge ${statusClass}">${_esc(status)}</span></td>
-                    <td style="font-size:0.78rem;color:var(--text-secondary);">${_esc(printedText)}</td>
+                    <td><strong>${_esc(d.carModel || '-')}</strong></td>
+                    <td>${_esc(d.partName || '-')}</td>
+                    <td style="text-align:center;">${(d.items || []).length}</td>
                     <td>${record ? '<span class="badge badge-success">입력완료</span>' : '<span class="badge badge-secondary">미입력</span>'}</td>
                     <td style="white-space:nowrap;">
                         <button class="btn btn-sm btn-primary" onclick="ProdQualityModule.printIssue('${_js(d.id)}')">인쇄물 발행</button>

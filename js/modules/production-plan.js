@@ -1252,59 +1252,67 @@ const ProductionPlanModule = (function() {
         const partNames = Object.keys(matColorMap);
         if (partNames.length === 0) return [];
 
-        // ★ 키: partName|lotNo (color 제거) — 출고 기록과 입고 기록이 같은 키로 집계됨
-        const lotMap = {};
-        all.forEach(item => {
-            if (!partNames.includes(item.partName)) return;
+        const seen = {};
+        const result = [];
 
-            // 차종 필터 — 자재에 차종이 지정된 경우에만 적용
-            const allowedCarModels = matCarModelMap[item.partName];
-            if (allowedCarModels && allowedCarModels.size > 0 && item.carModel) {
-                if (!allowedCarModels.has(item.carModel)) return;
-            }
+        matList.forEach(function(m) {
+            if (!m.injPartName) return;
+            const carModel = m.carModel || '';
+            const partName = m.injPartName;
+            const displayColor = m.injColor || '-';
 
-            // ★ 컬러 필터 — 입고 기록에만 적용 (출고는 color 없어도 항상 차감)
-            const isOutgoing = (item.type === '출고');
-            if (!isOutgoing) {
-                const allowedColors = matColorMap[item.partName];
-                if (allowedColors.size > 0) {
-                    const iColor = _normalizeColorName(item.color);
-                    const match = [...allowedColors].some(c =>
-                        iColor === c || iColor.includes(c) || c.includes(iColor));
-                    if (!match) return;
+            const records = all.filter(function(item) {
+                if (item.partName !== partName) return false;
+
+                const allowedCarModels = matCarModelMap[partName];
+                if (allowedCarModels && allowedCarModels.size > 0 && item.carModel) {
+                    if (!allowedCarModels.has(item.carModel)) return false;
                 }
-            }
+                if (carModel && item.carModel && item.carModel !== carModel) return false;
 
-            const effectiveLotNo = item.lotNo || '미기재';
-            // ★ color 제거 — 입출고 동일 키로 묶어 잔량 정확 계산
-            const key = `${item.partName}|${effectiveLotNo}`;
-            if (!lotMap[key]) lotMap[key] = {
-                partName: item.partName || '',
-                color:    item.color    || '-',  // 최초 입고 기록의 color 사용
-                lotNo:    effectiveLotNo,
-                balance:  0,
-                inDate:   ''
-            };
-            if (isOutgoing) {
-                lotMap[key].balance -= Number(item.quantity) || 0;
-            } else {
-                lotMap[key].balance += Number(item.quantity) || 0;
-                // 최초 입고일 · 입고 color 추적
-                if (!lotMap[key].inDate || item.date < lotMap[key].inDate) {
-                    lotMap[key].inDate = item.date || '';
+                const isOutgoing = (item.type === '출고');
+                if (!isOutgoing) {
+                    const allowedColors = matColorMap[partName];
+                    if (allowedColors.size > 0) {
+                        const iColor = _normalizeColorName(item.color);
+                        const match = [...allowedColors].some(function(c) {
+                            return iColor === c || iColor.includes(c) || c.includes(iColor);
+                        });
+                        if (!match) return false;
+                    }
+                    if (m.injColor) {
+                        const normMat = _normalizeColorName(m.injColor);
+                        const normItem = _normalizeColorName(item.color);
+                        if (normItem && normMat && normItem !== normMat &&
+                            !normItem.includes(normMat) && !normMat.includes(normItem)) {
+                            return false;
+                        }
+                    }
                 }
-                // 입고 기록에서 color가 있으면 업데이트
-                if (item.color && item.color !== '-') lotMap[key].color = item.color;
-            }
+                return true;
+            });
+
+            const balance = InvCalc.lotBalances(records);
+            balance.lots.forEach(function(l) {
+                if (l.lotNo === InvCalc.UNMATCHED || l.qty <= 0) return;
+                const dedupKey = partName + '|' + displayColor + '|' + l.lotNo;
+                if (seen[dedupKey]) return;
+                seen[dedupKey] = true;
+                result.push({
+                    partName: partName,
+                    color: displayColor,
+                    lotNo: l.lotNo,
+                    balance: l.qty,
+                    inDate: (l.date || '').split(' ')[0] || ''
+                });
+            });
         });
 
-        return Object.values(lotMap)
-            .filter(l => l.balance > 0)
-            .sort((a, b) =>
-                a.partName.localeCompare(b.partName) ||
+        return result.sort(function(a, b) {
+            return a.partName.localeCompare(b.partName) ||
                 (a.color || '').localeCompare(b.color || '') ||
-                a.lotNo.localeCompare(b.lotNo)
-            );
+                a.lotNo.localeCompare(b.lotNo);
+        });
     }
 
     // 도장-A → 레이저 → 도장-B 처럼 레이저 공정 이후에 다시 도장(2차)을 타는 제품인지 판정
@@ -2381,36 +2389,6 @@ const ProductionPlanModule = (function() {
                 } else if (!existingId && item.hourlyPlans && item.hourlyPlans[originalSlot]) {
                     oldDataParentId = item.id;
                 }
-            }
-        }
-
-        // ★ 실적 미입력 이전 계획 중복 방지:
-        // 동일 라인+차종+품명 에 이전 날짜의 미완료 계획이 있으면 저장 차단
-        // (사출 창고·레이져 재공품 이중 차감 방지)
-        if (partName && !existingId) {
-            const _paintWorks = Storage.getAll(DB.STORES.PAINTING_WORK) || [];
-            const _pendingPlans = allData.filter(p => {
-                if (!p.partName || !p.line) return false;
-                if (p.partName !== partName) return false;
-                if ((p.carModel || '') !== (carModel || '')) return false;
-                if (p.line !== line) return false;
-                if (p.date >= date) return false; // 오늘 이후 계획은 제외 (이전 날짜만)
-                if (p.status === '완료') return false; // 완료된 계획 제외
-                // 해당 계획에 대한 도장 실적이 있는지 확인
-                const hasWork = _paintWorks.some(w =>
-                    w.planId === p.id ||
-                    (w.carModel === (p.carModel||'') && w.partName === p.partName && w.line === p.line && w.date === p.date)
-                );
-                return !hasWork; // 실적 없는 이전 계획만
-            });
-            if (_pendingPlans.length > 0) {
-                const _oldest = _pendingPlans.reduce((a, b) => a.date < b.date ? a : b);
-                UIUtils.toast(
-                    `${_oldest.date} [${line}] ${carModel} ${partName} 실적 미입력 계획이 있습니다. ` +
-                    `먼저 이전 계획의 실적을 등록하거나 삭제 후 새 계획을 등록하세요.`,
-                    'warning', 5000
-                );
-                return;
             }
         }
 

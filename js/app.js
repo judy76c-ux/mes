@@ -81,7 +81,7 @@ const App = (function() {
             Router.registerLazy(
                 ['prod-standards', 'prod-conditions', 'paint-mix', 'prod-sub-materials',
                  'prod-quality', 'quality-performance', 'limit-samples', 'prod-spc', 'prod-equipment'],
-                'js/modules/production_mgmt_v91.js?v=214',
+                'js/modules/production_mgmt_v91.js?v=221',
                 function() {
                     Router.registerModule('prod-standards',
                         (typeof ProdStandardsModule !== 'undefined') ? ProdStandardsModule
@@ -267,6 +267,7 @@ const App = (function() {
         Router.registerModule('product-warehouse', ProductWarehouseModule);
         Router.registerModule('sales-delivery', SalesDeliveryModule);
         Router.registerModule('sales-delivery-plan', SalesDeliveryPlanModule);
+        Router.registerModule('sales-today-shipment', SalesTodayShipmentModule);
         Router.registerModule('sales-analytics', SalesAnalyticsModule);
         Router.registerModule('painting-jig', {
             render: function(container) {

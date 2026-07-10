@@ -214,8 +214,13 @@ var LaserHubModule = (function () {
         const inspQtyToday   = todayInsps.reduce(function(s,i){ return s + (Number(i.inspQty)||0); }, 0);
         const defectQtyToday = todayInsps.reduce(function(s,i){ return s + (Number(i.failQty)||0); }, 0);
         const defectRate     = inspQtyToday > 0 ? (defectQtyToday / inspQtyToday * 100).toFixed(1) : '0.0';
-        const qcMissing      = todayWorks.filter(function(w){ return !(w.qcFirst && w.qcMiddle && w.qcLast); }).length;
-        const waitInsp       = todayWorks.filter(function(w){ return w.id && !inspectedIds.has(w.id); }).length;
+        const qcReady = (typeof LaserWorkModule !== 'undefined' && typeof LaserWorkModule.isWorkQcFullyEntered === 'function')
+            ? LaserWorkModule.isWorkQcFullyEntered
+            : function(w) { return w && w.status !== 'in_progress'; };
+        const qcMissing = todayWorks.filter(function(w) { return !qcReady(w); }).length;
+        const waitInsp = todayWorks.filter(function(w) {
+            return w.id && !inspectedIds.has(w.id) && qcReady(w);
+        }).length;
 
         // ── 7일 추이 ──────────────────────────────────────────────────────
         var trend7 = [];

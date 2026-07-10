@@ -1,7 +1,8 @@
 /**
  * 재공품 현황 (통합)
  * - 탭 1: 레이져 대기품 현황  (도장 완료 → 레이져 공정 대기)
- * - 탭 2: 레이져 후 재공품 현황 (레이져 완료 → 도장-B 대기, 도장-B 공정 제품만)
+ * - 탭 2: 레이져 후 재공품 현황 (레이져 완료 → 도장-B 대기)
+ * - 탭 3: 레이져 후 잔량 현황   (포장단위 미달 잔량, 레이져→검사·출고 제품 / 도장-B 재공 3품목 제외)
  */
 
 var LaserWipModule = (function() {
@@ -37,8 +38,157 @@ var LaserWipModule = (function() {
         return false;
     }
 
+    // onclick 인자용 — URI 인코딩은 1회만. 따옴표만 이스케이프한다.
+    function _jsArg(value) {
+        return String(value == null ? '' : value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    }
+
+    function _parseProductKey(keyEnc) {
+        let s = String(keyEnc || '');
+        for (let i = 0; i < 3; i++) {
+            try {
+                const d = decodeURIComponent(s);
+                if (d === s) break;
+                s = d;
+            } catch (e) { break; }
+        }
+        const parts = s.split('||');
+        return {
+            carModel: (parts[0] || '').trim(),
+            partName: (parts[1] || '').trim(),
+            color: (parts[2] || '').trim()
+        };
+    }
+
+    function _productKey(carModel, partName, color) {
+        return encodeURIComponent(`${carModel || ''}||${partName || ''}||${color || ''}`);
+    }
+
+    function _decodeArg(value) {
+        let s = String(value || '');
+        for (let i = 0; i < 2; i++) {
+            try {
+                const d = decodeURIComponent(s);
+                if (d === s) break;
+                s = d;
+            } catch (e) { break; }
+        }
+        return s;
+    }
+
+    function _isCorruptedLaserIdentity(w) {
+        const cm = String(w && w.carModel || '');
+        const pn = String(w && w.partName || '');
+        if (!cm) return false;
+        if (cm.indexOf('%7C%7C') >= 0) return true;
+        if (cm.indexOf('||') >= 0 && !pn) return true;
+        if ((cm.indexOf('%20') >= 0 || cm.indexOf('%5B') >= 0 || cm.indexOf('%5D') >= 0) && !pn) return true;
+        return false;
+    }
+
+    async function _repairCorruptedLaserWorkRecords() {
+        const all = Storage.getAll(STORE_LASER) || [];
+        let repaired = 0;
+        for (let i = 0; i < all.length; i++) {
+            const w = all[i];
+            if (!_isCorruptedLaserIdentity(w)) continue;
+            const parsed = _parseProductKey(w.carModel);
+            if (!parsed.carModel || !parsed.partName) continue;
+            if (parsed.carModel === w.carModel && parsed.partName === w.partName && (parsed.color || '') === (w.color || '')) continue;
+            try {
+                await Storage.update(STORE_LASER, w.id, {
+                    carModel: parsed.carModel,
+                    partName: parsed.partName,
+                    color: parsed.color || w.color || ''
+                });
+                repaired++;
+            } catch (e) {
+                console.warn('[LaserWip] repair failed:', w.id, e);
+            }
+        }
+        if (repaired > 0) {
+            console.info('[LaserWip] repaired corrupted laser work records:', repaired);
+        }
+        return repaired;
+    }
+
+    function _validateProductIdentity(carModel, partName, color) {
+        if (!carModel || !partName) return false;
+        if (carModel.indexOf('%7C') >= 0 || carModel.indexOf('||') >= 0) return false;
+        if (partName.indexOf('%7C') >= 0 || partName.indexOf('||') >= 0) return false;
+        return true;
+    }
+
+    // 도장 LOT(YYMMDD) / 사출 LOT 문자열 정규화 — 보정 저장·집계 키 일치용
+    function _normalizePaintLot(value) {
+        const raw = String(value == null ? '' : value).trim();
+        if (!raw || raw === '-') return '-';
+        const s = raw.replace(/-/g, '');
+        if (/^\d{6}$/.test(s)) return s;
+        if (/^\d{8}$/.test(s)) return s.slice(2, 8);
+        if (s.length > 8) return s.slice(2, 8);
+        return s || raw;
+    }
+
+    function _normalizeInjLot(value) {
+        const s = String(value == null ? '' : value).trim();
+        if (!s || s === '-') return '-';
+        return s.split(',').map(function(p) { return p.trim(); }).filter(Boolean).join(', ');
+    }
+
+    function _residualLotKey(paintLot, injLot) {
+        return _normalizePaintLot(paintLot) + '|' + _normalizeInjLot(injLot);
+    }
+
+    function _workResidualLotKeys(w) {
+        const paintLots = Array.isArray(w.paintLots) && w.paintLots.length ? w.paintLots : [];
+        const paintLot = paintLots.length && paintLots[0] && paintLots[0].paintDate
+            ? _normalizePaintLot(paintLots[0].paintDate)
+            : _normalizePaintLot(w.paintDate || w.date || '');
+        const injLots = paintLots.length
+            ? paintLots.map(function(l) { return _normalizeInjLot(l && l.lotNo || ''); }).filter(function(v) { return v && v !== '-'; })
+            : [_normalizeInjLot(w.paintLot || w.lotNo || '')].filter(function(v) { return v && v !== '-'; });
+        const injStr = injLots.length ? injLots.join(', ') : '-';
+        return [_residualLotKey(paintLot, injStr)];
+    }
+
+    function _findResidualLotSourceWorks(carModel, partName, color, paintLot, injLot) {
+        const targetKey = _residualLotKey(paintLot, injLot);
+        return (Storage.getAll(STORE_LASER) || []).filter(function(w) {
+            if ((w.carModel || '') !== carModel || (w.partName || '') !== partName) return false;
+            if (color && (w.color || '') !== color) return false;
+            if (w.isManualOut || w.isResidualManualIn || w.isResidualManualOut) return false;
+            const goodQty = Number(w.inspectionGoodQty) || Number(w.completedQty) || Number(w.quantity) || 0;
+            const packUnit = Number(w.packUnit) || 0;
+            const resQty = Number(w.laserResidualQty) || (packUnit > 0 ? Math.max(0, goodQty - Math.floor(goodQty / packUnit) * packUnit) : 0);
+            if (resQty <= 0) return false;
+            return _workResidualLotKeys(w).some(function(k) { return k === targetKey; });
+        });
+    }
+
+    function _getResidualLotQtyFromDetail(detail, paintLot, injLot) {
+        const key = _residualLotKey(paintLot, injLot);
+        const row = (detail && detail.lots || []).find(function(l) {
+            return _residualLotKey(l.paintLot, l.injLot) === key;
+        });
+        return row ? Math.max(0, Number(row.qty) || 0) : 0;
+    }
+
+    async function _neutralizePriorLotAdjustRecords(carModel, partName, color, paintLot, injLot) {
+        const targetKey = _residualLotKey(paintLot, injLot);
+        const items = Storage.getAll(STORE_LASER) || [];
+        for (let i = 0; i < items.length; i++) {
+            const w = items[i];
+            if ((w.carModel || '') !== carModel || (w.partName || '') !== partName) continue;
+            if (color && (w.color || '') !== color) continue;
+            if (!w.isResidualLotAdjust || w.isResidualAuditOnly) continue;
+            if (_residualLotKey(w.residualPaintLot, w.lotNo) !== targetKey) continue;
+            await Storage.update(STORE_LASER, w.id, { isResidualAuditOnly: true });
+        }
+    }
+
     // 수기 입/출고 모달을 열 때 팝업에서 넘어온 품목을 드롭다운에 자동 선택한다.
-    // 제품 목록(도장-B/잔량 대상)에 없는 품목이면 조용히 무시되고 수동 선택으로 진행 가능.
+    // 제품 목록(잔량 대상)에 없는 품목이면 조용히 무시되고 수동 선택으로 진행 가능.
     function _applyPrefillSelects(prefill, carId, partId, colorId, onCarChange, onPartChange) {
         if (!prefill) return;
         setTimeout(function() {
@@ -65,8 +215,7 @@ var LaserWipModule = (function() {
     function openAdjustAfterLaserModal(keyEnc) {
         if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
         _closeDetailPopup();
-        const parts = decodeURIComponent(keyEnc || '').split('||');
-        const carModel = parts[0] || '', partName = parts[1] || '', color = parts[2] || '';
+        const { carModel, partName, color } = _parseProductKey(keyEnc);
         const r = (_calcWip()).find(x => x.carModel === carModel && x.partName === partName && (x.color || '') === color);
         const currentQty = r ? Math.max(0, Number(r.wip) || 0) : 0;
         const today = new Date().toISOString().slice(0, 10);
@@ -99,15 +248,14 @@ var LaserWipModule = (function() {
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" onclick="LaserWipModule.saveAdjustAfterLaserModal('${encodeURIComponent(keyEnc || '')}')">저장</button>
+            <button class="btn btn-primary" onclick="LaserWipModule.saveAdjustAfterLaserModal('${_jsArg(keyEnc || '')}')">저장</button>
         `, 'md');
     }
 
     async function saveAdjustAfterLaserModal(keyEnc) {
         if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
-        const parts = decodeURIComponent(keyEnc || '').split('||');
-        const carModel = parts[0] || '', partName = parts[1] || '', color = parts[2] || '';
-        if (!carModel || !partName) { UIUtils.toast('품목 정보가 없습니다.', 'warning'); return; }
+        const { carModel, partName, color } = _parseProductKey(keyEnc);
+        if (!_validateProductIdentity(carModel, partName, color)) { UIUtils.toast('품목 정보가 올바르지 않습니다.', 'warning'); return; }
 
         const r = (_calcWip()).find(x => x.carModel === carModel && x.partName === partName && (x.color || '') === color);
         const currentQty = r ? Math.max(0, Number(r.wip) || 0) : 0;
@@ -142,8 +290,7 @@ var LaserWipModule = (function() {
     function openAdjustResidualModal(keyEnc) {
         if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
         _closeDetailPopup();
-        const parts = decodeURIComponent(keyEnc || '').split('||');
-        const carModel = parts[0] || '', partName = parts[1] || '', color = parts[2] || '';
+        const { carModel, partName, color } = _parseProductKey(keyEnc);
         const r = _calcLaserResidualWip().find(x => x.carModel === carModel && x.partName === partName && (x.color || '') === color);
         const currentQty = r ? Math.max(0, Number(r.residualQty) || 0) : 0;
         const packUnit = r ? Number(r.packUnit) || 0 : 0;
@@ -178,15 +325,14 @@ var LaserWipModule = (function() {
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" onclick="LaserWipModule.saveAdjustResidualModal('${encodeURIComponent(keyEnc || '')}')">저장</button>
+            <button class="btn btn-primary" onclick="LaserWipModule.saveAdjustResidualModal('${_jsArg(keyEnc || '')}')">저장</button>
         `, 'md');
     }
 
     async function saveAdjustResidualModal(keyEnc) {
         if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
-        const parts = decodeURIComponent(keyEnc || '').split('||');
-        const carModel = parts[0] || '', partName = parts[1] || '', color = parts[2] || '';
-        if (!carModel || !partName) { UIUtils.toast('품목 정보가 없습니다.', 'warning'); return; }
+        const { carModel, partName, color } = _parseProductKey(keyEnc);
+        if (!_validateProductIdentity(carModel, partName, color)) { UIUtils.toast('품목 정보가 올바르지 않습니다.', 'warning'); return; }
 
         const r = _calcLaserResidualWip().find(x => x.carModel === carModel && x.partName === partName && (x.color || '') === color);
         const currentQty = r ? Math.max(0, Number(r.residualQty) || 0) : 0;
@@ -223,15 +369,13 @@ var LaserWipModule = (function() {
     function adjustAfterLaserFromPopup(keyEnc, mode) {
         if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
         _closeDetailPopup();
-        const parts = decodeURIComponent(keyEnc || '').split('||');
-        const prefill = { carModel: parts[0] || '', partName: parts[1] || '', color: parts[2] || '' };
+        const prefill = _parseProductKey(keyEnc);
         if (mode === 'out') openAfterLaserOut(prefill); else openAfterLaserInput(prefill);
     }
     function adjustResidualFromPopup(keyEnc, mode) {
         if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
         _closeDetailPopup();
-        const parts = decodeURIComponent(keyEnc || '').split('||');
-        const prefill = { carModel: parts[0] || '', partName: parts[1] || '', color: parts[2] || '' };
+        const prefill = _parseProductKey(keyEnc);
         if (mode === 'out') openResidualOut(prefill); else openResidualInput(prefill);
     }
 
@@ -240,6 +384,20 @@ var LaserWipModule = (function() {
         { id: 'after-laser', label: '레이져 후 재공품 현황', icon: 'bolt' },
         { id: 'after-laser-residual', label: '레이져 후 잔량 현황', icon: 'inventory_2' }
     ];
+    const TAB_STATE_KEY = 'mes_laser_wip_tab';
+
+    function _saveActiveTab() {
+        try { sessionStorage.setItem(TAB_STATE_KEY, _activeTab); } catch (e) { /* 무시 */ }
+    }
+
+    function _restoreActiveTab() {
+        try {
+            const saved = sessionStorage.getItem(TAB_STATE_KEY);
+            if (saved && TABS.some(function(t) { return t.id === saved; })) {
+                _activeTab = saved;
+            }
+        } catch (e) { /* 무시 */ }
+    }
 
     function _actionBtn(label, icon, onclick, color) {
         const col = color || 'var(--text-primary)';
@@ -256,8 +414,7 @@ var LaserWipModule = (function() {
     function _tabNav() {
         const standbyActions = _canEditWip() ? `
             ${_actionBtn('수동입고', 'arrow_downward', "LaserWipModule.openManualInput()", 'var(--accent-green)')}
-            ${_actionBtn('수동출고', 'arrow_upward',   "LaserStandbyModule.openStandbyOutModal()", 'var(--accent-red)')}
-            ${_actionBtn('일괄등록', 'table_rows', "LaserStandbyModule.openBulkModal()", 'var(--accent-blue)')}` : '';
+            ${_actionBtn('수동출고', 'arrow_upward',   "LaserStandbyModule.openStandbyOutModal()", 'var(--accent-red)')}` : '';
         const afterActions = _canEditWip() ? `
             ${_actionBtn('수동입고', 'arrow_downward', "LaserWipModule.openAfterLaserInput()", 'var(--accent-green)')}
             ${_actionBtn('수동출고', 'arrow_upward',   "LaserWipModule.openAfterLaserOut()", 'var(--accent-red)')}` : '';
@@ -272,6 +429,7 @@ var LaserWipModule = (function() {
         </div>`;
     }
     function render(container) {
+        _restoreActiveTab();
         const activePageId = _activeTab === 'standby' ? 'laser-wip-standby'
             : (_activeTab === 'after-laser' ? 'laser-wip-after' : 'laser-wip-residual');
         container.innerHTML = `
@@ -280,12 +438,15 @@ var LaserWipModule = (function() {
             <div id="wipTabNav">${_tabNav()}</div>
             <div id="wipTabContent"></div>
         </div>`;
-        _renderTabContent();
+        _repairCorruptedLaserWorkRecords().finally(function() {
+            _renderTabContent();
+        });
     }
 
     // ── 탭 전환 ──────────────────────────────────────────────────────────
     function switchTab(tab) {
         _activeTab = tab;
+        _saveActiveTab();
         const container = document.getElementById('contentArea');
         if (container) { render(container); return; }
         const navEl = document.getElementById('wipTabNav');
@@ -295,6 +456,7 @@ var LaserWipModule = (function() {
 
     function openTab(tab) {
         _activeTab = TABS.some(t => t.id === tab) ? tab : 'standby';
+        _saveActiveTab();
         if (typeof Router !== 'undefined' && Router.navigate) {
             Router.navigate('laser-wip');
             return;
@@ -361,7 +523,7 @@ var LaserWipModule = (function() {
                     .map(r => {
                         const wipColor   = r.wip > 0 ? 'var(--accent-green)' : (r.wip < 0 ? 'var(--accent-red)' : 'var(--text-muted)');
                         const statusText = r.wip > 0 ? '도장 투입 대기' : (r.wip < 0 ? '오류' : '소진');
-                        const encKey = encodeURIComponent(`${r.carModel}||${r.partName}||${r.color||''}`);
+                        const encKey = _productKey(r.carModel, r.partName, r.color || '');
                         return `<tr style="border-bottom:1px solid var(--border-color);cursor:pointer;"
                                     onclick="LaserWipModule.showWipDetail('${encKey}', event)"
                                     onmouseover="this.style.background='rgba(139,92,246,0.06)'"
@@ -635,7 +797,7 @@ var LaserWipModule = (function() {
                 const itemRows = items
                     .sort((a,b) => (a.partName||'').localeCompare(b.partName||'', 'ko'))
                     .map(r => {
-                        const encKey = encodeURIComponent(`${r.carModel}||${r.partName}||${r.color||''}`);
+                        const encKey = _productKey(r.carModel, r.partName, r.color || '');
                         return `
                     <tr style="border-bottom:1px solid var(--border-color);cursor:pointer;"
                         onclick="LaserWipModule.showResidualDetail('${encKey}', event)"
@@ -916,6 +1078,7 @@ var LaserWipModule = (function() {
         laserWorks
             .filter(w => w.isResidualManualIn || w.isResidualManualOut)
             .forEach(w => {
+                if (w.isResidualAuditOnly) return;
                 const key = `${w.carModel || ''}||${w.partName || ''}||${w.color || ''}`;
                 if (!residualMap[key]) {
                     residualMap[key] = {
@@ -950,10 +1113,6 @@ var LaserWipModule = (function() {
                 const cm = (a.carModel || '').localeCompare(b.carModel || '');
                 return cm !== 0 ? cm : (a.partName || '').localeCompare(b.partName || '');
             });
-    }
-
-    function _getResidualProducts() {
-        return _getPaintBProducts();
     }
 
     function openResidualInput(prefill) {
@@ -1152,20 +1311,285 @@ var LaserWipModule = (function() {
         refresh();
     }
 
-    // ── 제품 클릭 팝업 공통 닫기 ────────────────────────────────────────
+    // ── 상세 모달 공통 ───────────────────────────────────────────────────
     function _closeDetailPopup() {
+        UIUtils.closeModal();
         const el = document.getElementById('lwDetailPopup');
         if (el) el.remove();
     }
 
-    function _popupPosition(evt) {
-        const rect = evt.currentTarget ? evt.currentTarget.getBoundingClientRect() : { bottom: evt.clientY, left: evt.clientX, top: evt.clientY };
-        const popW = 460, popH = 380;
-        let top = (rect.bottom || evt.clientY) + 6;
-        let left = (rect.left || evt.clientX);
-        if (left + popW > window.innerWidth - 10) left = window.innerWidth - popW - 10;
-        if (top + popH > window.innerHeight - 10) top = (rect.top || evt.clientY) - popH - 6;
-        return { top, left };
+    function _wipHistorySection(histItems) {
+        return StockDetailUI.buildSimpleHistorySection(histItems);
+    }
+
+    function _openAfterLaserOutForPart(carModel, partName, color) {
+        UIUtils.closeModal();
+        setTimeout(function() { openAfterLaserOut({ carModel: carModel, partName: partName, color: color }); }, 80);
+    }
+
+    function _openAfterLaserInForPart(carModel, partName, color) {
+        UIUtils.closeModal();
+        setTimeout(function() { openAfterLaserInput({ carModel: carModel, partName: partName, color: color }); }, 80);
+    }
+
+    function _openResidualOutForPart(carModel, partName, color) {
+        UIUtils.closeModal();
+        setTimeout(function() { openResidualOut({ carModel: carModel, partName: partName, color: color }); }, 80);
+    }
+
+    function _openResidualInForPart(carModel, partName, color) {
+        UIUtils.closeModal();
+        setTimeout(function() { openResidualInput({ carModel: carModel, partName: partName, color: color }); }, 80);
+    }
+
+    function _calcResidualLotDetail(carModel, partName, color) {
+        const laserAllWorks = (Storage.getAll(STORE_LASER) || []).filter(function(w) {
+            return (w.carModel || '') === carModel && (w.partName || '') === partName && (!color || (w.color || '') === color);
+        });
+
+        const lotMap = {};
+        laserAllWorks.filter(function(w) { return !w.isManualOut && !w.isResidualManualIn && !w.isResidualManualOut; }).forEach(function(w) {
+            const goodQty = Number(w.inspectionGoodQty) || Number(w.completedQty) || Number(w.quantity) || 0;
+            const packUnit = Number(w.packUnit) || 0;
+            const resQty = Number(w.laserResidualQty) || (packUnit > 0 ? Math.max(0, goodQty - Math.floor(goodQty / packUnit) * packUnit) : 0);
+            if (resQty <= 0) return;
+            _workResidualLotKeys(w).forEach(function(key) {
+                const pipeIdx = key.indexOf('|');
+                const paintLot = pipeIdx >= 0 ? key.slice(0, pipeIdx) : key;
+                const injLot = pipeIdx >= 0 ? key.slice(pipeIdx + 1) : '-';
+                if (!lotMap[key]) lotMap[key] = { paintLot: paintLot, injLot: injLot, qty: 0 };
+                lotMap[key].qty += resQty;
+            });
+        });
+
+        var manualAdj = 0;
+        laserAllWorks.filter(function(w) {
+            return (w.isResidualManualIn || w.isResidualManualOut) && w.isResidualLotAdjust && w.residualLotAbsoluteQty == null;
+        }).forEach(function(w) {
+            if (w.isResidualAuditOnly) return;
+            const qty = Number(w.quantity) || 0;
+            const paintLot = _normalizePaintLot(w.residualPaintLot || w.paintDate || w.date || '-');
+            const injLot = _normalizeInjLot(w.lotNo || '-');
+            const key = _residualLotKey(paintLot, injLot);
+            if (!lotMap[key]) lotMap[key] = { paintLot: paintLot, injLot: injLot, qty: 0 };
+            lotMap[key].qty += w.isResidualManualIn ? qty : -qty;
+        });
+        laserAllWorks.filter(function(w) {
+            return (w.isResidualManualIn || w.isResidualManualOut) && !w.isResidualLotAdjust;
+        }).forEach(function(w) {
+            if (w.isResidualAuditOnly) return;
+            const qty = Number(w.quantity) || 0;
+            manualAdj += w.isResidualManualIn ? qty : -qty;
+        });
+
+        // LOT별 절대 수량 보정(최신 건 우선) — 감사 전용 기록은 집계 제외
+        laserAllWorks.filter(function(w) {
+            return w.isResidualLotAdjust && w.residualLotAbsoluteQty != null && !w.isResidualAuditOnly;
+        }).sort(function(a, b) {
+            return String(a.date || '').localeCompare(String(b.date || '')) || String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
+        }).forEach(function(w) {
+            const paintLot = _normalizePaintLot(w.residualPaintLot || w.paintDate || w.date || '-');
+            const injLot = _normalizeInjLot(w.lotNo || '-');
+            const key = _residualLotKey(paintLot, injLot);
+            if (!lotMap[key]) lotMap[key] = { paintLot: paintLot, injLot: injLot, qty: 0 };
+            lotMap[key].qty = Math.max(0, Number(w.residualLotAbsoluteQty) || 0);
+        });
+
+        const lots = Object.values(lotMap)
+            .map(function(l) { return { paintLot: l.paintLot, injLot: l.injLot, qty: Math.round(l.qty) }; })
+            .filter(function(l) { return l.qty > 0; })
+            .sort(function(a, b) { return a.paintLot.localeCompare(b.paintLot) || a.injLot.localeCompare(b.injLot); });
+
+        return { lots: lots, manualAdj: manualAdj };
+    }
+
+    function openAdjustResidualLotModal(keyEnc, paintLotEnc, injLotEnc, currentQty) {
+        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
+        const { carModel, partName, color } = _parseProductKey(keyEnc);
+        const paintLot = _decodeArg(paintLotEnc);
+        const injLot = _decodeArg(injLotEnc);
+        const curQty = Math.max(0, Number(currentQty) || 0);
+        const today = new Date().toISOString().slice(0, 10);
+
+        UIUtils.showModal('레이져 잔량 LOT 보정', `
+            <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.18);border-radius:8px;padding:12px 14px;margin-bottom:14px;">
+                <div style="font-size:0.82rem;color:var(--text-secondary);">
+                    <strong>${_esc(carModel)}</strong> / ${_esc(partName)}${color ? ' / ' + _esc(color) : ''}
+                </div>
+                <div style="font-size:0.82rem;margin-top:6px;">
+                    도장 LOT <strong style="font-family:monospace;color:var(--accent-green);">${_esc(paintLot)}</strong>
+                    · 사출 LOT <strong style="font-family:monospace;">${_esc(injLot)}</strong>
+                </div>
+                <div style="font-size:0.82rem;color:var(--text-secondary);margin-top:4px;">
+                    현재 잔량 <strong style="color:var(--accent-orange,#f59e0b);">${UIUtils.formatNumber(curQty)} EA</strong>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">수정 기준일</label>
+                    <input type="date" class="form-input" id="lwAdjResLotDate" value="${today}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">수정 후 잔량 (EA)</label>
+                    <input type="number" class="form-input" id="lwAdjResLotQty" value="${curQty}" min="0" placeholder="0">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">비고</label>
+                <input type="text" class="form-input" id="lwAdjResLotNote" placeholder="LOT 보정">
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="LaserWipModule.saveAdjustResidualLotModal('${_jsArg(keyEnc || '')}','${_jsArg(paintLotEnc || '')}','${_jsArg(injLotEnc || '')}',${curQty})">저장</button>
+        `, 'md');
+    }
+
+    async function saveAdjustResidualLotModal(keyEnc, paintLotEnc, injLotEnc, currentQty) {
+        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
+        const { carModel, partName, color } = _parseProductKey(keyEnc);
+        const paintLot = _normalizePaintLot(_decodeArg(paintLotEnc));
+        const injLot = _normalizeInjLot(_decodeArg(injLotEnc));
+        const detail = _calcResidualLotDetail(carModel, partName, color);
+        const curQty = _getResidualLotQtyFromDetail(detail, paintLot, injLot) || Math.max(0, Number(currentQty) || 0);
+        const targetQty = Math.max(0, parseInt((document.getElementById('lwAdjResLotQty') || {}).value || '0', 10) || 0);
+        const date = (document.getElementById('lwAdjResLotDate') || {}).value || new Date().toISOString().slice(0, 10);
+        const note = ((document.getElementById('lwAdjResLotNote') || {}).value || '').trim() || `LOT ${paintLot}/${injLot} 보정`;
+
+        if (targetQty === curQty) {
+            UIUtils.closeModal();
+            UIUtils.toast('변경된 수량이 없습니다.', 'info');
+            return;
+        }
+
+        if (!_validateProductIdentity(carModel, partName, color)) {
+            UIUtils.toast('품목 정보가 올바르지 않습니다. 목록에서 다시 시도해 주세요.', 'error');
+            return;
+        }
+
+        const prod = _getResidualProducts().find(function(p) { return p.carModel === carModel && p.partName === partName && (!color || p.color === color); });
+        const packUnit = prod ? _num(prod.packUnit || prod.packingUnit || prod.packageUnit || prod.packQty || prod.packingQty) : 0;
+        const diff = targetQty - curQty;
+        const injParts = injLot.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+        const sources = _findResidualLotSourceWorks(carModel, partName, color, paintLot, injLot);
+
+        try {
+            await _neutralizePriorLotAdjustRecords(carModel, partName, color, paintLot, injLot);
+            if (sources.length === 1 && injParts.length <= 1) {
+                await Storage.update(STORE_LASER, sources[0].id, {
+                    laserResidualQty: targetQty,
+                    laserResidualStatus: targetQty > 0 ? '잔량' : ''
+                });
+                await Storage.add(STORE_LASER, {
+                    date, carModel, partName, color, lotNo: injLot, residualPaintLot: paintLot,
+                    note, packUnit, isManual: true, isResidualLotAdjust: true,
+                    residualLotAbsoluteQty: targetQty, isResidualAuditOnly: true,
+                    quantity: Math.abs(diff),
+                    isResidualManualIn: diff > 0,
+                    isResidualManualOut: diff < 0
+                });
+            } else {
+                const base = {
+                    date, carModel, partName, color, lotNo: injLot, residualPaintLot: paintLot,
+                    note, packUnit, isManual: true, isResidualLotAdjust: true,
+                    residualLotAbsoluteQty: targetQty
+                };
+                if (diff > 0) {
+                    await Storage.add(STORE_LASER, Object.assign({}, base, { quantity: diff, isResidualManualIn: true }));
+                } else {
+                    await Storage.add(STORE_LASER, Object.assign({}, base, { quantity: Math.abs(diff), isResidualManualOut: true }));
+                }
+            }
+        } catch (err) {
+            console.error('[LaserWip] saveAdjustResidualLotModal failed:', err);
+            UIUtils.toast('LOT 보정 저장에 실패했습니다.', 'error');
+            return;
+        }
+
+        UIUtils.closeModal();
+        UIUtils.toast(`LOT ${paintLot}/${injLot} 잔량이 ${UIUtils.formatNumber(curQty)} → ${UIUtils.formatNumber(targetQty)} EA로 수정되었습니다.`, 'success');
+        refresh();
+        setTimeout(function() { showResidualDetail(_productKey(carModel, partName, color)); }, 80);
+    }
+
+    function openAdjustAfterLaserLotModal(keyEnc, paintLotEnc, lotNoEnc, currentQty) {
+        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
+        const { carModel, partName, color } = _parseProductKey(keyEnc);
+        const paintLot = _decodeArg(paintLotEnc);
+        const lotNo = _decodeArg(lotNoEnc);
+        const curQty = Math.max(0, Number(currentQty) || 0);
+        const today = new Date().toISOString().slice(0, 10);
+
+        UIUtils.showModal('레이져 후 재공품 LOT 보정', `
+            <div style="background:rgba(139,92,246,0.06);border:1px solid rgba(139,92,246,0.15);border-radius:8px;padding:12px 14px;margin-bottom:14px;">
+                <div style="font-size:0.82rem;color:var(--text-secondary);">
+                    <strong>${_esc(carModel)}</strong> / ${_esc(partName)}${color ? ' / ' + _esc(color) : ''}
+                </div>
+                <div style="font-size:0.82rem;margin-top:6px;">
+                    도장 LOT <strong style="font-family:monospace;color:var(--accent-green);">${_esc(paintLot || '-')}</strong>
+                    · 사출 LOT <strong style="font-family:monospace;">${_esc(lotNo)}</strong>
+                </div>
+                <div style="font-size:0.82rem;color:var(--text-secondary);margin-top:4px;">
+                    현재 수량 <strong style="color:var(--accent-purple,#7c3aed);">${UIUtils.formatNumber(curQty)} EA</strong>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">수정 기준일</label>
+                    <input type="date" class="form-input" id="lwAdjWipLotDate" value="${today}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">수정 후 수량 (EA)</label>
+                    <input type="number" class="form-input" id="lwAdjWipLotQty" value="${curQty}" min="0" placeholder="0">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">비고</label>
+                <input type="text" class="form-input" id="lwAdjWipLotNote" placeholder="LOT 보정">
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="LaserWipModule.saveAdjustAfterLaserLotModal('${_jsArg(keyEnc || '')}','${_jsArg(paintLotEnc || '')}','${_jsArg(lotNoEnc || '')}',${curQty})">저장</button>
+        `, 'md');
+    }
+
+    async function saveAdjustAfterLaserLotModal(keyEnc, paintLotEnc, lotNoEnc, currentQty) {
+        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
+        const { carModel, partName, color } = _parseProductKey(keyEnc);
+        const paintLot = _decodeArg(paintLotEnc);
+        const lotNo = _decodeArg(lotNoEnc);
+        const curQty = Math.max(0, Number(currentQty) || 0);
+        const targetQty = Math.max(0, parseInt((document.getElementById('lwAdjWipLotQty') || {}).value || '0', 10) || 0);
+        const date = (document.getElementById('lwAdjWipLotDate') || {}).value || new Date().toISOString().slice(0, 10);
+        const note = ((document.getElementById('lwAdjWipLotNote') || {}).value || '').trim() || `LOT ${paintLot || '-'}/${lotNo} 보정`;
+        const diff = targetQty - curQty;
+
+        if (diff === 0) {
+            UIUtils.closeModal();
+            UIUtils.toast('변경된 수량이 없습니다.', 'info');
+            return;
+        }
+
+        if (!_validateProductIdentity(carModel, partName, color)) {
+            UIUtils.toast('품목 정보가 올바르지 않습니다. 목록에서 다시 시도해 주세요.', 'error');
+            return;
+        }
+
+        const paintLots = paintLot ? [{ paintDate: paintLot, lotNo: lotNo, qty: Math.abs(diff) }] : [];
+        const base = {
+            date, carModel, partName, color, lotNo: lotNo, paintLot: paintLot || '',
+            paintLots: paintLots, machine: '', note, isManual: true, isWipLotAdjust: true
+        };
+
+        if (diff > 0) {
+            await Storage.add(STORE_LASER, Object.assign({}, base, { quantity: diff }));
+        } else {
+            await Storage.add(STORE_LASER, Object.assign({}, base, { quantity: Math.abs(diff), isManualOut: true }));
+        }
+
+        UIUtils.closeModal();
+        UIUtils.toast(`LOT ${lotNo} 수량이 ${UIUtils.formatNumber(curQty)} → ${UIUtils.formatNumber(targetQty)} EA로 수정되었습니다.`, 'success');
+        refresh();
+        setTimeout(function() { showWipDetail(_productKey(carModel, partName, color)); }, 80);
     }
 
     // ── 레이져 후 재공품 LOT별 잔량 계산 ────────────────────────────────
@@ -1243,310 +1667,299 @@ var LaserWipModule = (function() {
             if (wipMap[lotNo]) wipMap[lotNo].balance -= usedByLot[lotNo];
         });
 
+        laserWorks.filter(function(w) {
+            if ((w.carModel || '') !== carModel || (w.partName || '') !== partName) return false;
+            if (color && (w.color || '') !== color) return false;
+            return w.isWipLotAdjust;
+        }).forEach(function(w) {
+            const qty = Number(w.quantity) || 0;
+            const lotNo = String(w.lotNo || '').trim() || '-';
+            const paintLot = w.paintLot || (Array.isArray(w.paintLots) && w.paintLots[0] && w.paintLots[0].paintDate
+                ? String(w.paintLots[0].paintDate).replace(/-/g, '').slice(2, 8) : '');
+            if (!wipMap[lotNo]) wipMap[lotNo] = { lotNo: lotNo, paintLot: paintLot || '', balance: 0 };
+            else if (!wipMap[lotNo].paintLot && paintLot) wipMap[lotNo].paintLot = paintLot;
+            if (w.isManualOut) wipMap[lotNo].balance -= qty;
+            else wipMap[lotNo].balance += qty;
+        });
+
         return Object.values(wipMap)
             .map(function(l){ return { lotNo: l.lotNo, paintLot: l.paintLot||'', balance: Math.round(l.balance) }; })
             .sort(function(a,b){ return a.lotNo.localeCompare(b.lotNo); });
     }
 
-    // ── 레이져 후 재공품 팝업 ────────────────────────────────────────────
+    // ── 레이져 후 재공품 상세 모달 ────────────────────────────────────────
     function showWipDetail(keyEnc, evt) {
-        _closeDetailPopup();
-        evt.stopPropagation();
+        if (evt) evt.stopPropagation();
 
-        const parts = decodeURIComponent(keyEnc).split('||');
-        const carModel = parts[0]||'', partName = parts[1]||'', color = parts[2]||'';
+        const { carModel, partName, color } = _parseProductKey(keyEnc);
 
-        const r = (_calcWip()).find(function(x){ return x.carModel===carModel && x.partName===partName && (x.color||'')===color; });
+        const r = (_calcWip()).find(function(x) { return x.carModel === carModel && x.partName === partName && (x.color || '') === color; });
         if (!r) return;
 
         const lotRows = _calcWipLotDetail(carModel, partName, color);
+        const visibleLots = lotRows.filter(function(l) { return l.balance > 0; });
 
-        // 입출고 내역 rows
-        const laserWorks = (Storage.getAll(STORE_LASER)||[]).filter(function(w){
-            return (w.carModel||'')===carModel && (w.partName||'')===partName && (!color||(w.color||'')===color) && !w.isManualOut;
+        const laserWorks = (Storage.getAll(STORE_LASER) || []).filter(function(w) {
+            return (w.carModel || '') === carModel && (w.partName || '') === partName && (!color || (w.color || '') === color) && !w.isManualOut;
         });
-        const drainMap  = _buildAfterLaserDrainMap();
+        const drainMap = _buildAfterLaserDrainMap();
         const drainLine = drainMap[`${carModel}||${partName}`];
-        const paintWorks = (Storage.getAll(STORE_PAINT)||[]).filter(function(w){
-            return (w.carModel||'')===carModel && (w.partName||'')===partName && (!drainLine||(w.line||'').trim()===drainLine);
+        const paintWorks = (Storage.getAll(STORE_PAINT) || []).filter(function(w) {
+            return (w.carModel || '') === carModel && (w.partName || '') === partName && (!drainLine || (w.line || '').trim() === drainLine);
         });
 
-        const laserInsps = Storage.getAll(DB.STORES.LASER_INSPECTIONS)||[];
+        const laserInsps = Storage.getAll(DB.STORES.LASER_INSPECTIONS) || [];
         const inspGoodMap = {};
-        laserInsps.forEach(function(i){ if(i.workLogId){ const g=Math.max(0,(Number(i.inspQty)||0)-(Number(i.failQty)||0)); inspGoodMap[i.workLogId]=(inspGoodMap[i.workLogId]||0)+g; } });
-
-        const allHistRows = [];
-        laserWorks.sort(function(a,b){return String(a.date||'').localeCompare(String(b.date||''));}).forEach(function(w){
-            const goodQty = (w.id&&(w.id in inspGoodMap)) ? inspGoodMap[w.id] : (Number(w.quantity)||0);
-            const lots = Array.isArray(w.paintLots)&&w.paintLots.length ? w.paintLots.map(function(pl){ return (pl&&pl.lotNo)||''; }).filter(Boolean).join(',') : (w.paintLot||w.lotNo||'-');
-            allHistRows.push(`<tr style="border-bottom:1px solid var(--border-color);">
-                <td style="padding:4px 8px;"><span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:0.68rem;font-weight:700;background:rgba(139,92,246,0.12);color:var(--accent-purple);">레이져 입고</span></td>
-                <td style="padding:4px 8px;font-size:0.78rem;">${_esc(w.date||'-')}</td>
-                <td style="padding:4px 8px;font-size:0.74rem;color:var(--text-muted);">${_esc(lots)}</td>
-                <td style="padding:4px 8px;text-align:right;font-weight:700;color:var(--accent-purple);">+${UIUtils.formatNumber(goodQty)}</td>
-            </tr>`);
+        laserInsps.forEach(function(i) {
+            if (i.workLogId) {
+                const g = Math.max(0, (Number(i.inspQty) || 0) - (Number(i.failQty) || 0));
+                inspGoodMap[i.workLogId] = (inspGoodMap[i.workLogId] || 0) + g;
+            }
         });
-        paintWorks.sort(function(a,b){return String(a.date||'').localeCompare(String(b.date||''));}).forEach(function(w){
-            const qty = Number(w.productionQty)||0;
-            const wLots = Array.isArray(w.lots)&&w.lots.length ? w.lots.map(function(l){return l&&l.lotNo||'';}).filter(Boolean).join(',') : (w.lotNo||'-');
-            allHistRows.push(`<tr style="border-bottom:1px solid var(--border-color);">
-                <td style="padding:4px 8px;"><span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:0.68rem;font-weight:700;background:rgba(37,99,235,0.10);color:var(--accent-blue);">도장-B 출고</span></td>
-                <td style="padding:4px 8px;font-size:0.78rem;">${_esc(w.date||'-')}</td>
-                <td style="padding:4px 8px;font-size:0.74rem;color:var(--text-muted);">${_esc(wLots)}</td>
-                <td style="padding:4px 8px;text-align:right;font-weight:700;color:var(--accent-blue);">-${UIUtils.formatNumber(qty)}</td>
-            </tr>`);
+
+        const histItems = [];
+        laserWorks.forEach(function(w) {
+            const goodQty = (w.id && (w.id in inspGoodMap)) ? inspGoodMap[w.id] : (Number(w.quantity) || 0);
+            const lots = Array.isArray(w.paintLots) && w.paintLots.length
+                ? w.paintLots.map(function(pl) { return (pl && pl.lotNo) || ''; }).filter(Boolean).join(', ')
+                : (w.paintLot || w.lotNo || '-');
+            histItems.push({
+                date: w.date || '-',
+                isOut: false,
+                routeLabel: '레이저 입고',
+                routeColor: '#7c3aed',
+                routeDetail: w.machine || '레이저 작업',
+                lot: lots,
+                qty: goodQty,
+                note: w.note || w.machine || '-'
+            });
         });
-        allHistRows.sort(function(a,b){ const da=a.match(/\d{4}-\d{2}-\d{2}/)||['']; const db=b.match(/\d{4}-\d{2}-\d{2}/)||['']; return da[0].localeCompare(db[0]); });
+        paintWorks.forEach(function(w) {
+            const qty = Number(w.productionQty) || 0;
+            const wLots = Array.isArray(w.lots) && w.lots.length
+                ? w.lots.map(function(l) { return l && l.lotNo || ''; }).filter(Boolean).join(', ')
+                : (w.lotNo || '-');
+            histItems.push({
+                date: w.date || '-',
+                isOut: true,
+                routeLabel: '도장-B 출고',
+                routeColor: '#2563eb',
+                routeDetail: w.line || '도장-B 투입',
+                lot: wLots,
+                qty: qty,
+                note: w.note || '-'
+            });
+        });
+        histItems.sort(function(a, b) { return String(b.date).localeCompare(String(a.date)); });
 
-        const visibleLots = lotRows.filter(function(l){return l.balance>0;});
-        const lotTableHtml = visibleLots.length === 0
-            ? '<div style="color:var(--text-muted);font-size:0.82rem;padding:6px 0;">재고 없음</div>'
-            : `<table style="width:100%;border-collapse:collapse;">
-                <thead><tr style="background:rgba(139,92,246,0.07);">
-                    <th style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">도장 LOT</th>
-                    <th style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">사출 LOT</th>
-                    <th style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:right;border-bottom:1px solid var(--border-color);">재고 (EA)</th>
-                </tr></thead>
-                <tbody>${visibleLots.map(function(l){
-                    return `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
-                        <td style="padding:4px 10px;font-family:monospace;font-size:0.82rem;color:var(--accent-green);">${_esc(l.paintLot||'-')}</td>
-                        <td style="padding:4px 10px;font-family:monospace;font-size:0.82rem;">${_esc(l.lotNo)}</td>
-                        <td style="padding:4px 10px;text-align:right;font-weight:700;color:var(--accent-purple);">${UIUtils.formatNumber(l.balance)}</td>
-                    </tr>`;
-                }).join('')}</tbody>
-               </table>`;
+        const _cmJs = String(carModel || '').replace(/'/g, "\\'");
+        const _pnJs = String(partName || '').replace(/'/g, "\\'");
+        const _clJs = String(color || '').replace(/'/g, "\\'");
+        const _keyJs = _productKey(carModel, partName, color);
+        const canEdit = _canEditWip();
 
-        const popup = document.createElement('div');
-        popup.id = 'lwDetailPopup';
-        popup.style.cssText = `position:fixed;z-index:9999;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.18);min-width:320px;max-width:460px;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;`;
-        const pos = _popupPosition(evt);
-        popup.style.top = pos.top + 'px';
-        popup.style.left = pos.left + 'px';
+        const lotRowsHtml = visibleLots.map(function(l) {
+            const _plJs = encodeURIComponent(l.paintLot || '');
+            const _lnJs = encodeURIComponent(l.lotNo || '');
+            return `<tr>
+                <td style="font-family:monospace;color:var(--accent-green);">${_esc(l.paintLot || '-')}</td>
+                <td style="font-family:monospace;">${_esc(l.lotNo)}</td>
+                <td style="text-align:right;color:var(--accent-purple,#7c3aed);font-weight:600;">${UIUtils.formatNumber(l.balance)}</td>
+                ${canEdit ? `<td style="text-align:center;">
+                    <button class="btn btn-sm btn-outline" style="font-size:0.72rem;padding:2px 8px;"
+                        onclick="UIUtils.closeModal();setTimeout(()=>LaserWipModule.openAdjustAfterLaserLotModal('${_jsArg(_keyJs)}','${_plJs}','${_lnJs}',${Number(l.balance) || 0}),80);">
+                        보정 수정
+                    </button>
+                </td>` : ''}
+            </tr>`;
+        }).join('');
 
-        const adjustBtnHtml = _canEditWip()
-            ? `<button type="button" onclick="event.stopPropagation();LaserWipModule.openAdjustAfterLaserModal('${keyEnc}')"
-                    style="background:rgba(255,255,255,0.2);border:none;border-radius:6px;color:#fff;padding:4px 8px;cursor:pointer;font-size:0.78rem;font-family:inherit;">수량 수정</button>`
-            : '';
+        const historySection = _wipHistorySection(histItems);
 
-        popup.innerHTML = `
-            <div style="background:var(--accent-purple,#7c3aed);color:#fff;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-radius:10px 10px 0 0;">
-                <div>
-                    <div style="font-size:0.72rem;opacity:0.8;">${_esc(carModel)}</div>
-                    <div style="font-weight:700;font-size:0.95rem;">${_esc(partName)} <span style="font-size:0.8rem;font-weight:400;">${color&&color!=='-'?'/ '+_esc(color):''}</span></div>
+        UIUtils.showModal(
+            `⚡ ${carModel} · ${partName}${color && color !== '-' ? ' · ' + color : ''}`,
+            `
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:10px 14px;
+                        background:var(--bg-secondary);border-radius:8px;font-size:0.85rem;flex-wrap:wrap;">
+                <span><strong>${_esc(carModel)}</strong></span>
+                <span style="color:var(--text-muted);">·</span>
+                <span><strong>${_esc(partName)}</strong></span>
+                ${color && color !== '-' ? `<span style="color:var(--text-muted);">·</span><span>${_esc(color)}</span>` : ''}
+                ${canEdit ? `
+                <div style="margin-left:auto;display:flex;gap:6px;flex-shrink:0;">
+                    <button class="btn btn-sm btn-primary" style="font-size:0.78rem;"
+                        onclick="LaserWipModule._openAfterLaserInForPart('${_cmJs}','${_pnJs}','${_clJs}');">
+                        <span class="material-symbols-outlined" style="font-size:0.9rem;">login</span> 입고
+                    </button>
+                    <button class="btn btn-sm btn-danger" style="font-size:0.78rem;"
+                        onclick="LaserWipModule._openAfterLaserOutForPart('${_cmJs}','${_pnJs}','${_clJs}');">
+                        <span class="material-symbols-outlined" style="font-size:0.9rem;">logout</span> 출고
+                    </button>
+                </div>` : ''}
+            </div>
+            <div style="margin-bottom:16px;display:flex;gap:16px;flex-wrap:wrap;">
+                <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
+                    <div style="font-size:1.4rem;font-weight:700;color:var(--accent-purple,#7c3aed);">${UIUtils.formatNumber(Math.max(0, r.wip))}</div>
+                    <div style="font-size:0.8rem;color:var(--text-muted);">현재 재공 재고 (EA)</div>
                 </div>
-                <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
-                    <div style="text-align:right;">
-                        <div style="font-size:0.7rem;opacity:0.8;">현재 재공품</div>
-                        <div style="font-size:1.3rem;font-weight:800;">${UIUtils.formatNumber(Math.max(0,r.wip))} <span style="font-size:0.75rem;font-weight:400;">EA</span></div>
-                    </div>
-                    ${adjustBtnHtml}
+                <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
+                    <div style="font-size:1.4rem;font-weight:700;color:var(--accent-green);">${UIUtils.formatNumber(r.laserQty)}</div>
+                    <div style="font-size:0.8rem;color:var(--text-muted);">입고 합계 (EA)</div>
+                </div>
+                <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
+                    <div style="font-size:1.4rem;font-weight:700;color:var(--accent-red);">${UIUtils.formatNumber(r.paintBQty)}</div>
+                    <div style="font-size:0.8rem;color:var(--text-muted);">출고 합계 (EA)</div>
+                </div>
+                <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
+                    <div style="font-size:1.4rem;font-weight:700;">${visibleLots.length}</div>
+                    <div style="font-size:0.8rem;color:var(--text-muted);">보유 LOT 수</div>
                 </div>
             </div>
-            <div style="padding:10px 12px;">
-                <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:4px;">
-                    <span class="material-symbols-outlined" style="font-size:14px;">inventory_2</span>사출 LOT별 잔량
-                </div>
-                ${lotTableHtml}
-            </div>
-            ${_canEditWip() ? `
-            <div style="padding:0 12px 8px;display:flex;gap:6px;">
-                <button onclick="LaserWipModule.adjustAfterLaserFromPopup('${keyEnc}','in')" style="flex:1;font-size:0.78rem;padding:5px 10px;border:1px solid var(--accent-green);border-radius:6px;background:#fff;color:var(--accent-green);cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:3px;">
-                    <span class="material-symbols-outlined" style="font-size:14px;">arrow_downward</span>수동입고
-                </button>
-                <button onclick="LaserWipModule.adjustAfterLaserFromPopup('${keyEnc}','out')" style="flex:1;font-size:0.78rem;padding:5px 10px;border:1px solid var(--accent-red);border-radius:6px;background:#fff;color:var(--accent-red);cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:3px;">
-                    <span class="material-symbols-outlined" style="font-size:14px;">arrow_upward</span>수동출고
-                </button>
-            </div>` : ''}
-            <div style="padding:0 12px 10px;display:flex;align-items:center;gap:8px;">
-                <button onclick="(function(btn){
-                    const el=document.getElementById('lwDetailHistArea');
-                    const show=el.style.display==='none';
-                    el.style.display=show?'block':'none';
-                    btn.innerHTML=show?'<span class=\\'material-symbols-outlined\\' style=\\'font-size:14px;vertical-align:middle;\\'>expand_less</span> 내역 닫기':'<span class=\\'material-symbols-outlined\\' style=\\'font-size:14px;vertical-align:middle;\\'>expand_more</span> 입출고 내역 확인 (${allHistRows.length}건)';
-                })(this)" style="font-size:0.78rem;padding:4px 12px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-secondary);cursor:pointer;display:flex;align-items:center;gap:4px;color:var(--text-secondary);">
-                    <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">expand_more</span>입출고 내역 확인 (${allHistRows.length}건)
-                </button>
-                <span style="font-size:0.75rem;color:var(--text-muted);">입고 ${UIUtils.formatNumber(r.laserQty)} / 출고 ${UIUtils.formatNumber(r.paintBQty)} EA</span>
-            </div>
-            <div id="lwDetailHistArea" style="display:none;overflow-y:auto;max-height:240px;border-top:1px solid var(--border-color);">
-                <table style="width:100%;border-collapse:collapse;">
-                    <thead style="position:sticky;top:0;background:var(--bg-secondary);">
-                        <tr>
-                            <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">구분</th>
-                            <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">날짜</th>
-                            <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">LOT</th>
-                            <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;text-align:right;border-bottom:1px solid var(--border-color);">수량</th>
-                        </tr>
-                    </thead>
-                    <tbody>${allHistRows.join('')}</tbody>
-                </table>
-            </div>`;
-
-        document.body.appendChild(popup);
-        document.addEventListener('click', function _closeOnOuter(e) {
-            if (!popup.contains(e.target)) { popup.remove(); document.removeEventListener('click', _closeOnOuter); }
-        });
+            ${StockDetailUI.buildLotTableSection({
+                headers: canEdit ? ['도장 LOT', '사출 LOT', '현재 수량', ''] : ['도장 LOT', '사출 LOT', '현재 수량'],
+                colSpan: canEdit ? 4 : 3,
+                rowsHtml: lotRowsHtml
+            })}
+            ${historySection}
+            `,
+            '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>',
+            'lg'
+        );
     }
 
-    // ── 레이져 잔량 팝업 ─────────────────────────────────────────────────
+    // ── 레이져 잔량 상세 모달 ─────────────────────────────────────────────
     function showResidualDetail(keyEnc, evt) {
-        _closeDetailPopup();
-        evt.stopPropagation();
+        if (evt) evt.stopPropagation();
 
-        const parts = decodeURIComponent(keyEnc).split('||');
-        const carModel = parts[0]||'', partName = parts[1]||'', color = parts[2]||'';
+        const { carModel, partName, color } = _parseProductKey(keyEnc);
 
-        const r = _calcLaserResidualWip().find(function(x){ return x.carModel===carModel && x.partName===partName && (x.color||'')===color; });
+        const r = _calcLaserResidualWip().find(function(x) { return x.carModel === carModel && x.partName === partName && (x.color || '') === color; });
         if (!r) return;
 
-        // 레이져 작업 엔트리별 LOT잔량 계산
-        const laserAllWorks = (Storage.getAll(STORE_LASER)||[]).filter(function(w){
-            return (w.carModel||'')===carModel && (w.partName||'')===partName && (!color||(w.color||'')===color);
+        const laserAllWorks = (Storage.getAll(STORE_LASER) || []).filter(function(w) {
+            return (w.carModel || '') === carModel && (w.partName || '') === partName && (!color || (w.color || '') === color);
         });
 
-        // 일반 작업 잔량 rows
-        const lotEntries = [];
-        laserAllWorks.filter(function(w){ return !w.isManualOut&&!w.isResidualManualIn&&!w.isResidualManualOut; }).forEach(function(w){
-            const goodQty  = Number(w.inspectionGoodQty)||Number(w.completedQty)||Number(w.quantity)||0;
-            const packUnit = Number(w.packUnit)||0;
-            const resQty   = Number(w.laserResidualQty)||(packUnit>0?Math.max(0,goodQty-Math.floor(goodQty/packUnit)*packUnit):0);
-            if (resQty <= 0) return;
-            const paintLots = Array.isArray(w.paintLots)&&w.paintLots.length ? w.paintLots : [];
-            const paintLot  = paintLots.length&&paintLots[0]&&paintLots[0].paintDate
-                ? String(paintLots[0].paintDate).replace(/-/g,'').slice(2,8)
-                : String(w.paintDate||w.date||'').replace(/-/g,'').slice(2,8);
-            const injLots   = paintLots.map(function(l){ return l&&l.lotNo||''; }).filter(Boolean);
-            const injStr    = injLots.length ? injLots.join(', ') : (w.paintLot||w.lotNo||'-');
-            lotEntries.push({ paintLot: paintLot||'-', injLot: injStr, qty: resQty });
-        });
-        // 수기 입출고 조정분 (별도 행)
-        var manualAdj = 0;
-        laserAllWorks.filter(function(w){ return w.isResidualManualIn||w.isResidualManualOut; }).forEach(function(w){
-            manualAdj += w.isResidualManualIn ? (Number(w.quantity)||0) : -(Number(w.quantity)||0);
-        });
+        const { lots: lotEntries, manualAdj } = _calcResidualLotDetail(carModel, partName, color);
 
-        const lotTableHtml = lotEntries.length === 0
-            ? '<div style="color:var(--text-muted);font-size:0.82rem;padding:6px 0;">LOT 정보 없음</div>'
-            : `<table style="width:100%;border-collapse:collapse;">
-                <thead><tr style="background:rgba(245,158,11,0.07);">
-                    <th style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">도장 LOT</th>
-                    <th style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">사출 LOT</th>
-                    <th style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);font-weight:600;text-align:right;border-bottom:1px solid var(--border-color);">재고 (EA)</th>
-                </tr></thead>
-                <tbody>
-                    ${lotEntries.map(function(e){
-                        return `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
-                            <td style="padding:4px 10px;font-family:monospace;font-size:0.82rem;color:var(--accent-green);">${_esc(e.paintLot)}</td>
-                            <td style="padding:4px 10px;font-family:monospace;font-size:0.82rem;">${_esc(e.injLot)}</td>
-                            <td style="padding:4px 10px;text-align:right;font-weight:700;color:var(--accent-orange,#f59e0b);">${UIUtils.formatNumber(e.qty)}</td>
-                        </tr>`;
-                    }).join('')}
-                    ${manualAdj !== 0 ? `<tr style="border-top:1px dashed var(--border-color);">
-                        <td colspan="2" style="padding:4px 10px;font-size:0.74rem;color:var(--text-muted);">수기 조정</td>
-                        <td style="padding:4px 10px;text-align:right;font-size:0.8rem;font-weight:700;color:${manualAdj>0?'var(--accent-green)':'var(--accent-red)'};">${manualAdj>0?'+':''}${UIUtils.formatNumber(manualAdj)}</td>
-                    </tr>` : ''}
-                </tbody>
-               </table>`;
-
-        // 입출고 내역: laserWorks rows (잔량 발생) + residual manual rows
-        const laserWorks = (Storage.getAll(STORE_LASER)||[]).filter(function(w){
-            return (w.carModel||'')===carModel && (w.partName||'')===partName && (!color||(w.color||'')===color);
-        });
-        const histRows = [];
-        laserWorks.filter(function(w){return !w.isManualOut&&!w.isResidualManualIn&&!w.isResidualManualOut;}).forEach(function(w){
-            const goodQty = Number(w.inspectionGoodQty)||Number(w.completedQty)||Number(w.quantity)||0;
-            const packUnit = Number(w.packUnit)||0;
-            const residualQty = Number(w.laserResidualQty)||(packUnit>0?Math.max(0,goodQty-Math.floor(goodQty/packUnit)*packUnit):0);
+        const histItems = [];
+        laserAllWorks.filter(function(w) { return !w.isManualOut && !w.isResidualManualIn && !w.isResidualManualOut; }).forEach(function(w) {
+            const goodQty = Number(w.inspectionGoodQty) || Number(w.completedQty) || Number(w.quantity) || 0;
+            const packUnit = Number(w.packUnit) || 0;
+            const residualQty = Number(w.laserResidualQty) || (packUnit > 0 ? Math.max(0, goodQty - Math.floor(goodQty / packUnit) * packUnit) : 0);
             if (residualQty <= 0) return;
-            const lots = Array.isArray(w.paintLots)&&w.paintLots.length ? w.paintLots.map(function(pl){return pl&&pl.lotNo||'';}).filter(Boolean).join(',') : (w.paintLot||w.lotNo||'-');
-            histRows.push(`<tr style="border-bottom:1px solid var(--border-color);">
-                <td style="padding:4px 8px;"><span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:0.68rem;font-weight:700;background:rgba(245,158,11,0.12);color:var(--accent-orange,#f59e0b);">잔량 발생</span></td>
-                <td style="padding:4px 8px;font-size:0.78rem;">${_esc(w.date||'-')}</td>
-                <td style="padding:4px 8px;font-size:0.74rem;color:var(--text-muted);">${_esc(lots)}</td>
-                <td style="padding:4px 8px;text-align:right;font-weight:700;color:var(--accent-orange,#f59e0b);">+${UIUtils.formatNumber(residualQty)}</td>
-            </tr>`);
+            const lots = Array.isArray(w.paintLots) && w.paintLots.length
+                ? w.paintLots.map(function(pl) { return pl && pl.lotNo || ''; }).filter(Boolean).join(', ')
+                : (w.paintLot || w.lotNo || '-');
+            histItems.push({
+                date: w.date || '-',
+                isOut: false,
+                routeLabel: '잔량 발생',
+                routeColor: '#f59e0b',
+                routeDetail: w.machine || '레이저 작업',
+                lot: lots,
+                qty: residualQty,
+                note: w.note || w.machine || '-'
+            });
         });
-        laserWorks.filter(function(w){return w.isResidualManualIn||w.isResidualManualOut;}).forEach(function(w){
-            const qty = Number(w.quantity)||0;
+        laserAllWorks.filter(function(w) { return w.isResidualManualIn || w.isResidualManualOut; }).forEach(function(w) {
+            const qty = Number(w.quantity) || 0;
             const isIn = w.isResidualManualIn;
-            histRows.push(`<tr style="border-bottom:1px solid var(--border-color);">
-                <td style="padding:4px 8px;"><span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:0.68rem;font-weight:700;background:${isIn?'rgba(34,197,94,0.12)':'rgba(239,68,68,0.10)'};color:${isIn?'var(--accent-green)':'var(--accent-red)'};">${isIn?'수기 입고':'수기 출고'}</span></td>
-                <td style="padding:4px 8px;font-size:0.78rem;">${_esc(w.date||'-')}</td>
-                <td style="padding:4px 8px;font-size:0.74rem;color:var(--text-muted);">${_esc(w.lotNo||w.note||'-')}</td>
-                <td style="padding:4px 8px;text-align:right;font-weight:700;color:${isIn?'var(--accent-green)':'var(--accent-red)'};">${isIn?'+':'-'}${UIUtils.formatNumber(qty)}</td>
-            </tr>`);
+            const isLotAdjust = !!w.isResidualLotAdjust;
+            histItems.push({
+                date: w.date || '-',
+                isOut: !isIn,
+                routeLabel: isLotAdjust ? 'LOT 보정' : (isIn ? '수기 입고' : '수기 출고'),
+                routeColor: isLotAdjust ? '#2563eb' : (isIn ? '#16a34a' : '#dc2626'),
+                routeDetail: isLotAdjust
+                    ? ((w.residualPaintLot ? w.residualPaintLot + ' / ' : '') + (w.lotNo || ''))
+                    : (isIn ? '잔량 수기 입고' : '잔량 수기 출고'),
+                lot: w.lotNo || w.note || '-',
+                qty: qty,
+                note: w.note || '-'
+            });
         });
+        histItems.sort(function(a, b) { return String(b.date).localeCompare(String(a.date)); });
 
-        const popup = document.createElement('div');
-        popup.id = 'lwDetailPopup';
-        popup.style.cssText = `position:fixed;z-index:9999;background:var(--bg-primary);border:1px solid var(--border-color);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.18);min-width:340px;max-width:480px;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;`;
-        const pos = _popupPosition(evt);
-        popup.style.top = pos.top + 'px';
-        popup.style.left = pos.left + 'px';
+        const _cmJs = String(carModel || '').replace(/'/g, "\\'");
+        const _pnJs = String(partName || '').replace(/'/g, "\\'");
+        const _clJs = String(color || '').replace(/'/g, "\\'");
+        const _keyJs = _productKey(carModel, partName, color);
+        const canEdit = _canEditWip();
 
-        const adjustBtnHtml = _canEditWip()
-            ? `<button type="button" onclick="event.stopPropagation();LaserWipModule.openAdjustResidualModal('${keyEnc}')"
-                    style="background:rgba(255,255,255,0.2);border:none;border-radius:6px;color:#fff;padding:4px 8px;cursor:pointer;font-size:0.78rem;font-family:inherit;">수량 수정</button>`
-            : '';
+        const lotRowsHtml = lotEntries.map(function(e) {
+            const _plJs = encodeURIComponent(e.paintLot || '');
+            const _ilJs = encodeURIComponent(e.injLot || '');
+            return `<tr>
+                <td style="font-family:monospace;color:var(--accent-green);">${_esc(e.paintLot)}</td>
+                <td style="font-family:monospace;">${_esc(e.injLot)}</td>
+                <td style="text-align:right;color:var(--accent-orange,#f59e0b);font-weight:600;">${UIUtils.formatNumber(e.qty)}</td>
+                ${canEdit ? `<td style="text-align:center;">
+                    <button class="btn btn-sm btn-outline" style="font-size:0.72rem;padding:2px 8px;"
+                        onclick="UIUtils.closeModal();setTimeout(()=>LaserWipModule.openAdjustResidualLotModal('${_jsArg(_keyJs)}','${_plJs}','${_ilJs}',${Number(e.qty) || 0}),80);">
+                        보정 수정
+                    </button>
+                </td>` : ''}
+            </tr>`;
+        }).join('') + (manualAdj !== 0 ? `<tr style="border-top:1px dashed var(--border-color);">
+                <td colspan="${canEdit ? 3 : 2}" style="font-size:0.82rem;color:var(--text-muted);">품목 수기 조정</td>
+                <td style="text-align:right;font-weight:600;color:${manualAdj > 0 ? 'var(--accent-green)' : 'var(--accent-red)'};">${manualAdj > 0 ? '+' : ''}${UIUtils.formatNumber(manualAdj)}</td>
+                ${canEdit ? '<td></td>' : ''}
+            </tr>` : '');
 
-        popup.innerHTML = `
-            <div style="background:var(--accent-orange,#f59e0b);color:#fff;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-radius:10px 10px 0 0;">
-                <div>
-                    <div style="font-size:0.72rem;opacity:0.85;">${_esc(carModel)}</div>
-                    <div style="font-weight:700;font-size:0.95rem;">${_esc(partName)} <span style="font-size:0.8rem;font-weight:400;">${color&&color!=='-'?'/ '+_esc(color):''}</span></div>
+        const historySection = _wipHistorySection(histItems);
+
+        UIUtils.showModal(
+            `📦 ${carModel} · ${partName}${color && color !== '-' ? ' · ' + color : ''}`,
+            `
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:10px 14px;
+                        background:var(--bg-secondary);border-radius:8px;font-size:0.85rem;flex-wrap:wrap;">
+                <span><strong>${_esc(carModel)}</strong></span>
+                <span style="color:var(--text-muted);">·</span>
+                <span><strong>${_esc(partName)}</strong></span>
+                ${color && color !== '-' ? `<span style="color:var(--text-muted);">·</span><span>${_esc(color)}</span>` : ''}
+                ${canEdit ? `
+                <div style="margin-left:auto;display:flex;gap:6px;flex-shrink:0;">
+                    <button class="btn btn-sm btn-primary" style="font-size:0.78rem;"
+                        onclick="LaserWipModule._openResidualInForPart('${_cmJs}','${_pnJs}','${_clJs}');">
+                        <span class="material-symbols-outlined" style="font-size:0.9rem;">login</span> 입고
+                    </button>
+                    <button class="btn btn-sm btn-danger" style="font-size:0.78rem;"
+                        onclick="LaserWipModule._openResidualOutForPart('${_cmJs}','${_pnJs}','${_clJs}');">
+                        <span class="material-symbols-outlined" style="font-size:0.9rem;">logout</span> 출고
+                    </button>
+                </div>` : ''}
+            </div>
+            <div style="margin-bottom:16px;display:flex;gap:16px;flex-wrap:wrap;">
+                <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
+                    <div style="font-size:1.4rem;font-weight:700;color:var(--accent-orange,#f59e0b);">${UIUtils.formatNumber(r.residualQty)}</div>
+                    <div style="font-size:0.8rem;color:var(--text-muted);">현재 잔량 (EA)</div>
                 </div>
-                <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
-                    <div style="text-align:right;">
-                        <div style="font-size:0.7rem;opacity:0.85;">현재 잔량</div>
-                        <div style="font-size:1.3rem;font-weight:800;">${UIUtils.formatNumber(r.residualQty)} <span style="font-size:0.75rem;font-weight:400;">EA</span></div>
-                    </div>
-                    ${adjustBtnHtml}
+                <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
+                    <div style="font-size:1.4rem;font-weight:700;color:var(--accent-green);">${UIUtils.formatNumber(r.fullBoxQty)}</div>
+                    <div style="font-size:0.8rem;color:var(--text-muted);">출하가능 (EA)</div>
+                </div>
+                <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
+                    <div style="font-size:1.4rem;font-weight:700;">${r.packUnit ? UIUtils.formatNumber(r.packUnit) : '-'}</div>
+                    <div style="font-size:0.8rem;color:var(--text-muted);">포장단위 (EA)</div>
+                </div>
+                <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
+                    <div style="font-size:1.4rem;font-weight:700;">${lotEntries.length}</div>
+                    <div style="font-size:0.8rem;color:var(--text-muted);">LOT 항목 수</div>
                 </div>
             </div>
-            <div style="padding:10px 12px;">
-                <div style="font-size:0.75rem;color:var(--text-secondary);font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:4px;">
-                    <span class="material-symbols-outlined" style="font-size:14px;">sell</span>LOT / 작업일 정보
-                </div>
-                ${lotTableHtml}
-                ${r.packUnit ? `<div style="margin-top:6px;font-size:0.74rem;color:var(--text-muted);">포장단위: <strong style="color:var(--text-primary);">${UIUtils.formatNumber(r.packUnit)}</strong> / 출하가능: <strong style="color:var(--accent-green);">${UIUtils.formatNumber(r.fullBoxQty)} EA</strong></div>` : ''}
-            </div>
-            ${_canEditWip() ? `
-            <div style="padding:0 12px 8px;display:flex;gap:6px;">
-                <button onclick="LaserWipModule.adjustResidualFromPopup('${keyEnc}','in')" style="flex:1;font-size:0.78rem;padding:5px 10px;border:1px solid var(--accent-green);border-radius:6px;background:#fff;color:var(--accent-green);cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:3px;">
-                    <span class="material-symbols-outlined" style="font-size:14px;">arrow_downward</span>수동입고
-                </button>
-                <button onclick="LaserWipModule.adjustResidualFromPopup('${keyEnc}','out')" style="flex:1;font-size:0.78rem;padding:5px 10px;border:1px solid var(--accent-red);border-radius:6px;background:#fff;color:var(--accent-red);cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:3px;">
-                    <span class="material-symbols-outlined" style="font-size:14px;">arrow_upward</span>수동출고
-                </button>
-            </div>` : ''}
-            <div style="padding:0 12px 10px;display:flex;align-items:center;gap:8px;">
-                <button onclick="(function(btn){
-                    const el=document.getElementById('lwDetailHistArea');
-                    const show=el.style.display==='none';
-                    el.style.display=show?'block':'none';
-                    btn.innerHTML=show?'<span class=\\'material-symbols-outlined\\' style=\\'font-size:14px;vertical-align:middle;\\'>expand_less</span> 내역 닫기':'<span class=\\'material-symbols-outlined\\' style=\\'font-size:14px;vertical-align:middle;\\'>expand_more</span> 입출고 내역 확인 (${histRows.length}건)';
-                })(this)" style="font-size:0.78rem;padding:4px 12px;border:1px solid var(--border-color);border-radius:6px;background:var(--bg-secondary);cursor:pointer;display:flex;align-items:center;gap:4px;color:var(--text-secondary);">
-                    <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">expand_more</span>입출고 내역 확인 (${histRows.length}건)
-                </button>
-            </div>
-            <div id="lwDetailHistArea" style="display:none;overflow-y:auto;max-height:240px;border-top:1px solid var(--border-color);">
-                <table style="width:100%;border-collapse:collapse;">
-                    <thead style="position:sticky;top:0;background:var(--bg-secondary);">
-                        <tr>
-                            <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">구분</th>
-                            <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">날짜</th>
-                            <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border-color);">LOT</th>
-                            <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;text-align:right;border-bottom:1px solid var(--border-color);">수량</th>
-                        </tr>
-                    </thead>
-                    <tbody>${histRows.join('')}</tbody>
-                </table>
-            </div>`;
-
-        document.body.appendChild(popup);
-        document.addEventListener('click', function _closeOnOuter(e) {
-            if (!popup.contains(e.target)) { popup.remove(); document.removeEventListener('click', _closeOnOuter); }
-        });
+            ${StockDetailUI.buildLotTableSection({
+                title: '현재 보관 LOT',
+                headers: canEdit ? ['도장 LOT', '사출 LOT', '잔량 (EA)', ''] : ['도장 LOT', '사출 LOT', '잔량 (EA)'],
+                colSpan: canEdit ? 4 : 3,
+                emptyText: 'LOT 정보가 없습니다.',
+                rowsHtml: lotRowsHtml
+            })}
+            ${historySection}
+            `,
+            '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>',
+            'lg'
+        );
     }
 
     function _num(value) {
@@ -1554,7 +1967,7 @@ var LaserWipModule = (function() {
     }
 
     function _laserResidualRow(r) {
-        const encKey = encodeURIComponent(`${r.carModel||''}||${r.partName||''}||${r.color||''}`);
+        const encKey = _productKey(r.carModel || '', r.partName || '', r.color || '');
         return `<tr style="border-bottom:1px solid var(--border-color);cursor:pointer;"
                     onclick="LaserWipModule.showResidualDetail('${encKey}', event)"
                     onmouseover="this.style.background='rgba(245,158,11,0.07)'"
@@ -1626,7 +2039,7 @@ var LaserWipModule = (function() {
             </span>`;
         }
         const rowBg = wip > 0 ? '' : (wip < 0 ? 'background:rgba(239,68,68,0.04);' : 'background:var(--bg-secondary);opacity:0.7;');
-        const encKey = encodeURIComponent(`${r.carModel||''}||${r.partName||''}||${r.color||''}`);
+        const encKey = _productKey(r.carModel || '', r.partName || '', r.color || '');
         return `<tr style="border-bottom:1px solid var(--border-color);${rowBg}cursor:pointer;"
                     onclick="LaserWipModule.showWipDetail('${encKey}', event)"
                     onmouseover="this.style.background='rgba(139,92,246,0.07)'"
@@ -1653,6 +2066,35 @@ var LaserWipModule = (function() {
         if (/^도장.?B$/i.test(s)) return '도장-B';
         if (/^레이[져저]$/i.test(s)) return '레이져';
         return s;
+    }
+
+    function _productProcessSeq(p) {
+        return ['process1', 'process2', 'process3', 'process4']
+            .map(k => _normProc(p[k] || ''))
+            .filter(Boolean);
+    }
+
+    function _hasLaserProcess(p) {
+        return _productProcessSeq(p).includes('레이져');
+    }
+
+    function _getProcessAfterLaser(p) {
+        const seq = _productProcessSeq(p);
+        const idx = seq.findIndex(v => v === '레이져');
+        if (idx < 0 || idx === seq.length - 1) return '';
+        return seq[idx + 1];
+    }
+
+    // 레이져 후 재공품(도장-B 투입 대기): T1xx LENS / T1xx PARK / P702 Lens 등
+    function _isAfterLaserWipProduct(p) {
+        return _getProcessAfterLaser(p) === '도장-B';
+    }
+
+    // 레이져 잔량 대상: 제조공정에 레이져 포함, 레이져→도장-B 재공품은 제외(검사·출고 흐름)
+    function _getResidualProducts() {
+        return (Storage.getAll(DB.STORES.PRODUCTS) || []).filter(p =>
+            _hasLaserProcess(p) && !_isAfterLaserWipProduct(p)
+        );
     }
 
     // ── 레이져 직후 공정이 도장(A/B)인 제품 맵 구성 ─────────────────────
@@ -1759,8 +2201,14 @@ var LaserWipModule = (function() {
     }
 
     function refresh() {
-        _renderTabContent();
-        UIUtils.toast('재공품 현황을 새로고침했습니다.', 'info');
+        _repairCorruptedLaserWorkRecords().then(function(repaired) {
+            _renderTabContent();
+            if (repaired > 0) {
+                UIUtils.toast('손상된 레이저 기록 ' + repaired + '건을 자동 복구했습니다.', 'success');
+            } else {
+                UIUtils.toast('재공품 현황을 새로고침했습니다.', 'info');
+            }
+        });
     }
 
     function openManualInput() {
@@ -1779,11 +2227,7 @@ var LaserWipModule = (function() {
 
     function _getPaintBProducts() {
         return (Storage.getAll(DB.STORES.PRODUCTS) || []).filter(p => {
-            const seq = ['process1','process2','process3','process4']
-                .map(k => _normProc(p[k]||'')).filter(Boolean);
-            const idx = seq.findIndex(v => v === '레이져');
-            if (idx < 0 || idx === seq.length - 1) return false;
-            const next = seq[idx + 1];
+            const next = _getProcessAfterLaser(p);
             return next === '도장-A' || next === '도장-B';
         });
     }
@@ -1999,6 +2443,41 @@ var LaserWipModule = (function() {
         return !!_buildAfterLaserDrainMap()[`${carModel||''}||${partName||''}`];
     }
 
+    function getResidualQty(carModel, partName, color) {
+        const rows = _calcLaserResidualWip();
+        const car = String(carModel || '').trim();
+        const part = String(partName || '').trim();
+        const clr = String(color || '').trim();
+        // 1) 차종+품명+컬러 정확 매칭
+        let match = rows.find(r =>
+            String(r.carModel || '').trim() === car &&
+            String(r.partName || '').trim() === part &&
+            String(r.color || '').trim() === clr
+        );
+        // 2) 컬러 없으면 차종+품명 합산
+        if (!match && !clr) {
+            const same = rows.filter(r =>
+                String(r.carModel || '').trim() === car &&
+                String(r.partName || '').trim() === part
+            );
+            if (same.length) {
+                return same.reduce((s, r) => s + (Number(r.residualQty) || 0), 0);
+            }
+        }
+        // 3) 컬러 불일치 시 차종+품명 폴백 (도장 컬러 vs 제품 컬러 표기 차이)
+        if (!match) {
+            const same = rows.filter(r =>
+                String(r.carModel || '').trim() === car &&
+                String(r.partName || '').trim() === part
+            );
+            if (same.length === 1) match = same[0];
+            else if (same.length > 1 && clr) {
+                match = same.find(r => String(r.color || '').trim() === clr) || null;
+            }
+        }
+        return match ? Math.max(0, Number(match.residualQty) || 0) : 0;
+    }
+
     return { init, render, refresh, switchTab, openTab, _activeTabId, isAfterLaserDrainProduct, openManualInput,
              openAfterLaserInput, onAfterCarChange, onAfterPartChange, saveAfterLaserInput,
              openAfterLaserOut, onOutCarChange, onOutPartChange, saveAfterLaserOut,
@@ -2007,7 +2486,12 @@ var LaserWipModule = (function() {
              openResidualOut, onResidualOutCarChange, onResidualOutPartChange, saveResidualOut,
              openEditResidualManualEntry, saveEditResidualManualEntry, removeResidualManualEntry,
              getWipStock, _calcWip, showWipDetail, showResidualDetail,
+             getResidualQty, _calcLaserResidualWip,
              adjustAfterLaserFromPopup, adjustResidualFromPopup,
              openAdjustAfterLaserModal, saveAdjustAfterLaserModal,
-             openAdjustResidualModal, saveAdjustResidualModal };
+             openAdjustResidualModal, saveAdjustResidualModal,
+             openAdjustAfterLaserLotModal, saveAdjustAfterLaserLotModal,
+             openAdjustResidualLotModal, saveAdjustResidualLotModal,
+             _openAfterLaserOutForPart, _openAfterLaserInForPart,
+             _openResidualOutForPart, _openResidualInForPart };
 })();

@@ -79,7 +79,8 @@ const AuthModule = (function () {
         { id:'shipping-std-photo',        label:'출하검사 표준서',    group:'출하/제품' },
         { id:'product-warehouse',         label:'제품 창고',          group:'출하/제품' },
         { id:'product-outgoing',          label:'제품 출고',          group:'출하/제품' },
-        { id:'sales-delivery-plan',       label:'납품 계획',          group:'영업' },
+        { id:'sales-delivery-plan',       label:'영업 계획',          group:'영업' },
+        { id:'sales-today-shipment',      label:'납품 출하(금일)',    group:'영업' },
         { id:'sales-delivery',            label:'출고 등록',          group:'영업' },
         { id:'sales-analytics',           label:'영업관리(매출분석)', group:'영업' },
         { id:'sales-outsourcing',         label:'외주처관리',         group:'영업' },
@@ -133,7 +134,7 @@ const AuthModule = (function () {
 
     /* ── 페이지 그룹 (권한 관리 단위) ──────────────────────────── */
     const PAGE_GROUPS = [
-        { key:'sales_menu',       label:'\uc601\uc5c5 \uad00\ub9ac',     pages:['sales-delivery-plan','sales-delivery','sales-analytics','sales-outsourcing'] },
+        { key:'sales_menu',       label:'\uc601\uc5c5 \uad00\ub9ac',     pages:['sales-delivery-plan','sales-today-shipment','sales-delivery','sales-analytics','sales-outsourcing'] },
         { key:'board',            label:'\uac8c\uc2dc\ud310',            pages:['board'] },
         { key:'incoming',         label:'\uc218\uc785\uac80\uc0ac',      pages:['incoming-overview','injection-incoming','paint-incoming-inspection','inj-incoming-std','paint-incoming-std','inj-insp-std-photo'] },
         { key:'material_wh',      label:'\uc790\uc7ac \ucc3d\uace0',     pages:['warehouse-overview','injection-warehouse','paint-inventory','raw-material-inventory'] },
@@ -157,7 +158,8 @@ const AuthModule = (function () {
     /* ── 내부 스토리지 ───────────────────────────────────────── */
     const MENU_PERMISSION_SCOPES = {
         'board': ['board'],
-        'sales-delivery-plan': ['sales-delivery-plan','sales-delivery','sales-analytics','sales-outsourcing'],
+        'sales-delivery-plan': ['sales-delivery-plan','sales-today-shipment','sales-delivery','sales-analytics','sales-outsourcing'],
+        'sales-today-shipment': ['sales-delivery-plan','sales-today-shipment','sales-delivery','sales-analytics','sales-outsourcing'],
         'incoming-overview': ['incoming-overview','injection-incoming','paint-incoming-inspection','inj-incoming-std','paint-incoming-std','inj-insp-std-photo'],
         'warehouse-overview': ['warehouse-overview','injection-warehouse','paint-inventory','raw-material-inventory'],
         'product-warehouse': ['product-warehouse','product-outgoing'],

@@ -1961,6 +1961,44 @@ const SettingsModule = (function() {
         return _normalizePaintMaterialType(mat && mat.paintType) === type;
     }
 
+    // 저장된 도료 ID가 제조사/유형 필터에서 빠져도 드롭다운·저장 시 유지
+    function _ensurePaintInList(list, selectedId, allPaints) {
+        if (!selectedId || _isNoNeedPaintSelection(selectedId)) return list || [];
+        const items = list || [];
+        if (items.some(p => p.id === selectedId)) return items;
+        const saved = (allPaints || []).find(p => p.id === selectedId);
+        return saved ? [saved, ...items] : items;
+    }
+
+    function _preservePaintRowIdsOnSave(newRows, oldRows) {
+        const paints = Storage.getAll(PAINT_STORE) || [];
+        const paintMap = {};
+        paints.forEach(pm => { if (pm.id) paintMap[pm.id] = pm; });
+        const usedOld = new Set();
+        return (newRows || []).map(row => {
+            const mainKey = row.mainId || '';
+            const specKey = row.paintSpec || '';
+            const tagKey  = row.processTag || '';
+            const old = (oldRows || []).find((o, idx) => {
+                if (usedOld.has(idx)) return false;
+                const match = (o.processTag || '') === tagKey &&
+                    (o.paintSpec || '') === specKey &&
+                    (o.mainId || o.paintMaterialId || '') === mainKey;
+                if (match) usedOld.add(idx);
+                return match;
+            });
+            if (!old) return row;
+            const merged = { ...row };
+            if (!merged.hardId && old.hardId) {
+                if (_isNoNeedPaintSelection(old.hardId) || paintMap[old.hardId]) merged.hardId = old.hardId;
+            }
+            if (!merged.thinnerId && old.thinnerId) {
+                if (_isNoNeedPaintSelection(old.thinnerId) || paintMap[old.thinnerId]) merged.thinnerId = old.thinnerId;
+            }
+            return merged;
+        });
+    }
+
     function _isNoNeedPaintSelection(value) {
         const text = String(value || '').trim().replace(/\s+/g, '');
         return text === '사용불필요';
@@ -2054,13 +2092,21 @@ const SettingsModule = (function() {
         const scopedHard = basePaints.filter(p => _isPaintType(p, 'hardener'));
         const allHard    = scopedHard.length ? scopedHard : supplierPaints.filter(p => _isPaintType(p, 'hardener'));
         const hardByManufacturer  = mainManufacturer ? allHard.filter(p => _samePaintMaker(p.manufacturer, mainManufacturer)) : [];
-        const hardPaints = hardByManufacturer.length ? hardByManufacturer : allHard;
+        const hardPaints = _ensurePaintInList(
+            hardByManufacturer.length ? hardByManufacturer : allHard,
+            hardId,
+            allPaints
+        );
 
         // 신너(희석제): 구매처 필터 후 동일 공급처 우선 → 없으면 폴백
         const scopedThinner  = basePaints.filter(p => _isPaintType(p, 'thinner'));
         const allThinner     = scopedThinner.length ? scopedThinner : supplierPaints.filter(p => _isPaintType(p, 'thinner'));
         const thinnerByManufacturer   = mainManufacturer ? allThinner.filter(p => _samePaintMaker(p.manufacturer, mainManufacturer)) : [];
-        const thinnerPaints  = thinnerByManufacturer.length ? thinnerByManufacturer : allThinner;
+        const thinnerPaints  = _ensurePaintInList(
+            thinnerByManufacturer.length ? thinnerByManufacturer : allThinner,
+            thinnerId,
+            allPaints
+        );
 
         const mkOpts = (list, selectedId) => list.map(pm =>
             `<option value="${pm.id}" ${pm.id === selectedId ? 'selected' : ''}>${pm.name || ''}${[pm.manufacturer, pm.supplier].filter(Boolean).length ? ' · ' + [pm.manufacturer, pm.supplier].filter(Boolean).join(' / ') : ''}</option>`
@@ -2225,10 +2271,18 @@ const SettingsModule = (function() {
             const paintMap = {};
             paints.forEach(pm => { if (pm.id) paintMap[pm.id] = pm; });
             const mainPaint = mainId ? paintMap[mainId] : null;
-            if (mainPaint && mainPaint.manufacturer) rows[rowIdx].rowManufacturer = mainPaint.manufacturer;
-            // 주제가 바뀌면 경화제/신너 선택 초기화 (도료사가 달라지므로)
-            rows[rowIdx].hardId    = _isHardenerNotRequired(rows[rowIdx], paintMap) ? '사용불필요' : '';
-            rows[rowIdx].thinnerId = '';
+            const oldManufacturer = rows[rowIdx].rowManufacturer || '';
+            const newManufacturer = mainPaint ? (mainPaint.manufacturer || '') : '';
+            if (newManufacturer) rows[rowIdx].rowManufacturer = newManufacturer;
+            // 제조사가 실제로 바뀐 경우에만 경화제/신너 초기화
+            const manufacturerChanged = !!(newManufacturer && oldManufacturer &&
+                !_samePaintMaker(oldManufacturer, newManufacturer));
+            if (manufacturerChanged) {
+                rows[rowIdx].hardId    = _isHardenerNotRequired(rows[rowIdx], paintMap) ? '사용불필요' : '';
+                rows[rowIdx].thinnerId = '';
+            } else if (!rows[rowIdx].hardId && _isHardenerNotRequired(rows[rowIdx], paintMap)) {
+                rows[rowIdx].hardId = '사용불필요';
+            }
         }
         _renderPaintList(idPrefix, rows);
     }
@@ -3006,6 +3060,10 @@ const SettingsModule = (function() {
         const partNameChanged = oldPartName && newPartName && oldPartName !== newPartName;
 
         data.displayName = `${data.carModel} ${data.partName} ${data.color}`.trim();
+        data.paintMaterials = _preservePaintRowIdsOnSave(
+            data.paintMaterials,
+            oldRec && oldRec.paintMaterials
+        );
         await Storage.update(PRODUCTS_STORE, id, data);
 
         // ── 사출 자재 수정/신규 등록 (편집 모드가 활성화된 경우) ────

@@ -571,6 +571,28 @@ const PaintInventoryModule = (function() {
         `).join('');
     }
 
+    function _paintInvRoute(d) {
+        const src = String((d && d.source) || (d && d.memo) || '').trim();
+        if (d && d.type === '출고') {
+            return { label: '도장 출고', color: '#7c3aed', detail: src || '도장 투입' };
+        }
+        if (d && (d.sourceInspectionId || /수입검사/.test(src))) {
+            return { label: '수입검사', color: '#2563eb', detail: src || '도료 수입검사' };
+        }
+        return { label: '수동입고', color: '#0891b2', detail: src || '수기 등록' };
+    }
+
+    function _toPaintInvRecords(records) {
+        return (records || []).map(function(d) {
+            const lot = d.prodLot || d.lotNo || '';
+            const qty = Number(d.quantity) || 0;
+            return Object.assign({}, d, {
+                lotNo: lot || '무표기',
+                lots: lot ? [{ lotNo: lot, qty: qty }] : undefined
+            });
+        });
+    }
+
     // ── 도료 품목 상세 팝업 ───────────────────────────────────────────
     function showPaintDetail(matId) {
         const materials = Storage.getAll(MATERIALS_STORE);
@@ -596,10 +618,14 @@ const PaintInventoryModule = (function() {
                 lotNo:   d.lotNo   || '',
                 mfgDate: lotDates.mfgDate || '',
                 expDate: lotDates.expDate || '',
+                inDate:  '',
                 qty: 0
             };
             if (d.type === '출고') { lotMap[key].qty -= qty; totalStock -= qty; }
             else                   { lotMap[key].qty += qty; totalStock += qty;
+                const inStamp = InvCalc.normDate(d.date).stamp || (d.date || '');
+                if (inStamp && (!lotMap[key].inDate || inStamp > lotMap[key].inDate))
+                    lotMap[key].inDate = inStamp;
                 if (lotDates.mfgDate && (!lotMap[key].mfgDate || lotDates.mfgDate < lotMap[key].mfgDate))
                     lotMap[key].mfgDate = lotDates.mfgDate;
                 if (lotDates.expDate && (!lotMap[key].expDate || lotDates.expDate < lotMap[key].expDate))
@@ -637,6 +663,7 @@ const PaintInventoryModule = (function() {
                         onclick="PaintInventoryModule._openDetailOutgoing('${matId}','${prodLotEsc}','${lotNoEsc}',${l.qty})"
                         onmouseover="this.style.background='rgba(239,68,68,0.07)'"
                         onmouseout="this.style.background=''">
+                        <td style="white-space:nowrap;font-size:0.8rem;">${l.inDate || '-'}</td>
                         <td style="font-family:monospace;font-weight:700;">${l.prodLot || '-'}</td>
                         <td style="font-family:monospace;color:var(--text-muted);">${l.lotNo || '-'}</td>
                         <td style="text-align:center;">${l.mfgDate || '-'}</td>
@@ -647,26 +674,22 @@ const PaintInventoryModule = (function() {
                         </td>
                     </tr>`;
             }).join('')
-            : `<tr><td colspan="6" style="text-align:center;padding:14px;color:var(--text-muted);">재고 없음</td></tr>`;
+            : `<tr><td colspan="7" style="text-align:center;padding:14px;color:var(--text-muted);">재고 없음</td></tr>`;
 
-        // 입출고 이력 (최근 15건)
-        const histRows = records.slice(0, 15).map(d => {
-            const qty = Number(d.quantity) || 0;
-            const badge = d.type === '출고'
-                ? `<span style="background:#fee2e2;color:#dc2626;padding:1px 7px;border-radius:4px;font-size:0.75rem;font-weight:600;">출고</span>`
-                : `<span style="background:#dcfce7;color:#16a34a;padding:1px 7px;border-radius:4px;font-size:0.75rem;font-weight:600;">입고</span>`;
-            return `
-                <tr>
-                    <td style="white-space:nowrap;">${(d.date || '-').slice(0, 10)}</td>
-                    <td style="font-family:monospace;">${d.prodLot || '-'}</td>
-                    <td style="font-family:monospace;color:var(--text-muted);">${d.lotNo || '-'}</td>
-                    <td style="text-align:right;font-weight:600;color:${d.type === '출고' ? 'var(--accent-red)' : 'var(--accent-green)'};">
-                        ${d.type === '출고' ? '-' : '+'}${UIUtils.formatNumber(qty)}
-                    </td>
-                    <td>${badge}</td>
-                    <td style="color:var(--text-muted);font-size:0.78rem;">${d.type === '입고' ? (d.receivedBy || '') : (d.issuedBy || '')}</td>
-                </tr>`;
-        }).join('') || `<tr><td colspan="6" style="text-align:center;padding:14px;color:var(--text-muted);">이력 없음</td></tr>`;
+        // 입출고 이력 (전체 · 최신순 · 기존/현재 수량)
+        const invRecords = _toPaintInvRecords(records);
+        const historySection = StockDetailUI.buildInvHistorySection(invRecords, {
+            routeFn: _paintInvRoute,
+            lotFn: function(d) {
+                const p = d.prodLot || '';
+                const l = d.lotNo || '';
+                if (p && l && p !== l) return p + ' / ' + l;
+                return p || l || '무표기';
+            },
+            whoFn: function(d) {
+                return d.type === '입고' ? (d.receivedBy || '-') : (d.issuedBy || '-');
+            }
+        });
 
         const typeColors = { 'Primer': '#6366f1', 'Color': '#ec4899', '희석제': '#0ea5e9', '경화제': '#f59e0b' };
         const typeBg  = typeColors[mat.paintType || mat.type || ''] || '#6b7280';
@@ -704,43 +727,13 @@ const PaintInventoryModule = (function() {
                 </div>` : ''}
             </div>
             <!-- 활성 LOT 테이블 -->
-            <div style="font-weight:600;font-size:0.85rem;margin-bottom:6px;color:var(--text-primary);">
-                📦 현재 보유 LOT
-            </div>
-            <div style="overflow-x:auto;margin-bottom:18px;">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>제조 LOT</th>
-                            <th>제조사 표기 LOT</th>
-                            <th style="text-align:center;">제조일자</th>
-                            <th>유효기한</th>
-                            <th style="text-align:right;">재고 수량</th>
-                            <th style="text-align:center;">출고</th>
-                        </tr>
-                    </thead>
-                    <tbody>${lotRows}</tbody>
-                </table>
-            </div>
-            <!-- 입출고 이력 -->
-            <div style="font-weight:600;font-size:0.85rem;margin-bottom:6px;color:var(--text-primary);">
-                📋 입출고 이력 <span style="font-size:0.75rem;font-weight:400;color:var(--text-muted);">(최근 15건)</span>
-            </div>
-            <div style="overflow-x:auto;">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>날짜</th>
-                            <th>제조 LOT</th>
-                            <th>제조사 표기 LOT</th>
-                            <th style="text-align:right;">수량</th>
-                            <th style="text-align:center;">유형</th>
-                            <th>입고자</th>
-                        </tr>
-                    </thead>
-                    <tbody>${histRows}</tbody>
-                </table>
-            </div>
+            ${StockDetailUI.buildLotTableSection({
+                title: '현재 보관 LOT',
+                headers: ['입고일', '제조 LOT', '제조사 표기 LOT', '제조일자', '유효기한', '현재 수량', '출고'],
+                colSpan: 7,
+                rowsHtml: lotRows
+            })}
+            ${historySection}
             `,
             `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`,
             'lg'
@@ -949,9 +942,9 @@ const PaintInventoryModule = (function() {
         const inventory   = Storage.getAll(DB.STORES.PAINT_INVENTORY)           || [];
         const materials   = Storage.getAll(DB.STORES.PAINT_MATERIALS)           || [];
 
-        // 합격 검사 목록
+        // 합격·특채 검사 목록 (특채 = 예외 입고 허용)
         const passed = inspections
-            .filter(i => i.verdict === '합격' && (Number(i.incomingQty) || 0) > 0)
+            .filter(i => (i.verdict === '합격' || i.verdict === '특채') && (Number(i.incomingQty) || 0) > 0)
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
         if (passed.length === 0) {
@@ -1045,12 +1038,24 @@ const PaintInventoryModule = (function() {
                                 <td style="font-size:0.82rem;">${i.mfgDate || '-'}</td>
                                 <td style="font-size:0.82rem;">${i.expDate || '-'}</td>
                                 <td style="text-align:center;">
-                                    <span class="badge badge-warning" style="background:var(--accent-orange,#f59e0b);color:#fff;">입고대기</span>
+                                    ${_needsProdConfirm(i)
+                                        ? (i.prodConfirmed
+                                            ? '<span class="badge badge-success" style="background:#16a34a;color:#fff;">생산확인 완료</span>'
+                                            : '<span class="badge badge-warning" style="background:#dc2626;color:#fff;">생산확인 대기</span>')
+                                        : (i.verdict === '특채'
+                                            ? '<span class="badge badge-warning" style="background:#d97706;color:#fff;">특채 입고대기</span>'
+                                            : '<span class="badge badge-warning" style="background:var(--accent-orange,#f59e0b);color:#fff;">입고대기</span>')}
                                 </td>
                                 <td>
-                                    <button class="btn btn-sm btn-primary" onclick="PaintInventoryModule.openIncomingFromInspection('${i.id}')">
-                                        <span class="material-symbols-outlined" style="font-size:0.9rem;">add_circle</span> 입고 처리
-                                    </button>
+                                    ${_needsProdConfirm(i) && !i.prodConfirmed
+                                        ? (_canConfirmProdSchedule()
+                                            ? `<button class="btn btn-sm btn-primary" onclick="PaintInventoryModule.confirmProdSchedule('${i.id}')">
+                                                <span class="material-symbols-outlined" style="font-size:0.9rem;">fact_check</span> 생산 확인
+                                               </button>`
+                                            : `<span style="font-size:0.78rem;color:var(--text-muted);">생산관리자 확인 대기</span>`)
+                                        : `<button class="btn btn-sm btn-primary" onclick="PaintInventoryModule.openIncomingFromInspection('${i.id}')">
+                                            <span class="material-symbols-outlined" style="font-size:0.9rem;">add_circle</span> 입고 처리
+                                           </button>`}
                                     <button class="btn btn-sm btn-outline" style="margin-left:6px;" onclick="PaintInventoryModule.cancelPaintInspectionStandby('${i.id}')">
                                         <span class="material-symbols-outlined" style="font-size:0.9rem;">cancel</span> 취소
                                     </button>
@@ -1059,6 +1064,75 @@ const PaintInventoryModule = (function() {
                     </tbody>
                 </table>
             </div>`;
+    }
+
+    // ── 특채 도료 — 생산 일정 소모 확인 후 입고 허용 ─────────────────
+    function confirmProdSchedule(inspId) {
+        if (!_canConfirmProdSchedule()) {
+            UIUtils.toast('생산 일정 확인은 생산관리자·품질관리자만 가능합니다.', 'warning');
+            return;
+        }
+        const insp = Storage.getById(DB.STORES.PAINT_INCOMING_INSPECTIONS, inspId);
+        if (!insp) { UIUtils.toast('검사 정보를 찾을 수 없습니다.', 'error'); return; }
+        if (!_needsProdConfirm(insp)) {
+            UIUtils.toast('특채(6개월 이상) 건만 생산 확인이 필요합니다.', 'warning');
+            return;
+        }
+        if (insp.prodConfirmed) {
+            UIUtils.toast('이미 생산 확인이 완료된 건입니다.', 'info');
+            return;
+        }
+
+        const user = AuthModule.getCurrentUser();
+        const confirmer = user ? (user.displayName || user.username || '') : '';
+
+        UIUtils.showModal(
+            '생산 일정 소모 확인',
+            `<div style="padding:4px 0;">
+                <div style="padding:12px 14px;background:#fff7ed;border:1px solid #fdba74;border-radius:8px;margin-bottom:14px;">
+                    <div style="font-weight:700;color:#c2410c;margin-bottom:4px;">특채 도료 — 생산 일정 소모 가능 여부 확인</div>
+                    <div style="font-size:0.85rem;color:var(--text-secondary);">
+                        <strong>${insp.paintName || '-'}</strong> (${insp.supplier || '-'})<br>
+                        LOT: ${insp.lotNo || '-'} / 수량: ${UIUtils.formatNumber(insp.incomingQty || 0)}<br>
+                        제조일: ${insp.mfgDate || '-'} / 유효기간 확인: ${insp.expDateCheck || '-'}
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">확인 내용 <span style="color:var(--accent-red)">*</span></label>
+                    <textarea class="form-input" id="piProdConfirmNote" rows="3"
+                        placeholder="생산 일정에 소모 가능한지 확인 내용을 입력하세요. (예: 7월 도장 계획에 투입 가능)"
+                        style="resize:vertical;min-height:72px;"></textarea>
+                </div>
+                <div style="font-size:0.78rem;color:var(--text-muted);">확인자: ${confirmer || '-'}</div>
+            </div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+             <button class="btn btn-primary" onclick="PaintInventoryModule._saveProdConfirm('${inspId}')">생산 확인 완료</button>`,
+            '520px'
+        );
+    }
+
+    async function _saveProdConfirm(inspId) {
+        if (!_canConfirmProdSchedule()) {
+            UIUtils.toast('생산 일정 확인 권한이 없습니다.', 'warning');
+            return;
+        }
+        const noteEl = document.getElementById('piProdConfirmNote');
+        const note = noteEl ? noteEl.value.trim() : '';
+        if (!note) {
+            UIUtils.toast('생산 일정 소모 확인 내용을 입력하세요.', 'warning');
+            return;
+        }
+        const user = AuthModule.getCurrentUser();
+        const confirmer = user ? (user.displayName || user.username || '') : '';
+        await Storage.update(DB.STORES.PAINT_INCOMING_INSPECTIONS, inspId, {
+            prodConfirmed: true,
+            prodConfirmedAt: new Date().toISOString(),
+            prodConfirmedBy: confirmer,
+            prodConfirmNote: note
+        });
+        UIUtils.closeModal();
+        UIUtils.toast('생산 일정 확인이 완료되었습니다. 입고 처리가 가능합니다.', 'success');
+        renderPaintInspStandby();
     }
 
     // 제조 LOT 실시간 유효성 표시
@@ -1132,6 +1206,10 @@ const PaintInventoryModule = (function() {
     function openIncomingFromInspection(inspId) {
         const insp = Storage.getById(DB.STORES.PAINT_INCOMING_INSPECTIONS, inspId);
         if (!insp) { UIUtils.toast('검사 정보를 찾을 수 없습니다.', 'error'); return; }
+        if (_needsProdConfirm(insp) && !insp.prodConfirmed) {
+            UIUtils.toast('특채 도료는 생산 일정 소모 확인 후 입고할 수 있습니다.', 'warning');
+            return;
+        }
 
         const inspSupplier = _normalizeText(insp.supplier || insp.supplierName || '');
         const inspPaintName = _normalizeText(insp.paintName || insp.name || '');
@@ -1485,7 +1563,8 @@ const PaintInventoryModule = (function() {
                 .map(i => `${i.materialId}||${i.lotNo}`)
         );
         const pending = inspections.filter(i => {
-            if (i.verdict !== '합격' || isPaintInspectionStandbyCanceled(i) || (Number(i.incomingQty) || 0) <= 0) return false;
+            if (i.verdict !== '합격' && i.verdict !== '특채') return false;
+            if (isPaintInspectionStandbyCanceled(i) || (Number(i.incomingQty) || 0) <= 0) return false;
             if (processedInspIds.has(i.id)) return false;
             const mat = materials.find(m => m.name === i.paintName);
             if (mat && legacyStockSet.has(`${mat.id}||${i.lotNo}`)) return false;
@@ -1558,6 +1637,25 @@ const PaintInventoryModule = (function() {
         if (typeof AuthModule === 'undefined' || !AuthModule.getCurrentUser) return false;
         const user = AuthModule.getCurrentUser();
         return !!(user && user.role === 'admin');
+    }
+
+    function _canConfirmProdSchedule() {
+        if (typeof AuthModule === 'undefined' || !AuthModule.getCurrentUser) return false;
+        const user = AuthModule.getCurrentUser();
+        if (!user) return false;
+        const roles = [...(Array.isArray(user.roles) ? user.roles : []), user.role].filter(Boolean).map(String);
+        if (roles.includes('admin')) return true;
+        const roleDefs = (AuthModule.ROLES || []);
+        return roles.some(rk => {
+            if (rk === 'prod_manager' || rk === 'quality_manager') return true;
+            const def = roleDefs.find(d => d.key === rk);
+            const label = String((def && def.label) || rk).replace(/\s/g, '');
+            return /생산관리|품질관리/.test(label);
+        });
+    }
+
+    function _needsProdConfirm(insp) {
+        return !!(insp && (insp.verdict === '특채' || insp.expDateCheck === '6개월 이상'));
     }
 
     function _requireBulkAdmin(onPass) {
@@ -3955,6 +4053,8 @@ const PaintInventoryModule = (function() {
         openAuthorModal,
         saveAuthors,
         renderPaintInspStandby,
+        confirmProdSchedule,
+        _saveProdConfirm,
         cancelPaintInspectionStandby,
         cancelAllPaintInspectionStandby,
         renderSupplierTiles,

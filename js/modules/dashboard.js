@@ -147,7 +147,7 @@ const DashboardModule = (function() {
             <!-- 관리자 보고 누락 -->
             <div id="dashManagerAlerts"></div>
 
-            <!-- 도장 작업일지 기준 발행 누락(초중종물) -->
+            <!-- 초중종물(품질체크) 기준 발행 누락 -->
             <div id="dashQualityStdWarnings"></div>
 
             <!-- 출하검사 대기 목록 -->
@@ -580,8 +580,8 @@ const DashboardModule = (function() {
     }
 
     /* ══════════════════════════════════════════════════════════
-       도장 작업일지 기준 발행 누락(초중종물) 경고 섹션
-       - 대상: PROD_QUALITY_CHECK의 quality_template가 존재하는 도장 작업일지
+       초중종물(품질체크) 기준 발행 누락 경고 섹션
+       - 대상: PROD_QUALITY_CHECK의 quality_template가 존재하는 도장 작업(초중종물 대상)
        - 미발행: quality_issue(workId=work.id) 레코드가 없거나 printedAt 없음
     ══════════════════════════════════════════════════════════ */
     function renderQualityStdWarnings() {
@@ -669,7 +669,7 @@ const DashboardModule = (function() {
                 <div style="padding:10px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);gap:12px;flex-wrap:wrap;">
                     <div style="display:flex;align-items:center;gap:7px;">
                         <span class="material-symbols-outlined" style="font-size:18px;color:#f59e0b;">checklist</span>
-                        <span style="font-weight:700;font-size:0.88rem;color:#b45309;">도장 작업일지 기준 발행 누락</span>
+                        <span style="font-weight:700;font-size:0.88rem;color:#b45309;">초중종물 기준 발행 누락</span>
                         <span style="background:#f59e0b;color:#fff;border-radius:10px;padding:0 7px;font-size:0.73rem;font-weight:800;">${missing.length}</span>
                     </div>
                     <span style="font-size:0.75rem;color:var(--text-muted);">초중종물(품질체크) 기준 양식 미발행/미완료 · 클릭하여 발행 화면 열기</span>

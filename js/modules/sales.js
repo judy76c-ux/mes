@@ -48,7 +48,8 @@ const SalesUtils = {
 // 영업 관리 공통 상단 네비게이션 (수입검사/자재창고 허브 카드 스타일)
 var SalesProcessUI = (function () {
     const MENUS = [
-        { id: 'sales-delivery-plan', label: '납품계획', desc: '납품 스케쥴·계획·미납 현황', icon: 'event_note', accent: 'var(--accent-blue)' },
+        { id: 'sales-delivery-plan', label: '영업 계획', desc: '납품 스케쥴·계획·미납 현황', icon: 'event_note', accent: 'var(--accent-blue)' },
+        { id: 'sales-today-shipment', label: '납품 출하(금일)', desc: '금일 출하 계획품 관리', icon: 'outbox', accent: '#f97316' },
         { id: 'sales-delivery', label: '출고 등록', desc: '출고 리스트·납품처별 실적', icon: 'local_shipping', accent: '#8b5cf6' },
         { id: 'sales-analytics', label: '영업관리', desc: '연간·월간·주간 매출 분석', icon: 'analytics', accent: '#10b981' }
     ];
@@ -1162,7 +1163,7 @@ var SalesDeliveryPlanModule = (function() {
 
                 <div class="card">
                     <div class="card-header">
-                        <h4><span class="material-symbols-outlined">event_note</span> 납품 계획/부족 현황</h4>
+                        <h4><span class="material-symbols-outlined">event_note</span> 영업 계획/부족 현황</h4>
                         <span style="font-size:0.78rem;color:var(--text-muted);">
                             녹색: 계획 대비 납품 완료 · 노랑: 미납 · 빨강: 부족
                         </span>
@@ -3407,4 +3408,224 @@ var SalesOutsourcingModule = (function() {
         remove,
         exportData
     };
+})();
+
+/**
+ * 납품 출하(금일) — 금일 출하 계획품 관리 (우선 수동 등록)
+ * 추후 영업 계획에서 일자별 납품 리스트를 불러올 예정.
+ * 저장: config (sales_today_shipment_v1). 차종/품명/컬러는 제품 마스터 기반 필터 선택.
+ */
+var SalesTodayShipmentModule = (function () {
+    const CONFIG_KEY = 'sales_today_shipment_v1';
+    const _esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    let _records = [];
+
+    function init() {}
+
+    async function _load() {
+        _records = (await Storage.getConfigValue(CONFIG_KEY).catch(() => ([]))) || [];
+        if (!Array.isArray(_records)) _records = [];
+    }
+    async function _save() { await Storage.setConfigValue(CONFIG_KEY, _records); }
+
+    function _products() { return (Storage.getAll(DB.STORES.PRODUCTS) || []).filter(p => p.carModel || p.partName); }
+    function _cars() { return [...new Set(_products().map(p => p.carModel).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko')); }
+    function _partsFor(car) { return [...new Set(_products().filter(p => p.carModel === car).map(p => p.partName).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko')); }
+    function _colorsFor(car, part) { return [...new Set(_products().filter(p => p.carModel === car && p.partName === part).map(p => p.color).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko')); }
+    function _customerFor(car, part, color) {
+        const list = _products();
+        const p = list.find(x => x.carModel === car && x.partName === part && (!color || x.color === color))
+            || list.find(x => x.carModel === car && x.partName === part);
+        return p ? (p.customer || p.deliveryCustomer || p.client || '') : '';
+    }
+    function _opts(values, selected, placeholder) {
+        return `<option value="">${placeholder}</option>` +
+            values.map(v => `<option value="${_esc(v)}" ${v === selected ? 'selected' : ''}>${_esc(v)}</option>`).join('');
+    }
+
+    function _todayField() {
+        const el = document.getElementById('tsFilterDate');
+        return el && el.value ? el.value : UIUtils.today();
+    }
+
+    function render(container) {
+        container.innerHTML = `
+        <div class="fade-in-up">
+            ${SalesProcessUI.renderSection('sales-today-shipment')}
+            <div class="card">
+                <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+                    <h4 style="margin:0;display:flex;align-items:center;gap:6px;">
+                        <span class="material-symbols-outlined" style="color:var(--accent-orange);">outbox</span>
+                        납품 출하(금일)
+                        <span style="font-size:0.75rem;font-weight:400;color:var(--text-muted);">금일 출하 계획품 (수동 등록)</span>
+                    </h4>
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                        <label class="form-label" style="margin:0;">출하일자</label>
+                        <input type="date" class="form-input" id="tsFilterDate" value="${UIUtils.today()}" style="width:150px;" onchange="SalesTodayShipmentModule.renderList()">
+                        <button class="btn btn-primary btn-sm" onclick="SalesTodayShipmentModule.openForm()">
+                            <span class="material-symbols-outlined" style="font-size:16px;">add</span> 금일 출하 등록
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body" style="padding:0;">
+                    <div class="data-table-wrapper">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>출하일자</th><th>납품처</th><th>차종</th><th>품명</th><th>컬러</th>
+                                    <th style="text-align:right;">수량</th><th>비고</th>
+                                    <th style="text-align:center;width:120px;">작업</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tsBody"><tr><td colspan="8" style="text-align:center;padding:28px;color:var(--text-muted);">로딩 중...</td></tr></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+        renderList();
+    }
+
+    async function renderList() {
+        await _load();
+        const tbody = document.getElementById('tsBody');
+        if (!tbody) return;
+        const date = _todayField();
+        const rows = _records.filter(r => (r.date || '') === date)
+            .sort((a, b) => (a.customer || '').localeCompare(b.customer || '', 'ko') || (a.carModel || '').localeCompare(b.carModel || '', 'ko'));
+        if (!rows.length) {
+            tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-muted);">${_esc(date)} 출하 계획품이 없습니다. [금일 출하 등록]으로 추가하세요.</td></tr>`;
+            return;
+        }
+        const total = rows.reduce((s, r) => s + (Number(r.qty) || 0), 0);
+        tbody.innerHTML = rows.map(r => `
+            <tr>
+                <td>${_esc(r.date || '-')}</td>
+                <td>${_esc(r.customer || '-')}</td>
+                <td>${_esc(r.carModel || '-')}</td>
+                <td><strong>${_esc(r.partName || '-')}</strong></td>
+                <td>${_esc(r.color || '-')}</td>
+                <td style="text-align:right;font-weight:600;">${UIUtils.formatNumber(Number(r.qty) || 0)}</td>
+                <td style="color:var(--text-muted);font-size:0.85rem;">${_esc(r.note || '')}</td>
+                <td style="text-align:center;white-space:nowrap;">
+                    <button class="btn btn-sm btn-outline" onclick="SalesTodayShipmentModule.openForm('${r.id}')">수정</button>
+                    <button class="btn btn-sm btn-danger" onclick="SalesTodayShipmentModule.remove('${r.id}')">삭제</button>
+                </td>
+            </tr>`).join('') + `
+            <tr style="background:var(--bg-secondary);font-weight:700;">
+                <td colspan="5" style="text-align:right;">합계</td>
+                <td style="text-align:right;color:var(--accent-blue);">${UIUtils.formatNumber(total)}</td>
+                <td colspan="2"></td>
+            </tr>`;
+    }
+
+    function openForm(id) {
+        const rec = id ? _records.find(r => r.id === id) : null;
+        const car = rec ? (rec.carModel || '') : '';
+        const part = rec ? (rec.partName || '') : '';
+        const color = rec ? (rec.color || '') : '';
+        const carOpts = _opts(_cars(), car, '-- 차종 선택 --');
+        const partOpts = car ? _opts(_partsFor(car), part, '-- 품명 선택 --') : '<option value="">← 차종 먼저 선택</option>';
+        const colorOpts = (car && part) ? _opts(_colorsFor(car, part), color, '-- 컬러 선택 --') : '<option value="">← 품명 먼저 선택</option>';
+
+        UIUtils.showModal(rec ? '금일 출하 수정' : '금일 출하 등록', `
+            <div class="form-row">
+                <div class="form-group"><label class="form-label">출하일자 <span style="color:var(--accent-red)">*</span></label>
+                    <input type="date" class="form-input" id="tsDate" value="${rec ? _esc(rec.date) : _todayField()}"></div>
+                <div class="form-group"><label class="form-label">납품처</label>
+                    <input class="form-input" id="tsCustomer" value="${rec ? _esc(rec.customer || '') : ''}" placeholder="자동 채움 (제품 기준)"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label">차종 <span style="color:var(--accent-red)">*</span></label>
+                    <select class="form-select" id="tsCar" onchange="SalesTodayShipmentModule.onCarChange()">${carOpts}</select></div>
+                <div class="form-group"><label class="form-label">품명 <span style="color:var(--accent-red)">*</span></label>
+                    <select class="form-select" id="tsPart" onchange="SalesTodayShipmentModule.onPartChange()">${partOpts}</select></div>
+                <div class="form-group"><label class="form-label">컬러</label>
+                    <select class="form-select" id="tsColor" onchange="SalesTodayShipmentModule.onColorChange()">${colorOpts}</select></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label">수량 <span style="color:var(--accent-red)">*</span></label>
+                    <input type="number" class="form-input" id="tsQty" min="1" value="${rec ? _esc(rec.qty || '') : ''}" placeholder="출하 수량"></div>
+                <div class="form-group" style="flex:2;"><label class="form-label">비고</label>
+                    <input class="form-input" id="tsNote" value="${rec ? _esc(rec.note || '') : ''}" placeholder="특이사항"></div>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="SalesTodayShipmentModule.saveForm('${id || ''}')">저장</button>
+        `, 'lg');
+    }
+
+    function onCarChange() {
+        const car = document.getElementById('tsCar')?.value || '';
+        const partEl = document.getElementById('tsPart');
+        const colorEl = document.getElementById('tsColor');
+        if (partEl) partEl.innerHTML = car ? _opts(_partsFor(car), '', '-- 품명 선택 --') : '<option value="">← 차종 먼저 선택</option>';
+        if (colorEl) colorEl.innerHTML = '<option value="">← 품명 먼저 선택</option>';
+    }
+    function onPartChange() {
+        const car = document.getElementById('tsCar')?.value || '';
+        const part = document.getElementById('tsPart')?.value || '';
+        const colorEl = document.getElementById('tsColor');
+        if (colorEl) colorEl.innerHTML = (car && part) ? _opts(_colorsFor(car, part), '', '-- 컬러 선택 --') : '<option value="">← 품명 먼저 선택</option>';
+        _autofillCustomer();
+    }
+    function onColorChange() { _autofillCustomer(); }
+    function _autofillCustomer() {
+        const car = document.getElementById('tsCar')?.value || '';
+        const part = document.getElementById('tsPart')?.value || '';
+        const color = document.getElementById('tsColor')?.value || '';
+        const custEl = document.getElementById('tsCustomer');
+        if (!custEl) return;
+        if (!custEl.value.trim()) {
+            const c = _customerFor(car, part, color);
+            if (c) custEl.value = c;
+        }
+    }
+
+    async function saveForm(id) {
+        const g = elId => (document.getElementById(elId) || {}).value || '';
+        const date = g('tsDate').trim();
+        const carModel = g('tsCar').trim();
+        const partName = g('tsPart').trim();
+        const qty = parseInt(g('tsQty') || 0);
+        if (!date) { UIUtils.toast('출하일자를 입력하세요.', 'warning'); return; }
+        if (!carModel || !partName) { UIUtils.toast('차종과 품명을 선택하세요.', 'warning'); return; }
+        if (!qty || qty <= 0) { UIUtils.toast('수량을 입력하세요.', 'warning'); return; }
+
+        await _load();
+        const payload = {
+            date, carModel, partName,
+            color: g('tsColor').trim(),
+            customer: g('tsCustomer').trim(),
+            qty,
+            note: g('tsNote').trim(),
+            updatedAt: new Date().toISOString()
+        };
+        if (id) {
+            const idx = _records.findIndex(r => r.id === id);
+            if (idx >= 0) _records[idx] = { ..._records[idx], ...payload };
+        } else {
+            payload.id = 'tsh_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+            payload.createdAt = new Date().toISOString();
+            _records.push(payload);
+        }
+        await _save();
+        UIUtils.toast('금일 출하 계획품이 저장되었습니다.', 'success');
+        UIUtils.closeModal();
+        const filter = document.getElementById('tsFilterDate');
+        if (filter && date) filter.value = date;
+        renderList();
+    }
+
+    function remove(id) {
+        UIUtils.confirm('이 출하 계획품을 삭제하시겠습니까?', async () => {
+            await _load();
+            _records = _records.filter(r => r.id !== id);
+            await _save();
+            UIUtils.toast('삭제되었습니다.', 'success');
+            renderList();
+        });
+    }
+
+    return { init, render, renderList, openForm, onCarChange, onPartChange, onColorChange, saveForm, remove };
 })();
