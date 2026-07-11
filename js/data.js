@@ -111,21 +111,15 @@ const DataManager = (function() {
         },
 
         async add(name) {
-            if (this.getAll().some(d => d.name === name)) {
-                throw new Error('이미 존재하는 불량 유형입니다.');
-            }
-            return Storage.add(DEFECTS_STORE, { name: name.trim() });
+            throw new Error('불량 유형은 관리/설정 > 불량 유형에서만 등록할 수 있습니다.');
         },
 
         async delete(id) {
-            return Storage.remove(DEFECTS_STORE, id);
+            throw new Error('불량 유형은 관리/설정 > 불량 유형에서만 삭제할 수 있습니다.');
         },
 
         async update(id, newName) {
-            if (this.getAll().some(d => d.name === newName && d.id !== id)) {
-                throw new Error('이미 존재하는 불량 유형명입니다.');
-            }
-            return Storage.update(DEFECTS_STORE, id, { name: newName.trim() });
+            throw new Error('불량 유형은 관리/설정 > 불량 유형에서만 수정할 수 있습니다.');
         },
 
         getById(id) {

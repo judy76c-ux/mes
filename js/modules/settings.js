@@ -6,6 +6,12 @@
 const SettingsModule = (function() {
     const PRODUCTS_STORE = DB.STORES.PRODUCTS;
     const DEFECTS_STORE = DB.STORES.DEFECT_TYPES;
+
+    /** 불량 유형 마스터 쓰기 — Storage 가드 통과용 (관리/설정 전용) */
+    async function _mutateDefectTypes(fn) {
+        return Storage.runWithDefectTypesWrite(fn);
+    }
+
     const PAINT_STORE = DB.STORES.PAINT_MATERIALS;
     const INSPECTORS_STORE = DB.STORES.INSPECTORS;
     const OPERATORS_STORE = DB.STORES.OPERATORS;
@@ -4453,13 +4459,6 @@ const SettingsModule = (function() {
     // 불량 유형 탭 (사출 / 도장 / 레이져 / 인쇄 모두 한 화면에 표시)
     // =====================================================
 
-    // 도장 불량으로 자동 재분류할 기준 이름 목록
-    // (type 없이 저장된 기존 데이터 중 이 이름이면 → 'painting' 으로 재분류)
-    const KNOWN_PAINTING_DEFECT_NAMES = new Set([
-        '이물', '기포', '흘러내림', '핀홀', '긁힘', 'Peel Off',
-        '색차', '오렌지 필', '미도장', '찍힘', '광택불량', '백화'
-    ]);
-
     // ── 사출 불량 기본 데이터 (일반적인 사출 성형 불량 유형 10종)
     const DEFAULT_INJECTION_DEFECTS = [{
             name: '수축',
@@ -4503,6 +4502,170 @@ const SettingsModule = (function() {
         }
     ];
 
+    // 샘플 데이터(loadSampleData)로 무단 추가되던 도장 불량 템플릿
+    const SAMPLE_PAINTING_DEFECT_TEMPLATES = new Map([
+        ['이물', '도막 위 이물질 부착'],
+        ['기포', '도막 내부 기포 발생'],
+        ['흘러내림', '도료 흘러내림(Sag/Run)'],
+        ['핀홀', '도막 표면 미세 구멍 발생'],
+        ['긁힘', '도막 표면 스크래치'],
+        ['Peel Off', '도막 벗겨짐·박리'],
+        ['색차', '기준 대비 색상 불균일'],
+        ['오렌지 필', '오렌지 껍질 모양의 표면 요철'],
+        ['미도장', '도장 누락 부위 발생'],
+        ['찍힘', '외부 충격에 의한 도막 함몰'],
+        ['광택불량', '도막 광택 불균일 또는 저하'],
+        ['백화', '도막 하얗게 변색(Blushing)']
+    ]);
+
+    const DEFECT_TYPE_LABELS = {
+        injection: '사출',
+        plating: '도금',
+        painting: '도장',
+        laser: '레이져',
+        printing: '인쇄'
+    };
+
+    function _defectEffectiveType(d) {
+        return (d && d.type) ? d.type : 'injection';
+    }
+
+    function _defectRichnessScore(d) {
+        if (!d) return 0;
+        let score = 0;
+        const causes = d.causes || {};
+        if (Object.values(causes).some(v => v && String(v).trim())) score += 100;
+        if ((Array.isArray(d.exampleImages) && d.exampleImages.length > 0) || d.exampleImage) score += 50;
+        if (d.countermeasure && String(d.countermeasure).trim()) score += 20;
+        if (d.description && String(d.description).trim()) score += 5;
+        if (d.sortOrder != null) score += 3;
+        return score;
+    }
+
+    function _normDefectDesc(text) {
+        return String(text || '').replace(/\s+/g, ' ').trim();
+    }
+
+    function _isSamplePaintingDefect(d) {
+        if (!d || _defectEffectiveType(d) !== 'painting') return false;
+        const name = (d.name || '').trim();
+        const expected = SAMPLE_PAINTING_DEFECT_TEMPLATES.get(name);
+        if (!expected) return false;
+        if (_defectRichnessScore(d) > 0) return false;
+        const desc = _normDefectDesc(d.description);
+        return !desc || desc === expected;
+    }
+
+    function _isDefaultInjectionTemplate(d) {
+        if (!d || (_defectEffectiveType(d) !== 'injection')) return false;
+        if (_defectRichnessScore(d) > 0) return false;
+        const name = (d.name || '').trim();
+        const tmpl = DEFAULT_INJECTION_DEFECTS.find(x => x.name === name);
+        if (!tmpl) return false;
+        const desc = _normDefectDesc(d.description);
+        const tmplDesc = _normDefectDesc(tmpl.description);
+        return !desc || desc === tmplDesc || tmplDesc.includes(desc) || desc.includes(tmplDesc.slice(0, 12));
+    }
+
+    function _planDefectDuplicateCleanup(allDefects) {
+        const list = (allDefects || []).filter(d => d && d.id);
+        const toRemove = [];
+        const removeIds = new Set();
+
+        const pushRemove = (d, reason) => {
+            if (!d || !d.id || removeIds.has(d.id)) return;
+            removeIds.add(d.id);
+            toRemove.push({
+                id: d.id,
+                name: d.name || '(이름 없음)',
+                type: _defectEffectiveType(d),
+                typeLabel: DEFECT_TYPE_LABELS[_defectEffectiveType(d)] || '기타',
+                reason
+            });
+        };
+
+        // 1) 동일 구분 + 동일 이름 → 4M·사진 등 상세 항목 유지
+        const byKey = {};
+        list.forEach(d => {
+            const name = (d.name || '').trim();
+            if (!name) return;
+            const key = `${_defectEffectiveType(d)}::${name}`;
+            if (!byKey[key]) byKey[key] = [];
+            byKey[key].push(d);
+        });
+
+        Object.values(byKey).forEach(group => {
+            if (group.length <= 1) return;
+            group.sort((a, b) => {
+                const scoreDiff = _defectRichnessScore(b) - _defectRichnessScore(a);
+                if (scoreDiff !== 0) return scoreDiff;
+                return String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
+            });
+            for (let i = 1; i < group.length; i++) {
+                pushRemove(group[i], '동일 이름 중복 (상세 정보 없는 항목)');
+            }
+        });
+
+        // 2) 샘플 데이터로 추가된 도장 불량 (4M·사진 없음)
+        list.forEach(d => {
+            if (_isSamplePaintingDefect(d)) {
+                pushRemove(d, '샘플 데이터로 추가된 도장 불량');
+            }
+        });
+
+        // 3) 샘플 loadSampleData로 한꺼번에 추가된 사출 불량 (동시간대 5건 이상)
+        const injTemplates = list.filter(d => _isDefaultInjectionTemplate(d) && !removeIds.has(d.id));
+        const injBySec = {};
+        injTemplates.forEach(d => {
+            const sec = String(d.createdAt || '').slice(0, 19);
+            if (!injBySec[sec]) injBySec[sec] = [];
+            injBySec[sec].push(d);
+        });
+        Object.values(injBySec).forEach(group => {
+            if (group.length < 5) return;
+            group.forEach(d => pushRemove(d, '샘플 데이터로 일괄 추가된 사출 불량'));
+        });
+
+        return { toRemove, keepCount: list.length - toRemove.length };
+    }
+
+    async function cleanupDuplicateDefects() {
+        const allDefects = Storage.getAll(DEFECTS_STORE) || [];
+        const plan = _planDefectDuplicateCleanup(allDefects);
+
+        if (plan.toRemove.length === 0) {
+            UIUtils.toast('정리할 중복·샘플 불량 유형이 없습니다.', 'info');
+            return;
+        }
+
+        const preview = plan.toRemove.slice(0, 20).map(r =>
+            `• [${r.typeLabel}] ${r.name} (${r.reason})`
+        ).join('\n');
+        const more = plan.toRemove.length > 20 ? `\n… 외 ${plan.toRemove.length - 20}건` : '';
+
+        UIUtils.confirm(
+            `중복·샘플 불량 유형 ${plan.toRemove.length}건을 삭제합니다.\n` +
+            `4M·사진 등 상세 정보가 있는 항목은 유지됩니다.\n\n` +
+            preview + more +
+            `\n\n계속하시겠습니까?`,
+            async () => {
+                try {
+                    await _mutateDefectTypes(async () => {
+                        for (const item of plan.toRemove) {
+                            await Storage.remove(DEFECTS_STORE, item.id);
+                        }
+                    });
+                    await Storage.refresh(DEFECTS_STORE);
+                    UIUtils.toast(`중복·샘플 불량 ${plan.toRemove.length}건을 정리했습니다.`, 'success');
+                    renderTabContent();
+                } catch (err) {
+                    console.error('[불량 중복 정리] 오류:', err);
+                    UIUtils.toast('정리 중 오류가 발생했습니다.', 'error');
+                }
+            }
+        );
+    }
+
     // 기본 사출 불량 데이터 추가 (중복 이름 제외하고 누락된 항목만 추가)
     async function loadDefaultInjectionDefects() {
         const existing = Storage.getAll(DEFECTS_STORE) || [];
@@ -4518,13 +4681,15 @@ const SettingsModule = (function() {
         }
 
         try {
-            for (const d of toAdd) {
-                await Storage.add(DEFECTS_STORE, {
-                    name: d.name,
-                    description: d.description,
-                    type: 'injection'
-                });
-            }
+            await _mutateDefectTypes(async () => {
+                for (const d of toAdd) {
+                    await Storage.add(DEFECTS_STORE, {
+                        name: d.name,
+                        description: d.description,
+                        type: 'injection'
+                    });
+                }
+            });
             UIUtils.toast(`기본 사출 불량 ${toAdd.length}건이 추가되었습니다.`, 'success');
             defectSubTab = 'injection';
             renderTabContent();
@@ -4541,29 +4706,14 @@ const SettingsModule = (function() {
     function renderDefectsTab(el) {
         if (!el) return;
 
-        // ── 스마트 마이그레이션 (기존 logic 유지)
-        try {
-            const allDefects = Storage.getAll(DEFECTS_STORE) || [];
-            allDefects.forEach(d => {
-                if (!d || !d.id) return;
-                if (!d.type) {
-                    const correctType = KNOWN_PAINTING_DEFECT_NAMES.has(d.name) ? 'painting' : 'injection';
-                    Storage.update(DEFECTS_STORE, d.id, {
-                        type: correctType
-                    }).catch(() => {});
-                } else if (d.type === 'injection' && KNOWN_PAINTING_DEFECT_NAMES.has(d.name)) {
-                    Storage.update(DEFECTS_STORE, d.id, {
-                        type: 'painting'
-                    }).catch(() => {});
-                }
-            });
-        } catch (migErr) {}
-
         const defects = (Storage.getAll(DEFECTS_STORE) || []).slice().sort((a, b) => {
             const ao = (a && a.sortOrder != null) ? a.sortOrder : 9999;
             const bo = (b && b.sortOrder != null) ? b.sortOrder : 9999;
             return ao - bo;
         });
+
+        const dupPlan = _planDefectDuplicateCleanup(defects);
+        const dupCount = dupPlan.toRemove.length;
 
         // 공정별 데이터 분류
         const categories = [{
@@ -4610,6 +4760,22 @@ const SettingsModule = (function() {
 
         el.innerHTML = `
             <div style="display: flex; flex-direction: column; gap: 20px;">
+                ${dupCount > 0 ? `
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;background:rgba(220,38,38,0.06);border:1px solid rgba(220,38,38,0.25);border-radius:10px;">
+                    <div style="display:flex;align-items:flex-start;gap:10px;min-width:0;">
+                        <span class="material-symbols-outlined" style="color:#dc2626;font-size:22px;flex-shrink:0;">warning</span>
+                        <div style="min-width:0;">
+                            <div style="font-weight:700;color:#dc2626;font-size:0.92rem;">중복·샘플 불량 ${dupCount}건 발견</div>
+                            <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:4px;line-height:1.45;">
+                                샘플 데이터로 추가된 항목 또는 동일 이름 중복입니다. 4M·사진이 있는 운영 항목은 유지하고 나머지를 정리할 수 있습니다.
+                            </div>
+                        </div>
+                    </div>
+                    <button class="btn btn-sm btn-danger" style="flex-shrink:0;white-space:nowrap;" onclick="SettingsModule.cleanupDuplicateDefects()">
+                        <span class="material-symbols-outlined" style="font-size:16px;">cleaning_services</span> 중복 정리
+                    </button>
+                </div>
+                ` : ''}
                 
                 <!-- ▌ 상단 요약 카드 -->
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
@@ -4843,12 +5009,14 @@ const SettingsModule = (function() {
         const countermeasure = (document.getElementById('addCountermeasure') || {}).value?.trim() || '';
 
         try {
-            await Storage.add(DEFECTS_STORE, {
-                name,
-                description,
-                type,
-                causes,
-                countermeasure
+            await _mutateDefectTypes(async () => {
+                await Storage.add(DEFECTS_STORE, {
+                    name,
+                    description,
+                    type,
+                    causes,
+                    countermeasure
+                });
             });
             UIUtils.closeModal();
             UIUtils.toast(`${typeName} 불량 유형 "${name}"이 추가되었습니다.`, 'success');
@@ -4971,14 +5139,16 @@ const SettingsModule = (function() {
         const countermeasure = (document.getElementById('editCountermeasure') || {}).value?.trim() || '';
 
         try {
-            await Storage.update(DEFECTS_STORE, id, {
-                name,
-                description,
-                type,
-                causes,
-                countermeasure,
-                exampleImages,
-                exampleImage: exampleImages[0] || ''
+            await _mutateDefectTypes(async () => {
+                await Storage.update(DEFECTS_STORE, id, {
+                    name,
+                    description,
+                    type,
+                    causes,
+                    countermeasure,
+                    exampleImages,
+                    exampleImage: exampleImages[0] || ''
+                });
             });
             UIUtils.closeModal();
             UIUtils.toast(`"${name}" 불량 유형이 수정되었습니다.`, 'success');
@@ -5046,7 +5216,9 @@ const SettingsModule = (function() {
         const [moved] = list.splice(srcIdx, 1);
         list.splice(tgtIdx, 0, moved);
 
-        await Promise.all(list.map((d, i) => Storage.update(DEFECTS_STORE, d.id, { sortOrder: i })));
+        await _mutateDefectTypes(async () => {
+            await Promise.all(list.map((d, i) => Storage.update(DEFECTS_STORE, d.id, { sortOrder: i })));
+        });
         renderTabContent();
     }
 
@@ -5293,7 +5465,9 @@ const SettingsModule = (function() {
             `"${safeName}" (${typeName} 불량) 유형을 삭제하시겠습니까?\n\n※ 이미 기록된 검사 데이터의 유형명은 유지됩니다.`,
             async () => {
                 try {
-                    await Storage.remove(DEFECTS_STORE, id);
+                    await _mutateDefectTypes(async () => {
+                        await Storage.remove(DEFECTS_STORE, id);
+                    });
                     UIUtils.toast(`"${safeName}" 불량 유형이 삭제되었습니다.`, 'success');
                     renderTabContent();
                 } catch (err) {
@@ -8176,7 +8350,11 @@ const SettingsModule = (function() {
                     const stores = Object.entries(DB.STORES).filter(([k, v]) => v !== 'config');
                     for (const [key, storeName] of stores) {
                         if (data[storeName] && Array.isArray(data[storeName])) {
-                            await Storage.saveAll(storeName, data[storeName]);
+                            if (storeName === DEFECTS_STORE) {
+                                await _mutateDefectTypes(() => Storage.saveAll(storeName, data[storeName]));
+                            } else {
+                                await Storage.saveAll(storeName, data[storeName]);
+                            }
                         }
                     }
 
@@ -11163,7 +11341,11 @@ const SettingsModule = (function() {
         UIUtils.confirm('⚠️ 정말로 모든 데이터를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.', async () => {
             const stores = Object.values(DB.STORES).filter(s => s !== 'config');
             for (const storeName of stores) {
-                await Storage.saveAll(storeName, []);
+                if (storeName === DEFECTS_STORE) {
+                    await _mutateDefectTypes(() => Storage.saveAll(storeName, []));
+                } else {
+                    await Storage.saveAll(storeName, []);
+                }
             }
             await Storage.refresh();
             UIUtils.toast('모든 데이터가 초기화되었습니다.', 'success');
@@ -12638,6 +12820,7 @@ const SettingsModule = (function() {
         removeInjMatProductSlot,
         switchDefectSubTab,
         loadDefaultInjectionDefects,
+        cleanupDuplicateDefects,
         openAddDefectModal,
         saveDefect,
         editDefect,

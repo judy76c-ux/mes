@@ -29,6 +29,31 @@ const Storage = (function() {
       .every(s => _readyStores.has(s));
   }
 
+  // ── 불량 유형(defect_types) 쓰기 가드 ─────────────────────────────
+  // 관리/설정(SettingsModule)에서만 변경 허용. 그 외 경로는 Storage 레벨에서 차단.
+  let _defectTypesWriteDepth = 0;
+
+  function _isDefectTypesStore(storeName) {
+    return storeName === STORES.DEFECT_TYPES;
+  }
+
+  function _assertDefectTypesWritable(storeName) {
+    if (_isDefectTypesStore(storeName) && _defectTypesWriteDepth <= 0) {
+      const err = new Error('불량 유형은 관리/설정 > 불량 유형에서만 등록·수정·삭제할 수 있습니다.');
+      console.error('[Storage] defect_types 쓰기 차단', err);
+      throw err;
+    }
+  }
+
+  async function runWithDefectTypesWrite(fn) {
+    _defectTypesWriteDepth += 1;
+    try {
+      return await fn();
+    } finally {
+      _defectTypesWriteDepth -= 1;
+    }
+  }
+
   // DB.STORES 참조 (모든 스토어 이름 공유)
   const STORES = DB.STORES;
 
@@ -418,6 +443,7 @@ const Storage = (function() {
   // 추가
   async function add(storeName, data) {
     _assertWritable();
+    _assertDefectTypesWritable(storeName);
 
     const newItem = {
       id: generateId(),
@@ -441,6 +467,7 @@ const Storage = (function() {
   // 수정
   async function update(storeName, id, data) {
     _assertWritable();
+    _assertDefectTypesWritable(storeName);
 
     const items = cache[storeName] || [];
     const index = items.findIndex(item => item.id === id);
@@ -468,6 +495,7 @@ const Storage = (function() {
   // 업서트 — 동일 id 레코드가 있으면 덮어쓰기, 없으면 추가
   async function put(storeName, data) {
     if (!data || !data.id) throw new Error('[Storage.put] id 필드가 필요합니다.');
+    _assertDefectTypesWritable(storeName);
     const exists = (cache[storeName] || []).some(r => r.id === data.id);
     if (exists) {
       return update(storeName, data.id, data);
@@ -479,6 +507,7 @@ const Storage = (function() {
   // 삭제
   async function remove(storeName, id) {
     _assertWritable();
+    _assertDefectTypesWritable(storeName);
 
     try {
       await ApiClient.remove(storeName, id);
@@ -496,6 +525,7 @@ const Storage = (function() {
   // 배치 저장 (await 가능 — 호출측에서 await 사용 권장)
   async function saveAll(storeName, dataArray) {
     _assertWritable();
+    _assertDefectTypesWritable(storeName);
 
     try {
       await ApiClient.saveAll(storeName, dataArray);
@@ -632,6 +662,7 @@ const Storage = (function() {
 
       for (let i = 0; i < operations.length; i++) {
         const { store: storeName, op, id, data, items } = operations[i];
+        _assertDefectTypesWritable(storeName);
 
         if (!cache[storeName]) cache[storeName] = [];
 
@@ -810,6 +841,7 @@ const Storage = (function() {
     getConfigValue,
     setConfigValue,
     refresh,
+    runWithDefectTypesWrite,
     executeTransaction,
     getAllPaged,            // 페이징 조회 (동기, 캐시 기반)
     onCacheWarm             // 캐시 워밍 이벤트 구독

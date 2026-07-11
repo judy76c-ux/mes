@@ -396,7 +396,8 @@ const App = (function() {
                             </ol>
                         </div>
                         <p style="color:var(--text-muted);font-size:0.85rem;">
-                            💡 샘플 데이터를 추가하면 빠르게 시작할 수 있습니다.
+                            💡 샘플 데이터(제품·생산계획)를 추가하면 빠르게 시작할 수 있습니다.<br>
+                            불량 유형은 <strong>관리/설정</strong>에서만 등록·수정하세요.
                         </p>
                     </div>
                 `, `
@@ -454,131 +455,7 @@ const App = (function() {
             await Storage.add(DB.STORES.PRODUCTS, p);
         }
 
-        // ── 불량 유형: 사출 불량 (injection) ──────────────────────────────
-        // 사출 수입검사(입고 검사일지)에서 사용되는 사출 성형 불량 유형
-        const sampleInjectionDefects = [{
-                name: '수축',
-                type: 'injection',
-                description: '냉각 수축에 의한 표면 함몰(Sink Mark)'
-            },
-            {
-                name: '웰드라인',
-                type: 'injection',
-                description: '두 수지 흐름 합류 지점의 선상 불량'
-            },
-            {
-                name: '플래시(버)',
-                type: 'injection',
-                description: '파팅라인·게이트 부위 수지 넘침'
-            },
-            {
-                name: '변형(휨)',
-                type: 'injection',
-                description: '성형 후 제품 뒤틀림·변형(Warpage)'
-            },
-            {
-                name: '미성형',
-                type: 'injection',
-                description: '수지 미충전으로 성형 불완전(Short Shot)'
-            },
-            {
-                name: '크랙',
-                type: 'injection',
-                description: '성형품 표면 또는 내부 균열'
-            },
-            {
-                name: '에어마크',
-                type: 'injection',
-                description: '공기 혼입에 의한 표면 은백색 불량'
-            },
-            {
-                name: '플로우마크',
-                type: 'injection',
-                description: '수지 흐름 방향의 표면 줄무늬 자국'
-            },
-            {
-                name: '이물질혼입',
-                type: 'injection',
-                description: '성형 중 이물질 혼입에 의한 불량'
-            },
-            {
-                name: '색상불량',
-                type: 'injection',
-                description: '컬러 배합 불균일 또는 변색'
-            }
-        ];
-
-        for (const d of sampleInjectionDefects) {
-            await Storage.add(DB.STORES.DEFECT_TYPES, d);
-        }
-
-        // ── 불량 유형: 도장 불량 (painting) ─────────────────────────────
-        // 도장 검사(불량 집계)에서 사용되는 도장 공정 불량 유형
-        const samplePaintingDefects = [{
-                name: '이물',
-                type: 'painting',
-                description: '도막 위 이물질 부착'
-            },
-            {
-                name: '기포',
-                type: 'painting',
-                description: '도막 내부 기포 발생'
-            },
-            {
-                name: '흘러내림',
-                type: 'painting',
-                description: '도료 흘러내림(Sag/Run)'
-            },
-            {
-                name: '핀홀',
-                type: 'painting',
-                description: '도막 표면 미세 구멍 발생'
-            },
-            {
-                name: '긁힘',
-                type: 'painting',
-                description: '도막 표면 스크래치'
-            },
-            {
-                name: 'Peel Off',
-                type: 'painting',
-                description: '도막 벗겨짐·박리'
-            },
-            {
-                name: '색차',
-                type: 'painting',
-                description: '기준 대비 색상 불균일'
-            },
-            {
-                name: '오렌지 필',
-                type: 'painting',
-                description: '오렌지 껍질 모양의 표면 요철'
-            },
-            {
-                name: '미도장',
-                type: 'painting',
-                description: '도장 누락 부위 발생'
-            },
-            {
-                name: '찍힘',
-                type: 'painting',
-                description: '외부 충격에 의한 도막 함몰'
-            },
-            {
-                name: '광택불량',
-                type: 'painting',
-                description: '도막 광택 불균일 또는 저하'
-            },
-            {
-                name: '백화',
-                type: 'painting',
-                description: '도막 하얗게 변색(Blushing)'
-            }
-        ];
-
-        for (const d of samplePaintingDefects) {
-            await Storage.add(DB.STORES.DEFECT_TYPES, d);
-        }
+        // 불량 유형(defect_types)은 관리/설정에서만 등록·수정 — 샘플 데이터에 포함하지 않음
 
         // 샘플 생산 계획
         const today = UIUtils.today();
@@ -595,7 +472,7 @@ const App = (function() {
         });
 
         UIUtils.closeModal();
-        UIUtils.toast('샘플 데이터가 추가되었습니다!', 'success');
+        UIUtils.toast('샘플 제품·생산계획이 추가되었습니다. (불량 유형은 설정에서 등록)', 'success');
         Router.navigate('dashboard');
     }
 
