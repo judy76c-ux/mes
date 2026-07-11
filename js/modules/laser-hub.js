@@ -47,7 +47,7 @@ var LaserProcessUI = (function () {
             ' onmouseover="this.style.background=\'var(--bg-secondary)\'"' +
             ' onmouseout="this.style.background=\'none\'">' +
             '<span class="material-symbols-outlined" style="font-size:16px;">arrow_back</span>' +
-            '레이져 공정으로 돌아가기</button>';
+            '레이저 작업으로 돌아가기</button>';
     }
 
     function renderSection(activePage, _title, _desc, actionsHtml) {

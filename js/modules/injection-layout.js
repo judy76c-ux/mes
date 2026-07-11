@@ -257,6 +257,30 @@ var InjectionLayoutModule = (function () {
     let _selSet     = new Set();
     let _lasso      = null;
     let _lassoEl    = null;
+    let _editAllowed = false;
+
+    function _canEditLayout() {
+        if (typeof AuthModule === 'undefined' || !AuthModule.getCurrentUser) return false;
+        const user = AuthModule.getCurrentUser();
+        if (!user) return false;
+        const roles = [...(Array.isArray(user.roles) ? user.roles : []), user.role]
+            .filter(Boolean).map(String);
+        if (roles.includes('admin') || roles.includes('prod_manager')) return true;
+        const roleDefs = AuthModule.ROLES || AuthModule.getRoles && AuthModule.getRoles() || [];
+        return roles.some(rk => {
+            const def = (Array.isArray(roleDefs) ? roleDefs : []).find(d => d.key === rk);
+            const label = String((def && def.label) || rk).replace(/\s/g, '');
+            return label === '관리자' || /생산관리/.test(label);
+        });
+    }
+
+    function _guardEdit() {
+        if (_editAllowed) return true;
+        if (typeof UIUtils !== 'undefined' && UIUtils.toast) {
+            UIUtils.toast('레이아웃 편집은 관리자·생산관리자만 가능합니다.', 'warning');
+        }
+        return false;
+    }
 
     /* ══════════════════════════════════════
        진입점
@@ -264,16 +288,8 @@ var InjectionLayoutModule = (function () {
     async function init() {}
 
     async function render(container) {
-        container.innerHTML = `
-        <div class="fade-in-up" style="display:flex;flex-direction:column;height:100%;min-height:0;">
-
-          <!-- ── 툴바 ── -->
-          <div style="display:flex;align-items:center;gap:8px;padding:10px 16px;
-                      background:var(--bg-card);border-bottom:1px solid var(--border);
-                      flex-wrap:wrap;flex-shrink:0;">
-            <button class="btn btn-outline btn-sm" onclick="InjectionLayoutModule.goBack()">
-              <span class="material-symbols-outlined">arrow_back</span> 목록으로
-            </button>
+        _editAllowed = _canEditLayout();
+        const editToolbar = _editAllowed ? `
             <div style="width:1px;height:22px;background:var(--border);"></div>
             <button class="btn btn-secondary btn-sm" onclick="InjectionLayoutModule.addBox()">
               <span class="material-symbols-outlined">add_box</span> 박스 추가
@@ -310,7 +326,44 @@ var InjectionLayoutModule = (function () {
             </span>
             <button class="btn btn-primary btn-sm" onclick="InjectionLayoutModule.saveLayout()">
               <span class="material-symbols-outlined">save</span> 저장
+            </button>` : `
+            <div style="flex:1;min-width:0;"></div>
+            <span style="font-size:0.78rem;color:var(--text-muted);background:var(--bg-secondary);
+                  padding:4px 10px;border-radius:20px;white-space:nowrap;">
+              조회 전용 · 편집은 관리자·생산관리자만 가능
+            </span>`;
+        const hint = _editAllowed
+            ? `💡 <strong>클릭</strong> 선택 &nbsp;·&nbsp; <strong>드래그</strong> 이동 &nbsp;·&nbsp;
+                <strong>더블클릭</strong> 이름 편집 &nbsp;·&nbsp; 우하단 핸들 <strong>리사이즈</strong>
+                &nbsp;·&nbsp; <span style="color:#06b6d4;font-weight:600;">■ 완제품</span>
+                &nbsp;<span style="color:#f97316;font-weight:600;">■ 소재</span>`
+            : `👁 조회 모드 — 레이아웃을 확인할 수 있습니다. 편집은 관리자·생산관리자만 가능합니다.
+                &nbsp;·&nbsp; <span style="color:#06b6d4;font-weight:600;">■ 완제품</span>
+                &nbsp;<span style="color:#f97316;font-weight:600;">■ 소재</span>`;
+        const propPanel = _editAllowed ? `
+            <div id="ilPropPanel" style="
+                  width:215px;min-width:215px;
+                  background:var(--bg-card);
+                  border-left:1px solid var(--border);
+                  overflow-y:auto;padding:14px 12px;
+                  flex-shrink:0;">
+              <p style="color:var(--text-muted);font-size:0.83rem;
+                        text-align:center;margin-top:50px;line-height:1.8;">
+                박스를 선택하면<br>속성을 편집할 수 있습니다
+              </p>
+            </div>` : '';
+
+        container.innerHTML = `
+        <div class="fade-in-up" style="display:flex;flex-direction:column;height:100%;min-height:0;">
+
+          <!-- ── 툴바 ── -->
+          <div style="display:flex;align-items:center;gap:8px;padding:10px 16px;
+                      background:var(--bg-card);border-bottom:1px solid var(--border);
+                      flex-wrap:wrap;flex-shrink:0;">
+            <button class="btn btn-outline btn-sm" onclick="InjectionLayoutModule.goBack()">
+              <span class="material-symbols-outlined">arrow_back</span> 목록으로
             </button>
+            ${editToolbar}
             <button class="btn btn-outline btn-sm" onclick="InjectionLayoutModule.printLayout()"
                     style="color:#0891b2;border-color:#0891b2;gap:4px;"
                     title="현장 게시용 A3 인쇄">
@@ -324,10 +377,7 @@ var InjectionLayoutModule = (function () {
             <!-- 캔버스 스크롤 영역 -->
             <div style="flex:1;overflow:auto;padding:14px;background:var(--bg-secondary);">
               <div style="font-size:0.76rem;color:var(--text-muted);margin-bottom:8px;line-height:1.6;">
-                💡 <strong>클릭</strong> 선택 &nbsp;·&nbsp; <strong>드래그</strong> 이동 &nbsp;·&nbsp;
-                <strong>더블클릭</strong> 이름 편집 &nbsp;·&nbsp; 우하단 핸들 <strong>리사이즈</strong>
-                &nbsp;·&nbsp; <span style="color:#06b6d4;font-weight:600;">■ 완제품</span>
-                &nbsp;<span style="color:#f97316;font-weight:600;">■ 소재</span>
+                ${hint}
               </div>
               <div id="ilCanvas" style="
                     position:relative;
@@ -344,18 +394,7 @@ var InjectionLayoutModule = (function () {
               </div>
             </div>
 
-            <!-- 속성 패널 -->
-            <div id="ilPropPanel" style="
-                  width:215px;min-width:215px;
-                  background:var(--bg-card);
-                  border-left:1px solid var(--border);
-                  overflow-y:auto;padding:14px 12px;
-                  flex-shrink:0;">
-              <p style="color:var(--text-muted);font-size:0.83rem;
-                        text-align:center;margin-top:50px;line-height:1.8;">
-                박스를 선택하면<br>속성을 편집할 수 있습니다
-              </p>
-            </div>
+            ${propPanel}
 
           </div>
         </div>`;
@@ -411,7 +450,7 @@ var InjectionLayoutModule = (function () {
             `border:${isPrim ? '2.5px solid #6366f1' : isSel ? '2.5px solid #3b82f6' : b.borderColor === 'transparent' ? 'none' : `2px solid ${b.borderColor || '#94a3b8'}`}`,
             `border-radius:4px`,
             `display:flex`, `align-items:center`, `justify-content:center`,
-            `cursor:move`, `box-sizing:border-box`,
+            `cursor:${_editAllowed ? 'move' : 'default'}`, `box-sizing:border-box`,
             `box-shadow:${isPrim
                 ? '0 0 0 3px rgba(99,102,241,0.45),0 4px 16px rgba(99,102,241,0.3)'
                 : isSel ? '0 0 0 3px rgba(59,130,246,0.45)'
@@ -437,7 +476,7 @@ var InjectionLayoutModule = (function () {
         span.textContent = b.label || '';
         div.appendChild(span);
 
-        if (isPrim) {
+        if (_editAllowed && isPrim) {
             div.appendChild(_makeHandle(b.id, 'right'));
             div.appendChild(_makeHandle(b.id, 'bottom'));
             div.appendChild(_makeHandle(b.id, 'corner'));
@@ -455,8 +494,10 @@ var InjectionLayoutModule = (function () {
             div.appendChild(xBtn);
         }
 
-        div.addEventListener('mousedown', _onBoxMouseDown);
-        div.addEventListener('dblclick',  _onBoxDblClick);
+        if (_editAllowed) {
+            div.addEventListener('mousedown', _onBoxMouseDown);
+            div.addEventListener('dblclick',  _onBoxDblClick);
+        }
         return div;
     }
 
@@ -464,6 +505,7 @@ var InjectionLayoutModule = (function () {
        이벤트
     ══════════════════════════════════════ */
     function _bindCanvasEvents() {
+        if (!_editAllowed) return;
         document.addEventListener('mousemove', _onMouseMove);
         document.addEventListener('mouseup',   _onMouseUp);
         _canvas.addEventListener('mousedown', e => {
@@ -890,6 +932,7 @@ var InjectionLayoutModule = (function () {
        속성 변경
     ══════════════════════════════════════ */
     function _propChange(key, value) {
+        if (!_guardEdit()) return;
         const b = _sel ? _getBox(_sel) : null;
         if (!b) return;
         const multiKeys = ['color','borderColor','textColor','fontSize','bold'];
@@ -907,6 +950,7 @@ var InjectionLayoutModule = (function () {
        박스 CRUD
     ══════════════════════════════════════ */
     function addBox() {
+        if (!_guardEdit()) return;
         const id = 'box_' + (_nextId++);
         _boxes.push({
             id, label: '새 품목', x: _snap(50), y: _snap(50),
@@ -921,6 +965,7 @@ var InjectionLayoutModule = (function () {
     }
 
     function dupBox() {
+        if (!_guardEdit()) return;
         const b = _sel ? _getBox(_sel) : null;
         if (!b) return;
         const id = 'box_' + (_nextId++);
@@ -937,6 +982,7 @@ var InjectionLayoutModule = (function () {
     }
 
     function delBox() {
+        if (!_guardEdit()) return;
         if (!_sel) return;
         if (!confirm('선택한 박스를 삭제할까요?')) return;
         _boxes = _boxes.filter(b => b.id !== _sel);
@@ -950,6 +996,7 @@ var InjectionLayoutModule = (function () {
        저장 / 초기화 / 뒤로가기
     ══════════════════════════════════════ */
     async function saveLayout() {
+        if (!_guardEdit()) return;
         try {
             await Storage.setConfigValue(CONFIG_KEY, { boxes: _boxes, arrows: _arrows });
             _isDirty = false;
@@ -962,6 +1009,7 @@ var InjectionLayoutModule = (function () {
     }
 
     function resetLayout() {
+        if (!_guardEdit()) return;
         if (!confirm('기본 레이아웃으로 초기화할까요?\n현재 배치가 모두 사라집니다.')) return;
         _boxes    = JSON.parse(JSON.stringify(DEFAULT_BOXES));
         _arrows   = [];
@@ -986,6 +1034,7 @@ var InjectionLayoutModule = (function () {
        화살표 모드 토글
     ══════════════════════════════════════ */
     function toggleArrowMode() {
+        if (!_guardEdit()) return;
         _arrowMode = !_arrowMode;
         _arrowDraft = null;
         const btn = document.getElementById('ilArrowBtn');
@@ -1135,6 +1184,7 @@ var InjectionLayoutModule = (function () {
 
     /* 화살표 속성 변경 */
     function _arrowPropChange(key, value) {
+        if (!_guardEdit()) return;
         const a = _arrows.find(x => x.id === _selArrow);
         if (!a) return;
         a[key] = value;
@@ -1145,6 +1195,7 @@ var InjectionLayoutModule = (function () {
 
     /* 화살표 삭제 */
     function _delArrow() {
+        if (!_guardEdit()) return;
         if (!_selArrow) return;
         _arrows   = _arrows.filter(a => a.id !== _selArrow);
         _selArrow = null;
@@ -1407,6 +1458,7 @@ var InjectionLayoutModule = (function () {
        자석 스냅 기능
     ══════════════════════════════════════ */
     function toggleSnap() {
+        if (!_guardEdit()) return;
         _snapEnabled = !_snapEnabled;
         const btn = document.getElementById('ilSnapBtn');
         if (btn) {

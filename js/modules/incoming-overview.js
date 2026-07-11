@@ -15,27 +15,38 @@ var IncomingUI = (function () {
         { id: 'inj-insp-std-photo',        label: '수입검사 표준서',  icon: 'photo_library',   desc: '차종·품명별 수입검사 기준 사진 및 표준서 관리' },
         { id: 'incoming-delete-log',       label: '이력변경 관리',    icon: 'manage_history',  desc: '수입검사 삭제 이력 및 변경 감사 로그' },
     ];
+    const MAIN_MENU_IDS = ['incoming-overview', 'injection-incoming', 'paint-incoming-inspection', 'incoming-delete-log'];
+    const DOC_MENU_IDS = ['inj-incoming-std', 'paint-incoming-std', 'inj-insp-std-photo'];
+
+    function _menuButton(menu, activePage) {
+        const active = menu.id === activePage;
+        return `<button type="button" onclick="Router.navigate('${menu.id}')"
+            style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;
+                   border:${active ? '2px solid var(--accent-blue)' : '1.5px solid var(--border-color)'};
+                   background:var(--bg-primary);color:var(--text-primary);
+                   cursor:pointer;min-width:140px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+            <span style="display:inline-flex;align-items:center;justify-content:center;
+                         width:42px;height:42px;border-radius:10px;flex-shrink:0;
+                         background:${active ? 'var(--accent-blue)' : 'var(--bg-secondary)'};">
+                <span class="material-symbols-outlined" style="font-size:24px;color:${active ? '#fff' : 'var(--text-muted)'};">${menu.icon}</span>
+            </span>
+            <span style="display:flex;flex-direction:column;gap:2px;">
+                <span style="font-size:0.88rem;font-weight:700;white-space:nowrap;">${menu.label}</span>
+            </span>
+        </button>`;
+    }
 
     function renderSection(activePage) {
+        const mainMenus = MENUS.filter(m => MAIN_MENU_IDS.includes(m.id));
+        const docMenus = MENUS.filter(m => DOC_MENU_IDS.includes(m.id));
         return `
-            <div class="mes-apple-menu-hero" style="padding:16px 20px;margin-bottom:20px;display:flex;gap:10px;flex-wrap:wrap;">
-                ${MENUS.map(function(menu) {
-                    const active = menu.id === activePage;
-                    return `<button type="button" onclick="Router.navigate('${menu.id}')"
-                        style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;
-                               border:${active ? '2px solid var(--accent-blue)' : '1.5px solid var(--border-color)'};
-                               background:var(--bg-primary);color:var(--text-primary);
-                               cursor:pointer;min-width:140px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">
-                        <span style="display:inline-flex;align-items:center;justify-content:center;
-                                     width:42px;height:42px;border-radius:10px;flex-shrink:0;
-                                     background:${active ? 'var(--accent-blue)' : 'var(--bg-secondary)'};">
-                            <span class="material-symbols-outlined" style="font-size:24px;color:${active ? '#fff' : 'var(--text-muted)'};">${menu.icon}</span>
-                        </span>
-                        <span style="display:flex;flex-direction:column;gap:2px;">
-                            <span style="font-size:0.88rem;font-weight:700;white-space:nowrap;">${menu.label}</span>
-                        </span>
-                    </button>`;
-                }).join('')}
+            <div class="mes-apple-menu-hero" style="padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+                    ${mainMenus.map(m => _menuButton(m, activePage)).join('')}
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-left:auto;">
+                    ${docMenus.map(m => _menuButton(m, activePage)).join('')}
+                </div>
             </div>`;
     }
     return { renderSection };

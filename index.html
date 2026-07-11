@@ -40,9 +40,9 @@
                 <a class="nav-item" data-page="injection-process" id="nav-injection-process"><span class="material-symbols-outlined">precision_manufacturing</span><span class="nav-label">사출 공정</span></a>
                 <div class="nav-divider"><span>도장 공정</span></div>
                 <a class="nav-item" data-page="production-plan" id="nav-production-plan"><span class="material-symbols-outlined">assignment</span><span class="nav-label">생산 계획 지시서</span></a>
-                <a class="nav-item" data-page="painting-work" id="nav-painting-work"><span class="material-symbols-outlined">format_paint</span><span class="nav-label">도장작업현황</span></a>
-                <a class="nav-item" data-page="paint-mix" id="nav-paint-mix"><span class="material-symbols-outlined">science</span><span class="nav-label">도료 사용이력</span></a>
-                <a class="nav-item" data-page="laser-process" id="nav-laser-process"><span class="material-symbols-outlined">bolt</span><span class="nav-label">레이저 공정</span></a>
+                <a class="nav-item" data-page="painting-work" id="nav-painting-work"><span class="material-symbols-outlined">format_paint</span><span class="nav-label">도장작업</span></a>
+                <a class="nav-item" data-page="paint-mix" id="nav-paint-mix"><span class="material-symbols-outlined">science</span><span class="nav-label">배합작업</span></a>
+                <a class="nav-item" data-page="laser-process" id="nav-laser-process"><span class="material-symbols-outlined">bolt</span><span class="nav-label">레이저 작업</span></a>
                 <div class="nav-divider"><span>생산 관리</span></div>
                 <a class="nav-item" data-page="painting-jig" id="nav-painting-jig"><span class="material-symbols-outlined">build</span><span class="nav-label">도장지그</span></a>
                 <a class="nav-item" data-page="prod-standards" id="nav-prod-standards"><span class="material-symbols-outlined">rule</span><span class="nav-label">제조 관리 표준</span></a>
@@ -77,6 +77,7 @@
                     </button>
                     <h2 id="pageTitle">대시보드</h2>
                 </div>
+                <div id="topbarCenter" class="topbar-center" style="display:none;"></div>
                 <div class="topbar-right"><span class="topbar-date" id="currentDate"></span>
                     <div class="topbar-user" id="topbarUserBadge" style="display:flex;align-items:center;"><span class="material-symbols-outlined">person</span></div>
                 </div>
@@ -104,8 +105,8 @@
     <script src="js/ui.js?v=1"></script>
     <script src="js/data.js?v=2"></script>
     <script src="js/chart.js?v=1"></script>
-    <script src="js/router.js?v=23"></script>
-    <script src="js/auth.js?v=16"></script>
+    <script src="js/router.js?v=28"></script>
+    <script src="js/auth.js?v=20"></script>
     <script src="js/approval-utils.js?v=1"></script>
     <script src="js/sampling-table.js?v=1"></script>
     <script src="js/modules/dashboard.js?v=11"></script>
@@ -113,26 +114,26 @@
     <script src="js/modules/production-plan.js?v=39"></script>
     <script src="js/modules/overtime-plan.js?v=4"></script>
     <script src="js/modules/injection_part1.js?v=27"></script>
-    <script src="js/modules/injection_part2.js?v=31"></script>
+    <script src="js/modules/injection_part2.js?v=35"></script>
     <script src="js/modules/injection-process.js?v=5"></script>
     <script src="js/modules/injection_work.js?v=5"></script>
     <script src="js/modules/raw-material-inventory.js?v=3"></script>
     <script src="js/modules/injection_part3.js?v=21"></script>
-    <script src="js/modules/paint-inventory.js?v=26"></script>
-    <script src="js/modules/paint-layout.js?v=4"></script>
-    <script src="js/modules/injection-layout.js?v=4"></script>
+    <script src="js/modules/paint-inventory.js?v=30"></script>
+    <script src="js/modules/paint-layout.js?v=5"></script>
+    <script src="js/modules/injection-layout.js?v=5"></script>
     <script src="js/modules/injection-wip.js?v=3"></script>
     <script src="js/modules/injection-room-layout.js?v=5"></script>
     <script src="js/modules/painting.js?v=83"></script>
     <script src="js/modules/laser.js?v=111"></script>
     <script src="js/modules/laser-wip.js?v=29"></script>
-    <script src="js/modules/laser-hub.js?v=14"></script>
+    <script src="js/modules/laser-hub.js?v=15"></script>
     <script src="js/modules/laser-layout.js?v=4"></script>
-    <script src="js/modules/sales.js?v=21"></script>
+    <script src="js/modules/sales.js?v=23"></script>
     <!-- production_mgmt_v91.js: lazy load (router??좊읈? 癲?癲ル슣??????????깆뱾 ?棺??짆?삠궘? -->
     <script src="js/modules/improvement.js?v=18"></script>
-    <script src="js/modules/shipping.js?v=20"></script>
-    <script src="js/modules/shipping-hub.js?v=2"></script>
+    <script src="js/modules/shipping.js?v=24"></script>
+    <script src="js/modules/shipping-hub.js?v=4"></script>
     <script src="js/modules/jig.js?v=24"></script>
     <script src="js/modules/jig-layout.js?v=5"></script>
     <script src="js/modules/5s-management.js?v=7"></script>
@@ -141,7 +142,7 @@
     <script src="js/modules/fire-safety.js?v=4"></script>
     <script src="js/modules/settings.js?v=102"></script>
     <script src="js/modules/settings-backup-extension.js?v=5"></script>
-    <script src="js/modules/incoming-overview.js?v=7"></script>
+    <script src="js/modules/incoming-overview.js?v=8"></script>
     <script src="js/modules/inj-incoming-std.js?v=1"></script>
     <script src="js/modules/paint-incoming-std.js?v=1"></script>
     <script src="js/modules/inj-insp-std-photo.js?v=1"></script>
@@ -151,7 +152,7 @@
     <script src="js/modules/drying-std.js?v=1"></script>
     <script src="js/modules/customer-return-nc-std.js?v=3"></script>
     <script src="js/dev-seed.js?v=1"></script>
-    <script src="js/app.js?v=26"></script>
+    <script src="js/app.js?v=27"></script>
 </body>
 
 </html>

@@ -240,58 +240,31 @@ var InjectionWarehouseModule = (function() {
             </tr>`;
     }
 
-    function render(container) {
-        container.innerHTML = `
-            <div class="fade-in-up">
-                <div style="display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap;margin-bottom:14px;">
-                    <button class="btn btn-primary btn-sm" onclick="InjectionWarehouseModule.openAddModal('입고')"><span class="material-symbols-outlined">add_circle</span> 사출입고</button>
-                    <button class="btn btn-danger btn-sm" onclick="InjectionWarehouseModule.openAddModal('출고')"><span class="material-symbols-outlined">do_not_disturb_on</span> 사출출고</button>
-                    <button class="btn btn-outline btn-sm" onclick="Router.navigate('injection-layout')"><span class="material-symbols-outlined">map</span> 레이아웃</button>
-                </div>
+    let _activeTab = 'stock';
 
-                <!-- 입고 대기품 섹션 -->
-                <div id="injInspStandbyCard" style="margin-bottom:20px;"></div>
-
-                <!-- 차종별 재고 타일 -->
-                <div class="card" style="margin-bottom:20px;">
-                    <div class="card-header" style="flex-wrap:wrap;gap:8px;">
-                        <h4><span class="material-symbols-outlined">grid_view</span> 차종별 재고 현황</h4>
-                        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-left:auto;">
-                            <div id="injStockErrorAdminBar"></div>
-                            <select id="injTileCarFilter" class="form-select" style="width:140px;"
-                                onchange="InjectionWarehouseModule.renderCarTiles()">
-                                <option value="">전체 차종</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <div id="injCarTiles" style="display:flex; gap:12px; align-items:flex-start;"></div>
-                    </div>
-                </div>
-
-                <!-- 입출고 조회 -->
+    function _txHistoryCard(tab) {
+        const isIn = tab === 'incoming';
+        const suffix = isIn ? 'In' : 'Out';
+        const title = isIn ? '입고 이력' : '출고 이력';
+        const icon = isIn ? 'move_to_inbox' : 'outbox';
+        const monthAgo = UIUtils.monthAgo ? UIUtils.monthAgo() : '';
+        const today = UIUtils.today ? UIUtils.today() : '';
+        return `
                 <div class="card">
                     <div class="card-header" style="flex-wrap:wrap; gap:8px;">
-                        <h4><span class="material-symbols-outlined">receipt_long</span> 입출고 조회</h4>
-                        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-                            <input type="date" id="injTxStart" class="form-input" style="width:130px;"
-                                value="${UIUtils.monthAgo ? UIUtils.monthAgo() : ''}">
+                        <h4><span class="material-symbols-outlined">${icon}</span> ${title}</h4>
+                        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                            <input type="date" id="injTxStart${suffix}" class="form-input" style="width:165px;min-width:165px;" value="${monthAgo}">
                             <span style="color:var(--text-muted);">~</span>
-                            <input type="date" id="injTxEnd" class="form-input" style="width:130px;"
-                                value="${UIUtils.today ? UIUtils.today() : ''}">
-                            <select id="injTxCar" class="form-select" style="width:110px;"
-                                onchange="InjectionWarehouseModule.onTxCarChange()">
+                            <input type="date" id="injTxEnd${suffix}" class="form-input" style="width:165px;min-width:165px;" value="${today}">
+                            <select id="injTxCar${suffix}" class="form-select" style="width:150px;min-width:150px;"
+                                onchange="InjectionWarehouseModule.onTxCarChange('${suffix}')">
                                 <option value="">전체 차종</option>
                             </select>
-                            <select id="injTxPart" class="form-select" style="width:130px;">
+                            <select id="injTxPart${suffix}" class="form-select" style="width:200px;min-width:200px;">
                                 <option value="">전체 품명</option>
                             </select>
-                            <select id="injTxType" class="form-select" style="width:90px;">
-                                <option value="">전체</option>
-                                <option value="입고">입고</option>
-                                <option value="출고">출고</option>
-                            </select>
-                            <button class="btn btn-primary" onclick="InjectionWarehouseModule.filterTransactions()">
+                            <button class="btn btn-primary" onclick="InjectionWarehouseModule.filterTransactions('${tab}')">
                                 <span class="material-symbols-outlined">search</span> 조회
                             </button>
                         </div>
@@ -314,14 +287,96 @@ var InjectionWarehouseModule = (function() {
                                         <th>작업</th>
                                     </tr>
                                 </thead>
-                                <tbody id="injInvTableBody"></tbody>
+                                <tbody id="injInvTableBody${suffix}"></tbody>
                             </table>
                         </div>
                     </div>
+                </div>`;
+    }
+
+    function render(container) {
+        const actionCards = `
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-left:auto;">
+                ${ProdAppleMenu.card({ label: '레이아웃', subtitle: '보관창고 배치도', icon: 'map', accent: '#06b6d4', onClick: "sessionStorage.setItem('mes_layout_back','injection-warehouse');Router.navigate('injection-layout')" })}
+                ${ProdAppleMenu.card({ label: '사출입고', subtitle: '사출 자재 입고', icon: 'move_to_inbox', accent: '#10b981', onClick: "InjectionWarehouseModule.openAddModal('입고')" })}
+                ${ProdAppleMenu.card({ label: '사출 출고', subtitle: '사출 자재 출고', icon: 'outbox', accent: '#f59e0b', onClick: "InjectionWarehouseModule.openAddModal('출고')" })}
+            </div>`;
+
+        container.innerHTML = `
+            <div class="fade-in-up">
+                <div id="injNavStrip" class="mes-apple-menu-hero" style="padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+                    ${[
+                        { tab:'stock',    icon:'inventory_2',  title:'사출품현황', sub:'차종별 재고·입고대기', active:true  },
+                        { tab:'incoming', icon:'move_to_inbox',title:'입고이력',   sub:'사출 자재 입고 기록', active:false },
+                        { tab:'outgoing', icon:'outbox',       title:'출고 이력', sub:'사출 자재 출고 기록', active:false }
+                    ].map(m => `
+                        <button type="button" class="inj-tab-btn${m.active?' inj-tab-active':''}" data-tab="${m.tab}"
+                            onclick="InjectionWarehouseModule._switchTab('${m.tab}')"
+                            style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;
+                                   border:${m.active?'2px solid var(--accent-blue)':'1.5px solid var(--border-color)'};
+                                   background:var(--bg-primary);color:var(--text-primary);
+                                   cursor:pointer;min-width:160px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+                            <span style="display:inline-flex;align-items:center;justify-content:center;
+                                         width:42px;height:42px;border-radius:10px;flex-shrink:0;
+                                         background:${m.active?'var(--accent-blue)':'var(--bg-secondary)'};">
+                                <span class="material-symbols-outlined" style="font-size:24px;color:${m.active?'#fff':'var(--text-muted)'};">${m.icon}</span>
+                            </span>
+                            <span style="display:flex;flex-direction:column;gap:2px;">
+                                <span style="font-size:0.92rem;font-weight:700;">${m.title}</span>
+                                <span style="font-size:0.73rem;color:var(--text-muted);">${m.sub}</span>
+                            </span>
+                        </button>`).join('')}
+                    </div>
+                    ${actionCards}
+                </div>
+
+                <div id="injTabStock">
+                    <div id="injInspStandbyCard" style="margin-bottom:20px;"></div>
+                    <div class="card" style="margin-bottom:20px;">
+                        <div class="card-header" style="flex-wrap:wrap;gap:8px;">
+                            <h4><span class="material-symbols-outlined">grid_view</span> 차종별 재고 현황</h4>
+                            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-left:auto;">
+                                <div id="injStockErrorAdminBar"></div>
+                                <select id="injTileCarFilter" class="form-select" style="width:140px;"
+                                    onchange="InjectionWarehouseModule.renderCarTiles()">
+                                    <option value="">전체 차종</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div id="injCarTiles" style="display:flex; gap:12px; align-items:flex-start;"></div>
+                        </div>
+                    </div>
+                </div>
+                <div id="injTabIncoming" style="display:none;">
+                    ${_txHistoryCard('incoming')}
+                </div>
+                <div id="injTabOutgoing" style="display:none;">
+                    ${_txHistoryCard('outgoing')}
                 </div>
             </div>
         `;
+        _activeTab = 'stock';
         loadData();
+    }
+
+    function _switchTab(tab) {
+        _activeTab = tab;
+        ['stock', 'incoming', 'outgoing'].forEach(function (t) {
+            const panelEl = document.getElementById('injTab' + t.charAt(0).toUpperCase() + t.slice(1));
+            if (panelEl) panelEl.style.display = t === tab ? '' : 'none';
+        });
+        document.querySelectorAll('.inj-tab-btn').forEach(function (btn) {
+            const isActive = btn.dataset.tab === tab;
+            btn.style.border = isActive ? '2px solid var(--accent-blue)' : '1.5px solid var(--border-color)';
+            const iconBox = btn.querySelector('span[style*="border-radius:10px"]');
+            const icon = btn.querySelector('.material-symbols-outlined');
+            if (iconBox) iconBox.style.background = isActive ? 'var(--accent-blue)' : 'var(--bg-secondary)';
+            if (icon) icon.style.color = isActive ? '#fff' : 'var(--text-muted)';
+        });
+        if (tab === 'incoming') filterTransactions('incoming');
+        if (tab === 'outgoing') filterTransactions('outgoing');
     }
 
     function loadData() {
@@ -389,7 +444,7 @@ var InjectionWarehouseModule = (function() {
 
         // ── 차종 드롭다운 채우기 ───────────────────────────────────
         const carModels = UIUtils.sortCarModels(Object.values(stockMap).map(v => v.carModel));
-        ['injTileCarFilter','injTxCar'].forEach(id => {
+        ['injTileCarFilter', 'injTxCarIn', 'injTxCarOut'].forEach(id => {
             const sel = document.getElementById(id);
             if (!sel) return;
             const cur = sel.value;
@@ -401,9 +456,8 @@ var InjectionWarehouseModule = (function() {
         // ── 차종별 타일 렌더링 ─────────────────────────────────────
         renderCarTiles(stockMap, data);
 
-        // ── 입출고 조회 테이블 (초기: 전체, 최신순) ──────────────
-        const sortedData = data.slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-        renderTxTable(sortedData, materials);
+        if (_activeTab === 'incoming') filterTransactions('incoming');
+        else if (_activeTab === 'outgoing') filterTransactions('outgoing');
 
         renderInspStandby();
     }
@@ -689,74 +743,84 @@ var InjectionWarehouseModule = (function() {
             </button>`;
     }
 
-    // 입출고 조회 필터 적용
-    function filterTransactions() {
+    // 입출고 조회 필터 적용 (incoming | outgoing 탭)
+    function filterTransactions(tab) {
+        tab = tab || _activeTab;
+        if (tab !== 'incoming' && tab !== 'outgoing') return;
+
+        const suffix = tab === 'incoming' ? 'In' : 'Out';
+        const typeFixed = tab === 'incoming' ? '입고' : '출고';
         const data      = Storage.getAll(STORE);
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS);
-        const start  = (document.getElementById('injTxStart') || {}).value || '';
-        const end    = (document.getElementById('injTxEnd')   || {}).value || '';
-        const car    = (document.getElementById('injTxCar')   || {}).value || '';
-        const part   = (document.getElementById('injTxPart')  || {}).value || '';
-        const type   = (document.getElementById('injTxType')  || {}).value || '';
+        const start  = (document.getElementById('injTxStart' + suffix) || {}).value || '';
+        const end    = (document.getElementById('injTxEnd' + suffix)   || {}).value || '';
+        const car    = (document.getElementById('injTxCar' + suffix)   || {}).value || '';
+        const part   = (document.getElementById('injTxPart' + suffix)  || {}).value || '';
 
         const filtered = data.filter(d => {
             if (start && (d.date || '') < start) return false;
             if (end   && (d.date || '') > end)   return false;
             if (car   && d.carModel !== car)      return false;
             if (part  && d.partName !== part)     return false;
-            if (type  && d.type    !== type)      return false;
+            if (d.type !== typeFixed)             return false;
             return true;
         });
 
         filtered.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-        renderTxTable(filtered, materials);
+        renderTxTable(filtered, materials, 'injInvTableBody' + suffix, typeFixed);
     }
 
     // 차종 변경 시 품명 드롭다운 업데이트
-    function onTxCarChange() {
-        const car  = (document.getElementById('injTxCar') || {}).value || '';
+    function onTxCarChange(suffix) {
+        suffix = suffix || 'In';
+        const car  = (document.getElementById('injTxCar' + suffix) || {}).value || '';
         const data = Storage.getAll(STORE);
         const parts = [...new Set(
             data.filter(d => !car || d.carModel === car).map(d => d.partName).filter(Boolean)
         )].sort();
-        const sel = document.getElementById('injTxPart');
+        const sel = document.getElementById('injTxPart' + suffix);
         if (!sel) return;
         sel.innerHTML = `<option value="">전체 품명</option>` +
             parts.map(p => `<option value="${p}">${p}</option>`).join('');
     }
 
-    // 재고 오류(마이너스) 뱃지 클릭 → 입출고 조회를 해당 품목으로 필터링해 원인 기록을 바로 찾게 함 (관리자 전용)
+    // 재고 오류(마이너스) 뱃지 클릭 → 입고 이력을 해당 품목으로 필터링해 원인 기록을 바로 찾게 함 (관리자 전용)
     function jumpToTxHistory(carModel, partName, color) {
         if (!_isAdminUser()) return;
         const cm = decodeURIComponent(carModel || '');
         const pn = decodeURIComponent(partName || '');
 
-        // 오래된 원인 기록도 놓치지 않도록 조회 기간을 전체로 넓힌다
-        const startEl = document.getElementById('injTxStart');
-        const endEl   = document.getElementById('injTxEnd');
-        if (startEl) startEl.value = '2000-01-01';
-        if (endEl) endEl.value = UIUtils.today ? UIUtils.today() : '';
+        _switchTab('incoming');
 
-        const carSel = document.getElementById('injTxCar');
-        if (carSel) carSel.value = cm;
-        onTxCarChange();
+        setTimeout(function () {
+            const suffix = 'In';
+            const startEl = document.getElementById('injTxStart' + suffix);
+            const endEl   = document.getElementById('injTxEnd' + suffix);
+            if (startEl) startEl.value = '2000-01-01';
+            if (endEl) endEl.value = UIUtils.today ? UIUtils.today() : '';
 
-        setTimeout(() => {
-            const partSel = document.getElementById('injTxPart');
-            if (partSel) partSel.value = pn;
-            filterTransactions();
-            const tbody = document.getElementById('injInvTableBody');
-            const card = tbody && tbody.closest('.card');
-            if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            const carSel = document.getElementById('injTxCar' + suffix);
+            if (carSel) carSel.value = cm;
+            onTxCarChange(suffix);
+
+            setTimeout(function () {
+                const partSel = document.getElementById('injTxPart' + suffix);
+                if (partSel) partSel.value = pn;
+                filterTransactions('incoming');
+                const tbody = document.getElementById('injInvTableBody' + suffix);
+                const card = tbody && tbody.closest('.card');
+                if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 30);
         }, 30);
     }
 
     // 입출고 테이블 렌더링
-    function renderTxTable(data, materials) {
-        const tbody = document.getElementById('injInvTableBody');
+    function renderTxTable(data, materials, tbodyId, typeLabel) {
+        const tbody = document.getElementById(tbodyId || 'injInvTableBodyIn');
         if (!tbody) return;
+        const emptyMsg = typeLabel === '출고' ? '출고 이력이 없습니다.' : '입고 이력이 없습니다.';
         if (!data || data.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:40px;color:var(--text-muted);">입출고 내역이 없습니다.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:40px;color:var(--text-muted);">${emptyMsg}</td></tr>`;
             return;
         }
         const mats = materials || Storage.getAll(DB.STORES.INJECTION_MATERIALS);
@@ -3925,6 +3989,7 @@ var InjectionWarehouseModule = (function() {
 
     return {
         render,
+        _switchTab,
         loadData,
         renderInspStandby,
         clearTestInspections,

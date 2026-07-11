@@ -610,6 +610,15 @@ var SalesDeliveryModule = (function() {
             return;
         }
 
+        if (typeof ProductWarehouseModule !== 'undefined' && ProductWarehouseModule.getShippingReadiness) {
+            const shipColor = (allocations[0] && allocations[0].color) || '';
+            const shipStatus = await ProductWarehouseModule.getShippingReadiness(data.carModel, data.partName, shipColor);
+            if (!shipStatus.eligible) {
+                UIUtils.toast('출하 일상검사·신뢰성 검사가 모두 합격인 품목만 출고할 수 있습니다.', 'warning');
+                return;
+            }
+        }
+
         const delivery = await Storage.add(STORE, { ...data, lotAllocations: allocations });
         try {
             await _addInventoryOutRecords(delivery.id, data, allocations);
@@ -715,6 +724,16 @@ var SalesDeliveryModule = (function() {
             UIUtils.toast('제품 창고 재고가 부족하여 출고할 수 없습니다.', 'warning');
             return;
         }
+
+        if (typeof ProductWarehouseModule !== 'undefined' && ProductWarehouseModule.getShippingReadiness) {
+            const shipColor = (allocations[0] && allocations[0].color) || '';
+            const shipStatus = await ProductWarehouseModule.getShippingReadiness(data.carModel, data.partName, shipColor);
+            if (!shipStatus.eligible) {
+                UIUtils.toast('출하 일상검사·신뢰성 검사가 모두 합격인 품목만 출고할 수 있습니다.', 'warning');
+                return;
+            }
+        }
+
         await _removeInventoryOutRecords(id);
         await Storage.update(STORE, id, { ...data, lotAllocations: allocations });
         await _addInventoryOutRecords(id, data, allocations);
@@ -3411,12 +3430,12 @@ var SalesOutsourcingModule = (function() {
 })();
 
 /**
- * 납품 출하(금일) — 금일 출하 계획품 관리 (우선 수동 등록)
- * 추후 영업 계획에서 일자별 납품 리스트를 불러올 예정.
- * 저장: config (sales_today_shipment_v1). 차종/품명/컬러는 제품 마스터 기반 필터 선택.
+ * 납품 출하(금일) — 완제품 창고 재고 선택 후 자동 출고
+ * 저장: config (sales_today_shipment_v1) + product_inventory 출고 기록
  */
 var SalesTodayShipmentModule = (function () {
     const CONFIG_KEY = 'sales_today_shipment_v1';
+    const INVENTORY_STORE = DB.STORES.PRODUCT_INVENTORY;
     const _esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
     let _records = [];
 
@@ -3428,19 +3447,82 @@ var SalesTodayShipmentModule = (function () {
     }
     async function _save() { await Storage.setConfigValue(CONFIG_KEY, _records); }
 
-    function _products() { return (Storage.getAll(DB.STORES.PRODUCTS) || []).filter(p => p.carModel || p.partName); }
-    function _cars() { return [...new Set(_products().map(p => p.carModel).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko')); }
-    function _partsFor(car) { return [...new Set(_products().filter(p => p.carModel === car).map(p => p.partName).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko')); }
-    function _colorsFor(car, part) { return [...new Set(_products().filter(p => p.carModel === car && p.partName === part).map(p => p.color).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko')); }
+    function _lotKey(lot) {
+        return `${lot.paintingDate || '미표기'}||${lot.color || ''}||${lot.lotNo || ''}`;
+    }
+
+    function _getLotBalances(carModel, partName, ignoreShipmentId = '') {
+        const inv = Storage.getAll(INVENTORY_STORE) || [];
+        const lotMap = {};
+        inv.filter(r => (!carModel || r.carModel === carModel) && (!partName || r.partName === partName))
+            .forEach(r => {
+                if (ignoreShipmentId && r.todayShipmentId === ignoreShipmentId) return;
+                const paintingDate = r.paintingDate || r.date || '미표기';
+                const color = r.color || '';
+                const lotNo = r.lotNo || '';
+                const key = `${paintingDate}||${color}||${lotNo}`;
+                if (!lotMap[key]) {
+                    lotMap[key] = { paintingDate, color, lotNo, balance: 0, carModel: r.carModel, partName: r.partName };
+                }
+                if (r.type === '출고') lotMap[key].balance -= Number(r.quantity) || 0;
+                else lotMap[key].balance += Number(r.quantity) || 0;
+            });
+        return Object.values(lotMap)
+            .filter(l => l.balance > 0)
+            .sort((a, b) =>
+                (a.paintingDate || '').localeCompare(b.paintingDate || '') ||
+                (a.lotNo || '').localeCompare(b.lotNo || '')
+            );
+    }
+
+    function _carsFromStock(ignoreShipmentId = '') {
+        const inv = Storage.getAll(INVENTORY_STORE) || [];
+        const balanceMap = {};
+        inv.forEach(r => {
+            if (ignoreShipmentId && r.todayShipmentId === ignoreShipmentId) return;
+            const key = `${r.carModel || ''}||${r.partName || ''}`;
+            if (!balanceMap[key]) balanceMap[key] = { carModel: r.carModel, partName: r.partName, balance: 0 };
+            if (r.type === '출고') balanceMap[key].balance -= Number(r.quantity) || 0;
+            else balanceMap[key].balance += Number(r.quantity) || 0;
+        });
+        return [...new Set(Object.values(balanceMap).filter(x => x.balance > 0 && x.carModel).map(x => x.carModel))]
+            .sort((a, b) => a.localeCompare(b, 'ko'));
+    }
+
+    function _partsFromStock(car, ignoreShipmentId = '') {
+        const inv = Storage.getAll(INVENTORY_STORE) || [];
+        const balanceMap = {};
+        inv.filter(r => r.carModel === car).forEach(r => {
+            if (ignoreShipmentId && r.todayShipmentId === ignoreShipmentId) return;
+            const key = r.partName || '';
+            if (!key) return;
+            if (!balanceMap[key]) balanceMap[key] = 0;
+            if (r.type === '출고') balanceMap[key] -= Number(r.quantity) || 0;
+            else balanceMap[key] += Number(r.quantity) || 0;
+        });
+        return Object.keys(balanceMap).filter(k => balanceMap[k] > 0).sort((a, b) => a.localeCompare(b, 'ko'));
+    }
+
+    function _products() { return Storage.getAll(DB.STORES.PRODUCTS) || []; }
     function _customerFor(car, part, color) {
         const list = _products();
         const p = list.find(x => x.carModel === car && x.partName === part && (!color || x.color === color))
             || list.find(x => x.carModel === car && x.partName === part);
         return p ? (p.customer || p.deliveryCustomer || p.client || '') : '';
     }
+
     function _opts(values, selected, placeholder) {
         return `<option value="">${placeholder}</option>` +
             values.map(v => `<option value="${_esc(v)}" ${v === selected ? 'selected' : ''}>${_esc(v)}</option>`).join('');
+    }
+
+    function _lotOpts(lots, selectedKey, placeholder) {
+        return `<option value="">${placeholder}</option>` +
+            lots.map(l => {
+                const key = _lotKey(l);
+                const label = `${l.paintingDate || '미표기'}${l.lotNo ? ' / ' + l.lotNo : ''}${l.color ? ' / ' + l.color : ''} — ${UIUtils.formatNumber(l.balance)} EA`;
+                return `<option value="${_esc(key)}" ${key === selectedKey ? 'selected' : ''}>${_esc(label)}</option>`;
+            }).join('');
     }
 
     function _todayField() {
@@ -3448,16 +3530,50 @@ var SalesTodayShipmentModule = (function () {
         return el && el.value ? el.value : UIUtils.today();
     }
 
+    function _lotLabel(r) {
+        const parts = [r.paintingDate || '', r.lotNo || ''].filter(Boolean);
+        return parts.length ? parts.join(' / ') : '-';
+    }
+
+    async function _removeInventoryOut(shipmentId) {
+        const records = (Storage.getAll(INVENTORY_STORE) || [])
+            .filter(r => r.todayShipmentId === shipmentId && r.type === '출고');
+        for (const record of records) {
+            await Storage.remove(INVENTORY_STORE, record.id);
+        }
+    }
+
+    async function _addInventoryOut(shipmentId, data, lot) {
+        await Storage.add(INVENTORY_STORE, {
+            date: data.date,
+            type: '출고',
+            carModel: data.carModel,
+            partName: data.partName,
+            color: lot.color || '',
+            paintingDate: lot.paintingDate === '미표기' ? '' : (lot.paintingDate || ''),
+            lotNo: lot.lotNo || '',
+            quantity: data.qty,
+            source: '금일 출하',
+            todayShipmentId: shipmentId
+        });
+    }
+
     function render(container) {
         container.innerHTML = `
         <div class="fade-in-up">
             ${SalesProcessUI.renderSection('sales-today-shipment')}
+            <div class="card" style="margin-bottom:16px;">
+                <div class="card-body" style="padding:12px 16px;font-size:0.85rem;color:var(--text-secondary);line-height:1.55;">
+                    <strong style="color:var(--text-primary);">완제품 창고 연동</strong><br>
+                    금일 출하 등록 시 <strong>완제품 창고 재고(차종·품명·LOT)</strong>를 선택하면 등록과 동시에 창고에서 자동 출고됩니다.
+                </div>
+            </div>
             <div class="card">
                 <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
                     <h4 style="margin:0;display:flex;align-items:center;gap:6px;">
                         <span class="material-symbols-outlined" style="color:var(--accent-orange);">outbox</span>
                         납품 출하(금일)
-                        <span style="font-size:0.75rem;font-weight:400;color:var(--text-muted);">금일 출하 계획품 (수동 등록)</span>
+                        <span style="font-size:0.75rem;font-weight:400;color:var(--text-muted);">완제품 창고 출고 연동</span>
                     </h4>
                     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                         <label class="form-label" style="margin:0;">출하일자</label>
@@ -3472,12 +3588,12 @@ var SalesTodayShipmentModule = (function () {
                         <table class="data-table">
                             <thead>
                                 <tr>
-                                    <th>출하일자</th><th>납품처</th><th>차종</th><th>품명</th><th>컬러</th>
+                                    <th>출하일자</th><th>납품처</th><th>차종</th><th>품명</th><th>LOT</th><th>컬러</th>
                                     <th style="text-align:right;">수량</th><th>비고</th>
                                     <th style="text-align:center;width:120px;">작업</th>
                                 </tr>
                             </thead>
-                            <tbody id="tsBody"><tr><td colspan="8" style="text-align:center;padding:28px;color:var(--text-muted);">로딩 중...</td></tr></tbody>
+                            <tbody id="tsBody"><tr><td colspan="9" style="text-align:center;padding:28px;color:var(--text-muted);">로딩 중...</td></tr></tbody>
                         </table>
                     </div>
                 </div>
@@ -3494,7 +3610,7 @@ var SalesTodayShipmentModule = (function () {
         const rows = _records.filter(r => (r.date || '') === date)
             .sort((a, b) => (a.customer || '').localeCompare(b.customer || '', 'ko') || (a.carModel || '').localeCompare(b.carModel || '', 'ko'));
         if (!rows.length) {
-            tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-muted);">${_esc(date)} 출하 계획품이 없습니다. [금일 출하 등록]으로 추가하세요.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text-muted);">${_esc(date)} 출하 계획품이 없습니다.<br><span style="font-size:0.82rem;">[금일 출하 등록]으로 완제품 창고에서 선택하세요.</span></td></tr>`;
             return;
         }
         const total = rows.reduce((s, r) => s + (Number(r.qty) || 0), 0);
@@ -3504,6 +3620,7 @@ var SalesTodayShipmentModule = (function () {
                 <td>${_esc(r.customer || '-')}</td>
                 <td>${_esc(r.carModel || '-')}</td>
                 <td><strong>${_esc(r.partName || '-')}</strong></td>
+                <td style="font-family:monospace;font-size:0.82rem;">${_esc(_lotLabel(r))}</td>
                 <td>${_esc(r.color || '-')}</td>
                 <td style="text-align:right;font-weight:600;">${UIUtils.formatNumber(Number(r.qty) || 0)}</td>
                 <td style="color:var(--text-muted);font-size:0.85rem;">${_esc(r.note || '')}</td>
@@ -3513,73 +3630,154 @@ var SalesTodayShipmentModule = (function () {
                 </td>
             </tr>`).join('') + `
             <tr style="background:var(--bg-secondary);font-weight:700;">
-                <td colspan="5" style="text-align:right;">합계</td>
+                <td colspan="6" style="text-align:right;">합계</td>
                 <td style="text-align:right;color:var(--accent-blue);">${UIUtils.formatNumber(total)}</td>
                 <td colspan="2"></td>
             </tr>`;
     }
 
+    function _renderLotPanel(car, part, ignoreShipmentId = '') {
+        const el = document.getElementById('tsLotPanel');
+        if (!el) return;
+        if (!car || !part) {
+            el.innerHTML = `<div style="color:var(--text-muted);font-size:0.82rem;padding:10px;text-align:center;">차종과 품명을 선택하면 재고 LOT가 표시됩니다.</div>`;
+            return;
+        }
+        const lots = _getLotBalances(car, part, ignoreShipmentId);
+        if (!lots.length) {
+            el.innerHTML = `<div style="color:var(--text-muted);font-size:0.82rem;padding:10px;text-align:center;">완제품 창고에 가용 재고가 없습니다.</div>`;
+            return;
+        }
+        const total = lots.reduce((s, l) => s + l.balance, 0);
+        el.innerHTML = `
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border);">
+                <span style="font-size:0.8rem;color:var(--text-muted);">총 가용 재고</span>
+                <span style="font-size:1rem;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(total)} EA</span>
+            </div>
+            ${lots.map((l, i) => `
+            <div style="display:flex;align-items:center;gap:10px;padding:7px 10px;
+                        background:${i === 0 ? 'rgba(59,130,246,0.06)' : 'transparent'};
+                        border-radius:6px;margin-bottom:3px;border:1px solid ${i === 0 ? 'rgba(59,130,246,0.2)' : 'transparent'};">
+                <span style="font-family:monospace;font-weight:600;font-size:0.85rem;flex:1;">${_esc(l.paintingDate || '미표기')}</span>
+                ${l.lotNo ? `<span style="font-size:0.75rem;color:var(--text-muted);">${_esc(l.lotNo)}</span>` : ''}
+                ${l.color ? `<span style="font-size:0.75rem;color:var(--text-muted);">${_esc(l.color)}</span>` : ''}
+                <span style="font-weight:700;color:var(--accent-blue);font-size:0.88rem;">${UIUtils.formatNumber(l.balance)} EA</span>
+            </div>`).join('')}`;
+    }
+
     function openForm(id) {
         const rec = id ? _records.find(r => r.id === id) : null;
+        const ignoreId = id || '';
         const car = rec ? (rec.carModel || '') : '';
         const part = rec ? (rec.partName || '') : '';
-        const color = rec ? (rec.color || '') : '';
-        const carOpts = _opts(_cars(), car, '-- 차종 선택 --');
-        const partOpts = car ? _opts(_partsFor(car), part, '-- 품명 선택 --') : '<option value="">← 차종 먼저 선택</option>';
-        const colorOpts = (car && part) ? _opts(_colorsFor(car, part), color, '-- 컬러 선택 --') : '<option value="">← 품명 먼저 선택</option>';
+        const lotKey = rec ? _lotKey({ paintingDate: rec.paintingDate || '미표기', color: rec.color || '', lotNo: rec.lotNo || '' }) : '';
+        const lots = (car && part) ? _getLotBalances(car, part, ignoreId) : [];
+        const selectedLot = lots.find(l => _lotKey(l) === lotKey);
+        const maxQty = selectedLot ? selectedLot.balance : 0;
+
+        const carOpts = _opts(_carsFromStock(ignoreId), car, '-- 차종 선택 --');
+        const partOpts = car ? _opts(_partsFromStock(car, ignoreId), part, '-- 품명 선택 --') : '<option value="">← 차종 먼저 선택</option>';
+        const lotOpts = (car && part) ? _lotOpts(lots, lotKey, '-- LOT 선택 --') : '<option value="">← 품명 먼저 선택</option>';
 
         UIUtils.showModal(rec ? '금일 출하 수정' : '금일 출하 등록', `
+            <div style="padding:10px 14px;background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.2);border-radius:8px;margin-bottom:14px;font-size:0.84rem;line-height:1.55;">
+                완제품 창고 재고를 선택하면 <strong>등록과 동시에 창고 출고</strong>됩니다.
+            </div>
             <div class="form-row">
                 <div class="form-group"><label class="form-label">출하일자 <span style="color:var(--accent-red)">*</span></label>
                     <input type="date" class="form-input" id="tsDate" value="${rec ? _esc(rec.date) : _todayField()}"></div>
                 <div class="form-group"><label class="form-label">납품처</label>
-                    <input class="form-input" id="tsCustomer" value="${rec ? _esc(rec.customer || '') : ''}" placeholder="자동 채움 (제품 기준)"></div>
+                    <input class="form-input" id="tsCustomer" value="${rec ? _esc(rec.customer || '') : ''}" placeholder="품목 선택 시 자동 채움" readonly style="background:var(--bg-secondary);"></div>
             </div>
             <div class="form-row">
                 <div class="form-group"><label class="form-label">차종 <span style="color:var(--accent-red)">*</span></label>
-                    <select class="form-select" id="tsCar" onchange="SalesTodayShipmentModule.onCarChange()">${carOpts}</select></div>
+                    <select class="form-select" id="tsCar" onchange="SalesTodayShipmentModule.onCarChange('${id || ''}')">${carOpts}</select></div>
                 <div class="form-group"><label class="form-label">품명 <span style="color:var(--accent-red)">*</span></label>
-                    <select class="form-select" id="tsPart" onchange="SalesTodayShipmentModule.onPartChange()">${partOpts}</select></div>
-                <div class="form-group"><label class="form-label">컬러</label>
-                    <select class="form-select" id="tsColor" onchange="SalesTodayShipmentModule.onColorChange()">${colorOpts}</select></div>
+                    <select class="form-select" id="tsPart" onchange="SalesTodayShipmentModule.onPartChange('${id || ''}')">${partOpts}</select></div>
+                <div class="form-group"><label class="form-label">LOT <span style="color:var(--accent-red)">*</span></label>
+                    <select class="form-select" id="tsLot" onchange="SalesTodayShipmentModule.onLotChange('${id || ''}')">${lotOpts}</select></div>
             </div>
             <div class="form-row">
+                <div class="form-group"><label class="form-label">컬러</label>
+                    <input class="form-input" id="tsColor" value="${rec ? _esc(rec.color || '') : (selectedLot ? _esc(selectedLot.color) : '')}" readonly style="background:var(--bg-secondary);"></div>
                 <div class="form-group"><label class="form-label">수량 <span style="color:var(--accent-red)">*</span></label>
-                    <input type="number" class="form-input" id="tsQty" min="1" value="${rec ? _esc(rec.qty || '') : ''}" placeholder="출하 수량"></div>
+                    <input type="number" class="form-input" id="tsQty" min="1" max="${maxQty || ''}" value="${rec ? _esc(rec.qty || '') : ''}" placeholder="출하 수량">
+                    <div id="tsQtyHint" style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">${maxQty ? `가용 재고: ${UIUtils.formatNumber(maxQty)} EA` : 'LOT를 선택하세요.'}</div></div>
                 <div class="form-group" style="flex:2;"><label class="form-label">비고</label>
                     <input class="form-input" id="tsNote" value="${rec ? _esc(rec.note || '') : ''}" placeholder="특이사항"></div>
             </div>
+            <div style="margin-top:12px;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+                <div style="background:var(--accent-blue);color:#fff;padding:8px 14px;display:flex;align-items:center;gap:6px;font-size:0.82rem;font-weight:600;">
+                    <span class="material-symbols-outlined" style="font-size:0.95rem;">inventory_2</span>
+                    완제품 창고 재고 LOT
+                </div>
+                <div id="tsLotPanel" style="padding:10px 12px;background:var(--bg-primary);max-height:180px;overflow-y:auto;"></div>
+            </div>
+            <input type="hidden" id="tsEditId" value="${_esc(id || '')}">
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" onclick="SalesTodayShipmentModule.saveForm('${id || ''}')">저장</button>
+            <button class="btn btn-primary" onclick="SalesTodayShipmentModule.saveForm('${id || ''}')">${rec ? '저장' : '등록·출고'}</button>
         `, 'lg');
+        _renderLotPanel(car, part, ignoreId);
     }
 
-    function onCarChange() {
+    function onCarChange(editId) {
         const car = document.getElementById('tsCar')?.value || '';
         const partEl = document.getElementById('tsPart');
+        const lotEl = document.getElementById('tsLot');
         const colorEl = document.getElementById('tsColor');
-        if (partEl) partEl.innerHTML = car ? _opts(_partsFor(car), '', '-- 품명 선택 --') : '<option value="">← 차종 먼저 선택</option>';
-        if (colorEl) colorEl.innerHTML = '<option value="">← 품명 먼저 선택</option>';
+        const qtyEl = document.getElementById('tsQty');
+        const hintEl = document.getElementById('tsQtyHint');
+        if (partEl) partEl.innerHTML = car ? _opts(_partsFromStock(car, editId || ''), '', '-- 품명 선택 --') : '<option value="">← 차종 먼저 선택</option>';
+        if (lotEl) lotEl.innerHTML = '<option value="">← 품명 먼저 선택</option>';
+        if (colorEl) colorEl.value = '';
+        if (qtyEl) { qtyEl.value = ''; qtyEl.max = ''; }
+        if (hintEl) hintEl.textContent = 'LOT를 선택하세요.';
+        _renderLotPanel(car, '', editId || '');
     }
-    function onPartChange() {
+
+    function onPartChange(editId) {
         const car = document.getElementById('tsCar')?.value || '';
         const part = document.getElementById('tsPart')?.value || '';
+        const lotEl = document.getElementById('tsLot');
         const colorEl = document.getElementById('tsColor');
-        if (colorEl) colorEl.innerHTML = (car && part) ? _opts(_colorsFor(car, part), '', '-- 컬러 선택 --') : '<option value="">← 품명 먼저 선택</option>';
+        const qtyEl = document.getElementById('tsQty');
+        const hintEl = document.getElementById('tsQtyHint');
+        const lots = (car && part) ? _getLotBalances(car, part, editId || '') : [];
+        if (lotEl) lotEl.innerHTML = (car && part) ? _lotOpts(lots, '', '-- LOT 선택 --') : '<option value="">← 품명 먼저 선택</option>';
+        if (colorEl) colorEl.value = '';
+        if (qtyEl) { qtyEl.value = ''; qtyEl.max = ''; }
+        if (hintEl) hintEl.textContent = 'LOT를 선택하세요.';
+        _autofillCustomer();
+        _renderLotPanel(car, part, editId || '');
+    }
+
+    function onLotChange(editId) {
+        const car = document.getElementById('tsCar')?.value || '';
+        const part = document.getElementById('tsPart')?.value || '';
+        const lotKey = document.getElementById('tsLot')?.value || '';
+        const colorEl = document.getElementById('tsColor');
+        const qtyEl = document.getElementById('tsQty');
+        const hintEl = document.getElementById('tsQtyHint');
+        const lots = _getLotBalances(car, part, editId || '');
+        const lot = lots.find(l => _lotKey(l) === lotKey);
+        if (colorEl) colorEl.value = lot ? (lot.color || '') : '';
+        if (qtyEl && lot) {
+            qtyEl.max = lot.balance;
+            if (!qtyEl.value || Number(qtyEl.value) > lot.balance) qtyEl.value = lot.balance;
+        }
+        if (hintEl) hintEl.textContent = lot ? `가용 재고: ${UIUtils.formatNumber(lot.balance)} EA` : 'LOT를 선택하세요.';
         _autofillCustomer();
     }
-    function onColorChange() { _autofillCustomer(); }
+
     function _autofillCustomer() {
         const car = document.getElementById('tsCar')?.value || '';
         const part = document.getElementById('tsPart')?.value || '';
         const color = document.getElementById('tsColor')?.value || '';
         const custEl = document.getElementById('tsCustomer');
         if (!custEl) return;
-        if (!custEl.value.trim()) {
-            const c = _customerFor(car, part, color);
-            if (c) custEl.value = c;
-        }
+        const c = _customerFor(car, part, color);
+        if (c) custEl.value = c;
     }
 
     async function saveForm(id) {
@@ -3587,30 +3785,65 @@ var SalesTodayShipmentModule = (function () {
         const date = g('tsDate').trim();
         const carModel = g('tsCar').trim();
         const partName = g('tsPart').trim();
-        const qty = parseInt(g('tsQty') || 0);
+        const lotKey = g('tsLot').trim();
+        const qty = parseInt(g('tsQty') || 0, 10);
         if (!date) { UIUtils.toast('출하일자를 입력하세요.', 'warning'); return; }
         if (!carModel || !partName) { UIUtils.toast('차종과 품명을 선택하세요.', 'warning'); return; }
+        if (!lotKey) { UIUtils.toast('LOT를 선택하세요.', 'warning'); return; }
         if (!qty || qty <= 0) { UIUtils.toast('수량을 입력하세요.', 'warning'); return; }
+
+        const lots = _getLotBalances(carModel, partName, id || '');
+        const lot = lots.find(l => _lotKey(l) === lotKey);
+        if (!lot) {
+            UIUtils.toast('선택한 LOT 재고를 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        if (qty > lot.balance) {
+            UIUtils.toast(`재고가 부족합니다. (가용: ${UIUtils.formatNumber(lot.balance)} EA)`, 'warning');
+            return;
+        }
+
+        if (typeof ProductWarehouseModule !== 'undefined' && ProductWarehouseModule.getShippingReadiness) {
+            const shipStatus = await ProductWarehouseModule.getShippingReadiness(carModel, partName, lot.color || '');
+            if (!shipStatus.eligible) {
+                UIUtils.toast('출하 일상검사·신뢰성 검사가 모두 합격인 품목만 출하 등록할 수 있습니다.', 'warning');
+                return;
+            }
+        }
 
         await _load();
         const payload = {
             date, carModel, partName,
-            color: g('tsColor').trim(),
-            customer: g('tsCustomer').trim(),
+            color: lot.color || '',
+            paintingDate: lot.paintingDate === '미표기' ? '' : (lot.paintingDate || ''),
+            lotNo: lot.lotNo || '',
+            customer: g('tsCustomer').trim() || _customerFor(carModel, partName, lot.color),
             qty,
             note: g('tsNote').trim(),
             updatedAt: new Date().toISOString()
         };
-        if (id) {
-            const idx = _records.findIndex(r => r.id === id);
-            if (idx >= 0) _records[idx] = { ..._records[idx], ...payload };
-        } else {
-            payload.id = 'tsh_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
-            payload.createdAt = new Date().toISOString();
-            _records.push(payload);
+
+        let shipmentId = id;
+        try {
+            if (id) {
+                await _removeInventoryOut(id);
+                const idx = _records.findIndex(r => r.id === id);
+                if (idx >= 0) _records[idx] = { ..._records[idx], ...payload };
+            } else {
+                shipmentId = 'tsh_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+                payload.id = shipmentId;
+                payload.createdAt = new Date().toISOString();
+                _records.push(payload);
+            }
+            await _addInventoryOut(shipmentId, payload, lot);
+            await _save();
+        } catch (err) {
+            console.error('[SalesTodayShipment] save failed:', err);
+            UIUtils.toast('출고 처리 중 오류가 발생했습니다.', 'error');
+            return;
         }
-        await _save();
-        UIUtils.toast('금일 출하 계획품이 저장되었습니다.', 'success');
+
+        UIUtils.toast(id ? '금일 출하가 수정·재출고되었습니다.' : '금일 출하 등록 및 창고 출고가 완료되었습니다.', 'success');
         UIUtils.closeModal();
         const filter = document.getElementById('tsFilterDate');
         if (filter && date) filter.value = date;
@@ -3618,14 +3851,20 @@ var SalesTodayShipmentModule = (function () {
     }
 
     function remove(id) {
-        UIUtils.confirm('이 출하 계획품을 삭제하시겠습니까?', async () => {
+        UIUtils.confirm('이 출하 계획품을 삭제하고 창고 출고를 취소하시겠습니까?', async () => {
             await _load();
-            _records = _records.filter(r => r.id !== id);
-            await _save();
-            UIUtils.toast('삭제되었습니다.', 'success');
-            renderList();
+            try {
+                await _removeInventoryOut(id);
+                _records = _records.filter(r => r.id !== id);
+                await _save();
+                UIUtils.toast('삭제 및 창고 출고 취소가 완료되었습니다.', 'success');
+                renderList();
+            } catch (err) {
+                console.error('[SalesTodayShipment] remove failed:', err);
+                UIUtils.toast('삭제 처리 중 오류가 발생했습니다.', 'error');
+            }
         });
     }
 
-    return { init, render, renderList, openForm, onCarChange, onPartChange, onColorChange, saveForm, remove };
+    return { init, render, renderList, openForm, onCarChange, onPartChange, onLotChange, saveForm, remove };
 })();

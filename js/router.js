@@ -60,13 +60,13 @@ const Router = (function() {
         'raw-material-inventory': '원재료입출고',
         'injection-warehouse': '사출창고 (입출고/재고현황)',
         'paint-inventory': '도료창고 (입출고/재고현황)',
-        'injection-layout': '사출 레이아웃',
+        'injection-layout': '보관창고 레이아웃',
         'injection-wip': '사출 재공품 현황',
         'injection-room-layout': '사출실 레이아웃',
-        'painting-work': '도장작업현황',
-        'painting-inspection': '도장작업현황',
+        'painting-work': '도장작업',
+        'painting-inspection': '도장작업',
         'painting-quality-performance': '도장품 실적',
-        'laser-process': '레이져 공정',
+        'laser-process': '레이저 작업',
         'laser-wip': '재공품 현황',
         'laser-standby': '레이져대기품현황',
         'laser-work': '레이져 작업일지',
@@ -80,6 +80,7 @@ const Router = (function() {
         'shipping-standby': '출하 일상 검사',
         'shipping-inspection': '출하검사 일지',
         'shipping-reliability': '출하 신뢰성',
+        'shipping-certificate': '출하성적서 발행',
         'shipping-standard': '출하검사 기준서',
         'shipping-std-photo': '출하검사 표준서',
         'product-warehouse': '제품창고',
@@ -103,7 +104,7 @@ const Router = (function() {
         'drying-std':   '건조 및 셋팅룸 온도 기준서',
         'customer-return-nc-std': '고객 반송품 부적합품 처리 기준서',
         'prod-conditions': '작업조건 관리',
-        'paint-mix': '도료 사용이력',
+        'paint-mix': '배합작업',
         'prod-sub-materials': '부자재 관리',
         'prod-equipment': '설비관리',
         'five-s': '3정5S 관리',
@@ -148,26 +149,27 @@ const Router = (function() {
 
         'injection-warehouse': { target: 'warehouse-overview', label: '자재 창고로 돌아가기' },
         'paint-inventory': { target: 'warehouse-overview', label: '자재 창고로 돌아가기' },
+        'injection-layout': { target: 'warehouse-overview', label: '자재 창고로 돌아가기' },
 
         'injection-work': { target: 'injection-process', label: '사출 공정으로 돌아가기' },
         'raw-material-inventory': { target: 'injection-process', label: '사출 공정으로 돌아가기' },
-        'injection-layout': { target: 'injection-process', label: '사출 공정으로 돌아가기' },
         'injection-wip': { target: 'injection-process', label: '사출 공정으로 돌아가기' },
         'injection-room-layout': { target: 'injection-process', label: '사출 공정으로 돌아가기' },
 
-        'laser-standby': { target: 'laser-process', label: '레이져 공정으로 돌아가기' },
-        'laser-wip': { target: 'laser-process', label: '레이져 공정으로 돌아가기' },
-        'laser-work': { target: 'laser-process', label: '레이져 공정으로 돌아가기' },
-        'laser-inspection': { target: 'laser-process', label: '레이져 공정으로 돌아가기' },
-        'laser-layout': { target: 'laser-process', label: '레이져 공정으로 돌아가기' },
-        'laser-jig-master': { target: 'laser-process', label: '레이져 공정으로 돌아가기' },
-        'laser-jig-disposal': { target: 'laser-process', label: '레이져 공정으로 돌아가기' },
-        'laser-jig-cleaning': { target: 'laser-process', label: '레이져 공정으로 돌아가기' },
-        'laser-equipment-history': { target: 'laser-process', label: '레이져 공정으로 돌아가기' },
+        'laser-standby': { target: 'laser-process', label: '레이저 작업으로 돌아가기' },
+        'laser-wip': { target: 'laser-process', label: '레이저 작업으로 돌아가기' },
+        'laser-work': { target: 'laser-process', label: '레이저 작업으로 돌아가기' },
+        'laser-inspection': { target: 'laser-process', label: '레이저 작업으로 돌아가기' },
+        'laser-layout': { target: 'laser-process', label: '레이저 작업으로 돌아가기' },
+        'laser-jig-master': { target: 'laser-process', label: '레이저 작업으로 돌아가기' },
+        'laser-jig-disposal': { target: 'laser-process', label: '레이저 작업으로 돌아가기' },
+        'laser-jig-cleaning': { target: 'laser-process', label: '레이저 작업으로 돌아가기' },
+        'laser-equipment-history': { target: 'laser-process', label: '레이저 작업으로 돌아가기' },
 
         'shipping-standby': { target: 'shipping-overview', label: '출하검사 현황으로 돌아가기' },
         'shipping-inspection': { target: 'shipping-standby', label: '출하 일상 검사로 돌아가기' },
         'shipping-reliability': { target: 'shipping-overview', label: '출하검사 현황으로 돌아가기' },
+        'shipping-certificate': { target: 'shipping-overview', label: '출하검사 현황으로 돌아가기' },
         'shipping-standard': { target: 'shipping-overview', label: '출하검사 현황으로 돌아가기' },
         'shipping-std-photo': { target: 'shipping-overview', label: '출하검사 현황으로 돌아가기' },
         'product-outgoing': { target: 'product-warehouse', label: '제품창고로 돌아가기' },
@@ -367,18 +369,61 @@ const Router = (function() {
         _doNavigate(pageName);
     }
 
+    const LAYOUT_BACK_KEY = 'mes_layout_back';
+    const LAYOUT_BACK_TARGETS = {
+        'product-warehouse': { target: 'product-warehouse', label: '완제품 창고로 돌아가기' },
+        'injection-warehouse': { target: 'injection-warehouse', label: '사출 자재로 돌아가기' },
+        'warehouse-overview': { target: 'warehouse-overview', label: '자재 창고로 돌아가기' }
+    };
+
+    function _getLayoutBackConfig() {
+        try {
+            const key = sessionStorage.getItem(LAYOUT_BACK_KEY);
+            if (key && LAYOUT_BACK_TARGETS[key]) return LAYOUT_BACK_TARGETS[key];
+        } catch (e) {}
+        return LAYOUT_BACK_TARGETS['warehouse-overview'];
+    }
+
+    function _sidebarHighlightPage(pageName) {
+        if (pageName === 'injection-layout') {
+            const cfg = _getLayoutBackConfig();
+            if (document.querySelector('.nav-item[data-page="' + cfg.target + '"]')) {
+                return cfg.target;
+            }
+        }
+        let current = pageName;
+        const visited = new Set();
+        while (PAGE_PARENT_LINKS[current] && !visited.has(current)) {
+            visited.add(current);
+            const target = PAGE_PARENT_LINKS[current].target;
+            if (document.querySelector('.nav-item[data-page="' + target + '"]')) {
+                return target;
+            }
+            current = target;
+        }
+        return pageName;
+    }
+
     function _doNavigate(pageName) {
         currentPage = pageName;
         try { sessionStorage.setItem(PAGE_STATE_KEY, pageName); } catch (e) {}
 
+        const navHighlight = _sidebarHighlightPage(pageName);
         document.querySelectorAll('.nav-item').forEach(function(item) {
-            item.classList.toggle('active', item.dataset.page === pageName);
+            item.classList.toggle('active', item.dataset.page === navHighlight);
         });
 
         const pageTitleEl = document.getElementById('pageTitle');
         if (pageTitleEl) {
-            pageTitleEl.innerHTML = PAGE_TITLE_HTML[pageName] || PAGE_TITLES[pageName] || pageName;
+            let titleHtml = PAGE_TITLE_HTML[pageName] || PAGE_TITLES[pageName] || pageName;
+            if (pageName === 'injection-layout') {
+                const cfg = _getLayoutBackConfig();
+                titleHtml = buildBackLink(cfg.target, cfg.label);
+            }
+            pageTitleEl.innerHTML = titleHtml;
         }
+
+        clearTopbarCenter();
 
         const sidebar = document.getElementById('sidebar');
         if (sidebar) sidebar.classList.remove('mobile-open');
@@ -581,6 +626,20 @@ const Router = (function() {
         if (pageTitleEl) pageTitleEl.innerHTML = html || '';
     }
 
+    function clearTopbarCenter() {
+        const el = document.getElementById('topbarCenter');
+        if (!el) return;
+        el.innerHTML = '';
+        el.style.display = 'none';
+    }
+
+    function setTopbarCenter(html) {
+        const el = document.getElementById('topbarCenter');
+        if (!el) return;
+        el.innerHTML = html || '';
+        el.style.display = html ? 'flex' : 'none';
+    }
+
     return {
         init: init,
         registerModule: registerModule,
@@ -589,7 +648,9 @@ const Router = (function() {
         renderModule: renderModule,
         getCurrentPage: getCurrentPage,
         hasModule: hasModule,
-        setPageTitle: setPageTitle
+        setPageTitle: setPageTitle,
+        setTopbarCenter: setTopbarCenter,
+        clearTopbarCenter: clearTopbarCenter
     };
 })();
 

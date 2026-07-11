@@ -10,9 +10,12 @@ const PaintInventoryModule = (function() {
     // 이 페이지의 작성 책임자(작성 담당자) — 서버 config에 사용자 id 배열로 저장
     const AUTHOR_CONFIG_KEY = 'page_authors_paint-inventory';
 
-    // ── 페이지네이션 상태 ──────────────────────────────────────────
-    let _page     = 1;
-    let _pageSize = 50;
+    // ── 페이지네이션·탭 상태 ──────────────────────────────────────────
+    let _activeTab  = 'stock';
+    let _pageIn     = 1;
+    let _pageSizeIn = 50;
+    let _pageOut    = 1;
+    let _pageSizeOut = 50;
 
     // 다양한 날짜 형식 → YYYY-MM-DD 변환 (date input value용)
     function _toIsoDate(value) {
@@ -65,48 +68,16 @@ const PaintInventoryModule = (function() {
         return { mfgDate, expDate };
     }
 
-    function render(container) {
-        container.innerHTML = `
-            <div class="fade-in-up">
-                <div id="paintInvAuthorBar" style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;padding:8px 12px;background:var(--bg-secondary);border-radius:8px;border:1px solid var(--border-color);"></div>
-                <div style="display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap;margin-bottom:14px;">
-                    <button class="btn btn-primary btn-sm" onclick="PaintInventoryModule.openIncomingModal()"><span class="material-symbols-outlined">login</span> 도료 입고</button>
-                    <button class="btn btn-danger btn-sm" onclick="PaintInventoryModule.openOutgoingModal()"><span class="material-symbols-outlined">logout</span> 도료 출고</button>
-                    <button class="btn btn-outline btn-sm" onclick="PaintInventoryModule.openBulkModal()"><span class="material-symbols-outlined">admin_panel_settings</span> 일괄 수정</button>
-                    <button class="btn btn-outline btn-sm" onclick="PaintInventoryModule.openTemperatureStandard()"><span class="material-symbols-outlined">device_thermostat</span> 온도 기준</button>
-                    <button class="btn btn-outline btn-sm" onclick="Router.navigate('paint-layout')"><span class="material-symbols-outlined">map</span> 레이아웃</button>
-                </div>
-
-                <!-- 도료 창고 입고 대기품 섹션 -->
-                <div class="card" style="margin-bottom:20px; border-left:3px solid var(--accent-purple,#8b5cf6);">
-                    <div class="card-header" style="display:flex; align-items:center; justify-content:space-between;">
-                        <h4 style="display:flex; align-items:center; gap:8px;">
-                            <span class="material-symbols-outlined" style="color:var(--accent-purple,#8b5cf6);">move_to_inbox</span>
-                            도료 창고 입고 대기품
-                            <span style="font-size:0.75rem; color:var(--text-muted); font-weight:400;">(도료 수입 검사 완료품)</span>
-                            <span id="paintInspStandbyBadge" style="font-size:0.78rem; background:var(--accent-orange,#f59e0b); color:#fff; padding:2px 8px; border-radius:12px; font-weight:600; display:none;"></span>
-                        </h4>
-                        <button class="btn btn-sm btn-outline" onclick="PaintInventoryModule.renderPaintInspStandby()">
-                            <span class="material-symbols-outlined" style="font-size:1rem;">refresh</span>
-                        </button>
-                    </div>
-                    <div class="card-body" id="paintInspStandbyBody" style="padding:0;"></div>
-                </div>
-
-                <!-- 공급사별 재고 현황 타일 -->
-                <div class="card" style="margin-bottom:20px;">
-                    <div class="card-header">
-                        <h4><span class="material-symbols-outlined">palette</span> 공급사별 재고 현황</h4>
-                        <button class="btn btn-sm btn-outline" onclick="PaintInventoryModule.renderSupplierTiles()">
-                            <span class="material-symbols-outlined" style="font-size:1rem;">refresh</span>
-                        </button>
-                    </div>
-                    <div class="card-body">
-                        <div id="paintSupplierTiles" style="display:flex; gap:12px; align-items:flex-start;"></div>
-                    </div>
-                </div>
-
+    function _historyCard(tab) {
+        const isIn = tab === 'incoming';
+        const suffix = isIn ? 'In' : 'Out';
+        const title = isIn ? '입고 이력' : '출고 이력';
+        const icon = isIn ? 'move_to_inbox' : 'outbox';
+        return `
                 <div class="card">
+                    <div class="card-header">
+                        <h4><span class="material-symbols-outlined">${icon}</span> ${title}</h4>
+                    </div>
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
                             <table class="data-table">
@@ -126,15 +97,218 @@ const PaintInventoryModule = (function() {
                                         <th>작업</th>
                                     </tr>
                                 </thead>
-                                <tbody id="paintInvTableBody"></tbody>
+                                <tbody id="paintInvTableBody${suffix}"></tbody>
                             </table>
                         </div>
-                        <!-- 페이지네이션 영역 -->
-                        <div id="paintInvPagination"></div>
+                        <div id="paintInvPagination${suffix}"></div>
                     </div>
+                </div>`;
+    }
+
+    function _fmtDateCell(raw) {
+        const sp = (raw || '').split(' ');
+        const pp = (sp[0] || '').split('-');
+        const tt = sp[1] ? sp[1].slice(0, 5) : '';
+        if (pp.length !== 3) return raw || '-';
+        return '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;">' + pp[0] + '</span>' +
+               '<span style="font-weight:600;white-space:nowrap;">' + pp[1] + '-' + pp[2] + '</span>' +
+               (tt ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1.4;">' + tt + '</span>' : '');
+    }
+
+    function _buildTxRow(d, materials) {
+        const typeBadge = d.type === '출고' ? 'danger' : 'success';
+        const mat = materials.find(m => m.id === d.materialId);
+        const mName = mat ? mat.name : '-';
+        const mPackUnit = mat ? (mat.packUnit ? mat.packUnit + ' KG' : '-') : '-';
+        const mSupplier = mat ? (mat.supplier || '-') : '-';
+        const lotDates = _resolveLotDates(d, mat);
+
+        let remainHtml = '-';
+        if (lotDates.expDate) {
+            const today = new Date(); today.setHours(0, 0, 0, 0);
+            const exp = new Date(lotDates.expDate); exp.setHours(0, 0, 0, 0);
+            const diffDays = Math.round((exp - today) / 86400000);
+            if (diffDays < 0) {
+                remainHtml = `<span style="color:var(--accent-red);font-weight:700;">만료 (${Math.abs(diffDays)}일 경과)</span>`;
+            } else if (diffDays === 0) {
+                remainHtml = `<span style="color:var(--accent-red);font-weight:700;">오늘 만료</span>`;
+            } else if (diffDays <= 30) {
+                remainHtml = `<span style="color:var(--accent-orange,#f59e0b);font-weight:700;">${diffDays}일 남음</span>`;
+            } else {
+                remainHtml = `<span style="color:var(--accent-green);">${diffDays}일 남음</span>`;
+            }
+        }
+
+        return `
+            <tr>
+                <td style="line-height:1.3;">${_fmtDateCell(d.date)}</td>
+                <td style="line-height:1.3;">${_fmtDateCell(d.inspDate ? d.inspDate.slice(0, 10) : '')}</td>
+                <td>${mSupplier}</td>
+                <td><strong>${mName}</strong></td>
+                <td>${mPackUnit}</td>
+                <td style="text-align:right">${UIUtils.formatNumber(d.quantity)}</td>
+                <td style="font-family:monospace;color:var(--text-secondary);">${d.prodLot || '-'}</td>
+                <td style="font-size:0.82rem;">${lotDates.mfgDate || '-'}</td>
+                <td style="font-size:0.82rem;">${lotDates.expDate || '-'}</td>
+                <td style="font-size:0.82rem; white-space:nowrap;">${remainHtml}</td>
+                <td>${UIUtils.badge(d.type || '입고', typeBadge)}</td>
+                <td style="white-space:nowrap;">
+                    <button class="btn btn-sm btn-outline" onclick="PaintInventoryModule.edit('${d.id}')">수정</button>
+                    <button onclick="PaintInventoryModule.remove('${d.id}')"
+                        title="삭제"
+                        style="margin-left:6px;padding:2px 6px;font-size:0.72rem;border:1px solid var(--border-color);border-radius:4px;background:transparent;color:var(--text-muted);opacity:0.35;cursor:pointer;transition:opacity 0.2s;"
+                        onmouseenter="this.style.opacity='1';this.style.color='var(--accent-red)';this.style.borderColor='var(--accent-red)';"
+                        onmouseleave="this.style.opacity='0.35';this.style.color='var(--text-muted)';this.style.borderColor='var(--border-color)';">
+                        <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">delete</span>
+                    </button>
+                </td>
+            </tr>`;
+    }
+
+    function _renderHistoryTable(tab) {
+        const isIn = tab === 'incoming';
+        const suffix = isIn ? 'In' : 'Out';
+        const emptyMsg = isIn ? '입고 이력이 없습니다.' : '출고 이력이 없습니다.';
+        const tbody = document.getElementById('paintInvTableBody' + suffix);
+        const paginationEl = document.getElementById('paintInvPagination' + suffix);
+        if (!tbody) return;
+
+        const materials = Storage.getAll(MATERIALS_STORE);
+        let arr = (Storage.getAll(STORE) || []).filter(function (d) {
+            return isIn ? d.type !== '출고' : d.type === '출고';
+        });
+        arr.sort(function (a, b) { return (b.date || '').localeCompare(a.date || ''); });
+
+        let page = isIn ? _pageIn : _pageOut;
+        let pageSize = isIn ? _pageSizeIn : _pageSizeOut;
+        const total = arr.length;
+        const totalPages = Math.max(1, Math.ceil(total / pageSize));
+        const safePage = Math.min(Math.max(1, page), totalPages);
+        if (isIn) _pageIn = safePage;
+        else _pageOut = safePage;
+
+        if (total === 0) {
+            tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-muted);">${emptyMsg}</td></tr>`;
+            if (paginationEl) paginationEl.innerHTML = '';
+            return;
+        }
+
+        const data = arr.slice((safePage - 1) * pageSize, safePage * pageSize);
+        tbody.innerHTML = data.map(function (d) { return _buildTxRow(d, materials); }).join('');
+
+        if (paginationEl) {
+            UIUtils.renderPagination(paginationEl, {
+                total: total,
+                page: safePage,
+                pageSize: pageSize,
+                id: 'paintInv' + suffix,
+                pageSizes: [20, 50, 100, 200],
+                onChange: function (newPage, newPageSize) {
+                    if (isIn) {
+                        _pageIn = newPage;
+                        _pageSizeIn = newPageSize;
+                    } else {
+                        _pageOut = newPage;
+                        _pageSizeOut = newPageSize;
+                    }
+                    _renderHistoryTable(tab);
+                }
+            });
+        }
+    }
+
+    function _switchTab(tab) {
+        _activeTab = tab;
+        ['stock', 'incoming', 'outgoing'].forEach(function (t) {
+            const panelEl = document.getElementById('paintTab' + t.charAt(0).toUpperCase() + t.slice(1));
+            if (panelEl) panelEl.style.display = t === tab ? '' : 'none';
+        });
+        document.querySelectorAll('.paint-tab-btn').forEach(function (btn) {
+            const isActive = btn.dataset.tab === tab;
+            btn.style.border = isActive ? '2px solid var(--accent-blue)' : '1.5px solid var(--border-color)';
+            const iconBox = btn.querySelector('span[style*="border-radius:10px"]');
+            const icon = btn.querySelector('.material-symbols-outlined');
+            if (iconBox) iconBox.style.background = isActive ? 'var(--accent-blue)' : 'var(--bg-secondary)';
+            if (icon) icon.style.color = isActive ? '#fff' : 'var(--text-muted)';
+        });
+        if (tab === 'incoming') _renderHistoryTable('incoming');
+        if (tab === 'outgoing') _renderHistoryTable('outgoing');
+    }
+
+    function render(container) {
+        const actionCards = `
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-left:auto;">
+                ${ProdAppleMenu.card({ label: '도료입고', subtitle: '도료 자재 입고', icon: 'move_to_inbox', accent: '#10b981', onClick: 'PaintInventoryModule.openIncomingModal()' })}
+                ${ProdAppleMenu.card({ label: '도료 출고', subtitle: '도료 자재 출고', icon: 'outbox', accent: '#f59e0b', onClick: 'PaintInventoryModule.openOutgoingModal()' })}
+                ${ProdAppleMenu.card({ label: '온도기준서', subtitle: '보관 온도 관리 기준', icon: 'device_thermostat', accent: '#8b5cf6', onClick: 'PaintInventoryModule.openTemperatureStandard()' })}
+                ${ProdAppleMenu.card({ label: '레이아웃', subtitle: '도료 창고 배치도', icon: 'map', accent: '#06b6d4', onClick: "Router.navigate('paint-layout')" })}
+            </div>`;
+
+        container.innerHTML = `
+            <div class="fade-in-up">
+                <div id="paintNavStrip" class="mes-apple-menu-hero" style="padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+                    ${[
+                        { tab:'stock',    icon:'palette',       title:'도료 재고 현황', sub:'공급사별 재고·입고대기', active:true  },
+                        { tab:'incoming', icon:'move_to_inbox', title:'입고이력',       sub:'도료 입고 기록',         active:false },
+                        { tab:'outgoing', icon:'outbox',        title:'출고 이력',      sub:'도료 출고 기록',         active:false }
+                    ].map(m => `
+                        <button type="button" class="paint-tab-btn${m.active?' paint-tab-active':''}" data-tab="${m.tab}"
+                            onclick="PaintInventoryModule._switchTab('${m.tab}')"
+                            style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;
+                                   border:${m.active?'2px solid var(--accent-blue)':'1.5px solid var(--border-color)'};
+                                   background:var(--bg-primary);color:var(--text-primary);
+                                   cursor:pointer;min-width:160px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+                            <span style="display:inline-flex;align-items:center;justify-content:center;
+                                         width:42px;height:42px;border-radius:10px;flex-shrink:0;
+                                         background:${m.active?'var(--accent-blue)':'var(--bg-secondary)'};">
+                                <span class="material-symbols-outlined" style="font-size:24px;color:${m.active?'#fff':'var(--text-muted)'};">${m.icon}</span>
+                            </span>
+                            <span style="display:flex;flex-direction:column;gap:2px;">
+                                <span style="font-size:0.92rem;font-weight:700;">${m.title}</span>
+                                <span style="font-size:0.73rem;color:var(--text-muted);">${m.sub}</span>
+                            </span>
+                        </button>`).join('')}
+                    </div>
+                    ${actionCards}
+                </div>
+
+                <div id="paintTabStock">
+                    <div class="card" style="margin-bottom:20px; border-left:3px solid var(--accent-purple,#8b5cf6);">
+                        <div class="card-header" style="display:flex; align-items:center; justify-content:space-between;">
+                            <h4 style="display:flex; align-items:center; gap:8px;">
+                                <span class="material-symbols-outlined" style="color:var(--accent-purple,#8b5cf6);">move_to_inbox</span>
+                                도료 창고 입고 대기품
+                                <span style="font-size:0.75rem; color:var(--text-muted); font-weight:400;">(도료 수입 검사 완료품)</span>
+                                <span id="paintInspStandbyBadge" style="font-size:0.78rem; background:var(--accent-orange,#f59e0b); color:#fff; padding:2px 8px; border-radius:12px; font-weight:600; display:none;"></span>
+                            </h4>
+                            <button class="btn btn-sm btn-outline" onclick="PaintInventoryModule.renderPaintInspStandby()">
+                                <span class="material-symbols-outlined" style="font-size:1rem;">refresh</span>
+                            </button>
+                        </div>
+                        <div class="card-body" id="paintInspStandbyBody" style="padding:0;"></div>
+                    </div>
+                    <div class="card" style="margin-bottom:20px;">
+                        <div class="card-header">
+                            <h4><span class="material-symbols-outlined">palette</span> 공급사별 재고 현황</h4>
+                            <button class="btn btn-sm btn-outline" onclick="PaintInventoryModule.renderSupplierTiles()">
+                                <span class="material-symbols-outlined" style="font-size:1rem;">refresh</span>
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div id="paintSupplierTiles" style="display:flex; gap:12px; align-items:flex-start;"></div>
+                        </div>
+                    </div>
+                </div>
+                <div id="paintTabIncoming" style="display:none;">
+                    ${_historyCard('incoming')}
+                </div>
+                <div id="paintTabOutgoing" style="display:none;">
+                    ${_historyCard('outgoing')}
                 </div>
             </div>
         `;
+        _activeTab = 'stock';
         renderAuthorBar();
         loadData();
     }
@@ -158,7 +332,7 @@ const PaintInventoryModule = (function() {
     }
 
     async function renderAuthorBar() {
-        const el = document.getElementById('paintInvAuthorBar');
+        const el = document.getElementById('topbarCenter');
         if (!el) return;
 
         let ids = [];
@@ -173,18 +347,21 @@ const PaintInventoryModule = (function() {
             : `<span style="color:var(--text-muted);font-size:0.85rem;">미지정</span>`;
 
         const editBtn = _isAdminUser()
-            ? `<button class="btn btn-sm btn-outline" style="margin-left:auto;" onclick="PaintInventoryModule.openAuthorModal()">
+            ? `<button class="btn btn-sm btn-outline" onclick="PaintInventoryModule.openAuthorModal()">
                    <span class="material-symbols-outlined" style="font-size:0.95rem;">manage_accounts</span> 담당자 지정
                </button>`
             : '';
 
         el.innerHTML = `
-            <span style="display:inline-flex;align-items:center;gap:5px;font-weight:700;font-size:0.85rem;color:var(--text-primary);white-space:nowrap;">
-                <span class="material-symbols-outlined" style="font-size:1.05rem;color:var(--accent-blue);">edit_note</span>작성 담당자
-            </span>
-            <span style="color:var(--text-muted);">:</span>
-            <span style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">${chips}</span>
-            ${editBtn}`;
+            <div class="topbar-author-bar">
+                <span class="topbar-author-label">
+                    <span class="material-symbols-outlined" style="font-size:1.05rem;color:var(--accent-blue);">edit_note</span>작성 담당자
+                </span>
+                <span style="color:var(--text-muted);">:</span>
+                <span class="topbar-author-chips">${chips}</span>
+                ${editBtn}
+            </div>`;
+        el.style.display = 'flex';
     }
 
     async function openAuthorModal() {
@@ -277,101 +454,8 @@ const PaintInventoryModule = (function() {
             renderSupplierTiles();
         }, 150);
 
-        // ── 페이징된 테이블 렌더링 ───────────────────────────────────────
-        const { data, total, page, pageSize } = Storage.getAllPaged(STORE, {
-            page:     _page,
-            pageSize: _pageSize,
-            sort:     { field: 'date', order: 'desc' }
-        });
-        _page = page; // 범위 초과 시 clamp 결과 반영
-
-        const tbody = document.getElementById('paintInvTableBody');
-
-        if (total === 0) {
-            if (tbody) tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-muted);">재고 데이터가 없습니다.</td></tr>`;
-            const pEl = document.getElementById('paintInvPagination');
-            if (pEl) pEl.innerHTML = '';
-            return;
-        }
-
-        if (tbody) tbody.innerHTML = data.map(d => {
-            const typeBadge = d.type === '출고' ? 'danger' : 'success';
-            const mat = materials.find(m => m.id === d.materialId);
-            const mName = mat ? mat.name : '-';
-            const mPackUnit = mat ? (mat.packUnit ? mat.packUnit + ' KG' : '-') : '-';
-
-            const mSupplier = mat ? (mat.supplier || '-') : '-';
-            const lotDates = _resolveLotDates(d, mat);
-
-            // 남은 유효기한 계산
-            let remainHtml = '-';
-            if (lotDates.expDate) {
-                const today = new Date(); today.setHours(0,0,0,0);
-                const exp   = new Date(lotDates.expDate); exp.setHours(0,0,0,0);
-                const diffDays = Math.round((exp - today) / 86400000);
-                if (diffDays < 0) {
-                    remainHtml = `<span style="color:var(--accent-red);font-weight:700;">만료 (${Math.abs(diffDays)}일 경과)</span>`;
-                } else if (diffDays === 0) {
-                    remainHtml = `<span style="color:var(--accent-red);font-weight:700;">오늘 만료</span>`;
-                } else if (diffDays <= 30) {
-                    remainHtml = `<span style="color:var(--accent-orange,#f59e0b);font-weight:700;">${diffDays}일 남음</span>`;
-                } else {
-                    remainHtml = `<span style="color:var(--accent-green);">${diffDays}일 남음</span>`;
-                }
-            }
-
-            function _fmtDateCell(raw) {
-                const sp = (raw || '').split(' ');
-                const pp = (sp[0] || '').split('-');
-                const tt = sp[1] ? sp[1].slice(0,5) : '';
-                if (pp.length !== 3) return raw || '-';
-                return '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;">' + pp[0] + '</span>' +
-                       '<span style="font-weight:600;white-space:nowrap;">' + pp[1] + '-' + pp[2] + '</span>' +
-                       (tt ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1.4;">' + tt + '</span>' : '');
-            }
-            return `
-                <tr>
-                    <td style="line-height:1.3;">${_fmtDateCell(d.date)}</td>
-                    <td style="line-height:1.3;">${_fmtDateCell(d.inspDate ? d.inspDate.slice(0,10) : '')}</td>
-                    <td>${mSupplier}</td>
-                    <td><strong>${mName}</strong></td>
-                    <td>${mPackUnit}</td>
-                    <td style="text-align:right">${UIUtils.formatNumber(d.quantity)}</td>
-                    <td style="font-family:monospace;color:var(--text-secondary);">${d.prodLot || '-'}</td>
-                    <td style="font-size:0.82rem;">${lotDates.mfgDate || '-'}</td>
-                    <td style="font-size:0.82rem;">${lotDates.expDate || '-'}</td>
-                    <td style="font-size:0.82rem; white-space:nowrap;">${remainHtml}</td>
-                    <td>${UIUtils.badge(d.type || '입고', typeBadge)}</td>
-                    <td style="white-space:nowrap;">
-                        <button class="btn btn-sm btn-outline" onclick="PaintInventoryModule.edit('${d.id}')">수정</button>
-                        <button onclick="PaintInventoryModule.remove('${d.id}')"
-                            title="삭제"
-                            style="margin-left:6px;padding:2px 6px;font-size:0.72rem;border:1px solid var(--border-color);border-radius:4px;background:transparent;color:var(--text-muted);opacity:0.35;cursor:pointer;transition:opacity 0.2s;"
-                            onmouseenter="this.style.opacity='1';this.style.color='var(--accent-red)';this.style.borderColor='var(--accent-red)';"
-                            onmouseleave="this.style.opacity='0.35';this.style.color='var(--text-muted)';this.style.borderColor='var(--border-color)';">
-                            <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">delete</span>
-                        </button>
-                    </td>
-                </tr>
-            `;
-        }).join('');
-
-        // ── 페이지네이션 UI 렌더링 ───────────────────────────────────────
-        const paginationEl = document.getElementById('paintInvPagination');
-        if (paginationEl) {
-            UIUtils.renderPagination(paginationEl, {
-                total,
-                page,
-                pageSize,
-                id:        'paintInv',
-                pageSizes: [20, 50, 100, 200],
-                onChange:  (newPage, newPageSize) => {
-                    _page     = newPage;
-                    _pageSize = newPageSize;
-                    loadData();
-                }
-            });
-        }
+        if (_activeTab === 'incoming') _renderHistoryTable('incoming');
+        else if (_activeTab === 'outgoing') _renderHistoryTable('outgoing');
     }
 
     // ── 공급사별 재고 카드 HTML ────────────────────────────────────────
@@ -4048,6 +4132,7 @@ const PaintInventoryModule = (function() {
 
     return {
         render,
+        _switchTab,
         loadData,
         renderAuthorBar,
         openAuthorModal,

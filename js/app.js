@@ -262,6 +262,7 @@ const App = (function() {
         Router.registerModule('shipping-standby', ShippingStandbyModule);
         Router.registerModule('shipping-inspection', ShippingInspectionModule);
         Router.registerModule('shipping-reliability', ShippingReliabilityModule);
+        Router.registerModule('shipping-certificate', ShippingCertificateModule);
         Router.registerModule('shipping-standard', ShippingStandardPageModule);
         Router.registerModule('shipping-std-photo', ShippingStdPhotoModule);
         Router.registerModule('product-warehouse', ProductWarehouseModule);
