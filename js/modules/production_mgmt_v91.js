@@ -16264,10 +16264,17 @@ var PaintMixModule = (function() {
         return map;
     }
 
-    // 작업의 모든 도료가 등록됐으면 true
+    // 작업 라인에 해당하는 도료 구성만 반환한다.
+    // 제품 전체 도료(도장-A + 도장-B)를 기준으로 세면 한 공정만 완료해도 부분등록으로 남는다.
+    function _paintComponentsForWork(work) {
+        const product = _findProduct(work || {});
+        const line = _pmixNormalizeProcTag(work && work.line || '');
+        return _paintComponents(product, line);
+    }
+
+    // 작업 라인의 모든 도료가 등록됐으면 true
     function _isWorkFullyReg(work, regMap) {
-        const product = _findProduct(work);
-        const comps = _paintComponents(product);
+        const comps = _paintComponentsForWork(work);
         if (!comps.length) return regMap.has(work.id); // 도료 구성 미설정이면 기존 기준
         const regged = regMap.get(work.id) || new Set();
         return comps.every(c => regged.has(c.materialId));
@@ -16327,8 +16334,7 @@ var PaintMixModule = (function() {
         }
         if (!regMap) regMap = _buildRegisteredMap();
         tbody.innerHTML = works.map(w => {
-            const product = _findProduct(w);
-            const comps = _paintComponents(product);
+            const comps = _paintComponentsForWork(w);
             const lotDisplay = (w.lots && w.lots.length > 0)
                 ? w.lots.map(l => l.lotNo).filter(Boolean).join(', ')
                 : (w.lotNo || '-');
