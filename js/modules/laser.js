@@ -906,12 +906,19 @@ var LaserWorkModule = (function() {
         return d.status !== 'in_progress';
     }
 
+    // 재공/잔량의 실사 보정은 생산 작업이 아니라 재고 카운트 조정이다.
+    // 계산·감사 기록은 laser_work_log에 유지하되 작업 이력/통계에서는 제외한다.
+    function _isInventoryCorrectionRecord(d) {
+        return !!(d && (d.isResidualLotAdjust || d.isWipLotAdjust));
+    }
+
     function search() {
         const start = document.getElementById('lwFilterStart').value;
         const end = document.getElementById('lwFilterEnd').value;
         const machine = document.getElementById('lwFilterMachine').value;
 
         let data = Storage.getByDateRange(STORE, start, end);
+        data = data.filter(d => !_isInventoryCorrectionRecord(d));
         if (machine) data = data.filter(d => d.machine === machine);
         data.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || String(b.startTime || '').localeCompare(String(a.startTime || '')));
 
@@ -1823,6 +1830,11 @@ var LaserWorkModule = (function() {
 
     function calcCompletedQty() {
         const qty   = Number((document.getElementById('lwQuantity') || {}).value) || _selectedLotQtyTotal();
+        // ✓ 단일 LOT인 경우, 수량 필드를 직접 수정하면 LOT 수량도 함께 동기화한다.
+        //   (동기화하지 않으면 저장 시 LOT 합계가 우선 적용되어 사용자의 수량 수정이 조용히 무시됨)
+        if (_selectedLots.length === 1 && qty > 0) {
+            _selectedLots[0].qty = qty;
+        }
         checkQcProgress();
         const loss1 = Number((document.getElementById('lwQcFirstLoss')  || {}).value) || 0;
         const loss2 = Number((document.getElementById('lwQcMiddleLoss') || {}).value) || 0;
@@ -2213,6 +2225,24 @@ var LaserWorkModule = (function() {
             _selectedLots = [{ paintDate: d.paintDate || '', lotNo: d.paintLot || '', qty: Number(d.quantity) || 0, manual: false }];
         } else {
             _selectedLots = [];
+        }
+        // ✓ 레거시/불일치 데이터 보정: LOT별 수량 합계가 작업수량과 다르면(0 포함) 자동 맞춤.
+        //   ("이어서 입력" 화면엔 LOT qty를 고칠 UI가 없어, 값이 0이면 영원히 저장/완료가 막히는 문제 방지)
+        if (_selectedLots.length > 0) {
+            const totalQty = Number(d.quantity) || 0;
+            const lotQtySum = _selectedLots.reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
+            if (totalQty > 0 && lotQtySum !== totalQty) {
+                if (lotQtySum <= 0) {
+                    // 전 LOT 수량이 0 → 전체 작업수량을 균등 배분(마지막 LOT에 나머지 보정)
+                    const share = Math.floor(totalQty / _selectedLots.length);
+                    _selectedLots.forEach((l, i) => {
+                        l.qty = i === _selectedLots.length - 1 ? (totalQty - share * (_selectedLots.length - 1)) : share;
+                    });
+                } else {
+                    // 일부만 어긋남 → 차이를 마지막 LOT에 반영
+                    _selectedLots[_selectedLots.length - 1].qty = Math.max(0, _selectedLots[_selectedLots.length - 1].qty + (totalQty - lotQtySum));
+                }
+            }
         }
         const isInProgress = d.status === 'in_progress';
         UIUtils.showModal(isInProgress ? '레이져 작업 이어서 입력' : '레이져 작업 수정', buildFormHTML(d), `
