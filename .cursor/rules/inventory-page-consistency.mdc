@@ -1,0 +1,10 @@
+---
+description: Keep MES inventory page changes consistent across all products and lots
+globs: js/modules/laser.js,js/modules/laser-wip.js,js/modules/paint-inventory.js,js/modules/production_mgmt*.js
+alwaysApply: false
+---
+# Inventory Page Consistency
+
+- When changing a MES inventory, residual, or LOT calculation page, apply the rule to every product, color, LOT, and entry path on that page. Do not hard-code a fix for one displayed item.
+- Before completing, verify that page summaries, LOT detail rows, history, selection dialogs, and save/validation paths use the same calculation source and unit.
+- Preserve traceability: a manual adjustment without an identified LOT must be visibly labeled as LOT-unassigned; do not silently assign it to a real LOT.

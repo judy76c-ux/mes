@@ -1543,22 +1543,27 @@ var LaserWipModule = (function() {
 
         var manualAdj = 0;
         laserAllWorks.filter(function(w) {
-            return (w.isResidualManualIn || w.isResidualManualOut) && w.isResidualLotAdjust && w.residualLotAbsoluteQty == null;
+            return (w.isResidualManualIn || w.isResidualManualOut) &&
+                w.residualLotAbsoluteQty == null;
         }).forEach(function(w) {
             if (w.isResidualAuditOnly) return;
             const qty = Number(w.quantity) || 0;
-            const paintLot = _normalizePaintLot(w.residualPaintLot || w.paintDate || w.date || '-');
-            const injLot = _normalizeInjLot(w.lotNo || '-');
-            const key = _residualLotKey(paintLot, injLot);
-            if (!lotMap[key]) lotMap[key] = { paintLot: paintLot, injLot: injLot, qty: 0 };
-            lotMap[key].qty += w.isResidualManualIn ? qty : -qty;
-        });
-        laserAllWorks.filter(function(w) {
-            return (w.isResidualManualIn || w.isResidualManualOut) && !w.isResidualLotAdjust;
-        }).forEach(function(w) {
-            if (w.isResidualAuditOnly) return;
-            const qty = Number(w.quantity) || 0;
-            manualAdj += w.isResidualManualIn ? qty : -qty;
+            const rawPaintLot = w.residualPaintLot || w.paintDate || '';
+            const rawInjLot = w.lotNo || '';
+
+            // 수기 잔량입고/출고와 LOT 보정을 같은 LOT 집계 경로로 처리한다.
+            // 이전에는 isResidualLotAdjust=true인 기록만 LOT에 반영되어, 다른 품목의
+            // 정상 수기 잔량입고도 총수량에는 반영되지만 LOT 표에는 보이지 않았다.
+            if (rawPaintLot && rawInjLot) {
+                const paintLot = _normalizePaintLot(rawPaintLot);
+                const injLot = _normalizeInjLot(rawInjLot);
+                const key = _residualLotKey(paintLot, injLot);
+                if (!lotMap[key]) lotMap[key] = { paintLot: paintLot, injLot: injLot, qty: 0 };
+                lotMap[key].qty += w.isResidualManualIn ? qty : -qty;
+            } else {
+                // LOT가 없는 과거 수기 이력은 실제 LOT를 추정할 수 없으므로 별도 표시한다.
+                manualAdj += w.isResidualManualIn ? qty : -qty;
+            }
         });
 
         // LOT별 절대 수량 보정(최신 건 우선) — 감사 전용 기록은 집계 제외
@@ -2081,7 +2086,7 @@ var LaserWipModule = (function() {
                 </td>` : ''}
             </tr>`;
         }).join('') + (manualAdj !== 0 ? `<tr style="border-top:1px dashed var(--border-color);">
-                <td colspan="${canEdit ? 3 : 2}" style="font-size:0.82rem;color:var(--text-muted);">품목 수기 조정</td>
+                <td colspan="${canEdit ? 3 : 2}" style="font-size:0.82rem;color:var(--text-muted);">LOT 미지정 수기 조정</td>
                 <td style="text-align:right;font-weight:600;color:${manualAdj > 0 ? 'var(--accent-green)' : 'var(--accent-red)'};">${manualAdj > 0 ? '+' : ''}${UIUtils.formatNumber(manualAdj)}</td>
                 ${canEdit ? '<td></td>' : ''}
             </tr>` : '');
