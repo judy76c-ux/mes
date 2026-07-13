@@ -1942,19 +1942,31 @@ var LaserWipModule = (function() {
         const _keyJs = _productKey(carModel, partName, color);
         const canEdit = _canEditWip();
 
-        const lotRowsHtml = visibleLots.map(function(l) {
-            const _plJs = encodeURIComponent(l.paintLot || '');
-            const _lnJs = encodeURIComponent(l.lotNo || '');
+        // 동일 도장 LOT는 한 행으로 묶고, 사출 LOT별 수량은 태그로 함께 표시한다.
+        const wipLotGroups = {};
+        visibleLots.forEach(function(l) {
+            const paintLot = l.paintLot || '-';
+            if (!wipLotGroups[paintLot]) wipLotGroups[paintLot] = { paintLot: paintLot, lots: [], total: 0 };
+            wipLotGroups[paintLot].lots.push(l);
+            wipLotGroups[paintLot].total += Number(l.balance) || 0;
+        });
+        const lotRowsHtml = Object.values(wipLotGroups).sort(function(a, b) {
+            return String(a.paintLot).localeCompare(String(b.paintLot));
+        }).map(function(group) {
+            const lotTags = group.lots.map(function(l) {
+                const _plJs = encodeURIComponent(l.paintLot || '');
+                const _lnJs = encodeURIComponent(l.lotNo || '');
+                return `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border:1px solid var(--border-color);border-radius:999px;font-family:monospace;font-size:0.76rem;">
+                    ${_esc(l.lotNo)} <strong style="color:var(--accent-purple,#7c3aed);">(${UIUtils.formatNumber(l.balance)})</strong>
+                    ${canEdit ? `<button type="button" title="이 사출 LOT 보정" onclick="UIUtils.closeModal();setTimeout(()=>LaserWipModule.openAdjustAfterLaserLotModal('${_jsArg(_keyJs)}','${_plJs}','${_lnJs}',${Number(l.balance) || 0}),80);"
+                        style="border:0;background:transparent;color:var(--accent-blue);padding:0;cursor:pointer;">✎</button>` : ''}
+                </span>`;
+            }).join('');
             return `<tr>
-                <td style="font-family:monospace;color:var(--accent-green);">${_esc(l.paintLot || '-')}</td>
-                <td style="font-family:monospace;">${_esc(l.lotNo)}</td>
-                <td style="text-align:right;color:var(--accent-purple,#7c3aed);font-weight:600;">${UIUtils.formatNumber(l.balance)}</td>
-                ${canEdit ? `<td style="text-align:center;">
-                    <button class="btn btn-sm btn-outline" style="font-size:0.72rem;padding:2px 8px;"
-                        onclick="UIUtils.closeModal();setTimeout(()=>LaserWipModule.openAdjustAfterLaserLotModal('${_jsArg(_keyJs)}','${_plJs}','${_lnJs}',${Number(l.balance) || 0}),80);">
-                        보정 수정
-                    </button>
-                </td>` : ''}
+                <td style="font-family:monospace;color:var(--accent-green);">${_esc(group.paintLot)}</td>
+                <td><div style="display:flex;flex-wrap:wrap;gap:4px;">${lotTags}</div></td>
+                <td style="text-align:right;color:var(--accent-purple,#7c3aed);font-weight:600;">${UIUtils.formatNumber(group.total)}</td>
+                ${canEdit ? '<td></td>' : ''}
             </tr>`;
         }).join('');
 
@@ -1995,7 +2007,7 @@ var LaserWipModule = (function() {
                     <div style="font-size:0.8rem;color:var(--text-muted);">출고 합계 (EA)</div>
                 </div>
                 <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
-                    <div style="font-size:1.4rem;font-weight:700;">${visibleLots.length}</div>
+                    <div style="font-size:1.4rem;font-weight:700;">${Object.keys(wipLotGroups).length}</div>
                     <div style="font-size:0.8rem;color:var(--text-muted);">보유 LOT 수</div>
                 </div>
             </div>
@@ -2025,6 +2037,17 @@ var LaserWipModule = (function() {
         });
 
         const { lots: lotEntries, manualAdj } = _calcResidualLotDetail(carModel, partName, color);
+        // LOT가 없는 과거 수기 이력도 현재 보관 LOT 표에서 숨기지 않는다.
+        // 실제 LOT로 추정하지 않고 "LOT 미지정"으로 명확히 분리한다.
+        const displayLotEntries = lotEntries.slice();
+        if (manualAdj !== 0) {
+            displayLotEntries.push({
+                paintLot: 'LOT 미지정',
+                injLot: '수기 잔량입고',
+                qty: manualAdj,
+                isUnassigned: true
+            });
+        }
 
         const histItems = [];
         laserAllWorks.filter(function(w) { return !w.isManualOut && !w.isResidualManualIn && !w.isResidualManualOut; }).forEach(function(w) {
@@ -2071,25 +2094,38 @@ var LaserWipModule = (function() {
         const _keyJs = _productKey(carModel, partName, color);
         const canEdit = _canEditWip();
 
-        const lotRowsHtml = lotEntries.map(function(e) {
-            const _plJs = encodeURIComponent(e.paintLot || '');
-            const _ilJs = encodeURIComponent(e.injLot || '');
+        // 동일 도장 LOT는 한 행으로 묶고, 사출 LOT별 수량을 함께 표시한다.
+        const residualLotGroups = {};
+        displayLotEntries.forEach(function(e) {
+            const paintLot = e.paintLot || '-';
+            if (!residualLotGroups[paintLot]) residualLotGroups[paintLot] = { paintLot: paintLot, lots: [], total: 0 };
+            residualLotGroups[paintLot].lots.push(e);
+            residualLotGroups[paintLot].total += Number(e.qty) || 0;
+        });
+        const lotRowsHtml = Object.values(residualLotGroups).sort(function(a, b) {
+            return String(a.paintLot).localeCompare(String(b.paintLot));
+        }).map(function(group) {
+            const lotTags = group.lots.map(function(e) {
+                if (e.isUnassigned) {
+                    return `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border:1px dashed var(--accent-orange,#f59e0b);border-radius:999px;font-size:0.76rem;color:var(--text-muted);">
+                        LOT 미지정 <strong style="color:var(--accent-orange,#f59e0b);">(${UIUtils.formatNumber(e.qty)})</strong>
+                    </span>`;
+                }
+                const _plJs = encodeURIComponent(e.paintLot || '');
+                const _ilJs = encodeURIComponent(e.injLot || '');
+                return `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border:1px solid var(--border-color);border-radius:999px;font-family:monospace;font-size:0.76rem;">
+                    ${_esc(e.injLot)} <strong style="color:var(--accent-orange,#f59e0b);">(${UIUtils.formatNumber(e.qty)})</strong>
+                    ${canEdit ? `<button type="button" title="이 사출 LOT 보정" onclick="UIUtils.closeModal();setTimeout(()=>LaserWipModule.openAdjustResidualLotModal('${_jsArg(_keyJs)}','${_plJs}','${_ilJs}',${Number(e.qty) || 0}),80);"
+                        style="border:0;background:transparent;color:var(--accent-blue);padding:0;cursor:pointer;">✎</button>` : ''}
+                </span>`;
+            }).join('');
             return `<tr>
-                <td style="font-family:monospace;color:var(--accent-green);">${_esc(e.paintLot)}</td>
-                <td style="font-family:monospace;">${_esc(e.injLot)}</td>
-                <td style="text-align:right;color:var(--accent-orange,#f59e0b);font-weight:600;">${UIUtils.formatNumber(e.qty)}</td>
-                ${canEdit ? `<td style="text-align:center;">
-                    <button class="btn btn-sm btn-outline" style="font-size:0.72rem;padding:2px 8px;"
-                        onclick="UIUtils.closeModal();setTimeout(()=>LaserWipModule.openAdjustResidualLotModal('${_jsArg(_keyJs)}','${_plJs}','${_ilJs}',${Number(e.qty) || 0}),80);">
-                        보정 수정
-                    </button>
-                </td>` : ''}
-            </tr>`;
-        }).join('') + (manualAdj !== 0 ? `<tr style="border-top:1px dashed var(--border-color);">
-                <td colspan="${canEdit ? 3 : 2}" style="font-size:0.82rem;color:var(--text-muted);">LOT 미지정 수기 조정</td>
-                <td style="text-align:right;font-weight:600;color:${manualAdj > 0 ? 'var(--accent-green)' : 'var(--accent-red)'};">${manualAdj > 0 ? '+' : ''}${UIUtils.formatNumber(manualAdj)}</td>
+                <td style="font-family:monospace;color:${group.paintLot === 'LOT 미지정' ? 'var(--text-muted)' : 'var(--accent-green)'};">${_esc(group.paintLot)}</td>
+                <td><div style="display:flex;flex-wrap:wrap;gap:4px;">${lotTags}</div></td>
+                <td style="text-align:right;color:var(--accent-orange,#f59e0b);font-weight:600;">${UIUtils.formatNumber(group.total)}</td>
                 ${canEdit ? '<td></td>' : ''}
-            </tr>` : '');
+            </tr>`;
+        }).join('');
 
         const historySection = _wipHistorySection(histItems);
 
@@ -2128,7 +2164,7 @@ var LaserWipModule = (function() {
                     <div style="font-size:0.8rem;color:var(--text-muted);">포장단위 (EA)</div>
                 </div>
                 <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
-                    <div style="font-size:1.4rem;font-weight:700;">${lotEntries.length}</div>
+                    <div style="font-size:1.4rem;font-weight:700;">${Object.keys(residualLotGroups).length}</div>
                     <div style="font-size:0.8rem;color:var(--text-muted);">LOT 항목 수</div>
                 </div>
             </div>
