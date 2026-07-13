@@ -17292,26 +17292,31 @@ var PaintMixModule = (function() {
         const product = work ? _findProduct(work) : _findProduct(data);
         // 작업 라인을 표준 태그로 정규화해야 "도장-A", "도장 A" 등의 표기가 섞여도
         // 해당 공정 도료만 정확히 필터된다.
-        const filterLine = (!usages.length && data.line) ? _pmixNormalizeProcTag(data.line) : '';
-        // 항상 제품 레시피 전체를 기준으로 표시하고, 저장된 usages 값을 오버레이
+        const filterLine = data.line ? _pmixNormalizeProcTag(data.line) : '';
+        // 신규 등록·수정 모두 현재 작업 라인의 레시피만 사용한다.
+        // 기존 저장 이력(usages)은 값 오버레이 용도이며 다른 라인 도료를 되살리면 안 된다.
         const recipeComponents = _paintComponents(product, filterLine);
         let allComponents;
-        if (!usages.length || !recipeComponents.length) {
-            // 신규 등록 or 레시피 없음 → 기존 방식
-            allComponents = usages.length ? usages : recipeComponents;
+        if (!usages.length) {
+            allComponents = recipeComponents;
+        } else if (!recipeComponents.length) {
+            // 라인이 지정된 제품은 해당 라인 레시피가 없으면 다른 라인의 과거 도료를 표시하지 않는다.
+            allComponents = filterLine ? [] : usages;
         } else {
-            // 수정 모드: 레시피 전체 행을 보여주되 저장된 usage 값으로 채움
+            // 수정 모드: 현재 라인 레시피 행에 저장된 값만 오버레이
             const usageByMatId = new Map(usages.map(u => [u.materialId, u]));
             allComponents = recipeComponents.map(comp => {
                 const saved = usageByMatId.get(comp.materialId);
                 return saved ? { ...comp, ...saved } : comp;
             });
-            // 레시피에 없지만 수동으로 추가된 usage가 있으면 뒤에 붙임
-            usages.forEach(u => {
-                if (!recipeComponents.find(c => c.materialId === u.materialId)) {
-                    allComponents.push(u);
-                }
-            });
+            // 라인이 지정되지 않은 수기 등록만, 레시피 밖의 과거 수기 행을 보존한다.
+            if (!filterLine) {
+                usages.forEach(u => {
+                    if (!recipeComponents.find(c => c.materialId === u.materialId)) {
+                        allComponents.push(u);
+                    }
+                });
+            }
         }
         const components = allComponents.filter(c => c.role !== '경화제');
         const ignoreMixId = data.id || '';
