@@ -548,6 +548,7 @@ const DB = (function() {
         // ── 재고 원장 (무결성 보호) ────────────────────────────────
         [STORES.INJECTION_INVENTORY]:        { remove: 'operator', clear: 'admin'  },
         [STORES.PAINT_INVENTORY]:            { remove: 'operator', clear: 'admin'  },
+        [STORES.PAINT_OUTGOING_STANDBY]:     { remove: 'operator', clear: 'admin'  },
         [STORES.PRODUCT_INVENTORY]:          { remove: 'operator', clear: 'admin'  },
         [STORES.RAW_MATERIAL_INVENTORY]:     { remove: 'operator', clear: 'admin'  },
         // ── 출하 · 출고 ────────────────────────────────────────────

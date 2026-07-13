@@ -288,6 +288,20 @@ const PaintInventoryModule = (function() {
                         </div>
                         <div class="card-body" id="paintInspStandbyBody" style="padding:0;"></div>
                     </div>
+                    <div class="card" style="margin-bottom:20px; border-left:3px solid var(--accent-red);">
+                        <div class="card-header" style="display:flex; align-items:center; justify-content:space-between;">
+                            <h4 style="display:flex; align-items:center; gap:8px;">
+                                <span class="material-symbols-outlined" style="color:var(--accent-red);">outbox</span>
+                                도료 창고 출고 대기품
+                                <span style="font-size:0.75rem; color:var(--text-muted); font-weight:400;">(배합작업 도료오픈 → 확인 후 출고)</span>
+                                <span id="paintOutStandbyBadge" style="font-size:0.78rem; background:var(--accent-red); color:#fff; padding:2px 8px; border-radius:12px; font-weight:600; display:none;"></span>
+                            </h4>
+                            <button class="btn btn-sm btn-outline" onclick="PaintInventoryModule.renderPaintOutgoingStandby()">
+                                <span class="material-symbols-outlined" style="font-size:1rem;">refresh</span>
+                            </button>
+                        </div>
+                        <div class="card-body" id="paintOutStandbyBody" style="padding:0;"></div>
+                    </div>
                     <div class="card" style="margin-bottom:20px;">
                         <div class="card-header">
                             <h4><span class="material-symbols-outlined">palette</span> 공급사별 재고 현황</h4>
@@ -451,6 +465,7 @@ const PaintInventoryModule = (function() {
         // ★ 입고 대기 섹션 + 공급사 타일은 항상 렌더링
         setTimeout(() => {
             renderPaintInspStandby();
+            renderPaintOutgoingStandby();
             renderSupplierTiles();
         }, 150);
 
@@ -1147,6 +1162,175 @@ const PaintInventoryModule = (function() {
                     </tbody>
                 </table>
             </div>`;
+    }
+
+    // ── 도료 창고 출고 대기품 (배합작업 도료오픈 → 확인 후 실제 출고) ──────
+    function renderPaintOutgoingStandby() {
+        const body  = document.getElementById('paintOutStandbyBody');
+        const badge = document.getElementById('paintOutStandbyBadge');
+        if (!body) return;
+
+        const pending = (Storage.getAll(DB.STORES.PAINT_OUTGOING_STANDBY) || [])
+            .filter(r => r.status === '대기')
+            .sort((a, b) => (b.requestedAt || b.date || '').localeCompare(a.requestedAt || a.date || ''));
+
+        if (badge) {
+            if (pending.length > 0) {
+                badge.textContent = `대기 ${pending.length}건`;
+                badge.style.display = '';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+
+        if (pending.length === 0) {
+            body.innerHTML = `
+                <div style="display:flex;align-items:center;gap:10px;padding:18px;color:var(--accent-green);font-size:0.9rem;">
+                    <span class="material-symbols-outlined">check_circle</span>
+                    <span>출고 대기 품목이 없습니다.</span>
+                </div>`;
+            return;
+        }
+
+        const materials = Storage.getAll(DB.STORES.PAINT_MATERIALS) || [];
+
+        body.innerHTML = `
+            <div style="display:flex;justify-content:flex-end;padding:10px 16px;border-bottom:1px solid var(--border-color);background:var(--bg-secondary);">
+                <button class="btn btn-sm btn-outline" onclick="PaintInventoryModule.cancelAllPaintOutgoingStandby()"
+                    title="현재 출고 대기 목록을 모두 취소합니다. 배합 등록 자체는 삭제하지 않습니다.">
+                    <span class="material-symbols-outlined" style="font-size:0.9rem;">cancel</span> 전체 취소
+                </button>
+            </div>
+            <div class="data-table-wrapper">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>등록일</th>
+                            <th>도료명</th>
+                            <th>제조 LOT</th>
+                            <th style="text-align:right;">출고 예정수량</th>
+                            <th>배합 대상</th>
+                            <th>요청자</th>
+                            <th style="text-align:center;">상태</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${pending.map(r => {
+                            const mat = materials.find(m => m.id === r.materialId);
+                            return `
+                            <tr style="background:rgba(239,68,68,0.06);">
+                                <td style="font-size:0.82rem;">${(r.date || '').slice(0, 10)}</td>
+                                <td><strong>${mat ? mat.name : (r.paintName || '(삭제된 도료)')}</strong></td>
+                                <td style="font-family:monospace;">${r.prodLot || '-'}</td>
+                                <td style="text-align:right; font-weight:700; color:var(--accent-red);">${UIUtils.formatNumber(r.quantity || 0)} 캔</td>
+                                <td style="font-size:0.82rem;">${[r.carModel, r.partName].filter(Boolean).join(' · ') || '-'}</td>
+                                <td style="font-size:0.82rem;">${r.requestedBy || '-'}</td>
+                                <td style="text-align:center;">
+                                    <span class="badge badge-warning" style="background:var(--accent-red);color:#fff;">출고대기</span>
+                                </td>
+                                <td>
+                                    <button class="btn btn-sm btn-primary" onclick="PaintInventoryModule.confirmPaintOutgoingStandby('${r.id}')">
+                                        <span class="material-symbols-outlined" style="font-size:0.9rem;">logout</span> 출고 처리
+                                    </button>
+                                    <button class="btn btn-sm btn-outline" style="margin-left:6px;" onclick="PaintInventoryModule.cancelPaintOutgoingStandby('${r.id}')">
+                                        <span class="material-symbols-outlined" style="font-size:0.9rem;">cancel</span> 취소
+                                    </button>
+                                </td>
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>`;
+    }
+
+    // 출고 확인 처리 — 실제 PAINT_INVENTORY '출고' 기록 생성 + 로그인 사용자 기록
+    async function confirmPaintOutgoingStandby(id) {
+        const rec = Storage.getById(DB.STORES.PAINT_OUTGOING_STANDBY, id);
+        if (!rec) { UIUtils.toast('대기 항목을 찾을 수 없습니다.', 'error'); return; }
+        if (rec.status !== '대기') {
+            UIUtils.toast('이미 처리되었거나 취소된 항목입니다.', 'warning');
+            renderPaintOutgoingStandby();
+            return;
+        }
+
+        // 확인 시점 기준 재검증 — 그 사이 다른 조정/출고로 재고가 부족해졌을 수 있다.
+        const allLogs = Storage.getAll(STORE) || [];
+        const lotLogs = allLogs.filter(l => l.materialId === rec.materialId && (l.prodLot || l.lotNo) === rec.prodLot);
+        const stockIn  = lotLogs.filter(l => l.type === '입고').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
+        const stockOut = lotLogs.filter(l => l.type === '출고').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
+        const available = stockIn - stockOut;
+        if ((Number(rec.quantity) || 0) > available) {
+            UIUtils.toast(`재고 부족: LOT ${rec.prodLot} 가용 재고 ${UIUtils.formatNumber(available)}캔, 요청 ${UIUtils.formatNumber(rec.quantity)}캔. 도료 창고 실사조정 후 다시 처리하세요.`, 'error');
+            return;
+        }
+
+        const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? (AuthModule.getCurrentUser() || {}) : {};
+        const issuer = user.displayName || user.username || '';
+
+        await Storage.executeTransaction([
+            {
+                store: STORE,
+                op: 'add',
+                data: {
+                    date: UIUtils.today(),
+                    type: '출고',
+                    materialId: rec.materialId,
+                    lotNo: rec.lotNo || rec.prodLot,
+                    prodLot: rec.prodLot,
+                    quantity: rec.quantity,
+                    unit: rec.unit || 'CAN',
+                    warehouseCans: rec.warehouseCans || rec.quantity,
+                    packUnit: rec.packUnit,
+                    source: rec.source || '도료 배합 창고출고',
+                    paintMixId: rec.paintMixId || '',
+                    paintingWorkId: rec.paintingWorkId || '',
+                    carModel: rec.carModel || '',
+                    partName: rec.partName || '',
+                    issuedBy: issuer
+                }
+            },
+            {
+                store: DB.STORES.PAINT_OUTGOING_STANDBY,
+                op: 'update',
+                id: rec.id,
+                data: { status: '출고완료', processedBy: issuer, processedAt: new Date().toISOString() }
+            }
+        ]);
+        UIUtils.toast(`출고 처리가 완료되었습니다. (처리자: ${issuer || '-'})`, 'success');
+        renderPaintOutgoingStandby();
+        loadData();
+    }
+
+    function cancelPaintOutgoingStandby(id) {
+        UIUtils.confirm('이 출고 대기 항목을 취소하시겠습니까?', async () => {
+            const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? (AuthModule.getCurrentUser() || {}) : {};
+            await Storage.update(DB.STORES.PAINT_OUTGOING_STANDBY, id, {
+                status: '취소',
+                canceledAt: new Date().toISOString(),
+                canceledBy: user.displayName || user.username || ''
+            });
+            UIUtils.toast('취소되었습니다.', 'info');
+            renderPaintOutgoingStandby();
+        });
+    }
+
+    function cancelAllPaintOutgoingStandby() {
+        const pending = (Storage.getAll(DB.STORES.PAINT_OUTGOING_STANDBY) || []).filter(r => r.status === '대기');
+        if (!pending.length) return;
+        UIUtils.confirm(`출고 대기 ${pending.length}건을 모두 취소하시겠습니까?`, async () => {
+            const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? (AuthModule.getCurrentUser() || {}) : {};
+            const canceledBy = user.displayName || user.username || '';
+            for (const r of pending) {
+                await Storage.update(DB.STORES.PAINT_OUTGOING_STANDBY, r.id, {
+                    status: '취소',
+                    canceledAt: new Date().toISOString(),
+                    canceledBy
+                });
+            }
+            UIUtils.toast('전체 취소되었습니다.', 'info');
+            renderPaintOutgoingStandby();
+        });
     }
 
     // ── 특채 도료 — 생산 일정 소모 확인 후 입고 허용 ─────────────────

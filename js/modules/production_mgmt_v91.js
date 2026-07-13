@@ -14753,6 +14753,7 @@ var PaintMixModule = (function() {
     const USAGE_STORE     = DB.STORES.PAINT_USAGE_STD;
     const MIX_STD_STORE   = DB.STORES.PAINT_MIX_STD;
     const PAINT_INV_STORE = DB.STORES.PAINT_INVENTORY;
+    const PAINT_OUT_STANDBY_STORE = DB.STORES.PAINT_OUTGOING_STANDBY;
     const PAINT_MAT_STORE = DB.STORES.PAINT_MATERIALS;
     const PAINT_WORK_STORE = DB.STORES.PAINTING_WORK;
     const PRODUCT_STORE   = DB.STORES.PRODUCTS;
@@ -17196,6 +17197,18 @@ var PaintMixModule = (function() {
             if (r.type === '출고') map[key].balance -= Number(r.quantity) || 0;
             else map[key].balance += Number(r.quantity) || 0;
         });
+        // ✓ 확인 대기 중인 출고 요청(도료 오픈 → 창고 출고 대기품)도 다른 배합 등록이
+        //   같은 LOT를 중복 예약하지 못하도록 가용 재고에서 미리 차감한다.
+        //   (자기 자신의 대기 요청은 ignoreMixId로 제외 — 수정 시 중복 차감 방지)
+        (Storage.getAll(PAINT_OUT_STANDBY_STORE) || [])
+            .filter(r => r.materialId === materialId && r.status === '대기')
+            .forEach(r => {
+                if (ignoreMixId && r.paintMixId === ignoreMixId) return;
+                const prodLot = r.prodLot || r.lotNo || '미표기';
+                const key = prodLot;
+                if (!map[key]) map[key] = { prodLot, lotNo: r.lotNo || '', balance: 0 };
+                map[key].balance -= Number(r.quantity) || 0;
+            });
         // 수입검사 합격은 입고 대기일 뿐 창고 재고가 아니다.
         // 사용 등록에서 선택 가능한 LOT는 실제 PAINT_INVENTORY 재고로 한정한다.
         return Object.values(map)
@@ -17379,6 +17392,15 @@ var PaintMixModule = (function() {
             const selectedLotCans = availInvLots.find(l => l.prodLot === warehouseProdLot)?.balance || 0;
             const canAutoG = warehouseCans > 0 && packUnit > 0 ? UIUtils.formatNumber(warehouseCans * packUnit * 1000) : '';
             const remainingLot = canOpen ? (warehouseProdLot || residualProdLot) : residualProdLot;
+            // ✓ 이 배합 기록(수정 모드)에 연결된 출고 대기/완료 상태 표시
+            const outStandbyRec = (ignoreMixId && canOpen)
+                ? (Storage.getAll(PAINT_OUT_STANDBY_STORE) || []).find(r => r.paintMixId === ignoreMixId && r.materialId === materialId && r.status !== '취소')
+                : null;
+            const outStatusBadge = outStandbyRec
+                ? (outStandbyRec.status === '출고완료'
+                    ? `<span style="font-size:0.68rem;background:var(--accent-green,#16a34a);color:#fff;border-radius:3px;padding:1px 6px;margin-left:4px;">출고완료</span>`
+                    : `<span style="font-size:0.68rem;background:var(--accent-orange,#f59e0b);color:#fff;border-radius:3px;padding:1px 6px;margin-left:4px;">출고대기중</span>`)
+                : '';
             return `
                 <tr class="pmix-row" data-row="${i}" data-pack-unit="${packUnit}">
                     <!-- ① 도료명 -->
@@ -17429,7 +17451,7 @@ var PaintMixModule = (function() {
                             <input type="checkbox" class="pmix-can-open-chk" ${canOpen ? 'checked' : ''}
                                 onchange="PaintMixModule._onCanOpenToggle(this,${i})"
                                 style="width:16px;height:16px;cursor:pointer;">
-                            도료 오픈
+                            도료 오픈${outStatusBadge}
                         </label>
                         <div class="pmix-can-section" style="${canOpen ? '' : 'display:none;'}border-left:3px solid var(--accent-blue);padding-left:9px;">
                             <div style="font-size:0.75rem;margin-bottom:4px;">
@@ -17862,19 +17884,34 @@ var PaintMixModule = (function() {
         return '';
     }
 
+    // ✓ 배합 기록을 수정/삭제할 때, 이미 "출고 확인" 완료된 요청은 실제로 창고에서
+    //   소모된 재고이므로 건드리지 않는다(되돌리면 물리적 실재고와 어긋남).
+    //   아직 확인 전(대기)인 요청만 취소한다.
     function _inventoryOutRemoveOps(mixId) {
-        const rows = (Storage.getAll(PAINT_INV_STORE) || []).filter(r => r.paintMixId === mixId && r.type === '출고');
-        return rows.map(r => ({ store: PAINT_INV_STORE, op: 'remove', id: r.id }));
+        const rows = (Storage.getAll(PAINT_OUT_STANDBY_STORE) || [])
+            .filter(r => r.paintMixId === mixId && r.status === '대기');
+        return rows.map(r => ({
+            store: PAINT_OUT_STANDBY_STORE,
+            op: 'update',
+            id: r.id,
+            data: { status: '취소', canceledAt: new Date().toISOString(), canceledReason: '배합 기록 수정/삭제' }
+        }));
     }
 
+    // ✓ "도료 오픈"은 더 이상 창고 재고를 바로 차감하지 않는다. 도료 창고 화면의
+    //   "출고 대기품"에 등록만 하고, 담당자가 실제로 캔을 꺼내며 확인 처리할 때
+    //   비로소 PAINT_INVENTORY에 '출고' 기록이 남는다(재고 일치 보장 + 오기입 방지).
     function _inventoryOutOps(mixId, data) {
+        const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? (AuthModule.getCurrentUser() || {}) : {};
+        const requestedBy = user.displayName || user.username || data.operator || '';
         return data.usages.filter(u => u.warehouseCans > 0).map(u => ({
-            store: PAINT_INV_STORE,
+            store: PAINT_OUT_STANDBY_STORE,
             op: 'add',
             data: {
                 date: data.date,
-                type: '출고',
+                status: '대기',
                 materialId: u.materialId,
+                paintName: u.paintName || '',
                 lotNo: u.lotNo || u.warehouseProdLot,
                 prodLot: u.warehouseProdLot,
                 // paint_inventory.quantity의 단위는 "캔"이다.
@@ -17888,7 +17925,9 @@ var PaintMixModule = (function() {
                 paintMixId: mixId,
                 paintingWorkId: data.workId || '',
                 carModel: data.carModel,
-                partName: data.partName
+                partName: data.partName,
+                requestedBy,
+                requestedAt: new Date().toISOString()
             }
         }));
     }
@@ -17935,7 +17974,7 @@ var PaintMixModule = (function() {
 
     function remove(id) {
         if (!_isAdmin()) { UIUtils.toast('관리자만 삭제할 수 있습니다.', 'warning'); return; }
-        UIUtils.confirm('도료 배합 기록을 삭제하시겠습니까?\n연결된 도료 LOT 출고 이력도 함께 삭제됩니다.', async () => {
+        UIUtils.confirm('도료 배합 기록을 삭제하시겠습니까?\n아직 확인 전인 출고 대기 요청은 취소됩니다. (이미 출고 확인된 이력은 유지됩니다)', async () => {
             await Storage.executeTransaction([
                 ..._inventoryOutRemoveOps(id),
                 { store: STORE, op: 'remove', id }
