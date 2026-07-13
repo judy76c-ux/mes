@@ -1529,11 +1529,23 @@ var LaserWorkModule = (function() {
 
         const oldestDate = filtered[0].date || '';
 
-        // 현재 재고 합계
-        const totalBalance = filtered.reduce((sum, w) => {
+        // 현재 재고 합계: 재고 스냅샷(수기보정 포함)을 우선 사용해 상세모달 합계와 일치시킨다.
+        let totalBalance = filtered.reduce((sum, w) => {
             const lots = Array.isArray(w.lots) && w.lots.length > 0 ? w.lots : [{ qty: Number(w.productionQty) || 0 }];
             return sum + lots.reduce((s, l) => s + (Number(l.qty) || 0), 0);
         }, 0);
+        try {
+            const snap = typeof LaserStandbyModule !== 'undefined' && typeof LaserStandbyModule.getStockSnapshotSync === 'function'
+                ? (LaserStandbyModule.getStockSnapshotSync() || []) : [];
+            if (snap.length > 0) {
+                const snapTotal = snap
+                    .filter(function(item) {
+                        return item.partName === part && (!car || item.carModel === car);
+                    })
+                    .reduce(function(s, item) { return s + (Number(item.stockQty) || 0); }, 0);
+                if (snapTotal > 0) totalBalance = snapTotal;
+            }
+        } catch (_) { /* 폴백: FIFO 행 합산 유지 */ }
 
         el.innerHTML = `
             <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; gap:8px;">
@@ -4762,6 +4774,12 @@ var LaserStandbyModule = (function() {
         paintingWorks.forEach(raw => {
             const w = _canonicalStandbyRecord(raw, products, injectionMaterials);
             if ((w.carModel || '') !== carModel || (w.partName || '') !== partName || ((w.color || '') !== (color || ''))) return;
+            // _buildInventorySnapshot과 동일한 필터: 이 도장 작업이 레이저 대기 인바운드인지 확인
+            const prod = products.find(function(p) {
+                return String(p.carModel||'').trim() === String(w.carModel||'').trim() &&
+                       String(p.partName||'').trim() === String(w.partName||'').trim();
+            });
+            if (!_isPaintingWorkLaserStandbyInbound(w, prod)) return;
             const totalQty = Number(w.productionQty) || 0;
             if (totalQty <= 0) return;
             const paintLot = String(_paintingWorkDateTime(w) || w.date || '').replace(/-/g, '').slice(2, 8);

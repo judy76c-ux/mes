@@ -1153,6 +1153,16 @@ var LaserWipModule = (function() {
             </div>
             <div class="form-row">
                 <div class="form-group">
+                    <label class="form-label">사출 LOT</label>
+                    <input type="text" class="form-input" id="lwResidualInInjectionLot" readonly style="background:var(--bg-secondary);cursor:default;">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">도장 작업일</label>
+                    <input type="text" class="form-input" id="lwResidualInPaintDate" readonly style="background:var(--bg-secondary);cursor:default;">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
                     <label class="form-label">잔량 수량 (EA)</label>
                     <input type="number" class="form-input" id="lwResidualInQty" min="1" placeholder="0">
                 </div>
@@ -1176,6 +1186,12 @@ var LaserWipModule = (function() {
         if (partSel) partSel.innerHTML = '<option value="">-- 품명 선택 --</option>' + partNames.map(n => `<option value="${n}">${n}</option>`).join('');
         const colorSel = document.getElementById('lwResidualInColor');
         if (colorSel) colorSel.innerHTML = '<option value="">-- 컬러 선택 --</option>';
+
+        // LOT 필드 초기화
+        const injLotEl = document.getElementById('lwResidualInInjectionLot');
+        const paintDateEl = document.getElementById('lwResidualInPaintDate');
+        if (injLotEl) injLotEl.value = '';
+        if (paintDateEl) paintDateEl.value = '';
     }
 
     function onResidualInPartChange() {
@@ -1185,6 +1201,20 @@ var LaserWipModule = (function() {
         const colors = [...new Set(products.map(p => p.color).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'ko'));
         const colorSel = document.getElementById('lwResidualInColor');
         if (colorSel) colorSel.innerHTML = '<option value="">-- 컬러 선택 --</option>' + colors.map(c => `<option value="${c}">${c}</option>`).join('');
+
+        // 선택한 제품의 기존 LOT 정보 표시
+        const r = _calcLaserResidualWip().find(x => x.carModel === carModel && x.partName === partName);
+        const injLotEl = document.getElementById('lwResidualInInjectionLot');
+        const paintDateEl = document.getElementById('lwResidualInPaintDate');
+        if (r) {
+            const injLots = (Array.isArray(r.injectionLots) ? r.injectionLots : []).filter(Boolean);
+            const paintDates = (Array.isArray(r.paintDates) ? r.paintDates : []).filter(Boolean);
+            if (injLotEl) injLotEl.value = injLots.length > 0 ? injLots.join(', ') : '-';
+            if (paintDateEl) paintDateEl.value = paintDates.length > 0 ? paintDates.join(', ') : '-';
+        } else {
+            if (injLotEl) injLotEl.value = '-';
+            if (paintDateEl) paintDateEl.value = '-';
+        }
     }
 
     async function saveResidualInput() {
@@ -1193,7 +1223,9 @@ var LaserWipModule = (function() {
         const partName = (document.getElementById('lwResidualInPartName') || {}).value || '';
         const color = (document.getElementById('lwResidualInColor') || {}).value || '';
         const quantity = parseInt((document.getElementById('lwResidualInQty') || {}).value || '0', 10);
-        const note = (document.getElementById('lwResidualInNote') || {}).value.trim() || '수기 잔량입고';
+        const note = ((document.getElementById('lwResidualInNote') || {}).value || '').trim() || '수기 잔량입고';
+        const injectionLot = ((document.getElementById('lwResidualInInjectionLot') || {}).value || '').trim();
+        const paintDate = ((document.getElementById('lwResidualInPaintDate') || {}).value || '').trim();
         const prod = _getResidualProducts().find(p => p.carModel === carModel && p.partName === partName && (!color || p.color === color))
             || _getResidualProducts().find(p => p.carModel === carModel && p.partName === partName);
         const packUnit = prod ? _num(prod.packUnit || prod.packingUnit || prod.packageUnit || prod.packQty || prod.packingQty) : 0;
@@ -1203,7 +1235,17 @@ var LaserWipModule = (function() {
             return;
         }
 
-        await Storage.add(STORE_LASER, { date, carModel, partName, color, quantity, note, packUnit, isManual: true, isResidualManualIn: true });
+        const record = { date, carModel, partName, color, quantity, note, packUnit, isManual: true, isResidualManualIn: true };
+        if (injectionLot && injectionLot !== '-') record.lotNo = injectionLot;
+        if (paintDate && paintDate !== '-') record.paintDate = paintDate;
+
+        try {
+            await Storage.add(STORE_LASER, record);
+        } catch (e) {
+            console.error('레이져 후 잔량 수기 등록 실패:', e);
+            UIUtils.toast('저장 중 오류가 발생했습니다: ' + (e && e.message ? e.message : '알 수 없는 오류'), 'error');
+            return;
+        }
         UIUtils.closeModal();
         UIUtils.toast(`레이져 후 잔량 수기 등록 완료 — ${partName} ${quantity}EA`, 'success');
         refresh();
@@ -1247,6 +1289,16 @@ var LaserWipModule = (function() {
             </div>
             <div class="form-row">
                 <div class="form-group">
+                    <label class="form-label">사출 LOT</label>
+                    <input type="text" class="form-input" id="lwResidualOutInjectionLot" readonly style="background:var(--bg-secondary);cursor:default;">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">도장 작업일</label>
+                    <input type="text" class="form-input" id="lwResidualOutPaintDate" readonly style="background:var(--bg-secondary);cursor:default;">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
                     <label class="form-label">출고 수량 (EA)</label>
                     <input type="number" class="form-input" id="lwResidualOutQty" min="1" placeholder="0">
                 </div>
@@ -1273,6 +1325,12 @@ var LaserWipModule = (function() {
         if (colorSel) colorSel.innerHTML = '<option value="">-- 컬러 선택 --</option>';
         const info = document.getElementById('lwResidualOutStockInfo');
         if (info) info.textContent = '';
+
+        // LOT 필드 초기화
+        const injLotEl = document.getElementById('lwResidualOutInjectionLot');
+        const paintDateEl = document.getElementById('lwResidualOutPaintDate');
+        if (injLotEl) injLotEl.value = '';
+        if (paintDateEl) paintDateEl.value = '';
     }
 
     function onResidualOutPartChange() {
@@ -1285,6 +1343,19 @@ var LaserWipModule = (function() {
         const match = rows.find(r => r.partName === partName);
         const info = document.getElementById('lwResidualOutStockInfo');
         if (info && match) info.innerHTML = `현재 잔량 재고 <strong style="color:var(--accent-orange);">${UIUtils.formatNumber(match.residualQty)} EA</strong>`;
+
+        // 선택한 제품의 기존 LOT 정보 표시
+        const injLotEl = document.getElementById('lwResidualOutInjectionLot');
+        const paintDateEl = document.getElementById('lwResidualOutPaintDate');
+        if (match) {
+            const injLots = (Array.isArray(match.injectionLots) ? match.injectionLots : []).filter(Boolean);
+            const paintDates = (Array.isArray(match.paintDates) ? match.paintDates : []).filter(Boolean);
+            if (injLotEl) injLotEl.value = injLots.length > 0 ? injLots.join(', ') : '-';
+            if (paintDateEl) paintDateEl.value = paintDates.length > 0 ? paintDates.join(', ') : '-';
+        } else {
+            if (injLotEl) injLotEl.value = '-';
+            if (paintDateEl) paintDateEl.value = '-';
+        }
     }
 
     async function saveResidualOut() {
@@ -1293,7 +1364,9 @@ var LaserWipModule = (function() {
         const partName = (document.getElementById('lwResidualOutPartName') || {}).value || '';
         const color = (document.getElementById('lwResidualOutColor') || {}).value || '';
         const quantity = parseInt((document.getElementById('lwResidualOutQty') || {}).value || '0', 10);
-        const note = (document.getElementById('lwResidualOutNote') || {}).value.trim() || '수기 잔량출고';
+        const note = ((document.getElementById('lwResidualOutNote') || {}).value || '').trim() || '수기 잔량출고';
+        const injectionLot = ((document.getElementById('lwResidualOutInjectionLot') || {}).value || '').trim();
+        const paintDate = ((document.getElementById('lwResidualOutPaintDate') || {}).value || '').trim();
 
         if (!date || !carModel || !partName || !quantity || quantity <= 0) {
             UIUtils.toast('날짜, 차종, 품명, 출고 수량(1 이상)은 필수입니다.', 'warning');
@@ -1305,7 +1378,17 @@ var LaserWipModule = (function() {
             return;
         }
 
-        await Storage.add(STORE_LASER, { date, carModel, partName, color, quantity, note, packUnit: residual ? residual.packUnit : 0, isManual: true, isResidualManualOut: true });
+        const record = { date, carModel, partName, color, quantity, note, packUnit: residual ? residual.packUnit : 0, isManual: true, isResidualManualOut: true };
+        if (injectionLot && injectionLot !== '-') record.lotNo = injectionLot;
+        if (paintDate && paintDate !== '-') record.paintDate = paintDate;
+
+        try {
+            await Storage.add(STORE_LASER, record);
+        } catch (e) {
+            console.error('레이져 후 잔량 수기 출고 실패:', e);
+            UIUtils.toast('저장 중 오류가 발생했습니다: ' + (e && e.message ? e.message : '알 수 없는 오류'), 'error');
+            return;
+        }
         UIUtils.closeModal();
         UIUtils.toast(`레이져 후 잔량 출고 완료 — ${partName} ${quantity}EA`, 'success');
         refresh();
