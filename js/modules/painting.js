@@ -5465,7 +5465,7 @@ const PaintingInspectionModule = (function() {
                                 <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px;">
                                     <div class="form-group" style="margin:0;">
                                         <label class="form-label" style="font-size:0.72rem;">양품수</label>
-                                        <input type="number" class="form-input" id="inpGoodQty" value="${work.productionQty || 0}" min="0" style="text-align:right; font-weight:600; font-size:0.9rem; padding:5px 6px;" onchange="PaintingInspectionModule._updateDefectQty()">
+                                        <input type="number" class="form-input" id="inpGoodQty" value="${initGoodQty}" min="0" style="text-align:right; font-weight:600; font-size:0.9rem; padding:5px 6px;" onchange="PaintingInspectionModule._updateDefectQty()">
                                     </div>
                                     <div class="form-group" style="margin:0;">
                                         <label class="form-label" style="font-size:0.72rem;">불량수</label>
@@ -5473,13 +5473,13 @@ const PaintingInspectionModule = (function() {
                                     </div>
                                     <div class="form-group" style="margin:0;">
                                         <label class="form-label" style="font-size:0.72rem;">합계 (자동)</label>
-                                        <input type="text" class="form-input" id="inpTotalQty" value="${UIUtils.formatNumber(work.productionQty || 0)}" readonly style="background:var(--bg-secondary); text-align:right; font-weight:700; font-size:0.9rem; padding:5px 6px; color:var(--accent-blue);">
+                                        <input type="text" class="form-input" id="inpTotalQty" value="${UIUtils.formatNumber(initGoodQty)}" readonly style="background:var(--bg-secondary); text-align:right; font-weight:700; font-size:0.9rem; padding:5px 6px; color:var(--accent-blue);">
                                     </div>
                                 </div>
-                                <!-- ✓ Case 1: 부분 완료 시 설명 -->
+                                <!-- ✓ Case 1: 부분 완료 시 설명 (최대 입력 가능 수량 안내) -->
                                 <div id="piPartialInspectionInfo" style="display:none; margin-top:8px; padding:8px 10px; background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.25); border-radius:6px; font-size:0.75rem; color:var(--text-secondary); line-height:1.4;">
                                     <span class="material-symbols-outlined" style="font-size:16px; vertical-align:middle; color:var(--accent-orange);">info</span>
-                                    <span style="margin-left:4px;">부분 완료 시 입력한 수량만 검사 완료되며, 나머지는 외관검사 대기로 유지됩니다.</span>
+                                    <span style="margin-left:4px;">부분 완료 시 입력한 수량(양품+불량, 최대 <strong>${UIUtils.formatNumber(baseInspQty)}</strong> EA)만 검사 완료되며, 나머지는 외관검사 대기로 유지됩니다.</span>
                                 </div>
                             </div>
                         </div>
@@ -6407,19 +6407,44 @@ const PaintingInspectionModule = (function() {
         }
     }
 
+    function _isPartialInspectionMode() {
+        const checkbox = document.getElementById('inpIsPartialInspection');
+        return !!(checkbox && checkbox.checked);
+    }
+
     function _updateDefectQty() {
-        const inspectionQty = parseInt(document.getElementById('inpInspectionQty').value.replace(/,/g, '') || 0);
         const goodQty = parseInt(document.getElementById('inpGoodQty').value || 0);
+        const totalEl = document.getElementById('inpTotalQty');
+
+        // ✓ 부분 완료 모드: 양품수/불량수는 각각 독립 입력값 — 미검사분을 불량으로 계산하지 않는다.
+        if (_isPartialInspectionMode()) {
+            const defectQty = parseInt(document.getElementById('inpDefectQty').value || 0);
+            if (totalEl) totalEl.value = goodQty + defectQty;
+            _updatePaintPackagingCalc();
+            return;
+        }
+
+        const inspectionQty = parseInt(document.getElementById('inpInspectionQty').value.replace(/,/g, '') || 0);
         const defectQty = inspectionQty - goodQty;
         document.getElementById('inpDefectQty').value = Math.max(0, defectQty);
-        const totalEl = document.getElementById('inpTotalQty');
         if (totalEl) totalEl.value = inspectionQty;
         _updatePaintPackagingCalc();
     }
 
     function _updateGoodQty() {
-        const inspectionQty = parseInt(document.getElementById('inpInspectionQty').value.replace(/,/g, '') || 0);
         const defectQtyEl = document.getElementById('inpDefectQty');
+        const totalEl = document.getElementById('inpTotalQty');
+
+        // ✓ 부분 완료 모드: 양품수/불량수는 각각 독립 입력값 — 미검사분을 불량으로 계산하지 않는다.
+        if (_isPartialInspectionMode()) {
+            const goodQty = parseInt(document.getElementById('inpGoodQty').value || 0);
+            const defectQty = parseInt(defectQtyEl.value || 0);
+            if (totalEl) totalEl.value = goodQty + defectQty;
+            _autoPaintBoxCount();
+            return;
+        }
+
+        const inspectionQty = parseInt(document.getElementById('inpInspectionQty').value.replace(/,/g, '') || 0);
         let defectQty = parseInt(defectQtyEl.value || 0);
         if (defectQty > inspectionQty) {
             defectQty = inspectionQty;
@@ -6428,7 +6453,6 @@ const PaintingInspectionModule = (function() {
         }
         const goodQty = inspectionQty - defectQty;
         document.getElementById('inpGoodQty').value = Math.max(0, goodQty);
-        const totalEl = document.getElementById('inpTotalQty');
         if (totalEl) totalEl.value = Math.max(0, goodQty) + defectQty;
         _autoPaintBoxCount();
     }
@@ -6437,9 +6461,25 @@ const PaintingInspectionModule = (function() {
     function _togglePartialInspection() {
         const checkbox = document.getElementById('inpIsPartialInspection');
         const infoDiv = document.getElementById('piPartialInspectionInfo');
+        const goodQtyEl = document.getElementById('inpGoodQty');
+        const defectQtyEl = document.getElementById('inpDefectQty');
+        const totalEl = document.getElementById('inpTotalQty');
         if (checkbox && infoDiv) {
             infoDiv.style.display = checkbox.checked ? 'flex' : 'none';
         }
+        if (checkbox && checkbox.checked) {
+            // 부분 완료 진입: 자동계산 해제, 이번 회차 검사수량을 직접 입력하도록 초기화
+            if (goodQtyEl) goodQtyEl.value = 0;
+            if (defectQtyEl) defectQtyEl.value = 0;
+            if (totalEl) totalEl.value = 0;
+        } else {
+            // 부분 완료 해제: 전체(남은) 수량 기준 자동계산 복원
+            const inspectionQty = parseInt((document.getElementById('inpInspectionQty') || {}).value || 0);
+            if (goodQtyEl) goodQtyEl.value = inspectionQty;
+            if (defectQtyEl) defectQtyEl.value = 0;
+            if (totalEl) totalEl.value = inspectionQty;
+        }
+        _updatePaintPackagingCalc();
     }
 
     // ── 표준 검사 시간(외관검사 C.TIME) → 개당 초 ────────────────────
@@ -6890,7 +6930,12 @@ const PaintingInspectionModule = (function() {
 
         const goodQty      = parseInt(document.getElementById('inpGoodQty').value || 0);
         const defectQty    = parseInt(document.getElementById('inpDefectQty').value || 0);
-        const inspectionQty = parseInt(document.getElementById('inpInspectionQty').value.replace(/,/g, '') || 0);
+        // availableQty = 이번에 검사 가능한 전체(남은) 수량 — 부분완료 회차의 상한선으로 사용
+        const availableQty = parseInt(document.getElementById('inpInspectionQty').value.replace(/,/g, '') || 0);
+
+        // ✓ Case 1: 부분 완료 여부 (양품수+불량수 = 이번 회차 실제 검사수량, 미검사분과 무관)
+        const isPartialCheckbox = document.getElementById('inpIsPartialInspection');
+        const isPartial = !!(isPartialCheckbox && isPartialCheckbox.checked);
 
         // 포장 데이터 수집
         const prevResidualQty = parseInt(document.getElementById('piPrevResidual')?.value || 0);
@@ -6899,10 +6944,16 @@ const PaintingInspectionModule = (function() {
         const packQty         = packUnit * packBoxCount;
         const residualQty     = Math.max(0, prevResidualQty + goodQty - packQty);
 
-        // 검사 수량 검증 (검사수량이 0이면 양품수 기준으로 허용)
-        const effectiveInspQty = inspectionQty > 0 ? inspectionQty : goodQty;
+        // ✓ 검사 수량 산정: 부분완료는 실제 입력한 양품+불량 합이 "이번 회차 검사수량"이다.
+        //   (전체 남은 수량으로 강제하지 않음 — 미검사분을 불량으로 취급하는 버그 방지)
+        const effectiveInspQty = isPartial ? (goodQty + defectQty) : (availableQty > 0 ? availableQty : goodQty);
         if (effectiveInspQty === 0) {
             UIUtils.toast('검사수량이 0입니다. 양품수를 입력해주세요.', 'warning');
+            return;
+        }
+        // ✓ 부분완료 시 이번 회차 검사수량이 남은 수량을 초과할 수 없음
+        if (isPartial && effectiveInspQty > availableQty) {
+            UIUtils.toast(`이번 검사수량(${UIUtils.formatNumber(effectiveInspQty)})이 남은 수량(${UIUtils.formatNumber(availableQty)})을 초과할 수 없습니다.`, 'warning');
             return;
         }
         if (!_validateDefectQtyWithinWorkQty(defectQty, _getPaintingWorkQty(work) || effectiveInspQty)) {
@@ -7006,10 +7057,6 @@ const PaintingInspectionModule = (function() {
             return;
         }
 
-        // ✓ Case 1: 부분 완료 여부 확인
-        const isPartialCheckbox = document.getElementById('inpIsPartialInspection');
-        const isPartial = isPartialCheckbox && isPartialCheckbox.checked;
-
         // 검사 결과 1건만 저장
         await Storage.add(STORE, {
             ...baseData,
@@ -7021,20 +7068,27 @@ const PaintingInspectionModule = (function() {
 
         // ✓ Case 1: 부분 완료 처리
         if (isPartial) {
-            // 미검사 수량 = 원본 도장 수량 - 현재 검사 수량
-            const remainingQty = (work.productionQty || 0) - effectiveInspQty;
+            // ✓ 다회차 부분검사 누적 처리 — 이전 회차까지 누적 검사수량에 이번 회차를 더한다.
+            //   (이전 버그: work.productionQty - effectiveInspQty로 계산해 2회차부터 누적이 무시됨)
+            const previousInspectedQty = work.inspectedQty || 0;
+            const cumulativeInspectedQty = previousInspectedQty + effectiveInspQty;
+            const remainingQty = Math.max(0, (work.productionQty || 0) - cumulativeInspectedQty);
+            // 이번 회차로 전량 소진되면 부분 상태를 해제하고 완료로 전환
+            const nextStatus = remainingQty > 0 ? 'partial' : 'completed';
 
             // 도장 작업 업데이트
             await Storage.update(PAINTING_WORK_STORE, workId, {
-                inspectionStatus: 'partial', // 부분 검사됨
-                inspectedQty: effectiveInspQty, // 검사 완료 수량
+                inspectionStatus: nextStatus,
+                inspectedQty: cumulativeInspectedQty, // 누적 검사 완료 수량
                 remainingQty: remainingQty, // 미검사 수량
                 lastInspectionDate: inspectionDate,
                 updatedAt: new Date().toISOString()
             });
 
             // 부분 완료 메시지
-            const msg = `부분 검사 완료: ${UIUtils.formatNumber(effectiveInspQty)} EA 검사, ${UIUtils.formatNumber(remainingQty)} EA 미검사 (외관검사 대기 상태 유지)`;
+            const msg = remainingQty > 0
+                ? `부분 검사 완료: 이번 회차 ${UIUtils.formatNumber(effectiveInspQty)} EA 검사, 누적 ${UIUtils.formatNumber(cumulativeInspectedQty)} EA / 남은 ${UIUtils.formatNumber(remainingQty)} EA (외관검사 대기 상태 유지)`
+                : `부분 검사로 전량 소진되어 검사 완료 처리되었습니다. (누적 ${UIUtils.formatNumber(cumulativeInspectedQty)} EA)`;
             UIUtils.toast(msg, 'success');
         } else {
             // 해당 작업의 상태를 "검사 완료"로 변경
