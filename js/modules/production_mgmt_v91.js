@@ -17140,7 +17140,9 @@ var PaintMixModule = (function() {
             const resolvedLine = tags.length ? _pmixResolveTag(row, tags, index, rows.length) : _pmixNormalizeProcTag(
                 row.processTag || row.line || row.linkedProcess || row.process || row.paintProcess || row.paintLine || ''
             );
-            if (filterLine && resolvedLine && resolvedLine !== filterLine) return;
+            // 도료 사용등록은 현재 도장 라인과 정확히 연결된 도료만 표시한다.
+            // 태그가 비어 있는 행을 통과시키면 도장-A 작업에 도장-B 도료가 함께 나타난다.
+            if (filterLine && resolvedLine !== filterLine) return;
             [
                 ['mainId', '주제'],
                 ['thinnerId', '희석제']
@@ -17288,7 +17290,9 @@ var PaintMixModule = (function() {
     function _formHtml(data = {}, usages = []) {
         const work = data.workId ? Storage.getById(PAINT_WORK_STORE, data.workId) : null;
         const product = work ? _findProduct(work) : _findProduct(data);
-        const filterLine = (!usages.length && data.line) ? data.line : '';
+        // 작업 라인을 표준 태그로 정규화해야 "도장-A", "도장 A" 등의 표기가 섞여도
+        // 해당 공정 도료만 정확히 필터된다.
+        const filterLine = (!usages.length && data.line) ? _pmixNormalizeProcTag(data.line) : '';
         // 항상 제품 레시피 전체를 기준으로 표시하고, 저장된 usages 값을 오버레이
         const recipeComponents = _paintComponents(product, filterLine);
         let allComponents;
