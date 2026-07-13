@@ -1579,6 +1579,26 @@ var LaserWipModule = (function() {
             lotMap[key].qty = Math.max(0, Number(w.residualLotAbsoluteQty) || 0);
         });
 
+        // 과거 수기 출고 중 LOT가 누락된 기록은 총수량과 LOT 표가 어긋나지 않도록
+        // 보관 LOT의 오래된 순서(FIFO)로 차감한다. 실제 LOT를 새로 만드는 것이 아니라
+        // 기존 보관 LOT에만 차감하며, 남는 미지정 조정은 아래 별도 표시한다.
+        if (manualAdj < 0) {
+            let remainingOut = Math.abs(manualAdj);
+            Object.values(lotMap)
+                .sort(function(a, b) {
+                    return String(a.paintLot || '').localeCompare(String(b.paintLot || '')) ||
+                        String(a.injLot || '').localeCompare(String(b.injLot || ''));
+                })
+                .forEach(function(lot) {
+                    if (remainingOut <= 0) return;
+                    const available = Math.max(0, Number(lot.qty) || 0);
+                    const used = Math.min(available, remainingOut);
+                    lot.qty -= used;
+                    remainingOut -= used;
+                });
+            manualAdj = remainingOut > 0 ? -remainingOut : 0;
+        }
+
         const lots = Object.values(lotMap)
             .map(function(l) { return { paintLot: l.paintLot, injLot: l.injLot, qty: Math.round(l.qty) }; })
             .filter(function(l) { return l.qty > 0; })
