@@ -14767,17 +14767,21 @@ var PaintMixModule = (function() {
         return !!(u && u.role === 'admin');
     };
 
-    // 도료사용 등록·수정: 관리자 또는 배합작업(paint-mix) 입력 권한 보유자.
-    // 삭제·일괄정리·배합실 실사 조정은 관리자 전용으로 유지한다.
-    const _canWritePaintMix = () => {
-        if (_isAdmin()) return true;
+    const _isPaintLineOp = () => {
         try {
-            return typeof AuthModule !== 'undefined' &&
-                typeof AuthModule.canWritePage === 'function' &&
-                AuthModule.canWritePage('paint-mix');
+            const u = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
+                ? AuthModule.getCurrentUser() : null;
+            if (!u) return false;
+            const keys = Array.isArray(u.roles) ? u.roles.slice() : [];
+            if (u.role) keys.push(u.role);
+            return keys.some(k => String(k) === 'paint_line_op');
         } catch (e) { /* 무시 */ }
         return false;
     };
+
+    // 도료사용 등록·수정: 도장라인운영자(paint_line_op) 전용.
+    // 삭제·일괄정리·배합실 실사 조정은 관리자 전용으로 유지한다.
+    const _canWritePaintMix = () => _isPaintLineOp();
 
     let _curTab = 'history';
 
@@ -16196,7 +16200,7 @@ var PaintMixModule = (function() {
                     <span class="material-symbols-outlined" style="font-size:16px;">inventory_2</span> 도료 잔량
                 </button>
             </div>
-            ${active === 'history' ? `
+            ${active === 'history' && _canWritePaintMix() ? `
             <button class="btn btn-primary" onclick="PaintMixModule.openManualModal()">
                 <span class="material-symbols-outlined">science</span> 수기 등록
             </button>
@@ -16384,7 +16388,7 @@ var PaintMixModule = (function() {
                     <td>${comps.length ? `<span class="badge badge-success">${comps.length}개</span>` : '<span class="badge badge-warning">미설정</span>'}</td>
                     <td style="white-space:nowrap;">
                         ${statusBadge}
-                        <button class="btn btn-sm ${btnClass}" onclick="PaintMixModule.openFromWork('${_js(w.id)}')">${btnLabel}</button>
+                        ${_canWritePaintMix() ? `<button class="btn btn-sm ${btnClass}" onclick="PaintMixModule.openFromWork('${_js(w.id)}')">${btnLabel}</button>` : ''}
                         ${_isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="PaintMixModule.removeWork('${_js(w.id)}')">삭제</button>` : ''}
                     </td>
                 </tr>`;
@@ -16559,7 +16563,7 @@ var PaintMixModule = (function() {
 
     /* ── 배합실 잔량 신규 등록/조정 ── */
     function openMixResidualAdjust(materialId, lotNo) {
-        if (!_canWritePaintMix()) { UIUtils.toast('배합작업 입력 권한이 있는 사용자만 잔량을 조정할 수 있습니다.', 'warning'); return; }
+        if (!_canWritePaintMix()) { UIUtils.toast('도장라인운영자만 잔량을 조정할 수 있습니다.', 'warning'); return; }
         const isNew = !materialId;
         const mats = Storage.getAll(PAINT_MAT_STORE) || [];
         const current = isNew ? null : _calcMixingRoomResiduals().find(r => r.materialId === materialId && r.lotNo === lotNo);
@@ -16604,7 +16608,7 @@ var PaintMixModule = (function() {
 
     async function saveMixResidualAdjust(materialId, lotNo) {
         if (!_canWritePaintMix()) {
-            UIUtils.toast('배합작업 입력 권한이 있는 사용자만 잔량을 조정할 수 있습니다.', 'warning');
+            UIUtils.toast('도장라인운영자만 잔량을 조정할 수 있습니다.', 'warning');
             return;
         }
         const matId = materialId || document.getElementById('pmixResMatId')?.value || '';
@@ -17197,46 +17201,86 @@ var PaintMixModule = (function() {
         return out;
     }
 
-    // includeNonPositive=false(기본): 선택 가능한 LOT만(잔량 있는 LOT) — 드롭다운/소진 검증용.
-    // includeNonPositive=true: 마이너스로 내려간 LOT까지 전부 포함 — 실제 총재고 합계 계산용.
-    //   (이전엔 항상 balance>0만 반환해 "창고 재고" 합계가 마이너스 LOT를 누락시켜
-    //    도료 창고 화면의 실제 총재고와 어긋나는 근본 원인이 있었음)
-    function _lotBalances(materialId, ignoreMixId = '', includeNonPositive = false) {
-        const rows = Storage.getAll(PAINT_INV_STORE) || [];
+    // ── 도료 창고 재고 (PAINT_INVENTORY 집계 — 도료 창고 화면과 동일) ──
+    function _warehouseStockByLot(materialId) {
         const map = {};
-        rows.filter(r => r.materialId === materialId).forEach(r => {
-            if (ignoreMixId && r.paintMixId === ignoreMixId) return;
-            const prodLot = r.prodLot || r.lotNo || '미표기';
-            const key = prodLot;
-            if (!map[key]) map[key] = { prodLot, lotNo: r.lotNo || '', balance: 0 };
-            if (r.type === '출고') map[key].balance -= Number(r.quantity) || 0;
-            else map[key].balance += Number(r.quantity) || 0;
-        });
-        // ✓ 확인 대기 중인 출고 요청(도료 오픈 → 창고 출고 대기품)도 다른 배합 등록이
-        //   같은 LOT를 중복 예약하지 못하도록 가용 재고에서 미리 차감한다.
-        //   (자기 자신의 대기 요청은 ignoreMixId로 제외 — 수정 시 중복 차감 방지)
+        (Storage.getAll(PAINT_INV_STORE) || [])
+            .filter(r => r.materialId === materialId)
+            .forEach(r => {
+                const prodLot = r.prodLot || r.lotNo || '미표기';
+                if (!map[prodLot]) map[prodLot] = { prodLot, lotNo: r.lotNo || '', warehouseCans: 0 };
+                if (!map[prodLot].lotNo && r.lotNo) map[prodLot].lotNo = r.lotNo;
+                if (r.type === '출고') map[prodLot].warehouseCans -= Number(r.quantity) || 0;
+                else map[prodLot].warehouseCans += Number(r.quantity) || 0;
+            });
+        return map;
+    }
+
+    // 출고 대기(PAINT_OUTGOING_STANDBY) — 아직 창고 출고 확인 전 예약 수량
+    function _pendingOutboundByLot(materialId, ignoreMixId = '') {
+        const map = {};
         (Storage.getAll(PAINT_OUT_STANDBY_STORE) || [])
             .filter(r => r.materialId === materialId && r.status === '대기')
             .forEach(r => {
                 if (ignoreMixId && r.paintMixId === ignoreMixId) return;
                 const prodLot = r.prodLot || r.lotNo || '미표기';
-                const key = prodLot;
-                if (!map[key]) map[key] = { prodLot, lotNo: r.lotNo || '', balance: 0 };
-                map[key].balance -= Number(r.quantity) || 0;
+                map[prodLot] = (map[prodLot] || 0) + (Number(r.quantity) || 0);
             });
-        // 수입검사 합격은 입고 대기일 뿐 창고 재고가 아니다.
-        // 사용 등록에서 선택 가능한 LOT는 실제 PAINT_INVENTORY 재고로 한정한다.
-        return Object.values(map)
-            .filter(l => includeNonPositive || l.balance > 0)
+        return map;
+    }
+
+    // 창고 재고 + 출고 대기 + 오픈 가능을 LOT별로 합친 목록
+    function _lotStockRows(materialId, ignoreMixId = '', includeNonPositive = false) {
+        const whMap = _warehouseStockByLot(materialId);
+        const pendingMap = _pendingOutboundByLot(materialId, ignoreMixId);
+        const lotKeys = new Set([...Object.keys(whMap), ...Object.keys(pendingMap)]);
+        return [...lotKeys].map(prodLot => {
+            const wh = whMap[prodLot] || { prodLot, lotNo: '', warehouseCans: 0 };
+            const pendingCans = pendingMap[prodLot] || 0;
+            const warehouseCans = Number(wh.warehouseCans) || 0;
+            const availableCans = warehouseCans - pendingCans;
+            return {
+                prodLot,
+                lotNo: wh.lotNo || '',
+                warehouseCans,
+                pendingCans,
+                availableCans,
+                balance: availableCans
+            };
+        })
+            .filter(l => includeNonPositive || l.availableCans > 0 || l.warehouseCans !== 0)
             .sort((a, b) => (a.prodLot || '').localeCompare(b.prodLot || ''));
     }
 
+    function _formatLotStockDetail(lot) {
+        if (!lot || !lot.prodLot) return '';
+        const parts = [`창고 ${UIUtils.formatNumber(lot.warehouseCans || 0)}캔`];
+        if ((lot.pendingCans || 0) > 0) parts.push(`대기 ${UIUtils.formatNumber(lot.pendingCans)}캔`);
+        parts.push(`오픈가능 ${UIUtils.formatNumber(Math.max(0, lot.availableCans || 0))}캔`);
+        return parts.join(' · ');
+    }
+
+    // 드롭다운·출고 검증용 — 오픈 가능 수량(availableCans) 기준
+    function _lotBalances(materialId, ignoreMixId = '', includeNonPositive = false) {
+        return _lotStockRows(materialId, ignoreMixId, includeNonPositive)
+            .filter(l => includeNonPositive || l.availableCans > 0);
+    }
+
     function _lotOptions(materialId, selected, ignoreMixId = '') {
-        const lots = _lotBalances(materialId, ignoreMixId);
-        const hasSelected = selected && !lots.some(l => l.prodLot === selected);
+        const openLots = _lotBalances(materialId, ignoreMixId);
+        const allLots = _lotStockRows(materialId, ignoreMixId, true);
+        const hasSelected = selected && !openLots.some(l => l.prodLot === selected);
+        const selectedLot = allLots.find(l => l.prodLot === selected);
         return `<option value="">LOT 선택</option>` +
-            (hasSelected ? `<option value="${_esc(selected)}" selected>${_esc(selected)} (기존)</option>` : '') +
-            lots.map((l, i) => `<option value="${_esc(l.prodLot)}" data-balance="${l.balance}" ${l.prodLot === selected ? 'selected' : ''}>${l.fromInspection ? '[수입검사] ' : (i === 0 ? '[선입] ' : '')}${_esc(l.prodLot)}${l.fromInspection ? ` · 수입 ${UIUtils.formatNumber(l.balance)}캔` : ` · 창고 ${UIUtils.formatNumber(l.balance)}캔`}</option>`).join('');
+            (hasSelected && selectedLot ? `<option value="${_esc(selected)}" selected>${_esc(selected)} (기존 · ${_formatLotStockDetail(selectedLot)})</option>` : '') +
+            openLots.map((l, i) => {
+                const fifo = i === 0 ? '[선입] ' : '';
+                const wh = UIUtils.formatNumber(l.warehouseCans);
+                const avail = UIUtils.formatNumber(l.availableCans);
+                const pendingNote = l.pendingCans > 0 ? ` · 대기 ${UIUtils.formatNumber(l.pendingCans)}` : '';
+                const label = `${fifo}${_esc(l.prodLot)} · 창고 ${wh}캔${pendingNote} · 오픈 ${avail}캔`;
+                return `<option value="${_esc(l.prodLot)}" data-balance="${l.availableCans}" data-warehouse="${l.warehouseCans}" data-pending="${l.pendingCans}" ${l.prodLot === selected ? 'selected' : ''}>${label}</option>`;
+            }).join('');
     }
 
     function _mixRoomLotOptions(materialId, selected, ignoreMixId = '') {
@@ -17385,10 +17429,12 @@ var PaintMixModule = (function() {
             const mixRoomAvailLots = _mixRoomLots(materialId, ignoreMixId);
             const residualProdLot = c.residualProdLot || c.prodLot
                 || (mixRoomAvailLots.length > 0 ? mixRoomAvailLots[0].prodLot : '');
-            // ✓ 창고 재고 합계: 반드시 전체 LOT(마이너스 포함) 기준으로 계산해야 도료 창고 화면의
-            //   실제 총재고와 일치한다. availInvLots(양수 LOT만)로 합산하면 과소비로 마이너스가 된
-            //   LOT가 통째로 빠져 실제보다 부풀려진 재고가 표시되는 버그가 있었다.
-            const totalCans = _lotBalances(materialId, ignoreMixId, true).reduce((s, l) => s + l.balance, 0);
+            const allStockLots = _lotStockRows(materialId, ignoreMixId, true);
+            const totalWarehouseCans = allStockLots.reduce((s, l) => s + l.warehouseCans, 0);
+            const totalPendingCans = allStockLots.reduce((s, l) => s + l.pendingCans, 0);
+            const totalAvailableCans = totalWarehouseCans - totalPendingCans;
+            const selectedLotInfo = allStockLots.find(l => l.prodLot === warehouseProdLot) || null;
+            const selectedLotDetail = selectedLotInfo ? _formatLotStockDetail(selectedLotInfo) : '';
             const invRec = (Storage.getAll(PAINT_INV_STORE) || []).find(r =>
                 r.materialId === materialId && r.type !== '출고' && (r.prodLot || r.lotNo) === warehouseProdLot);
             const mfgDateVal = invRec ? (invRec.mfgDate || '') : '';
@@ -17404,9 +17450,10 @@ var PaintMixModule = (function() {
             const afterBalDisplay = (warehouseCans > 0 || residualUseG > 0 || warehouseUseG > 0) ? `${UIUtils.formatNumber(afterBal)}g` : '-';
             const totalUseG = residualUseG + warehouseUseG;
             const canOpen = warehouseCans > 0;
-            const selectedLotCans = availInvLots.find(l => l.prodLot === warehouseProdLot)?.balance || 0;
             const canAutoG = warehouseCans > 0 && packUnit > 0 ? UIUtils.formatNumber(warehouseCans * packUnit * 1000) : '';
             const remainingLot = canOpen ? (warehouseProdLot || residualProdLot) : residualProdLot;
+            const whColor = totalWarehouseCans < 0 ? 'var(--accent-red)' : (totalWarehouseCans > 0 ? 'var(--accent-blue)' : 'var(--text-muted)');
+            const availColor = totalAvailableCans < 0 ? 'var(--accent-red)' : (totalAvailableCans > 0 ? '#15803d' : 'var(--text-muted)');
             // ✓ 이 배합 기록(수정 모드)에 연결된 출고 대기/완료 상태 표시
             const outStandbyRec = (ignoreMixId && canOpen)
                 ? (Storage.getAll(PAINT_OUT_STANDBY_STORE) || []).find(r => r.paintMixId === ignoreMixId && r.materialId === materialId && r.status !== '취소')
@@ -17431,8 +17478,11 @@ var PaintMixModule = (function() {
                             </div>
                         </div>
                         <div style="margin-top:5px;font-size:0.75rem;color:var(--text-muted);">
-                            창고&nbsp;<strong style="color:${totalCans < 0 ? 'var(--accent-red)' : (totalCans > 0 ? 'var(--accent-blue)' : 'var(--text-muted)')};">${UIUtils.formatNumber(totalCans)}캔</strong>&nbsp;/ ${packUnit||'-'}kg/캔
-                            ${totalCans < 0 ? `<span title="창고 실재고가 마이너스입니다. 도료 창고 실사조정에서 확인하세요." style="color:var(--accent-red);margin-left:2px;">⚠</span>` : ''}
+                            창고&nbsp;<strong style="color:${whColor};">${UIUtils.formatNumber(totalWarehouseCans)}캔</strong>
+                            ${totalPendingCans > 0 ? `&nbsp;· 대기&nbsp;<strong style="color:#b45309;">${UIUtils.formatNumber(totalPendingCans)}캔</strong>` : ''}
+                            &nbsp;· 오픈&nbsp;<strong style="color:${availColor};">${UIUtils.formatNumber(totalAvailableCans)}캔</strong>
+                            &nbsp;/ ${packUnit||'-'}kg/캔
+                            ${totalWarehouseCans < 0 ? `<span title="창고 실재고가 마이너스입니다. 도료 창고 실사조정에서 확인하세요." style="color:var(--accent-red);margin-left:2px;">⚠</span>` : ''}
                         </div>
                     </td>
                     <!-- ② 총 사용량(g) -->
@@ -17469,17 +17519,20 @@ var PaintMixModule = (function() {
                             도료 오픈${outStatusBadge}
                         </label>
                         <div class="pmix-can-section" style="${canOpen ? '' : 'display:none;'}border-left:3px solid var(--accent-blue);padding-left:9px;">
-                            <div style="font-size:0.75rem;margin-bottom:4px;">
-                                창고 재고&nbsp;<strong style="color:${totalCans < 0 ? 'var(--accent-red)' : 'var(--accent-blue)'};">${UIUtils.formatNumber(totalCans)}캔</strong>
-                                <span style="color:var(--text-muted);">&nbsp;/ ${packUnit||'-'}kg/캔</span>
-                                ${totalCans < 0 ? `<span title="창고 실재고가 마이너스입니다. 도료 창고 실사조정에서 확인하세요." style="color:var(--accent-red);margin-left:2px;">⚠ 재고부족</span>` : ''}
-                                ${mfgDateVal ? `<span class="pmix-mfg-date" style="color:var(--text-muted);margin-left:4px;">제조: ${_esc(mfgDateVal)}</span>` : `<span class="pmix-mfg-date"></span>`}
+                            <div style="font-size:0.75rem;margin-bottom:4px;line-height:1.55;">
+                                <div>창고 재고&nbsp;<strong style="color:${whColor};">${UIUtils.formatNumber(totalWarehouseCans)}캔</strong>
+                                    <span style="color:var(--text-muted);">&nbsp;/ ${packUnit||'-'}kg/캔</span>
+                                    ${totalWarehouseCans < 0 ? `<span title="창고 실재고가 마이너스입니다. 도료 창고 실사조정에서 확인하세요." style="color:var(--accent-red);margin-left:2px;">⚠</span>` : ''}
+                                    ${mfgDateVal ? `<span class="pmix-mfg-date" style="color:var(--text-muted);margin-left:4px;">제조: ${_esc(mfgDateVal)}</span>` : `<span class="pmix-mfg-date"></span>`}
+                                </div>
+                                ${totalPendingCans > 0 ? `<div style="color:#b45309;">출고 대기&nbsp;<strong>${UIUtils.formatNumber(totalPendingCans)}캔</strong> <span style="color:var(--text-muted);font-size:0.7rem;">(다른 배합 등록 예약)</span></div>` : ''}
+                                <div>오픈 가능&nbsp;<strong style="color:${availColor};">${UIUtils.formatNumber(totalAvailableCans)}캔</strong></div>
                             </div>
                             <div style="margin-bottom:4px;">
                                 <select class="form-select pmix-warehouse-lot" style="font-size:0.78rem;width:100%;" onchange="PaintMixModule._onWarehouseLotChange(this,${i})">
                                     ${_lotOptions(materialId, warehouseProdLot, ignoreMixId)}
                                 </select>
-                                <div class="pmix-lot-bal-disp" style="font-size:0.72rem;color:var(--accent-blue);margin-top:2px;">${warehouseProdLot && selectedLotCans > 0 ? `이 LOT 재고: ${UIUtils.formatNumber(selectedLotCans)}캔` : ''}</div>
+                                <div class="pmix-lot-bal-disp" style="font-size:0.72rem;color:var(--accent-blue);margin-top:2px;line-height:1.45;">${selectedLotDetail ? selectedLotDetail : ''}</div>
                             </div>
                             <div style="display:flex;align-items:center;gap:5px;margin-bottom:4px;">
                                 <input type="number" class="form-input pmix-warehouse-cans" value="${warehouseCans || ''}" min="0" step="1"
@@ -17564,12 +17617,9 @@ var PaintMixModule = (function() {
         const materialId = row.querySelector('.pmix-material-id')?.value || '';
         const ignoreMixId = document.getElementById('pmixId')?.value || '';
         const prodLot = selectEl.value;
-        const lots = _lotBalances(materialId, ignoreMixId);
-        const lotInfo = lots.find(l => l.prodLot === prodLot);
-        const lotCans = lotInfo ? lotInfo.balance : 0;
-        // 이 LOT 재고 표시 갱신
+        const lotInfo = _lotStockRows(materialId, ignoreMixId, true).find(l => l.prodLot === prodLot);
         const balDisp = row.querySelector('.pmix-lot-bal-disp');
-        if (balDisp) balDisp.textContent = prodLot && lotCans > 0 ? `이 LOT 재고: ${UIUtils.formatNumber(lotCans)}캔` : '';
+        if (balDisp) balDisp.textContent = lotInfo ? _formatLotStockDetail(lotInfo) : '';
         // 제조일 갱신 (도료명 셀 내 .pmix-mfg-date)
         const mfgSpan = row.querySelector('.pmix-mfg-date');
         if (mfgSpan) {
@@ -17772,7 +17822,7 @@ var PaintMixModule = (function() {
 
     function openFromWork(workId) {
         if (!_canWritePaintMix()) {
-            UIUtils.toast('배합작업 입력 권한이 있는 사용자만 등록·수정할 수 있습니다.', 'warning');
+            UIUtils.toast('도장라인운영자만 등록·수정할 수 있습니다.', 'warning');
             return;
         }
         const work = Storage.getById(PAINT_WORK_STORE, workId);
@@ -17788,7 +17838,7 @@ var PaintMixModule = (function() {
 
     function openManualModal() {
         if (!_canWritePaintMix()) {
-            UIUtils.toast('배합작업 입력 권한이 있는 사용자만 등록할 수 있습니다.', 'warning');
+            UIUtils.toast('도장라인운영자만 등록할 수 있습니다.', 'warning');
             return;
         }
         UIUtils.showModal('도료 배합 수기 등록', _formHtml({ date: UIUtils.today() }), `
@@ -17886,11 +17936,12 @@ var PaintMixModule = (function() {
             if (u.warehouseCans > 0) {
                 if (!u.warehouseProdLot) return `${u.paintName || '도료'}의 출고 LOT를 선택하세요.`;
                 const lot = _lotBalances(u.materialId, ignoreMixId).find(l => l.prodLot === u.warehouseProdLot);
-                const availableCans = lot ? Number(lot.balance) || 0 : 0;
+                const availableCans = lot ? Number(lot.availableCans) || 0 : 0;
+                const warehouseCansOnHand = lot ? Number(lot.warehouseCans) || 0 : 0;
                 const available = _roundQty(availableCans * (u.packUnit || 1));
                 const required = _roundQty(u.warehouseCans * u.packUnit);
                 if (required > available) {
-                    return `${u.paintName || '도료'} LOT ${u.warehouseProdLot} 창고 재고가 부족합니다. 출고 필요: ${UIUtils.formatNumber(required)} KG, 가용: ${UIUtils.formatNumber(available)} KG (${UIUtils.formatNumber(availableCans)}캔)`;
+                    return `${u.paintName || '도료'} LOT ${u.warehouseProdLot} 오픈 가능 재고가 부족합니다. 필요: ${UIUtils.formatNumber(u.warehouseCans)}캔 (${UIUtils.formatNumber(required)} KG), 창고 ${UIUtils.formatNumber(warehouseCansOnHand)}캔 · 오픈가능 ${UIUtils.formatNumber(availableCans)}캔`;
                 }
             }
             if (u.residualUseG > 0) {
@@ -17960,7 +18011,7 @@ var PaintMixModule = (function() {
 
     async function saveNew() {
         if (!_canWritePaintMix()) {
-            UIUtils.toast('배합작업 입력 권한이 있는 사용자만 저장할 수 있습니다.', 'warning');
+            UIUtils.toast('도장라인운영자만 저장할 수 있습니다.', 'warning');
             return;
         }
         if (!_validateAllRows()) { UIUtils.toast('도료 구성 미입력 항목을 확인하세요.', 'warning'); return; }
@@ -17978,7 +18029,7 @@ var PaintMixModule = (function() {
     }
 
     function edit(id) {
-        if (!_canWritePaintMix()) { UIUtils.toast('배합작업 입력 권한이 있는 사용자만 수정할 수 있습니다.', 'warning'); return; }
+        if (!_canWritePaintMix()) { UIUtils.toast('도장라인운영자만 수정할 수 있습니다.', 'warning'); return; }
         const data = Storage.getById(STORE, id);
         if (!data) return;
         UIUtils.showModal('도료 배합 수정', _formHtml(data, data.usages || []), `
@@ -17988,7 +18039,7 @@ var PaintMixModule = (function() {
     }
 
     async function saveEdit(id) {
-        if (!_canWritePaintMix()) { UIUtils.toast('배합작업 입력 권한이 있는 사용자만 저장할 수 있습니다.', 'warning'); return; }
+        if (!_canWritePaintMix()) { UIUtils.toast('도장라인운영자만 저장할 수 있습니다.', 'warning'); return; }
         if (!_validateAllRows()) { UIUtils.toast('도료 구성 미입력 항목을 확인하세요.', 'warning'); return; }
         const data = _collectData();
         const err = _validate(data, id);
