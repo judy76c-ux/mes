@@ -2131,19 +2131,27 @@ var LaserWipModule = (function() {
                         LOT 미지정 <strong style="color:var(--accent-orange,#f59e0b);">(${UIUtils.formatNumber(e.qty)})</strong>
                     </span>`;
                 }
-                const _plJs = encodeURIComponent(e.paintLot || '');
-                const _ilJs = encodeURIComponent(e.injLot || '');
                 return `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border:1px solid var(--border-color);border-radius:999px;font-family:monospace;font-size:0.76rem;">
                     ${_esc(e.injLot)} <strong style="color:var(--accent-orange,#f59e0b);">(${UIUtils.formatNumber(e.qty)})</strong>
-                    ${canEdit ? `<button type="button" title="이 사출 LOT 보정" onclick="UIUtils.closeModal();setTimeout(()=>LaserWipModule.openAdjustResidualLotModal('${_jsArg(_keyJs)}','${_plJs}','${_ilJs}',${Number(e.qty) || 0}),80);"
-                        style="border:0;background:transparent;color:var(--accent-blue);padding:0;cursor:pointer;">✎</button>` : ''}
                 </span>`;
             }).join('');
+            const adjustableLots = group.lots.filter(function(e) { return !e.isUnassigned; });
+            const actionHtml = canEdit && adjustableLots.length
+                ? adjustableLots.map(function(e) {
+                    const _plJs = encodeURIComponent(e.paintLot || '');
+                    const _ilJs = encodeURIComponent(e.injLot || '');
+                    const label = adjustableLots.length > 1 ? `${_esc(e.injLot)} 보정` : '수량 보정';
+                    return `<button class="btn btn-sm btn-outline" style="font-size:0.72rem;padding:2px 8px;white-space:nowrap;"
+                        onclick="UIUtils.closeModal();setTimeout(()=>LaserWipModule.openAdjustResidualLotModal('${_jsArg(_keyJs)}','${_plJs}','${_ilJs}',${Number(e.qty) || 0}),80);">
+                        ${label}
+                    </button>`;
+                }).join('')
+                : '';
             return `<tr>
                 <td style="font-family:monospace;color:${group.paintLot === 'LOT 미지정' ? 'var(--text-muted)' : 'var(--accent-green)'};">${_esc(group.paintLot)}</td>
                 <td><div style="display:flex;flex-wrap:wrap;gap:4px;">${lotTags}</div></td>
                 <td style="text-align:right;color:var(--accent-orange,#f59e0b);font-weight:600;">${UIUtils.formatNumber(group.total)}</td>
-                ${canEdit ? '<td></td>' : ''}
+                ${canEdit ? `<td style="text-align:center;"><div style="display:flex;gap:4px;justify-content:center;flex-wrap:wrap;">${actionHtml}</div></td>` : ''}
             </tr>`;
         }).join('');
 

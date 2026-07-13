@@ -1618,7 +1618,7 @@ var LaserWorkModule = (function() {
             <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; gap:8px;">
                 <div style="font-size:0.75rem; color:var(--accent-green); font-weight:600; display:flex; align-items:center; gap:4px;">
                     <span class="material-symbols-outlined" style="font-size:0.9rem;">swap_vert</span>
-                    선입선출(FIFO) 순서 — 도장작업일 오래된 순으로 정렬됨
+                    선입선출(FIFO) 순서 — 도장 LOT 오래된 순으로 정렬됨
                 </div>
                 <div style="display:flex; align-items:center; gap:6px; background:rgba(37,99,235,0.08); border:1px solid rgba(37,99,235,0.2); border-radius:6px; padding:3px 10px;">
                     <span class="material-symbols-outlined" style="font-size:14px; color:var(--accent-blue);">inventory_2</span>
@@ -1632,7 +1632,6 @@ var LaserWorkModule = (function() {
                     <col style="width:86px;">
                     <col style="width:auto;">
                     <col style="width:64px;">
-                    <col style="width:108px;">
                     <col style="width:92px;">
                     <col style="width:150px;">
                     <col style="width:88px;">
@@ -1645,7 +1644,6 @@ var LaserWorkModule = (function() {
                         <th style="padding:5px 8px; text-align:left; font-size:0.78rem; border-bottom:1px solid var(--border-color);">차종</th>
                         <th style="padding:5px 8px; text-align:left; font-size:0.78rem; border-bottom:1px solid var(--border-color);">품명</th>
                         <th style="padding:5px 8px; text-align:left; font-size:0.78rem; border-bottom:1px solid var(--border-color);">컬러</th>
-                        <th style="padding:5px 8px; text-align:left; font-size:0.78rem; border-bottom:1px solid var(--border-color);">도장작업일</th>
                         <th style="padding:5px 8px; text-align:left; font-size:0.78rem; border-bottom:1px solid var(--border-color);">도장LOT</th>
                         <th style="padding:5px 8px; text-align:left; font-size:0.78rem; border-bottom:1px solid var(--border-color);">사출LOT</th>
                         <th style="padding:5px 8px; text-align:right; font-size:0.78rem; border-bottom:1px solid var(--border-color);">잔여수량</th>
@@ -1674,7 +1672,6 @@ var LaserWorkModule = (function() {
                             <td style="padding:5px 8px; white-space:nowrap;">${w.carModel || '-'}</td>
                             <td style="padding:5px 8px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${w.partName || '-'}</td>
                             <td style="padding:5px 8px; white-space:nowrap;">${w.color || '-'}</td>
-                            <td style="padding:5px 8px; white-space:nowrap; font-weight:${isFirst ? '700' : '400'}; color:${isFirst ? 'var(--accent-green)' : 'inherit'};">${w.date || '-'}</td>
                             <td style="padding:5px 8px; font-family:monospace; font-size:0.8rem; color:var(--accent-green); white-space:nowrap;">${paintLotText}</td>
                             <td style="padding:5px 8px; font-family:monospace; font-size:0.78rem; white-space:normal; overflow-wrap:anywhere;" title="${lotNoText}">${lotNoText}</td>
                             <td style="padding:5px 8px; text-align:right; font-weight:700; color:var(--accent-blue); white-space:nowrap;">${UIUtils.formatNumber(totalQty)}</td>
