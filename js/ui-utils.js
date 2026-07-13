@@ -498,6 +498,45 @@ const UIUtils = (function () {
 
     _initModalDragObserver();
 
+    // ── 컬러 별칭 정규화 (BK→black, 블랙→black 등) ───────────────────────
+    function normalizeColorAlias(c) {
+        const s = String(c || '').trim().toLowerCase().replace(/\s+/g, '');
+        const MAP = {
+            '블랙': 'black', '검정': 'black', '검은색': 'black', '흑': 'black',
+            '화이트': 'white', '흰색': 'white', '백색': 'white', '백': 'white',
+            '그레이': 'gray', '회색': 'gray', '그레': 'gray',
+            '실버': 'silver', '은색': 'silver', '은': 'silver',
+            '레드': 'red', '빨강': 'red', '빨간색': 'red', '적색': 'red',
+            '블루': 'blue', '파랑': 'blue', '파란색': 'blue', '청색': 'blue',
+            '그린': 'green', '초록': 'green', '녹색': 'green',
+            '옐로우': 'yellow', '노랑': 'yellow', '노란색': 'yellow', '황색': 'yellow',
+            '골드': 'gold', '금색': 'gold', '금': 'gold',
+            '오렌지': 'orange', '주황': 'orange', '주황색': 'orange',
+            '퍼플': 'purple', '보라': 'purple', '보라색': 'purple',
+            '브라운': 'brown', '갈색': 'brown',
+            '베이지': 'beige', '크림': 'beige',
+            'bk': 'black', 'blk': 'black',
+            'wh': 'white', 'wht': 'white',
+            'si': 'silver', 'sil': 'silver', 'sl': 'silver',
+            'gy': 'gray', 'gry': 'gray',
+            'rd': 'red',
+            'bl': 'blue', 'blu': 'blue',
+            'gn': 'green', 'grn': 'green',
+            'yl': 'yellow', 'yel': 'yellow',
+            'gd': 'gold',
+            'or': 'orange', 'org': 'orange',
+            'vi': 'purple', 'vio': 'purple',
+            'br': 'brown', 'brn': 'brown'
+        };
+        if (MAP[s] !== undefined) return MAP[s];
+        const sortedKeys = Object.keys(MAP).sort(function(a, b) { return b.length - a.length; });
+        for (let i = 0; i < sortedKeys.length; i++) {
+            const k = sortedKeys[i];
+            if (s.startsWith(k)) return MAP[k];
+        }
+        return s;
+    }
+
     // ── Public API ───────────────────────────────────────────────────────
     return {
         today,
@@ -514,7 +553,8 @@ const UIUtils = (function () {
         itemTypeBadge,
         sortCarModels,
         renderPagination,
-        makeDraggableModal
+        makeDraggableModal,
+        normalizeColorAlias
     };
 })();
 
