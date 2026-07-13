@@ -12900,7 +12900,9 @@ var PaintMixModule = (function() {
                 materialId: u.materialId,
                 lotNo: u.lotNo || u.warehouseProdLot,
                 prodLot: u.warehouseProdLot,
-                quantity: u.quantity,
+                // paint_inventory.quantity는 캔 단위다. KG 환산값을 저장하면 재고가 과다 차감된다.
+                quantity: u.warehouseCans,
+                unit: 'CAN',
                 warehouseCans: u.warehouseCans,
                 packUnit: u.packUnit,
                 source: '도료 배합 창고출고',

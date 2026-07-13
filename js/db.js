@@ -5,7 +5,7 @@
 
 const DB = (function() {
     const DB_NAME = 'ProductionMES_DB';
-    const DB_VERSION = 52;
+    const DB_VERSION = 53;
     let db = null;
 
     // 스토어 이름 - 전체 공정에 대응
@@ -28,6 +28,7 @@ const DB = (function() {
 
         // 자재 창고 (도료 등)
         PAINT_INVENTORY: 'paint_inventory', // 도료 창고 재고
+        PAINT_OUTGOING_STANDBY: 'paint_outgoing_standby', // 도료 창고 출고 대기품 (배합작업 도료오픈 → 확인 후 출고)
 
         // 도장 공정
         PAINTING_INCOMING: 'painting_incoming', // 도장 입고
@@ -235,6 +236,14 @@ const DB = (function() {
                           enum: ['입고', '출고'] },
             materialId: { required: true,  type: 'string', label: '도료 ID' },
             quantity:   { required: true,  type: 'number', label: '수량',   min: 0 }
+        },
+        [STORES.PAINT_OUTGOING_STANDBY]: {
+            date:       { required: true,  type: 'string', label: '날짜',
+                          pattern: /^\d{4}-\d{2}-\d{2}$/, patternDesc: 'YYYY-MM-DD' },
+            materialId: { required: true,  type: 'string', label: '도료 ID' },
+            quantity:   { required: true,  type: 'number', label: '수량',   min: 0 },
+            status:     { required: true,  type: 'string', label: '상태',
+                          enum: ['대기', '출고완료', '취소'] }
         },
         [STORES.PRODUCT_INVENTORY]: {
             date:     { required: true,  type: 'string', label: '날짜',
@@ -787,6 +796,19 @@ const DB = (function() {
                         keyPath: 'id'
                     });
                     store.createIndex('materialId', 'materialId', {
+                        unique: false
+                    });
+                }
+
+                // 도료 창고 출고 대기품
+                if (!database.objectStoreNames.contains(STORES.PAINT_OUTGOING_STANDBY)) {
+                    const store = database.createObjectStore(STORES.PAINT_OUTGOING_STANDBY, {
+                        keyPath: 'id'
+                    });
+                    store.createIndex('materialId', 'materialId', {
+                        unique: false
+                    });
+                    store.createIndex('status', 'status', {
                         unique: false
                     });
                 }
