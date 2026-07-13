@@ -16780,14 +16780,15 @@ var PaintMixModule = (function() {
         }
         tbody.innerHTML = rows.map(r => {
             const p = _packState(r.balance, r.packUnit);
-            const badge = p.status === '소량' ? 'warning' : (p.status === '개봉' ? 'info' : 'success');
+            const badge = p.status === '재고부족' ? 'error' : (p.status === '소량' ? 'warning' : (p.status === '개봉' ? 'info' : 'success'));
+            const balColor = r.balance < 0 ? 'var(--accent-red)' : 'var(--accent-blue)';
             return `
-                <tr>
+                <tr${r.balance < 0 ? ' style="background:rgba(239,68,68,0.06);"' : ''}>
                     <td>${_esc(r.supplier || '-')}</td>
                     <td><strong>${_esc(r.paintName || '-')}</strong><div style="font-size:0.75rem;color:var(--text-muted);">${_esc([r.paintType, r.paintSpec].filter(Boolean).join(' · '))}</div></td>
                     <td style="font-family:monospace;">${_esc(r.prodLot || '-')}</td>
                     <td>${r.packUnit ? `${UIUtils.formatNumber(r.packUnit)} KG/캔` : '-'}</td>
-                    <td style="text-align:right;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(r.balance)} KG</td>
+                    <td style="text-align:right;font-weight:700;color:${balColor};">${UIUtils.formatNumber(r.balance)} KG</td>
                     <td>${p.packText}</td>
                     <td style="text-align:right;">${p.openText}</td>
                     <td>${UIUtils.badge(p.status, badge)}</td>
@@ -16811,6 +16812,11 @@ var PaintMixModule = (function() {
     function _packState(balance, packUnit) {
         const qty = _roundQty(balance);
         const unit = _num(packUnit);
+        // ✓ 재고가 0 이하로 내려간 LOT(과소비/보정 오류)는 포장 수 계산이 무의미하므로
+        //   별도의 "재고부족" 상태로 표시한다 (숨기지 않고 그대로 노출해 발견/보정 가능하게 함).
+        if (qty <= 0) {
+            return { packText: '-', openText: `${UIUtils.formatNumber(qty)} KG`, status: '재고부족' };
+        }
         if (!unit) {
             return { packText: '-', openText: `${UIUtils.formatNumber(qty)} KG`, status: '확인' };
         }
@@ -16852,10 +16858,14 @@ var PaintMixModule = (function() {
             if (r.type === '출고') map[key].balance -= _num(r.quantity);
             else map[key].balance += _num(r.quantity);
         });
+        // ✓ 잔량이 0을 초과하는 정상 LOT뿐 아니라 과소비/보정 오류로 재고가 마이너스로
+        //   내려간 LOT도 그대로 노출한다. (이전엔 balance>0만 남겨 실사조정 화면에서
+        //   문제 LOT를 아예 찾을 수도 고칠 수도 없었음 — 근본 원인 중 하나)
         return Object.values(map)
             .map(r => ({ ...r, balance: _roundQty(r.balance) }))
-            .filter(r => r.balance > 0)
+            .filter(r => r.balance !== 0)
             .sort((a, b) =>
+                (a.balance < 0 && b.balance >= 0) ? -1 : (a.balance >= 0 && b.balance < 0) ? 1 :
                 (a.supplier || '').localeCompare(b.supplier || '', 'ko') ||
                 (a.paintName || '').localeCompare(b.paintName || '', 'ko') ||
                 (a.prodLot || '').localeCompare(b.prodLot || '')
@@ -17171,7 +17181,11 @@ var PaintMixModule = (function() {
         return out;
     }
 
-    function _lotBalances(materialId, ignoreMixId = '') {
+    // includeNonPositive=false(기본): 선택 가능한 LOT만(잔량 있는 LOT) — 드롭다운/소진 검증용.
+    // includeNonPositive=true: 마이너스로 내려간 LOT까지 전부 포함 — 실제 총재고 합계 계산용.
+    //   (이전엔 항상 balance>0만 반환해 "창고 재고" 합계가 마이너스 LOT를 누락시켜
+    //    도료 창고 화면의 실제 총재고와 어긋나는 근본 원인이 있었음)
+    function _lotBalances(materialId, ignoreMixId = '', includeNonPositive = false) {
         const rows = Storage.getAll(PAINT_INV_STORE) || [];
         const map = {};
         rows.filter(r => r.materialId === materialId).forEach(r => {
@@ -17185,7 +17199,7 @@ var PaintMixModule = (function() {
         // 수입검사 합격은 입고 대기일 뿐 창고 재고가 아니다.
         // 사용 등록에서 선택 가능한 LOT는 실제 PAINT_INVENTORY 재고로 한정한다.
         return Object.values(map)
-            .filter(l => l.balance > 0)
+            .filter(l => includeNonPositive || l.balance > 0)
             .sort((a, b) => (a.prodLot || '').localeCompare(b.prodLot || ''));
     }
 
@@ -17343,8 +17357,10 @@ var PaintMixModule = (function() {
             const mixRoomAvailLots = _mixRoomLots(materialId, ignoreMixId);
             const residualProdLot = c.residualProdLot || c.prodLot
                 || (mixRoomAvailLots.length > 0 ? mixRoomAvailLots[0].prodLot : '');
-            // 창고 재고: balance는 이미 캔 단위 (paint_inventory.quantity 단위 = 캔)
-            const totalCans = availInvLots.reduce((s, l) => s + l.balance, 0);
+            // ✓ 창고 재고 합계: 반드시 전체 LOT(마이너스 포함) 기준으로 계산해야 도료 창고 화면의
+            //   실제 총재고와 일치한다. availInvLots(양수 LOT만)로 합산하면 과소비로 마이너스가 된
+            //   LOT가 통째로 빠져 실제보다 부풀려진 재고가 표시되는 버그가 있었다.
+            const totalCans = _lotBalances(materialId, ignoreMixId, true).reduce((s, l) => s + l.balance, 0);
             const invRec = (Storage.getAll(PAINT_INV_STORE) || []).find(r =>
                 r.materialId === materialId && r.type !== '출고' && (r.prodLot || r.lotNo) === warehouseProdLot);
             const mfgDateVal = invRec ? (invRec.mfgDate || '') : '';
@@ -17378,7 +17394,8 @@ var PaintMixModule = (function() {
                             </div>
                         </div>
                         <div style="margin-top:5px;font-size:0.75rem;color:var(--text-muted);">
-                            창고&nbsp;<strong style="color:${totalCans > 0 ? 'var(--accent-blue)' : 'var(--text-muted)'};">${UIUtils.formatNumber(totalCans)}캔</strong>&nbsp;/ ${packUnit||'-'}kg/캔
+                            창고&nbsp;<strong style="color:${totalCans < 0 ? 'var(--accent-red)' : (totalCans > 0 ? 'var(--accent-blue)' : 'var(--text-muted)')};">${UIUtils.formatNumber(totalCans)}캔</strong>&nbsp;/ ${packUnit||'-'}kg/캔
+                            ${totalCans < 0 ? `<span title="창고 실재고가 마이너스입니다. 도료 창고 실사조정에서 확인하세요." style="color:var(--accent-red);margin-left:2px;">⚠</span>` : ''}
                         </div>
                     </td>
                     <!-- ② 총 사용량(g) -->
@@ -17416,8 +17433,9 @@ var PaintMixModule = (function() {
                         </label>
                         <div class="pmix-can-section" style="${canOpen ? '' : 'display:none;'}border-left:3px solid var(--accent-blue);padding-left:9px;">
                             <div style="font-size:0.75rem;margin-bottom:4px;">
-                                창고 재고&nbsp;<strong style="color:var(--accent-blue);">${UIUtils.formatNumber(totalCans)}캔</strong>
+                                창고 재고&nbsp;<strong style="color:${totalCans < 0 ? 'var(--accent-red)' : 'var(--accent-blue)'};">${UIUtils.formatNumber(totalCans)}캔</strong>
                                 <span style="color:var(--text-muted);">&nbsp;/ ${packUnit||'-'}kg/캔</span>
+                                ${totalCans < 0 ? `<span title="창고 실재고가 마이너스입니다. 도료 창고 실사조정에서 확인하세요." style="color:var(--accent-red);margin-left:2px;">⚠ 재고부족</span>` : ''}
                                 ${mfgDateVal ? `<span class="pmix-mfg-date" style="color:var(--text-muted);margin-left:4px;">제조: ${_esc(mfgDateVal)}</span>` : `<span class="pmix-mfg-date"></span>`}
                             </div>
                             <div style="margin-bottom:4px;">
@@ -17859,7 +17877,11 @@ var PaintMixModule = (function() {
                 materialId: u.materialId,
                 lotNo: u.lotNo || u.warehouseProdLot,
                 prodLot: u.warehouseProdLot,
-                quantity: u.quantity,
+                // paint_inventory.quantity의 단위는 "캔"이다.
+                // u.quantity는 warehouseCans × packUnit(KG)라서 저장하면
+                // 1캔 출고가 15/16/18캔 출고로 기록되어 마이너스 재고가 발생한다.
+                quantity: u.warehouseCans,
+                unit: 'CAN',
                 warehouseCans: u.warehouseCans,
                 packUnit: u.packUnit,
                 source: '도료 배합 창고출고',
