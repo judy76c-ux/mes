@@ -1910,9 +1910,14 @@ const PaintInventoryModule = (function() {
     }
 
     function _isAdminUser() {
+        if (typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function') {
+            return AuthModule.isAdminUser();
+        }
         if (typeof AuthModule === 'undefined' || !AuthModule.getCurrentUser) return false;
         const user = AuthModule.getCurrentUser();
-        return !!(user && user.role === 'admin');
+        if (!user) return false;
+        const roles = [...(Array.isArray(user.roles) ? user.roles : []), user.role].filter(Boolean).map(String);
+        return roles.includes('admin');
     }
 
     // 도료 LOT 재고 보정 권한: 관리자 또는 도료 창고 입력 권한 보유자(생산관리자 등)
@@ -1946,18 +1951,16 @@ const PaintInventoryModule = (function() {
     }
 
     function _requireBulkAdmin(onPass) {
-        if (_isAdminUser()) {
+        if (_canEditPaintStock()) {
             onPass();
             return;
         }
-        if (typeof AuthModule !== 'undefined' && AuthModule.checkSettingsAuth) {
-            AuthModule.checkSettingsAuth(function() {
-                if (_isAdminUser()) onPass();
-                else UIUtils.toast('도료 창고 일괄 등록 및 설정은 관리자만 가능합니다.', 'warning');
-            });
+        const user = typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser ? AuthModule.getCurrentUser() : null;
+        if (!user && typeof AuthModule !== 'undefined' && AuthModule.showLoginModal) {
+            AuthModule.showLoginModal(function() { _requireBulkAdmin(onPass); });
             return;
         }
-        UIUtils.toast('도료 창고 일괄 등록 및 설정은 관리자만 가능합니다.', 'warning');
+        UIUtils.toast('도료 창고 입력 권한이 있는 사용자만 일괄 등록·수정할 수 있습니다.', 'warning');
     }
 
     function _parseBulkRows(text) {
@@ -2305,8 +2308,8 @@ const PaintInventoryModule = (function() {
     }
 
     async function _bulkSave() {
-        if (!_isAdminUser()) {
-            UIUtils.toast('도료 창고 일괄 등록 및 설정은 관리자만 가능합니다.', 'warning');
+        if (!_canEditPaintStock()) {
+            UIUtils.toast('도료 창고 입력 권한이 있는 사용자만 일괄 등록·수정할 수 있습니다.', 'warning');
             return;
         }
         const records = PaintInventoryModule._bulkRecords || [];

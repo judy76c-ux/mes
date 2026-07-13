@@ -455,6 +455,38 @@ var LaserJigMasterModule = (function () {
             : Number(value || 0).toLocaleString('ko-KR');
     }
 
+    function _isAdminUser() {
+        if (typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function') {
+            return AuthModule.isAdminUser();
+        }
+        const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
+            ? AuthModule.getCurrentUser() : null;
+        if (!user) return false;
+        const roles = [...(Array.isArray(user.roles) ? user.roles : []), user.role].filter(Boolean).map(String);
+        return roles.includes('admin');
+    }
+
+    function _canWriteJigMaster() {
+        if (_isAdminUser()) return true;
+        try {
+            return typeof AuthModule !== 'undefined' &&
+                typeof AuthModule.canWritePage === 'function' &&
+                AuthModule.canWritePage('laser-jig-master');
+        } catch (e) { return false; }
+    }
+
+    function _requireWrite() {
+        if (_canWriteJigMaster()) return true;
+        UIUtils.toast('레이져 지그대장 입력 권한이 없습니다.', 'warning');
+        return false;
+    }
+
+    function _requireAdmin() {
+        if (_isAdminUser()) return true;
+        UIUtils.toast('관리자만 실행할 수 있습니다.', 'warning');
+        return false;
+    }
+
     async function _load() {
         try {
             const rows = await Storage.getConfigValue(CONFIG_KEY);
@@ -722,7 +754,7 @@ var LaserJigMasterModule = (function () {
     }
 
     async function openModal(id) {
-        if (id && !_requireAdmin()) return;
+        if (!_requireWrite()) return;
         const rows = await _load();
         const row = id ? rows.find(function (item) { return item.id === id; }) : null;
 
@@ -769,7 +801,7 @@ var LaserJigMasterModule = (function () {
     }
 
     async function save(id) {
-        if (id && !_requireAdmin()) return;
+        if (!_requireWrite()) return;
         const rows = await _load();
         const products = _collectSelectedProducts();
         const payload = {
@@ -1047,15 +1079,34 @@ var LaserJigCleaningModule = (function () {
     }
 
     function _isAdmin() {
+        if (typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function') {
+            return AuthModule.isAdminUser();
+        }
         const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
-            ? AuthModule.getCurrentUser()
-            : null;
-        return !!(user && user.role === 'admin');
+            ? AuthModule.getCurrentUser() : null;
+        if (!user) return false;
+        const roles = [...(Array.isArray(user.roles) ? user.roles : []), user.role].filter(Boolean).map(String);
+        return roles.includes('admin');
+    }
+
+    function _canWriteCleaning() {
+        if (_isAdmin()) return true;
+        try {
+            return typeof AuthModule !== 'undefined' &&
+                typeof AuthModule.canWritePage === 'function' &&
+                AuthModule.canWritePage('laser-jig-cleaning');
+        } catch (e) { return false; }
+    }
+
+    function _requireWrite() {
+        if (_canWriteCleaning()) return true;
+        UIUtils.toast('지그 세척 입력 권한이 없습니다.', 'warning');
+        return false;
     }
 
     function _requireAdmin() {
         if (_isAdmin()) return true;
-        UIUtils.toast('관리자만 접근할 수 있습니다.', 'warning');
+        UIUtils.toast('관리자만 삭제할 수 있습니다.', 'warning');
         return false;
     }
 
@@ -1128,7 +1179,7 @@ var LaserJigCleaningModule = (function () {
                     <td>${_esc(row.note || '-')}</td>
                     <td>
                         <button class="btn btn-sm btn-outline" onclick="LaserJigCleaningModule.openModal('${row.id}')">수정</button>
-                        <button class="btn btn-sm btn-danger" onclick="LaserJigCleaningModule.remove('${row.id}')">삭제</button>
+                        ${_isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="LaserJigCleaningModule.remove('${row.id}')">삭제</button>` : ''}
                     </td>
                 </tr>
             `;
@@ -1136,6 +1187,7 @@ var LaserJigCleaningModule = (function () {
     }
 
     async function openModal(id) {
+        if (!_requireWrite()) return;
         const rows = await _load();
         const row = id ? rows.find(function (item) { return item.id === id; }) : null;
         const jigs = await _jigs();
@@ -1180,6 +1232,7 @@ var LaserJigCleaningModule = (function () {
     }
 
     async function save(id) {
+        if (!_requireWrite()) return;
         const rows = await _load();
         const payload = {
             date: document.getElementById('ljcDate').value,
@@ -1215,6 +1268,7 @@ var LaserJigCleaningModule = (function () {
     }
 
     async function remove(id) {
+        if (!_requireAdmin()) return;
         UIUtils.confirm('이 세척 기록을 삭제하시겠습니까?', async function () {
             const rows = await _load();
             await _save(rows.filter(function (item) { return item.id !== id; }));
@@ -1264,6 +1318,38 @@ var LaserEquipmentHistoryModule = (function () {
 
     async function _save(rows) {
         await Storage.setConfigValue(CONFIG_KEY, rows);
+    }
+
+    function _isAdmin() {
+        if (typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function') {
+            return AuthModule.isAdminUser();
+        }
+        const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
+            ? AuthModule.getCurrentUser() : null;
+        if (!user) return false;
+        const roles = [...(Array.isArray(user.roles) ? user.roles : []), user.role].filter(Boolean).map(String);
+        return roles.includes('admin');
+    }
+
+    function _canWriteEquipmentHistory() {
+        if (_isAdmin()) return true;
+        try {
+            return typeof AuthModule !== 'undefined' &&
+                typeof AuthModule.canWritePage === 'function' &&
+                AuthModule.canWritePage('laser-equipment-history');
+        } catch (e) { return false; }
+    }
+
+    function _requireWrite() {
+        if (_canWriteEquipmentHistory()) return true;
+        UIUtils.toast('장비 점검/수리 입력 권한이 없습니다.', 'warning');
+        return false;
+    }
+
+    function _requireAdmin() {
+        if (_isAdmin()) return true;
+        UIUtils.toast('관리자만 삭제할 수 있습니다.', 'warning');
+        return false;
     }
 
     async function render(container) {
@@ -1327,7 +1413,7 @@ var LaserEquipmentHistoryModule = (function () {
                     <td style="text-align:right;">${_esc(row.cost || 0)}</td>
                     <td>
                         <button class="btn btn-sm btn-outline" onclick="LaserEquipmentHistoryModule.openModal('${row.id}')">수정</button>
-                        <button class="btn btn-sm btn-danger" onclick="LaserEquipmentHistoryModule.remove('${row.id}')">삭제</button>
+                        ${_isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="LaserEquipmentHistoryModule.remove('${row.id}')">삭제</button>` : ''}
                     </td>
                 </tr>
             `;
@@ -1335,6 +1421,7 @@ var LaserEquipmentHistoryModule = (function () {
     }
 
     async function openModal(id) {
+        if (!_requireWrite()) return;
         const rows = await _load();
         const row = id ? rows.find(function (item) { return item.id === id; }) : null;
 
@@ -1379,6 +1466,7 @@ var LaserEquipmentHistoryModule = (function () {
     }
 
     async function save(id) {
+        if (!_requireWrite()) return;
         const rows = await _load();
         const payload = {
             date: document.getElementById('lehDate').value,
@@ -1415,6 +1503,7 @@ var LaserEquipmentHistoryModule = (function () {
     }
 
     async function remove(id) {
+        if (!_requireAdmin()) return;
         UIUtils.confirm('이 장비 이력을 삭제하시겠습니까?', async function () {
             const rows = await _load();
             await _save(rows.filter(function (item) { return item.id !== id; }));

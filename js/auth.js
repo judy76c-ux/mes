@@ -811,6 +811,12 @@ const AuthModule = (function () {
         return isPageWriteGranted(_roleKeys(user), pageId);
     }
 
+    /* 관리자 여부 (roles 배열 + 대표 role 모두 확인) */
+    function isAdminUser() {
+        const user = getCurrentUser();
+        return !!(user && _hasRole(user, 'admin'));
+    }
+
     /* ── 기본 관리자 계정 보장 ───────────────────────────────── */
     async function ensureAdminUser() {
         if (_getUsers().length === 0) {
@@ -1245,6 +1251,7 @@ const AuthModule = (function () {
         getCurrentUser,
         canWrite,
         canWritePage,
+        isAdminUser,
         ensureAdminUser,
         doLogin,
         logout,

@@ -2433,23 +2433,12 @@ const PaintingWorkModule = (function() {
             UIUtils.toast('로그인 후 실적을 입력할 수 있습니다.', 'warning');
             return false;
         }
-        // 사용자의 모든 역할(roles 배열 + 대표 role)을 검사한다. 키가 커스텀이어도 라벨로 보조 매칭.
-        var roleKeys = Array.isArray(user.roles) ? user.roles.slice() : [];
-        if (user.role) roleKeys.push(user.role);
-        var roleDefs = (typeof AuthModule !== 'undefined' && Array.isArray(AuthModule.ROLES)) ? AuthModule.ROLES : [];
-        var allowed = roleKeys.some(function (rk) {
-            var key = String(rk || '');
-            if (WORK_INPUT_ROLES.indexOf(key) >= 0) return true;
-            var def = roleDefs.find(function (d) { return d.key === key; });
-            var label = String((def && def.label) || key).replace(/\s/g, '');
-            // '도장라인운영자' / '생산관리자' 라벨 매칭
-            return /도장.*운영/.test(label) || /생산.*관리/.test(label);
-        });
-        if (!allowed) {
-            UIUtils.toast('실적 입력 권한이 없습니다. (도장라인운영자·생산관리자만 가능)', 'warning');
-            return false;
+        if (typeof AuthModule !== 'undefined' && typeof AuthModule.canWritePage === 'function' &&
+            AuthModule.canWritePage('painting-work')) {
+            return user;
         }
-        return user;
+        UIUtils.toast('도장 작업 입력 권한이 없습니다.', 'warning');
+        return false;
     }
 
     function openAddModal(prefill) {
@@ -4713,9 +4702,15 @@ const PaintingInspectionModule = (function() {
         }
     }
 
+    function _canWriteInspection() {
+        if (typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function' && AuthModule.isAdminUser()) return true;
+        return typeof AuthModule !== 'undefined' &&
+            typeof AuthModule.canWritePage === 'function' &&
+            AuthModule.canWritePage('painting-inspection');
+    }
+
     function _canUploadNonconformStandard() {
-        const user = _currentUser();
-        return !!(user && STANDARD_UPLOAD_ROLES.includes(String(user.role || '')));
+        return _canWriteInspection();
     }
 
     async function _loadNonconformStandardImage() {
@@ -6559,6 +6554,10 @@ const PaintingInspectionModule = (function() {
     }
 
     async function _saveInspectionDraft(workId) {
+        if (!_canWriteInspection()) {
+            UIUtils.toast('도장 검사 입력 권한이 없습니다.', 'warning');
+            return;
+        }
         if (!workId) { UIUtils.toast('임시 저장할 검사 대상이 없습니다.', 'warning'); return; }
         const work = Storage.getById(PAINTING_WORK_STORE, workId);
         if (!work) { UIUtils.toast('도장 작업을 찾을 수 없습니다.', 'warning'); return; }
@@ -6922,6 +6921,10 @@ const PaintingInspectionModule = (function() {
 
     // 검사 데이터 저장 함수
     async function _saveInspection(workId) {
+        if (!_canWriteInspection()) {
+            UIUtils.toast('도장 검사 입력 권한이 없습니다.', 'warning');
+            return;
+        }
         const work = Storage.getById(PAINTING_WORK_STORE, workId);
         if (!work) {
             UIUtils.toast('도장 작업을 찾을 수 없습니다.', 'error');
@@ -7802,17 +7805,16 @@ const PaintingInspectionModule = (function() {
             </div>` : ''}
 
             ${(() => {
-                const _cu = AuthModule && AuthModule.getCurrentUser ? AuthModule.getCurrentUser() : null;
-                const _isAdmin = !!(_cu && (_cu.role === 'admin' || (Array.isArray(_cu.roles) && _cu.roles.includes('admin'))));
-                if (!_isAdmin) return '';
-                return `<div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
-                    <button class="btn btn-sm btn-primary" onclick="document.getElementById('${popupId}').remove();PaintingInspectionModule.openEditInspectionModal('${d.id}')">
+                const canWrite = _canWriteInspection();
+                const isAdmin = typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function' && AuthModule.isAdminUser();
+                if (!canWrite && !isAdmin) return '';
+                const editBtn = canWrite ? `<button class="btn btn-sm btn-primary" onclick="document.getElementById('${popupId}').remove();PaintingInspectionModule.openEditInspectionModal('${d.id}')">
                         <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">edit</span> 편집
-                    </button>
-                    <button class="btn btn-sm btn-danger" onclick="document.getElementById('${popupId}').remove();PaintingInspectionModule._deleteInspection('${d.id}')">
+                    </button>` : '';
+                const deleteBtn = isAdmin ? `<button class="btn btn-sm btn-danger" onclick="document.getElementById('${popupId}').remove();PaintingInspectionModule._deleteInspection('${d.id}')">
                         <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">delete</span> 삭제
-                    </button>
-                </div>`;
+                    </button>` : '';
+                return `<div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">${editBtn}${deleteBtn}</div>`;
             })()}
         `;
 
@@ -7838,6 +7840,10 @@ const PaintingInspectionModule = (function() {
 
     // 검사 실적 수정 모달 열기
     function openEditInspectionModal(inspectionId) {
+        if (!_canWriteInspection()) {
+            UIUtils.toast('도장 검사 입력 권한이 없습니다.', 'warning');
+            return;
+        }
         const inspection = Storage.getById(STORE, inspectionId);
         if (!inspection) {
             UIUtils.toast('검사 실적을 찾을 수 없습니다.', 'error');
@@ -8653,6 +8659,7 @@ const PaintingInspectionModule = (function() {
         _updateGoodQty,
         _updateDefectTotal,
         _calculateInspectionTime,
+        _canWriteInspection,
         _saveInspection,
         _saveInspectionDraft,
         _clearInspectionDraft,

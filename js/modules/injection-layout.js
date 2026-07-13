@@ -263,21 +263,15 @@ var InjectionLayoutModule = (function () {
         if (typeof AuthModule === 'undefined' || !AuthModule.getCurrentUser) return false;
         const user = AuthModule.getCurrentUser();
         if (!user) return false;
-        const roles = [...(Array.isArray(user.roles) ? user.roles : []), user.role]
-            .filter(Boolean).map(String);
-        if (roles.includes('admin') || roles.includes('prod_manager')) return true;
-        const roleDefs = AuthModule.ROLES || AuthModule.getRoles && AuthModule.getRoles() || [];
-        return roles.some(rk => {
-            const def = (Array.isArray(roleDefs) ? roleDefs : []).find(d => d.key === rk);
-            const label = String((def && def.label) || rk).replace(/\s/g, '');
-            return label === '관리자' || /생산관리/.test(label);
-        });
+        if (typeof AuthModule.isAdminUser === 'function' && AuthModule.isAdminUser()) return true;
+        if (typeof AuthModule.canWritePage === 'function' && AuthModule.canWritePage('injection-layout')) return true;
+        return false;
     }
 
     function _guardEdit() {
         if (_editAllowed) return true;
         if (typeof UIUtils !== 'undefined' && UIUtils.toast) {
-            UIUtils.toast('레이아웃 편집은 관리자·생산관리자만 가능합니다.', 'warning');
+            UIUtils.toast('보관창고 레이아웃 입력 권한이 없습니다.', 'warning');
         }
         return false;
     }

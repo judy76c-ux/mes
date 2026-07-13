@@ -17,23 +17,12 @@ var LaserWipModule = (function() {
         return roles.some(role => String(role || '') === 'admin');
     }
 
-    // 수량 수정(수기 입고/출고/조정) 권한: 관리자(admin) 또는 레이져운영자(laser_op).
-    // 커스텀 역할일 수 있어 역할 키('laser_op')와 라벨('레이져운영자')을 함께 매칭한다. (삭제는 관리자 전용 유지)
     function _canEditWip() {
         try {
             if (_isAdmin()) return true;
-            const u = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? AuthModule.getCurrentUser() : null;
-            if (!u) return false;
-            const roleKeys = Array.isArray(u.roles) ? u.roles.slice() : [];
-            if (u.role) roleKeys.push(u.role);
-            const roleDefs = (typeof AuthModule !== 'undefined' && Array.isArray(AuthModule.ROLES)) ? AuthModule.ROLES : [];
-            return roleKeys.some(function(rk) {
-                const key = String(rk || '');
-                if (key === 'laser_op') return true;
-                const def = roleDefs.find(function(d) { return d.key === key; });
-                const label = String((def && def.label) || key).replace(/\s/g, '');
-                return /레이[져저].*운영/.test(label);
-            });
+            return typeof AuthModule !== 'undefined' &&
+                typeof AuthModule.canWritePage === 'function' &&
+                AuthModule.canWritePage('laser-wip');
         } catch (e) { /* 무시 */ }
         return false;
     }

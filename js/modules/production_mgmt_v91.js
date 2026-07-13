@@ -14767,6 +14767,18 @@ var PaintMixModule = (function() {
         return !!(u && u.role === 'admin');
     };
 
+    // 도료사용 등록·수정: 관리자 또는 배합작업(paint-mix) 입력 권한 보유자.
+    // 삭제·일괄정리·배합실 실사 조정은 관리자 전용으로 유지한다.
+    const _canWritePaintMix = () => {
+        if (_isAdmin()) return true;
+        try {
+            return typeof AuthModule !== 'undefined' &&
+                typeof AuthModule.canWritePage === 'function' &&
+                AuthModule.canWritePage('paint-mix');
+        } catch (e) { /* 무시 */ }
+        return false;
+    };
+
     let _curTab = 'history';
 
     /* ─── 탭 타일 카드 네비게이션 ──────────────────────────────── */
@@ -14923,9 +14935,9 @@ var PaintMixModule = (function() {
                 <td style="text-align:right;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(totalG)}g</td>
                 <td>${_esc(m.operator||'-')}</td>
                 <td>
-                    ${_isAdmin() ? `
-                    <button class="btn btn-sm btn-outline" onclick="PaintMixModule.edit('${_js(m.id)}')">수정</button>
-                    <button class="btn btn-sm btn-danger" onclick="PaintMixModule.remove('${_js(m.id)}')">삭제</button>` : '-'}
+                    ${_canWritePaintMix() ? `<button class="btn btn-sm btn-outline" onclick="PaintMixModule.edit('${_js(m.id)}')">수정</button>` : ''}
+                    ${_isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="PaintMixModule.remove('${_js(m.id)}')">삭제</button>` : ''}
+                    ${_canWritePaintMix() || _isAdmin() ? '' : '-'}
                 </td>
             </tr>`;
         }).join('');
@@ -16430,9 +16442,9 @@ var PaintMixModule = (function() {
                     <td style="text-align:right;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(totalG)}g${totalCans > 0 ? `<br><span style="font-size:0.75rem;color:var(--text-muted);">출고 ${totalCans}캔</span>` : ''}</td>
                     <td>${_esc(m.operator || '-')}</td>
                     <td style="white-space:nowrap;">
-                        ${_isAdmin() ? `
-                        <button class="btn btn-sm btn-outline" onclick="PaintMixModule.edit('${_js(m.id)}')">수정</button>
-                        <button class="btn btn-sm btn-danger" onclick="PaintMixModule.remove('${_js(m.id)}')">삭제</button>` : '-'}
+                        ${_canWritePaintMix() ? `<button class="btn btn-sm btn-outline" onclick="PaintMixModule.edit('${_js(m.id)}')">수정</button>` : ''}
+                        ${_isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="PaintMixModule.remove('${_js(m.id)}')">삭제</button>` : ''}
+                        ${_canWritePaintMix() || _isAdmin() ? '' : '-'}
                     </td>
                 </tr>`;
         }).join('');
@@ -16545,9 +16557,9 @@ var PaintMixModule = (function() {
         return (Storage.getAll(STORE) || []).filter(d => d._docKind === 'paint_residual_adjust');
     }
 
-    /* ── 배합실 잔량 신규 등록/조정 (관리자 전용) ── */
+    /* ── 배합실 잔량 신규 등록/조정 ── */
     function openMixResidualAdjust(materialId, lotNo) {
-        if (!_isAdmin()) { UIUtils.toast('관리자만 조정할 수 있습니다.', 'warning'); return; }
+        if (!_canWritePaintMix()) { UIUtils.toast('배합작업 입력 권한이 있는 사용자만 잔량을 조정할 수 있습니다.', 'warning'); return; }
         const isNew = !materialId;
         const mats = Storage.getAll(PAINT_MAT_STORE) || [];
         const current = isNew ? null : _calcMixingRoomResiduals().find(r => r.materialId === materialId && r.lotNo === lotNo);
@@ -16591,7 +16603,10 @@ var PaintMixModule = (function() {
     }
 
     async function saveMixResidualAdjust(materialId, lotNo) {
-        if (!_isAdmin()) return;
+        if (!_canWritePaintMix()) {
+            UIUtils.toast('배합작업 입력 권한이 있는 사용자만 잔량을 조정할 수 있습니다.', 'warning');
+            return;
+        }
         const matId = materialId || document.getElementById('pmixResMatId')?.value || '';
         if (!matId) { UIUtils.toast('도료를 선택하세요.', 'warning'); return; }
         const finalLotNo = (document.getElementById('pmixResLotNo')?.value || '').trim() || '미기입';
@@ -16656,7 +16671,7 @@ var PaintMixModule = (function() {
                 <div class="card-header">
                     <h4><span class="material-symbols-outlined">inventory_2</span> 도료별 잔량 요약</h4>
                     <div style="display:flex;gap:6px;">
-                        ${_isAdmin() ? `
+                        ${_canWritePaintMix() ? `
                         <button class="btn btn-sm btn-outline" onclick="PaintMixModule.openMixResidualAdjust(null,'')">
                             <span class="material-symbols-outlined" style="font-size:16px;">add</span> 잔량 신규 등록
                         </button>` : ''}
@@ -16674,7 +16689,7 @@ var PaintMixModule = (function() {
                                 <th style="text-align:right;">총 입고(g)</th>
                                 <th style="text-align:right;">총 사용(g)</th>
                                 <th style="text-align:right;">잔량(g)</th>
-                                ${_isAdmin() ? '<th>관리</th>' : ''}
+                                ${_canWritePaintMix() ? '<th>관리</th>' : ''}
                             </tr></thead>
                             <tbody>
                                 ${mixResiduals.map(r => {
@@ -16689,7 +16704,7 @@ var PaintMixModule = (function() {
                                         <td style="text-align:right;">${UIUtils.formatNumber(r.totalWithdrawG)}</td>
                                         <td style="text-align:right;">${UIUtils.formatNumber(r.totalUsedG)}</td>
                                         <td style="text-align:right;font-weight:700;color:${color};">${UIUtils.formatNumber(r.residualG)}</td>
-                                        ${_isAdmin() ? `<td style="white-space:nowrap;"><button class="btn btn-sm btn-outline" onclick="PaintMixModule.openMixResidualAdjust('${_js(r.materialId)}','${_js(r.lotNo)}')">조정</button></td>` : ''}
+                                        ${_canWritePaintMix() ? `<td style="white-space:nowrap;"><button class="btn btn-sm btn-outline" onclick="PaintMixModule.openMixResidualAdjust('${_js(r.materialId)}','${_js(r.lotNo)}')">조정</button></td>` : ''}
                                     </tr>`;
                                 }).join('')}
                             </tbody>
@@ -17756,6 +17771,10 @@ var PaintMixModule = (function() {
     }
 
     function openFromWork(workId) {
+        if (!_canWritePaintMix()) {
+            UIUtils.toast('배합작업 입력 권한이 있는 사용자만 등록·수정할 수 있습니다.', 'warning');
+            return;
+        }
         const work = Storage.getById(PAINT_WORK_STORE, workId);
         if (!work) return;
         const existing = _mixes().find(m => m.workId === workId);
@@ -17768,6 +17787,10 @@ var PaintMixModule = (function() {
     }
 
     function openManualModal() {
+        if (!_canWritePaintMix()) {
+            UIUtils.toast('배합작업 입력 권한이 있는 사용자만 등록할 수 있습니다.', 'warning');
+            return;
+        }
         UIUtils.showModal('도료 배합 수기 등록', _formHtml({ date: UIUtils.today() }), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="PaintMixModule.saveNew()">등록</button>
@@ -17936,6 +17959,10 @@ var PaintMixModule = (function() {
     }
 
     async function saveNew() {
+        if (!_canWritePaintMix()) {
+            UIUtils.toast('배합작업 입력 권한이 있는 사용자만 저장할 수 있습니다.', 'warning');
+            return;
+        }
         if (!_validateAllRows()) { UIUtils.toast('도료 구성 미입력 항목을 확인하세요.', 'warning'); return; }
         const data = _collectData();
         const err = _validate(data);
@@ -17951,7 +17978,7 @@ var PaintMixModule = (function() {
     }
 
     function edit(id) {
-        if (!_isAdmin()) { UIUtils.toast('관리자만 수정할 수 있습니다.', 'warning'); return; }
+        if (!_canWritePaintMix()) { UIUtils.toast('배합작업 입력 권한이 있는 사용자만 수정할 수 있습니다.', 'warning'); return; }
         const data = Storage.getById(STORE, id);
         if (!data) return;
         UIUtils.showModal('도료 배합 수정', _formHtml(data, data.usages || []), `
@@ -17961,6 +17988,7 @@ var PaintMixModule = (function() {
     }
 
     async function saveEdit(id) {
+        if (!_canWritePaintMix()) { UIUtils.toast('배합작업 입력 권한이 있는 사용자만 저장할 수 있습니다.', 'warning'); return; }
         if (!_validateAllRows()) { UIUtils.toast('도료 구성 미입력 항목을 확인하세요.', 'warning'); return; }
         const data = _collectData();
         const err = _validate(data, id);

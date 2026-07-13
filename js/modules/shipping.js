@@ -2457,28 +2457,29 @@ const ProductWarehouseModule = (function() {
     }
 
     function _isAdminUser() {
+        if (typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function') {
+            return AuthModule.isAdminUser();
+        }
         if (typeof AuthModule === 'undefined' || !AuthModule.getCurrentUser) return false;
         const user = AuthModule.getCurrentUser();
-        return !!(user && user.role === 'admin');
+        if (!user) return false;
+        const roles = [...(Array.isArray(user.roles) ? user.roles : []), user.role].filter(Boolean).map(String);
+        return roles.includes('admin');
     }
 
     function _requireProductAdmin(onPass, message) {
-        if (_isAdminUser()) {
-            onPass();
-            return;
-        }
-        if (typeof AuthModule !== 'undefined' && AuthModule.checkSettingsAuth) {
-            AuthModule.checkSettingsAuth(function() {
-                if (_isAdminUser()) onPass();
-                else UIUtils.toast(message || '제품 창고 재고 등록과 수정은 관리자만 가능합니다.', 'warning');
-            });
-            return;
-        }
-        UIUtils.toast(message || '제품 창고 재고 등록과 수정은 관리자만 가능합니다.', 'warning');
+        _requireProductWrite(onPass, message || '제품 창고 입력 권한이 없습니다.');
     }
 
     function _requireBulkAdmin(onPass) {
-        _requireProductAdmin(onPass, '제품 창고 일괄 등록 및 수정은 관리자만 가능합니다.');
+        _requireProductWrite(onPass, '제품 창고 입력 권한이 있는 사용자만 일괄 등록·수정할 수 있습니다.');
+    }
+
+    function _canWriteProductWarehouse() {
+        if (_isAdminUser()) return true;
+        return typeof AuthModule !== 'undefined' &&
+            typeof AuthModule.canWritePage === 'function' &&
+            AuthModule.canWritePage('product-warehouse');
     }
 
     function _requireProductWrite(onPass, message) {
@@ -2491,7 +2492,7 @@ const ProductWarehouseModule = (function() {
             UIUtils.toast('로그인이 필요합니다.', 'warning');
             return;
         }
-        if (_isAdminUser() || (typeof AuthModule !== 'undefined' && AuthModule.canWritePage && AuthModule.canWritePage('product-warehouse'))) {
+        if (_isAdminUser() || _canWriteProductWarehouse()) {
             onPass();
             return;
         }
@@ -2793,8 +2794,8 @@ const ProductWarehouseModule = (function() {
     }
 
     function _openLotAdjust(keyEnc, lotNo, inDate, currentQty) {
-        if (!_isAdminUser()) {
-            UIUtils.toast('수량 보정은 관리자만 가능합니다.', 'warning');
+        if (!_canWriteProductWarehouse()) {
+            UIUtils.toast('제품 창고 입력 권한이 있는 사용자만 수량을 보정할 수 있습니다.', 'warning');
             return;
         }
         const key = decodeURIComponent(keyEnc);
@@ -2827,8 +2828,8 @@ const ProductWarehouseModule = (function() {
     }
 
     async function _saveLotAdjust() {
-        if (!_isAdminUser()) {
-            UIUtils.toast('수량 보정은 관리자만 가능합니다.', 'warning');
+        if (!_canWriteProductWarehouse()) {
+            UIUtils.toast('제품 창고 입력 권한이 있는 사용자만 수량을 보정할 수 있습니다.', 'warning');
             return;
         }
         const keyEnc = (document.getElementById('pwLotAdjKeyEnc') || {}).value || '';
@@ -3266,8 +3267,8 @@ const ProductWarehouseModule = (function() {
     }
 
     async function _bulkSave() {
-        if (!_isAdminUser()) {
-            UIUtils.toast('제품 창고 일괄 등록 및 수정은 관리자만 가능합니다.', 'warning');
+        if (!_canWriteProductWarehouse()) {
+            UIUtils.toast('제품 창고 입력 권한이 있는 사용자만 일괄 등록·수정할 수 있습니다.', 'warning');
             return;
         }
         const records = ProductWarehouseModule._bulkRecords;
@@ -3450,8 +3451,8 @@ const ProductWarehouseModule = (function() {
     }
 
     async function saveStockAdjustment() {
-        if (!_isAdminUser()) {
-            UIUtils.toast('제품 창고 현재고 보정은 관리자만 가능합니다.', 'warning');
+        if (!_canWriteProductWarehouse()) {
+            UIUtils.toast('제품 창고 입력 권한이 있는 사용자만 현재고를 보정할 수 있습니다.', 'warning');
             return;
         }
         const reason = _normalizeText((document.getElementById('pwAdjustReason') || {}).value);

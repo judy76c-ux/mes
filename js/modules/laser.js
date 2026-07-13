@@ -254,26 +254,12 @@ var LaserWorkModule = (function() {
         }
     }
 
-    // 레이져 작업이력 수정 버튼 노출 대상: 관리자(admin) 또는 레이져 운영자만.
-    // 계정 역할이 기본 키('laser_op')가 아닌 커스텀 역할일 수 있어, 역할 키와 라벨('레이져운영자')을 함께 매칭한다.
     function _canWriteLaserWork() {
         try {
             if (_isAdminUser()) return true;
-            const user = (typeof AuthModule !== 'undefined' && typeof AuthModule.getCurrentUser === 'function')
-                ? AuthModule.getCurrentUser()
-                : null;
-            if (!user) return false;
-            const roleKeys = Array.isArray(user.roles) ? user.roles.slice() : [];
-            if (user.role) roleKeys.push(user.role);
-            const roleDefs = (typeof AuthModule !== 'undefined' && Array.isArray(AuthModule.ROLES)) ? AuthModule.ROLES : [];
-            return roleKeys.some(function(rk) {
-                const key = String(rk || '');
-                if (key === 'laser_op') return true;
-                const def = roleDefs.find(function(d) { return d.key === key; });
-                const label = String((def && def.label) || key).replace(/\s/g, '');
-                // '레이져운영자' / '레이저운영자' 등 라벨 매칭
-                return /레이[져저].*운영/.test(label);
-            });
+            return typeof AuthModule !== 'undefined' &&
+                typeof AuthModule.canWritePage === 'function' &&
+                AuthModule.canWritePage('laser-work');
         } catch (e) { /* 무시 */ }
         return false;
     }
@@ -2556,23 +2542,12 @@ var LaserInspectionModule = (function() {
         return !!(user && (user.role === 'admin' || (Array.isArray(user.roles) && user.roles.includes('admin'))));
     }
 
-    // 검사 이력 수정·삭제: 관리자(admin) 또는 레이져운영자(laser_op)만.
-    // 커스텀 역할은 라벨('레이져운영자')로도 매칭한다.
     function _canEditInspection() {
         try {
             if (_isAdminUser()) return true;
-            const user = _currentUser();
-            if (!user) return false;
-            const roleKeys = Array.isArray(user.roles) ? user.roles.slice() : [];
-            if (user.role) roleKeys.push(user.role);
-            const roleDefs = (typeof AuthModule !== 'undefined' && Array.isArray(AuthModule.ROLES)) ? AuthModule.ROLES : [];
-            return roleKeys.some(function(rk) {
-                const key = String(rk || '');
-                if (key === 'laser_op') return true;
-                const def = roleDefs.find(function(d) { return d.key === key; });
-                const label = String((def && def.label) || key).replace(/\s/g, '');
-                return /레이[져저].*운영/.test(label);
-            });
+            return typeof AuthModule !== 'undefined' &&
+                typeof AuthModule.canWritePage === 'function' &&
+                AuthModule.canWritePage('laser-inspection');
         } catch (e) { /* 무시 */ }
         return false;
     }

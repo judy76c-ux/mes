@@ -3073,18 +3073,26 @@ var InjectionWarehouseModule = (function() {
     }
 
     function _requireBulkAdmin(onPass) {
-        if (_isAdminUser()) {
+        if (_canManageStockData()) {
             onPass();
             return;
         }
-        if (typeof AuthModule !== 'undefined' && AuthModule.checkSettingsAuth) {
-            AuthModule.checkSettingsAuth(function() {
-                if (_isAdminUser()) onPass();
-                else UIUtils.toast('재고 일괄 등록/수정은 관리자만 가능합니다.', 'warning');
-            });
+        const user = typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser ? AuthModule.getCurrentUser() : null;
+        if (!user && typeof AuthModule !== 'undefined' && AuthModule.showLoginModal) {
+            AuthModule.showLoginModal(function() { _requireBulkAdmin(onPass); });
             return;
         }
-        UIUtils.toast('재고 일괄 등록/수정은 관리자만 가능합니다.', 'warning');
+        UIUtils.toast('사출 창고 입력 권한이 있는 사용자만 일괄 등록·수정할 수 있습니다.', 'warning');
+    }
+
+    function _canEditReservedPlan() {
+        if (_isAdminUser()) return true;
+        try {
+            if (typeof AuthModule !== 'undefined' && typeof AuthModule.canWritePage === 'function') {
+                return AuthModule.canWritePage('production-plan') || AuthModule.canWritePage('injection-warehouse');
+            }
+        } catch (e) { /* 무시 */ }
+        return false;
     }
 
     function openBulkPasteModal() {
@@ -3212,8 +3220,8 @@ var InjectionWarehouseModule = (function() {
     }
 
     async function confirmBulkPaste() {
-        if (!_isAdminUser()) {
-            UIUtils.toast('재고 일괄 등록/수정은 관리자만 가능합니다.', 'warning');
+        if (!_canManageStockData()) {
+            UIUtils.toast('사출 창고 입력 권한이 있는 사용자만 일괄 등록·수정할 수 있습니다.', 'warning');
             return;
         }
 
@@ -4278,23 +4286,23 @@ var InjectionWarehouseModule = (function() {
         const { pendingPlans, inProgressPlans, pendingTotal, inProgressTotal } = detail;
         const totalReserved = pendingTotal + inProgressTotal;
         const isAdmin = _isAdminUser();
+        const canEditPlan = _canEditReservedPlan();
 
-        // 관리자 전용 예약 수정/삭제 버튼 (생산계획 레코드 직접 수정)
         function _adminButtons(p) {
-            if (!isAdmin) return '';
-            return `
-                <span style="display:flex;gap:2px;margin-left:2px;flex-shrink:0;">
+            if (!canEditPlan && !isAdmin) return '';
+            const editBtn = canEditPlan ? `
                     <button type="button" title="수량 수정"
                         onclick="event.stopPropagation();InjectionWarehouseModule.editReservedPlan('${p.id}', ${Number(p.planQty) || 0})"
                         style="border:none;background:none;cursor:pointer;padding:1px;color:var(--accent-blue);display:flex;">
                         <span class="material-symbols-outlined" style="font-size:14px;">edit</span>
-                    </button>
+                    </button>` : '';
+            const deleteBtn = isAdmin ? `
                     <button type="button" title="삭제"
                         onclick="event.stopPropagation();InjectionWarehouseModule.removeReservedPlan('${p.id}')"
                         style="border:none;background:none;cursor:pointer;padding:1px;color:var(--accent-red);display:flex;">
                         <span class="material-symbols-outlined" style="font-size:14px;">delete</span>
-                    </button>
-                </span>`;
+                    </button>` : '';
+            return `<span style="display:flex;gap:2px;margin-left:2px;flex-shrink:0;">${editBtn}${deleteBtn}</span>`;
         }
 
         // 계획 목록 행 생성
@@ -4436,8 +4444,8 @@ var InjectionWarehouseModule = (function() {
 
     // ── 예약(생산계획) 수량 수정/삭제 — 관리자 전용 ──────────────────
     function editReservedPlan(id, currentQty) {
-        if (!_isAdminUser()) {
-            UIUtils.toast('예약 수정은 관리자만 가능합니다.', 'warning');
+        if (!_canEditReservedPlan()) {
+            UIUtils.toast('생산계획 또는 사출 창고 입력 권한이 있는 사용자만 예약 수량을 수정할 수 있습니다.', 'warning');
             return;
         }
         UIUtils.showModal('예약 수량 수정', `
