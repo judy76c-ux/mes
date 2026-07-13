@@ -5526,21 +5526,6 @@ const PaintingInspectionModule = (function() {
                             </div>
                         </div>
 
-                        <!-- 검사자 -->
-                        <div class="card">
-                            <div class="card-body" style="padding:12px;">
-                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                                    <h5 style="margin:0; font-size:0.85rem; color:var(--text-primary);">검사자 <span style="color:var(--accent-red);">*</span> <span style="font-size:0.68rem; font-weight:400; color:var(--text-muted);">(자주검사자만 · 1명 이상 필수)</span></h5>
-                                    <button class="btn btn-sm btn-primary" onclick="PaintingInspectionModule._addInspectorField()" id="addInspectorBtn" style="gap:4px; padding:4px 8px; font-size:0.78rem;">
-                                        <span class="material-symbols-outlined" style="font-size:14px;">add</span> 추가
-                                    </button>
-                                </div>
-                                <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;" id="inspectorContainer">
-                                    <!-- 동적으로 생성됨 -->
-                                </div>
-                            </div>
-                        </div>
-
                         <!-- 버튼 -->
                         <div style="display:flex; flex-direction:column; gap:6px;">
                             <button class="btn btn-primary" onclick="PaintingInspectionModule._saveInspection('${workId}')" style="width:100%; justify-content:center;">
@@ -5627,6 +5612,21 @@ const PaintingInspectionModule = (function() {
                                 </div>
                             </div>
                             ` : ''}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 검사자 (불량 유형 아래, 가로 배치) -->
+                <div class="card">
+                    <div class="card-body" style="padding:12px 14px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                            <h5 style="margin:0; font-size:0.85rem; color:var(--text-primary);">검사자 <span style="color:var(--accent-red);">*</span> <span style="font-size:0.68rem; font-weight:400; color:var(--text-muted);">(자주검사자만 · 1명 이상 필수)</span></h5>
+                            <button class="btn btn-sm btn-primary" onclick="PaintingInspectionModule._addInspectorField()" id="addInspectorBtn" style="gap:4px; padding:4px 8px; font-size:0.78rem;">
+                                <span class="material-symbols-outlined" style="font-size:14px;">add</span> 추가
+                            </button>
+                        </div>
+                        <div style="display:flex; flex-wrap:wrap; gap:10px;" id="inspectorContainer">
+                            <!-- 동적으로 생성됨 -->
                         </div>
                     </div>
                 </div>
@@ -5848,9 +5848,9 @@ const PaintingInspectionModule = (function() {
         const idx = container.inspectorCount;
 
         const fieldHTML = `
-            <div class="form-group" id="inspectorGroup${idx}" style="margin:0;">
+            <div class="form-group" id="inspectorGroup${idx}" style="margin:0; flex:1 1 160px; min-width:140px; max-width:220px;">
                 <label class="form-label" style="font-size:0.72rem;">검사자${idx}</label>
-                <select id="inspector${idx}" class="form-select" style="padding:5px 6px; border:1px solid var(--border); font-size:0.85rem;" onchange="PaintingInspectionModule._syncInspectorOptions()">
+                <select id="inspector${idx}" class="form-select" style="width:100%; padding:5px 6px; border:1px solid var(--border); font-size:0.85rem;" onchange="PaintingInspectionModule._syncInspectorOptions()">
                     <option value="">선택 안함</option>
                     ${inspectors.length === 0
                         ? `<option value="" disabled>자주검사자 미등록 (자격인증 관리 › 검사자 관리)</option>`
