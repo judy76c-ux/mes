@@ -785,7 +785,11 @@ const PaintInventoryModule = (function() {
                 return p || l || '무표기';
             },
             whoFn: function(d) {
-                return d.type === '입고' ? (d.receivedBy || '-') : (d.issuedBy || '-');
+                // ✓ 작업자(선택 등록)와 로그인 처리자를 함께 남긴다 — 서로 다르면 둘 다 표시.
+                const worker = d.type === '입고' ? (d.receivedBy || '') : (d.issuedBy || '');
+                const processedBy = d.processedBy || '';
+                if (worker && processedBy && worker !== processedBy) return `${worker} (처리: ${processedBy})`;
+                return worker || processedBy || '-';
             }
         });
 
@@ -906,6 +910,7 @@ const PaintInventoryModule = (function() {
             return;
         }
 
+        const loginUser = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? (AuthModule.getCurrentUser() || {}) : {};
         const data = {
             date:       date,
             type:       '출고',
@@ -916,6 +921,8 @@ const PaintInventoryModule = (function() {
             mfgDate:    '',
             expDate:    '',
             memo:       memo,
+            issuedBy:   loginUser.displayName || loginUser.username || '',
+            processedBy: loginUser.displayName || loginUser.username || '',
             sourceInspectionId: ''
         };
 
@@ -1005,6 +1012,7 @@ const PaintInventoryModule = (function() {
 
         // 입고 조정 시 LOT의 제조/유효기한을 기존 입고 기록에서 승계
         const refIn = lotLogs.find(l => l.type === '입고') || {};
+        const loginUser = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? (AuthModule.getCurrentUser() || {}) : {};
 
         const data = {
             date:       date,
@@ -1017,6 +1025,7 @@ const PaintInventoryModule = (function() {
             expDate:    diff > 0 ? (refIn.expDate || '') : '',
             memo:       '[재고수정] ' + (memo || `${UIUtils.formatNumber(available)} → ${UIUtils.formatNumber(newQty)}`),
             adjust:     true,
+            processedBy: loginUser.displayName || loginUser.username || '',
             sourceInspectionId: ''
         };
 
@@ -2360,6 +2369,10 @@ const PaintInventoryModule = (function() {
     }
 
     async function saveNew(type) {
+        // ✓ 실제 작업자(입고자/출고자 드롭다운, 선택)와 별개로, 지금 이 화면에서
+        //   처리 버튼을 누른 로그인 사용자를 항상 감사이력용으로 함께 남긴다.
+        const loginUser = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? (AuthModule.getCurrentUser() || {}) : {};
+        const processedBy = loginUser.displayName || loginUser.username || '';
         const data = {
             date: document.getElementById('addPaintInvDate').value,
             type: type,
@@ -2371,6 +2384,7 @@ const PaintInventoryModule = (function() {
             inspDate: (document.getElementById('addPaintInvInspDate') || {}).value || '',
             receivedBy: type === '입고' ? ((document.getElementById('addPaintInvReceivedBy') || {}).value || '') : '',
             issuedBy: type === '출고' ? ((document.getElementById('addPaintInvIssuedBy') || {}).value || '') : '',
+            processedBy,
             sourceInspectionId: (type === '입고' && window._sourceInspectionId) ? window._sourceInspectionId : ''
         };
 
@@ -4325,6 +4339,10 @@ const PaintInventoryModule = (function() {
         _saveProdConfirm,
         cancelPaintInspectionStandby,
         cancelAllPaintInspectionStandby,
+        renderPaintOutgoingStandby,
+        confirmPaintOutgoingStandby,
+        cancelPaintOutgoingStandby,
+        cancelAllPaintOutgoingStandby,
         renderSupplierTiles,
         showPaintDetail,
         _openDetailOutgoing,

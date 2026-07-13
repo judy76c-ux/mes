@@ -17836,6 +17836,8 @@ var PaintMixModule = (function() {
             UIUtils.toast('조정할 차이가 없습니다.', 'info');
             return;
         }
+        const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? (AuthModule.getCurrentUser() || {}) : {};
+        const processedBy = user.displayName || user.username || '';
         await Storage.add(PAINT_INV_STORE, {
             date: document.getElementById('pmixAdjustDate')?.value || UIUtils.today(),
             type: delta > 0 ? '입고' : '출고',
@@ -17846,7 +17848,8 @@ var PaintMixModule = (function() {
             source: '도료 잔량 실사 조정',
             note: document.getElementById('pmixAdjustNote')?.value.trim() || '',
             adjustedFromBalance: row.balance,
-            adjustedToBalance: actual
+            adjustedToBalance: actual,
+            processedBy
         });
         UIUtils.closeModal();
         UIUtils.toast('도료 잔량이 조정되었습니다.', 'success');
