@@ -975,6 +975,8 @@ var LaserWorkModule = (function() {
     }
 
     function renderStats(data) {
+        // 호출 경로가 추가되더라도 재고 수기조정이 생산실적 통계에 섞이지 않도록 이중 방어
+        data = (data || []).filter(d => !_isInventoryCorrectionRecord(d));
         const total = data.reduce((s, d) => s + (Number(d.quantity) || 0), 0);
         const inspections = Storage.getAll(DB.STORES.LASER_INSPECTIONS) || [];
         const inspectedIds = new Set(inspections.map(item => item.workLogId).filter(Boolean));
@@ -1011,6 +1013,8 @@ var LaserWorkModule = (function() {
         const tbody = document.getElementById('lwTableBody');
         const isAdmin = _isAdminUser();
         const canEdit = _canWriteLaserWork();
+        // 잔량/재공 수기 입출고·보정은 재고 감사 이력이며 레이저 작업일지가 아니다.
+        data = (data || []).filter(d => !_isInventoryCorrectionRecord(d));
         if (data.length === 0) {
             tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:40px;color:var(--text-muted);">기록이 없습니다.</td></tr>`;
             return;
@@ -1364,7 +1368,7 @@ var LaserWorkModule = (function() {
         }
     }
 
-    function previewStandbyQty(idx, lotIdx, value) {
+    function previewStandbyQty(idx, value) {
         const w = _standbyItems[idx];
         if (!w) return;
         _selectedCarModel = w.carModel || '';
@@ -1540,7 +1544,7 @@ var LaserWorkModule = (function() {
                     <col style="width:64px;">
                     <col style="width:108px;">
                     <col style="width:92px;">
-                    <col style="width:92px;">
+                    <col style="width:150px;">
                     <col style="width:88px;">
                     <col style="width:120px;">
                     <col style="width:88px;">
@@ -1553,8 +1557,8 @@ var LaserWorkModule = (function() {
                         <th style="padding:5px 8px; text-align:left; font-size:0.78rem; border-bottom:1px solid var(--border-color);">컬러</th>
                         <th style="padding:5px 8px; text-align:left; font-size:0.78rem; border-bottom:1px solid var(--border-color);">도장작업일</th>
                         <th style="padding:5px 8px; text-align:left; font-size:0.78rem; border-bottom:1px solid var(--border-color);">도장LOT</th>
-                        <th style="padding:5px 8px; text-align:right; font-size:0.78rem; border-bottom:1px solid var(--border-color);">LOT수량</th>
                         <th style="padding:5px 8px; text-align:left; font-size:0.78rem; border-bottom:1px solid var(--border-color);">사출LOT</th>
+                        <th style="padding:5px 8px; text-align:right; font-size:0.78rem; border-bottom:1px solid var(--border-color);">잔여수량</th>
                         <th style="padding:5px 8px; text-align:right; font-size:0.78rem; border-bottom:1px solid var(--border-color);">작업수량</th>
                         <th style="padding:5px 8px; text-align:center; font-size:0.78rem; border-bottom:1px solid var(--border-color);">선택</th>
                     </tr>
@@ -1567,55 +1571,59 @@ var LaserWorkModule = (function() {
                         const orderBadge = isFirst
                             ? `<span style="color:var(--accent-green);font-weight:700;font-size:0.8rem;">① 선출</span>`
                             : `<span style="color:#f59e0b;font-size:0.75rem;">⚠ 후순위</span>`;
+                        // ✓ 같은 도장LOT(도장작업)은 사출LOT가 여러 개여도 한 행으로 묶고,
+                        //   사출LOT는 참고용 목록으로만 표기한다 (선택/입력은 도장LOT 단위로 1번만).
                         const lots = Array.isArray(w.lots) && w.lots.length > 0 ? w.lots : [{ lotNo: w.lotNo || '', qty: Number(w.productionQty) || 0 }];
-                        return lots.map((lot, lotIdx) => {
-                            const inputId = `lwLotPickQty_${globalIdx}_${lotIdx}`;
-                            const paintLotText = w.date ? w.date.replace(/-/g,'').slice(2,8) : '-';
-                            return `
-                            <tr style="${rowBg}" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='${rowBg}'">
-                                <td style="padding:5px 8px; text-align:center; white-space:nowrap;">${lotIdx === 0 ? orderBadge : ''}</td>
-                                <td style="padding:5px 8px; white-space:nowrap;">${lotIdx === 0 ? (w.carModel || '-') : ''}</td>
-                                <td style="padding:5px 8px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${lotIdx === 0 ? (w.partName || '-') : ''}</td>
-                                <td style="padding:5px 8px; white-space:nowrap;">${lotIdx === 0 ? (w.color || '-') : ''}</td>
-                                <td style="padding:5px 8px; white-space:nowrap; font-weight:${lotIdx === 0 && isFirst ? '700' : '400'}; color:${lotIdx === 0 && isFirst ? 'var(--accent-green)' : 'inherit'};">${lotIdx === 0 ? (w.date || '-') : ''}</td>
-                                <td style="padding:5px 8px; font-family:monospace; font-size:0.8rem; color:var(--accent-green); white-space:nowrap;">${lotIdx === 0 ? paintLotText : ''}</td>
-                                <td style="padding:5px 8px; text-align:right; font-weight:700; color:var(--accent-blue); white-space:nowrap;">${UIUtils.formatNumber(lot.qty || 0)}</td>
-                                <td style="padding:5px 8px; font-family:monospace; font-size:0.8rem; white-space:nowrap;">${lot.lotNo || '-'}</td>
-                                <td style="padding:5px 8px; text-align:right;">
-                                    <input id="${inputId}" type="text" class="form-input" inputmode="numeric" enterkeyhint="done" data-ime-dismiss="true" value="" placeholder="입력" style="height:30px;text-align:right;padding:4px 8px;"
-                                           oninput="this.value=this.value.replace(/[^0-9]/g,'');LaserWorkModule.previewStandbyQty(${globalIdx}, ${lotIdx}, this.value)">
-                                </td>
-                                <td style="padding:5px 8px; text-align:center; white-space:nowrap;">
-                                    <button class="btn btn-sm btn-primary" onclick="LaserWorkModule.selectStandbyItem(${globalIdx}, ${lotIdx}, '${inputId}')">LOT 선택</button>
-                                </td>
-                            </tr>`;
-                        }).join('');
+                        const totalQty = lots.reduce((s, l) => s + (Number(l.qty) || 0), 0);
+                        const lotNoText = [...new Set(lots.map(l => l.lotNo).filter(Boolean))].join(', ') || '-';
+                        const paintLotText = w.date ? w.date.replace(/-/g,'').slice(2,8) : '-';
+                        const inputId = `lwLotPickQty_${globalIdx}`;
+                        return `
+                        <tr style="${rowBg}" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='${rowBg}'">
+                            <td style="padding:5px 8px; text-align:center; white-space:nowrap;">${orderBadge}</td>
+                            <td style="padding:5px 8px; white-space:nowrap;">${w.carModel || '-'}</td>
+                            <td style="padding:5px 8px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${w.partName || '-'}</td>
+                            <td style="padding:5px 8px; white-space:nowrap;">${w.color || '-'}</td>
+                            <td style="padding:5px 8px; white-space:nowrap; font-weight:${isFirst ? '700' : '400'}; color:${isFirst ? 'var(--accent-green)' : 'inherit'};">${w.date || '-'}</td>
+                            <td style="padding:5px 8px; font-family:monospace; font-size:0.8rem; color:var(--accent-green); white-space:nowrap;">${paintLotText}</td>
+                            <td style="padding:5px 8px; font-family:monospace; font-size:0.78rem; white-space:normal; overflow-wrap:anywhere;" title="${lotNoText}">${lotNoText}</td>
+                            <td style="padding:5px 8px; text-align:right; font-weight:700; color:var(--accent-blue); white-space:nowrap;">${UIUtils.formatNumber(totalQty)}</td>
+                            <td style="padding:5px 8px; text-align:right;">
+                                <input id="${inputId}" type="text" class="form-input" inputmode="numeric" enterkeyhint="done" data-ime-dismiss="true" value="" placeholder="입력" style="height:30px;text-align:right;padding:4px 8px;"
+                                       oninput="this.value=this.value.replace(/[^0-9]/g,'');LaserWorkModule.previewStandbyQty(${globalIdx}, this.value)">
+                            </td>
+                            <td style="padding:5px 8px; text-align:center; white-space:nowrap;">
+                                <button class="btn btn-sm btn-primary" onclick="LaserWorkModule.selectStandbyItem(${globalIdx}, '${inputId}')">LOT 선택</button>
+                            </td>
+                        </tr>`;
                     }).join('')}
                 </tbody>
             </table>`;
     }
 
     // 대기품 항목 선택 → 폼 자동 채움 + 선입선출 경고
-    function selectStandbyItem(idx, lotIdx = 0, qtyInputId = '') {
+    // ✓ 도장LOT(도장작업) 단위로 선택한다. 사출LOT가 여러 개여도 pickQty를 사출LOT 순서대로
+    //   배분해 _selectedLots에 기록만 남기고(선입선출), 사용자는 도장LOT 1건으로만 조작한다.
+    function selectStandbyItem(idx, qtyInputId) {
         const w = _standbyItems[idx];
         if (!w) return;
         const lots = Array.isArray(w.lots) && w.lots.length > 0 ? w.lots : [{ lotNo: w.lotNo || '', qty: Number(w.productionQty) || 0 }];
-        const lot = lots[lotIdx] || lots[0] || {};
-        const maxQty = Number(lot.qty) || Number(w.productionQty) || 0;
+        const maxQty = lots.reduce((sum, l) => sum + (Number(l.qty) || 0), 0);
         const pickQty = Number((document.getElementById(qtyInputId) || {}).value) || 0;
         if (pickQty <= 0) {
-            UIUtils.toast('LOT 작업수량을 입력하세요.', 'warning');
+            UIUtils.toast('작업수량을 입력하세요.', 'warning');
             return;
         }
         if (pickQty > maxQty) {
-            UIUtils.toast(`LOT 잔량(${UIUtils.formatNumber(maxQty)}EA)보다 큰 수량은 선택할 수 없습니다.`, 'warning');
+            UIUtils.toast(`잔여수량(${UIUtils.formatNumber(maxQty)}EA)보다 큰 수량은 선택할 수 없습니다.`, 'warning');
             return;
         }
+        // 이 도장LOT(도장작업일 기준)에서 이미 선택된 수량 합계 — 사출LOT 구분 없이 전체로 체크
         const sameSelectedQty = _selectedLots
-            .filter(row => (row.paintDate || '') === (w.date || '') && (row.lotNo || '') === (lot.lotNo || w.lotNo || ''))
+            .filter(row => (row.paintDate || '') === (w.date || ''))
             .reduce((sum, row) => sum + (Number(row.qty) || 0), 0);
         if (sameSelectedQty + pickQty > maxQty) {
-            UIUtils.toast(`이미 선택한 수량을 포함하면 LOT 잔량(${UIUtils.formatNumber(maxQty)}EA)을 초과합니다.`, 'warning');
+            UIUtils.toast(`이미 선택한 수량을 포함하면 잔여수량(${UIUtils.formatNumber(maxQty)}EA)을 초과합니다.`, 'warning');
             return;
         }
 
@@ -1637,11 +1645,31 @@ var LaserWorkModule = (function() {
         _selectedColor    = w.color    || '';
         updateLaserGuideChecks();
 
-        // 도장 LOT 내부 배열에 추가
-        _selectedLots.push({ paintDate: w.date || '', lotNo: lot.lotNo || w.lotNo || '', qty: pickQty, manual: false });
+        // ✓ pickQty를 이 도장LOT의 사출LOT들에 순서대로(선입선출) 배분해 각각 기록으로 남긴다.
+        //   이미 다른 선택으로 소모된 사출LOT 잔량은 제외하고 배분한다.
+        const consumedByLot = {};
+        _selectedLots.forEach(row => {
+            if ((row.paintDate || '') !== (w.date || '')) return;
+            const key = row.lotNo || '';
+            consumedByLot[key] = (consumedByLot[key] || 0) + (Number(row.qty) || 0);
+        });
+        let remaining = pickQty;
+        lots.forEach(lot => {
+            if (remaining <= 0) return;
+            const lotNo = lot.lotNo || w.lotNo || '';
+            const already = consumedByLot[lotNo] || 0;
+            const available = Math.max(0, (Number(lot.qty) || 0) - already);
+            if (available <= 0) return;
+            const take = Math.min(available, remaining);
+            if (take > 0) {
+                _selectedLots.push({ paintDate: w.date || '', lotNo, qty: take, manual: false });
+                consumedByLot[lotNo] = already + take;
+                remaining -= take;
+            }
+        });
         renderLotRows();
 
-        // 선택한 LOT 작업수량만 총 작업수량에 반영
+        // 선택한 작업수량만 총 작업수량에 반영
         const qtyEl = document.getElementById('lwQuantity');
         if (qtyEl) qtyEl.value = _selectedLotQtyTotal() || '';
         _refreshLaserCycleSpec(true);
@@ -1667,7 +1695,8 @@ var LaserWorkModule = (function() {
             }
         }
 
-        UIUtils.toast(`${w.carModel} / ${w.partName} / ${lot.lotNo || '-'} ${UIUtils.formatNumber(pickQty)}EA 선택되었습니다.`, 'success');
+        const lotSummary = [...new Set(lots.map(l => l.lotNo).filter(Boolean))].join(', ') || '-';
+        UIUtils.toast(`${w.carModel} / ${w.partName} / ${lotSummary} ${UIUtils.formatNumber(pickQty)}EA 선택되었습니다.`, 'success');
     }
 
     function onSplitQtyChange() {
