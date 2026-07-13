@@ -5554,18 +5554,35 @@ var LaserStandbyModule = (function() {
         const _keyJs = encodeURIComponent(key);
         const canEdit = _canEditStandby();
 
-        const lotRowsHtml = lotBalRows.map(r => `
+        // ✓ 도장LOT 기준으로 묶어서 1행으로 표시 — 사출LOT는 (수량) 태그로 참고 나열만 한다.
+        const _lotGroupsByPaintLot = {};
+        lotBalRows.forEach(r => {
+            const gKey = r.paintLot || '-';
+            if (!_lotGroupsByPaintLot[gKey]) _lotGroupsByPaintLot[gKey] = { paintLot: r.paintLot || '-', lots: [], totalQty: 0 };
+            _lotGroupsByPaintLot[gKey].lots.push({ lotNo: r.lotNo, qty: r.qty });
+            _lotGroupsByPaintLot[gKey].totalQty += Number(r.qty) || 0;
+        });
+        const lotGroupRows = Object.values(_lotGroupsByPaintLot)
+            .sort((a, b) => String(a.paintLot).localeCompare(String(b.paintLot)));
+
+        const lotRowsHtml = lotGroupRows.map(g => {
+            const lotTags = g.lots.map(l => `
+                <span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border:1px solid var(--border-color);border-radius:999px;font-size:0.76rem;font-family:monospace;white-space:nowrap;background:var(--bg-secondary);">
+                    ${l.lotNo || '-'} <strong style="color:var(--accent-blue);">(${UIUtils.formatNumber(l.qty)})</strong>
+                </span>`).join(' ');
+            return `
             <tr>
-                <td style="font-family:monospace;color:var(--accent-green);">${r.paintLot || '-'}</td>
-                <td style="font-family:monospace;">${r.lotNo || '-'}</td>
-                <td style="text-align:right;color:var(--accent-blue);font-weight:600;">${UIUtils.formatNumber(r.qty)}</td>
+                <td style="font-family:monospace;color:var(--accent-green);white-space:nowrap;">${g.paintLot}</td>
+                <td><div style="display:flex;flex-wrap:wrap;gap:4px;">${lotTags}</div></td>
+                <td style="text-align:right;color:var(--accent-blue);font-weight:600;white-space:nowrap;">${UIUtils.formatNumber(g.totalQty)}</td>
                 ${canEdit ? `<td style="text-align:center;">
                     <button class="btn btn-sm btn-outline" style="font-size:0.72rem;padding:2px 8px;"
                         onclick="UIUtils.closeModal();setTimeout(()=>LaserStandbyModule.openAdjustModal('${_keyJs}'),80);">
                         보정 수정
                     </button>
                 </td>` : ''}
-            </tr>`).join('');
+            </tr>`;
+        }).join('');
 
         const historySection = StockDetailUI.buildInvHistorySection(_standbyToInvRecords(allRows), {
             routeFn: function(d) {
