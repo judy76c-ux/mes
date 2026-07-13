@@ -136,6 +136,47 @@ var LaserWipModule = (function() {
         return s.split(',').map(function(p) { return p.trim(); }).filter(Boolean).join(', ');
     }
 
+    // ── 사출 LOT / 도장 작업LOT 입력 형식 검증 (YYMMDD 6자리) ────────────
+    function _isValidLotFormat(value) {
+        const v = String(value == null ? '' : value).trim();
+        if (!/^\d{6}$/.test(v)) return false;
+        const mm = parseInt(v.substring(2, 4), 10);
+        const dd = parseInt(v.substring(4, 6), 10);
+        if (mm < 1 || mm > 12) return false;
+        if (dd < 1 || dd > 31) return false;
+        return true;
+    }
+
+    // 입력 중(oninput): 숫자만 남기고 6자리로 제한
+    function _validateLotFormat(input) {
+        if (!input) return;
+        input.value = input.value.replace(/[^0-9]/g, '');
+        if (input.value.length > 6) input.value = input.value.substring(0, 6);
+    }
+
+    // 포커스 아웃(onblur): 형식 검증 — YYMMDD, 월 01~12, 일 01~31
+    function _checkLotFormat(input) {
+        if (!input) return;
+        const value = input.value.trim();
+        if (!value) return; // 빈 값은 저장 시점에 별도로 필수 검증
+        if (value.length !== 6) {
+            UIUtils.toast('LOT은 YYMMDD 형식으로 6자리여야 합니다.', 'warning');
+            input.focus();
+            return;
+        }
+        const mm = parseInt(value.substring(2, 4), 10);
+        const dd = parseInt(value.substring(4, 6), 10);
+        if (mm < 1 || mm > 12) {
+            UIUtils.toast('월(MM)은 01~12 범위여야 합니다.', 'warning');
+            input.focus();
+            return;
+        }
+        if (dd < 1 || dd > 31) {
+            UIUtils.toast('일(DD)은 01~31 범위여야 합니다.', 'warning');
+            input.focus();
+        }
+    }
+
     function _residualLotKey(paintLot, injLot) {
         return _normalizePaintLot(paintLot) + '|' + _normalizeInjLot(injLot);
     }
@@ -1154,11 +1195,13 @@ var LaserWipModule = (function() {
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">사출 LOT <span style="color:var(--accent-red);">*</span></label>
-                    <input type="text" class="form-input" id="lwResidualInInjectionLot" placeholder="사출 LOT 입력 (필수)">
+                    <input type="text" class="form-input" id="lwResidualInInjectionLot" placeholder="YYMMDD" maxlength="6" inputmode="numeric"
+                        oninput="LaserWipModule._validateLotFormat(this)" onblur="LaserWipModule._checkLotFormat(this)">
                 </div>
                 <div class="form-group">
                     <label class="form-label">도장 작업LOT <span style="color:var(--accent-red);">*</span></label>
-                    <input type="text" class="form-input" id="lwResidualInPaintDate" placeholder="도장 작업일/LOT 입력 (필수)">
+                    <input type="text" class="form-input" id="lwResidualInPaintDate" placeholder="YYMMDD" maxlength="6" inputmode="numeric"
+                        oninput="LaserWipModule._validateLotFormat(this)" onblur="LaserWipModule._checkLotFormat(this)">
                 </div>
             </div>
             <div class="form-row">
@@ -1202,15 +1245,16 @@ var LaserWipModule = (function() {
         const colorSel = document.getElementById('lwResidualInColor');
         if (colorSel) colorSel.innerHTML = '<option value="">-- 컬러 선택 --</option>' + colors.map(c => `<option value="${c}">${c}</option>`).join('');
 
-        // 선택한 제품의 기존 작업 실적이 있으면 참고용으로 자동 채워준다(직접 수정 가능).
-        // 실적이 없어도(도장 생산과 무관하게) 사용자가 직접 입력할 수 있어야 하므로 '-'로 채우지 않는다.
+        // 선택한 제품의 기존 작업 실적이 있으면 참고용으로 최근 LOT 1건만 자동 채워준다(직접 수정 가능).
+        // 필드가 YYMMDD 단일 입력으로 필수화되어 여러 값을 콤마로 채우지 않는다.
+        // 실적이 없어도(도장 생산과 무관하게) 사용자가 직접 입력할 수 있어야 하므로 비워둔다.
         const r = _calcLaserResidualWip().find(x => x.carModel === carModel && x.partName === partName);
         const injLotEl = document.getElementById('lwResidualInInjectionLot');
         const paintDateEl = document.getElementById('lwResidualInPaintDate');
         const injLots = r ? (Array.isArray(r.injectionLots) ? r.injectionLots : []).filter(Boolean) : [];
         const paintDates = r ? (Array.isArray(r.paintDates) ? r.paintDates : []).filter(Boolean) : [];
-        if (injLotEl) injLotEl.value = injLots.length > 0 ? injLots.join(', ') : '';
-        if (paintDateEl) paintDateEl.value = paintDates.length > 0 ? paintDates.join(', ') : '';
+        if (injLotEl) injLotEl.value = injLots.length > 0 ? _normalizePaintLot(injLots[injLots.length - 1]).replace('-', '') : '';
+        if (paintDateEl) paintDateEl.value = paintDates.length > 0 ? _normalizePaintLot(paintDates[paintDates.length - 1]).replace('-', '') : '';
     }
 
     async function saveResidualInput() {
@@ -1230,14 +1274,24 @@ var LaserWipModule = (function() {
             UIUtils.toast('날짜, 차종, 품명, 잔량 수량(1 이상)은 필수입니다.', 'warning');
             return;
         }
-        // ✓ 사출 LOT, 도장 작업LOT은 도장 생산 실적과 무관하게 직접 입력 가능하되 필수값이다.
+        // ✓ 사출 LOT, 도장 작업LOT은 도장 생산 실적과 무관하게 직접 입력 가능하되 필수값이며 YYMMDD 형식이어야 한다.
         if (!injectionLot) {
             UIUtils.toast('사출 LOT을 입력해 주세요.', 'warning');
             document.getElementById('lwResidualInInjectionLot')?.focus();
             return;
         }
+        if (!_isValidLotFormat(injectionLot)) {
+            UIUtils.toast('사출 LOT은 YYMMDD 형식(6자리)으로 입력해 주세요.', 'warning');
+            document.getElementById('lwResidualInInjectionLot')?.focus();
+            return;
+        }
         if (!paintDate) {
             UIUtils.toast('도장 작업LOT을 입력해 주세요.', 'warning');
+            document.getElementById('lwResidualInPaintDate')?.focus();
+            return;
+        }
+        if (!_isValidLotFormat(paintDate)) {
+            UIUtils.toast('도장 작업LOT은 YYMMDD 형식(6자리)으로 입력해 주세요.', 'warning');
             document.getElementById('lwResidualInPaintDate')?.focus();
             return;
         }
@@ -1295,11 +1349,13 @@ var LaserWipModule = (function() {
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">사출 LOT <span style="color:var(--accent-red);">*</span></label>
-                    <input type="text" class="form-input" id="lwResidualOutInjectionLot" placeholder="사출 LOT 입력 (필수)">
+                    <input type="text" class="form-input" id="lwResidualOutInjectionLot" placeholder="YYMMDD" maxlength="6" inputmode="numeric"
+                        oninput="LaserWipModule._validateLotFormat(this)" onblur="LaserWipModule._checkLotFormat(this)">
                 </div>
                 <div class="form-group">
                     <label class="form-label">도장 작업LOT <span style="color:var(--accent-red);">*</span></label>
-                    <input type="text" class="form-input" id="lwResidualOutPaintDate" placeholder="도장 작업일/LOT 입력 (필수)">
+                    <input type="text" class="form-input" id="lwResidualOutPaintDate" placeholder="YYMMDD" maxlength="6" inputmode="numeric"
+                        oninput="LaserWipModule._validateLotFormat(this)" onblur="LaserWipModule._checkLotFormat(this)">
                 </div>
             </div>
             <div class="form-row">
@@ -1349,14 +1405,14 @@ var LaserWipModule = (function() {
         const info = document.getElementById('lwResidualOutStockInfo');
         if (info && match) info.innerHTML = `현재 잔량 재고 <strong style="color:var(--accent-orange);">${UIUtils.formatNumber(match.residualQty)} EA</strong>`;
 
-        // 기존 작업 실적이 있으면 참고용으로 자동 채워준다(직접 수정 가능). 실적이 없어도
-        // 사용자가 직접 입력할 수 있어야 하므로 '-'로 채우지 않는다.
+        // 기존 작업 실적이 있으면 참고용으로 최근 LOT 1건만 자동 채워준다(직접 수정 가능).
+        // 필드가 YYMMDD 단일 입력으로 필수화되어 여러 값을 콤마로 채우지 않는다.
         const injLotEl = document.getElementById('lwResidualOutInjectionLot');
         const paintDateEl = document.getElementById('lwResidualOutPaintDate');
         const injLots = match ? (Array.isArray(match.injectionLots) ? match.injectionLots : []).filter(Boolean) : [];
         const paintDates = match ? (Array.isArray(match.paintDates) ? match.paintDates : []).filter(Boolean) : [];
-        if (injLotEl) injLotEl.value = injLots.length > 0 ? injLots.join(', ') : '';
-        if (paintDateEl) paintDateEl.value = paintDates.length > 0 ? paintDates.join(', ') : '';
+        if (injLotEl) injLotEl.value = injLots.length > 0 ? _normalizePaintLot(injLots[injLots.length - 1]).replace('-', '') : '';
+        if (paintDateEl) paintDateEl.value = paintDates.length > 0 ? _normalizePaintLot(paintDates[paintDates.length - 1]).replace('-', '') : '';
     }
 
     async function saveResidualOut() {
@@ -1373,14 +1429,24 @@ var LaserWipModule = (function() {
             UIUtils.toast('날짜, 차종, 품명, 출고 수량(1 이상)은 필수입니다.', 'warning');
             return;
         }
-        // ✓ 사출 LOT, 도장 작업LOT은 도장 생산 실적과 무관하게 직접 입력 가능하되 필수값이다.
+        // ✓ 사출 LOT, 도장 작업LOT은 도장 생산 실적과 무관하게 직접 입력 가능하되 필수값이며 YYMMDD 형식이어야 한다.
         if (!injectionLot) {
             UIUtils.toast('사출 LOT을 입력해 주세요.', 'warning');
             document.getElementById('lwResidualOutInjectionLot')?.focus();
             return;
         }
+        if (!_isValidLotFormat(injectionLot)) {
+            UIUtils.toast('사출 LOT은 YYMMDD 형식(6자리)으로 입력해 주세요.', 'warning');
+            document.getElementById('lwResidualOutInjectionLot')?.focus();
+            return;
+        }
         if (!paintDate) {
             UIUtils.toast('도장 작업LOT을 입력해 주세요.', 'warning');
+            document.getElementById('lwResidualOutPaintDate')?.focus();
+            return;
+        }
+        if (!_isValidLotFormat(paintDate)) {
+            UIUtils.toast('도장 작업LOT은 YYMMDD 형식(6자리)으로 입력해 주세요.', 'warning');
             document.getElementById('lwResidualOutPaintDate')?.focus();
             return;
         }
@@ -2381,11 +2447,13 @@ var LaserWipModule = (function() {
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">사출 LOT <span style="color:var(--accent-red);">*</span></label>
-                    <input type="text" class="form-input" id="lwAfterInjectionLot" placeholder="사출 LOT 입력 (필수)">
+                    <input type="text" class="form-input" id="lwAfterInjectionLot" placeholder="YYMMDD" maxlength="6" inputmode="numeric"
+                        oninput="LaserWipModule._validateLotFormat(this)" onblur="LaserWipModule._checkLotFormat(this)">
                 </div>
                 <div class="form-group">
                     <label class="form-label">도장 작업LOT <span style="color:var(--accent-red);">*</span></label>
-                    <input type="text" class="form-input" id="lwAfterPaintDate" placeholder="도장 작업일/LOT 입력 (필수)">
+                    <input type="text" class="form-input" id="lwAfterPaintDate" placeholder="YYMMDD" maxlength="6" inputmode="numeric"
+                        oninput="LaserWipModule._validateLotFormat(this)" onblur="LaserWipModule._checkLotFormat(this)">
                 </div>
             </div>
             <div class="form-row">
@@ -2431,15 +2499,16 @@ var LaserWipModule = (function() {
         const sel = document.getElementById('lwAfterColor');
         if (sel) sel.innerHTML = '<option value="">-- 컬러 선택 --</option>' + colors.map(c => `<option value="${c}">${c}</option>`).join('');
 
-        // 기존 작업 실적이 있으면 참고용으로 자동 채워준다(직접 수정 가능). 실적이 없어도
-        // 도장 생산과 무관하게 사용자가 직접 입력할 수 있어야 하므로 '-'로 채우지 않는다.
+        // 기존 작업 실적이 있으면 참고용으로 최근 LOT 1건만 자동 채워준다(직접 수정 가능).
+        // 필드가 YYMMDD 단일 입력으로 필수화되어 여러 값을 콤마로 채우지 않는다.
+        // 실적이 없어도 도장 생산과 무관하게 사용자가 직접 입력할 수 있어야 하므로 비워둔다.
         const wip = _calcWip().find(r => r.carModel === carModel && r.partName === partName);
         const injLotEl = document.getElementById('lwAfterInjectionLot');
         const paintDateEl = document.getElementById('lwAfterPaintDate');
         const injLots = wip ? (Array.isArray(wip.injectionLots) ? wip.injectionLots : []).filter(Boolean) : [];
         const paintDates = wip ? (Array.isArray(wip.paintDates) ? wip.paintDates : []).filter(Boolean) : [];
-        if (injLotEl) injLotEl.value = injLots.length > 0 ? injLots.join(', ') : '';
-        if (paintDateEl) paintDateEl.value = paintDates.length > 0 ? paintDates.join(', ') : '';
+        if (injLotEl) injLotEl.value = injLots.length > 0 ? _normalizePaintLot(injLots[injLots.length - 1]).replace('-', '') : '';
+        if (paintDateEl) paintDateEl.value = paintDates.length > 0 ? _normalizePaintLot(paintDates[paintDates.length - 1]).replace('-', '') : '';
     }
 
     async function saveAfterLaserInput() {
@@ -2456,14 +2525,24 @@ var LaserWipModule = (function() {
             UIUtils.toast('날짜, 차종, 품명, 수량(1 이상)은 필수입니다.', 'warning');
             return;
         }
-        // ✓ 사출 LOT, 도장 작업LOT은 도장 생산 실적과 무관하게 직접 입력 가능하되 필수값이다.
+        // ✓ 사출 LOT, 도장 작업LOT은 도장 생산 실적과 무관하게 직접 입력 가능하되 필수값이며 YYMMDD 형식이어야 한다.
         if (!injectionLot) {
             UIUtils.toast('사출 LOT을 입력해 주세요.', 'warning');
             document.getElementById('lwAfterInjectionLot')?.focus();
             return;
         }
+        if (!_isValidLotFormat(injectionLot)) {
+            UIUtils.toast('사출 LOT은 YYMMDD 형식(6자리)으로 입력해 주세요.', 'warning');
+            document.getElementById('lwAfterInjectionLot')?.focus();
+            return;
+        }
         if (!paintDate) {
             UIUtils.toast('도장 작업LOT을 입력해 주세요.', 'warning');
+            document.getElementById('lwAfterPaintDate')?.focus();
+            return;
+        }
+        if (!_isValidLotFormat(paintDate)) {
+            UIUtils.toast('도장 작업LOT은 YYMMDD 형식(6자리)으로 입력해 주세요.', 'warning');
             document.getElementById('lwAfterPaintDate')?.focus();
             return;
         }
@@ -2524,11 +2603,13 @@ var LaserWipModule = (function() {
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">사출 LOT <span style="color:var(--accent-red);">*</span></label>
-                    <input type="text" class="form-input" id="lwOutInjectionLot" placeholder="사출 LOT 입력 (필수)">
+                    <input type="text" class="form-input" id="lwOutInjectionLot" placeholder="YYMMDD" maxlength="6" inputmode="numeric"
+                        oninput="LaserWipModule._validateLotFormat(this)" onblur="LaserWipModule._checkLotFormat(this)">
                 </div>
                 <div class="form-group">
                     <label class="form-label">도장 작업LOT <span style="color:var(--accent-red);">*</span></label>
-                    <input type="text" class="form-input" id="lwOutPaintDate" placeholder="도장 작업일/LOT 입력 (필수)">
+                    <input type="text" class="form-input" id="lwOutPaintDate" placeholder="YYMMDD" maxlength="6" inputmode="numeric"
+                        oninput="LaserWipModule._validateLotFormat(this)" onblur="LaserWipModule._checkLotFormat(this)">
                 </div>
             </div>
             <div class="form-row">
@@ -2579,15 +2660,16 @@ var LaserWipModule = (function() {
         const info  = document.getElementById('lwOutStockInfo');
         if (info && match) info.innerHTML = `현재 재공품: <strong style="color:var(--accent-purple);">${UIUtils.formatNumber(match.wip)} EA</strong>`;
 
-        // 기존 작업 실적이 있으면 참고용으로 자동 채워준다(직접 수정 가능). 실적이 없어도
-        // 도장 생산과 무관하게 사용자가 직접 입력할 수 있어야 하므로 '-'로 채우지 않는다.
+        // 기존 작업 실적이 있으면 참고용으로 최근 LOT 1건만 자동 채워준다(직접 수정 가능).
+        // 필드가 YYMMDD 단일 입력으로 필수화되어 여러 값을 콤마로 채우지 않는다.
+        // 실적이 없어도 도장 생산과 무관하게 사용자가 직접 입력할 수 있어야 하므로 비워둔다.
         const wip = _calcWip().find(r => r.carModel === carModel && r.partName === partName);
         const injLotEl = document.getElementById('lwOutInjectionLot');
         const paintDateEl = document.getElementById('lwOutPaintDate');
         const injLots = wip ? (Array.isArray(wip.injectionLots) ? wip.injectionLots : []).filter(Boolean) : [];
         const paintDates = wip ? (Array.isArray(wip.paintDates) ? wip.paintDates : []).filter(Boolean) : [];
-        if (injLotEl) injLotEl.value = injLots.length > 0 ? injLots.join(', ') : '';
-        if (paintDateEl) paintDateEl.value = paintDates.length > 0 ? paintDates.join(', ') : '';
+        if (injLotEl) injLotEl.value = injLots.length > 0 ? _normalizePaintLot(injLots[injLots.length - 1]).replace('-', '') : '';
+        if (paintDateEl) paintDateEl.value = paintDates.length > 0 ? _normalizePaintLot(paintDates[paintDates.length - 1]).replace('-', '') : '';
     }
 
     async function saveAfterLaserOut() {
@@ -2604,14 +2686,24 @@ var LaserWipModule = (function() {
             UIUtils.toast('날짜, 차종, 품명, 수량(1 이상)은 필수입니다.', 'warning');
             return;
         }
-        // ✓ 사출 LOT, 도장 작업LOT은 도장 생산 실적과 무관하게 직접 입력 가능하되 필수값이다.
+        // ✓ 사출 LOT, 도장 작업LOT은 도장 생산 실적과 무관하게 직접 입력 가능하되 필수값이며 YYMMDD 형식이어야 한다.
         if (!injectionLot) {
             UIUtils.toast('사출 LOT을 입력해 주세요.', 'warning');
             document.getElementById('lwOutInjectionLot')?.focus();
             return;
         }
+        if (!_isValidLotFormat(injectionLot)) {
+            UIUtils.toast('사출 LOT은 YYMMDD 형식(6자리)으로 입력해 주세요.', 'warning');
+            document.getElementById('lwOutInjectionLot')?.focus();
+            return;
+        }
         if (!paintDate) {
             UIUtils.toast('도장 작업LOT을 입력해 주세요.', 'warning');
+            document.getElementById('lwOutPaintDate')?.focus();
+            return;
+        }
+        if (!_isValidLotFormat(paintDate)) {
+            UIUtils.toast('도장 작업LOT은 YYMMDD 형식(6자리)으로 입력해 주세요.', 'warning');
             document.getElementById('lwOutPaintDate')?.focus();
             return;
         }
@@ -2696,5 +2788,6 @@ var LaserWipModule = (function() {
              openAdjustAfterLaserLotModal, saveAdjustAfterLaserLotModal,
              openAdjustResidualLotModal, saveAdjustResidualLotModal,
              _openAfterLaserOutForPart, _openAfterLaserInForPart,
-             _openResidualOutForPart, _openResidualInForPart };
+             _openResidualOutForPart, _openResidualInForPart,
+             _validateLotFormat, _checkLotFormat };
 })();
