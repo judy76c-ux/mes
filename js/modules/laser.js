@@ -779,6 +779,56 @@ var LaserWorkModule = (function() {
             return (Number(w.productionQty) || 0) > 0;
         });
 
+        // 수량 보정에 LOT별 배분이 있으면 원본 도장 작업 잔량이 아니라 보정 LOT를 유일한 기준으로 쓴다.
+        // 그렇지 않으면 상세 대기재고(보정 후)와 작업 등록 FIFO(보정 전)가 서로 달라진다.
+        try {
+            if (typeof LaserStandbyModule !== 'undefined' && LaserStandbyModule.getStockSnapshotSync) {
+                const snapshots = LaserStandbyModule.getStockSnapshotSync() || [];
+                snapshots.forEach(function(item) {
+                    const override = item.manualOverride;
+                    if (!override || !Array.isArray(override.lots) || override.lots.length === 0) return;
+
+                    const color = item.color === '-' ? '' : (item.color || '');
+                    const itemKey = `${item.carModel}||${item.partName}||${color}`;
+                    const lotsByPaintDate = {};
+
+                    override.lots.forEach(function(rawLot) {
+                        const paintLot = String(rawLot && (rawLot.paintLot || rawLot.paintDate) || '').trim();
+                        const lotNo = String(rawLot && (rawLot.injectionLot || rawLot.lotNo) || '').trim();
+                        const qty = Number(rawLot && rawLot.qty) || 0;
+                        if (!paintLot || !lotNo || qty <= 0) return;
+                        if (!lotsByPaintDate[paintLot]) lotsByPaintDate[paintLot] = [];
+                        lotsByPaintDate[paintLot].push({ paintDate: paintLot, lotNo: lotNo, qty: qty });
+                    });
+
+                    if (Object.keys(lotsByPaintDate).length === 0) return;
+
+                    // 같은 제품의 원본 FIFO 행은 제거한다. 보정 LOT가 그것을 대체한다.
+                    for (let i = result.length - 1; i >= 0; i--) {
+                        const row = result[i];
+                        const rowKey = `${row.carModel}||${row.partName}||${row.color || ''}`;
+                        if (rowKey === itemKey) result.splice(i, 1);
+                    }
+
+                    Object.keys(lotsByPaintDate).forEach(function(paintLot) {
+                        const lots = lotsByPaintDate[paintLot];
+                        const date = /^\d{6}$/.test(paintLot)
+                            ? `20${paintLot.slice(0, 2)}-${paintLot.slice(2, 4)}-${paintLot.slice(4, 6)}`
+                            : paintLot;
+                        result.push({
+                            carModel: item.carModel,
+                            partName: item.partName,
+                            color: color,
+                            date: date,
+                            productionQty: lots.reduce(function(sum, lot) { return sum + lot.qty; }, 0),
+                            lots: lots,
+                            isLotAdjustedStandby: true
+                        });
+                    });
+                });
+            }
+        } catch (e) { /* 보정 LOT 병합 실패 시 원본 FIFO 목록 사용 */ }
+
         // 도장 작업일지 없이 "재공품 현황" 화면에서 수기 등록/일괄 등록된 재고는 위 로직에 전혀
         // 반영되지 않아 이 목록(작업 등록 드롭다운)에서 보이지 않는 문제가 있었다. 그 재고 중
         // 아직 위 목록으로 커버되지 않는 만큼을 보충 항목으로 추가한다.

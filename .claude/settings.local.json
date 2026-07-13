@@ -85,7 +85,9 @@
       "Bash(awk '/^    function openInspectionModal/,/^    function [a-zA-Z]/ {print NR\": \"$0}' js/modules/painting.js)",
       "Bash(git commit -m ' *)",
       "Bash(node --check js/modules/painting.js)",
-      "Bash(node --check js/modules/laser.js)"
+      "Bash(node --check js/modules/laser.js)",
+      "Bash(echo \"clean=$?\")",
+      "Bash(node --check js/modules/laser-wip.js)"
     ]
   }
 }
