@@ -12316,18 +12316,8 @@ var PaintMixModule = (function() {
             if (r.type === '출고') map[key].balance -= Number(r.quantity) || 0;
             else map[key].balance += Number(r.quantity) || 0;
         });
-        // 창고 재고가 없으면 도료 수입검사 합격 기록에서 LOT 보완
-        if (!Object.values(map).some(l => l.balance > 0)) {
-            const mat = (Storage.getAll(PAINT_MAT_STORE) || []).find(m => m.id === materialId);
-            if (mat) {
-                (Storage.getAll(DB.STORES.PAINT_INCOMING_INSPECTIONS) || [])
-                    .filter(r => r.paintName === mat.name && r.verdict !== '불합격' && r.lotNo)
-                    .forEach(r => {
-                        const prodLot = r.lotNo;
-                        if (!map[prodLot]) map[prodLot] = { prodLot, lotNo: r.lotNo, balance: Number(r.incomingQty) || 1, fromInspection: true };
-                    });
-            }
-        }
+        // 수입검사 합격은 입고 대기일 뿐 창고 재고가 아니다.
+        // 사용 등록에서 선택 가능한 LOT는 실제 PAINT_INVENTORY 재고로 한정한다.
         return Object.values(map)
             .filter(l => l.balance > 0)
             .sort((a, b) => (a.prodLot || '').localeCompare(b.prodLot || ''));

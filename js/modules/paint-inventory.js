@@ -608,11 +608,10 @@ const PaintInventoryModule = (function() {
             matStock[mid].minExpDate = withExp.length > 0 ? withExp.map(l => l.expDate).sort()[0] : null;
         });
 
-        // ── 공급사별 그룹핑 (재고 > 0) ─────────────────────────────
+        // ── 공급사별 그룹핑 (도료 마스터 전체, 재고 0 포함) ─────────
         const bySupplier = {};
         materials.forEach(mat => {
-            const ms = matStock[mat.id];
-            if (!ms || ms.stock <= 0) return;
+            const ms = matStock[mat.id] || { stock: 0, activeLots: [], minExpDate: null };
             const sup = mat.supplier || '미분류';
             if (!bySupplier[sup]) bySupplier[sup] = [];
             bySupplier[sup].push({
