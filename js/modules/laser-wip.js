@@ -137,18 +137,7 @@ var LaserWipModule = (function() {
     }
 
     // ── 사출 LOT / 도장 작업LOT 입력 형식 검증 (YYMMDD 6자리, 미래 날짜 금지) ──
-    function _isValidLotFormat(value) {
-        const v = String(value == null ? '' : value).trim();
-        if (!/^\d{6}$/.test(v)) return false;
-        const mm = parseInt(v.substring(2, 4), 10);
-        const dd = parseInt(v.substring(4, 6), 10);
-        if (mm < 1 || mm > 12) return false;
-        if (dd < 1 || dd > 31) return false;
-        if (_isFutureLotDate(v)) return false;
-        return true;
-    }
-
-    // YYMMDD 값이 오늘보다 미래인지 확인 (형식은 유효하다고 가정하고 호출)
+    // YYMMDD 값이 오늘보다 미래인지 확인
     function _isFutureLotDate(value) {
         const v = String(value == null ? '' : value).trim();
         if (!/^\d{6}$/.test(v)) return false;
@@ -1464,8 +1453,9 @@ var LaserWipModule = (function() {
             document.getElementById('lwResidualOutInjectionLot')?.focus();
             return;
         }
-        if (!_isValidLotFormat(injectionLot)) {
-            UIUtils.toast('사출 LOT은 YYMMDD 형식(6자리)으로 입력해 주세요.', 'warning');
+        const injLotErr = _lotValidationMessage(injectionLot);
+        if (injLotErr) {
+            UIUtils.toast('사출 LOT: ' + injLotErr, 'warning');
             document.getElementById('lwResidualOutInjectionLot')?.focus();
             return;
         }
@@ -1474,8 +1464,9 @@ var LaserWipModule = (function() {
             document.getElementById('lwResidualOutPaintDate')?.focus();
             return;
         }
-        if (!_isValidLotFormat(paintDate)) {
-            UIUtils.toast('도장 작업LOT은 YYMMDD 형식(6자리)으로 입력해 주세요.', 'warning');
+        const paintLotErr = _lotValidationMessage(paintDate);
+        if (paintLotErr) {
+            UIUtils.toast('도장 작업LOT: ' + paintLotErr, 'warning');
             document.getElementById('lwResidualOutPaintDate')?.focus();
             return;
         }
@@ -2560,8 +2551,9 @@ var LaserWipModule = (function() {
             document.getElementById('lwAfterInjectionLot')?.focus();
             return;
         }
-        if (!_isValidLotFormat(injectionLot)) {
-            UIUtils.toast('사출 LOT은 YYMMDD 형식(6자리)으로 입력해 주세요.', 'warning');
+        const injLotErr = _lotValidationMessage(injectionLot);
+        if (injLotErr) {
+            UIUtils.toast('사출 LOT: ' + injLotErr, 'warning');
             document.getElementById('lwAfterInjectionLot')?.focus();
             return;
         }
@@ -2570,8 +2562,9 @@ var LaserWipModule = (function() {
             document.getElementById('lwAfterPaintDate')?.focus();
             return;
         }
-        if (!_isValidLotFormat(paintDate)) {
-            UIUtils.toast('도장 작업LOT은 YYMMDD 형식(6자리)으로 입력해 주세요.', 'warning');
+        const paintLotErr = _lotValidationMessage(paintDate);
+        if (paintLotErr) {
+            UIUtils.toast('도장 작업LOT: ' + paintLotErr, 'warning');
             document.getElementById('lwAfterPaintDate')?.focus();
             return;
         }
@@ -2721,8 +2714,9 @@ var LaserWipModule = (function() {
             document.getElementById('lwOutInjectionLot')?.focus();
             return;
         }
-        if (!_isValidLotFormat(injectionLot)) {
-            UIUtils.toast('사출 LOT은 YYMMDD 형식(6자리)으로 입력해 주세요.', 'warning');
+        const injLotErr = _lotValidationMessage(injectionLot);
+        if (injLotErr) {
+            UIUtils.toast('사출 LOT: ' + injLotErr, 'warning');
             document.getElementById('lwOutInjectionLot')?.focus();
             return;
         }
@@ -2731,8 +2725,9 @@ var LaserWipModule = (function() {
             document.getElementById('lwOutPaintDate')?.focus();
             return;
         }
-        if (!_isValidLotFormat(paintDate)) {
-            UIUtils.toast('도장 작업LOT은 YYMMDD 형식(6자리)으로 입력해 주세요.', 'warning');
+        const paintLotErr = _lotValidationMessage(paintDate);
+        if (paintLotErr) {
+            UIUtils.toast('도장 작업LOT: ' + paintLotErr, 'warning');
             document.getElementById('lwOutPaintDate')?.focus();
             return;
         }
