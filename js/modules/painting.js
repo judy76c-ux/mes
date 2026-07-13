@@ -5182,18 +5182,36 @@ const PaintingInspectionModule = (function() {
                 ? `<span class="badge" title="임시 저장됨 (${_formatDraftTime(_draft.savedAt)})" style="background:var(--accent-orange);color:#fff;margin-left:6px;font-size:0.68rem;">임시저장</span>`
                 : '';
 
+            // ✓ Case 1: 부분 검사된 도장 작업 표시
+            const isPartial = w.inspectionStatus === 'partial';
+            const inspectedQty = w.inspectedQty || 0;
+            const remainingQty = w.remainingQty || (w.productionQty || 0);
+            const progressPercent = (w.productionQty && inspectedQty) ? Math.round((inspectedQty / w.productionQty) * 100) : 0;
+
+            const partialBadge = isPartial
+                ? `<span class="badge" style="background:var(--accent-blue);color:#fff;margin-left:6px;font-size:0.68rem;" title="부분 검사됨">부분 ${progressPercent}%</span>`
+                : '';
+
+            const qtyDisplay = isPartial
+                ? `<div style="text-align:right;font-weight:600;">${UIUtils.formatNumber(remainingQty)}<span style="font-size:0.75rem;color:var(--text-muted);margin-left:2px;">/ ${UIUtils.formatNumber(w.productionQty || 0)}</span></div>`
+                : `<div style="text-align:right;font-weight:600;">${UIUtils.formatNumber(w.productionQty || 0)}</div>`;
+
+            const btnText = isPartial ? '계속 검사' : (_draft ? '이어서 검사' : '외관 검사');
+            const btnColor = isPartial ? 'var(--accent-blue)' : (_draft ? 'var(--accent-orange)' : 'inherit');
+            const btnStyle = isPartial || _draft ? ` style="color:${btnColor};border-color:${btnColor};"` : '';
+
             return `
-                                <tr${_draft ? ' style="background:rgba(245,158,11,0.06);"' : ''}>
+                                <tr${isPartial ? ' style="background:rgba(37,99,235,0.06);"' : (_draft ? ' style="background:rgba(245,158,11,0.06);"' : '')}>
                                     <td style="line-height:1.3;">${_workDateHtml}</td>
                                     <td><span class="badge badge-info">${w.line || '-'}</span></td>
                                     <td>${w.carModel || '-'}</td>
-                                    <td><strong>${w.partName || '-'}</strong>${draftBadge}</td>
+                                    <td><strong>${w.partName || '-'}</strong>${partialBadge}${draftBadge}</td>
                                     <td>${w.color || '-'}</td>
                                     <td style="font-family:monospace;font-size:0.85rem;">${lotDisplay}</td>
-                                    <td style="text-align:right;font-weight:600;">${UIUtils.formatNumber(w.productionQty || 0)}</td>
+                                    <td>${qtyDisplay}</td>
                                     <td style="text-align:center;">
-                                        <button class="btn btn-sm ${_draft ? 'btn-outline' : 'btn-primary'}" type="button" data-open-painting-inspection="${waitKey}"${_draft ? ' style="color:var(--accent-orange);border-color:var(--accent-orange);"' : ''}>
-                                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:2px;">edit</span>${_draft ? '이어서 검사' : '외관 검사'}
+                                        <button class="btn btn-sm ${isPartial || _draft ? 'btn-outline' : 'btn-primary'}" type="button" data-open-painting-inspection="${waitKey}"${btnStyle}>
+                                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:2px;">edit</span>${btnText}
                                         </button>
                                     </td>
                                 </tr>
@@ -5320,17 +5338,21 @@ const PaintingInspectionModule = (function() {
                 (work.lotNo || '-');
             const injectionMeta = _getInjectionMetaForWork(work);
 
+        // ✓ Case 1: 부분 검사 도장 작업 처리
+            const isPartialWork = work.inspectionStatus === 'partial';
+            const baseInspQty = isPartialWork ? (work.remainingQty || 0) : (work.productionQty || 0);
+
         // 포장 초기값 계산
             const prevResidualQty = _getPaintPrevResidualQty(work.carModel, work.partName, work.color);
             const packUnitVal     = _findPaintProductPackUnit(work.carModel, work.partName, work.color);
-            const initGoodQty     = work.productionQty || 0;
+            const initGoodQty     = baseInspQty; // ✓ Case 1: 부분 검사인 경우 remainingQty 사용
             const initBoxCount    = packUnitVal > 0 ? Math.floor((prevResidualQty + initGoodQty) / packUnitVal) : 0;
             const initPackQty     = packUnitVal * initBoxCount;
             const initNewResid    = prevResidualQty + initGoodQty - initPackQty;
 
         // 표준 검사 시간 → 예상 검사 시간 계산 (제품 정보의 외관검사 C.TIME 기준)
             const _stdPerEaSec    = _getInspectionStdPerEaSec(work);
-            const _inspQtyForEst  = work.productionQty || 0;
+            const _inspQtyForEst  = baseInspQty; // ✓ Case 1: 부분 검사인 경우 remainingQty 사용
             _currentInspectionExpectedSec = _stdPerEaSec * _inspQtyForEst;
             const expectedTimeHtml = _stdPerEaSec > 0
                 ? `<div style="margin-top:2px;padding:8px 10px;background:rgba(37,99,235,0.06);border:1px solid rgba(37,99,235,0.25);border-radius:6px;">
@@ -5347,9 +5369,21 @@ const PaintingInspectionModule = (function() {
                         설정 › 제품 정보 › <strong>외관 검사 기초 정보(C.TIME)</strong>에서 입력하세요.
                    </div>`;
 
+        // ✓ Case 1: 부분 검사 배너 표시
+            const partialBannerHtml = isPartialWork
+                ? `<div style="background:rgba(37,99,235,0.1); border:1px solid rgba(37,99,235,0.3); border-radius:8px; padding:8px 14px; font-size:0.82rem; color:var(--text-primary); display:flex; align-items:center; gap:8px;">
+                    <span class="material-symbols-outlined" style="color:var(--accent-blue); font-size:20px;">restart_alt</span>
+                    <div>
+                        <strong>부분 검사 계속</strong>: 이전 ${UIUtils.formatNumber(work.inspectedQty || 0)}개 검사 완료,
+                        <strong style="color:var(--accent-blue);">${UIUtils.formatNumber(work.remainingQty || 0)}개</strong> 남음
+                    </div>
+                  </div>`
+                : '';
+
         // 모달 HTML 작성
             let modalContent = `
             <div style="display:flex; flex-direction:column; gap:10px;">
+                ${partialBannerHtml}
                 <!-- 도장 정보 컴팩트 배너 -->
                 <div style="background:var(--bg-secondary); border-radius:8px; padding:8px 14px; display:flex; flex-wrap:wrap; gap:6px 20px; align-items:center; border-left:4px solid var(--accent-blue);">
                     <span style="font-size:0.75rem; color:var(--text-muted);">작업일&nbsp;<strong style="color:var(--text-primary);">${work.date || '-'}</strong></span>
@@ -5368,8 +5402,8 @@ const PaintingInspectionModule = (function() {
                     <span style="color:var(--border);">|</span>
                     <span style="font-size:0.75rem; color:var(--text-muted);">사출 LOT&nbsp;<strong style="color:var(--text-primary); font-family:monospace;">${lotDisplay}</strong></span>
                     <span style="color:var(--border);">|</span>
-                    <span style="font-size:0.75rem; color:var(--text-muted);">작업수량&nbsp;<strong style="color:var(--accent-blue); font-size:0.95rem;">${UIUtils.formatNumber(work.productionQty || 0)} EA</strong>
-                        <input type="hidden" id="inpInspectionQty" value="${work.productionQty || 0}">
+                    <span style="font-size:0.75rem; color:var(--text-muted);">${isPartialWork ? '남은 검사수량' : '작업수량'}&nbsp;<strong style="color:var(--accent-blue); font-size:0.95rem;">${UIUtils.formatNumber(baseInspQty)} EA</strong>
+                        <input type="hidden" id="inpInspectionQty" value="${baseInspQty}">
                     </span>
                 </div>
 
@@ -5653,23 +5687,26 @@ const PaintingInspectionModule = (function() {
                     _addInspectorField();
                     _addInspectorField();
                 }
-                // 임시 저장된 내용이 있으면 자동 복원
-                try {
-                    const drafts = await _getInspectionDrafts();
-                    const draft = drafts[workId];
-                    if (draft) {
-                        // ✓ Case 2: 수량 변경 감지 - draft 저장 당시와 현재 도장 수량 비교
-                        if (draft.sourceProductionQty && draft.sourceProductionQty !== (work.productionQty || 0)) {
-                            _showDraftQuantityMismatchModal(work, draft, workId);
-                        } else {
-                            _applyInspectionDraft(draft);
-                            const notice = document.getElementById('inspDraftNotice');
-                            const timeEl = document.getElementById('inspDraftNoticeTime');
-                            if (notice) notice.style.display = 'flex';
-                            if (timeEl) timeEl.textContent = _formatDraftTime(draft.savedAt);
+                // ✓ Case 1: 부분 검사 도장 작업은 draft를 로드하지 않음 (새로 검사)
+                if (!isPartialWork) {
+                    // 임시 저장된 내용이 있으면 자동 복원
+                    try {
+                        const drafts = await _getInspectionDrafts();
+                        const draft = drafts[workId];
+                        if (draft) {
+                            // ✓ Case 2: 수량 변경 감지 - draft 저장 당시와 현재 도장 수량 비교
+                            if (draft.sourceProductionQty && draft.sourceProductionQty !== (work.productionQty || 0)) {
+                                _showDraftQuantityMismatchModal(work, draft, workId);
+                            } else {
+                                _applyInspectionDraft(draft);
+                                const notice = document.getElementById('inspDraftNotice');
+                                const timeEl = document.getElementById('inspDraftNoticeTime');
+                                if (notice) notice.style.display = 'flex';
+                                if (timeEl) timeEl.textContent = _formatDraftTime(draft.savedAt);
+                            }
                         }
-                    }
-                } catch (e) { /* 무시 */ }
+                    } catch (e) { /* 무시 */ }
+                }
             }, 100);
         } catch (error) {
             console.error('도장 검사 입력 모달 열기 실패', error);
