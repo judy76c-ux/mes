@@ -4819,7 +4819,7 @@ var LaserStandbyModule = (function() {
             addLot(row.lotNo || row.injectionLot || '(미확인)', row.paintLot || row.paintingDate || '-', row.kind === 'in' ? row.qty : -row.qty);
         });
 
-        return Object.values(balanceMap)
+        const calculatedRows = Object.values(balanceMap)
             .filter(row => row.qty > 0.001)
             .sort((a, b) => String(a.lotNo || '').localeCompare(String(b.lotNo || '')))
             .map(row => ({
@@ -4827,6 +4827,22 @@ var LaserStandbyModule = (function() {
                 paintLot: row.paintLot || '-',
                 qty: Math.round(row.qty * 1000) / 1000
             }));
+
+        // ✓ 자동 복구: 수기보정(override)은 있는데 LOT 배분(lots)이 비어있는 레거시/버그 데이터는
+        //   계산된 LOT 잔량 합계가 실제 보정된 재고(actualQty)와 어긋난다. 그 경우 계산된 LOT
+        //   잔량을 actualQty 합계에 맞춰 자동으로 조정한다(마지막 LOT에 차액 반영).
+        const override = item && item.manualOverride;
+        if (override && calculatedRows.length > 0) {
+            const targetQty = _normalizeQty(override.actualQty);
+            const calcSum = calculatedRows.reduce(function(sum, row) { return sum + row.qty; }, 0);
+            const gap = targetQty - calcSum;
+            if (targetQty > 0 && Math.abs(gap) > 0.001) {
+                calculatedRows[calculatedRows.length - 1].qty = Math.max(0, calculatedRows[calculatedRows.length - 1].qty + gap);
+                return calculatedRows.filter(row => row.qty > 0.001);
+            }
+        }
+
+        return calculatedRows;
     }
 
     // 레이저 대기품 재고 계산에 반드시 필요한 스토어
@@ -5919,7 +5935,11 @@ var LaserStandbyModule = (function() {
             _itemKey(o.carModel, o.partName, o.color || '') === key
         );
         const existingOverride = existingIdx >= 0 ? _manualOverrides[existingIdx] : null;
-        let remainingLots = existingOverride && Array.isArray(existingOverride.lots)
+        // ✓ 기존 수기보정(override) LOT 배분이 없는 품목(= 도장 작업 기록만으로 재고가 잡혀 있던
+        //   품목)은 계산된 LOT 잔량(_buildLotBalanceRows)에서 시작해야 한다. 빈 배열로 시작하면
+        //   차감량이 LOT 화면에 전혀 반영되지 않아 재공재고(스냅샷)와 LOT별 표시가 어긋난다.
+        const hasOverrideLots = existingOverride && Array.isArray(existingOverride.lots) && existingOverride.lots.length > 0;
+        let remainingLots = hasOverrideLots
             ? existingOverride.lots.map(function(lot) {
                 return {
                     paintLot: String(lot.paintLot || '').trim(),
@@ -5927,7 +5947,24 @@ var LaserStandbyModule = (function() {
                     qty: _normalizeQty(lot.qty)
                 };
             }).filter(function(lot) { return lot.injectionLot && lot.qty > 0; })
-            : [];
+            : _buildLotBalanceRows(key, item).map(function(lot) {
+                return {
+                    paintLot: String(lot.paintLot || '').trim(),
+                    injectionLot: String(lot.lotNo || '').trim(),
+                    qty: _normalizeQty(lot.qty)
+                };
+            }).filter(function(lot) { return lot.injectionLot && lot.qty > 0; });
+
+        // ✓ 계산된 LOT 잔량 합계가 재고 스냅샷(currentStock)과 어긋나는 경우(계산 경로 차이 등)
+        //   마지막 LOT에 차액을 반영해 항상 합계가 일치하도록 맞춘다.
+        if (!hasOverrideLots && remainingLots.length > 0) {
+            const lotSum = remainingLots.reduce(function(sum, lot) { return sum + lot.qty; }, 0);
+            const gap = currentStock - lotSum;
+            if (Math.abs(gap) > 0.001) {
+                remainingLots[remainingLots.length - 1].qty = Math.max(0, remainingLots[remainingLots.length - 1].qty + gap);
+                remainingLots = remainingLots.filter(function(lot) { return lot.qty > 0; });
+            }
+        }
 
         // LOT별 실사 보정이 있는 품목은 출고 후에도 LOT 배분을 보존한다.
         // 입력한 사출 LOT를 우선 차감하고, 미입력/잔여분은 등록 순서대로 차감한다.
