@@ -4161,6 +4161,12 @@ const PaintingWorkModule = (function() {
                 });
         });
 
+        // ✓ Case 3: 수량 변경 감지 (수정 전 도장 작업 조회)
+        const originalWork = Storage.getById(STORE, id) || {};
+        const originalQty = originalWork.productionQty || 0;
+        const qtyChanged = prodQty !== originalQty;
+        const qtyDiff = prodQty - originalQty;
+
         await Storage.update(STORE, id, {
             carModel: editCarModel,
             partName: editPartName,
@@ -4185,6 +4191,18 @@ const PaintingWorkModule = (function() {
             qtyDiffManagerRecipients: editQtyDiffNotifyUsers,
             note: ((document.getElementById('editPwNote') || {}).value || '').trim()
         });
+
+        // ✓ Case 3: 수량 변경 시 검사 기록 동기화 처리
+        if (qtyChanged) {
+            const inspections = (Storage.getAll(PAINTING_INSPECTIONS_STORE) || []).filter(
+                insp => insp.workId === id
+            );
+            if (inspections.length > 0) {
+                // 검사 기록이 있으면 동기화 확인 모달 표시
+                _showInspectionSyncModal(id, originalQty, prodQty, qtyDiff, inspections);
+            }
+        }
+
         UIUtils.toast('수정되었습니다.', 'success');
         if (_workViewId) {
             const savedId = _workViewId;
@@ -5403,7 +5421,13 @@ const PaintingInspectionModule = (function() {
                         <!-- 검사 수량 -->
                         <div class="card">
                             <div class="card-body" style="padding:12px;">
-                                <h5 style="margin:0 0 10px 0; font-size:0.85rem; color:var(--text-primary);">검사 수량</h5>
+                                <h5 style="margin:0 0 10px 0; font-size:0.85rem; color:var(--text-primary);">검사 수량
+                                    <!-- ✓ Case 1: 부분 완료 옵션 -->
+                                    <label style="margin-left:auto; display:flex; align-items:center; gap:6px; font-size:0.75rem; font-weight:400; color:var(--text-secondary);">
+                                        <input type="checkbox" id="inpIsPartialInspection" style="cursor:pointer;" onchange="PaintingInspectionModule._togglePartialInspection()">
+                                        <span>부분 완료</span>
+                                    </label>
+                                </h5>
                                 <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px;">
                                     <div class="form-group" style="margin:0;">
                                         <label class="form-label" style="font-size:0.72rem;">양품수</label>
@@ -5417,6 +5441,11 @@ const PaintingInspectionModule = (function() {
                                         <label class="form-label" style="font-size:0.72rem;">합계 (자동)</label>
                                         <input type="text" class="form-input" id="inpTotalQty" value="${UIUtils.formatNumber(work.productionQty || 0)}" readonly style="background:var(--bg-secondary); text-align:right; font-weight:700; font-size:0.9rem; padding:5px 6px; color:var(--accent-blue);">
                                     </div>
+                                </div>
+                                <!-- ✓ Case 1: 부분 완료 시 설명 -->
+                                <div id="piPartialInspectionInfo" style="display:none; margin-top:8px; padding:8px 10px; background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.25); border-radius:6px; font-size:0.75rem; color:var(--text-secondary); line-height:1.4;">
+                                    <span class="material-symbols-outlined" style="font-size:16px; vertical-align:middle; color:var(--accent-orange);">info</span>
+                                    <span style="margin-left:4px;">부분 완료 시 입력한 수량만 검사 완료되며, 나머지는 외관검사 대기로 유지됩니다.</span>
                                 </div>
                             </div>
                         </div>
@@ -5604,6 +5633,7 @@ const PaintingInspectionModule = (function() {
 
             document.body.appendChild(modalEl);
             _makeInspectionModalDraggable(modalEl, modalId, modalHandleId);
+            _makeInspectionModalResizable(modalEl, modalId);
 
         // 모달에 데이터 저장 (나중에 접근하기 위해)
             modalEl.inspectionWorkId = workId;
@@ -5628,11 +5658,16 @@ const PaintingInspectionModule = (function() {
                     const drafts = await _getInspectionDrafts();
                     const draft = drafts[workId];
                     if (draft) {
-                        _applyInspectionDraft(draft);
-                        const notice = document.getElementById('inspDraftNotice');
-                        const timeEl = document.getElementById('inspDraftNoticeTime');
-                        if (notice) notice.style.display = 'flex';
-                        if (timeEl) timeEl.textContent = _formatDraftTime(draft.savedAt);
+                        // ✓ Case 2: 수량 변경 감지 - draft 저장 당시와 현재 도장 수량 비교
+                        if (draft.sourceProductionQty && draft.sourceProductionQty !== (work.productionQty || 0)) {
+                            _showDraftQuantityMismatchModal(work, draft, workId);
+                        } else {
+                            _applyInspectionDraft(draft);
+                            const notice = document.getElementById('inspDraftNotice');
+                            const timeEl = document.getElementById('inspDraftNoticeTime');
+                            if (notice) notice.style.display = 'flex';
+                            if (timeEl) timeEl.textContent = _formatDraftTime(draft.savedAt);
+                        }
                     }
                 } catch (e) { /* 무시 */ }
             }, 100);
@@ -5679,6 +5714,71 @@ const PaintingInspectionModule = (function() {
             document.addEventListener('mousemove', onMouseMove);
             document.addEventListener('mouseup', stopDrag);
             event.preventDefault();
+        });
+    }
+
+    function _makeInspectionModalResizable(rootEl, modalId) {
+        const modalBox = rootEl.querySelector('#' + modalId);
+        if (!modalBox) return;
+
+        const handleId = modalId + 'Resize';
+        const old = rootEl.querySelector('#' + handleId);
+        if (old) old.remove();
+
+        const handle = document.createElement('div');
+        handle.id = handleId;
+        handle.title = '드래그하여 창 너비 조절';
+
+        function placeHandle() {
+            const r = modalBox.getBoundingClientRect();
+            handle.style.cssText = [
+                'position:fixed',
+                'top:' + r.top + 'px',
+                'left:' + (r.right - 12) + 'px',
+                'width:12px',
+                'height:' + r.height + 'px',
+                'cursor:ew-resize',
+                'z-index:1001',
+                'background:linear-gradient(to right,transparent,rgba(99,102,241,0.35))',
+                'border-radius:0 10px 10px 0',
+            ].join(';');
+        }
+
+        placeHandle();
+        rootEl.appendChild(handle);
+
+        handle.addEventListener('mousedown', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            const rect = modalBox.getBoundingClientRect();
+            modalBox.style.left = rect.left + 'px';
+            modalBox.style.top = rect.top + 'px';
+            modalBox.style.transform = 'none';
+            modalBox.style.width = rect.width + 'px';
+            modalBox.style.maxWidth = 'none';
+
+            const startX = event.clientX;
+            const startW = rect.width;
+            const minW = Math.min(640, window.innerWidth * 0.45);
+            const maxW = window.innerWidth * 0.98;
+
+            document.body.style.userSelect = 'none';
+            document.body.style.cursor = 'ew-resize';
+
+            function onMove(ev) {
+                const newW = Math.max(minW, Math.min(startW + (ev.clientX - startX), maxW));
+                modalBox.style.width = newW + 'px';
+                placeHandle();
+            }
+            function onUp() {
+                document.body.style.userSelect = '';
+                document.body.style.cursor = '';
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+            }
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
         });
     }
 
@@ -6296,6 +6396,15 @@ const PaintingInspectionModule = (function() {
         _autoPaintBoxCount();
     }
 
+    // ✓ Case 1: 부분 완료 토글
+    function _togglePartialInspection() {
+        const checkbox = document.getElementById('inpIsPartialInspection');
+        const infoDiv = document.getElementById('piPartialInspectionInfo');
+        if (checkbox && infoDiv) {
+            infoDiv.style.display = checkbox.checked ? 'flex' : 'none';
+        }
+    }
+
     // ── 표준 검사 시간(외관검사 C.TIME) → 개당 초 ────────────────────
     // 제품 정보의 외관 검사 C.TIME(초, 1인 기준)/CVT를 이용해 EA당 표준 검사 시간을 구한다.
     function _getInspectionStdPerEaSec(work) {
@@ -6374,8 +6483,13 @@ const PaintingInspectionModule = (function() {
 
     async function _saveInspectionDraft(workId) {
         if (!workId) { UIUtils.toast('임시 저장할 검사 대상이 없습니다.', 'warning'); return; }
+        const work = Storage.getById(PAINTING_WORK_STORE, workId);
+        if (!work) { UIUtils.toast('도장 작업을 찾을 수 없습니다.', 'warning'); return; }
+
         const data = _collectInspectionFormData();
         data.savedAt = new Date().toISOString();
+        data.sourceProductionQty = work.productionQty; // ✓ Case 2: 원본 도장 수량 스냅샷 저장
+
         try {
             const drafts = await _getInspectionDrafts();
             drafts[workId] = data;
@@ -6390,6 +6504,129 @@ const PaintingInspectionModule = (function() {
             console.error('외관 검사 임시 저장 실패', e);
             UIUtils.toast('임시 저장 중 오류가 발생했습니다.', 'error');
         }
+    }
+
+    // ✓ Case 3: 도장 작업 수량 수정 후 검사 기록 동기화 모달
+    function _showInspectionSyncModal(workId, oldQty, newQty, diffQty, inspections) {
+        const diffSign = diffQty > 0 ? '+' : '';
+        const totalInspected = inspections.reduce((sum, insp) => sum + (Number(insp.inspectionQty) || 0), 0);
+        const totalRemaining = oldQty - totalInspected;
+        const newRemaining = totalRemaining + diffQty;
+
+        UIUtils.showModal('⚠️ 도장 작업 수량이 변경되었습니다 (검사 기록 동기화 필요)', `
+            <div style="background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);border-radius:8px;padding:14px;margin-bottom:16px;">
+                <div style="font-size:0.85rem;color:var(--text-primary);line-height:1.8;">
+                    <div><strong>원본 도장 수량</strong>: ${UIUtils.formatNumber(oldQty)} EA</div>
+                    <div><strong>변경 도장 수량</strong>: ${UIUtils.formatNumber(newQty)} EA</div>
+                    <div><strong>변경량</strong>: ${diffSign}${UIUtils.formatNumber(Math.abs(diffQty))} EA</div>
+                    <div style="margin-top:8px;border-top:1px solid var(--border-color);padding-top:8px;color:var(--text-secondary);">
+                        <div><strong>검사 완료 수량</strong>: ${UIUtils.formatNumber(totalInspected)} EA (${inspections.length}건)</div>
+                        <div><strong>이전 미검사</strong>: ${UIUtils.formatNumber(totalRemaining)} EA</div>
+                        <div style="color:var(--accent-blue);"><strong>변경 후 미검사</strong>: ${UIUtils.formatNumber(Math.max(0, newRemaining))} EA</div>
+                    </div>
+                </div>
+            </div>
+            <div style="background:var(--bg-secondary);border-radius:8px;padding:10px 12px;margin-bottom:16px;font-size:0.82rem;color:var(--text-secondary);">
+                <span class="material-symbols-outlined" style="font-size:18px;vertical-align:middle;color:var(--accent-orange);">info</span>
+                <span style="margin-left:6px;">다음 중 선택하세요:</span>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소 (나중에 수정)</button>
+            <button class="btn btn-primary" style="background:var(--accent-blue);border-color:var(--accent-blue);"
+                onclick="PaintingInspectionModule._autoSyncInspections('${workId}', ${oldQty}, ${newQty})">
+                <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px;">sync</span> 자동 동기화
+            </button>
+        `, 'md');
+    }
+
+    // ✓ Case 3: 검사 기록 자동 동기화
+    async function _autoSyncInspections(workId, oldQty, newQty) {
+        UIUtils.closeModal();
+        try {
+            const inspections = (Storage.getAll(PAINTING_INSPECTIONS_STORE) || []).filter(
+                insp => insp.workId === workId
+            );
+
+            let syncCount = 0;
+            for (const insp of inspections) {
+                // 각 검사 기록의 "원본 도장 수량" 필드 업데이트 (검사 수량은 유지)
+                await Storage.update(PAINTING_INSPECTIONS_STORE, insp.id, {
+                    sourcePaintingProductionQty: newQty
+                });
+                syncCount++;
+            }
+
+            UIUtils.toast(`검사 기록 ${syncCount}건이 자동 동기화되었습니다.`, 'success');
+            if (typeof loadAll === 'function') loadAll();
+        } catch (e) {
+            console.error('검사 기록 동기화 실패:', e);
+            UIUtils.toast('검사 기록 동기화 중 오류가 발생했습니다.', 'error');
+        }
+    }
+
+    // ✓ Case 2: 임시 저장 데이터와 현재 도장 작업 수량 불일치 처리
+    function _showDraftQuantityMismatchModal(work, draft, workId) {
+        const oldQty = draft.sourceProductionQty;
+        const newQty = work.productionQty || 0;
+        const diffQty = newQty - oldQty;
+        const diffSign = diffQty > 0 ? '+' : '';
+
+        UIUtils.showModal('⚠️ 도장 작업 수량이 변경되었습니다', `
+            <div style="background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);border-radius:8px;padding:12px 14px;margin-bottom:16px;">
+                <div style="font-size:0.85rem;color:var(--text-primary);line-height:1.6;">
+                    <div><strong>임시 저장 당시 수량</strong>: ${UIUtils.formatNumber(oldQty)} EA</div>
+                    <div style="margin-top:4px;"><strong>현재 도장 수량</strong>: ${UIUtils.formatNumber(newQty)} EA</div>
+                    <div style="margin-top:4px;"><strong>변경량</strong>: ${diffSign}${UIUtils.formatNumber(Math.abs(diffQty))} EA</div>
+                </div>
+            </div>
+            <div style="background:var(--bg-secondary);border-radius:8px;padding:10px 12px;margin-bottom:16px;font-size:0.82rem;color:var(--text-secondary);">
+                <span class="material-symbols-outlined" style="font-size:18px;vertical-align:middle;color:var(--accent-orange);">info</span>
+                <span style="margin-left:6px;">다음 중 선택하세요:</span>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" style="background:var(--accent-orange);border-color:var(--accent-orange);"
+                onclick="PaintingInspectionModule._continueExistingDraft('${workId}')">
+                <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px;">refresh</span> 계속 검사 (${UIUtils.formatNumber(oldQty)}개 기준)
+            </button>
+            <button class="btn btn-primary" style="background:var(--accent-blue);border-color:var(--accent-blue);"
+                onclick="PaintingInspectionModule._restartWithNewQuantity('${workId}')">
+                <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px;">restart_alt</span> 새 수량으로 재시작 (${UIUtils.formatNumber(newQty)}개)
+            </button>
+        `, 'md');
+    }
+
+    // ✓ Case 2: 기존 draft로 계속 검사
+    function _continueExistingDraft(workId) {
+        UIUtils.closeModal();
+        setTimeout(async () => {
+            try {
+                const drafts = await _getInspectionDrafts();
+                const draft = drafts[workId];
+                if (draft) {
+                    _applyInspectionDraft(draft);
+                    const notice = document.getElementById('inspDraftNotice');
+                    const timeEl = document.getElementById('inspDraftNoticeTime');
+                    if (notice) notice.style.display = 'flex';
+                    if (timeEl) timeEl.textContent = _formatDraftTime(draft.savedAt);
+                    UIUtils.toast('임시 저장된 검사 내용으로 계속합니다.', 'info');
+                }
+            } catch (e) { console.error(e); }
+        }, 100);
+    }
+
+    // ✓ Case 2: 새 수량으로 재시작 (draft 삭제)
+    async function _restartWithNewQuantity(workId) {
+        UIUtils.closeModal();
+        // draft 삭제
+        await _clearInspectionDraft(workId, true);
+        // 페이지 새로고침하여 draft 없이 다시 로드
+        setTimeout(() => {
+            const modalEl = document.querySelector('[data-inspection-modal="' + workId + '"]');
+            if (modalEl) modalEl.remove();
+            openInspectionModal(workId);
+            UIUtils.toast('새 수량으로 검사를 재시작합니다.', 'success');
+        }, 100);
     }
 
     async function _clearInspectionDraft(workId, silent) {
@@ -6732,23 +6969,48 @@ const PaintingInspectionModule = (function() {
             return;
         }
 
+        // ✓ Case 1: 부분 완료 여부 확인
+        const isPartialCheckbox = document.getElementById('inpIsPartialInspection');
+        const isPartial = isPartialCheckbox && isPartialCheckbox.checked;
+
         // 검사 결과 1건만 저장
         await Storage.add(STORE, {
             ...baseData,
             defects: defectDetails,
-            inspectionStatus: 'completed',
+            inspectionStatus: isPartial ? 'partial' : 'completed', // ✓ Case 1: 부분/완료 구분
+            isPartial: isPartial, // ✓ Case 1: 부분 검사 플래그
             createdAt: new Date().toISOString()
         });
 
-        // 해당 작업의 상태를 "검사 완료"로 변경
-        await Storage.update(PAINTING_WORK_STORE, workId, {
-            inspectionStatus: 'completed',
-            inspectionDate: inspectionDate,
-            inspectionStartTime: inspectionStartTime,
-            inspectionEndTime: inspectionEndTime,
-            inspectors: inspectors,
-            updatedAt: new Date().toISOString()
-        });
+        // ✓ Case 1: 부분 완료 처리
+        if (isPartial) {
+            // 미검사 수량 = 원본 도장 수량 - 현재 검사 수량
+            const remainingQty = (work.productionQty || 0) - effectiveInspQty;
+
+            // 도장 작업 업데이트
+            await Storage.update(PAINTING_WORK_STORE, workId, {
+                inspectionStatus: 'partial', // 부분 검사됨
+                inspectedQty: effectiveInspQty, // 검사 완료 수량
+                remainingQty: remainingQty, // 미검사 수량
+                lastInspectionDate: inspectionDate,
+                updatedAt: new Date().toISOString()
+            });
+
+            // 부분 완료 메시지
+            const msg = `부분 검사 완료: ${UIUtils.formatNumber(effectiveInspQty)} EA 검사, ${UIUtils.formatNumber(remainingQty)} EA 미검사 (외관검사 대기 상태 유지)`;
+            UIUtils.toast(msg, 'success');
+        } else {
+            // 해당 작업의 상태를 "검사 완료"로 변경
+            await Storage.update(PAINTING_WORK_STORE, workId, {
+                inspectionStatus: 'completed',
+                inspectionDate: inspectionDate,
+                inspectionStartTime: inspectionStartTime,
+                inspectionEndTime: inspectionEndTime,
+                inspectors: inspectors,
+                updatedAt: new Date().toISOString()
+            });
+            UIUtils.toast('검사 데이터가 저장되었습니다.', 'success');
+        }
 
         // 검사 완료 시 임시 저장 내용 정리
         await _clearInspectionDraft(workId, true);
@@ -6760,8 +7022,10 @@ const PaintingInspectionModule = (function() {
         // 이 도장 라인 완료 후 레이저가 남아있으면 출하대기 미등록 (레이저 → 도장 → 검사 순서인 제품은 등록)
         const _paintLineName = (work.line || '').trim();
         const _isLaser = _laserAfterPaintLine(_prod, _paintLineName);
-        if (!_isLaser) {
-            const standbyQty = packQty > 0 ? packQty : goodQty;
+
+        // ✓ Case 1: 부분 완료인 경우 양품만 출하검사로 이동
+        if (!_isLaser && (!isPartial || (isPartial && goodQty > 0))) {
+            const standbyQty = isPartial ? (packQty > 0 ? Math.min(packQty, goodQty) : goodQty) : (packQty > 0 ? packQty : goodQty);
             await Storage.add(DB.STORES.SHIPPING_STANDBY, {
                 date         : inspectionDate,
                 source       : 'painting_inspection',
@@ -6776,14 +7040,13 @@ const PaintingInspectionModule = (function() {
                 inspectionQty: standbyQty,
                 goodQty      : standbyQty,
                 packUnit     : packUnit,
-                boxCount     : packBoxCount,
-                residualQty  : residualQty,
+                boxCount     : isPartial ? Math.floor(standbyQty / Math.max(1, packUnit)) : packBoxCount,
+                residualQty  : isPartial ? (standbyQty % Math.max(1, packUnit)) : residualQty,
                 customer     : _prod ? (_prod.customer || '') : '',
-                status       : '대기'
+                status       : '대기',
+                isPartialSource: isPartial // ✓ Case 1: 부분 검사에서 나온 출하검사임을 표시
             });
         }
-
-        UIUtils.toast('검사 데이터가 저장되었습니다.', 'success');
 
         // 모달 제거 후 도장 검사 페이지로 복귀
         const modal = document.querySelector('.modal.fade');
@@ -8310,7 +8573,16 @@ const PaintingInspectionModule = (function() {
         _closeInspectionModal,
         focusNonconformStandardPasteZone,
         handleNonconformStandardPaste,
-        printNonconformStandardPage
+        printNonconformStandardPage,
+        // ✓ Case 1: 부분 완료 검사
+        _togglePartialInspection,
+        // ✓ Case 2: 작업 중단 후 재개
+        _showDraftQuantityMismatchModal,
+        _continueExistingDraft,
+        _restartWithNewQuantity,
+        // ✓ Case 3: 도장 작업 수량 수정 후 검사 기록 동기화
+        _showInspectionSyncModal,
+        _autoSyncInspections
     };
 })();
 

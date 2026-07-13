@@ -2271,6 +2271,16 @@ var LaserWipModule = (function() {
             </div>
             <div class="form-row">
                 <div class="form-group">
+                    <label class="form-label">사출 LOT</label>
+                    <input type="text" class="form-input" id="lwAfterInjectionLot" readonly style="background:var(--bg-secondary);cursor:default;">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">도장 작업일</label>
+                    <input type="text" class="form-input" id="lwAfterPaintDate" readonly style="background:var(--bg-secondary);cursor:default;">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
                     <label class="form-label">수량 (EA)</label>
                     <input type="number" class="form-input" id="lwAfterQty" min="1" placeholder="0">
                 </div>
@@ -2294,6 +2304,12 @@ var LaserWipModule = (function() {
         if (sel) sel.innerHTML = '<option value="">-- 품명 선택 --</option>' + partNames.map(n => `<option value="${n}">${n}</option>`).join('');
         const colSel = document.getElementById('lwAfterColor');
         if (colSel) colSel.innerHTML = '<option value="">-- 컬러 선택 --</option>';
+
+        // LOT 필드 초기화
+        const injLotEl = document.getElementById('lwAfterInjectionLot');
+        const paintDateEl = document.getElementById('lwAfterPaintDate');
+        if (injLotEl) injLotEl.value = '';
+        if (paintDateEl) paintDateEl.value = '';
     }
 
     function onAfterPartChange() {
@@ -2305,6 +2321,20 @@ var LaserWipModule = (function() {
         const colors = [...new Set(products.map(p => p.color).filter(Boolean))].sort((a,b) => String(a).localeCompare(String(b), 'ko'));
         const sel = document.getElementById('lwAfterColor');
         if (sel) sel.innerHTML = '<option value="">-- 컬러 선택 --</option>' + colors.map(c => `<option value="${c}">${c}</option>`).join('');
+
+        // 선택한 제품의 기존 LOT 정보 표시
+        const wip = _calcWip().find(r => r.carModel === carModel && r.partName === partName);
+        const injLotEl = document.getElementById('lwAfterInjectionLot');
+        const paintDateEl = document.getElementById('lwAfterPaintDate');
+        if (wip) {
+            const injLots = (Array.isArray(wip.injectionLots) ? wip.injectionLots : []).filter(Boolean);
+            const paintDates = (Array.isArray(wip.paintDates) ? wip.paintDates : []).filter(Boolean);
+            if (injLotEl) injLotEl.value = injLots.length > 0 ? injLots.join(', ') : '-';
+            if (paintDateEl) paintDateEl.value = paintDates.length > 0 ? paintDates.join(', ') : '-';
+        } else {
+            if (injLotEl) injLotEl.value = '-';
+            if (paintDateEl) paintDateEl.value = '-';
+        }
     }
 
     async function saveAfterLaserInput() {
@@ -2314,13 +2344,19 @@ var LaserWipModule = (function() {
         const color    = (document.getElementById('lwAfterColor')    || {}).value || '';
         const quantity = parseInt((document.getElementById('lwAfterQty')  || {}).value || '0', 10);
         const note     = (document.getElementById('lwAfterNote')     || {}).value.trim() || '수기등록';
+        const injectionLot = ((document.getElementById('lwAfterInjectionLot') || {}).value || '').trim();
+        const paintDate = ((document.getElementById('lwAfterPaintDate') || {}).value || '').trim();
 
         if (!date || !carModel || !partName || !quantity || quantity <= 0) {
             UIUtils.toast('날짜, 차종, 품명, 수량(1 이상)은 필수입니다.', 'warning');
             return;
         }
 
-        await Storage.add(STORE_LASER, { date, carModel, partName, color, quantity, machine: '', note, isManual: true });
+        const record = { date, carModel, partName, color, quantity, machine: '', note, isManual: true };
+        if (injectionLot && injectionLot !== '-') record.lotNo = injectionLot;
+        if (paintDate && paintDate !== '-') record.paintDate = paintDate;
+
+        await Storage.add(STORE_LASER, record);
         UIUtils.closeModal();
         UIUtils.toast(`레이져 후 재공품 수기 등록 완료 — ${partName} ${quantity}EA`, 'success');
         refresh();
@@ -2367,6 +2403,16 @@ var LaserWipModule = (function() {
             </div>
             <div class="form-row">
                 <div class="form-group">
+                    <label class="form-label">사출 LOT</label>
+                    <input type="text" class="form-input" id="lwOutInjectionLot" readonly style="background:var(--bg-secondary);cursor:default;">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">도장 작업일</label>
+                    <input type="text" class="form-input" id="lwOutPaintDate" readonly style="background:var(--bg-secondary);cursor:default;">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
                     <label class="form-label">출고 수량 (EA)</label>
                     <input type="number" class="form-input" id="lwOutQty" min="1" placeholder="0">
                 </div>
@@ -2394,6 +2440,12 @@ var LaserWipModule = (function() {
         if (colSel) colSel.innerHTML = '<option value="">-- 컬러 선택 --</option>';
         const info = document.getElementById('lwOutStockInfo');
         if (info) info.textContent = '';
+
+        // LOT 필드 초기화
+        const injLotEl = document.getElementById('lwOutInjectionLot');
+        const paintDateEl = document.getElementById('lwOutPaintDate');
+        if (injLotEl) injLotEl.value = '';
+        if (paintDateEl) paintDateEl.value = '';
     }
 
     function onOutPartChange() {
@@ -2406,6 +2458,20 @@ var LaserWipModule = (function() {
         const match = rows.find(r => r.partName === partName);
         const info  = document.getElementById('lwOutStockInfo');
         if (info && match) info.innerHTML = `현재 재공품: <strong style="color:var(--accent-purple);">${UIUtils.formatNumber(match.wip)} EA</strong>`;
+
+        // 선택한 제품의 기존 LOT 정보 표시
+        const wip = _calcWip().find(r => r.carModel === carModel && r.partName === partName);
+        const injLotEl = document.getElementById('lwOutInjectionLot');
+        const paintDateEl = document.getElementById('lwOutPaintDate');
+        if (wip) {
+            const injLots = (Array.isArray(wip.injectionLots) ? wip.injectionLots : []).filter(Boolean);
+            const paintDates = (Array.isArray(wip.paintDates) ? wip.paintDates : []).filter(Boolean);
+            if (injLotEl) injLotEl.value = injLots.length > 0 ? injLots.join(', ') : '-';
+            if (paintDateEl) paintDateEl.value = paintDates.length > 0 ? paintDates.join(', ') : '-';
+        } else {
+            if (injLotEl) injLotEl.value = '-';
+            if (paintDateEl) paintDateEl.value = '-';
+        }
     }
 
     async function saveAfterLaserOut() {
@@ -2415,6 +2481,8 @@ var LaserWipModule = (function() {
         const color    = (document.getElementById('lwOutColor')    || {}).value || '';
         const quantity = parseInt((document.getElementById('lwOutQty')  || {}).value || '0', 10);
         const note     = (document.getElementById('lwOutNote')     || {}).value.trim() || '수기 출고';
+        const injectionLot = ((document.getElementById('lwOutInjectionLot') || {}).value || '').trim();
+        const paintDate = ((document.getElementById('lwOutPaintDate') || {}).value || '').trim();
 
         if (!date || !carModel || !partName || !quantity || quantity <= 0) {
             UIUtils.toast('날짜, 차종, 품명, 수량(1 이상)은 필수입니다.', 'warning');
@@ -2426,7 +2494,11 @@ var LaserWipModule = (function() {
             return;
         }
 
-        await Storage.add(STORE_LASER, { date, carModel, partName, color, quantity, machine: '', note, isManual: true, isManualOut: true });
+        const record = { date, carModel, partName, color, quantity, machine: '', note, isManual: true, isManualOut: true };
+        if (injectionLot && injectionLot !== '-') record.lotNo = injectionLot;
+        if (paintDate && paintDate !== '-') record.paintDate = paintDate;
+
+        await Storage.add(STORE_LASER, record);
         UIUtils.closeModal();
         UIUtils.toast(`레이져 후 재공품 출고 완료 — ${partName} ${quantity}EA`, 'success');
         refresh();
