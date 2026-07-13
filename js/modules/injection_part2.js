@@ -1444,6 +1444,10 @@ var InjectionWarehouseModule = (function() {
 
     // LOT 정보 전체 수정 모달 — 입고일·생산처·LOT번호·현재 수량을 함께 편집한다.
     function openLotEditModal(carModel, partName, color, oldLot, currentQty) {
+        if (!_canEditWarehouseLot()) {
+            UIUtils.toast('사출 창고 입력 권한이 있는 사용자만 LOT 수량을 수정할 수 있습니다.', 'warning');
+            return;
+        }
         const _cmJs = carModel.replace(/'/g, "\\'");
         const _pnJs = partName.replace(/'/g, "\\'");
         const _clJs = (color || '').replace(/'/g, "\\'");
@@ -1499,6 +1503,10 @@ var InjectionWarehouseModule = (function() {
     }
 
     async function saveLotEdit(carModel, partName, color, oldLot, oldQty) {
+        if (!_canEditWarehouseLot()) {
+            UIUtils.toast('사출 창고 입력 권한이 있는 사용자만 LOT 수량을 수정할 수 있습니다.', 'warning');
+            return;
+        }
         const newLot      = ((document.getElementById('lotEditLot')      || {}).value || '').trim();
         const newDate     = ((document.getElementById('lotEditDate')     || {}).value || '').trim();
         const newSupplier = ((document.getElementById('lotEditSupplier') || {}).value || '').trim();
@@ -3052,12 +3060,13 @@ var InjectionWarehouseModule = (function() {
         });
     }
 
-    // LOT 정보 수정 권한: 관리자, 또는 자재창고(injection-warehouse)+완제품창고(product-warehouse) 입력 권한을 모두 가진 사용자(물류작업자 등)
+    // 사출 LOT 정보 수정 권한: 사출 창고 입력 권한 보유자.
+    // 완제품 창고 권한까지 요구하면 생산관리자처럼 자재창고만 맡은 사용자가 보정할 수 없다.
     function _canEditWarehouseLot() {
         try {
             if (_isAdminUser()) return true;
             if (typeof AuthModule !== 'undefined' && typeof AuthModule.canWritePage === 'function') {
-                return AuthModule.canWritePage('injection-warehouse') && AuthModule.canWritePage('product-warehouse');
+                return AuthModule.canWritePage('injection-warehouse');
             }
         } catch (e) { /* 무시 */ }
         return false;

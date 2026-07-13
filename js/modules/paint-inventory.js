@@ -697,7 +697,7 @@ const PaintInventoryModule = (function() {
         const mat = materials.find(m => m.id === matId);
         if (!mat) { UIUtils.toast('도료 정보를 찾을 수 없습니다.', 'error'); return; }
 
-        const isAdmin = _isAdminUser();
+        const canEditStock = _canEditPaintStock();
 
         const data = Storage.getAll(STORE);
         const records = data
@@ -751,8 +751,8 @@ const PaintInventoryModule = (function() {
                 }
                 const prodLotEsc = (l.prodLot || '').replace(/'/g, "\\'");
                 const lotNoEsc   = (l.lotNo   || '').replace(/'/g, "\\'");
-                const adjustBtn = isAdmin
-                    ? `<button type="button" title="재고 수량 수정 (관리자)"
+                const adjustBtn = canEditStock
+                    ? `<button type="button" title="재고 수량 수정"
                             onclick="event.stopPropagation(); PaintInventoryModule._openDetailAdjust('${matId}','${prodLotEsc}','${lotNoEsc}',${l.qty})"
                             style="font-size:0.7rem;border:1px solid var(--border-color);border-radius:4px;padding:2px 6px;margin-right:4px;background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;">수정</button>`
                     : '';
@@ -938,11 +938,11 @@ const PaintInventoryModule = (function() {
         setTimeout(() => showPaintDetail(matId), 150);
     }
 
-    // ── 도료 상세 팝업에서 LOT 재고 수량 수정 (관리자 전용) ──────────
+    // ── 도료 상세 팝업에서 LOT 재고 수량 수정 (도료 창고 입력 권한) ──────────
     // 실제 재고 값을 관리자가 직접 보정한다. 입력한 값과 현재 재고의 차이를
     // 조정(입고/출고) 레코드로 기록해 이력을 보존한다.
     function _openDetailAdjust(matId, prodLot, lotNo, currentQty) {
-        if (!_isAdminUser()) { UIUtils.toast('재고 수정은 관리자만 가능합니다.', 'warning'); return; }
+        if (!_canEditPaintStock()) { UIUtils.toast('도료 창고 입력 권한이 있는 사용자만 재고를 수정할 수 있습니다.', 'warning'); return; }
         const materials = Storage.getAll(MATERIALS_STORE);
         const mat = materials.find(m => m.id === matId);
         if (!mat) { UIUtils.toast('도료 정보를 찾을 수 없습니다.', 'error'); return; }
@@ -952,7 +952,7 @@ const PaintInventoryModule = (function() {
         const lotLabel = prodLot || lotNo || '-';
 
         UIUtils.showModal(
-            `<span class="material-symbols-outlined" style="vertical-align:middle;color:var(--accent-blue);">edit</span> 도료 재고 수정 <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(관리자)</span>`,
+            `<span class="material-symbols-outlined" style="vertical-align:middle;color:var(--accent-blue);">edit</span> 도료 재고 수정`,
             `<div style="margin-bottom:12px;padding:10px 14px;background:var(--bg-secondary);border-radius:8px;font-size:0.85rem;">
                 <span style="font-weight:700;">${mat.name}</span>
                 <span style="color:var(--text-muted);margin:0 8px;">|</span>
@@ -989,7 +989,7 @@ const PaintInventoryModule = (function() {
     }
 
     async function _saveDetailAdjust(matId, prodLot, lotNo) {
-        if (!_isAdminUser()) { UIUtils.toast('재고 수정은 관리자만 가능합니다.', 'warning'); return; }
+        if (!_canEditPaintStock()) { UIUtils.toast('도료 창고 입력 권한이 있는 사용자만 재고를 수정할 수 있습니다.', 'warning'); return; }
         const date   = (document.getElementById('detailAdjDate') || {}).value || '';
         const newQty = Number((document.getElementById('detailAdjQty') || {}).value);
         const memo   = (document.getElementById('detailAdjMemo') || {}).value?.trim() || '';
@@ -1913,6 +1913,17 @@ const PaintInventoryModule = (function() {
         if (typeof AuthModule === 'undefined' || !AuthModule.getCurrentUser) return false;
         const user = AuthModule.getCurrentUser();
         return !!(user && user.role === 'admin');
+    }
+
+    // 도료 LOT 재고 보정 권한: 관리자 또는 도료 창고 입력 권한 보유자(생산관리자 등)
+    function _canEditPaintStock() {
+        if (_isAdminUser()) return true;
+        try {
+            return typeof AuthModule !== 'undefined' &&
+                typeof AuthModule.canWritePage === 'function' &&
+                AuthModule.canWritePage('paint-inventory');
+        } catch (e) { /* 무시 */ }
+        return false;
     }
 
     function _canConfirmProdSchedule() {
