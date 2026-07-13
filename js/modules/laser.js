@@ -779,6 +779,23 @@ var LaserWorkModule = (function() {
             return (Number(w.productionQty) || 0) > 0;
         });
 
+        // 작업등록 FIFO는 대기재고 상세와 동일한 LOT 잔량 계산을 사용한다.
+        // 차감·보정·수기 이력을 모두 반영한 권위 있는 LOT 행으로 원본 도장작업 행을 대체한다.
+        try {
+            if (typeof LaserStandbyModule !== 'undefined' && LaserStandbyModule.getWorkLotSnapshotSync) {
+                const authoritativeRows = LaserStandbyModule.getWorkLotSnapshotSync() || [];
+                const authoritativeKeys = new Set(authoritativeRows.map(function(row) {
+                    return `${row.carModel}||${row.partName}||${row.color || ''}`;
+                }));
+                for (let i = result.length - 1; i >= 0; i--) {
+                    const row = result[i];
+                    const key = `${row.carModel}||${row.partName}||${row.color || ''}`;
+                    if (authoritativeKeys.has(key)) result.splice(i, 1);
+                }
+                result.push.apply(result, authoritativeRows);
+            }
+        } catch (e) { /* 상세 LOT 조회 실패 시 기존 원본 도장작업 계산 사용 */ }
+
         // 수량 보정에 LOT별 배분이 있으면 원본 도장 작업 잔량이 아니라 보정 LOT를 유일한 기준으로 쓴다.
         // 그렇지 않으면 상세 대기재고(보정 후)와 작업 등록 FIFO(보정 전)가 서로 달라진다.
         try {
@@ -4455,6 +4472,55 @@ var LaserStandbyModule = (function() {
         return _buildInventorySnapshot().stockItems;
     }
 
+    // 레이저 작업등록 FIFO가 대기재고 상세의 LOT 계산과 같은 값을 사용하도록 제공한다.
+    // 도장 작업 원본만 재계산하면 수기 차감·LOT 보정이 누락되어 화면별 수량이 달라진다.
+    function getWorkLotSnapshotSync() {
+        const snapshot = _buildInventorySnapshot();
+        const rows = [];
+
+        (snapshot.stockItems || []).forEach(function(item) {
+            const grouped = {};
+            _buildLotBalanceRows(item.key, item).forEach(function(lot) {
+                const paintLot = String(lot.paintLot || '').trim();
+                const groupKey = paintLot || 'LOT 미지정';
+                if (!grouped[groupKey]) {
+                    grouped[groupKey] = {
+                        carModel: item.carModel || '',
+                        partName: item.partName || '',
+                        color: item.color === '-' ? '' : (item.color || ''),
+                        paintLot: paintLot,
+                        lots: [],
+                        quantity: 0
+                    };
+                }
+                grouped[groupKey].lots.push({
+                    paintDate: paintLot,
+                    lotNo: String(lot.lotNo || ''),
+                    qty: Number(lot.qty) || 0
+                });
+                grouped[groupKey].quantity += Number(lot.qty) || 0;
+            });
+
+            Object.values(grouped).forEach(function(group) {
+                if (group.quantity <= 0) return;
+                const p = group.paintLot;
+                const date = /^\d{6}$/.test(p)
+                    ? `20${p.slice(0, 2)}-${p.slice(2, 4)}-${p.slice(4, 6)}`
+                    : p;
+                rows.push({
+                    carModel: group.carModel,
+                    partName: group.partName,
+                    color: group.color,
+                    date: date,
+                    productionQty: group.quantity,
+                    lots: group.lots,
+                    isAuthoritativeLotBalance: true
+                });
+            });
+        });
+        return rows;
+    }
+
     function _parseManualLotPair(value) {
         const text = String(value || '').trim();
         if (!text) return { paintLot: '', injectionLot: '' };
@@ -6120,6 +6186,7 @@ var LaserStandbyModule = (function() {
         _showItemDetail,
         ensureManualOverridesLoadedForWork,
         getStockSnapshotSync,
+        getWorkLotSnapshotSync,
         normalizeStandbyRecord: function(row, products, injectionMaterials) {
             return _canonicalStandbyRecord(
                 row || {},
