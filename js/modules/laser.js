@@ -796,15 +796,26 @@ var LaserWorkModule = (function() {
                     const shortfall = (Number(item.stockQty) || 0) - already;
                     if (shortfall <= 0) return;
                     const ov = item.manualOverride;
+                    // 신형 lots 배열 우선 → 구형 단일 paintLot/injectionLot → 없음
+                    const ovLots = ov && Array.isArray(ov.lots) && ov.lots.length > 0
+                        ? ov.lots.map(function(l) {
+                            return { paintDate: String(l.paintLot || l.paintDate || ''), lotNo: String(l.injectionLot || l.lotNo || ''), qty: Number(l.qty) || 0 };
+                          }).filter(function(l) { return l.lotNo && l.qty > 0; })
+                        : (ov && (ov.paintLot || ov.injectionLot)
+                            ? [{ paintDate: ov.paintLot || '', lotNo: ov.injectionLot || '', qty: shortfall }]
+                            : []);
+                    // date를 도장 LOT의 날짜로 채워야 작업등록 화면에서 도장LOT가 표시된다.
+                    const firstPaintLot = ovLots.length > 0 ? (ovLots[0].paintDate || '') : (ov && ov.paintLot ? ov.paintLot : '');
+                    const syntheticDate = firstPaintLot && /^\d{6}$/.test(firstPaintLot)
+                        ? '20' + firstPaintLot.slice(0,2) + '-' + firstPaintLot.slice(2,4) + '-' + firstPaintLot.slice(4,6)
+                        : '';
                     result.push({
                         carModel: item.carModel,
                         partName: item.partName,
                         color,
-                        date: '',
+                        date: syntheticDate,
                         productionQty: shortfall,
-                        lots: (ov && (ov.paintLot || ov.injectionLot))
-                            ? [{ paintDate: ov.paintLot || '', lotNo: ov.injectionLot || '', qty: shortfall }]
-                            : []
+                        lots: ovLots.length > 0 ? ovLots : []
                     });
                 });
             }
@@ -4506,6 +4517,9 @@ var LaserStandbyModule = (function() {
         });
 
         laserWorks.forEach(raw => {
+            // isManual 레코드는 잔량·재공 수기 조정이며 대기품 출고가 아니다.
+            // 대기품 출고는 _manualOverrides(CONFIG)에 저장되므로 여기서 걸러야 한다.
+            if (raw && raw.isManual) return;
             const w = _canonicalStandbyRecord(raw, products, injectionMaterials);
             const key = _itemKey(w.carModel, w.partName, w.color || '');
             if (!inventoryMap[key]) return;
@@ -4761,6 +4775,8 @@ var LaserStandbyModule = (function() {
         });
 
         laserWorks.forEach(raw => {
+            // isManual 레코드(잔량·재공 수기조정)는 대기품 LOT 잔량 계산에 포함하지 않는다.
+            if (raw && raw.isManual) return;
             const w = _canonicalStandbyRecord(raw, products, injectionMaterials);
             if ((w.carModel || '') !== carModel || (w.partName || '') !== partName || ((w.color || '') !== (color || ''))) return;
             const totalQty = Number(w.quantity) || 0;
