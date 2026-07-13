@@ -909,7 +909,16 @@ var LaserWorkModule = (function() {
     // 재공/잔량의 실사 보정은 생산 작업이 아니라 재고 카운트 조정이다.
     // 계산·감사 기록은 laser_work_log에 유지하되 작업 이력/통계에서는 제외한다.
     function _isInventoryCorrectionRecord(d) {
-        return !!(d && (d.isResidualLotAdjust || d.isWipLotAdjust));
+        // laser-wip.js가 만드는 모든 수기 입고·출고·LOT 보정은 isManual=true이다.
+        // 개별 플래그가 추가되거나 구버전 레코드에 일부 플래그가 빠져도 작업 실적으로 오인하지 않는다.
+        return !!(d && (
+            d.isManual ||
+            d.isResidualLotAdjust ||
+            d.isWipLotAdjust ||
+            d.isResidualManualIn ||
+            d.isResidualManualOut ||
+            d.isManualOut
+        ));
     }
 
     function search() {

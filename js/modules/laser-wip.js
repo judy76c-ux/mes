@@ -2,7 +2,7 @@
  * 재공품 현황 (통합)
  * - 탭 1: 레이져 대기품 현황  (도장 완료 → 레이져 공정 대기)
  * - 탭 2: 레이져 후 재공품 현황 (레이져 완료 → 도장-B 대기)
- * - 탭 3: 레이져 후 잔량 현황   (포장단위 미달 잔량, 레이져→검사·출고 제품 / 도장-B 재공 3품목 제외)
+ * - 탭 3: 레이져 후 잔량 현황   (포장단위 미달 잔량, 레이져 공정 제품)
  */
 
 var LaserWipModule = (function() {
@@ -2090,11 +2090,27 @@ var LaserWipModule = (function() {
         return _getProcessAfterLaser(p) === '도장-B';
     }
 
-    // 레이져 잔량 대상: 제조공정에 레이져 포함, 레이져→도장-B 재공품은 제외(검사·출고 흐름)
+    // 레이져 잔량 대상: 제조공정에 레이져가 포함된 전체 제품
+    // T1xx LENS/PARK처럼 다음 공정이 도장-B인 제품도 실제 레이져 잔량이 발생하므로 포함한다.
     function _getResidualProducts() {
-        return (Storage.getAll(DB.STORES.PRODUCTS) || []).filter(p =>
-            _hasLaserProcess(p) && !_isAfterLaserWipProduct(p)
-        );
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const residualKeys = new Set();
+
+        // 기존 잔량·수기조정 이력이 있는 제품은 제품 마스터의 공정 설정이 바뀌거나
+        // 일시적으로 비어도 등록 목록에서 갑자기 사라지지 않게 유지한다.
+        (Storage.getAll(STORE_LASER) || []).forEach(function(w) {
+            const packUnit = _num(w.packUnit);
+            const goodQty = _num(w.inspectionGoodQty) || _num(w.completedQty) || _num(w.quantity);
+            const hasCalculatedResidual = packUnit > 0 && goodQty % packUnit > 0;
+            if (!w.isResidualManualIn && !w.isResidualManualOut &&
+                !w.isResidualLotAdjust && !_num(w.laserResidualQty) && !hasCalculatedResidual) return;
+            residualKeys.add(`${w.carModel || ''}||${w.partName || ''}||${w.color || ''}`);
+        });
+
+        return products.filter(function(p) {
+            if (_hasLaserProcess(p)) return true;
+            return residualKeys.has(`${p.carModel || ''}||${p.partName || ''}||${p.color || ''}`);
+        });
     }
 
     // ── 레이져 직후 공정이 도장(A/B)인 제품 맵 구성 ─────────────────────

@@ -83,7 +83,9 @@
       "Bash(node --check js/modules/injection_part2.js)",
       "mcp__claude-in-chrome__tabs_context_mcp",
       "Bash(awk '/^    function openInspectionModal/,/^    function [a-zA-Z]/ {print NR\": \"$0}' js/modules/painting.js)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(node --check js/modules/painting.js)",
+      "Bash(node --check js/modules/laser.js)"
     ]
   }
 }
