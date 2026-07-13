@@ -4710,6 +4710,24 @@ var LaserStandbyModule = (function() {
 
     function _buildLotBalanceRows(key, item = null) {
         const [carModel, partName, color] = String(key || '').split('||');
+        const overrideLots = item && item.manualOverride && Array.isArray(item.manualOverride.lots)
+            ? item.manualOverride.lots : [];
+
+        // 실사 보정에서 LOT별 수량을 지정한 경우 그 배분이 최종 기준이다.
+        // 총 재고만 보정되고 기존 LOT 합계가 남아 서로 달라지는 현상을 방지한다.
+        if (overrideLots.length > 0) {
+            return overrideLots
+                .map(function(lot) {
+                    return {
+                        lotNo: String((lot && (lot.injectionLot || lot.lotNo)) || '').trim(),
+                        paintLot: String((lot && (lot.paintLot || lot.paintDate)) || '-').trim() || '-',
+                        qty: Math.round((Number(lot && lot.qty) || 0) * 1000) / 1000
+                    };
+                })
+                .filter(function(lot) { return lot.lotNo && lot.qty > 0; })
+                .sort(function(a, b) { return String(a.lotNo).localeCompare(String(b.lotNo)); });
+        }
+
         const paintingWorks = Storage.getAll(DB.STORES.PAINTING_WORK) || [];
         const laserWorks = Storage.getAll(DB.STORES.LASER_WORK_LOG) || [];
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
@@ -5245,6 +5263,59 @@ var LaserStandbyModule = (function() {
         }
     }
 
+    function _adjustLotRowHtml(lot = {}) {
+        const paintLot = String(lot.paintLot || lot.paintDate || '').trim();
+        const injectionLot = String(lot.injectionLot || lot.lotNo || '').trim();
+        const qty = _normalizeQty(lot.qty);
+        return `
+            <div class="lsb-adjust-lot-row" style="display:grid;grid-template-columns:1fr 1fr 140px 34px;gap:8px;align-items:end;margin-bottom:8px;">
+                <div class="form-group" style="margin:0;">
+                    <label class="form-label">도장 LOT</label>
+                    <input type="text" class="form-input lsb-adjust-paint-lot" value="${_escapeAttr(paintLot)}" placeholder="예: 260710">
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label class="form-label">사출 LOT</label>
+                    <input type="text" class="form-input lsb-adjust-injection-lot" value="${_escapeAttr(injectionLot)}" placeholder="예: 260504">
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label class="form-label">LOT 수량</label>
+                    <input type="number" class="form-input lsb-adjust-lot-qty" value="${qty || ''}" min="0" placeholder="0">
+                </div>
+                <button type="button" class="btn btn-sm btn-danger" style="height:38px;padding:0;"
+                    title="LOT 행 삭제" onclick="LaserStandbyModule.removeAdjustLotRow(this)">−</button>
+            </div>`;
+    }
+
+    function addAdjustLotRow(lot) {
+        const container = document.getElementById('lsbAdjustLotRows');
+        if (!container) return;
+        container.insertAdjacentHTML('beforeend', _adjustLotRowHtml(lot || {}));
+    }
+
+    function removeAdjustLotRow(button) {
+        const container = document.getElementById('lsbAdjustLotRows');
+        const row = button && button.closest ? button.closest('.lsb-adjust-lot-row') : null;
+        if (!container || !row) return;
+        const rows = container.querySelectorAll('.lsb-adjust-lot-row');
+        if (rows.length <= 1) {
+            row.querySelectorAll('input').forEach(function(input) { input.value = ''; });
+            return;
+        }
+        row.remove();
+    }
+
+    function _readAdjustLotRows() {
+        return Array.from(document.querySelectorAll('#lsbAdjustLotRows .lsb-adjust-lot-row'))
+            .map(function(row) {
+                return {
+                    paintLot: String((row.querySelector('.lsb-adjust-paint-lot') || {}).value || '').trim(),
+                    injectionLot: String((row.querySelector('.lsb-adjust-injection-lot') || {}).value || '').trim(),
+                    qty: _normalizeQty((row.querySelector('.lsb-adjust-lot-qty') || {}).value || 0)
+                };
+            })
+            .filter(function(lot) { return lot.paintLot || lot.injectionLot || lot.qty > 0; });
+    }
+
     async function openAdjustModal(keyEnc = '', isAddMode = false) {
         if (!_canEditStandby()) {
             UIUtils.toast('관리자·레이져운영자만 레이져 대기품 수량을 수정할 수 있습니다.', 'warning');
@@ -5281,6 +5352,13 @@ var LaserStandbyModule = (function() {
         const parsedLot = _parseManualLotPair(latestInRecord?.lotNo || '');
         const initialPaintLot = (override?.paintLot || (latestInRecord && latestInRecord.note === '수기조정' ? parsedLot.paintLot : '') || '').trim();
         const initialInjectionLot = (override?.injectionLot || parsedLot.injectionLot || '').trim();
+        const savedLots = override && Array.isArray(override.lots) ? override.lots : [];
+        const calculatedLots = (!addMode && key && item) ? _buildLotBalanceRows(key, item) : [];
+        const initialLots = savedLots.length > 0
+            ? savedLots
+            : (calculatedLots.length > 0
+                ? calculatedLots
+                : [{ paintLot: initialPaintLot, injectionLot: initialInjectionLot, qty: addMode ? 0 : currentStock }]);
 
         // 이 항목이 제품 마스터에 없는 품명인가 (= 유령 품목)
         const _isUnmatchedItem = !!_canonicalStandbyRecord(
@@ -5355,19 +5433,23 @@ var LaserStandbyModule = (function() {
                 </div>
             </div>
             ${identityFieldsHtml}
-            <div class="form-row">
+            <div class="form-row" style="margin-bottom:12px;">
                 <div class="form-group">
-                    <label class="form-label">${addMode ? '추가 수량' : '수량'}</label>
+                    <label class="form-label">${addMode ? '추가 수량' : '수정 후 총수량'}</label>
                     <input type="number" class="form-input" id="lsbAdjustQty" value="${override ? _normalizeQty(override.actualQty) : currentStock}" min="0" placeholder="0">
                 </div>
-                <div class="form-group">
-                    <label class="form-label">도장 LOT - ${addMode ? '필수' : '임의입력'}</label>
-                    <input type="text" class="form-input" id="lsbAdjustPaintLot" value="${_escapeAttr(initialPaintLot)}" placeholder="도장 LOT 입력">
+            </div>
+            <div style="border:1px solid var(--border-color);border-radius:8px;padding:12px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                    <div>
+                        <strong style="font-size:0.85rem;">LOT별 재고 배분</strong>
+                        <div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">LOT 수량 합계가 수정 후 총수량과 같아야 합니다.</div>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline" onclick="LaserStandbyModule.addAdjustLotRow()">
+                        <span class="material-symbols-outlined" style="font-size:1rem;">add</span> LOT 추가
+                    </button>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">사출 LOT - ${addMode ? '필수' : '임의입력'}</label>
-                    <input type="text" class="form-input" id="lsbAdjustInjectionLot" value="${_escapeAttr(initialInjectionLot)}" placeholder="사출 LOT 입력">
-                </div>
+                <div id="lsbAdjustLotRows">${initialLots.map(_adjustLotRowHtml).join('')}</div>
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
@@ -5399,19 +5481,31 @@ var LaserStandbyModule = (function() {
         const partName = document.getElementById('lsbAdjustPartName')?.value || '';
         const color = document.getElementById('lsbAdjustColor')?.value || '';
         const actualQty = _normalizeQty(document.getElementById('lsbAdjustQty')?.value || 0);
-        const paintLot = document.getElementById('lsbAdjustPaintLot')?.value?.trim() || '';
-        const injectionLot = document.getElementById('lsbAdjustInjectionLot')?.value?.trim() || '';
+        const lots = _readAdjustLotRows();
+        const invalidLot = lots.find(function(lot) {
+            return !lot.paintLot || !lot.injectionLot || lot.qty <= 0;
+        });
+        const lotQtySum = lots.reduce(function(sum, lot) { return sum + lot.qty; }, 0);
+        const paintLot = [...new Set(lots.map(function(lot) { return lot.paintLot; }).filter(Boolean))].join(', ');
+        const injectionLot = [...new Set(lots.map(function(lot) { return lot.injectionLot; }).filter(Boolean))].join(', ');
 
         if (!carModel || !partName) {
             UIUtils.toast('차종과 품명을 선택해 주세요.', 'warning');
             return;
         }
-        if (addMode && (!paintLot || !injectionLot)) {
-            UIUtils.toast('도장 LOT와 사출 LOT는 필수입니다.', 'warning');
+        if (!lots.length || invalidLot) {
+            UIUtils.toast('각 LOT 행의 도장 LOT, 사출 LOT, LOT 수량을 모두 입력해 주세요.', 'warning');
             return;
         }
         if (addMode && actualQty <= 0) {
             UIUtils.toast('수량을 1개 이상 입력해 주세요.', 'warning');
+            return;
+        }
+        if (Math.abs(lotQtySum - actualQty) > 0.001) {
+            UIUtils.toast(
+                `LOT 수량 합계(${UIUtils.formatNumber(lotQtySum)} EA)와 수정 후 총수량(${UIUtils.formatNumber(actualQty)} EA)이 일치하지 않습니다.`,
+                'warning'
+            );
             return;
         }
 
@@ -5449,6 +5543,7 @@ var LaserStandbyModule = (function() {
             actualQty,
             paintLot,
             injectionLot,
+            lots,
             manualType: addMode ? 'add' : 'edit',
             updatedAt: new Date().toISOString()
         };
@@ -5789,11 +5884,47 @@ var LaserStandbyModule = (function() {
         const existingIdx = _manualOverrides.findIndex(o =>
             _itemKey(o.carModel, o.partName, o.color || '') === key
         );
+        const existingOverride = existingIdx >= 0 ? _manualOverrides[existingIdx] : null;
+        let remainingLots = existingOverride && Array.isArray(existingOverride.lots)
+            ? existingOverride.lots.map(function(lot) {
+                return {
+                    paintLot: String(lot.paintLot || '').trim(),
+                    injectionLot: String(lot.injectionLot || lot.lotNo || '').trim(),
+                    qty: _normalizeQty(lot.qty)
+                };
+            }).filter(function(lot) { return lot.injectionLot && lot.qty > 0; })
+            : [];
+
+        // LOT별 실사 보정이 있는 품목은 출고 후에도 LOT 배분을 보존한다.
+        // 입력한 사출 LOT를 우선 차감하고, 미입력/잔여분은 등록 순서대로 차감한다.
+        if (remainingLots.length > 0) {
+            let remainingOut = outQty;
+            const ordered = remainingLots.slice().sort(function(a, b) {
+                const aPreferred = injectionLot && a.injectionLot === injectionLot ? 0 : 1;
+                const bPreferred = injectionLot && b.injectionLot === injectionLot ? 0 : 1;
+                return aPreferred - bPreferred;
+            });
+            ordered.forEach(function(lot) {
+                if (remainingOut <= 0) return;
+                const used = Math.min(lot.qty, remainingOut);
+                lot.qty -= used;
+                remainingOut -= used;
+            });
+            remainingLots = remainingLots.filter(function(lot) { return lot.qty > 0; });
+        }
+        const remainingPaintLots = remainingLots.length
+            ? [...new Set(remainingLots.map(function(lot) { return lot.paintLot; }).filter(Boolean))].join(', ')
+            : paintLot;
+        const remainingInjectionLots = remainingLots.length
+            ? [...new Set(remainingLots.map(function(lot) { return lot.injectionLot; }).filter(Boolean))].join(', ')
+            : injectionLot;
         const record = {
             id: existingIdx >= 0 ? _manualOverrides[existingIdx].id : Storage.generateId(),
             carModel, partName, color,
             actualQty: newQty,
-            paintLot, injectionLot,
+            paintLot: remainingPaintLots,
+            injectionLot: remainingInjectionLots,
+            lots: remainingLots,
             manualType: 'out',
             updatedAt: new Date().toISOString()
         };
@@ -5855,6 +5986,8 @@ var LaserStandbyModule = (function() {
         openLayout,
         openAdjustModal,
         saveAdjustModal,
+        addAdjustLotRow,
+        removeAdjustLotRow,
         onAdjustCarChange,
         onAdjustPartChange,
         openStandbyOutModal,
