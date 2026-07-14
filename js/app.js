@@ -80,8 +80,9 @@ const App = (function() {
             // 3-1. 대형 모듈 lazy 등록 (production_mgmt_v91.js — 1.47MB)
             Router.registerLazy(
                 ['prod-standards', 'prod-conditions', 'paint-mix', 'prod-sub-materials',
-                 'prod-quality', 'quality-performance', 'limit-samples', 'prod-spc', 'prod-equipment'],
-                'js/modules/production_mgmt_v91.js?v=236',
+                 'prod-quality', 'quality-performance', 'limit-samples', 'prod-spc',
+                 'spc-color', 'spc-film', 'spc-gloss', 'prod-equipment'],
+                'js/modules/production_mgmt_v91.js?v=237',
                 function() {
                     Router.registerModule('prod-standards',
                         (typeof ProdStandardsModule !== 'undefined') ? ProdStandardsModule
@@ -95,6 +96,15 @@ const App = (function() {
                     Router.registerModule('quality-performance', QualityPerformanceModule);
                     Router.registerModule('limit-samples', LimitSamplesModule);
                     Router.registerModule('prod-spc', ProdSpcModule);
+                    Router.registerModule('spc-color', {
+                        render: function(c) { ProdSpcModule.renderCategory(c, 'color'); }
+                    });
+                    Router.registerModule('spc-film', {
+                        render: function(c) { ProdSpcModule.renderCategory(c, 'film'); }
+                    });
+                    Router.registerModule('spc-gloss', {
+                        render: function(c) { ProdSpcModule.renderCategory(c, 'gloss'); }
+                    });
                     Router.registerModule('prod-equipment', ProdEquipmentModule);
                 }
             );

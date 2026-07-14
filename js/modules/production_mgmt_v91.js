@@ -29140,20 +29140,48 @@ var QualityPerformanceModule = (function() {
  *    초중종물 관리에 입력된 실측값을 자동으로 읽어 X-bar / R 관리도 작성
  */
 var ProdSpcModule = (function() {
-    // 데이터 소스: 초중종물 관리 레코드
     const Q_STORE = DB.STORES.PROD_QUALITY_CHECK;
 
-    // SPC 대상 수치 항목 목록
     const SPC_ITEMS = [
-        { key: 'film_under', label: '도막두께(하도)', unit: 'μm' },
-        { key: 'film_top',   label: '도막두께(상도)', unit: 'μm' },
-        { key: 'gloss',      label: '광택',           unit: 'GU' },
-        { key: 'color_l',    label: '색차 △L',        unit: '△L' },
-        { key: 'color_a',    label: '색차 △a',        unit: '△a' },
-        { key: 'color_b',    label: '색차 △b',        unit: '△b' },
+        { key: 'film_under', label: '도막두께(하도)', unit: 'μm', category: 'film' },
+        { key: 'film_top',   label: '도막두께(상도)', unit: 'μm', category: 'film' },
+        { key: 'gloss',      label: '광택',           unit: 'GU', category: 'gloss' },
+        { key: 'color_l',    label: '색차 △L',        unit: '△L', category: 'color' },
+        { key: 'color_a',    label: '색차 △a',        unit: '△a', category: 'color' },
+        { key: 'color_b',    label: '색차 △b',        unit: '△b', category: 'color' },
     ];
 
-    // Shewhart 관리도 상수 (n = 서브그룹 크기)
+    const SPC_CATEGORIES = {
+        color: {
+            pageId: 'spc-color', label: '색차 SPC',
+            desc: '차종별 색차(△L/△a/△b) SPC 조회',
+            icon: 'palette', accent: '#8b5cf6',
+            itemKeys: ['color_l', 'color_a', 'color_b'],
+            defaultItem: 'color_l'
+        },
+        film: {
+            pageId: 'spc-film', label: '도막두께',
+            desc: '차종별 도막두께(하도/상도) SPC 조회',
+            icon: 'straighten', accent: '#2563eb',
+            itemKeys: ['film_under', 'film_top'],
+            defaultItem: 'film_under'
+        },
+        gloss: {
+            pageId: 'spc-gloss', label: '광택',
+            desc: '차종별 광택 SPC 조회',
+            icon: 'blur_on', accent: '#f59e0b',
+            itemKeys: ['gloss'],
+            defaultItem: 'gloss'
+        }
+    };
+
+    const SPC_MENUS = [
+        { id: 'prod-spc',   label: '메인',      icon: 'dashboard' },
+        { id: 'spc-color',  label: '색차 SPC',  icon: 'palette' },
+        { id: 'spc-film',   label: '도막두께',  icon: 'straighten' },
+        { id: 'spc-gloss',  label: '광택',      icon: 'blur_on' },
+    ];
+
     const CC = {
         2: { A2: 1.880, D3: 0,     D4: 3.267 },
         3: { A2: 1.023, D3: 0,     D4: 2.575 },
@@ -29163,57 +29191,129 @@ var ProdSpcModule = (function() {
 
     let _xbarChart = null;
     let _rChart    = null;
+    let _activeCategory = null;
 
     const _esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     const _js  = s => String(s ?? '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,' ');
 
-    // ── 헬퍼 ────────────────────────────────────────────────────
-    function _carOptions(sel) {
-        const productsForCars = Storage.getAll(DB.STORES.PRODUCTS) || [];
-        const cars = UIUtils.sortCarModels(productsForCars.map(p=>p.carModel), productsForCars);
-        return cars.map(c=>`<option value="${_esc(c)}" ${c===sel?'selected':''}>${_esc(c)}</option>`).join('');
-    }
-    function _partOptions(car, sel) {
-        const products = Storage.getAll(DB.STORES.PRODUCTS)||[];
-        const workParts = (Storage.getAll(DB.STORES.PAINTING_WORK)||[]).filter(w=>!car||w.carModel===car).map(w=>w.partName);
-        const parts = [...new Set([...products.filter(p=>!car||p.carModel===car).map(p=>p.partName),...workParts].filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ko'));
-        return '<option value="">전체</option>'+parts.map(p=>`<option value="${_esc(p)}" ${p===sel?'selected':''}>${_esc(p)}</option>`).join('');
-    }
-    function _itemOptions(sel) {
-        return SPC_ITEMS.map(i=>`<option value="${i.key}" ${i.key===sel?'selected':''}>${i.label}</option>`).join('');
-    }
     function _30DaysAgo() {
         const d = new Date(); d.setDate(d.getDate()-30);
         return d.toISOString().slice(0,10);
     }
 
-    // ── render ───────────────────────────────────────────────────
-    function render(container) {
-        const today = UIUtils.today();
-        container.innerHTML = `
-        <div class="fade-in-up">
+    function _qualityRecords() {
+        return (Storage.getAll(Q_STORE) || []).filter(r => r._docKind !== 'quality_template');
+    }
+
+    function _hasItemData(r, itemKey) {
+        const hit = (r.items || []).find(i => i.key === itemKey);
+        return !!(hit && hit.vals && Object.keys(hit.vals).length > 0);
+    }
+
+    function _carOptions(sel, includeAll) {
+        const productsForCars = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const cars = UIUtils.sortCarModels(productsForCars.map(p => p.carModel), productsForCars);
+        const opts = includeAll ? '<option value="">전체</option>' : '<option value="">차종 선택</option>';
+        return opts + cars.map(c => `<option value="${_esc(c)}" ${c === sel ? 'selected' : ''}>${_esc(c)}</option>`).join('');
+    }
+
+    function _partOptions(car, sel) {
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const workParts = (Storage.getAll(DB.STORES.PAINTING_WORK) || []).filter(w => !car || w.carModel === car).map(w => w.partName);
+        const parts = [...new Set([
+            ...products.filter(p => !car || p.carModel === car).map(p => p.partName),
+            ...workParts
+        ].filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+        return '<option value="">전체</option>' + parts.map(p => `<option value="${_esc(p)}" ${p === sel ? 'selected' : ''}>${_esc(p)}</option>`).join('');
+    }
+
+    function _itemOptions(sel, itemKeys) {
+        const keys = itemKeys || SPC_ITEMS.map(i => i.key);
+        return SPC_ITEMS.filter(i => keys.includes(i.key))
+            .map(i => `<option value="${i.key}" ${i.key === sel ? 'selected' : ''}>${i.label}</option>`)
+            .join('');
+    }
+
+    function _buildPoints(filtered, itemKey) {
+        return filtered.map(r => {
+            const hit = (r.items || []).find(i => i.key === itemKey);
+            const types = r.types && r.types.length ? r.types : ['초물', '중물', '종물'];
+            const vals = types.map(t => hit.vals[t])
+                .filter(v => v !== undefined && v !== null && !isNaN(Number(v)))
+                .map(Number);
+            if (!vals.length) return null;
+            const xbar = vals.reduce((s, v) => s + v, 0) / vals.length;
+            const rv = vals.length > 1 ? Math.max(...vals) - Math.min(...vals) : 0;
+            return {
+                id: r.id,
+                date: r.date,
+                carModel: r.carModel || '',
+                partName: r.partName || '',
+                lot: r.lotNo || '',
+                line: r.line || '',
+                types,
+                vals,
+                xbar,
+                rv
+            };
+        }).filter(Boolean);
+    }
+
+    function _countCategoryRecords(recs, itemKeys) {
+        return recs.filter(r => itemKeys.some(k => _hasItemData(r, k))).length;
+    }
+
+    function _dashboardRows() {
+        const start = _30DaysAgo();
+        const end = UIUtils.today();
+        const recs = _qualityRecords().filter(r => (!start || r.date >= start) && (!end || r.date <= end));
+        const productsForCars = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const cars = UIUtils.sortCarModels(
+            [...new Set(recs.map(r => r.carModel).filter(Boolean))],
+            productsForCars
+        );
+        return cars.map(car => {
+            const carRecs = recs.filter(r => r.carModel === car);
+            const dates = carRecs.map(r => r.date).filter(Boolean).sort();
+            return {
+                carModel: car,
+                colorCount: _countCategoryRecords(carRecs, SPC_CATEGORIES.color.itemKeys),
+                filmCount: _countCategoryRecords(carRecs, SPC_CATEGORIES.film.itemKeys),
+                glossCount: _countCategoryRecords(carRecs, SPC_CATEGORIES.gloss.itemKeys),
+                partCount: new Set(carRecs.map(r => r.partName).filter(Boolean)).size,
+                lastDate: dates.length ? dates[dates.length - 1] : '-',
+                totalCount: carRecs.length
+            };
+        });
+    }
+
+    function _renderMenu(activePage) {
+        return `
             <div class="mes-apple-menu-hero" style="padding:16px 20px;margin-bottom:20px;display:flex;gap:10px;flex-wrap:wrap;">
-                <button type="button" onclick="ProdSpcModule.search()"
-                    style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;
-                           border:2px solid var(--accent-blue);background:var(--bg-primary);color:var(--text-primary);
-                           cursor:pointer;min-width:160px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">
-                    <span style="display:inline-flex;align-items:center;justify-content:center;
-                                 width:42px;height:42px;border-radius:10px;flex-shrink:0;
-                                 background:var(--accent-blue);">
-                        <span class="material-symbols-outlined" style="font-size:24px;color:#fff;">ssid_chart</span>
-                    </span>
-                    <span style="display:flex;flex-direction:column;gap:2px;">
-                        <span style="font-size:0.92rem;font-weight:700;">SPC 관리</span>
-                        <span style="font-size:0.73rem;color:var(--text-muted);">관리도 조회</span>
-                    </span>
-                </button>
+                ${SPC_MENUS.map(menu => {
+                    const active = menu.id === activePage;
+                    return `<button type="button" onclick="Router.navigate('${menu.id}')"
+                        style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;
+                               border:${active ? '2px solid var(--accent-blue)' : '1.5px solid var(--border-color)'};
+                               background:var(--bg-primary);color:var(--text-primary);
+                               cursor:pointer;min-width:130px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+                        <span style="display:inline-flex;align-items:center;justify-content:center;
+                                     width:42px;height:42px;border-radius:10px;flex-shrink:0;
+                                     background:${active ? 'var(--accent-blue)' : 'var(--bg-secondary)'};">
+                            <span class="material-symbols-outlined" style="font-size:24px;color:${active ? '#fff' : 'var(--text-muted)'};">${menu.icon}</span>
+                        </span>
+                        <span style="display:flex;flex-direction:column;gap:2px;">
+                            <span style="font-size:0.92rem;font-weight:700;">${menu.label}</span>
+                            <span style="font-size:0.73rem;color:var(--text-muted);">${menu.id === 'prod-spc' ? '대시보드' : '차종별 조회'}</span>
+                        </span>
+                    </button>`;
+                }).join('')}
                 <button type="button" onclick="Router.navigate('prod-quality')"
                     style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;
                            border:1.5px solid var(--border-color);background:var(--bg-primary);color:var(--text-primary);
-                           cursor:pointer;min-width:160px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+                           cursor:pointer;min-width:130px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);margin-left:auto;">
                     <span style="display:inline-flex;align-items:center;justify-content:center;
-                                 width:42px;height:42px;border-radius:10px;flex-shrink:0;
-                                 background:var(--bg-secondary);">
+                                 width:42px;height:42px;border-radius:10px;flex-shrink:0;background:var(--bg-secondary);">
                         <span class="material-symbols-outlined" style="font-size:24px;color:var(--text-muted);">edit_document</span>
                     </span>
                     <span style="display:flex;flex-direction:column;gap:2px;">
@@ -29221,8 +29321,117 @@ var ProdSpcModule = (function() {
                         <span style="font-size:0.73rem;color:var(--text-muted);">실측값 입력</span>
                     </span>
                 </button>
+            </div>`;
+    }
+
+    function _categoryCard(cat) {
+        const rows = _dashboardRows();
+        const total = rows.reduce((s, r) => {
+            if (cat.pageId === 'spc-color') return s + r.colorCount;
+            if (cat.pageId === 'spc-film') return s + r.filmCount;
+            return s + r.glossCount;
+        }, 0);
+        return `
+            <button type="button" onclick="Router.navigate('${cat.pageId}')"
+                style="display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:18px 20px;border-radius:14px;
+                       border:1.5px solid var(--border-color);background:var(--bg-primary);cursor:pointer;text-align:left;
+                       box-shadow:0 1px 4px rgba(0,0,0,.06);min-height:140px;">
+                <span style="display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:12px;background:${cat.accent}22;">
+                    <span class="material-symbols-outlined" style="font-size:26px;color:${cat.accent};">${cat.icon}</span>
+                </span>
+                <span style="font-size:1rem;font-weight:700;">${cat.label}</span>
+                <span style="font-size:0.8rem;color:var(--text-muted);line-height:1.45;">${cat.desc}</span>
+                <span style="margin-top:auto;font-size:0.82rem;color:${cat.accent};font-weight:600;">최근 30일 ${total}건</span>
+            </button>`;
+    }
+
+    function renderHub(container) {
+        _activeCategory = null;
+        const rows = _dashboardRows();
+        const sumColor = rows.reduce((s, r) => s + r.colorCount, 0);
+        const sumFilm = rows.reduce((s, r) => s + r.filmCount, 0);
+        const sumGloss = rows.reduce((s, r) => s + r.glossCount, 0);
+
+        container.innerHTML = `
+        <div class="fade-in-up">
+            ${_renderMenu('prod-spc')}
+            <div class="stat-cards" style="margin-bottom:16px;">
+                <div class="stat-card blue"><div class="stat-card-value">${rows.length}</div><div class="stat-card-label">측정 차종</div></div>
+                <div class="stat-card purple"><div class="stat-card-value">${sumColor}</div><div class="stat-card-label">색차 SPC (30일)</div></div>
+                <div class="stat-card cyan"><div class="stat-card-value">${sumFilm}</div><div class="stat-card-label">도막두께 (30일)</div></div>
+                <div class="stat-card orange"><div class="stat-card-value">${sumGloss}</div><div class="stat-card-label">광택 (30일)</div></div>
             </div>
 
+            <div class="card" style="margin-bottom:16px;">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">table_chart</span> 차종별 SPC 현황 (최근 30일)</h4>
+                    <span style="font-size:0.78rem;color:var(--text-muted);">초중종물 관리 실측값 기준</span>
+                </div>
+                <div class="card-body" style="padding:0;">
+                    <div class="data-table-wrapper">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>차종</th>
+                                    <th style="text-align:right;">색차</th>
+                                    <th style="text-align:right;">도막두께</th>
+                                    <th style="text-align:right;">광택</th>
+                                    <th style="text-align:right;">품목수</th>
+                                    <th>최근 측정일</th>
+                                    <th>바로가기</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${rows.length ? rows.map(r => `
+                                    <tr>
+                                        <td><strong>${_esc(r.carModel)}</strong></td>
+                                        <td style="text-align:right;">${r.colorCount || '-'}</td>
+                                        <td style="text-align:right;">${r.filmCount || '-'}</td>
+                                        <td style="text-align:right;">${r.glossCount || '-'}</td>
+                                        <td style="text-align:right;">${r.partCount || 0}</td>
+                                        <td>${_esc(r.lastDate)}</td>
+                                        <td style="white-space:nowrap;">
+                                            <button class="btn btn-sm btn-outline" onclick="ProdSpcModule.openCarCategory('spc-color','${_js(r.carModel)}')">색차</button>
+                                            <button class="btn btn-sm btn-outline" onclick="ProdSpcModule.openCarCategory('spc-film','${_js(r.carModel)}')">도막</button>
+                                            <button class="btn btn-sm btn-outline" onclick="ProdSpcModule.openCarCategory('spc-gloss','${_js(r.carModel)}')">광택</button>
+                                        </td>
+                                    </tr>
+                                `).join('') : `
+                                    <tr><td colspan="7" style="text-align:center;padding:36px;color:var(--text-muted);">
+                                        최근 30일 SPC 측정 데이터가 없습니다.<br>
+                                        <span style="font-size:0.82rem;">초중종물 관리에서 도막두께·광택·색차 실측값을 입력하세요.</span>
+                                    </td></tr>
+                                `}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;">
+                ${_categoryCard(SPC_CATEGORIES.color)}
+                ${_categoryCard(SPC_CATEGORIES.film)}
+                ${_categoryCard(SPC_CATEGORIES.gloss)}
+            </div>
+        </div>`;
+    }
+
+    function renderCategory(container, categoryKey) {
+        const cat = SPC_CATEGORIES[categoryKey];
+        if (!cat) { renderHub(container); return; }
+        _activeCategory = cat;
+        const today = UIUtils.today();
+        const presetCar = sessionStorage.getItem('spc_preset_car') || '';
+        sessionStorage.removeItem('spc_preset_car');
+
+        container.innerHTML = `
+        <div class="fade-in-up">
+            ${_renderMenu(cat.pageId)}
+            <div style="margin-bottom:14px;padding:10px 14px;background:rgba(37,99,235,0.05);border:1px solid rgba(37,99,235,0.2);
+                        border-radius:8px;font-size:0.83rem;color:#1d4ed8;">
+                <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;margin-right:4px;">info</span>
+                <strong>${cat.label}</strong> — 차종을 선택하면 해당 차종의 SPC 관리도를 조회합니다.
+            </div>
             <div class="filter-bar" style="flex-wrap:wrap;gap:10px;margin-bottom:16px;">
                 <div class="form-group">
                     <label class="form-label">시작일</label>
@@ -29233,21 +29442,19 @@ var ProdSpcModule = (function() {
                     <input type="date" class="form-input" id="spcEnd" value="${today}">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">차종</label>
-                    <select class="form-select" id="spcCar" onchange="ProdSpcModule._onCarChange()">
-                        <option value="">전체</option>${_carOptions('')}
-                    </select>
+                    <label class="form-label">차종 <span style="color:var(--accent-red)">*</span></label>
+                    <select class="form-select" id="spcCar" onchange="ProdSpcModule._onCarChange()">${_carOptions(presetCar, false)}</select>
                 </div>
                 <div class="form-group">
                     <label class="form-label">품명</label>
-                    <select class="form-select" id="spcPart">${_partOptions('','')}</select>
+                    <select class="form-select" id="spcPart">${_partOptions(presetCar, '')}</select>
                 </div>
                 <div class="form-group">
                     <label class="form-label">관리항목</label>
-                    <select class="form-select" id="spcItem">${_itemOptions('film_under')}</select>
+                    <select class="form-select" id="spcItem">${_itemOptions(cat.defaultItem, cat.itemKeys)}</select>
                 </div>
                 <div class="form-group" style="align-self:flex-end;">
-                    <button class="btn btn-outline" onclick="ProdSpcModule.search()">
+                    <button class="btn btn-primary" onclick="ProdSpcModule.search()">
                         <span class="material-symbols-outlined">search</span> 조회
                     </button>
                 </div>
@@ -29256,27 +29463,15 @@ var ProdSpcModule = (function() {
             <div id="spcStats" class="stat-cards" style="margin-bottom:16px;"></div>
 
             <div class="card" style="margin-bottom:16px;">
-                <div class="card-header">
-                    <h4><span class="material-symbols-outlined">show_chart</span> X̄ 관리도 (평균)</h4>
-                </div>
-                <div class="card-body" id="spcXbarWrap" style="min-height:220px;">
-                    <canvas id="spcXbarCanvas"></canvas>
-                </div>
+                <div class="card-header"><h4><span class="material-symbols-outlined">show_chart</span> X̄ 관리도 (평균)</h4></div>
+                <div class="card-body" id="spcXbarWrap" style="min-height:220px;"><canvas id="spcXbarCanvas"></canvas></div>
             </div>
-
             <div class="card" style="margin-bottom:16px;">
-                <div class="card-header">
-                    <h4><span class="material-symbols-outlined">show_chart</span> R 관리도 (범위)</h4>
-                </div>
-                <div class="card-body" id="spcRWrap" style="min-height:220px;">
-                    <canvas id="spcRCanvas"></canvas>
-                </div>
+                <div class="card-header"><h4><span class="material-symbols-outlined">show_chart</span> R 관리도 (범위)</h4></div>
+                <div class="card-body" id="spcRWrap" style="min-height:220px;"><canvas id="spcRCanvas"></canvas></div>
             </div>
-
             <div class="card">
-                <div class="card-header">
-                    <h4><span class="material-symbols-outlined">table_chart</span> 측정 데이터 목록</h4>
-                </div>
+                <div class="card-header"><h4><span class="material-symbols-outlined">table_chart</span> 측정 데이터 목록</h4></div>
                 <div class="card-body" style="padding:0;">
                     <div class="data-table-wrapper">
                         <table class="data-table">
@@ -29293,7 +29488,27 @@ var ProdSpcModule = (function() {
                 </div>
             </div>
         </div>`;
-        search();
+        if (presetCar) search();
+        else _renderEmptyCategory();
+    }
+
+    function _renderEmptyCategory() {
+        const msg = `<div class="empty-state" style="width:100%;padding:24px;">
+            <span class="material-symbols-outlined" style="font-size:36px;color:var(--text-muted);">directions_car</span>
+            <p>차종을 선택한 후 조회하세요.</p></div>`;
+        const stats = document.getElementById('spcStats');
+        if (stats) stats.innerHTML = msg;
+        const tbody = document.getElementById('spcTableBody');
+        if (tbody) tbody.innerHTML = `<tr><td colspan="12" class="empty-cell">차종을 선택하세요.</td></tr>`;
+    }
+
+    function openCarCategory(pageId, carModel) {
+        if (carModel) sessionStorage.setItem('spc_preset_car', carModel);
+        Router.navigate(pageId);
+    }
+
+    function render(container) {
+        renderHub(container);
     }
 
     function _onCarChange() {
@@ -29302,52 +29517,29 @@ var ProdSpcModule = (function() {
         if (sel) sel.innerHTML = _partOptions(car, '');
     }
 
-    // ── search / render charts ───────────────────────────────────
     function search() {
         const start   = document.getElementById('spcStart')?.value  || '';
         const end     = document.getElementById('spcEnd')?.value    || '';
         const car     = document.getElementById('spcCar')?.value    || '';
         const part    = document.getElementById('spcPart')?.value   || '';
-        const itemKey = document.getElementById('spcItem')?.value   || 'film_under';
-        const meta    = SPC_ITEMS.find(i=>i.key===itemKey) || SPC_ITEMS[0];
+        const itemKey = document.getElementById('spcItem')?.value   || (_activeCategory && _activeCategory.defaultItem) || 'film_under';
 
-        // ── 초중종물 레코드에서 실측값 자동 수집 ──────────────────
-        const allRecs = Storage.getAll(Q_STORE) || [];
-        const filtered = allRecs.filter(r => {
-            // 템플릿 제외, 실제 발행 레코드만
-            if (r._docKind === 'quality_template') return false;
+        if (_activeCategory && !car) {
+            UIUtils.toast('차종을 선택하세요.', 'warning');
+            _renderEmptyCategory();
+            return;
+        }
+
+        const meta = SPC_ITEMS.find(i => i.key === itemKey) || SPC_ITEMS[0];
+        const filtered = _qualityRecords().filter(r => {
             if (start && r.date < start) return false;
-            if (end   && r.date > end)   return false;
-            if (car   && r.carModel !== car)  return false;
-            if (part  && r.partName !== part) return false;
-            // 해당 항목에 실측값이 있는 레코드만
-            const hit = (r.items||[]).find(i => i.key === itemKey);
-            return hit && hit.vals && Object.keys(hit.vals).length > 0;
-        }).sort((a,b) => a.date.localeCompare(b.date) || (a.id > b.id ? 1 : -1));
+            if (end && r.date > end) return false;
+            if (car && r.carModel !== car) return false;
+            if (part && r.partName !== part) return false;
+            return _hasItemData(r, itemKey);
+        }).sort((a, b) => a.date.localeCompare(b.date) || (a.id > b.id ? 1 : -1));
 
-        // 각 레코드의 서브그룹 통계 계산
-        const points = filtered.map(r => {
-            const hit   = (r.items||[]).find(i => i.key === itemKey);
-            const types = r.types && r.types.length ? r.types : ['초물','중물','종물'];
-            // types 순서대로 vals 배열 구성
-            const vals  = types.map(t => hit.vals[t]).filter(v => v !== undefined && v !== null && !isNaN(Number(v))).map(Number);
-            if (!vals.length) return null;
-            const xbar  = vals.reduce((s,v)=>s+v,0)/vals.length;
-            const rv    = vals.length > 1 ? Math.max(...vals)-Math.min(...vals) : 0;
-            return {
-                id:       r.id,
-                date:     r.date,
-                carModel: r.carModel||'',
-                partName: r.partName||'',
-                lot:      r.lotNo||'',
-                line:     r.line||'',
-                types,
-                vals,
-                xbar,
-                rv
-            };
-        }).filter(Boolean);
-
+        const points = _buildPoints(filtered, itemKey);
         _renderStats(points, meta);
         _renderCharts(points, meta);
         _renderTable(points, meta);
@@ -29572,6 +29764,9 @@ var ProdSpcModule = (function() {
 
     return {
         render,
+        renderHub,
+        renderCategory,
+        openCarCategory,
         search,
         _onCarChange,
         exportData

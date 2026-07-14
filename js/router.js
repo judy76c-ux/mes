@@ -113,6 +113,9 @@ const Router = (function() {
         'improvement-activity': '개선활동',
         'limit-samples': '한도 견본',
         'prod-spc': 'SPC 관리',
+        'spc-color': '색차 SPC',
+        'spc-film': '도막두께 SPC',
+        'spc-gloss': '광택 SPC',
         'certifications-mgmt': '자격인증 관리',
         'safety-hub': '안전관리',
         'safety-standard': '안전관리 표준서',
@@ -182,6 +185,10 @@ const Router = (function() {
         'jig-change-history': { target: 'painting-jig', label: '도장지그로 돌아가기' },
         'jig-repair-history': { target: 'painting-jig', label: '도장지그로 돌아가기' },
         'jig-layout': { target: 'painting-jig', label: '도장지그로 돌아가기' },
+
+        'spc-color': { target: 'prod-spc', label: 'SPC 관리로 돌아가기' },
+        'spc-film': { target: 'prod-spc', label: 'SPC 관리로 돌아가기' },
+        'spc-gloss': { target: 'prod-spc', label: 'SPC 관리로 돌아가기' },
 
         'prod-standards': { target: 'dashboard', label: '메인 페이지' },
         'work-standard': { target: 'prod-standards', label: '제조 관리 표준 돌아가기' },

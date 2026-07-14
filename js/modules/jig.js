@@ -953,7 +953,9 @@ var JigModule = (function () {
     function _carModelOptions(selected = '') {
         // 도장 공정이 있는 제품의 차종만 표시
         const paintingProds = _paintingProducts();
-        const cars = [...new Set(paintingProds.map(p => p.carModel).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+        const cars = [...new Set(paintingProds.map(p => p.carModel).filter(Boolean))];
+        if (selected && !cars.includes(selected)) cars.push(selected);
+        cars.sort((a, b) => a.localeCompare(b, 'ko'));
         const note = cars.length === 0
             ? '<option value="" disabled>도장 공정 제품 없음</option>'
             : '';
@@ -966,8 +968,11 @@ var JigModule = (function () {
         const parts = [...new Set(
             paintingProds.filter(p => !carModel || p.carModel === carModel)
                       .map(p => p.partName).filter(Boolean)
-        )].sort((a, b) => a.localeCompare(b, 'ko'));
-        return `<option value="">선택</option>` + parts.map(p => `<option value="${_esc(p)}" ${p === selected ? 'selected' : ''}>${_esc(p)}</option>`).join('');
+        )];
+        // 기존 대장 품명이 마스터 목록에 없어도 보기/수정 시 표시
+        if (selected && !parts.includes(selected)) parts.push(selected);
+        const sorted = [...parts].sort((a, b) => a.localeCompare(b, 'ko'));
+        return `<option value="">선택</option>` + sorted.map(p => `<option value="${_esc(p)}" ${p === selected ? 'selected' : ''}>${_esc(p)}</option>`).join('');
     }
 
     function onCarModelChange() {
@@ -1058,16 +1063,46 @@ var JigModule = (function () {
         `).join('')}</div>`;
     }
 
+    const CAR_ORDER = ['GOLF7','GOLF-7','A3','A3(PA)','Q2','A3 PA','A8','XFD','J34A','T1XX','DECO','EMBLEM','C223','FORD','P702','C300','리비안'];
+
+    /* 제품 구분(양산/개발/A·S) 배지 색상 — 안전관리 MSDS 화면과 동일 컨벤션 */
+    const PROD_COLORS = { '양산': '#059669', 'A/S': '#2563eb', '개발': '#7c3aed' };
+
+    /* itemType 정규화: '양산품'→'양산', 'A/S품'→'A/S' */
+    function _normItemType(raw) {
+        if (!raw) return '';
+        return String(raw).replace(/품$/, '').trim();
+    }
+
+    /* 차종+품명 → 제품 itemType 조회맵 (도장 지그는 제품을 직접 참조하지 않고 텍스트로 저장되어 있어 매칭) */
+    function _productItemTypeMap() {
+        const map = {};
+        (Storage.getAll(DB.STORES.PRODUCTS) || []).forEach(p => {
+            const key = `${p.carModel || ''}||${p.partName || ''}`;
+            map[key] = _normItemType(p.itemType);
+        });
+        return map;
+    }
+
+    function _itemTypeBadge(pt) {
+        if (!pt) return `<span style="font-size:.63rem;background:#f3f4f6;color:#9ca3af;border-radius:3px;padding:1px 5px;">미지정</span>`;
+        const col = PROD_COLORS[pt] || '#9ca3af';
+        return `<span style="font-size:.63rem;background:${col}22;color:${col};border-radius:3px;padding:1px 5px;font-weight:700;">${_esc(pt)}</span>`;
+    }
+
     function renderJigMaster() {
         const el = document.getElementById('jigMasterView');
         if (!el) return;
+        const itemTypeMap = _productItemTypeMap();
         const jigs = (Storage.getAll(STORE) || [])
             .filter(j => !_masterCarFilter || j.carModel === _masterCarFilter)
             .slice()
-            .sort((a, b) =>
-            (a.carModel || '').localeCompare(b.carModel || '', 'ko') ||
-            (a.partName || '').localeCompare(b.partName || '', 'ko')
-        );
+            .sort((a, b) => {
+                const ai = CAR_ORDER.indexOf(a.carModel);
+                const bi = CAR_ORDER.indexOf(b.carModel);
+                if (ai !== bi) return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
+                return (a.partName || '').localeCompare(b.partName || '', 'ko');
+            });
         el.innerHTML = `
             <div class="card">
                 <div class="card-body">
@@ -1077,6 +1112,7 @@ var JigModule = (function () {
                             <thead>
                                 <tr>
                                     <th>차종</th>
+                                    <th>구분</th>
                                     <th>품명</th>
                                     <th>수명 횟수</th>
                                     <th>재질</th>
@@ -1091,6 +1127,7 @@ var JigModule = (function () {
                                 ${jigs.length ? jigs.map(j => `
                                     <tr>
                                         <td><strong>${_esc(j.carModel || '-')}</strong></td>
+                                        <td>${_itemTypeBadge(itemTypeMap[`${j.carModel || ''}||${j.partName || ''}`])}</td>
                                         <td>${_esc(j.partName || '-')}</td>
                                         <td style="text-align:right;">${_fmt(j.maxCount || 0)}</td>
                                         <td>${_esc(j.material || '-')}</td>
@@ -1099,11 +1136,11 @@ var JigModule = (function () {
                                         <td>${_photoThumbs(j, 'jigPhotos')}</td>
                                         <td>${_photoThumbs(j, 'productFitPhotos')}</td>
                                         <td>
-                                            <button class="btn btn-outline btn-sm" onclick="JigModule.openJigMasterModal('${_js(j.id)}')">수정</button>
+                                            <button class="btn btn-outline btn-sm" onclick="JigModule.openJigMasterModal('${_js(j.id)}')">보기</button>
                                         </td>
                                     </tr>
                                 `).join('') : `
-                                    <tr><td colspan="9" style="text-align:center;padding:36px;color:var(--text-muted);">등록된 도장 지그가 없습니다.</td></tr>
+                                    <tr><td colspan="10" style="text-align:center;padding:36px;color:var(--text-muted);">등록된 도장 지그가 없습니다.</td></tr>
                                 `}
                             </tbody>
                         </table>
@@ -1119,7 +1156,12 @@ var JigModule = (function () {
 
     function renderMasterPage(container) {
         const cars = [...new Set((Storage.getAll(STORE) || []).map(j => j.carModel).filter(Boolean))]
-            .sort((a, b) => a.localeCompare(b, 'ko'));
+            .sort((a, b) => {
+                const ai = CAR_ORDER.indexOf(a);
+                const bi = CAR_ORDER.indexOf(b);
+                if (ai !== bi) return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
+                return a.localeCompare(b, 'ko');
+            });
         container.innerHTML = `
         <div class="fade-in-up jig-page">
             ${renderMenu('jig-master', '도장 지그대장', '도장 지그의 기본 정보와 사진 자료를 관리합니다.')}
@@ -1392,49 +1434,75 @@ var JigModule = (function () {
             </div>`;
     }
 
-    function _masterFormHtml(d = {}) {
+    function _masterPhotoViewBox(title, src) {
+        const photoSrc = _jigPhotoSrc(src);
+        return `
+            <div style="border:1px solid var(--border-color);border-radius:10px;padding:10px;background:var(--bg-secondary);">
+                <strong style="font-size:0.84rem;display:block;margin-bottom:8px;">${title}</strong>
+                ${src
+                    ? `<img src="${_esc(photoSrc)}" alt="" style="width:100%;height:180px;object-fit:contain;background:#fff;border:1px solid var(--border-color);border-radius:8px;cursor:zoom-in;"
+                        onclick="JigModule.viewJigMasterPhoto('${_js(photoSrc)}')">`
+                    : `<div style="height:180px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);border:1px dashed var(--border-color);border-radius:8px;">사진 없음</div>`}
+            </div>`;
+    }
+
+    function _masterFormHtml(d = {}, opts = {}) {
+        const readOnly = !!opts.readOnly;
+        const roAttr = readOnly ? ' disabled' : '';
         const jigPhotos = Array.isArray(d.jigPhotos) ? d.jigPhotos : [];
         const fitPhotos = Array.isArray(d.productFitPhotos) ? d.productFitPhotos : [];
+        const infoText = readOnly
+            ? '등록된 지그 정보를 확인합니다. 수정이 필요하면 하단의 수정 버튼을 누르세요.'
+            : '도장 공정에 연결된 제품만 선택할 수 있으며, 대장 수정 시 기존 사진도 함께 유지됩니다.';
         return `
             <div style="margin-bottom:12px;padding:8px 12px;background:rgba(99,102,241,0.07);
                         border:1px solid rgba(99,102,241,0.3);border-radius:6px;
                         font-size:0.8rem;color:var(--text-secondary);display:flex;align-items:center;gap:6px;">
                 <span class="material-symbols-outlined" style="font-size:16px;color:#6366f1;">info</span>
-                도장 공정에 연결된 제품만 선택할 수 있으며, 대장 수정 시 기존 사진도 함께 유지됩니다.
+                ${infoText}
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
                 <div class="form-group">
                     <label class="form-label">차종 <span style="color:var(--accent-red)">*</span></label>
-                    <select class="form-select" id="jigMasterCarModel" onchange="JigModule.onMasterCarModelChange()">${_carModelOptions(d.carModel || '')}</select>
+                    <select class="form-select" id="jigMasterCarModel" onchange="JigModule.onMasterCarModelChange()"${roAttr}>${_carModelOptions(d.carModel || '')}</select>
                 </div>
                 <div class="form-group">
                     <label class="form-label">품명 <span style="color:var(--accent-red)">*</span></label>
-                    <select class="form-select" id="jigMasterPartName">${_partNameOptions(d.carModel || '', d.partName || '')}</select>
+                    <select class="form-select" id="jigMasterPartName"${roAttr}>${_partNameOptions(d.carModel || '', d.partName || '')}</select>
                 </div>
                 <div class="form-group">
                     <label class="form-label">수명 횟수 <span style="color:var(--accent-red)">*</span></label>
-                    <input type="number" class="form-input" id="jigMasterMaxCount" value="${d.maxCount || ''}" min="1" placeholder="예: 10000">
+                    <input type="number" class="form-input" id="jigMasterMaxCount" value="${d.maxCount || ''}" min="1" placeholder="예: 10000"${roAttr}>
                 </div>
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
                 <div class="form-group">
                     <label class="form-label">재질</label>
-                    <input type="text" class="form-input" id="jigMasterMaterial" value="${_esc(d.material || '')}" placeholder="예: SUS, AL">
+                    <input type="text" class="form-input" id="jigMasterMaterial" value="${_esc(d.material || '')}" placeholder="예: SUS, AL"${roAttr}>
                 </div>
                 <div class="form-group">
                     <label class="form-label">구매처</label>
-                    <input type="text" class="form-input" id="jigMasterSupplier" value="${_esc(d.supplier || '')}" placeholder="구매처 입력">
+                    <input type="text" class="form-input" id="jigMasterSupplier" value="${_esc(d.supplier || '')}" placeholder="구매처 입력"${roAttr}>
                 </div>
                 <div class="form-group">
                     <label class="form-label">제작일</label>
-                    <input type="date" class="form-input" id="jigMasterMadeDate" value="${d.madeDate || d.registDate || _today()}">
+                    <input type="date" class="form-input" id="jigMasterMadeDate" value="${d.madeDate || d.registDate || _today()}"${roAttr}>
                 </div>
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px;">
-                ${_masterPhotoBox('jigPhoto0', '지그 사진 1', jigPhotos[0] || '')}
-                ${_masterPhotoBox('jigPhoto1', '지그 사진 2', jigPhotos[1] || '')}
-                ${_masterPhotoBox('productFitPhoto0', '제품 결합 사진 1', fitPhotos[0] || '')}
-                ${_masterPhotoBox('productFitPhoto1', '제품 결합 사진 2', fitPhotos[1] || '')}
+                ${readOnly
+                    ? [
+                        _masterPhotoViewBox('지그 사진 1', jigPhotos[0] || ''),
+                        _masterPhotoViewBox('지그 사진 2', jigPhotos[1] || ''),
+                        _masterPhotoViewBox('제품 결합 사진 1', fitPhotos[0] || ''),
+                        _masterPhotoViewBox('제품 결합 사진 2', fitPhotos[1] || '')
+                    ].join('')
+                    : [
+                        _masterPhotoBox('jigPhoto0', '지그 사진 1', jigPhotos[0] || ''),
+                        _masterPhotoBox('jigPhoto1', '지그 사진 2', jigPhotos[1] || ''),
+                        _masterPhotoBox('productFitPhoto0', '제품 결합 사진 1', fitPhotos[0] || ''),
+                        _masterPhotoBox('productFitPhoto1', '제품 결합 사진 2', fitPhotos[1] || '')
+                    ].join('')}
             </div>`;
     }
 
@@ -1463,14 +1531,46 @@ var JigModule = (function () {
     }
 
     function openJigMasterModal(id = '') {
-        const jig = id ? Storage.getById(STORE, id) : {};
+        if (!id) {
+            UIUtils.showModal(
+                '도장 지그 대장 등록',
+                _masterFormHtml({}, { readOnly: false }),
+                `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="JigModule.saveJigMaster('')">저장</button>`,
+                'xl'
+            );
+            _ensureJigPasteListener();
+            return;
+        }
+        const jig = Storage.getById(STORE, id) || {};
         UIUtils.showModal(
-            id ? '도장 지그 대장 수정' : '도장 지그 대장 등록',
-            _masterFormHtml(jig || {}),
+            '도장 지그 대장 보기',
+            _masterFormHtml(jig, { readOnly: true }),
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+             <button class="btn btn-primary" onclick="JigModule.enableJigMasterEdit('${_js(id)}')">
+                <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">edit</span> 수정
+             </button>`,
+            'xl'
+        );
+    }
+
+    function enableJigMasterEdit(id) {
+        const jig = Storage.getById(STORE, id);
+        if (!jig) {
+            UIUtils.toast('지그 정보를 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        UIUtils.showModal(
+            '도장 지그 대장 수정',
+            _masterFormHtml(jig, { readOnly: false }),
             `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="JigModule.saveJigMaster('${_js(id)}')">저장</button>`,
             'xl'
         );
         _ensureJigPasteListener();
+    }
+
+    function viewJigMasterPhoto(src) {
+        if (!src) return;
+        UIUtils.showModal('사진 보기', `<div style="text-align:center;"><img src="${_esc(src)}" alt="" style="max-width:100%;max-height:72vh;object-fit:contain;border-radius:8px;"></div>`, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'lg');
     }
 
     async function saveJigMaster(id = '') {
@@ -2141,6 +2241,8 @@ var JigModule = (function () {
         onLogCarChange,
         resetLogFilter,
         openJigMasterModal,
+        enableJigMasterEdit,
+        viewJigMasterPhoto,
         openAddModal,
         openEditModal,
         openBatchRegisterModal,
