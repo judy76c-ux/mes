@@ -141,8 +141,11 @@ const AuthModule = (function () {
         { key:'material_wh',      label:'\uc790\uc7ac \ucc3d\uace0',     pages:['warehouse-overview','injection-warehouse','paint-inventory','raw-material-inventory','injection-layout'] },
         { key:'product_wh',       label:'\uc644\uc81c\ud488 \ucc3d\uace0', pages:['product-warehouse','product-outgoing','injection-layout'] },
         { key:'injection',        label:'\uc0ac\ucd9c \uacf5\uc815',     pages:['injection-process','injection-work','injection-wip','injection-room-layout'] },
-        { key:'painting',         label:'\ub3c4\uc7a5 \uacf5\uc815',     pages:['production-plan','overtime-plan','painting-work','painting-inspection','paint-mix'] },
-        { key:'laser',            label:'\ub808\uc774\uc800 \uacf5\uc815', pages:['laser-process','laser-standby','laser-wip','laser-work','laser-inspection','laser-layout','laser-jig-master','laser-jig-disposal','laser-jig-cleaning','laser-equipment-history'] },
+        { key:'production_plan',  label:'\uc0dd\uc0b0\uacc4\ud68d\uc9c0\uc2dc\uc11c', pages:['production-plan','overtime-plan'] },
+        { key:'painting_work',    label:'\ub3c4\uc7a5\uc791\uc5c5',       pages:['painting-work','painting-inspection'] },
+        { key:'paint_mix',        label:'\ubc30\ud569\uc791\uc5c5',       pages:['paint-mix'] },
+        { key:'laser',            label:'\ub808\uc774\uc800 \uacf5\uc815', pages:['laser-process','laser-standby','laser-wip','laser-inspection','laser-layout','laser-jig-master','laser-jig-disposal','laser-jig-cleaning','laser-equipment-history'] },
+        { key:'laser_work',       label:'\ub808\uc774\uc838 \uc791\uc5c5',    pages:['laser-work'] },
         { key:'shipping',         label:'\ucd9c\ud558\uac80\uc0ac',      pages:['shipping-overview','shipping-standby','shipping-inspection','shipping-reliability','shipping-certificate','shipping-standard','shipping-std-photo'] },
         { key:'painting_jig',     label:'\ub3c4\uc7a5\uc9c0\uadf8',      pages:['painting-jig','jig-management','jig-life-standard','jig-master','jig-disposal','jig-cleaning','jig-change-history','jig-repair-history','jig-layout'] },
         { key:'prod_standards',   label:'\uc81c\uc870 \uad00\ub9ac \ud45c\uc900', pages:['prod-standards','work-standard','robot-pg-std','drying-std','customer-return-nc-std'] },
@@ -260,10 +263,9 @@ const AuthModule = (function () {
        - access: 페이지 접근 허용
        - write:  작성·등록·수정·삭제 허용
        admin은 null (전체 접근+쓰기) */
-    /* 페이지별 입력(write) 허용 역할 — 설정 화면·실제 동작·상단 표시의 단일 기준 */
-    const PAGE_WRITE_POLICY = {
-        'paint-mix': ['paint_line_op'],
-    };
+    /* 페이지별 입력(write) 허용 역할 — 설정 화면·실제 동작·상단 표시의 단일 기준
+       (paint-mix 전용 강제 제한 제거됨 — 관리/설정 > 역할별 접근 권한에서 자유롭게 설정) */
+    const PAGE_WRITE_POLICY = {};
 
     function _defaultPerms() {
         const all = ALL_PAGES.map(p => p.id);

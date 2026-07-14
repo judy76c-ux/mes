@@ -2218,7 +2218,7 @@ const PaintInventoryModule = (function() {
         const duplicateLabels = _bulkDuplicateLabels(records);
         const mismatchLabels = _bulkMismatchLabels(records);
         const missingLabels = _bulkGetMissingLabels(records, materials);
-        const autoCreate = (document.getElementById('paintBulkCreateMissing') || {}).checked !== false;
+        const autoCreate = !!document.getElementById('paintBulkCreateMissing')?.checked;
         const hasBlockers = duplicateLabels.length > 0 || mismatchLabels.length > 0 || (!autoCreate && missingLabels.length > 0);
         const lotRecordCount = records.reduce((sum, r) => sum + Math.max(1, r.lots.length), 0);
         const currentTotal = records.reduce((sum, r) => sum + (Number(r.currentQty) || 0), 0);
@@ -2319,7 +2319,7 @@ const PaintInventoryModule = (function() {
         }
 
         let materials = Storage.getAll(MATERIALS_STORE) || [];
-        const autoCreate = (document.getElementById('paintBulkCreateMissing') || {}).checked !== false;
+        const autoCreate = !!document.getElementById('paintBulkCreateMissing')?.checked;
         const duplicateLabels = _bulkDuplicateLabels(records);
         const mismatchLabels = _bulkMismatchLabels(records);
         const missingLabels = _bulkGetMissingLabels(records, materials);

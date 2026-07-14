@@ -12378,6 +12378,27 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         _renderStandardsDetail(document.getElementById('contentArea'));
     }
 
+    /* 구형 IndexedDB TDS 레코드(fileData만 있고 fileUrl 없음) 자동 정리 — 앱 준비 후 1회 실행 */
+    function _migrateRemoveLocalTdsRecords() {
+        try {
+            if (typeof Storage === 'undefined' || typeof Storage.getAll !== 'function') return;
+            const oldRecs = (Storage.getAll(STORE) || []).filter(
+                r => r._docKind === STANDARD_DOC_KIND && r.standardType === 'paint-tds' && r.fileData && !r.fileUrl
+            );
+            if (!oldRecs.length) return;
+            Promise.all(oldRecs.map(r => Storage.remove(STORE, r.id)))
+                .then(() => console.log(`[TDS] 구형 로컬 레코드 ${oldRecs.length}개 정리 완료`))
+                .catch(err => console.warn('[TDS] 구형 레코드 정리 실패:', err));
+        } catch (err) {
+            console.warn('[TDS] 구형 레코드 정리 스킵:', err);
+        }
+    }
+    if (document.readyState === 'complete') {
+        setTimeout(_migrateRemoveLocalTdsRecords, 500);
+    } else {
+        window.addEventListener('load', () => setTimeout(_migrateRemoveLocalTdsRecords, 500));
+    }
+
     return {
         render,
         onCarChange,
@@ -14773,7 +14794,8 @@ var PaintMixModule = (function() {
         return keys.includes('admin');
     };
 
-    // 도료사용 등록·수정: AuthModule.canWritePage('paint-mix') 단일 기준 (도장라인운영자 전용).
+    // 도료사용 등록·수정: AuthModule.canWritePage('paint-mix') 단일 기준.
+    // 관리/설정 > 역할별 접근 권한 > 배합작업에서 역할별로 자유롭게 부여/해제한다 (특정 역할 강제 없음).
     // 삭제·일괄정리·배합실 실사 조정은 관리자 전용으로 유지한다.
     const _canWritePaintMix = () => {
         try {
@@ -16336,7 +16358,7 @@ var PaintMixModule = (function() {
             <div class="stat-card blue"><div class="stat-card-value">${works.length}</div><div class="stat-card-label">도장 작업 건수</div></div>
             <div class="stat-card green"><div class="stat-card-value">${mixes.length}</div><div class="stat-card-label">배합 기록</div></div>
             <div class="stat-card orange"><div class="stat-card-value">${works.filter(w => !issuedWorkIds.has(w.id)).length}</div><div class="stat-card-label">미등록 작업</div></div>
-            <div class="stat-card purple"><div class="stat-card-value">${UIUtils.formatNumber(totalUsageG)}g</div><div class="stat-card-label">총 사용량(g)</div></div>
+            <div class="stat-card purple"><div class="stat-card-value">${totalUsageG > 0 ? UIUtils.formatNumber(totalUsageG) + 'g' : '0g'}</div><div class="stat-card-label">총 사용량(g)</div></div>
         `;
     }
 
@@ -16564,7 +16586,7 @@ var PaintMixModule = (function() {
 
     /* ── 배합실 잔량 신규 등록/조정 ── */
     function openMixResidualAdjust(materialId, lotNo) {
-        if (!_canWritePaintMix()) { UIUtils.toast('도장라인운영자만 잔량을 조정할 수 있습니다.', 'warning'); return; }
+        if (!_canWritePaintMix()) { UIUtils.toast('배합작업 입력 권한이 없습니다.', 'warning'); return; }
         const isNew = !materialId;
         const mats = Storage.getAll(PAINT_MAT_STORE) || [];
         const current = isNew ? null : _calcMixingRoomResiduals().find(r => r.materialId === materialId && r.lotNo === lotNo);
@@ -16609,7 +16631,7 @@ var PaintMixModule = (function() {
 
     async function saveMixResidualAdjust(materialId, lotNo) {
         if (!_canWritePaintMix()) {
-            UIUtils.toast('도장라인운영자만 잔량을 조정할 수 있습니다.', 'warning');
+            UIUtils.toast('배합작업 입력 권한이 없습니다.', 'warning');
             return;
         }
         const matId = materialId || document.getElementById('pmixResMatId')?.value || '';
@@ -17823,7 +17845,7 @@ var PaintMixModule = (function() {
 
     function openFromWork(workId) {
         if (!_canWritePaintMix()) {
-            UIUtils.toast('도장라인운영자만 등록·수정할 수 있습니다.', 'warning');
+            UIUtils.toast('배합작업 입력 권한이 없습니다.', 'warning');
             return;
         }
         const work = Storage.getById(PAINT_WORK_STORE, workId);
@@ -17839,7 +17861,7 @@ var PaintMixModule = (function() {
 
     function openManualModal() {
         if (!_canWritePaintMix()) {
-            UIUtils.toast('도장라인운영자만 등록할 수 있습니다.', 'warning');
+            UIUtils.toast('배합작업 입력 권한이 없습니다.', 'warning');
             return;
         }
         UIUtils.showModal('도료 배합 수기 등록', _formHtml({ date: UIUtils.today() }), `
@@ -18012,7 +18034,7 @@ var PaintMixModule = (function() {
 
     async function saveNew() {
         if (!_canWritePaintMix()) {
-            UIUtils.toast('도장라인운영자만 저장할 수 있습니다.', 'warning');
+            UIUtils.toast('배합작업 입력 권한이 없습니다.', 'warning');
             return;
         }
         if (!_validateAllRows()) { UIUtils.toast('도료 구성 미입력 항목을 확인하세요.', 'warning'); return; }
@@ -18030,7 +18052,7 @@ var PaintMixModule = (function() {
     }
 
     function edit(id) {
-        if (!_canWritePaintMix()) { UIUtils.toast('도장라인운영자만 수정할 수 있습니다.', 'warning'); return; }
+        if (!_canWritePaintMix()) { UIUtils.toast('배합작업 입력 권한이 없습니다.', 'warning'); return; }
         const data = Storage.getById(STORE, id);
         if (!data) return;
         UIUtils.showModal('도료 배합 수정', _formHtml(data, data.usages || []), `
@@ -18040,7 +18062,7 @@ var PaintMixModule = (function() {
     }
 
     async function saveEdit(id) {
-        if (!_canWritePaintMix()) { UIUtils.toast('도장라인운영자만 저장할 수 있습니다.', 'warning'); return; }
+        if (!_canWritePaintMix()) { UIUtils.toast('배합작업 입력 권한이 없습니다.', 'warning'); return; }
         if (!_validateAllRows()) { UIUtils.toast('도료 구성 미입력 항목을 확인하세요.', 'warning'); return; }
         const data = _collectData();
         const err = _validate(data, id);
@@ -23858,22 +23880,6 @@ var ProdEquipmentModule = (function() {
 
     // ── 메인 렌더 ────────────────────────────────────────────────
     function init() {}
-
-    /* 구형 IndexedDB TDS 레코드(fileData만 있고 fileUrl 없음) 자동 정리 — 앱 준비 후 1회 실행 */
-    function _migrateRemoveLocalTdsRecords() {
-        const oldRecs = (Storage.getAll(STORE) || []).filter(
-            r => r._docKind === STANDARD_DOC_KIND && r.standardType === 'paint-tds' && r.fileData && !r.fileUrl
-        );
-        if (!oldRecs.length) return;
-        Promise.all(oldRecs.map(r => Storage.remove(STORE, r.id)))
-            .then(() => console.log(`[TDS] 구형 로컬 레코드 ${oldRecs.length}개 정리 완료`))
-            .catch(err => console.warn('[TDS] 구형 레코드 정리 실패:', err));
-    }
-    if (document.readyState === 'complete') {
-        setTimeout(_migrateRemoveLocalTdsRecords, 500);
-    } else {
-        window.addEventListener('load', () => setTimeout(_migrateRemoveLocalTdsRecords, 500));
-    }
 
     function render(container) {
         try {
