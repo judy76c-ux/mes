@@ -14762,26 +14762,27 @@ var PaintMixModule = (function() {
     const _esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const _js  = s => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ');
     const _isAdmin = () => {
+        if (typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function') {
+            return AuthModule.isAdminUser();
+        }
         const u = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
             ? AuthModule.getCurrentUser() : null;
-        return !!(u && u.role === 'admin');
+        if (!u) return false;
+        const keys = Array.isArray(u.roles) ? u.roles.slice() : [];
+        if (u.role) keys.push(u.role);
+        return keys.includes('admin');
     };
 
-    const _isPaintLineOp = () => {
+    // 도료사용 등록·수정: AuthModule.canWritePage('paint-mix') 단일 기준 (도장라인운영자 전용).
+    // 삭제·일괄정리·배합실 실사 조정은 관리자 전용으로 유지한다.
+    const _canWritePaintMix = () => {
         try {
-            const u = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
-                ? AuthModule.getCurrentUser() : null;
-            if (!u) return false;
-            const keys = Array.isArray(u.roles) ? u.roles.slice() : [];
-            if (u.role) keys.push(u.role);
-            return keys.some(k => String(k) === 'paint_line_op');
+            return typeof AuthModule !== 'undefined' &&
+                typeof AuthModule.canWritePage === 'function' &&
+                AuthModule.canWritePage('paint-mix');
         } catch (e) { /* 무시 */ }
         return false;
     };
-
-    // 도료사용 등록·수정: 도장라인운영자(paint_line_op) 전용.
-    // 삭제·일괄정리·배합실 실사 조정은 관리자 전용으로 유지한다.
-    const _canWritePaintMix = () => _isPaintLineOp();
 
     let _curTab = 'history';
 

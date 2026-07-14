@@ -665,8 +665,73 @@ var LaserWorkModule = (function() {
         return products.filter(prod => _hasLaserProcess(prod));
     }
 
-    // 재공재고 > 0인 레이저 대기품의 도장작업 레코드 목록 반환
+    // 재공재고 > 0인 레이저 대기품 — 보정 후 재고(LaserStandbyModule 스냅샷) 단일 기준
     function getLaserStandbyItems() {
+        try {
+            if (typeof LaserStandbyModule !== 'undefined'
+                && typeof LaserStandbyModule.getWorkLotSnapshotSync === 'function'
+                && typeof LaserStandbyModule.getStockSnapshotSync === 'function') {
+                const rows = (LaserStandbyModule.getWorkLotSnapshotSync() || [])
+                    .filter(function(row) { return (Number(row.productionQty) || 0) > 0; })
+                    .map(function(row) { return { ...row }; });
+
+                const coveredQtyByKey = {};
+                rows.forEach(function(row) {
+                    const key = `${row.carModel}||${row.partName}||${row.color || ''}`;
+                    coveredQtyByKey[key] = (coveredQtyByKey[key] || 0) + (Number(row.productionQty) || 0);
+                });
+
+                // LOT 배분이 없거나 FIFO 합이 보정 재고보다 적을 때 미배분 잔량 보충
+                (LaserStandbyModule.getStockSnapshotSync() || []).forEach(function(item) {
+                    const color = item.color === '-' ? '' : (item.color || '');
+                    const key = `${item.carModel}||${item.partName}||${color}`;
+                    const stockQty = Number(item.stockQty) || 0;
+                    if (stockQty <= 0) return;
+                    const already = coveredQtyByKey[key] || 0;
+                    const shortfall = stockQty - already;
+                    if (shortfall <= 0.001) return;
+
+                    const ov = item.manualOverride;
+                    const ovLots = ov && Array.isArray(ov.lots) && ov.lots.length > 0
+                        ? ov.lots.map(function(l) {
+                            return {
+                                paintDate: String(l.paintLot || l.paintDate || ''),
+                                lotNo: String(l.injectionLot || l.lotNo || ''),
+                                qty: Number(l.qty) || 0
+                            };
+                        }).filter(function(l) { return l.lotNo && l.qty > 0; })
+                        : (ov && (ov.paintLot || ov.injectionLot)
+                            ? [{ paintDate: ov.paintLot || '', lotNo: ov.injectionLot || '', qty: shortfall }]
+                            : []);
+
+                    const firstPaintLot = ovLots.length > 0
+                        ? (ovLots[0].paintDate || '')
+                        : (ov && ov.paintLot ? ov.paintLot : '');
+                    const syntheticDate = firstPaintLot && /^\d{6}$/.test(firstPaintLot)
+                        ? `20${firstPaintLot.slice(0, 2)}-${firstPaintLot.slice(2, 4)}-${firstPaintLot.slice(4, 6)}`
+                        : '';
+
+                    rows.push({
+                        carModel: item.carModel,
+                        partName: item.partName,
+                        color: color,
+                        date: syntheticDate,
+                        productionQty: shortfall,
+                        lots: ovLots.length > 0 ? ovLots : [],
+                        isStockShortfallRow: true
+                    });
+                    coveredQtyByKey[key] = stockQty;
+                });
+
+                return rows.sort(function(a, b) { return (a.date || '').localeCompare(b.date || ''); });
+            }
+        } catch (e) { /* 스냅샷 실패 시 레거시 폴백 */ }
+
+        return _getLaserStandbyItemsLegacy();
+    }
+
+    // LaserStandbyModule 미로드·스냅샷 실패 시 폴백 (도장작업 − 레이저작업 원본 계산)
+    function _getLaserStandbyItemsLegacy() {
         const paintingWorks = Storage.getAll(DB.STORES.PAINTING_WORK) || [];
         const laserWorks    = Storage.getAll(DB.STORES.LASER_WORK_LOG) || [];
         const products      = Storage.getAll(DB.STORES.PRODUCTS) || [];
@@ -874,7 +939,7 @@ var LaserWorkModule = (function() {
             }
         } catch (e) { /* 수기 재고 병합 실패 시 도장 작업일지 기준 목록만 표시 */ }
 
-        return result.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        return result.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
     }
 
     function render(container) {
@@ -1582,23 +1647,13 @@ var LaserWorkModule = (function() {
 
         const oldestDate = filtered[0].date || '';
 
-        // 현재 재고 합계: 재고 스냅샷(수기보정 포함)을 우선 사용해 상세모달 합계와 일치시킨다.
-        let totalBalance = filtered.reduce((sum, w) => {
-            const lots = Array.isArray(w.lots) && w.lots.length > 0 ? w.lots : [{ qty: Number(w.productionQty) || 0 }];
-            return sum + lots.reduce((s, l) => s + (Number(l.qty) || 0), 0);
+        // 현재 재고 합계: 보정 후 FIFO 행 합산(상단·행 잔여 동일 경로)
+        const totalBalance = filtered.reduce(function(sum, w) {
+            const lots = Array.isArray(w.lots) && w.lots.length > 0
+                ? w.lots
+                : [{ qty: Number(w.productionQty) || 0 }];
+            return sum + lots.reduce(function(s, l) { return s + (Number(l.qty) || 0); }, 0);
         }, 0);
-        try {
-            const snap = typeof LaserStandbyModule !== 'undefined' && typeof LaserStandbyModule.getStockSnapshotSync === 'function'
-                ? (LaserStandbyModule.getStockSnapshotSync() || []) : [];
-            if (snap.length > 0) {
-                const snapTotal = snap
-                    .filter(function(item) {
-                        return item.partName === part && (!car || item.carModel === car);
-                    })
-                    .reduce(function(s, item) { return s + (Number(item.stockQty) || 0); }, 0);
-                if (snapTotal > 0) totalBalance = snapTotal;
-            }
-        } catch (_) { /* 폴백: FIFO 행 합산 유지 */ }
 
         el.innerHTML = `
             <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; gap:8px;">

@@ -576,6 +576,30 @@ body.sidebar-hidden .sidebar-show-btn {
     flex-wrap: wrap;
 }
 
+.topbar-perm-status {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.35;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+
+.topbar-perm-status.is-ok {
+    background: rgba(22, 163, 74, 0.1);
+    color: #16a34a;
+    border-color: rgba(22, 163, 74, 0.25);
+}
+
+.topbar-perm-status.is-deny {
+    background: rgba(220, 38, 38, 0.08);
+    color: #dc2626;
+    border-color: rgba(220, 38, 38, 0.2);
+}
+
 .topbar-permission-link {
     appearance: none;
     border: 1px solid rgba(37, 99, 235, 0.18);

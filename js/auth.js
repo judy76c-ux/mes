@@ -260,24 +260,33 @@ const AuthModule = (function () {
        - access: 페이지 접근 허용
        - write:  작성·등록·수정·삭제 허용
        admin은 null (전체 접근+쓰기) */
+    /* 페이지별 입력(write) 허용 역할 — 설정 화면·실제 동작·상단 표시의 단일 기준 */
+    const PAGE_WRITE_POLICY = {
+        'paint-mix': ['paint_line_op'],
+    };
+
     function _defaultPerms() {
         const all = ALL_PAGES.map(p => p.id);
         const noSettings = all.filter(id => id !== 'settings');
         const rw = pages => ({ access: pages, write: pages });  // 접근+입력 동일
+        const prodWorkerPages = [
+            'dashboard',
+            'incoming-overview','injection-incoming','paint-incoming-inspection',
+            'warehouse-overview','injection-warehouse','paint-inventory','raw-material-inventory',
+            'injection-process','injection-work',
+            'production-plan','overtime-plan','painting-work','painting-inspection','paint-mix',
+            'laser-standby','laser-wip','laser-work','laser-inspection',
+            'shipping-standby','product-warehouse',
+        ];
 
         return {
             admin: null,  /* null = 전체 접근 + 전체 쓰기 */
 
-            /* 생산 작업자 — 작업일지·입고·창고 중심 */
-            prod_worker: rw([
-                'dashboard',
-                'incoming-overview','injection-incoming','paint-incoming-inspection',
-                'warehouse-overview','injection-warehouse','paint-inventory','raw-material-inventory',
-                'injection-process','injection-work',
-                'production-plan','overtime-plan','painting-work','painting-inspection','paint-mix',
-                'laser-standby','laser-wip','laser-work','laser-inspection',
-                'shipping-standby','product-warehouse',
-            ]),
+            /* 생산 작업자 — 작업일지·입고·창고 중심 (배합작업은 조회만) */
+            prod_worker: {
+                access: prodWorkerPages,
+                write: prodWorkerPages.filter(id => id !== 'paint-mix'),
+            },
 
             /* 물류작업자 — 입고/창고/출하/제품 이동 전담 */
             logistics_worker: rw([
@@ -288,8 +297,11 @@ const AuthModule = (function () {
                 'product-warehouse','product-outgoing',
             ]),
 
-            /* 생산관리자 — 생산 전반 + 관리 표준 (설정 제외) */
-            prod_manager: rw(noSettings),
+            /* 생산관리자 — 생산 전반 + 관리 표준 (설정 제외, 배합작업은 조회만) */
+            prod_manager: {
+                access: noSettings,
+                write: noSettings.filter(id => id !== 'paint-mix'),
+            },
 
             /* 품질 관리자 — 검사·품질 관련 전체 + 입고·출하 */
             quality_manager: rw([
@@ -352,6 +364,47 @@ const AuthModule = (function () {
         };
     }
 
+    function _mockUserForRole(roleKey) {
+        return { role: roleKey, roles: [roleKey] };
+    }
+
+    function _rolePassesPageWritePolicy(roleKey, pageId) {
+        const allowed = PAGE_WRITE_POLICY[pageId];
+        if (!Array.isArray(allowed) || !allowed.length) return null;
+        if (roleKey === 'admin') return false;
+        return allowed.includes(roleKey);
+    }
+
+    function _userPassesPageWritePolicy(user, pageId) {
+        const allowed = PAGE_WRITE_POLICY[pageId];
+        if (!Array.isArray(allowed) || !allowed.length) return null;
+        return _roleKeys(user).some(key => allowed.includes(key));
+    }
+
+    function _syncPageWritePolicies(perms) {
+        Object.keys(PAGE_WRITE_POLICY).forEach(pageId => {
+            const writeRoles = PAGE_WRITE_POLICY[pageId] || [];
+            Object.keys(perms).forEach(roleKey => {
+                if (roleKey === 'admin') return;
+                let rp = perms[roleKey];
+                if (rp === null || rp === undefined) return;
+                if (!rp || typeof rp !== 'object') {
+                    rp = { access: [], write: [] };
+                    perms[roleKey] = rp;
+                }
+                if (!Array.isArray(rp.access)) rp.access = [];
+                if (!Array.isArray(rp.write)) rp.write = [];
+                if (writeRoles.includes(roleKey)) {
+                    if (!rp.access.includes(pageId)) rp.access.push(pageId);
+                    if (!rp.write.includes(pageId)) rp.write.push(pageId);
+                } else {
+                    rp.write = rp.write.filter(id => id !== pageId);
+                }
+            });
+        });
+        return perms;
+    }
+
     /* 구버전(array) → 신버전({access,write}) 자동 변환 */
     function _syncMenuAccessPages(perms) {
         Object.keys(MENU_PERMISSION_SCOPES).forEach(menuPageId => {
@@ -405,7 +458,7 @@ const AuthModule = (function () {
                 result[key] = { access: [], write: [] };
             }
         });
-        return _syncMenuAccessPages(result);
+        return _syncPageWritePolicies(_syncMenuAccessPages(result));
     }
 
     function _getPermissions() {
@@ -491,6 +544,9 @@ const AuthModule = (function () {
         return titleText || pageId || '페이지';
     }
     function _rolesAllowedForPage(pageId, permissionType) {
+        if (permissionType === 'write' && PAGE_WRITE_POLICY[pageId]) {
+            return _getDynamicRoles().filter(role => _rolePassesPageWritePolicy(role.key, pageId) === true);
+        }
         return _getDynamicRoles().filter(role => _hasScopedPermission(role.key, pageId, permissionType));
     }
     function _esc(value) {
@@ -804,10 +860,19 @@ const AuthModule = (function () {
         return true;
     }
 
+    /* 현재 사용자가 특정 페이지에 접근 권한이 있는지 확인 */
+    function canAccessPage(pageId) {
+        const user = getCurrentUser();
+        if (!user) return false;
+        return isPageAccessGranted(_roleKeys(user), pageId);
+    }
+
     /* 현재 사용자가 특정 페이지에 입력/등록 권한이 있는지 확인 */
     function canWritePage(pageId) {
         const user = getCurrentUser();
         if (!user) return false;
+        const policy = _userPassesPageWritePolicy(user, pageId);
+        if (policy !== null) return policy;
         return isPageWriteGranted(_roleKeys(user), pageId);
     }
 
@@ -992,6 +1057,9 @@ const AuthModule = (function () {
                     style="background:none;border:none;cursor:pointer;padding:3px;color:var(--text-muted);display:flex;align-items:center;flex-shrink:0;">
                     <span class="material-symbols-outlined" style="font-size:18px;">logout</span>
                 </button>`;
+            if (typeof Router !== 'undefined' && typeof Router.refreshTopbarPermissions === 'function') {
+                Router.refreshTopbarPermissions();
+            }
         } else {
             badge.innerHTML = `
                 <button onclick="AuthModule.showLoginModal()" title="로그인"
@@ -1234,7 +1302,9 @@ const AuthModule = (function () {
         isPageWriteGranted,
         getCurrentUser,
         canWrite,
+        canAccessPage,
         canWritePage,
+        PAGE_WRITE_POLICY,
         isAdminUser,
         ensureAdminUser,
         doLogin,

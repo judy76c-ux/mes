@@ -248,29 +248,48 @@ const Router = (function() {
     function injectTopbarPermissionInspector() {
         const badge = document.getElementById('topbarUserBadge');
         if (!badge) return;
-        if (badge.querySelector('.topbar-permission-tools')) return;
         if (typeof AuthModule === 'undefined' || !AuthModule.getCurrentUser || !AuthModule.getCurrentUser()) return;
         if (typeof AuthModule.openPageRolePermissionWindow !== 'function') return;
 
-        const tools = document.createElement('div');
-        tools.className = 'topbar-permission-tools';
-        tools.innerHTML = ''
-            + '<button type="button" class="topbar-permission-link" onclick="AuthModule.openPageRolePermissionWindow(\'access\')" title="현재 페이지 접근 가능 역할 보기">접근 가능</button>'
-            + '<button type="button" class="topbar-permission-link" onclick="AuthModule.openPageRolePermissionWindow(\'write\')" title="현재 페이지 입력 가능 역할 보기">입력 가능</button>';
+        let tools = badge.querySelector('.topbar-permission-tools');
+        if (!tools) {
+            tools = document.createElement('div');
+            tools.className = 'topbar-permission-tools';
+            const mailButton = badge.querySelector('button[onclick="AuthModule.openInboxModal()"]');
+            if (mailButton) mailButton.insertAdjacentElement('beforebegin', tools);
+            else badge.appendChild(tools);
+        }
 
-        const mailButton = badge.querySelector('button[onclick="AuthModule.openInboxModal()"]');
-        if (mailButton) mailButton.insertAdjacentElement('beforebegin', tools);
-        else badge.appendChild(tools);
+        const pageId = (typeof Router !== 'undefined' && Router.getCurrentPage) ? Router.getCurrentPage() : '';
+        const roleKeys = (typeof AuthModule.getCurrentUser === 'function' && AuthModule.getCurrentUser())
+            ? (function() {
+                const u = AuthModule.getCurrentUser();
+                const rows = Array.isArray(u.roles) ? u.roles.slice() : [];
+                if (u.role) rows.push(u.role);
+                return [...new Set(rows.map(String).filter(Boolean))];
+            })()
+            : [];
+        const canAccess = !pageId || (typeof AuthModule.isPageAccessGranted === 'function'
+            && AuthModule.isPageAccessGranted(roleKeys, pageId));
+        const canWrite = !pageId || (typeof AuthModule.canWritePage === 'function'
+            && AuthModule.canWritePage(pageId));
+
+        const accessBadge = `<span class="topbar-perm-status ${canAccess ? 'is-ok' : 'is-deny'}" title="현재 페이지 내 접근 권한">접근 ${canAccess ? '✓' : '✗'}</span>`;
+        const writeBadge = `<span class="topbar-perm-status ${canWrite ? 'is-ok' : 'is-deny'}" title="현재 페이지 내 입력·등록 권한">입력 ${canWrite ? '✓' : '✗'}</span>`;
+
+        const html = accessBadge + writeBadge
+            + '<button type="button" class="topbar-permission-link" onclick="AuthModule.openPageRolePermissionWindow(\'access\')" title="이 페이지 접근 가능 역할 보기">역할별 접근</button>'
+            + '<button type="button" class="topbar-permission-link" onclick="AuthModule.openPageRolePermissionWindow(\'write\')" title="이 페이지 입력 가능 역할 보기">역할별 입력</button>';
+
+        if (tools.getAttribute('data-perm-html') === html) return;
+        tools.setAttribute('data-perm-html', html);
+        tools.innerHTML = html;
     }
 
     function setupTopbarPermissionInspector() {
         const badge = document.getElementById('topbarUserBadge');
         if (!badge || badge.dataset.permissionInspectorBound === '1') return;
         badge.dataset.permissionInspectorBound = '1';
-        const observer = new MutationObserver(function() {
-            injectTopbarPermissionInspector();
-        });
-        observer.observe(badge, { childList: true, subtree: true });
         injectTopbarPermissionInspector();
     }
 
@@ -433,8 +452,9 @@ const Router = (function() {
         // 페이지 변경 시 topbar 권한 배지 갱신
         if (typeof AuthModule !== 'undefined' && AuthModule.updateTopbar) {
             AuthModule.updateTopbar();
+        } else {
+            injectTopbarPermissionInspector();
         }
-        injectTopbarPermissionInspector();
     }
 
     function renderModule(pageName) {
@@ -650,7 +670,8 @@ const Router = (function() {
         hasModule: hasModule,
         setPageTitle: setPageTitle,
         setTopbarCenter: setTopbarCenter,
-        clearTopbarCenter: clearTopbarCenter
+        clearTopbarCenter: clearTopbarCenter,
+        refreshTopbarPermissions: injectTopbarPermissionInspector
     };
 })();
 
