@@ -27,6 +27,15 @@ var LaserWipModule = (function() {
         return false;
     }
 
+    // 잔량 수기 입/출고 기록에 남길 작성자 이름
+    function _currentUserName() {
+        try {
+            const u = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? AuthModule.getCurrentUser() : null;
+            return (u && (u.displayName || u.username)) || '';
+        } catch (e) { /* 무시 */ }
+        return '';
+    }
+
     // onclick 인자용 — URI 인코딩은 1회만. 따옴표만 이스케이프한다.
     function _jsArg(value) {
         return String(value == null ? '' : value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
@@ -397,12 +406,12 @@ var LaserWipModule = (function() {
         if (diff > 0) {
             await Storage.add(STORE_LASER, {
                 date, carModel, partName, color, quantity: diff, note, packUnit,
-                isManual: true, isResidualManualIn: true
+                isManual: true, isResidualManualIn: true, author: _currentUserName()
             });
         } else {
             await Storage.add(STORE_LASER, {
                 date, carModel, partName, color, quantity: Math.abs(diff), note, packUnit,
-                isManual: true, isResidualManualOut: true
+                isManual: true, isResidualManualOut: true, author: _currentUserName()
             });
         }
 
@@ -925,7 +934,7 @@ var LaserWipModule = (function() {
             <div class="card">
                 <div class="card-header">
                     <h4><span class="material-symbols-outlined">table_rows</span> 잔량 상세 내역 <span style="font-size:0.78rem;color:var(--text-muted);font-weight:600;">(입출고 현황)</span></h4>
-                    <span style="font-size:0.75rem;color:var(--text-muted);">레이져 작업 기준 잔량 발생 내역</span>
+                    <span style="font-size:0.75rem;color:var(--text-muted);">레이져 작업 기준 잔량 발생 내역 · 수동입고/출고 포함</span>
                 </div>
                 <div class="card-body" style="padding:0;">
                     <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
@@ -942,15 +951,24 @@ var LaserWipModule = (function() {
                                 <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--text-secondary);white-space:nowrap;">포장단위</th>
                                 <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--accent-orange,#f59e0b);white-space:nowrap;">잔량</th>
                                 <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--text-secondary);white-space:nowrap;">상태</th>
+                                <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">작성자</th>
                             </tr>
                         </thead>
                         <tbody>
-                            ${rows.length === 0
-                                ? `<tr><td colspan="11" style="text-align:center;padding:40px;color:var(--text-muted);">
-                                    <span class="material-symbols-outlined" style="font-size:2rem;display:block;margin-bottom:8px;opacity:0.4;">check_circle</span>
-                                    레이져 후 잔량 입고 대상이 없습니다.
-                                   </td></tr>`
-                                : rows.map(r => _laserResidualRow(r)).join('')}
+                            ${(function() {
+                                const manualEntries = _residualManualEntries();
+                                if (rows.length === 0 && manualEntries.length === 0) {
+                                    return `<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-muted);">
+                                        <span class="material-symbols-outlined" style="font-size:2rem;display:block;margin-bottom:8px;opacity:0.4;">check_circle</span>
+                                        레이져 후 잔량 입고 대상이 없습니다.
+                                       </td></tr>`;
+                                }
+                                const combined = [
+                                    ...rows.map(r => ({ date: r.laserDates[0] || '', html: _laserResidualRow(r) })),
+                                    ...manualEntries.map(w => ({ date: w.date || '', html: _manualResidualHistoryRow(w) }))
+                                ].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+                                return combined.map(item => item.html).join('');
+                            })()}
                         </tbody>
                     </table>
                 </div>
@@ -986,7 +1004,7 @@ var LaserWipModule = (function() {
             <table class="data-table" style="font-size:0.83rem;">
                 <thead><tr>
                     <th>날짜</th><th>구분</th><th>차종</th><th>품명</th><th>컬러</th>
-                    <th style="text-align:right;">수량(EA)</th><th>비고</th><th>관리</th>
+                    <th style="text-align:right;">수량(EA)</th><th>비고</th><th>작성자</th><th>관리</th>
                 </tr></thead>
                 <tbody>
                     ${entries.map(w => {
@@ -1002,6 +1020,7 @@ var LaserWipModule = (function() {
                             <td>${_esc(w.color || '-')}</td>
                             <td style="text-align:right;">${UIUtils.formatNumber(w.quantity || 0)}</td>
                             <td style="font-size:0.8rem;color:var(--text-muted);">${_esc(w.note || '-')}</td>
+                            <td style="font-size:0.8rem;color:var(--text-secondary);">${_esc(w.author || '-')}</td>
                             <td style="white-space:nowrap;">
                                 <button class="btn btn-sm btn-outline" onclick="LaserWipModule.openEditResidualManualEntry('${w.id}')">수정</button>
                                 ${_isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="LaserWipModule.removeResidualManualEntry('${w.id}')">삭제</button>` : ''}
@@ -1303,7 +1322,7 @@ var LaserWipModule = (function() {
             return;
         }
 
-        const record = { date, carModel, partName, color, quantity, note, packUnit, isManual: true, isResidualManualIn: true, lotNo: injectionLot, paintDate };
+        const record = { date, carModel, partName, color, quantity, note, packUnit, isManual: true, isResidualManualIn: true, lotNo: injectionLot, paintDate, author: _currentUserName() };
 
         try {
             await Storage.add(STORE_LASER, record);
@@ -1465,7 +1484,7 @@ var LaserWipModule = (function() {
             return;
         }
 
-        const record = { date, carModel, partName, color, quantity, note, packUnit: residual ? residual.packUnit : 0, isManual: true, isResidualManualOut: true, lotNo: injectionLot, paintDate };
+        const record = { date, carModel, partName, color, quantity, note, packUnit: residual ? residual.packUnit : 0, isManual: true, isResidualManualOut: true, lotNo: injectionLot, paintDate, author: _currentUserName() };
 
         try {
             await Storage.add(STORE_LASER, record);
@@ -1678,13 +1697,14 @@ var LaserWipModule = (function() {
                     residualLotAbsoluteQty: targetQty, isResidualAuditOnly: true,
                     quantity: Math.abs(diff),
                     isResidualManualIn: diff > 0,
-                    isResidualManualOut: diff < 0
+                    isResidualManualOut: diff < 0,
+                    author: _currentUserName()
                 });
             } else {
                 const base = {
                     date, carModel, partName, color, lotNo: injLot, residualPaintLot: paintLot,
                     note, packUnit, isManual: true, isResidualLotAdjust: true,
-                    residualLotAbsoluteQty: targetQty
+                    residualLotAbsoluteQty: targetQty, author: _currentUserName()
                 };
                 if (diff > 0) {
                     await Storage.add(STORE_LASER, Object.assign({}, base, { quantity: diff, isResidualManualIn: true }));
@@ -2224,6 +2244,34 @@ var LaserWipModule = (function() {
                     <span class="material-symbols-outlined" style="font-size:0.85rem;">move_to_inbox</span> 잔량입고
                 </span>
             </td>
+            <td style="padding:10px 14px;color:var(--text-muted);">-</td>
+        </tr>`;
+    }
+
+    // 잔량 상세 내역에 표시할 개별 수동 입고/출고 이력 행 (작성자 포함)
+    function _manualResidualHistoryRow(w) {
+        const isOut = !!w.isResidualManualOut;
+        const qty = _num(w.quantity);
+        const badge = isOut
+            ? `<span style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:12px;font-size:0.75rem;font-weight:700;background:rgba(239,68,68,0.12);color:var(--accent-red);">
+                  <span class="material-symbols-outlined" style="font-size:0.85rem;">outbox</span> 수동출고
+               </span>`
+            : `<span style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:12px;font-size:0.75rem;font-weight:700;background:rgba(59,130,246,0.12);color:var(--accent-blue,#2563eb);">
+                  <span class="material-symbols-outlined" style="font-size:0.85rem;">move_to_inbox</span> 수동입고
+               </span>`;
+        return `<tr style="border-bottom:1px solid var(--border-color);background:rgba(59,130,246,0.03);">
+            <td style="padding:10px 14px;font-weight:600;">${_esc(w.carModel || '-')}</td>
+            <td style="padding:10px 14px;">${_esc(w.partName || '-')}</td>
+            <td style="padding:10px 14px;">${w.color ? `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;background:var(--bg-secondary);font-size:0.82rem;">${_esc(w.color)}</span>` : '-'}</td>
+            <td style="padding:10px 14px;">${_esc(w.date || '-')}</td>
+            <td style="padding:10px 14px;">${_esc(w.paintDate || '-')}</td>
+            <td style="padding:10px 14px;">${_esc(w.lotNo || '-')}</td>
+            <td style="padding:10px 14px;text-align:right;color:var(--text-muted);">-</td>
+            <td style="padding:10px 14px;text-align:right;color:var(--text-muted);">-</td>
+            <td style="padding:10px 14px;text-align:right;">${w.packUnit ? UIUtils.formatNumber(w.packUnit) : '-'}</td>
+            <td style="padding:10px 14px;text-align:right;font-weight:800;color:${isOut ? 'var(--accent-red)' : 'var(--accent-blue,#2563eb)'};">${isOut ? '-' : '+'}${UIUtils.formatNumber(qty)}</td>
+            <td style="padding:10px 14px;text-align:center;">${badge}</td>
+            <td style="padding:10px 14px;font-size:0.8rem;color:var(--text-secondary);">${_esc(w.author || '-')}</td>
         </tr>`;
     }
 

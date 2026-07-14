@@ -1003,7 +1003,7 @@ var LaserWorkModule = (function() {
                     </div>
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
-                            <table class="data-table data-table--compact" style="min-width:920px;table-layout:fixed;">
+                            <table class="data-table data-table--compact" style="min-width:1000px;table-layout:fixed;">
                                 <thead>
                                     <tr>
                                         <th style="width:76px;">레이져작업일</th>
@@ -1014,7 +1014,7 @@ var LaserWorkModule = (function() {
                                         <th style="width:72px;">수량</th>
                                         <th style="width:80px;">도장작업일</th>
                                         <th style="width:110px;">사출LOT</th>
-                                        <th style="width:96px;">품질확인</th>
+                                        <th style="width:176px;">품질확인</th>
                                         <th style="width:180px;">작업자</th>
                                         <th style="width:100px;">작업</th>
                                     </tr>
@@ -1138,6 +1138,18 @@ var LaserWorkModule = (function() {
         `;
     }
 
+    // 작업 이력 표의 초/중/종품 셀: 완료 배지 + (있으면) 작은 썸네일. 클릭 시 원본 크기로 확인.
+    function _qcStageCell(done, photoUrl, shortLabel, fullLabel) {
+        if (!done) return '<span style="color:var(--text-muted);font-size:0.75rem;">-</span>';
+        const src = photoUrl ? (typeof ApiClient !== 'undefined' ? ApiClient.photoUrl(photoUrl) : photoUrl) : '';
+        const thumb = src
+            ? `<img src="${src}" alt="${fullLabel}" title="${fullLabel} 사진 (클릭 시 확대)"
+                    style="width:22px;height:22px;object-fit:cover;border-radius:4px;border:1px solid var(--border-color);cursor:pointer;vertical-align:middle;"
+                    onclick="LaserWorkModule.viewQcPhotoUrl('${photoUrl.replace(/'/g, "\\'")}', '${fullLabel}')">`
+            : '';
+        return `<span style="display:inline-flex;align-items:center;gap:2px;"><span class="badge badge-success" style="padding:1px 5px;font-size:0.72rem;">${shortLabel}</span>${thumb}</span>`;
+    }
+
     function renderTable(data) {
         const tbody = document.getElementById('lwTableBody');
         const isAdmin = _isAdminUser();
@@ -1162,10 +1174,10 @@ var LaserWorkModule = (function() {
                 <td style="white-space:nowrap;">${_paintDateCell(d)}</td>
                 <td style="font-size:0.8rem; font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${d.paintLot || '-'}</td>
                 <td style="overflow:hidden;">
-                    <div style="display:flex; gap:3px; flex-wrap:nowrap; align-items:center;">
-                        ${d.qcFirst ? '<span class="badge badge-success" style="padding:1px 5px;font-size:0.72rem;">초</span>' : '<span style="color:var(--text-muted);font-size:0.75rem;">-</span>'}
-                        ${d.qcMiddle ? '<span class="badge badge-success" style="padding:1px 5px;font-size:0.72rem;">중</span>' : ''}
-                        ${d.qcLast ? '<span class="badge badge-success" style="padding:1px 5px;font-size:0.72rem;">종</span>' : ''}
+                    <div style="display:flex; gap:4px; flex-wrap:nowrap; align-items:center;">
+                        ${_qcStageCell(d.qcFirst, d.qcFirstPhotoUrl, '초', '초품')}
+                        ${d.qcMiddle ? _qcStageCell(d.qcMiddle, d.qcMiddlePhotoUrl, '중', '중품') : ''}
+                        ${d.qcLast ? _qcStageCell(d.qcLast, d.qcLastPhotoUrl, '종', '종품') : ''}
                     </div>
                 </td>
                 <td style="font-size:0.8rem;white-space:nowrap;">${[d.worker1, d.worker2, d.worker3].filter(Boolean).join(', ') || '-'}</td>
@@ -1994,6 +2006,13 @@ var LaserWorkModule = (function() {
         UIUtils.showModal('사진 확인', `<img src="${src}" style="max-width:100%;border-radius:8px;">`, '', 'md');
     }
 
+    // 작업 이력 테이블의 초/중/종품 썸네일 클릭 시 원본 크기로 확인
+    function viewQcPhotoUrl(url, label) {
+        if (!url) return;
+        const src = typeof ApiClient !== 'undefined' ? ApiClient.photoUrl(url) : url;
+        UIUtils.showModal(label ? `${label} 사진 확인` : '사진 확인', `<img src="${src}" style="max-width:100%;border-radius:8px;">`, '', 'md');
+    }
+
     function calcCompletedQty() {
         const qty   = Number((document.getElementById('lwQuantity') || {}).value) || _selectedLotQtyTotal();
         // ✓ 단일 LOT인 경우, 수량 필드를 직접 수정하면 LOT 수량도 함께 동기화한다.
@@ -2496,6 +2515,7 @@ var LaserWorkModule = (function() {
         checkQcProgress,
         uploadQcPhoto,
         viewQcPhoto,
+        viewQcPhotoUrl,
         addExternalWorker,
         confirmAddExternalWorker,
         cancelAddExternalWorker,
@@ -4593,25 +4613,14 @@ var LaserStandbyModule = (function() {
         }
     }
 
-    // 수량 수정(재공 조정/출고) 권한: 관리자(admin) 또는 레이져운영자(laser_op).
-    // 커스텀 역할일 수 있어 역할 키('laser_op')와 라벨('레이져운영자')을 함께 매칭한다. (삭제는 관리자 전용 유지)
+    // 수량 수정(재공 조정/출고) 권한: 관리자(admin) 또는 설정 화면에서 "레이져 대기품"
+    // 입력 권한을 부여받은 역할(범용 권한 시스템, AuthModule.canWritePage). (삭제는 관리자 전용 유지)
     function _canEditStandby() {
         try {
             if (_isAdminUser()) return true;
-            const user = (typeof AuthModule !== 'undefined' && typeof AuthModule.getCurrentUser === 'function')
-                ? AuthModule.getCurrentUser()
-                : null;
-            if (!user) return false;
-            const roleKeys = Array.isArray(user.roles) ? user.roles.slice() : [];
-            if (user.role) roleKeys.push(user.role);
-            const roleDefs = (typeof AuthModule !== 'undefined' && Array.isArray(AuthModule.ROLES)) ? AuthModule.ROLES : [];
-            return roleKeys.some(function(rk) {
-                const key = String(rk || '');
-                if (key === 'laser_op') return true;
-                const def = roleDefs.find(function(d) { return d.key === key; });
-                const label = String((def && def.label) || key).replace(/\s/g, '');
-                return /레이[져저].*운영/.test(label);
-            });
+            return typeof AuthModule !== 'undefined' &&
+                typeof AuthModule.canWritePage === 'function' &&
+                AuthModule.canWritePage('laser-standby');
         } catch (e) { /* 무시 */ }
         return false;
     }
@@ -5511,7 +5520,7 @@ var LaserStandbyModule = (function() {
 
     async function openAdjustModal(keyEnc = '', isAddMode = false) {
         if (!_canEditStandby()) {
-            UIUtils.toast('관리자·레이져운영자만 레이져 대기품 수량을 수정할 수 있습니다.', 'warning');
+            UIUtils.toast('레이져 대기품 입력 권한이 없습니다. (관리자·설정에서 입력 권한 부여된 역할만 가능)', 'warning');
             return;
         }
         await _ensureManualOverridesLoaded();
@@ -5663,7 +5672,7 @@ var LaserStandbyModule = (function() {
 
     async function saveAdjustModal(keyEnc = '', isAddMode = false) {
         if (!_canEditStandby()) {
-            UIUtils.toast('관리자·레이져운영자만 레이져 대기품 수량을 수정할 수 있습니다.', 'warning');
+            UIUtils.toast('레이져 대기품 입력 권한이 없습니다. (관리자·설정에서 입력 권한 부여된 역할만 가능)', 'warning');
             return;
         }
         await _ensureManualOverridesLoaded();
@@ -5947,7 +5956,7 @@ var LaserStandbyModule = (function() {
     // ── 레이져 대기품 출고 ──────────────────────────────────────────────
     async function openStandbyOutModal() {
         if (!_canEditStandby()) {
-            UIUtils.toast('관리자·레이져운영자만 레이져 대기품 수량을 수정할 수 있습니다.', 'warning');
+            UIUtils.toast('레이져 대기품 입력 권한이 없습니다. (관리자·설정에서 입력 권한 부여된 역할만 가능)', 'warning');
             return;
         }
         await _ensureManualOverridesLoaded();
@@ -6046,7 +6055,7 @@ var LaserStandbyModule = (function() {
 
     async function saveStandbyOutModal() {
         if (!_canEditStandby()) {
-            UIUtils.toast('관리자·레이져운영자만 레이져 대기품 수량을 수정할 수 있습니다.', 'warning');
+            UIUtils.toast('레이져 대기품 입력 권한이 없습니다. (관리자·설정에서 입력 권한 부여된 역할만 가능)', 'warning');
             return;
         }
         await _ensureManualOverridesLoaded();

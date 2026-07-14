@@ -14178,11 +14178,11 @@ var ProdConditionsModule = (function() {
         const type = row[4] === 'check' ? 'check' : 'text';
         return `
             <tr class="cs-template-edit-row" data-section="${_esc(row[0] || '')}">
-                <td><input class="form-input cs-tpl-process" value="${_esc(row[1] || '')}" placeholder="공정명"></td>
-                <td><input class="form-input cs-tpl-item" value="${_esc(row[2] || '')}" placeholder="관리항목"></td>
-                <td><input class="form-input cs-tpl-spec" value="${_esc(row[3] || '')}" placeholder="점검사항 또는 기준"></td>
+                <td><input class="data-table-cell-input cs-tpl-process" value="${_esc(row[1] || '')}" placeholder="공정명"></td>
+                <td><input class="data-table-cell-input cs-tpl-item" value="${_esc(row[2] || '')}" placeholder="관리항목"></td>
+                <td><input class="data-table-cell-input cs-tpl-spec" value="${_esc(row[3] || '')}" placeholder="점검사항 또는 기준"></td>
                 <td>
-                    <select class="form-select cs-tpl-type">
+                    <select class="data-table-cell-input cs-tpl-type">
                         <option value="text" ${type === 'text' ? 'selected' : ''}>값 입력</option>
                         <option value="check" ${type === 'check' ? 'selected' : ''}>OK / NG</option>
                     </select>
@@ -20904,22 +20904,176 @@ var ProdQualityModule = (function() {
         renderMeasureHistoryTable(kind);
     }
 
-    function renderMeasureHistoryTable(kind = 'colorGloss') {
-        const tbody = document.getElementById('pqMeasureHistoryBody');
-        if (!tbody) return;
-        const month = document.getElementById('pqMeasureMonth')?.value || '';
-        const car = document.getElementById('pqMeasureCar')?.value || '';
-        const wanted = group => kind === 'film' ? group === 'film' : (group === 'color' || group === 'gloss');
+    function _isMassProductionType(itemType = '') {
+        const norm = String(itemType || '').replace(/품$/, '').trim();
+        return norm === '양산';
+    }
+
+    function _paintProcessProductRows(filterCar = '', { massProductionOnly = false } = {}) {
+        const _hasPaintProcess = (p) => {
+            const procs = [p.process1, p.process2, p.process3, p.process4].filter(Boolean).map(String);
+            return procs.some(s => s.includes('도장'));
+        };
+        const allProducts = (Storage.getAll(DB.STORES.PRODUCTS) || [])
+            .filter(p => _normText(p.carModel))
+            .filter(_hasPaintProcess)
+            .filter(p => !massProductionOnly || _isMassProductionType(p.itemType))
+            .filter(p => !filterCar || _normText(p.carModel) === filterCar)
+            .map(p => ({
+                id: p.id,
+                carModel: _normText(p.carModel),
+                partName: _normText(p.partName || '-'),
+                color: _normText(p.color || p.paintColor || p.paint || p.drawingColor || ''),
+                itemType: p.itemType || ''
+            }));
+        function _expandDualProcess(prod) {
+            const product = (Storage.getAll(DB.STORES.PRODUCTS) || []).find(p => p.id === prod.id);
+            if (!product) return [prod];
+            const procs = [product.process1, product.process2, product.process3, product.process4].filter(Boolean);
+            const hasA = procs.includes('도장-A'), hasB = procs.includes('도장-B');
+            const colorA = _normText(product.paintColorA || prod.color || '');
+            const colorB = _normText(product.paintColorB || prod.color || '');
+            const fallback = [prod.color, colorA, colorB].filter(Boolean);
+            if (hasA && hasB) {
+                return [
+                    { ...prod, paintProcess: '도장-A', color: colorA, fallbackColors: fallback },
+                    { ...prod, paintProcess: '도장-B', color: colorB, fallbackColors: fallback }
+                ];
+            }
+            if (hasA) return [{ ...prod, paintProcess: '도장-A', color: colorA, fallbackColors: fallback }];
+            if (hasB) return [{ ...prod, paintProcess: '도장-B', color: colorB, fallbackColors: fallback }];
+            return [prod];
+        }
+        return allProducts.flatMap(_expandDualProcess);
+    }
+
+    function _itemHasColorManagement(item = {}) {
+        if (_isColorSpecItem(item)) return true;
+        const key = String(item.key || '');
+        const label = String(item.label || '');
+        return key === 'color_diff' || /색차|△L|△a|△b|ΔE/i.test(`${key} ${label}`);
+    }
+
+    /** 초중종물 품목별 기준 — 색차(△L/a/b) 관리 대상 차종·품명 목록 (양산품만) */
+    function getColorManagedCatalog(filterCar = '') {
+        const expanded = _paintProcessProductRows(filterCar, { massProductionOnly: true });
+        const managed = expanded.filter(p => {
+            const items = _productSpecItems(p.carModel, p.partName, p.color, {
+                fallbackToMaster: false,
+                paintProcess: p.paintProcess || '',
+                fallbackColors: p.fallbackColors || []
+            });
+            return items.some(_itemHasColorManagement);
+        });
+        const byCar = {};
+        managed.forEach(p => {
+            if (!byCar[p.carModel]) byCar[p.carModel] = { carModel: p.carModel, parts: [] };
+            const items = _productSpecItems(p.carModel, p.partName, p.color, {
+                fallbackToMaster: false,
+                paintProcess: p.paintProcess || '',
+                fallbackColors: p.fallbackColors || []
+            }).filter(_itemHasColorManagement);
+            byCar[p.carModel].parts.push({
+                partName: p.partName,
+                color: p.color,
+                paintProcess: p.paintProcess || '',
+                line: p.paintProcess || '',
+                itemType: p.itemType || '',
+                colorItemLabels: items.map(i => i.label || i.key).filter(Boolean)
+            });
+        });
+        Object.values(byCar).forEach(g => {
+            g.parts.sort((a, b) => a.partName.localeCompare(b.partName, 'ko') || a.paintProcess.localeCompare(b.paintProcess, 'ko'));
+        });
+        const productsForCars = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        return UIUtils.sortCarModels(Object.keys(byCar), productsForCars)
+            .map(car => byCar[car])
+            .filter(Boolean);
+    }
+
+    function _itemHasFilmManagement(item = {}) {
+        if (_isFilmSpecItem(item)) return true;
+        const key = String(item.key || '');
+        const label = String(item.label || '');
+        return /도막|두께|film|하도|상도/i.test(`${key} ${label}`);
+    }
+
+    /** 초중종물 품목별 기준 — 도막두께(하도/상도) 관리 대상 차종·품명 목록 (양산품만) */
+    function getFilmManagedCatalog(filterCar = '') {
+        const expanded = _paintProcessProductRows(filterCar, { massProductionOnly: true });
+        const managed = expanded.filter(p => {
+            const items = _productSpecItems(p.carModel, p.partName, p.color, {
+                fallbackToMaster: false,
+                paintProcess: p.paintProcess || '',
+                fallbackColors: p.fallbackColors || []
+            });
+            return items.some(_itemHasFilmManagement);
+        });
+        const byCar = {};
+        managed.forEach(p => {
+            if (!byCar[p.carModel]) byCar[p.carModel] = { carModel: p.carModel, parts: [] };
+            const items = _productSpecItems(p.carModel, p.partName, p.color, {
+                fallbackToMaster: false,
+                paintProcess: p.paintProcess || '',
+                fallbackColors: p.fallbackColors || []
+            }).filter(_itemHasFilmManagement);
+            byCar[p.carModel].parts.push({
+                partName: p.partName,
+                color: p.color,
+                paintProcess: p.paintProcess || '',
+                line: p.paintProcess || '',
+                itemType: p.itemType || '',
+                filmItemLabels: items.map(i => i.label || i.key).filter(Boolean)
+            });
+        });
+        Object.values(byCar).forEach(g => {
+            g.parts.sort((a, b) => a.partName.localeCompare(b.partName, 'ko') || a.paintProcess.localeCompare(b.paintProcess, 'ko'));
+        });
+        const productsForCars = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        return UIUtils.sortCarModels(Object.keys(byCar), productsForCars)
+            .map(car => byCar[car])
+            .filter(Boolean);
+    }
+
+    function getMeasureHistoryRows(opts = {}) {
+        const kind = opts.kind || 'colorGloss';
+        const start = opts.start || '';
+        const end = opts.end || '';
+        const month = opts.month || '';
+        const car = opts.car || '';
+        const part = opts.part || '';
+        const wanted = group => {
+            if (kind === 'film') return group === 'film';
+            if (kind === 'color') return group === 'color';
+            if (kind === 'gloss') return group === 'gloss';
+            return group === 'color' || group === 'gloss';
+        };
         const rows = [];
         _measureRecords()
-            .filter(r => !month || (r.recordDate || r.date || '').slice(0, 7) === month)
-            .filter(r => !car || r.carModel === car)
+            .filter(r => {
+                const d = r.recordDate || r.date || '';
+                if (month && d.slice(0, 7) !== month) return false;
+                if (start && d < start) return false;
+                if (end && d > end) return false;
+                if (car && r.carModel !== car) return false;
+                if (part && r.partName !== part) return false;
+                return true;
+            })
             .sort((a, b) => String(b.recordDate || b.date || '').localeCompare(String(a.recordDate || a.date || '')))
             .forEach(record => {
                 (record.items || []).filter(item => wanted(item.group)).forEach(item => {
                     rows.push({ record, item });
                 });
             });
+        return rows;
+    }
+
+    function renderMeasureHistoryTable(kind = 'colorGloss') {
+        const tbody = document.getElementById('pqMeasureHistoryBody');
+        if (!tbody) return;
+        const month = document.getElementById('pqMeasureMonth')?.value || '';
+        const car = document.getElementById('pqMeasureCar')?.value || '';
+        const rows = getMeasureHistoryRows({ kind, month, car });
 
         if (!rows.length) {
             tbody.innerHTML = `<tr><td colspan="13" style="text-align:center;padding:30px;color:var(--text-muted);">기록이 없습니다.</td></tr>`;
@@ -23510,6 +23664,9 @@ window.addEventListener('afterprint', () => {
         ,removePqDataPhoto
         ,_formatFilmValue
         ,saveMeasureRecord
+        ,getMeasureHistoryRows
+        ,getColorManagedCatalog
+        ,getFilmManagedCatalog
         ,openMeasureHistory
         ,renderMeasureHistoryTable
         ,applyPreset
@@ -29154,21 +29311,21 @@ var ProdSpcModule = (function() {
     const SPC_CATEGORIES = {
         color: {
             pageId: 'spc-color', label: '색차 SPC',
-            desc: '차종별 색차(△L/△a/△b) SPC 조회',
+            desc: '초중종물 색차/광택 이력의 색차(△L/△a/△b) DATA 기준',
             icon: 'palette', accent: '#8b5cf6',
             itemKeys: ['color_l', 'color_a', 'color_b'],
             defaultItem: 'color_l'
         },
         film: {
             pageId: 'spc-film', label: '도막두께',
-            desc: '차종별 도막두께(하도/상도) SPC 조회',
+            desc: '초중종물 도막 이력 DATA 기준 (하도/상도)',
             icon: 'straighten', accent: '#2563eb',
             itemKeys: ['film_under', 'film_top'],
             defaultItem: 'film_under'
         },
         gloss: {
             pageId: 'spc-gloss', label: '광택',
-            desc: '차종별 광택 SPC 조회',
+            desc: '초중종물 색차/광택 이력의 광택 DATA 기준',
             icon: 'blur_on', accent: '#f59e0b',
             itemKeys: ['gloss'],
             defaultItem: 'gloss'
@@ -29196,18 +29353,367 @@ var ProdSpcModule = (function() {
     const _esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     const _js  = s => String(s ?? '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,' ');
 
+    const MEASURE_RECORD_KIND = 'quality_measure_record';
+
     function _30DaysAgo() {
         const d = new Date(); d.setDate(d.getDate()-30);
         return d.toISOString().slice(0,10);
     }
 
-    function _qualityRecords() {
-        return (Storage.getAll(Q_STORE) || []).filter(r => r._docKind !== 'quality_template');
+    function _recordDate(r) {
+        return r?.recordDate || r?.date || '';
     }
 
-    function _hasItemData(r, itemKey) {
-        const hit = (r.items || []).find(i => i.key === itemKey);
-        return !!(hit && hit.vals && Object.keys(hit.vals).length > 0);
+    function _itemVals(item) {
+        return item?.vals || item?.values || {};
+    }
+
+    function _hasNumericVals(item) {
+        const vals = _itemVals(item);
+        return Object.values(vals).some(v => v !== '' && v !== null && v !== undefined && !isNaN(Number(v)));
+    }
+
+    /** 초중종물 색차/광택·도막 이력과 동일한 DATA 소스 */
+    function _historyRows(opts = {}) {
+        if (typeof ProdQualityModule !== 'undefined' && ProdQualityModule.getMeasureHistoryRows) {
+            return ProdQualityModule.getMeasureHistoryRows(opts);
+        }
+        const kind = opts.kind || 'colorGloss';
+        const wanted = group => {
+            if (kind === 'film') return group === 'film';
+            if (kind === 'color') return group === 'color';
+            if (kind === 'gloss') return group === 'gloss';
+            return group === 'color' || group === 'gloss';
+        };
+        const rows = [];
+        (Storage.getAll(Q_STORE) || [])
+            .filter(r => r._docKind === MEASURE_RECORD_KIND)
+            .filter(r => {
+                const d = _recordDate(r);
+                if (opts.month && d.slice(0, 7) !== opts.month) return false;
+                if (opts.start && d < opts.start) return false;
+                if (opts.end && d > opts.end) return false;
+                if (opts.car && r.carModel !== opts.car) return false;
+                if (opts.part && r.partName !== opts.part) return false;
+                return true;
+            })
+            .forEach(record => {
+                (record.items || []).filter(item => wanted(item.group)).forEach(item => {
+                    rows.push({ record, item });
+                });
+            });
+        return rows;
+    }
+
+    function _categoryKind(categoryKey) {
+        if (categoryKey === 'film') return 'film';
+        if (categoryKey === 'gloss') return 'gloss';
+        if (categoryKey === 'color') return 'color';
+        return 'colorGloss';
+    }
+
+    function _itemMatchesKey(item, itemKey) {
+        if (!item || !itemKey) return false;
+        if (String(item.key || '') === itemKey) return true;
+        const meta = SPC_ITEMS.find(i => i.key === itemKey);
+        if (!meta) return false;
+        const label = String(item.label || '');
+        const text = `${item.key || ''} ${label}`;
+        if (meta.category === 'color') {
+            if (item.group && item.group !== 'color') return false;
+            if (itemKey === 'color_l' && /△L|Luminosity/i.test(text)) return true;
+            if (itemKey === 'color_a' && /△a/i.test(text)) return true;
+            if (itemKey === 'color_b' && /△b/i.test(text)) return true;
+            return false;
+        }
+        if (meta.category === 'film') {
+            if (item.group && item.group !== 'film') return false;
+            if (itemKey === 'film_under' && /하도/i.test(text)) return true;
+            if (itemKey === 'film_top' && /상도/i.test(text)) return true;
+            if (itemKey === 'film_under' && !/상도/i.test(text)) return true;
+            return false;
+        }
+        if (meta.category === 'gloss') {
+            return item.group === 'gloss' || /광택|gloss/i.test(text);
+        }
+        return false;
+    }
+
+    function _countCategoryRows(opts, categoryKey) {
+        return _historyRows({ ...opts, kind: _categoryKind(categoryKey) })
+            .filter(({ item }) => _hasNumericVals(item)).length;
+    }
+
+    const MANAGED_SPC_CFG = {
+        color: {
+            kind: 'color',
+            accent: '#8b5cf6',
+            listTitle: '색차 관리 차종 · 품명',
+            listSummary: '양산 · 색차 관리',
+            emptyIcon: 'palette',
+            emptyTitle: '양산 차종 중 색차 관리 대상 품명이 없습니다.',
+            emptyHint: '초중종물 관리 → 품목별 기준에서 색차(△L/△a/△b) 항목을 설정하세요.',
+            carOptAll: '전체 (양산 · 색차 관리)',
+            infoHtml: '<strong>색차 SPC</strong> — <strong>양산</strong> 차종 중 색차(△L/△a/△b) 관리 품명만 표시합니다.',
+            idPrefix: 'spcColorCar',
+            selectCar: 'selectColorCar',
+            selectPart: 'selectColorPart'
+        },
+        film: {
+            kind: 'film',
+            accent: '#2563eb',
+            listTitle: '도막두께 관리 차종 · 품명',
+            listSummary: '양산 · 도막 관리',
+            emptyIcon: 'layers',
+            emptyTitle: '양산 차종 중 도막두께 관리 대상 품명이 없습니다.',
+            emptyHint: '초중종물 관리 → 품목별 기준에서 도막두께(하도/상도) 항목을 설정하세요.',
+            carOptAll: '전체 (양산 · 도막 관리)',
+            infoHtml: '<strong>도막두께 SPC</strong> — <strong>양산</strong> 차종 중 도막두께(하도/상도) 관리 품명만 표시합니다.',
+            idPrefix: 'spcFilmCar',
+            selectCar: 'selectFilmCar',
+            selectPart: 'selectFilmPart'
+        }
+    };
+
+    function _managedCatalog(categoryKey, filterCar = '') {
+        if (categoryKey === 'color' && typeof ProdQualityModule !== 'undefined' && ProdQualityModule.getColorManagedCatalog) {
+            return ProdQualityModule.getColorManagedCatalog(filterCar);
+        }
+        if (categoryKey === 'film' && typeof ProdQualityModule !== 'undefined' && ProdQualityModule.getFilmManagedCatalog) {
+            return ProdQualityModule.getFilmManagedCatalog(filterCar);
+        }
+        return [];
+    }
+
+    function _colorManagedCatalog(filterCar = '') {
+        return _managedCatalog('color', filterCar);
+    }
+
+    function _filmManagedCatalog(filterCar = '') {
+        return _managedCatalog('film', filterCar);
+    }
+
+    function _colorPartToken(partName, paintProcess = '') {
+        return `${partName}|||${paintProcess || ''}`;
+    }
+
+    function _parsePartToken(token = '') {
+        if (!token || !token.includes('|||')) return { partName: token || '', line: '' };
+        const [partName, line] = token.split('|||');
+        return { partName: partName || '', line: line || '' };
+    }
+
+    function _managedCarOptions(categoryKey, sel, includeAll) {
+        const cfg = MANAGED_SPC_CFG[categoryKey];
+        const catalog = _managedCatalog(categoryKey);
+        const productsForCars = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const cars = UIUtils.sortCarModels(catalog.map(g => g.carModel), productsForCars);
+        const opts = includeAll
+            ? `<option value="">${cfg?.carOptAll || '전체'}</option>`
+            : '<option value="">차종 선택</option>';
+        return opts + cars.map(c => `<option value="${_esc(c)}" ${c === sel ? 'selected' : ''}>${_esc(c)}</option>`).join('');
+    }
+
+    function _colorManagedCarOptions(sel, includeAll) {
+        return _managedCarOptions('color', sel, includeAll);
+    }
+
+    function _filmManagedCarOptions(sel, includeAll) {
+        return _managedCarOptions('film', sel, includeAll);
+    }
+
+    function _managedPartOptions(categoryKey, car, selToken) {
+        const group = _managedCatalog(categoryKey).find(g => g.carModel === car);
+        const label = categoryKey === 'film' ? '도막 관리' : '색차 관리';
+        if (!group) return `<option value="">품명 선택</option><option value="" disabled>${label} 품목 없음</option>`;
+        const opts = '<option value="">전체 (해당 차종)</option>';
+        return opts + group.parts.map(p => {
+            const val = _colorPartToken(p.partName, p.paintProcess);
+            const plabel = p.paintProcess ? `${p.partName} · ${p.paintProcess}` : p.partName;
+            return `<option value="${_esc(val)}" ${val === selToken ? 'selected' : ''}>${_esc(plabel)}</option>`;
+        }).join('');
+    }
+
+    function _colorPartOptions(car, selToken) {
+        return _managedPartOptions('color', car, selToken);
+    }
+
+    function _filmPartOptions(car, selToken) {
+        return _managedPartOptions('film', car, selToken);
+    }
+
+    function _partManagedDataSummary(categoryKey, part, carModel, start, end) {
+        const kind = MANAGED_SPC_CFG[categoryKey]?.kind || categoryKey;
+        const rows = _historyRows({ kind, start, end, car: carModel, part: part.partName })
+            .filter(({ record, item }) => {
+                if (part.paintProcess && record.line && record.line !== part.paintProcess) return false;
+                return _hasNumericVals(item);
+            });
+        const recordMap = new Map();
+        rows.forEach(({ record }) => {
+            if (record?.id) recordMap.set(record.id, _recordDate(record));
+        });
+        return { recordCount: recordMap.size, itemCount: rows.length };
+    }
+
+    function _partColorDataSummary(part, carModel, start, end) {
+        return _partManagedDataSummary('color', part, carModel, start, end);
+    }
+
+    function _partFilmDataSummary(part, carModel, start, end) {
+        const rows = _historyRows({ kind: 'film', start, end, car: carModel, part: part.partName })
+            .filter(({ record, item }) => {
+                if (part.paintProcess && record.line && record.line !== part.paintProcess) return false;
+                return _hasNumericVals(item);
+            });
+        const underRecords = new Set();
+        const topRecords = new Set();
+        rows.forEach(({ record, item }) => {
+            if (!record?.id) return;
+            if (_itemMatchesKey(item, 'film_under')) underRecords.add(record.id);
+            if (_itemMatchesKey(item, 'film_top')) topRecords.add(record.id);
+        });
+        return { underCount: underRecords.size, topCount: topRecords.size };
+    }
+
+    function _filmDataSummaryHtml(sum) {
+        const u = sum?.underCount ?? 0;
+        const t = sum?.topCount ?? 0;
+        return `<span style="white-space:nowrap;font-size:0.72rem;">하도 - ${u}건 | 상도 - ${t}건</span>`;
+    }
+
+    function _balanceCatalogColumns(catalog) {
+        const left = [];
+        const right = [];
+        let leftWeight = 0;
+        let rightWeight = 0;
+        catalog.forEach(group => {
+            const weight = (group.parts?.length || 0) + 3;
+            if (leftWeight <= rightWeight) {
+                left.push(group);
+                leftWeight += weight;
+            } else {
+                right.push(group);
+                rightWeight += weight;
+            }
+        });
+        return { left, right };
+    }
+
+    function _renderManagedCarCard(cfg, categoryKey, group, start, end) {
+        return `
+            <div class="card" style="margin:0;" id="${cfg.idPrefix}-${_esc(group.carModel).replace(/\s+/g,'-')}">
+                <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;">
+                    <h4 style="margin:0;display:flex;align-items:center;gap:6px;font-size:0.9rem;">
+                        <span class="material-symbols-outlined" style="color:${cfg.accent};font-size:20px;">directions_car</span>
+                        ${_esc(group.carModel)}
+                        <span style="font-size:0.72rem;color:var(--text-muted);font-weight:500;">${group.parts.length}품목</span>
+                    </h4>
+                    <button type="button" class="btn btn-sm btn-outline" style="padding:3px 8px;font-size:0.72rem;"
+                        onclick="ProdSpcModule.${cfg.selectCar}('${_js(group.carModel)}')">선택</button>
+                </div>
+                <div class="card-body" style="padding:0;">
+                    <div class="data-table-wrapper">
+                        <table class="data-table" style="font-size:0.76rem;">
+                            <thead>
+                                <tr>
+                                    <th>품명</th>
+                                    <th style="width:42px;">컬러</th>
+                                    <th style="width:52px;">라인</th>
+                                    <th style="${categoryKey === 'film' ? 'text-align:left;width:140px;' : 'text-align:right;width:52px;'}">최근DATA</th>
+                                    <th style="text-align:center;width:44px;">SPC</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${group.parts.map(p => {
+                                    const sum = categoryKey === 'film'
+                                        ? _partFilmDataSummary(p, group.carModel, start, end)
+                                        : _partManagedDataSummary(categoryKey, p, group.carModel, start, end);
+                                    const dataCell = categoryKey === 'film'
+                                        ? _filmDataSummaryHtml(sum)
+                                        : String(sum.recordCount || 0);
+                                    return `<tr>
+                                        <td style="max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${_esc(p.partName)}"><strong>${_esc(p.partName)}</strong></td>
+                                        <td>${_esc(p.color || '-')}</td>
+                                        <td style="font-size:0.72rem;">${_esc((p.paintProcess || '-').replace('도장-',''))}</td>
+                                        <td style="${categoryKey === 'film' ? 'text-align:left;' : 'text-align:right;font-weight:700;'}">${dataCell}</td>
+                                        <td style="text-align:center;padding:2px;">
+                                            <button class="btn btn-sm btn-primary" style="padding:2px 7px;font-size:0.7rem;min-width:0;"
+                                                onclick="ProdSpcModule.${cfg.selectPart}('${_js(group.carModel)}','${_js(p.partName)}','${_js(p.paintProcess || '')}')">조회</button>
+                                        </td>
+                                    </tr>`;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    function _renderManagedCarSections(categoryKey, filterCar = '') {
+        const cfg = MANAGED_SPC_CFG[categoryKey];
+        const el = document.getElementById('spcManagedSections');
+        if (!el || !cfg) return;
+        const start = document.getElementById('spcStart')?.value || _30DaysAgo();
+        const end = document.getElementById('spcEnd')?.value || UIUtils.today();
+        const catalog = _managedCatalog(categoryKey, filterCar);
+        if (!catalog.length) {
+            el.innerHTML = `<div class="card"><div class="card-body" style="padding:28px;text-align:center;color:var(--text-muted);">
+                <span class="material-symbols-outlined" style="font-size:36px;opacity:.45;">${cfg.emptyIcon}</span>
+                <p style="margin-top:10px;">${cfg.emptyTitle}</p>
+                <p style="font-size:0.82rem;margin-top:6px;">${cfg.emptyHint}</p>
+            </div></div>`;
+            return;
+        }
+        const { left, right } = _balanceCatalogColumns(catalog);
+        const renderCol = groups => groups.map(g => _renderManagedCarCard(cfg, categoryKey, g, start, end)).join('');
+        el.innerHTML = `<div style="display:flex;gap:12px;align-items:flex-start;">
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:12px;">${renderCol(left)}</div>
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:12px;">${renderCol(right)}</div>
+        </div>`;
+    }
+
+    function _renderColorCarSections(filterCar = '') {
+        _renderManagedCarSections('color', filterCar);
+    }
+
+    function _renderFilmCarSections(filterCar = '') {
+        _renderManagedCarSections('film', filterCar);
+    }
+
+    function selectColorCar(carModel) {
+        _selectManagedCar('color', carModel);
+    }
+
+    function selectColorPart(carModel, partName, paintProcess = '') {
+        _selectManagedPart('color', carModel, partName, paintProcess);
+    }
+
+    function selectFilmCar(carModel) {
+        _selectManagedCar('film', carModel);
+    }
+
+    function selectFilmPart(carModel, partName, paintProcess = '') {
+        _selectManagedPart('film', carModel, partName, paintProcess);
+    }
+
+    function _selectManagedCar(categoryKey, carModel) {
+        const cfg = MANAGED_SPC_CFG[categoryKey];
+        const carEl = document.getElementById('spcCar');
+        if (carEl) carEl.value = carModel || '';
+        _onCarChange();
+        document.getElementById(`${cfg.idPrefix}-${(carModel || '').replace(/\s+/g, '-')}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function _selectManagedPart(categoryKey, carModel, partName, paintProcess = '') {
+        const carEl = document.getElementById('spcCar');
+        const partEl = document.getElementById('spcPart');
+        const token = _colorPartToken(partName, paintProcess);
+        if (carEl) carEl.value = carModel || '';
+        if (partEl) partEl.innerHTML = _managedPartOptions(categoryKey, carModel, token);
+        if (partEl) partEl.value = token;
+        search();
+        document.getElementById('spcChartSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     function _carOptions(sel, includeAll) {
@@ -29234,57 +29740,82 @@ var ProdSpcModule = (function() {
             .join('');
     }
 
-    function _buildPoints(filtered, itemKey) {
-        return filtered.map(r => {
-            const hit = (r.items || []).find(i => i.key === itemKey);
-            const types = r.types && r.types.length ? r.types : ['초물', '중물', '종물'];
-            const vals = types.map(t => hit.vals[t])
-                .filter(v => v !== undefined && v !== null && !isNaN(Number(v)))
-                .map(Number);
-            if (!vals.length) return null;
-            const xbar = vals.reduce((s, v) => s + v, 0) / vals.length;
-            const rv = vals.length > 1 ? Math.max(...vals) - Math.min(...vals) : 0;
-            return {
-                id: r.id,
-                date: r.date,
-                carModel: r.carModel || '',
-                partName: r.partName || '',
-                lot: r.lotNo || '',
-                line: r.line || '',
-                types,
-                vals,
-                xbar,
-                rv
-            };
-        }).filter(Boolean);
+    const MEASURE_TYPES = ['초물', '중물', '종물'];
+
+    function _valsByMeasureType(valsObj, types = MEASURE_TYPES) {
+        const keys = types.length ? types : MEASURE_TYPES;
+        const byType = {};
+        keys.forEach(t => {
+            const raw = valsObj[t];
+            byType[t] = (raw !== undefined && raw !== null && raw !== '' && !isNaN(Number(raw)))
+                ? Number(raw) : null;
+        });
+        return byType;
     }
 
-    function _countCategoryRecords(recs, itemKeys) {
-        return recs.filter(r => itemKeys.some(k => _hasItemData(r, k))).length;
+    function _buildPoints(historyRows, itemKey) {
+        return historyRows
+            .filter(({ item }) => _itemMatchesKey(item, itemKey) && _hasNumericVals(item))
+            .map(({ record, item }) => {
+                const types = record.types && record.types.length ? record.types : MEASURE_TYPES;
+                const valsObj = _itemVals(item);
+                const valsByType = _valsByMeasureType(valsObj, types);
+                const numericVals = Object.values(valsByType).filter(v => v !== null);
+                if (!numericVals.length) return null;
+                const xbar = numericVals.reduce((s, v) => s + v, 0) / numericVals.length;
+                const rv = numericVals.length > 1 ? Math.max(...numericVals) - Math.min(...numericVals) : 0;
+                return {
+                    id: record.id,
+                    date: _recordDate(record),
+                    carModel: record.carModel || '',
+                    partName: record.partName || '',
+                    lot: record.lotNo || '',
+                    line: record.line || '',
+                    itemLabel: item.label || '',
+                    types,
+                    valsByType,
+                    xbar,
+                    rv
+                };
+            })
+            .filter(Boolean)
+            .sort((a, b) => a.date.localeCompare(b.date) || (a.id > b.id ? 1 : -1));
     }
 
     function _dashboardRows() {
         const start = _30DaysAgo();
         const end = UIUtils.today();
-        const recs = _qualityRecords().filter(r => (!start || r.date >= start) && (!end || r.date <= end));
+        const baseOpts = { start, end };
+        const allRows = [
+            ..._historyRows({ ...baseOpts, kind: 'color' }),
+            ..._historyRows({ ...baseOpts, kind: 'film' }),
+            ..._historyRows({ ...baseOpts, kind: 'gloss' })
+        ].filter(({ item }) => _hasNumericVals(item));
         const productsForCars = Storage.getAll(DB.STORES.PRODUCTS) || [];
         const cars = UIUtils.sortCarModels(
-            [...new Set(recs.map(r => r.carModel).filter(Boolean))],
+            [...new Set(allRows.map(({ record }) => record.carModel).filter(Boolean))],
             productsForCars
         );
         return cars.map(car => {
-            const carRecs = recs.filter(r => r.carModel === car);
-            const dates = carRecs.map(r => r.date).filter(Boolean).sort();
+            const carOpts = { ...baseOpts, car };
+            const carRows = allRows.filter(({ record }) => record.carModel === car);
+            const dates = carRows.map(({ record }) => _recordDate(record)).filter(Boolean).sort();
             return {
                 carModel: car,
-                colorCount: _countCategoryRecords(carRecs, SPC_CATEGORIES.color.itemKeys),
-                filmCount: _countCategoryRecords(carRecs, SPC_CATEGORIES.film.itemKeys),
-                glossCount: _countCategoryRecords(carRecs, SPC_CATEGORIES.gloss.itemKeys),
-                partCount: new Set(carRecs.map(r => r.partName).filter(Boolean)).size,
+                colorCount: _countCategoryRows(carOpts, 'color'),
+                filmCount: _countCategoryRows(carOpts, 'film'),
+                glossCount: _countCategoryRows(carOpts, 'gloss'),
+                partCount: new Set(carRows.map(({ record }) => record.partName).filter(Boolean)).size,
                 lastDate: dates.length ? dates[dates.length - 1] : '-',
-                totalCount: carRecs.length
+                totalCount: new Set(carRows.map(({ record }) => record.id)).size
             };
         });
+    }
+
+    function _activeCategoryKind() {
+        if (!_activeCategory) return 'color';
+        const entry = Object.entries(SPC_CATEGORIES).find(([, v]) => v.pageId === _activeCategory.pageId);
+        return entry ? _categoryKind(entry[0]) : 'color';
     }
 
     function _renderMenu(activePage) {
@@ -29308,6 +29839,32 @@ var ProdSpcModule = (function() {
                         </span>
                     </button>`;
                 }).join('')}
+                <button type="button" onclick="Router.navigate('prod-quality');setTimeout(function(){ProdQualityModule.openMeasureHistory('colorGloss')},120)"
+                    style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;
+                           border:1.5px solid var(--border-color);background:var(--bg-primary);color:var(--text-primary);
+                           cursor:pointer;min-width:130px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+                    <span style="display:inline-flex;align-items:center;justify-content:center;
+                                 width:42px;height:42px;border-radius:10px;flex-shrink:0;background:var(--bg-secondary);">
+                        <span class="material-symbols-outlined" style="font-size:24px;color:var(--text-muted);">monitoring</span>
+                    </span>
+                    <span style="display:flex;flex-direction:column;gap:2px;">
+                        <span style="font-size:0.92rem;font-weight:700;">색차/광택 이력</span>
+                        <span style="font-size:0.73rem;color:var(--text-muted);">DATA 원본 조회</span>
+                    </span>
+                </button>
+                <button type="button" onclick="Router.navigate('prod-quality');setTimeout(function(){ProdQualityModule.openMeasureHistory('film')},120)"
+                    style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;
+                           border:1.5px solid var(--border-color);background:var(--bg-primary);color:var(--text-primary);
+                           cursor:pointer;min-width:130px;text-align:left;box-shadow:0 1px 4px rgba(0,0,0,.06);">
+                    <span style="display:inline-flex;align-items:center;justify-content:center;
+                                 width:42px;height:42px;border-radius:10px;flex-shrink:0;background:var(--bg-secondary);">
+                        <span class="material-symbols-outlined" style="font-size:24px;color:var(--text-muted);">layers</span>
+                    </span>
+                    <span style="display:flex;flex-direction:column;gap:2px;">
+                        <span style="font-size:0.92rem;font-weight:700;">도막 이력</span>
+                        <span style="font-size:0.73rem;color:var(--text-muted);">DATA 원본 조회</span>
+                    </span>
+                </button>
                 <button type="button" onclick="Router.navigate('prod-quality')"
                     style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;
                            border:1.5px solid var(--border-color);background:var(--bg-primary);color:var(--text-primary);
@@ -29365,7 +29922,7 @@ var ProdSpcModule = (function() {
             <div class="card" style="margin-bottom:16px;">
                 <div class="card-header">
                     <h4><span class="material-symbols-outlined">table_chart</span> 차종별 SPC 현황 (최근 30일)</h4>
-                    <span style="font-size:0.78rem;color:var(--text-muted);">초중종물 관리 실측값 기준</span>
+                    <span style="font-size:0.78rem;color:var(--text-muted);">초중종물 색차/광택·도막 이력 DATA 기준 (최근 30일)</span>
                 </div>
                 <div class="card-body" style="padding:0;">
                     <div class="data-table-wrapper">
@@ -29385,9 +29942,9 @@ var ProdSpcModule = (function() {
                                 ${rows.length ? rows.map(r => `
                                     <tr>
                                         <td><strong>${_esc(r.carModel)}</strong></td>
-                                        <td style="text-align:right;">${r.colorCount || '-'}</td>
-                                        <td style="text-align:right;">${r.filmCount || '-'}</td>
-                                        <td style="text-align:right;">${r.glossCount || '-'}</td>
+                                        <td style="text-align:right;">${r.colorCount != null ? r.colorCount : '-'}</td>
+                                        <td style="text-align:right;">${r.filmCount != null ? r.filmCount : '-'}</td>
+                                        <td style="text-align:right;">${r.glossCount != null ? r.glossCount : '-'}</td>
                                         <td style="text-align:right;">${r.partCount || 0}</td>
                                         <td>${_esc(r.lastDate)}</td>
                                         <td style="white-space:nowrap;">
@@ -29398,8 +29955,8 @@ var ProdSpcModule = (function() {
                                     </tr>
                                 `).join('') : `
                                     <tr><td colspan="7" style="text-align:center;padding:36px;color:var(--text-muted);">
-                                        최근 30일 SPC 측정 데이터가 없습니다.<br>
-                                        <span style="font-size:0.82rem;">초중종물 관리에서 도막두께·광택·색차 실측값을 입력하세요.</span>
+                                        최근 30일 SPC 측정 DATA가 없습니다.<br>
+                                        <span style="font-size:0.82rem;">초중종물 관리 → 색차/광택 이력·도막 이력에 DATA를 입력하세요.</span>
                                     </td></tr>
                                 `}
                             </tbody>
@@ -29423,6 +29980,11 @@ var ProdSpcModule = (function() {
         const today = UIUtils.today();
         const presetCar = sessionStorage.getItem('spc_preset_car') || '';
         sessionStorage.removeItem('spc_preset_car');
+        const isColorPage = categoryKey === 'color';
+        const isFilmPage = categoryKey === 'film';
+        const isManagedPage = isColorPage || isFilmPage;
+        const managedCfg = MANAGED_SPC_CFG[categoryKey];
+        const managedCatalog = isManagedPage ? _managedCatalog(categoryKey) : [];
 
         container.innerHTML = `
         <div class="fade-in-up">
@@ -29430,24 +29992,26 @@ var ProdSpcModule = (function() {
             <div style="margin-bottom:14px;padding:10px 14px;background:rgba(37,99,235,0.05);border:1px solid rgba(37,99,235,0.2);
                         border-radius:8px;font-size:0.83rem;color:#1d4ed8;">
                 <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;margin-right:4px;">info</span>
-                <strong>${cat.label}</strong> — 차종을 선택하면 해당 차종의 SPC 관리도를 조회합니다.
+                ${isManagedPage
+                    ? managedCfg.infoHtml
+                    : `<strong>${cat.label}</strong> — 초중종물 색차/광택 이력(광택) DATA로 SPC 관리도를 조회합니다.`}
             </div>
             <div class="filter-bar" style="flex-wrap:wrap;gap:10px;margin-bottom:16px;">
                 <div class="form-group">
                     <label class="form-label">시작일</label>
-                    <input type="date" class="form-input" id="spcStart" value="${_30DaysAgo()}">
+                    <input type="date" class="form-input" id="spcStart" value="${_30DaysAgo()}" onchange="ProdSpcModule._onDateChange()">
                 </div>
                 <div class="form-group">
                     <label class="form-label">종료일</label>
-                    <input type="date" class="form-input" id="spcEnd" value="${today}">
+                    <input type="date" class="form-input" id="spcEnd" value="${today}" onchange="ProdSpcModule._onDateChange()">
                 </div>
                 <div class="form-group">
                     <label class="form-label">차종 <span style="color:var(--accent-red)">*</span></label>
-                    <select class="form-select" id="spcCar" onchange="ProdSpcModule._onCarChange()">${_carOptions(presetCar, false)}</select>
+                    <select class="form-select" id="spcCar" onchange="ProdSpcModule._onCarChange()">${isColorPage ? _colorManagedCarOptions(presetCar, true) : (isFilmPage ? _filmManagedCarOptions(presetCar, true) : _carOptions(presetCar, false))}</select>
                 </div>
                 <div class="form-group">
                     <label class="form-label">품명</label>
-                    <select class="form-select" id="spcPart">${_partOptions(presetCar, '')}</select>
+                    <select class="form-select" id="spcPart">${isColorPage ? _colorPartOptions(presetCar, '') : (isFilmPage ? _filmPartOptions(presetCar, '') : _partOptions(presetCar, ''))}</select>
                 </div>
                 <div class="form-group">
                     <label class="form-label">관리항목</label>
@@ -29460,6 +30024,23 @@ var ProdSpcModule = (function() {
                 </div>
             </div>
 
+            ${isManagedPage ? `
+            <div style="margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+                <h4 style="margin:0;font-size:0.95rem;display:flex;align-items:center;gap:6px;">
+                    <span class="material-symbols-outlined" style="color:${managedCfg.accent};">view_list</span>
+                    ${managedCfg.listTitle}
+                </h4>
+                <span style="font-size:0.78rem;color:var(--text-muted);">${managedCfg.listSummary} ${managedCatalog.length}개 차종 · ${managedCatalog.reduce((s,g)=>s+g.parts.length,0)}개 품목</span>
+            </div>
+            <div id="spcManagedSections" style="margin-bottom:18px;"></div>
+            <div style="margin-bottom:10px;padding-top:4px;border-top:1px dashed var(--border-color);">
+                <h4 style="margin:0 0 12px;font-size:0.95rem;display:flex;align-items:center;gap:6px;">
+                    <span class="material-symbols-outlined" style="color:#2563eb;">ssid_chart</span>
+                    SPC 관리도
+                </h4>
+            </div>` : ''}
+
+            <div id="spcChartSection">
             <div id="spcStats" class="stat-cards" style="margin-bottom:16px;"></div>
 
             <div class="card" style="margin-bottom:16px;">
@@ -29478,8 +30059,12 @@ var ProdSpcModule = (function() {
                             <thead>
                                 <tr>
                                     <th>No</th><th>날짜</th><th>차종</th><th>품명</th><th>LOT</th><th>라인</th>
-                                    <th>초물</th><th>중물</th><th>종물</th>
-                                    <th>X̄(평균)</th><th>R(범위)</th><th>판정</th>
+                                    <th style="text-align:right;min-width:64px;">초물</th>
+                                    <th style="text-align:right;min-width:64px;">중물</th>
+                                    <th style="text-align:right;min-width:64px;">종물</th>
+                                    <th style="text-align:right;min-width:72px;">X̄(평균)</th>
+                                    <th style="text-align:right;min-width:72px;">R(범위)</th>
+                                    <th style="text-align:center;min-width:64px;">판정</th>
                                 </tr>
                             </thead>
                             <tbody id="spcTableBody"></tbody>
@@ -29487,15 +30072,17 @@ var ProdSpcModule = (function() {
                     </div>
                 </div>
             </div>
+            </div>
         </div>`;
+        if (isManagedPage) _renderManagedCarSections(categoryKey, presetCar);
         if (presetCar) search();
-        else _renderEmptyCategory();
+        else _renderEmptyCategory(isManagedPage);
     }
 
-    function _renderEmptyCategory() {
+    function _renderEmptyCategory(isManagedPage = false) {
         const msg = `<div class="empty-state" style="width:100%;padding:24px;">
             <span class="material-symbols-outlined" style="font-size:36px;color:var(--text-muted);">directions_car</span>
-            <p>차종을 선택한 후 조회하세요.</p></div>`;
+            <p>${isManagedPage ? '차종·품명을 선택하거나 아래 목록에서 조회하세요.' : '차종을 선택한 후 조회하세요.'}</p></div>`;
         const stats = document.getElementById('spcStats');
         if (stats) stats.innerHTML = msg;
         const tbody = document.getElementById('spcTableBody');
@@ -29511,43 +30098,69 @@ var ProdSpcModule = (function() {
         renderHub(container);
     }
 
+    function _activeManagedCategoryKey() {
+        const pageId = _activeCategory?.pageId;
+        if (pageId === 'spc-color') return 'color';
+        if (pageId === 'spc-film') return 'film';
+        return '';
+    }
+
     function _onCarChange() {
         const car = document.getElementById('spcCar')?.value || '';
+        const catKey = _activeManagedCategoryKey();
         const sel = document.getElementById('spcPart');
-        if (sel) sel.innerHTML = _partOptions(car, '');
+        if (sel) {
+            sel.innerHTML = catKey === 'color' ? _colorPartOptions(car, '')
+                : catKey === 'film' ? _filmPartOptions(car, '')
+                : _partOptions(car, '');
+        }
+        if (catKey) _renderManagedCarSections(catKey, car);
+    }
+
+    function _onDateChange() {
+        const catKey = _activeManagedCategoryKey();
+        if (catKey) _renderManagedCarSections(catKey, document.getElementById('spcCar')?.value || '');
     }
 
     function search() {
         const start   = document.getElementById('spcStart')?.value  || '';
         const end     = document.getElementById('spcEnd')?.value    || '';
         const car     = document.getElementById('spcCar')?.value    || '';
-        const part    = document.getElementById('spcPart')?.value   || '';
+        const partRaw = document.getElementById('spcPart')?.value   || '';
+        const catKey = _activeManagedCategoryKey();
+        const isManagedPage = !!catKey;
+        const { partName: part, line: partLine } = isManagedPage
+            ? _parsePartToken(partRaw) : { partName: partRaw, line: '' };
         const itemKey = document.getElementById('spcItem')?.value   || (_activeCategory && _activeCategory.defaultItem) || 'film_under';
 
         if (_activeCategory && !car) {
             UIUtils.toast('차종을 선택하세요.', 'warning');
-            _renderEmptyCategory();
+            _renderEmptyCategory(isManagedPage);
             return;
         }
 
         const meta = SPC_ITEMS.find(i => i.key === itemKey) || SPC_ITEMS[0];
-        const filtered = _qualityRecords().filter(r => {
-            if (start && r.date < start) return false;
-            if (end && r.date > end) return false;
-            if (car && r.carModel !== car) return false;
-            if (part && r.partName !== part) return false;
-            return _hasItemData(r, itemKey);
-        }).sort((a, b) => a.date.localeCompare(b.date) || (a.id > b.id ? 1 : -1));
-
-        const points = _buildPoints(filtered, itemKey);
+        let historyRows = _historyRows({
+            kind: _activeCategoryKind(),
+            start, end, car, part: part || ''
+        });
+        if (partLine) {
+            historyRows = historyRows.filter(({ record }) => !record.line || record.line === partLine);
+        }
+        const points = _buildPoints(historyRows, itemKey);
         _renderStats(points, meta);
         _renderCharts(points, meta);
         _renderTable(points, meta);
+        if (points.length) {
+            document.getElementById('spcChartSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else if (!points.length && car) {
+            UIUtils.toast('조회 조건에 해당하는 DATA가 없습니다.', 'warning');
+        }
     }
 
     function _calcLimits(points) {
         if (!points.length) return null;
-        const n = Math.round(points.reduce((s,p)=>s+p.vals.length,0)/points.length);
+        const n = Math.round(points.reduce((s,p)=>s+Object.values(p.valsByType||{}).filter(v=>v!==null).length,0)/points.length);
         const cn = CC[Math.min(5,Math.max(2,n))] || CC[3];
         const xbars = points.map(p=>p.xbar);
         const rs    = points.map(p=>p.rv);
@@ -29698,32 +30311,33 @@ var ProdSpcModule = (function() {
         if (!tbody) return;
         if (!points.length) {
             tbody.innerHTML = `<tr><td colspan="12" class="empty-cell">
-                초중종물 관리에서 수치 항목(도막두께·광택·색차)의 측정값을 입력하면 여기에 자동으로 표시됩니다.
+                초중종물 관리 → 색차/광택 이력·도막 이력에 입력한 DATA가 여기에 자동으로 표시됩니다.
             </td></tr>`;
             return;
         }
         const L = _calcLimits(points);
-        tbody.innerHTML = points.map((p,i) => {
+        const numCell = (v, extra = '') => {
+            const text = (v !== null && v !== undefined) ? Number(v).toFixed(2) : '-';
+            return `<td style="text-align:right;font-variant-numeric:tabular-nums;padding:8px 12px;${extra}">${text}</td>`;
+        };
+        tbody.innerHTML = points.map((p, i) => {
             const outX  = p.xbar > L.UCL_x || p.xbar < L.LCL_x;
             const outR  = p.rv   > L.UCL_r;
             const out   = outX || outR;
             const rowSt = out ? 'background:rgba(239,68,68,0.05);' : '';
-            // 초물/중물/종물 셀 (최대 3개, 부족하면 '-')
-            const vCells = [0,1,2].map(j => {
-                const v = p.vals[j];
-                return `<td style="text-align:right;">${v!==undefined ? v.toFixed(2) : '-'}</td>`;
-            }).join('');
+            const byType = p.valsByType || {};
+            const vCells = MEASURE_TYPES.map(t => numCell(byType[t])).join('');
             return `<tr style="${rowSt}">
-                <td>${points.length-i}</td>
+                <td style="text-align:center;">${i + 1}</td>
                 <td>${_esc(p.date||'')}</td>
                 <td>${_esc(p.carModel||'')}</td>
                 <td>${_esc(p.partName||'')}</td>
                 <td style="font-family:monospace;font-size:0.8rem;">${_esc(p.lot||'-')}</td>
                 <td>${_esc(p.line||'-')}</td>
                 ${vCells}
-                <td style="text-align:right;${outX?'color:#ef4444;font-weight:600;':''}">${p.xbar.toFixed(3)}</td>
-                <td style="text-align:right;${outR?'color:#ef4444;font-weight:600;':''}">${p.rv.toFixed(3)}</td>
-                <td><span class="badge ${out?'badge-danger':'badge-success'}">${out?'이탈':'정상'}</span></td>
+                <td style="text-align:right;font-variant-numeric:tabular-nums;padding:8px 12px;${outX?'color:#ef4444;font-weight:600;':''}">${p.xbar.toFixed(3)}</td>
+                <td style="text-align:right;font-variant-numeric:tabular-nums;padding:8px 12px;${outR?'color:#ef4444;font-weight:600;':''}">${p.rv.toFixed(3)}</td>
+                <td style="text-align:center;"><span class="badge ${out?'badge-danger':'badge-success'}">${out?'이탈':'정상'}</span></td>
             </tr>`;
         }).join('');
     }
@@ -29737,27 +30351,15 @@ var ProdSpcModule = (function() {
         const itemKey = document.getElementById('spcItem')?.value   || 'film_under';
         const meta    = SPC_ITEMS.find(i=>i.key===itemKey) || SPC_ITEMS[0];
 
-        const allRecs = Storage.getAll(Q_STORE) || [];
-        const filtered = allRecs.filter(r => {
-            if (r._docKind === 'quality_template') return false;
-            if (start && r.date < start) return false;
-            if (end   && r.date > end)   return false;
-            if (car   && r.carModel !== car)  return false;
-            if (part  && r.partName !== part) return false;
-            const hit = (r.items||[]).find(i => i.key === itemKey);
-            return hit && hit.vals && Object.keys(hit.vals).length > 0;
-        }).sort((a,b) => a.date.localeCompare(b.date));
+        const kind = itemKey.startsWith('film') ? 'film' : (itemKey === 'gloss' ? 'gloss' : 'color');
+        const historyRows = _historyRows({ kind, start, end, car, part });
+        const points = _buildPoints(historyRows, itemKey);
 
         const headers = ['날짜','관리항목','단위','차종','품명','LOT','라인','초물','중물','종물','X̄(평균)','R(범위)'];
-        const rows = filtered.map(r => {
-            const hit   = (r.items||[]).find(i => i.key === itemKey);
-            const types = r.types && r.types.length ? r.types : ['초물','중물','종물'];
-            const vals  = types.map(t => hit.vals[t] ?? '');
-            const numVals = vals.map(v => v !== '' ? Number(v) : NaN).filter(v => !isNaN(v));
-            const xbar  = numVals.length ? (numVals.reduce((s,v)=>s+v,0)/numVals.length).toFixed(3) : '';
-            const rv    = numVals.length > 1 ? (Math.max(...numVals)-Math.min(...numVals)).toFixed(3) : '';
-            return [r.date, meta.label, meta.unit, r.carModel||'', r.partName||'', r.lotNo||'', r.line||'',
-                    vals[0]??'', vals[1]??'', vals[2]??'', xbar, rv];
+        const rows = points.map(p => {
+            const byType = p.valsByType || {};
+            return [p.date, meta.label, meta.unit, p.carModel||'', p.partName||'', p.lot||'', p.line||'',
+                    byType['초물'] ?? '', byType['중물'] ?? '', byType['종물'] ?? '', p.xbar.toFixed(3), p.rv.toFixed(3)];
         });
         Storage.exportToCSV(headers, rows, `SPC_${meta.label}`);
     }
@@ -29767,8 +30369,13 @@ var ProdSpcModule = (function() {
         renderHub,
         renderCategory,
         openCarCategory,
+        selectColorCar,
+        selectColorPart,
+        selectFilmCar,
+        selectFilmPart,
         search,
         _onCarChange,
+        _onDateChange,
         exportData
     };
 })();

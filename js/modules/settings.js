@@ -732,8 +732,17 @@ const SettingsModule = (function() {
         </div>`;
     }
 
+    /* 제품 구분 정렬 순서: 양산 → 개발 → A/S (그 외/미지정은 맨 뒤) */
+    const _PRODUCT_TYPE_ORDER = ['양산', '개발', 'A/S'];
+    function _productTypeRank(itemType) {
+        const norm = String(itemType || '').replace(/품$/, '').trim();
+        const idx = _PRODUCT_TYPE_ORDER.indexOf(norm);
+        return idx < 0 ? _PRODUCT_TYPE_ORDER.length : idx;
+    }
+
     function renderProductsTab(el) {
         const products = Storage.getAll(PRODUCTS_STORE).sort((a, b) =>
+            _productTypeRank(a.itemType) - _productTypeRank(b.itemType) ||
             (a.carModel || '').localeCompare(b.carModel || '', 'ko') || (a.partName || '').localeCompare(b.partName || '', 'ko')
         );
         const injMaterials  = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
