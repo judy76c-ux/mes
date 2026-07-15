@@ -1958,7 +1958,10 @@ const SettingsModule = (function() {
         if (!text) return '';
         if (text.includes('주제') || text.includes('base') || text.includes('main')) return 'main';
         if (text.includes('경화') || text.includes('hardener') || text.includes('catalyst')) return 'hardener';
-        if (text.includes('희석') || text.includes('신너') || text.includes('시너') || text.includes('thinner')) return 'thinner';
+        // '신나'는 '신너'의 관용 표기(예: "DR-705 신나(지건)", "T-971 신나")로 이 프로젝트 데이터에서 흔히 쓰인다.
+        // CSV 일괄 업로드나 수기 입력 시 도료종류 칸에 '신나'라고만 적으면 기존 키워드로는 신너로 분류되지 않아
+        // 신너 드롭다운에서 통째로 빠지는 문제가 있었다(근본 원인).
+        if (text.includes('희석') || text.includes('신너') || text.includes('신나') || text.includes('시너') || text.includes('thinner')) return 'thinner';
         return text;
     }
 
@@ -1973,7 +1976,15 @@ const SettingsModule = (function() {
     }
 
     function _isPaintType(mat, type) {
-        return _normalizePaintMaterialType(mat && mat.paintType) === type;
+        if (!mat) return false;
+        const byField = _normalizePaintMaterialType(mat.paintType);
+        if (byField === type) return true;
+        // paintType이 이미 주제/경화제/신너 중 하나로 명확히 분류돼 있으면 이름으로 재분류하지 않는다.
+        if (byField === 'main' || byField === 'hardener' || byField === 'thinner') return false;
+        // paintType이 비어있거나 목록에 없는 값(등록 실수 등)이면 이름 텍스트로 유형을 추정한다.
+        // 예: "705신너(표준)"처럼 이름에 '신너'가 있는데 paintType이 잘못 저장되어 신너 드롭다운에서 빠지는 문제 방지.
+        const byName = _normalizePaintMaterialType(mat.name || mat.matName || mat.paintName);
+        return byName === type;
     }
 
     // 저장된 도료 ID가 제조사/유형 필터에서 빠져도 드롭다운·저장 시 유지
@@ -2106,7 +2117,7 @@ const SettingsModule = (function() {
         // 경화제: 구매처 필터 후 동일 공급처 우선 → 없으면 폴백
         const scopedHard = basePaints.filter(p => _isPaintType(p, 'hardener'));
         const allHard    = scopedHard.length ? scopedHard : supplierPaints.filter(p => _isPaintType(p, 'hardener'));
-        const hardByManufacturer  = mainManufacturer ? allHard.filter(p => _samePaintMaker(p.manufacturer, mainManufacturer)) : [];
+        const hardByManufacturer  = mainManufacturer ? allHard.filter(p => _samePaintMaker(p.manufacturer, mainManufacturer) || !p.manufacturer) : [];
         const hardPaints = _ensurePaintInList(
             hardByManufacturer.length ? hardByManufacturer : allHard,
             hardId,
@@ -2116,7 +2127,7 @@ const SettingsModule = (function() {
         // 신너(희석제): 구매처 필터 후 동일 공급처 우선 → 없으면 폴백
         const scopedThinner  = basePaints.filter(p => _isPaintType(p, 'thinner'));
         const allThinner     = scopedThinner.length ? scopedThinner : supplierPaints.filter(p => _isPaintType(p, 'thinner'));
-        const thinnerByManufacturer   = mainManufacturer ? allThinner.filter(p => _samePaintMaker(p.manufacturer, mainManufacturer)) : [];
+        const thinnerByManufacturer   = mainManufacturer ? allThinner.filter(p => _samePaintMaker(p.manufacturer, mainManufacturer) || !p.manufacturer) : [];
         const thinnerPaints  = _ensurePaintInList(
             thinnerByManufacturer.length ? thinnerByManufacturer : allThinner,
             thinnerId,
@@ -2785,13 +2796,13 @@ const SettingsModule = (function() {
         function getFilteredHard(mid) {
             const mat = paintMaterials.find(m => m.id === mid);
             const mfr = mat ? (mat.manufacturer || '') : '';
-            const byMfr = mfr ? allHardeners.filter(m => _samePaintMaker(m.manufacturer, mfr)) : [];
+            const byMfr = mfr ? allHardeners.filter(m => _samePaintMaker(m.manufacturer, mfr) || !m.manufacturer) : [];
             return byMfr.length ? byMfr : allHardeners;
         }
         function getFilteredThin(mid) {
             const mat = paintMaterials.find(m => m.id === mid);
             const mfr = mat ? (mat.manufacturer || '') : '';
-            const byMfr = mfr ? allThinners.filter(m => _samePaintMaker(m.manufacturer, mfr)) : [];
+            const byMfr = mfr ? allThinners.filter(m => _samePaintMaker(m.manufacturer, mfr) || !m.manufacturer) : [];
             return byMfr.length ? byMfr : allThinners;
         }
 
