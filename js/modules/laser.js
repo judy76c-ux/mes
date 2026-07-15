@@ -5481,7 +5481,7 @@ var LaserStandbyModule = (function() {
                 </div>
                 <div class="form-group" style="margin:0;">
                     <label class="form-label">LOT 수량</label>
-                    <input type="number" class="form-input lsb-adjust-lot-qty" value="${qty || ''}" min="0" placeholder="0">
+                    <input type="number" class="form-input lsb-adjust-lot-qty" value="${qty || ''}" min="0" placeholder="0" oninput="LaserStandbyModule.onAdjustLotQtyInput()">
                 </div>
                 <button type="button" class="btn btn-sm btn-danger" style="height:38px;padding:0;"
                     title="LOT 행 삭제" onclick="LaserStandbyModule.removeAdjustLotRow(this)">−</button>
@@ -5492,6 +5492,31 @@ var LaserStandbyModule = (function() {
         const container = document.getElementById('lsbAdjustLotRows');
         if (!container) return;
         container.insertAdjacentHTML('beforeend', _adjustLotRowHtml(lot || {}));
+        onAdjustLotQtyInput();
+    }
+
+    // LOT 행이 1개뿐일 때는 배분 방식이 하나로 정해져 있으므로(총수량 = 그 LOT 수량),
+    // "수정 후 총수량" 입력에 맞춰 그 LOT 수량도 실시간으로 따라가게 한다.
+    // (그렇지 않으면 예전에 저장된 LOT 수량이 그대로 남아 총수량과 계속 어긋나 저장이 막힌다.)
+    function onAdjustTotalQtyInput(value) {
+        const container = document.getElementById('lsbAdjustLotRows');
+        if (!container) return;
+        const rows = container.querySelectorAll('.lsb-adjust-lot-row');
+        if (rows.length !== 1) return;
+        const qtyInput = rows[0].querySelector('.lsb-adjust-lot-qty');
+        if (qtyInput) qtyInput.value = value;
+    }
+
+    // 반대 방향: LOT별 수량을 고치면(추가/삭제 포함) "수정 후 총수량"이 그 합계를 그대로
+    // 따라가게 한다. 총수량은 결국 LOT 배분의 합이어야 하므로, 사용자가 아래 LOT 수량만
+    // 고쳐도 위 총수량을 따로 다시 입력할 필요가 없게 하기 위함.
+    function onAdjustLotQtyInput() {
+        const container = document.getElementById('lsbAdjustLotRows');
+        const totalInput = document.getElementById('lsbAdjustQty');
+        if (!container || !totalInput) return;
+        const sum = Array.from(container.querySelectorAll('.lsb-adjust-lot-qty'))
+            .reduce(function(s, input) { return s + (_normalizeQty(input.value) || 0); }, 0);
+        totalInput.value = sum;
     }
 
     function removeAdjustLotRow(button) {
@@ -5501,9 +5526,11 @@ var LaserStandbyModule = (function() {
         const rows = container.querySelectorAll('.lsb-adjust-lot-row');
         if (rows.length <= 1) {
             row.querySelectorAll('input').forEach(function(input) { input.value = ''; });
+            onAdjustLotQtyInput();
             return;
         }
         row.remove();
+        onAdjustLotQtyInput();
     }
 
     function _readAdjustLotRows() {
@@ -5638,7 +5665,7 @@ var LaserStandbyModule = (function() {
             <div class="form-row" style="margin-bottom:12px;">
                 <div class="form-group">
                     <label class="form-label">${addMode ? '추가 수량' : '수정 후 총수량'}</label>
-                    <input type="number" class="form-input" id="lsbAdjustQty" value="${override ? _normalizeQty(override.actualQty) : currentStock}" min="0" placeholder="0">
+                    <input type="number" class="form-input" id="lsbAdjustQty" value="${override ? _normalizeQty(override.actualQty) : currentStock}" min="0" placeholder="0" oninput="LaserStandbyModule.onAdjustTotalQtyInput(this.value)">
                 </div>
             </div>
             <div style="border:1px solid var(--border-color);border-radius:8px;padding:12px;">
@@ -5684,6 +5711,12 @@ var LaserStandbyModule = (function() {
         const color = document.getElementById('lsbAdjustColor')?.value || '';
         const actualQty = _normalizeQty(document.getElementById('lsbAdjustQty')?.value || 0);
         const lots = _readAdjustLotRows();
+        // LOT이 1개뿐이면 배분 방식이 유일하므로(총수량 = 그 LOT 수량) 화면에서 못 맞춘 경우
+        // 저장 시점에 자동으로 맞춰준다. LOT이 여러 개일 때는 어느 LOT을 조정할지 애매하므로
+        // 그대로 두고 아래 불일치 검증에서 사용자가 직접 배분하게 한다.
+        if (lots.length === 1 && actualQty > 0) {
+            lots[0].qty = actualQty;
+        }
         const invalidLot = lots.find(function(lot) {
             return !lot.paintLot || !lot.injectionLot || lot.qty <= 0;
         });
@@ -6211,6 +6244,8 @@ var LaserStandbyModule = (function() {
         saveAdjustModal,
         addAdjustLotRow,
         removeAdjustLotRow,
+        onAdjustTotalQtyInput,
+        onAdjustLotQtyInput,
         onAdjustCarChange,
         onAdjustPartChange,
         openStandbyOutModal,

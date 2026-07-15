@@ -16660,6 +16660,284 @@ var PaintMixModule = (function() {
         renderResidualTab();
     }
 
+    function _residualSupplierKey(r) {
+        return (r.supplier || r.manufacturer || '미지정').trim() || '미지정';
+    }
+
+    function _groupResidualsBySupplier(items) {
+        const map = {};
+        items.forEach(r => {
+            const key = _residualSupplierKey(r);
+            if (!map[key]) map[key] = { supplier: key, items: [], totalG: 0 };
+            map[key].items.push(r);
+            map[key].totalG += r.residualG;
+        });
+        return Object.values(map)
+            .sort((a, b) => a.supplier.localeCompare(b.supplier, 'ko'));
+    }
+
+    function _balanceResidualSupplierColumns(groups) {
+        const left = [];
+        const right = [];
+        let leftWeight = 0;
+        let rightWeight = 0;
+        groups.forEach(group => {
+            const weight = group.items.length + 3;
+            if (leftWeight <= rightWeight) {
+                left.push(group);
+                leftWeight += weight;
+            } else {
+                right.push(group);
+                rightWeight += weight;
+            }
+        });
+        return { left, right };
+    }
+
+    function _usageAmountG(u) {
+        const residualUseG = Number(u.residualUseG);
+        const warehouseUseG = Number(u.warehouseUseG);
+        if (Number.isFinite(residualUseG) || Number.isFinite(warehouseUseG)) {
+            return (Number(u.residualUseG) || 0) + (Number(u.warehouseUseG) || 0);
+        }
+        return Number(u.usageG) || 0;
+    }
+
+    function _residualLotHistory(materialId, lotNo) {
+        const mats = Storage.getAll(PAINT_MAT_STORE) || [];
+        const mat = mats.find(x => x.id === materialId);
+        const packKg = Number(mat?.packUnit) || 0;
+        const paintName = mat?.name || '';
+        const supplier = mat?.supplier || mat?.manufacturer || '';
+        const inRows = [];
+        const useRows = [];
+
+        // ① 창고 수동 출고 → 배합실 입고
+        (Storage.getAll(PAINT_INV_STORE) || []).forEach(r => {
+            if (r.type !== '출고' || r.paintMixId) return;
+            if ((r.materialId || '') !== materialId) return;
+            const rLot = r.prodLot || r.lotNo || '미기입';
+            if (rLot !== lotNo) return;
+            const cans = Number(r.quantity) || 0;
+            const inG = cans * packKg * 1000;
+            if (!inG) return;
+            inRows.push({
+                date: r.date || '',
+                type: '창고 출고 → 배합실 입고',
+                detail: `${cans}캔 × ${packKg}kg`,
+                amountG: inG,
+                note: r.note || r.remark || ''
+            });
+        });
+
+        // ② 도료사용등록: 캔 오픈(입고) / 사용
+        _mixes().forEach(m => {
+            (m.usages || []).forEach(u => {
+                if ((u.materialId || '') !== materialId) return;
+                const openLot = u.prodLot || u.lotNo || '미기입';
+                const residLot = u.residualProdLot || openLot;
+                const cans = Number(u.warehouseCans) || 0;
+                const rowPack = Number(u.packUnitKg) || Number(u.packUnit) || packKg;
+                if (openLot === lotNo && cans > 0) {
+                    const inG = cans * rowPack * 1000;
+                    inRows.push({
+                        date: m.date || '',
+                        type: '도료사용 · 캔 오픈',
+                        detail: `${cans}캔 × ${rowPack}kg · ${m.carModel || ''} / ${m.partName || ''}`,
+                        amountG: inG,
+                        note: m.line ? `라인 ${m.line}` : '',
+                        mixId: m.id || ''
+                    });
+                }
+                const usedG = _usageAmountG(u);
+                const lotMatch = openLot === lotNo || residLot === lotNo;
+                if (lotMatch && usedG > 0) {
+                    const parts = [];
+                    if (Number(u.residualUseG) > 0) parts.push(`잔량사용 ${UIUtils.formatNumber(u.residualUseG)}g`);
+                    if (Number(u.warehouseUseG) > 0) parts.push(`오픈후사용 ${UIUtils.formatNumber(u.warehouseUseG)}g`);
+                    if (!parts.length && Number(u.usageG) > 0) parts.push(`사용 ${UIUtils.formatNumber(u.usageG)}g`);
+                    useRows.push({
+                        date: m.date || '',
+                        type: '도료 사용',
+                        detail: `${m.carModel || '-'} / ${m.partName || '-'} · LOT ${m.productionLot || m.lotNo || '-'}`,
+                        amountG: usedG,
+                        note: parts.join(' · ') + (m.operator ? ` · ${m.operator}` : ''),
+                        mixId: m.id || ''
+                    });
+                }
+            });
+        });
+
+        // ③ 실사 조정
+        _residualAdjustments().forEach(a => {
+            if ((a.materialId || '') !== materialId) return;
+            if ((a.lotNo || '미기입') !== lotNo) return;
+            const delta = Number(a.adjustG) || 0;
+            if (!delta) return;
+            inRows.push({
+                date: a.date || '',
+                type: delta > 0 ? '실사 조정(+)' : '실사 조정(-)',
+                detail: a.note || '배합실 실사',
+                amountG: delta,
+                note: a.operator ? `작업자 ${a.operator}` : ''
+            });
+        });
+
+        const sortAsc = (a, b) => String(a.date || '').localeCompare(String(b.date || ''));
+        inRows.sort(sortAsc);
+        useRows.sort(sortAsc);
+        const totalIn = inRows.reduce((s, r) => s + (Number(r.amountG) || 0), 0);
+        const totalUse = useRows.reduce((s, r) => s + (Number(r.amountG) || 0), 0);
+        return {
+            materialId, lotNo, paintName, supplier, packKg,
+            inRows, useRows,
+            totalIn, totalUse,
+            residualG: totalIn - totalUse
+        };
+    }
+
+    function openResidualHistory(materialId, lotNo) {
+        if (!materialId) return;
+        const hist = _residualLotHistory(materialId, lotNo || '미기입');
+        const fmt = v => UIUtils.formatNumber(Math.round(Number(v) || 0));
+        const residColor = hist.residualG > 0 ? '#15803d' : hist.residualG < 0 ? '#b91c1c' : '#64748b';
+        const rowHtml = (rows, isIn) => rows.length ? rows.map((r, i) => `
+            <tr>
+                <td style="text-align:center;color:#94a3b8;">${i + 1}</td>
+                <td style="white-space:nowrap;">${_esc(r.date || '-')}</td>
+                <td>${_esc(r.type)}</td>
+                <td style="font-size:12px;color:#475569;">${_esc(r.detail || '-')}</td>
+                <td style="text-align:right;font-weight:700;color:${isIn ? (r.amountG >= 0 ? '#0369a1' : '#b91c1c') : '#b45309'};">
+                    ${isIn && r.amountG > 0 ? '+' : ''}${fmt(r.amountG)}
+                </td>
+                <td style="font-size:12px;color:#64748b;">${_esc(r.note || '')}</td>
+            </tr>`).join('') : `<tr><td colspan="6" style="text-align:center;padding:28px;color:#94a3b8;">이력이 없습니다.</td></tr>`;
+
+        const win = window.open('', '_blank', 'width=1100,height=820,scrollbars=yes,resizable=yes');
+        if (!win) {
+            UIUtils.toast('팝업이 차단되었습니다. 브라우저에서 팝업을 허용한 뒤 다시 시도하세요.', 'warning');
+            return;
+        }
+        win.document.write(`<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>배합실 잔량 이력 — ${_esc(hist.paintName || '도료')}</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:#f1f5f9;color:#0f172a;font-family:"Pretendard","Malgun Gothic","맑은 고딕",sans-serif}
+  .toolbar{position:sticky;top:0;z-index:5;display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 16px;background:#0f172a;color:#fff}
+  .toolbar h1{margin:0;font-size:15px;font-weight:700}
+  .toolbar button{border:0;border-radius:6px;padding:7px 14px;font-weight:700;cursor:pointer;background:#fff;color:#0f172a}
+  .wrap{padding:16px;max-width:1040px;margin:0 auto}
+  .card{background:#fff;border:1px solid #e2e8f0;border-radius:10px;margin-bottom:14px;overflow:hidden}
+  .card-h{padding:12px 14px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .card-h h2{margin:0;font-size:14px}
+  .meta{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;padding:14px}
+  .meta .box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px}
+  .meta .lbl{font-size:11px;color:#64748b;margin-bottom:4px}
+  .meta .val{font-size:15px;font-weight:700;word-break:break-all}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:8px 10px;border-bottom:1px solid #eef2f7;text-align:left;vertical-align:top}
+  th{background:#f8fafc;font-size:12px;color:#475569;font-weight:700;white-space:nowrap}
+  .empty{padding:24px;text-align:center;color:#94a3b8}
+  @media print{.toolbar{display:none} body{background:#fff} .wrap{padding:0;max-width:none}}
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <h1>배합실 잔량 이력 · ${_esc(hist.paintName || '-')} · LOT ${_esc(hist.lotNo)}</h1>
+    <div style="display:flex;gap:8px;">
+      <button onclick="window.print()">인쇄</button>
+      <button onclick="window.close()">닫기</button>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="card">
+      <div class="meta">
+        <div class="box"><div class="lbl">도료명</div><div class="val">${_esc(hist.paintName || '-')}</div></div>
+        <div class="box"><div class="lbl">제조 LOT</div><div class="val" style="font-family:monospace">${_esc(hist.lotNo)}</div></div>
+        <div class="box"><div class="lbl">공급사</div><div class="val">${_esc(hist.supplier || '-')}</div></div>
+        <div class="box"><div class="lbl">총 입고 / 총 사용</div><div class="val">${fmt(hist.totalIn)}g / ${fmt(hist.totalUse)}g</div></div>
+        <div class="box"><div class="lbl">현재 잔량</div><div class="val" style="color:${residColor}">${fmt(hist.residualG)}g</div></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-h"><h2>입고 이력 (${hist.inRows.length}건)</h2><span style="font-size:12px;color:#0369a1;font-weight:700;">합계 ${fmt(hist.totalIn)}g</span></div>
+      <table>
+        <thead><tr><th style="width:40px">No</th><th style="width:100px">일자</th><th style="width:150px">구분</th><th>내용</th><th style="width:100px;text-align:right">수량(g)</th><th style="width:160px">비고</th></tr></thead>
+        <tbody>${rowHtml(hist.inRows, true)}</tbody>
+      </table>
+    </div>
+    <div class="card">
+      <div class="card-h"><h2>사용 이력 (${hist.useRows.length}건)</h2><span style="font-size:12px;color:#b45309;font-weight:700;">합계 ${fmt(hist.totalUse)}g</span></div>
+      <table>
+        <thead><tr><th style="width:40px">No</th><th style="width:100px">일자</th><th style="width:150px">구분</th><th>내용</th><th style="width:100px;text-align:right">수량(g)</th><th style="width:160px">비고</th></tr></thead>
+        <tbody>${rowHtml(hist.useRows, false)}</tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>`);
+        win.document.close();
+    }
+
+    function _renderResidualSupplierRow(r) {
+        const pct = r.totalWithdrawG > 0 ? (r.residualG / r.totalWithdrawG * 100).toFixed(0) : 0;
+        const color = Number(pct) > 50 ? '#15803d' : Number(pct) > 20 ? '#b45309' : '#b91c1c';
+        return `<tr>
+            <td style="width:120px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${_esc(r.paintName || '-')}">
+                <a href="javascript:void(0)" onclick="PaintMixModule.openResidualHistory('${_js(r.materialId)}','${_js(r.lotNo)}')"
+                   style="color:#0369a1;text-decoration:underline;font-weight:700;cursor:pointer;">${_esc(r.paintName || '-')}</a>
+            </td>
+            <td style="font-family:monospace;font-size:0.78rem;">${_esc(r.lotNo)}</td>
+            <td style="text-align:right;">${UIUtils.formatNumber(r.totalWithdrawG)}</td>
+            <td style="text-align:right;">${UIUtils.formatNumber(r.totalUsedG)}</td>
+            <td style="text-align:right;font-weight:700;color:${color};">${UIUtils.formatNumber(r.residualG)}</td>
+            ${_canWritePaintMix() ? `<td style="white-space:nowrap;"><button class="btn btn-sm btn-outline" onclick="PaintMixModule.openMixResidualAdjust('${_js(r.materialId)}','${_js(r.lotNo)}')">조정</button></td>` : ''}
+        </tr>`;
+    }
+
+    function _renderResidualSupplierCard(group) {
+        const items = [...group.items].sort((a, b) => (a.paintName || '').localeCompare(b.paintName || '', 'ko'));
+        const manageCol = _canWritePaintMix() ? '<th style="width:44px;">관리</th>' : '';
+        return `
+            <div class="card" style="margin:0;">
+                <div class="card-header" style="padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                    <h4 style="margin:0;font-size:0.9rem;display:flex;align-items:center;gap:6px;">
+                        <span class="material-symbols-outlined" style="color:#10b981;font-size:20px;">factory</span>
+                        ${_esc(group.supplier)}
+                        <span style="font-size:0.72rem;color:var(--text-muted);font-weight:500;">${items.length}종 · ${UIUtils.formatNumber(group.totalG)}g</span>
+                    </h4>
+                </div>
+                <div class="card-body" style="padding:0;">
+                    <div class="data-table-wrapper">
+                        <table class="data-table" style="font-size:0.76rem;table-layout:fixed;width:100%;">
+                            <thead><tr>
+                                <th style="width:120px;max-width:120px;">도료명</th>
+                                <th style="width:72px;">제조 LOT</th>
+                                <th style="text-align:right;width:68px;">입고(g)</th>
+                                <th style="text-align:right;width:68px;">사용(g)</th>
+                                <th style="text-align:right;width:72px;">잔량(g)</th>
+                                ${manageCol}
+                            </tr></thead>
+                            <tbody>${items.map(_renderResidualSupplierRow).join('')}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    function _renderResidualSupplierSections(mixResiduals) {
+        const groups = _groupResidualsBySupplier(mixResiduals);
+        const { left, right } = _balanceResidualSupplierColumns(groups);
+        const renderCol = cols => cols.map(g => _renderResidualSupplierCard(g)).join('');
+        return `<div style="display:flex;gap:12px;align-items:flex-start;">
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:12px;">${renderCol(left)}</div>
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:12px;">${renderCol(right)}</div>
+        </div>`;
+    }
+
     function renderResidualTab() {
         const pane = document.getElementById('pmixPane_residual');
         if (!pane) return;
@@ -16693,10 +16971,12 @@ var PaintMixModule = (function() {
                 </div>
             </div>
 
-            <!-- 도료별 잔량 요약 -->
+            <!-- 도료별 잔량 요약 (도료사별) -->
             <div class="card" style="margin-bottom:14px;">
                 <div class="card-header">
-                    <h4><span class="material-symbols-outlined">inventory_2</span> 도료별 잔량 요약</h4>
+                    <h4><span class="material-symbols-outlined">inventory_2</span> 도료별 잔량 요약
+                        <span style="font-size:0.78rem;font-weight:400;color:var(--text-muted);margin-left:6px;">도료사별 · ${_groupResidualsBySupplier(mixResiduals).length}개사</span>
+                    </h4>
                     <div style="display:flex;gap:6px;">
                         ${_canWritePaintMix() ? `
                         <button class="btn btn-sm btn-outline" onclick="PaintMixModule.openMixResidualAdjust(null,'')">
@@ -16707,36 +16987,8 @@ var PaintMixModule = (function() {
                         </button>
                     </div>
                 </div>
-                <div class="card-body" style="padding:0;">
-                    ${mixResiduals.length ? `
-                    <div class="data-table-wrapper">
-                        <table class="data-table" style="font-size:0.83rem;">
-                            <thead><tr>
-                                <th>도료명</th><th>제조 LOT</th><th>공급사</th>
-                                <th style="text-align:right;">총 입고(g)</th>
-                                <th style="text-align:right;">총 사용(g)</th>
-                                <th style="text-align:right;">잔량(g)</th>
-                                ${_canWritePaintMix() ? '<th>관리</th>' : ''}
-                            </tr></thead>
-                            <tbody>
-                                ${mixResiduals.map(r => {
-                                    const pct = r.totalWithdrawG > 0 ? (r.residualG / r.totalWithdrawG * 100).toFixed(0) : 0;
-                                    const color = Number(pct) > 50 ? '#15803d' : Number(pct) > 20 ? '#b45309' : '#b91c1c';
-                                    return `<tr>
-                                        <td><strong>${_esc(r.paintName||'-')}</strong>
-                                            <div style="font-size:0.72rem;color:var(--text-muted);">${_esc(r.supplier||'-')}</div>
-                                        </td>
-                                        <td style="font-family:monospace;font-size:0.8rem;">${_esc(r.lotNo)}</td>
-                                        <td style="font-size:0.8rem;">${_esc(r.supplier||'-')}</td>
-                                        <td style="text-align:right;">${UIUtils.formatNumber(r.totalWithdrawG)}</td>
-                                        <td style="text-align:right;">${UIUtils.formatNumber(r.totalUsedG)}</td>
-                                        <td style="text-align:right;font-weight:700;color:${color};">${UIUtils.formatNumber(r.residualG)}</td>
-                                        ${_canWritePaintMix() ? `<td style="white-space:nowrap;"><button class="btn btn-sm btn-outline" onclick="PaintMixModule.openMixResidualAdjust('${_js(r.materialId)}','${_js(r.lotNo)}')">조정</button></td>` : ''}
-                                    </tr>`;
-                                }).join('')}
-                            </tbody>
-                        </table>
-                    </div>` : `<div style="text-align:center;padding:24px;color:var(--text-muted);">배합실에 잔량이 없습니다.</div>`}
+                <div class="card-body" style="padding:12px;">
+                    ${mixResiduals.length ? _renderResidualSupplierSections(mixResiduals) : `<div style="text-align:center;padding:24px;color:var(--text-muted);">배합실에 잔량이 없습니다.</div>`}
                 </div>
             </div>
 
@@ -18127,7 +18379,7 @@ var PaintMixModule = (function() {
         _onCanOpenToggle, _onCanCountChange,
         _validateRow, _validateAllRows,
         renderResidualStock, filterResidualStock, exportResidualData, openResidualAdjust, saveResidualAdjust,
-        openMixResidualAdjust, saveMixResidualAdjust,
+        openMixResidualAdjust, saveMixResidualAdjust, openResidualHistory,
         saveNew, edit, saveEdit, remove, exportData,
         renderFormulaAsStandard, renderUsageAsStandard
     };
@@ -29348,16 +29600,20 @@ var ProdSpcModule = (function() {
 
     let _xbarChart = null;
     let _rChart    = null;
+    let _filmCharts = {};
     let _activeCategory = null;
+
+    const FILM_LAYER_KEYS = ['film_under', 'film_top'];
 
     const _esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     const _js  = s => String(s ?? '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,' ');
 
     const MEASURE_RECORD_KIND = 'quality_measure_record';
 
-    function _30DaysAgo() {
-        const d = new Date(); d.setDate(d.getDate()-30);
-        return d.toISOString().slice(0,10);
+    function _1YearAgo() {
+        const d = new Date();
+        d.setFullYear(d.getFullYear() - 1);
+        return d.toISOString().slice(0, 10);
     }
 
     function _recordDate(r) {
@@ -29428,9 +29684,9 @@ var ProdSpcModule = (function() {
         }
         if (meta.category === 'film') {
             if (item.group && item.group !== 'film') return false;
-            if (itemKey === 'film_under' && /하도/i.test(text)) return true;
-            if (itemKey === 'film_top' && /상도/i.test(text)) return true;
-            if (itemKey === 'film_under' && !/상도/i.test(text)) return true;
+            const key = String(item.key || '');
+            if (itemKey === 'film_under' && (key === 'film_under' || /하도/i.test(text))) return true;
+            if (itemKey === 'film_top' && (key === 'film_top' || /상도/i.test(text))) return true;
             return false;
         }
         if (meta.category === 'gloss') {
@@ -29601,6 +29857,7 @@ var ProdSpcModule = (function() {
     }
 
     function _renderManagedCarCard(cfg, categoryKey, group, start, end) {
+        const partColPx = 120;
         return `
             <div class="card" style="margin:0;" id="${cfg.idPrefix}-${_esc(group.carModel).replace(/\s+/g,'-')}">
                 <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;">
@@ -29614,14 +29871,14 @@ var ProdSpcModule = (function() {
                 </div>
                 <div class="card-body" style="padding:0;">
                     <div class="data-table-wrapper">
-                        <table class="data-table" style="font-size:0.76rem;">
+                        <table class="data-table" style="font-size:0.76rem;table-layout:fixed;width:100%;">
                             <thead>
                                 <tr>
-                                    <th>품명</th>
+                                    <th style="width:${partColPx}px;max-width:${partColPx}px;">품명</th>
                                     <th style="width:42px;">컬러</th>
                                     <th style="width:52px;">라인</th>
                                     <th style="${categoryKey === 'film' ? 'text-align:left;width:140px;' : 'text-align:right;width:52px;'}">최근DATA</th>
-                                    <th style="text-align:center;width:44px;">SPC</th>
+                                    <th style="text-align:center;width:${categoryKey === 'film' ? '72px' : '44px'};">SPC</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -29633,13 +29890,18 @@ var ProdSpcModule = (function() {
                                         ? _filmDataSummaryHtml(sum)
                                         : String(sum.recordCount || 0);
                                     return `<tr>
-                                        <td style="max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${_esc(p.partName)}"><strong>${_esc(p.partName)}</strong></td>
+                                        <td style="width:${partColPx}px;max-width:${partColPx}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${_esc(p.partName)}"><strong>${_esc(p.partName)}</strong></td>
                                         <td>${_esc(p.color || '-')}</td>
                                         <td style="font-size:0.72rem;">${_esc((p.paintProcess || '-').replace('도장-',''))}</td>
                                         <td style="${categoryKey === 'film' ? 'text-align:left;' : 'text-align:right;font-weight:700;'}">${dataCell}</td>
-                                        <td style="text-align:center;padding:2px;">
-                                            <button class="btn btn-sm btn-primary" style="padding:2px 7px;font-size:0.7rem;min-width:0;"
-                                                onclick="ProdSpcModule.${cfg.selectPart}('${_js(group.carModel)}','${_js(p.partName)}','${_js(p.paintProcess || '')}')">조회</button>
+                                        <td style="text-align:center;padding:2px;white-space:nowrap;">
+                                            ${categoryKey === 'film'
+                                                ? `<button class="btn btn-sm btn-outline" style="padding:2px 5px;font-size:0.66rem;min-width:0;margin-right:2px;"
+                                                    onclick="ProdSpcModule.selectFilmPart('${_js(group.carModel)}','${_js(p.partName)}','${_js(p.paintProcess || '')}','film_under')">하도</button>
+                                                   <button class="btn btn-sm btn-primary" style="padding:2px 5px;font-size:0.66rem;min-width:0;"
+                                                    onclick="ProdSpcModule.selectFilmPart('${_js(group.carModel)}','${_js(p.partName)}','${_js(p.paintProcess || '')}','film_top')">상도</button>`
+                                                : `<button class="btn btn-sm btn-primary" style="padding:2px 7px;font-size:0.7rem;min-width:0;"
+                                                    onclick="ProdSpcModule.${cfg.selectPart}('${_js(group.carModel)}','${_js(p.partName)}','${_js(p.paintProcess || '')}')">조회</button>`}
                                         </td>
                                     </tr>`;
                                 }).join('')}
@@ -29654,7 +29916,7 @@ var ProdSpcModule = (function() {
         const cfg = MANAGED_SPC_CFG[categoryKey];
         const el = document.getElementById('spcManagedSections');
         if (!el || !cfg) return;
-        const start = document.getElementById('spcStart')?.value || _30DaysAgo();
+        const start = document.getElementById('spcStart')?.value || _1YearAgo();
         const end = document.getElementById('spcEnd')?.value || UIUtils.today();
         const catalog = _managedCatalog(categoryKey, filterCar);
         if (!catalog.length) {
@@ -29693,8 +29955,8 @@ var ProdSpcModule = (function() {
         _selectManagedCar('film', carModel);
     }
 
-    function selectFilmPart(carModel, partName, paintProcess = '') {
-        _selectManagedPart('film', carModel, partName, paintProcess);
+    function selectFilmPart(carModel, partName, paintProcess = '', itemKey = '') {
+        _selectManagedPart('film', carModel, partName, paintProcess, itemKey);
     }
 
     function _selectManagedCar(categoryKey, carModel) {
@@ -29705,15 +29967,20 @@ var ProdSpcModule = (function() {
         document.getElementById(`${cfg.idPrefix}-${(carModel || '').replace(/\s+/g, '-')}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
-    function _selectManagedPart(categoryKey, carModel, partName, paintProcess = '') {
+    function _selectManagedPart(categoryKey, carModel, partName, paintProcess = '', itemKey = '') {
         const carEl = document.getElementById('spcCar');
         const partEl = document.getElementById('spcPart');
+        const itemEl = document.getElementById('spcItem');
         const token = _colorPartToken(partName, paintProcess);
         if (carEl) carEl.value = carModel || '';
         if (partEl) partEl.innerHTML = _managedPartOptions(categoryKey, carModel, token);
         if (partEl) partEl.value = token;
+        if (itemEl && itemKey) itemEl.value = itemKey;
         search();
-        document.getElementById('spcChartSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const scrollId = categoryKey === 'film' && itemKey
+            ? `spcFilmPanel_${itemKey === 'film_top' ? 'top' : 'under'}`
+            : 'spcChartSection';
+        document.getElementById(scrollId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     function _carOptions(sel, includeAll) {
@@ -29783,7 +30050,7 @@ var ProdSpcModule = (function() {
     }
 
     function _dashboardRows() {
-        const start = _30DaysAgo();
+        const start = _1YearAgo();
         const end = UIUtils.today();
         const baseOpts = { start, end };
         const allRows = [
@@ -29898,7 +30165,7 @@ var ProdSpcModule = (function() {
                 </span>
                 <span style="font-size:1rem;font-weight:700;">${cat.label}</span>
                 <span style="font-size:0.8rem;color:var(--text-muted);line-height:1.45;">${cat.desc}</span>
-                <span style="margin-top:auto;font-size:0.82rem;color:${cat.accent};font-weight:600;">최근 30일 ${total}건</span>
+                <span style="margin-top:auto;font-size:0.82rem;color:${cat.accent};font-weight:600;">최근 1년 ${total}건</span>
             </button>`;
     }
 
@@ -29914,15 +30181,15 @@ var ProdSpcModule = (function() {
             ${_renderMenu('prod-spc')}
             <div class="stat-cards" style="margin-bottom:16px;">
                 <div class="stat-card blue"><div class="stat-card-value">${rows.length}</div><div class="stat-card-label">측정 차종</div></div>
-                <div class="stat-card purple"><div class="stat-card-value">${sumColor}</div><div class="stat-card-label">색차 SPC (30일)</div></div>
-                <div class="stat-card cyan"><div class="stat-card-value">${sumFilm}</div><div class="stat-card-label">도막두께 (30일)</div></div>
-                <div class="stat-card orange"><div class="stat-card-value">${sumGloss}</div><div class="stat-card-label">광택 (30일)</div></div>
+                <div class="stat-card purple"><div class="stat-card-value">${sumColor}</div><div class="stat-card-label">색차 SPC (1년)</div></div>
+                <div class="stat-card cyan"><div class="stat-card-value">${sumFilm}</div><div class="stat-card-label">도막두께 (1년)</div></div>
+                <div class="stat-card orange"><div class="stat-card-value">${sumGloss}</div><div class="stat-card-label">광택 (1년)</div></div>
             </div>
 
             <div class="card" style="margin-bottom:16px;">
                 <div class="card-header">
-                    <h4><span class="material-symbols-outlined">table_chart</span> 차종별 SPC 현황 (최근 30일)</h4>
-                    <span style="font-size:0.78rem;color:var(--text-muted);">초중종물 색차/광택·도막 이력 DATA 기준 (최근 30일)</span>
+                    <h4><span class="material-symbols-outlined">table_chart</span> 차종별 SPC 현황 (최근 1년)</h4>
+                    <span style="font-size:0.78rem;color:var(--text-muted);">초중종물 색차/광택·도막 이력 DATA 기준 (최근 1년)</span>
                 </div>
                 <div class="card-body" style="padding:0;">
                     <div class="data-table-wrapper">
@@ -29955,7 +30222,7 @@ var ProdSpcModule = (function() {
                                     </tr>
                                 `).join('') : `
                                     <tr><td colspan="7" style="text-align:center;padding:36px;color:var(--text-muted);">
-                                        최근 30일 SPC 측정 DATA가 없습니다.<br>
+                                        최근 1년 SPC 측정 DATA가 없습니다.<br>
                                         <span style="font-size:0.82rem;">초중종물 관리 → 색차/광택 이력·도막 이력에 DATA를 입력하세요.</span>
                                     </td></tr>
                                 `}
@@ -29999,7 +30266,7 @@ var ProdSpcModule = (function() {
             <div class="filter-bar" style="flex-wrap:wrap;gap:10px;margin-bottom:16px;">
                 <div class="form-group">
                     <label class="form-label">시작일</label>
-                    <input type="date" class="form-input" id="spcStart" value="${_30DaysAgo()}" onchange="ProdSpcModule._onDateChange()">
+                    <input type="date" class="form-input" id="spcStart" value="${_1YearAgo()}" onchange="ProdSpcModule._onDateChange()">
                 </div>
                 <div class="form-group">
                     <label class="form-label">종료일</label>
@@ -30015,7 +30282,9 @@ var ProdSpcModule = (function() {
                 </div>
                 <div class="form-group">
                     <label class="form-label">관리항목</label>
-                    <select class="form-select" id="spcItem">${_itemOptions(cat.defaultItem, cat.itemKeys)}</select>
+                    ${isFilmPage
+                        ? `<div class="form-input" style="background:#f8fafc;color:var(--text-muted);font-size:0.84rem;padding:8px 12px;">하도 · 상도 동시 표시</div>`
+                        : `<select class="form-select" id="spcItem">${_itemOptions(cat.defaultItem, cat.itemKeys)}</select>`}
                 </div>
                 <div class="form-group" style="align-self:flex-end;">
                     <button class="btn btn-primary" onclick="ProdSpcModule.search()">
@@ -30041,6 +30310,9 @@ var ProdSpcModule = (function() {
             </div>` : ''}
 
             <div id="spcChartSection">
+            ${isFilmPage ? `
+            <div id="spcFilmPanels"></div>
+            ` : `
             <div id="spcStats" class="stat-cards" style="margin-bottom:16px;"></div>
 
             <div class="card" style="margin-bottom:16px;">
@@ -30072,17 +30344,23 @@ var ProdSpcModule = (function() {
                     </div>
                 </div>
             </div>
+            `}
             </div>
         </div>`;
         if (isManagedPage) _renderManagedCarSections(categoryKey, presetCar);
         if (presetCar) search();
-        else _renderEmptyCategory(isManagedPage);
+        else _renderEmptyCategory(isManagedPage, isFilmPage);
     }
 
-    function _renderEmptyCategory(isManagedPage = false) {
+    function _renderEmptyCategory(isManagedPage = false, isFilmPage = false) {
         const msg = `<div class="empty-state" style="width:100%;padding:24px;">
             <span class="material-symbols-outlined" style="font-size:36px;color:var(--text-muted);">directions_car</span>
             <p>${isManagedPage ? '차종·품명을 선택하거나 아래 목록에서 조회하세요.' : '차종을 선택한 후 조회하세요.'}</p></div>`;
+        if (isFilmPage) {
+            const panels = document.getElementById('spcFilmPanels');
+            if (panels) panels.innerHTML = msg;
+            return;
+        }
         const stats = document.getElementById('spcStats');
         if (stats) stats.innerHTML = msg;
         const tbody = document.getElementById('spcTableBody');
@@ -30122,6 +30400,84 @@ var ProdSpcModule = (function() {
         if (catKey) _renderManagedCarSections(catKey, document.getElementById('spcCar')?.value || '');
     }
 
+    function _filmLayerSuffix(itemKey) {
+        return itemKey === 'film_top' ? 'top' : 'under';
+    }
+
+    function _destroyFilmCharts() {
+        Object.values(_filmCharts).forEach(ch => {
+            if (ch?.xbar) { ch.xbar.destroy(); }
+            if (ch?.r) { ch.r.destroy(); }
+        });
+        _filmCharts = {};
+    }
+
+    function _filmLayerPanelHtml(suffix, meta) {
+        return `
+            <div id="spcFilmPanel_${suffix}" style="margin-bottom:28px;padding-bottom:22px;border-bottom:1px dashed var(--border-color);">
+                <h5 style="margin:0 0 14px;font-size:0.95rem;display:flex;align-items:center;gap:6px;">
+                    <span class="material-symbols-outlined" style="color:#2563eb;font-size:22px;">layers</span>
+                    ${meta.label}
+                </h5>
+                <div id="spcStats_${suffix}" class="stat-cards" style="margin-bottom:16px;"></div>
+                <div class="card" style="margin-bottom:16px;">
+                    <div class="card-header"><h4><span class="material-symbols-outlined">show_chart</span> X̄ 관리도 (평균)</h4></div>
+                    <div class="card-body" id="spcXbarWrap_${suffix}" style="min-height:220px;"></div>
+                </div>
+                <div class="card" style="margin-bottom:16px;">
+                    <div class="card-header"><h4><span class="material-symbols-outlined">show_chart</span> R 관리도 (범위)</h4></div>
+                    <div class="card-body" id="spcRWrap_${suffix}" style="min-height:220px;"></div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h4><span class="material-symbols-outlined">table_chart</span> 측정 데이터 목록</h4></div>
+                    <div class="card-body" style="padding:0;">
+                        <div class="data-table-wrapper">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>No</th><th>날짜</th><th>차종</th><th>품명</th><th>LOT</th><th>라인</th>
+                                        <th style="text-align:right;min-width:64px;">초물</th>
+                                        <th style="text-align:right;min-width:64px;">중물</th>
+                                        <th style="text-align:right;min-width:64px;">종물</th>
+                                        <th style="text-align:right;min-width:72px;">X̄(평균)</th>
+                                        <th style="text-align:right;min-width:72px;">R(범위)</th>
+                                        <th style="text-align:center;min-width:64px;">판정</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="spcTableBody_${suffix}"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    function _searchFilmLayers(opts) {
+        const panelsEl = document.getElementById('spcFilmPanels');
+        if (!panelsEl) return;
+        _destroyFilmCharts();
+
+        const layers = FILM_LAYER_KEYS.map(itemKey => {
+            const meta = SPC_ITEMS.find(i => i.key === itemKey) || SPC_ITEMS[0];
+            const suffix = _filmLayerSuffix(itemKey);
+            let rows = opts.historyRows || [];
+            const points = _buildPoints(rows, itemKey);
+            return { itemKey, meta, suffix, points };
+        });
+
+        panelsEl.innerHTML = layers.map(l => _filmLayerPanelHtml(l.suffix, l.meta)).join('');
+        layers.forEach(l => {
+            _renderStats(l.points, l.meta, `spcStats_${l.suffix}`);
+            _renderCharts(l.points, l.meta, l.suffix);
+            _renderTable(l.points, l.meta, `spcTableBody_${l.suffix}`);
+        });
+        if (!layers.some(l => l.points.length)) {
+            UIUtils.toast('조회 조건에 해당하는 DATA가 없습니다.', 'warning');
+        } else {
+            document.getElementById('spcChartSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    }
+
     function search() {
         const start   = document.getElementById('spcStart')?.value  || '';
         const end     = document.getElementById('spcEnd')?.value    || '';
@@ -30129,17 +30485,17 @@ var ProdSpcModule = (function() {
         const partRaw = document.getElementById('spcPart')?.value   || '';
         const catKey = _activeManagedCategoryKey();
         const isManagedPage = !!catKey;
+        const isFilmPage = catKey === 'film';
         const { partName: part, line: partLine } = isManagedPage
             ? _parsePartToken(partRaw) : { partName: partRaw, line: '' };
         const itemKey = document.getElementById('spcItem')?.value   || (_activeCategory && _activeCategory.defaultItem) || 'film_under';
 
         if (_activeCategory && !car) {
             UIUtils.toast('차종을 선택하세요.', 'warning');
-            _renderEmptyCategory(isManagedPage);
+            _renderEmptyCategory(isManagedPage, isFilmPage);
             return;
         }
 
-        const meta = SPC_ITEMS.find(i => i.key === itemKey) || SPC_ITEMS[0];
         let historyRows = _historyRows({
             kind: _activeCategoryKind(),
             start, end, car, part: part || ''
@@ -30147,6 +30503,13 @@ var ProdSpcModule = (function() {
         if (partLine) {
             historyRows = historyRows.filter(({ record }) => !record.line || record.line === partLine);
         }
+
+        if (isFilmPage) {
+            _searchFilmLayers({ historyRows });
+            return;
+        }
+
+        const meta = SPC_ITEMS.find(i => i.key === itemKey) || SPC_ITEMS[0];
         const points = _buildPoints(historyRows, itemKey);
         _renderStats(points, meta);
         _renderCharts(points, meta);
@@ -30178,8 +30541,8 @@ var ProdSpcModule = (function() {
         };
     }
 
-    function _renderStats(points, meta) {
-        const el = document.getElementById('spcStats');
+    function _renderStats(points, meta, statsId = 'spcStats') {
+        const el = document.getElementById(statsId);
         if (!el) return;
         if (!points.length) {
             el.innerHTML = `<div class="empty-state" style="width:100%;padding:24px;">
@@ -30217,12 +30580,23 @@ var ProdSpcModule = (function() {
             </div>`;
     }
 
-    function _renderCharts(points, meta) {
-        if (_xbarChart) { _xbarChart.destroy(); _xbarChart = null; }
-        if (_rChart)    { _rChart.destroy();    _rChart    = null; }
+    function _renderCharts(points, meta, suffix = '') {
+        const xbarWrapId = suffix ? `spcXbarWrap_${suffix}` : 'spcXbarWrap';
+        const rWrapId    = suffix ? `spcRWrap_${suffix}` : 'spcRWrap';
+        const xbarCanvasId = suffix ? `spcXbarCanvas_${suffix}` : 'spcXbarCanvas';
+        const rCanvasId    = suffix ? `spcRCanvas_${suffix}` : 'spcRCanvas';
 
-        const xbarWrap = document.getElementById('spcXbarWrap');
-        const rWrap    = document.getElementById('spcRWrap');
+        if (suffix) {
+            if (_filmCharts[suffix]?.xbar) { _filmCharts[suffix].xbar.destroy(); }
+            if (_filmCharts[suffix]?.r) { _filmCharts[suffix].r.destroy(); }
+            _filmCharts[suffix] = { xbar: null, r: null };
+        } else {
+            if (_xbarChart) { _xbarChart.destroy(); _xbarChart = null; }
+            if (_rChart)    { _rChart.destroy();    _rChart    = null; }
+        }
+
+        const xbarWrap = document.getElementById(xbarWrapId);
+        const rWrap    = document.getElementById(rWrapId);
 
         if (!points.length) {
             if (xbarWrap) xbarWrap.innerHTML = `<div class="empty-state" style="padding:40px;"><span class="material-symbols-outlined">bar_chart_off</span><p>데이터가 없습니다.</p></div>`;
@@ -30231,11 +30605,11 @@ var ProdSpcModule = (function() {
         }
 
         // 캔버스 재생성 (destroy 후 dom 재삽입)
-        if (xbarWrap) xbarWrap.innerHTML = '<canvas id="spcXbarCanvas" style="max-height:280px;"></canvas>';
-        if (rWrap)    rWrap.innerHTML    = '<canvas id="spcRCanvas"    style="max-height:240px;"></canvas>';
+        if (xbarWrap) xbarWrap.innerHTML = `<canvas id="${xbarCanvasId}" style="max-height:280px;"></canvas>`;
+        if (rWrap)    rWrap.innerHTML    = `<canvas id="${rCanvasId}"    style="max-height:240px;"></canvas>`;
 
-        const xbarCanvas = document.getElementById('spcXbarCanvas');
-        const rCanvas    = document.getElementById('spcRCanvas');
+        const xbarCanvas = document.getElementById(xbarCanvasId);
+        const rCanvas    = document.getElementById(rCanvasId);
         if (!xbarCanvas || !rCanvas) return;
 
         const L      = _calcLimits(points);
@@ -30259,7 +30633,7 @@ var ProdSpcModule = (function() {
             }
         };
 
-        _xbarChart = new Chart(xbarCanvas, {
+        const xbarChart = new Chart(xbarCanvas, {
             type: 'line',
             data: {
                 labels,
@@ -30299,15 +30673,22 @@ var ProdSpcModule = (function() {
             rDatasets.push({ label: `LCL (${L.LCL_r.toFixed(3)})`, data: Array(labels.length).fill(+L.LCL_r.toFixed(3)), ...lineOpts('#ef4444',[6,3]) });
         }
 
-        _rChart = new Chart(rCanvas, {
+        const rChart = new Chart(rCanvas, {
             type: 'line',
             data: { labels, datasets: rDatasets },
             options: { ...chartOpts }
         });
+
+        if (suffix) {
+            _filmCharts[suffix] = { xbar: xbarChart, r: rChart };
+        } else {
+            _xbarChart = xbarChart;
+            _rChart = rChart;
+        }
     }
 
-    function _renderTable(points, meta) {
-        const tbody = document.getElementById('spcTableBody');
+    function _renderTable(points, meta, tbodyId = 'spcTableBody') {
+        const tbody = document.getElementById(tbodyId);
         if (!tbody) return;
         if (!points.length) {
             tbody.innerHTML = `<tr><td colspan="12" class="empty-cell">
