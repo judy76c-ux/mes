@@ -936,10 +936,16 @@ var LaserLayoutModule = (function () {
         const b = _sel ? _getBox(_sel) : null;
         if (!b) return;
         if (key !== 'label') _pushHistory();
-        // 색상·스타일 속성은 다중 선택된 박스 전체에 적용
-        const multiKeys = ['color','borderColor','textColor','fontSize','bold'];
+        // 색상·스타일·크기 속성은 다중 선택된 박스 전체에 적용
+        const multiKeys = ['color','borderColor','textColor','fontSize','bold','w','h'];
         if (multiKeys.includes(key) && _selSet.size > 1) {
-            _selSet.forEach(id => { const ob = _getBox(id); if (ob) ob[key] = value; });
+            _selSet.forEach(id => {
+                const ob = _getBox(id);
+                if (!ob) return;
+                if (key === 'w') ob.w = Math.max(50, Math.min(CANVAS_W - ob.x, value));
+                else if (key === 'h') ob.h = Math.max(30, Math.min(CANVAS_H - ob.y, value));
+                else ob[key] = value;
+            });
         } else {
             b[key] = value;
         }

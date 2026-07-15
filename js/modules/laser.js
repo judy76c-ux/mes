@@ -3291,10 +3291,13 @@ var LaserInspectionModule = (function() {
     }
 
     // 작업 정보 컴팩트 배너 (도장 검사 일지 스타일)
-    function _buildWorkBanner(work) {
+    function _buildWorkBanner(work, qtyOverride) {
         const lotInfo   = _lotInfo(work);
         const paintLots = lotInfo.paintDates.join(', ')    || '-';
         const injLots   = lotInfo.injectionLots.join(', ') || '-';
+        const workQty   = qtyOverride != null && qtyOverride !== ''
+            ? Number(qtyOverride) || 0
+            : (Number(work.quantity) || 0);
         return `
         <div style="background:var(--bg-secondary);border-radius:8px;padding:8px 14px;display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;border-left:4px solid var(--accent-blue);">
             <span style="font-size:0.75rem;color:var(--text-muted);">작업일 <strong style="color:var(--text-primary);">${work.date||'-'}</strong></span>
@@ -3311,8 +3314,9 @@ var LaserInspectionModule = (function() {
             <span style="color:var(--border);">|</span>
             <span style="font-size:0.75rem;color:var(--text-muted);">사출LOT <strong style="color:var(--text-primary);font-family:monospace;">${injLots}</strong></span>
             <span style="color:var(--border);">|</span>
-            <span style="font-size:0.75rem;color:var(--text-muted);">작업수량 <strong style="color:var(--accent-blue);font-size:0.95rem;">${UIUtils.formatNumber(work.quantity||0)} EA</strong>
-                <input type="hidden" id="liInspQty" value="${work.quantity||0}">
+            <span style="font-size:0.75rem;color:var(--text-muted);">작업수량 <strong id="liWorkQtyLabel" style="color:var(--accent-blue);font-size:0.95rem;">${UIUtils.formatNumber(workQty)} EA</strong>
+                <input type="hidden" id="liInspQty" value="${workQty}">
+                <span style="font-size:0.68rem;color:var(--text-muted);margin-left:4px;">(검사 합계와 연동)</span>
             </span>
         </div>`;
     }
@@ -3501,12 +3505,14 @@ var LaserInspectionModule = (function() {
                         <label class="form-label" style="font-size:0.72rem;">양품수</label>
                         <input type="number" class="form-input" id="liGoodQty" value="${goodQty>0?goodQty:''}" placeholder="-" min="0"
                             style="text-align:right;font-weight:600;font-size:0.9rem;padding:5px 6px;"
+                            oninput="LaserInspectionModule._updateDefectQty()"
                             onchange="LaserInspectionModule._updateDefectQty()">
                     </div>
                     <div class="form-group" style="margin:0;">
                         <label class="form-label" style="font-size:0.72rem;">불량수</label>
                         <input type="number" class="form-input" id="liDefectQty" value="${failQty}" min="0"
                             style="text-align:right;font-weight:600;font-size:0.9rem;padding:5px 6px;"
+                            oninput="LaserInspectionModule._updateGoodQty()"
                             onchange="LaserInspectionModule._updateGoodQty()">
                     </div>
                     <div class="form-group" style="margin:0;">
@@ -3673,7 +3679,7 @@ var LaserInspectionModule = (function() {
                 ? _buildBtns(`LaserInspectionModule._saveInspection('${id}')`)
                 : _buildBtns('', { readonly: true, editId: canEdit ? id : null }));
         _openModal(isEdit ? '레이져 검사 수정' : '레이져 검사 보기',
-            (workRef ? _buildWorkBanner(workRef) : '') +
+            (workRef ? _buildWorkBanner(workRef, d.inspQty || ((Number(d.goodQty)||0) + (Number(d.failQty)||0)) || workRef.quantity) : '') +
             _build2Col(left, _buildDefectCard(d.defectDetails||{})));
         setTimeout(() => {
             _initInspectorFields(d.inspectors || []);
@@ -3710,6 +3716,64 @@ var LaserInspectionModule = (function() {
     }
 
     // ─ 저장 ──────────────────────────────────────────────────────────
+    function _scalePaintLotsToQty(paintLots, newQty) {
+        const lots = (Array.isArray(paintLots) ? paintLots : []).map(function(l) {
+            return Object.assign({}, l);
+        });
+        if (!lots.length) return lots;
+        const target = Math.max(0, Number(newQty) || 0);
+        if (lots.length === 1) {
+            lots[0].qty = target;
+            return lots;
+        }
+        const lotSum = lots.reduce(function(s, l) { return s + (Number(l.qty) || 0); }, 0);
+        if (lotSum <= 0) {
+            lots[0].qty = target;
+            return lots;
+        }
+        var allocated = 0;
+        lots.forEach(function(l, idx) {
+            if (idx === lots.length - 1) {
+                l.qty = Math.max(0, target - allocated);
+            } else {
+                l.qty = Math.round((Number(l.qty) || 0) / lotSum * target);
+                allocated += l.qty;
+            }
+        });
+        return lots;
+    }
+
+    async function _syncWorkLogFromInspection(data) {
+        if (!data.workLogId) return null;
+        const workRef = Storage.getById(DB.STORES.LASER_WORK_LOG, data.workLogId);
+        if (!workRef) return null;
+
+        const newQty = Math.max(0, Number(data.inspQty) || ((Number(data.goodQty) || 0) + (Number(data.failQty) || 0)));
+        const oldQty = Number(workRef.quantity) || 0;
+        const qtyChanged = newQty > 0 && newQty !== oldQty;
+        const patch = {
+            packUnit: data.packUnit || workRef.packUnit || 0,
+            inspectionGoodQty: Number(data.goodQty) || 0,
+            shippingEligibleQty: Number(data.packQty) || 0,
+            laserResidualQty: Number(data.residualQty) || 0,
+            laserResidualStatus: (Number(data.residualQty) || 0) > 0 ? '잔량' : ''
+        };
+
+        if (qtyChanged) {
+            patch.quantity = newQty;
+            // 기존 로스(작업수량-완료수량)는 유지한 채 완료수량만 맞춤
+            const oldCompleted = Number(workRef.completedQty);
+            const oldLoss = Number.isFinite(oldCompleted) ? Math.max(0, oldQty - oldCompleted) : 0;
+            patch.completedQty = Math.max(0, newQty - oldLoss);
+            if (Array.isArray(workRef.paintLots) && workRef.paintLots.length) {
+                patch.paintLots = _scalePaintLotsToQty(workRef.paintLots, newQty);
+            }
+        }
+
+        await Storage.update(DB.STORES.LASER_WORK_LOG, data.workLogId, Object.assign({}, workRef, patch));
+        return { qtyChanged: qtyChanged, oldQty: oldQty, newQty: newQty };
+    }
+
     async function _saveInspection(existingId) {
         if (existingId && !_canEditInspection()) {
             UIUtils.toast('검사 이력 수정 권한이 없습니다. (레이져운영자·관리자만 가능)', 'warning');
@@ -3721,12 +3785,33 @@ var LaserInspectionModule = (function() {
             return;
         }
         if (!_validateFailQty(data)) return;
+
+        // 외관검사 합계(양품+불량) ↔ 레이저 작업일지 작업수량 연동
+        let syncResult = null;
+        try {
+            syncResult = await _syncWorkLogFromInspection(data);
+        } catch (e) {
+            console.error('[LaserInspection] work log sync failed:', e);
+            UIUtils.toast('작업일지 수량 연동에 실패했습니다: ' + (e && e.message ? e.message : '오류'), 'error');
+            return;
+        }
+
         if (existingId) {
             await Storage.update(STORE, existingId, data);
-            UIUtils.toast('수정되었습니다.', 'success');
+            UIUtils.toast(
+                syncResult && syncResult.qtyChanged
+                    ? `수정되었습니다. 작업일지 수량 ${UIUtils.formatNumber(syncResult.oldQty)} → ${UIUtils.formatNumber(syncResult.newQty)} EA 반영`
+                    : '수정되었습니다.',
+                'success'
+            );
         } else {
             await Storage.add(STORE, data);
-            UIUtils.toast('검사 등록되었습니다.', 'success');
+            UIUtils.toast(
+                syncResult && syncResult.qtyChanged
+                    ? `검사 등록되었습니다. 작업일지 수량 ${UIUtils.formatNumber(syncResult.oldQty)} → ${UIUtils.formatNumber(syncResult.newQty)} EA 반영`
+                    : '검사 등록되었습니다.',
+                'success'
+            );
 
             // ── 출하검사 대기 자동 등록 ────────────────────────────────
             const _workRef = data.workLogId
@@ -3744,17 +3829,6 @@ var LaserInspectionModule = (function() {
             const _packQty   = data.packQty || 0;
             const _boxCount  = data.packBoxCount || 0;
             const _residualQty = data.residualQty || 0;
-
-            if (_workRef && data.workLogId) {
-                await Storage.update(DB.STORES.LASER_WORK_LOG, data.workLogId, {
-                    ..._workRef,
-                    packUnit: _packUnit,
-                    inspectionGoodQty: data.goodQty || 0,
-                    shippingEligibleQty: _packQty,
-                    laserResidualQty: _residualQty,
-                    laserResidualStatus: _residualQty > 0 ? '잔량' : ''
-                });
-            }
 
             // 레이져 후 도장(A/B) 공정이 있는 제품은 출하대기가 아닌 재공품(WIP)으로 남김
             const _isWipProduct = typeof LaserWipModule !== 'undefined' &&
@@ -3786,14 +3860,19 @@ var LaserInspectionModule = (function() {
         _closeModal();
         renderStandby();
         search();
+        if (typeof LaserWorkModule !== 'undefined' && LaserWorkModule.search) {
+            try { LaserWorkModule.search(); } catch (e) { /* ignore */ }
+        }
     }
 
     // ─ 데이터 수집 ───────────────────────────────────────────────────
     function collectData() {
+        const goodQty   = parseInt(document.getElementById('liGoodQty')?.value || 0) || 0;
+        const failQty   = parseInt(document.getElementById('liDefectQty')?.value || 0) || 0;
+        // 검사수량 = 양품+불량 (작업일지 작업수량과 동일 기준)
+        const inspQty   = Math.max(0, goodQty + failQty);
         const inspQtyEl = document.getElementById('liInspQty');
-        const inspQty   = parseInt((inspQtyEl?.value || '').toString().replace(/,/g, '') || 0);
-        const goodQty   = parseInt(document.getElementById('liGoodQty')?.value || 0);
-        const failQty   = parseInt(document.getElementById('liDefectQty')?.value || 0);
+        if (inspQtyEl) inspQtyEl.value = inspQty;
 
         const defectDetails = {};
         document.querySelectorAll('[id^="linj-"],[id^="lpaint-"],[id^="llaser-"]').forEach(el => {
@@ -3836,56 +3915,41 @@ var LaserInspectionModule = (function() {
     }
 
     // ─ 계산 헬퍼 ─────────────────────────────────────────────────────
+    function _syncWorkQtyBanner(total) {
+        const iEl = document.getElementById('liInspQty');
+        if (iEl) iEl.value = total;
+        const tEl = document.getElementById('liTotalQty');
+        if (tEl) tEl.value = total;
+        const label = document.getElementById('liWorkQtyLabel');
+        if (label) label.textContent = UIUtils.formatNumber(total) + ' EA';
+    }
+
+    function _syncInspQtyFromGoodFail() {
+        const g = parseInt(document.getElementById('liGoodQty')?.value || 0) || 0;
+        const f = parseInt(document.getElementById('liDefectQty')?.value || 0) || 0;
+        const total = Math.max(0, g + f);
+        _syncWorkQtyBanner(total);
+        _updatePackagingCalc();
+    }
+
     function _updateDefectTotal() {
         let sum = 0;
         const defectInputs = document.querySelectorAll('[id^="linj-"],[id^="lpaint-"],[id^="llaser-"]');
         defectInputs.forEach(el => { sum += parseInt(el.value||0); });
-        const iEl = document.getElementById('liInspQty');
-        const maxDefectQty = parseInt(iEl?.value?.toString().replace(/,/g,'')||0);
-        if (maxDefectQty > 0 && sum > maxDefectQty) {
-            const activeEl = document.activeElement;
-            if (activeEl && Array.from(defectInputs).includes(activeEl)) {
-                const overflow = sum - maxDefectQty;
-                const current = parseInt(activeEl.value || 0);
-                activeEl.value = Math.max(0, current - overflow);
-                sum = maxDefectQty;
-            } else {
-                sum = maxDefectQty;
-            }
-            UIUtils.toast(`불량수는 검사수량보다 클 수 없습니다. 최대 ${UIUtils.formatNumber(maxDefectQty)} EA`, 'warning');
-        }
         const dEl = document.getElementById('liDefectQty');
         if (dEl) dEl.value = sum;
-        const gEl = document.getElementById('liGoodQty');
-        const tEl = document.getElementById('liTotalQty');
-        if (iEl && gEl) gEl.value = Math.max(0, parseInt(iEl.value?.toString().replace(/,/g,'')||0) - sum);
-        if (tEl) tEl.value = parseInt(gEl?.value||0) + sum;
-        _updatePackagingCalc();
+        // 양품수는 유지하고, 합계(양품+불량)로 작업수량을 맞춘다
+        _syncInspQtyFromGoodFail();
     }
 
     function _updateDefectQty() {
-        const i = parseInt((document.getElementById('liInspQty')?.value||'').replace(/,/g,'')||0);
-        const g = parseInt(document.getElementById('liGoodQty')?.value||0);
-        const dEl = document.getElementById('liDefectQty');
-        if (dEl) dEl.value = Math.max(0, i - g);
-        const tEl = document.getElementById('liTotalQty');
-        if (tEl) tEl.value = i;
+        // 양품수 변경 → 합계/작업수량 동기화 (불량수는 유지)
+        _syncInspQtyFromGoodFail();
     }
 
     function _updateGoodQty() {
-        const i = parseInt((document.getElementById('liInspQty')?.value||'').replace(/,/g,'')||0);
-        const dEl = document.getElementById('liDefectQty');
-        let f = parseInt(dEl?.value||0);
-        if (f > i) {
-            f = i;
-            if (dEl) dEl.value = i;
-            UIUtils.toast(`불량수는 검사수량보다 클 수 없습니다. 최대 ${UIUtils.formatNumber(i)} EA`, 'warning');
-        }
-        const gEl = document.getElementById('liGoodQty');
-        if (gEl) gEl.value = Math.max(0, i - f);
-        const tEl = document.getElementById('liTotalQty');
-        if (tEl) tEl.value = Math.max(0, i - f) + f;
-        _updatePackagingCalc();
+        // 불량수 변경 → 합계/작업수량 동기화 (양품수는 유지)
+        _syncInspQtyFromGoodFail();
     }
 
     function _getPrevResidualQty(carModel, partName, color, excludeId) {
@@ -4668,6 +4732,10 @@ var LaserStandbyModule = (function() {
                 };
             }
             const qty = Number(w.productionQty) || 0;
+            const paintLot = String(_paintingWorkDateTime(w) || w.date || '').replace(/-/g, '').slice(2, 8);
+            const injLot = w.lotNo || (w.lots && w.lots.length > 0
+                ? [...new Set(w.lots.map(l => l.lotNo).filter(Boolean))].join(', ')
+                : '');
             inventoryMap[key].inQty += qty;
             inventoryMap[key].inRecords.push({
                 sourceType: DB.STORES.PAINTING_WORK,
@@ -4675,8 +4743,11 @@ var LaserStandbyModule = (function() {
                 date: _recordedDateTime(w, w.date || '', w.endTime || w.startTime || ''),
                 paintingDate: _paintingWorkDateTime(w),
                 qty,
-                lotNo: w.lotNo || (w.lots && w.lots.length > 0 ? [...new Set(w.lots.map(l => l.lotNo).filter(Boolean))].join(', ') : ''),
-                note: w.note || w.line || ''
+                lotNo: injLot,
+                injLotNo: injLot,
+                paintLot: paintLot || '',
+                line: w.line || '',
+                note: w.note || ''
             });
         });
 
@@ -4695,15 +4766,27 @@ var LaserStandbyModule = (function() {
             const injLots = w.paintLots && w.paintLots.length > 0
                 ? [...new Set(w.paintLots.map(l => l.lotNo).filter(Boolean))].join(', ')
                 : (w.paintLot || w.lotNo || '');
+            const paintLotOut = paintDates
+                ? String(paintDates).split(/[,\s]+/).filter(Boolean).map(function(p) {
+                    const digits = String(p).replace(/-/g, '').replace(/\D/g, '');
+                    if (digits.length >= 8) return digits.slice(2, 8);
+                    if (digits.length === 6) return digits;
+                    return p;
+                }).join(', ')
+                : '';
             inventoryMap[key].outRecords.push({
                 sourceType: DB.STORES.LASER_WORK_LOG,
                 sourceId: w.id || '',
                 date: _formatWorkDateTime(w.date || '', w.endTime || w.startTime || ''),
                 paintingDate: _formatWorkDateTime(paintDates, ''),
                 lotNo: injLots,
+                injLotNo: injLots,
+                paintLot: paintLotOut,
                 qty,
                 machine: w.machine || '',
-                note: w.note || w.machine || ''
+                operator: [w.worker1, w.worker2, w.worker3].filter(Boolean).join(', ') || w.author || '',
+                author: w.author || '',
+                note: w.note || ''
             });
         });
 
@@ -4740,6 +4823,7 @@ var LaserStandbyModule = (function() {
                     paintingDate: _formatWorkDateTime(override.paintLot || override.date || '', ''),
                     qty: diff,
                     lotNo: override.injectionLot || '',
+                    injLotNo: override.injectionLot || '',
                     paintLot: override.paintLot || '',
                     injectionLot: override.injectionLot || '',
                     note: override.manualType === 'add' ? '수기추가' : '수기조정'
@@ -4752,6 +4836,8 @@ var LaserStandbyModule = (function() {
                     date: _formatWorkDateTime(override.updatedAt || override.date || UIUtils.today(), ''),
                     paintingDate: _formatWorkDateTime(override.paintLot || override.date || '', ''),
                     lotNo: override.injectionLot || '',
+                    injLotNo: override.injectionLot || '',
+                    paintLot: override.paintLot || '',
                     qty: Math.abs(diff),
                     machine: override.manualType === 'add' ? '수기추가' : '수기조정',
                     note: override.manualType === 'add' ? '수기추가' : '수기조정'
@@ -4787,32 +4873,79 @@ var LaserStandbyModule = (function() {
     function _standbyRoute(r) {
         const note = String((r && r.note) || '').trim();
         const machine = String((r && r.machine) || '').trim();
+        const line = String((r && r.line) || '').trim();
         const srcType = String((r && r.sourceType) || '').trim();
+        const laserWorkStore = (typeof DB !== 'undefined' && DB.STORES && DB.STORES.LASER_WORK_LOG)
+            ? DB.STORES.LASER_WORK_LOG
+            : 'laser_work_log';
+
         if (r && r.kind === 'out') {
-            if (srcType === 'laser_work' || /레이저|레이져/.test(machine)) {
-                return { label: '레이저 출고', color: '#7c3aed', detail: machine || note || '레이저 작업' };
+            // 레이져 작업일지로 대기품을 소진한 경우 → 수동 차감이 아니라 레이져 생산
+            const isLaserWork = srcType === laserWorkStore
+                || srcType === 'laser_work_log'
+                || srcType === 'laser_work'
+                || /레이저|레이져/.test(machine)
+                || /레이저|레이져/.test(note);
+            if (isLaserWork) {
+                return { label: '레이져 생산', color: '#7c3aed', detail: machine || note || '레이져 작업' };
             }
             return { label: '수동 차감', color: '#dc2626', detail: note || machine || '수기 출고' };
         }
-        if (srcType === 'manual_override' || /수기|수동|조정|추가/.test(note)) {
-            return { label: '수동입고', color: '#0891b2', detail: note || '수기 등록' };
+
+        // 입고: 수동 입고 vs 도장 라인에서 입고
+        if (srcType === 'manual_override' || /수기|수동|조정|추가/.test(note) || /수기|수동|조정|추가/.test(machine)) {
+            return { label: '수동 입고', color: '#0891b2', detail: note || machine || '수기 등록' };
         }
-        return { label: '도장 완료', color: '#2563eb', detail: note || '도장 작업 입고' };
+        return {
+            label: '도장 라인에서 입고',
+            color: '#2563eb',
+            detail: line || note || '도장 작업 입고'
+        };
+    }
+
+    function _standbyWho(r) {
+        if (!r) return '-';
+        return r.operator || r.author
+            || [r.worker1, r.worker2, r.worker3].filter(Boolean).join(', ')
+            || '-';
+    }
+
+    function _standbyPaintLotDisplay(r) {
+        function toYymmdd(v) {
+            const s = String(v || '').trim();
+            if (!s) return '';
+            if (/^\d{6}$/.test(s)) return s;
+            const m = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+            if (m) return m[1].slice(2) + m[2] + m[3];
+            const digits = s.replace(/-/g, '').replace(/\D/g, '');
+            if (digits.length >= 8) return digits.slice(2, 8);
+            if (digits.length === 6) return digits;
+            return s;
+        }
+        const raw = String(r.paintLot || '').trim();
+        if (raw) {
+            return raw.split(/[,\s]+/).filter(Boolean).map(toYymmdd).filter(Boolean).join(', ') || '-';
+        }
+        const fromPainting = toYymmdd(r.paintingDate);
+        return fromPainting || '-';
     }
 
     function _standbyToInvRecords(allRows) {
         return (allRows || []).map(function(r) {
-            const lot = r.injLotNo || r.lotNo || '무표기';
+            const injLot = r.injLotNo || r.injectionLot || r.lotNo || '무표기';
+            const paintLot = _standbyPaintLotDisplay(r);
             const qty = Number(r.qty) || 0;
             return {
                 type: r.kind === 'out' ? '출고' : '입고',
                 date: r.date,
                 quantity: qty,
-                lotNo: lot,
-                lots: [{ lotNo: lot, qty: qty }],
+                lotNo: injLot,
+                paintLot: paintLot || '-',
+                injLot: injLot,
+                lots: [{ lotNo: injLot, paintLot: paintLot || '', qty: qty }],
                 _orig: r,
-                receivedBy: r.operator,
-                outgoingBy: r.operator
+                receivedBy: r.operator || r.author || '',
+                outgoingBy: r.operator || r.author || ''
             };
         });
     }
@@ -4827,7 +4960,7 @@ var LaserStandbyModule = (function() {
         const lotText = paintLot && paintLot !== '-'
             ? `${injLot} / ${paintLot}`
             : injLot;
-        const who = r.operator || r.machine || r.note || '-';
+        const who = _standbyWho(r);
         const detail = String(route.detail || '').replace(/"/g, '&quot;');
         return `
             <tr>
@@ -5915,23 +6048,18 @@ var LaserStandbyModule = (function() {
         }).join('');
 
         const historySection = StockDetailUI.buildInvHistorySection(_standbyToInvRecords(allRows), {
+            splitLots: true,
             routeFn: function(d) {
                 return _standbyRoute(d._orig || { kind: d.type === '출고' ? 'out' : 'in' });
             },
-            lotFn: function(d) {
-                const r = d._orig;
-                if (!r) return d.lotNo || '무표기';
-                const injLot = r.injLotNo || r.lotNo || '-';
-                const paintLot = r.kind === 'in'
-                    ? (r.paintLot ? String(r.paintLot).replace(/-/g, '').slice(2, 8) : '-')
-                    : (r.paintLot || '-');
-                return paintLot && paintLot !== '-'
-                    ? injLot + ' / ' + paintLot
-                    : injLot;
+            paintLotFn: function(d) {
+                return d.paintLot || '-';
+            },
+            injLotFn: function(d) {
+                return d.injLot || d.lotNo || '-';
             },
             whoFn: function(d) {
-                const r = d._orig;
-                return (r && (r.operator || r.machine || r.note)) || '-';
+                return _standbyWho(d._orig || d);
             }
         });
 

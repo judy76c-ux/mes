@@ -328,12 +328,12 @@ var LaserWipModule = (function() {
         if (diff > 0) {
             await Storage.add(STORE_LASER, {
                 date, carModel, partName, color, quantity: diff, machine: '', note,
-                isManual: true
+                isManual: true, author: _currentUserName()
             });
         } else {
             await Storage.add(STORE_LASER, {
                 date, carModel, partName, color, quantity: Math.abs(diff), machine: '', note,
-                isManual: true, isManualOut: true
+                isManual: true, isManualOut: true, author: _currentUserName()
             });
         }
 
@@ -467,6 +467,10 @@ var LaserWipModule = (function() {
     }
 
     function _tabNav() {
+        // 재공품 현황 레이아웃(보관 위치/박스 배치 편집기)은 대기품·후 재공품 탭에서만 의미가 있다(잔량 탭 제외).
+        const layoutAction = (_activeTab === 'standby' || _activeTab === 'after-laser')
+            ? _actionBtn('재공품 현황 레이아웃', 'map', "LaserStandbyModule.openLayout()")
+            : '';
         const standbyActions = _canEditWip() ? `
             ${_actionBtn('수동입고', 'arrow_downward', "LaserWipModule.openManualInput()", 'var(--accent-green)')}
             ${_actionBtn('수동출고', 'arrow_upward',   "LaserStandbyModule.openStandbyOutModal()", 'var(--accent-red)')}` : '';
@@ -480,6 +484,7 @@ var LaserWipModule = (function() {
             : (_activeTab === 'after-laser' ? afterActions : residualActions);
         return `
         <div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
+            ${layoutAction}
             ${currentActions}
         </div>`;
     }
@@ -1104,73 +1109,78 @@ var LaserWipModule = (function() {
         });
     }
 
+    function _residualQtyFromLotDetail(detail) {
+        const lotSum = (detail.lots || []).reduce(function(s, l) {
+            return s + Math.max(0, Number(l.qty) || 0);
+        }, 0);
+        // LOT 미지정 양수 잔량만 총량에 포함 (FIFO 후 남은 음수 미지정은 실재고가 아님)
+        const unassigned = Math.max(0, Number(detail.manualAdj) || 0);
+        return Math.max(0, Math.round(lotSum + unassigned));
+    }
+
     function _calcLaserResidualWip() {
         const laserWorks = Storage.getAll(STORE_LASER) || [];
         const residualMap = {};
 
+        function ensureRow(w) {
+            const key = `${w.carModel || ''}||${w.partName || ''}||${w.color || ''}`;
+            if (!residualMap[key]) {
+                residualMap[key] = {
+                    carModel: w.carModel || '',
+                    partName: w.partName || '',
+                    color: w.color || '',
+                    laserDates: [],
+                    paintDates: [],
+                    injectionLots: [],
+                    goodQty: 0,
+                    fullBoxQty: 0,
+                    packUnit: 0,
+                    residualQty: 0
+                };
+            }
+            return residualMap[key];
+        }
+
+        // 메타(양품/출하가능/일자)는 작업 실적에서 수집
         laserWorks
             .filter(w => !w.isManualOut && !w.isResidualManualIn && !w.isResidualManualOut)
             .forEach(w => {
                 const packUnit = _num(w.packUnit);
                 const goodQty = _num(w.inspectionGoodQty) || _num(w.completedQty) || _num(w.quantity);
                 const fullBoxQty = _num(w.shippingEligibleQty) || (packUnit > 0 ? Math.floor(goodQty / packUnit) * packUnit : goodQty);
-                const residualQty = _num(w.laserResidualQty) || (packUnit > 0 ? Math.max(0, goodQty - fullBoxQty) : 0);
                 const paintLots = Array.isArray(w.paintLots) ? w.paintLots : [];
-                const key = `${w.carModel || ''}||${w.partName || ''}||${w.color || ''}`;
-                if (!residualMap[key]) {
-                    residualMap[key] = {
-                        carModel: w.carModel || '',
-                        partName: w.partName || '',
-                        color: w.color || '',
-                        laserDates: [],
-                        paintDates: [],
-                        injectionLots: [],
-                        goodQty: 0,
-                        fullBoxQty: 0,
-                        packUnit,
-                        residualQty: 0
-                    };
-                }
-                residualMap[key].laserDates.push(_dateTime(w.date || '', w.startTime || w.endTime || ''));
-                (paintLots.length ? paintLots.map(l => l && l.paintDate) : [w.paintDate || '']).forEach(v => residualMap[key].paintDates.push(v));
-                (paintLots.length ? paintLots.map(l => l && l.lotNo) : [w.paintLot || w.lotNo || '']).forEach(v => residualMap[key].injectionLots.push(v));
-                residualMap[key].goodQty += goodQty;
-                residualMap[key].fullBoxQty += fullBoxQty;
-                residualMap[key].packUnit = residualMap[key].packUnit || packUnit;
-                residualMap[key].residualQty += residualQty;
+                const row = ensureRow(w);
+                row.laserDates.push(_dateTime(w.date || '', w.startTime || w.endTime || ''));
+                (paintLots.length ? paintLots.map(l => l && l.paintDate) : [w.paintDate || '']).forEach(v => row.paintDates.push(v));
+                (paintLots.length ? paintLots.map(l => l && l.lotNo) : [w.paintLot || w.lotNo || '']).forEach(v => row.injectionLots.push(v));
+                row.goodQty += goodQty;
+                row.fullBoxQty += fullBoxQty;
+                row.packUnit = row.packUnit || packUnit;
             });
 
+        // 수기/LOT보정만 있는 품목도 집계 대상에 포함
         laserWorks
-            .filter(w => w.isResidualManualIn || w.isResidualManualOut)
+            .filter(w => w.isResidualManualIn || w.isResidualManualOut || w.isResidualLotAdjust)
             .forEach(w => {
                 if (w.isResidualAuditOnly) return;
-                const key = `${w.carModel || ''}||${w.partName || ''}||${w.color || ''}`;
-                if (!residualMap[key]) {
-                    residualMap[key] = {
-                        carModel: w.carModel || '',
-                        partName: w.partName || '',
-                        color: w.color || '',
-                        laserDates: [],
-                        paintDates: [],
-                        injectionLots: [],
-                        goodQty: 0,
-                        fullBoxQty: 0,
-                        packUnit: _num(w.packUnit),
-                        residualQty: 0
-                    };
-                }
-                residualMap[key].packUnit = residualMap[key].packUnit || _num(w.packUnit);
-                residualMap[key].residualQty += w.isResidualManualIn ? _num(w.quantity) : -_num(w.quantity);
-                residualMap[key].laserDates.push(_dateTime(w.date || '', w.startTime || w.endTime || ''));
-                if (w.paintDate) residualMap[key].paintDates.push(w.paintDate);
-                if (w.lotNo) residualMap[key].injectionLots.push(w.lotNo);
+                const row = ensureRow(w);
+                row.packUnit = row.packUnit || _num(w.packUnit);
+                row.laserDates.push(_dateTime(w.date || '', w.startTime || w.endTime || ''));
+                if (w.paintDate) row.paintDates.push(w.paintDate);
+                if (w.residualPaintLot) row.paintDates.push(w.residualPaintLot);
+                if (w.lotNo) row.injectionLots.push(w.lotNo);
             });
 
+        // ★ 현재 잔량 = 현재 보관 LOT 합계 (단일 원천)
+        // 과거처럼 품목 단위 델타 누적과 LOT 절대보정 로직이 달라 42 vs 164 불일치가 나지 않도록 한다.
         return Object.values(residualMap)
-            .map(r => ({
-                ...r,
-                residualQty: Math.max(0, _num(r.residualQty))
-            }))
+            .map(r => {
+                const detail = _calcResidualLotDetail(r.carModel, r.partName, r.color);
+                return Object.assign({}, r, {
+                    residualQty: _residualQtyFromLotDetail(detail),
+                    residualLotCount: (detail.lots || []).length + ((Number(detail.manualAdj) || 0) > 0 ? 1 : 0)
+                });
+            })
             .filter(r => r.residualQty > 0)
             .sort((a, b) => {
                 const d = String(b.laserDates[0] || '').localeCompare(String(a.laserDates[0] || ''));
@@ -1322,7 +1332,13 @@ var LaserWipModule = (function() {
             return;
         }
 
-        const record = { date, carModel, partName, color, quantity, note, packUnit, isManual: true, isResidualManualIn: true, lotNo: injectionLot, paintDate, author: _currentUserName() };
+        const record = {
+            date, carModel, partName, color, quantity, note, packUnit,
+            isManual: true, isResidualManualIn: true,
+            lotNo: injectionLot, paintDate,
+            residualPaintLot: paintDate,
+            author: _currentUserName()
+        };
 
         try {
             await Storage.add(STORE_LASER, record);
@@ -1484,7 +1500,14 @@ var LaserWipModule = (function() {
             return;
         }
 
-        const record = { date, carModel, partName, color, quantity, note, packUnit: residual ? residual.packUnit : 0, isManual: true, isResidualManualOut: true, lotNo: injectionLot, paintDate, author: _currentUserName() };
+        const record = {
+            date, carModel, partName, color, quantity, note,
+            packUnit: residual ? residual.packUnit : 0,
+            isManual: true, isResidualManualOut: true,
+            lotNo: injectionLot, paintDate,
+            residualPaintLot: paintDate,
+            author: _currentUserName()
+        };
 
         try {
             await Storage.add(STORE_LASER, record);
@@ -1505,8 +1528,22 @@ var LaserWipModule = (function() {
         if (el) el.remove();
     }
 
-    function _wipHistorySection(histItems) {
-        return StockDetailUI.buildSimpleHistorySection(histItems);
+    function _wipHistorySection(histItems, opts) {
+        opts = opts || {};
+        return StockDetailUI.buildSimpleHistorySection(histItems, {
+            floorZero: true,
+            splitLots: opts.splitLots !== false,
+            perLotKey: function(item) {
+                if (item.lotKey) return item.lotKey;
+                const paint = item.paintLot || '';
+                const inj = item.injLot || item.lot || '';
+                if (paint || inj) return String(paint) + '|' + String(inj);
+                return '__ALL__';
+            },
+            getAbsoluteAfter: function(item) {
+                return item.absoluteAfter != null ? item.absoluteAfter : null;
+            }
+        });
     }
 
     function _openAfterLaserOutForPart(carModel, partName, color) {
@@ -1529,13 +1566,77 @@ var LaserWipModule = (function() {
         setTimeout(function() { openResidualInput({ carModel: carModel, partName: partName, color: color }); }, 80);
     }
 
+    // 잔량 이력 호기: 기록 자체 > 동일 LOT 레이져 작업일지 > 외관검사일지→작업일지
+    function _resolveResidualMachine(carModel, partName, color, paintLot, injLot, date, seedMachine) {
+        if (seedMachine) return String(seedMachine).trim();
+        const paint = _normalizePaintLot(paintLot || '');
+        const inj = _normalizeInjLot(injLot || '');
+        const day = String(date || '').slice(0, 10);
+        let fallback = '';
+
+        function lotMatches(work) {
+            const lots = Array.isArray(work.paintLots) ? work.paintLots : [];
+            const workPaint = lots.length
+                ? lots.map(function(l) { return _normalizePaintLot(l && l.paintDate || ''); })
+                : [_normalizePaintLot(work.paintDate || work.residualPaintLot || '')];
+            const workInj = lots.length
+                ? lots.map(function(l) { return _normalizeInjLot(l && l.lotNo || ''); })
+                : [_normalizeInjLot(work.paintLot || work.lotNo || '')];
+            const paintOk = !paint || paint === '-' || workPaint.indexOf(paint) >= 0;
+            const injOk = !inj || inj === '-' || workInj.indexOf(inj) >= 0;
+            return paintOk && injOk;
+        }
+
+        function productMatches(row) {
+            if ((row.carModel || '') !== carModel || (row.partName || '') !== partName) return false;
+            if (color && (row.color || '') !== color) return false;
+            return true;
+        }
+
+        const works = Storage.getAll(STORE_LASER) || [];
+        for (let i = 0; i < works.length; i++) {
+            const w = works[i];
+            if (!w || w.isManual || w.isResidualManualIn || w.isResidualManualOut || w.isResidualLotAdjust) continue;
+            if (!productMatches(w) || !w.machine) continue;
+            if (!lotMatches(w)) continue;
+            if (day && String(w.date || '').slice(0, 10) === day) return String(w.machine).trim();
+            if (!fallback) fallback = String(w.machine).trim();
+        }
+
+        const insps = Storage.getAll(DB.STORES.LASER_INSPECTIONS) || [];
+        for (let j = 0; j < insps.length; j++) {
+            const insp = insps[j];
+            if (!insp || !insp.workLogId || !productMatches(insp)) continue;
+            const work = Storage.getById(STORE_LASER, insp.workLogId);
+            if (!work || !work.machine) continue;
+            if (paint && paint !== '-' && !lotMatches(work)) continue;
+            if (inj && inj !== '-' && !lotMatches(work)) continue;
+            const inspDay = String(insp.date || work.date || '').slice(0, 10);
+            if (day && inspDay === day) return String(work.machine).trim();
+            if (!fallback) fallback = String(work.machine).trim();
+        }
+
+        return fallback;
+    }
+
     function _calcResidualLotDetail(carModel, partName, color) {
         const laserAllWorks = (Storage.getAll(STORE_LASER) || []).filter(function(w) {
             return (w.carModel || '') === carModel && (w.partName || '') === partName && (!color || (w.color || '') === color);
         });
 
         const lotMap = {};
-        laserAllWorks.filter(function(w) { return !w.isManualOut && !w.isResidualManualIn && !w.isResidualManualOut; }).forEach(function(w) {
+        var manualAdj = 0;
+        const events = [];
+
+        function ensureLot(key, paintLot, injLot) {
+            if (!lotMap[key]) lotMap[key] = { paintLot: paintLot, injLot: injLot, qty: 0 };
+            return lotMap[key];
+        }
+
+        // ① 레이저 작업 잔량 발생
+        laserAllWorks.filter(function(w) {
+            return !w.isManualOut && !w.isResidualManualIn && !w.isResidualManualOut;
+        }).forEach(function(w) {
             const goodQty = Number(w.inspectionGoodQty) || Number(w.completedQty) || Number(w.quantity) || 0;
             const packUnit = Number(w.packUnit) || 0;
             const resQty = Number(w.laserResidualQty) || (packUnit > 0 ? Math.max(0, goodQty - Math.floor(goodQty / packUnit) * packUnit) : 0);
@@ -1544,52 +1645,81 @@ var LaserWipModule = (function() {
                 const pipeIdx = key.indexOf('|');
                 const paintLot = pipeIdx >= 0 ? key.slice(0, pipeIdx) : key;
                 const injLot = pipeIdx >= 0 ? key.slice(pipeIdx + 1) : '-';
-                if (!lotMap[key]) lotMap[key] = { paintLot: paintLot, injLot: injLot, qty: 0 };
-                lotMap[key].qty += resQty;
+                events.push({
+                    date: w.date || '',
+                    createdAt: w.createdAt || w.id || '',
+                    type: 'delta',
+                    key: key,
+                    paintLot: paintLot,
+                    injLot: injLot,
+                    qty: resQty
+                });
             });
         });
 
-        var manualAdj = 0;
+        // ② 수기 입출고 / LOT 절대 보정
         laserAllWorks.filter(function(w) {
-            return (w.isResidualManualIn || w.isResidualManualOut) &&
-                w.residualLotAbsoluteQty == null;
+            return w.isResidualManualIn || w.isResidualManualOut;
         }).forEach(function(w) {
             if (w.isResidualAuditOnly) return;
             const qty = Number(w.quantity) || 0;
+            const absQty = w.residualLotAbsoluteQty;
             const rawPaintLot = w.residualPaintLot || w.paintDate || '';
             const rawInjLot = w.lotNo || '';
-
-            // 수기 잔량입고/출고와 LOT 보정을 같은 LOT 집계 경로로 처리한다.
-            // 이전에는 isResidualLotAdjust=true인 기록만 LOT에 반영되어, 다른 품목의
-            // 정상 수기 잔량입고도 총수량에는 반영되지만 LOT 표에는 보이지 않았다.
-            if (rawPaintLot && rawInjLot) {
-                const paintLot = _normalizePaintLot(rawPaintLot);
-                const injLot = _normalizeInjLot(rawInjLot);
-                const key = _residualLotKey(paintLot, injLot);
-                if (!lotMap[key]) lotMap[key] = { paintLot: paintLot, injLot: injLot, qty: 0 };
-                lotMap[key].qty += w.isResidualManualIn ? qty : -qty;
+            const paintLot = rawPaintLot ? _normalizePaintLot(rawPaintLot) : '';
+            const injLot = rawInjLot ? _normalizeInjLot(rawInjLot) : '';
+            if (absQty != null && w.isResidualLotAdjust && paintLot && injLot) {
+                events.push({
+                    date: w.date || '',
+                    createdAt: w.createdAt || w.id || '',
+                    type: 'absolute',
+                    key: _residualLotKey(paintLot, injLot),
+                    paintLot: paintLot,
+                    injLot: injLot,
+                    qty: Math.max(0, Number(absQty) || 0)
+                });
+                return;
+            }
+            if (paintLot && injLot) {
+                events.push({
+                    date: w.date || '',
+                    createdAt: w.createdAt || w.id || '',
+                    type: 'delta',
+                    key: _residualLotKey(paintLot, injLot),
+                    paintLot: paintLot,
+                    injLot: injLot,
+                    qty: w.isResidualManualIn ? qty : -qty
+                });
             } else {
-                // LOT가 없는 과거 수기 이력은 실제 LOT를 추정할 수 없으므로 별도 표시한다.
-                manualAdj += w.isResidualManualIn ? qty : -qty;
+                events.push({
+                    date: w.date || '',
+                    createdAt: w.createdAt || w.id || '',
+                    type: 'unassigned',
+                    qty: w.isResidualManualIn ? qty : -qty
+                });
             }
         });
 
-        // LOT별 절대 수량 보정(최신 건 우선) — 감사 전용 기록은 집계 제외
-        laserAllWorks.filter(function(w) {
-            return w.isResidualLotAdjust && w.residualLotAbsoluteQty != null && !w.isResidualAuditOnly;
-        }).sort(function(a, b) {
-            return String(a.date || '').localeCompare(String(b.date || '')) || String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
-        }).forEach(function(w) {
-            const paintLot = _normalizePaintLot(w.residualPaintLot || w.paintDate || w.date || '-');
-            const injLot = _normalizeInjLot(w.lotNo || '-');
-            const key = _residualLotKey(paintLot, injLot);
-            if (!lotMap[key]) lotMap[key] = { paintLot: paintLot, injLot: injLot, qty: 0 };
-            lotMap[key].qty = Math.max(0, Number(w.residualLotAbsoluteQty) || 0);
+        events.sort(function(a, b) {
+            return String(a.date || '').localeCompare(String(b.date || '')) ||
+                String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
         });
 
-        // 과거 수기 출고 중 LOT가 누락된 기록은 총수량과 LOT 표가 어긋나지 않도록
-        // 보관 LOT의 오래된 순서(FIFO)로 차감한다. 실제 LOT를 새로 만드는 것이 아니라
-        // 기존 보관 LOT에만 차감하며, 남는 미지정 조정은 아래 별도 표시한다.
+        events.forEach(function(e) {
+            if (e.type === 'unassigned') {
+                manualAdj += e.qty;
+                return;
+            }
+            const row = ensureLot(e.key, e.paintLot, e.injLot);
+            if (e.type === 'absolute') {
+                row.qty = Math.max(0, Number(e.qty) || 0);
+            } else {
+                row.qty += Number(e.qty) || 0;
+                if (row.qty < 0) row.qty = 0;
+            }
+        });
+
+        // 과거 LOT 미지정 출고는 FIFO로 보관 LOT에서 차감
         if (manualAdj < 0) {
             let remainingOut = Math.abs(manualAdj);
             Object.values(lotMap)
@@ -1610,7 +1740,10 @@ var LaserWipModule = (function() {
         const lots = Object.values(lotMap)
             .map(function(l) { return { paintLot: l.paintLot, injLot: l.injLot, qty: Math.round(l.qty) }; })
             .filter(function(l) { return l.qty > 0; })
-            .sort(function(a, b) { return String(a.paintLot || '').localeCompare(String(b.paintLot || '')) || String(a.injLot || '').localeCompare(String(b.injLot || '')); });
+            .sort(function(a, b) {
+                return String(a.paintLot || '').localeCompare(String(b.paintLot || '')) ||
+                    String(a.injLot || '').localeCompare(String(b.injLot || ''));
+            });
 
         return { lots: lots, manualAdj: manualAdj };
     }
@@ -1634,6 +1767,10 @@ var LaserWipModule = (function() {
                 </div>
                 <div style="font-size:0.82rem;color:var(--text-secondary);margin-top:4px;">
                     현재 잔량 <strong style="color:var(--accent-orange,#f59e0b);">${UIUtils.formatNumber(curQty)} EA</strong>
+                </div>
+                <div style="font-size:0.78rem;color:var(--text-muted);margin-top:8px;line-height:1.45;">
+                    수량 보정은 <strong>현재 실사 수량</strong>을 기준으로 LOT 잔량을 맞춥니다.
+                    과거 이력(음수 포함)과 무관하게 입력한 값으로 현재 수량이 덮어씌워집니다.
                 </div>
             </div>
             <div class="form-row">
@@ -1681,37 +1818,30 @@ var LaserWipModule = (function() {
         const prod = _getResidualProducts().find(function(p) { return p.carModel === carModel && p.partName === partName && (!color || p.color === color); });
         const packUnit = prod ? _num(prod.packUnit || prod.packingUnit || prod.packageUnit || prod.packQty || prod.packingQty) : 0;
         const diff = targetQty - curQty;
-        const injParts = injLot.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
-        const sources = _findResidualLotSourceWorks(carModel, partName, color, paintLot, injLot);
 
         try {
+            // 이전 LOT 절대보정은 감사처리 후, 이번 보정만 실재고로 반영
             await _neutralizePriorLotAdjustRecords(carModel, partName, color, paintLot, injLot);
-            if (sources.length === 1 && injParts.length <= 1) {
-                await Storage.update(STORE_LASER, sources[0].id, {
-                    laserResidualQty: targetQty,
-                    laserResidualStatus: targetQty > 0 ? '잔량' : ''
-                });
-                await Storage.add(STORE_LASER, {
-                    date, carModel, partName, color, lotNo: injLot, residualPaintLot: paintLot,
-                    note, packUnit, isManual: true, isResidualLotAdjust: true,
-                    residualLotAbsoluteQty: targetQty, isResidualAuditOnly: true,
-                    quantity: Math.abs(diff),
-                    isResidualManualIn: diff > 0,
-                    isResidualManualOut: diff < 0,
-                    author: _currentUserName()
-                });
-            } else {
-                const base = {
-                    date, carModel, partName, color, lotNo: injLot, residualPaintLot: paintLot,
-                    note, packUnit, isManual: true, isResidualLotAdjust: true,
-                    residualLotAbsoluteQty: targetQty, author: _currentUserName()
-                };
-                if (diff > 0) {
-                    await Storage.add(STORE_LASER, Object.assign({}, base, { quantity: diff, isResidualManualIn: true }));
-                } else {
-                    await Storage.add(STORE_LASER, Object.assign({}, base, { quantity: Math.abs(diff), isResidualManualOut: true }));
-                }
-            }
+            // ★ 원천 작업의 laserResidualQty를 직접 고치지 않는다.
+            //    (고치면 과거 수기 출고가 남은 채 기준량만 커져 LOT 합과 총잔량이 다시 어긋남)
+            //    residualLotAbsoluteQty로 “현재 실사 수량”을 덮어쓰는 것이 수량 보정의 의미이다.
+            await Storage.add(STORE_LASER, {
+                date,
+                carModel,
+                partName,
+                color,
+                lotNo: injLot,
+                residualPaintLot: paintLot,
+                note,
+                packUnit,
+                isManual: true,
+                isResidualLotAdjust: true,
+                residualLotAbsoluteQty: targetQty,
+                quantity: Math.abs(diff) || targetQty,
+                isResidualManualIn: diff >= 0,
+                isResidualManualOut: diff < 0,
+                author: _currentUserName()
+            });
         } catch (err) {
             console.error('[LaserWip] saveAdjustResidualLotModal failed:', err);
             UIUtils.toast('LOT 보정 저장에 실패했습니다.', 'error');
@@ -1931,7 +2061,8 @@ var LaserWipModule = (function() {
         const paintLots = paintLot ? [{ paintDate: paintLot, lotNo: lotNo, qty: Math.abs(diff) }] : [];
         const base = {
             date, carModel, partName, color, lotNo: lotNo, paintLot: paintLot || '',
-            paintLots: paintLots, machine: '', note, isManual: true, isWipLotAdjust: true
+            paintLots: paintLots, machine: '', note, isManual: true, isWipLotAdjust: true,
+            author: _currentUserName()
         };
 
         if (diff > 0) {
@@ -2071,37 +2202,90 @@ var LaserWipModule = (function() {
             }
         });
 
+        function _wipHistLotsFromLaser(w) {
+            let paintLot = '-';
+            let injLot = '-';
+            if (Array.isArray(w.paintLots) && w.paintLots.length > 0) {
+                paintLot = [...new Set(w.paintLots.map(function(pl) {
+                    return pl && pl.paintDate ? String(pl.paintDate).replace(/-/g, '').slice(2, 8) : '';
+                }).filter(Boolean))].join(', ') || '-';
+                injLot = [...new Set(w.paintLots.map(function(pl) {
+                    return String((pl && pl.lotNo) || '').trim();
+                }).filter(Boolean))].join(', ') || '-';
+            } else if (w.isWipLotAdjust || w.isManual) {
+                paintLot = String(w.paintLot || w.paintDate || '').replace(/-/g, '').slice(2, 8) || '-';
+                injLot = String(w.lotNo || '').trim() || '-';
+            } else {
+                paintLot = String(w.paintDate || '').replace(/-/g, '').slice(2, 8) || '-';
+                injLot = String(w.paintLot || w.lotNo || '').trim() || '-';
+            }
+            return { paintLot: paintLot || '-', injLot: injLot || '-' };
+        }
+
         const histItems = [];
         laserWorks.forEach(function(w) {
             const goodQty = (w.id && (w.id in inspGoodMap)) ? inspGoodMap[w.id] : (Number(w.quantity) || 0);
-            const lots = Array.isArray(w.paintLots) && w.paintLots.length
-                ? w.paintLots.map(function(pl) { return (pl && pl.lotNo) || ''; }).filter(Boolean).join(', ')
-                : (w.paintLot || w.lotNo || '-');
+            const lots = _wipHistLotsFromLaser(w);
+            const isAdj = !!w.isWipLotAdjust;
+            const isManualIn = !!w.isManual && !isAdj;
             histItems.push({
                 date: w.date || '-',
                 isOut: false,
-                routeLabel: '레이저 입고',
-                routeColor: '#7c3aed',
-                routeDetail: w.machine || '레이저 작업',
-                lot: lots,
+                routeLabel: isAdj ? 'LOT 보정' : (isManualIn ? '수기 입고' : '레이저 입고'),
+                routeColor: isAdj ? '#2563eb' : (isManualIn ? '#16a34a' : '#7c3aed'),
+                routeDetail: w.machine || (isAdj || isManualIn ? (w.note || '수동 조정') : '레이저 작업'),
+                lot: lots.injLot,
+                paintLot: lots.paintLot,
+                injLot: lots.injLot,
                 qty: goodQty,
-                note: w.note || w.machine || '-'
+                note: w.note || w.machine || '-',
+                author: w.author || w.operator || '-'
+            });
+        });
+        // 수동 출고(재공 보정·출고)도 이력에 표시
+        (Storage.getAll(STORE_LASER) || []).filter(function(w) {
+            return (w.carModel || '') === carModel && (w.partName || '') === partName
+                && (!color || (w.color || '') === color) && !!w.isManualOut;
+        }).forEach(function(w) {
+            const lots = _wipHistLotsFromLaser(w);
+            const isAdj = !!w.isWipLotAdjust;
+            histItems.push({
+                date: w.date || '-',
+                isOut: true,
+                routeLabel: isAdj ? 'LOT 보정' : '수기 출고',
+                routeColor: isAdj ? '#2563eb' : '#dc2626',
+                routeDetail: w.note || '수동 차감',
+                lot: lots.injLot,
+                paintLot: lots.paintLot,
+                injLot: lots.injLot,
+                qty: Number(w.quantity) || 0,
+                note: w.note || '',
+                author: w.author || '-'
             });
         });
         paintWorks.forEach(function(w) {
             const qty = Number(w.productionQty) || 0;
-            const wLots = Array.isArray(w.lots) && w.lots.length
+            const injLot = Array.isArray(w.lots) && w.lots.length
                 ? w.lots.map(function(l) { return l && l.lotNo || ''; }).filter(Boolean).join(', ')
                 : (w.lotNo || '-');
+            const paintLot = Array.isArray(w.lots) && w.lots.length
+                ? [...new Set(w.lots.map(function(l) {
+                    const raw = (l && (l.paintDate || l.paintLot)) || '';
+                    return raw ? String(raw).replace(/-/g, '').slice(2, 8) : '';
+                }).filter(Boolean))].join(', ') || '-'
+                : '-';
             histItems.push({
                 date: w.date || '-',
                 isOut: true,
                 routeLabel: '도장-B 출고',
                 routeColor: '#2563eb',
                 routeDetail: w.line || '도장-B 투입',
-                lot: wLots,
+                lot: injLot || '-',
+                paintLot: paintLot,
+                injLot: injLot || '-',
                 qty: qty,
-                note: w.note || '-'
+                note: w.note || '',
+                author: w.author || w.operator || w.worker || '-'
             });
         });
         histItems.sort(function(a, b) { return String(b.date).localeCompare(String(a.date)); });
@@ -2147,7 +2331,7 @@ var LaserWipModule = (function() {
             </tr>`;
         }).join('');
 
-        const historySection = _wipHistorySection(histItems);
+        const historySection = _wipHistorySection(histItems, { splitLots: true });
 
         UIUtils.showModal(
             `⚡ ${carModel} · ${partName}${color && color !== '-' ? ' · ' + color : ''}`,
@@ -2221,7 +2405,7 @@ var LaserWipModule = (function() {
         // LOT가 없는 과거 수기 이력도 현재 보관 LOT 표에서 숨기지 않는다.
         // 실제 LOT로 추정하지 않고 "LOT 미지정"으로 명확히 분리한다.
         const displayLotEntries = lotEntries.slice();
-        if (manualAdj !== 0) {
+        if (manualAdj > 0) {
             displayLotEntries.push({
                 paintLot: 'LOT 미지정',
                 injLot: '수기 잔량입고',
@@ -2229,6 +2413,9 @@ var LaserWipModule = (function() {
                 isUnassigned: true
             });
         }
+        const lotTotalQty = displayLotEntries.reduce(function(s, e) { return s + Math.max(0, Number(e.qty) || 0); }, 0);
+        // 헤더 현재 잔량은 보관 LOT 합과 반드시 동일
+        const residualQtyDisplay = lotTotalQty > 0 ? lotTotalQty : Math.max(0, Number(r && r.residualQty) || 0);
 
         const histItems = [];
         laserAllWorks.filter(function(w) { return !w.isManualOut && !w.isResidualManualIn && !w.isResidualManualOut; }).forEach(function(w) {
@@ -2236,35 +2423,73 @@ var LaserWipModule = (function() {
             const packUnit = Number(w.packUnit) || 0;
             const residualQty = Number(w.laserResidualQty) || (packUnit > 0 ? Math.max(0, goodQty - Math.floor(goodQty / packUnit) * packUnit) : 0);
             if (residualQty <= 0) return;
-            const lots = Array.isArray(w.paintLots) && w.paintLots.length
-                ? w.paintLots.map(function(pl) { return pl && pl.lotNo || ''; }).filter(Boolean).join(', ')
-                : (w.paintLot || w.lotNo || '-');
+            const lotKeys = _workResidualLotKeys(w);
+            const firstKey = lotKeys[0] || '';
+            const pipeIdx = firstKey.indexOf('|');
+            const paintLot = pipeIdx >= 0 ? firstKey.slice(0, pipeIdx) : (w.paintDate || '-');
+            const injLot = pipeIdx >= 0 ? firstKey.slice(pipeIdx + 1) : (w.lotNo || '-');
+            const machine = _resolveResidualMachine(carModel, partName, color, paintLot, injLot, w.date, w.machine);
             histItems.push({
                 date: w.date || '-',
                 isOut: false,
                 routeLabel: '잔량 발생',
                 routeColor: '#f59e0b',
-                routeDetail: w.machine || '레이저 작업',
-                lot: lots,
+                routeDetail: machine || w.machine || '레이져 작업',
+                lot: injLot || '-',
+                paintLot: paintLot || '-',
+                injLot: injLot || '-',
+                lotKey: firstKey || ('__RES__|' + (w.id || '')),
                 qty: residualQty,
-                note: w.note || w.machine || '-'
+                author: w.author || w.operator || [w.worker1, w.worker2, w.worker3].filter(Boolean).join(', ') || '-',
+                note: w.note || '',
+                _seq: w.createdAt || w.id || ''
             });
         });
-        laserAllWorks.filter(function(w) { return w.isResidualManualIn || w.isResidualManualOut; }).forEach(function(w) {
+        laserAllWorks.filter(function(w) {
+            return (w.isResidualManualIn || w.isResidualManualOut) && !w.isResidualAuditOnly;
+        }).forEach(function(w) {
             const qty = Number(w.quantity) || 0;
             const isIn = w.isResidualManualIn;
             const isLotAdjust = !!w.isResidualLotAdjust;
+            const paintLot = _normalizePaintLot(w.residualPaintLot || w.paintDate || '') || '-';
+            const injLot = _normalizeInjLot(w.lotNo || '') || '-';
+            const lotKey = (paintLot !== '-' && injLot !== '-') ? _residualLotKey(paintLot, injLot) : ('__MANUAL__|' + (w.id || ''));
+            const absQty = w.residualLotAbsoluteQty;
+            const machine = _resolveResidualMachine(carModel, partName, color, paintLot, injLot, w.date, w.machine);
+            let routeLabel;
+            let routeColor;
+            let routeDetail;
+            if (isLotAdjust) {
+                routeLabel = 'LOT 보정';
+                routeColor = '#2563eb';
+                routeDetail = machine
+                    || ((paintLot !== '-' ? paintLot + ' / ' : '') + (injLot !== '-' ? injLot : ''))
+                    || (w.note || '');
+            } else if (isIn) {
+                routeLabel = '수기 입고';
+                routeColor = '#16a34a';
+                routeDetail = machine || w.note || '잔량 수기 입고';
+            } else {
+                // 잔량 차감은 레이져 작업(포장·검사) 소진 — 수기 출고로 표기하지 않는다
+                routeLabel = '레이져 작업출고';
+                routeColor = '#7c3aed';
+                routeDetail = machine || w.note || '레이져 작업';
+            }
             histItems.push({
                 date: w.date || '-',
                 isOut: !isIn,
-                routeLabel: isLotAdjust ? 'LOT 보정' : (isIn ? '수기 입고' : '수기 출고'),
-                routeColor: isLotAdjust ? '#2563eb' : (isIn ? '#16a34a' : '#dc2626'),
-                routeDetail: isLotAdjust
-                    ? ((w.residualPaintLot ? w.residualPaintLot + ' / ' : '') + (w.lotNo || ''))
-                    : (isIn ? '잔량 수기 입고' : '잔량 수기 출고'),
-                lot: w.lotNo || w.note || '-',
+                routeLabel: routeLabel,
+                routeColor: routeColor,
+                routeDetail: routeDetail,
+                lot: injLot,
+                paintLot: paintLot,
+                injLot: injLot,
+                lotKey: lotKey,
                 qty: qty,
-                note: w.note || '-'
+                absoluteAfter: (isLotAdjust && absQty != null) ? Math.max(0, Number(absQty) || 0) : null,
+                author: w.author || '-',
+                note: w.note || '',
+                _seq: w.createdAt || w.id || ''
             });
         });
         histItems.sort(function(a, b) { return String(b.date).localeCompare(String(a.date)); });
@@ -2320,7 +2545,7 @@ var LaserWipModule = (function() {
             </tr>`;
         }).join('');
 
-        const historySection = _wipHistorySection(histItems);
+        const historySection = _wipHistorySection(histItems, { splitLots: true });
 
         UIUtils.showModal(
             `📦 ${carModel} · ${partName}${color && color !== '-' ? ' · ' + color : ''}`,
@@ -2345,7 +2570,7 @@ var LaserWipModule = (function() {
             </div>
             <div style="margin-bottom:16px;display:flex;gap:16px;flex-wrap:wrap;">
                 <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
-                    <div style="font-size:1.4rem;font-weight:700;color:var(--accent-orange,#f59e0b);">${UIUtils.formatNumber(r.residualQty)}</div>
+                    <div style="font-size:1.4rem;font-weight:700;color:var(--accent-orange,#f59e0b);">${UIUtils.formatNumber(residualQtyDisplay)}</div>
                     <div style="font-size:0.8rem;color:var(--text-muted);">현재 잔량 (EA)</div>
                 </div>
                 <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
@@ -2409,12 +2634,16 @@ var LaserWipModule = (function() {
         const isOut = !!w.isResidualManualOut;
         const qty = _num(w.quantity);
         const badge = isOut
-            ? `<span style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:12px;font-size:0.75rem;font-weight:700;background:rgba(239,68,68,0.12);color:var(--accent-red);">
-                  <span class="material-symbols-outlined" style="font-size:0.85rem;">outbox</span> 수동출고
+            ? `<span style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:12px;font-size:0.75rem;font-weight:700;background:rgba(124,58,237,0.12);color:#7c3aed;">
+                  <span class="material-symbols-outlined" style="font-size:0.85rem;">outbox</span> 레이져 작업출고
                </span>`
             : `<span style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:12px;font-size:0.75rem;font-weight:700;background:rgba(59,130,246,0.12);color:var(--accent-blue,#2563eb);">
                   <span class="material-symbols-outlined" style="font-size:0.85rem;">move_to_inbox</span> 수동입고
                </span>`;
+        const machine = _resolveResidualMachine(
+            w.carModel || '', w.partName || '', w.color || '',
+            w.residualPaintLot || w.paintDate || '', w.lotNo || '', w.date || '', w.machine || ''
+        );
         return `<tr style="border-bottom:1px solid var(--border-color);background:rgba(59,130,246,0.03);">
             <td style="padding:10px 14px;font-weight:600;">${_esc(w.carModel || '-')}</td>
             <td style="padding:10px 14px;">${_esc(w.partName || '-')}</td>
@@ -2426,7 +2655,7 @@ var LaserWipModule = (function() {
             <td style="padding:10px 14px;text-align:right;color:var(--text-muted);">-</td>
             <td style="padding:10px 14px;text-align:right;">${w.packUnit ? UIUtils.formatNumber(w.packUnit) : '-'}</td>
             <td style="padding:10px 14px;text-align:right;font-weight:800;color:${isOut ? 'var(--accent-red)' : 'var(--accent-blue,#2563eb)'};">${isOut ? '-' : '+'}${UIUtils.formatNumber(qty)}</td>
-            <td style="padding:10px 14px;text-align:center;">${badge}</td>
+            <td style="padding:10px 14px;text-align:center;">${badge}${machine ? `<div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">${_esc(machine)}</div>` : ''}</td>
             <td style="padding:10px 14px;font-size:0.8rem;color:var(--text-secondary);">${_esc(w.author || '-')}</td>
         </tr>`;
     }
@@ -2831,7 +3060,7 @@ var LaserWipModule = (function() {
             return;
         }
 
-        const record = { date, carModel, partName, color, quantity, machine: '', note, isManual: true, lotNo: injectionLot, paintDate };
+        const record = { date, carModel, partName, color, quantity, machine: '', note, isManual: true, lotNo: injectionLot, paintDate, author: _currentUserName() };
 
         try {
             await Storage.add(STORE_LASER, record);
@@ -2999,7 +3228,7 @@ var LaserWipModule = (function() {
             return;
         }
 
-        const record = { date, carModel, partName, color, quantity, machine: '', note, isManual: true, isManualOut: true, lotNo: injectionLot, paintDate };
+        const record = { date, carModel, partName, color, quantity, machine: '', note, isManual: true, isManualOut: true, lotNo: injectionLot, paintDate, author: _currentUserName() };
 
         try {
             await Storage.add(STORE_LASER, record);
