@@ -811,7 +811,10 @@ var LaserWipModule = (function() {
                     .sort((a,b) => (a.partName||'').localeCompare(b.partName||'', 'ko'))
                     .map(r => {
                         const wipColor   = r.wip > 0 ? 'var(--accent-green)' : (r.wip < 0 ? 'var(--accent-red)' : 'var(--text-muted)');
-                        const statusText = r.wip > 0 ? '도장 투입 대기' : (r.wip < 0 ? '오류' : '소진');
+                        const displayQty = Math.max(0, Number(r.wip) || 0);
+                        const excessQty  = r.wip < 0 ? Math.abs(Number(r.wip) || 0) : 0;
+                        const statusText = r.wip > 0 ? '도장 투입 대기'
+                            : (excessQty > 0 ? `오류(초과 ${excessQty.toLocaleString('ko-KR')})` : '소진');
                         const encKey = _productKey(r.carModel, r.partName, r.color || '');
                         const paintLotText = r.paintLotSummary || '-';
                         return `<tr style="border-bottom:1px solid var(--border-color);cursor:pointer;"
@@ -824,7 +827,7 @@ var LaserWipModule = (function() {
                             <td style="padding:5px 6px;font-size:0.75rem;color:var(--text-muted);white-space:nowrap;">${r.color && r.color !== '-' ? _esc(r.color) : ''}</td>
                             <td style="padding:5px 6px;font-family:monospace;font-size:0.72rem;color:var(--accent-green);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:96px;" title="${_esc(paintLotText)}">${_esc(paintLotText)}</td>
                             <td style="padding:5px 8px;text-align:right;white-space:nowrap;">
-                                <span style="font-size:0.9rem;font-weight:800;color:${wipColor};">${UIUtils.formatNumber(Math.abs(r.wip))}</span>
+                                <span style="font-size:0.9rem;font-weight:800;color:${wipColor};">${displayQty.toLocaleString('ko-KR')}</span>
                                 <span style="font-size:0.68rem;color:var(--text-muted);margin-left:1px;">EA</span>
                             </td>
                             <td style="padding:5px 8px;font-size:0.7rem;color:${wipColor};white-space:nowrap;">${statusText}
@@ -4040,15 +4043,17 @@ var LaserWipModule = (function() {
 
     function _afterLaserRow(r) {
         const wip = r.wip;
+        const displayWip = Math.max(0, Number(wip) || 0);
+        const excessWip = wip < 0 ? Math.abs(Number(wip) || 0) : 0;
         const wipColor = wip > 0 ? 'var(--accent-green)' : (wip < 0 ? 'var(--accent-red)' : 'var(--text-muted)');
         let statusBadge;
         if (wip > 0) {
             statusBadge = `<span style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:12px;font-size:0.75rem;font-weight:600;background:rgba(34,197,94,0.12);color:var(--accent-green);">
                 <span class="material-symbols-outlined" style="font-size:0.85rem;">hourglass_empty</span> 도장 투입 대기
             </span>`;
-        } else if (wip < 0) {
+        } else if (excessWip > 0) {
             statusBadge = `<span style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:12px;font-size:0.75rem;font-weight:600;background:rgba(239,68,68,0.12);color:var(--accent-red);">
-                <span class="material-symbols-outlined" style="font-size:0.85rem;">error</span> 수량 오류
+                <span class="material-symbols-outlined" style="font-size:0.85rem;">error</span> 출고 초과 ${excessWip.toLocaleString('ko-KR')}
             </span>`;
         } else {
             statusBadge = `<span style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:12px;font-size:0.75rem;font-weight:600;background:var(--bg-secondary);color:var(--text-muted);">
@@ -4071,7 +4076,7 @@ var LaserWipModule = (function() {
             <td style="padding:10px 14px;">${_listCell(r.injectionLots)}</td>
             <td style="padding:10px 14px;text-align:right;font-weight:600;color:var(--accent-purple);">${UIUtils.formatNumber(r.laserQty)}</td>
             <td style="padding:10px 14px;text-align:right;font-weight:600;color:var(--accent-blue);">${UIUtils.formatNumber(r.paintBQty)}</td>
-            <td style="padding:10px 14px;text-align:right;font-size:1rem;font-weight:700;color:${wipColor};">${UIUtils.formatNumber(wip)}</td>
+            <td style="padding:10px 14px;text-align:right;font-size:1rem;font-weight:700;color:${wipColor};">${displayWip.toLocaleString('ko-KR')}</td>
             <td style="padding:10px 14px;text-align:center;">${statusBadge}</td>
         </tr>`;
     }
