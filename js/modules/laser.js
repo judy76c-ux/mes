@@ -3309,14 +3309,154 @@ var LaserInspectionModule = (function() {
         if (el) el.remove();
     }
 
+    function _getWorkLossTotal(work) {
+        if (!work) return 0;
+        return (Number(work.qcFirstLoss) || 0) + (Number(work.qcMiddleLoss) || 0) + (Number(work.qcLastLoss) || 0);
+    }
+
+    function _getInspBaseFromWork(work) {
+        if (!work) return 0;
+        const loss = _getWorkLossTotal(work);
+        const qty = Number(work.quantity) || 0;
+        if (work.completedQty != null && work.completedQty !== '' && Number.isFinite(Number(work.completedQty))) {
+            return Math.max(0, Number(work.completedQty));
+        }
+        return Math.max(0, qty - loss);
+    }
+
+    function _getInspBaseFromForm() {
+        const baseEl = document.getElementById('liInspBaseQty');
+        if (baseEl) return Math.max(0, Number(baseEl.value) || 0);
+        const goodQty = parseInt(document.getElementById('liGoodQty')?.value || 0, 10) || 0;
+        const failQty = parseInt(document.getElementById('liDefectQty')?.value || 0, 10) || 0;
+        return Math.max(0, goodQty + failQty);
+    }
+
+    function _refreshWorkQtyDisplay() {
+        const workQty = Math.max(0, Number(document.getElementById('liWorkQty')?.value) || 0);
+        const loss = Math.max(0, Number(document.getElementById('liLossTotalHidden')?.value) || 0);
+        const base = Math.max(0, workQty - loss);
+        const baseEl = document.getElementById('liInspBaseQty');
+        const baseLabel = document.getElementById('liInspBaseLabel');
+        const lossLabel = document.getElementById('liLossTotalLabel');
+        if (baseEl) baseEl.value = base;
+        if (baseLabel) baseLabel.textContent = UIUtils.formatNumber(base) + ' EA';
+        if (lossLabel) lossLabel.textContent = UIUtils.formatNumber(loss);
+    }
+
+    function _recalcInspQuantities() {
+        _refreshWorkQtyDisplay();
+        const base = _getInspBaseFromForm();
+        let failQty = parseInt(document.getElementById('liDefectQty')?.value || 0, 10) || 0;
+        let defectSum = 0;
+        const defectInputs = document.querySelectorAll('[id^="linj-"],[id^="lpaint-"],[id^="llaser-"]');
+        defectInputs.forEach(function(el) {
+            defectSum += parseInt(el.value || 0, 10) || 0;
+        });
+        if (defectSum > 0) {
+            failQty = defectSum;
+            const failEl = document.getElementById('liDefectQty');
+            if (failEl) failEl.value = failQty;
+        }
+        const goodQty = Math.max(0, base - failQty);
+        const gEl = document.getElementById('liGoodQty');
+        if (gEl) gEl.value = goodQty > 0 || failQty > 0 ? goodQty : '';
+        const total = goodQty + failQty;
+        const tEl = document.getElementById('liTotalQty');
+        if (tEl) tEl.value = total > 0 ? total : '';
+        const inspQtyEl = document.getElementById('liInspQty');
+        if (inspQtyEl) inspQtyEl.value = total;
+        _updatePackagingCalc();
+    }
+
+    async function _syncWorkQtyToWorkLogImmediate(newQty) {
+        if (!_liWorkId) return;
+        const workRef = Storage.getById(DB.STORES.LASER_WORK_LOG, _liWorkId);
+        if (!workRef) return;
+        const qty = Math.max(0, Number(newQty) || 0);
+        const loss = _getWorkLossTotal(workRef);
+        const patch = {
+            quantity: qty,
+            completedQty: Math.max(0, qty - loss)
+        };
+        if (Array.isArray(workRef.paintLots) && workRef.paintLots.length) {
+            patch.paintLots = _scalePaintLotsToQty(workRef.paintLots, qty);
+        }
+        await Storage.update(DB.STORES.LASER_WORK_LOG, _liWorkId, Object.assign({}, workRef, patch));
+        if (typeof LaserWorkModule !== 'undefined' && LaserWorkModule.search) {
+            try { LaserWorkModule.search(); } catch (e) { /* ignore */ }
+        }
+    }
+
+    function _enableWorkQtyEdit() {
+        const el = document.getElementById('liWorkQty');
+        if (!el || el.disabled) return;
+        const current = Number(el.value) || 0;
+        const input = window.prompt('작업수량을 입력하세요.', String(current));
+        if (input === null) return;
+        const newQty = Math.max(0, parseInt(String(input).replace(/[^\d]/g, ''), 10) || 0);
+        if (newQty <= 0) {
+            UIUtils.toast('작업수량은 1 이상이어야 합니다.', 'warning');
+            return;
+        }
+        el.value = newQty;
+        _recalcInspQuantities();
+        _syncWorkQtyToWorkLogImmediate(newQty)
+            .then(function() {
+                UIUtils.toast('작업일지 수량 ' + UIUtils.formatNumber(newQty) + ' EA 반영', 'success');
+            })
+            .catch(function(e) {
+                UIUtils.toast('작업일지 반영 실패: ' + (e && e.message ? e.message : '오류'), 'error');
+            });
+    }
+
+    // 작업수량 카드 — 작업일지 연동 검사 등록 시 (초중종 LOSS 차감 후 검사 기준)
+    function _buildWorkQtyCard(work) {
+        const workQty = Number(work.quantity) || 0;
+        const lossTotal = _getWorkLossTotal(work);
+        const inspBase = _getInspBaseFromWork(work);
+        const lossParts = [];
+        if (Number(work.qcFirstLoss)) lossParts.push('초 ' + work.qcFirstLoss);
+        if (Number(work.qcMiddleLoss)) lossParts.push('중 ' + work.qcMiddleLoss);
+        if (Number(work.qcLastLoss)) lossParts.push('종 ' + work.qcLastLoss);
+        const lossHint = lossParts.length ? lossParts.join(' · ') : '-';
+        return `
+        <div class="card">
+            <div class="card-body" style="padding:12px;">
+                <h5 style="margin:0 0 10px 0;font-size:0.85rem;color:var(--text-primary);">작업 수량</h5>
+                <div style="display:flex;flex-direction:column;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <label class="form-label" style="font-size:0.72rem;margin:0;flex:0 0 52px;">작업수량</label>
+                        <input type="number" class="form-input" id="liWorkQty" value="${workQty}" min="0" readonly
+                            style="text-align:right;font-weight:700;font-size:0.95rem;padding:5px 8px;flex:1;background:var(--bg-secondary);">
+                        <span style="font-size:0.72rem;color:var(--text-muted);">EA</span>
+                        <button type="button" class="btn btn-sm btn-outline"
+                            onclick="LaserInspectionModule._enableWorkQtyEdit()"
+                            style="padding:4px 10px;font-size:0.75rem;white-space:nowrap;gap:3px;">
+                            <span class="material-symbols-outlined" style="font-size:14px;">edit</span> 변경
+                        </button>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.72rem;color:var(--text-muted);">
+                        <span>초중종 LOSS <strong id="liLossTotalLabel" style="color:var(--accent-orange);">${UIUtils.formatNumber(lossTotal)}</strong> EA</span>
+                        <span title="${lossHint}">${lossHint}</span>
+                    </div>
+                    <input type="hidden" id="liLossTotalHidden" value="${lossTotal}">
+                    <div style="background:rgba(59,130,246,0.08);border-radius:6px;padding:6px 10px;display:flex;justify-content:space-between;align-items:center;">
+                        <span style="font-size:0.72rem;color:var(--text-muted);">검사 기준 (작업−LOSS)</span>
+                        <strong id="liInspBaseLabel" style="font-size:0.95rem;color:var(--accent-blue);">${UIUtils.formatNumber(inspBase)} EA</strong>
+                    </div>
+                    <input type="hidden" id="liInspBaseQty" value="${inspBase}">
+                    <input type="hidden" id="liInspQty" value="${inspBase}">
+                </div>
+            </div>
+        </div>`;
+    }
+
     // 작업 정보 컴팩트 배너 (도장 검사 일지 스타일)
-    function _buildWorkBanner(work, qtyOverride) {
+    function _buildWorkBanner(work) {
         const lotInfo   = _lotInfo(work);
         const paintLots = lotInfo.paintDates.join(', ')    || '-';
         const injLots   = lotInfo.injectionLots.join(', ') || '-';
-        const workQty   = qtyOverride != null && qtyOverride !== ''
-            ? Number(qtyOverride) || 0
-            : (Number(work.quantity) || 0);
         return `
         <div style="background:var(--bg-secondary);border-radius:8px;padding:8px 14px;display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;border-left:4px solid var(--accent-blue);">
             <span style="font-size:0.75rem;color:var(--text-muted);">작업일 <strong style="color:var(--text-primary);">${work.date||'-'}</strong></span>
@@ -3332,11 +3472,6 @@ var LaserInspectionModule = (function() {
             <span style="font-size:0.75rem;color:var(--text-muted);">도장LOT <strong style="color:var(--text-primary);font-family:monospace;">${paintLots}</strong></span>
             <span style="color:var(--border);">|</span>
             <span style="font-size:0.75rem;color:var(--text-muted);">사출LOT <strong style="color:var(--text-primary);font-family:monospace;">${injLots}</strong></span>
-            <span style="color:var(--border);">|</span>
-            <span style="font-size:0.75rem;color:var(--text-muted);">작업수량 <strong id="liWorkQtyLabel" style="color:var(--accent-blue);font-size:0.95rem;">${UIUtils.formatNumber(workQty)} EA</strong>
-                <input type="hidden" id="liInspQty" value="${workQty}">
-                <span style="font-size:0.68rem;color:var(--text-muted);margin-left:4px;">(검사 합계와 연동)</span>
-            </span>
         </div>`;
     }
 
@@ -3411,20 +3546,20 @@ var LaserInspectionModule = (function() {
         </div>`;
     }
 
-    // 검사자 선택 카드 (도장 검사와 동일 패턴)
+    // 검사자 선택 카드 — 하단 가로 배치 (좌측 세로 폭 절감)
     function _buildInspectorCard() {
         return `
-        <div class="card">
-            <div class="card-body" style="padding:12px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                    <h5 style="margin:0;font-size:0.85rem;color:var(--text-primary);">검사자</h5>
+        <div class="card" style="margin:0;">
+            <div class="card-body" style="padding:10px 14px;">
+                <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                    <h5 style="margin:0;font-size:0.85rem;color:var(--text-primary);white-space:nowrap;flex:0 0 auto;">검사자</h5>
+                    <div style="display:flex;align-items:flex-end;gap:8px;flex:1 1 auto;flex-wrap:wrap;min-width:0;" id="liInspectorContainer"></div>
                     <button type="button" class="btn btn-sm btn-primary" id="liAddInspectorBtn"
                         onclick="LaserInspectionModule._addInspectorField()"
-                        style="gap:4px;padding:4px 8px;font-size:0.78rem;">
+                        style="gap:4px;padding:4px 10px;font-size:0.78rem;flex:0 0 auto;align-self:flex-end;">
                         <span class="material-symbols-outlined" style="font-size:14px;">add</span> 추가
                     </button>
                 </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;" id="liInspectorContainer"></div>
             </div>
         </div>`;
     }
@@ -3449,10 +3584,10 @@ var LaserInspectionModule = (function() {
             : '';
 
         container.insertAdjacentHTML('beforeend', `
-            <div class="form-group" id="liInspectorGroup${idx}" style="margin:0;">
-                <label class="form-label" style="font-size:0.72rem;">검사자${idx}</label>
+            <div class="form-group" id="liInspectorGroup${idx}" style="margin:0;flex:0 1 160px;min-width:120px;max-width:200px;">
+                <label class="form-label" style="font-size:0.72rem;margin-bottom:2px;">검사자${idx}</label>
                 <select id="liInspector${idx}" class="form-select"
-                    style="padding:5px 6px;border:1px solid var(--border);font-size:0.85rem;"
+                    style="padding:5px 6px;border:1px solid var(--border);font-size:0.85rem;width:100%;"
                     onchange="LaserInspectionModule._syncInspectorOptions()">
                     <option value="">선택 안함</option>
                     ${inspectors.map(insp => {
@@ -3512,31 +3647,37 @@ var LaserInspectionModule = (function() {
     }
 
     // 검사 수량 카드 (좌측)
-    function _buildQtyCard(d = {}, autoInspQty = 0) {
-        const failQty = d.failQty || 0;
-        const goodQty = d.goodQty !== undefined ? d.goodQty : Math.max(0, autoInspQty - failQty);
+    function _buildQtyCard(d = {}, workRef = null, inspBaseQty = 0) {
+        const failQty = Number(d.failQty) || 0;
+        const hasWorkRef = !!workRef;
+        const base = hasWorkRef ? (inspBaseQty || _getInspBaseFromWork(workRef)) : (Number(d.inspQty) || 0);
+        const goodQty = d.goodQty !== undefined && d.goodQty !== null && d.goodQty !== ''
+            ? Math.max(0, Number(d.goodQty) || 0)
+            : Math.max(0, base - failQty);
+        const totalQty = goodQty + failQty;
+        const goodReadonly = hasWorkRef ? 'readonly style="background:var(--bg-secondary);text-align:right;font-weight:600;font-size:0.9rem;padding:5px 6px;"' : 'style="text-align:right;font-weight:600;font-size:0.9rem;padding:5px 6px;"';
         return `
         <div class="card">
             <div class="card-body" style="padding:12px;">
                 <h5 style="margin:0 0 10px 0;font-size:0.85rem;color:var(--text-primary);">검사 수량</h5>
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">
                     <div class="form-group" style="margin:0;">
-                        <label class="form-label" style="font-size:0.72rem;">양품수</label>
-                        <input type="number" class="form-input" id="liGoodQty" value="${goodQty>0?goodQty:''}" placeholder="-" min="0"
-                            style="text-align:right;font-weight:600;font-size:0.9rem;padding:5px 6px;"
+                        <label class="form-label" style="font-size:0.72rem;">양품수${hasWorkRef ? ' <span style="font-weight:400;color:var(--text-muted);">(자동)</span>' : ''}</label>
+                        <input type="number" class="form-input" id="liGoodQty" value="${goodQty > 0 || failQty > 0 ? goodQty : ''}" placeholder="-" min="0"
+                            ${goodReadonly}
                             oninput="LaserInspectionModule._updateDefectQty()"
                             onchange="LaserInspectionModule._updateDefectQty()">
                     </div>
                     <div class="form-group" style="margin:0;">
                         <label class="form-label" style="font-size:0.72rem;">불량수</label>
-                        <input type="number" class="form-input" id="liDefectQty" value="${failQty}" min="0"
+                        <input type="number" class="form-input" id="liDefectQty" value="${failQty || ''}" min="0"
                             style="text-align:right;font-weight:600;font-size:0.9rem;padding:5px 6px;"
                             oninput="LaserInspectionModule._updateGoodQty()"
                             onchange="LaserInspectionModule._updateGoodQty()">
                     </div>
                     <div class="form-group" style="margin:0;">
                         <label class="form-label" style="font-size:0.72rem;">합계 (자동)</label>
-                        <input type="text" class="form-input" id="liTotalQty" value="${goodQty+failQty}" readonly
+                        <input type="text" class="form-input" id="liTotalQty" value="${totalQty || ''}" readonly
                             style="background:var(--bg-secondary);text-align:right;font-weight:700;font-size:0.9rem;padding:5px 6px;color:var(--accent-blue);">
                     </div>
                 </div>
@@ -3631,26 +3772,29 @@ var LaserInspectionModule = (function() {
         });
     }
 
-    // 2-컬럼 레이아웃 래퍼 (도장 검사 일지 스타일)
-    function _build2Col(leftContent, rightContent) {
+    // 2-컬럼 레이아웃 래퍼 — 검사자는 footer로 하단 가로 배치
+    function _build2Col(leftContent, rightContent, footerContent) {
         return `
-        <div style="display:grid;grid-template-columns:260px 1fr;gap:10px;align-items:start;">
-            <div style="display:flex;flex-direction:column;gap:10px;">${leftContent}</div>
-            ${rightContent}
+        <div style="display:flex;flex-direction:column;gap:10px;">
+            <div style="display:grid;grid-template-columns:260px 1fr;gap:10px;align-items:start;">
+                <div style="display:flex;flex-direction:column;gap:10px;">${leftContent}</div>
+                ${rightContent}
+            </div>
+            ${footerContent || ''}
         </div>`;
     }
 
     function buildFormHTML(d = {}) {
-        const left = _buildSelectCard(d) + _buildInspInfoCard(d) + _buildQtyCard(d) + _buildInspectorCard();
-        return _build2Col(left, _buildDefectCard(d.defectDetails||{}));
+        const left = _buildSelectCard(d) + _buildInspInfoCard(d) + _buildQtyCard(d);
+        return _build2Col(left, _buildDefectCard(d.defectDetails||{}), _buildInspectorCard());
     }
 
     // ─ 모달 열기 ─────────────────────────────────────────────────────
     function openAddModal() {
         _liCarModel = ''; _liPartName = ''; _liColor = ''; _liWorkId = null;
         const left = _buildSelectCard() + _buildInspInfoCard() + _buildQtyCard() +
-            _buildPackagingCard() + _buildInspectorCard() + _buildBtns('LaserInspectionModule._saveInspection()');
-        _openModal('레이져 검사 등록', _build2Col(left, _buildDefectCard()));
+            _buildPackagingCard() + _buildBtns('LaserInspectionModule._saveInspection()');
+        _openModal('레이져 검사 등록', _build2Col(left, _buildDefectCard(), _buildInspectorCard()));
         setTimeout(() => _initInspectorFields(), 50);
     }
 
@@ -3661,16 +3805,17 @@ var LaserInspectionModule = (function() {
         _liColor    = w.color    || ''; _liWorkId   = w.id;
         const prevResidualQty = _getPrevResidualQty(w.carModel, w.partName, w.color);
         const packUnit = _parsePackNum(w.packUnit) || _findProductPackUnit(w.carModel, w.partName, w.color);
-        const initGoodQty = w.quantity || 0;
-        const left = _buildInspInfoCard({}, w) + _buildQtyCard({}, w.quantity||0) +
-            _buildPackagingCard({}, prevResidualQty, packUnit, initGoodQty) +
-            _buildInspectorCard() +
+        const inspBase = _getInspBaseFromWork(w);
+        const left = _buildWorkQtyCard(w) + _buildInspInfoCard({}, w) +
+            _buildQtyCard({}, w, inspBase) +
+            _buildPackagingCard({}, prevResidualQty, packUnit, inspBase) +
             _buildBtns('LaserInspectionModule._saveInspection()');
         _openModal(`레이져 검사 등록 — ${w.partName||''}`,
-            _buildWorkBanner(w) + _build2Col(left, _buildDefectCard()));
-        setTimeout(() => {
+            _buildWorkBanner(w) + _build2Col(left, _buildDefectCard(), _buildInspectorCard()));
+        setTimeout(function() {
             _calculateInspectionTime();
             _initInspectorFields();
+            _recalcInspQuantities();
         }, 0);
     }
 
@@ -3690,20 +3835,21 @@ var LaserInspectionModule = (function() {
             ? Number(d.prevResidualQty)
             : _getPrevResidualQty(d.carModel, d.partName, d.color, id);
         const packUnit = d.packUnit || (workRef?.packUnit) || _findProductPackUnit(d.carModel, d.partName, d.color);
-        const left = (workRef ? '' : _buildSelectCard(d)) +
-            _buildInspInfoCard(d) + _buildQtyCard(d) +
+        const left = (workRef ? _buildWorkQtyCard(workRef) : _buildSelectCard(d)) +
+            _buildInspInfoCard(d) +
+            _buildQtyCard(d, workRef, workRef ? _getInspBaseFromWork(workRef) : 0) +
             _buildPackagingCard(d, prevResidualQty, packUnit) +
-            _buildInspectorCard() +
             (isEdit
                 ? _buildBtns(`LaserInspectionModule._saveInspection('${id}')`)
                 : _buildBtns('', { readonly: true, editId: canEdit ? id : null }));
         _openModal(isEdit ? '레이져 검사 수정' : '레이져 검사 보기',
-            (workRef ? _buildWorkBanner(workRef, d.inspQty || ((Number(d.goodQty)||0) + (Number(d.failQty)||0)) || workRef.quantity) : '') +
-            _build2Col(left, _buildDefectCard(d.defectDetails||{})));
-        setTimeout(() => {
+            (workRef ? _buildWorkBanner(workRef) : '') +
+            _build2Col(left, _buildDefectCard(d.defectDetails||{}), _buildInspectorCard()));
+        setTimeout(function() {
             _initInspectorFields(d.inspectors || []);
             if (!workRef) onCarModelChange(d.partName);
             if (!isEdit) _setInspectionFormReadonly(true);
+            if (workRef) _recalcInspQuantities();
         }, 50);
     }
 
@@ -3716,19 +3862,19 @@ var LaserInspectionModule = (function() {
     }
 
     function _validateFailQty(data) {
-        const inspQty = Number(data.inspQty) || 0;
+        const inspBase = Number(data.inspBaseQty) || Number(data.inspQty) || 0;
         const failQty = Number(data.failQty) || 0;
         const defectTotal = Object.values(data.defectDetails || {})
             .reduce((sum, value) => sum + (Number(value) || 0), 0);
 
-        if (failQty > inspQty) {
-            UIUtils.toast(`불량수는 검사수량보다 클 수 없습니다. 검사 ${UIUtils.formatNumber(inspQty)} EA / 불량 ${UIUtils.formatNumber(failQty)} EA`, 'warning');
+        if (failQty > inspBase) {
+            UIUtils.toast(`불량수는 검사 기준(${UIUtils.formatNumber(inspBase)} EA)보다 클 수 없습니다.`, 'warning');
             const failEl = document.getElementById('liDefectQty');
             if (failEl) failEl.focus();
             return false;
         }
-        if (defectTotal > inspQty) {
-            UIUtils.toast(`불량 유형 합계는 검사수량보다 클 수 없습니다. 검사 ${UIUtils.formatNumber(inspQty)} EA / 불량 유형 합계 ${UIUtils.formatNumber(defectTotal)} EA`, 'warning');
+        if (defectTotal > inspBase) {
+            UIUtils.toast(`불량 유형 합계는 검사 기준(${UIUtils.formatNumber(inspBase)} EA)보다 클 수 없습니다.`, 'warning');
             return false;
         }
         return true;
@@ -3767,9 +3913,10 @@ var LaserInspectionModule = (function() {
         const workRef = Storage.getById(DB.STORES.LASER_WORK_LOG, data.workLogId);
         if (!workRef) return null;
 
-        const newQty = Math.max(0, Number(data.inspQty) || ((Number(data.goodQty) || 0) + (Number(data.failQty) || 0)));
+        const newWorkQty = Math.max(0, Number(data.workQty) || Number(workRef.quantity) || 0);
         const oldQty = Number(workRef.quantity) || 0;
-        const qtyChanged = newQty > 0 && newQty !== oldQty;
+        const qtyChanged = newWorkQty > 0 && newWorkQty !== oldQty;
+        const loss = _getWorkLossTotal(workRef);
         const patch = {
             packUnit: data.packUnit || workRef.packUnit || 0,
             inspectionGoodQty: Number(data.goodQty) || 0,
@@ -3779,18 +3926,15 @@ var LaserInspectionModule = (function() {
         };
 
         if (qtyChanged) {
-            patch.quantity = newQty;
-            // 기존 로스(작업수량-완료수량)는 유지한 채 완료수량만 맞춤
-            const oldCompleted = Number(workRef.completedQty);
-            const oldLoss = Number.isFinite(oldCompleted) ? Math.max(0, oldQty - oldCompleted) : 0;
-            patch.completedQty = Math.max(0, newQty - oldLoss);
+            patch.quantity = newWorkQty;
+            patch.completedQty = Math.max(0, newWorkQty - loss);
             if (Array.isArray(workRef.paintLots) && workRef.paintLots.length) {
-                patch.paintLots = _scalePaintLotsToQty(workRef.paintLots, newQty);
+                patch.paintLots = _scalePaintLotsToQty(workRef.paintLots, newWorkQty);
             }
         }
 
         await Storage.update(DB.STORES.LASER_WORK_LOG, data.workLogId, Object.assign({}, workRef, patch));
-        return { qtyChanged: qtyChanged, oldQty: oldQty, newQty: newQty };
+        return { qtyChanged: qtyChanged, oldQty: oldQty, newQty: newWorkQty };
     }
 
     async function _saveInspection(existingId) {
@@ -3886,10 +4030,11 @@ var LaserInspectionModule = (function() {
 
     // ─ 데이터 수집 ───────────────────────────────────────────────────
     function collectData() {
-        const goodQty   = parseInt(document.getElementById('liGoodQty')?.value || 0) || 0;
-        const failQty   = parseInt(document.getElementById('liDefectQty')?.value || 0) || 0;
-        // 검사수량 = 양품+불량 (작업일지 작업수량과 동일 기준)
+        const goodQty   = parseInt(document.getElementById('liGoodQty')?.value || 0, 10) || 0;
+        const failQty   = parseInt(document.getElementById('liDefectQty')?.value || 0, 10) || 0;
+        const inspBaseQty = _getInspBaseFromForm();
         const inspQty   = Math.max(0, goodQty + failQty);
+        const workQty   = parseInt(document.getElementById('liWorkQty')?.value || 0, 10) || 0;
         const inspQtyEl = document.getElementById('liInspQty');
         if (inspQtyEl) inspQtyEl.value = inspQty;
 
@@ -3914,7 +4059,7 @@ var LaserInspectionModule = (function() {
             workLogId          : _liWorkId || '',
             inspectionStartTime: document.getElementById('liStartTime')?.value || '',
             inspectionEndTime  : document.getElementById('liEndTime')?.value   || '',
-            inspQty, goodQty, failQty,
+            inspQty, goodQty, failQty, workQty, inspBaseQty,
             failRate           : inspQty > 0 ? (failQty / inspQty * 100) : 0,
             defectDetails,
             inspectors         : _collectInspectors(),
@@ -3934,41 +4079,26 @@ var LaserInspectionModule = (function() {
     }
 
     // ─ 계산 헬퍼 ─────────────────────────────────────────────────────
-    function _syncWorkQtyBanner(total) {
-        const iEl = document.getElementById('liInspQty');
-        if (iEl) iEl.value = total;
-        const tEl = document.getElementById('liTotalQty');
-        if (tEl) tEl.value = total;
-        const label = document.getElementById('liWorkQtyLabel');
-        if (label) label.textContent = UIUtils.formatNumber(total) + ' EA';
-    }
-
-    function _syncInspQtyFromGoodFail() {
-        const g = parseInt(document.getElementById('liGoodQty')?.value || 0) || 0;
-        const f = parseInt(document.getElementById('liDefectQty')?.value || 0) || 0;
-        const total = Math.max(0, g + f);
-        _syncWorkQtyBanner(total);
-        _updatePackagingCalc();
-    }
-
     function _updateDefectTotal() {
-        let sum = 0;
-        const defectInputs = document.querySelectorAll('[id^="linj-"],[id^="lpaint-"],[id^="llaser-"]');
-        defectInputs.forEach(el => { sum += parseInt(el.value||0); });
-        const dEl = document.getElementById('liDefectQty');
-        if (dEl) dEl.value = sum;
-        // 양품수는 유지하고, 합계(양품+불량)로 작업수량을 맞춘다
-        _syncInspQtyFromGoodFail();
+        _recalcInspQuantities();
     }
 
     function _updateDefectQty() {
-        // 양품수 변경 → 합계/작업수량 동기화 (불량수는 유지)
-        _syncInspQtyFromGoodFail();
+        if (document.getElementById('liWorkQty')) {
+            _recalcInspQuantities();
+            return;
+        }
+        const g = parseInt(document.getElementById('liGoodQty')?.value || 0, 10) || 0;
+        const f = parseInt(document.getElementById('liDefectQty')?.value || 0, 10) || 0;
+        const tEl = document.getElementById('liTotalQty');
+        if (tEl) tEl.value = g + f;
+        const inspQtyEl = document.getElementById('liInspQty');
+        if (inspQtyEl) inspQtyEl.value = g + f;
+        _updatePackagingCalc();
     }
 
     function _updateGoodQty() {
-        // 불량수 변경 → 합계/작업수량 동기화 (양품수는 유지)
-        _syncInspQtyFromGoodFail();
+        _recalcInspQuantities();
     }
 
     function _getPrevResidualQty(carModel, partName, color, excludeId) {
@@ -4308,6 +4438,7 @@ var LaserInspectionModule = (function() {
         showNonconformStandardPage, showInspectionPage,
         focusNonconformStandardPasteZone, handleNonconformStandardPaste, printNonconformStandardPage,
         _updateDefectTotal, _updateDefectQty, _updateGoodQty, _calculateInspectionTime,
+        _enableWorkQtyEdit, _recalcInspQuantities,
         _updatePackagingCalc, _autoBoxCount,
         _addInspectorField, _syncInspectorOptions,
     };

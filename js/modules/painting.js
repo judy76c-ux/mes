@@ -4652,6 +4652,21 @@ const PaintingInspectionModule = (function() {
         return _isPlatingInjectionColor(work.carModel, work.partName, work.color);
     }
 
+    // 제품 공정 순서(process1~4)에 레이저 공정이 포함된 제품인지 판단
+    function _isLaserForWork(work) {
+        if (!work) return false;
+        var products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        var product = products.find(function(p) {
+            return p.carModel === work.carModel && p.partName === work.partName;
+        });
+        if (!product) return false;
+        for (var i = 1; i <= 4; i++) {
+            var proc = String(product['process' + i] || '');
+            if (proc.includes('레이저') || proc.includes('레이져') || /laser/i.test(proc)) return true;
+        }
+        return false;
+    }
+
     function _getPaintingWorkByInspection(inspection) {
         if (!inspection) return null;
         const works = Storage.getAll(PAINTING_WORK_STORE) || [];
@@ -5326,6 +5341,9 @@ const PaintingInspectionModule = (function() {
             const platingDefects = _isPlatingForWork(work)
                 ? allDefects.filter(d => d && d.type === 'plating')
                 : [];
+            const laserDefects = _isLaserForWork(work)
+                ? allDefects.filter(d => d && d.type === 'laser')
+                : [];
             const inspectors = Storage.getAll(DB.STORES.INSPECTORS) || [];
 
             const lotDisplay = work.lots && work.lots.length > 0 ?
@@ -5523,11 +5541,11 @@ const PaintingInspectionModule = (function() {
 
                         <!-- 버튼 -->
                         <div style="display:flex; flex-direction:column; gap:6px;">
-                            <button class="btn btn-primary" onclick="PaintingInspectionModule._saveInspection('${workId}')" style="width:100%; justify-content:center;">
-                                <span class="material-symbols-outlined">save</span> 저장 (검사 완료)
-                            </button>
                             <button class="btn btn-outline" onclick="PaintingInspectionModule._saveInspectionDraft('${workId}')" style="width:100%; justify-content:center; color:var(--accent-orange); border-color:var(--accent-orange);">
                                 <span class="material-symbols-outlined" style="font-size:18px;">bookmark_add</span> 임시 저장 (이어서 작성)
+                            </button>
+                            <button class="btn btn-primary" onclick="PaintingInspectionModule._saveInspection('${workId}')" style="width:100%; justify-content:center;">
+                                <span class="material-symbols-outlined">save</span> 저장 (검사 완료)
                             </button>
                             <div style="display:flex; gap:6px;">
                                 <button class="btn btn-secondary" onclick="window.print()" style="flex:1; justify-content:center; font-size:0.85rem;">
@@ -5602,6 +5620,27 @@ const PaintingInspectionModule = (function() {
                                                 <span style="flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name}</span>
                                             </label>
                                             <input type="text" inputmode="numeric" enterkeyhint="done" id="plate-${d.id}" value="" placeholder="-" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem;" oninput="this.value=this.value.replace(/[^0-9]/g,'');PaintingInspectionModule._updateDefectTotal()">
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                            ` : ''}
+
+                            ${laserDefects.length > 0 ? `
+                            <div style="margin-top:14px;">
+                                <div style="font-size:0.78rem; font-weight:700; color:#ef4444; border-bottom:2px solid #ef4444; padding-bottom:4px; margin-bottom:10px; display:flex; align-items:center; gap:4px;">
+                                    <span class="material-symbols-outlined" style="font-size:14px;color:#ef4444;">bolt</span> 레이저 불량
+                                </div>
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:8px;">
+                    ${laserDefects.map(d => `
+                                        <div style="display:flex; flex-direction:column; gap:4px;">
+                                            <label style="font-size:0.78rem; font-weight:600; margin:0; color:var(--text-secondary); display:flex; align-items:flex-start; gap:6px; min-width:0;">
+                                                <button type="button" title="불량유형 보기" onclick="LaserInspectionModule.showDefectTypeView('${d.id}')" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:1px solid var(--border);border-radius:50%;background:#fff;color:var(--accent-blue);cursor:pointer;flex:0 0 20px;padding:0;margin-top:1px;">
+                                                    <span class="material-symbols-outlined" style="font-size:14px;">search</span>
+                                                </button>
+                                                <span style="flex:1;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.25;" title="${(d.name || '').replace(/"/g, '&quot;')}">${d.name}</span>
+                                            </label>
+                                            <input type="text" inputmode="numeric" enterkeyhint="done" id="laser-${d.id}" value="" placeholder="-" style="padding:6px; border:1px solid var(--border); border-radius:4px; text-align:center; font-weight:700; font-size:0.9rem;" oninput="this.value=this.value.replace(/[^0-9]/g,'');PaintingInspectionModule._updateDefectTotal()">
                                         </div>
                                     `).join('')}
                                 </div>
@@ -6535,7 +6574,7 @@ const PaintingInspectionModule = (function() {
             inspectorIds.push(el ? (el.value || '') : '');
         }
         const defects = {};
-        document.querySelectorAll('[id^="inj-"],[id^="paint-"],[id^="plate-"]').forEach(el => {
+        document.querySelectorAll('[id^="inj-"],[id^="paint-"],[id^="plate-"],[id^="laser-"]').forEach(el => {
             const v = String(el.value || '').trim();
             if (v !== '' && v !== '0') defects[el.id] = v;
         });
@@ -6796,7 +6835,7 @@ const PaintingInspectionModule = (function() {
     function _updateDefectTotal() {
         // 모든 불량 유형 입력값 합산 (inj-*, paint-*)
         let defectSum = 0;
-        const defectInputs = document.querySelectorAll('[id^="inj-"], [id^="paint-"], [id^="plate-"]');
+        const defectInputs = document.querySelectorAll('[id^="inj-"], [id^="paint-"], [id^="plate-"], [id^="laser-"]');
         defectInputs.forEach(el => {
             defectSum += parseInt(el.value || 0);
         });
@@ -7038,9 +7077,11 @@ const PaintingInspectionModule = (function() {
             const injInput   = document.getElementById(`inj-${defect.id}`);
             const paintInput = document.getElementById(`paint-${defect.id}`);
             const plateInput = document.getElementById(`plate-${defect.id}`);
+            const laserInput = document.getElementById(`laser-${defect.id}`);
             if (injInput)   count = parseInt(injInput.value   || 0);
             if (paintInput) count = parseInt(paintInput.value || 0);
             if (plateInput) count = parseInt(plateInput.value || 0);
+            if (laserInput) count = parseInt(laserInput.value || 0);
 
             if (count > 0) {
                 defectDetails.push({
