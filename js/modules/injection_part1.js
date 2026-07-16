@@ -1638,7 +1638,7 @@ var InjectionIncomingModule = (function() {
         const d = Storage.getById(STORE, id);
         if (!d) { UIUtils.toast('레코드를 찾을 수 없습니다.', 'error'); return; }
         UIUtils.closeModal();
-        AuthModule.checkSettingsAuth(async function() {
+        AuthModule.requireAdminAuth(async function() {
             const linked = (typeof InjectionWarehouseModule !== 'undefined' && InjectionWarehouseModule.getLinkedInventoryForInspection)
                 ? InjectionWarehouseModule.getLinkedInventoryForInspection(d)
                 : [];

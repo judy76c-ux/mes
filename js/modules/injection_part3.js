@@ -1572,7 +1572,7 @@ var PaintIncomingInspectionModule = (function() {
         const d = Storage.getById(STORE, id);
         if (!d) { UIUtils.toast('레코드를 찾을 수 없습니다.', 'error'); return; }
         UIUtils.closeModal();
-        AuthModule.checkSettingsAuth(async function() {
+        AuthModule.requireAdminAuth(async function() {
             const user = AuthModule.getCurrentUser();
             const logEntry = {
                 id: Storage.generateId(),

@@ -262,10 +262,19 @@ const AuthModule = (function () {
         return _persistAuthState(AUTH_USERS_CONFIG_KEY, _usersCache, USERS_KEY);
     }
 
-    /* 권한 구조: { access:[pageIds], write:[pageIds] }
-       - access: 페이지 접근 허용
-       - write:  작성·등록·수정·삭제 허용
-       admin은 null (전체 접근+쓰기) */
+    /* ── 권한 매트릭스 정의 (2026-07-15 재확립) ─────────────────────────────
+       구조: { access:[pageIds], write:[pageIds] }, admin은 null (전체 접근+쓰기)
+
+       접근(access) 권한: 데이터를 변경하지 않는 한도 내에서 해당 페이지를 전부 볼 수 있는 권한.
+         - 접근이 없으면 그 페이지에 아예 들어갈 수 없다(router.js에서 렌더링 자체를 막음).
+         - 접근이 있으면 조회·검색·필터 등 데이터를 바꾸지 않는 동작은 전부 허용된다.
+         - 예외: 비로그인 사용자는 이 매트릭스와 무관하게 모든 페이지를 조회만 할 수 있다
+           (로그인 사용자에게만 역할별 접근 제한이 적용된다 — router.js의 접근 게이트 참고).
+
+       입력(write) 권한: 접근을 전제로, 데이터에 영향을 주는 수정·등록·삭제·입력(키 입력, 선택 등)을
+         할 수 있는 권한. 입력이 없으면 페이지는 정상적으로 보이되, 저장·추가·수정·삭제 등
+         데이터를 바꾸는 개별 동작은 각 모듈에서 canWritePage()로 막아야 한다.
+       ──────────────────────────────────────────────────────────────────── */
     /* 페이지별 입력(write) 허용 역할 — 설정 화면·실제 동작·상단 표시의 단일 기준
        (paint-mix 전용 강제 제한 제거됨 — 관리/설정 > 역할별 접근 권한에서 자유롭게 설정) */
     const PAGE_WRITE_POLICY = {};
@@ -1011,9 +1020,30 @@ const AuthModule = (function () {
         /* 관리/설정 페이지 진입은 router.js에서 checkSettingsAuth()로 별도 처리 */
     }
 
-    /* ── 설정 페이지 관리자 인증 ─────────────────────────────── */
-    /* 관리/설정 페이지만 관리자 로그인 필요 (나머지 전체 허용) */
+    /* ── 설정 페이지 인증 ─────────────────────────────────────── */
+    /* 관리/설정 페이지는 로그인 필요. admin은 항상 허용, 그 외 역할은
+       역할별 접근 권한 화면에서 '관리/설정' 접근이 켜져 있어야 들어갈 수 있다.
+       (예전엔 admin만 무조건 통과시키고 나머지는 권한 설정과 무관하게 항상 막았음 —
+       역할별 접근 권한 화면에서 '관리/설정' 접근을 켜도 실제로는 반영되지 않던 버그) */
+    function _passesSettingsAuth(user) {
+        return !!user && (_hasRole(user, 'admin') || isPageAccessGranted(_roleKeys(user), 'settings'));
+    }
     function checkSettingsAuth(onPass) {
+        const user = getCurrentUser();
+        if (_passesSettingsAuth(user)) { onPass(); return; }
+        showLoginModal(function() {
+            const u = getCurrentUser();
+            if (_passesSettingsAuth(u)) { onPass(); }
+            else { UIUtils.toast('설정 페이지 접근 권한이 없습니다. 관리자에게 문의하세요.', 'warning'); }
+        });
+    }
+
+    /* 진짜 admin 계정만 통과시키는 인증 게이트.
+       일부 모듈(사출/도료 수입검사 "관리자 인증 후 삭제")이 이 용도로 checkSettingsAuth를
+       빌려 쓰고 있었는데, checkSettingsAuth가 '관리/설정 접근 권한'까지 허용하도록 바뀌면서
+       그 삭제 기능도 덩달아 admin이 아닌 역할(예: 생산관리자)에게 뚫릴 뻔했다.
+       "관리자 인증"이 필요한 곳은 이 함수를 쓰도록 분리한다. */
+    function requireAdminAuth(onPass) {
         const user = getCurrentUser();
         if (user && _hasRole(user, 'admin')) { onPass(); return; }
         showLoginModal(function() {
@@ -1316,6 +1346,7 @@ const AuthModule = (function () {
         logout,
         showLoginModal,
         checkSettingsAuth,
+        requireAdminAuth,
         getUnreadInboxCount,
         sendInternalMessage,
         openInboxModal,

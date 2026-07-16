@@ -1931,19 +1931,11 @@ const PaintInventoryModule = (function() {
         return false;
     }
 
+    // 특채/장기재고 입고 "생산 확인" 권한 — 예전엔 생산관리자/품질관리자 역할 키를 하드코딩해서
+    // 역할별 접근 권한 화면에서 다른 역할에 도료 창고 입력 권한을 줘도 이 기능만은 못 열었다.
+    // 도료 LOT 재고 보정 권한(_canEditPaintStock)과 동일하게 매트릭스(도료 창고 입력 권한)를 따르게 한다.
     function _canConfirmProdSchedule() {
-        if (typeof AuthModule === 'undefined' || !AuthModule.getCurrentUser) return false;
-        const user = AuthModule.getCurrentUser();
-        if (!user) return false;
-        const roles = [...(Array.isArray(user.roles) ? user.roles : []), user.role].filter(Boolean).map(String);
-        if (roles.includes('admin')) return true;
-        const roleDefs = (AuthModule.ROLES || []);
-        return roles.some(rk => {
-            if (rk === 'prod_manager' || rk === 'quality_manager') return true;
-            const def = roleDefs.find(d => d.key === rk);
-            const label = String((def && def.label) || rk).replace(/\s/g, '');
-            return /생산관리|품질관리/.test(label);
-        });
+        return _canEditPaintStock();
     }
 
     function _needsProdConfirm(insp) {

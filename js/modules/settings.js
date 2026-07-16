@@ -2099,8 +2099,10 @@ const SettingsModule = (function() {
             : allPaints;
         const uniqueManufacturers = [...new Set(supplierPaints.map(p => p.manufacturer).filter(Boolean))]
             .sort((a,b) => a.localeCompare(b,'ko'));
+        // 제조사 공란인 항목은 이 단계에서 걸러지면 아래 하위 필터의 공란 허용 로직까지 도달하지 못하므로
+        // 여기서도 함께 허용해야 한다(근본 원인: 이 1차 필터가 하위 필터보다 먼저 배제시킴).
         const basePaints = rowManufacturer
-            ? supplierPaints.filter(p => _samePaintMaker(p.manufacturer, rowManufacturer) || p.id === mainId || p.id === hardId || p.id === thinnerId)
+            ? supplierPaints.filter(p => _samePaintMaker(p.manufacturer, rowManufacturer) || !p.manufacturer || p.id === mainId || p.id === hardId || p.id === thinnerId)
             : supplierPaints;
 
         // 선택된 주제 도료의 공급처 파악 (경화제/신너 자동 매칭용)
@@ -7060,13 +7062,32 @@ const SettingsModule = (function() {
         ], selected);
     }
 
-    function _paintShelfLifeOptions(selected = '') {
-        return _paintOptionHtml([
-            '6개월',
-            '1년',
-            '2년',
+    // 제조사(브랜드) 목록은 고정 6종만 허용한다.
+    // 예전에는 _paintSelectOptions처럼 DB에 이미 저장된 값을 후보에 합쳤는데,
+    // CSV 일괄 업로드로 구매처명("페인트마당")이 제조사 칸에 잘못 들어간 뒤로
+    // 그 값이 select에 정상 선택지처럼 계속 노출되어 다른 도료에도 반복 선택되는 문제가 있었다.
+    // 고정 목록만 쓰면 이런 오염이 다시 후보로 뜨지 않는다.
+    const PAINT_MANUFACTURERS = ['NOROO', 'KCC', 'PPG', 'YULIM', 'REDSOPT', 'ORIGIN'];
+    function _paintManufacturerOptions(selected = '') {
+        // 현재 저장된 값이 고정 목록에 없어도(예: 과거 오염된 값) 드롭다운에서 사라지지 않고
+        // 보이게 해서, 잘못된 값이 저장돼 있다는 것을 사용자가 알아채고 고칠 수 있게 한다.
+        return _paintOptionHtml(PAINT_MANUFACTURERS, selected);
+    }
+
+    // 유효기한은 3/6/9/12/18/24개월 등 값이 다양해 고정 select로는 새 값(예: "9개월")을 고를 수 없었다.
+    // datalist로 기존 값을 추천은 하되 자유 입력이 가능한 텍스트 입력으로 바꿔 근본적으로 해결한다.
+    function _paintShelfLifeInputHtml(inputId, selected = '') {
+        const listId = inputId + 'List';
+        const esc = v => String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        const values = [...new Set([
+            '3개월', '6개월', '9개월', '1년', '18개월', '2년',
             ...((Storage.getAll(PAINT_STORE) || []).map(p => p.shelfLife).filter(Boolean))
-        ], selected);
+        ])];
+        return `<input type="text" class="form-input" id="${inputId}" list="${listId}"
+                    value="${esc(selected)}" placeholder="예: 9개월">
+                <datalist id="${listId}">
+                    ${values.map(v => `<option value="${esc(v)}">`).join('')}
+                </datalist>`;
     }
 
     // 납품처 옵션 HTML (도료 추가/수정 모달용)
@@ -7164,12 +7185,16 @@ const SettingsModule = (function() {
                                         <th>도료 사양</th>
                                         <th>포장 용량</th>
                                         <th>매입 단가</th>
+                                        <th>KG당 단가</th>
                                         <th>유효기한</th>
                                         <th>작업</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     ${paints.map((p, i) => {
+                                        const packUnitNum = Number(p.packUnit) || 0;
+                                        const priceNum = Number(String(p.purchasePrice || '').replace(/,/g, '')) || 0;
+                                        const perKg = packUnitNum > 0 && priceNum > 0 ? Math.round(priceNum / packUnitNum) : 0;
                                         return `
                                         <tr>
                                             <td>${i + 1}</td>
@@ -7180,7 +7205,8 @@ const SettingsModule = (function() {
                                             <td>${p.paintType ? UIUtils.badge(p.paintType, paintTypeBadge(p.paintType)) : '-'}</td>
                                             <td>${p.paintSpec ? UIUtils.badge(p.paintSpec, paintSpecBadge(p.paintSpec)) : '-'}</td>
                                             <td>${p.packUnit ? p.packUnit + ' KG' : '-'}</td>
-                                            <td style="text-align:right;">${p.purchasePrice ? (Number(String(p.purchasePrice).replace(/,/g, '')) || 0).toLocaleString() : '-'}</td>
+                                            <td style="text-align:right;">${priceNum ? priceNum.toLocaleString() : '-'}</td>
+                                            <td style="text-align:right;color:var(--text-secondary);">${perKg ? perKg.toLocaleString() + ' 원' : '-'}</td>
                                             <td>${p.shelfLife || '-'}</td>
                                             <td>
                                                 <button class="btn btn-sm btn-outline" onclick="SettingsModule.editPaint('${p.id}')">수정</button>
@@ -7522,7 +7548,7 @@ const SettingsModule = (function() {
                             style="font-size:0.72rem;padding:1px 7px;background:transparent;border:1px solid var(--border-color);border-radius:4px;cursor:pointer;color:var(--accent-blue);font-weight:600;">+ 추가</button>
                     </label>
                     <select class="form-select" id="addPaintManufacturer">
-                        ${_paintSelectOptions('manufacturer', '', ['NOROO', 'KCC', 'PPG', 'YULIM', 'REDSOPT', 'ORIGIN'])}
+                        ${_paintManufacturerOptions('')}
                     </select>
                 </div>
                 <div class="form-group">
@@ -7559,9 +7585,7 @@ const SettingsModule = (function() {
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">유효기한</label>
-                    <select class="form-select" id="addPaintShelfLife">
-                        ${_paintShelfLifeOptions('')}
-                    </select>
+                    ${_paintShelfLifeInputHtml('addPaintShelfLife', '')}
                 </div>
             </div>
         `, `
@@ -7624,7 +7648,7 @@ const SettingsModule = (function() {
                 <div class="form-group">
                     <label class="form-label">제조사</label>
                     <select class="form-select" id="editPaintManufacturer">
-                        ${_paintSelectOptions('manufacturer', p.manufacturer || '', ['NOROO', 'KCC', 'PPG', 'YULIM', 'REDSOPT', 'ORIGIN'])}
+                        ${_paintManufacturerOptions(p.manufacturer || '')}
                     </select>
                 </div>
                 <div class="form-group">
@@ -7668,9 +7692,7 @@ const SettingsModule = (function() {
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">유효기한</label>
-                    <select class="form-select" id="editPaintShelfLife">
-                        ${_paintShelfLifeOptions(p.shelfLife || '')}
-                    </select>
+                    ${_paintShelfLifeInputHtml('editPaintShelfLife', p.shelfLife || '')}
                 </div>
             </div>
         `, `
@@ -12228,6 +12250,33 @@ const SettingsModule = (function() {
     const _esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     let _selectedPermRole = null; /* 권한 패널에서 현재 선택된 역할 키 */
 
+    // '관리/설정' 페이지 접근은 역할별 권한 매트릭스로 다른 역할에도 열어줄 수 있게 됐지만,
+    // 사용자 계정·역할·권한 매트릭스 자체를 바꾸는 것까지 열리면 그 역할이 스스로에게
+    // admin 권한을 부여하는 등 권한 상승이 가능해진다. 그래서 이 조작들만은 매트릭스와 무관하게
+    // 항상 진짜 admin 계정만 할 수 있게 막는다. (아래 목록은 사용자 관리 화면에도 그대로 표시)
+    // 전수 조사(2026-07-15) 결과: 접근/입력 매트릭스와는 별도로 "삭제·초기화" 같은
+    // 되돌리기 어려운 동작은 대부분 모듈에서 의도적으로 admin 전용으로 하드코딩돼 있었다.
+    // 이건 버그가 아니라 파괴적 동작에 대한 별도 안전장치이므로 그대로 유지하고, 목록으로만 표시한다.
+    const ADMIN_ONLY_CAPABILITIES = [
+        '사용자 계정 추가 · 수정 · 삭제',
+        '역할 추가 · 수정 · 삭제',
+        '역할별 접근 권한(그룹/페이지) 매트릭스 변경',
+        '사출/도료 수입검사 기록 삭제 (관리자 인증 필요)',
+        '도장/레이저/품질 등 각 공정 기록·이력 삭제 및 이력 초기화(리셋)',
+        '재고 오류(음수재고 등) 리셋, 컬러 별칭 이력 일괄 삭제·마이그레이션',
+        'JIG 마스터 폐기·삭제·초기화, 설비 점검/수리 이력 삭제',
+        'C/S 품질검사 양식 템플릿 구조 편집',
+        '결재 서명 취소/초기화',
+        '도료 창고 작성 담당자 지정'
+    ];
+    function _requireTrueAdmin(message) {
+        if (typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function' && AuthModule.isAdminUser()) {
+            return true;
+        }
+        UIUtils.toast(message || '이 작업은 관리자 계정만 할 수 있습니다.', 'warning');
+        return false;
+    }
+
     function _roleBadgeHtml(userOrRole, roles) {
         const keys = Array.isArray(userOrRole?.roles)
             ? userOrRole.roles
@@ -12308,8 +12357,25 @@ const SettingsModule = (function() {
             { color:'#c2410c', bg:'#ffedd5' }, { color:'#0f766e', bg:'#ccfbf1' },
         ];
 
+        const isTrueAdmin = typeof AuthModule.isAdminUser === 'function' && AuthModule.isAdminUser();
+
         el.innerHTML = `
         <div style="display:flex;flex-direction:column;gap:16px;">
+
+            <!-- 관리자 전용 기능 안내 -->
+            <div style="border:1px solid rgba(220,38,38,0.3);background:rgba(220,38,38,0.05);border-radius:10px;padding:12px 16px;">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                    <span class="material-symbols-outlined" style="font-size:1.1rem;color:#dc2626;">admin_panel_settings</span>
+                    <strong style="font-size:0.88rem;color:#dc2626;">관리자(admin) 전용 기능</strong>
+                    <span style="font-size:0.75rem;color:var(--text-muted);">— 아래 항목은 역할별 접근 권한을 아무리 허용해도 admin 계정만 할 수 있습니다.</span>
+                </div>
+                <ul style="margin:0;padding-left:20px;font-size:0.8rem;color:var(--text-secondary);line-height:1.9;">
+                    ${ADMIN_ONLY_CAPABILITIES.map(c => `<li>${_esc(c)}</li>`).join('')}
+                </ul>
+                ${!isTrueAdmin ? `<div style="margin-top:8px;font-size:0.78rem;color:#dc2626;">
+                    현재 로그인 계정은 admin이 아닙니다 — 위 항목은 화면에는 보이지만 저장을 시도하면 차단됩니다.
+                </div>` : ''}
+            </div>
 
             <!-- 상단: 사용자 목록 + 역할 관리 -->
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;">
@@ -12500,6 +12566,7 @@ const SettingsModule = (function() {
     }
 
     function saveUser(userId) {
+        if (!_requireTrueAdmin('사용자 계정 관리는 관리자 계정만 할 수 있습니다.')) return;
         const username    = (document.getElementById('umUsername')    || {}).value || '';
         const displayName = (document.getElementById('umDisplayName') || {}).value || '';
         const password    = (document.getElementById('umPassword')    || {}).value || '';
@@ -12543,6 +12610,7 @@ const SettingsModule = (function() {
     }
 
     function deleteUser(userId) {
+        if (!_requireTrueAdmin('사용자 계정 관리는 관리자 계정만 할 수 있습니다.')) return;
         const users = AuthModule.getUsers();
         const target = users.find(u => u.id === userId);
         if (!target) return;
@@ -12596,6 +12664,10 @@ const SettingsModule = (function() {
         try { await _onGroupPermChangeInner(el); } finally { _permSaving = false; }
     }
     async function _onGroupPermChangeInner(el) {
+        if (!_requireTrueAdmin('권한 매트릭스 변경은 관리자 계정만 할 수 있습니다.')) {
+            el.checked = !el.checked; // 클릭으로 이미 바뀐 체크 표시를 원래대로 되돌린다.
+            return;
+        }
         const roleKey  = el.dataset.role;
         const groupKey = el.dataset.group;
         const type     = el.dataset.type;
@@ -12644,6 +12716,7 @@ const SettingsModule = (function() {
 
     /* 전체 접근 허용 / 전체 입력 허용 / 전체 해제 */
     async function toggleAllGroupPerm(roleKey, mode) {
+        if (!_requireTrueAdmin('권한 매트릭스 변경은 관리자 계정만 할 수 있습니다.')) return;
         if (_permSaving) return;
         _permSaving = true;
         try {
@@ -12721,6 +12794,7 @@ const SettingsModule = (function() {
 
     /* 역할 저장 */
     async function saveRole(editKey) {
+        if (!_requireTrueAdmin('역할 관리는 관리자 계정만 할 수 있습니다.')) return;
         const key   = editKey || (document.getElementById('rmKey')?.value||'').trim().replace(/[^a-z0-9_]/gi,'_').toLowerCase();
         const label = (document.getElementById('rmLabel')?.value||'').trim();
         const desc  = (document.getElementById('rmDesc')?.value||'').trim();
@@ -12741,6 +12815,7 @@ const SettingsModule = (function() {
 
     /* 역할 삭제 */
     function deleteRole(roleKey) {
+        if (!_requireTrueAdmin('역할 관리는 관리자 계정만 할 수 있습니다.')) return;
         const roles = AuthModule.getRoles();
         const r = roles.find(x => x.key === roleKey);
         UIUtils.confirm(`"${r?.label || roleKey}" 역할을 삭제하시겠습니까?`, async () => {
@@ -12754,6 +12829,10 @@ const SettingsModule = (function() {
 
     /* 하위 호환: 구형 onPermChange (개별 페이지 직접 변경) */
     function onPermChange(checkbox) {
+        if (!_requireTrueAdmin('권한 매트릭스 변경은 관리자 계정만 할 수 있습니다.')) {
+            checkbox.checked = !checkbox.checked;
+            return;
+        }
         const role   = checkbox.dataset.role;
         const pageId = checkbox.dataset.page;
         const type   = checkbox.dataset.type || 'access';
@@ -12775,6 +12854,7 @@ const SettingsModule = (function() {
         AuthModule.savePermissions(perms);
     }
     function toggleAllPerm(role, grant) {
+        if (!_requireTrueAdmin('권한 매트릭스 변경은 관리자 계정만 할 수 있습니다.')) return;
         const perms = AuthModule.getPermissions();
         const all = AuthModule.ALL_PAGES.map(p => p.id);
         perms[role] = grant ? { access:[...all], write:[...all] } : { access:[], write:[] };

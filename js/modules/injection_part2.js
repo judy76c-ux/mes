@@ -3306,7 +3306,24 @@ var InjectionWarehouseModule = (function() {
         }
     }
 
-    async function _applyStockErrorCorrection(carModel, partName, color, reason, targetQty) {
+    function _yymmddLotError(value) {
+        const val = String(value == null ? '' : value).trim();
+        if (!/^\d{6}$/.test(val)) return 'LOT번호는 YYMMDD 형식(6자리 숫자)으로 입력하세요.';
+        const mm = parseInt(val.slice(2, 4), 10);
+        const dd = parseInt(val.slice(4, 6), 10);
+        const yyNum = parseInt(val.slice(0, 2), 10);
+        const fullYear = yyNum >= 50 ? 1900 + yyNum : 2000 + yyNum;
+        const inputDate = new Date(fullYear, mm - 1, dd);
+        if (inputDate.getFullYear() !== fullYear || inputDate.getMonth() !== mm - 1 || inputDate.getDate() !== dd) {
+            return '유효하지 않은 날짜입니다. YYMMDD 형식으로 입력하세요.';
+        }
+        const today = new Date();
+        today.setHours(23, 59, 59, 999);
+        if (inputDate > today) return '오늘 이후(미래)의 날짜는 LOT로 사용할 수 없습니다.';
+        return null;
+    }
+
+    async function _applyStockErrorCorrection(carModel, partName, color, reason, targetQty, lotNo) {
         const target = Math.max(0, Math.round(Number(targetQty) || 0));
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
         const resolvedColor = _resolveMasterColor(carModel, partName, color, materials);
@@ -3318,9 +3335,11 @@ var InjectionWarehouseModule = (function() {
         const diff = target - current;
         if (diff === 0) return { skipped: true, reason: 'no_change' };
 
+        const lotErr = _yymmddLotError(lotNo);
+        if (lotErr) throw new Error(lotErr);
+        const normalizedLot = String(lotNo).trim();
+
         const material = _findInjectionMaterial(carModel, partName, color);
-        const today = UIUtils.today ? UIUtils.today() : new Date().toISOString().slice(0, 10);
-        const lotNo = `RST${today.slice(2).replace(/-/g, '')}${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`;
         const resetActor = _getResetActorFields();
         const record = {
             date: InvCalc.stampFor(new Date()),
@@ -3329,8 +3348,8 @@ var InjectionWarehouseModule = (function() {
             partName: partName,
             color: resolvedColor || color || '',
             supplier: material ? (material.supplier || '') : '',
-            lots: [{ lotNo: lotNo, qty: Math.abs(diff) }],
-            lotNo: lotNo,
+            lots: [{ lotNo: normalizedLot, qty: Math.abs(diff) }],
+            lotNo: normalizedLot,
             quantity: Math.abs(diff),
             unit: 'EA',
             source: '재고 오류 초기화',
@@ -3393,6 +3412,13 @@ var InjectionWarehouseModule = (function() {
                 <div style="color:var(--text-secondary);margin-top:6px;">보정 입고를 등록해 재고를 <strong>0 EA</strong>로 맞춥니다. 기존 입출고 기록은 삭제하지 않습니다.</div>
             </div>
             <div class="form-group">
+                <label class="form-label">보정 LOT (YYMMDD) <span style="color:var(--accent-red)">*</span></label>
+                <input type="text" class="form-input" id="injStockResetLot" maxlength="6" placeholder="예: 260716"
+                    style="font-family:monospace;letter-spacing:1px;"
+                    oninput="InjectionWarehouseModule.onLotInput(this, 'injStockResetLotMsg')">
+                <div id="injStockResetLotMsg" style="font-size:0.78rem;margin-top:4px;"></div>
+            </div>
+            <div class="form-group">
                 <label class="form-label">초기화 사유 <span style="color:var(--accent-red)">*</span></label>
                 <textarea id="injStockResetReason" class="form-textarea" rows="3" placeholder="오류 원인 및 초기화 사유를 입력하세요"></textarea>
             </div>
@@ -3405,7 +3431,7 @@ var InjectionWarehouseModule = (function() {
         `, 'md');
 
         setTimeout(function() {
-            const el = document.getElementById('injStockResetReason');
+            const el = document.getElementById('injStockResetLot');
             if (el) el.focus();
         }, 100);
     }
@@ -3413,6 +3439,14 @@ var InjectionWarehouseModule = (function() {
     async function confirmResetStockError(carModelEnc, partNameEnc, colorEnc) {
         if (!_isAdminUser()) {
             UIUtils.toast('관리자만 재고 오류를 초기화할 수 있습니다.', 'warning');
+            return;
+        }
+        const lotEl = document.getElementById('injStockResetLot');
+        const lotNo = lotEl ? lotEl.value.trim() : '';
+        const lotErr = _yymmddLotError(lotNo);
+        if (lotErr) {
+            UIUtils.toast(lotErr, 'warning');
+            if (lotEl) lotEl.focus();
             return;
         }
         const reasonEl = document.getElementById('injStockResetReason');
@@ -3428,7 +3462,7 @@ var InjectionWarehouseModule = (function() {
         const color = decodeURIComponent(colorEnc || '');
 
         try {
-            const result = await _applyStockErrorCorrection(carModel, partName, color, reason, 0);
+            const result = await _applyStockErrorCorrection(carModel, partName, color, reason, 0, lotNo);
             if (result.skipped) {
                 UIUtils.toast(
                     result.reason === 'not_negative' ? '이미 마이너스 재고가 아닙니다.' : '변경할 내용이 없습니다.',
@@ -3437,7 +3471,7 @@ var InjectionWarehouseModule = (function() {
                 return;
             }
             UIUtils.closeModal();
-            UIUtils.toast(`재고 오류 초기화 완료 (${UIUtils.formatNumber(result.before)} → 0 EA)`, 'success');
+            UIUtils.toast(`재고 오류 초기화 완료 (${UIUtils.formatNumber(result.before)} → 0 EA, LOT ${lotNo})`, 'success');
             loadData();
         } catch (e) {
             console.error('재고 오류 초기화 실패:', e);
@@ -3474,7 +3508,14 @@ var InjectionWarehouseModule = (function() {
         UIUtils.showModal('재고 오류 일괄 초기화', `
             <div style="background:rgba(220,38,38,0.06);border:1px solid rgba(220,38,38,0.2);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:0.86rem;line-height:1.6;">
                 <div style="font-weight:700;margin-bottom:4px;">마이너스 재고 <span id="injBulkStockResetCount">${items.length}</span>건을 0 EA로 보정합니다.</div>
-                <div style="color:var(--text-secondary);">각 품목에 보정 입고가 등록되며, 기존 입출고 기록은 삭제하지 않습니다.</div>
+                <div style="color:var(--text-secondary);">각 품목에 보정 입고가 등록되며, 기존 입출고 기록은 삭제하지 않습니다. 보정 LOT는 YYMMDD로 공통 적용됩니다.</div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">보정 LOT (YYMMDD) <span style="color:var(--accent-red)">*</span></label>
+                <input type="text" class="form-input" id="injBulkStockResetLot" maxlength="6" placeholder="예: 260716"
+                    style="font-family:monospace;letter-spacing:1px;"
+                    oninput="InjectionWarehouseModule.onLotInput(this, 'injBulkStockResetLotMsg')">
+                <div id="injBulkStockResetLotMsg" style="font-size:0.78rem;margin-top:4px;"></div>
             </div>
             <div class="form-group">
                 <label class="form-label">초기화 사유 <span style="color:var(--accent-red)">*</span></label>
@@ -3506,7 +3547,7 @@ var InjectionWarehouseModule = (function() {
         _renderBulkResetPreviewTable();
 
         setTimeout(function() {
-            const el = document.getElementById('injBulkStockResetReason');
+            const el = document.getElementById('injBulkStockResetLot');
             if (el) el.focus();
         }, 100);
     }
@@ -3552,6 +3593,14 @@ var InjectionWarehouseModule = (function() {
             UIUtils.toast('관리자만 재고 오류를 초기화할 수 있습니다.', 'warning');
             return;
         }
+        const lotEl = document.getElementById('injBulkStockResetLot');
+        const lotNo = lotEl ? lotEl.value.trim() : '';
+        const lotErr = _yymmddLotError(lotNo);
+        if (lotErr) {
+            UIUtils.toast(lotErr, 'warning');
+            if (lotEl) lotEl.focus();
+            return;
+        }
         const reasonEl = document.getElementById('injBulkStockResetReason');
         const reason = reasonEl ? reasonEl.value.trim() : '';
         if (!reason) {
@@ -3570,13 +3619,13 @@ var InjectionWarehouseModule = (function() {
             let done = 0;
             let skipped = 0;
             for (const item of items) {
-                const result = await _applyStockErrorCorrection(item.carModel, item.partName, item.color, reason, 0);
+                const result = await _applyStockErrorCorrection(item.carModel, item.partName, item.color, reason, 0, lotNo);
                 if (result.skipped) skipped++;
                 else done++;
             }
             UIUtils.closeModal();
             window._injStockResetItems = null;
-            UIUtils.toast(`재고 오류 일괄 초기화 완료 (${done}건${skipped ? `, 제외 ${skipped}건` : ''})`, 'success');
+            UIUtils.toast(`재고 오류 일괄 초기화 완료 (${done}건${skipped ? `, 제외 ${skipped}건` : ''}, LOT ${lotNo})`, 'success');
             loadData();
         } catch (e) {
             console.error('재고 오류 일괄 초기화 실패:', e);

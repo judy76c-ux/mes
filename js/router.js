@@ -464,9 +464,30 @@ const Router = (function() {
         }
     }
 
+    // 접근(access) 권한 정의: 로그인한 사용자의 역할이 이 페이지에 접근 권한이 없으면
+    // 페이지를 아예 렌더링하지 않는다. 비로그인 사용자는 기존 설계대로 전 페이지 조회 가능
+    // (매트릭스는 "로그인한 특정 역할을 제한"하는 용도이지 익명 조회를 막는 용도가 아니다).
+    function _isPageAccessBlocked(pageName) {
+        if (typeof AuthModule === 'undefined' || !AuthModule.getCurrentUser || !AuthModule.canAccessPage) return false;
+        const user = AuthModule.getCurrentUser();
+        if (!user) return false;
+        return !AuthModule.canAccessPage(pageName);
+    }
+
     function renderModule(pageName) {
         const contentArea = document.getElementById('contentArea');
         if (!contentArea) return;
+
+        if (_isPageAccessBlocked(pageName)) {
+            contentArea.innerHTML = `
+                <div class="empty-state">
+                    <span class="material-symbols-outlined" style="color:var(--accent-red);">lock</span>
+                    <h4>접근 권한이 없습니다</h4>
+                    <p>현재 계정의 역할에는 이 페이지에 대한 접근 권한이 없습니다. 관리자에게 문의하세요.</p>
+                </div>
+            `;
+            return;
+        }
 
         if (modules[pageName] && typeof modules[pageName].render === 'function') {
             contentArea.innerHTML = '';
