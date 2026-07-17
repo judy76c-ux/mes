@@ -68,6 +68,21 @@ const PaintInventoryModule = (function() {
         return { mfgDate, expDate };
     }
 
+    // 도료 LOT별 잔량(개) — 제조 LOT 오름차순(선입선출 순, 오래된 것 먼저) 정렬
+    function _activePaintLots(matId) {
+        const qtyMap = {};
+        (Storage.getAll(STORE) || []).forEach(d => {
+            if (d.materialId !== matId) return;
+            const key = d.prodLot || d.lotNo || '__';
+            const qty = Number(d.quantity) || 0;
+            qtyMap[key] = (qtyMap[key] || 0) + (d.type === '출고' ? -qty : qty);
+        });
+        return Object.entries(qtyMap)
+            .filter(([, qty]) => qty > 0)
+            .map(([prodLot, qty]) => ({ prodLot, qty }))
+            .sort((a, b) => a.prodLot.localeCompare(b.prodLot));
+    }
+
     function _historyCard(tab) {
         const isIn = tab === 'incoming';
         const suffix = isIn ? 'In' : 'Out';
@@ -852,9 +867,24 @@ const PaintInventoryModule = (function() {
         const qtyMax   = Number(currentQty) || 0;
         const lotLabel = prodLot || lotNo || '-';
 
+        // 선입선출(FIFO) 안내 — 이 LOT보다 먼저 입고된 LOT의 재고가 남아 있으면 경고
+        const activeLots = _activePaintLots(matId);
+        const oldestLot = activeLots.length ? activeLots[0].prodLot : '';
+        const currentKey = prodLot || lotNo || '__';
+        const fifoWarningHtml = (oldestLot && currentKey !== oldestLot)
+            ? `<div style="margin-bottom:12px;padding:10px 14px;background:rgba(255,152,0,0.1);border:1px solid var(--accent-orange);border-radius:8px;color:var(--accent-orange);font-size:0.85rem;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span class="material-symbols-outlined" style="font-size:18px;">warning</span>
+                    <strong>선입선출(FIFO) 경고</strong>
+                </div>
+                <p style="margin:5px 0 0 26px;">이 LOT(${_escapeHtml(lotLabel)})보다 먼저 입고된 <strong>LOT(${_escapeHtml(oldestLot)})</strong>의 재고가 남아 있습니다.<br>선입선출을 위해 먼저 입고된 LOT부터 출고하는 것을 권장합니다.</p>
+              </div>`
+            : '';
+
         UIUtils.showModal(
             `<span class="material-symbols-outlined" style="vertical-align:middle;color:var(--accent-red);">output</span> 도료 출고 등록`,
-            `<div style="margin-bottom:12px;padding:10px 14px;background:var(--bg-secondary);border-radius:8px;font-size:0.85rem;">
+            `${fifoWarningHtml}
+            <div style="margin-bottom:12px;padding:10px 14px;background:var(--bg-secondary);border-radius:8px;font-size:0.85rem;">
                 <span style="font-weight:700;">${mat.name}</span>
                 <span style="color:var(--text-muted);margin:0 8px;">|</span>
                 <span>제조 LOT: <strong style="font-family:monospace;">${lotLabel}</strong></span>

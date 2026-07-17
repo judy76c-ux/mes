@@ -2566,8 +2566,10 @@ var LaserInspectionModule = (function() {
     const STORE = DB.STORES.LASER_INSPECTIONS;
     const STANDARD_UPLOAD_ROLES = ['admin', 'prod_manager', 'quality_manager', 'paint_line_op'];
     const NONCONFORM_STANDARD_IMAGE_KEY = 'laser_nonconform_standard_image_v1';
+    const LASER_INSPECTION_DRAFT_KEY = 'laser_inspection_drafts';
     let _currentView = 'inspection';
     let _nonconformStandardImage = null;
+    let _inspectionDraftCache = null; // { [workLogId]: draftData }
 
     function _splitDateParts(dateValue, timeValue = '') {
         const rawDate = String(dateValue || '').trim();
@@ -2676,7 +2678,8 @@ var LaserInspectionModule = (function() {
             ? LaserWorkModule.isWorkQcFullyEntered
             : (w) => w && w.status !== 'in_progress';
         return works
-            .filter(w => w.id && !inspectedIds.has(w.id) && qcReady(w))
+            // 부분검사 중(inspectionStatus:'partial')인 작업은 검사 이력이 있어도 계속 대기 목록에 남는다.
+            .filter(w => w.id && qcReady(w) && (!inspectedIds.has(w.id) || w.inspectionStatus === 'partial'))
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     }
 
@@ -2834,6 +2837,7 @@ var LaserInspectionModule = (function() {
         `;
         renderStandby();
         search();
+        _refreshInspectionDrafts(); // 임시저장 배지 표시를 위해 캐시 선로딩
     }
 
     // ── 검사 대기 섹션 렌더링 ─────────────────────────────────────────
@@ -2875,19 +2879,37 @@ var LaserInspectionModule = (function() {
                     <tbody>
                         ${works.map(w => {
                             const info = _lotInfo(w);
+                            const _draft = _inspectionDraftCache && _inspectionDraftCache[w.id];
+                            const isPartial = w.inspectionStatus === 'partial';
+                            const inspectedQty = w.inspectedQty || 0;
+                            const remainingQty = w.remainingQty != null ? w.remainingQty : (w.quantity || 0);
+                            const progressPercent = (w.quantity && inspectedQty) ? Math.round(inspectedQty / w.quantity * 100) : 0;
+                            const partialBadge = isPartial
+                                ? `<span class="badge" style="background:var(--accent-blue);color:#fff;margin-left:4px;font-size:0.68rem;" title="부분검사됨">부분 ${progressPercent}%</span>`
+                                : '';
+                            const draftBadge = _draft
+                                ? `<span class="badge" style="background:var(--accent-orange,#f59e0b);color:#fff;margin-left:4px;font-size:0.68rem;" title="임시 저장됨 (${_formatDraftTime(_draft.savedAt)})">임시저장</span>`
+                                : '';
+                            const qtyDisplay = isPartial
+                                ? `${UIUtils.formatNumber(remainingQty)} <span style="font-size:0.72rem;color:var(--text-muted);">/ ${UIUtils.formatNumber(w.quantity || 0)}</span>`
+                                : UIUtils.formatNumber(w.quantity || 0);
+                            const btnText = isPartial ? '계속 검사' : (_draft ? '이어서 검사' : '검사 등록');
+                            const btnColor = isPartial ? 'var(--accent-blue)' : (_draft ? 'var(--accent-orange,#f59e0b)' : 'inherit');
+                            const btnStyle = isPartial || _draft ? ` style="color:${btnColor};border-color:${btnColor};"` : '';
+                            const btnClass = isPartial || _draft ? 'btn-outline' : 'btn-primary';
                             return `
-                            <tr>
+                            <tr${isPartial ? ' style="background:rgba(37,99,235,0.06);"' : (_draft ? ' style="background:rgba(245,158,11,0.06);"' : '')}>
                                 <td>${_dateStack(w.date, w.startTime)}</td>
                                 <td style="white-space:nowrap;"><span class="badge badge-info">${w.machine || '-'}</span></td>
                                 <td style="white-space:nowrap;font-size:0.82rem;">${w.carModel || '-'}</td>
-                                <td style="font-weight:600;">${w.partName || '-'}</td>
+                                <td style="font-weight:600;">${w.partName || '-'}${partialBadge}${draftBadge}</td>
                                 <td style="white-space:nowrap;">${w.color || '-'}</td>
-                                <td style="text-align:right; font-weight:700; color:var(--accent-blue);">${UIUtils.formatNumber(w.quantity || 0)}</td>
+                                <td style="text-align:right; font-weight:700; color:var(--accent-blue);">${qtyDisplay}</td>
                                 <td>${_dateListHtml(info.paintDates)}</td>
                                 <td>${_lotListHtml(info.injectionLots)}</td>
                                 <td style="white-space:nowrap;">
-                                    <button class="btn btn-sm btn-primary" onclick="LaserInspectionModule.openInspFromWork('${w.id}')">
-                                        <span class="material-symbols-outlined" style="font-size:0.9rem;">add_task</span> 검사 등록
+                                    <button class="btn btn-sm ${btnClass}" onclick="LaserInspectionModule.openInspFromWork('${w.id}')"${btnStyle}>
+                                        <span class="material-symbols-outlined" style="font-size:0.9rem;">add_task</span> ${btnText}
                                     </button>${isAdmin ? `
                                     <button class="btn btn-sm btn-danger" onclick="LaserInspectionModule._deleteStandbyWork('${w.id}')" style="margin-left:4px;">
                                         <span class="material-symbols-outlined" style="font-size:0.9rem;">delete</span> 삭제
@@ -3364,6 +3386,17 @@ var LaserInspectionModule = (function() {
             const failEl = document.getElementById('liDefectQty');
             if (failEl) failEl.value = failQty;
         }
+        // ✓ 부분검사 모드: 양품수는 독립 입력값 — 미검사분을 base로 자동 채우지 않는다.
+        if (_isPartialInspectionMode()) {
+            const goodQty = parseInt(document.getElementById('liGoodQty')?.value || 0, 10) || 0;
+            const total = goodQty + failQty;
+            const tEl = document.getElementById('liTotalQty');
+            if (tEl) tEl.value = total > 0 ? total : '';
+            const inspQtyEl = document.getElementById('liInspQty');
+            if (inspQtyEl) inspQtyEl.value = total;
+            _updatePackagingCalc();
+            return;
+        }
         const goodQty = Math.max(0, base - failQty);
         const gEl = document.getElementById('liGoodQty');
         if (gEl) gEl.value = goodQty > 0 || failQty > 0 ? goodQty : '';
@@ -3373,6 +3406,149 @@ var LaserInspectionModule = (function() {
         const inspQtyEl = document.getElementById('liInspQty');
         if (inspQtyEl) inspQtyEl.value = total;
         _updatePackagingCalc();
+    }
+
+    function _isPartialInspectionMode() {
+        const checkbox = document.getElementById('liIsPartialInspection');
+        return !!(checkbox && checkbox.checked);
+    }
+
+    // ✓ 부분검사 토글 — 체크: 양품수 직접입력 전환 + 이번 회차 값 초기화 / 해제: 검사기준 자동계산 복원
+    function _togglePartialInspection() {
+        const checkbox = document.getElementById('liIsPartialInspection');
+        const infoDiv = document.getElementById('liPartialInspectionInfo');
+        const goodQtyEl = document.getElementById('liGoodQty');
+        const defectQtyEl = document.getElementById('liDefectQty');
+        if (checkbox && infoDiv) infoDiv.style.display = checkbox.checked ? 'flex' : 'none';
+        if (checkbox && checkbox.checked) {
+            if (goodQtyEl) { goodQtyEl.readOnly = false; goodQtyEl.style.background = ''; goodQtyEl.value = 0; }
+            if (defectQtyEl) defectQtyEl.value = 0;
+        } else {
+            if (goodQtyEl && goodQtyEl.dataset.hasWorkRef === '1') {
+                goodQtyEl.readOnly = true;
+                goodQtyEl.style.background = 'var(--bg-secondary)';
+            }
+            if (defectQtyEl) defectQtyEl.value = 0;
+        }
+        _recalcInspQuantities();
+    }
+
+    // ── 레이져 검사 임시 저장(draft) — workLogId별 폼 스냅샷 캐시 (DB 레코드 아님) ──
+    function _formatDraftTime(iso) {
+        try {
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return '';
+            const p = n => String(n).padStart(2, '0');
+            return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+        } catch (e) { return ''; }
+    }
+
+    async function _getInspectionDrafts(force) {
+        if (_inspectionDraftCache && !force) return _inspectionDraftCache;
+        let drafts = {};
+        try { drafts = await Storage.getConfigValue(LASER_INSPECTION_DRAFT_KEY) || {}; } catch (e) { drafts = {}; }
+        if (!drafts || typeof drafts !== 'object') drafts = {};
+        _inspectionDraftCache = drafts;
+        return drafts;
+    }
+
+    async function _refreshInspectionDrafts() {
+        await _getInspectionDrafts(true);
+        if (_currentView === 'inspection' && document.getElementById('liStandbyBody')) {
+            renderStandby();
+        }
+    }
+
+    // 현재 검사 모달의 입력값을 수집 (임시 저장 & 복원 공용)
+    function _collectInspectionFormData() {
+        const g = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+        const defects = {};
+        document.querySelectorAll('[id^="linj-"],[id^="lpaint-"],[id^="llaser-"]').forEach(el => {
+            const v = String(el.value || '').trim();
+            if (v !== '' && v !== '0') defects[el.id] = v;
+        });
+        return {
+            date:         g('liDate'),
+            startTime:    g('liStartTime'),
+            endTime:      g('liEndTime'),
+            goodQty:      g('liGoodQty'),
+            defectQty:    g('liDefectQty'),
+            prevResidual: g('liPrevResidual'),
+            packUnit:     g('liPackUnit'),
+            packBoxCount: g('liPackBoxCount'),
+            inspectors:   _collectInspectors(),
+            defects
+        };
+    }
+
+    async function _saveInspectionDraft(workId) {
+        if (!_canEditInspection()) {
+            UIUtils.toast('레이져 검사 입력 권한이 없습니다.', 'warning');
+            return;
+        }
+        if (!workId) { UIUtils.toast('임시 저장할 검사 대상이 없습니다.', 'warning'); return; }
+        const work = Storage.getById(DB.STORES.LASER_WORK_LOG, workId);
+        if (!work) { UIUtils.toast('작업일지를 찾을 수 없습니다.', 'warning'); return; }
+
+        const data = _collectInspectionFormData();
+        data.savedAt = new Date().toISOString();
+
+        try {
+            const drafts = await _getInspectionDrafts();
+            drafts[workId] = data;
+            await Storage.setConfigValue(LASER_INSPECTION_DRAFT_KEY, drafts);
+            _inspectionDraftCache = drafts;
+            UIUtils.toast('임시 저장되었습니다. 나중에 이어서 작성할 수 있습니다.', 'success');
+            const notice = document.getElementById('liDraftNotice');
+            const timeEl = document.getElementById('liDraftNoticeTime');
+            if (notice) notice.style.display = 'flex';
+            if (timeEl) timeEl.textContent = _formatDraftTime(data.savedAt);
+        } catch (e) {
+            console.error('레이져 검사 임시 저장 실패', e);
+            UIUtils.toast('임시 저장 중 오류가 발생했습니다.', 'error');
+        }
+    }
+
+    function _applyInspectionDraft(draft) {
+        if (!draft) return;
+        const setV = (id, val) => { const el = document.getElementById(id); if (el && val != null && val !== '') el.value = val; };
+        setV('liDate',      draft.date);
+        setV('liStartTime', draft.startTime);
+        setV('liEndTime',   draft.endTime);
+        setV('liPrevResidual', draft.prevResidual);
+        setV('liPackUnit',     draft.packUnit);
+        setV('liPackBoxCount', draft.packBoxCount);
+        _initInspectorFields(draft.inspectors || []);
+        Object.entries(draft.defects || {}).forEach(([id, val]) => {
+            const el = document.getElementById(id);
+            if (el) el.value = val;
+        });
+        _recalcInspQuantities();
+        // 불량 유형 상세가 없으면(합산 0) 저장된 양품/불량 값을 그대로 복원
+        if (!draft.defects || Object.keys(draft.defects).length === 0) {
+            setV('liGoodQty',   draft.goodQty);
+            setV('liDefectQty', draft.defectQty);
+            _recalcInspQuantities();
+        }
+        _calculateInspectionTime();
+        _updatePackagingCalc();
+    }
+
+    async function _clearInspectionDraft(workId, silent) {
+        if (!workId) return;
+        try {
+            const drafts = await _getInspectionDrafts();
+            if (drafts[workId]) {
+                delete drafts[workId];
+                await Storage.setConfigValue(LASER_INSPECTION_DRAFT_KEY, drafts);
+                _inspectionDraftCache = drafts;
+            }
+        } catch (e) { /* 무시 */ }
+        if (!silent) {
+            UIUtils.toast('임시 저장 내용을 삭제했습니다.', 'info');
+            const notice = document.getElementById('liDraftNotice');
+            if (notice) notice.style.display = 'none';
+        }
     }
 
     async function _syncWorkQtyToWorkLogImmediate(newQty) {
@@ -3397,16 +3573,113 @@ var LaserInspectionModule = (function() {
     function _enableWorkQtyEdit() {
         const el = document.getElementById('liWorkQty');
         if (!el || el.disabled) return;
-        const current = Number(el.value) || 0;
-        const input = window.prompt('작업수량을 입력하세요.', String(current));
-        if (input === null) return;
-        const newQty = Math.max(0, parseInt(String(input).replace(/[^\d]/g, ''), 10) || 0);
+        // 이미 편집 중이면 포커스만
+        if (!el.readOnly) {
+            el.focus();
+            el.select();
+            return;
+        }
+        const prev = Number(el.value) || 0;
+        el.readOnly = false;
+        el.style.background = '#fff';
+        el.style.borderColor = 'var(--accent-blue)';
+        el.style.minWidth = '110px';
+        el.style.width = '100%';
+        el.style.flex = '1 1 110px';
+        el.dataset.prevQty = String(prev);
+
+        const btn = document.getElementById('liWorkQtyEditBtn');
+        if (btn) {
+            btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:14px;">check</span> 적용';
+            btn.className = 'btn btn-sm btn-primary';
+            btn.style.flexShrink = '0';
+            btn.setAttribute('onclick', 'LaserInspectionModule.confirmWorkQtyEdit()');
+        }
+        let cancelBtn = document.getElementById('liWorkQtyCancelBtn');
+        if (!cancelBtn && btn && btn.parentNode) {
+            cancelBtn = document.createElement('button');
+            cancelBtn.type = 'button';
+            cancelBtn.id = 'liWorkQtyCancelBtn';
+            cancelBtn.className = 'btn btn-sm btn-outline';
+            cancelBtn.style.cssText = 'padding:4px 10px;font-size:0.75rem;white-space:nowrap;flex-shrink:0;';
+            cancelBtn.textContent = '취소';
+            cancelBtn.setAttribute('onclick', 'LaserInspectionModule.cancelWorkQtyEdit()');
+            btn.parentNode.insertBefore(cancelBtn, btn.nextSibling);
+        }
+        const row = el.parentElement;
+        if (row) {
+            row.style.flexWrap = 'wrap';
+            row.style.rowGap = '6px';
+        }
+        el.oninput = function() { _recalcInspQuantities(); };
+        el.onkeydown = function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                confirmWorkQtyEdit();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                cancelWorkQtyEdit();
+            }
+        };
+        el.focus();
+        el.select();
+    }
+
+    function cancelWorkQtyEdit() {
+        const el = document.getElementById('liWorkQty');
+        if (!el) return;
+        const prev = Number(el.dataset.prevQty);
+        if (Number.isFinite(prev) && prev > 0) el.value = prev;
+        el.readOnly = true;
+        el.style.background = 'var(--bg-secondary)';
+        el.style.borderColor = '';
+        el.style.minWidth = '110px';
+        el.style.flex = '1 1 110px';
+        el.oninput = null;
+        el.onkeydown = null;
+        delete el.dataset.prevQty;
+        _recalcInspQuantities();
+        _resetWorkQtyEditButtons();
+    }
+
+    function _resetWorkQtyEditButtons() {
+        const btn = document.getElementById('liWorkQtyEditBtn');
+        if (btn) {
+            btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:14px;">edit</span> 변경';
+            btn.className = 'btn btn-sm btn-outline';
+            btn.style.cssText = 'padding:4px 10px;font-size:0.75rem;white-space:nowrap;gap:3px;flex-shrink:0;';
+            btn.setAttribute('onclick', 'LaserInspectionModule._enableWorkQtyEdit()');
+        }
+        const cancelBtn = document.getElementById('liWorkQtyCancelBtn');
+        if (cancelBtn) cancelBtn.remove();
+        const panel = document.getElementById('liWorkQtyEditPanel');
+        if (panel) panel.remove();
+    }
+
+    function _previewWorkQtyEdit() {
+        // 인라인 편집 시 입력과 동시에 _recalcInspQuantities 로 반영
+    }
+
+    function confirmWorkQtyEdit() {
+        const el = document.getElementById('liWorkQty');
+        if (!el) return;
+        const newQty = Math.max(0, parseInt(String(el.value || '').replace(/[^\d]/g, ''), 10) || 0);
         if (newQty <= 0) {
             UIUtils.toast('작업수량은 1 이상이어야 합니다.', 'warning');
+            el.focus();
             return;
         }
         el.value = newQty;
+        el.readOnly = true;
+        el.style.background = 'var(--bg-secondary)';
+        el.style.borderColor = '';
+        el.style.minWidth = '110px';
+        el.style.flex = '1 1 110px';
+        el.oninput = null;
+        el.onkeydown = null;
+        delete el.dataset.prevQty;
         _recalcInspQuantities();
+        _resetWorkQtyEditButtons();
         _syncWorkQtyToWorkLogImmediate(newQty)
             .then(function() {
                 UIUtils.toast('작업일지 수량 ' + UIUtils.formatNumber(newQty) + ' EA 반영', 'success');
@@ -3431,14 +3704,14 @@ var LaserInspectionModule = (function() {
             <div class="card-body" style="padding:12px;">
                 <h5 style="margin:0 0 10px 0;font-size:0.85rem;color:var(--text-primary);">작업 수량</h5>
                 <div style="display:flex;flex-direction:column;gap:8px;">
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <label class="form-label" style="font-size:0.72rem;margin:0;flex:0 0 52px;">작업수량</label>
+                    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                        <label class="form-label" style="font-size:0.72rem;margin:0;flex:0 0 auto;white-space:nowrap;">작업수량</label>
                         <input type="number" class="form-input" id="liWorkQty" value="${workQty}" min="0" readonly
-                            style="text-align:right;font-weight:700;font-size:0.95rem;padding:5px 8px;flex:1;background:var(--bg-secondary);">
-                        <span style="font-size:0.72rem;color:var(--text-muted);">EA</span>
-                        <button type="button" class="btn btn-sm btn-outline"
+                            style="text-align:right;font-weight:700;font-size:0.95rem;padding:5px 8px;flex:1 1 110px;min-width:110px;max-width:100%;background:var(--bg-secondary);">
+                        <span style="font-size:0.72rem;color:var(--text-muted);flex-shrink:0;">EA</span>
+                        <button type="button" id="liWorkQtyEditBtn" class="btn btn-sm btn-outline"
                             onclick="LaserInspectionModule._enableWorkQtyEdit()"
-                            style="padding:4px 10px;font-size:0.75rem;white-space:nowrap;gap:3px;">
+                            style="padding:4px 10px;font-size:0.75rem;white-space:nowrap;gap:3px;flex-shrink:0;">
                             <span class="material-symbols-outlined" style="font-size:14px;">edit</span> 변경
                         </button>
                     </div>
@@ -3596,10 +3869,16 @@ var LaserInspectionModule = (function() {
                 </button>
             </div>`;
         }
+        const draftBtn = opts.draftAction
+            ? `<button class="btn btn-outline" onclick="${opts.draftAction}" style="justify-content:center;min-width:96px;color:var(--accent-orange);border-color:var(--accent-orange);" title="검사 도중 다른 작업으로 변경 시 임시 저장 가능">
+                <span class="material-symbols-outlined" style="font-size:18px;">bookmark_add</span> 임시 저장
+            </button>`
+            : '';
         return `
         <div style="display:flex;gap:6px;flex:0 0 auto;">
+            ${draftBtn}
             <button class="btn btn-primary" onclick="${saveAction}" style="justify-content:center;min-width:96px;">
-                <span class="material-symbols-outlined">save</span> 저장
+                <span class="material-symbols-outlined">save</span> 저장${opts.draftAction ? ' (검사 완료)' : ''}
             </button>
             <button class="btn btn-outline" onclick="LaserInspectionModule._closeModal()" style="justify-content:center;min-width:80px;">
                 <span class="material-symbols-outlined">close</span> 취소
@@ -3655,17 +3934,46 @@ var LaserInspectionModule = (function() {
         _liColor    = w.color    || ''; _liWorkId   = w.id;
         const prevResidualQty = _getPrevResidualQty(w.carModel, w.partName, w.color);
         const packUnit = _parsePackNum(w.packUnit) || _findProductPackUnit(w.carModel, w.partName, w.color);
-        const inspBase = _getInspBaseFromWork(w);
-        const left = _buildWorkQtyCard(w) + _buildInspInfoCard({}, w) +
+        // ✓ 부분검사 이어하기: 남은 수량(remainingQty)을 이번 회차 검사 기준으로 삼는다.
+        const isPartialWork = w.inspectionStatus === 'partial';
+        const inspBase = isPartialWork ? (w.remainingQty || 0) : _getInspBaseFromWork(w);
+        const partialBannerHtml = isPartialWork
+            ? `<div style="display:flex;align-items:center;gap:8px;padding:9px 12px;margin-bottom:8px;background:rgba(37,99,235,0.08);border:1px solid rgba(37,99,235,0.25);border-radius:8px;font-size:0.82rem;color:var(--text-primary);">
+                    <span class="material-symbols-outlined" style="color:var(--accent-blue);">restart_alt</span>
+                    <div><strong>부분검사 계속</strong>: 이전 ${UIUtils.formatNumber(w.inspectedQty || 0)}개 검사 완료,
+                    <strong style="color:var(--accent-blue);">${UIUtils.formatNumber(w.remainingQty || 0)}개</strong> 남음</div>
+                </div>`
+            : '';
+        const draftNoticeHtml = `
+            <div id="liDraftNotice" style="display:none;align-items:center;gap:8px;padding:8px 12px;margin-bottom:8px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);border-radius:8px;font-size:0.8rem;color:var(--text-primary);">
+                <span class="material-symbols-outlined" style="color:var(--accent-orange,#f59e0b);">bookmark_added</span>
+                <div style="flex:1;">임시 저장된 내용을 불러왔습니다. (<span id="liDraftNoticeTime"></span>)</div>
+                <button type="button" class="btn btn-sm btn-outline" onclick="LaserInspectionModule._clearInspectionDraft('${workId}')">삭제</button>
+            </div>`;
+        const left = draftNoticeHtml + _buildWorkQtyCard(w) + _buildInspInfoCard({}, w) +
             _buildQtyCard({}, w, inspBase) +
             _buildPackagingCard({}, prevResidualQty, packUnit, inspBase);
         _openModal(`레이져 검사 등록 — ${w.partName || ''}`,
-            _buildWorkBanner(w) + _build2Col(left, _buildDefectCard(),
-                _buildActionBar('LaserInspectionModule._saveInspection()')));
-        setTimeout(function() {
+            partialBannerHtml + _buildWorkBanner(w) + _build2Col(left, _buildDefectCard(),
+                _buildActionBar('LaserInspectionModule._saveInspection()', { draftAction: `LaserInspectionModule._saveInspectionDraft('${workId}')` })));
+        setTimeout(async function() {
             _calculateInspectionTime();
             _initInspectorFields();
             _recalcInspQuantities();
+            // ✓ 부분검사 이어하기는 항상 새 라운드로 취급 — 임시저장을 불러오지 않는다.
+            if (!isPartialWork) {
+                try {
+                    const drafts = await _getInspectionDrafts();
+                    const draft = drafts[workId];
+                    if (draft) {
+                        _applyInspectionDraft(draft);
+                        const notice = document.getElementById('liDraftNotice');
+                        const timeEl = document.getElementById('liDraftNoticeTime');
+                        if (notice) notice.style.display = 'flex';
+                        if (timeEl) timeEl.textContent = _formatDraftTime(draft.savedAt);
+                    }
+                } catch (e) { /* 무시 */ }
+            }
         }, 0);
     }
 
@@ -3690,7 +3998,8 @@ var LaserInspectionModule = (function() {
             _buildQtyCard(d, workRef, workRef ? _getInspBaseFromWork(workRef) : 0) +
             _buildPackagingCard(d, prevResidualQty, packUnit);
         const footer = isEdit
-            ? _buildActionBar(`LaserInspectionModule._saveInspection('${id}')`)
+            ? _buildActionBar(`LaserInspectionModule._saveInspection('${id}')`,
+                d.workLogId ? { draftAction: `LaserInspectionModule._saveInspectionDraft('${d.workLogId}')` } : {})
             : _buildActionBar('', { readonly: true, editId: canEdit ? id : null });
         _openModal(isEdit ? '레이져 검사 수정' : '레이져 검사 보기',
             (workRef ? _buildWorkBanner(workRef) : '') +
@@ -3795,14 +4104,31 @@ var LaserInspectionModule = (function() {
             : Math.max(0, base - failQty);
         const totalQty = goodQty + failQty;
         const goodReadonly = hasWorkRef ? 'readonly style="background:var(--bg-secondary);text-align:right;font-weight:600;font-size:0.9rem;padding:5px 6px;"' : 'style="text-align:right;font-weight:600;font-size:0.9rem;padding:5px 6px;"';
+        const isPartial = !!d.isPartial;
         return `
         <div class="card">
             <div class="card-body" style="padding:12px;">
-                <h5 style="margin:0 0 10px 0;font-size:0.85rem;color:var(--text-primary);">검사 수량</h5>
+                <h5 style="margin:0 0 10px 0;font-size:0.85rem;color:var(--text-primary);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    검사 수량
+                    ${hasWorkRef ? `
+                    <label style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:0.75rem;font-weight:400;color:var(--text-secondary);cursor:pointer;">
+                        <input type="checkbox" id="liIsPartialInspection" ${isPartial ? 'checked' : ''} onchange="LaserInspectionModule._togglePartialInspection()" style="cursor:pointer;">
+                        <span>부분검사</span>
+                    </label>` : ''}
+                </h5>
+                ${hasWorkRef ? `
+                <div style="margin:-2px 0 8px 0;font-size:0.68rem;color:var(--text-muted);line-height:1.35;text-align:right;">
+                    일부 수량만 검사 완료 후 저장 시 체크 — 나머지는 검사 대기로 유지됩니다.
+                </div>
+                <div id="liPartialInspectionInfo" style="display:${isPartial ? 'flex' : 'none'};align-items:flex-start;gap:6px;margin-bottom:8px;padding:7px 10px;background:rgba(37,99,235,0.06);border:1px solid rgba(37,99,235,0.18);border-radius:6px;font-size:0.72rem;color:var(--text-secondary);line-height:1.4;">
+                    <span class="material-symbols-outlined" style="font-size:14px;color:var(--accent-blue);">info</span>
+                    <span>부분검사 시 입력한 수량(양품+불량, 최대 <strong>${UIUtils.formatNumber(base)}</strong> EA)만 검사 완료되며, 나머지는 검사 대기로 유지됩니다.</span>
+                </div>` : ''}
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">
                     <div class="form-group" style="margin:0;">
                         <label class="form-label" style="font-size:0.72rem;">양품수${hasWorkRef ? ' <span style="font-weight:400;color:var(--text-muted);">(자동)</span>' : ''}</label>
                         <input type="number" class="form-input" id="liGoodQty" value="${goodQty > 0 || failQty > 0 ? goodQty : ''}" placeholder="-" min="0"
+                            data-has-work-ref="${hasWorkRef ? '1' : '0'}"
                             ${goodReadonly}
                             oninput="LaserInspectionModule._updateDefectQty()"
                             onchange="LaserInspectionModule._updateDefectQty()">
@@ -3925,7 +4251,7 @@ var LaserInspectionModule = (function() {
         return lots;
     }
 
-    async function _syncWorkLogFromInspection(data) {
+    async function _syncWorkLogFromInspection(data, isPartial, existingId) {
         if (!data.workLogId) return null;
         const workRef = Storage.getById(DB.STORES.LASER_WORK_LOG, data.workLogId);
         if (!workRef) return null;
@@ -3950,8 +4276,28 @@ var LaserInspectionModule = (function() {
             }
         }
 
+        // ✓ 부분검사 진행 상태(작업일지에 누적 검사수량/남은수량 저장)
+        let remainingQty = 0;
+        if (isPartial) {
+            const totalBase = _getInspBaseFromWork(qtyChanged ? Object.assign({}, workRef, patch) : workRef);
+            // 기존 검사 건 수정 시, 이전에 이 건이 이미 반영한 수량만큼은 누적에서 빼고 새 값으로 대체(중복 가산 방지)
+            let prevRoundQty = 0;
+            if (existingId) {
+                const prevRecord = Storage.getById(STORE, existingId);
+                prevRoundQty = prevRecord ? (Number(prevRecord.inspQty) || 0) : 0;
+            }
+            const cumulativeInspectedQty = Math.max(0, (Number(workRef.inspectedQty) || 0) - prevRoundQty + (Number(data.inspQty) || 0));
+            remainingQty = Math.max(0, totalBase - cumulativeInspectedQty);
+            patch.inspectionStatus = remainingQty > 0 ? 'partial' : 'completed';
+            patch.inspectedQty = cumulativeInspectedQty;
+            patch.remainingQty = remainingQty;
+            patch.lastInspectionDate = data.date || UIUtils.today();
+        } else {
+            patch.inspectionStatus = 'completed';
+        }
+
         await Storage.update(DB.STORES.LASER_WORK_LOG, data.workLogId, Object.assign({}, workRef, patch));
-        return { qtyChanged: qtyChanged, oldQty: oldQty, newQty: newWorkQty };
+        return { qtyChanged: qtyChanged, oldQty: oldQty, newQty: newWorkQty, isPartial: isPartial, remainingQty: remainingQty };
     }
 
     async function _saveInspection(existingId) {
@@ -3966,30 +4312,46 @@ var LaserInspectionModule = (function() {
         }
         if (!_validateFailQty(data)) return;
 
-        // 외관검사 합계(양품+불량) ↔ 레이저 작업일지 작업수량 연동
+        // ✓ 부분검사: 이번 회차 검사수량이 검사 대상 수량(검사 기준)을 넘지 않는지 확인
+        const isPartial = _isPartialInspectionMode();
+        const availableQty = _getInspBaseFromForm();
+        if (isPartial && availableQty > 0 && data.inspQty > availableQty) {
+            UIUtils.toast(`이번 검사수량(${UIUtils.formatNumber(data.inspQty)})이 검사 대상 수량(${UIUtils.formatNumber(availableQty)})을 초과할 수 없습니다.`, 'warning');
+            return;
+        }
+        data.isPartial = isPartial;
+        data.inspectionStatus = isPartial ? 'partial' : 'completed';
+
+        // 외관검사 합계(양품+불량) ↔ 레이저 작업일지 작업수량 연동 + 부분검사 진행상태 반영
         let syncResult = null;
         try {
-            syncResult = await _syncWorkLogFromInspection(data);
+            syncResult = await _syncWorkLogFromInspection(data, isPartial, existingId);
         } catch (e) {
             console.error('[LaserInspection] work log sync failed:', e);
             UIUtils.toast('작업일지 수량 연동에 실패했습니다: ' + (e && e.message ? e.message : '오류'), 'error');
             return;
         }
 
+        const partialMsg = (isPartial && syncResult)
+            ? (syncResult.remainingQty > 0
+                ? `부분검사 완료: 이번 회차 ${UIUtils.formatNumber(data.inspQty)} EA 검사, 남은 수량 ${UIUtils.formatNumber(syncResult.remainingQty)} EA (검사 대기 상태 유지)`
+                : '부분검사로 전량 소진되어 검사 완료 처리되었습니다.')
+            : null;
+
         if (existingId) {
             await Storage.update(STORE, existingId, data);
             UIUtils.toast(
-                syncResult && syncResult.qtyChanged
+                partialMsg || (syncResult && syncResult.qtyChanged
                     ? `수정되었습니다. 작업일지 수량 ${UIUtils.formatNumber(syncResult.oldQty)} → ${UIUtils.formatNumber(syncResult.newQty)} EA 반영`
-                    : '수정되었습니다.',
+                    : '수정되었습니다.'),
                 'success'
             );
         } else {
             await Storage.add(STORE, data);
             UIUtils.toast(
-                syncResult && syncResult.qtyChanged
+                partialMsg || (syncResult && syncResult.qtyChanged
                     ? `검사 등록되었습니다. 작업일지 수량 ${UIUtils.formatNumber(syncResult.oldQty)} → ${UIUtils.formatNumber(syncResult.newQty)} EA 반영`
-                    : '검사 등록되었습니다.',
+                    : '검사 등록되었습니다.'),
                 'success'
             );
 
@@ -4037,6 +4399,8 @@ var LaserInspectionModule = (function() {
                 });
             }
         }
+        // 검사 저장(부분검사 포함) 완료 시 임시 저장 내용은 정리
+        if (data.workLogId) await _clearInspectionDraft(data.workLogId, true);
         _closeModal();
         renderStandby();
         search();
@@ -4455,9 +4819,10 @@ var LaserInspectionModule = (function() {
         showNonconformStandardPage, showInspectionPage,
         focusNonconformStandardPasteZone, handleNonconformStandardPaste, printNonconformStandardPage,
         _updateDefectTotal, _updateDefectQty, _updateGoodQty, _calculateInspectionTime,
-        _enableWorkQtyEdit, _recalcInspQuantities,
+        _enableWorkQtyEdit, confirmWorkQtyEdit, cancelWorkQtyEdit, _previewWorkQtyEdit, _recalcInspQuantities,
         _updatePackagingCalc, _autoBoxCount,
         _addInspectorField, _syncInspectorOptions,
+        _togglePartialInspection, _saveInspectionDraft, _clearInspectionDraft,
     };
 })();
 

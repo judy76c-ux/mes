@@ -4,6 +4,96 @@
 var PaintIncomingInspectionModule = (function() {
     const STORE = DB.STORES.PAINT_INCOMING_INSPECTIONS;
 
+    /** 도료 마스터에서 원료 찾기 (구매처+도료명 우선) */
+    function _findPaintMaterial(paintName, supplier) {
+        const mats = Storage.getAll(DB.STORES.PAINT_MATERIALS) || [];
+        const name = String(paintName || '').trim();
+        if (!name) return null;
+        const nameL = name.toLowerCase();
+        const exact = mats.filter(m => String(m.name || '').trim().toLowerCase() === nameL);
+        if (exact.length) {
+            const sup = String(supplier || '').trim();
+            if (sup) {
+                const bySup = exact.find(m => String(m.supplier || '').trim() === sup);
+                if (bySup) return bySup;
+            }
+            return exact[0];
+        }
+        return mats.find(m => {
+            const mn = String(m.name || '').trim().toLowerCase();
+            return mn && (nameL.includes(mn) || mn.includes(nameL));
+        }) || null;
+    }
+
+    /**
+     * 성적서 대상 제외 — 도료종류=경화제 (미등록 시 이름 키워드 보조)
+     * 외부(개요 등)에서도 사용: PaintIncomingInspectionModule.isCertExempt(...)
+     */
+    function isCertExempt(paintName, supplier, paintTypeHint) {
+        const mat = _findPaintMaterial(paintName, supplier);
+        const pt = String((mat && mat.paintType) || paintTypeHint || '').trim();
+        if (pt === '경화제') return true;
+        if (!pt) {
+            const n = String((mat && mat.name) || paintName || '');
+            if (/경화제|hardener|curing\s*agent|\bC\.?A\b/i.test(n)) return true;
+        }
+        return false;
+    }
+
+    function _isCertPendingRecord(d) {
+        if (!d) return false;
+        if (d.certCheck === '접수완료' || d.certCheck === '대상외') return false;
+        if (isCertExempt(d.paintName, d.supplier, d.paintType)) return false;
+        return true;
+    }
+
+    function _applyCertExemptIfNeeded(data) {
+        if (!data) return data;
+        if (isCertExempt(data.paintName, data.supplier, data.paintType)) {
+            data.certCheck = '대상외';
+            if (!String(data.certNote || '').trim()) data.certNote = '경화제 — 성적서 대상 외';
+        }
+        return data;
+    }
+
+    function _syncCertExemptUI() {
+        const paintName = (document.getElementById('piPaintName') || {}).value || '';
+        const supplier = (document.getElementById('piSupplier') || {}).value || '';
+        const exempt = isCertExempt(paintName, supplier);
+        const hint = document.getElementById('piCertExemptHint');
+        const note = document.getElementById('piCertNote');
+        const photoRow = document.getElementById('piCertPhotoRow');
+        const radios = Array.from(document.querySelectorAll('input[name="piCert"]'));
+        const exemptRadio = document.getElementById('piCertExemptRadio');
+        if (exemptRadio) {
+            exemptRadio.closest('label').style.display = exempt ? '' : 'none';
+        }
+        if (exempt) {
+            if (exemptRadio) {
+                exemptRadio.checked = true;
+            } else {
+                // fallback: 접수완료로 표시하지 않고 숨은 값 유지 — collect에서 보정
+            }
+            radios.forEach(r => {
+                if (r.value !== '대상외') r.disabled = true;
+            });
+            if (hint) {
+                hint.style.display = '';
+                hint.textContent = '경화제(도료종류) — 성적서 접수 대상에서 제외됩니다.';
+            }
+            if (note && !note.value.trim()) note.value = '경화제 — 성적서 대상 외';
+            if (photoRow) photoRow.style.display = 'none';
+        } else {
+            radios.forEach(r => { r.disabled = false; });
+            if (exemptRadio && exemptRadio.checked) {
+                const wait = radios.find(r => r.value === '접수대기');
+                if (wait) wait.checked = true;
+            }
+            if (hint) hint.style.display = 'none';
+            if (note && note.value === '경화제 — 성적서 대상 외') note.value = '';
+        }
+    }
+
     function render(container) {
         container.innerHTML = `
             <div class="fade-in-up">
@@ -62,6 +152,7 @@ var PaintIncomingInspectionModule = (function() {
                                         <th>입고수량</th>
                                         <th>제조일자</th>
                                         <th>제조사 표기 LOT</th>
+                                        <th>명판</th>
                                         <th>LOT구분</th>
                                         <th>용기상태</th>
                                         <th>유효기간</th>
@@ -207,7 +298,7 @@ var PaintIncomingInspectionModule = (function() {
     function renderTable(data) {
         const tbody = document.getElementById('piTableBody');
         if (data.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-muted);">데이터가 없습니다.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-muted);">데이터가 없습니다.</td></tr>`;
             return;
         }
 
@@ -221,6 +312,7 @@ var PaintIncomingInspectionModule = (function() {
                 : (d.expDateCheck === '6개월 미만') ? 'info'
                 : (d.expDateCheck === '불합격' || d.expDateCheck === '6개월 이상') ? 'danger' : '';
             const certType = d.certCheck === '합격' || d.certCheck === '접수완료' ? 'success'
+                : d.certCheck === '대상외' ? 'secondary'
                 : (d.certCheck === '불합격' || d.certCheck === '접수대기') ? 'danger' : '';
             const _dsp = (d.date || '').split(' ');
             const _dpp = (_dsp[0] || '').split('-');
@@ -237,6 +329,11 @@ var PaintIncomingInspectionModule = (function() {
                     <td style="text-align:right">${UIUtils.formatNumber(d.incomingQty)}</td>
                     <td>${d.mfgDate || '-'}</td>
                     <td>${d.lotNo || '-'}</td>
+                    <td>${d.nameplatePhotoUrl
+                        ? `<a href="${ApiClient.photoUrl(d.nameplatePhotoUrl)}" target="_blank" title="명판 사진 (클릭 시 원본 보기)">
+                                <img src="${ApiClient.photoUrl(d.nameplatePhotoUrl)}" style="width:32px;height:32px;object-fit:cover;border-radius:4px;border:1px solid var(--border-color);cursor:pointer;">
+                            </a>`
+                        : '<span style="color:var(--text-muted);font-size:0.75rem;">-</span>'}</td>
                     <td>${lotCheckBadge(d.lotCheck)}</td>
                     <td>${d.containerStatus && containerType ? UIUtils.badge(d.containerStatus, containerType) : (d.containerStatus || '-')}</td>
                     <td>${d.expDateCheck && expType ? UIUtils.badge(d.expDateCheck, expType) : (d.expDateCheck || '-')}</td>
@@ -529,7 +626,7 @@ var PaintIncomingInspectionModule = (function() {
                     <tr style="border-bottom:1px solid var(--border);">
                         <td style="padding:10px 14px;color:var(--text-primary);font-weight:500;">성적서 접수 확인</td>
                         <td style="padding:10px 14px;text-align:center;">
-                            <div style="display:flex;gap:20px;justify-content:center;">
+                            <div style="display:flex;gap:20px;justify-content:center;flex-wrap:wrap;">
                                 <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.875rem;">
                                     <input type="radio" name="piCert" value="접수완료"
                                         ${d.certCheck === '접수완료' ? 'checked' : ''}
@@ -540,7 +637,13 @@ var PaintIncomingInspectionModule = (function() {
                                         ${d.certCheck === '접수대기' ? 'checked' : ''}
                                         onchange="PaintIncomingInspectionModule.onCertCheckChange(this)"> 접수대기
                                 </label>
+                                <label style="display:${d.certCheck === '대상외' ? 'flex' : 'none'};align-items:center;gap:5px;cursor:pointer;font-size:0.875rem;color:var(--text-muted);">
+                                    <input type="radio" name="piCert" id="piCertExemptRadio" value="대상외"
+                                        ${d.certCheck === '대상외' ? 'checked' : ''}
+                                        onchange="PaintIncomingInspectionModule.onCertCheckChange(this)"> 대상외
+                                </label>
                             </div>
+                            <div id="piCertExemptHint" style="display:none;margin-top:6px;font-size:0.75rem;color:#64748b;"></div>
                         </td>
                         <td style="padding:8px 14px;">
                             <input type="text" class="form-input" id="piCertNote" placeholder="특이사항" value="${d.certNote || ''}" style="margin:0;padding:6px 10px;">
@@ -975,6 +1078,7 @@ var PaintIncomingInspectionModule = (function() {
         if (!data.incomingQty || data.incomingQty <= 0) { UIUtils.toast('입고수량을 입력하세요.', 'warning'); return false; }
         if (!data.containerStatus) { UIUtils.toast('검사항목 — 용기 상태를 선택하세요.', 'warning'); return false; }
         if (!data.expDateCheck) { UIUtils.toast('검사항목 — 유효기간 확인을 선택하세요.', 'warning'); return false; }
+        _applyCertExemptIfNeeded(data);
         if (!data.certCheck) { UIUtils.toast('검사항목 — 성적서 접수 확인을 선택하세요.', 'warning'); return false; }
         if (!data.verdict) { UIUtils.toast('최종 판정을 선택하세요.', 'warning'); return false; }
 
@@ -1298,6 +1402,7 @@ var PaintIncomingInspectionModule = (function() {
                 }
                 updateInventoryDisplay();
                 checkLotStatus();
+                _syncCertExemptUI();
             });
 
             if (mfgDateInput) mfgDateInput.addEventListener('change', () => {
@@ -1320,6 +1425,7 @@ var PaintIncomingInspectionModule = (function() {
             _syncExpCheckFromMfg();
             onVerdictChange();
             updateInventoryDisplay();
+            _syncCertExemptUI();
         }, 100);
     }
 
@@ -1346,6 +1452,7 @@ var PaintIncomingInspectionModule = (function() {
             await _uploadPendingPhotos();
         } catch (e) { return; }
         const finalData = collectFormData();
+        _applyCertExemptIfNeeded(finalData);
         // 저장 직전 자동 판정 재동기화
         if (finalData.mfgDate) {
             const ageCat = _mfgAgeCategory(finalData.mfgDate, (finalData.date || '').split(' ')[0] || UIUtils.today());
@@ -1418,6 +1525,7 @@ var PaintIncomingInspectionModule = (function() {
             await _uploadPendingPhotos();
         } catch (e) { return; }
         const finalData = collectFormData();
+        _applyCertExemptIfNeeded(finalData);
         const prev = Storage.getById(STORE, id) || {};
         if (finalData.mfgDate) {
             const ageCat = _mfgAgeCategory(finalData.mfgDate, (finalData.date || '').split(' ')[0] || UIUtils.today());
@@ -1628,7 +1736,7 @@ var PaintIncomingInspectionModule = (function() {
         if (!el) return;
 
         const allRecords = Storage.getAll(STORE);
-        const pending = allRecords.filter(d => d.certCheck !== '접수완료')
+        const pending = allRecords.filter(_isCertPendingRecord)
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
         if (pending.length === 0) { el.innerHTML = ''; return; }
@@ -1786,6 +1894,8 @@ var PaintIncomingInspectionModule = (function() {
         onCertFileChange,
         markCertReceived,
         _onCertQuickPhotoSelected,
-        confirmCertReceived
+        confirmCertReceived,
+        isCertExempt,
+        isCertPendingRecord: _isCertPendingRecord
     };
 })();

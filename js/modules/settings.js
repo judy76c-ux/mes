@@ -7045,6 +7045,36 @@ const SettingsModule = (function() {
         return map[spec] || '';
     }
 
+    /** 도료 구분: 양산 / 개발용 / A/S용 (저장값 정규화) */
+    const PAINT_ITEM_TYPES = ['양산', '개발용', 'A/S용'];
+    function _normPaintItemType(raw) {
+        const s = String(raw || '').replace(/품$/, '').trim();
+        if (!s) return '';
+        if (s === '양산' || s === '양산용') return '양산';
+        if (s === '개발' || s === '개발용') return '개발용';
+        if (s === 'A/S' || s === 'A/S용' || s === 'AS' || s === 'AS용') return 'A/S용';
+        return s;
+    }
+    function paintItemTypeBadge(raw) {
+        const t = _normPaintItemType(raw);
+        if (t === '양산') return UIUtils.badge('양산', 'success');
+        if (t === '개발용') return UIUtils.badge('개발용', 'info');
+        if (t === 'A/S용') return `<span class="badge" style="background:rgba(245,158,11,0.15);color:#d97706;border:1px solid #d97706;">A/S용</span>`;
+        return t ? UIUtils.badge(t, 'secondary') : '<span style="color:var(--text-muted);">-</span>';
+    }
+    function _paintItemTypeOptions(selected) {
+        const cur = _normPaintItemType(selected);
+        return `<option value="">-- 선택 --</option>` +
+            PAINT_ITEM_TYPES.map(t =>
+                `<option value="${t}" ${cur === t ? 'selected' : ''}>${t}</option>`
+            ).join('');
+    }
+    function _paintItemTypeRank(raw) {
+        const t = _normPaintItemType(raw);
+        const i = PAINT_ITEM_TYPES.indexOf(t);
+        return i >= 0 ? i : 99;
+    }
+
     function _paintOptionHtml(values, selected = '', placeholder = '-- 선택 --') {
         const selectedValue = (selected || '').trim();
         const uniqueValues = [...new Set([selectedValue, ...values].map(v => (v || '').trim()).filter(Boolean))]
@@ -7105,9 +7135,11 @@ const SettingsModule = (function() {
     function filterPaintList() {
         const supplierElement = document.getElementById('paintSupplierFilter');
         const manufacturerElement = document.getElementById('paintManufacturerFilter');
+        const itemTypeElement = document.getElementById('paintItemTypeFilter');
         if (!supplierElement) return;
         const selectedSupplier = supplierElement.value;
         const selectedManufacturer = manufacturerElement ? manufacturerElement.value : '';
+        const selectedItemType = itemTypeElement ? itemTypeElement.value : '';
 
         const tbody = document.querySelector('#settingsContent .data-table tbody');
         if (!tbody) return;
@@ -7119,15 +7151,13 @@ const SettingsModule = (function() {
         if (rows.length === 1 && rows[0].cells.length === 1) return;
 
         rows.forEach(row => {
-            const supplierCell = row.cells[1];
-            const manufacturerCell = row.cells[3];
-            if (!supplierCell) return;
-
-            const rowSupplier = supplierCell.textContent.trim();
-            const rowManufacturer = manufacturerCell ? manufacturerCell.textContent.trim() : '';
+            const rowSupplier = row.getAttribute('data-supplier') || '';
+            const rowManufacturer = row.getAttribute('data-manufacturer') || '';
+            const rowItemType = row.getAttribute('data-item-type') || '';
             const matchSupplier = selectedSupplier === '' || rowSupplier === selectedSupplier;
             const matchManufacturer = selectedManufacturer === '' || rowManufacturer === selectedManufacturer;
-            if (matchSupplier && matchManufacturer) {
+            const matchItemType = selectedItemType === '' || rowItemType === selectedItemType;
+            if (matchSupplier && matchManufacturer && matchItemType) {
                 row.style.display = '';
                 visibleCount++;
             } else {
@@ -7140,8 +7170,10 @@ const SettingsModule = (function() {
     }
 
     function renderPaintTab(el) {
-        const paints = Storage.getAll(PAINT_STORE).sort((a, b) =>
-            (a.supplier || '').localeCompare(b.supplier || '', 'ko') || (a.name || '').localeCompare(b.name || '', 'ko')
+        const paints = Storage.getAll(PAINT_STORE).slice().sort((a, b) =>
+            _paintItemTypeRank(a.itemType) - _paintItemTypeRank(b.itemType) ||
+            (a.supplier || '').localeCompare(b.supplier || '', 'ko') ||
+            (a.name || '').localeCompare(b.name || '', 'ko')
         );
         const uniqueSuppliers = [...new Set(paints.map(p => p.supplier).filter(Boolean))].sort();
         const uniqueManufacturers = [...new Set(paints.map(p => p.manufacturer).filter(Boolean))].sort();
@@ -7149,8 +7181,12 @@ const SettingsModule = (function() {
         el.innerHTML = `
             <div class="card">
                 <div class="card-header" style="flex-wrap: wrap; gap: 10px;">
-                    <div style="display:flex; align-items:center; gap: 12px;">
+                    <div style="display:flex; align-items:center; gap: 12px;flex-wrap:wrap;">
                         <h4 style="margin:0;"><span class="material-symbols-outlined">palette</span> 도료 정보 (<span id="paintCount">${paints.length}</span>건)</h4>
+                        <select id="paintItemTypeFilter" class="form-input" style="width: 120px; padding: 4px 8px;" onchange="SettingsModule.filterPaintList()">
+                            <option value="">전체 구분</option>
+                            ${PAINT_ITEM_TYPES.map(t => `<option value="${t}">${t}</option>`).join('')}
+                        </select>
                         <select id="paintSupplierFilter" class="form-input" style="width: 150px; padding: 4px 8px;" onchange="SettingsModule.filterPaintList()">
                             <option value="">전체 구매처</option>
                             ${uniqueSuppliers.map(supplier => `<option value="${supplier}">${supplier}</option>`).join('')}
@@ -7177,6 +7213,7 @@ const SettingsModule = (function() {
                                 <thead>
                                     <tr>
                                         <th>No</th>
+                                        <th style="white-space:nowrap;">구분</th>
                                         <th>구매처</th>
                                         <th>도료명</th>
                                         <th>도료특징</th>
@@ -7195,9 +7232,12 @@ const SettingsModule = (function() {
                                         const packUnitNum = Number(p.packUnit) || 0;
                                         const priceNum = Number(String(p.purchasePrice || '').replace(/,/g, '')) || 0;
                                         const perKg = packUnitNum > 0 && priceNum > 0 ? Math.round(priceNum / packUnitNum) : 0;
+                                        const itemType = _normPaintItemType(p.itemType);
+                                        const escA = v => String(v ?? '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
                                         return `
-                                        <tr>
+                                        <tr data-supplier="${escA(p.supplier || '')}" data-manufacturer="${escA(p.manufacturer || '')}" data-item-type="${escA(itemType)}">
                                             <td>${i + 1}</td>
+                                            <td style="white-space:nowrap;">${paintItemTypeBadge(itemType)}</td>
                                             <td>${p.supplier || '-'}</td>
                                             <td><strong>${p.name || '-'}</strong></td>
                                             <td>${p.feature || '-'}</td>
@@ -7537,6 +7577,12 @@ const SettingsModule = (function() {
                     <input type="text" class="form-input" id="addPaintName" placeholder="예: PRIMER BLACK, TOP WHITE">
                 </div>
                 <div class="form-group">
+                    <label class="form-label">구분</label>
+                    <select class="form-select" id="addPaintItemType">
+                        ${_paintItemTypeOptions('양산')}
+                    </select>
+                </div>
+                <div class="form-group">
                     <label class="form-label">도료특징</label>
                     <input type="text" class="form-input" id="addPaintFeature" placeholder="예: 1액형, 고내후성, 속건">
                 </div>
@@ -7602,6 +7648,7 @@ const SettingsModule = (function() {
         const shelfLife = document.getElementById('addPaintShelfLife').value.trim();
         const paintType = document.getElementById('addPaintType').value;
         const paintSpec = document.getElementById('addPaintSpec').value;
+        const itemType = _normPaintItemType((document.getElementById('addPaintItemType') || {}).value);
         if (!name) {
             UIUtils.toast('도료명을 입력하세요.', 'warning');
             return;
@@ -7616,7 +7663,8 @@ const SettingsModule = (function() {
             purchasePrice: document.getElementById('addPaintPurchasePrice').value.trim(),
             shelfLife,
             paintType,
-            paintSpec
+            paintSpec,
+            itemType
         });
         UIUtils.closeModal();
         UIUtils.toast('도료 정보가 추가되었습니다.', 'success');
@@ -7638,6 +7686,12 @@ const SettingsModule = (function() {
                 <div class="form-group">
                     <label class="form-label">도료명 <span style="color:var(--accent-red)">*</span></label>
                     <input type="text" class="form-input" id="editPaintName" value="${p.name || ''}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">구분</label>
+                    <select class="form-select" id="editPaintItemType">
+                        ${_paintItemTypeOptions(p.itemType || '')}
+                    </select>
                 </div>
                 <div class="form-group">
                     <label class="form-label">도료특징</label>
@@ -7709,6 +7763,7 @@ const SettingsModule = (function() {
         const shelfLife = document.getElementById('editPaintShelfLife').value.trim();
         const paintType = document.getElementById('editPaintType').value;
         const paintSpec = document.getElementById('editPaintSpec').value;
+        const itemType = _normPaintItemType((document.getElementById('editPaintItemType') || {}).value);
         if (!name) {
             UIUtils.toast('도료명을 입력하세요.', 'warning');
             return;
@@ -7723,7 +7778,8 @@ const SettingsModule = (function() {
             purchasePrice: document.getElementById('editPaintPurchasePrice').value.trim(),
             shelfLife,
             paintType,
-            paintSpec
+            paintSpec,
+            itemType
         });
         UIUtils.closeModal();
         UIUtils.toast('도료 정보가 수정되었습니다.', 'success');
@@ -7784,7 +7840,7 @@ const SettingsModule = (function() {
         },
         {
             key: 'itemType',
-            label: '품목구분'
+            label: '구분'
         }
     ];
 
@@ -7843,6 +7899,12 @@ const SettingsModule = (function() {
             LABEL_TO_KEY[col.label.toLowerCase()] = col.key; // 예: '매입단가' → 'purchasePrice'
             LABEL_TO_KEY[col.key.toLowerCase()] = col.key; // 예: 'purchaseprice' → 'purchasePrice'
         });
+        LABEL_TO_KEY['품목구분'] = 'itemType';
+
+        const _normPaintRow = (obj) => {
+            if (obj && obj.itemType != null) obj.itemType = _normPaintItemType(obj.itemType);
+            return obj;
+        };
 
         if (isHeader) {
             // 헤더 기반 매핑: 헤더 행의 각 열 이름 → 필드 key 대응표 생성
@@ -7861,7 +7923,8 @@ const SettingsModule = (function() {
                         packUnit: '',
                         purchasePrice: '',
                         shelfLife: '',
-                        usage: ''
+                        usage: '',
+                        itemType: ''
                     };
                     colMap.forEach((key, i) => {
                         if (key && row[i] !== undefined) {
@@ -7871,25 +7934,21 @@ const SettingsModule = (function() {
                                 row[i];
                         }
                     });
-                    return obj;
+                    return _normPaintRow(obj);
                 })
                 .filter(p => p.name);
         } else {
-            // 헤더 없음: 순서(인덱스) 기반 매핑 (A~I 순서)
+            // 헤더 없음: 순서(인덱스) 기반 매핑 (PAINT_COLUMNS 순서)
             return parsed
                 .filter(row => row.some(c => c !== ''))
-                .map(row => ({
-                    supplier: row[0] || '',
-                    name: row[1] || '',
-                    manufacturer: row[2] || '',
-                    paintType: row[3] || '',
-                    paintSpec: row[4] || '',
-                    packUnit: row[5] || '',
-                    // 쉼표(천단위 구분자) 제거 후 저장
-                    purchasePrice: String(row[6] || '').replace(/,/g, ''),
-                    shelfLife: row[7] || '',
-                    usage: row[8] || ''
-                }))
+                .map(row => {
+                    const obj = {};
+                    PAINT_COLUMNS.forEach((col, i) => {
+                        const raw = row[i] || '';
+                        obj[col.key] = col.key === 'purchasePrice' ? String(raw).replace(/,/g, '') : raw;
+                    });
+                    return _normPaintRow(obj);
+                })
                 .filter(p => p.name);
         }
     }

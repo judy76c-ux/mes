@@ -82,7 +82,7 @@ const App = (function() {
                 ['prod-standards', 'prod-conditions', 'paint-mix', 'prod-sub-materials',
                  'prod-quality', 'quality-performance', 'limit-samples', 'prod-spc',
                  'spc-color', 'spc-film', 'spc-gloss', 'prod-equipment'],
-                'js/modules/production_mgmt_v91.js?v=255',
+                'js/modules/production_mgmt_v91.js?v=260',
                 function() {
                     Router.registerModule('prod-standards',
                         (typeof ProdStandardsModule !== 'undefined') ? ProdStandardsModule
@@ -869,23 +869,35 @@ const App = (function() {
             const toastEl = document.getElementById('toastContainer');
             if (!toastEl) return;
             const div = document.createElement('div');
-            div.className = 'toast toast-warning';
+            div.className = 'toast warning';
             div.style.cssText = 'cursor:pointer;';
             div.innerHTML = `
                 <span class="material-symbols-outlined">warning</span>
                 <span>사출 LOT 번호 형식 오류 <strong>${errorCount}건</strong> 발견
                   — <u>클릭하여 수정</u></span>`;
             div.onclick = () => {
-                Router.navigate('settings');
-                setTimeout(() => {
-                    if (typeof SettingsModule !== 'undefined' && SettingsModule.switchTab) {
-                        SettingsModule.switchTab('system');
-                        setTimeout(() => {
-                            const btn = document.querySelector('#lotRepairResult')?.parentElement?.querySelector('.btn-primary');
-                            if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        }, 400);
-                    }
-                }, 300);
+                // ✓ Router.navigate('settings')는 내부적으로 AuthModule.checkSettingsAuth로
+                //   로그인/권한 확인을 거친 뒤(비로그인 시 로그인 모달 완료까지 비동기 대기)
+                //   실제 페이지를 그린다. 그걸 기다리지 않고 고정 300ms 뒤에 탭 전환을 하면
+                //   로그인 모달이 뜬 경우 탭 전환이 아무 효과 없이 씹혀 "클릭해도 안 되는" 것처럼
+                //   보인다. 인증 통과 콜백 안에서 탭 전환을 하도록 명시적으로 순서를 맞춘다.
+                const goToLotRepairTab = () => {
+                    Router.navigate('settings');
+                    setTimeout(() => {
+                        if (typeof SettingsModule !== 'undefined' && SettingsModule.switchTab) {
+                            SettingsModule.switchTab('system');
+                            setTimeout(() => {
+                                const btn = document.querySelector('#lotRepairResult')?.parentElement?.querySelector('.btn-primary');
+                                if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }, 400);
+                        }
+                    }, 300);
+                };
+                if (typeof AuthModule !== 'undefined' && AuthModule.checkSettingsAuth) {
+                    AuthModule.checkSettingsAuth(goToLotRepairTab);
+                } else {
+                    goToLotRepairTab();
+                }
             };
             toastEl.appendChild(div);
             setTimeout(() => { if (div.parentNode) div.parentNode.removeChild(div); }, 10000);

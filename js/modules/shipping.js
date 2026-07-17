@@ -573,35 +573,44 @@ const ShippingStandbyModule = (function() {
         { group: 'reliability', item: '연필경도',   standard: 'B 연필, 9.8N, 50mm 왕복 후 이상 없을 것.', method: '연필경도시험기', sample: '1EA/LOT', management: '출하검사성적서' }
     ];
     const _SSTD_DEFAULT_POINTS = _SSTD_DEFAULT_APPEARANCE.concat(_SSTD_DEFAULT_RELIABILITY);
-    const _SSTD_RELI_ITEM_RE = /색차|COLOR|부착|도막|경도|신뢰|내스크|내약|내크림|재질|접착/i;
+    const _SSTD_RELI_ITEM_RE = /색차|COLOR|광택|GLOSS|부착|도막|두께|경도|연필|신뢰|내스크|내약|내크림|재질|접착|CREAM|SCRATCH/i;
     const _SSTD_DEFAULT_PROC = '1. 제품의 표면상태를 검사한다.\n2. 중요치수를 측정한다.\n3. 불량은 해당 부위 마킹 후 별도의 불량 박스에 보관한다.\n4. 명세표 대비 수량을 확인한다.';
     const _SSTD_DEFAULT_CORR = '1. 부적합 발생시 해당 제품 격리 후 부적합 식별을 실시한다.\n2. 부적합 사항은 보고서를 작성하여 담당자 및 조반장에게 통지한다.';
 
     function _sstdGuessGroup(pt) {
-        const g = String((pt && pt.group) || '').toLowerCase();
+        const g = String((pt && pt.group) || '').toLowerCase().trim();
+        if (g === 'hidden' || g === 'hide' || g === '숨김' || g === 'inactive') return 'hidden';
         if (g === 'reliability' || g === 'reli' || g === '신뢰성') return 'reliability';
         if (g === 'appearance' || g === '외관') return 'appearance';
         if (_SSTD_RELI_ITEM_RE.test((pt && pt.item) || '')) return 'reliability';
         return 'appearance';
     }
 
+    function _sstdNormGroup(v) {
+        const g = String(v || '').toLowerCase().trim();
+        if (g === 'hidden' || g === 'hide' || g === '숨김') return 'hidden';
+        if (g === 'reliability' || g === 'reli' || g === '신뢰성') return 'reliability';
+        return 'appearance';
+    }
+
     function _sstdSplitCheckPoints(checkPoints) {
         const appearance = [];
         const reliability = [];
+        const hidden = [];
         (checkPoints || []).forEach(pt => {
             const row = Object.assign({}, pt || {}, { group: _sstdGuessGroup(pt) });
-            if (row.group === 'reliability') reliability.push(row);
+            if (row.group === 'hidden') hidden.push(row);
+            else if (row.group === 'reliability') reliability.push(row);
             else appearance.push(row);
         });
-        return { appearance, reliability };
+        return { appearance, reliability, hidden };
     }
 
     /** 목록용 주요검사 Point — 외관/신뢰성 각각 */
     function _sstdGroupItemsText(std, group) {
         if (!std) return '';
         const pts = Array.isArray(std.checkPoints) ? std.checkPoints : [];
-        const { appearance, reliability } = _sstdSplitCheckPoints(pts);
-        const list = group === 'reliability' ? reliability : appearance;
+        const list = _sstdPointsForGroup(pts, group === 'reliability' ? 'reliability' : 'appearance');
         return list.map(p => String(p.item || '').trim()).filter(Boolean).join(', ');
     }
 
@@ -609,7 +618,8 @@ const ShippingStandbyModule = (function() {
         if (!std) return '<span style="color:var(--text-muted);">-</span>';
         const pts = Array.isArray(std.checkPoints) ? std.checkPoints : [];
         if (!pts.length) return '<span style="color:var(--text-muted);">-</span>';
-        const { appearance, reliability } = _sstdSplitCheckPoints(pts);
+        const appearance = _sstdPointsForGroup(pts, 'appearance');
+        const reliability = _sstdPointsForGroup(pts, 'reliability');
         const chip = (label, bg, items) => {
             if (!items.length) return '';
             const names = items.map(p => String(p.item || '').trim()).filter(Boolean);
@@ -637,22 +647,97 @@ const ShippingStandbyModule = (function() {
     function _sstdListRowHtml(product, standards) {
         const key = _stdProductKey(product);
         const std = standards[key];
+        const car = String(product.carModel || '').trim();
+        const part = String(product.partName || '').trim();
+        const color = String(product.color || '').trim();
+        const q = [car, part, color].join(' ').toLowerCase();
         return `
-            <tr>
-                <td style="padding:8px 10px;border-bottom:1px solid var(--border-color);white-space:nowrap;">${_esc(product.carModel || '-')}</td>
-                <td style="padding:8px 10px;border-bottom:1px solid var(--border-color);font-weight:700;white-space:nowrap;">${_esc(product.partName || '-')}</td>
-                <td style="padding:8px 10px;border-bottom:1px solid var(--border-color);white-space:nowrap;">${_esc(product.color || '-')}</td>
+            <tr class="sstd-list-row" data-sstd-car="${_esc(car)}" data-sstd-q="${_esc(q)}">
+                <td style="padding:8px 10px;border-bottom:1px solid var(--border-color);white-space:nowrap;">${_esc(car || '-')}</td>
+                <td style="padding:8px 10px;border-bottom:1px solid var(--border-color);font-weight:700;white-space:nowrap;">${_esc(part || '-')}</td>
+                <td style="padding:8px 10px;border-bottom:1px solid var(--border-color);white-space:nowrap;">${_esc(color || '-')}</td>
                 <td style="padding:8px 10px;border-bottom:1px solid var(--border-color);">${_sstdListCellPoints(std, 'appearance')}</td>
                 <td style="padding:8px 10px;border-bottom:1px solid var(--border-color);">${_sstdListCellPoints(std, 'reliability')}</td>
                 <td style="padding:8px 10px;border-bottom:1px solid var(--border-color);text-align:center;white-space:nowrap;">
                     ${std ? UIUtils.badge('등록', 'success') : UIUtils.badge('미등록', 'warning')}
                 </td>
                 <td style="padding:8px 10px;border-bottom:1px solid var(--border-color);text-align:center;white-space:nowrap;">
-                    <button class="btn btn-sm btn-outline" onclick="ShippingStandbyModule.openShippingStandardEditor('${encodeURIComponent(key)}')">${std ? '수정' : '등록'}</button>
-                    ${std ? `<button class="btn btn-sm btn-primary" onclick="ShippingStandbyModule.viewShippingStandard('${encodeURIComponent(key)}')" style="margin-left:4px;">보기</button>
-                    <button class="btn btn-sm btn-outline" onclick="ShippingStandbyModule._sstdPrint('${encodeURIComponent(key)}')" style="margin-left:4px;" title="출력"><span class="material-symbols-outlined" style="font-size:0.9rem;">print</span></button>` : ''}
+                    ${std
+                        ? `<button class="btn btn-sm btn-primary" onclick="ShippingStandbyModule.viewShippingStandard('${encodeURIComponent(key)}')">보기</button>
+                    <button class="btn btn-sm btn-outline" onclick="ShippingStandbyModule._sstdPrint('${encodeURIComponent(key)}')" style="margin-left:4px;" title="출력"><span class="material-symbols-outlined" style="font-size:0.9rem;">print</span></button>`
+                        : `<button class="btn btn-sm btn-outline" onclick="ShippingStandbyModule.openShippingStandardEditor('${encodeURIComponent(key)}')">등록</button>`}
                 </td>
             </tr>`;
+    }
+
+    function _sstdCarOptionsHtml(products, selected) {
+        const cars = [...new Set((products || []).map(p => String(p.carModel || '').trim()).filter(Boolean))]
+            .sort((a, b) => a.localeCompare(b, 'ko'));
+        return `<option value="">전체 차종</option>` + cars.map(c =>
+            `<option value="${_esc(c)}" ${c === selected ? 'selected' : ''}>${_esc(c)}</option>`
+        ).join('');
+    }
+
+    /** 목록 필터 유지 (편집·저장 후에도 차종/검색어 복원) */
+    let _sstdListFilter = { car: '', q: '' };
+
+    function _sstdCaptureListFilter() {
+        for (const prefix of ['sstdPage', 'sstdModal']) {
+            const carEl = document.getElementById(prefix + 'Car');
+            const qEl = document.getElementById(prefix + 'Q');
+            if (!carEl && !qEl) continue;
+            _sstdListFilter = {
+                car: String((carEl && carEl.value) || '').trim(),
+                q: String((qEl && qEl.value) || '').trim()
+            };
+            return;
+        }
+    }
+
+    function _sstdFilterBarHtml(products, prefix) {
+        const idCar = prefix + 'Car';
+        const idQ = prefix + 'Q';
+        const idCnt = prefix + 'Count';
+        const selCar = _sstdListFilter.car || '';
+        const selQ = _sstdListFilter.q || '';
+        return `
+            <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px;">
+                <select id="${idCar}" class="form-select" style="width:150px;height:34px;font-size:0.82rem;"
+                    onchange="ShippingStandbyModule._sstdFilterList('${prefix}')">
+                    ${_sstdCarOptionsHtml(products, selCar)}
+                </select>
+                <input id="${idQ}" class="form-input" type="search" placeholder="품명·컬러 검색"
+                    value="${_esc(selQ)}"
+                    style="width:220px;height:34px;font-size:0.82rem;"
+                    oninput="ShippingStandbyModule._sstdFilterList('${prefix}')">
+                <span id="${idCnt}" style="font-size:0.8rem;color:var(--text-muted);margin-left:4px;"></span>
+            </div>`;
+    }
+
+    function _sstdFilterList(prefix) {
+        const root = prefix === 'sstdModal'
+            ? document.getElementById('sstdModalListWrap')
+            : document.getElementById('sstdPageListWrap');
+        if (!root) return;
+        const car = String((document.getElementById(prefix + 'Car') || {}).value || '').trim();
+        const qRaw = String((document.getElementById(prefix + 'Q') || {}).value || '').trim();
+        const q = qRaw.toLowerCase().replace(/\s+/g, ' ');
+        _sstdListFilter = { car, q: qRaw };
+        const rows = root.querySelectorAll('tr.sstd-list-row');
+        let shown = 0;
+        rows.forEach(tr => {
+            const rowCar = tr.getAttribute('data-sstd-car') || '';
+            const rowQ = tr.getAttribute('data-sstd-q') || '';
+            const okCar = !car || rowCar === car;
+            const okQ = !q || rowQ.includes(q);
+            const show = okCar && okQ;
+            tr.style.display = show ? '' : 'none';
+            if (show) shown++;
+        });
+        const cnt = document.getElementById(prefix + 'Count');
+        if (cnt) cnt.textContent = `표시 ${shown} / ${rows.length}종`;
+        const empty = root.querySelector('.sstd-filter-empty');
+        if (empty) empty.style.display = shown ? 'none' : '';
     }
 
     /** 차종·품명·컬러로 기준서 찾기 (동기, standards 맵 전달) */
@@ -689,13 +774,34 @@ const ShippingStandbyModule = (function() {
         return hit ? _sstdNormalize(hit.std, product || { carModel: cm, partName: pn, color: cl }) : null;
     }
 
+    /** 기준서 checkPoints에서 외관/신뢰성 목록 추출 (신뢰성 비어 있으면 항목명으로 보완) */
+    function _sstdPointsForGroup(checkPoints, group) {
+        const split = _sstdSplitCheckPoints(checkPoints);
+        const nonEmpty = p => String(p.item || '').trim() || String(p.standard || '').trim();
+        if (group === 'reliability') {
+            let list = split.reliability.slice();
+            if (!list.length) {
+                // 구분을 외관으로 둔 채 등록된 신뢰성 항목(부착성·색차 등)도 불러오기
+                list = (checkPoints || []).filter(pt => {
+                    if (_sstdGuessGroup(pt) === 'hidden') return false;
+                    return _SSTD_RELI_ITEM_RE.test(String((pt && pt.item) || ''));
+                });
+            }
+            return list.filter(nonEmpty);
+        }
+        let list = split.appearance.slice();
+        // 신뢰성 구분이 비어 항목명으로 보완하는 경우, 해당 항목은 외관 목록에서 제외
+        if (!split.reliability.length) {
+            list = list.filter(pt => !_SSTD_RELI_ITEM_RE.test(String((pt && pt.item) || '')));
+        }
+        return list.filter(nonEmpty);
+    }
+
     /** 기준서 주요검사 Point 개수·항목명 (목록 표시용) */
     function _stdPointsSummary(standards, carModel, partName, color, group) {
         const std = _findShipStandardIn(standards, carModel, partName, color);
         if (!std) return { count: 0, names: [], found: false };
-        const split = _sstdSplitCheckPoints(std.checkPoints || []);
-        const list = (group === 'reliability' ? split.reliability : split.appearance)
-            .filter(p => String(p.item || '').trim() || String(p.standard || '').trim());
+        const list = _sstdPointsForGroup(std.checkPoints || [], group === 'reliability' ? 'reliability' : 'appearance');
         return {
             count: list.length,
             names: list.map(p => String(p.item || '').trim()).filter(Boolean),
@@ -716,20 +822,17 @@ const ShippingStandbyModule = (function() {
     async function getCheckPointsForProduct(carModel, partName, color, group) {
         const std = await findShipStandard(carModel, partName, color);
         if (!std) return [];
-        const split = _sstdSplitCheckPoints(std.checkPoints || []);
-        const list = group === 'reliability' ? split.reliability : split.appearance;
-        return list
-            .filter(p => String(p.item || '').trim() || String(p.standard || '').trim())
-            .map(p => ({
-                group: group === 'reliability' ? 'reliability' : 'appearance',
-                item: p.item || '',
-                standard: p.standard || '',
-                method: p.method || '',
-                sample: p.sample || '',
-                management: p.management || '',
-                resultValue: '',
-                judge: ''
-            }));
+        const want = group === 'reliability' ? 'reliability' : 'appearance';
+        return _sstdPointsForGroup(std.checkPoints || [], want).map(p => ({
+            group: want,
+            item: p.item || '',
+            standard: p.standard || '',
+            method: p.method || '',
+            sample: p.sample || '',
+            management: p.management || '',
+            resultValue: '',
+            judge: ''
+        }));
     }
 
     function _defaultShipStandard(product = {}) {
@@ -791,12 +894,14 @@ const ShippingStandbyModule = (function() {
                 (a.partName || '').localeCompare(b.partName || '', 'ko') ||
                 (a.color || '').localeCompare(b.color || '', 'ko'));
         const standards = await _loadShipStandards();
+        const regCount = products.filter(p => standards[_stdProductKey(p)]).length;
         const rows = products.map(p => _sstdListRowHtml(p, standards)).join('');
         UIUtils.showModal('출하검사 기준서', `
-            <div style="margin-bottom:12px;font-size:0.84rem;color:var(--text-secondary);">
-                제품 마스터에 등록된 품목별 출하검사 기준서를 등록합니다. 모든 품목이 리스트업됩니다.
+            <div style="margin-bottom:8px;font-size:0.84rem;color:var(--text-secondary);">
+                제품 마스터에 등록된 품목별 출하검사 기준서를 등록합니다. 등록 ${regCount} / 전체 ${products.length}종
             </div>
-            <div style="max-height:560px;overflow:auto;border:1px solid var(--border-color);border-radius:8px;">
+            ${_sstdFilterBarHtml(products, 'sstdModal')}
+            <div id="sstdModalListWrap" style="max-height:560px;overflow:auto;border:1px solid var(--border-color);border-radius:8px;">
                 <table style="width:max-content;min-width:100%;border-collapse:collapse;table-layout:auto;font-size:0.86rem;">
                     <thead style="position:sticky;top:0;background:var(--bg-secondary);z-index:1;">
                         <tr>
@@ -809,10 +914,13 @@ const ShippingStandbyModule = (function() {
                             <th style="padding:9px 10px;text-align:center;white-space:nowrap;">작업</th>
                         </tr>
                     </thead>
-                    <tbody>${rows || `<tr><td colspan="7" style="padding:36px;text-align:center;color:var(--text-muted);">제품 마스터에 등록된 품목이 없습니다.</td></tr>`}</tbody>
+                    <tbody>${rows || `<tr><td colspan="7" style="padding:36px;text-align:center;color:var(--text-muted);">제품 마스터에 등록된 품목이 없습니다.</td></tr>`}
+                        <tr class="sstd-filter-empty" style="display:none;"><td colspan="7" style="padding:28px;text-align:center;color:var(--text-muted);">검색 결과가 없습니다.</td></tr>
+                    </tbody>
                 </table>
             </div>
         `, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'xl');
+        setTimeout(() => _sstdFilterList('sstdModal'), 0);
     }
 
     // 출하검사 기준서 목록을 페이지 컨테이너에 인라인 렌더 (허브 하위 페이지용)
@@ -835,7 +943,10 @@ const ShippingStandbyModule = (function() {
                     </h4>
                     <span style="font-size:0.82rem;color:var(--text-muted);">등록 ${regCount} / 전체 ${products.length}종 — 품목별 기준서를 등록·편집·출력합니다.</span>
                 </div>
-                <div class="card-body" style="padding:0;">
+                <div class="card-body" style="padding:12px 12px 0;">
+                    ${_sstdFilterBarHtml(products, 'sstdPage')}
+                </div>
+                <div class="card-body" style="padding:0;" id="sstdPageListWrap">
                     <div class="data-table-wrapper" style="overflow:auto;">
                         <table class="data-table" style="width:max-content;min-width:100%;table-layout:auto;">
                             <thead>
@@ -849,11 +960,14 @@ const ShippingStandbyModule = (function() {
                                     <th style="text-align:center;white-space:nowrap;">작업</th>
                                 </tr>
                             </thead>
-                            <tbody>${rows || `<tr><td colspan="7" style="padding:36px;text-align:center;color:var(--text-muted);">제품 마스터에 등록된 품목이 없습니다.</td></tr>`}</tbody>
+                            <tbody>${rows || `<tr><td colspan="7" style="padding:36px;text-align:center;color:var(--text-muted);">제품 마스터에 등록된 품목이 없습니다.</td></tr>`}
+                                <tr class="sstd-filter-empty" style="display:none;"><td colspan="7" style="padding:28px;text-align:center;color:var(--text-muted);">검색 결과가 없습니다.</td></tr>
+                            </tbody>
                         </table>
                     </div>
                 </div>
             </div>`;
+        setTimeout(() => _sstdFilterList('sstdPage'), 0);
     }
 
     /* ═══ 출하검사 기준서 — 수입검사와 동일한 문서형 편집기 ═══════════════ */
@@ -863,7 +977,8 @@ const ShippingStandbyModule = (function() {
     function _sstdCheckRowHtml(pt, idx) {
         pt = pt || {};
         const group = _sstdGuessGroup(pt);
-        return `<tr class="sstd-pt-row" data-group="${group}">
+        const muted = group === 'hidden' ? 'opacity:0.55;' : '';
+        return `<tr class="sstd-pt-row" data-group="${group}" style="${muted}">
             <td class="sstd-pt-no" style="text-align:center;padding:3px;border:1px solid #bbb;font-size:10px;white-space:nowrap;">${idx == null ? '-' : idx + 1}</td>
             <td style="padding:2px;border:1px solid #bbb;white-space:nowrap;"><input class="sstd-pt-item" type="text" value="${_esc(pt.item || '')}"
                 style="border:none;background:transparent;font-size:10px;padding:2px;width:auto;min-width:5em;white-space:nowrap;"></td>
@@ -872,24 +987,33 @@ const ShippingStandbyModule = (function() {
             <td style="padding:2px;border:1px solid #bbb;white-space:nowrap;"><input class="sstd-pt-method" type="text" value="${_esc(pt.method || '')}"
                 style="border:none;background:transparent;font-size:10px;padding:2px;text-align:center;width:auto;min-width:3em;"></td>
             <td style="padding:2px;border:1px solid #bbb;white-space:nowrap;"><input class="sstd-pt-sample" type="text" value="${_esc(pt.sample || '')}"
-                style="border:none;background:transparent;font-size:10px;padding:2px;text-align:center;width:auto;min-width:5em;"></td>
+                style="border:none;background:transparent;font-size:8px;padding:2px;text-align:center;width:auto;min-width:4em;"></td>
             <td style="padding:2px;border:1px solid #bbb;white-space:nowrap;"><input class="sstd-pt-mgmt" type="text" value="${_esc(pt.management || '')}"
-                style="border:none;background:transparent;font-size:10px;padding:2px;width:auto;min-width:8em;"></td>
+                style="border:none;background:transparent;font-size:8px;padding:2px;width:auto;min-width:6em;"></td>
             <td style="padding:2px;border:1px solid #bbb;text-align:right;white-space:nowrap;">
+                <select class="sstd-pt-group-sel" title="구분 변경"
+                    onchange="ShippingStandbyModule._sstdChangeCheckGroup(this)"
+                    style="font-size:9px;border:1px solid #ccc;border-radius:3px;padding:1px 2px;vertical-align:middle;max-width:4.8em;background:#fff;">
+                    <option value="appearance"${group === 'appearance' ? ' selected' : ''}>외관</option>
+                    <option value="reliability"${group === 'reliability' ? ' selected' : ''}>신뢰성</option>
+                    <option value="hidden"${group === 'hidden' ? ' selected' : ''}>숨김</option>
+                </select>
                 <button type="button" onclick="ShippingStandbyModule._sstdInsertCheckRowAfter(this)"
-                    style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;" title="아래 행 추가">+</button>
+                    style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;vertical-align:middle;" title="아래 행 추가">+</button>
                 <button type="button" onclick="this.closest('tr').remove();ShippingStandbyModule._sstdRefreshCheckLayout()"
-                    style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px;line-height:1;" title="행 삭제">−</button>
+                    style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px;line-height:1;vertical-align:middle;" title="행 삭제">−</button>
             </td></tr>`;
     }
 
     function _sstdBuildCheckBodyHtml(checkPoints) {
-        const { appearance, reliability } = _sstdSplitCheckPoints(checkPoints);
+        const { appearance, reliability, hidden } = _sstdSplitCheckPoints(checkPoints);
         let n = 0;
         const app = appearance.length ? appearance : [{ group: 'appearance' }];
         const reli = reliability.length ? reliability : [{ group: 'reliability' }];
+        const hid = hidden; // 숨김은 비어 있으면 섹션 생략 (행 추가는 구분 메뉴로)
         return app.map(pt => _sstdCheckRowHtml(Object.assign({ group: 'appearance' }, pt), n++)).join('')
-            + reli.map(pt => _sstdCheckRowHtml(Object.assign({ group: 'reliability' }, pt), n++)).join('');
+            + reli.map(pt => _sstdCheckRowHtml(Object.assign({ group: 'reliability' }, pt), n++)).join('')
+            + hid.map(pt => _sstdCheckRowHtml(Object.assign({ group: 'hidden' }, pt), n++)).join('');
     }
 
     function _sstdGroupedStaticRowsHtml(checkPoints, forPrint) {
@@ -901,7 +1025,7 @@ const ShippingStandbyModule = (function() {
             return items.map((pt, idx) => {
                 n += 1;
                 const groupTd = idx === 0
-                    ? `<td rowspan="${items.length}" style="${cellPad}width:28px;background:${tone};font-weight:700;text-align:center;vertical-align:middle;writing-mode:vertical-rl;letter-spacing:2px;white-space:nowrap;">${label}</td>`
+                    ? `<td rowspan="${items.length}" style="${cellPad}width:auto;max-width:1.4em;background:${tone};font-weight:700;text-align:center;vertical-align:middle;writing-mode:vertical-rl;letter-spacing:2px;white-space:nowrap;">${label}</td>`
                     : '';
                 return `<tr>
                     ${groupTd}
@@ -909,8 +1033,8 @@ const ShippingStandbyModule = (function() {
                     <td style="${cellPad}white-space:nowrap;">${_esc(pt.item || '')}</td>
                     <td style="${cellPad}white-space:pre-wrap;">${_esc(pt.standard || '')}</td>
                     <td style="${cellPad}text-align:center;white-space:nowrap;">${_esc(pt.method || '')}</td>
-                    <td style="${cellPad}text-align:center;white-space:nowrap;">${_esc(pt.sample || '')}</td>
-                    <td style="${cellPad}white-space:nowrap;">${_esc(pt.management || '')}</td>
+                    <td style="${cellPad}text-align:center;white-space:nowrap;font-size:8px;">${_esc(pt.sample || '')}</td>
+                    <td style="${cellPad}white-space:nowrap;font-size:8px;">${_esc(pt.management || '')}</td>
                 </tr>`;
             }).join('');
         };
@@ -1033,6 +1157,7 @@ const ShippingStandbyModule = (function() {
     }
 
     async function openShippingStandardEditor(encodedKey, sourceOverride) {
+        _sstdCaptureListFilter();
         const key = decodeURIComponent(encodedKey);
         _sstdCurrentKey = key;
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
@@ -1057,7 +1182,36 @@ const ShippingStandbyModule = (function() {
 
         const carModel = product.carModel || data.carModel || '';
         const sameCarProducts = products.filter(p => String(p.carModel || '').trim() === String(carModel || '').trim());
-        const sameCarCount = Math.max(0, sameCarProducts.length - 1);
+        const sameCarOthers = sameCarProducts
+            .filter(p => _stdProductKey(p) !== key)
+            .slice()
+            .sort((a, b) => (a.partName || '').localeCompare(b.partName || '', 'ko') ||
+                (a.color || '').localeCompare(b.color || '', 'ko'));
+        const applyPickHtml = sameCarOthers.length ? `
+            <div id="sstdApplyPickPanel" style="width:100%;margin-top:2px;padding:8px 10px;background:#fff;border:1px solid #e2e8f0;border-radius:6px;">
+                <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px;">
+                    <span style="font-size:0.78rem;font-weight:700;color:#334155;">동일 차종 다른 품목에도 적용
+                        <span style="font-weight:400;color:#64748b;">(${_esc(carModel)} · 선택 <span id="sstdApplyPickCount">0</span> / ${sameCarOthers.length})</span>
+                    </span>
+                    <span style="margin-left:auto;display:inline-flex;gap:4px;">
+                        <button type="button" class="btn btn-sm btn-outline" style="height:26px;padding:0 8px;font-size:0.72rem;"
+                            onclick="ShippingStandbyModule._sstdApplyPickAll(true)">전체 선택</button>
+                        <button type="button" class="btn btn-sm btn-outline" style="height:26px;padding:0 8px;font-size:0.72rem;"
+                            onclick="ShippingStandbyModule._sstdApplyPickAll(false)">선택 해제</button>
+                    </span>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:4px 10px;max-height:132px;overflow:auto;">
+                    ${sameCarOthers.map(p => {
+                        const pk = _stdProductKey(p);
+                        const label = [p.partName, p.color].filter(Boolean).join(' · ') || pk;
+                        return `<label style="display:inline-flex;align-items:center;gap:5px;font-size:0.78rem;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${_esc(label)}">
+                            <input type="checkbox" class="sstd-apply-target" value="${_esc(pk)}"
+                                onchange="ShippingStandbyModule._sstdUpdateApplyPickCount()">
+                            <span style="overflow:hidden;text-overflow:ellipsis;">${_esc(label)}</span>
+                        </label>`;
+                    }).join('')}
+                </div>
+            </div>` : '';
         const loadOpts = products
             .filter(p => {
                 const k = _stdProductKey(p);
@@ -1082,6 +1236,10 @@ const ShippingStandbyModule = (function() {
             #sstdDoc .doc-input { border:none; background:transparent; width:100%; font-family:inherit; font-size:inherit; color:#111; padding:0; outline:none; vertical-align:middle; text-align:left; }
             #sstdDoc .doc-input:focus { background:#fffbeb; border-radius:2px; }
             #sstdDoc > table + table { margin-top:-1px; }
+            #sstdDoc .sstd-split-left { width:360px; max-width:360px; }
+            #sstdDoc .sstd-pt-table { width:max-content; min-width:100%; table-layout:auto; }
+            #sstdDoc .sstd-pt-table .doc-th { white-space:nowrap; }
+            #sstdDoc .sstd-pt-table .sstd-pt-std { white-space:pre-wrap; min-width:10em; }
             </style>`;
 
         UIUtils.showModal(`출하검사 기준서 ${isEdit ? '수정' : '등록'} — ${_stdProductLabel(product)}`, `
@@ -1095,10 +1253,7 @@ const ShippingStandbyModule = (function() {
             <button type="button" class="btn btn-sm btn-outline" onclick="ShippingStandbyModule._sstdLoadFromRegistered()">
                 <span class="material-symbols-outlined" style="font-size:14px;">download</span> 불러오기
             </button>
-            <label style="display:inline-flex;align-items:center;gap:6px;margin-left:auto;font-size:0.8rem;cursor:pointer;white-space:nowrap;">
-                <input type="checkbox" id="sstdApplySameCar" ${sameCarCount ? '' : 'disabled'}>
-                동일 차종 전체 적용${carModel ? ` (${_esc(carModel)} · ${sameCarCount + 1}품목)` : ''}
-            </label>
+            ${applyPickHtml}
         </div>
         <input type="hidden" id="sstdProcessNo"   value="${_esc(data.processNo || '100')}">
         <input type="hidden" id="sstdRevNo"       value="${_esc(data.revNo || '00')}">
@@ -1138,10 +1293,10 @@ const ShippingStandbyModule = (function() {
                 </td>
             </tr>
         </table>
-        <table style="margin-top:0;table-layout:fixed;width:100%;">
-            <colgroup><col style="width:470px"><col></colgroup>
+        <table class="sstd-split" style="margin-top:0;table-layout:fixed;width:100%;">
+            <colgroup><col style="width:360px"><col></colgroup>
             <tr>
-                <td style="width:470px;border:1px solid #888;padding:0;height:1px;vertical-align:top;">
+                <td class="sstd-split-left" style="width:360px;border:1px solid #888;padding:0;height:1px;vertical-align:top;">
                     <div class="doc-sec" style="display:flex;align-items:center;justify-content:space-between;padding:5px 8px;">
                         <span>외관 / 치수포인트</span>
                         <label style="display:flex;align-items:center;gap:3px;cursor:pointer;font-size:.72rem;font-weight:400;color:#2563eb;white-space:nowrap;">
@@ -1159,28 +1314,30 @@ const ShippingStandbyModule = (function() {
                         </div>
                     </div>
                 </td>
-                <td style="vertical-align:top;border:1px solid #888;padding:0;height:100%;">
-                    <div class="doc-sec">주요검사 Point <span style="font-weight:400;font-size:10px;color:#555;">(외관 / 신뢰성)</span></div>
-                    <table style="font-size:10px;width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
+                <td class="sstd-split-right" style="vertical-align:top;border:1px solid #888;padding:0;height:100%;">
+                    <div class="doc-sec">주요검사 Point <span style="font-weight:400;font-size:10px;color:#555;">(외관 / 신뢰성 · 행마다 구분 선택)</span></div>
+                    <div style="overflow:auto;">
+                    <table class="sstd-pt-table" style="font-size:10px;width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
                         <thead><tr>
-                            <td class="doc-th" style="width:28px;white-space:nowrap;">구분</td>
-                            <td class="doc-th" style="width:24px;white-space:nowrap;">No</td>
-                            <td class="doc-th" style="width:88px;white-space:nowrap;">항 목</td>
-                            <td class="doc-th">기 준</td>
+                            <td class="doc-th" style="white-space:nowrap;">구분</td>
+                            <td class="doc-th" style="white-space:nowrap;">No</td>
+                            <td class="doc-th" style="white-space:nowrap;">항 목</td>
+                            <td class="doc-th" style="min-width:10em;">기 준</td>
                             <td class="doc-th" style="white-space:nowrap;">확인방법</td>
-                            <td class="doc-th" style="white-space:nowrap;">시 료</td>
-                            <td class="doc-th" style="white-space:nowrap;">관리방안</td>
-                            <td class="doc-th" style="width:44px;white-space:nowrap;">±</td>
+                            <td class="doc-th" style="white-space:nowrap;font-size:8px;">시 료</td>
+                            <td class="doc-th" style="white-space:nowrap;font-size:8px;">관리방안</td>
+                            <td class="doc-th" style="white-space:nowrap;">구분/±</td>
                         </tr></thead>
                         <tbody id="sstdCheckBody">${ptRows}</tbody>
                     </table>
+                    </div>
                 </td>
             </tr>
         </table>
-        <table style="margin-top:0;table-layout:fixed;width:100%;">
-            <colgroup><col style="width:470px"><col></colgroup>
+        <table class="sstd-bottom" style="margin-top:0;table-layout:fixed;width:100%;">
+            <colgroup><col style="width:48%"><col style="width:52%"></colgroup>
             <tr>
-                <td style="width:470px;vertical-align:top;border:1px solid #888;padding:0;">
+                <td style="vertical-align:top;border:1px solid #888;padding:0;">
                     <div class="doc-sec">검 사 순 서</div>
                     <div style="padding:6px;">
                         <textarea id="sstdProcedure"
@@ -1189,8 +1346,8 @@ const ShippingStandbyModule = (function() {
                     </div>
                 </td>
                 <td style="vertical-align:top;border:1px solid #888;padding:0;height:1px;">
-                    <table style="font-size:10px;width:100%;border-collapse:collapse;height:100%;table-layout:fixed;">
-                        <colgroup><col style="width:20px"><col style="width:28px"><col style="width:72px"><col><col style="width:72px"><col style="width:44px"></colgroup>
+                    <table style="font-size:10px;width:100%;border-collapse:collapse;height:100%;table-layout:auto;">
+                        <colgroup><col style="width:1%"><col style="width:1%"><col style="width:1%"><col><col style="width:1%"><col style="width:1%"></colgroup>
                         <tbody>
                         <tr>
                             <td colspan="6" style="padding:0;border:none;">
@@ -1289,6 +1446,7 @@ const ShippingStandbyModule = (function() {
     }
 
     function _sstdRefreshListAfterSave() {
+        _sstdCaptureListFilter();
         const pageBody = document.getElementById('shipStdPageBody');
         if (pageBody) {
             renderStandardListInto(pageBody);
@@ -1311,7 +1469,7 @@ const ShippingStandbyModule = (function() {
             const method = (tr.querySelector('.sstd-pt-method') || {}).value || '';
             const sample = (tr.querySelector('.sstd-pt-sample') || {}).value || '';
             const management = (tr.querySelector('.sstd-pt-mgmt') || {}).value || '';
-            const group = tr.getAttribute('data-group') === 'reliability' ? 'reliability' : 'appearance';
+            const group = _sstdNormGroup(tr.getAttribute('data-group'));
             if (item || standard) checkPoints.push({ item, standard, method, sample, management, group });
         });
 
@@ -1350,18 +1508,19 @@ const ShippingStandbyModule = (function() {
             updatedAt:   new Date().toISOString()
         };
 
-        const applySameCar = !!(document.getElementById('sstdApplySameCar') || {}).checked;
-        const car = payload.carModel;
+        const applyKeys = Array.from(document.querySelectorAll('.sstd-apply-target:checked'))
+            .map(el => String(el.value || '').trim())
+            .filter(Boolean);
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-        const sameCarTargets = applySameCar && car
-            ? products.filter(p => String(p.carModel || '').trim() === car)
+        const applyTargets = applyKeys.length
+            ? products.filter(p => applyKeys.includes(_stdProductKey(p)))
             : [];
 
         const doSave = async () => {
             const standards = await _loadShipStandards();
             standards[key] = payload;
             let applied = 0;
-            sameCarTargets.forEach(p => {
+            applyTargets.forEach(p => {
                 const pk = _stdProductKey(p);
                 if (pk === key) return;
                 standards[pk] = _sstdCloneForProduct(payload, p);
@@ -1374,7 +1533,7 @@ const ShippingStandbyModule = (function() {
             ].filter(Boolean);
             await _saveShipStandards(standards);
             if (applied > 0) {
-                UIUtils.toast(`저장됨. 동일 차종 ${applied + 1}개 품목에 적용되었습니다.`, 'success');
+                UIUtils.toast(`저장됨. 선택 ${applied + 1}개 품목에 적용되었습니다.`, 'success');
             } else if (missingSeal.length) {
                 UIUtils.toast(`저장됨. 날인 미등록: ${missingSeal.join(', ')} (설정>사용자에서 날인 등록)`, 'warning');
             } else {
@@ -1384,18 +1543,32 @@ const ShippingStandbyModule = (function() {
             _sstdRefreshListAfterSave();
         };
 
-        if (sameCarTargets.length > 1) {
-            const overwrite = sameCarTargets.filter(p => {
-                const pk = _stdProductKey(p);
-                return pk !== key;
-            }).length;
+        if (applyTargets.length > 0) {
+            const names = applyTargets
+                .map(p => [p.partName, p.color].filter(Boolean).join(' · '))
+                .filter(Boolean)
+                .slice(0, 8);
+            const more = applyTargets.length > names.length ? ` 외 ${applyTargets.length - names.length}건` : '';
             UIUtils.confirm(
-                `동일 차종「${car}」 ${sameCarTargets.length}개 품목에 이 기준서를 적용합니다.\n(현재 품목 외 ${overwrite}건 — 기존 등록분도 덮어씀)\n계속할까요?`,
+                `선택한 ${applyTargets.length}개 품목에도 이 기준서를 적용합니다.\n(${names.join(', ')}${more})\n기존 등록분은 덮어씁니다. 계속할까요?`,
                 () => { doSave(); }
             );
             return;
         }
         await doSave();
+    }
+
+    function _sstdUpdateApplyPickCount() {
+        const all = document.querySelectorAll('.sstd-apply-target');
+        const checked = document.querySelectorAll('.sstd-apply-target:checked');
+        const el = document.getElementById('sstdApplyPickCount');
+        if (el) el.textContent = String(checked.length);
+        void all;
+    }
+
+    function _sstdApplyPickAll(on) {
+        document.querySelectorAll('.sstd-apply-target').forEach(el => { el.checked = !!on; });
+        _sstdUpdateApplyPickCount();
     }
 
     async function viewShippingStandard(encodedKey) {
@@ -1457,40 +1630,42 @@ const ShippingStandbyModule = (function() {
                 <tr style="height:20px;"><td class="dlb">차 종</td><td style="text-align:center;font-weight:700;">${_esc(data.carModel || '')}</td></tr>
                 <tr style="height:20px;"><td class="dlb">품 명</td><td style="text-align:center;font-weight:700;color:#1d4ed8;min-width:260px;white-space:nowrap;">${_esc(data.partName || '')}${data.color ? ' / ' + _esc(data.color) : ''}</td></tr>
             </table>
-            <table style="margin-top:0;table-layout:fixed;width:100%;">
-                <colgroup><col style="width:470px"><col></colgroup>
+            <table class="sstd-split" style="margin-top:0;table-layout:fixed;width:100%;">
+                <colgroup><col style="width:360px"><col></colgroup>
                 <tr>
-                    <td style="width:470px;vertical-align:top;padding:0;">
+                    <td class="sstd-split-left" style="width:360px;vertical-align:top;padding:0;">
                         <div class="dsec">외관 / 치수포인트</div>
                         <div style="padding:6px;display:grid;grid-template-columns:${imgs.length > 1 ? '1fr 1fr' : '1fr'};gap:4px;">${imgHtml}</div>
                     </td>
-                    <td style="vertical-align:top;padding:0;">
+                    <td class="sstd-split-right" style="vertical-align:top;padding:0;">
                         <div class="dsec">주요검사 Point <span style="font-weight:400;font-size:10px;">(외관 / 신뢰성)</span></div>
-                        <table style="font-size:10px;width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
+                        <div style="overflow:auto;">
+                        <table class="sstd-pt-table" style="font-size:10px;width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
                             <thead><tr>
-                                <td class="dth" style="width:28px;white-space:nowrap;">구분</td>
-                                <td class="dth" style="width:24px;white-space:nowrap;">No</td>
-                                <td class="dth" style="width:88px;white-space:nowrap;">항 목</td>
-                                <td class="dth">기 준</td>
+                                <td class="dth" style="white-space:nowrap;">구분</td>
+                                <td class="dth" style="white-space:nowrap;">No</td>
+                                <td class="dth" style="white-space:nowrap;">항 목</td>
+                                <td class="dth" style="min-width:10em;">기 준</td>
                                 <td class="dth" style="white-space:nowrap;">확인방법</td>
-                                <td class="dth" style="white-space:nowrap;">시 료</td>
-                                <td class="dth" style="white-space:nowrap;">관리방안</td>
+                                <td class="dth" style="white-space:nowrap;font-size:8px;">시 료</td>
+                                <td class="dth" style="white-space:nowrap;font-size:8px;">관리방안</td>
                             </tr></thead>
                             <tbody>${ptRows}</tbody>
                         </table>
+                        </div>
                     </td>
                 </tr>
             </table>
-            <table style="margin-top:0;table-layout:fixed;width:100%;">
-                <colgroup><col style="width:470px"><col></colgroup>
+            <table class="sstd-bottom" style="margin-top:0;table-layout:fixed;width:100%;">
+                <colgroup><col style="width:48%"><col style="width:52%"></colgroup>
                 <tr>
-                    <td style="width:470px;vertical-align:top;padding:0;">
+                    <td style="vertical-align:top;padding:0;">
                         <div class="dsec">검 사 순 서</div>
                         <div style="padding:8px;white-space:pre-wrap;font-size:11px;line-height:1.8;">${_esc(data.procedure || '')}</div>
                     </td>
                     <td style="vertical-align:top;padding:0;height:1px;">
-                        <table style="font-size:10px;width:100%;border-collapse:collapse;height:100%;table-layout:fixed;">
-                            <colgroup><col style="width:20px"><col style="width:28px"><col style="width:72px"><col><col style="width:72px"></colgroup>
+                        <table style="font-size:10px;width:100%;border-collapse:collapse;height:100%;table-layout:auto;">
+                            <colgroup><col style="width:1%"><col style="width:1%"><col style="width:1%"><col><col style="width:1%"></colgroup>
                             <tr><td colspan="5" class="dsec">조 치 사 항</td></tr>
                             <tr><td colspan="5" style="padding:8px;white-space:pre-wrap;font-size:11px;line-height:1.8;vertical-align:top;">${_esc(data.corrective || '')}</td></tr>
                             <tr style="height:24px;">
@@ -1578,40 +1753,40 @@ const ShippingStandbyModule = (function() {
             <tr style="height:20px;"><td class="doc-label">차 종</td><td style="text-align:center;font-weight:700;">${_esc(std.carModel || '')}</td></tr>
             <tr style="height:20px;"><td class="doc-label">품 명</td><td style="text-align:center;font-weight:700;color:#1d4ed8;white-space:nowrap;">${_esc(std.partName || '')}${std.color ? ' / ' + _esc(std.color) : ''}</td></tr>
         </table>
-        <table style="margin-top:0;table-layout:fixed;width:100%;">
-            <colgroup><col style="width:470px"><col></colgroup>
+        <table class="sstd-split" style="margin-top:0;table-layout:fixed;width:100%;">
+            <colgroup><col style="width:360px"><col></colgroup>
             <tr>
-                <td style="width:470px;vertical-align:top;padding:0;">
+                <td class="sstd-split-left" style="width:360px;vertical-align:top;padding:0;">
                     <div class="doc-sec">외관 / 치수포인트</div>
                     <div style="padding:4px;display:grid;grid-template-columns:${(std.images || []).length > 1 ? '1fr 1fr' : '1fr'};gap:4px;align-items:start;">${imgHtml || '<div style="text-align:center;padding:20px;color:#aaa;">이미지 없음</div>'}</div>
                 </td>
-                <td style="vertical-align:top;padding:0;">
+                <td class="sstd-split-right" style="vertical-align:top;padding:0;">
                     <div class="doc-sec">주요검사 Point (외관 / 신뢰성)</div>
-                    <table style="font-size:10px;width:100%;table-layout:auto;">
+                    <table class="sstd-pt-table" style="font-size:10px;width:max-content;min-width:100%;table-layout:auto;">
                         <thead><tr>
-                            <th class="doc-th" style="width:22px;">구분</th>
-                            <th class="doc-th" style="width:22px;">No</th>
-                            <th class="doc-th" style="width:62px;">항 목</th>
-                            <th class="doc-th">기 준</th>
+                            <th class="doc-th" style="white-space:nowrap;">구분</th>
+                            <th class="doc-th" style="white-space:nowrap;">No</th>
+                            <th class="doc-th" style="white-space:nowrap;">항 목</th>
+                            <th class="doc-th" style="min-width:10em;">기 준</th>
                             <th class="doc-th" style="white-space:nowrap;">확인방법</th>
-                            <th class="doc-th" style="white-space:nowrap;">시 료</th>
-                            <th class="doc-th" style="white-space:nowrap;">관리방안</th>
+                            <th class="doc-th" style="white-space:nowrap;font-size:8px;">시 료</th>
+                            <th class="doc-th" style="white-space:nowrap;font-size:8px;">관리방안</th>
                         </tr></thead>
                         <tbody>${ptRows}</tbody>
                     </table>
                 </td>
             </tr>
         </table>
-        <table style="margin-top:0;table-layout:fixed;width:100%;">
-            <colgroup><col style="width:470px"><col></colgroup>
+        <table class="sstd-bottom" style="margin-top:0;table-layout:fixed;width:100%;">
+            <colgroup><col style="width:48%"><col style="width:52%"></colgroup>
             <tr>
-                <td style="width:470px;vertical-align:top;padding:0;">
+                <td style="vertical-align:top;padding:0;">
                     <div class="doc-sec">검 사 순 서</div>
                     <div style="padding:8px;white-space:pre-wrap;line-height:1.8;font-size:11px;">${_esc(std.procedure || '')}</div>
                 </td>
                 <td style="vertical-align:top;padding:0;height:1px;">
-                    <table style="font-size:10px;width:100%;border-collapse:collapse;height:100%;table-layout:fixed;">
-                        <colgroup><col style="width:20px"><col style="width:28px"><col style="width:72px"><col><col style="width:72px"></colgroup>
+                    <table style="font-size:10px;width:100%;border-collapse:collapse;height:100%;table-layout:auto;">
+                        <colgroup><col style="width:1%"><col style="width:1%"><col style="width:1%"><col><col style="width:1%"></colgroup>
                         <tr><td colspan="5" class="doc-sec">조 치 사 항</td></tr>
                         <tr><td colspan="5" style="padding:8px;white-space:pre-wrap;line-height:1.8;font-size:11px;vertical-align:top;">${_esc(std.corrective || '')}</td></tr>
                         <tr style="height:24px;">
@@ -1722,6 +1897,10 @@ const ShippingStandbyModule = (function() {
         });
     }
 
+    function _sstdRowGroup(tr) {
+        return _sstdNormGroup(tr && tr.getAttribute('data-group'));
+    }
+
     function _sstdApplyGroupRowspans() {
         const tb = document.getElementById('sstdCheckBody');
         if (!tb) return;
@@ -1729,24 +1908,23 @@ const ShippingStandbyModule = (function() {
         const rows = Array.from(tb.querySelectorAll('tr.sstd-pt-row'));
         let i = 0;
         while (i < rows.length) {
-            const group = rows[i].getAttribute('data-group') === 'reliability' ? 'reliability' : 'appearance';
+            const group = _sstdRowGroup(rows[i]);
             let j = i + 1;
-            while (j < rows.length) {
-                const g = rows[j].getAttribute('data-group') === 'reliability' ? 'reliability' : 'appearance';
-                if (g !== group) break;
-                j += 1;
-            }
+            while (j < rows.length && _sstdRowGroup(rows[j]) === group) j += 1;
             const span = j - i;
-            const label = group === 'reliability' ? '신뢰성' : '외관';
-            const tone = group === 'reliability' ? '#fde8d0' : '#d0e4f7';
+            const meta = group === 'reliability'
+                ? { label: '신뢰성', tone: '#fde8d0' }
+                : group === 'hidden'
+                    ? { label: '숨김', tone: '#e5e7eb' }
+                    : { label: '외관', tone: '#d0e4f7' };
             const td = document.createElement('td');
             td.className = 'sstd-pt-group';
             td.rowSpan = span;
-            td.style.cssText = 'width:28px;background:' + tone + ';font-weight:700;text-align:center;vertical-align:middle;border:1px solid #888;padding:6px 2px;writing-mode:vertical-rl;letter-spacing:2px;font-size:11px;white-space:nowrap;';
-            td.innerHTML = label
+            td.style.cssText = 'width:auto;max-width:1.4em;background:' + meta.tone + ';font-weight:700;text-align:center;vertical-align:middle;border:1px solid #888;padding:4px 1px;writing-mode:vertical-rl;letter-spacing:2px;font-size:11px;white-space:nowrap;';
+            td.innerHTML = meta.label
                 + '<button type="button" onclick="ShippingStandbyModule._sstdAddCheckRow(\'' + group + '\')" '
                 + 'style="display:block;margin:6px auto 0;background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;writing-mode:horizontal-tb;letter-spacing:0;" '
-                + 'title="' + label + ' 행 추가">+</button>';
+                + 'title="' + meta.label + ' 행 추가">+</button>';
             rows[i].insertBefore(td, rows[i].firstChild);
             i = j;
         }
@@ -1758,20 +1936,56 @@ const ShippingStandbyModule = (function() {
     }
 
     function _sstdFindSectionInsertPoint(group) {
+        group = _sstdNormGroup(group);
         const tb = document.getElementById('sstdCheckBody');
         if (!tb) return null;
         const rows = Array.from(tb.querySelectorAll('tr.sstd-pt-row'));
-        const ofGroup = rows.filter(tr => (tr.getAttribute('data-group') === 'reliability' ? 'reliability' : 'appearance') === group);
-        if (!ofGroup.length) {
-            // 해당 그룹이 없으면: 외관은 맨 앞, 신뢰성은 맨 뒤
-            if (group === 'appearance') return { parent: tb, after: null, before: rows[0] || null };
+        const ofGroup = rows.filter(tr => _sstdRowGroup(tr) === group);
+        if (ofGroup.length) return { parent: tb, after: ofGroup[ofGroup.length - 1] };
+
+        // 그룹이 비어 있으면: 외관 → 맨 앞, 신뢰성 → 외관 뒤(숨김 앞), 숨김 → 맨 뒤
+        if (group === 'appearance') return { parent: tb, after: null, before: rows[0] || null };
+        if (group === 'reliability') {
+            const app = rows.filter(tr => _sstdRowGroup(tr) === 'appearance');
+            if (app.length) return { parent: tb, after: app[app.length - 1] };
+            const hid = rows.find(tr => _sstdRowGroup(tr) === 'hidden');
+            if (hid) return { parent: tb, after: null, before: hid };
             return { parent: tb, after: rows[rows.length - 1] || null };
         }
-        return { parent: tb, after: ofGroup[ofGroup.length - 1] };
+        return { parent: tb, after: rows[rows.length - 1] || null };
+    }
+
+    function _sstdMoveRowToGroup(tr, group) {
+        group = _sstdNormGroup(group);
+        if (!tr || !tr.parentNode) return;
+        tr.setAttribute('data-group', group);
+        tr.style.opacity = group === 'hidden' ? '0.55' : '';
+        const sel = tr.querySelector('.sstd-pt-group-sel');
+        if (sel) sel.value = group;
+        const tb = tr.parentNode;
+        // 임시로 빼 둔 뒤 목표 섹션 끝에 삽입
+        tb.removeChild(tr);
+        const spot = _sstdFindSectionInsertPoint(group);
+        if (spot && spot.before) {
+            spot.parent.insertBefore(tr, spot.before);
+        } else if (spot && spot.after && spot.after.nextSibling) {
+            spot.parent.insertBefore(tr, spot.after.nextSibling);
+        } else if (spot && spot.after) {
+            spot.parent.appendChild(tr);
+        } else {
+            tb.appendChild(tr);
+        }
+    }
+
+    function _sstdChangeCheckGroup(sel) {
+        const tr = sel && sel.closest ? sel.closest('tr.sstd-pt-row') : null;
+        if (!tr) return;
+        _sstdMoveRowToGroup(tr, sel.value);
+        _sstdRefreshCheckLayout();
     }
 
     function _sstdAddCheckRow(group) {
-        group = group === 'reliability' ? 'reliability' : 'appearance';
+        group = _sstdNormGroup(group);
         const spot = _sstdFindSectionInsertPoint(group);
         if (!spot || !spot.parent) return;
         const wrap = document.createElement('tbody');
@@ -1793,12 +2007,11 @@ const ShippingStandbyModule = (function() {
     function _sstdInsertCheckRowAfter(btn) {
         let el = btn; while (el && el.tagName !== 'TR') el = el.parentNode;
         if (!el || !el.parentNode) return;
-        const group = el.getAttribute('data-group') === 'reliability' ? 'reliability' : 'appearance';
+        const group = _sstdRowGroup(el);
         const wrap = document.createElement('tbody');
         wrap.innerHTML = _sstdCheckRowHtml({ group }, null);
         const tr = wrap.firstElementChild;
         if (!tr) return;
-        // 그룹 셀(rowspan)이 있으면 nextSibling 이 실제 다음 데이터 행
         let next = el.nextElementSibling;
         if (next) el.parentNode.insertBefore(tr, next); else el.parentNode.appendChild(tr);
         _sstdRefreshCheckLayout();
@@ -1846,8 +2059,11 @@ const ShippingStandbyModule = (function() {
         _sstdAddImages, _sstdOnPaste, _sstdRemoveImage, _sstdUpdateImgLabel,
         _sstdDragStart, _sstdDragOver, _sstdDragEnd, _sstdDragDrop, _sstdStartResize,
         _sstdAddCheckRow, _sstdInsertCheckRowAfter, _sstdRenumberCheckRows, _sstdRefreshCheckLayout,
+        _sstdChangeCheckGroup,
         _sstdAddRevRow, _sstdInsertRevRowAfter, _sstdOnCfInput,
         _sstdLoadFromRegistered,
+        _sstdFilterList,
+        _sstdApplyPickAll, _sstdUpdateApplyPickCount,
         // 하위호환 (구 코드 참조용)
         remove: removeStandby
     };

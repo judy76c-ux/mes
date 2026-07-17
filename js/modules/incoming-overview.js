@@ -255,7 +255,12 @@ var IncomingOverviewModule = (function () {
             else if (diff <= 30) expiringItems.push({ ...d, _daysLeft: diff });
         });
         const failItems   = data.filter(d => d.verdict === '불합격');
-        const certPending = data.filter(d => d.certCheck !== '접수완료');
+        const certPending = data.filter(d => {
+            if (typeof PaintIncomingInspectionModule !== 'undefined' && PaintIncomingInspectionModule.isCertPendingRecord) {
+                return PaintIncomingInspectionModule.isCertPendingRecord(d);
+            }
+            return d.certCheck !== '접수완료' && d.certCheck !== '대상외';
+        });
         return {
             count: data.length,
             totalQty: data.reduce((s,d) => s+(Number(d.incomingQty)||0), 0),

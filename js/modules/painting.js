@@ -4446,6 +4446,8 @@ const PaintingInspectionModule = (function() {
     const INSPECTION_DRAFT_KEY = 'painting_inspection_drafts';
     let _inspectionDraftCache = null;      // { [workId]: draftData }
     let _currentInspectionExpectedSec = 0; // 현재 검사 모달의 예상 검사 시간(초)
+    let _piWorkId = null;
+    let _piWorkInspectedQty = 0;
 
     // 현재 카운팅 상태
     let state = {
@@ -4663,6 +4665,35 @@ const PaintingInspectionModule = (function() {
         for (var i = 1; i <= 4; i++) {
             var proc = String(product['process' + i] || '');
             if (proc.includes('레이저') || proc.includes('레이져') || /laser/i.test(proc)) return true;
+        }
+        return false;
+    }
+
+    // 레이져 후 재공품(t1xx lens, park, p702 lens 등) — 도장-B 등 2차 도장 라인
+    function _isLaserWipWork(work) {
+        if (!work) return false;
+        var products = Storage.getAll(PRODUCTS_STORE) || [];
+        var product = products.find(function(p) {
+            return p.carModel === work.carModel && p.partName === work.partName;
+        });
+        if (!product) {
+            var hasOut = (Storage.getAll(INJ_INV_STORE) || []).some(function(r) {
+                return r.source === '도장 작업 출고' && String(r.refWorkId || '') === String(work.id || '');
+            });
+            return !hasOut;
+        }
+        var lineLow = String(work.line || '').toLowerCase().replace(/\s+/g, '');
+        var seenLaser = false;
+        for (var pi = 1; pi <= 4; pi++) {
+            var pv = String(product['process' + pi] || '').toLowerCase().replace(/\s+/g, '');
+            if (!pv) break;
+            if (pv.includes('레이') || pv.includes('laser')) { seenLaser = true; continue; }
+            if (seenLaser && pv.includes('도장')) {
+                return pv === lineLow || lineLow.startsWith(pv) || pv.startsWith(lineLow) ||
+                    (pv.includes('-b') && lineLow.includes('-b')) ||
+                    (pv.includes('-a') && lineLow.includes('-a')) ||
+                    pv === '도장';
+            }
         }
         return false;
     }
@@ -5335,6 +5366,9 @@ const PaintingInspectionModule = (function() {
                 return;
             }
 
+            _piWorkId = workId;
+            _piWorkInspectedQty = Number(work.inspectedQty) || 0;
+
             const allDefects = Storage.getAll(DEFECT_STORE) || [];
             const injectionDefects = allDefects.filter(d => d && (d.type === 'injection' || !d.type));
             const paintingDefects = allDefects.filter(d => d && d.type === 'painting');
@@ -5415,8 +5449,11 @@ const PaintingInspectionModule = (function() {
                     <span style="color:var(--border);">|</span>
                     <span style="font-size:0.75rem; color:var(--text-muted);">사출 LOT&nbsp;<strong style="color:var(--text-primary); font-family:monospace;">${lotDisplay}</strong></span>
                     <span style="color:var(--border);">|</span>
-                    <span style="font-size:0.75rem; color:var(--text-muted);">${isPartialWork ? '남은 검사수량' : '작업수량'}&nbsp;<strong style="color:var(--accent-blue); font-size:0.95rem;">${UIUtils.formatNumber(baseInspQty)} EA</strong>
+                    <span style="font-size:0.75rem; color:var(--text-muted);">${isPartialWork ? '남은 검사수량' : '검사 대상'}&nbsp;<strong id="piBannerInspQty" style="color:var(--accent-blue); font-size:0.95rem;">${UIUtils.formatNumber(baseInspQty)} EA</strong>
                         <input type="hidden" id="inpInspectionQty" value="${baseInspQty}">
+                        <input type="hidden" id="piInspectedQtyHidden" value="${work.inspectedQty || 0}">
+                        <input type="hidden" id="piIsPartialWorkFlag" value="${isPartialWork ? '1' : '0'}">
+                        <input type="hidden" id="piStdPerEaHidden" value="${_stdPerEaSec}">
                     </span>
                 </div>
 
@@ -5465,6 +5502,9 @@ const PaintingInspectionModule = (function() {
                             </div>
                         </div>
 
+                        <!-- 작업 수량 (작업일지 연동) -->
+                        ${_buildWorkQtyCard(work, isPartialWork)}
+
                         <!-- 검사 수량 -->
                         <div class="card">
                             <div class="card-body" style="padding:12px;">
@@ -5497,48 +5537,6 @@ const PaintingInspectionModule = (function() {
                                 <div id="piPartialInspectionInfo" style="display:none; margin-top:8px; padding:8px 10px; background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.25); border-radius:6px; font-size:0.75rem; color:var(--text-secondary); line-height:1.4;">
                                     <span class="material-symbols-outlined" style="font-size:16px; vertical-align:middle; color:var(--accent-orange);">info</span>
                                     <span style="margin-left:4px;">부분 검사 시 입력한 수량(양품+불량, 최대 <strong>${UIUtils.formatNumber(baseInspQty)}</strong> EA)만 검사 완료되며, 나머지는 외관검사 대기로 유지됩니다.</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- 포장 -->
-                        <div class="card">
-                            <div class="card-body" style="padding:12px;">
-                                <h5 style="margin:0 0 10px 0;font-size:0.85rem;color:var(--text-primary);display:flex;align-items:center;gap:5px;">
-                                    <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);">inventory_2</span>
-                                    포장
-                                </h5>
-                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;">
-                                    <div class="form-group" style="margin:0;">
-                                        <label class="form-label" style="font-size:0.72rem;">기존 잔량</label>
-                                        <input type="number" class="form-input" id="piPrevResidual" value="${prevResidualQty}" min="0"
-                                            style="text-align:right;font-weight:600;font-size:0.9rem;padding:5px 6px;"
-                                            oninput="PaintingInspectionModule._updatePaintPackagingCalc()">
-                                    </div>
-                                    <div class="form-group" style="margin:0;">
-                                        <label class="form-label" style="font-size:0.72rem;">박스당 수량</label>
-                                        <input type="number" class="form-input" id="piPackUnit" value="${packUnitVal || ''}" min="1" placeholder="-"
-                                            style="text-align:right;font-weight:600;font-size:0.9rem;padding:5px 6px;"
-                                            oninput="PaintingInspectionModule._autoPaintBoxCount()">
-                                    </div>
-                                </div>
-                                <div class="form-group" style="margin:0 0 8px 0;">
-                                    <label class="form-label" style="font-size:0.72rem;">박스 수 <span style="font-weight:400;color:var(--text-muted);font-size:0.68rem;">(조정 가능)</span></label>
-                                    <input type="number" class="form-input" id="piPackBoxCount" value="${initBoxCount || ''}" min="0" placeholder="0"
-                                        style="text-align:right;font-weight:700;font-size:0.95rem;padding:5px 6px;"
-                                        oninput="PaintingInspectionModule._updatePaintPackagingCalc()">
-                                </div>
-                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;background:var(--bg-secondary);border-radius:6px;padding:8px;">
-                                    <div style="text-align:center;">
-                                        <div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:2px;">포장수량</div>
-                                        <div id="piPackQtyDisp" style="font-weight:700;font-size:1.05rem;color:var(--accent-blue);">${UIUtils.formatNumber(initPackQty)}</div>
-                                        <div style="font-size:0.65rem;color:var(--text-muted);">EA</div>
-                                    </div>
-                                    <div style="text-align:center;">
-                                        <div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:2px;">신규 잔량</div>
-                                        <div id="piNewResidDisp" style="font-weight:700;font-size:1.05rem;color:${initNewResid < 0 ? 'var(--accent-red)' : 'var(--accent-orange)'};">${UIUtils.formatNumber(Math.max(0, initNewResid))}</div>
-                                        <div style="font-size:0.65rem;color:var(--text-muted);">EA</div>
-                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -5637,34 +5635,66 @@ const PaintingInspectionModule = (function() {
                     </div>
                 </div>
 
-                <!-- 하단 액션바: 저장 버튼 + 검사자 -->
+                <!-- 하단 액션바: 포장 | 검사자 | 저장 -->
                 <div class="card" style="margin:0;">
-                    <div class="card-body" style="padding:10px 14px;display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;">
-                        <div style="display:flex;gap:6px;flex:0 0 auto;flex-wrap:wrap;align-items:flex-start;">
-                            <div style="display:flex;flex-direction:column;gap:4px;">
-                                <button class="btn btn-outline" onclick="PaintingInspectionModule._saveInspectionDraft('${workId}')" style="justify-content:center; color:var(--accent-orange); border-color:var(--accent-orange); white-space:nowrap;" title="검사 도중 다른 작업으로 변경시 임시 저장가능">
-                                    <span class="material-symbols-outlined" style="font-size:18px;">bookmark_add</span> 임시 저장
-                                </button>
-                                <div style="font-size:0.65rem; color:var(--text-muted); line-height:1.3; max-width:210px;">
-                                    검사 도중 다른 작업으로 변경시 임시 저장가능
+                    <div class="card-body" style="padding:10px 14px;display:flex;align-items:flex-end;gap:10px;flex-wrap:nowrap;overflow-x:auto;">
+                        <!-- ① 포장 -->
+                        <div style="display:flex;align-items:flex-end;gap:6px;flex:0 0 auto;flex-wrap:nowrap;">
+                            <span style="font-size:0.78rem;font-weight:700;color:var(--text-primary);white-space:nowrap;align-self:center;display:flex;align-items:center;gap:3px;padding-bottom:6px;">
+                                <span class="material-symbols-outlined" style="font-size:16px;color:var(--accent-blue);">inventory_2</span>포장
+                            </span>
+                            <div style="display:flex;flex-direction:column;gap:2px;">
+                                <label class="form-label" style="font-size:0.65rem;margin:0;white-space:nowrap;">기존 잔량</label>
+                                <input type="number" class="form-input" id="piPrevResidual" value="${prevResidualQty}" min="0"
+                                    style="width:72px;text-align:right;font-weight:600;font-size:0.82rem;padding:4px 6px;"
+                                    oninput="PaintingInspectionModule._updatePaintPackagingCalc()">
+                            </div>
+                            <div style="display:flex;flex-direction:column;gap:2px;">
+                                <label class="form-label" style="font-size:0.65rem;margin:0;white-space:nowrap;">박스당</label>
+                                <input type="number" class="form-input" id="piPackUnit" value="${packUnitVal || ''}" min="1" placeholder="-"
+                                    style="width:72px;text-align:right;font-weight:600;font-size:0.82rem;padding:4px 6px;"
+                                    oninput="PaintingInspectionModule._autoPaintBoxCount()">
+                            </div>
+                            <div style="display:flex;flex-direction:column;gap:2px;">
+                                <label class="form-label" style="font-size:0.65rem;margin:0;white-space:nowrap;">박스 수</label>
+                                <input type="number" class="form-input" id="piPackBoxCount" value="${initBoxCount || ''}" min="0" placeholder="0"
+                                    style="width:56px;text-align:right;font-weight:700;font-size:0.85rem;padding:4px 6px;"
+                                    oninput="PaintingInspectionModule._updatePaintPackagingCalc()">
+                            </div>
+                            <div style="display:flex;gap:8px;align-items:center;background:var(--bg-secondary);border-radius:6px;padding:4px 10px;align-self:stretch;">
+                                <div style="text-align:center;white-space:nowrap;">
+                                    <div style="font-size:0.62rem;color:var(--text-muted);">포장</div>
+                                    <div id="piPackQtyDisp" style="font-weight:700;font-size:0.88rem;color:var(--accent-blue);">${UIUtils.formatNumber(initPackQty)}</div>
+                                </div>
+                                <div style="width:1px;align-self:stretch;background:var(--border-color);"></div>
+                                <div style="text-align:center;white-space:nowrap;">
+                                    <div style="font-size:0.62rem;color:var(--text-muted);">잔량</div>
+                                    <div id="piNewResidDisp" style="font-weight:700;font-size:0.88rem;color:${initNewResid < 0 ? 'var(--accent-red)' : 'var(--accent-orange)'};">${UIUtils.formatNumber(Math.max(0, initNewResid))}</div>
                                 </div>
                             </div>
-                            <button class="btn btn-primary" onclick="PaintingInspectionModule._saveInspection('${workId}')" style="justify-content:center; white-space:nowrap;">
-                                <span class="material-symbols-outlined">save</span> 저장 (검사 완료)
-                            </button>
-                            <button class="btn btn-outline" onclick="PaintingInspectionModule._closeInspectionModal()" style="justify-content:center; font-size:0.85rem;">
-                                <span class="material-symbols-outlined" style="font-size:16px;">close</span> 취소
+                        </div>
+                        <div style="width:1px;align-self:stretch;background:var(--border-color);flex:0 0 1px;min-height:36px;"></div>
+                        <!-- ② 검사자 -->
+                        <div style="display:flex;align-items:flex-end;gap:6px;flex:1 1 auto;min-width:180px;flex-wrap:nowrap;">
+                            <span style="font-size:0.78rem;font-weight:700;color:var(--text-primary);white-space:nowrap;align-self:center;padding-bottom:6px;">
+                                검사자 <span style="color:var(--accent-red);">*</span>
+                            </span>
+                            <div style="display:flex;align-items:flex-end;gap:6px;flex:1 1 auto;flex-wrap:nowrap;min-width:0;" id="inspectorContainer"></div>
+                            <button type="button" class="btn btn-sm btn-primary" onclick="PaintingInspectionModule._addInspectorField()" id="addInspectorBtn" style="gap:3px;padding:4px 8px;font-size:0.72rem;flex:0 0 auto;align-self:flex-end;">
+                                <span class="material-symbols-outlined" style="font-size:14px;">add</span> 추가
                             </button>
                         </div>
                         <div style="width:1px;align-self:stretch;background:var(--border-color);flex:0 0 1px;min-height:36px;"></div>
-                        <div style="display:flex;align-items:flex-end;gap:8px;flex:1 1 auto;flex-wrap:wrap;min-width:0;">
-                            <span style="font-size:0.82rem;font-weight:700;color:var(--text-primary);white-space:nowrap;align-self:center;padding-bottom:2px;">
-                                검사자 <span style="color:var(--accent-red);">*</span>
-                                <span style="font-size:0.68rem;font-weight:400;color:var(--text-muted);">(자주검사자)</span>
-                            </span>
-                            <div style="display:flex;align-items:flex-end;gap:8px;flex:1 1 auto;flex-wrap:wrap;min-width:0;" id="inspectorContainer"></div>
-                            <button type="button" class="btn btn-sm btn-primary" onclick="PaintingInspectionModule._addInspectorField()" id="addInspectorBtn" style="gap:4px;padding:4px 10px;font-size:0.78rem;flex:0 0 auto;">
-                                <span class="material-symbols-outlined" style="font-size:14px;">add</span> 추가
+                        <!-- ③ 저장 버튼 -->
+                        <div style="display:flex;gap:6px;flex:0 0 auto;flex-wrap:nowrap;align-items:flex-end;">
+                            <button class="btn btn-outline btn-sm" onclick="PaintingInspectionModule._saveInspectionDraft('${workId}')" style="white-space:nowrap;color:var(--accent-orange);border-color:var(--accent-orange);" title="검사 도중 다른 작업으로 변경시 임시 저장">
+                                <span class="material-symbols-outlined" style="font-size:16px;">bookmark_add</span> 임시 저장
+                            </button>
+                            <button class="btn btn-primary btn-sm" onclick="PaintingInspectionModule._saveInspection('${workId}')" style="white-space:nowrap;">
+                                <span class="material-symbols-outlined" style="font-size:16px;">save</span> 검사 완료
+                            </button>
+                            <button class="btn btn-outline btn-sm" onclick="PaintingInspectionModule._closeInspectionModal()" style="white-space:nowrap;">
+                                <span class="material-symbols-outlined" style="font-size:16px;">close</span> 취소
                             </button>
                         </div>
                     </div>
@@ -5722,8 +5752,6 @@ const PaintingInspectionModule = (function() {
                     container.innerHTML = '';
                     container.inspectorCount = 0;
                     _addInspectorField(true);
-                    _addInspectorField();
-                    _addInspectorField();
                     _addInspectorField();
                 }
                 // ✓ Case 1: 부분 검사 도장 작업은 draft를 로드하지 않음 (새로 검사)
@@ -5887,12 +5915,12 @@ const PaintingInspectionModule = (function() {
         const idx = container.inspectorCount;
 
         const fieldHTML = `
-            <div class="form-group" id="inspectorGroup${idx}" style="margin:0; flex:1 1 160px; min-width:140px; max-width:220px;">
-                <label class="form-label" style="font-size:0.72rem;">검사자${idx}</label>
-                <select id="inspector${idx}" class="form-select" style="width:100%; padding:5px 6px; border:1px solid var(--border); font-size:0.85rem;" onchange="PaintingInspectionModule._syncInspectorOptions()">
+            <div class="form-group" id="inspectorGroup${idx}" style="margin:0; flex:0 0 auto; min-width:120px; max-width:160px;">
+                <label class="form-label" style="font-size:0.65rem;margin:0 0 2px 0;white-space:nowrap;">검사자${idx}</label>
+                <select id="inspector${idx}" class="form-select" style="width:100%; padding:4px 6px; border:1px solid var(--border); font-size:0.82rem;" onchange="PaintingInspectionModule._syncInspectorOptions()">
                     <option value="">선택 안함</option>
                     ${inspectors.length === 0
-                        ? `<option value="" disabled>자주검사자 미등록 (자격인증 관리 › 검사자 관리)</option>`
+                        ? `<option value="" disabled>자주검사자 미등록</option>`
                         : inspectors.map(insp => `<option value="${insp.id}">${insp.name || insp.id}</option>`).join('')}
                 </select>
             </div>
@@ -6452,6 +6480,10 @@ const PaintingInspectionModule = (function() {
     }
 
     function _updateDefectQty() {
+        if (document.getElementById('piWorkQty')) {
+            _recalcInspQuantities();
+            return;
+        }
         const goodQty = parseInt(document.getElementById('inpGoodQty').value || 0);
         const totalEl = document.getElementById('inpTotalQty');
 
@@ -6471,6 +6503,10 @@ const PaintingInspectionModule = (function() {
     }
 
     function _updateGoodQty() {
+        if (document.getElementById('piWorkQty')) {
+            _recalcInspQuantities();
+            return;
+        }
         const defectQtyEl = document.getElementById('inpDefectQty');
         const totalEl = document.getElementById('inpTotalQty');
 
@@ -6766,6 +6802,299 @@ const PaintingInspectionModule = (function() {
         }
     }
 
+    function _scaleLotsToQty(lots, newQty) {
+        const scaled = (Array.isArray(lots) ? lots : []).map(function(l) {
+            return Object.assign({}, l);
+        });
+        if (!scaled.length) return scaled;
+        const target = Math.max(0, Number(newQty) || 0);
+        if (scaled.length === 1) {
+            scaled[0].qty = target;
+            return scaled;
+        }
+        const lotSum = scaled.reduce(function(s, l) { return s + (Number(l.qty) || 0); }, 0);
+        if (lotSum <= 0) {
+            scaled[0].qty = target;
+            return scaled;
+        }
+        var allocated = 0;
+        scaled.forEach(function(l, idx) {
+            if (idx === scaled.length - 1) {
+                l.qty = Math.max(0, target - allocated);
+            } else {
+                l.qty = Math.round((Number(l.qty) || 0) / lotSum * target);
+                allocated += l.qty;
+            }
+        });
+        return scaled;
+    }
+
+    async function _syncInjectionOutboundForWork(workId, updatedLots) {
+        const deductions = (Storage.getAll(INJ_INV_STORE) || []).filter(function(r) {
+            return r.source === '도장 작업 출고' && String(r.refWorkId || '') === String(workId || '');
+        });
+        if (!deductions.length) return;
+        const lotQtyMap = {};
+        (updatedLots || []).forEach(function(l) {
+            if (l && l.lotNo) lotQtyMap[String(l.lotNo)] = Number(l.qty) || 0;
+        });
+        for (var i = 0; i < deductions.length; i++) {
+            var rec = deductions[i];
+            var lotNo = String(rec.lotNo || '');
+            if (!lotNo || lotQtyMap[lotNo] === undefined) continue;
+            var newRecQty = lotQtyMap[lotNo];
+            await Storage.update(INJ_INV_STORE, rec.id, Object.assign({}, rec, {
+                quantity: newRecQty,
+                lots: [{ lotNo: lotNo, qty: newRecQty }]
+            }));
+        }
+    }
+
+    async function _syncWorkQtyToWorkLogImmediate(newQty) {
+        if (!_piWorkId) return;
+        const workRef = Storage.getById(PAINTING_WORK_STORE, _piWorkId);
+        if (!workRef) return;
+        const qty = Math.max(0, Number(newQty) || 0);
+        const oldQty = Number(workRef.productionQty) || 0;
+        const patch = { productionQty: qty };
+        if (Array.isArray(workRef.lots) && workRef.lots.length) {
+            patch.lots = _scaleLotsToQty(workRef.lots, qty);
+            patch.inputQty = patch.lots.reduce(function(s, l) { return s + (Number(l.qty) || 0); }, 0);
+        } else if (!workRef.inputQty || Number(workRef.inputQty) === oldQty) {
+            patch.inputQty = qty;
+        }
+        const inspected = Number(workRef.inspectedQty) || _piWorkInspectedQty || 0;
+        if (workRef.inspectionStatus === 'partial' || inspected > 0) {
+            patch.remainingQty = Math.max(0, qty - inspected);
+            patch.inspectionStatus = patch.remainingQty > 0 ? 'partial' : (workRef.inspectionStatus || 'partial');
+        }
+        await Storage.update(PAINTING_WORK_STORE, _piWorkId, Object.assign({}, workRef, patch));
+        if (!_isLaserWipWork(workRef)) {
+            await _syncInjectionOutboundForWork(_piWorkId, patch.lots || workRef.lots);
+        }
+        if (typeof PaintingWorkModule !== 'undefined' && typeof PaintingWorkModule.search === 'function') {
+            try { PaintingWorkModule.search(); } catch (e) { /* ignore */ }
+        }
+    }
+
+    function _buildWorkQtyCard(work, isPartialWork) {
+        const workQty = Number(work.productionQty) || 0;
+        const inspected = Number(work.inspectedQty) || 0;
+        const available = isPartialWork ? Math.max(0, workQty - inspected) : workQty;
+        const sourceLabel = _isLaserWipWork(work) ? '레이저 후 재공품' : '사출 출고';
+        return `
+        <div class="card">
+            <div class="card-body" style="padding:12px;">
+                <h5 style="margin:0 0 10px 0;font-size:0.85rem;color:var(--text-primary);">작업 수량</h5>
+                <div style="display:flex;flex-direction:column;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                        <label class="form-label" style="font-size:0.72rem;margin:0;flex:0 0 auto;white-space:nowrap;">작업수량</label>
+                        <input type="number" class="form-input" id="piWorkQty" value="${workQty}" min="0" readonly
+                            style="text-align:right;font-weight:700;font-size:0.95rem;padding:5px 8px;flex:1 1 110px;min-width:110px;max-width:100%;background:var(--bg-secondary);">
+                        <span style="font-size:0.72rem;color:var(--text-muted);flex-shrink:0;">EA</span>
+                        <button type="button" id="piWorkQtyEditBtn" class="btn btn-sm btn-outline"
+                            onclick="PaintingInspectionModule._enableWorkQtyEdit()"
+                            style="padding:4px 10px;font-size:0.75rem;white-space:nowrap;gap:3px;flex-shrink:0;">
+                            <span class="material-symbols-outlined" style="font-size:14px;">edit</span> 변경
+                        </button>
+                    </div>
+                    ${isPartialWork ? `<div style="font-size:0.72rem;color:var(--text-muted);">이미 검사 <strong style="color:var(--accent-orange);">${UIUtils.formatNumber(inspected)}</strong> EA · 남은 검사 <strong id="piAvailInspLabel" style="color:var(--accent-blue);">${UIUtils.formatNumber(available)}</strong> EA</div>` : ''}
+                    <div style="background:rgba(59,130,246,0.08);border-radius:6px;padding:6px 10px;display:flex;justify-content:space-between;align-items:center;">
+                        <span style="font-size:0.72rem;color:var(--text-muted);">검사 대상</span>
+                        <strong id="piInspAvailLabel" style="font-size:0.95rem;color:var(--accent-blue);">${UIUtils.formatNumber(available)} EA</strong>
+                    </div>
+                    <div style="font-size:0.68rem;color:var(--text-muted);">연동: 도장 작업일지 · ${sourceLabel}</div>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    function _getInspAvailableFromForm() {
+        const workQty = Math.max(0, Number(document.getElementById('piWorkQty')?.value) || 0);
+        const inspected = Math.max(0, Number(document.getElementById('piInspectedQtyHidden')?.value) || 0);
+        const isPartialWork = (document.getElementById('piIsPartialWorkFlag') || {}).value === '1';
+        if (isPartialWork) return Math.max(0, workQty - inspected);
+        return workQty;
+    }
+
+    function _refreshWorkQtyDisplay() {
+        const available = _getInspAvailableFromForm();
+        const inspEl = document.getElementById('inpInspectionQty');
+        if (inspEl) inspEl.value = available;
+        const bannerQty = document.getElementById('piBannerInspQty');
+        if (bannerQty) bannerQty.textContent = UIUtils.formatNumber(available) + ' EA';
+        const availLabel = document.getElementById('piInspAvailLabel');
+        if (availLabel) availLabel.textContent = UIUtils.formatNumber(available) + ' EA';
+        const partialAvail = document.getElementById('piAvailInspLabel');
+        if (partialAvail) partialAvail.textContent = UIUtils.formatNumber(available);
+        const stdPerEa = Number((document.getElementById('piStdPerEaHidden') || {}).value) || 0;
+        if (stdPerEa > 0) {
+            _currentInspectionExpectedSec = stdPerEa * available;
+            const expEl = document.getElementById('inspExpectedTimeVal');
+            if (expEl) expEl.textContent = _formatDurationSec(_currentInspectionExpectedSec);
+        }
+        const partialInfo = document.getElementById('piPartialInspectionInfo');
+        if (partialInfo) {
+            const strong = partialInfo.querySelector('strong');
+            if (strong) strong.textContent = UIUtils.formatNumber(available);
+        }
+    }
+
+    function _recalcInspQuantities() {
+        _refreshWorkQtyDisplay();
+        const available = _getInspAvailableFromForm();
+        if (_isPartialInspectionMode()) {
+            const goodQty = parseInt(document.getElementById('inpGoodQty')?.value || 0, 10) || 0;
+            const failQty = parseInt(document.getElementById('inpDefectQty')?.value || 0, 10) || 0;
+            const totalEl = document.getElementById('inpTotalQty');
+            if (totalEl) totalEl.value = UIUtils.formatNumber(goodQty + failQty);
+            _updatePaintPackagingCalc();
+            return;
+        }
+        let failQty = parseInt(document.getElementById('inpDefectQty')?.value || 0, 10) || 0;
+        let defectSum = 0;
+        document.querySelectorAll('[id^="inj-"],[id^="paint-"],[id^="plate-"],[id^="laser-"]').forEach(function(el) {
+            defectSum += parseInt(el.value || 0, 10) || 0;
+        });
+        if (defectSum > 0) {
+            failQty = defectSum;
+            const failEl = document.getElementById('inpDefectQty');
+            if (failEl) failEl.value = failQty;
+        }
+        const goodQty = Math.max(0, available - failQty);
+        const goodEl = document.getElementById('inpGoodQty');
+        if (goodEl) goodEl.value = goodQty;
+        const totalEl = document.getElementById('inpTotalQty');
+        if (totalEl) totalEl.value = UIUtils.formatNumber(goodQty + failQty);
+        _updatePaintPackagingCalc();
+    }
+
+    function _enableWorkQtyEdit() {
+        if (!_canWriteInspection()) {
+            UIUtils.toast('도장 검사 입력 권한이 없습니다.', 'warning');
+            return;
+        }
+        const el = document.getElementById('piWorkQty');
+        if (!el || el.disabled) return;
+        if (!el.readOnly) {
+            el.focus();
+            el.select();
+            return;
+        }
+        const prev = Number(el.value) || 0;
+        el.readOnly = false;
+        el.style.background = '#fff';
+        el.style.borderColor = 'var(--accent-blue)';
+        el.style.minWidth = '110px';
+        el.style.width = '100%';
+        el.style.flex = '1 1 110px';
+        el.dataset.prevQty = String(prev);
+        const btn = document.getElementById('piWorkQtyEditBtn');
+        if (btn) {
+            btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:14px;">check</span> 적용';
+            btn.className = 'btn btn-sm btn-primary';
+            btn.style.flexShrink = '0';
+            btn.setAttribute('onclick', 'PaintingInspectionModule.confirmWorkQtyEdit()');
+        }
+        let cancelBtn = document.getElementById('piWorkQtyCancelBtn');
+        if (!cancelBtn && btn && btn.parentNode) {
+            cancelBtn = document.createElement('button');
+            cancelBtn.type = 'button';
+            cancelBtn.id = 'piWorkQtyCancelBtn';
+            cancelBtn.className = 'btn btn-sm btn-outline';
+            cancelBtn.style.cssText = 'padding:4px 10px;font-size:0.75rem;white-space:nowrap;flex-shrink:0;';
+            cancelBtn.textContent = '취소';
+            cancelBtn.setAttribute('onclick', 'PaintingInspectionModule.cancelWorkQtyEdit()');
+            btn.parentNode.insertBefore(cancelBtn, btn.nextSibling);
+        }
+        const row = el.parentElement;
+        if (row) {
+            row.style.flexWrap = 'wrap';
+            row.style.rowGap = '6px';
+        }
+        el.oninput = function() { _recalcInspQuantities(); };
+        el.onkeydown = function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                confirmWorkQtyEdit();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                cancelWorkQtyEdit();
+            }
+        };
+        el.focus();
+        el.select();
+    }
+
+    function cancelWorkQtyEdit() {
+        const el = document.getElementById('piWorkQty');
+        if (!el) return;
+        const prev = Number(el.dataset.prevQty);
+        if (Number.isFinite(prev) && prev > 0) el.value = prev;
+        el.readOnly = true;
+        el.style.background = 'var(--bg-secondary)';
+        el.style.borderColor = '';
+        el.style.minWidth = '110px';
+        el.style.flex = '1 1 110px';
+        el.oninput = null;
+        el.onkeydown = null;
+        delete el.dataset.prevQty;
+        _recalcInspQuantities();
+        _resetWorkQtyEditButtons();
+    }
+
+    function _resetWorkQtyEditButtons() {
+        const btn = document.getElementById('piWorkQtyEditBtn');
+        if (btn) {
+            btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:14px;">edit</span> 변경';
+            btn.className = 'btn btn-sm btn-outline';
+            btn.style.cssText = 'padding:4px 10px;font-size:0.75rem;white-space:nowrap;gap:3px;flex-shrink:0;';
+            btn.setAttribute('onclick', 'PaintingInspectionModule._enableWorkQtyEdit()');
+        }
+        const cancelBtn = document.getElementById('piWorkQtyCancelBtn');
+        if (cancelBtn) cancelBtn.remove();
+    }
+
+    function confirmWorkQtyEdit() {
+        const el = document.getElementById('piWorkQty');
+        if (!el) return;
+        const newQty = Math.max(0, parseInt(String(el.value || '').replace(/[^\d]/g, ''), 10) || 0);
+        if (newQty <= 0) {
+            UIUtils.toast('작업수량은 1 이상이어야 합니다.', 'warning');
+            el.focus();
+            return;
+        }
+        const inspected = Math.max(0, Number(document.getElementById('piInspectedQtyHidden')?.value) || 0);
+        if (inspected > 0 && newQty < inspected) {
+            UIUtils.toast('작업수량은 이미 검사한 수량(' + UIUtils.formatNumber(inspected) + ' EA)보다 작을 수 없습니다.', 'warning');
+            el.focus();
+            return;
+        }
+        el.value = newQty;
+        el.readOnly = true;
+        el.style.background = 'var(--bg-secondary)';
+        el.style.borderColor = '';
+        el.style.minWidth = '110px';
+        el.style.flex = '1 1 110px';
+        el.oninput = null;
+        el.onkeydown = null;
+        delete el.dataset.prevQty;
+        _recalcInspQuantities();
+        _resetWorkQtyEditButtons();
+        const workRef = Storage.getById(PAINTING_WORK_STORE, _piWorkId);
+        const isLaserWip = workRef ? _isLaserWipWork(workRef) : false;
+        _syncWorkQtyToWorkLogImmediate(newQty)
+            .then(function() {
+                var msg = '작업일지 수량 ' + UIUtils.formatNumber(newQty) + ' EA 반영';
+                if (isLaserWip) msg += ' · 레이저 재공품 출고 연동';
+                else msg += ' · 사출 출고 연동';
+                UIUtils.toast(msg, 'success');
+            })
+            .catch(function(e) {
+                UIUtils.toast('작업일지 반영 실패: ' + (e && e.message ? e.message : '오류'), 'error');
+            });
+    }
+
     // 임시 저장 내용을 현재 열린 검사 모달 폼에 채운다.
     function _applyInspectionDraft(draft) {
         if (!draft) return;
@@ -6838,6 +7167,10 @@ const PaintingInspectionModule = (function() {
     }
 
     function _updateDefectTotal() {
+        if (document.getElementById('piWorkQty')) {
+            _recalcInspQuantities();
+            return;
+        }
         // 모든 불량 유형 입력값 합산 (inj-*, paint-*)
         let defectSum = 0;
         const defectInputs = document.querySelectorAll('[id^="inj-"], [id^="paint-"], [id^="plate-"], [id^="laser-"]');
@@ -8726,7 +9059,12 @@ const PaintingInspectionModule = (function() {
         _restartWithNewQuantity,
         // ✓ Case 3: 도장 작업 수량 수정 후 검사 기록 동기화
         _showInspectionSyncModal,
-        _autoSyncInspections
+        _autoSyncInspections,
+        // 작업수량 변경 (작업일지 · 사출출고/레이저재공 연동)
+        _enableWorkQtyEdit,
+        confirmWorkQtyEdit,
+        cancelWorkQtyEdit,
+        _recalcInspQuantities
     };
 })();
 

@@ -490,25 +490,114 @@ var ShippingReliabilityModule = (function () {
         `, 'xl');
     }
 
+    async function _applyReliItems(items, hint) {
+        const tb = document.getElementById('reliItemsBody');
+        if (!tb) return;
+        tb.innerHTML = (items || []).map(_itemRowHtml).join('');
+        const labs = Array.from(document.querySelectorAll('label.form-label'));
+        const itemLab = labs.find(el => /신뢰성 시험 항목/.test(el.textContent || ''));
+        if (itemLab && hint) {
+            let span = itemLab.querySelector('span[data-reli-hint]');
+            if (!span) {
+                span = document.createElement('span');
+                span.setAttribute('data-reli-hint', '1');
+                span.style.cssText = 'font-size:0.72rem;font-weight:400;color:var(--text-muted);margin-left:6px;';
+                itemLab.appendChild(span);
+            }
+            span.textContent = hint;
+        }
+        const bar = document.getElementById('reliStdPickBar');
+        if (bar) bar.remove();
+        UIUtils.toast(hint || `기준서 항목 ${(items || []).length}건을 불러왔습니다.`, 'success');
+    }
+
     async function reloadFromStandard() {
-        const carModel = (document.getElementById('reliCarModel') || {}).value || '';
-        const partName = (document.getElementById('reliPartName') || {}).value || '';
-        const color = (document.getElementById('reliColor') || {}).value || '';
+        const carModel = String((document.getElementById('reliCarModel') || {}).value || '').trim();
+        const partName = String((document.getElementById('reliPartName') || {}).value || '').trim();
+        const color = String((document.getElementById('reliColor') || {}).value || '').trim();
         if (!carModel && !partName) {
             UIUtils.toast('차종·품명을 먼저 입력하세요.', 'warning');
             return;
         }
-        const fromStd = (typeof ShippingStandbyModule !== 'undefined' && ShippingStandbyModule.getCheckPointsForProduct)
-            ? await ShippingStandbyModule.getCheckPointsForProduct(carModel, partName, color, 'reliability')
-            : [];
-        const tb = document.getElementById('reliItemsBody');
-        if (!tb) return;
-        if (!fromStd.length) {
-            UIUtils.toast('해당 품목의 기준서(신뢰성) 항목이 없습니다.', 'warning');
+        const getPts = (typeof ShippingStandbyModule !== 'undefined' && ShippingStandbyModule.getCheckPointsForProduct)
+            ? ShippingStandbyModule.getCheckPointsForProduct.bind(ShippingStandbyModule)
+            : null;
+        if (!getPts) {
+            UIUtils.toast('기준서 모듈을 사용할 수 없습니다.', 'error');
             return;
         }
-        tb.innerHTML = fromStd.map(_itemRowHtml).join('');
-        UIUtils.toast(`기준서 신뢰성 항목 ${fromStd.length}건을 불러왔습니다.`, 'success');
+
+        let fromStd = await getPts(carModel, partName, color, 'reliability');
+        if (fromStd.length) {
+            await _applyReliItems(fromStd, `기준서(신뢰성) 항목 ${fromStd.length}건을 불러왔습니다.`);
+            return;
+        }
+
+        // 해당 품목에 없으면 — 등록된 다른 기준서에서 선택 (모달 유지, 인라인)
+        const standards = (typeof ShippingStandbyModule !== 'undefined' && ShippingStandbyModule.loadShipStandards)
+            ? await ShippingStandbyModule.loadShipStandards()
+            : {};
+        const picks = [];
+        for (const key of Object.keys(standards || {})) {
+            const std = standards[key] || {};
+            const pts = await getPts(std.carModel || '', std.partName || '', std.color || '', 'reliability');
+            if (!pts.length) continue;
+            const label = [std.carModel, std.partName, std.color].filter(Boolean).join(' | ') || key;
+            picks.push({ key, label, pts, car: String(std.carModel || '').trim() });
+        }
+        picks.sort((a, b) => {
+            const aSame = a.car === carModel ? 0 : 1;
+            const bSame = b.car === carModel ? 0 : 1;
+            if (aSame !== bSame) return aSame - bSame;
+            return a.label.localeCompare(b.label, 'ko');
+        });
+        if (!picks.length) {
+            UIUtils.toast('불러올 기준서(신뢰성) 항목이 없습니다. 출하검사 기준서에 신뢰성 항목을 등록하세요.', 'warning');
+            return;
+        }
+
+        // 동일 차종 1건이면 바로 적용
+        const sameCar = picks.filter(p => p.car === carModel);
+        if (sameCar.length === 1) {
+            await _applyReliItems(sameCar[0].pts, `「${sameCar[0].label}」 기준서에서 ${sameCar[0].pts.length}건을 불러왔습니다.`);
+            return;
+        }
+        if (picks.length === 1) {
+            await _applyReliItems(picks[0].pts, `「${picks[0].label}」 기준서에서 ${picks[0].pts.length}건을 불러왔습니다.`);
+            return;
+        }
+
+        const tb = document.getElementById('reliItemsBody');
+        if (!tb || !tb.parentElement) return;
+        let bar = document.getElementById('reliStdPickBar');
+        if (!bar) {
+            bar = document.createElement('div');
+            bar.id = 'reliStdPickBar';
+            bar.style.cssText = 'margin:0 0 8px;padding:8px 10px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);display:flex;flex-wrap:wrap;gap:8px;align-items:center;';
+            tb.parentElement.insertBefore(bar, tb);
+        }
+        const opts = picks.map((p, i) =>
+            `<option value="${i}">${_esc(p.label)} (${p.pts.length}항목)</option>`
+        ).join('');
+        bar.innerHTML = `
+            <span style="font-size:0.8rem;color:var(--text-secondary);white-space:nowrap;">이 품목 기준서에 신뢰성 항목이 없습니다. 다른 기준서에서 불러오기:</span>
+            <select id="reliStdPick" class="form-select" style="width:auto;min-width:220px;height:32px;font-size:0.82rem;">${opts}</select>
+            <button type="button" class="btn btn-sm btn-primary" onclick="ShippingReliabilityModule.applyPickedStandard()">적용</button>
+            <button type="button" class="btn btn-sm btn-outline" onclick="document.getElementById('reliStdPickBar')&&document.getElementById('reliStdPickBar').remove()">취소</button>
+        `;
+        ShippingReliabilityModule._stdPicks = picks;
+        UIUtils.toast('불러올 기준서를 선택한 뒤 적용하세요.', 'info');
+    }
+
+    async function applyPickedStandard() {
+        const idx = parseInt((document.getElementById('reliStdPick') || {}).value, 10);
+        const picks = ShippingReliabilityModule._stdPicks || [];
+        const pick = picks[idx];
+        if (!pick || !pick.pts || !pick.pts.length) {
+            UIUtils.toast('선택한 기준서 항목이 없습니다.', 'warning');
+            return;
+        }
+        await _applyReliItems(pick.pts, `「${pick.label}」 기준서에서 ${pick.pts.length}건을 불러왔습니다.`);
     }
 
     function addItemRow() {
@@ -609,7 +698,7 @@ var ShippingReliabilityModule = (function () {
         });
     }
 
-    return { init, render, openTest, addItemRow, reloadFromStandard, saveTest, viewTest, remove };
+    return { init, render, openTest, addItemRow, reloadFromStandard, applyPickedStandard, saveTest, viewTest, remove };
 })();
 
 /* ══════════════════════════════════════════════════════════════

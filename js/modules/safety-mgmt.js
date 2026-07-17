@@ -952,10 +952,14 @@ var MSDSModule = (function () {
         _draw(container);
     }
 
-    /* itemType 정규화: '양산품'→'양산', 'A/S품'→'A/S' */
+    /* itemType 정규화: '양산품'→'양산', '개발용'→'개발', 'A/S용'→'A/S' */
     function _normType(raw) {
         if (!raw) return '';
-        return raw.replace(/품$/, '').trim();
+        let s = String(raw).replace(/품$/, '').trim();
+        if (s === '개발용') return '개발';
+        if (s === 'A/S용' || s === 'AS용' || s === 'AS') return 'A/S';
+        if (s === '양산용') return '양산';
+        return s;
     }
 
     /* paintType + 도료명 키워드로 도료 카테고리 판별 */

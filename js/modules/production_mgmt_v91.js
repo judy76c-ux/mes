@@ -14812,7 +14812,7 @@ var PaintMixModule = (function() {
     const _PMIX_TABS = [
         { key: 'history',  label: '도료사용등록', desc: '도장 실적 연동 · 도료 출고/사용량 기록', icon: 'science',    accent: '#2563eb' },
         { key: 'mixhist',  label: '도료사용 이력', desc: '등록된 도료 사용 기록 조회',              icon: 'receipt_long', accent: '#8b5cf6' },
-        { key: 'residual', label: '배합실 잔량',  desc: '도료 잔량 재고 현황 · 사용/폐기 처리',  icon: 'inventory_2', accent: '#10b981' }
+        { key: 'residual', label: '배합실 도료재고',  desc: '도료 잔량 재고 현황 · 사용/폐기 처리',  icon: 'inventory_2', accent: '#10b981' }
     ];
 
     function render(container) {
@@ -16477,7 +16477,7 @@ var PaintMixModule = (function() {
         }).join('');
     }
 
-    /* ── 배합실 잔량: 창고 출고량(g) - 도료사용량(g) 집계 ── */
+    /* ── 배합실 도료재고: 창고 출고량(g) - 도료사용량(g) 집계 ── */
     function _calcMixingRoomResiduals() {
         const mats  = Storage.getAll(PAINT_MAT_STORE) || [];
         const mixes = _mixes();
@@ -16549,7 +16549,7 @@ var PaintMixModule = (function() {
             });
         });
 
-        // ③ 관리자 실사 조정 (배합실 잔량 신규 등록/수정)
+        // ③ 관리자 실사 조정 / 배합실 입고 등록
         _residualAdjustments().forEach(a => {
             const matId = a.materialId || '';
             const mat   = mats.find(x => x.id === matId);
@@ -16584,14 +16584,14 @@ var PaintMixModule = (function() {
         return (Storage.getAll(STORE) || []).filter(d => d._docKind === 'paint_residual_adjust');
     }
 
-    /* ── 배합실 잔량 신규 등록/조정 ── */
+    /* ── 배합실 도료재고 입고 등록 / 조정 ── */
     function openMixResidualAdjust(materialId, lotNo) {
         if (!_canWritePaintMix()) { UIUtils.toast('배합작업 입력 권한이 없습니다.', 'warning'); return; }
         const isNew = !materialId;
         const mats = Storage.getAll(PAINT_MAT_STORE) || [];
         const current = isNew ? null : _calcMixingRoomResiduals().find(r => r.materialId === materialId && r.lotNo === lotNo);
         const matOptions = mats.map(m => `<option value="${_esc(m.id)}">${_esc(m.name)}</option>`).join('');
-        UIUtils.showModal(isNew ? '배합실 잔량 신규 등록' : '배합실 잔량 조정', `
+        UIUtils.showModal(isNew ? '배합실 입고 등록' : '배합실 도료재고 조정', `
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">도료 <span style="color:var(--accent-red)">*</span></label>
@@ -16606,22 +16606,23 @@ var PaintMixModule = (function() {
                 </div>
             </div>
             <div class="form-row">
+                ${isNew ? '' : `
                 <div class="form-group">
                     <label class="form-label">현재 전산 잔량</label>
-                    <input type="text" class="form-input" value="${current ? UIUtils.formatNumber(current.residualG) + ' g' : '0 g (신규)'}" readonly style="background:var(--bg-secondary);">
+                    <input type="text" class="form-input" value="${current ? UIUtils.formatNumber(current.residualG) + ' g' : '0 g'}" readonly style="background:var(--bg-secondary);">
+                </div>`}
+                <div class="form-group">
+                    <label class="form-label">${isNew ? '입고량(g)' : '실사 잔량(g)'} <span style="color:var(--accent-red)">*</span></label>
+                    <input type="number" class="form-input" id="pmixResActualG" value="${isNew ? '' : (current ? current.residualG : '')}" min="0" step="1" style="text-align:right;" placeholder="${isNew ? '입고 수량(g)' : ''}">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">실사 잔량(g) <span style="color:var(--accent-red)">*</span></label>
-                    <input type="number" class="form-input" id="pmixResActualG" value="${current ? current.residualG : ''}" min="0" step="1" style="text-align:right;">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">조정일자</label>
+                    <label class="form-label">${isNew ? '입고일자' : '조정일자'}</label>
                     <input type="date" class="form-input" id="pmixResDate" value="${UIUtils.today()}">
                 </div>
             </div>
             <div class="form-group">
                 <label class="form-label">사유</label>
-                <input type="text" class="form-input" id="pmixResNote" placeholder="예: 배합실 실사 결과 반영">
+                <input type="text" class="form-input" id="pmixResNote" placeholder="${isNew ? '예: 배합실 입고' : '예: 배합실 실사 결과 반영'}">
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
@@ -16634,29 +16635,39 @@ var PaintMixModule = (function() {
             UIUtils.toast('배합작업 입력 권한이 없습니다.', 'warning');
             return;
         }
+        const isNew = !materialId;
         const matId = materialId || document.getElementById('pmixResMatId')?.value || '';
         if (!matId) { UIUtils.toast('도료를 선택하세요.', 'warning'); return; }
         const finalLotNo = (document.getElementById('pmixResLotNo')?.value || '').trim() || '미기입';
         const actual = Number(document.getElementById('pmixResActualG')?.value);
-        if (!Number.isFinite(actual) || actual < 0) { UIUtils.toast('실사 잔량을 올바르게 입력하세요.', 'warning'); return; }
+        if (!Number.isFinite(actual) || actual < 0) {
+            UIUtils.toast(isNew ? '입고량을 올바르게 입력하세요.' : '실사 잔량을 올바르게 입력하세요.', 'warning');
+            return;
+        }
+        if (isNew && actual <= 0) {
+            UIUtils.toast('입고량은 0보다 커야 합니다.', 'warning');
+            return;
+        }
 
         const current = _calcMixingRoomResiduals().find(r => r.materialId === matId && r.lotNo === finalLotNo);
         const currentG = current ? current.residualG : 0;
-        const delta = Math.round(actual - currentG);
+        // 신규 입고: 입력값이 입고량. 조정: 실사 잔량 − 전산 잔량
+        const delta = isNew ? Math.round(actual) : Math.round(actual - currentG);
         if (delta === 0) { UIUtils.toast('조정할 차이가 없습니다.', 'info'); UIUtils.closeModal(); return; }
 
         const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? AuthModule.getCurrentUser() : null;
         await Storage.add(STORE, {
             _docKind: 'paint_residual_adjust',
+            kind: isNew ? 'inbound' : 'adjust',
             materialId: matId,
             lotNo: finalLotNo,
             adjustG: delta,
             date: document.getElementById('pmixResDate')?.value || UIUtils.today(),
-            note: document.getElementById('pmixResNote')?.value.trim() || '',
+            note: document.getElementById('pmixResNote')?.value.trim() || (isNew ? '배합실 입고' : ''),
             operator: user ? (user.name || '') : ''
         });
         UIUtils.closeModal();
-        UIUtils.toast('배합실 잔량이 조정되었습니다.', 'success');
+        UIUtils.toast(isNew ? '배합실 입고가 등록되었습니다.' : '배합실 도료재고가 조정되었습니다.', 'success');
         renderResidualTab();
     }
 
@@ -16776,8 +16787,10 @@ var PaintMixModule = (function() {
             if (!delta) return;
             inRows.push({
                 date: a.date || '',
-                type: delta > 0 ? '실사 조정(+)' : '실사 조정(-)',
-                detail: a.note || '배합실 실사',
+                type: delta > 0
+                    ? ((a.kind === 'inbound' || /입고/.test(a.note || '')) ? '배합실 입고' : '실사 조정(+)')
+                    : '실사 조정(-)',
+                detail: a.note || (a.kind === 'inbound' ? '배합실 입고' : '배합실 실사'),
                 amountG: delta,
                 note: a.operator ? `작업자 ${a.operator}` : ''
             });
@@ -16822,7 +16835,7 @@ var PaintMixModule = (function() {
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>배합실 잔량 이력 — ${_esc(hist.paintName || '도료')}</title>
+<title>배합실 도료재고 이력 — ${_esc(hist.paintName || '도료')}</title>
 <style>
   *{box-sizing:border-box}
   body{margin:0;background:#f1f5f9;color:#0f172a;font-family:"Pretendard","Malgun Gothic","맑은 고딕",sans-serif}
@@ -16846,7 +16859,7 @@ var PaintMixModule = (function() {
 </head>
 <body>
   <div class="toolbar">
-    <h1>배합실 잔량 이력 · ${_esc(hist.paintName || '-')} · LOT ${_esc(hist.lotNo)}</h1>
+    <h1>배합실 도료재고 이력 · ${_esc(hist.paintName || '-')} · LOT ${_esc(hist.lotNo)}</h1>
     <div style="display:flex;gap:8px;">
       <button onclick="window.print()">인쇄</button>
       <button onclick="window.close()">닫기</button>
@@ -16945,15 +16958,62 @@ var PaintMixModule = (function() {
 
         const mixResiduals = _calcMixingRoomResiduals();
         const mixes = _mixes().sort((a, b) => String(b.date||'').localeCompare(String(a.date||'')));
+        const mats = Storage.getAll(PAINT_MAT_STORE) || [];
 
         // 잔량 있는 mix 레코드: 사용된 도료 중 mixResiduals에 포함된 것 (warehouseCans > 0 사용 기록)
         const residualLotKeys = new Set(mixResiduals.map(r => `${r.materialId}__${r.lotNo}`));
-        const usageMixes = mixes.filter(m =>
-            (m.usages || []).some(u => {
+        const historyRows = [];
+
+        mixes.forEach(m => {
+            const relevantUsages = (m.usages || []).filter(u => {
                 const key = `${u.materialId}__${u.prodLot || u.lotNo || '미기입'}`;
                 return u.warehouseCans > 0 && residualLotKeys.has(key);
-            })
-        );
+            });
+            if (!relevantUsages.length) return;
+            const paintNames = [...new Set(relevantUsages.map(u => u.paintName || '').filter(Boolean))].join(', ');
+            const totalUsageG = relevantUsages.reduce((s, u) =>
+                s + (Number(u.usageG) || 0) + (Number(u.residualUseG) || 0) + (Number(u.warehouseUseG) || 0), 0);
+            historyRows.push({
+                sortDate: m.date || '',
+                kind: 'use',
+                date: m.date || '-',
+                line: m.line || '-',
+                carModel: m.carModel || '-',
+                partName: m.partName || '-',
+                lot: m.productionLot || m.lotNo || '-',
+                paintNames: paintNames || '-',
+                amountG: totalUsageG,
+                amountLabel: totalUsageG > 0 ? UIUtils.formatNumber(totalUsageG) : '-',
+                operator: m.operator || '-',
+                actionHtml: `<button class="btn btn-sm btn-outline" onclick="PaintMixModule.openPaintMixModal('${_esc(m.id || '')}')">
+                    <span class="material-symbols-outlined" style="font-size:14px;">edit</span>
+                </button>`
+            });
+        });
+
+        // 배합실 입고 등록 · 실사 조정(+) 도 이력에 표시
+        _residualAdjustments().forEach(a => {
+            const delta = Number(a.adjustG) || 0;
+            if (delta <= 0) return;
+            const mat = mats.find(x => x.id === a.materialId);
+            const isInbound = a.kind === 'inbound' || /입고/.test(a.note || '');
+            historyRows.push({
+                sortDate: a.date || '',
+                kind: 'in',
+                date: a.date || '-',
+                line: isInbound ? '배합실 입고' : '실사 조정',
+                carModel: '-',
+                partName: a.note || (isInbound ? '배합실 입고' : '실사 조정(+)'),
+                lot: a.lotNo || '미기입',
+                paintNames: (mat && mat.name) || '-',
+                amountG: delta,
+                amountLabel: '+' + UIUtils.formatNumber(delta),
+                operator: a.operator || '-',
+                actionHtml: `<span style="font-size:0.72rem;color:var(--text-muted);">${isInbound ? '입고' : '조정'}</span>`
+            });
+        });
+
+        historyRows.sort((a, b) => String(b.sortDate || '').localeCompare(String(a.sortDate || '')));
 
         // 요약 stat
         const totalResidualG = mixResiduals.reduce((s, r) => s + r.residualG, 0);
@@ -16967,7 +17027,7 @@ var PaintMixModule = (function() {
                 </div>
                 <div class="stat-card blue">
                     <div class="stat-card-value">${UIUtils.formatNumber(totalResidualG)}g</div>
-                    <div class="stat-card-label">총 배합실 잔량</div>
+                    <div class="stat-card-label">총 배합실 도료재고</div>
                 </div>
             </div>
 
@@ -16980,7 +17040,7 @@ var PaintMixModule = (function() {
                     <div style="display:flex;gap:6px;">
                         ${_canWritePaintMix() ? `
                         <button class="btn btn-sm btn-outline" onclick="PaintMixModule.openMixResidualAdjust(null,'')">
-                            <span class="material-symbols-outlined" style="font-size:16px;">add</span> 잔량 신규 등록
+                            <span class="material-symbols-outlined" style="font-size:16px;">add</span> 배합실 입고 등록
                         </button>` : ''}
                         <button class="btn btn-sm btn-outline" onclick="PaintMixModule.renderResidualTab()">
                             <span class="material-symbols-outlined" style="font-size:16px;">refresh</span>
@@ -16992,18 +17052,19 @@ var PaintMixModule = (function() {
                 </div>
             </div>
 
-            <!-- 사용 이력 상세 -->
+            <!-- 입고·사용 이력 상세 -->
             <div class="card">
                 <div class="card-header">
-                    <h4><span class="material-symbols-outlined">science</span> 배합실 잔량 도료 사용 이력
-                        <span style="font-size:0.78rem;font-weight:400;color:var(--text-muted);margin-left:6px;">잔량이 남아 있는 도료를 사용한 작업 기록</span>
+                    <h4><span class="material-symbols-outlined">science</span> 배합실 도료재고 사용 이력
+                        <span style="font-size:0.78rem;font-weight:400;color:var(--text-muted);margin-left:6px;">입고 등록 · 잔량 사용 작업 기록</span>
                     </h4>
                 </div>
                 <div class="card-body" style="padding:0;">
-                    ${usageMixes.length ? `
+                    ${historyRows.length ? `
                     <div class="data-table-wrapper">
                         <table class="data-table" style="font-size:0.83rem;">
                             <thead><tr>
+                                <th style="white-space:nowrap;">구분</th>
                                 <th>도료 사용일</th>
                                 <th>라인</th>
                                 <th>차종</th>
@@ -17015,25 +17076,22 @@ var PaintMixModule = (function() {
                                 <th>작업</th>
                             </tr></thead>
                             <tbody>
-                                ${usageMixes.map(m => {
-                                    const relevantUsages = (m.usages || []).filter(u => {
-                                        const key = `${u.materialId}__${u.prodLot || u.lotNo || '미기입'}`;
-                                        return u.warehouseCans > 0 && residualLotKeys.has(key);
-                                    });
-                                    const paintNames = [...new Set(relevantUsages.map(u => u.paintName||'').filter(Boolean))].join(', ');
-                                    const totalUsageG = relevantUsages.reduce((s, u) => s + (Number(u.usageG)||0) + (Number(u.residualUseG)||0) + (Number(u.warehouseUseG)||0), 0);
+                                ${historyRows.map(r => {
+                                    const kindBadge = r.kind === 'in'
+                                        ? `<span style="display:inline-block;padding:2px 7px;border-radius:999px;font-size:0.7rem;font-weight:700;background:#dbeafe;color:#1d4ed8;">입고</span>`
+                                        : `<span style="display:inline-block;padding:2px 7px;border-radius:999px;font-size:0.7rem;font-weight:700;background:#ffedd5;color:#c2410c;">사용</span>`;
+                                    const amtColor = r.kind === 'in' ? 'var(--accent-blue,#2563eb)' : 'inherit';
                                     return `<tr>
-                                        <td style="white-space:nowrap;">${_esc(m.date||'-')}</td>
-                                        <td>${_esc(m.line||'-')}</td>
-                                        <td style="font-weight:600;">${_esc(m.carModel||'-')}</td>
-                                        <td>${_esc(m.partName||'-')}</td>
-                                        <td style="font-family:monospace;font-size:0.78rem;">${_esc(m.productionLot||m.lotNo||'-')}</td>
-                                        <td style="font-size:0.8rem;color:var(--accent-blue);">${_esc(paintNames||'-')}</td>
-                                        <td style="text-align:right;font-weight:600;">${totalUsageG > 0 ? UIUtils.formatNumber(totalUsageG) : '-'}</td>
-                                        <td>${_esc(m.operator||'-')}</td>
-                                        <td><button class="btn btn-sm btn-outline" onclick="PaintMixModule.openPaintMixModal('${_esc(m.id||'')}')">
-                                            <span class="material-symbols-outlined" style="font-size:14px;">edit</span>
-                                        </button></td>
+                                        <td style="white-space:nowrap;">${kindBadge}</td>
+                                        <td style="white-space:nowrap;">${_esc(r.date)}</td>
+                                        <td>${_esc(r.line)}</td>
+                                        <td style="font-weight:600;">${_esc(r.carModel)}</td>
+                                        <td>${_esc(r.partName)}</td>
+                                        <td style="font-family:monospace;font-size:0.78rem;">${_esc(r.lot)}</td>
+                                        <td style="font-size:0.8rem;color:var(--accent-blue);">${_esc(r.paintNames)}</td>
+                                        <td style="text-align:right;font-weight:600;color:${amtColor};">${r.amountLabel}</td>
+                                        <td>${_esc(r.operator)}</td>
+                                        <td>${r.actionHtml}</td>
                                     </tr>`;
                                 }).join('')}
                             </tbody>
@@ -17041,8 +17099,8 @@ var PaintMixModule = (function() {
                     </div>` : `
                     <div style="text-align:center;padding:36px;color:var(--text-muted);">
                         <span class="material-symbols-outlined" style="font-size:32px;display:block;margin-bottom:8px;">inventory_2</span>
-                        배합실에 잔량이 없습니다.<br>
-                        <span style="font-size:0.82rem;">도료사용등록 탭에서 도료 사용량을 등록하면 잔량이 자동으로 계산됩니다.</span>
+                        입고·사용 이력이 없습니다.<br>
+                        <span style="font-size:0.82rem;">배합실 입고 등록 또는 도료사용등록 후 이력이 표시됩니다.</span>
                     </div>`}
                 </div>
             </div>
@@ -17583,7 +17641,7 @@ var PaintMixModule = (function() {
             .sort((a, b) => (a.prodLot || '').localeCompare(b.prodLot || ''));
     }
 
-    // 배합실 잔량: 해당 LOT에서 꺼낸 캔 합계g - 사용량 합계g
+    // 배합실 도료재고: 해당 LOT에서 꺼낸 캔 합계g - 사용량 합계g
     function _mixRoomBalanceG(materialId, prodLot, ignoreMixId = '') {
         let takenG = 0, usedG = 0;
 
@@ -17672,7 +17730,7 @@ var PaintMixModule = (function() {
         const rows = sortedComponents.map((c, i) => {
             const materialId = c.materialId || '';
             const packUnit = Number(c.packUnit) || 0;
-            // 배합실 잔량 LOT: 저장값 없으면 배합실 잔량 중 첫 번째 LOT 자동 선택
+            // 배합실 도료재고 LOT: 저장값 없으면 배합실 도료재고 중 첫 번째 LOT 자동 선택
             const mixRoomAvailLots = _mixRoomLots(materialId, ignoreMixId);
             const residualProdLot = c.residualProdLot || c.prodLot
                 || (mixRoomAvailLots.length > 0 ? mixRoomAvailLots[0].prodLot : '');
@@ -17712,10 +17770,10 @@ var PaintMixModule = (function() {
                             ${totalUseG > 0 ? UIUtils.formatNumber(totalUseG) + 'g' : '-'}
                         </span>
                     </td>
-                    <!-- ③ 배합실 잔량 사용량 / 잔량 LOT -->
+                    <!-- ③ 배합실 도료재고 사용량 / 잔량 LOT -->
                     <td style="padding:8px 10px;min-width:185px;vertical-align:top;">
                         <div style="display:flex;align-items:center;gap:5px;margin-bottom:4px;">
-                            <span style="font-size:0.7rem;color:var(--text-muted);white-space:nowrap;">배합실 잔량</span>
+                            <span style="font-size:0.7rem;color:var(--text-muted);white-space:nowrap;">배합실 도료재고</span>
                             <span class="pmix-mix-room-bal" style="font-weight:700;font-size:0.85rem;">${residualProdLot ? `${UIUtils.formatNumber(mixRoomBal)}g` : '-'}</span>
                         </div>
                         <div style="margin-bottom:4px;">
@@ -17767,7 +17825,7 @@ var PaintMixModule = (function() {
                 <div style="padding:9px 12px;background:var(--bg-secondary);font-weight:700;">도료 구성 및 LOT 사용량</div>
                 <div class="data-table-wrapper">
                     <table class="data-table" style="font-size:0.82rem;">
-                        <thead><tr><th>도료명</th><th>총 사용량(g)</th><th>배합실 잔량 사용량 / 잔량 LOT</th><th>사용후 잔량(g) / 도료 LOT</th></tr></thead>
+                        <thead><tr><th>도료명</th><th>총 사용량(g)</th><th>배합실 도료재고 사용량 / 잔량 LOT</th><th>사용후 잔량(g) / 도료 LOT</th></tr></thead>
                         <tbody>${rows || `<tr><td colspan="4" style="text-align:center;padding:24px;">제품 기본정보에 등록된 도료 정보가 없습니다.</td></tr>`}</tbody>
                     </table>
                 </div>
@@ -18022,7 +18080,7 @@ var PaintMixModule = (function() {
                 if (!u.residualProdLot) return `${u.paintName || '도료'}의 잔량 LOT를 선택하세요.`;
                 const mixRoomBal = _mixRoomBalanceG(u.materialId, u.residualProdLot, ignoreMixId);
                 if (u.residualUseG > mixRoomBal) {
-                    return `${u.paintName || '도료'} 잔량 LOT ${u.residualProdLot} 사용량(${UIUtils.formatNumber(u.residualUseG)}g)이 배합실 잔량(${UIUtils.formatNumber(mixRoomBal)}g)을 초과합니다.`;
+                    return `${u.paintName || '도료'} 잔량 LOT ${u.residualProdLot} 사용량(${UIUtils.formatNumber(u.residualUseG)}g)이 배합실 도료재고(${UIUtils.formatNumber(mixRoomBal)}g)를 초과합니다.`;
                 }
             }
         }
@@ -20609,7 +20667,7 @@ var ProdQualityModule = (function() {
                     <td style="text-align:center;">${_esc(item.unit || '-')}</td>
                     ${typeOrder.map(type => typeHeaders.includes(type)
                         ? `<td><input type="number" step="${_measureStep(group)}" class="form-input pq-data-val" data-type="${_esc(type)}" value="${_esc(valueOf(item, type))}" style="height:38px;text-align:right;font-weight:700;"${group === 'film' ? ' onblur="ProdQualityModule._formatFilmValue(this)"' : ''}></td>`
-                        : `<td style="background:#f8fafc;color:var(--text-muted);text-align:center;">-</td>`).join('')}
+                        : `<td style="background:#f8fafc;color:var(--text-muted);text-align:center;">/</td>`).join('')}
                     <td><input type="text" class="form-input pq-data-note" value="${_esc(noteOf(item))}" placeholder="비고" style="height:38px;"></td>
                 </tr>`;
         }).join('');
@@ -20657,6 +20715,21 @@ var ProdQualityModule = (function() {
                     <div><span style="color:var(--text-muted);">사출 LOT</span><br><strong style="font-family:monospace;font-size:0.76rem;">${_esc(injLots || '-')}</strong></div>
                 </div>`;
             })()}
+            ${(() => {
+                const workHours = Number(issue.workHours) || Number(_durationHours(issue.startTime || '', issue.endTime || '')) || 0;
+                const expectedTypes = _typesForWorkHours(workHours);
+                const expectedLabel = expectedTypes.length === 2 ? '초물 · 종물 (2회 실시)' : '초물 · 중물 · 종물 (3회 실시)';
+                const actualLabel = typeHeaders.join(' · ') + ` (${typeHeaders.length}회 실시)`;
+                const mismatch = expectedTypes.length !== typeHeaders.length
+                    || !expectedTypes.every(t => typeHeaders.includes(t));
+                return `
+                <div style="margin-bottom:12px;padding:9px 12px;border:1px solid rgba(37,99,235,0.25);border-radius:8px;background:rgba(37,99,235,0.05);font-size:0.78rem;color:var(--text-secondary);line-height:1.7;">
+                    <div><strong style="color:var(--accent-blue);">주기 / 샘플 수량 기준</strong> — 생산계획 시간 기준 생산 LOT가 4시간 이내: 초물·종물 2회 실시 / 4시간 초과: 초물·중물·종물 3회 실시</div>
+                    <div>이 LOT(${workHours ? `${workHours}HR` : '시간 미기록'}) 적용 기준: <strong>${_esc(expectedLabel)}</strong>
+                        ${mismatch ? `&nbsp;·&nbsp;<span style="color:var(--accent-orange,#f59e0b);font-weight:700;">⚠ 발행된 기준 양식은 ${_esc(actualLabel)}로 되어 있어 다릅니다</span>` : ''}
+                    </div>
+                </div>`;
+            })()}
             ${items.length ? `
                 <div class="data-table-wrapper" style="max-height:46vh;overflow:auto;">
                     <table class="data-table" style="font-size:0.82rem;">
@@ -20677,25 +20750,31 @@ var ProdQualityModule = (function() {
                 </div>
             ` : `<div style="padding:28px;text-align:center;color:var(--text-muted);border:1px dashed var(--border-color);border-radius:8px;">색차, 광택, 도막두께 관리항목이 없습니다.</div>`}
             <div style="margin-top:14px;border:1px solid var(--border-color);border-radius:8px;padding:10px 12px;background:#f8fafc;">
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-                    <div style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:.86rem;">
-                        <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-blue);">photo_camera</span>
-                        C/Sheet 사진 (촬영 / 첨부)
-                    </div>
-                    <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                        <label class="btn btn-sm btn-outline" style="cursor:pointer;font-size:.76rem;">
-                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">photo_camera</span> 촬영
-                            <input type="file" accept="image/*" capture="environment" multiple
-                                onchange="ProdQualityModule.addPqDataPhotos(this)" style="display:none;">
-                        </label>
-                        <label class="btn btn-sm btn-outline" style="cursor:pointer;font-size:.76rem;">
-                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">upload</span> 파일 선택
-                            <input type="file" accept="image/*" multiple
-                                onchange="ProdQualityModule.addPqDataPhotos(this)" style="display:none;">
-                        </label>
-                    </div>
+                <div style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:.86rem;margin-bottom:10px;">
+                    <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-blue);">photo_camera</span>
+                    초중종물 사진 등록
                 </div>
-                <div id="pqDataPhotoList" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+                <div style="display:grid;grid-template-columns:repeat(${(typeHeaders.length || 1)},minmax(0,1fr));gap:10px;">
+                    ${(typeHeaders.length ? typeHeaders : typeOrder).map(type => `
+                    <div style="border:1px solid var(--border-color);border-radius:8px;padding:8px;background:#fff;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px;">
+                            <strong style="font-size:.82rem;">${_esc(type)}</strong>
+                            <div style="display:flex;gap:4px;">
+                                <label class="btn btn-sm btn-outline" style="cursor:pointer;font-size:.7rem;padding:3px 7px;" title="촬영">
+                                    <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">photo_camera</span>
+                                    <input type="file" accept="image/*" capture="environment" multiple
+                                        onchange="ProdQualityModule.addPqDataPhotos(this,'${_esc(type)}')" style="display:none;">
+                                </label>
+                                <label class="btn btn-sm btn-outline" style="cursor:pointer;font-size:.7rem;padding:3px 7px;" title="파일 선택">
+                                    <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">upload</span>
+                                    <input type="file" accept="image/*" multiple
+                                        onchange="ProdQualityModule.addPqDataPhotos(this,'${_esc(type)}')" style="display:none;">
+                                </label>
+                            </div>
+                        </div>
+                        <div id="pqDataPhotoList_${_esc(type)}" style="display:flex;flex-wrap:wrap;gap:6px;min-height:40px;"></div>
+                    </div>`).join('')}
+                </div>
             </div>
         `;
     }
@@ -20703,25 +20782,31 @@ var ProdQualityModule = (function() {
     // 사진 업로드/삭제는 모달 메모리 상태로 관리
     let _pqDataPhotos = [];
 
-    function _renderPqDataPhotoList() {
-        const el = document.getElementById('pqDataPhotoList');
+    // 초물/중물/종물 열별로 나눠 렌더링 — idx는 _pqDataPhotos 배열 기준 전역 인덱스(삭제용)
+    function _renderPqDataPhotoList(type) {
+        const el = document.getElementById('pqDataPhotoList_' + type);
         if (!el) return;
-        if (!_pqDataPhotos.length) {
-            el.innerHTML = `<div style="padding:14px;color:var(--text-muted);font-size:.78rem;text-align:center;width:100%;border:1px dashed var(--border-color);border-radius:6px;">등록된 사진이 없습니다. [촬영] 또는 [파일 선택]으로 추가하세요.</div>`;
+        const entries = [];
+        _pqDataPhotos.forEach((p, idx) => { if ((p.type || '') === type) entries.push({ p, idx }); });
+        if (!entries.length) {
+            el.innerHTML = `<div style="padding:8px;color:var(--text-muted);font-size:.68rem;text-align:center;width:100%;">사진 없음</div>`;
             return;
         }
-        el.innerHTML = _pqDataPhotos.map((p, idx) => {
+        el.innerHTML = entries.map(({ p, idx }) => {
             const src = ApiClient.photoUrl ? ApiClient.photoUrl(p.url) : p.url;
-            return `<div style="position:relative;width:120px;height:120px;border:1px solid var(--border-color);border-radius:6px;overflow:hidden;background:#fff;">
+            return `<div style="position:relative;width:74px;height:74px;border:1px solid var(--border-color);border-radius:6px;overflow:hidden;background:#fff;">
                 <img src="${_esc(src)}" alt="${_esc(p.name || '')}" style="width:100%;height:100%;object-fit:cover;cursor:pointer;" onclick="window.open('${_esc(src)}','_blank')">
                 <button type="button" onclick="ProdQualityModule.removePqDataPhoto(${idx})"
-                    style="position:absolute;top:3px;right:3px;width:22px;height:22px;border:0;border-radius:50%;background:rgba(220,38,38,.92);color:#fff;font-weight:800;cursor:pointer;font-size:14px;line-height:1;">×</button>
-                <div style="position:absolute;bottom:0;left:0;right:0;padding:2px 5px;background:rgba(0,0,0,.5);color:#fff;font-size:.66rem;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;">${_esc(p.name || '')}</div>
+                    style="position:absolute;top:2px;right:2px;width:18px;height:18px;border:0;border-radius:50%;background:rgba(220,38,38,.92);color:#fff;font-weight:800;cursor:pointer;font-size:12px;line-height:1;">×</button>
             </div>`;
         }).join('');
     }
 
-    async function addPqDataPhotos(input) {
+    function _renderAllPqDataPhotoLists() {
+        ['초물', '중물', '종물'].forEach(_renderPqDataPhotoList);
+    }
+
+    async function addPqDataPhotos(input, type) {
         const files = Array.from(input?.files || []);
         if (!files.length) return;
         // 저장 폴더: quality-checksheet/{YYYY}/{MM} — 기록일 우선, 없으면 오늘
@@ -20734,20 +20819,20 @@ var ProdQualityModule = (function() {
         for (const file of files) {
             try {
                 const url = await ApiClient.uploadPhoto(file, subdir, { noAutoYearMonth: true });
-                _pqDataPhotos.push({ name: file.name, url, uploadedAt: new Date().toISOString() });
+                _pqDataPhotos.push({ type: type || '', name: file.name, url, uploadedAt: new Date().toISOString() });
             } catch (e) {
                 UIUtils.toast(`사진 업로드 실패: ${file.name} — ${e.message}`, 'error');
             }
         }
         input.value = '';
-        _renderPqDataPhotoList();
+        _renderAllPqDataPhotoLists();
         UIUtils.toast('사진이 추가되었습니다.', 'success');
     }
 
     function removePqDataPhoto(idx) {
         if (idx < 0 || idx >= _pqDataPhotos.length) return;
         _pqDataPhotos.splice(idx, 1);
-        _renderPqDataPhotoList();
+        _renderAllPqDataPhotoLists();
     }
 
     function openDataModal(issueId) {
@@ -20759,7 +20844,7 @@ var ProdQualityModule = (function() {
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="ProdQualityModule.saveMeasureRecord('${_js(issueId)}','${_js(record.id || '')}')">저장</button>
         `, 'xl');
-        setTimeout(_renderPqDataPhotoList, 50);
+        setTimeout(_renderAllPqDataPhotoLists, 50);
     }
 
     function openDataView(issueId) {
@@ -20777,9 +20862,10 @@ var ProdQualityModule = (function() {
             body.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
             // 사진 영역 버튼(촬영/파일 선택, 삭제 ×)은 숨김
             setTimeout(() => {
-                _renderPqDataPhotoList();
-                const list = document.getElementById('pqDataPhotoList');
-                if (list) list.querySelectorAll('button').forEach(b => { b.style.display = 'none'; });
+                _renderAllPqDataPhotoLists();
+                body.querySelectorAll('[id^="pqDataPhotoList_"]').forEach(list => {
+                    list.querySelectorAll('button').forEach(b => { b.style.display = 'none'; });
+                });
                 // 촬영/파일선택 라벨도 비활성화
                 body.querySelectorAll('#modalBody label.btn').forEach(l => { l.style.pointerEvents = 'none'; l.style.opacity = '0.4'; });
             }, 50);
@@ -20844,7 +20930,7 @@ var ProdQualityModule = (function() {
             productionQty: Number(issue.productionQty) || 0,
             inspector,
             items,
-            photos: (_pqDataPhotos || []).map(p => ({ name: p.name || '', url: p.url || '', uploadedAt: p.uploadedAt || '' })),
+            photos: (_pqDataPhotos || []).map(p => ({ type: p.type || '', name: p.name || '', url: p.url || '', uploadedAt: p.uploadedAt || '' })),
             updatedAt: now
         };
 
@@ -21363,6 +21449,11 @@ var ProdQualityModule = (function() {
         return { startTime, endTime };
     }
 
+    // 주기/샘플 수량 규정: 생산 LOT 작업시간 4시간 이내 → 초물+종물(2회), 4시간 초과 → 초물+중물+종물(3회)
+    function _typesForWorkHours(hours) {
+        return (Number(hours) || 0) > 4 ? ['초물', '중물', '종물'] : ['초물', '종물'];
+    }
+
     function _durationHours(startTime = '', endTime = '') {
         const s = _timeToMinutes(startTime);
         const e0 = _timeToMinutes(endTime);
@@ -21874,7 +21965,7 @@ var ProdQualityModule = (function() {
             workId,
             date: work.date || UIUtils.today(),
             type: '초물/중물/종물',
-            types: ['초물', '중물', '종물'],
+            types: _typesForWorkHours(_durationHours(work.startTime || '', work.endTime || '')),
             line: work.line || '',
             carModel: work.carModel || '',
             partName: work.partName || '',
@@ -21940,7 +22031,7 @@ var ProdQualityModule = (function() {
             workId,
             date: work.date || UIUtils.today(),
             type: '초물/중물/종물',
-            types: ['초물', '중물', '종물'],
+            types: _typesForWorkHours(_durationHours(work.startTime || '', work.endTime || '')),
             line: work.line || '',
             carModel: work.carModel || '',
             partName: work.partName || '',
@@ -21977,7 +22068,7 @@ var ProdQualityModule = (function() {
             workId,
             date: work.date || UIUtils.today(),
             type: '초물/중물/종물',
-            types: ['초물', '중물', '종물'],
+            types: _typesForWorkHours(_durationHours(work.startTime || '', work.endTime || '')),
             line: work.line || '',
             carModel: work.carModel || '',
             partName: work.partName || '',
@@ -23279,7 +23370,12 @@ var ProdQualityModule = (function() {
                 : _normalizeQualityItems(d.items || [])
             ).map(item => _normalizeItemForEdit({ ...item }))
         );
-        const typeHeaders = (d.types && d.types.length ? d.types : ['초물', '중물', '종물']);
+        // ✓ 작업시간 기준(4hr 규정)을 우선 적용 — 예전에 발행된 기준 양식(저장된 d.types)도
+        //   재인쇄할 때마다 항상 최신 규정으로 자동 판정한다. 시간 정보 자체가 없을 때만 저장값을 쓴다.
+        const workHoursForTypes = Number(d.workHours) || Number(_durationHours(d.startTime || '', d.endTime || '')) || 0;
+        const typeHeaders = workHoursForTypes > 0
+            ? _typesForWorkHours(workHoursForTypes)
+            : (d.types && d.types.length ? d.types : ['초물', '중물', '종물']);
         const selectedTypes = new Set(typeHeaders);
         const measureCellMode = item => {
             const label = `${item.label || ''} ${item.method || ''}`;
@@ -23325,7 +23421,11 @@ var ProdQualityModule = (function() {
             }
             return `<td class="spec-text" colspan="2">${_esc(spec || '기준에 준할 것')}</td>`;
         };
-        const renderMeasureCell = item => {
+        const renderMeasureCell = (item, type) => {
+            // ✓ 이번 LOT 기준(초/중/종)에 포함되지 않은 열은 측정란 자체를 감춘다
+            if (!selectedTypes.has(type)) {
+                return `<td class="measure-cell blank" style="color:#94a3b8;font-weight:900;">/</td>`;
+            }
             const mode = measureCellMode(item);
             if (mode.type === 'box') {
                 return `<td class="measure-cell"><span>${_esc(mode.text)}</span></td>`;
@@ -23343,7 +23443,7 @@ var ProdQualityModule = (function() {
             return span;
         });
         const lotHead = (type, suffix) => {
-            const checked = selectedTypes.has(type) && type !== '중물';
+            const checked = selectedTypes.has(type);
             return `
                 <th class="lot-head">
                     <div class="measure-type">
@@ -23371,9 +23471,9 @@ var ProdQualityModule = (function() {
                     <td class="item-detail">${info.detailHtml || '&nbsp;'}</td>
                     ${specCells(item)}
                     <td class="method-cell">${_esc(item.method || '')}</td>
-                    ${renderMeasureCell(item)}
-                    ${renderMeasureCell(item)}
-                    ${renderMeasureCell(item)}
+                    ${renderMeasureCell(item, '초물')}
+                    ${renderMeasureCell(item, '중물')}
+                    ${renderMeasureCell(item, '종물')}
                     <td class="judge-cell">OK , NG</td>
                 </tr>`;
         }).join('');
@@ -23507,9 +23607,9 @@ table{border-collapse:collapse;width:100%}
       </tr>
       <tr class="subhead">
         <th class="spec-head-upper">상</th><th class="spec-head-lower">하</th>
-        ${lotHead(typeHeaders[0] || '초물', 'IP')}
-        ${lotHead(typeHeaders[1] || '중물', 'MP')}
-        ${lotHead(typeHeaders[2] || '종물', 'FP')}
+        ${lotHead('초물', 'IP')}
+        ${lotHead('중물', 'MP')}
+        ${lotHead('종물', 'FP')}
       </tr>
     </thead>
     <tbody>${rows}</tbody>

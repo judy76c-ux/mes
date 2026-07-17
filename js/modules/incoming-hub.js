@@ -78,7 +78,12 @@ var IncomingHubModule = (function () {
         const all = Storage.getAll(PAINT_STORE);
         const mon = all.filter(d => d.date >= period.start && d.date <= period.end);
 
-        const certPending = all.filter(d => d.certCheck !== '접수완료')
+        const certPending = all.filter(d => {
+            if (typeof PaintIncomingInspectionModule !== 'undefined' && PaintIncomingInspectionModule.isCertPendingRecord) {
+                return PaintIncomingInspectionModule.isCertPendingRecord(d);
+            }
+            return d.certCheck !== '접수완료' && d.certCheck !== '대상외';
+        })
             .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 
         // 유효기간 임박 (30일 이내)
