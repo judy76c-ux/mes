@@ -785,7 +785,7 @@ const PaintInventoryModule = (function() {
                             style="font-size:0.7rem;border:1px solid var(--border-color);border-radius:4px;padding:2px 6px;margin-right:4px;background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;">수정</button>`
                     : '';
                 return `
-                    <tr style="cursor:pointer;" title="클릭하여 출고 등록"
+                    <tr style="cursor:pointer;" title="클릭하여 출고 목록에 추가"
                         onclick="PaintInventoryModule._openDetailOutgoing('${matId}','${prodLotEsc}','${lotNoEsc}',${l.qty})"
                         onmouseover="this.style.background='rgba(239,68,68,0.07)'"
                         onmouseout="this.style.background=''">
@@ -870,7 +870,78 @@ const PaintInventoryModule = (function() {
         );
     }
 
-    // ── 도료 상세 팝업에서 LOT 클릭 → 즉시 출고 등록 ────────────────
+    function _outListupPendingQty(materialId, prodLot) {
+        let total = 0;
+        _buildOutgoingListupCandidates(_currentListupDate()).forEach(function(r) {
+            if (r.materialId === materialId && r.prodLot === prodLot) {
+                total += Math.max(1, Number(r.qty) || 1);
+            }
+        });
+        return total;
+    }
+
+    function _scrollToOutgoingListup() {
+        if (_activeTab !== 'stock') _switchTab('stock');
+        setTimeout(function() {
+            const body = document.getElementById('paintOutListupBody');
+            const card = body && body.closest('.card');
+            if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 120);
+    }
+
+    function _addToOutgoingListup(opts) {
+        const materialId = opts.materialId;
+        const prodLot = opts.prodLot || opts.lotNo || '';
+        const lotNo = opts.lotNo || prodLot;
+        const qty = Math.max(1, parseInt(opts.qty, 10) || 1);
+        const mixTarget = opts.mixTarget || '수동 추가';
+        const listupDate = opts.listupDate ? String(opts.listupDate).slice(0, 10) : '';
+
+        if (!materialId) { UIUtils.toast('도료를 선택하세요.', 'warning'); return false; }
+        if (!prodLot) { UIUtils.toast('제조 LOT를 선택하세요.', 'warning'); return false; }
+
+        const avail = _lotAvailableCans(materialId, prodLot);
+        const pending = _outListupPendingQty(materialId, prodLot);
+        if (pending + qty > avail) {
+            UIUtils.toast(
+                `재고 부족 — 가용 ${UIUtils.formatNumber(avail)}캔, 목록 대기 ${UIUtils.formatNumber(pending)}캔, 요청 ${UIUtils.formatNumber(qty)}캔`,
+                'error'
+            );
+            return false;
+        }
+
+        if (listupDate) {
+            const dateEl = document.getElementById('paintOutListupDate');
+            if (dateEl) dateEl.value = listupDate;
+        }
+
+        const mat = (Storage.getAll(MATERIALS_STORE) || []).find(m => m.id === materialId);
+        const existing = (_outListupManualRows || []).find(r => r.materialId === materialId && r.prodLot === prodLot);
+        if (existing) {
+            existing.qty = (Number(existing.qty) || 0) + qty;
+            if (opts.memo) existing.memo = opts.memo;
+        } else {
+            _outListupManualRows.push({
+                key: 'mn__' + Storage.generateId(),
+                source: 'manual',
+                materialId,
+                paintName: opts.paintName || (mat ? mat.name : ''),
+                prodLot,
+                lotNo,
+                qty,
+                mixTarget,
+                paintMixId: '',
+                mixDate: listupDate || _currentListupDate(),
+                memo: opts.memo || ''
+            });
+        }
+
+        renderPaintOutgoingListup();
+        _scrollToOutgoingListup();
+        return true;
+    }
+
+    // ── 도료 상세 팝업에서 LOT 클릭 → 출고 리스트업에 추가 ────────────────
     async function _openDetailOutgoing(matId, prodLot, lotNo, currentQty) {
         const materials = Storage.getAll(MATERIALS_STORE);
         const mat = materials.find(m => m.id === matId);
@@ -921,7 +992,7 @@ const PaintInventoryModule = (function() {
                 <input type="text" class="form-input" id="detailOutMemo" placeholder="출고 용도 또는 메모">
             </div>`,
             `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-             <button class="btn btn-primary" onclick="PaintInventoryModule._saveDetailOutgoing('${matId}','${prodLot}','${lotNo}')">출고 등록</button>`
+             <button class="btn btn-primary" onclick="PaintInventoryModule._saveDetailOutgoing('${matId}','${prodLot}','${lotNo}')">출고 목록에 추가</button>`
         );
 
         setTimeout(() => {
@@ -938,47 +1009,25 @@ const PaintInventoryModule = (function() {
         if (!date) { UIUtils.toast('출고 일자를 선택하세요.', 'warning'); return; }
         if (qty <= 0) { UIUtils.toast('출고 수량을 입력하세요.', 'warning'); return; }
 
-        // 현재 재고 재검증
-        const allLogs = Storage.getAll(STORE);
-        const lotLogs = allLogs.filter(l =>
-            l.materialId === matId &&
-            (l.prodLot || l.lotNo) === (prodLot || lotNo)
-        );
-        const stockIn  = lotLogs.filter(l => l.type === '입고').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
-        const stockOut = lotLogs.filter(l => l.type === '출고').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
-        const available = stockIn - stockOut;
+        const materials = Storage.getAll(MATERIALS_STORE);
+        const mat = materials.find(m => m.id === matId);
 
-        if (qty > available) {
-            UIUtils.toast(`재고 부족 — 출고 가능 수량: ${UIUtils.formatNumber(available)} 개`, 'error');
-            return;
-        }
-
-        const loginUser = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? (AuthModule.getCurrentUser() || {}) : {};
-        const data = {
-            date:       date,
-            type:       '출고',
+        const ok = _addToOutgoingListup({
             materialId: matId,
-            prodLot:    prodLot || '',
-            lotNo:      lotNo   || prodLot || '',
-            quantity:   qty,
-            mfgDate:    '',
-            expDate:    '',
-            memo:       memo,
-            issuedBy:   loginUser.displayName || loginUser.username || '',
-            processedBy: loginUser.displayName || loginUser.username || '',
-            sourceInspectionId: ''
-        };
+            prodLot: prodLot || lotNo,
+            lotNo: lotNo || prodLot,
+            qty,
+            paintName: mat ? mat.name : '',
+            mixTarget: memo ? `재고 선택 · ${memo}` : '재고 선택',
+            memo,
+            listupDate: date
+        });
+        if (!ok) return;
 
-        // executeTransaction: 단일 스토어지만 향후 연관 스토어 추가를 대비해 통일
-        await Storage.executeTransaction([
-            { store: STORE, op: 'add', data }
-        ]);
-        UIUtils.toast('출고 등록되었습니다.', 'success');
-        // 출고 모달 닫기 → 상위 상세 팝업도 닫고 최신 상태로 다시 열기
-        UIUtils.closeModal(); // 출고 등록 모달
-        UIUtils.closeModal(); // 상세 팝업
+        UIUtils.toast('출고 목록에 추가되었습니다. 출고자 선택 후 출고 완료를 누르세요.', 'success');
+        UIUtils.closeModal();
+        UIUtils.closeModal();
         loadData();
-        setTimeout(() => showPaintDetail(matId), 150);
     }
 
     // ── 도료 상세 팝업에서 LOT 재고 수량 수정 (도료 창고 입력 권한) ──────────
@@ -1502,23 +1551,9 @@ const PaintInventoryModule = (function() {
         const matId = (document.getElementById('paintOutListupAddMat') || {}).value || '';
         const prodLot = (document.getElementById('paintOutListupAddLot') || {}).value || '';
         const qty = Math.max(1, parseInt((document.getElementById('paintOutListupAddQty') || {}).value || '1', 10) || 1);
-        if (!matId) { UIUtils.toast('도료를 선택하세요.', 'warning'); return; }
-        if (!prodLot) { UIUtils.toast('제조 LOT를 선택하세요.', 'warning'); return; }
-        const mat = (Storage.getAll(MATERIALS_STORE) || []).find(m => m.id === matId);
-        _outListupManualRows.push({
-            key: 'mn__' + Storage.generateId(),
-            source: 'manual',
-            materialId: matId,
-            paintName: mat ? mat.name : '',
-            prodLot,
-            lotNo: prodLot,
-            qty,
-            mixTarget: '수동 추가',
-            paintMixId: '',
-            mixDate: _currentListupDate()
-        });
-        renderPaintOutgoingListup();
-        UIUtils.toast('출고 목록에 추가했습니다.', 'info');
+        if (_addToOutgoingListup({ materialId: matId, prodLot, qty, mixTarget: '수동 추가' })) {
+            UIUtils.toast('출고 목록에 추가했습니다.', 'info');
+        }
     }
 
     function removeOutgoingListupManualRow(key) {
@@ -1992,7 +2027,7 @@ const PaintInventoryModule = (function() {
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" onclick="PaintInventoryModule.saveNew('${type}')">등록</button>
+            <button class="btn btn-primary" onclick="PaintInventoryModule.saveNew('${type}')">${type === '출고' ? '출고 목록에 추가' : '등록'}</button>
         `);
         // 모달 DOM 삽입 후 작업자 목록 채우기
         setTimeout(() => _fillWorkerSelect(type), 0);
@@ -2740,8 +2775,7 @@ const PaintInventoryModule = (function() {
         // 출고 시 prodLot 기준 재고 검증 + lotNo 역조회
         if (data.type === '출고') {
             const allLogs = Storage.getAll(STORE);
-            // select 값이 prodLot이므로 prodLot 기준 매칭
-            const selectedProdLot = data.lotNo; // select value → prodLot
+            const selectedProdLot = data.lotNo;
             const lotLogs = allLogs.filter(l =>
                 l.materialId === data.materialId &&
                 (l.prodLot || l.lotNo) === selectedProdLot
@@ -2749,18 +2783,41 @@ const PaintInventoryModule = (function() {
             const stockIn  = lotLogs.filter(l => l.type === '입고').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
             const stockOut = lotLogs.filter(l => l.type === '출고').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
             const available = stockIn - stockOut;
+            const pending = _outListupPendingQty(data.materialId, selectedProdLot);
 
-            if (data.quantity > available) {
+            if (data.quantity + pending > available) {
                 checkStockLive('add');
                 const qtyInput = document.getElementById('addPaintInvQty');
                 if (qtyInput) qtyInput.focus();
+                UIUtils.toast(
+                    pending > 0
+                        ? `재고 부족 — 가용 ${UIUtils.formatNumber(available)}캔, 목록 대기 ${UIUtils.formatNumber(pending)}캔`
+                        : `재고 부족 — 출고 가능 수량: ${UIUtils.formatNumber(available)}캔`,
+                    'error'
+                );
                 return;
             }
 
-            // prodLot / lotNo 분리 저장
             data.prodLot = selectedProdLot;
             const srcRec = lotLogs.find(l => l.type === '입고' && l.lotNo);
             data.lotNo = srcRec ? srcRec.lotNo : selectedProdLot;
+
+            const mat = (Storage.getAll(MATERIALS_STORE) || []).find(m => m.id === data.materialId);
+            const ok = _addToOutgoingListup({
+                materialId: data.materialId,
+                prodLot: data.prodLot,
+                lotNo: data.lotNo,
+                qty: data.quantity,
+                paintName: mat ? mat.name : '',
+                mixTarget: '출고 등록',
+                listupDate: data.date
+            });
+            if (!ok) return;
+
+            UIUtils.closeModal();
+            UIUtils.toast('출고 목록에 추가되었습니다. 출고자 선택 후 출고 완료를 누르세요.', 'success');
+            loadData();
+            return;
         }
 
         // ── executeTransaction: 작업 목록 구성 ──────────────────────────
