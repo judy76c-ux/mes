@@ -1023,7 +1023,8 @@ var InjectionWarehouseModule = (function() {
             lots.forEach(function(lot) {
                 if (lot.lotNo && insp.partName) {
                     const k = `${insp.partName}||${lot.lotNo}`;
-                    if (!_inspDateMap[k]) _inspDateMap[k] = (insp.date || '').slice(0, 10);
+                    // 전체 일시(시간 포함)를 보존 — 입고경로 옆 시간 표시에 사용, 컬럼 표시는 날짜만 자름
+                    if (!_inspDateMap[k]) _inspDateMap[k] = insp.date || '';
                 }
             });
         });
@@ -1034,9 +1035,8 @@ var InjectionWarehouseModule = (function() {
             const value = (Number(d.quantity) || 0) * price;
             const typeBadge = d.type === '출고' ? 'danger' : 'success';
             const isReset = _isStockErrorResetRecord(d);
-            const inspDate = d.inspDate
-                ? d.inspDate.slice(0, 10)
-                : (_inspDateMap[`${d.partName}||${d.lotNo}`] || '-');
+            const fullInspDate = d.inspDate || _inspDateMap[`${d.partName}||${d.lotNo}`] || '';
+            const inspDate = fullInspDate || '-';
             const path = isIncoming ? _incomingPathLabel(d) : null;
             const who = d.resetBy || _formatActorLabel(d.receivedBy || d.outgoingBy || '');
             const actionCell = isIncoming
