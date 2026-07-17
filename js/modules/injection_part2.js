@@ -240,6 +240,116 @@ var InjectionWarehouseModule = (function() {
         return v;
     }
 
+    function _fmtTxDateCell(raw) {
+        const sp = String(raw || '').split(' ');
+        const pp = (sp[0] || '').split('-');
+        const tt = sp[1] ? sp[1].slice(0, 5) : '';
+        if (pp.length !== 3) return raw ? String(raw) : '-';
+        return '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;">' + pp[0] + '</span>' +
+               '<span style="font-weight:600;white-space:nowrap;">' + pp[1] + '-' + pp[2] + '</span>' +
+               (tt ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1.4;">' + tt + '</span>' : '');
+    }
+
+    function _buildInspDateContext() {
+        const inspections = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
+        const inspDateMap = {};
+        inspections.forEach(function(insp) {
+            const lots = (insp.lots && insp.lots.length > 0)
+                ? insp.lots
+                : (insp.lotNo ? [{ lotNo: insp.lotNo }] : []);
+            lots.forEach(function(lot) {
+                if (lot.lotNo && insp.partName) {
+                    const k = `${insp.partName}||${lot.lotNo}`;
+                    if (!inspDateMap[k]) inspDateMap[k] = insp.date || '';
+                }
+            });
+        });
+
+        const inboundInspMap = {};
+        (Storage.getAll(STORE) || []).forEach(function(r) {
+            if (r.type === '출고' || !r.partName || !r.lotNo) return;
+            const k = `${r.partName}||${r.lotNo}`;
+            if (inboundInspMap[k]) return;
+            const src = String(r.source || '');
+            inboundInspMap[k] = {
+                inspDate: r.inspDate || '',
+                fromInsp: /수입검사/.test(src) || !!r.inspDate
+            };
+        });
+        return { inspDateMap, inboundInspMap };
+    }
+
+    function _formatInspDateCell(d, isIncoming, inspDateMap, inboundInspMap) {
+        const key = `${d.partName || ''}||${d.lotNo || ''}`;
+        const fullDate = d.inspDate || inspDateMap[key] || (inboundInspMap[key] && inboundInspMap[key].inspDate) || '';
+        if (fullDate) return _fmtTxDateCell(fullDate);
+
+        if (isIncoming) {
+            const src = String(d.source || '');
+            const linkedInsp = /수입검사/.test(src) || !!d.inspDate;
+            if (linkedInsp) {
+                return '<span style="font-size:0.78rem;color:var(--accent-orange);font-weight:600;" title="수입검사 연동 건이나 검사일 미등록">미등록</span>';
+            }
+            return '<span style="font-size:0.78rem;color:var(--text-muted);" title="수입검사 없이 직접 입고">해당없음</span>';
+        }
+
+        const inbound = inboundInspMap[key];
+        if (inbound && !inbound.fromInsp) {
+            return '<span style="font-size:0.78rem;color:var(--text-muted);" title="수동 입고 LOT">해당없음</span>';
+        }
+        if (inbound && inbound.fromInsp) {
+            return '<span style="font-size:0.78rem;color:var(--accent-orange);font-weight:600;" title="수입검사 연동 LOT이나 검사일 미연동">미연동</span>';
+        }
+        return '<span style="font-size:0.78rem;color:var(--text-muted);" title="연결된 수입검사 없음">-</span>';
+    }
+
+    function _normalizePaintLine(line) {
+        const s = String(line || '').trim();
+        if (!s) return '';
+        if (/도장[-\s]?B|\(B\)|B\s*라인|^B$/i.test(s)) return '도장-B';
+        if (/도장[-\s]?A|\(A\)|A\s*라인|^A$/i.test(s)) return '도장-A';
+        return s;
+    }
+
+    function _buildPaintWorkLineMap() {
+        const map = {};
+        (Storage.getAll(DB.STORES.PAINTING_WORK) || []).forEach(function(w) {
+            if (w.id) map[w.id] = w.line || '';
+        });
+        return map;
+    }
+
+    function _outgoingActorLabel(d) {
+        const direct = String(d.outgoingByName || '').trim();
+        if (direct) return direct;
+        return _formatActorLabel(d.outgoingBy || d.processedBy || '');
+    }
+
+    function _outgoingTypeHtml(d, workLineMap) {
+        const src = String(d.source || '').trim();
+        let paintLine = _normalizePaintLine(d.paintLine || '');
+        if (!paintLine && d.refWorkId && workLineMap[d.refWorkId]) {
+            paintLine = _normalizePaintLine(workLineMap[d.refWorkId]);
+        }
+
+        let detailBadge = '';
+        if (src === '도장 작업 출고' || paintLine) {
+            const line = paintLine || '도장';
+            const bg = line === '도장-B' ? '#ffedd5' : '#ede9fe';
+            const fg = line === '도장-B' ? '#c2410c' : '#6d28d9';
+            const br = line === '도장-B' ? '#fdba74' : '#c4b5fd';
+            detailBadge = `<span style="margin-left:4px;font-size:0.72rem;background:${bg};color:${fg};border:1px solid ${br};padding:1px 7px;border-radius:10px;font-weight:700;">${line}</span>`;
+        } else if (d.outgoingType === '반출') {
+            detailBadge = `<span style="margin-left:4px;font-size:0.72rem;background:#fef3c7;color:#b45309;border:1px solid #fcd34d;padding:1px 7px;border-radius:10px;font-weight:700;">반출</span>`;
+        } else if (d.outgoingType === '생산출고') {
+            detailBadge = `<span style="margin-left:4px;font-size:0.72rem;background:#ede9fe;color:#7c3aed;border:1px solid #c4b5fd;padding:1px 7px;border-radius:10px;font-weight:700;">생산출고</span>`;
+        } else if (src === '도장 입고') {
+            detailBadge = `<span style="margin-left:4px;font-size:0.72rem;background:#dbeafe;color:#2563eb;border:1px solid #93c5fd;padding:1px 7px;border-radius:10px;font-weight:700;">도장입고</span>`;
+        }
+
+        return `${UIUtils.badge('출고', 'danger')}${detailBadge}`;
+    }
+
     function _actorFieldsForRecord(type) {
         const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
             ? AuthModule.getCurrentUser() : null;
@@ -425,7 +535,7 @@ var InjectionWarehouseModule = (function() {
                             <table class="data-table">
                                 <thead>
                                     <tr>
-                                        <th>창고 입고일</th>
+                                        <th>${isIn ? '창고 입고일' : '출고일'}</th>
                                         <th>수입검사일</th>
                                         <th>차종</th>
                                         <th>품명</th>
@@ -435,7 +545,7 @@ var InjectionWarehouseModule = (function() {
                                         <th style="text-align:right;">수량</th>
                                         <th style="text-align:right;">금액</th>
                                         <th>유형</th>
-                                        ${isIn ? '<th>입고경로</th>' : ''}
+                                        ${isIn ? '<th>입고경로</th>' : '<th>출고자</th>'}
                                         <th>작업</th>
                                     </tr>
                                 </thead>
@@ -1005,29 +1115,15 @@ var InjectionWarehouseModule = (function() {
         const tbody = document.getElementById(tbodyId || 'injInvTableBodyIn');
         if (!tbody) return;
         const isIncoming = typeLabel === '입고';
-        const emptyColspan = isIncoming ? 12 : 11;
+        const emptyColspan = 12;
         const emptyMsg = typeLabel === '출고' ? '출고 이력이 없습니다.' : '입고 이력이 없습니다.';
         if (!data || data.length === 0) {
             tbody.innerHTML = `<tr><td colspan="${emptyColspan}" style="text-align:center;padding:40px;color:var(--text-muted);">${emptyMsg}</td></tr>`;
             return;
         }
         const mats = materials || Storage.getAll(DB.STORES.INJECTION_MATERIALS);
-
-        // 수입검사일 자동 매칭: partName||lotNo → 검사일자
-        const _inspections = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
-        const _inspDateMap = {};
-        _inspections.forEach(function(insp) {
-            const lots = (insp.lots && insp.lots.length > 0)
-                ? insp.lots
-                : (insp.lotNo ? [{ lotNo: insp.lotNo }] : []);
-            lots.forEach(function(lot) {
-                if (lot.lotNo && insp.partName) {
-                    const k = `${insp.partName}||${lot.lotNo}`;
-                    // 전체 일시(시간 포함)를 보존 — 입고경로 옆 시간 표시에 사용, 컬럼 표시는 날짜만 자름
-                    if (!_inspDateMap[k]) _inspDateMap[k] = insp.date || '';
-                }
-            });
-        });
+        const inspCtx = _buildInspDateContext();
+        const workLineMap = isIncoming ? {} : _buildPaintWorkLineMap();
 
         tbody.innerHTML = data.map(d => {
             const mat   = mats.find(m => m.carModel === d.carModel && m.injPartName === d.partName);
@@ -1035,10 +1131,10 @@ var InjectionWarehouseModule = (function() {
             const value = (Number(d.quantity) || 0) * price;
             const typeBadge = d.type === '출고' ? 'danger' : 'success';
             const isReset = _isStockErrorResetRecord(d);
-            const fullInspDate = d.inspDate || _inspDateMap[`${d.partName}||${d.lotNo}`] || '';
-            const inspDate = fullInspDate || '-';
+            const inspDateHtml = _formatInspDateCell(d, isIncoming, inspCtx.inspDateMap, inspCtx.inboundInspMap);
             const path = isIncoming ? _incomingPathLabel(d) : null;
             const who = d.resetBy || _formatActorLabel(d.receivedBy || d.outgoingBy || '');
+            const outgoingActor = _outgoingActorLabel(d);
             const actionCell = isIncoming
                 ? `<button class="btn btn-sm btn-outline" onclick="InjectionWarehouseModule.openIncomingTxView('${d.id}')">
                         <span class="material-symbols-outlined" style="font-size:0.9rem;">visibility</span> 보기
@@ -1048,10 +1144,13 @@ var InjectionWarehouseModule = (function() {
                         <button class="btn btn-sm btn-outline" style="color:#dc2626;border-color:#fca5a5;margin-left:4px;"
                                 title="이 입출고 기록을 삭제합니다. 재고 오류(마이너스 재고) 수정 시 사용하세요."
                                 onclick="InjectionWarehouseModule.remove('${d.id}')">삭제</button>` : ''}`;
+            const typeCell = isIncoming
+                ? `${UIUtils.badge(d.type || '입고', typeBadge)}`
+                : _outgoingTypeHtml(d, workLineMap);
             return `
                 <tr>
-                    <td style="white-space:nowrap;">${d.date || '-'}</td>
-                    <td style="white-space:nowrap;color:var(--text-muted);font-size:0.85rem;">${inspDate}</td>
+                    <td style="white-space:nowrap;line-height:1.3;">${_fmtTxDateCell(d.date)}</td>
+                    <td style="white-space:nowrap;">${inspDateHtml}</td>
                     <td>${d.carModel || '-'}</td>
                     <td><strong>${d.partName || '-'}</strong></td>
                     <td>${d.color || '-'}</td>
@@ -1060,20 +1159,20 @@ var InjectionWarehouseModule = (function() {
                     <td style="text-align:right;">${UIUtils.formatNumber(d.quantity)}</td>
                     <td style="text-align:right;">${UIUtils.formatNumber(value)}</td>
                     <td>
-                        ${UIUtils.badge(d.type || '입고', typeBadge)}
+                        ${typeCell}
                         ${isReset ? `<span style="margin-left:4px;font-size:0.72rem;background:#dc2626;color:#fff;padding:1px 6px;border-radius:10px;">재고오류 초기화</span>` : ''}
-                        ${d.outgoingType === '반출' ? `<span style="margin-left:4px;font-size:0.72rem;background:#f59e0b;color:#fff;padding:1px 6px;border-radius:10px;">반출</span>` : ''}
                         ${isReset && d.stockBefore != null ? `<div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">${UIUtils.formatNumber(d.stockBefore)} EA → ${d.stockAfterTarget != null ? UIUtils.formatNumber(d.stockAfterTarget) : '0'} EA</div>` : ''}
                         ${isReset && d.resetReason ? `<div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">사유: ${_escapeHtml(d.resetReason)}</div>` : ''}
                         ${isReset && who ? `<div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">처리: ${_escapeHtml(who)}</div>` : ''}
                         ${!isReset && d.returnReason ? `<div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;">사유: ${d.returnReason}</div>` : ''}
+                        ${!isIncoming && d.refWorkId ? `<div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">작업연동</div>` : ''}
                     </td>
                     ${isIncoming ? `<td style="white-space:nowrap;">
                         <span style="font-size:0.75rem;font-weight:700;padding:2px 8px;border-radius:999px;
                             border:1px solid ${path.color}44;background:${path.color}12;color:${path.color};">${path.label}</span>
                         ${path.detail ? `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:3px;max-width:140px;
                             white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${_escapeHtml(path.detail)}">${_escapeHtml(path.detail)}</div>` : ''}
-                    </td>` : ''}
+                    </td>` : `<td style="white-space:nowrap;font-size:0.85rem;">${outgoingActor ? _escapeHtml(outgoingActor) : '<span style="color:var(--text-muted);font-size:0.78rem;">미등록</span>'}</td>`}
                     <td style="white-space:nowrap;">${actionCell}</td>
                 </tr>
             `;
@@ -1124,15 +1223,8 @@ var InjectionWarehouseModule = (function() {
         const value = (Number(d.quantity) || 0) * price;
         const path = _incomingPathLabel(d);
 
-        const inspections = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
-        let inspDate = d.inspDate ? String(d.inspDate).slice(0, 10) : '';
-        if (!inspDate && d.partName && d.lotNo) {
-            const hit = inspections.find(function(insp) {
-                const lots = (insp.lots && insp.lots.length) ? insp.lots : (insp.lotNo ? [{ lotNo: insp.lotNo }] : []);
-                return lots.some(function(lot) { return lot.lotNo === d.lotNo; }) && insp.partName === d.partName;
-            });
-            if (hit) inspDate = (hit.date || '').slice(0, 10);
-        }
+        const inspCtx = _buildInspDateContext();
+        const inspDateHtml = _formatInspDateCell(d, true, inspCtx.inspDateMap, inspCtx.inboundInspMap);
 
         const who = d.resetBy || _formatActorLabel(d.receivedBy || d.outgoingBy || '');
         const isReset = _isStockErrorResetRecord(d);
@@ -1168,7 +1260,7 @@ var InjectionWarehouseModule = (function() {
             <div style="background:var(--bg-secondary);border-radius:10px;padding:12px 14px;">
                 ${resetRows}
                 ${row('창고 입고일', _escapeHtml((d.date || '-') + (d.time ? ' ' + d.time : '')))}
-                ${isReset ? '' : row('수입검사일', _escapeHtml(inspDate || '-'))}
+                ${isReset ? '' : row('수입검사일', inspDateHtml)}
                 ${row('차종', _escapeHtml(d.carModel || '-'))}
                 ${row('품명', '<strong>' + _escapeHtml(d.partName || '-') + '</strong>')}
                 ${row('컬러', _escapeHtml(d.color || '-'))}
@@ -3789,6 +3881,11 @@ var InjectionWarehouseModule = (function() {
         const d = Storage.getById(STORE, id);
         if (!d) { UIUtils.toast('기록을 찾을 수 없습니다.', 'error'); return; }
         const typeColor = d.type === '출고' ? 'var(--accent-red)' : 'var(--accent-blue)';
+        const inspCtx = _buildInspDateContext();
+        const inspDateHtml = _formatInspDateCell(d, d.type !== '출고', inspCtx.inspDateMap, inspCtx.inboundInspMap);
+        const workLineMap = _buildPaintWorkLineMap();
+        const paintLine = _normalizePaintLine(d.paintLine || (d.refWorkId && workLineMap[d.refWorkId]) || '');
+        const outgoingActor = _outgoingActorLabel(d);
         UIUtils.showModal(
             `<span class="material-symbols-outlined" style="vertical-align:middle;color:${typeColor};margin-right:4px;">edit</span> 입출고 이력 수정`,
             `<div style="padding:10px 12px;background:var(--bg-secondary);border-radius:8px;margin-bottom:14px;font-size:0.85rem;">
@@ -3799,6 +3896,9 @@ var InjectionWarehouseModule = (function() {
                     <span><strong>품명:</strong> ${d.partName || '-'}</span>
                     <span><strong>컬러:</strong> ${d.color || '-'}</span>
                     <span><strong>LOT:</strong> ${d.lotNo || (d.lots ? d.lots.map(l=>l.lotNo).join(', ') : '-')}</span>
+                    ${d.type === '출고' && paintLine ? `<span><strong>출고구분:</strong> ${paintLine}</span>` : ''}
+                    ${d.type === '출고' ? `<span><strong>출고자:</strong> ${outgoingActor || '미등록'}</span>` : ''}
+                    <span><strong>수입검사일:</strong> ${inspDateHtml}</span>
                 </div>
             </div>
             <div class="form-row">

@@ -1844,6 +1844,9 @@ const PaintInventoryModule = (function() {
                     autoFillProdLot(_toIsoDate(insp.mfgDate));
                     const inspDateInput = document.getElementById('addPaintInvInspDate');
                     if (inspDateInput) inspDateInput.value = (insp.date || '').slice(0, 10);
+                    // ✓ 표시용(type=date)과 별개로, 저장에는 시간 포함 전체 일시를 그대로 넘긴다.
+                    const inspDateFullInput = document.getElementById('addPaintInvInspDateFull');
+                    if (inspDateFullInput) inspDateFullInput.value = insp.date || '';
                 }, 80);
             }, 80);
         }, 80);
@@ -1880,6 +1883,9 @@ const PaintInventoryModule = (function() {
                 <div class="form-group">
                     <label class="form-label">수입검사일 <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(검사 연동 시 자동)</span></label>
                     <input type="date" class="form-input" id="addPaintInvInspDate" readonly style="background:var(--bg-secondary);cursor:default;">
+                    <!-- ✓ type="date" 입력은 시:분을 담을 수 없어 저장 시 시간이 통째로 날아간다.
+                         실제 저장에 쓰는 전체 일시(시간 포함)는 이 hidden 필드에 따로 보존한다. -->
+                    <input type="hidden" id="addPaintInvInspDateFull" value="">
                 </div>` : '<div class="form-group" style="visibility:hidden;"></div>'}
             </div>
             <div class="form-row">
@@ -2697,7 +2703,10 @@ const PaintInventoryModule = (function() {
             quantity: Number(document.getElementById('addPaintInvQty').value) || 0,
             mfgDate: _toIsoDate((document.getElementById('addPaintInvMfgDate') || {}).value || ''),
             expDate: _toIsoDate((document.getElementById('addPaintInvExpDate') || {}).value || ''),
-            inspDate: (document.getElementById('addPaintInvInspDate') || {}).value || '',
+            // ✓ hidden 필드(시간 포함 전체 일시)가 있으면 그걸 우선 사용 — type="date" 표시값은 시간이 잘려 있다.
+            inspDate: (document.getElementById('addPaintInvInspDateFull') || {}).value
+                || (document.getElementById('addPaintInvInspDate') || {}).value
+                || '',
             receivedBy: type === '입고' ? ((document.getElementById('addPaintInvReceivedBy') || {}).value || '') : '',
             issuedBy: type === '출고' ? ((document.getElementById('addPaintInvIssuedBy') || {}).value || '') : '',
             processedBy,

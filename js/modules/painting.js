@@ -541,6 +541,24 @@ const PaintingWorkModule = (function() {
     let _currentDate = '';
     let _currentLine = '도장-A';
 
+    function _normalizePaintLine(line) {
+        var s = String(line || '').trim();
+        if (!s) return '';
+        if (/도장[-\s]?B|\(B\)|B\s*라인|^B$/i.test(s)) return '도장-B';
+        if (/도장[-\s]?A|\(A\)|A\s*라인|^A$/i.test(s)) return '도장-A';
+        return s;
+    }
+
+    function _workActorLabel(user) {
+        if (!user) return '';
+        return String(user.displayName || user.name || user.username || user.id || '').trim();
+    }
+
+    function _workActorId(user) {
+        if (!user) return '';
+        return String(user.id || user.username || '').trim();
+    }
+
     // 수량 파싱: 콤마/공백 제거 후 정수화 (문자열 연결 방지)
     function _toQty(value) {
         if (value == null || value === '') return 0;
@@ -3120,7 +3138,11 @@ const PaintingWorkModule = (function() {
             qtyDiffManagerRecipients: qtyDiffNotifyUsers,
             note: ((document.getElementById('addPwNote') || {}).value || '').trim(),
             registeredAt: new Date().toISOString(),
-            createdBy: _authUser ? { id: _authUser.id, name: _authUser.name, role: _authUser.role } : null
+            createdBy: _authUser ? {
+                id: _workActorId(_authUser),
+                name: _workActorLabel(_authUser),
+                role: _authUser.role
+            } : null
         };
 
         if (!data.date) {
@@ -3235,6 +3257,8 @@ const PaintingWorkModule = (function() {
                     continue;
                 }
 
+                var _outActorId = _workActorId(_authUser);
+                var _outActorName = _workActorLabel(_authUser);
                 await Storage.add(INJ_INV_STORE, {
                     date: InvCalc.stampFor(data.date),
                     lotNo: dl.lotNo,
@@ -3245,6 +3269,11 @@ const PaintingWorkModule = (function() {
                     lots: [{ lotNo: dl.lotNo, qty: dl.qty }],
                     type: '출고',
                     source: '도장 작업 출고',
+                    outgoingType: '생산출고',
+                    paintLine: _normalizePaintLine(data.line),
+                    outgoingBy: _outActorId || _outActorName,
+                    outgoingByName: _outActorName || undefined,
+                    inspDate: _origRec.inspDate || undefined,
                     refWorkId: workId
                 });
             }
