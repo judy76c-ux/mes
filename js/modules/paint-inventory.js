@@ -1343,6 +1343,16 @@ const PaintInventoryModule = (function() {
         return rows;
     }
 
+    function _fmtListupLotLabel(prodLot, avail) {
+        if (!prodLot) return '-';
+        return `${prodLot} (잔량 ${UIUtils.formatNumber(avail)}캔)`;
+    }
+
+    function _fmtListupAvail(avail, hasLot) {
+        if (!hasLot) return '-';
+        return `${UIUtils.formatNumber(avail)}캔`;
+    }
+
     function _outListupLotOptions(materialId, selectedProdLot) {
         const lots = _activePaintLots(materialId).filter(l => l.qty > 0);
         if (!lots.length) return '<option value="">-- 재고 LOT 없음 --</option>';
@@ -1455,13 +1465,13 @@ const PaintInventoryModule = (function() {
                     <tbody>
                         ${rows.map(r => {
                             const avail = r.prodLot ? _lotAvailableCans(r.materialId, r.prodLot) : 0;
-                            const lotCell = r.source === 'manual' || !r.prodLot
+                            const lotCell = !r.prodLot
                                 ? `<select class="form-select paint-out-listup-lot" data-key="${_escapeHtml(r.key)}"
                                     style="font-size:0.78rem;padding:4px 6px;min-width:120px;"
                                     onchange="PaintInventoryModule.updateOutgoingListupLot('${_jsArg(r.key)}', this.value)">
                                     ${_outListupLotOptions(r.materialId, r.prodLot)}
                                    </select>`
-                                : `<span style="font-family:monospace;font-size:0.82rem;">${_escapeHtml(r.prodLot)}</span>`;
+                                : `<span style="font-family:monospace;font-size:0.82rem;white-space:nowrap;">${_escapeHtml(_fmtListupLotLabel(r.prodLot, avail))}</span>`;
                             const srcBadge = r.source === 'standby'
                                 ? '<span style="font-size:0.65rem;background:#fee2e2;color:#dc2626;padding:1px 6px;border-radius:4px;">대기이관</span>'
                                 : r.source === 'manual'
@@ -1490,7 +1500,7 @@ const PaintInventoryModule = (function() {
                                         style="width:72px;text-align:right;font-weight:700;padding:4px 6px;font-size:0.85rem;">
                                 </td>
                                 <td style="text-align:right;font-size:0.82rem;color:${avail > 0 ? 'var(--accent-green)' : 'var(--accent-red)'};">
-                                    ${r.prodLot ? UIUtils.formatNumber(avail) : '-'}
+                                    ${_fmtListupAvail(avail, !!r.prodLot)}
                                 </td>
                                 <td style="font-size:0.82rem;">${_escapeHtml(r.mixTarget || '-')}</td>
                                 <td style="font-size:0.78rem;">${srcBadge}<div style="color:var(--text-muted);margin-top:2px;">${r.mixDate || date}</div></td>
@@ -1542,7 +1552,7 @@ const PaintInventoryModule = (function() {
         const avail = prodLot ? _lotAvailableCans(matId, prodLot) : 0;
         const availCell = row.querySelector('td:nth-child(5)');
         if (availCell) {
-            availCell.textContent = prodLot ? UIUtils.formatNumber(avail) : '-';
+            availCell.textContent = prodLot ? _fmtListupAvail(avail, true) : '-';
             availCell.style.color = avail > 0 ? 'var(--accent-green)' : 'var(--accent-red)';
         }
     }
