@@ -2418,6 +2418,12 @@ var LaserWorkModule = (function() {
     function edit(id) {
         const d = Storage.getById(STORE, id);
         if (!d) return;
+        // 초/중/종품 사진 복원 — 미복원 시 재업로드 없이 저장하면 기존 사진 URL이 지워짐
+        _qcPhotos = {
+            First:  d.qcFirstPhotoUrl  ? { name: '', url: d.qcFirstPhotoUrl }  : null,
+            Middle: d.qcMiddlePhotoUrl ? { name: '', url: d.qcMiddlePhotoUrl } : null,
+            Last:   d.qcLastPhotoUrl   ? { name: '', url: d.qcLastPhotoUrl }   : null
+        };
         // 모듈 변수 복원
         _selectedCarModel = d.carModel || '';
         _selectedPartName = d.partName || '';
@@ -3546,22 +3552,155 @@ var LaserInspectionModule = (function() {
         </div>`;
     }
 
-    // 검사자 선택 카드 — 하단 가로 배치 (좌측 세로 폭 절감)
+    // 검사자 — 저장 버튼 옆 가로 배치
     function _buildInspectorCard() {
         return `
+        <div style="display:flex;align-items:flex-end;gap:8px;flex:1 1 auto;flex-wrap:wrap;min-width:0;">
+            <span style="font-size:0.82rem;font-weight:700;color:var(--text-primary);white-space:nowrap;align-self:center;padding-bottom:2px;">검사자</span>
+            <div style="display:flex;align-items:flex-end;gap:8px;flex:1 1 auto;flex-wrap:wrap;min-width:0;" id="liInspectorContainer"></div>
+            <button type="button" class="btn btn-sm btn-primary" id="liAddInspectorBtn"
+                onclick="LaserInspectionModule._addInspectorField()"
+                style="gap:4px;padding:4px 10px;font-size:0.78rem;flex:0 0 auto;">
+                <span class="material-symbols-outlined" style="font-size:14px;">add</span> 추가
+            </button>
+        </div>`;
+    }
+
+    // 하단 액션바: 저장/취소 + 검사자
+    function _buildActionBar(saveAction, opts) {
+        opts = opts || {};
+        return `
         <div class="card" style="margin:0;">
-            <div class="card-body" style="padding:10px 14px;">
-                <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-                    <h5 style="margin:0;font-size:0.85rem;color:var(--text-primary);white-space:nowrap;flex:0 0 auto;">검사자</h5>
-                    <div style="display:flex;align-items:flex-end;gap:8px;flex:1 1 auto;flex-wrap:wrap;min-width:0;" id="liInspectorContainer"></div>
-                    <button type="button" class="btn btn-sm btn-primary" id="liAddInspectorBtn"
-                        onclick="LaserInspectionModule._addInspectorField()"
-                        style="gap:4px;padding:4px 10px;font-size:0.78rem;flex:0 0 auto;align-self:flex-end;">
-                        <span class="material-symbols-outlined" style="font-size:14px;">add</span> 추가
-                    </button>
-                </div>
+            <div class="card-body" style="padding:10px 14px;display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;">
+                ${_buildBtns(saveAction, opts)}
+                <div style="width:1px;align-self:stretch;background:var(--border-color);flex:0 0 1px;min-height:36px;"></div>
+                ${_buildInspectorCard()}
             </div>
         </div>`;
+    }
+
+    // 저장/취소 버튼 (액션바용 가로 배치)
+    function _buildBtns(saveAction, opts) {
+        opts = opts || {};
+        if (opts.readonly) {
+            const editBtn = opts.editId
+                ? `<button class="btn btn-primary" onclick="LaserInspectionModule.edit('${opts.editId}')" style="justify-content:center;min-width:96px;">
+                    <span class="material-symbols-outlined">edit</span> 수정
+                </button>`
+                : '';
+            return `
+            <div style="display:flex;gap:6px;flex:0 0 auto;">
+                ${editBtn}
+                <button class="btn btn-outline" onclick="LaserInspectionModule._closeModal()" style="justify-content:center;min-width:80px;">
+                    <span class="material-symbols-outlined">close</span> 닫기
+                </button>
+            </div>`;
+        }
+        return `
+        <div style="display:flex;gap:6px;flex:0 0 auto;">
+            <button class="btn btn-primary" onclick="${saveAction}" style="justify-content:center;min-width:96px;">
+                <span class="material-symbols-outlined">save</span> 저장
+            </button>
+            <button class="btn btn-outline" onclick="LaserInspectionModule._closeModal()" style="justify-content:center;min-width:80px;">
+                <span class="material-symbols-outlined">close</span> 취소
+            </button>
+        </div>`;
+    }
+
+    function _setInspectionFormReadonly(readonly) {
+        const root = document.getElementById('liCustomModalInner');
+        if (!root) return;
+        root.querySelectorAll('input, select, textarea, button').forEach(el => {
+            if (el.closest('[onclick*="_closeModal"]') || el.closest('[onclick*="LaserInspectionModule.edit"]')) return;
+            if (el.tagName === 'BUTTON') {
+                if (readonly) el.style.display = 'none';
+                return;
+            }
+            el.disabled = !!readonly;
+            if (readonly) el.style.background = 'var(--bg-secondary)';
+        });
+    }
+
+    // 상단: 좌측 정보 + 우측 불량 / 하단: 저장+검사자
+    function _build2Col(leftContent, rightContent, footerContent) {
+        return `
+        <div style="display:flex;flex-direction:column;gap:10px;">
+            <div style="display:grid;grid-template-columns:260px 1fr;gap:10px;align-items:start;">
+                <div style="display:flex;flex-direction:column;gap:10px;">${leftContent}</div>
+                <div style="min-width:0;align-self:start;">${rightContent}</div>
+            </div>
+            ${footerContent || ''}
+        </div>`;
+    }
+
+    function buildFormHTML(d) {
+        d = d || {};
+        const left = _buildSelectCard(d) + _buildInspInfoCard(d) + _buildQtyCard(d);
+        return _build2Col(left, _buildDefectCard(d.defectDetails || {}), _buildActionBar('LaserInspectionModule._saveInspection()'));
+    }
+
+    // ─ 모달 열기 ─────────────────────────────────────────────────────
+    function openAddModal() {
+        _liCarModel = ''; _liPartName = ''; _liColor = ''; _liWorkId = null;
+        const left = _buildSelectCard() + _buildInspInfoCard() + _buildQtyCard() + _buildPackagingCard();
+        _openModal('레이져 검사 등록',
+            _build2Col(left, _buildDefectCard(), _buildActionBar('LaserInspectionModule._saveInspection()')));
+        setTimeout(function() { _initInspectorFields(); }, 50);
+    }
+
+    function openInspFromWork(workId) {
+        const w = Storage.getById(DB.STORES.LASER_WORK_LOG, workId);
+        if (!w) { UIUtils.toast('작업 정보를 찾을 수 없습니다.', 'error'); return; }
+        _liCarModel = w.carModel || ''; _liPartName = w.partName || '';
+        _liColor    = w.color    || ''; _liWorkId   = w.id;
+        const prevResidualQty = _getPrevResidualQty(w.carModel, w.partName, w.color);
+        const packUnit = _parsePackNum(w.packUnit) || _findProductPackUnit(w.carModel, w.partName, w.color);
+        const inspBase = _getInspBaseFromWork(w);
+        const left = _buildWorkQtyCard(w) + _buildInspInfoCard({}, w) +
+            _buildQtyCard({}, w, inspBase) +
+            _buildPackagingCard({}, prevResidualQty, packUnit, inspBase);
+        _openModal(`레이져 검사 등록 — ${w.partName || ''}`,
+            _buildWorkBanner(w) + _build2Col(left, _buildDefectCard(),
+                _buildActionBar('LaserInspectionModule._saveInspection()')));
+        setTimeout(function() {
+            _calculateInspectionTime();
+            _initInspectorFields();
+            _recalcInspQuantities();
+        }, 0);
+    }
+
+    function _openInspectionDetail(id, mode) {
+        const d = Storage.getById(STORE, id);
+        if (!d) return;
+        const canEdit = _canEditInspection();
+        const isEdit = mode === 'edit';
+        if (isEdit && !canEdit) {
+            UIUtils.toast('검사 이력 수정 권한이 없습니다. (레이져운영자·관리자만 가능)', 'warning');
+            return;
+        }
+        _liCarModel = d.carModel || ''; _liPartName = d.partName || '';
+        _liColor    = d.color    || ''; _liWorkId   = d.workLogId || null;
+        const workRef = d.workLogId ? Storage.getById(DB.STORES.LASER_WORK_LOG, d.workLogId) : null;
+        const prevResidualQty = d.prevResidualQty !== undefined
+            ? Number(d.prevResidualQty)
+            : _getPrevResidualQty(d.carModel, d.partName, d.color, id);
+        const packUnit = d.packUnit || (workRef && workRef.packUnit) || _findProductPackUnit(d.carModel, d.partName, d.color);
+        const left = (workRef ? _buildWorkQtyCard(workRef) : _buildSelectCard(d)) +
+            _buildInspInfoCard(d) +
+            _buildQtyCard(d, workRef, workRef ? _getInspBaseFromWork(workRef) : 0) +
+            _buildPackagingCard(d, prevResidualQty, packUnit);
+        const footer = isEdit
+            ? _buildActionBar(`LaserInspectionModule._saveInspection('${id}')`)
+            : _buildActionBar('', { readonly: true, editId: canEdit ? id : null });
+        _openModal(isEdit ? '레이져 검사 수정' : '레이져 검사 보기',
+            (workRef ? _buildWorkBanner(workRef) : '') +
+            _build2Col(left, _buildDefectCard(d.defectDetails || {}), footer));
+        setTimeout(function() {
+            _initInspectorFields(d.inspectors || []);
+            if (!workRef) onCarModelChange(d.partName);
+            if (!isEdit) _setInspectionFormReadonly(true);
+            if (workRef) _recalcInspQuantities();
+        }, 50);
     }
 
     function _addInspectorField(isFirst = false, selectedName = '') {
@@ -3730,128 +3869,6 @@ var LaserInspectionModule = (function() {
         </div>`;
     }
 
-
-    // 저장/취소 버튼 (좌측, 세로 배치)
-    function _buildBtns(saveAction, opts = {}) {
-        if (opts.readonly) {
-            const editBtn = opts.editId
-                ? `<button class="btn btn-primary" onclick="LaserInspectionModule.edit('${opts.editId}')" style="width:100%;justify-content:center;">
-                    <span class="material-symbols-outlined">edit</span> 수정
-                </button>`
-                : '';
-            return `
-            <div style="display:flex;flex-direction:column;gap:6px;">
-                ${editBtn}
-                <button class="btn btn-outline" onclick="LaserInspectionModule._closeModal()" style="width:100%;justify-content:center;">
-                    <span class="material-symbols-outlined">close</span> 닫기
-                </button>
-            </div>`;
-        }
-        return `
-        <div style="display:flex;flex-direction:column;gap:6px;">
-            <button class="btn btn-primary" onclick="${saveAction}" style="width:100%;justify-content:center;">
-                <span class="material-symbols-outlined">save</span> 저장
-            </button>
-            <button class="btn btn-outline" onclick="LaserInspectionModule._closeModal()" style="width:100%;justify-content:center;">
-                <span class="material-symbols-outlined">close</span> 취소
-            </button>
-        </div>`;
-    }
-
-    function _setInspectionFormReadonly(readonly) {
-        const root = document.getElementById('liCustomModalInner');
-        if (!root) return;
-        root.querySelectorAll('input, select, textarea, button').forEach(el => {
-            if (el.closest('[onclick*="_closeModal"]') || el.closest('[onclick*="LaserInspectionModule.edit"]')) return;
-            if (el.tagName === 'BUTTON') {
-                if (readonly) el.style.display = 'none';
-                return;
-            }
-            el.disabled = !!readonly;
-            if (readonly) el.style.background = 'var(--bg-secondary)';
-        });
-    }
-
-    // 2-컬럼 레이아웃 래퍼 — 검사자는 footer로 하단 가로 배치
-    function _build2Col(leftContent, rightContent, footerContent) {
-        return `
-        <div style="display:flex;flex-direction:column;gap:10px;">
-            <div style="display:grid;grid-template-columns:260px 1fr;gap:10px;align-items:start;">
-                <div style="display:flex;flex-direction:column;gap:10px;">${leftContent}</div>
-                ${rightContent}
-            </div>
-            ${footerContent || ''}
-        </div>`;
-    }
-
-    function buildFormHTML(d = {}) {
-        const left = _buildSelectCard(d) + _buildInspInfoCard(d) + _buildQtyCard(d);
-        return _build2Col(left, _buildDefectCard(d.defectDetails||{}), _buildInspectorCard());
-    }
-
-    // ─ 모달 열기 ─────────────────────────────────────────────────────
-    function openAddModal() {
-        _liCarModel = ''; _liPartName = ''; _liColor = ''; _liWorkId = null;
-        const left = _buildSelectCard() + _buildInspInfoCard() + _buildQtyCard() +
-            _buildPackagingCard() + _buildBtns('LaserInspectionModule._saveInspection()');
-        _openModal('레이져 검사 등록', _build2Col(left, _buildDefectCard(), _buildInspectorCard()));
-        setTimeout(() => _initInspectorFields(), 50);
-    }
-
-    function openInspFromWork(workId) {
-        const w = Storage.getById(DB.STORES.LASER_WORK_LOG, workId);
-        if (!w) { UIUtils.toast('작업 정보를 찾을 수 없습니다.', 'error'); return; }
-        _liCarModel = w.carModel || ''; _liPartName = w.partName || '';
-        _liColor    = w.color    || ''; _liWorkId   = w.id;
-        const prevResidualQty = _getPrevResidualQty(w.carModel, w.partName, w.color);
-        const packUnit = _parsePackNum(w.packUnit) || _findProductPackUnit(w.carModel, w.partName, w.color);
-        const inspBase = _getInspBaseFromWork(w);
-        const left = _buildWorkQtyCard(w) + _buildInspInfoCard({}, w) +
-            _buildQtyCard({}, w, inspBase) +
-            _buildPackagingCard({}, prevResidualQty, packUnit, inspBase) +
-            _buildBtns('LaserInspectionModule._saveInspection()');
-        _openModal(`레이져 검사 등록 — ${w.partName||''}`,
-            _buildWorkBanner(w) + _build2Col(left, _buildDefectCard(), _buildInspectorCard()));
-        setTimeout(function() {
-            _calculateInspectionTime();
-            _initInspectorFields();
-            _recalcInspQuantities();
-        }, 0);
-    }
-
-    function _openInspectionDetail(id, mode) {
-        const d = Storage.getById(STORE, id);
-        if (!d) return;
-        const canEdit = _canEditInspection();
-        const isEdit = mode === 'edit';
-        if (isEdit && !canEdit) {
-            UIUtils.toast('검사 이력 수정 권한이 없습니다. (레이져운영자·관리자만 가능)', 'warning');
-            return;
-        }
-        _liCarModel = d.carModel || ''; _liPartName = d.partName || '';
-        _liColor    = d.color    || ''; _liWorkId   = d.workLogId || null;
-        const workRef = d.workLogId ? Storage.getById(DB.STORES.LASER_WORK_LOG, d.workLogId) : null;
-        const prevResidualQty = d.prevResidualQty !== undefined
-            ? Number(d.prevResidualQty)
-            : _getPrevResidualQty(d.carModel, d.partName, d.color, id);
-        const packUnit = d.packUnit || (workRef?.packUnit) || _findProductPackUnit(d.carModel, d.partName, d.color);
-        const left = (workRef ? _buildWorkQtyCard(workRef) : _buildSelectCard(d)) +
-            _buildInspInfoCard(d) +
-            _buildQtyCard(d, workRef, workRef ? _getInspBaseFromWork(workRef) : 0) +
-            _buildPackagingCard(d, prevResidualQty, packUnit) +
-            (isEdit
-                ? _buildBtns(`LaserInspectionModule._saveInspection('${id}')`)
-                : _buildBtns('', { readonly: true, editId: canEdit ? id : null }));
-        _openModal(isEdit ? '레이져 검사 수정' : '레이져 검사 보기',
-            (workRef ? _buildWorkBanner(workRef) : '') +
-            _build2Col(left, _buildDefectCard(d.defectDetails||{}), _buildInspectorCard()));
-        setTimeout(function() {
-            _initInspectorFields(d.inspectors || []);
-            if (!workRef) onCarModelChange(d.partName);
-            if (!isEdit) _setInspectionFormReadonly(true);
-            if (workRef) _recalcInspQuantities();
-        }, 50);
-    }
 
     function view(id) {
         _openInspectionDetail(id, 'view');

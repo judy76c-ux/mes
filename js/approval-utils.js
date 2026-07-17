@@ -24,13 +24,43 @@ const ApprovalUtils = (function () {
     }
 
     function getUsers() {
-        if (!window.AuthModule || typeof AuthModule.getUsers !== 'function') return [];
-        return (AuthModule.getUsers() || []).filter(u => u && u.active !== false);
+        const auth = (typeof AuthModule !== 'undefined') ? AuthModule
+            : (typeof window !== 'undefined' ? window.AuthModule : null);
+        if (!auth || typeof auth.getUsers !== 'function') return [];
+        return (auth.getUsers() || []).filter(u => u && u.active !== false);
+    }
+
+    /** 이름(표시명) 또는 username으로 사용자 검색. 정확 일치 우선, 유일 접두사 허용. */
+    function findUserByName(name) {
+        const q = String(name || '').trim().replace(/\s+/g, '');
+        if (!q) return null;
+        const users = getUsers();
+        const norm = u => String(u.displayName || u.name || '').replace(/\s+/g, '');
+        // 1) 표시명 정확 일치
+        let hit = users.find(u => norm(u) === q);
+        if (hit) return hit;
+        // 2) username 정확 일치
+        hit = users.find(u => String(u.username || '').replace(/\s+/g, '') === q);
+        if (hit) return hit;
+        // 3) 표시명 includes (양방향) — 공백 무시
+        const contains = users.filter(u => {
+            const n = norm(u);
+            return n && (n.includes(q) || q.includes(n));
+        });
+        if (contains.length === 1) return contains[0];
+        // 4) 접두사 유일
+        if (q.length >= 2) {
+            const prefix = users.filter(u => norm(u).startsWith(q) || String(u.username || '').startsWith(q));
+            if (prefix.length === 1) return prefix[0];
+        }
+        return null;
     }
 
     function getCurrentUserFull() {
-        if (!window.AuthModule || typeof AuthModule.getCurrentUser !== 'function') return null;
-        const session = AuthModule.getCurrentUser();
+        const auth = (typeof AuthModule !== 'undefined') ? AuthModule
+            : (typeof window !== 'undefined' ? window.AuthModule : null);
+        if (!auth || typeof auth.getCurrentUser !== 'function') return null;
+        const session = auth.getCurrentUser();
         if (!session) return null;
         const users = getUsers();
         return users.find(u => _userId(u) === _userId(session) || u.username === session.username) || session;
@@ -184,6 +214,103 @@ const ApprovalUtils = (function () {
         return data;
     }
 
+    /** 이름 입력용 datalist */
+    function userDatalistHtml(listId) {
+        const id = listId || 'approvalUserDatalist';
+        return `<datalist id="${_esc(id)}">${getUsers().map(u =>
+            `<option value="${_esc(u.displayName || u.name || u.username || '')}"></option>`
+        ).join('')}</datalist>`;
+    }
+
+    /** 저장된 날인 없으면 사용자 마스터에서 보강 */
+    function resolveSeal(name, existingSeal) {
+        if (existingSeal) return existingSeal;
+        if (!name) return '';
+        const u = findUserByName(name);
+        return (u && u.seal) || '';
+    }
+
+    /**
+     * 문서 결재칸 편집 HTML
+     * @param {object} opts { inputId, name, seal, handler } handler 예: 'InjIncomingStdModule._onSignNameInput'
+     */
+    function signCellEditHtml(opts) {
+        const inputId = opts.inputId || 'signName';
+        const name = opts.name || '';
+        const seal = opts.seal || '';
+        const listId = opts.listId || 'approvalUserDatalist';
+        const handler = opts.handler || 'ApprovalUtils.onSignNameInput';
+        const hasSeal = !!(seal && String(seal).trim());
+        return `<td class="doc-cell" rowspan="3" style="text-align:center;vertical-align:middle;padding:2px;min-width:80px;">
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:64px;">
+                <input class="doc-input" id="${_esc(inputId)}" list="${_esc(listId)}"
+                    value="${_esc(name)}" placeholder="이름 입력"
+                    style="text-align:center;font-size:10px;font-weight:700;width:100%;"
+                    oninput="${_esc(handler)}(this,false)"
+                    onchange="${_esc(handler)}(this,true)"
+                    onblur="${_esc(handler)}(this,true)">
+                <div id="${_esc(inputId)}SealBox" style="width:56px;height:56px;display:flex;align-items:center;justify-content:center;${hasSeal ? '' : 'border:1px dashed #fca5a5;'}">
+                    ${hasSeal
+                        ? `<img src="${_esc(seal)}" alt="날인" style="max-width:56px;max-height:56px;object-fit:contain;">`
+                        : `<span style="font-size:9px;color:#bbb;">날인</span>`}
+                </div>
+                <input type="hidden" id="${_esc(inputId)}Seal" value="${_esc(seal)}">
+            </div>
+        </td>`;
+    }
+
+    function signCellViewHtml(name, seal) {
+        const resolved = resolveSeal(name, seal);
+        if (resolved) {
+            const src = String(resolved).replace(/"/g, '&quot;');
+            return `<div style="display:flex;align-items:center;justify-content:center;min-height:56px;">
+                <img src="${src}" alt="${_esc(name || '날인')}" style="max-width:56px;max-height:56px;object-fit:contain;" title="${_esc(name || '')}">
+            </div>`;
+        }
+        return _esc(name || '');
+    }
+
+    /** input id 규칙: {id} / {id}Seal / {id}SealBox */
+    function onSignNameInput(inp, commit) {
+        if (!inp) return;
+        const raw = String(inp.value || '').trim();
+        const sealHidden = document.getElementById(inp.id + 'Seal');
+        const sealBox = document.getElementById(inp.id + 'SealBox');
+        const clearSeal = function (placeholder) {
+            if (sealHidden) sealHidden.value = '';
+            if (sealBox) {
+                sealBox.style.border = '1px dashed #fca5a5';
+                sealBox.innerHTML = `<span style="font-size:9px;color:#bbb;">${placeholder || '날인'}</span>`;
+            }
+        };
+        if (!raw) { clearSeal('날인'); return; }
+
+        const users = getUsers();
+        const norm = u => String(u.displayName || u.name || '').replace(/\s+/g, '');
+        const q = raw.replace(/\s+/g, '');
+        let user = users.find(u => norm(u) === q || String(u.username || '') === q);
+        if (!user && commit) user = findUserByName(raw);
+        if (!user) { clearSeal('날인'); return; }
+
+        const exactName = String(user.displayName || user.name || user.username || '').trim();
+        if (commit || norm(user) === q) inp.value = exactName;
+
+        const seal = user.seal || '';
+        if (seal) {
+            if (sealHidden) sealHidden.value = seal;
+            if (sealBox) {
+                sealBox.style.border = 'none';
+                sealBox.innerHTML = `<img src="${_esc(seal)}" alt="날인" style="max-width:56px;max-height:56px;object-fit:contain;">`;
+            }
+        } else {
+            clearSeal('미등록');
+            if (sealBox) sealBox.innerHTML = `<span style="font-size:9px;color:#f59e0b;">미등록</span>`;
+            if (commit && typeof UIUtils !== 'undefined') {
+                UIUtils.toast(`'${exactName}' 사용자의 날인이 없습니다. 설정에서 등록하세요.`, 'info');
+            }
+        }
+    }
+
     return {
         ROLES,
         normalize,
@@ -191,7 +318,14 @@ const ApprovalUtils = (function () {
         collect,
         sign,
         clear,
-        getCurrentUserFull
+        getUsers,
+        findUserByName,
+        getCurrentUserFull,
+        userDatalistHtml,
+        resolveSeal,
+        signCellEditHtml,
+        signCellViewHtml,
+        onSignNameInput
     };
 })();
 

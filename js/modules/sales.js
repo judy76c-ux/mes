@@ -614,7 +614,7 @@ var SalesDeliveryModule = (function() {
             const shipColor = (allocations[0] && allocations[0].color) || '';
             const shipStatus = await ProductWarehouseModule.getShippingReadiness(data.carModel, data.partName, shipColor);
             if (!shipStatus.eligible) {
-                UIUtils.toast('출하 일상검사·신뢰성 검사가 모두 합격인 품목만 출고할 수 있습니다.', 'warning');
+                UIUtils.toast('출하검사(외관)·신뢰성 검사가 모두 합격인 품목만 출고할 수 있습니다.', 'warning');
                 return;
             }
         }
@@ -729,7 +729,7 @@ var SalesDeliveryModule = (function() {
             const shipColor = (allocations[0] && allocations[0].color) || '';
             const shipStatus = await ProductWarehouseModule.getShippingReadiness(data.carModel, data.partName, shipColor);
             if (!shipStatus.eligible) {
-                UIUtils.toast('출하 일상검사·신뢰성 검사가 모두 합격인 품목만 출고할 수 있습니다.', 'warning');
+                UIUtils.toast('출하검사(외관)·신뢰성 검사가 모두 합격인 품목만 출고할 수 있습니다.', 'warning');
                 return;
             }
         }
@@ -3806,7 +3806,7 @@ var SalesTodayShipmentModule = (function () {
         if (typeof ProductWarehouseModule !== 'undefined' && ProductWarehouseModule.getShippingReadiness) {
             const shipStatus = await ProductWarehouseModule.getShippingReadiness(carModel, partName, lot.color || '');
             if (!shipStatus.eligible) {
-                UIUtils.toast('출하 일상검사·신뢰성 검사가 모두 합격인 품목만 출하 등록할 수 있습니다.', 'warning');
+                UIUtils.toast('출하검사(외관)·신뢰성 검사가 모두 합격인 품목만 출하 등록할 수 있습니다.', 'warning');
                 return;
             }
         }

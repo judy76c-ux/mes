@@ -8,6 +8,37 @@ var InjIncomingStdModule = (function () {
 
     const _esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
+    function _sealForName(name, existingSeal) {
+        if (existingSeal && String(existingSeal).trim()) return existingSeal;
+        if (!name) return '';
+        if (typeof ApprovalUtils !== 'undefined' && ApprovalUtils.resolveSeal) {
+            return ApprovalUtils.resolveSeal(name, '') || '';
+        }
+        return '';
+    }
+
+    /** 보기/출력 결재란: 날인만 (없으면 이름) */
+    function _signView(name, seal) {
+        const resolved = _sealForName(name, seal);
+        if (resolved) {
+            const src = String(resolved).replace(/"/g, '&quot;');
+            return `<div style="display:flex;align-items:center;justify-content:center;min-height:56px;padding:2px;">
+                <img class="std-seal" src="${src}" alt="${_esc(name || '날인')}" style="max-width:64px;max-height:64px;width:auto;object-fit:contain;" title="${_esc(name || '')}">
+            </div>`;
+        }
+        return name ? `<span style="font-weight:700;">${_esc(name)}</span>` : '';
+    }
+
+    /** 개정내용 확인란: 결재 날인의 ~1/3 크기 */
+    function _confirmerView(name) {
+        const resolved = _sealForName(name, '');
+        if (resolved) {
+            const src = String(resolved).replace(/"/g, '&quot;');
+            return `<img class="std-seal" src="${src}" alt="${_esc(name || '날인')}" style="max-width:22px;max-height:22px;width:auto;object-fit:contain;vertical-align:middle;" title="${_esc(name || '')}">`;
+        }
+        return name ? `<span style="font-weight:700;">${_esc(name)}</span>` : '';
+    }
+
     let _formImages = [];   // 편집 중 이미지 배열
     let _kbHandler  = null; // 편집 모달 키보드 핸들러
 
@@ -178,7 +209,7 @@ var InjIncomingStdModule = (function () {
             <td style="padding:3px;border:1px solid #bbb;text-align:center;font-size:10px;">${_esc(r.no||'')}</td>
             <td style="padding:3px;border:1px solid #bbb;text-align:center;font-size:10px;">${_esc(r.date||'')}</td>
             <td style="padding:3px;border:1px solid #bbb;text-align:center;font-size:10px;">${_esc(r.reason||'')}</td>
-            <td style="padding:${cf?'3px':'0'};border:1px solid #bbb;text-align:center;font-size:10px;${cf?'':'background:'+_DIAG}">${_esc(cf)}</td>
+            <td style="padding:${cf?'2px':'0'};border:1px solid #bbb;text-align:center;vertical-align:middle;${cf?'':'background:'+_DIAG}">${cf ? _confirmerView(cf) : ''}</td>
         </tr>`;}).join('');
 
         // 이미지
@@ -203,7 +234,7 @@ var InjIncomingStdModule = (function () {
         <div id="stdViewDoc">
             <!-- 헤더 -->
             <table>
-                <colgroup><col style="width:58px"><col style="width:130px"><col style="width:auto"><col style="width:26px"><col style="width:80px"><col style="width:80px"><col style="width:80px"></colgroup>
+                <colgroup><col style="width:58px"><col style="width:130px"><col style="width:auto"><col style="width:26px"><col style="width:88px"><col style="width:88px"><col style="width:88px"></colgroup>
                 <tr style="height:20px;">
                     <td class="dlb">공정NO</td><td style="text-align:center;font-weight:700;">10</td>
                     <td rowspan="4" class="dtitle">수입검사 기준서</td>
@@ -213,9 +244,9 @@ var InjIncomingStdModule = (function () {
                 <tr style="height:20px;">
                     <td class="dlb">공정명</td><td style="text-align:center;font-weight:700;">${_esc(std.processName||'수입검사')}</td>
                     <td class="dth" rowspan="3" style="writing-mode:vertical-rl;text-align:center;vertical-align:middle;border-top:none;font-size:11px;letter-spacing:3px;">결 재</td>
-                    <td rowspan="3" style="text-align:center;vertical-align:middle;height:22px;">${_esc(std.author||'')}</td>
-                    <td rowspan="3" style="text-align:center;vertical-align:middle;">${_esc(std.reviewer||'')}</td>
-                    <td rowspan="3" style="text-align:center;vertical-align:middle;">${_esc(std.approver||'')}</td>
+                    <td rowspan="3" style="text-align:center;vertical-align:middle;padding:2px;">${_signView(std.author, std.authorSeal)}</td>
+                    <td rowspan="3" style="text-align:center;vertical-align:middle;padding:2px;">${_signView(std.reviewer, std.reviewerSeal)}</td>
+                    <td rowspan="3" style="text-align:center;vertical-align:middle;padding:2px;">${_signView(std.approver, std.approverSeal)}</td>
                 </tr>
                 <tr style="height:20px;"><td class="dlb">차 종</td><td style="text-align:center;font-weight:700;">${_esc(std.carModel||'')}</td></tr>
                 <tr style="height:20px;"><td class="dlb">품 명</td><td style="text-align:center;font-weight:700;color:#1d4ed8;">${_esc(std.partName||'')}</td></tr>
@@ -254,7 +285,7 @@ var InjIncomingStdModule = (function () {
                     </td>
                     <td style="vertical-align:top;padding:0;height:1px;">
                         <table style="font-size:10px;width:100%;border-collapse:collapse;height:100%;">
-                            <colgroup><col style="width:20px"><col style="width:28px"><col style="width:72px"><col><col style="width:60px"></colgroup>
+                            <colgroup><col style="width:20px"><col style="width:28px"><col style="width:72px"><col><col style="width:72px"></colgroup>
                             <tr>
                                 <td colspan="5" class="dsec">조 치 사 항</td>
                             </tr>
@@ -319,7 +350,7 @@ var InjIncomingStdModule = (function () {
             <td style="padding:3px;border:1px solid #bbb;text-align:center;font-size:10px;">${_esc(r.no||'')}</td>
             <td style="padding:3px;border:1px solid #bbb;text-align:center;font-size:10px;">${_esc(r.date||'')}</td>
             <td style="padding:3px;border:1px solid #bbb;text-align:center;font-size:10px;">${_esc(r.reason||'')}</td>
-            <td style="padding:${cf?'3px':'0'};border:1px solid #bbb;text-align:center;font-size:10px;${cf?'':'background:'+_DIAG}">${_esc(cf)}</td>
+            <td style="padding:${cf?'2px':'0'};border:1px solid #bbb;text-align:center;vertical-align:middle;${cf?'':'background:'+_DIAG}">${cf ? _confirmerView(cf) : ''}</td>
         </tr>`;}).join('');
 
         const imgs = (std.images||[]).map(_normImg);
@@ -359,7 +390,7 @@ var InjIncomingStdModule = (function () {
                 </style>
                 <div id="_stdOvDoc">
                     <table>
-                        <colgroup><col style="width:58px"><col style="width:130px"><col style="width:auto"><col style="width:26px"><col style="width:80px"><col style="width:80px"><col style="width:80px"></colgroup>
+                        <colgroup><col style="width:58px"><col style="width:130px"><col style="width:auto"><col style="width:26px"><col style="width:88px"><col style="width:88px"><col style="width:88px"></colgroup>
                         <tr style="height:20px;">
                             <td class="dlb">공정NO</td><td style="text-align:center;font-weight:700;">10</td>
                             <td rowspan="4" class="dtitle">수입검사 기준서</td>
@@ -369,9 +400,9 @@ var InjIncomingStdModule = (function () {
                         <tr style="height:20px;">
                             <td class="dlb">공정명</td><td style="text-align:center;font-weight:700;">${_esc(std.processName||'수입검사')}</td>
                             <td class="dth" rowspan="3" style="writing-mode:vertical-rl;text-align:center;vertical-align:middle;border-top:none;font-size:11px;letter-spacing:3px;">결 재</td>
-                            <td rowspan="3" style="text-align:center;vertical-align:middle;">${_esc(std.author||'')}</td>
-                            <td rowspan="3" style="text-align:center;vertical-align:middle;">${_esc(std.reviewer||'')}</td>
-                            <td rowspan="3" style="text-align:center;vertical-align:middle;">${_esc(std.approver||'')}</td>
+                            <td rowspan="3" style="text-align:center;vertical-align:middle;padding:2px;">${_signView(std.author, std.authorSeal)}</td>
+                            <td rowspan="3" style="text-align:center;vertical-align:middle;padding:2px;">${_signView(std.reviewer, std.reviewerSeal)}</td>
+                            <td rowspan="3" style="text-align:center;vertical-align:middle;padding:2px;">${_signView(std.approver, std.approverSeal)}</td>
                         </tr>
                         <tr style="height:20px;"><td class="dlb">차 종</td><td style="text-align:center;font-weight:700;">${_esc(std.carModel||'')}</td></tr>
                         <tr style="height:20px;"><td class="dlb">품 명</td><td style="text-align:center;font-weight:700;color:#1d4ed8;">${_esc(std.partName||'')}</td></tr>
@@ -408,7 +439,7 @@ var InjIncomingStdModule = (function () {
                             </td>
                             <td style="vertical-align:top;padding:0;height:1px;">
                                 <table style="font-size:10px;width:100%;border-collapse:collapse;height:100%;">
-                                    <colgroup><col style="width:20px"><col style="width:28px"><col style="width:72px"><col><col style="width:60px"></colgroup>
+                                    <colgroup><col style="width:20px"><col style="width:28px"><col style="width:72px"><col><col style="width:72px"></colgroup>
                                     <tr>
                                         <td colspan="5" class="dsec">조 치 사 항</td>
                                     </tr>
@@ -508,7 +539,7 @@ var InjIncomingStdModule = (function () {
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-rev-reason" type="text" value="${_esc(r.reason||'')}"
                 style="width:100%;height:28px;border:none;background:transparent;font-size:10px;"></td>
             <td style="padding:0;border:1px solid #bbb;background:${hasCf?'none':_DIAG_E};">
-                <input class="std-rev-confirmer" type="text" value="${_esc(r.confirmer||'')}"
+                <input class="std-rev-confirmer" type="text" list="stdUserDatalist" value="${_esc(r.confirmer||'')}"
                     style="width:100%;height:32px;border:none;background:transparent;font-size:10px;text-align:center;display:block;"
                     oninput="InjIncomingStdModule._onCfInput(this)">
             </td>
@@ -537,6 +568,18 @@ var InjIncomingStdModule = (function () {
             #stdDoc .doc-title { font-size:22px; font-weight:900; text-align:center; letter-spacing:2px; }
             </style>`;
 
+        // 날인: 편집은 이름만 — 저장 시 매칭
+        const userListHtml = (typeof ApprovalUtils !== 'undefined' && ApprovalUtils.userDatalistHtml)
+            ? ApprovalUtils.userDatalistHtml('stdUserDatalist')
+            : '<datalist id="stdUserDatalist"></datalist>';
+        const nameTd = (id, val) => `<td class="doc-cell" rowspan="3" style="text-align:center;vertical-align:middle;padding:4px;min-width:80px;">
+            <input class="doc-input" id="${id}" list="stdUserDatalist" value="${_esc(val || '')}" placeholder="이름"
+                style="text-align:center;font-weight:700;width:100%;">
+        </td>`;
+        const signAuthor = nameTd('stdAuthor', std ? (std.author || '') : '');
+        const signReviewer = nameTd('stdReviewer', std ? (std.reviewer || '') : '');
+        const signApprover = nameTd('stdApprover', std ? (std.approver || '') : '');
+
         UIUtils.showModal(isEdit ? '수입검사 기준서 편집' : '수입검사 기준서 등록', `
         ${docStyle}
         <!-- 제품 연결 선택 (문서 위) -->
@@ -552,6 +595,7 @@ var InjIncomingStdModule = (function () {
             </select>
         </div>
 
+        ${userListHtml}
         <!-- ══ 문서 본체 ══ -->
         <div id="stdDoc">
 
@@ -562,9 +606,9 @@ var InjIncomingStdModule = (function () {
                 <col style="width:130px"><!-- 값 -->
                 <col style="width:auto"><!-- 제목 -->
                 <col style="width:26px"><!-- 결재 세로 -->
-                <col style="width:80px"><!-- 작성 -->
-                <col style="width:80px"><!-- 검토 -->
-                <col style="width:80px"><!-- 승인 -->
+                <col style="width:88px"><!-- 작성 -->
+                <col style="width:88px"><!-- 검토 -->
+                <col style="width:88px"><!-- 승인 -->
             </colgroup>
             <tr style="height:20px;">
                 <td class="doc-label">공정NO</td>
@@ -579,9 +623,9 @@ var InjIncomingStdModule = (function () {
                 <td class="doc-label">공정명</td>
                 <td class="doc-cell" style="text-align:center;"><input class="doc-input" id="stdProcessName" value="${fv('processName','수입검사')}" style="text-align:center;font-weight:700;"></td>
                 <td class="doc-th" rowspan="3" style="writing-mode:vertical-rl;text-align:center;vertical-align:middle;padding:4px 2px;font-size:11px;letter-spacing:3px;border-top:none;">결 재</td>
-                <td class="doc-cell" rowspan="3" style="text-align:center;vertical-align:middle;"><input class="doc-input" id="stdAuthor" value="${fv('author')}" style="text-align:center;"></td>
-                <td class="doc-cell" rowspan="3" style="text-align:center;vertical-align:middle;"><input class="doc-input" id="stdReviewer" value="${fv('reviewer')}" style="text-align:center;"></td>
-                <td class="doc-cell" rowspan="3" style="text-align:center;vertical-align:middle;"><input class="doc-input" id="stdApprover" value="${fv('approver')}" style="text-align:center;"></td>
+                ${signAuthor}
+                ${signReviewer}
+                ${signApprover}
             </tr>
             <tr style="height:20px;">
                 <td class="doc-label">차 종</td>
@@ -662,7 +706,7 @@ var InjIncomingStdModule = (function () {
                 </td>
                 <td style="width:50%;vertical-align:top;border:1px solid #888;padding:0;height:1px;">
                     <table style="font-size:10px;width:100%;border-collapse:collapse;height:100%;">
-                        <colgroup><col style="width:20px"><col style="width:28px"><col style="width:72px"><col><col style="width:60px"><col style="width:44px"></colgroup>
+                        <colgroup><col style="width:20px"><col style="width:28px"><col style="width:72px"><col><col style="width:72px"><col style="width:44px"></colgroup>
                         <tbody>
                         <tr>
                             <td colspan="6" style="padding:0;border:none;">
@@ -1012,7 +1056,7 @@ var InjIncomingStdModule = (function () {
             <td style="padding:2px;border:1px solid #bbb;"><input class="std-rev-reason" type="text"
                 style="width:100%;height:28px;border:none;background:transparent;font-size:10px;"></td>
             <td style="padding:0;border:1px solid #bbb;background:${_DIAG};">
-                <input class="std-rev-confirmer" type="text"
+                <input class="std-rev-confirmer" type="text" list="stdUserDatalist"
                     style="width:100%;height:32px;border:none;background:transparent;font-size:10px;text-align:center;display:block;"
                     oninput="InjIncomingStdModule._onCfInput(this)">
             </td>
@@ -1084,9 +1128,12 @@ var InjIncomingStdModule = (function () {
             itemType:    g('stdItemType'),
             createdDate: g('stdCreatedDate'),
             revisedDate: g('stdRevisedDate'),
-            author:      g('stdAuthor'),
-            reviewer:    g('stdReviewer'),
-            approver:    g('stdApprover'),
+            author:      g('stdAuthor').trim(),
+            reviewer:    g('stdReviewer').trim(),
+            approver:    g('stdApprover').trim(),
+            authorSeal:  _sealForName(g('stdAuthor').trim(), ''),
+            reviewerSeal:_sealForName(g('stdReviewer').trim(), ''),
+            approverSeal:_sealForName(g('stdApprover').trim(), ''),
             procedure:   g('stdProcedure'),
             corrective:  g('stdCorrective'),
             images:      _formImages.map(_normImg),
@@ -1094,8 +1141,22 @@ var InjIncomingStdModule = (function () {
             revisions
         };
 
-        if(editId){await Storage.update(STORE,editId,data);UIUtils.toast('기준서가 수정되었습니다.','success');}
-        else{await Storage.add(STORE,data);UIUtils.toast('기준서가 등록되었습니다.','success');}
+        const missingSeal = [
+            data.author && !data.authorSeal ? data.author : '',
+            data.reviewer && !data.reviewerSeal ? data.reviewer : '',
+            data.approver && !data.approverSeal ? data.approver : '',
+            ...revisions.filter(r => r.confirmer && !_sealForName(r.confirmer, '')).map(r => r.confirmer)
+        ].filter(Boolean);
+        // confirmer 중복 제거
+        const missingUnique = [...new Set(missingSeal)];
+
+        if(editId){await Storage.update(STORE,editId,data);}
+        else{await Storage.add(STORE,data);}
+        if (missingUnique.length) {
+            UIUtils.toast(`저장됨. 날인 미등록: ${missingUnique.join(', ')} (설정>사용자에서 날인 등록)`, 'warning');
+        } else {
+            UIUtils.toast(editId ? '기준서가 수정되었습니다.' : '기준서가 등록되었습니다.', 'success');
+        }
         if(_kbHandler){document.removeEventListener('keydown',_kbHandler);_kbHandler=null;}
         UIUtils.closeModal();
         renderList();
@@ -1138,7 +1199,7 @@ var InjIncomingStdModule = (function () {
             <td style="text-align:center;">${_esc(r.no||'')}</td>
             <td style="text-align:center;">${_esc(r.date||'')}</td>
             <td style="text-align:center;">${_esc(r.reason||'')}</td>
-            <td style="padding:${cf?'3px':'0'};text-align:center;${diagBg}">${_esc(cf)}</td></tr>`;}).join('');
+            <td style="padding:${cf?'2px':'0'};text-align:center;vertical-align:middle;${diagBg}">${cf ? _confirmerView(cf) : ''}</td></tr>`;}).join('');
 
         const win=window.open('','_blank','width=960,height=720');
         win.document.write(`<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
@@ -1154,6 +1215,7 @@ var InjIncomingStdModule = (function () {
             .doc-label{background:#f0f0f0;font-weight:700;text-align:center;white-space:nowrap;}
             .doc-title{font-size:18px;font-weight:900;text-align:center;letter-spacing:2px;}
             img{display:block;width:100%;object-fit:contain;background:#fff;}
+            img.std-seal{width:auto;display:inline-block;background:transparent;}
             @media print{html,body{width:281mm;}}
         </style></head><body>
         <!-- 헤더 -->
@@ -1162,7 +1224,7 @@ var InjIncomingStdModule = (function () {
                 <col style="width:56px"><col style="width:128px">
                 <col style="width:auto">
                 <col style="width:24px">
-                <col style="width:78px"><col style="width:78px"><col style="width:78px">
+                <col style="width:88px"><col style="width:88px"><col style="width:88px">
             </colgroup>
             <tr style="height:20px;">
                 <td class="doc-label">공정NO</td>
@@ -1177,9 +1239,9 @@ var InjIncomingStdModule = (function () {
                 <td class="doc-label">공정명</td>
                 <td style="text-align:center;font-weight:700;">${_esc(std.processName||'수입검사')}</td>
                 <td class="doc-th" rowspan="3" style="writing-mode:vertical-rl;text-align:center;vertical-align:middle;padding:4px 2px;font-size:11px;letter-spacing:3px;border-top:none;">결 재</td>
-                <td rowspan="3" style="text-align:center;vertical-align:middle;">${_esc(std.author||'')}</td>
-                <td rowspan="3" style="text-align:center;vertical-align:middle;">${_esc(std.reviewer||'')}</td>
-                <td rowspan="3" style="text-align:center;vertical-align:middle;">${_esc(std.approver||'')}</td>
+                <td rowspan="3" style="text-align:center;vertical-align:middle;padding:2px;">${_signView(std.author, std.authorSeal)}</td>
+                <td rowspan="3" style="text-align:center;vertical-align:middle;padding:2px;">${_signView(std.reviewer, std.reviewerSeal)}</td>
+                <td rowspan="3" style="text-align:center;vertical-align:middle;padding:2px;">${_signView(std.approver, std.approverSeal)}</td>
             </tr>
             <tr style="height:20px;">
                 <td class="doc-label">차 종</td>
@@ -1226,7 +1288,7 @@ var InjIncomingStdModule = (function () {
                 </td>
                 <td style="vertical-align:top;padding:0;height:1px;">
                     <table style="font-size:10px;width:100%;border-collapse:collapse;height:100%;">
-                        <colgroup><col style="width:20px"><col style="width:28px"><col style="width:72px"><col><col style="width:60px"></colgroup>
+                                    <colgroup><col style="width:20px"><col style="width:28px"><col style="width:72px"><col><col style="width:72px"></colgroup>
                         <tr>
                             <td colspan="5" class="doc-sec">조 치 사 항</td>
                         </tr>

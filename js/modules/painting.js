@@ -5434,7 +5434,7 @@ const PaintingInspectionModule = (function() {
                 <!-- 2-컬럼 메인 레이아웃 -->
                 <div style="display:grid; grid-template-columns:260px 1fr; gap:10px; align-items:start;">
 
-                    <!-- 좌측: 검사 정보 + 수량 + 검사자 -->
+                    <!-- 좌측: 검사 정보 + 수량 + 포장 -->
                     <div style="display:flex; flex-direction:column; gap:10px;">
 
                         <!-- 검사 시간 -->
@@ -5468,13 +5468,17 @@ const PaintingInspectionModule = (function() {
                         <!-- 검사 수량 -->
                         <div class="card">
                             <div class="card-body" style="padding:12px;">
-                                <h5 style="margin:0 0 10px 0; font-size:0.85rem; color:var(--text-primary);">검사 수량
-                                    <!-- ✓ Case 1: 부분 완료 옵션 -->
-                                    <label style="margin-left:auto; display:flex; align-items:center; gap:6px; font-size:0.75rem; font-weight:400; color:var(--text-secondary);">
+                                <h5 style="margin:0 0 8px 0; font-size:0.85rem; color:var(--text-primary); display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                    검사 수량
+                                    <!-- ✓ Case 1: 부분 검사 옵션 -->
+                                    <label style="margin-left:auto; display:flex; align-items:center; gap:6px; font-size:0.75rem; font-weight:400; color:var(--text-secondary); cursor:pointer;">
                                         <input type="checkbox" id="inpIsPartialInspection" style="cursor:pointer;" onchange="PaintingInspectionModule._togglePartialInspection()">
-                                        <span>부분 완료</span>
+                                        <span>부분 검사</span>
                                     </label>
                                 </h5>
+                                <div style="margin:-2px 0 8px 0; font-size:0.68rem; color:var(--text-muted); line-height:1.35; text-align:right;">
+                                    일부 검사 완료 후 출고시 체크
+                                </div>
                                 <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px;">
                                     <div class="form-group" style="margin:0;">
                                         <label class="form-label" style="font-size:0.72rem;">양품수</label>
@@ -5489,10 +5493,10 @@ const PaintingInspectionModule = (function() {
                                         <input type="text" class="form-input" id="inpTotalQty" value="${UIUtils.formatNumber(initGoodQty)}" readonly style="background:var(--bg-secondary); text-align:right; font-weight:700; font-size:0.9rem; padding:5px 6px; color:var(--accent-blue);">
                                     </div>
                                 </div>
-                                <!-- ✓ Case 1: 부분 완료 시 설명 (최대 입력 가능 수량 안내) -->
+                                <!-- ✓ Case 1: 부분 검사 시 설명 (최대 입력 가능 수량 안내) -->
                                 <div id="piPartialInspectionInfo" style="display:none; margin-top:8px; padding:8px 10px; background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.25); border-radius:6px; font-size:0.75rem; color:var(--text-secondary); line-height:1.4;">
                                     <span class="material-symbols-outlined" style="font-size:16px; vertical-align:middle; color:var(--accent-orange);">info</span>
-                                    <span style="margin-left:4px;">부분 완료 시 입력한 수량(양품+불량, 최대 <strong>${UIUtils.formatNumber(baseInspQty)}</strong> EA)만 검사 완료되며, 나머지는 외관검사 대기로 유지됩니다.</span>
+                                    <span style="margin-left:4px;">부분 검사 시 입력한 수량(양품+불량, 최대 <strong>${UIUtils.formatNumber(baseInspQty)}</strong> EA)만 검사 완료되며, 나머지는 외관검사 대기로 유지됩니다.</span>
                                 </div>
                             </div>
                         </div>
@@ -5539,27 +5543,10 @@ const PaintingInspectionModule = (function() {
                             </div>
                         </div>
 
-                        <!-- 버튼 -->
-                        <div style="display:flex; flex-direction:column; gap:6px;">
-                            <button class="btn btn-outline" onclick="PaintingInspectionModule._saveInspectionDraft('${workId}')" style="width:100%; justify-content:center; color:var(--accent-orange); border-color:var(--accent-orange);">
-                                <span class="material-symbols-outlined" style="font-size:18px;">bookmark_add</span> 임시 저장 (이어서 작성)
-                            </button>
-                            <button class="btn btn-primary" onclick="PaintingInspectionModule._saveInspection('${workId}')" style="width:100%; justify-content:center;">
-                                <span class="material-symbols-outlined">save</span> 저장 (검사 완료)
-                            </button>
-                            <div style="display:flex; gap:6px;">
-                                <button class="btn btn-secondary" onclick="window.print()" style="flex:1; justify-content:center; font-size:0.85rem;">
-                                    <span class="material-symbols-outlined" style="font-size:16px;">print</span> 인쇄
-                                </button>
-                                <button class="btn btn-outline" onclick="PaintingInspectionModule._closeInspectionModal()" style="flex:1; justify-content:center; font-size:0.85rem;">
-                                    <span class="material-symbols-outlined" style="font-size:16px;">close</span> 취소
-                                </button>
-                            </div>
-                        </div>
                     </div>
 
-                    <!-- 우측: 불량 유형 입력 -->
-                    <div class="card" style="height:100%;">
+                    <!-- 우측: 불량 유형 입력 (상단 정렬) -->
+                    <div class="card" style="align-self:start; min-width:0;">
                         <div class="card-body" style="padding:14px;">
                             <h5 style="margin:0 0 12px 0; font-size:0.85rem; color:var(--text-primary);">불량 유형 입력</h5>
 
@@ -5650,17 +5637,35 @@ const PaintingInspectionModule = (function() {
                     </div>
                 </div>
 
-                <!-- 검사자 (불량 유형 아래, 가로 배치) -->
-                <div class="card">
-                    <div class="card-body" style="padding:12px 14px;">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                            <h5 style="margin:0; font-size:0.85rem; color:var(--text-primary);">검사자 <span style="color:var(--accent-red);">*</span> <span style="font-size:0.68rem; font-weight:400; color:var(--text-muted);">(자주검사자만 · 1명 이상 필수)</span></h5>
-                            <button class="btn btn-sm btn-primary" onclick="PaintingInspectionModule._addInspectorField()" id="addInspectorBtn" style="gap:4px; padding:4px 8px; font-size:0.78rem;">
-                                <span class="material-symbols-outlined" style="font-size:14px;">add</span> 추가
+                <!-- 하단 액션바: 저장 버튼 + 검사자 -->
+                <div class="card" style="margin:0;">
+                    <div class="card-body" style="padding:10px 14px;display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;">
+                        <div style="display:flex;gap:6px;flex:0 0 auto;flex-wrap:wrap;align-items:flex-start;">
+                            <div style="display:flex;flex-direction:column;gap:4px;">
+                                <button class="btn btn-outline" onclick="PaintingInspectionModule._saveInspectionDraft('${workId}')" style="justify-content:center; color:var(--accent-orange); border-color:var(--accent-orange); white-space:nowrap;" title="검사 도중 다른 작업으로 변경시 임시 저장가능">
+                                    <span class="material-symbols-outlined" style="font-size:18px;">bookmark_add</span> 임시 저장
+                                </button>
+                                <div style="font-size:0.65rem; color:var(--text-muted); line-height:1.3; max-width:210px;">
+                                    검사 도중 다른 작업으로 변경시 임시 저장가능
+                                </div>
+                            </div>
+                            <button class="btn btn-primary" onclick="PaintingInspectionModule._saveInspection('${workId}')" style="justify-content:center; white-space:nowrap;">
+                                <span class="material-symbols-outlined">save</span> 저장 (검사 완료)
+                            </button>
+                            <button class="btn btn-outline" onclick="PaintingInspectionModule._closeInspectionModal()" style="justify-content:center; font-size:0.85rem;">
+                                <span class="material-symbols-outlined" style="font-size:16px;">close</span> 취소
                             </button>
                         </div>
-                        <div style="display:flex; flex-wrap:wrap; gap:10px;" id="inspectorContainer">
-                            <!-- 동적으로 생성됨 -->
+                        <div style="width:1px;align-self:stretch;background:var(--border-color);flex:0 0 1px;min-height:36px;"></div>
+                        <div style="display:flex;align-items:flex-end;gap:8px;flex:1 1 auto;flex-wrap:wrap;min-width:0;">
+                            <span style="font-size:0.82rem;font-weight:700;color:var(--text-primary);white-space:nowrap;align-self:center;padding-bottom:2px;">
+                                검사자 <span style="color:var(--accent-red);">*</span>
+                                <span style="font-size:0.68rem;font-weight:400;color:var(--text-muted);">(자주검사자)</span>
+                            </span>
+                            <div style="display:flex;align-items:flex-end;gap:8px;flex:1 1 auto;flex-wrap:wrap;min-width:0;" id="inspectorContainer"></div>
+                            <button type="button" class="btn btn-sm btn-primary" onclick="PaintingInspectionModule._addInspectorField()" id="addInspectorBtn" style="gap:4px;padding:4px 10px;font-size:0.78rem;flex:0 0 auto;">
+                                <span class="material-symbols-outlined" style="font-size:14px;">add</span> 추가
+                            </button>
                         </div>
                     </div>
                 </div>
