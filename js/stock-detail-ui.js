@@ -187,8 +187,9 @@ var StockDetailUI = (function() {
             }
 
             var delta = getSignedQty(item);
+            // 입고(양수)는 항상 전량 가산. 출고로 잔량이 0 밑으로 내려갈 때만 0으로 절단(음수 채무 미이월).
             var after = before + delta;
-            if (floorZero && after < 0) after = 0;
+            if (floorZero && delta < 0 && after < 0) after = 0;
             if (perLotKey) runningByKey[key] = after;
             else runningAll = after;
             return { item: item, stockBefore: before, stockAfter: after };
@@ -247,15 +248,30 @@ var StockDetailUI = (function() {
         const getSigned = opts.getSignedQty || function(item) {
             return item.isOut ? -(Number(item.qty) || 0) : (Number(item.qty) || 0);
         };
+        const perLotKeyFn = typeof opts.perLotKey === 'function' ? opts.perLotKey : null;
         const steps = simpleReplaySteps(items, getSigned, {
             floorZero: opts.floorZero !== false,
             perLotKey: opts.perLotKey,
             getAbsoluteAfter: opts.getAbsoluteAfter
         }).slice().reverse();
+        // LOT별로 나눠 재생할 때(perLotKey)는 "현재" 표시도 LOT별로 가장 최근 한 건씩 붙여야 한다.
+        // 전체 목록에서 맨 위 한 줄에만 붙이면, 동시각(예: 이력 리셋)에 LOT가 여러 개 있을 때
+        // 그중 하나의 값만 우연히 "현재"로 보여서 품목 합계(헤더)와 달라 보이는 문제가 있었다.
         let currentMarked = false;
+        const currentMarkedKeys = perLotKeyFn ? new Set() : null;
         const rows = steps.map(function(step) {
-            const isCurrent = !currentMarked && !(step.archiveOnly || (step.item && (step.item.beforeReset || step.item.archiveOnly)));
-            if (isCurrent) currentMarked = true;
+            const isArchive = !!(step.archiveOnly || (step.item && (step.item.beforeReset || step.item.archiveOnly)));
+            let isCurrent = false;
+            if (!isArchive) {
+                if (currentMarkedKeys) {
+                    const key = perLotKeyFn(step.item) || '__ALL__';
+                    isCurrent = !currentMarkedKeys.has(key);
+                    if (isCurrent) currentMarkedKeys.add(key);
+                } else {
+                    isCurrent = !currentMarked;
+                    if (isCurrent) currentMarked = true;
+                }
+            }
             return renderSimpleStepRow(step, isCurrent, opts);
         }).join('');
         return buildHistorySection(rows, (items || []).length, opts);

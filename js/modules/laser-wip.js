@@ -2448,7 +2448,8 @@ var LaserWipModule = (function() {
                     lot.qty -= used;
                     remainingOut -= used;
                 });
-            manualAdj = remainingOut > 0 ? -remainingOut : 0;
+            // 초과 출고분은 음수로 남기지 않음
+            manualAdj = 0;
         }
 
         const lots = Object.values(lotMap)
@@ -2992,7 +2993,7 @@ var LaserWipModule = (function() {
             if (pref && pref !== '-' && wipMap[pref]) {
                 const avail = Math.max(0, wipMap[pref].balance);
                 const take = Math.min(avail, remain);
-                wipMap[pref].balance -= take;
+                wipMap[pref].balance = Math.max(0, wipMap[pref].balance - take);
                 remain -= take;
                 if (!wipMap[pref].paintLot && paintLot) wipMap[pref].paintLot = paintLot;
             }
@@ -3002,14 +3003,11 @@ var LaserWipModule = (function() {
                     const avail = Math.max(0, wipMap[k].balance);
                     if (avail <= 0) return;
                     const take = Math.min(avail, remain);
-                    wipMap[k].balance -= take;
+                    wipMap[k].balance = Math.max(0, wipMap[k].balance - take);
                     remain -= take;
                 });
             }
-            if (remain > 0) {
-                const row = _ensureLot(pref && pref !== '-' ? pref : '__UNASSIGNED__', paintLot);
-                row.balance -= remain;
-            }
+            // 후공정이 보유 재고보다 많이 빼가도 음수는 기억하지 않음 (잔량 0에서 절단)
         }
 
         function _lotAllocationsOf(h) {
@@ -3063,25 +3061,20 @@ var LaserWipModule = (function() {
                     if (a.fifo || !injLot || injLot === '-') _drainLots('', qty, paintLot);
                     else _drainLots(injLot, qty, paintLot);
                 } else {
+                    // 입고(양수)는 이전 초과출고와 무관하게 전량 가산
                     _ensureLot(injLot && injLot !== '-' ? injLot : '__UNASSIGNED__', paintLot).balance += qty;
                 }
             });
         });
 
-        // 음수 LOT를 양수 LOT에서 흡수 — 화면에 안 보이는 음수 때문에 보관 LOT 합 > 재공 되는 것 방지
-        let deficit = 0;
+        // 잔량은 항상 0 이상만 유지 (후공정 초과 출고로 생긴 음수는 폐기)
         Object.keys(wipMap).forEach(function(k) {
-            const bal = Number(wipMap[k].balance) || 0;
-            if (bal < 0) {
-                deficit += -bal;
-                wipMap[k].balance = 0;
-            }
+            wipMap[k].balance = Math.max(0, Number(wipMap[k].balance) || 0);
         });
-        if (deficit > 0) _drainLots('', deficit, '');
 
         return Object.values(wipMap)
             .map(function(l) { return { lotNo: l.lotNo, paintLot: l.paintLot || '', balance: Math.round(l.balance) }; })
-            .filter(function(l) { return (Number(l.balance) || 0) !== 0 || l.lotNo !== '__UNASSIGNED__'; })
+            .filter(function(l) { return (Number(l.balance) || 0) > 0; })
             .sort(function(a, b) { return String(a.lotNo || '').localeCompare(String(b.lotNo || '')); });
     }
 
@@ -3190,6 +3183,7 @@ var LaserWipModule = (function() {
                 author: w.author || w.operator || '-',
                 sourceId: w.id || '',
                 createdAt: w.createdAt || '',
+                _seq: w.createdAt || w.id || '',
                 editKind: isAdj || isManualIn ? 'after_manual' : 'laser_work'
             });
         });
@@ -3220,6 +3214,7 @@ var LaserWipModule = (function() {
                 author: w.author || '-',
                 sourceId: w.id || '',
                 createdAt: w.createdAt || '',
+                _seq: w.createdAt || w.id || '',
                 editKind: 'after_manual'
             });
         });
@@ -3273,7 +3268,8 @@ var LaserWipModule = (function() {
                 lotAllocations: lotAllocations,
                 note: w.note || '',
                 author: w.author || w.operator || w.worker || '-',
-                createdAt: w.createdAt || ''
+                createdAt: w.createdAt || '',
+                _seq: w.createdAt || w.id || ''
             });
         });
         return histItems;
@@ -3420,7 +3416,7 @@ var LaserWipModule = (function() {
             </tr>`;
         }).join('');
 
-        const historySection = _wipHistorySection(displayHist, { splitLots: true, productLevelQty: true, floorZero: false });
+        const historySection = _wipHistorySection(displayHist, { splitLots: true, productLevelQty: true, floorZero: true });
         const resetBanner = histReset ? `
             <div style="margin-bottom:12px;padding:10px 12px;border-radius:8px;background:rgba(37,99,235,0.06);border:1px solid rgba(37,99,235,0.18);font-size:0.8rem;color:var(--text-secondary);">
                 <strong style="color:#2563eb;">이력만 리셋 적용</strong>

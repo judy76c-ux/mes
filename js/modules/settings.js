@@ -979,8 +979,7 @@ const SettingsModule = (function() {
                                         <td style="white-space:nowrap;"><div style="display:flex;flex-wrap:nowrap;gap:4px;">${matBadges}</div></td>
                                         <td><div style="display:flex;flex-direction:column;gap:1px;">${paintBadges}</div></td>
                                         <td style="white-space:nowrap;">
-                                            <button class="btn btn-sm btn-outline" onclick="SettingsModule.editProduct('${p.id}')">수정</button>
-                                            <button class="btn btn-sm btn-danger" onclick="SettingsModule.removeProduct('${p.id}')">삭제</button>
+                                            <button class="btn btn-sm btn-outline" onclick="SettingsModule.viewProduct('${p.id}')">보기</button>
                                         </td>
                                     </tr>
                                 `;
@@ -3047,6 +3046,81 @@ const SettingsModule = (function() {
         renderTabContent();
     }
 
+    function viewProduct(id, returnToValidation = false) {
+        const p = Storage.getById(PRODUCTS_STORE, id);
+        if (!p) return;
+
+        const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+        const paintMaterials = Storage.getAll(PAINT_STORE) || [];
+        const paintMap = {};
+        paintMaterials.forEach(pm => { if (pm.id) paintMap[pm.id] = pm; });
+        const products = Storage.getAll(PRODUCTS_STORE) || [];
+        const productsById = {};
+        products.forEach(row => { if (row.id) productsById[row.id] = row; });
+        const injMaterials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+        const usedMats = injMaterials.filter(m => (m.productIds || []).includes(id));
+
+        const field = (label, valueHtml) => `
+            <div style="display:flex;gap:12px;padding:8px 0;border-bottom:1px solid var(--border-color);align-items:flex-start;">
+                <div style="width:110px;flex-shrink:0;color:var(--text-muted);font-size:0.82rem;">${label}</div>
+                <div style="flex:1;font-size:0.88rem;">${valueHtml || '-'}</div>
+            </div>`;
+        const paintName = pid => _isNoNeedPaintSelection(pid) ? '사용불필요' : (pid && paintMap[pid] ? esc(paintMap[pid].name) : (pid ? '미등록' : '-'));
+        const procHtml = [1, 2, 3, 4].map(n => {
+            const proc = String(p['process' + n] || '').trim();
+            if (!proc) return '';
+            const cvt = p['cvt' + n] || '-';
+            const ct = p['ct' + n] || '-';
+            return `<span class="badge badge-info" style="margin:0 4px 4px 0;white-space:nowrap;">${esc(proc)} <span style="opacity:0.75;">${esc(cvt)}|${esc(ct)}</span></span>`;
+        }).filter(Boolean).join('');
+        const paintHtml = (Array.isArray(p.paintMaterials) ? p.paintMaterials : []).length
+            ? (p.paintMaterials || []).map(row => {
+                const spec = row.paintSpec || (row.mainId && paintMap[row.mainId] ? paintMap[row.mainId].paintSpec : '') || '-';
+                const tag = row.processTag ? `[${esc(row.processTag)}] ` : '';
+                return `<div style="font-size:0.82rem;line-height:1.5;margin-bottom:4px;">${tag}<strong>${esc(spec)}</strong> · ${paintName(row.mainId || row.paintMaterialId)} / ${paintName(row.hardId)} / ${paintName(row.thinnerId)}</div>`;
+            }).join('')
+            : '-';
+        const injHtml = usedMats.length
+            ? usedMats.map(m => `<div style="font-size:0.82rem;line-height:1.5;margin-bottom:4px;">${esc(m.injPartName || '-')} · ${esc(m.injColor || '-')} · ${esc(m.supplier || '-')}</div>`).join('')
+            : '-';
+        const linkedHtml = p.linkedProductId && productsById[p.linkedProductId]
+            ? esc(`${productsById[p.linkedProductId].partName || '-'} (${productsById[p.linkedProductId].customer || '-'})`)
+            : '-';
+        const itemTypeBadge = p.itemType === '양산품'
+            ? '<span class="badge" style="background:rgba(52,211,153,0.15);color:var(--accent-green);">양산</span>'
+            : p.itemType === '개발품'
+            ? '<span class="badge" style="background:rgba(59,130,246,0.15);color:var(--accent-blue);">개발</span>'
+            : p.itemType === 'A/S품'
+            ? '<span class="badge" style="background:rgba(245,158,11,0.15);color:#d97706;">A/S</span>'
+            : esc(p.itemType);
+
+        const editJs = returnToValidation
+            ? `UIUtils.closeModal();setTimeout(function(){SettingsModule.editProduct('${id}', true);},80);`
+            : `UIUtils.closeModal();setTimeout(function(){SettingsModule.editProduct('${id}');},80);`;
+        const closeJs = returnToValidation ? 'SettingsModule.openPaintValidationModal()' : 'UIUtils.closeModal()';
+
+        UIUtils.showModal(`제품 정보 — ${esc(p.partName || '-')}`, `
+            <div style="padding:2px 0;">
+                ${field('차종', esc(p.carModel))}
+                ${field('품명', `<strong>${esc(p.partName)}</strong>`)}
+                ${field('도장 컬러', esc(p.color))}
+                ${field('품목구분', itemTypeBadge)}
+                ${field('납품처', esc(p.customer))}
+                ${field('납품포장용량', p.packUnit ? esc(p.packUnit) : '-')}
+                ${field('관리코드', esc(p.productCode || p.code))}
+                ${field('제조 공정', procHtml || '-')}
+                ${field('외관 검사', esc(p.appearanceInspType || '-'))}
+                ${field('사용 사출 자재', injHtml)}
+                ${field('도료 자재', paintHtml)}
+                ${field('레이저 분리 연결', linkedHtml)}
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="${closeJs}">닫기</button>
+            <button class="btn btn-outline" onclick="${editJs}">수정</button>
+            <button class="btn btn-danger" onclick="SettingsModule.removeProduct('${id}')">삭제</button>
+        `, 'lg');
+    }
+
     function editProduct(id, returnToValidation = false) {
         const p = Storage.getById(PRODUCTS_STORE, id);
         if (!p) return;
@@ -3169,6 +3243,7 @@ const SettingsModule = (function() {
     function removeProduct(id) {
         UIUtils.confirm('이 제품을 삭제하시겠습니까?', async () => {
             await Storage.remove(PRODUCTS_STORE, id);
+            UIUtils.closeModal();
             UIUtils.toast('삭제되었습니다.', 'success');
             renderTabContent();
         });
@@ -3701,8 +3776,7 @@ const SettingsModule = (function() {
                                             <td>${rawMatName}${matchedCount > 1 ? `<span style="font-size:0.72rem;color:var(--text-muted);margin-left:4px;">(${matchedCount}건)</span>` : ''}</td>
                                             <td>${rawMatColor}</td>
                                             <td>
-                                                <button class="btn btn-sm btn-outline" onclick="SettingsModule.editInjectMat('${m.id}')">수정</button>
-                                                <button class="btn btn-sm btn-danger" onclick="SettingsModule.removeInjectMat('${m.id}')">삭제</button>
+                                                <button class="btn btn-sm btn-outline" onclick="SettingsModule.viewInjectMat('${m.id}')">보기</button>
                                             </td>
                                         </tr>
                                     `;
@@ -4141,6 +4215,58 @@ const SettingsModule = (function() {
         renderTabContent();
     }
 
+    function viewInjectMat(id) {
+        const m = Storage.getById(INJECT_MAT_STORE, id);
+        if (!m) return;
+
+        const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const rawMats = Storage.getAll(DB.STORES.RAW_MATERIALS) || [];
+        const field = (label, valueHtml) => `
+            <div style="display:flex;gap:12px;padding:8px 0;border-bottom:1px solid var(--border-color);align-items:flex-start;">
+                <div style="width:110px;flex-shrink:0;color:var(--text-muted);font-size:0.82rem;">${label}</div>
+                <div style="flex:1;font-size:0.88rem;">${valueHtml || '-'}</div>
+            </div>`;
+
+        const linkedProducts = (Array.isArray(m.productIds) ? m.productIds : [])
+            .map(pid => products.find(p => p.id === pid))
+            .filter(Boolean)
+            .map(p => `${esc(p.partName || '-')}${p.color ? ' / ' + esc(p.color) : ''}`)
+            .join('<br>') || '-';
+
+        let rawMatName = m.rawMatName || '-';
+        let rawMatColor = m.rawMatColor || '-';
+        if (m.rawMatId) {
+            const raw = rawMats.find(r => r.id === m.rawMatId);
+            if (raw) {
+                rawMatName = esc(raw.matName || '-');
+                rawMatColor = esc(raw.color || '-');
+            }
+        }
+
+        UIUtils.showModal(`사출자재 — ${esc(m.injPartName || '-')}`, `
+            <div style="padding:2px 0;">
+                ${field('차종', esc(m.carModel))}
+                ${field('생산처', esc(m.supplier))}
+                ${field('사출품명', `<strong>${esc(m.injPartName)}</strong>`)}
+                ${field('컬러', esc(m.injColor))}
+                ${field('단가', m.unitPrice ? Number(m.unitPrice).toLocaleString() + ' 원' : '-')}
+                ${field('품목구분', esc(m.itemType))}
+                ${field('제작품목1', esc(m.mfgProductName))}
+                ${field('제작품목2', esc(m.mfgProductName2))}
+                ${field('연결 제품', linkedProducts)}
+                ${field('캐비티', m.cavityCount != null && m.cavityCount !== '' ? esc(m.cavityCount) : '-')}
+                ${field('중량', m.weight ? Number(m.weight).toLocaleString() + ' g' : '-')}
+                ${field('원재료명', rawMatName)}
+                ${field('원재료 컬러', rawMatColor)}
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+            <button class="btn btn-outline" onclick="UIUtils.closeModal();setTimeout(function(){SettingsModule.editInjectMat('${id}');},80);">수정</button>
+            <button class="btn btn-danger" onclick="SettingsModule.removeInjectMat('${id}')">삭제</button>
+        `, 'lg');
+    }
+
     function editInjectMat(id) {
         const m = Storage.getById(INJECT_MAT_STORE, id);
         if (!m) return;
@@ -4193,6 +4319,7 @@ const SettingsModule = (function() {
     function removeInjectMat(id) {
         UIUtils.confirm('이 사출자재를 삭제하시겠습니까?', async () => {
             await Storage.remove(INJECT_MAT_STORE, id);
+            UIUtils.closeModal();
             UIUtils.toast('삭제되었습니다.', 'success');
             renderTabContent();
         });
@@ -4874,8 +5001,7 @@ const SettingsModule = (function() {
                                                         </div>
                                                     </div>
                                                     <div style="display:flex; gap:4px; flex-shrink:0;">
-                                                        <button class="btn btn-sm btn-outline" style="padding:2px 6px; font-size:0.7rem;" onclick="SettingsModule.editDefect('${d.id}')">수정</button>
-                                                        <button class="btn btn-sm btn-danger" style="padding:2px 6px; font-size:0.7rem;" onclick="SettingsModule.removeDefect('${d.id}')">삭제</button>
+                                                        <button class="btn btn-sm btn-outline" style="padding:2px 6px; font-size:0.7rem;" onclick="SettingsModule.viewDefect('${d.id}')">보기</button>
                                                     </div>
                                                 </div>`;
                                             }).join('')}
@@ -5047,6 +5173,65 @@ const SettingsModule = (function() {
             console.error('[불량유형 추가] 오류:', err);
             UIUtils.toast('추가에 실패했습니다. 다시 시도해주세요.', 'error');
         }
+    }
+
+    function viewDefect(id) {
+        const d = Storage.getById(DEFECTS_STORE, id);
+        if (!d) {
+            UIUtils.toast('해당 불량 유형을 찾을 수 없습니다.', 'error');
+            return;
+        }
+
+        const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+        const typeKey = ['painting', 'plating', 'laser', 'printing'].includes(d.type) ? d.type : 'injection';
+        const typeName = DEFECT_TYPE_LABELS[typeKey] || '기타';
+        const field = (label, valueHtml) => `
+            <div style="display:flex;gap:12px;padding:8px 0;border-bottom:1px solid var(--border-color);align-items:flex-start;">
+                <div style="width:110px;flex-shrink:0;color:var(--text-muted);font-size:0.82rem;">${label}</div>
+                <div style="flex:1;font-size:0.88rem;">${valueHtml || '-'}</div>
+            </div>`;
+
+        const c = d.causes || {};
+        const causeField = (label, color, value) => {
+            const text = String(value || '').trim();
+            if (!text) return '';
+            return `
+                <div style="margin-bottom:8px;">
+                    <div style="font-size:0.72rem;font-weight:700;color:${color};margin-bottom:3px;">${label}</div>
+                    <div style="font-size:0.84rem;white-space:pre-wrap;line-height:1.45;">${esc(text)}</div>
+                </div>`;
+        };
+        const causesHtml = [
+            causeField('Machine (기계/설비)', '#2563eb', c.machine),
+            causeField('Material (재료)', '#d97706', c.material),
+            causeField('Method (방법)', '#7c3aed', c.method),
+            causeField('Man (작업자)', '#16a34a', c.man)
+        ].filter(Boolean).join('') || '-';
+
+        const images = Array.isArray(d.exampleImages) && d.exampleImages.length
+            ? d.exampleImages
+            : (d.exampleImage ? [d.exampleImage] : []);
+        const imagesHtml = images.length
+            ? `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">${images.map((src, i) => `
+                <div style="border-radius:6px;overflow:hidden;border:1px solid var(--border-color);aspect-ratio:4/3;background:#f0f0f0;">
+                    <img src="${src.replace(/"/g, '&quot;')}" alt="예시 ${i + 1}" style="width:100%;height:100%;object-fit:cover;display:block;">
+                </div>`).join('')}</div>`
+            : '-';
+
+        UIUtils.showModal(`불량 유형 — ${esc(d.name || '-')}`, `
+            <div style="padding:2px 0;">
+                ${field('구분', `<span style="font-weight:600;">${esc(typeName)}</span>`)}
+                ${field('불량 유형명', `<strong>${esc(d.name)}</strong>`)}
+                ${field('설명', esc(d.description))}
+                ${field('4M 불량 원인', causesHtml)}
+                ${field('조치 방법', d.countermeasure ? `<span style="white-space:pre-wrap;">${esc(d.countermeasure)}</span>` : '-')}
+                ${field('예시 사진', imagesHtml)}
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+            <button class="btn btn-outline" onclick="UIUtils.closeModal();setTimeout(function(){SettingsModule.editDefect('${id}');},80);">수정</button>
+            <button class="btn btn-danger" onclick="SettingsModule.removeDefect('${id}')">삭제</button>
+        `, 'lg');
     }
 
     function editDefect(id) {
@@ -5490,6 +5675,7 @@ const SettingsModule = (function() {
                     await _mutateDefectTypes(async () => {
                         await Storage.remove(DEFECTS_STORE, id);
                     });
+                    UIUtils.closeModal();
                     UIUtils.toast(`"${safeName}" 불량 유형이 삭제되었습니다.`, 'success');
                     renderTabContent();
                 } catch (err) {
@@ -5623,8 +5809,7 @@ const SettingsModule = (function() {
                     </div>
                 </td>
                 <td>
-                    <button class="btn btn-sm btn-outline" onclick="SettingsModule.editRawMat('${m.id}')">수정</button>
-                    <button class="btn btn-sm btn-danger" onclick="SettingsModule.removeRawMat('${m.id}')">삭제</button>
+                    <button class="btn btn-sm btn-outline" onclick="SettingsModule.viewRawMat('${m.id}')">보기</button>
                 </td>
             </tr>
         `).join('');
@@ -5817,6 +6002,43 @@ const SettingsModule = (function() {
         renderTabContent();
     }
 
+    function viewRawMat(id) {
+        const m = Storage.getById(RAW_MAT_STORE, id);
+        if (!m) return;
+
+        const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+        const field = (label, valueHtml) => `
+            <div style="display:flex;gap:12px;padding:8px 0;border-bottom:1px solid var(--border-color);align-items:flex-start;">
+                <div style="width:110px;flex-shrink:0;color:var(--text-muted);font-size:0.82rem;">${label}</div>
+                <div style="flex:1;font-size:0.88rem;">${valueHtml || '-'}</div>
+            </div>`;
+
+        const usedForHtml = (m.usedFor || '')
+            .split(/[,，、]/)
+            .map(s => s.trim())
+            .filter(Boolean)
+            .map(s => `<span class="badge badge-info" style="margin:0 4px 4px 0;font-size:0.78rem;">${esc(s)}</span>`)
+            .join('') || '-';
+
+        const packLabel = m.packLabel || (m.packKg ? m.packKg + 'KG/포' : '25KG/포');
+
+        UIUtils.showModal(`원재료 — ${esc(m.matName || '-')}`, `
+            <div style="padding:2px 0;">
+                ${field('공급처', esc(m.supplier))}
+                ${field('원재료명', `<strong>${esc(m.matName)}</strong>`)}
+                ${field('컬러', esc(m.color))}
+                ${field('단가', m.unitPrice ? Number(m.unitPrice).toLocaleString() + ' 원' : '-')}
+                ${field('포장 단위', esc(m.packKg != null && m.packKg !== '' ? m.packKg + ' KG/포' : '25 KG/포'))}
+                ${field('포장 표기', esc(packLabel))}
+                ${field('사용품목', usedForHtml)}
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+            <button class="btn btn-outline" onclick="UIUtils.closeModal();setTimeout(function(){SettingsModule.editRawMat('${id}');},80);">수정</button>
+            <button class="btn btn-danger" onclick="SettingsModule.removeRawMat('${id}')">삭제</button>
+        `, 'lg');
+    }
+
     function editRawMat(id) {
         const m = Storage.getById(RAW_MAT_STORE, id);
         if (!m) return;
@@ -5841,6 +6063,7 @@ const SettingsModule = (function() {
     function removeRawMat(id) {
         UIUtils.confirm('이 원재료를 삭제하시겠습니까?', async () => {
             await Storage.remove(RAW_MAT_STORE, id);
+            UIUtils.closeModal();
             UIUtils.toast('삭제되었습니다.', 'success');
             renderTabContent();
         });
@@ -7249,8 +7472,7 @@ const SettingsModule = (function() {
                                             <td style="text-align:right;color:var(--text-secondary);">${perKg ? perKg.toLocaleString() + ' 원' : '-'}</td>
                                             <td>${p.shelfLife || '-'}</td>
                                             <td>
-                                                <button class="btn btn-sm btn-outline" onclick="SettingsModule.editPaint('${p.id}')">수정</button>
-                                                <button class="btn btn-sm btn-danger" onclick="SettingsModule.removePaint('${p.id}')">삭제</button>
+                                                <button class="btn btn-sm btn-outline" onclick="SettingsModule.viewPaint('${p.id}')">보기</button>
                                             </td>
                                         </tr>`;
                                     }).join('')}
@@ -7671,6 +7893,42 @@ const SettingsModule = (function() {
         renderTabContent();
     }
 
+    function viewPaint(id) {
+        const p = Storage.getById(PAINT_STORE, id);
+        if (!p) return;
+
+        const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+        const packUnitNum = Number(p.packUnit) || 0;
+        const priceNum = Number(String(p.purchasePrice || '').replace(/,/g, '')) || 0;
+        const perKg = packUnitNum > 0 && priceNum > 0 ? Math.round(priceNum / packUnitNum) : 0;
+        const itemType = _normPaintItemType(p.itemType);
+        const field = (label, valueHtml) => `
+            <div style="display:flex;gap:12px;padding:8px 0;border-bottom:1px solid var(--border-color);align-items:flex-start;">
+                <div style="width:96px;flex-shrink:0;color:var(--text-muted);font-size:0.82rem;">${label}</div>
+                <div style="flex:1;font-size:0.88rem;">${valueHtml || '-'}</div>
+            </div>`;
+
+        UIUtils.showModal(`도료 정보 — ${esc(p.name || '-')}`, `
+            <div style="padding:2px 0;">
+                ${field('구분', paintItemTypeBadge(itemType))}
+                ${field('구매처', esc(p.supplier))}
+                ${field('도료명', `<strong>${esc(p.name)}</strong>`)}
+                ${field('도료특징', esc(p.feature))}
+                ${field('제조사', esc(p.manufacturer))}
+                ${field('도료종류', p.paintType ? UIUtils.badge(p.paintType, paintTypeBadge(p.paintType)) : '-')}
+                ${field('도료 사양', p.paintSpec ? UIUtils.badge(p.paintSpec, paintSpecBadge(p.paintSpec)) : '-')}
+                ${field('포장 용량', packUnitNum ? esc(packUnitNum) + ' KG' : '-')}
+                ${field('매입 단가', priceNum ? priceNum.toLocaleString() + ' 원' : '-')}
+                ${field('KG당 단가', perKg ? perKg.toLocaleString() + ' 원' : '-')}
+                ${field('유효기한', esc(p.shelfLife))}
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+            <button class="btn btn-outline" onclick="UIUtils.closeModal();setTimeout(function(){SettingsModule.editPaint('${id}');},80);">수정</button>
+            <button class="btn btn-danger" onclick="SettingsModule.removePaint('${id}')">삭제</button>
+        `, 'md');
+    }
+
     function editPaint(id, returnToValidation = false) {
         const p = Storage.getById(PAINT_STORE, id);
         if (!p) return;
@@ -7793,6 +8051,7 @@ const SettingsModule = (function() {
     function removePaint(id) {
         UIUtils.confirm('삭제하시겠습니까?', async () => {
             await Storage.remove(PAINT_STORE, id);
+            UIUtils.closeModal();
             UIUtils.toast('삭제되었습니다.', 'success');
             renderTabContent();
         });
@@ -8578,12 +8837,10 @@ const SettingsModule = (function() {
     }
 
     /**
-     * 스캔 전용 — 수정하지 않고 오류 목록만 반환
+     * 사출 LOT 형식 오류 스캔 — DOM에 손대지 않는 순수 함수.
+     * scanInjLotNumbers(설정 화면)와 대시보드 알림 카드가 같은 스캔 로직을 공유하도록 분리했다.
      */
-    async function scanInjLotNumbers() {
-        const resultEl = document.getElementById('lotRepairResult');
-        if (resultEl) resultEl.innerHTML = '<span style="color:var(--text-muted);">스캔 중...</span>';
-
+    function scanInjLotErrorsData() {
         const invenItems = Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [];
         const inspItems  = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
 
@@ -8656,7 +8913,16 @@ const SettingsModule = (function() {
             }
         });
 
-        _renderLotScanResult(errors, false);
+        return errors;
+    }
+
+    /**
+     * 스캔 전용 — 수정하지 않고 오류 목록만 반환
+     */
+    async function scanInjLotNumbers() {
+        const resultEl = document.getElementById('lotRepairResult');
+        if (resultEl) resultEl.innerHTML = '<span style="color:var(--text-muted);">스캔 중...</span>';
+        _renderLotScanResult(scanInjLotErrorsData(), false);
     }
 
     /**
@@ -12931,6 +13197,7 @@ const SettingsModule = (function() {
         loadProductTemplate,
         onTemplateCarModelChange,
         saveProduct,
+        viewProduct,
         editProduct,
         updateProduct,
         onProductProcessChange,
@@ -12965,6 +13232,7 @@ const SettingsModule = (function() {
         confirmProductUpload,
         openAddInjectMatModal,
         saveInjectMat,
+        viewInjectMat,
         editInjectMat,
         updateInjectMat,
         removeInjectMat,
@@ -12982,6 +13250,7 @@ const SettingsModule = (function() {
         cleanupDuplicateDefects,
         openAddDefectModal,
         saveDefect,
+        viewDefect,
         editDefect,
         updateDefect,
         removeDefect,
@@ -13000,6 +13269,7 @@ const SettingsModule = (function() {
         _initDefectImagePaste,
         openAddPaintModal,
         savePaint,
+        viewPaint,
         editPaint,
         updatePaint,
         openPaintValidationModal,
@@ -13052,6 +13322,7 @@ const SettingsModule = (function() {
         filterRawMatList,
         openAddRawMatModal,
         saveRawMat,
+        viewRawMat,
         editRawMat,
         updateRawMat,
         removeRawMat,
@@ -13068,6 +13339,7 @@ const SettingsModule = (function() {
             await DevSeed.run();
         },
         scanInjLotNumbers,
+        scanInjLotErrorsData,
         repairInjLotNumbers,
         // 생산계획 매칭 검토
         openMfgMatchingReview,

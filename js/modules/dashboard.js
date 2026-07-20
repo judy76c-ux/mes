@@ -156,8 +156,8 @@ const DashboardModule = (function() {
             <!-- 도료 입고 대기 (물류담당자 전용) -->
             <div id="dashPaintPending"></div>
 
-            <!-- 사출 입고 대기 / 실적 미입력 / 도료 사용 미등록 (3열 경보 섹션) -->
-            <div id="dashAlertRow" style="display:none;grid-template-columns:repeat(3,1fr);gap:10px;"></div>
+            <!-- 사출 입고 대기 / 실적 미입력 / 도료 사용 미등록 / 사출 LOT 형식 오류 (경보 섹션) -->
+            <div id="dashAlertRow" style="display:none;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;"></div>
 
             <!-- 점검/관리 타일 -->
             <div id="dashMonitorTiles"></div>
@@ -383,12 +383,22 @@ const DashboardModule = (function() {
             .filter(w => w.date && w.date < today && !mixedWorkIds.has(w.id))
             .sort((a, b) => (b.date||'').localeCompare(a.date||''));
 
-        const total = (injPending.length > 0 ? 1 : 0) + (unenteredPlans.length > 0 ? 1 : 0) + (paintMissing.length > 0 ? 1 : 0);
+        /* ④ 사출 LOT 번호 형식 오류 (설정 화면 스캔 로직과 동일 소스) */
+        let lotErrors = [];
+        try {
+            if (typeof SettingsModule !== 'undefined' && SettingsModule.scanInjLotErrorsData) {
+                lotErrors = SettingsModule.scanInjLotErrorsData();
+            }
+        } catch (e) { console.warn('[Dashboard] LOT 오류 스캔 실패:', e); }
+
+        const total = (injPending.length > 0 ? 1 : 0) + (unenteredPlans.length > 0 ? 1 : 0)
+            + (paintMissing.length > 0 ? 1 : 0) + (lotErrors.length > 0 ? 1 : 0);
         if (!total) { el.style.display = 'none'; return; }
         el.style.display = 'grid';
 
-        /* 공통: 미니 카드 생성 헬퍼 */
-        function _alertCard(icon, iconColor, title, count, rows, nav, emptyMsg) {
+        /* 공통: 미니 카드 생성 헬퍼. onClickJs를 주면 nav 대신 그 JS를 "바로가기" 버튼에 쓴다
+           (예: 설정 화면의 특정 탭으로 스크롤까지 이동해야 하는 등 단순 페이지 이동 이상이 필요할 때). */
+        function _alertCard(icon, iconColor, title, count, rows, nav, emptyMsg, onClickJs) {
             if (!count) return `<div style="border:1px solid var(--border-color);border-radius:8px;padding:10px 12px;background:var(--bg-secondary);display:flex;align-items:center;gap:8px;color:var(--text-muted);font-size:0.82rem;">
                 <span class="material-symbols-outlined" style="font-size:16px;color:var(--accent-green);">check_circle</span>${emptyMsg}</div>`;
             return `<div style="border:1px solid var(--border-color);border-top:3px solid ${iconColor};border-radius:8px;overflow:hidden;background:var(--bg-primary);">
@@ -397,7 +407,7 @@ const DashboardModule = (function() {
                         <span class="material-symbols-outlined" style="font-size:14px;">${icon}</span>${title}
                         <span style="background:${iconColor};color:#fff;border-radius:10px;padding:1px 7px;font-size:.68rem;">${count}건</span>
                     </div>
-                    <button onclick="Router.navigate('${nav}')" style="border:none;background:none;cursor:pointer;font-size:.72rem;color:${iconColor};font-weight:600;padding:2px 6px;">바로가기 →</button>
+                    <button onclick="${onClickJs || `Router.navigate('${nav}')`}" style="border:none;background:none;cursor:pointer;font-size:.72rem;color:${iconColor};font-weight:600;padding:2px 6px;">바로가기 →</button>
                 </div>
                 <div style="max-height:160px;overflow-y:auto;">${rows}</div>
             </div>`;
@@ -431,9 +441,19 @@ const DashboardModule = (function() {
                 <td style="padding:4px 8px;font-size:0.72rem;color:var(--text-muted);">${w.partName||''}</td>
             </tr>`).join('') + `</table>` : '';
 
+        /* 사출 LOT 형식 오류 rows */
+        const lotErrorRows = lotErrors.length ? `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;">` +
+            lotErrors.slice(0, 20).map(e => `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
+                <td style="padding:4px 10px;white-space:nowrap;color:var(--text-muted);">${_esc((e.date||'-').split(' ')[0])}</td>
+                <td style="padding:4px 8px;font-size:0.72rem;color:#dc2626;font-weight:600;">${_esc(e.src||'')}</td>
+                <td style="padding:4px 8px;font-weight:600;">${_esc(e.partName||'')}</td>
+                <td style="padding:4px 8px;font-size:0.72rem;font-family:monospace;color:var(--text-muted);">${_esc(e.original||'')}</td>
+            </tr>`).join('') + `</table>` : '';
+
         el.innerHTML =
             _alertCard('precision_manufacturing', '#8b5cf6', '사출 입고 대기', injPending.length, injRows, 'warehouse-overview', '사출 입고 대기 없음') +
             _alertCard('edit_note',               '#f59e0b', '실적 미입력',    unenteredPlans.length, unenteredRows, 'painting-work', '미입력 계획 없음') +
+            _alertCard('barcode_scanner',         '#dc2626', '사출 LOT 형식 오류', lotErrors.length, lotErrorRows, null, 'LOT 형식 오류 없음', 'App.goToLotRepairTab()') +
             _alertCard('science',                 '#ef4444', '도료 사용 미등록', paintMissing.length, paintRows, 'paint-mix', '도료 사용 모두 등록됨');
     }
 
