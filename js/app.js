@@ -870,37 +870,39 @@ const App = (function() {
             if (!toastEl) return;
             const div = document.createElement('div');
             div.className = 'toast warning';
-            div.style.cssText = 'cursor:pointer;';
+            div.style.cssText = 'cursor:pointer;position:relative;padding-right:34px;';
             div.innerHTML = `
                 <span class="material-symbols-outlined">warning</span>
                 <span>사출 LOT 번호 형식 오류 <strong>${errorCount}건</strong> 발견
-                  — <u>클릭하여 수정</u></span>`;
-            div.onclick = () => {
-                // ✓ Router.navigate('settings')는 내부적으로 AuthModule.checkSettingsAuth로
-                //   로그인/권한 확인을 거친 뒤(비로그인 시 로그인 모달 완료까지 비동기 대기)
-                //   실제 페이지를 그린다. 그걸 기다리지 않고 고정 300ms 뒤에 탭 전환을 하면
-                //   로그인 모달이 뜬 경우 탭 전환이 아무 효과 없이 씹혀 "클릭해도 안 되는" 것처럼
-                //   보인다. 인증 통과 콜백 안에서 탭 전환을 하도록 명시적으로 순서를 맞춘다.
-                const goToLotRepairTab = () => {
-                    Router.navigate('settings');
-                    setTimeout(() => {
-                        if (typeof SettingsModule !== 'undefined' && SettingsModule.switchTab) {
-                            SettingsModule.switchTab('system');
-                            setTimeout(() => {
-                                const btn = document.querySelector('#lotRepairResult')?.parentElement?.querySelector('.btn-primary');
-                                if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            }, 400);
-                        }
-                    }, 300);
-                };
-                if (typeof AuthModule !== 'undefined' && AuthModule.checkSettingsAuth) {
-                    AuthModule.checkSettingsAuth(goToLotRepairTab);
-                } else {
-                    goToLotRepairTab();
-                }
+                  — <u>클릭하여 수정</u></span>
+                <span class="material-symbols-outlined" title="닫기"
+                    style="position:absolute;top:6px;right:6px;font-size:16px;opacity:0.75;">close</span>`;
+            const dismiss = () => { if (div.parentNode) div.parentNode.removeChild(div); };
+            div.onclick = (ev) => {
+                if (ev.target && ev.target.textContent === 'close') { dismiss(); return; }
+                dismiss();
+                // Router.navigate('settings')가 내부적으로 AuthModule.checkSettingsAuth로 로그인/권한을
+                // 확인한 뒤(비로그인 시 로그인 모달 완료까지 비동기 대기) 페이지를 그린다. 그 결과를
+                // 기다리지 않고 고정 300ms 뒤에 탭 전환을 하면, 로그인 모달이 뜬 경우 탭 전환이 아무
+                // 효과 없이 씹혀 "클릭해도 안 되는" 것처럼 보인다. 여기서 별도로 checkSettingsAuth를
+                // 먼저 부르지 않는 이유도 같다 — Router.navigate가 이미 그 확인을 하므로, 밖에서
+                // 한 번 더 부르면 이미 로그인된 사용자에게 사유 설명 없는 로그인 모달이 불필요하게
+                // 뜰 수 있다(권한만 없는 경우는 auth.js의 checkSettingsAuth가 바로 토스트로 안내한다).
+                Router.navigate('settings');
+                setTimeout(() => {
+                    if (typeof SettingsModule !== 'undefined' && SettingsModule.switchTab) {
+                        SettingsModule.switchTab('system');
+                        setTimeout(() => {
+                            const btn = document.querySelector('#lotRepairResult')?.parentElement?.querySelector('.btn-primary');
+                            if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }, 400);
+                    }
+                }, 300);
             };
             toastEl.appendChild(div);
-            setTimeout(() => { if (div.parentNode) div.parentNode.removeChild(div); }, 10000);
+            // 실사용자가 알아채고 클릭하기까지 시간이 걸리는 "조치가 필요한" 알림이라
+            // 일반 토스트(수 초)보다 훨씬 오래 유지한다. 그래도 안 눌러도 되게 닫기(×)를 뒀다.
+            setTimeout(dismiss, 120000);
         } catch(e) {
             console.warn('[LOT Check]', e);
         }

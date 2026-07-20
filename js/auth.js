@@ -1039,6 +1039,15 @@ const AuthModule = (function () {
     function checkSettingsAuth(onPass) {
         const user = getCurrentUser();
         if (_passesSettingsAuth(user)) { onPass(); return; }
+        // 이미 로그인은 되어 있는데 권한만 없는 경우, 안내 없이 로그인 모달부터 띄우면
+        // "이미 로그인했는데 왜 또 로그인하라는 건지" 헷갈리고, 취소하면 아무 반응도 없어
+        // 클릭이 안 먹는 것처럼 보인다(사출 LOT 오류 토스트 "클릭하여 수정"이 이 경로였다).
+        // 로그인 안 된 경우에만 로그인 모달을 띄우고, 이미 로그인된 경우는 바로 권한 부족을 알린다.
+        // 계정 전환이 필요하면 topbar의 로그아웃으로 하면 된다.
+        if (user) {
+            UIUtils.toast('설정 페이지 접근 권한이 없습니다. 관리자에게 문의하세요.', 'warning');
+            return;
+        }
         showLoginModal(function() {
             const u = getCurrentUser();
             if (_passesSettingsAuth(u)) { onPass(); }

@@ -5093,7 +5093,16 @@ var LaserStandbyModule = (function() {
 
     function _getLaserTargetProducts() {
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-        return products.filter(prod => _hasLaserAfterPaintFlow(prod));
+        // 레이져 납품처 분리 연결의 대상 제품(예: KNOB BLACK [LED])은
+        // 레이져 작업 시점에야 생기므로 대기품(도장→레이져 전) 목록에서 제외한다.
+        // 대기 품명은 소스 제품(예: KNOB [LED] BK 1spot)만 표시.
+        const linkedTargetIds = new Set(
+            products.map(function(p) { return p && p.linkedProductId; }).filter(Boolean)
+        );
+        return products.filter(function(prod) {
+            if (!prod || linkedTargetIds.has(prod.id)) return false;
+            return _hasLaserAfterPaintFlow(prod);
+        });
     }
 
     function _getOverrideByKey(key) {
