@@ -110,9 +110,22 @@ var LaserWipModule = (function() {
             });
     }
 
-    function _isBeforeHistoryReset(dateValue, resetAt) {
+    // dateValue는 시각 없는 'YYYY-MM-DD'로 저장되는 경우가 많아 00:00:00으로 취급된다.
+    // 같은 날짜에 이력 리셋이 일어나면 그 날 입력된 보정/수기입출고가 전부 리셋 이전으로
+    // 오판되어 반영되지 않는 문제가 있어, dateValue와 createdAt이 같은 날이면
+    // createdAt의 정밀 시각으로 순서를 가린다.
+    function _isBeforeHistoryReset(dateValue, resetAt, createdAtValue) {
         if (!resetAt) return false;
-        return _eventStamp(dateValue) < _eventStamp(resetAt);
+        const resetStamp = _eventStamp(resetAt);
+        if (!dateValue) return _eventStamp(createdAtValue || '') < resetStamp;
+        const dateStamp = _eventStamp(dateValue);
+        if (createdAtValue) {
+            const createdStamp = _eventStamp(createdAtValue);
+            if (createdStamp.slice(0, 10) === dateStamp.slice(0, 10)) {
+                return createdStamp < resetStamp;
+            }
+        }
+        return dateStamp < resetStamp;
     }
 
     function _getAfterWipHistoryReset(carModel, partName, color) {
@@ -824,7 +837,7 @@ var LaserWipModule = (function() {
                             <td style="padding:5px 8px;font-size:0.8rem;font-weight:600;line-height:1.28;white-space:normal;word-break:break-word;min-width:140px;max-width:200px;">
                                 <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;" title="${_esc(r.partName)}">${_esc(r.partName)}</span>
                             </td>
-                            <td style="padding:5px 6px;font-size:0.75rem;color:var(--text-muted);white-space:nowrap;">${r.color && r.color !== '-' ? _esc(r.color) : ''}</td>
+                            <td style="padding:5px 6px;font-size:0.75rem;color:var(--text-muted);white-space:nowrap;">${_wipColorDisplayHtml(r.carModel, r.partName, r.color || '')}</td>
                             <td style="padding:5px 6px;font-family:monospace;font-size:0.72rem;color:var(--accent-green);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:96px;" title="${_esc(paintLotText)}">${_esc(paintLotText)}</td>
                             <td style="padding:5px 8px;text-align:right;white-space:nowrap;">
                                 <span style="font-size:0.9rem;font-weight:800;color:${wipColor};">${displayQty.toLocaleString('ko-KR')}</span>
@@ -2324,7 +2337,7 @@ var LaserWipModule = (function() {
         laserAllWorks.filter(function(w) {
             return !w.isManualOut && !w.isResidualManualIn && !w.isResidualManualOut;
         }).forEach(function(w) {
-            if (useSnapshot && _isBeforeHistoryReset(w.date || w.createdAt || '', resetAt)) return;
+            if (useSnapshot && _isBeforeHistoryReset(w.date, resetAt, w.createdAt)) return;
             const goodQty = Number(w.inspectionGoodQty) || Number(w.completedQty) || Number(w.quantity) || 0;
             const packUnit = Number(w.packUnit) || 0;
             const resQty = Number(w.laserResidualQty) || (packUnit > 0 ? Math.max(0, goodQty - Math.floor(goodQty / packUnit) * packUnit) : 0);
@@ -2350,7 +2363,7 @@ var LaserWipModule = (function() {
             return w.isResidualManualIn || w.isResidualManualOut;
         }).forEach(function(w) {
             if (w.isResidualAuditOnly) return;
-            if (useSnapshot && _isBeforeHistoryReset(w.date || w.createdAt || '', resetAt)) return;
+            if (useSnapshot && _isBeforeHistoryReset(w.date, resetAt, w.createdAt)) return;
             const qty = Number(w.quantity) || 0;
             const absQty = w.residualLotAbsoluteQty;
             const rawPaintLot = w.residualPaintLot || w.paintDate || '';
@@ -2775,7 +2788,7 @@ var LaserWipModule = (function() {
         const paintWorks = Storage.getAll(STORE_PAINT) || [];
         const drainMap   = _buildAfterLaserDrainMap();
         const drainLine  = drainMap[`${carModel}||${partName}`];
-        const colorKey = String(color || '');
+        const colorKey = _resolveWipColorKey(carModel, partName, color);
 
         const histReset = ignoreHistoryReset ? null : _getAfterWipHistoryReset(carModel, partName, color);
         const resetAt = histReset && histReset.historyOnly ? (histReset.historyResetAt || '') : '';
@@ -2792,9 +2805,9 @@ var LaserWipModule = (function() {
         const usedByLot = {};
         paintWorks.forEach(function(w) {
             if ((w.carModel||'') !== carModel || (w.partName||'') !== partName) return;
-            if (colorKey && String(w.color || '') !== colorKey) return;
+            if (colorKey && _resolveWipColorKey(w.carModel, w.partName, w.color) !== colorKey) return;
             if (drainLine && (w.line||'').trim() !== drainLine) return;
-            if (useSnapshot && _isBeforeHistoryReset(w.date || w.createdAt || '', resetAt)) return;
+            if (useSnapshot && _isBeforeHistoryReset(w.date, resetAt, w.createdAt)) return;
             const wLots = Array.isArray(w.lots) && w.lots.length > 0
                 ? w.lots : [{ lotNo: w.lotNo||'', qty: Number(w.productionQty)||0 }];
             wLots.forEach(function(l) {
@@ -2853,9 +2866,9 @@ var LaserWipModule = (function() {
         laserWorks.filter(function(w) {
             if (_isResidualOnlyRecord(w)) return false;
             if ((w.carModel||'') !== carModel || (w.partName||'') !== partName) return false;
-            if (colorKey && String(w.color || '') !== colorKey) return false;
+            if (colorKey && _resolveWipColorKey(w.carModel, w.partName, w.color) !== colorKey) return false;
             if (w.isManualOut || w.isWipLotAdjust) return false;
-            if (useSnapshot && _isBeforeHistoryReset(w.date || w.createdAt || '', resetAt)) return false;
+            if (useSnapshot && _isBeforeHistoryReset(w.date, resetAt, w.createdAt)) return false;
             return true;
         }).forEach(function(w) {
             const workQty = Number(w.quantity)||0;
@@ -2902,8 +2915,8 @@ var LaserWipModule = (function() {
         laserWorks.filter(function(w) {
             if (_isResidualOnlyRecord(w)) return false;
             if ((w.carModel || '') !== carModel || (w.partName || '') !== partName) return false;
-            if (colorKey && String(w.color || '') !== colorKey) return false;
-            if (useSnapshot && _isBeforeHistoryReset(w.date || w.createdAt || '', resetAt)) return false;
+            if (colorKey && _resolveWipColorKey(w.carModel, w.partName, w.color) !== colorKey) return false;
+            if (useSnapshot && _isBeforeHistoryReset(w.date, resetAt, w.createdAt)) return false;
             return !!(w.isWipLotAdjust || w.isManualOut);
         }).forEach(function(w) {
             const qty = Number(w.quantity) || 0;
@@ -3011,6 +3024,7 @@ var LaserWipModule = (function() {
                 note: w.note || w.machine || '-',
                 author: w.author || w.operator || '-',
                 sourceId: w.id || '',
+                createdAt: w.createdAt || '',
                 editKind: isAdj || isManualIn ? 'after_manual' : 'laser_work'
             });
         });
@@ -3034,6 +3048,7 @@ var LaserWipModule = (function() {
                 note: w.note || '',
                 author: w.author || '-',
                 sourceId: w.id || '',
+                createdAt: w.createdAt || '',
                 editKind: 'after_manual'
             });
         });
@@ -3067,7 +3082,7 @@ var LaserWipModule = (function() {
         let displayHist = histItems.slice();
         if (histReset && histReset.historyResetAt) {
             displayHist = histItems.map(function(h) {
-                if (_isBeforeHistoryReset(h.date, histReset.historyResetAt)) {
+                if (_isBeforeHistoryReset(h.date, histReset.historyResetAt, h.createdAt)) {
                     return Object.assign({}, h, { beforeReset: true });
                 }
                 return h;
@@ -3367,6 +3382,7 @@ var LaserWipModule = (function() {
                 author: w.author || w.operator || [w.worker1, w.worker2, w.worker3].filter(Boolean).join(', ') || '-',
                 note: w.note || '',
                 _seq: w.createdAt || w.id || '',
+                createdAt: w.createdAt || '',
                 sourceId: w.id || '',
                 editKind: 'laser_work'
             });
@@ -3416,6 +3432,7 @@ var LaserWipModule = (function() {
                 author: w.author || '-',
                 note: w.note || '',
                 _seq: w.createdAt || w.id || '',
+                createdAt: w.createdAt || '',
                 sourceId: w.id || '',
                 editKind: 'residual_manual'
             });
@@ -3426,7 +3443,7 @@ var LaserWipModule = (function() {
         let displayHist = histItems.slice();
         if (histReset && histReset.historyResetAt) {
             displayHist = histItems.map(function(h) {
-                if (_isBeforeHistoryReset(h.date, histReset.historyResetAt)) {
+                if (_isBeforeHistoryReset(h.date, histReset.historyResetAt, h.createdAt)) {
                     return Object.assign({}, h, { beforeReset: true });
                 }
                 return h;
@@ -4112,6 +4129,57 @@ var LaserWipModule = (function() {
         return _getProcessAfterLaser(p) === '도장-B';
     }
 
+    // 도장-A(BK) → 레이저 → 도장-B(CLEAR) 제품: 공정별 컬러(BK/CLEAR)를 제품 마스터 color(BK+CLEAR)로 통합 집계
+    function _findProductsForPart(carModel, partName) {
+        const car = String(carModel || '').trim();
+        const part = String(partName || '').trim();
+        return (Storage.getAll(DB.STORES.PRODUCTS) || []).filter(function(p) {
+            return String(p.carModel || '').trim() === car && String(p.partName || '').trim() === part;
+        });
+    }
+
+    function _isDualCoatLaserProduct(prod) {
+        if (!prod) return false;
+        const seq = _productProcessSeq(prod);
+        return seq.includes('도장-A') && seq.includes('레이져') && seq.includes('도장-B');
+    }
+
+    function _resolveWipColorKey(carModel, partName, recordColor) {
+        const rc = String(recordColor || '').trim();
+        const products = _findProductsForPart(carModel, partName);
+        if (!products.length) return rc;
+
+        const byExact = products.find(function(p) { return String(p.color || '').trim() === rc; });
+        const dual = products.find(_isDualCoatLaserProduct);
+        const prod = byExact || dual || products[0];
+
+        if (_isDualCoatLaserProduct(prod) && prod.color) {
+            const canonical = String(prod.color).trim();
+            const aliases = new Set([canonical]);
+            if (prod.paintColorA) aliases.add(String(prod.paintColorA).trim());
+            if (prod.paintColorB) aliases.add(String(prod.paintColorB).trim());
+            if (!rc || aliases.has(rc)) return canonical;
+        }
+        return rc || String(prod.color || '').trim();
+    }
+
+    function _wipColorDisplayHtml(carModel, partName, canonicalColor) {
+        const cc = String(canonicalColor || '').trim();
+        const products = _findProductsForPart(carModel, partName);
+        const prod = products.find(function(p) { return String(p.color || '').trim() === cc; })
+            || products.find(_isDualCoatLaserProduct) || products[0];
+        if (!prod || !_isDualCoatLaserProduct(prod)) {
+            return cc ? _esc(cc) : '';
+        }
+        const a = String(prod.paintColorA || '').trim();
+        const b = String(prod.paintColorB || '').trim();
+        const main = _esc(cc || prod.color || '-');
+        if (a && b && a !== b) {
+            return `${main}<div style="font-size:0.62rem;color:var(--text-muted);margin-top:1px;white-space:nowrap;">A:${_esc(a)} · B:${_esc(b)}</div>`;
+        }
+        return main;
+    }
+
     // 레이져 잔량 대상: 제조공정에 레이져가 포함된 전체 제품
     // T1xx LENS/PARK처럼 다음 공정이 도장-B인 제품도 실제 레이져 잔량이 발생하므로 포함한다.
     function _getResidualProducts() {
@@ -4174,14 +4242,20 @@ var LaserWipModule = (function() {
 
         const laserMap = {};
 
+        function _wipBucketKey(carModel, partName, recordColor) {
+            const canon = _resolveWipColorKey(carModel, partName, recordColor);
+            return `${carModel || ''}||${partName || ''}||${canon}`;
+        }
+
         laserWorks.forEach(w => {
             // 레이져 잔량 수기/보정 기록은 후재공 집계에 넣지 않는다 (잔량 탭 전용)
             if (_isResidualOnlyRecord(w)) return;
             const prodKey = `${w.carModel||''}||${w.partName||''}`;
             if (!drainMap[prodKey]) return; // 레이져→도장 구조 아닌 제품 제외
-            const key = `${w.carModel||''}||${w.partName||''}||${w.color||''}`;
+            const canonColor = _resolveWipColorKey(w.carModel, w.partName, w.color);
+            const key = _wipBucketKey(w.carModel, w.partName, w.color);
             if (!laserMap[key]) laserMap[key] = {
-                carModel: w.carModel||'', partName: w.partName||'', color: w.color||'',
+                carModel: w.carModel||'', partName: w.partName||'', color: canonColor,
                 laserQty: 0, paintBQty: 0, drainLine: drainMap[prodKey],
                 laserDates: [], paintDates: [], injectionLots: []
             };
@@ -4211,7 +4285,7 @@ var LaserWipModule = (function() {
             const drainLine = drainMap[prodKey];
             if (!drainLine) return;
             if ((w.line||'').trim() !== drainLine) return; // 해당 제품의 drain 공정과 일치하는 것만
-            const key = `${w.carModel||''}||${w.partName||''}||${w.color||''}`;
+            const key = _wipBucketKey(w.carModel, w.partName, w.color);
             if (!laserMap[key]) return;
             laserMap[key].paintBQty += Number(w.productionQty) || 0;
         });
@@ -4233,8 +4307,8 @@ var LaserWipModule = (function() {
                     laserWorks.forEach(function(w) {
                         if (_isResidualOnlyRecord(w)) return;
                         if ((w.carModel || '') !== r.carModel || (w.partName || '') !== r.partName) return;
-                        if (String(w.color || '') !== String(r.color || '')) return;
-                        if (_isBeforeHistoryReset(w.date || w.createdAt || '', resetAt)) return;
+                        if (_resolveWipColorKey(w.carModel, w.partName, w.color) !== _resolveWipColorKey(r.carModel, r.partName, r.color)) return;
+                        if (_isBeforeHistoryReset(w.date, resetAt, w.createdAt)) return;
                         if (w.isManualOut) {
                             postOut += Number(w.quantity) || 0;
                             return;
@@ -4246,9 +4320,9 @@ var LaserWipModule = (function() {
                     });
                     paintWorks.forEach(function(w) {
                         if ((w.carModel || '') !== r.carModel || (w.partName || '') !== r.partName) return;
-                        if (String(w.color || '') !== String(r.color || '')) return;
+                        if (_resolveWipColorKey(w.carModel, w.partName, w.color) !== _resolveWipColorKey(r.carModel, r.partName, r.color)) return;
                         if ((w.line || '').trim() !== (r.drainLine || '')) return;
-                        if (_isBeforeHistoryReset(w.date || w.createdAt || '', resetAt)) return;
+                        if (_isBeforeHistoryReset(w.date, resetAt, w.createdAt)) return;
                         postOut += Number(w.productionQty) || 0;
                     });
                     wip = opening + postIn - postOut;
