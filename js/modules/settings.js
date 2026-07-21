@@ -5432,6 +5432,28 @@ const SettingsModule = (function() {
     // ── 도료 미등록 ID 차종 일괄수정 ─────────────────────────────────
     var _bulkFixPaintRefData = null;
 
+    function _bulkFixPaintOptionsHtml(list) {
+        return (list || [])
+            .slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'))
+            .map(pm => `<option value="${pm.id}">${(pm.name || pm.id)}${pm.paintSpec ? ' [' + pm.paintSpec + ']' : ''}</option>`)
+            .join('');
+    }
+
+    // 교체 도료 목록을 도료사(구매처)로 좁힌다 — 마스터가 많으면 원하는 도료를 찾기 어려워서 추가.
+    function _onBulkFixSupplierChange(i) {
+        if (!_bulkFixPaintRefData) return;
+        const supplierSel = document.getElementById('bulkFixSupplier_' + i);
+        const targetSel = document.getElementById('bulkFixSel_' + i);
+        if (!supplierSel || !targetSel) return;
+        const supplier = supplierSel.value;
+        const prevValue = targetSel.value;
+        const filtered = (_bulkFixPaintRefData.paintMaterials || [])
+            .filter(pm => !supplier || pm.supplier === supplier);
+        targetSel.innerHTML = '<option value="">-- 선택 안 함 (변경 없음) --</option>' + _bulkFixPaintOptionsHtml(filtered);
+        // 필터링된 목록에도 이전 선택값이 있으면 유지
+        if (filtered.some(pm => pm.id === prevValue)) targetSel.value = prevValue;
+    }
+
     function openBulkFixPaintRefModal(carModel) {
         const products = Storage.getAll(PRODUCTS_STORE) || [];
         const paintMaterials = Storage.getAll(DB.STORES.PAINT_MATERIALS) || [];
@@ -5448,30 +5470,32 @@ const SettingsModule = (function() {
 
         if (affected.length === 0) { UIUtils.toast('해당 차종의 미등록 ID가 없습니다.', 'info'); return; }
 
-        // 고유 (slot, invalidId) 집계 + 연관 주제 도료 수집
+        // 고유 (slot, invalidId) 집계 + 연관 주제 도료명·도료 사양(Primer/Color/Clear) 수집
+        // 슬롯(주제/경화제/신너)만으로는 "어느 공정의 어떤 도료"인지 알 수 없어 교체 대상을
+        // 특정하기 어려웠다 — 같은 행의 사양을 같이 보여준다.
         const uniqueMap = {};
         affected.forEach(item => {
             const mainId = item.row.mainId || item.row.paintMaterialId || '';
             const mainName = mainId && paintMap[mainId] ? (paintMap[mainId].name || mainId) : (mainId || '');
+            const spec = item.row.paintSpec || '';
             item.refs.forEach(([slot, invalidId]) => {
                 const key = slot + '::' + invalidId;
-                if (!uniqueMap[key]) uniqueMap[key] = { slot, invalidId, count: 0, mainNames: new Set() };
+                if (!uniqueMap[key]) uniqueMap[key] = { slot, invalidId, count: 0, mainNames: new Set(), specs: new Set() };
                 uniqueMap[key].count++;
                 // 경화제/신너는 같은 행의 주제 도료명을 수집
                 if (slot !== '주제' && mainName) uniqueMap[key].mainNames.add(mainName);
+                if (spec) uniqueMap[key].specs.add(spec);
             });
         });
         const uniqueInvalids = Object.values(uniqueMap).map(v => ({
-            ...v, mainNames: Array.from(v.mainNames)
+            ...v, mainNames: Array.from(v.mainNames), specs: Array.from(v.specs)
         }));
 
-        _bulkFixPaintRefData = { carModel, uniqueInvalids };
+        _bulkFixPaintRefData = { carModel, uniqueInvalids, paintMaterials };
 
         const slotColors = { '주제': '#1e40af', '경화제': '#92400e', '신너': '#0369a1' };
-        const paintOptions = paintMaterials
-            .slice().sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'))
-            .map(pm => `<option value="${pm.id}">${(pm.name || pm.id)}${pm.paintSpec ? ' [' + pm.paintSpec + ']' : ''}</option>`)
-            .join('');
+        const uniqueSuppliers = [...new Set(paintMaterials.map(pm => pm.supplier).filter(Boolean))]
+            .sort((a, b) => String(a).localeCompare(String(b), 'ko'));
 
         const body = `
             <div style="margin-bottom:12px;font-size:0.85rem;color:var(--text-muted);">
@@ -5481,6 +5505,7 @@ const SettingsModule = (function() {
                 ${uniqueInvalids.map((inv, i) => `
                 <div style="padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-primary);">
                     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+                        ${inv.specs.map(s => UIUtils.badge(s, paintSpecBadge(s))).join('')}
                         <span style="font-size:0.75rem;font-weight:700;color:${slotColors[inv.slot]||'#555'};background:rgba(0,0,0,0.06);padding:1px 7px;border-radius:4px;">${inv.slot}</span>
                         <span style="font-size:0.78rem;color:#dc2626;font-family:monospace;">${inv.invalidId}</span>
                         <span style="font-size:0.72rem;color:var(--text-muted);">(${inv.count}개 제품)</span>
@@ -5489,11 +5514,17 @@ const SettingsModule = (function() {
                     <div style="font-size:0.76rem;color:var(--text-muted);margin-bottom:8px;padding:4px 8px;background:rgba(0,0,0,0.03);border-radius:4px;">
                         주제 도료: ${inv.mainNames.map(n => `<strong style="color:var(--text-primary);">${n}</strong>`).join(', ')}
                     </div>` : ''}
-                    <div style="display:flex;align-items:center;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                        <span style="font-size:0.78rem;white-space:nowrap;color:var(--text-muted);">도료사:</span>
+                        <select id="bulkFixSupplier_${i}" style="padding:4px 8px;border:1px solid var(--border-color);border-radius:4px;font-size:0.8rem;"
+                            onchange="SettingsModule._onBulkFixSupplierChange(${i})">
+                            <option value="">-- 전체 --</option>
+                            ${uniqueSuppliers.map(s => `<option value="${s}">${s}</option>`).join('')}
+                        </select>
                         <span style="font-size:0.78rem;white-space:nowrap;color:var(--text-muted);">→ 교체:</span>
-                        <select id="bulkFixSel_${i}" style="flex:1;padding:4px 8px;border:1px solid var(--border-color);border-radius:4px;font-size:0.8rem;">
+                        <select id="bulkFixSel_${i}" style="flex:1;min-width:160px;padding:4px 8px;border:1px solid var(--border-color);border-radius:4px;font-size:0.8rem;">
                             <option value="">-- 선택 안 함 (변경 없음) --</option>
-                            ${paintOptions}
+                            ${_bulkFixPaintOptionsHtml(paintMaterials)}
                         </select>
                     </div>
                 </div>`).join('')}
@@ -8061,6 +8092,11 @@ const SettingsModule = (function() {
     // 도료 CSV 다운로드 / 일괄 업로드
     // =====================================================
     // 열 정의 (순서 고정)
+    // id는 맨 끝 열에 둔다(기존 헤더 없는 CSV의 앞쪽 열 순서를 그대로 유지하기 위함).
+    // 구매처+도료명만으로 기존 항목을 매칭하면, CSV 왕복 중 이름/구매처 셀이 미세하게
+    // 달라졌을 때(공백, 인코딩 등) 같은 도료를 "새 도료"로 오인해 기존 ID를 삭제하고
+    // 새 ID를 발급 — 그 ID를 참조하던 모든 제품이 한꺼번에 "미등록"으로 끊긴다.
+    // id 열이 있으면 그 값으로 먼저 매칭해 이 문제를 근본적으로 막는다.
     const PAINT_COLUMNS = [{
             key: 'supplier',
             label: '구매처'
@@ -8100,6 +8136,10 @@ const SettingsModule = (function() {
         {
             key: 'itemType',
             label: '구분'
+        },
+        {
+            key: 'id',
+            label: 'ID'
         }
     ];
 
@@ -8174,6 +8214,7 @@ const SettingsModule = (function() {
                 .filter(row => row.some(c => c !== ''))
                 .map(row => {
                     const obj = {
+                        id: '',
                         supplier: '',
                         name: '',
                         manufacturer: '',
@@ -8246,6 +8287,8 @@ const SettingsModule = (function() {
                                 <td style="padding:5px 10px;text-align:right;">${r.purchasePrice || '-'}</td>
                                 <td style="padding:5px 10px;">${r.shelfLife || '-'}</td>
                                 <td style="padding:5px 10px;">${r.usage || '-'}</td>
+                                <td style="padding:5px 10px;">${r.itemType || '-'}</td>
+                                <td style="padding:5px 10px;font-family:monospace;font-size:0.72rem;color:var(--text-muted);">${r.id || '-'}</td>
                             </tr>`).join('')}
                     </tbody>
                 </table>
@@ -8382,25 +8425,38 @@ const SettingsModule = (function() {
         let added = 0;
         let updated = 0;
 
-        // 기존 도료 마스터: supplier+name 키 → 기존 레코드 맵
+        // 기존 도료 마스터: id 우선, 없으면 supplier+name 키로 기존 레코드를 찾는다.
+        // supplier+name만 키로 쓰면, CSV 왕복 중 이름/구매처 셀이 미세하게 달라졌을 때
+        // (공백, 인코딩 등) 같은 도료를 "새 도료"로 오인해 기존 ID를 삭제하고 새 ID를
+        // 발급 — 그 ID를 참조하던 모든 제품이 한꺼번에 "미등록"으로 끊기는 사고가 난다.
         const existing = Storage.getAll(PAINT_STORE);
         const existingMap = {};
+        const existingById = {};
         existing.forEach(item => {
             const key = `${(item.supplier || '').trim()}||${(item.name || '').trim()}`;
             existingMap[key] = item;
+            if (item.id) existingById[item.id] = item;
         });
 
         function _paintKey(r) {
             return `${(r.supplier || '').trim()}||${(r.name || '').trim()}`;
         }
 
-        // 기존 ID 보존 또는 신규 ID 생성
+        function _findExistingMatch(row) {
+            const rid = String((row && row.id) || '').trim();
+            if (rid && existingById[rid]) return existingById[rid];
+            return existingMap[_paintKey(row)] || null;
+        }
+
+        // 기존 ID 보존 또는 신규 ID 생성 — CSV의 id 값은 매칭에만 쓰고, 저장 값은
+        // 항상 매칭된 기존 레코드의 id(또는 새로 발급한 id)를 그대로 쓴다.
         function _resolveItem(row) {
-            const match = existingMap[_paintKey(row)];
+            const match = _findExistingMatch(row);
+            const { id: _csvId, ...rowRest } = row || {};
             return {
+                ...rowRest,
                 id:        match ? match.id        : Storage.generateId(),
-                createdAt: match ? match.createdAt : ts,
-                ...row
+                createdAt: match ? match.createdAt : ts
             };
         }
 
@@ -8430,13 +8486,14 @@ const SettingsModule = (function() {
                 UIUtils.toast(`${added}건 업로드 완료 (${deleted}건 삭제, 기존 ID 보존)`, 'success');
 
             } else if (mode === 'merge') {
-                // 스마트 병합: supplier+name 키 일치 시 기존 ID 유지하고 덮어쓰기, 없으면 추가
+                // 스마트 병합: id(또는 supplier+name) 일치 시 기존 ID 유지하고 덮어쓰기, 없으면 추가
                 const cacheArr = Storage.getAll(PAINT_STORE);
                 for (const row of rows) {
                     if (!row.name) continue;
-                    const match = existingMap[_paintKey(row)];
+                    const match = _findExistingMatch(row);
                     if (match) {
-                        const merged = { ...match, ...row, id: match.id, createdAt: match.createdAt };
+                        const { id: _csvId, ...rowRest } = row;
+                        const merged = { ...match, ...rowRest, id: match.id, createdAt: match.createdAt };
                         await ApiClient.save(PAINT_STORE, merged);
                         const idx = cacheArr.findIndex(c => c.id === match.id);
                         if (idx !== -1) cacheArr[idx] = merged;
@@ -8451,16 +8508,17 @@ const SettingsModule = (function() {
                 UIUtils.toast(`업로드 완료 — 신규: ${added}건, 덮어쓰기: ${updated}건`, 'success');
 
             } else {
-                // 추가(append): 동일 supplier+name이 이미 있으면 건너뜀 (중복 방지)
+                // 추가(append): 동일 id 또는 supplier+name이 이미 있으면 건너뜀 (중복 방지)
                 const cacheArr = Storage.getAll(PAINT_STORE);
                 let skipped = 0;
                 for (const row of rows) {
                     if (!row.name) continue;
-                    if (existingMap[_paintKey(row)]) { skipped++; continue; }
+                    if (_findExistingMatch(row)) { skipped++; continue; }
                     const newItem = _resolveItem(row);
                     await ApiClient.save(PAINT_STORE, newItem);
                     cacheArr.push(newItem);
                     existingMap[_paintKey(newItem)] = newItem; // 같은 배치 내 중복 방지
+                    existingById[newItem.id] = newItem;
                     added++;
                 }
                 const msg = skipped > 0 ? `${added}건 추가, ${skipped}건 중복 건너뜀` : `${added}건 추가 완료`;
@@ -13263,6 +13321,7 @@ const SettingsModule = (function() {
         _defectDragEnd,
         _defectDrop,
         openBulkFixPaintRefModal,
+        _onBulkFixSupplierChange,
         _paintInlineAdd,
         _paintInlineConfirm,
         _confirmBulkFixPaintRef,

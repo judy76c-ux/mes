@@ -987,6 +987,11 @@ const AuthModule = (function () {
             UIUtils.toast(`${result.user.displayName}님 로그인되었습니다.`, 'success');
             _applyWriteMode();
             _updateTopbar();
+            // 로그인 전에 렌더링된 화면은 이전 권한 기준 그대로라, 로그인 직후 현재 페이지를
+            // 다시 그려서 새로 얻은 권한(버튼·메뉴 등)이 새로고침 없이 바로 보이게 한다.
+            if (typeof Router !== 'undefined' && Router.getCurrentPage && Router.navigate) {
+                Router.navigate(Router.getCurrentPage());
+            }
             showUnreadInboxPopup();
             if (typeof _loginCallback === 'function') { _loginCallback(); _loginCallback = null; }
         } else {

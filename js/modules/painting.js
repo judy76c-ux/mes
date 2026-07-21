@@ -1374,108 +1374,39 @@ const PaintingWorkModule = (function() {
     // LASER_WORK_LOG.paintLots (사출 LOT 정보) 기준으로 WIP 잔량 계산
     // ──────────────────────────────────────────────
     function getLaserWipLots(carModel, partName) {
-        var laserWorks = Storage.getAll(DB.STORES.LASER_WORK_LOG) || [];
-        var laserInsps = Storage.getAll(DB.STORES.LASER_INSPECTIONS) || [];
-        var paintWorks = Storage.getAll(STORE) || [];
-
-        // workLogId → 검사 양품수 (_calcWip()와 동일한 방식)
-        var inspGoodMap = {};
-        laserInsps.forEach(function(insp) {
-            if (!insp.workLogId) return;
-            var good = Math.max(0, (Number(insp.inspQty) || 0) - (Number(insp.failQty) || 0));
-            inspGoodMap[insp.workLogId] = (inspGoodMap[insp.workLogId] || 0) + good;
-        });
-
-        // 이미 도장 투입된 수량 (LOT별)
-        var usedByLot = {};
-        paintWorks.forEach(function(pw) {
-            if ((pw.carModel || '') !== carModel || (pw.partName || '') !== partName) return;
-            if (Array.isArray(pw.lots) && pw.lots.length > 0) {
-                pw.lots.forEach(function(lot) {
-                    if (lot && lot.lotNo) {
-                        usedByLot[lot.lotNo] = (usedByLot[lot.lotNo] || 0) + (Number(lot.qty) || 0);
-                    }
+        // 단일 원천: LaserWipModule LOT표 (이력 리셋·도장 LOT 포함)
+        if (typeof LaserWipModule !== 'undefined' && typeof LaserWipModule.getWipLotDetail === 'function') {
+            return (LaserWipModule.getWipLotDetail(carModel, partName) || [])
+                .map(function(l) {
+                    return {
+                        lotNo: l.lotNo || '-',
+                        paintLot: l.paintLot || '-',
+                        color: l.color || '',
+                        balance: Math.max(0, Number(l.balance) || 0)
+                    };
+                })
+                .filter(function(l) { return l.balance > 0 && l.lotNo && l.lotNo !== '-'; })
+                .sort(function(a, b) {
+                    return String(a.paintLot).localeCompare(String(b.paintLot))
+                        || String(a.lotNo).localeCompare(String(b.lotNo));
                 });
-            } else if (pw.lotNo) {
-                usedByLot[pw.lotNo] = (usedByLot[pw.lotNo] || 0) + (Number(pw.inputQty) || 0);
-            }
-        });
-
-        // 레이져 작업 → WIP LOT 집계
-        var wipMap = {};
-        laserWorks.forEach(function(lw) {
-            if ((lw.carModel || '') !== carModel || (lw.partName || '') !== partName) return;
-            if (lw.isManualOut) return; // 수동출고 레코드는 WIP 입력분 아님
-
-            var workQty = Number(lw.quantity) || 0;
-            // 검사 양품수 우선, 없으면 작업수량 fallback (_calcWip()와 동일)
-            var goodQty = (lw.id && (lw.id in inspGoodMap)) ? inspGoodMap[lw.id] : workQty;
-            if (goodQty <= 0 && workQty <= 0) return;
-            if (goodQty <= 0) goodQty = workQty; // 검사 기록 없을 때 fallback
-
-            // 사출 LOT 추출 (우선순위: paintLots배열 → paintLot단일 → lotNo단일 → 날짜key)
-            var injLots = []; // [{lotNo, qty}]
-
-            if (Array.isArray(lw.paintLots) && lw.paintLots.length > 0) {
-                lw.paintLots.forEach(function(pl) {
-                    if (!pl) return;
-                    var lotNo = String(pl.lotNo || '').trim();
-                    // lotNo 없으면 paintDate를 YYMMDD 형식으로 변환해 대체
-                    if (!lotNo && pl.paintDate) {
-                        lotNo = String(pl.paintDate).replace(/-/g, '').slice(2, 8);
-                    }
-                    if (!lotNo) return;
-                    injLots.push({ lotNo: lotNo, qty: Number(pl.qty) || 0 });
-                });
-            }
-
-            // paintLots 미사용이거나 추출 실패 시 단일 필드 fallback
-            if (injLots.length === 0) {
-                var singleLot = String(lw.paintLot || lw.lotNo || '').trim();
-                if (singleLot) {
-                    injLots.push({ lotNo: singleLot, qty: workQty });
-                }
-            }
-
-            // LOT 정보 전혀 없으면 작업일자를 LOT 키로 사용
-            if (injLots.length === 0) {
-                var dateKey = String(lw.date || lw.workDate || '').replace(/-/g, '').slice(2, 8);
-                if (!dateKey) return;
-                injLots.push({ lotNo: dateKey, qty: workQty });
-            }
-
-            // 총 LOT 수량 합 (WIP 비율 분배용)
-            var totalLotQty = injLots.reduce(function(s, l) { return s + l.qty; }, 0);
-
-            injLots.forEach(function(lj) {
-                // qty 비율로 goodQty를 분배; qty=0인 경우 균등 배분
-                var wipQty = totalLotQty > 0
-                    ? (goodQty * lj.qty / totalLotQty)
-                    : (goodQty / injLots.length);
-                if (!wipMap[lj.lotNo]) wipMap[lj.lotNo] = { lotNo: lj.lotNo, balance: 0 };
-                wipMap[lj.lotNo].balance += wipQty;
-            });
-        });
-
-        // 도장 투입 소비량 차감
-        Object.keys(usedByLot).forEach(function(lotNo) {
-            if (wipMap[lotNo]) wipMap[lotNo].balance -= usedByLot[lotNo];
-        });
-
-        return Object.values(wipMap)
-            .map(function(l) { return { lotNo: l.lotNo, balance: Math.round(l.balance) }; })
-            .filter(function(l) { return l.balance > 0; })
-            .sort(function(a, b) { return a.lotNo.localeCompare(b.lotNo); });
+        }
+        return [];
     }
 
     function buildLaserWipLotOptionsHtml(carModel, partName) {
         var lots = getLaserWipLots(carModel, partName);
         if (lots.length === 0) return '<option value="" data-balance="">-- 재공품 재고 없음 (직접입력 가능) --</option>';
         return lots.map(function(l, i) {
+            var paint = (l.paintLot && l.paintLot !== '-') ? l.paintLot : '미지정';
+            var label = '도장 ' + paint + ' / 사출 ' + l.lotNo +
+                (l.color ? ' │ ' + l.color : '') +
+                ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA';
             return '<option value="' + l.lotNo + '"' + (i === 0 ? ' selected' : '') +
-                ' data-balance="' + l.balance + '">' +
-                l.lotNo + ' │ ' + partName +
-                ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA</option>';
+                ' data-balance="' + l.balance + '"' +
+                ' data-paint-lot="' + String(paint === '미지정' ? '' : paint).replace(/"/g, '&quot;') + '"' +
+                ' data-color="' + String(l.color || '').replace(/"/g, '&quot;') + '">' +
+                label + '</option>';
         }).join('');
     }
 
@@ -1724,9 +1655,14 @@ const PaintingWorkModule = (function() {
             var html = '<option value="" data-balance="">-- 재공품 LOT 선택 --</option>';
             html += '<optgroup label="▶ 레이져 후 재공품 LOT (선입선출)">';
             html += wipFiltered.map(function(l) {
+                var paint = (l.paintLot && l.paintLot !== '-') ? l.paintLot : '미지정';
                 return '<option value="' + l.lotNo + '"' +
-                    ' data-balance="' + l.balance + '">' +
-                    l.lotNo + ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA</option>';
+                    ' data-balance="' + l.balance + '"' +
+                    ' data-paint-lot="' + String(paint === '미지정' ? '' : paint).replace(/"/g, '&quot;') + '"' +
+                    ' data-color="' + String(l.color || '').replace(/"/g, '&quot;') + '">' +
+                    '도장 ' + paint + ' / 사출 ' + l.lotNo +
+                    (l.color ? ' │ ' + l.color : '') +
+                    ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA</option>';
             }).join('');
             html += '</optgroup>';
             return html;
@@ -2231,12 +2167,20 @@ const PaintingWorkModule = (function() {
             const opt = sel && sel.options ? sel.options[sel.selectedIndex] : null;
             const partName = opt ? String(opt.getAttribute('data-part-name') || '').trim() : '';
             const color = opt ? String(opt.getAttribute('data-color') || '').trim() : '';
+            const paintLot = opt ? String(opt.getAttribute('data-paint-lot') || '').trim() : '';
             const warnEl = row.querySelector('.pw-fifo-warn');
             const isFifoViolated = warnEl && warnEl.style.display !== 'none';
             const fifoReason = isFifoViolated
                 ? ((row.querySelector('.pw-fifo-reason') || {}).value || '')
                 : '';
-            if (lotNo) lots.push({ lotNo, qty, fifoReason, partName, color });
+            if (lotNo) {
+                const rowData = { lotNo, qty, fifoReason, partName, color };
+                if (paintLot) {
+                    rowData.paintLot = paintLot;
+                    rowData.paintDate = paintLot;
+                }
+                lots.push(rowData);
+            }
         });
         return lots;
     }
@@ -6628,61 +6572,34 @@ const PaintingInspectionModule = (function() {
         return !!(checkbox && checkbox.checked);
     }
 
+    function _sumDefectTypeInputs() {
+        let defectSum = 0;
+        document.querySelectorAll('[id^="inj-"],[id^="paint-"],[id^="plate-"],[id^="laser-"]').forEach(function(el) {
+            defectSum += parseInt(String(el.value || '').replace(/,/g, ''), 10) || 0;
+        });
+        return defectSum;
+    }
+
+    function _commitActiveNumericInput() {
+        // 태블릿은 포커스가 남은 채 체크박스를 누르면 입력값이 아직 확정되지 않는 경우가 있다.
+        const active = document.activeElement;
+        if (!active || active === document.body) return;
+        if (typeof active.blur === 'function') active.blur();
+    }
+
     function _updateDefectQty() {
-        if (document.getElementById('piWorkQty')) {
-            _recalcInspQuantities();
-            return;
-        }
-        const goodQty = parseInt(document.getElementById('inpGoodQty').value || 0);
-        const totalEl = document.getElementById('inpTotalQty');
-
-        // ✓ 부분 완료 모드: 양품수/불량수는 각각 독립 입력값 — 미검사분을 불량으로 계산하지 않는다.
-        if (_isPartialInspectionMode()) {
-            const defectQty = parseInt(document.getElementById('inpDefectQty').value || 0);
-            if (totalEl) totalEl.value = goodQty + defectQty;
-            _updatePaintPackagingCalc();
-            return;
-        }
-
-        const inspectionQty = parseInt(document.getElementById('inpInspectionQty').value.replace(/,/g, '') || 0);
-        const defectQty = inspectionQty - goodQty;
-        document.getElementById('inpDefectQty').value = Math.max(0, defectQty);
-        if (totalEl) totalEl.value = inspectionQty;
-        _updatePaintPackagingCalc();
+        // 양품수 변경 시에도 불량 유형 합계를 유지한다.
+        // (태블릿은 양품수 value 대입만으로 change가 발생해 불량수가 0으로 덮이는 경우가 있다)
+        _recalcInspQuantities();
     }
 
     function _updateGoodQty() {
-        if (document.getElementById('piWorkQty')) {
-            _recalcInspQuantities();
-            return;
-        }
-        const defectQtyEl = document.getElementById('inpDefectQty');
-        const totalEl = document.getElementById('inpTotalQty');
-
-        // ✓ 부분 완료 모드: 양품수/불량수는 각각 독립 입력값 — 미검사분을 불량으로 계산하지 않는다.
-        if (_isPartialInspectionMode()) {
-            const goodQty = parseInt(document.getElementById('inpGoodQty').value || 0);
-            const defectQty = parseInt(defectQtyEl.value || 0);
-            if (totalEl) totalEl.value = goodQty + defectQty;
-            _autoPaintBoxCount();
-            return;
-        }
-
-        const inspectionQty = parseInt(document.getElementById('inpInspectionQty').value.replace(/,/g, '') || 0);
-        let defectQty = parseInt(defectQtyEl.value || 0);
-        if (defectQty > inspectionQty) {
-            defectQty = inspectionQty;
-            defectQtyEl.value = inspectionQty;
-            UIUtils.toast(`불량수는 작업 수량보다 클 수 없습니다. 최대 ${UIUtils.formatNumber(inspectionQty)} EA`, 'warning');
-        }
-        const goodQty = inspectionQty - defectQty;
-        document.getElementById('inpGoodQty').value = Math.max(0, goodQty);
-        if (totalEl) totalEl.value = Math.max(0, goodQty) + defectQty;
-        _autoPaintBoxCount();
+        _recalcInspQuantities();
     }
 
     // ✓ Case 1: 부분 완료 토글
     function _togglePartialInspection() {
+        _commitActiveNumericInput();
         const checkbox = document.getElementById('inpIsPartialInspection');
         const infoDiv = document.getElementById('piPartialInspectionInfo');
         const goodQtyEl = document.getElementById('inpGoodQty');
@@ -6693,11 +6610,9 @@ const PaintingInspectionModule = (function() {
             // 부분 완료 진입: 양품수만 직접 입력하도록 초기화한다.
             // 불량수와 합계는 현재 불량 유형 입력값을 그대로 합산한다.
             if (goodQtyEl) goodQtyEl.value = 0;
-        } else {
-            // 부분 완료 해제: 전체(남은) 수량 기준 자동계산 복원
-            const inspectionQty = parseInt((document.getElementById('inpInspectionQty') || {}).value || 0);
-            if (goodQtyEl) goodQtyEl.value = inspectionQty;
         }
+        // 해제 시 양품수를 미리 채우지 않는다.
+        // (미리 채우면 태블릿에서 change → 불량수=검사수량-양품수=0 이 먼저 실행된다)
         _recalcInspQuantities();
     }
 
@@ -7087,26 +7002,17 @@ const PaintingInspectionModule = (function() {
     function _recalcInspQuantities() {
         _refreshWorkQtyDisplay();
         const available = _getInspAvailableFromForm();
-        let defectSum = 0;
-        document.querySelectorAll('[id^="inj-"],[id^="paint-"],[id^="plate-"],[id^="laser-"]').forEach(function(el) {
-            defectSum += parseInt(el.value || 0, 10) || 0;
-        });
+        // 불량수는 항상 불량 유형 입력 합계가 권위 값이다.
+        const failQty = _sumDefectTypeInputs();
+        const failEl = document.getElementById('inpDefectQty');
+        if (failEl) failEl.value = failQty;
+
         if (_isPartialInspectionMode()) {
             const goodQty = parseInt(document.getElementById('inpGoodQty')?.value || 0, 10) || 0;
-            // 부분 검사에서도 불량수는 불량 유형 입력값 합계로 계속 자동 계산한다.
-            const failQty = defectSum;
-            const failEl = document.getElementById('inpDefectQty');
-            if (failEl) failEl.value = failQty;
             const totalEl = document.getElementById('inpTotalQty');
             if (totalEl) totalEl.value = UIUtils.formatNumber(goodQty + failQty);
             _updatePaintPackagingCalc();
             return;
-        }
-        let failQty = parseInt(document.getElementById('inpDefectQty')?.value || 0, 10) || 0;
-        if (defectSum > 0) {
-            failQty = defectSum;
-            const failEl = document.getElementById('inpDefectQty');
-            if (failEl) failEl.value = failQty;
         }
         const goodQty = Math.max(0, available - failQty);
         const goodEl = document.getElementById('inpGoodQty');

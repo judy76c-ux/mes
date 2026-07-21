@@ -1173,12 +1173,14 @@ const ProductionPlanModule = (function() {
         });
     }
 
-    // ── 색상명 정규화 (한국어↔영어 + 복합색명 + 자동차 컬러코드 통일) ──────
-    // "블랙"/"black"/"BK"/"블랙펄"/"블랙 메탈릭" 등 다양한 표기 → 동일 대표값으로 변환
+    // ── 색상명 정규화 — 사출 창고(UIUtils.normalizeColorAlias)와 동일 원천 사용 ──
+    // "블랙"/"black"/"BK"/"블랙펄" 등 → 동일 대표값. 창고·생산계획 수량 불일치 재발 방지.
     function _normalizeColorName(c) {
+        if (typeof UIUtils !== 'undefined' && typeof UIUtils.normalizeColorAlias === 'function') {
+            return UIUtils.normalizeColorAlias(c);
+        }
         const s = (c || '').trim().toLowerCase().replace(/\s+/g, '');
         const MAP = {
-            // ── 한국어 기본 색상 ─────────────────────────────────────────
             '블랙':'black','검정':'black','검은색':'black','흑':'black',
             '화이트':'white','흰색':'white','백색':'white','백':'white',
             '그레이':'gray','회색':'gray','그레':'gray',
@@ -1192,7 +1194,6 @@ const ProductionPlanModule = (function() {
             '퍼플':'purple','보라':'purple','보라색':'purple',
             '브라운':'brown','갈색':'brown',
             '베이지':'beige','크림':'beige',
-            // ── 자동차 산업 컬러 코드 ────────────────────────────────────
             'bk':'black','blk':'black',
             'wh':'white','wht':'white',
             'si':'silver','sil':'silver','sl':'silver',
@@ -1206,10 +1207,7 @@ const ProductionPlanModule = (function() {
             'vi':'purple','vio':'purple',
             'br':'brown','brn':'brown',
         };
-        // ① 정확히 일치하면 즉시 반환
         if (MAP[s] !== undefined) return MAP[s];
-        // ② 접두 매칭 — 복합 색명 처리 ("블랙펄" → "블랙" → "black", "blackpearl" → "black"...)
-        //    긴 키를 먼저 시도해 짧은 키가 우선 매칭되는 것을 방지
         const sortedKeys = Object.keys(MAP).sort((a, b) => b.length - a.length);
         for (const k of sortedKeys) {
             if (s.startsWith(k)) return MAP[k];
@@ -1217,13 +1215,20 @@ const ProductionPlanModule = (function() {
         return s;
     }
 
+    function _injColorsMatch(a, b) {
+        const na = _normalizeColorName(a);
+        const nb = _normalizeColorName(b);
+        if (!na || !nb) return false;
+        return na === nb || na.includes(nb) || nb.includes(na);
+    }
+
     // 사출자재 마스터 목록 기준 창고 재고 집계
     // matList: [{injPartName, injColor, carModel}, ...] (getInjPartNamesForPlan 반환값)
     //
-    // ★ Fix: 키에서 color 제거 → 출고 기록(color 없음)과 입고 기록(color 있음)이
-    //         같은 LOT 키로 합산되어 차감이 정상 반영됨
-    // ★ Fix: 컬러 필터는 입고(type !== '출고') 기록에만 적용
-    //         출고 기록은 color 저장 여부와 무관하게 항상 차감 반영
+    // ★ 입·출고 모두 컬러 필터 적용 (사출 창고 _filterProductRecords 와 동일 원칙)
+    //   - 컬러 없는 출고(레거시): 해당 품명 버킷에 포함 (창고와 동일)
+    //   - 컬러 있는 출고: 자재 컬러와 일치할 때만 차감
+    //   ※ 과거 버그: 출고를 컬러 무관 차감 → GRAY 재고에 WHITE 출고가 섞여 수량이 과소 표시됨
     function getInjStockLots(matList, planColor) {
         const all = Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [];
 
@@ -1236,18 +1241,13 @@ const ProductionPlanModule = (function() {
             if (!matColorMap[m.injPartName])    matColorMap[m.injPartName]    = new Set();
             if (!matCarModelMap[m.injPartName]) matCarModelMap[m.injPartName] = new Set();
             if (m.injColor) {
-                m.injColor.split(/[,，\/]/).map(c => _normalizeColorName(c)).filter(Boolean)
+                m.injColor.split(/[,，\/·|、]/).map(c => _normalizeColorName(c)).filter(Boolean)
                     .forEach(c => matColorMap[m.injPartName].add(c));
             }
             if (m.carModel) {
                 matCarModelMap[m.injPartName].add(m.carModel);
             }
         });
-
-        // ★ 컬러 전체 확장 블록 제거
-        // 이유: getInjPartNamesForPlan이 injPartName+injColor 조합으로 de-dup하므로
-        //       같은 injPartName의 다른 injColor 자재가 모두 matList에 포함됨.
-        //       → 확장 불필요. 확장하면 오히려 관계없는 색상 재고가 섞임.
 
         const partNames = Object.keys(matColorMap);
         if (partNames.length === 0) return [];
@@ -1270,24 +1270,18 @@ const ProductionPlanModule = (function() {
                 }
                 if (carModel && item.carModel && item.carModel !== carModel) return false;
 
+                const itemColorRaw = String(item.color || '').trim();
                 const isOutgoing = (item.type === '출고');
-                if (!isOutgoing) {
-                    const allowedColors = matColorMap[partName];
-                    if (allowedColors.size > 0) {
-                        const iColor = _normalizeColorName(item.color);
-                        const match = [...allowedColors].some(function(c) {
-                            return iColor === c || iColor.includes(c) || c.includes(iColor);
-                        });
-                        if (!match) return false;
-                    }
-                    if (m.injColor) {
-                        const normMat = _normalizeColorName(m.injColor);
-                        const normItem = _normalizeColorName(item.color);
-                        if (normItem && normMat && normItem !== normMat &&
-                            !normItem.includes(normMat) && !normMat.includes(normItem)) {
-                            return false;
-                        }
-                    }
+                // 레거시 출고(컬러 미기록): 창고와 같이 품명 단위로 차감 허용
+                if (isOutgoing && !itemColorRaw) return true;
+
+                const allowedColors = matColorMap[partName];
+                if (allowedColors && allowedColors.size > 0) {
+                    const iColor = _normalizeColorName(itemColorRaw);
+                    const match = [...allowedColors].some(function(c) {
+                        return _injColorsMatch(iColor, c);
+                    });
+                    if (!match) return false;
                 }
                 return true;
             });
@@ -1662,6 +1656,50 @@ const ProductionPlanModule = (function() {
         }).join('');
     }
 
+    function _buildLaserWipLotsHtml(carModel, partName, colorVal, lineName, wip) {
+        const wipColor = wip > 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+        const lots = (typeof LaserWipModule !== 'undefined' && LaserWipModule.getWipLotDetail)
+            ? (LaserWipModule.getWipLotDetail(carModel, partName, colorVal) || [])
+            : [];
+        const header = `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 6px;border-radius:4px;">
+            <span style="font-size:0.82rem;color:var(--text-secondary);">
+                <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">bolt</span>
+                레이져 완료 → ${lineName || '도장'} 대기
+            </span>
+            <span style="font-weight:700;color:${wipColor};font-size:0.95rem;">${UIUtils.formatNumber(wip)} EA</span>
+        </div>`;
+        if (wip <= 0) {
+            return header + `<div style="text-align:center;padding:4px 0;font-size:0.78rem;color:var(--accent-red);">
+                <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">warning</span>
+                재공품 재고 없음 — 레이져 공정 완료 후 진행 가능
+            </div>`;
+        }
+        if (!lots.length) {
+            return header + `<div style="padding:4px 6px;font-size:0.75rem;color:var(--text-muted);">LOT 미지정 잔량 포함</div>`;
+        }
+        const lotRows = lots.map(function(l) {
+            const keyEnc = encodeURIComponent(`${l.carModel || carModel || ''}||${l.partName || partName || ''}||${l.color || colorVal || ''}`);
+            const paint = (l.paintLot && l.paintLot !== '-') ? l.paintLot : '미지정';
+            const inj = (l.lotNo && l.lotNo !== '-') ? l.lotNo : '-';
+            return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 6px;border-bottom:1px solid var(--border-color);font-size:0.78rem;cursor:pointer;border-radius:4px;"
+                onclick="typeof LaserWipModule!=='undefined'&&LaserWipModule.showWipDetail('${keyEnc}',event)"
+                onmouseover="this.style.background='rgba(139,92,246,0.08)'"
+                onmouseout="this.style.background=''"
+                title="클릭하여 재공 LOT 이력 보기">
+                <span style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">
+                    <span style="font-family:monospace;color:var(--accent-green);">도장 ${paint}</span>
+                    <span style="color:var(--text-muted);">/</span>
+                    <span style="font-family:monospace;color:var(--text-secondary);">사출 ${inj}</span>
+                    ${l.color ? `<span style="font-size:0.7rem;color:var(--text-muted);">${l.color}</span>` : ''}
+                </span>
+                <span style="font-weight:700;color:var(--accent-purple,#7c3aed);">${UIUtils.formatNumber(l.balance)} EA</span>
+            </div>`;
+        }).join('');
+        return header
+            + `<div style="margin-top:4px;padding:0 2px 2px;font-size:0.72rem;color:var(--text-muted);">도장 LOT / 사출 LOT 구분</div>`
+            + lotRows;
+    }
+
     // 레이져 후 재공품 재고 패널 갱신 (제조공정-3이 도장인 품목만)
     function updateLaserWipPanel(overridePartName, overrideCarModel) {
         const panel = document.getElementById('laserWipPanel');
@@ -1695,17 +1733,7 @@ const ProductionPlanModule = (function() {
         if (totalEl) totalEl.innerHTML = `<span style="color:${wipColor};font-weight:700;">${UIUtils.formatNumber(wip)} EA</span>`;
 
         if (lotsEl) {
-            lotsEl.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 6px;border-radius:4px;">
-                <span style="font-size:0.82rem;color:var(--text-secondary);">
-                    <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">bolt</span>
-                    레이져 완료 → ${lineName || '도장'} 대기
-                </span>
-                <span style="font-weight:700;color:${wipColor};font-size:0.95rem;">${UIUtils.formatNumber(wip)} EA</span>
-            </div>
-            ${wip <= 0 ? `<div style="text-align:center;padding:4px 0;font-size:0.78rem;color:var(--accent-red);">
-                <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">warning</span>
-                재공품 재고 없음 — 레이져 공정 완료 후 진행 가능
-            </div>` : ''}`;
+            lotsEl.innerHTML = _buildLaserWipLotsHtml(carModel, partName, colorVal, lineName, wip);
         }
     }
     // ─────────────────────────────────────────────────────────────────
@@ -2049,17 +2077,7 @@ const ProductionPlanModule = (function() {
                 _laserWipDisplay = 'block';
                 const _lwipColor = _lwip > 0 ? 'var(--accent-green)' : 'var(--accent-red)';
                 _laserWipTotal = `<span style="color:${_lwipColor};font-weight:700;">${UIUtils.formatNumber(_lwip)} EA</span>`;
-                _laserWipHtml = `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 6px;border-radius:4px;">
-                    <span style="font-size:0.82rem;color:var(--text-secondary);">
-                        <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">bolt</span>
-                        레이져 완료 → ${line || '도장'} 대기
-                    </span>
-                    <span style="font-weight:700;color:${_lwipColor};font-size:0.95rem;">${UIUtils.formatNumber(_lwip)} EA</span>
-                </div>
-                ${_lwip <= 0 ? `<div style="text-align:center;padding:4px 0;font-size:0.78rem;color:var(--accent-red);">
-                    <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">warning</span>
-                    재공품 재고 없음 — 레이져 공정 완료 후 진행 가능
-                </div>` : ''}`;
+                _laserWipHtml = _buildLaserWipLotsHtml(modelValue || '', partValue, colorValue || '', line || '도장', _lwip);
                 // 레이져 후 도장 공정 품목은 사출 재고 대신 재공품 재고를 기준으로 확인
                 _injDisplay = 'none';
             } catch(e) { console.error('[editSlot] laserWip pre-compute error:', e); }
@@ -3006,6 +3024,82 @@ const ProductionPlanModule = (function() {
         };
     }
 
+    /**
+     * 진단: 구버전(출고 컬러 무시) vs 현행(입·출고 컬러 일치) 재고 차이.
+     * 차이가 있으면 같은 품명의 다른 색 출고가 섞였던 케이스.
+     */
+    function diagnoseInjStockColorMismatch() {
+        const all = Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [];
+        const mats = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const rows = [];
+
+        mats.forEach(function(m) {
+            const carModel = m.carModel || '';
+            const partName = m.injPartName || '';
+            const injColor = m.injColor || '';
+            if (!partName || !injColor) return;
+
+            const targetColors = new Set(
+                injColor.split(/[,，\/·|、]/).map(function(c) { return _normalizeColorName(c); }).filter(Boolean)
+            );
+            if (!targetColors.size) return;
+
+            const baseFilter = function(item) {
+                if (item.partName !== partName) return false;
+                if (carModel && item.carModel && item.carModel !== carModel) return false;
+                return true;
+            };
+
+            const legacyRecords = all.filter(function(item) {
+                if (!baseFilter(item)) return false;
+                if (item.type === '출고') return true;
+                const iColor = _normalizeColorName(item.color);
+                return [...targetColors].some(function(c) { return _injColorsMatch(iColor, c); });
+            });
+
+            const fixedRecords = all.filter(function(item) {
+                if (!baseFilter(item)) return false;
+                const itemColorRaw = String(item.color || '').trim();
+                if (item.type === '출고' && !itemColorRaw) return true;
+                const iColor = _normalizeColorName(itemColorRaw);
+                return [...targetColors].some(function(c) { return _injColorsMatch(iColor, c); });
+            });
+
+            const legacyTotal = InvCalc.totalStock(legacyRecords);
+            const fixedTotal = InvCalc.totalStock(fixedRecords);
+            const delta = fixedTotal - legacyTotal;
+            if (Math.abs(delta) < 0.001) return;
+
+            const linkedProducts = [];
+            if (m.productIds && m.productIds.length) {
+                m.productIds.forEach(function(pid) {
+                    const p = products.find(function(x) { return x.id === pid; });
+                    if (p && p.partName) linkedProducts.push(p.partName);
+                });
+            }
+            if (m.mfgProductName) linkedProducts.push(m.mfgProductName);
+            if (m.mfgProductName2) linkedProducts.push(m.mfgProductName2);
+
+            rows.push({
+                carModel: carModel,
+                injPartName: partName,
+                injColor: injColor,
+                warehouseLike: Math.max(0, fixedTotal),
+                planLegacy: Math.max(0, legacyTotal),
+                delta: delta,
+                linkedProducts: [...new Set(linkedProducts.filter(Boolean))]
+            });
+        });
+
+        rows.sort(function(a, b) {
+            return Math.abs(b.delta) - Math.abs(a.delta) ||
+                String(a.carModel).localeCompare(String(b.carModel)) ||
+                String(a.injPartName).localeCompare(String(b.injPartName));
+        });
+        return rows;
+    }
+
     return {
         render,
         search,
@@ -3033,6 +3127,8 @@ const ProductionPlanModule = (function() {
         autoUpdateStatus,
         _showInjLotPopup,
         _calcInjPlanReserved,
-        _getInjReserveDetail
+        _getInjReserveDetail,
+        getInjStockLots,
+        diagnoseInjStockColorMismatch
     };
 })();

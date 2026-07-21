@@ -527,6 +527,9 @@ var LaserWorkModule = (function() {
             </div>`;
     }
 
+    // 완료 지연 사유 판정 여유 — 표준 완료시간 이후 15분까지는 사유 입력 없이 허용
+    const OVERTIME_GRACE_MINUTES = 15;
+
     function updateStandardEndTime(forceFill = false) {
         const startEl = document.getElementById('lwStartTime');
         const endEl = document.getElementById('lwEndTime');
@@ -537,16 +540,25 @@ var LaserWorkModule = (function() {
         const estimateMin = _laserEstimateMinutes(spec);
         if (startMin === null || estimateMin <= 0) {
             if (hintEl) hintEl.textContent = '';
+            endEl.dataset.standardEnd = '';
+            endEl.dataset.graceEnd = '';
+            endEl.dataset.graceMinutes = '';
             return;
         }
+        const graceMin = OVERTIME_GRACE_MINUTES;
         const standardEnd = _minutesToTime(startMin + estimateMin);
+        const graceEnd = _minutesToTime(startMin + estimateMin + graceMin);
         endEl.dataset.standardEnd = standardEnd;
+        endEl.dataset.graceEnd = graceEnd;
+        endEl.dataset.graceMinutes = String(graceMin);
         const autoManaged = endEl.dataset.standardAuto === '1';
         if (forceFill || !endEl.value || autoManaged) {
             endEl.value = standardEnd;
             endEl.dataset.standardAuto = '1';
         }
-        if (hintEl) hintEl.textContent = `표준 완료시간은 ${standardEnd} 입니다`;
+        if (hintEl) {
+            hintEl.textContent = `표준 완료시간은 ${standardEnd} 입니다 (${graceMin}분 여유 → ${graceEnd}까지 지연 사유 없음)`;
+        }
         updateOvertimeReasonVisibility();
     }
 
@@ -559,13 +571,14 @@ var LaserWorkModule = (function() {
     function _isEndOverStandard() {
         const startEl = document.getElementById('lwStartTime');
         const endEl = document.getElementById('lwEndTime');
-        if (!startEl || !endEl || !startEl.value || !endEl.value || !endEl.dataset.standardEnd) return false;
+        if (!startEl || !endEl || !startEl.value || !endEl.value) return false;
         const startMin = _timeToMinutes(startEl.value);
         const endMinRaw = _timeToMinutes(endEl.value);
-        const stdMinRaw = _timeToMinutes(endEl.dataset.standardEnd);
-        if (startMin === null || endMinRaw === null || stdMinRaw === null) return false;
+        // 지연 사유는 표준 완료시간 + 15분 여유(graceEnd)를 넘을 때만 요구한다.
+        const thresholdRaw = _timeToMinutes(endEl.dataset.graceEnd || endEl.dataset.standardEnd);
+        if (startMin === null || endMinRaw === null || thresholdRaw === null) return false;
         const normalizeAfterStart = value => value < startMin ? value + 1440 : value;
-        return normalizeAfterStart(endMinRaw) > normalizeAfterStart(stdMinRaw);
+        return normalizeAfterStart(endMinRaw) > normalizeAfterStart(thresholdRaw);
     }
 
     function updateOvertimeReasonVisibility() {
@@ -574,7 +587,14 @@ var LaserWorkModule = (function() {
         const endEl = document.getElementById('lwEndTime');
         const show = _isEndOverStandard();
         if (wrap) wrap.style.display = show ? 'block' : 'none';
-        if (stdEl) stdEl.textContent = (endEl && endEl.dataset.standardEnd) || '-';
+        if (stdEl) {
+            const standardEnd = (endEl && endEl.dataset.standardEnd) || '-';
+            const graceEnd = (endEl && endEl.dataset.graceEnd) || '';
+            const graceMin = (endEl && endEl.dataset.graceMinutes) || '';
+            stdEl.textContent = graceEnd
+                ? `${standardEnd} (여유 ${graceMin}분 → ${graceEnd})`
+                : standardEnd;
+        }
     }
 
     // 표준 완료시간을 초과했을 때 관리자에게 즉시 통보한다.
@@ -594,11 +614,13 @@ var LaserWorkModule = (function() {
         const partName = _selectedPartName || _inputValue('lwPartName') || _inputValue('lwSbPart');
         const endEl = document.getElementById('lwEndTime');
         const standardEnd = (endEl && endEl.dataset.standardEnd) || '-';
+        const graceEnd = (endEl && endEl.dataset.graceEnd) || standardEnd;
+        const graceMin = (endEl && endEl.dataset.graceMinutes) || '';
         const actualEnd = _inputValue('lwEndTime');
 
         _sendManagerNotification(
             '레이져 작업 완료 지연 통보',
-            `[${carModel || '-'} / ${partName || '-'}]\n표준 완료시간: ${standardEnd}\n실제 완료시간: ${actualEnd}\n사유: ${reason}`,
+            `[${carModel || '-'} / ${partName || '-'}]\n표준 완료시간: ${standardEnd}\n여유 기준(+${graceMin || 15}분): ${graceEnd}\n실제 완료시간: ${actualEnd}\n사유: ${reason}`,
             recipients
         );
 
@@ -1296,8 +1318,8 @@ var LaserWorkModule = (function() {
             </div>
             <div id="lwOvertimeReasonWrap" style="display:none;margin:-2px 0 8px 0;padding:10px 12px;border:1px solid rgba(239,68,68,0.28);border-radius:8px;background:rgba(239,68,68,0.06);">
                 <label class="form-label" style="color:var(--accent-red);">완료 지연 사유 <span style="color:var(--accent-red)">*</span></label>
-                <textarea class="form-input" id="lwOvertimeReason" rows="2" placeholder="표준 완료시간을 초과한 사유를 입력하세요." style="resize:vertical;">${d.overtimeReason || ''}</textarea>
-                <div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">표준 완료시간 <strong id="lwOvertimeStandardTime">-</strong> 이후 완료 시 사유 입력 필수</div>
+                <textarea class="form-input" id="lwOvertimeReason" rows="2" placeholder="표준 완료시간 + 15분 여유를 초과한 사유를 입력하세요." style="resize:vertical;">${d.overtimeReason || ''}</textarea>
+                <div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">표준 완료시간 <strong id="lwOvertimeStandardTime">-</strong> 초과 시 사유 입력 필수</div>
                 ${_buildNotifySelectorHtml('lwOvertime', '완료 지연 사유를 통보할 담당자를 선택하세요.')}
                 <div style="margin-top:8px;display:flex;align-items:center;gap:10px;">
                     <button type="button" id="lwNotifyManagerBtn" class="btn btn-danger btn-sm" onclick="LaserWorkModule.notifyOvertimeManager()">
@@ -3399,20 +3421,28 @@ var LaserInspectionModule = (function() {
         if (lossLabel) lossLabel.textContent = UIUtils.formatNumber(loss);
     }
 
+    function _sumLaserDefectTypeInputs() {
+        let defectSum = 0;
+        document.querySelectorAll('[id^="linj-"],[id^="lpaint-"],[id^="llaser-"]').forEach(function(el) {
+            defectSum += parseInt(String(el.value || '').replace(/,/g, ''), 10) || 0;
+        });
+        return defectSum;
+    }
+
+    function _commitActiveNumericInput() {
+        const active = document.activeElement;
+        if (!active || active === document.body) return;
+        if (typeof active.blur === 'function') active.blur();
+    }
+
     function _recalcInspQuantities() {
         _refreshWorkQtyDisplay();
         const base = _getInspBaseFromForm();
-        let failQty = parseInt(document.getElementById('liDefectQty')?.value || 0, 10) || 0;
-        let defectSum = 0;
-        const defectInputs = document.querySelectorAll('[id^="linj-"],[id^="lpaint-"],[id^="llaser-"]');
-        defectInputs.forEach(function(el) {
-            defectSum += parseInt(el.value || 0, 10) || 0;
-        });
-        if (defectSum > 0) {
-            failQty = defectSum;
-            const failEl = document.getElementById('liDefectQty');
-            if (failEl) failEl.value = failQty;
-        }
+        // 불량수는 항상 불량 유형 입력 합계가 권위 값이다.
+        const failQty = _sumLaserDefectTypeInputs();
+        const failEl = document.getElementById('liDefectQty');
+        if (failEl) failEl.value = failQty;
+
         // ✓ 부분검사 모드: 양품수는 독립 입력값 — 미검사분을 base로 자동 채우지 않는다.
         if (_isPartialInspectionMode()) {
             const goodQty = parseInt(document.getElementById('liGoodQty')?.value || 0, 10) || 0;
@@ -3440,22 +3470,19 @@ var LaserInspectionModule = (function() {
         return !!(checkbox && checkbox.checked);
     }
 
-    // ✓ 부분검사 토글 — 체크: 양품수 직접입력 전환 + 이번 회차 값 초기화 / 해제: 검사기준 자동계산 복원
+    // ✓ 부분검사 토글 — 체크: 양품수만 초기화 / 해제: 검사기준 자동계산 복원
+    // 불량수는 불량 유형 입력 합계를 유지한다. (태블릿에서 0으로 덮이는 문제 방지)
     function _togglePartialInspection() {
+        _commitActiveNumericInput();
         const checkbox = document.getElementById('liIsPartialInspection');
         const infoDiv = document.getElementById('liPartialInspectionInfo');
         const goodQtyEl = document.getElementById('liGoodQty');
-        const defectQtyEl = document.getElementById('liDefectQty');
         if (checkbox && infoDiv) infoDiv.style.display = checkbox.checked ? 'flex' : 'none';
         if (checkbox && checkbox.checked) {
             if (goodQtyEl) { goodQtyEl.readOnly = false; goodQtyEl.style.background = ''; goodQtyEl.value = 0; }
-            if (defectQtyEl) defectQtyEl.value = 0;
-        } else {
-            if (goodQtyEl && goodQtyEl.dataset.hasWorkRef === '1') {
-                goodQtyEl.readOnly = true;
-                goodQtyEl.style.background = 'var(--bg-secondary)';
-            }
-            if (defectQtyEl) defectQtyEl.value = 0;
+        } else if (goodQtyEl && goodQtyEl.dataset.hasWorkRef === '1') {
+            goodQtyEl.readOnly = true;
+            goodQtyEl.style.background = 'var(--bg-secondary)';
         }
         _recalcInspQuantities();
     }
