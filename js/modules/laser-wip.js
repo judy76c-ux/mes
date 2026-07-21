@@ -167,7 +167,7 @@ var LaserWipModule = (function() {
     }
 
     function _historyResetBtnHtml(onClickJs) {
-        if (!_isAdmin()) return '';
+        if (!_canEditWip()) return '';
         return `<button class="btn btn-sm btn-outline" style="font-size:0.78rem;border-color:var(--accent-red);color:var(--accent-red);"
             onclick="${onClickJs}">
             <span class="material-symbols-outlined" style="font-size:0.9rem;">restart_alt</span> 이력만 리셋
@@ -2409,7 +2409,9 @@ var LaserWipModule = (function() {
                     date: w.date || '',
                     createdAt: w.createdAt || w.id || '',
                     type: 'unassigned',
-                    qty: w.isResidualManualIn ? qty : -qty
+                    qty: w.isResidualManualIn ? qty : -qty,
+                    sourceId: w.id || '',
+                    author: w.author || ''
                 });
             }
         });
@@ -2419,9 +2421,53 @@ var LaserWipModule = (function() {
                 String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
         });
 
+        // LOT 미지정 출고를 그 시점까지 쌓인 LOT에서 FIFO로 차감한다.
+        // 어느 LOT에서 얼마나 빠졌는지 fifoTrace에 남겨서, 이력표에도 실제 배분 내역을 보여줄 수 있게 한다.
+        const fifoTrace = [];
+        function fifoDeductFromLots(amount, sourceEvent) {
+            let remaining = amount;
+            Object.values(lotMap)
+                .sort(function(a, b) {
+                    return String(a.paintLot || '').localeCompare(String(b.paintLot || '')) ||
+                        String(a.injLot || '').localeCompare(String(b.injLot || ''));
+                })
+                .forEach(function(lot) {
+                    if (remaining <= 0) return;
+                    const available = Math.max(0, Number(lot.qty) || 0);
+                    const used = Math.min(available, remaining);
+                    if (used > 0) {
+                        lot.qty -= used;
+                        remaining -= used;
+                        fifoTrace.push({
+                            date: sourceEvent.date || '',
+                            createdAt: sourceEvent.createdAt || '',
+                            sourceId: sourceEvent.sourceId || '',
+                            author: sourceEvent.author || '',
+                            paintLot: lot.paintLot,
+                            injLot: lot.injLot,
+                            key: String(lot.paintLot) + '|' + String(lot.injLot),
+                            qty: used
+                        });
+                    }
+                });
+            return remaining;
+        }
+
+        // ★ 이벤트를 시간순으로 재생하면서 그 시점에 처리한다. 미지정 출고를 전부 쌓았다가
+        //   맨 마지막에 "최종" LOT 상태에서 한 번에 FIFO 차감하면, 과거 미지정 출고가 그 이후에
+        //   새로 생긴(당시엔 존재하지도 않았던) LOT에서 잘못 빠져나가는 오류가 생긴다.
+        //   (예: 7/13 미지정 출고가 7/20에 새로 생긴 LOT의 잔량을 갉아먹는 문제)
         events.forEach(function(e) {
             if (e.type === 'unassigned') {
-                manualAdj += e.qty;
+                if (e.qty >= 0) {
+                    manualAdj += e.qty;
+                } else {
+                    let remainingOut = Math.abs(e.qty);
+                    const fromPool = Math.min(manualAdj, remainingOut);
+                    manualAdj -= fromPool;
+                    remainingOut -= fromPool;
+                    if (remainingOut > 0) fifoDeductFromLots(remainingOut, e);
+                }
                 return;
             }
             const row = ensureLot(e.key, e.paintLot, e.injLot);
@@ -2433,24 +2479,8 @@ var LaserWipModule = (function() {
             }
         });
 
-        // 과거 LOT 미지정 출고는 FIFO로 보관 LOT에서 차감
-        if (manualAdj < 0) {
-            let remainingOut = Math.abs(manualAdj);
-            Object.values(lotMap)
-                .sort(function(a, b) {
-                    return String(a.paintLot || '').localeCompare(String(b.paintLot || '')) ||
-                        String(a.injLot || '').localeCompare(String(b.injLot || ''));
-                })
-                .forEach(function(lot) {
-                    if (remainingOut <= 0) return;
-                    const available = Math.max(0, Number(lot.qty) || 0);
-                    const used = Math.min(available, remainingOut);
-                    lot.qty -= used;
-                    remainingOut -= used;
-                });
-            // 초과 출고분은 음수로 남기지 않음
-            manualAdj = 0;
-        }
+        // 초과 출고분(그 시점까지 차감할 LOT조차 없던 경우)은 음수로 남기지 않음
+        if (manualAdj < 0) manualAdj = 0;
 
         const lots = Object.values(lotMap)
             .map(function(l) { return { paintLot: l.paintLot, injLot: l.injLot, qty: Math.round(l.qty) }; })
@@ -2460,7 +2490,7 @@ var LaserWipModule = (function() {
                     String(a.injLot || '').localeCompare(String(b.injLot || ''));
             });
 
-        return { lots: lots, manualAdj: manualAdj };
+        return { lots: lots, manualAdj: manualAdj, fifoTrace: fifoTrace };
     }
 
     // 레이저 대기 수량 보정(LaserStandbyModule)과 동일한 UX: 총수량 + LOT별 재고 배분(추가/삭제 가능)을 한 화면에서 고친다.
@@ -3496,8 +3526,8 @@ var LaserWipModule = (function() {
     }
 
     async function confirmResetAfterWip(keyEnc) {
-        if (!_isAdmin()) {
-            UIUtils.toast('이력만 리셋은 관리자만 실행할 수 있습니다.', 'warning');
+        if (!_canEditWip()) {
+            UIUtils.toast('관리자·레이져운영자만 이력만 리셋을 실행할 수 있습니다.', 'warning');
             return;
         }
         await _ensureAfterWipHistoryResetsLoaded();
@@ -3536,8 +3566,8 @@ var LaserWipModule = (function() {
     }
 
     async function executeResetAfterWip(keyEnc) {
-        if (!_isAdmin()) {
-            UIUtils.toast('이력만 리셋은 관리자만 실행할 수 있습니다.', 'warning');
+        if (!_canEditWip()) {
+            UIUtils.toast('관리자·레이져운영자만 이력만 리셋을 실행할 수 있습니다.', 'warning');
             return;
         }
         await _ensureAfterWipHistoryResetsLoaded();
@@ -3616,7 +3646,7 @@ var LaserWipModule = (function() {
             return (w.carModel || '') === carModel && (w.partName || '') === partName && (!color || (w.color || '') === color);
         });
 
-        const { lots: lotEntries, manualAdj } = _calcResidualLotDetail(carModel, partName, color);
+        const { lots: lotEntries, manualAdj, fifoTrace } = _calcResidualLotDetail(carModel, partName, color);
         // LOT가 없는 과거 수기 이력도 현재 보관 LOT 표에서 숨기지 않는다.
         // 실제 LOT로 추정하지 않고 "LOT 미지정"으로 명확히 분리한다.
         const displayLotEntries = lotEntries.slice();
@@ -3711,6 +3741,31 @@ var LaserWipModule = (function() {
                 createdAt: w.createdAt || '',
                 sourceId: w.id || '',
                 editKind: 'residual_manual'
+            });
+        });
+
+        // LOT 미지정 출고가 FIFO로 실제 LOT에서 빠져나간 내역을 그 LOT의 이력 행으로도 남긴다.
+        // (원본 미지정 출고 행은 그대로 유지하고, 어디서 빠졌는지 보여주는 배분 행을 추가한다.
+        //  총량은 이미 원본 미지정 출고 행에 반영돼 있으므로, 이 배분 행은 해당 LOT의
+        //  기존/현재 수량을 맞추는 표시용이지 전체 합계에 이중 반영되지 않는다 — LOT별로만 재생한다.)
+        (fifoTrace || []).forEach(function(t) {
+            histItems.push({
+                date: t.date || '-',
+                isOut: true,
+                routeLabel: '미지정 출고 배분',
+                routeColor: '#dc2626',
+                routeDetail: 'LOT 미지정 출고 자동 배분',
+                lot: t.injLot,
+                paintLot: t.paintLot,
+                injLot: t.injLot,
+                lotKey: t.key,
+                qty: t.qty,
+                author: t.author || '-',
+                note: '미지정 출고가 이 LOT에서 자동 차감됨',
+                _seq: (t.createdAt || t.date || '') + '_fifo',
+                createdAt: t.createdAt || '',
+                sourceId: t.sourceId || '',
+                editKind: null
             });
         });
         histItems.sort(function(a, b) { return String(b.date).localeCompare(String(a.date)); });
@@ -3882,8 +3937,8 @@ var LaserWipModule = (function() {
     }
 
     async function confirmResetResidual(keyEnc) {
-        if (!_isAdmin()) {
-            UIUtils.toast('이력만 리셋은 관리자만 실행할 수 있습니다.', 'warning');
+        if (!_canEditWip()) {
+            UIUtils.toast('관리자·레이져운영자만 이력만 리셋을 실행할 수 있습니다.', 'warning');
             return;
         }
         await _ensureResidualHistoryResetsLoaded();
@@ -3926,8 +3981,8 @@ var LaserWipModule = (function() {
     }
 
     async function executeResetResidual(keyEnc) {
-        if (!_isAdmin()) {
-            UIUtils.toast('이력만 리셋은 관리자만 실행할 수 있습니다.', 'warning');
+        if (!_canEditWip()) {
+            UIUtils.toast('관리자·레이져운영자만 이력만 리셋을 실행할 수 있습니다.', 'warning');
             return;
         }
         await _ensureResidualHistoryResetsLoaded();

@@ -847,56 +847,6 @@ var LaserWorkModule = (function() {
             }
         } catch (e) { /* 상세 LOT 조회 실패 시 기존 원본 도장작업 계산 사용 */ }
 
-        // 수량 보정에 LOT별 배분이 있으면 원본 도장 작업 잔량이 아니라 보정 LOT를 유일한 기준으로 쓴다.
-        // 그렇지 않으면 상세 대기재고(보정 후)와 작업 등록 FIFO(보정 전)가 서로 달라진다.
-        try {
-            if (typeof LaserStandbyModule !== 'undefined' && LaserStandbyModule.getStockSnapshotSync) {
-                const snapshots = LaserStandbyModule.getStockSnapshotSync() || [];
-                snapshots.forEach(function(item) {
-                    const override = item.manualOverride;
-                    if (!override || !Array.isArray(override.lots) || override.lots.length === 0) return;
-
-                    const color = item.color === '-' ? '' : (item.color || '');
-                    const itemKey = `${item.carModel}||${item.partName}||${color}`;
-                    const lotsByPaintDate = {};
-
-                    override.lots.forEach(function(rawLot) {
-                        const paintLot = String(rawLot && (rawLot.paintLot || rawLot.paintDate) || '').trim();
-                        const lotNo = String(rawLot && (rawLot.injectionLot || rawLot.lotNo) || '').trim();
-                        const qty = Number(rawLot && rawLot.qty) || 0;
-                        if (!paintLot || !lotNo || qty <= 0) return;
-                        if (!lotsByPaintDate[paintLot]) lotsByPaintDate[paintLot] = [];
-                        lotsByPaintDate[paintLot].push({ paintDate: paintLot, lotNo: lotNo, qty: qty });
-                    });
-
-                    if (Object.keys(lotsByPaintDate).length === 0) return;
-
-                    // 같은 제품의 원본 FIFO 행은 제거한다. 보정 LOT가 그것을 대체한다.
-                    for (let i = result.length - 1; i >= 0; i--) {
-                        const row = result[i];
-                        const rowKey = `${row.carModel}||${row.partName}||${row.color || ''}`;
-                        if (rowKey === itemKey) result.splice(i, 1);
-                    }
-
-                    Object.keys(lotsByPaintDate).forEach(function(paintLot) {
-                        const lots = lotsByPaintDate[paintLot];
-                        const date = /^\d{6}$/.test(paintLot)
-                            ? `20${paintLot.slice(0, 2)}-${paintLot.slice(2, 4)}-${paintLot.slice(4, 6)}`
-                            : paintLot;
-                        result.push({
-                            carModel: item.carModel,
-                            partName: item.partName,
-                            color: color,
-                            date: date,
-                            productionQty: lots.reduce(function(sum, lot) { return sum + lot.qty; }, 0),
-                            lots: lots,
-                            isLotAdjustedStandby: true
-                        });
-                    });
-                });
-            }
-        } catch (e) { /* 보정 LOT 병합 실패 시 원본 FIFO 목록 사용 */ }
-
         // 도장 작업일지 없이 "재공품 현황" 화면에서 수기 등록/일괄 등록된 재고는 위 로직에 전혀
         // 반영되지 않아 이 목록(작업 등록 드롭다운)에서 보이지 않는 문제가 있었다. 그 재고 중
         // 아직 위 목록으로 커버되지 않는 만큼을 보충 항목으로 추가한다.
@@ -2115,6 +2065,10 @@ var LaserWorkModule = (function() {
             _selectedPartName || (manualEnabled ? manualPartName : ''),
             _selectedColor || (manualEnabled ? manualColor : '')
         );
+        const effectiveCarModel = _selectedCarModel || (manualEnabled ? manualCarModel : '');
+        const effectivePartName = _selectedPartName || (manualEnabled ? manualPartName : '');
+        const effectiveColor = _selectedColor || (manualEnabled ? manualColor : '');
+        const effectiveProduct = _findProductForWork(effectiveCarModel, effectivePartName, effectiveColor);
         return {
             date: document.getElementById('lwDate').value,
             machine: document.getElementById('lwMachine').value,
@@ -2123,9 +2077,10 @@ var LaserWorkModule = (function() {
             standardEndTime: (document.getElementById('lwEndTime') || {}).dataset?.standardEnd || '',
             overtimeReason: (document.getElementById('lwOvertimeReason') || {}).value?.trim() || '',
             overtimeNotified: (document.getElementById('lwOvertimeNotified') || {}).value === '1',
-            carModel: _selectedCarModel || (manualEnabled ? manualCarModel : ''),
-            partName: _selectedPartName || (manualEnabled ? manualPartName : ''),
-            color: _selectedColor || (manualEnabled ? manualColor : ''),
+            productId: effectiveProduct ? (effectiveProduct.id || '') : '',
+            carModel: effectiveCarModel,
+            partName: effectivePartName,
+            color: effectiveColor,
             paintDate: mergedLots.length > 0 ? (mergedLots[0].paintDate || '') : '',
             paintLots: mergedLots.map(l => ({ paintDate: l.paintDate, lotNo: l.lotNo, qty: Number(l.qty) || 0, manual: !!l.manual })),
             manualInput: manualEnabled && _selectedLots.length === 0,
@@ -2369,6 +2324,41 @@ var LaserWorkModule = (function() {
         }
     }
 
+    // 납품처 분할 등록 시 같은 전체 LOT를 양쪽 작업에 복사하면 LOT 출고가 중복된다.
+    // 원본 LOT 순서를 유지한 채 첫 작업 수량만큼 먼저 배분하고 나머지를 연결 제품에 넘긴다.
+    function _partitionPaintLotsForSplit(lots, firstQty) {
+        let remainingFirst = Math.max(0, Number(firstQty) || 0);
+        const first = [];
+        const second = [];
+        (Array.isArray(lots) ? lots : []).forEach(function(lot) {
+            const qty = Math.max(0, Number(lot && lot.qty) || 0);
+            if (qty <= 0) return;
+            const firstUsed = Math.min(qty, remainingFirst);
+            const secondUsed = qty - firstUsed;
+            const base = {
+                paintDate: String((lot && lot.paintDate) || ''),
+                lotNo: String((lot && lot.lotNo) || ''),
+                manual: !!(lot && lot.manual)
+            };
+            if (firstUsed > 0) first.push({ ...base, qty: firstUsed });
+            if (secondUsed > 0) second.push({ ...base, qty: secondUsed });
+            remainingFirst -= firstUsed;
+        });
+        return { first, second };
+    }
+
+    function _withSplitPaintLots(data, quantity, paintLots, identityPatch) {
+        const lots = Array.isArray(paintLots) ? paintLots : [];
+        return {
+            ...data,
+            ...(identityPatch || {}),
+            quantity,
+            paintLots: lots,
+            paintDate: lots.length > 0 ? (lots[0].paintDate || '') : '',
+            paintLot: [...new Set(lots.map(function(lot) { return lot.lotNo; }).filter(Boolean))].join(', ')
+        };
+    }
+
     async function saveNew() {
         const data = collectData();
         if (!validateWorkRequired(data, { strict: false })) return;
@@ -2397,11 +2387,42 @@ var LaserWorkModule = (function() {
             }
             const allProds = Storage.getAll(DB.STORES.PRODUCTS) || [];
             const linkedProd = allProds.find(p => p.id === linkedProductId);
+            if (qB > 0 && !linkedProd) {
+                UIUtils.toast('연결 제품 정보를 찾을 수 없습니다. 제품 마스터의 연결 제품을 확인하세요.', 'error');
+                return;
+            }
+            const sourceProd = allProds.find(function(p) {
+                return p.carModel === data.carModel && p.partName === data.partName && p.color === data.color;
+            }) || allProds.find(function(p) {
+                return p.carModel === data.carModel && p.partName === data.partName;
+            });
+            const splitGroupId = Storage.generateId();
+            const sourceIdentity = {
+                splitGroupId,
+                standbySourceProductId: sourceProd ? (sourceProd.id || '') : '',
+                standbySourceCarModel: data.carModel || '',
+                standbySourcePartName: data.partName || '',
+                standbySourceColor: data.color || ''
+            };
+            const sourceLots = (data.paintLots || []).some(function(lot) { return Number(lot && lot.qty) > 0; })
+                ? data.paintLots
+                : [{
+                    paintDate: data.paintDate || '',
+                    lotNo: data.paintLot || '',
+                    qty: Number(data.quantity) || 0,
+                    manual: !!data.manualInput
+                }];
+            const splitLots = _partitionPaintLotsForSplit(sourceLots, qA);
             if (qA > 0) {
-                await Storage.add(STORE, { ...data, quantity: qA });
+                await Storage.add(STORE, _withSplitPaintLots(data, qA, splitLots.first, sourceIdentity));
             }
             if (qB > 0 && linkedProd) {
-                await Storage.add(STORE, { ...data, quantity: qB, partName: linkedProd.partName, color: linkedProd.color || data.color });
+                await Storage.add(STORE, _withSplitPaintLots(data, qB, splitLots.second, {
+                    ...sourceIdentity,
+                    partName: linkedProd.partName,
+                    color: linkedProd.color || data.color,
+                    productId: linkedProd.id || ''
+                }));
             }
             UIUtils.closeModal();
             UIUtils.toast(`납품처별 분리 등록 완료 — ${(document.getElementById('lwSplitLabelA') || {}).textContent || ''}: ${qA}EA / ${(document.getElementById('lwSplitLabelB') || {}).textContent || ''}: ${qB}EA`, 'success');
@@ -2449,8 +2470,14 @@ var LaserWorkModule = (function() {
                         l.qty = i === _selectedLots.length - 1 ? (totalQty - share * (_selectedLots.length - 1)) : share;
                     });
                 } else {
-                    // 일부만 어긋남 → 차이를 마지막 LOT에 반영
-                    _selectedLots[_selectedLots.length - 1].qty = Math.max(0, _selectedLots[_selectedLots.length - 1].qty + (totalQty - lotQtySum));
+                    // 일부만 어긋나도 전체 LOT를 비례 조정해 합계가 반드시 작업수량과 같게 한다.
+                    let allocated = 0;
+                    _selectedLots.forEach((l, i) => {
+                        l.qty = i === _selectedLots.length - 1
+                            ? Math.max(0, totalQty - allocated)
+                            : Math.max(0, Math.floor(((Number(l.qty) || 0) / lotQtySum) * totalQty));
+                        allocated += l.qty;
+                    });
                 }
             }
         }
@@ -4942,6 +4969,11 @@ var LaserStandbyModule = (function() {
 
     // 제품 조회 헬퍼 — 컬러가 있으면 제품 마스터 컬러와 정확히 일치해야 함 (다른 컬러로 조용히 치환하지 않음)
     function findProduct(products, w) {
+        const productId = String((w && w.productId) || '').trim();
+        if (productId) {
+            const byId = products.find(function(p) { return String((p && p.id) || '') === productId; });
+            if (byId) return byId;
+        }
         const car = String(w.carModel || '').trim();
         const part = String(w.partName || '').trim();
         const color = String(w.color || '').trim();
@@ -4993,32 +5025,45 @@ var LaserStandbyModule = (function() {
             unique.push(product);
         });
 
-        return unique.find(product => color && _sameText(product.color, color))
-            || unique.find(product => car && _sameText(product.carModel, car))
-            || unique[0]
-            || null;
+        if (color) {
+            // 컬러가 명시된 기록은 다른 컬러 제품으로 조용히 치환하지 않는다.
+            return unique.find(product => _sameText(product.color, color)) || null;
+        }
+        return unique.find(product => car && _sameText(product.carModel, car))
+            || (unique.length === 1 ? unique[0] : null);
     }
 
     function _canonicalStandbyRecord(row, products, injectionMaterials) {
-        const prod = findProduct(products, row)
-            || _findProductByInjectionPart(products, injectionMaterials, row);
+        // 납품처 분할 작업은 작업 결과 품명이 연결 제품으로 바뀔 수 있지만,
+        // 레이져 대기에서는 작업 전 원본 품목을 차감해야 한다.
+        const identityRow = row && row.standbySourcePartName
+            ? {
+                ...row,
+                productId: row.standbySourceProductId || row.productId || '',
+                carModel: row.standbySourceCarModel || row.carModel || '',
+                partName: row.standbySourcePartName || row.partName || '',
+                color: row.standbySourceColor != null ? row.standbySourceColor : (row.color || '')
+            }
+            : row;
+        const prod = findProduct(products, identityRow)
+            || _findProductByInjectionPart(products, injectionMaterials, identityRow);
 
         // ⚠ 제품 마스터에 매칭되는 제품이 없으면 예전에는 원본 행을 그대로 통과시켰다.
         // 그 결과 도장/사출 쪽 품명(예: 'PAO COVER (WHITE)')이 재공 현황에 제품 품명인 척
         // 섞여 들어와 존재하지 않는 유령 품목이 만들어졌다. 통과시키되 반드시 표시한다.
-        if (!prod) return { ...row, _unmatchedProduct: true };
+        if (!prod) return { ...identityRow, _unmatchedProduct: true };
 
-        const originalPartName = String(row.partName || '').trim();
+        const originalPartName = String(identityRow.partName || '').trim();
         const productPartName = String(prod.partName || '').trim();
         return {
             ...row,
-            productId: prod.id || row.productId || '',
-            carModel: prod.carModel || row.carModel || '',
-            partName: productPartName || row.partName || '',
-            color: prod.color || row.color || '',
+            productId: prod.id || identityRow.productId || '',
+            carModel: prod.carModel || identityRow.carModel || '',
+            partName: productPartName || identityRow.partName || '',
+            color: prod.color || identityRow.color || '',
             sourcePartName: originalPartName && originalPartName !== productPartName
                 ? originalPartName
-                : (row.sourcePartName || '')
+                : (identityRow.sourcePartName || '')
         };
     }
 
@@ -5029,6 +5074,26 @@ var LaserStandbyModule = (function() {
     function _normalizeQty(value) {
         const qty = parseInt(String(value || '').replace(/,/g, ''), 10);
         return Number.isFinite(qty) && qty > 0 ? qty : 0;
+    }
+
+    function _scaleLotRowsToTotal(lots, totalQty) {
+        const rows = (lots || []).filter(function(lot) {
+            return _normalizeQty(lot && lot.qty) > 0;
+        });
+        const total = _normalizeQty(totalQty);
+        const sourceTotal = rows.reduce(function(sum, lot) {
+            return sum + _normalizeQty(lot.qty);
+        }, 0);
+        if (!rows.length || total <= 0 || sourceTotal <= 0) return total <= 0 ? [] : rows;
+
+        let allocated = 0;
+        return rows.map(function(lot, index) {
+            const qty = index === rows.length - 1
+                ? Math.max(0, total - allocated)
+                : Math.max(0, Math.floor((_normalizeQty(lot.qty) / sourceTotal) * total));
+            allocated += qty;
+            return Object.assign({}, lot, { qty: qty });
+        }).filter(function(lot) { return lot.qty > 0; });
     }
 
     function _normalizeFlowKey(value) {
@@ -5140,6 +5205,21 @@ var LaserStandbyModule = (function() {
             .replace(/(\d{4}-\d{2}-\d{2})T?(\d{2}:\d{2})?(:\d{2})?.*$/, function(_, d, hm, sec) {
                 return d + 'T' + (hm || '00:00') + (sec || ':00');
             });
+    }
+
+    // 재고 선후관계는 사용자가 수정 가능한 생산일/시간보다 실제 레코드 생성시각을 우선한다.
+    // 수기보정은 effectiveAt(신규) → updatedAt(레거시), 작업은 createdAt을 사용하고,
+    // 해당 값이 없는 오래된 레코드만 생산일+시간으로 폴백한다.
+    function _inventoryEventStamp(record, fallbackDate = '', fallbackTime = '') {
+        if (!record) return _eventStamp(_formatWorkDateTime(fallbackDate, fallbackTime));
+        const preferred = record.effectiveAt
+            || record.createdAt
+            || record.updatedAt
+            || '';
+        return _eventStamp(preferred || _formatWorkDateTime(
+            record.date || fallbackDate,
+            record.endTime || record.startTime || fallbackTime
+        ));
     }
 
     function _isBeforeHistoryReset(dateValue, resetAt) {
@@ -5332,6 +5412,7 @@ var LaserStandbyModule = (function() {
                 sourceType: DB.STORES.PAINTING_WORK,
                 sourceId: w.id || '',
                 date: _recordedDateTime(w, w.date || '', w.endTime || w.startTime || ''),
+                eventStamp: _inventoryEventStamp(w, w.date || '', w.endTime || w.startTime || ''),
                 paintingDate: _paintingWorkDateTime(w),
                 qty,
                 lotNo: injLot,
@@ -5342,15 +5423,59 @@ var LaserStandbyModule = (function() {
             });
         });
 
+        // 수기 입고/보정 품목은 실제 날짜와 관계없이 아래 레이져 작업 루프보다 먼저
+        // 품목 바구니를 준비한다. 기존 코드는 데이터 날짜가 7/10 입고 → 7/16 출고여도
+        // 스토어 종류별로 도장입고 → 레이져작업 → 수기보정 순서로 처리하여,
+        // 도장 자동입고가 없는 수기 품목의 7/16 출고를 먼저 버리는 문제가 있었다.
+        // 수량 보정은 기존과 같이 뒤의 보정 계산에서 적용하고 여기서는 키만 선등록한다.
+        _manualOverrides.forEach(function(rawOverride) {
+            const override = _canonicalStandbyRecord(rawOverride, products, injectionMaterials);
+            const key = _itemKey(override.carModel, override.partName, override.color || '');
+            if (!key.replace(/\|/g, '') || inventoryMap[key]) return;
+            const prod = findProduct(products, override) || {};
+            inventoryMap[key] = {
+                key,
+                carModel: override.carModel || '-',
+                partName: override.partName || '-',
+                color: override.color || '-',
+                itemType: prod.process2 || '-',
+                unmatchedProduct: !!override._unmatchedProduct,
+                inQty: 0,
+                outQty: 0,
+                inRecords: [],
+                outRecords: [],
+                historyReset: _getHistoryResetForKey(key)
+            };
+        });
+
         laserWorks.forEach(raw => {
             // isManual 레코드는 잔량·재공 수기 조정이며 대기품 출고가 아니다.
             // 대기품 출고는 _manualOverrides(CONFIG)에 저장되므로 여기서 걸러야 한다.
             if (raw && raw.isManual) return;
             const w = _canonicalStandbyRecord(raw, products, injectionMaterials);
             const key = _itemKey(w.carModel, w.partName, w.color || '');
-            if (!inventoryMap[key]) return;
             const histReset = _getHistoryResetForKey(key);
-            if (histReset) inventoryMap[key].historyReset = histReset;
+            // 도장 자동입고가 없고 수기 재고보정으로만 입고된 품목도 레이져 작업 출고를
+            // 보존해야 한다. 이전에는 이 시점에 품목 바구니가 없으면 출고를 버렸고,
+            // 뒤에서 수기보정 입고만 생성되어 작업 후에도 대기재고가 차감되지 않았다.
+            if (!inventoryMap[key]) {
+                const prod = findProduct(products, w) || {};
+                inventoryMap[key] = {
+                    key,
+                    carModel: w.carModel || '-',
+                    partName: w.partName || '-',
+                    color: w.color || '-',
+                    itemType: prod.process2 || '-',
+                    unmatchedProduct: !!w._unmatchedProduct,
+                    inQty: 0,
+                    outQty: 0,
+                    inRecords: [],
+                    outRecords: [],
+                    historyReset: histReset || null
+                };
+            } else if (histReset) {
+                inventoryMap[key].historyReset = histReset;
+            }
             const qty = Number(w.quantity) || 0;
             inventoryMap[key].outQty += qty;
             const paintDates = w.paintLots && w.paintLots.length > 0
@@ -5371,6 +5496,7 @@ var LaserStandbyModule = (function() {
                 sourceType: DB.STORES.LASER_WORK_LOG,
                 sourceId: w.id || '',
                 date: _formatWorkDateTime(w.date || '', w.endTime || w.startTime || ''),
+                eventStamp: _inventoryEventStamp(w, w.date || '', w.endTime || w.startTime || ''),
                 paintingDate: _formatWorkDateTime(paintDates, ''),
                 lotNo: injLots,
                 injLotNo: injLots,
@@ -5417,18 +5543,26 @@ var LaserStandbyModule = (function() {
             // diff는 "보정 시점 이전" 원본 기록만을 기준으로 계산한다 — 전체 기간을 기준으로
             // 계산하면 보정 이후의 실제 실적까지 diff에 흡수되어 재고가 그 실적을 반영하지 못하고
             // 보정값에 고정돼버린다(실제로 이 문제가 있었다).
-            const overrideDateStamp = _formatWorkDateTime(override.date || override.updatedAt || UIUtils.today(), '');
+            const overrideEventStamp = _inventoryEventStamp(
+                override,
+                override.date || UIUtils.today(),
+                ''
+            );
+            const overrideDisplayDate = _formatWorkDateTime(
+                override.date || override.updatedAt || UIUtils.today(),
+                ''
+            );
             const rawInBefore = inventoryMap[key].inRecords
-                .filter(r => String(r.date || '') <= overrideDateStamp)
+                .filter(r => String(r.eventStamp || _eventStamp(r.date)) <= overrideEventStamp)
                 .reduce((s, r) => s + (Number(r.qty) || 0), 0);
             const rawOutBefore = inventoryMap[key].outRecords
-                .filter(r => String(r.date || '') <= overrideDateStamp)
+                .filter(r => String(r.eventStamp || _eventStamp(r.date)) <= overrideEventStamp)
                 .reduce((s, r) => s + (Number(r.qty) || 0), 0);
             const currentStock = rawInBefore - rawOutBefore;
             const targetStock = _normalizeQty(override.actualQty);
             const diff = targetStock - currentStock;
             inventoryMap[key].manualOverride = override;
-            inventoryMap[key].manualOverrideDate = overrideDateStamp;
+            inventoryMap[key].manualOverrideDate = overrideEventStamp;
 
             // absoluteAfter=targetStock을 함께 실어, 이력 화면이 diff를 이전 잔량에 누적하지 않고
             // targetStock으로 바로 덮어쓰게 한다 — 이력의 "현재 수량"이 항상 실제 재고와 일치해야 하므로.
@@ -5437,7 +5571,8 @@ var LaserStandbyModule = (function() {
                 inventoryMap[key].inRecords.push({
                     sourceType: 'manual_override',
                     sourceId: override.id || '',
-                    date: overrideDateStamp,
+                    date: overrideDisplayDate,
+                    eventStamp: overrideEventStamp,
                     paintingDate: _formatWorkDateTime(override.paintLot || override.date || '', ''),
                     qty: diff,
                     absoluteAfter: targetStock,
@@ -5445,6 +5580,8 @@ var LaserStandbyModule = (function() {
                     injLotNo: override.injectionLot || '',
                     paintLot: override.paintLot || '',
                     injectionLot: override.injectionLot || '',
+                    author: override.author || '',
+                    operator: override.author || '',
                     note: override.note || (override.manualType === 'add' ? '수기추가'
                         : (override.manualType === 'out' ? '수기출고' : '수기조정'))
                 });
@@ -5453,13 +5590,16 @@ var LaserStandbyModule = (function() {
                 inventoryMap[key].outRecords.push({
                     sourceType: 'manual_override',
                     sourceId: override.id || '',
-                    date: overrideDateStamp,
+                    date: overrideDisplayDate,
+                    eventStamp: overrideEventStamp,
                     paintingDate: _formatWorkDateTime(override.paintLot || override.date || '', ''),
                     lotNo: override.injectionLot || '',
                     injLotNo: override.injectionLot || '',
                     paintLot: override.paintLot || '',
                     qty: Math.abs(diff),
                     absoluteAfter: targetStock,
+                    author: override.author || '',
+                    operator: override.author || '',
                     machine: override.note || (override.manualType === 'add' ? '수기추가'
                         : (override.manualType === 'out' ? '수기출고' : '수기조정')),
                     note: override.note || (override.manualType === 'add' ? '수기추가'
@@ -5706,15 +5846,22 @@ var LaserStandbyModule = (function() {
             }));
         }
 
-        const adjusted = normalized.map(lot => ({
-            lotNo: lot.lotNo,
-            paintLot: lot.paintLot,
-            qty: Number(lot.qty) || 0
-        }));
-        const diff = total - lotQtySum;
-        if (Math.abs(diff) > 0.001) {
-            adjusted[adjusted.length - 1].qty = Math.max(0, adjusted[adjusted.length - 1].qty + diff);
-        }
+        if (total <= 0) return [];
+        // LOT 합계가 작업수량과 다르면 마지막 LOT 하나에 차이를 몰아넣지 않는다.
+        // 큰 음수 차이에서 마지막 LOT만 0으로 잘리고 앞 LOT가 작업수량을 초과해 남는 문제를
+        // 방지하도록 전체 LOT를 비례 조정하고 마지막 LOT에 반올림 잔여만 배분한다.
+        let allocated = 0;
+        const adjusted = normalized.map(function(lot, index) {
+            const qty = index === normalized.length - 1
+                ? Math.max(0, total - allocated)
+                : Math.max(0, Math.floor(((Number(lot.qty) || 0) / lotQtySum) * total));
+            allocated += qty;
+            return {
+                lotNo: lot.lotNo,
+                paintLot: lot.paintLot,
+                qty: qty
+            };
+        });
         return adjusted.filter(lot => lot.qty > 0);
     }
 
@@ -5739,6 +5886,31 @@ var LaserStandbyModule = (function() {
             balanceMap[lotKey].qty += Number(qtyDelta) || 0;
         }
 
+        // 출고 LOT가 현재 보유 LOT와 정확히 맞지 않더라도 음수 LOT를 만들지 않는다.
+        // 같은 사출 LOT → 미확인 LOT → 나머지 보유 LOT 순서로 실제 재고만 0까지 차감한다.
+        function drainLot(lotNo, qty) {
+            let remaining = Math.max(0, Number(qty) || 0);
+            if (remaining <= 0) return;
+            const requested = String(lotNo || '(미확인)');
+            const orderedKeys = Object.keys(balanceMap).sort(function(a, b) {
+                const rank = function(key) {
+                    if (key === requested) return 0;
+                    if (key === '(미확인)') return 1;
+                    return 2;
+                };
+                return rank(a) - rank(b);
+            });
+            orderedKeys.forEach(function(key) {
+                if (remaining <= 0) return;
+                const row = balanceMap[key];
+                const available = Math.max(0, Number(row && row.qty) || 0);
+                if (available <= 0) return;
+                const used = Math.min(available, remaining);
+                row.qty = available - used;
+                remaining -= used;
+            });
+        }
+
         // 보정 시점 LOT 스냅샷을 기준선으로 놓는다. 보정 이전 원본 기록은 이 스냅샷에 이미
         // 반영돼 있으므로 다시 더하지 않고, 보정 이후 실제 실적만 추가로 얹는다.
         if (overrideLots.length > 0) {
@@ -5747,6 +5919,11 @@ var LaserStandbyModule = (function() {
                 if (!lotNo) return;
                 addLot(lotNo, String((lot && (lot.paintLot || lot.paintDate)) || '-').trim() || '-', Number(lot && lot.qty) || 0);
             });
+        } else if (override) {
+            // LOT 배분이 없는 레거시 보정도 보정 시점의 기준 재고로 먼저 세워야
+            // 이후 레이져 작업 출고가 이 수량을 정상적으로 차감할 수 있다.
+            const targetQty = _normalizeQty(override.actualQty);
+            if (targetQty > 0) addLot('(미확인)', '-', targetQty);
         }
 
         const paintingWorks = Storage.getAll(DB.STORES.PAINTING_WORK) || [];
@@ -5766,7 +5943,7 @@ var LaserStandbyModule = (function() {
             const totalQty = Number(w.productionQty) || 0;
             if (totalQty <= 0) return;
             if (overrideDateStamp) {
-                const recordDate = _recordedDateTime(w, w.date || '', w.endTime || w.startTime || '');
+                const recordDate = _inventoryEventStamp(w, w.date || '', w.endTime || w.startTime || '');
                 if (String(recordDate || '') <= overrideDateStamp) return; // 보정 시점 이전은 스냅샷에 이미 포함
             }
             const paintLot = String(_paintingWorkDateTime(w) || w.date || '').replace(/-/g, '').slice(2, 8);
@@ -5787,7 +5964,7 @@ var LaserStandbyModule = (function() {
             const totalQty = Number(w.quantity) || 0;
             if (totalQty <= 0) return;
             if (overrideDateStamp) {
-                const recordDate = _formatWorkDateTime(w.date || '', w.endTime || w.startTime || '');
+                const recordDate = _inventoryEventStamp(w, w.date || '', w.endTime || w.startTime || '');
                 if (String(recordDate || '') <= overrideDateStamp) return;
             }
             const fallbackPaintLot = String(w.paintDate || w.date || '').replace(/-/g, '').slice(2, 8);
@@ -5797,16 +5974,8 @@ var LaserStandbyModule = (function() {
                 w.lotNo || w.paintLot || '',
                 fallbackPaintLot
             );
-            lots.forEach(lot => addLot(lot.lotNo, lot.paintLot || fallbackPaintLot, -lot.qty));
+            lots.forEach(lot => drainLot(lot.lotNo, lot.qty));
         });
-
-        // 보정은 있는데 LOT 배분(.lots)이 비어있는 레거시 데이터: 시점 스냅샷을 세울 수 없으므로
-        // 목표수량을 "LOT 미확인" 버킷으로 얹어 최소한 총량은 header(stockQty)와 일치시킨다.
-        // (품목 상세 화면의 불일치 배너가 이런 레거시 데이터를 알려준다)
-        if (override && overrideLots.length === 0) {
-            const targetQty = _normalizeQty(override.actualQty);
-            if (targetQty > 0) addLot('(미확인)', '-', targetQty);
-        }
 
         return Object.values(balanceMap)
             .filter(row => row.qty > 0.001)
@@ -6701,6 +6870,15 @@ var LaserStandbyModule = (function() {
         }
     }
 
+    // 수기 보정(수량 보정/수동입고/수동출고)은 권한자만 할 수 있는데 작성자가 안 남으면
+    // 누가 고쳤는지 추적할 수 없다 — _manualOverrides에 저장하는 모든 경로에서 공용으로 쓴다.
+    function _currentAuthorName() {
+        try {
+            const u = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? AuthModule.getCurrentUser() : null;
+            return (u && (u.displayName || u.username)) || '';
+        } catch (e) { return ''; }
+    }
+
     async function saveAdjustModal(keyEnc = '', isAddMode = false) {
         if (!_canEditStandby()) {
             UIUtils.toast('레이져 대기품 입력 권한이 없습니다. (관리자·설정에서 입력 권한 부여된 역할만 가능)', 'warning');
@@ -6786,6 +6964,9 @@ var LaserStandbyModule = (function() {
             ? _manualOverrides.findIndex(item => _itemKey(item.carModel, item.partName, item.color) === originalKey)
             : -1;
 
+        const author = _currentAuthorName();
+
+        const effectiveAt = new Date().toISOString();
         const nextRecord = {
             id: currentIndex >= 0 ? _manualOverrides[currentIndex].id : Storage.generateId(),
             carModel: normalizedCarModel,
@@ -6796,7 +6977,9 @@ var LaserStandbyModule = (function() {
             injectionLot,
             lots,
             manualType: addMode ? 'add' : 'edit',
-            updatedAt: new Date().toISOString()
+            author,
+            effectiveAt,
+            updatedAt: effectiveAt
         };
 
         _manualOverrides = _manualOverrides.filter((item, index) => {
@@ -7016,7 +7199,7 @@ var LaserStandbyModule = (function() {
                     onclick="LaserStandbyModule._openStandbyOutForPart('${_cmJs}','${_pnJs}','${_clJs}');">
                     <span class="material-symbols-outlined" style="font-size:0.9rem;">logout</span> 수동 출고
                 </button>` : ''}
-                ${_isAdminUser() ? `<button class="btn btn-sm btn-outline" style="font-size:0.78rem;border-color:var(--accent-red);color:var(--accent-red);"
+                ${canEdit ? `<button class="btn btn-sm btn-outline" style="font-size:0.78rem;border-color:var(--accent-red);color:var(--accent-red);"
                     onclick="UIUtils.closeModal();setTimeout(()=>LaserStandbyModule.confirmResetStandby('${_keyJs}'),80);">
                     <span class="material-symbols-outlined" style="font-size:0.9rem;">restart_alt</span> 이력만 리셋
                 </button>` : ''}
@@ -7060,8 +7243,8 @@ var LaserStandbyModule = (function() {
     }
 
     async function confirmResetStandby(keyEnc) {
-        if (!_isAdminUser()) {
-            UIUtils.toast('이력만 리셋은 관리자만 실행할 수 있습니다.', 'warning');
+        if (!_canEditStandby()) {
+            UIUtils.toast('관리자·레이져운영자만 이력만 리셋을 실행할 수 있습니다.', 'warning');
             return;
         }
         await _ensureManualOverridesLoaded();
@@ -7110,8 +7293,8 @@ var LaserStandbyModule = (function() {
     }
 
     async function executeResetStandby(keyEnc) {
-        if (!_isAdminUser()) {
-            UIUtils.toast('이력만 리셋은 관리자만 실행할 수 있습니다.', 'warning');
+        if (!_canEditStandby()) {
+            UIUtils.toast('관리자·레이져운영자만 이력만 리셋을 실행할 수 있습니다.', 'warning');
             return;
         }
         await _ensureManualOverridesLoaded();
@@ -7335,31 +7518,19 @@ var LaserStandbyModule = (function() {
         const existingIdx = _manualOverrides.findIndex(o =>
             _itemKey(o.carModel, o.partName, o.color || '') === key
         );
-        const existingOverride = existingIdx >= 0 ? _manualOverrides[existingIdx] : null;
-        const hasOverrideLots = existingOverride && Array.isArray(existingOverride.lots) && existingOverride.lots.length > 0;
-        let remainingLots = hasOverrideLots
-            ? existingOverride.lots.map(function(lot) {
-                return {
-                    paintLot: String(lot.paintLot || '').trim(),
-                    injectionLot: String(lot.injectionLot || lot.lotNo || '').trim(),
-                    qty: _normalizeQty(lot.qty)
-                };
-            }).filter(function(lot) { return lot.injectionLot && lot.qty > 0; })
-            : _buildLotBalanceRows(key, item).map(function(lot) {
-                return {
-                    paintLot: String(lot.paintLot || '').trim(),
-                    injectionLot: String(lot.lotNo || '').trim(),
-                    qty: _normalizeQty(lot.qty)
-                };
-            }).filter(function(lot) { return lot.injectionLot && lot.qty > 0; });
+        // 항상 작업 출고까지 반영된 현재 권위 LOT 잔량에서 시작한다.
+        // 원본 override.lots를 다시 쓰면 보정 이후 레이져 작업 차감이 되살아난다.
+        let remainingLots = _buildLotBalanceRows(key, item).map(function(lot) {
+            return {
+                paintLot: String(lot.paintLot || '').trim(),
+                injectionLot: String(lot.lotNo || '').trim(),
+                qty: _normalizeQty(lot.qty)
+            };
+        }).filter(function(lot) { return lot.injectionLot && lot.qty > 0; });
 
-        if (!hasOverrideLots && remainingLots.length > 0) {
-            const lotSum = remainingLots.reduce(function(sum, lot) { return sum + lot.qty; }, 0);
-            const gap = currentStock - lotSum;
-            if (Math.abs(gap) > 0.001) {
-                remainingLots[remainingLots.length - 1].qty = Math.max(0, remainingLots[remainingLots.length - 1].qty + gap);
-                remainingLots = remainingLots.filter(function(lot) { return lot.qty > 0; });
-            }
+        remainingLots = _scaleLotRowsToTotal(remainingLots, currentStock);
+        if (!remainingLots.length && currentStock > 0) {
+            remainingLots.push({ paintLot: '', injectionLot: '(미확인)', qty: currentStock });
         }
 
         const matchIdx = remainingLots.findIndex(function(lot) {
@@ -7373,6 +7544,7 @@ var LaserStandbyModule = (function() {
 
         const remainingPaintLots = [...new Set(remainingLots.map(function(lot) { return lot.paintLot; }).filter(Boolean))].join(', ');
         const remainingInjectionLots = [...new Set(remainingLots.map(function(lot) { return lot.injectionLot; }).filter(Boolean))].join(', ');
+        const effectiveAt = new Date().toISOString();
         const record = {
             id: existingIdx >= 0 ? _manualOverrides[existingIdx].id : Storage.generateId(),
             carModel, partName, color,
@@ -7383,7 +7555,9 @@ var LaserStandbyModule = (function() {
             date,
             note,
             manualType: 'add',
-            updatedAt: new Date().toISOString()
+            author: _currentAuthorName(),
+            effectiveAt,
+            updatedAt: effectiveAt
         };
         if (existingIdx >= 0) {
             _manualOverrides[existingIdx] = record;
@@ -7529,36 +7703,20 @@ var LaserStandbyModule = (function() {
         const existingIdx = _manualOverrides.findIndex(o =>
             _itemKey(o.carModel, o.partName, o.color || '') === key
         );
-        const existingOverride = existingIdx >= 0 ? _manualOverrides[existingIdx] : null;
-        // ✓ 기존 수기보정(override) LOT 배분이 없는 품목(= 도장 작업 기록만으로 재고가 잡혀 있던
-        //   품목)은 계산된 LOT 잔량(_buildLotBalanceRows)에서 시작해야 한다. 빈 배열로 시작하면
-        //   차감량이 LOT 화면에 전혀 반영되지 않아 재공재고(스냅샷)와 LOT별 표시가 어긋난다.
-        const hasOverrideLots = existingOverride && Array.isArray(existingOverride.lots) && existingOverride.lots.length > 0;
-        let remainingLots = hasOverrideLots
-            ? existingOverride.lots.map(function(lot) {
-                return {
-                    paintLot: String(lot.paintLot || '').trim(),
-                    injectionLot: String(lot.injectionLot || lot.lotNo || '').trim(),
-                    qty: _normalizeQty(lot.qty)
-                };
-            }).filter(function(lot) { return lot.injectionLot && lot.qty > 0; })
-            : _buildLotBalanceRows(key, item).map(function(lot) {
-                return {
-                    paintLot: String(lot.paintLot || '').trim(),
-                    injectionLot: String(lot.lotNo || '').trim(),
-                    qty: _normalizeQty(lot.qty)
-                };
-            }).filter(function(lot) { return lot.injectionLot && lot.qty > 0; });
+        // 수동 출고도 원본 override가 아니라 정상 작업 차감까지 반영된 현재 LOT에서 시작한다.
+        let remainingLots = _buildLotBalanceRows(key, item).map(function(lot) {
+            return {
+                paintLot: String(lot.paintLot || '').trim(),
+                injectionLot: String(lot.lotNo || '').trim(),
+                qty: _normalizeQty(lot.qty)
+            };
+        }).filter(function(lot) { return lot.injectionLot && lot.qty > 0; });
 
         // ✓ 계산된 LOT 잔량 합계가 재고 스냅샷(currentStock)과 어긋나는 경우(계산 경로 차이 등)
         //   마지막 LOT에 차액을 반영해 항상 합계가 일치하도록 맞춘다.
-        if (!hasOverrideLots && remainingLots.length > 0) {
-            const lotSum = remainingLots.reduce(function(sum, lot) { return sum + lot.qty; }, 0);
-            const gap = currentStock - lotSum;
-            if (Math.abs(gap) > 0.001) {
-                remainingLots[remainingLots.length - 1].qty = Math.max(0, remainingLots[remainingLots.length - 1].qty + gap);
-                remainingLots = remainingLots.filter(function(lot) { return lot.qty > 0; });
-            }
+        remainingLots = _scaleLotRowsToTotal(remainingLots, currentStock);
+        if (!remainingLots.length && currentStock > 0) {
+            remainingLots.push({ paintLot: '', injectionLot: '(미확인)', qty: currentStock });
         }
 
         // LOT별 실사 보정이 있는 품목은 출고 후에도 LOT 배분을 보존한다.
@@ -7584,6 +7742,7 @@ var LaserStandbyModule = (function() {
         const remainingInjectionLots = remainingLots.length
             ? [...new Set(remainingLots.map(function(lot) { return lot.injectionLot; }).filter(Boolean))].join(', ')
             : injectionLot;
+        const effectiveAt = new Date().toISOString();
         const record = {
             id: existingIdx >= 0 ? _manualOverrides[existingIdx].id : Storage.generateId(),
             carModel, partName, color,
@@ -7592,7 +7751,9 @@ var LaserStandbyModule = (function() {
             injectionLot: remainingInjectionLots,
             lots: remainingLots,
             manualType: 'out',
-            updatedAt: new Date().toISOString()
+            author: _currentAuthorName(),
+            effectiveAt,
+            updatedAt: effectiveAt
         };
         if (existingIdx >= 0) {
             _manualOverrides[existingIdx] = record;

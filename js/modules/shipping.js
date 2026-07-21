@@ -29,6 +29,32 @@ const ShippingStandbyModule = (function() {
             .replace(/'/g, '&#39;');
     }
 
+    const _SS_WAIT_TABLE_STYLE = `
+        <style>
+            .ss-wait-wrap{width:100%;max-width:100%;overflow-x:auto !important;-webkit-overflow-scrolling:touch;}
+            .ss-wait-table{width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;font-size:clamp(0.72rem,0.65rem + 0.35vw,0.88rem);}
+            .ss-wait-table th,.ss-wait-table td{padding:clamp(6px,0.55vw,10px) clamp(6px,0.7vw,12px);vertical-align:middle;}
+            .ss-wait-table th{white-space:nowrap;line-height:1.25;}
+            .ss-wait-table .col-date{min-width:5.5em;white-space:nowrap;}
+            .ss-wait-table .col-src{min-width:3.8em;white-space:nowrap;}
+            .ss-wait-table .col-car{min-width:4.5em;white-space:nowrap;}
+            .ss-wait-table .col-part{min-width:10em;white-space:nowrap;}
+            .ss-wait-table .col-color{min-width:4em;white-space:nowrap;}
+            .ss-wait-table .col-lot{min-width:6.5em;white-space:nowrap;font-family:monospace;font-size:0.8rem;}
+            .ss-wait-table .col-num{min-width:4.2em;text-align:right;white-space:nowrap;}
+            .ss-wait-table .col-box{min-width:5em;text-align:center;white-space:nowrap;}
+            .ss-wait-table .col-cust{min-width:5.5em;white-space:nowrap;}
+            .ss-wait-table .col-std{min-width:4.2em;text-align:center;white-space:nowrap;}
+            .ss-wait-table .col-act{min-width:9em;white-space:nowrap;}
+            @media (max-width:1400px){
+                .ss-wait-table{min-width:1080px;font-size:clamp(0.7rem,0.62rem + 0.3vw,0.82rem);}
+            }
+            @media (max-width:1100px){
+                .ss-wait-table{min-width:980px;}
+                .ss-wait-table .col-part{min-width:8em;}
+            }
+        </style>`;
+
     function _inspectionDateCell(dateValue, timeValue) {
         const rawDate = String(dateValue || '').trim();
         const rawTime = String(timeValue || '').trim();
@@ -87,23 +113,24 @@ const ShippingStandbyModule = (function() {
                             검사 대기
                         </h4>
                     </div>
-                    <div class="card-body" style="padding:0;">
-                        <div class="data-table-wrapper">
-                            <table class="data-table">
+                    <div class="card-body" style="padding:0;min-width:0;">
+                        ${_SS_WAIT_TABLE_STYLE}
+                        <div class="data-table-wrapper ss-wait-wrap">
+                            <table class="data-table ss-wait-table">
                                 <thead>
                                     <tr>
-                                        <th>등록일</th>
-                                        <th>공정</th>
-                                        <th>차종</th>
-                                        <th>품명</th>
-                                        <th>컬러</th>
-                                        <th>도장 LOT</th>
-                                        <th>사출 LOT</th>
-                                        <th style="text-align:right">수량</th>
-                                        <th style="text-align:center">박스수</th>
-                                        <th>납품처</th>
-                                        <th style="text-align:center;white-space:nowrap;">외관항목</th>
-                                        <th>작업</th>
+                                        <th class="col-date">등록일</th>
+                                        <th class="col-src">공정</th>
+                                        <th class="col-car">차종</th>
+                                        <th class="col-part">품명</th>
+                                        <th class="col-color">컬러</th>
+                                        <th class="col-lot">도장 LOT</th>
+                                        <th class="col-lot">사출 LOT</th>
+                                        <th class="col-num">수량</th>
+                                        <th class="col-box">박스수</th>
+                                        <th class="col-cust">납품처</th>
+                                        <th class="col-std">외관항목</th>
+                                        <th class="col-act">작업</th>
                                     </tr>
                                 </thead>
                                 <tbody id="ssWaitingBody"></tbody>
@@ -232,18 +259,18 @@ const ShippingStandbyModule = (function() {
                 : `<span title="기준서 미등록" style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:0.72rem;font-weight:700;background:#fee2e2;color:#b91c1c;">없음</span>`;
             return `
             <tr>
-                <td style="white-space:nowrap;">${d.date || '-'}</td>
-                <td style="white-space:nowrap;"><span style="font-size:0.78rem;font-weight:600;color:${srcColor(d.source)};">${srcLabel(d.source)}</span></td>
-                <td style="white-space:nowrap;">${_esc(d.carModel || '-')}</td>
-                <td style="white-space:nowrap;"><strong>${_esc(d.partName || '-')}</strong></td>
-                <td style="white-space:nowrap;">${_esc(d.color || '-')}</td>
-                <td style="font-family:monospace;font-size:0.8rem;white-space:nowrap;">${_esc(d.paintingDate || '-')}</td>
-                <td style="font-family:monospace;font-size:0.8rem;white-space:nowrap;">${_esc(d.lotNo || '-')}</td>
-                <td style="text-align:right;font-weight:600;white-space:nowrap;">${UIUtils.formatNumber(d.goodQty || d.inspectionQty || 0)}</td>
-                <td style="text-align:center;font-weight:700;color:var(--accent-blue);white-space:nowrap;">${d.boxCount > 0 ? UIUtils.formatNumber(d.boxCount) + ' BOX' : '-'}</td>
-                <td style="font-size:0.85rem;white-space:nowrap;">${_esc(d.customer || '-')}</td>
-                <td style="text-align:center;white-space:nowrap;">${cntHtml}</td>
-                <td style="white-space:nowrap;" onclick="event.stopPropagation()">
+                <td class="col-date">${d.date || '-'}</td>
+                <td class="col-src"><span style="font-size:0.78rem;font-weight:600;color:${srcColor(d.source)};">${srcLabel(d.source)}</span></td>
+                <td class="col-car">${_esc(d.carModel || '-')}</td>
+                <td class="col-part"><strong>${_esc(d.partName || '-')}</strong></td>
+                <td class="col-color">${_esc(d.color || '-')}</td>
+                <td class="col-lot">${_esc(d.paintingDate || '-')}</td>
+                <td class="col-lot">${_esc(d.lotNo || '-')}</td>
+                <td class="col-num" style="font-weight:600;">${UIUtils.formatNumber(d.goodQty || d.inspectionQty || 0)}</td>
+                <td class="col-box" style="font-weight:700;color:var(--accent-blue);">${d.boxCount > 0 ? UIUtils.formatNumber(d.boxCount) + ' BOX' : '-'}</td>
+                <td class="col-cust" style="font-size:0.85rem;">${_esc(d.customer || '-')}</td>
+                <td class="col-std">${cntHtml}</td>
+                <td class="col-act" onclick="event.stopPropagation()">
                     <button class="btn btn-sm btn-primary"
                         onclick="ShippingInspectionModule.openFromStandby('${d.id}')"
                         style="padding:4px 10px;font-size:0.8rem;">

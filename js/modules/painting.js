@@ -4784,6 +4784,126 @@ const PaintingInspectionModule = (function() {
             AuthModule.canWritePage('painting-inspection');
     }
 
+    const _MANAGER_NOTIFY_ROLES = new Set(['admin', 'prod_manager', 'quality_manager']);
+
+    function _currentUserDisplayName() {
+        const user = _currentUser();
+        if (!user) return '미확인 사용자';
+        return String(user.displayName || user.username || user.id || '미확인 사용자');
+    }
+
+    function _getManagerNotifyUsers() {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.getUsers !== 'function') return [];
+        const users = AuthModule.getUsers() || [];
+        const roleMap = (AuthModule.ROLES || []).reduce(function(map, role) {
+            map[role.key] = role;
+            return map;
+        }, {});
+        return users
+            .filter(function(user) {
+                if (!user || user.active === false) return false;
+                const roles = [...(Array.isArray(user.roles) ? user.roles : []), user.role].filter(Boolean).map(String);
+                return roles.some(function(role) { return _MANAGER_NOTIFY_ROLES.has(role); });
+            })
+            .map(function(user) {
+                const roles = [...(Array.isArray(user.roles) ? user.roles : []), user.role].filter(Boolean).map(String);
+                const primary = roles.find(function(role) { return _MANAGER_NOTIFY_ROLES.has(role); }) || String(user.role || '');
+                const role = roleMap[primary] || null;
+                return {
+                    id: String(user.id || ''),
+                    name: String(user.displayName || user.username || user.id || ''),
+                    role: primary,
+                    roleLabel: role ? role.label : primary,
+                    roleColor: role ? role.color : 'var(--text-muted)'
+                };
+            });
+    }
+
+    function _buildEditNotifySelectorHtml(prefix, helpText, selectedIds) {
+        const users = _getManagerNotifyUsers();
+        const selected = new Set((Array.isArray(selectedIds) ? selectedIds : users.map(function(u) { return u.id; })).map(String));
+        if (!users.length) {
+            return '<div style="margin-top:10px;padding:10px 12px;border:1px dashed rgba(239,68,68,0.35);border-radius:6px;font-size:0.8rem;color:var(--text-muted);">통보 가능한 관리자 사용자가 없습니다.</div>';
+        }
+        const groups = {};
+        users.forEach(function(user) {
+            const key = user.role || '__none__';
+            if (!groups[key]) groups[key] = { label: user.roleLabel, color: user.roleColor, items: [] };
+            groups[key].items.push(user);
+        });
+        const roleBlocks = Object.keys(groups).map(function(key) {
+            const group = groups[key];
+            return '<div style="display:flex;flex-direction:column;gap:8px;">' +
+                '<div style="font-size:0.78rem;font-weight:700;color:' + group.color + ';">' + group.label + '</div>' +
+                '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;">' +
+                group.items.map(function(user) {
+                    return '<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid rgba(239,68,68,0.18);border-radius:8px;background:#fff;cursor:pointer;">' +
+                        '<input type="checkbox" class="' + prefix + '-notify-user" value="' + user.id + '"' + (selected.has(String(user.id)) ? ' checked' : '') + ' style="width:16px;height:16px;accent-color:#dc2626;">' +
+                        '<span style="font-size:0.82rem;color:var(--text-primary);font-weight:600;">' + user.name + '</span>' +
+                        '</label>';
+                }).join('') +
+                '</div></div>';
+        }).join('');
+        return '<div style="margin-top:10px;border:1px solid rgba(239,68,68,0.25);border-radius:8px;background:#fff;padding:10px;">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">' +
+            '<div style="font-size:0.8rem;font-weight:700;color:#dc2626;">통보 대상 선택</div>' +
+            '<button type="button" class="btn btn-outline btn-sm" onclick="PaintingInspectionModule.toggleEditNotifyUsers(\'' + prefix + '\', true)">전체 선택</button>' +
+            '</div>' +
+            '<div style="font-size:0.76rem;color:var(--text-muted);margin-bottom:10px;">' + helpText + '</div>' +
+            '<div id="' + prefix + 'NotifyUserWrap" style="display:flex;flex-direction:column;gap:12px;max-height:210px;overflow:auto;">' + roleBlocks + '</div>' +
+            '</div>';
+    }
+
+    function _getSelectedEditNotifyUsers(prefix) {
+        return Array.from(document.querySelectorAll('.' + prefix + '-notify-user:checked'))
+            .map(function(el) { return String(el.value || '').trim(); })
+            .filter(Boolean);
+    }
+
+    function toggleEditNotifyUsers(prefix, forceCheck) {
+        const checks = Array.from(document.querySelectorAll('.' + prefix + '-notify-user'));
+        if (!checks.length) return;
+        const shouldCheck = typeof forceCheck === 'boolean'
+            ? forceCheck
+            : checks.some(function(check) { return !check.checked; });
+        checks.forEach(function(check) { check.checked = shouldCheck; });
+    }
+
+    function _sendEditManagerNotification(title, body, recipientIds) {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return false;
+        if (!Array.isArray(recipientIds) || !recipientIds.length) return false;
+        AuthModule.sendInternalMessage({
+            targetType: 'user',
+            targetIds: recipientIds,
+            title: title,
+            body: body,
+            category: 'manager_notice',
+            priority: 'high'
+        });
+        return true;
+    }
+
+    function _buildInspectionEditChangeSummary(before, after) {
+        const lines = [];
+        const addLine = function(label, oldVal, newVal) {
+            const o = String(oldVal == null ? '' : oldVal);
+            const n = String(newVal == null ? '' : newVal);
+            if (o !== n) lines.push(label + ': ' + (o || '-') + ' → ' + (n || '-'));
+        };
+        addLine('검사일', before.date, after.date);
+        addLine('시작시간', before.inspectionStartTime, after.inspectionStartTime);
+        addLine('완료시간', before.inspectionEndTime, after.inspectionEndTime);
+        addLine('양품수', before.goodQty, after.goodQty);
+        addLine('불량수', before.defectQty, after.defectQty);
+        const oldInspectors = (before.inspectors || []).join(', ');
+        const newInspectors = (after.inspectors || []).join(', ');
+        if (oldInspectors !== newInspectors) lines.push('검사자: ' + (oldInspectors || '-') + ' → ' + (newInspectors || '-'));
+        const oldDefTotal = (before.defects || []).reduce(function(sum, d) { return sum + (Number(d.defectCount) || 0); }, 0);
+        const newDefTotal = (after.defects || []).reduce(function(sum, d) { return sum + (Number(d.defectCount) || 0); }, 0);
+        if (oldDefTotal !== newDefTotal) lines.push('불량 유형 합계: ' + UIUtils.formatNumber(oldDefTotal) + ' → ' + UIUtils.formatNumber(newDefTotal));
+        return lines.length ? lines.join('\n') : '세부 항목 변경 없음';
+    }
+
     function _canUploadNonconformStandard() {
         return _canWriteInspection();
     }
@@ -6566,24 +6686,19 @@ const PaintingInspectionModule = (function() {
         const checkbox = document.getElementById('inpIsPartialInspection');
         const infoDiv = document.getElementById('piPartialInspectionInfo');
         const goodQtyEl = document.getElementById('inpGoodQty');
-        const defectQtyEl = document.getElementById('inpDefectQty');
-        const totalEl = document.getElementById('inpTotalQty');
         if (checkbox && infoDiv) {
             infoDiv.style.display = checkbox.checked ? 'flex' : 'none';
         }
         if (checkbox && checkbox.checked) {
-            // 부분 완료 진입: 자동계산 해제, 이번 회차 검사수량을 직접 입력하도록 초기화
+            // 부분 완료 진입: 양품수만 직접 입력하도록 초기화한다.
+            // 불량수와 합계는 현재 불량 유형 입력값을 그대로 합산한다.
             if (goodQtyEl) goodQtyEl.value = 0;
-            if (defectQtyEl) defectQtyEl.value = 0;
-            if (totalEl) totalEl.value = 0;
         } else {
             // 부분 완료 해제: 전체(남은) 수량 기준 자동계산 복원
             const inspectionQty = parseInt((document.getElementById('inpInspectionQty') || {}).value || 0);
             if (goodQtyEl) goodQtyEl.value = inspectionQty;
-            if (defectQtyEl) defectQtyEl.value = 0;
-            if (totalEl) totalEl.value = inspectionQty;
         }
-        _updatePaintPackagingCalc();
+        _recalcInspQuantities();
     }
 
     // ── 표준 검사 시간(외관검사 C.TIME) → 개당 초 ────────────────────
@@ -6972,19 +7087,22 @@ const PaintingInspectionModule = (function() {
     function _recalcInspQuantities() {
         _refreshWorkQtyDisplay();
         const available = _getInspAvailableFromForm();
+        let defectSum = 0;
+        document.querySelectorAll('[id^="inj-"],[id^="paint-"],[id^="plate-"],[id^="laser-"]').forEach(function(el) {
+            defectSum += parseInt(el.value || 0, 10) || 0;
+        });
         if (_isPartialInspectionMode()) {
             const goodQty = parseInt(document.getElementById('inpGoodQty')?.value || 0, 10) || 0;
-            const failQty = parseInt(document.getElementById('inpDefectQty')?.value || 0, 10) || 0;
+            // 부분 검사에서도 불량수는 불량 유형 입력값 합계로 계속 자동 계산한다.
+            const failQty = defectSum;
+            const failEl = document.getElementById('inpDefectQty');
+            if (failEl) failEl.value = failQty;
             const totalEl = document.getElementById('inpTotalQty');
             if (totalEl) totalEl.value = UIUtils.formatNumber(goodQty + failQty);
             _updatePaintPackagingCalc();
             return;
         }
         let failQty = parseInt(document.getElementById('inpDefectQty')?.value || 0, 10) || 0;
-        let defectSum = 0;
-        document.querySelectorAll('[id^="inj-"],[id^="paint-"],[id^="plate-"],[id^="laser-"]').forEach(function(el) {
-            defectSum += parseInt(el.value || 0, 10) || 0;
-        });
         if (defectSum > 0) {
             failQty = defectSum;
             const failEl = document.getElementById('inpDefectQty');
@@ -8410,7 +8528,7 @@ const PaintingInspectionModule = (function() {
             </div>
 
             <!-- ⑤ 검사자 -->
-            <div class="card" style="margin-bottom:6px;">
+            <div class="card" style="margin-bottom:14px;">
                 <div class="card-header" style="padding:10px 16px;border-bottom:1px solid var(--border);">
                     <h4 style="margin:0;font-size:0.88rem;display:flex;align-items:center;gap:6px;">
                         <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);">group</span>
@@ -8419,6 +8537,30 @@ const PaintingInspectionModule = (function() {
                 </div>
                 <div class="card-body" style="padding:14px 16px;">
                     <div id="inspectorsList"></div>
+                </div>
+            </div>
+
+            <!-- ⑥ 수정 확인 · 관리자 통보 -->
+            <div class="card" style="margin-bottom:6px;border:1px solid rgba(239,68,68,0.28);">
+                <div class="card-header" style="padding:10px 16px;border-bottom:1px solid rgba(239,68,68,0.18);background:rgba(239,68,68,0.04);">
+                    <h4 style="margin:0;font-size:0.88rem;display:flex;align-items:center;gap:6px;color:#dc2626;">
+                        <span class="material-symbols-outlined" style="font-size:1rem;">campaign</span>
+                        수정 확인 · 관리자 통보
+                    </h4>
+                </div>
+                <div class="card-body" style="padding:14px 16px;">
+                    <div style="display:flex;align-items:flex-start;gap:10px;background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.22);border-radius:8px;padding:12px 14px;margin-bottom:12px;">
+                        <span class="material-symbols-outlined" style="color:#dc2626;font-size:20px;flex-shrink:0;margin-top:1px;">warning</span>
+                        <div style="font-size:0.82rem;line-height:1.5;color:var(--text-primary);">
+                            <strong style="color:#dc2626;">관리자 통보 필요</strong> — 검사 실적 수정이므로 담당 관리자에게 수정 내용을 보고한 뒤 저장하세요.
+                            <div style="margin-top:6px;color:var(--text-secondary);">수정자: <strong>${_currentUserDisplayName()}</strong></div>
+                        </div>
+                    </div>
+                    <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer;">
+                        <input type="checkbox" id="editInspManagerNotified" style="width:16px;height:16px;accent-color:#dc2626;"${insp.editManagerNotified ? ' checked' : ''}>
+                        <span style="font-size:0.82rem;font-weight:600;color:#dc2626;">관리자 통보 완료</span>
+                    </label>
+                    ${_buildEditNotifySelectorHtml('editInsp', '검사 실적 수정 통보를 받을 관리자를 선택하세요.', insp.editManagerRecipients || [])}
                 </div>
             </div>
 
@@ -8432,6 +8574,11 @@ const PaintingInspectionModule = (function() {
 
         // 검사자 목록 렌더링
         _renderInspectorsForEdit(inspection.inspectors || []);
+        setTimeout(function() {
+            if (!(inspection.editManagerRecipients || []).length) {
+                toggleEditNotifyUsers('editInsp', true);
+            }
+        }, 60);
     }
 
     // 검사자 목록 렌더링 (수정 모달용)
@@ -8516,6 +8663,27 @@ const PaintingInspectionModule = (function() {
             }
         });
 
+        const managerNotifiedEl = document.getElementById('editInspManagerNotified');
+        if (!managerNotifiedEl || !managerNotifiedEl.checked) {
+            UIUtils.toast('검사 실적 수정 내용을 관리자에게 통보 후 "관리자 통보 완료"를 체크해 주세요.', 'warning');
+            return;
+        }
+        const editNotifyUsers = _getSelectedEditNotifyUsers('editInsp');
+        if (!editNotifyUsers.length) {
+            UIUtils.toast('통보를 받을 관리자를 한 명 이상 선택해 주세요.', 'warning');
+            return;
+        }
+
+        const editor = _currentUser();
+        const editorName = _currentUserDisplayName();
+        const notifyMeta = {
+            editManagerNotified: true,
+            editManagerRecipients: editNotifyUsers,
+            editManagerNotifiedAt: new Date().toISOString(),
+            editManagerNotifiedBy: editor ? String(editor.id || '') : '',
+            editManagerNotifiedByName: editorName
+        };
+
         // 저장
         const success = await _saveInspectionUpdate(inspectionId, {
             goodQty,
@@ -8525,10 +8693,29 @@ const PaintingInspectionModule = (function() {
             defects,
             date: inspectionDate,
             inspectionStartTime,
-            inspectionEndTime
+            inspectionEndTime,
+            ...notifyMeta
         });
 
         if (success) {
+            const changeSummary = _buildInspectionEditChangeSummary(inspection, {
+                date: inspectionDate,
+                inspectionStartTime,
+                inspectionEndTime,
+                goodQty,
+                defectQty,
+                inspectors,
+                defects
+            });
+            _sendEditManagerNotification(
+                '도장 검사 실적 수정 통보',
+                '[수정자] ' + editorName + '\n' +
+                '[제품] ' + (inspection.carModel || '-') + ' / ' + (inspection.partName || '-') + ' / ' + (inspection.color || '-') + '\n' +
+                '[검사일] ' + (inspectionDate || '-') + '\n' +
+                '[변경 내용]\n' + changeSummary,
+                editNotifyUsers
+            );
+
             // 해당 작업의 상태를 "검사 완료"로 유지
             const workId = inspection.workId || inspection.productId;
             if (workId) {
@@ -8973,6 +9160,11 @@ const PaintingInspectionModule = (function() {
             defectQty,
             defects: data.defects || inspection.defects || [],
             inspectors: data.inspectors || inspection.inspectors || [],
+            editManagerNotified: data.editManagerNotified != null ? data.editManagerNotified : inspection.editManagerNotified,
+            editManagerRecipients: data.editManagerRecipients || inspection.editManagerRecipients || [],
+            editManagerNotifiedAt: data.editManagerNotifiedAt || inspection.editManagerNotifiedAt || '',
+            editManagerNotifiedBy: data.editManagerNotifiedBy || inspection.editManagerNotifiedBy || '',
+            editManagerNotifiedByName: data.editManagerNotifiedByName || inspection.editManagerNotifiedByName || '',
             updatedAt: new Date().toISOString()
         };
 
@@ -9047,6 +9239,7 @@ const PaintingInspectionModule = (function() {
         _updateCompletionPartFilter,
         _updateStatsPartFilter,
         openEditInspectionModal,
+        toggleEditNotifyUsers,
         _submitEditInspection,
         _addInspectorFieldToModal,
         _switchTab,

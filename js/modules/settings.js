@@ -8737,10 +8737,13 @@ const SettingsModule = (function() {
     // 사출 LOT 번호 형식 검증 / 수정
     // =====================================================
 
-    /** LOT 번호 유효성 검사 — YYMMDD 6자리 숫자, 실제 존재하는 날짜 */
+    /** LOT 번호 유효성 검사 — YYMMDD 6자리 숫자, 실제 존재하는 날짜.
+     *  단, 'RST' 접두 코드(예: RST260710010)는 사출 LOT 표기 형식과 무관한 별도 용도의
+     *  코드라 형식 오류로 취급하지 않는다(사용자 확인). */
     function _isValidLot(v) {
         if (!v) return false;
         const s = String(v).trim();
+        if (/^RST\d+$/i.test(s)) return true;
         if (!/^\d{6}$/.test(s)) return false;
         const yy = parseInt(s.slice(0, 2), 10);
         const mm = parseInt(s.slice(2, 4), 10);

@@ -160,9 +160,18 @@ var StockDetailUI = (function() {
         const floorZero = !!opts.floorZero;
         const perLotKey = typeof opts.perLotKey === 'function' ? opts.perLotKey : null;
         const getAbsoluteAfter = typeof opts.getAbsoluteAfter === 'function' ? opts.getAbsoluteAfter : null;
+        // date는 'YYYY-MM-DD'(시각 없음)와 'YYYY-MM-DDTHH:MM:SS...'(전체 타임스탬프)가 섞여 있다.
+        // 문자열 그대로 비교하면 같은 날 안에서 시각 없는 값이 항상 "더 이르다"로 취급돼(짧은 문자열이
+        // 접두어로 작다), 시각 없이 저장된 이후 이벤트가 그날의 정밀 타임스탬프 이벤트보다 앞으로
+        // 잘못 재생되는 문제가 있었다. 날짜(앞 10자리)가 같으면 실제 저장 순서(_seq/createdAt/date)로
+        // 다시 가려서, 같은 날 안에서는 진짜 발생 순서를 따르게 한다.
         const sorted = (items || []).slice().sort(function(a, b) {
-            return String(a.date || '').localeCompare(String(b.date || '')) ||
-                String(a._seq || '').localeCompare(String(b._seq || ''));
+            const aDay = String(a.date || '').slice(0, 10);
+            const bDay = String(b.date || '').slice(0, 10);
+            if (aDay !== bDay) return aDay.localeCompare(bDay);
+            const aSeq = String(a._seq || a.createdAt || a.date || '');
+            const bSeq = String(b._seq || b.createdAt || b.date || '');
+            return aSeq.localeCompare(bSeq);
         });
         const runningByKey = {};
         var runningAll = 0;

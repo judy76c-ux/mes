@@ -16306,10 +16306,12 @@ var PaintMixModule = (function() {
 
     // 작업 라인에 해당하는 도료 구성만 반환한다.
     // 제품 전체 도료(도장-A + 도장-B)를 기준으로 세면 한 공정만 완료해도 부분등록으로 남는다.
+    // 도료사용등록은 주제(메인 수지)만 필수로 관리한다 — 희석제는 등록 폼(_paintComponents 직접 호출)에서는
+    // 계속 입력할 수 있지만, "등록완료/부분등록" 판정과 카운트에는 넣지 않는다.
     function _paintComponentsForWork(work) {
         const product = _findProduct(work || {});
         const line = _pmixNormalizeProcTag(work && work.line || '');
-        return _paintComponents(product, line);
+        return _paintComponents(product, line).filter(c => c.role === '주제');
     }
 
     // 작업 라인의 모든 도료가 등록됐으면 true
@@ -16585,13 +16587,67 @@ var PaintMixModule = (function() {
     }
 
     /* ── 배합실 도료재고 입고 등록 / 조정 ── */
+    // 구분(주제/경화제/신너) → 제조사 → 도료명 순으로 좁혀가는 캐스케이드 필터.
+    // 등록 대상 도료가 많을 때 이름 하나로 통 목록에서 찾는 대신 단계별로 걸러 찾게 한다.
+    function _pmixResFilteredMats(category, supplier) {
+        return (Storage.getAll(PAINT_MAT_STORE) || []).filter(m => {
+            if (category && String(m.paintType || '').trim() !== category) return false;
+            if (supplier && String(m.supplier || '').trim() !== supplier) return false;
+            return true;
+        });
+    }
+
+    function onResCategoryChange() {
+        const category = document.getElementById('pmixResCategory')?.value || '';
+        const supplierSel = document.getElementById('pmixResSupplier');
+        const matSel = document.getElementById('pmixResMatId');
+        if (!supplierSel || !matSel) return;
+        const suppliers = [...new Set(_pmixResFilteredMats(category, '').map(m => m.supplier || '').filter(Boolean))]
+            .sort((a, b) => a.localeCompare(b, 'ko'));
+        supplierSel.innerHTML = `<option value="">전체</option>` + suppliers.map(s => `<option value="${_esc(s)}">${_esc(s)}</option>`).join('');
+        supplierSel.value = '';
+        onResSupplierChange();
+    }
+
+    function onResSupplierChange() {
+        const category = document.getElementById('pmixResCategory')?.value || '';
+        const supplier = document.getElementById('pmixResSupplier')?.value || '';
+        const matSel = document.getElementById('pmixResMatId');
+        if (!matSel) return;
+        const mats = _pmixResFilteredMats(category, supplier)
+            .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ko'));
+        matSel.innerHTML = `<option value="">선택</option>` + mats.map(m => `<option value="${_esc(m.id)}">${_esc(m.name)}</option>`).join('');
+    }
+
     function openMixResidualAdjust(materialId, lotNo) {
         if (!_canWritePaintMix()) { UIUtils.toast('배합작업 입력 권한이 없습니다.', 'warning'); return; }
         const isNew = !materialId;
         const mats = Storage.getAll(PAINT_MAT_STORE) || [];
         const current = isNew ? null : _calcMixingRoomResiduals().find(r => r.materialId === materialId && r.lotNo === lotNo);
-        const matOptions = mats.map(m => `<option value="${_esc(m.id)}">${_esc(m.name)}</option>`).join('');
-        UIUtils.showModal(isNew ? '배합실 입고 등록' : '배합실 도료재고 조정', `
+        const categories = [...new Set(mats.map(m => m.paintType || '').filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+        const suppliers = [...new Set(mats.map(m => m.supplier || '').filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+        const matOptions = mats
+            .slice()
+            .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ko'))
+            .map(m => `<option value="${_esc(m.id)}">${_esc(m.name)}</option>`).join('');
+        UIUtils.showModal(isNew ? '배합실에 잔량 도료 등록' : '배합실 도료재고 조정', `
+            ${isNew ? `
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">구분</label>
+                    <select class="form-select" id="pmixResCategory" onchange="PaintMixModule.onResCategoryChange()">
+                        <option value="">전체</option>
+                        ${categories.map(c => `<option value="${_esc(c)}">${_esc(c)}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">제조사</label>
+                    <select class="form-select" id="pmixResSupplier" onchange="PaintMixModule.onResSupplierChange()">
+                        <option value="">전체</option>
+                        ${suppliers.map(s => `<option value="${_esc(s)}">${_esc(s)}</option>`).join('')}
+                    </select>
+                </div>
+            </div>` : ''}
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">도료 <span style="color:var(--accent-red)">*</span></label>
@@ -16960,6 +17016,27 @@ var PaintMixModule = (function() {
         const mixes = _mixes().sort((a, b) => String(b.date||'').localeCompare(String(a.date||'')));
         const mats = Storage.getAll(PAINT_MAT_STORE) || [];
 
+        // 오늘 도료창고 → 배합실 출고 목록 (배합실 작업자가 오늘 뭐가 들어왔는지 바로 확인)
+        const _pmixToday = UIUtils.today();
+        const todayOutgoing = (Storage.getAll(PAINT_INV_STORE) || [])
+            .filter(d => d.type === '출고' && String(d.date || '').slice(0, 10) === _pmixToday)
+            .map(d => {
+                const mat = mats.find(m => m.id === d.materialId);
+                const cans = Number(d.quantity) || 0;
+                const packUnit = Number(d.packUnit) || (mat ? Number(mat.packUnit) || 0 : 0);
+                return {
+                    id: d.id || '',
+                    paintName: (mat && mat.name) || '-',
+                    supplier: (mat && mat.supplier) || '-',
+                    lotNo: d.prodLot || d.lotNo || '-',
+                    cans,
+                    gramLabel: packUnit > 0 ? UIUtils.formatNumber(cans * packUnit) + 'g' : '-',
+                    issuedBy: d.issuedBy || d.processedBy || '-',
+                    source: d.source || '-'
+                };
+            })
+            .sort((a, b) => String(b.id).localeCompare(String(a.id)));
+
         // 잔량 있는 mix 레코드: 사용된 도료 중 mixResiduals에 포함된 것 (warehouseCans > 0 사용 기록)
         const residualLotKeys = new Set(mixResiduals.map(r => `${r.materialId}__${r.lotNo}`));
         const historyRows = [];
@@ -17020,6 +17097,36 @@ var PaintMixModule = (function() {
 
         pane.innerHTML = `
         <div style="margin-bottom:14px;">
+            ${todayOutgoing.length ? `
+            <div class="card" style="margin-bottom:14px;border-left:3px solid #2563eb;">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined" style="color:#2563eb;">local_shipping</span> 오늘 도료창고 출고 목록
+                        <span style="font-size:0.78rem;font-weight:400;color:var(--text-muted);margin-left:6px;">${_esc(_pmixToday)} · ${todayOutgoing.length}건</span>
+                    </h4>
+                </div>
+                <div class="card-body" style="padding:0;">
+                    <div class="data-table-wrapper">
+                        <table class="data-table" style="font-size:0.83rem;">
+                            <thead><tr>
+                                <th>도료명</th><th>제조사</th><th>제조 LOT</th>
+                                <th style="text-align:right;">출고 캔수</th><th style="text-align:right;">환산량(g)</th>
+                                <th>용도/출처</th><th>처리자</th>
+                            </tr></thead>
+                            <tbody>
+                                ${todayOutgoing.map(r => `<tr>
+                                    <td style="font-weight:600;">${_esc(r.paintName)}</td>
+                                    <td style="font-size:0.78rem;color:var(--text-muted);">${_esc(r.supplier)}</td>
+                                    <td style="font-family:monospace;">${_esc(r.lotNo)}</td>
+                                    <td style="text-align:right;font-weight:700;color:#2563eb;">${UIUtils.formatNumber(r.cans)}캔</td>
+                                    <td style="text-align:right;">${_esc(r.gramLabel)}</td>
+                                    <td style="font-size:0.78rem;color:var(--text-muted);">${_esc(r.source)}</td>
+                                    <td>${_esc(r.issuedBy)}</td>
+                                </tr>`).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>` : ''}
             <div class="stat-cards" style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
                 <div class="stat-card green">
                     <div class="stat-card-value">${mixResiduals.length}</div>
@@ -17040,7 +17147,7 @@ var PaintMixModule = (function() {
                     <div style="display:flex;gap:6px;">
                         ${_canWritePaintMix() ? `
                         <button class="btn btn-sm btn-outline" onclick="PaintMixModule.openMixResidualAdjust(null,'')">
-                            <span class="material-symbols-outlined" style="font-size:16px;">add</span> 배합실 입고 등록
+                            <span class="material-symbols-outlined" style="font-size:16px;">add</span> 배합실에 잔량 도료 등록
                         </button>` : ''}
                         <button class="btn btn-sm btn-outline" onclick="PaintMixModule.renderResidualTab()">
                             <span class="material-symbols-outlined" style="font-size:16px;">refresh</span>
@@ -17100,7 +17207,7 @@ var PaintMixModule = (function() {
                     <div style="text-align:center;padding:36px;color:var(--text-muted);">
                         <span class="material-symbols-outlined" style="font-size:32px;display:block;margin-bottom:8px;">inventory_2</span>
                         입고·사용 이력이 없습니다.<br>
-                        <span style="font-size:0.82rem;">배합실 입고 등록 또는 도료사용등록 후 이력이 표시됩니다.</span>
+                        <span style="font-size:0.82rem;">배합실에 잔량 도료 등록 또는 도료사용등록 후 이력이 표시됩니다.</span>
                     </div>`}
                 </div>
             </div>
@@ -18194,6 +18301,7 @@ var PaintMixModule = (function() {
         _validateRow, _validateAllRows,
         renderResidualStock, filterResidualStock, exportResidualData, openResidualAdjust, saveResidualAdjust,
         openMixResidualAdjust, saveMixResidualAdjust, openResidualHistory,
+        onResCategoryChange, onResSupplierChange,
         saveNew, edit, saveEdit, remove, exportData,
         renderFormulaAsStandard, renderUsageAsStandard
     };
