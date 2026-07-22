@@ -376,10 +376,11 @@ const DashboardModule = (function() {
             .filter(p => p.date && p.date < today && (p.carModel || p.partName) && !workedPlanIds.has(p.id))
             .sort((a, b) => b.date.localeCompare(a.date));
 
-        /* ③ 도료 사용 미등록 (전일 이전 작업일지 중 도료 배합 기록 없음) */
+        /* ③ 도료 사용 미등록 (전일 이전 작업일지 중 도료 배합 기록 없음)
+           - 도료사용등록 대상에서 '제외'한 작업은 알림에서도 빼 둔다 */
         const mixes = (Storage.getAll(DB.STORES.PROD_CONDITIONS) || []).filter(d => d._docKind === 'paint_mix');
         const mixedWorkIds = new Set(mixes.map(m => m.workId).filter(Boolean));
-        const paintMissing = works
+        let paintMissing = works
             .filter(w => w.date && w.date < today && !mixedWorkIds.has(w.id))
             .sort((a, b) => (b.date||'').localeCompare(a.date||''));
 
@@ -391,13 +392,6 @@ const DashboardModule = (function() {
             }
         } catch (e) { console.warn('[Dashboard] LOT 오류 스캔 실패:', e); }
 
-        const total = (injPending.length > 0 ? 1 : 0) + (unenteredPlans.length > 0 ? 1 : 0)
-            + (paintMissing.length > 0 ? 1 : 0) + (lotErrors.length > 0 ? 1 : 0);
-        if (!total) { el.style.display = 'none'; return; }
-        el.style.display = 'grid';
-
-        /* 공통: 미니 카드 생성 헬퍼. onClickJs를 주면 nav 대신 그 JS를 "바로가기" 버튼에 쓴다
-           (예: 설정 화면의 특정 탭으로 스크롤까지 이동해야 하는 등 단순 페이지 이동 이상이 필요할 때). */
         function _alertCard(icon, iconColor, title, count, rows, nav, emptyMsg, onClickJs) {
             if (!count) return `<div style="border:1px solid var(--border-color);border-radius:8px;padding:10px 12px;background:var(--bg-secondary);display:flex;align-items:center;gap:8px;color:var(--text-muted);font-size:0.82rem;">
                 <span class="material-symbols-outlined" style="font-size:16px;color:var(--accent-green);">check_circle</span>${emptyMsg}</div>`;
@@ -413,48 +407,63 @@ const DashboardModule = (function() {
             </div>`;
         }
 
-        /* 사출 입고 대기 rows */
-        const injRows = injPending.length ? `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;">` +
-            injPending.slice(0, 20).map(r => `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
-                <td style="padding:4px 10px;white-space:nowrap;color:var(--text-muted);">${r.date||'-'}</td>
-                <td style="padding:4px 8px;font-weight:600;">${r.partName||'-'}</td>
-                <td style="padding:4px 8px;font-size:0.72rem;color:var(--text-muted);">${r.carModel||''} ${r.color||''}</td>
-                <td style="padding:4px 10px;text-align:right;font-weight:700;color:#8b5cf6;">${UIUtils.formatNumber(r.qty||0)}</td>
-            </tr>`).join('') + `</table>` : '';
+        function _paintRowsHtml(list) {
+            if (!list.length) return '';
+            return `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;">` +
+                list.slice(0, 20).map(w => `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
+                    <td style="padding:4px 10px;white-space:nowrap;color:var(--text-muted);">${(w.date||'-').split(' ')[0]}</td>
+                    <td style="padding:4px 8px;font-size:0.72rem;color:#0891b2;font-weight:600;">${w.line||''}</td>
+                    <td style="padding:4px 8px;font-weight:600;">${w.carModel||''}</td>
+                    <td style="padding:4px 8px;font-size:0.72rem;color:var(--text-muted);">${w.partName||''}</td>
+                </tr>`).join('') + `</table>`;
+        }
 
-        /* 실적 미입력 rows */
-        const unenteredRows = unenteredPlans.length ? `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;">` +
-            unenteredPlans.slice(0, 20).map(p => `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
-                <td style="padding:4px 10px;white-space:nowrap;color:var(--text-muted);">${p.date||'-'}</td>
-                <td style="padding:4px 8px;font-size:0.72rem;color:#0891b2;font-weight:600;">${p.line||''}</td>
-                <td style="padding:4px 8px;font-weight:600;">${p.carModel||''}</td>
-                <td style="padding:4px 8px;font-size:0.72rem;color:var(--text-muted);">${p.partName||''}</td>
-                <td style="padding:4px 10px;text-align:right;font-weight:700;color:#f59e0b;">${UIUtils.formatNumber(p.planQty||0)}</td>
-            </tr>`).join('') + `</table>` : '';
+        function _paintHtml(list) {
+            const injRows = injPending.length ? `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;">` +
+                injPending.slice(0, 20).map(r => `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
+                    <td style="padding:4px 10px;white-space:nowrap;color:var(--text-muted);">${r.date||'-'}</td>
+                    <td style="padding:4px 8px;font-weight:600;">${r.partName||'-'}</td>
+                    <td style="padding:4px 8px;font-size:0.72rem;color:var(--text-muted);">${r.carModel||''} ${r.color||''}</td>
+                    <td style="padding:4px 10px;text-align:right;font-weight:700;color:#8b5cf6;">${UIUtils.formatNumber(r.qty||0)}</td>
+                </tr>`).join('') + `</table>` : '';
 
-        /* 도료 사용 미등록 rows */
-        const paintRows = paintMissing.length ? `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;">` +
-            paintMissing.slice(0, 20).map(w => `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
-                <td style="padding:4px 10px;white-space:nowrap;color:var(--text-muted);">${(w.date||'-').split(' ')[0]}</td>
-                <td style="padding:4px 8px;font-size:0.72rem;color:#0891b2;font-weight:600;">${w.line||''}</td>
-                <td style="padding:4px 8px;font-weight:600;">${w.carModel||''}</td>
-                <td style="padding:4px 8px;font-size:0.72rem;color:var(--text-muted);">${w.partName||''}</td>
-            </tr>`).join('') + `</table>` : '';
+            const unenteredRows = unenteredPlans.length ? `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;">` +
+                unenteredPlans.slice(0, 20).map(p => `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
+                    <td style="padding:4px 10px;white-space:nowrap;color:var(--text-muted);">${p.date||'-'}</td>
+                    <td style="padding:4px 8px;font-size:0.72rem;color:#0891b2;font-weight:600;">${p.line||''}</td>
+                    <td style="padding:4px 8px;font-weight:600;">${p.carModel||''}</td>
+                    <td style="padding:4px 8px;font-size:0.72rem;color:var(--text-muted);">${p.partName||''}</td>
+                    <td style="padding:4px 10px;text-align:right;font-weight:700;color:#f59e0b;">${UIUtils.formatNumber(p.planQty||0)}</td>
+                </tr>`).join('') + `</table>` : '';
 
-        /* 사출 LOT 형식 오류 rows */
-        const lotErrorRows = lotErrors.length ? `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;">` +
-            lotErrors.slice(0, 20).map(e => `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
-                <td style="padding:4px 10px;white-space:nowrap;color:var(--text-muted);">${_esc((e.date||'-').split(' ')[0])}</td>
-                <td style="padding:4px 8px;font-size:0.72rem;color:#dc2626;font-weight:600;">${_esc(e.src||'')}</td>
-                <td style="padding:4px 8px;font-weight:600;">${_esc(e.partName||'')}</td>
-                <td style="padding:4px 8px;font-size:0.72rem;font-family:monospace;color:var(--text-muted);">${_esc(e.original||'')}</td>
-            </tr>`).join('') + `</table>` : '';
+            const lotErrorRows = lotErrors.length ? `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;">` +
+                lotErrors.slice(0, 20).map(e => `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
+                    <td style="padding:4px 10px;white-space:nowrap;color:var(--text-muted);">${_esc((e.date||'-').split(' ')[0])}</td>
+                    <td style="padding:4px 8px;font-size:0.72rem;color:#dc2626;font-weight:600;">${_esc(e.src||'')}</td>
+                    <td style="padding:4px 8px;font-weight:600;">${_esc(e.partName||'')}</td>
+                    <td style="padding:4px 8px;font-size:0.72rem;font-family:monospace;color:var(--text-muted);">${_esc(e.original||'')}</td>
+                </tr>`).join('') + `</table>` : '';
 
-        el.innerHTML =
-            _alertCard('precision_manufacturing', '#8b5cf6', '사출 입고 대기', injPending.length, injRows, 'warehouse-overview', '사출 입고 대기 없음') +
-            _alertCard('edit_note',               '#f59e0b', '실적 미입력',    unenteredPlans.length, unenteredRows, 'painting-work', '미입력 계획 없음') +
-            _alertCard('barcode_scanner',         '#dc2626', '사출 LOT 형식 오류', lotErrors.length, lotErrorRows, null, 'LOT 형식 오류 없음', 'App.goToLotRepairTab()') +
-            _alertCard('science',                 '#ef4444', '도료 사용 미등록', paintMissing.length, paintRows, 'paint-mix', '도료 사용 모두 등록됨');
+            const total = (injPending.length > 0 ? 1 : 0) + (unenteredPlans.length > 0 ? 1 : 0)
+                + (list.length > 0 ? 1 : 0) + (lotErrors.length > 0 ? 1 : 0);
+            if (!total) { el.style.display = 'none'; el.innerHTML = ''; return; }
+            el.style.display = 'grid';
+            el.innerHTML =
+                _alertCard('precision_manufacturing', '#8b5cf6', '사출 입고 대기', injPending.length, injRows, 'warehouse-overview', '사출 입고 대기 없음') +
+                _alertCard('edit_note',               '#f59e0b', '실적 미입력',    unenteredPlans.length, unenteredRows, 'painting-work', '미입력 계획 없음') +
+                _alertCard('barcode_scanner',         '#dc2626', '사출 LOT 형식 오류', lotErrors.length, lotErrorRows, null, 'LOT 형식 오류 없음', 'App.goToLotRepairTab()') +
+                _alertCard('science',                 '#ef4444', '도료 사용 미등록', list.length, _paintRowsHtml(list), 'paint-mix', '도료 사용 모두 등록됨');
+        }
+
+        _paintHtml(paintMissing);
+
+        Storage.getConfigValue('paint_mix_hidden_works_v1').then(function(list) {
+            const hidden = new Set((Array.isArray(list) ? list : []).map(String));
+            if (!hidden.size) return;
+            const filtered = paintMissing.filter(w => !hidden.has(String(w.id)));
+            if (filtered.length === paintMissing.length) return;
+            _paintHtml(filtered);
+        }).catch(function() {});
     }
 
     /* ══════════════════════════════════════════════════════════

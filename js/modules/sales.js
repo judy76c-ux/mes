@@ -2872,7 +2872,7 @@ var DeliveryConsolidateModule = (function() {
                                     </div>
                                     <div class="form-group">
                                         <label class="form-label" style="font-size:0.74rem;">납품처 열 (0=사용안함)</label>
-                                        <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="dpcCustomerCol" value="0" type="number" min="0">
+                                        <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="dpcCustomerCol" value="15" type="number" min="0">
                                     </div>
                                     <div class="form-group">
                                         <label class="form-label" style="font-size:0.74rem;">기준 연도</label>
@@ -2924,6 +2924,53 @@ var DeliveryConsolidateModule = (function() {
         return { month: Number(m[1]), day: Number(m[2]) };
     }
 
+    // 엑셀에서 줄바꿈 포함 셀(예: 세로글씨 차종, 여러 줄 헤더)을 복사하면
+    // 그 셀 값 전체가 큰따옴표로 감싸져 안의 개행("\n")·탭이 그대로 들어온다.
+    // 단순히 '\n' 기준으로 행을 나누면 이런 셀 안의 개행을 행 구분자로 착각해
+    // 그 지점부터 모든 열이 밀리는 문제가 생긴다 — 따옴표를 인식하는 파서로 방지.
+    function _parseTsvGrid(text) {
+        const s = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const rows = [];
+        let row = [];
+        let field = '';
+        let inQuotes = false;
+        for (let i = 0; i < s.length; i++) {
+            const ch = s[i];
+            if (inQuotes) {
+                if (ch === '"') {
+                    if (s[i + 1] === '"') { field += '"'; i++; }
+                    else inQuotes = false;
+                } else {
+                    field += ch;
+                }
+                continue;
+            }
+            if (ch === '"' && field === '') {
+                inQuotes = true;
+            } else if (ch === '\t') {
+                row.push(field); field = '';
+            } else if (ch === '\n') {
+                row.push(field); field = '';
+                rows.push(row); row = [];
+            } else {
+                field += ch;
+            }
+        }
+        row.push(field);
+        rows.push(row);
+        return rows.filter(r => r.some(c => String(c || '').trim() !== ''));
+    }
+
+    // 세로로 한 글자씩 줄바꿈된 셀(예: "G\nO\nL\nF\n_\n\n7" → "GOLF_7") 복구용 —
+    // 차종·납품처 열은 열 폭이 좁아 세로쓰기로 표시된 병합 셀이 많다.
+    function _cleanGroupLabel(raw) {
+        return String(raw ?? '').replace(/\s+/g, '');
+    }
+
+    function _cleanText(raw) {
+        return String(raw ?? '').replace(/\s+/g, ' ').trim();
+    }
+
     function parsePasted() {
         const text = (document.getElementById('dpcPasteArea') || {}).value || '';
         const statusEl = document.getElementById('dpcParseStatus');
@@ -2933,9 +2980,7 @@ var DeliveryConsolidateModule = (function() {
             return;
         }
 
-        const grid = text.replace(/\r/g, '').split('\n')
-            .map(line => line.split('\t'))
-            .filter(row => row.some(c => String(c || '').trim() !== ''));
+        const grid = _parseTsvGrid(text);
 
         // 날짜 헤더 행 자동 탐색 — 날짜 패턴 셀이 가장 많은 행을 헤더로 채택
         let headerRowIdx = -1;
@@ -2972,14 +3017,14 @@ var DeliveryConsolidateModule = (function() {
         let lastCustomer = '';
         for (let ri = headerRowIdx + 1; ri < grid.length; ri++) {
             const row = grid[ri];
-            const partName = String(row[partCol] || '').trim();
-            const carModelRaw = String(row[carCol] || '').trim();
+            const partName = _cleanText(row[partCol]);
+            const carModelRaw = _cleanGroupLabel(row[carCol]);
             if (carModelRaw) lastCarModel = carModelRaw;
-            const customerRaw = customerCol >= 0 ? String(row[customerCol] || '').trim() : '';
+            const customerRaw = customerCol >= 0 ? _cleanGroupLabel(row[customerCol]) : '';
             if (customerRaw) lastCustomer = customerRaw;
             if (!partName) continue; // 구분선/합계 행 등은 건너뜀
 
-            const packUnit = packCol >= 0 ? String(row[packCol] || '').trim() : '';
+            const packUnit = packCol >= 0 ? _cleanText(row[packCol]) : '';
 
             dateCols.forEach(function(dc) {
                 const qty = _num(row[dc.col]);
@@ -3087,26 +3132,74 @@ var DeliveryConsolidateModule = (function() {
     }
 
     // ── 취합 대기함 ────────────────────────────────────────────────
-    function renderStaging() {
-        const body = document.getElementById('dpcStagingBody');
-        const badge = document.getElementById('dpcStagingBadge');
-        if (!body) return;
+    // 취합 대기함 보기 형태: 'pivot' = 원본 시트처럼 행=날짜/열=차종·품명, 'list' = 개별 삭제·확인용 목록형
+    let _stagingViewMode = 'pivot';
 
-        const items = (Storage.getAll(STAGING_STORE) || [])
-            .filter(r => r.status !== '반영완료')
-            .sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.carModel || '').localeCompare(b.carModel || ''));
+    function setStagingViewMode(mode) {
+        _stagingViewMode = mode === 'list' ? 'list' : 'pivot';
+        renderStaging();
+    }
 
-        if (badge) {
-            if (items.length) { badge.textContent = `${items.length}건`; badge.style.display = ''; }
-            else badge.style.display = 'none';
-        }
+    function _toolbarHtml(count) {
+        const btn = (mode, label) => `
+            <button class="btn btn-sm ${_stagingViewMode === mode ? 'btn-primary' : 'btn-outline'}"
+                onclick="DeliveryConsolidateModule.setStagingViewMode('${mode}')">${label}</button>`;
+        return `
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:10px 16px;border-bottom:1px solid var(--border-color);">
+                <div style="display:flex;gap:6px;">
+                    ${btn('pivot', '표 형태 (행=품명, 열=날짜)')}
+                    ${btn('list', '목록형 (개별 삭제)')}
+                </div>
+                <span style="font-size:0.78rem;color:var(--text-muted);">${count}건</span>
+            </div>`;
+    }
 
-        if (!items.length) {
-            body.innerHTML = `<div style="padding:18px;color:var(--text-muted);font-size:0.9rem;text-align:center;">대기 중인 취합 항목이 없습니다.</div>`;
-            return;
-        }
+    // 원본 취합 시트와 동일한 감각으로 검토할 수 있게, 행=차종/품명 · 열=납품일로 피벗한다.
+    function _renderStagingPivot(items) {
+        const dates = [...new Set(items.map(r => r.date))].sort();
+        const keyOf = r => `${r.carModel || '-'}||${r.partName}`;
+        const itemMap = new Map();
+        items.forEach(r => {
+            const key = keyOf(r);
+            if (!itemMap.has(key)) itemMap.set(key, { carModel: r.carModel || '-', partName: r.partName });
+        });
+        const rowsList = [...itemMap.entries()].sort((a, b) =>
+            a[1].carModel.localeCompare(b[1].carModel) || a[1].partName.localeCompare(b[1].partName));
 
-        body.innerHTML = `
+        const cellMap = {};
+        items.forEach(r => {
+            const k = `${keyOf(r)}||${r.date}`;
+            cellMap[k] = (cellMap[k] || 0) + (Number(r.planQty) || 0);
+        });
+
+        const headHtml = `<th style="white-space:nowrap;position:sticky;left:0;background:var(--bg-primary);z-index:1;">차종 · 품명</th>` +
+            dates.map(d => `<th style="white-space:nowrap;font-size:0.72rem;font-weight:600;padding:6px 8px;">${_esc(d)}</th>`).join('');
+
+        const bodyHtml = rowsList.map(([key, it]) => {
+            const cells = dates.map(d => {
+                const qty = cellMap[`${key}||${d}`];
+                return `<td style="text-align:right;padding:5px 8px;${qty ? 'font-weight:700;color:var(--accent-blue);' : 'color:var(--border-color);'}">${qty ? UIUtils.formatNumber(qty) : '-'}</td>`;
+            }).join('');
+            return `<tr><td style="white-space:nowrap;position:sticky;left:0;background:var(--bg-primary);">
+                        <div style="font-size:0.72rem;color:var(--text-muted);">${_esc(it.carModel)}</div>
+                        <div style="font-weight:700;">${_esc(it.partName)}</div>
+                    </td>${cells}</tr>`;
+        }).join('');
+
+        return `
+            <div class="data-table-wrapper" style="max-height:480px;overflow:auto;">
+                <table class="data-table" style="width:max-content;">
+                    <thead><tr>${headHtml}</tr></thead>
+                    <tbody>${bodyHtml}</tbody>
+                </table>
+            </div>
+            <div style="padding:8px 16px;font-size:0.76rem;color:var(--text-muted);">
+                행 ${rowsList.length}개(차종/품명) · 열 ${dates.length}개(납품일) — 개별 삭제나 반영은 '목록형'에서 하세요.
+            </div>`;
+    }
+
+    function _renderStagingList(items) {
+        return `
             <div class="data-table-wrapper">
                 <table class="data-table">
                     <thead>
@@ -3134,12 +3227,47 @@ var DeliveryConsolidateModule = (function() {
                             </tr>`).join('')}
                     </tbody>
                 </table>
-            </div>
+            </div>`;
+    }
+
+    function renderStaging() {
+        const body = document.getElementById('dpcStagingBody');
+        const badge = document.getElementById('dpcStagingBadge');
+        if (!body) return;
+
+        const items = (Storage.getAll(STAGING_STORE) || [])
+            .filter(r => r.status !== '반영완료')
+            .sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.carModel || '').localeCompare(b.carModel || ''));
+
+        if (badge) {
+            if (items.length) { badge.textContent = `${items.length}건`; badge.style.display = ''; }
+            else badge.style.display = 'none';
+        }
+
+        if (!items.length) {
+            body.innerHTML = `<div style="padding:18px;color:var(--text-muted);font-size:0.9rem;text-align:center;">대기 중인 취합 항목이 없습니다.</div>`;
+            return;
+        }
+
+        const commitBarHtml = `
             <div style="padding:12px 16px;border-top:1px solid var(--border-color);background:var(--bg-secondary);">
                 <button class="btn btn-primary" onclick="DeliveryConsolidateModule.commitStaging()">
-                    <span class="material-symbols-outlined" style="font-size:18px;">playlist_add_check</span> 선택 항목 납품계획에 반영
+                    <span class="material-symbols-outlined" style="font-size:18px;">playlist_add_check</span>
+                    ${_stagingViewMode === 'list' ? '선택 항목 납품계획에 반영' : '전체 납품계획에 반영'}
                 </button>
             </div>`;
+
+        body.innerHTML = _toolbarHtml(items.length) +
+            (_stagingViewMode === 'list' ? _renderStagingList(items) : _renderStagingPivot(items)) +
+            commitBarHtml;
+
+        if (_stagingViewMode === 'pivot') {
+            // 피벗 화면은 체크박스가 없으니, 반영 시 전체를 대상으로 하도록 숨은 체크박스를 채워둔다.
+            const hidden = document.createElement('div');
+            hidden.style.display = 'none';
+            hidden.innerHTML = items.map(r => `<input type="checkbox" class="dpc-staging-chk" data-id="${r.id}" checked>`).join('');
+            body.appendChild(hidden);
+        }
     }
 
     function toggleStagingAll(checked) {
@@ -3180,7 +3308,8 @@ var DeliveryConsolidateModule = (function() {
     return {
         init, render,
         parsePasted, toggleParsePreviewAll, clearPreview, saveToStaging,
-        renderStaging, toggleStagingAll, removeStagingRow, commitStaging
+        renderStaging, toggleStagingAll, removeStagingRow, commitStaging,
+        setStagingViewMode
     };
 })();
 

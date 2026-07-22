@@ -14779,6 +14779,8 @@ var PaintMixModule = (function() {
     const PAINT_WORK_STORE = DB.STORES.PAINTING_WORK;
     const PRODUCT_STORE   = DB.STORES.PRODUCTS;
     const DOC_KIND = 'paint_mix';
+    /** 도료사용등록 대상 목록에서 제외한 도장작업 ID (작업일지는 유지) */
+    const HIDDEN_WORKS_KEY = 'paint_mix_hidden_works_v1';
 
     const _esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const _js  = s => String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ');
@@ -14807,6 +14809,27 @@ var PaintMixModule = (function() {
     };
 
     let _curTab = 'history';
+    let _hiddenWorkIds = new Set();
+    let _hiddenWorksLoaded = false;
+
+    async function _loadHiddenWorks() {
+        try {
+            const list = (await Storage.getConfigValue(HIDDEN_WORKS_KEY).catch(() => ([]))) || [];
+            _hiddenWorkIds = new Set(Array.isArray(list) ? list.map(String) : []);
+        } catch (e) {
+            _hiddenWorkIds = new Set();
+        }
+        _hiddenWorksLoaded = true;
+        return _hiddenWorkIds;
+    }
+
+    async function _saveHiddenWorks() {
+        await Storage.setConfigValue(HIDDEN_WORKS_KEY, Array.from(_hiddenWorkIds));
+    }
+
+    function _isWorkHidden(workId) {
+        return _hiddenWorkIds.has(String(workId || ''));
+    }
 
     /* ─── 탭 타일 카드 네비게이션 ──────────────────────────────── */
     const _PMIX_TABS = [
@@ -16242,6 +16265,7 @@ var PaintMixModule = (function() {
             <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;margin-right:4px;">info</span>
             도장 작업 완료 실적을 선택하여 <strong>도료사용등록</strong>을 누르면 도료 출고량·사용량·잔량을 기록할 수 있습니다.<br>
             도료 창고에서 출고 처리가 자동으로 연결됩니다.
+            <span style="color:var(--text-secondary);">목록에서 제외한 항목은 다시 나타나지 않습니다 (도장 작업일지는 유지).</span>
         </div>
         <div class="filter-bar" style="flex-wrap:wrap;gap:10px;margin-bottom:14px;">
             <div class="form-group">
@@ -16271,7 +16295,7 @@ var PaintMixModule = (function() {
                 <span style="font-size:0.78rem;color:var(--text-muted);">미등록: 파란 버튼 / 부분등록: 노란 테두리 / 전체등록 완료: 회색 버튼</span>
                 ${_isAdmin() ? `
                 <button class="btn btn-sm btn-danger" style="margin-left:auto;" onclick="PaintMixModule.removeAllWork()">
-                    <span class="material-symbols-outlined" style="font-size:16px;">delete_sweep</span> 전체 삭제
+                    <span class="material-symbols-outlined" style="font-size:16px;">visibility_off</span> 전체 제외
                 </button>` : ''}
             </div>
             <div class="card-body" style="padding:0;">
@@ -16326,29 +16350,40 @@ var PaintMixModule = (function() {
         const start = document.getElementById('pmixStart')?.value || '';
         const end   = document.getElementById('pmixEnd')?.value || '';
         const car   = document.getElementById('pmixCarFilter')?.value || '';
-        const allWorks = Storage.getAll(PAINT_WORK_STORE) || [];
-        const regMap = _buildRegisteredMap();
 
-        const filtered = allWorks
-            .filter(w => (!start || w.date >= start) && (!end || w.date <= end))
-            .filter(w => !car || w.carModel === car);
+        const run = function() {
+            const allWorks = (Storage.getAll(PAINT_WORK_STORE) || [])
+                .filter(w => !_isWorkHidden(w.id));
+            const regMap = _buildRegisteredMap();
 
-        // 미등록/부분등록 작업은 날짜 필터 밖이어도 항상 표시 (누락 방지)
-        const filteredIds = new Set(filtered.map(w => w.id));
-        const alwaysShow = allWorks
-            .filter(w => !_isWorkFullyReg(w, regMap) && !filteredIds.has(w.id))
-            .filter(w => !car || w.carModel === car);
+            const filtered = allWorks
+                .filter(w => (!start || w.date >= start) && (!end || w.date <= end))
+                .filter(w => !car || w.carModel === car);
 
-        const works = [...filtered, ...alwaysShow]
-            .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+            // 미등록/부분등록 작업은 날짜 필터 밖이어도 항상 표시 (누락 방지)
+            // ※ 목록에서 제외(hidden)한 건은 위에서 이미 빠지므로 다시 나타나지 않음
+            const filteredIds = new Set(filtered.map(w => w.id));
+            const alwaysShow = allWorks
+                .filter(w => !_isWorkFullyReg(w, regMap) && !filteredIds.has(w.id))
+                .filter(w => !car || w.carModel === car);
 
-        const mixes = _mixes()
-            .filter(m => (!start || m.date >= start) && (!end || m.date <= end))
-            .filter(m => !car || m.carModel === car)
-            .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-        renderStats(works, mixes);
-        renderWorkTable(works, regMap);
-        renderMixTable(mixes);
+            const works = [...filtered, ...alwaysShow]
+                .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+            const mixes = _mixes()
+                .filter(m => (!start || m.date >= start) && (!end || m.date <= end))
+                .filter(m => !car || m.carModel === car)
+                .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+            renderStats(works, mixes);
+            renderWorkTable(works, regMap);
+            renderMixTable(mixes);
+        };
+
+        if (!_hiddenWorksLoaded) {
+            _loadHiddenWorks().then(run).catch(run);
+            return;
+        }
+        run();
     }
 
     function renderStats(works, mixes) {
@@ -16414,7 +16449,7 @@ var PaintMixModule = (function() {
                     <td style="white-space:nowrap;">
                         ${statusBadge}
                         ${_canWritePaintMix() ? `<button class="btn btn-sm ${btnClass}" onclick="PaintMixModule.openFromWork('${_js(w.id)}')">${btnLabel}</button>` : ''}
-                        ${_isAdmin() ? `<button class="btn btn-sm btn-danger" onclick="PaintMixModule.removeWork('${_js(w.id)}')">삭제</button>` : ''}
+                        ${_isAdmin() ? `<button class="btn btn-sm btn-outline" title="도료사용등록 대상 목록에서만 제외 (도장 작업일지는 유지)" onclick="PaintMixModule.removeWork('${_js(w.id)}')">제외</button>` : ''}
                     </td>
                 </tr>`;
         }).join('');
@@ -16422,22 +16457,42 @@ var PaintMixModule = (function() {
 
     function removeWork(id) {
         if (!_isAdmin()) return;
-        UIUtils.confirm('이 도장 완료 실적을 삭제하시겠습니까?\n도장 작업일지에서도 함께 삭제됩니다.', async () => {
-            await Storage.remove(PAINT_WORK_STORE, id);
-            UIUtils.toast('삭제되었습니다.', 'success');
-            search();
-        });
+        UIUtils.confirm(
+            '이 항목을 도료사용등록 대상 목록에서 제외할까요?\n\n· 목록/대시보드 미등록 알림에서 더 이상 나타나지 않습니다.\n· 도장 작업일지·배합 기록은 삭제되지 않습니다.',
+            async () => {
+                try {
+                    if (!_hiddenWorksLoaded) await _loadHiddenWorks();
+                    _hiddenWorkIds.add(String(id));
+                    await _saveHiddenWorks();
+                    UIUtils.toast('목록에서 제외되었습니다.', 'success');
+                    search();
+                } catch (err) {
+                    console.error('[PaintMix] hide work failed:', err);
+                    UIUtils.toast('제외 처리 중 오류가 발생했습니다.', 'error');
+                }
+            }
+        );
     }
 
     function removeAllWork() {
         if (!_isAdmin()) return;
         const list = _curWorks || [];
-        if (!list.length) { UIUtils.toast('삭제할 도장 완료 실적이 없습니다.', 'warning'); return; }
-        UIUtils.confirm(`조회된 도장 완료 실적 ${list.length}건을 모두 삭제하시겠습니까?\n도장 작업일지에서도 함께 삭제되며, 되돌릴 수 없습니다.`, async () => {
-            await Storage.executeTransaction(list.map(w => ({ store: PAINT_WORK_STORE, op: 'remove', id: w.id })));
-            UIUtils.toast(`${list.length}건이 삭제되었습니다.`, 'success');
-            search();
-        });
+        if (!list.length) { UIUtils.toast('제외할 도장 완료 실적이 없습니다.', 'warning'); return; }
+        UIUtils.confirm(
+            `조회된 ${list.length}건을 도료사용등록 대상 목록에서 모두 제외할까요?\n\n· 도장 작업일지는 삭제되지 않습니다.\n· 이후 이 목록에 다시 나타나지 않습니다.`,
+            async () => {
+                try {
+                    if (!_hiddenWorksLoaded) await _loadHiddenWorks();
+                    list.forEach(w => { if (w && w.id) _hiddenWorkIds.add(String(w.id)); });
+                    await _saveHiddenWorks();
+                    UIUtils.toast(`${list.length}건을 목록에서 제외했습니다.`, 'success');
+                    search();
+                } catch (err) {
+                    console.error('[PaintMix] hide all failed:', err);
+                    UIUtils.toast('일괄 제외 처리 중 오류가 발생했습니다.', 'error');
+                }
+            }
+        );
     }
 
     function renderMixTable(mixes) {
@@ -18358,6 +18413,8 @@ var PaintMixModule = (function() {
         _onFormulaModalCarChange, viewControlPlan, showFormulaValidation,
         renderHistoryTab, renderResidualTab, renderMixHistTab, search, searchMixHist,
         openFromWork, openManualModal, removeWork, removeAllWork,
+        getHiddenWorkIds: function() { return _hiddenWorkIds; },
+        ensureHiddenWorksLoaded: _loadHiddenWorks,
         _onResidualLotChange, _onRowCalc,
         _validateRow, _validateAllRows,
         renderResidualStock, filterResidualStock, exportResidualData, openResidualAdjust, saveResidualAdjust,
