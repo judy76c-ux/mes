@@ -6425,30 +6425,9 @@ var LaserStandbyModule = (function() {
             return;
         }
 
-        // 입고/출고 표 열 폭 동기화
-        const ioColgroup = isAdmin ? `
-            <colgroup>
-                <col style="width:14%;">
-                <col style="width:7%;">
-                <col style="width:8%;">
-                <col style="width:9%;">
-                <col style="width:9%;">
-                <col style="width:14%;">
-                <col style="width:10%;">
-                <col style="width:21%;">
-                <col style="width:8%;">
-            </colgroup>` : `
-            <colgroup>
-                <col style="width:15%;">
-                <col style="width:7%;">
-                <col style="width:8%;">
-                <col style="width:10%;">
-                <col style="width:9%;">
-                <col style="width:15%;">
-                <col style="width:10%;">
-                <col style="width:26%;">
-            </colgroup>`;
-        const ioTableStyle = 'width:100%;min-width:100%;table-layout:fixed;border-collapse:collapse;';
+        // 입고/출고 표 — 글자수 맞춤 (품명·컬러 공백/깨짐 방지). fixed+% col 사용 금지
+        const ioTableStyle = 'width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;';
+        const ioColgroup = '';
 
         const emptyRow = label => `
             <tr>
@@ -6458,30 +6437,30 @@ var LaserStandbyModule = (function() {
         const incomingBody = incomingRows.length
             ? incomingRows.map(r => `
                 <tr style="border-left:3px solid var(--accent-green);${r.beforeReset ? 'opacity:0.72;' : ''}">
-                    <td style="white-space:nowrap;">${r.date || '-'}</td>
-                    <td style="white-space:nowrap;"><strong>${r.carModel || '-'}</strong></td>
-                    <td style="white-space:nowrap;">${r.partName || '-'}</td>
-                    <td style="white-space:nowrap;">${r.color || '-'}</td>
-                    <td style="text-align:right;color:var(--accent-green);font-weight:700;white-space:nowrap;">${UIUtils.formatNumber(r.qty || 0)}</td>
-                    <td style="white-space:nowrap;">${r.paintingDate || '-'}</td>
-                    <td style="font-family:monospace;font-size:0.78rem;color:var(--text-secondary);white-space:nowrap;">${r.lotNo || '-'}</td>
-                    <td style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(r.note || '').replace(/"/g, '&quot;')}">${r.note || ''}${r.beforeReset ? ' <span style="color:#94a3b8;">(리셋 이전 기록)</span>' : ''}</td>
-                    ${isAdmin ? `<td style="text-align:center;white-space:nowrap;">${_deleteButton(r, 'in')}</td>` : ''}
+                    <td style="white-space:nowrap;padding:8px 10px;">${r.date || '-'}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;"><strong>${r.carModel || '-'}</strong></td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${r.partName || '-'}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${r.color || '-'}</td>
+                    <td style="text-align:right;color:var(--accent-green);font-weight:700;white-space:nowrap;padding:8px 10px;">${UIUtils.formatNumber(r.qty || 0)}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${r.paintingDate || '-'}</td>
+                    <td style="font-family:monospace;font-size:0.78rem;color:var(--text-secondary);white-space:nowrap;padding:8px 10px;">${r.lotNo || '-'}</td>
+                    <td style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;padding:8px 10px;" title="${(r.note || '').replace(/"/g, '&quot;')}">${r.note || ''}${r.beforeReset ? ' <span style="color:#94a3b8;">(리셋 이전 기록)</span>' : ''}</td>
+                    ${isAdmin ? `<td style="text-align:center;white-space:nowrap;padding:8px 10px;">${_deleteButton(r, 'in')}</td>` : ''}
                 </tr>`).join('')
             : emptyRow('입고 내역이 없습니다.');
 
         const outgoingBody = outgoingRows.length
             ? outgoingRows.map(r => `
                 <tr style="border-left:3px solid var(--accent-blue);${r.beforeReset ? 'opacity:0.72;' : ''}">
-                    <td style="white-space:nowrap;">${r.date || '-'}</td>
-                    <td style="white-space:nowrap;"><strong>${r.carModel || '-'}</strong></td>
-                    <td style="white-space:nowrap;">${r.partName || '-'}</td>
-                    <td style="white-space:nowrap;">${r.color || '-'}</td>
-                    <td style="text-align:right;color:var(--accent-blue);font-weight:700;white-space:nowrap;">${UIUtils.formatNumber(r.qty || 0)}</td>
-                    <td style="white-space:nowrap;">${r.paintingDate || '-'}</td>
-                    <td style="font-family:monospace;font-size:0.78rem;color:var(--text-secondary);white-space:nowrap;">${r.lotNo || '-'}</td>
-                    <td style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${(r.note || '').replace(/"/g, '&quot;')}">${r.note || ''}${r.beforeReset ? ' <span style="color:#94a3b8;">(리셋 이전 기록)</span>' : ''}</td>
-                    ${isAdmin ? `<td style="text-align:center;white-space:nowrap;">${_deleteButton(r, 'out')}</td>` : ''}
+                    <td style="white-space:nowrap;padding:8px 10px;">${r.date || '-'}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;"><strong>${r.carModel || '-'}</strong></td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${r.partName || '-'}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${r.color || '-'}</td>
+                    <td style="text-align:right;color:var(--accent-blue);font-weight:700;white-space:nowrap;padding:8px 10px;">${UIUtils.formatNumber(r.qty || 0)}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${r.paintingDate || '-'}</td>
+                    <td style="font-family:monospace;font-size:0.78rem;color:var(--text-secondary);white-space:nowrap;padding:8px 10px;">${r.lotNo || '-'}</td>
+                    <td style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;padding:8px 10px;" title="${(r.note || '').replace(/"/g, '&quot;')}">${r.note || ''}${r.beforeReset ? ' <span style="color:#94a3b8;">(리셋 이전 기록)</span>' : ''}</td>
+                    ${isAdmin ? `<td style="text-align:center;white-space:nowrap;padding:8px 10px;">${_deleteButton(r, 'out')}</td>` : ''}
                 </tr>`).join('')
             : emptyRow('출고 내역이 없습니다.');
 

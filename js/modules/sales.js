@@ -49,6 +49,7 @@ const SalesUtils = {
 var SalesProcessUI = (function () {
     const MENUS = [
         { id: 'sales-delivery-plan', label: '영업 계획', desc: '납품 스케쥴·계획·미납 현황', icon: 'event_note', accent: 'var(--accent-blue)' },
+        { id: 'sales-delivery-consolidate', label: '납품계획 취합', desc: '취합 시트 붙여넣기 → 검토 후 반영', icon: 'content_paste', accent: '#eab308' },
         { id: 'sales-today-shipment', label: '납품 출하(금일)', desc: '금일 출하 계획품 관리', icon: 'outbox', accent: '#f97316' },
         { id: 'sales-delivery', label: '출고 등록', desc: '출고 리스트·납품처별 실적', icon: 'local_shipping', accent: '#8b5cf6' },
         { id: 'sales-analytics', label: '영업관리', desc: '연간·월간·주간 매출 분석', icon: 'analytics', accent: '#10b981' }
@@ -2796,6 +2797,390 @@ var SalesDeliveryPlanModule = (function() {
         _savePresetNow,
         _deleteCurrentPreset,
         _confirmExcelImport
+    };
+})();
+
+/**
+ * 1-1-2) 납품계획 취합 등록 — 취합 정리 엑셀 시트 범위를 그대로 복사해 붙여넣으면
+ *        날짜별 납품계획으로 파싱한다. 파싱 결과는 바로 반영되지 않고 "취합 대기함"에
+ *        모아두며, 검토 후 선택한 항목만 납품계획(SALES_DELIVERY_PLAN)에 반영한다.
+ *        기존 영업계획 등록(SalesDeliveryPlanModule)의 수동 등록·엑셀 업로드는
+ *        전혀 건드리지 않는 완전히 별도의 진입점이다.
+ */
+var DeliveryConsolidateModule = (function() {
+    const STAGING_STORE = DB.STORES.DELIVERY_PLAN_STAGING;
+    const PLAN_STORE = DB.STORES.SALES_DELIVERY_PLAN;
+
+    let _parsedRows = []; // 붙여넣기 파싱 직후 미리보기 (저장 전 상태)
+
+    function _esc(value) {
+        return String(value ?? '').replace(/[&<>"']/g, ch => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[ch]));
+    }
+
+    function _num(v) {
+        return Number(String(v ?? '').replace(/,/g, '').trim()) || 0;
+    }
+
+    function init() {}
+
+    function render(container) {
+        const today = UIUtils.today ? UIUtils.today() : new Date().toISOString().slice(0, 10);
+        const year = today.slice(0, 4);
+
+        container.innerHTML = `
+            <div class="fade-in-up">
+                ${SalesProcessUI.renderSection('sales-delivery-consolidate')}
+
+                <div style="margin-bottom:0.75rem;padding:8px 14px;background:rgba(37,99,235,0.05);border-left:3px solid var(--accent-blue);border-radius:0 6px 6px 0;">
+                    <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;color:var(--accent-blue);margin-right:4px;">info</span>
+                    <span style="font-size:0.82rem;color:var(--text-secondary);">
+                        엑셀에서 취합 시트 범위를 복사(Ctrl+C)해서 아래에 붙여넣으면(Ctrl+V) 날짜별 납품계획으로 파싱합니다.
+                        기존 '영업 계획' 등록·엑셀 업로드와는 별개이며, 검토 후 확인한 항목만 납품계획에 반영됩니다.
+                    </span>
+                </div>
+
+                <div class="card" style="margin-bottom:16px;">
+                    <div class="card-header">
+                        <h4><span class="material-symbols-outlined">content_paste</span> 붙여넣기</h4>
+                    </div>
+                    <div class="card-body">
+                        <textarea id="dpcPasteArea" class="form-textarea" rows="8"
+                            placeholder="여기에 엑셀 범위를 붙여넣으세요 (Ctrl+V)"
+                            style="width:100%;font-family:monospace;font-size:0.78rem;"></textarea>
+
+                        <details style="border:1px solid var(--border);border-radius:8px;margin-top:10px;">
+                            <summary style="padding:9px 14px;font-size:0.83rem;font-weight:600;cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;list-style:none;">
+                                <span class="material-symbols-outlined" style="font-size:0.95rem;color:var(--text-muted);">tune</span>
+                                파싱 설정
+                                <span style="font-size:0.72rem;font-weight:400;color:var(--text-muted);margin-left:2px;">붙여넣은 범위 안에서의 상대 열 번호(1부터 시작)</span>
+                            </summary>
+                            <div style="padding:12px 14px;border-top:1px solid var(--border);background:var(--bg-secondary);border-radius:0 0 8px 8px;">
+                                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;">
+                                    <div class="form-group">
+                                        <label class="form-label" style="font-size:0.74rem;">차종 열</label>
+                                        <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="dpcCarCol" value="1" type="number" min="1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label" style="font-size:0.74rem;">품명 열</label>
+                                        <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="dpcPartCol" value="2" type="number" min="1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label" style="font-size:0.74rem;">포장단위 열 (0=사용안함)</label>
+                                        <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="dpcPackCol" value="3" type="number" min="0">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label" style="font-size:0.74rem;">납품처 열 (0=사용안함)</label>
+                                        <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="dpcCustomerCol" value="0" type="number" min="0">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label" style="font-size:0.74rem;">기준 연도</label>
+                                        <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="dpcYear" value="${year}" type="number" min="2020" max="2099">
+                                    </div>
+                                </div>
+                                <div style="font-size:0.75rem;color:var(--text-muted);margin-top:8px;">
+                                    "8월 6일" 형식의 날짜 헤더 열은 자동으로 찾습니다. 차종은 병합 셀이라 빈 칸이면 바로 위 값을 이어받습니다.
+                                </div>
+                            </div>
+                        </details>
+
+                        <div style="margin-top:10px;display:flex;gap:8px;">
+                            <button class="btn btn-primary" onclick="DeliveryConsolidateModule.parsePasted()">
+                                <span class="material-symbols-outlined" style="font-size:0.9rem;">search</span> 파싱
+                            </button>
+                            <button class="btn btn-outline" onclick="DeliveryConsolidateModule.clearPreview()">
+                                <span class="material-symbols-outlined" style="font-size:0.9rem;">clear</span> 지우기
+                            </button>
+                        </div>
+
+                        <div id="dpcParseStatus" style="font-size:0.82rem;margin-top:8px;"></div>
+                        <div id="dpcPreviewArea" style="margin-top:12px;"></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
+                        <h4><span class="material-symbols-outlined">pending_actions</span> 취합 대기함
+                            <span id="dpcStagingBadge" style="font-size:0.75rem;background:var(--accent-orange,#f59e0b);color:#fff;padding:2px 8px;border-radius:12px;font-weight:600;margin-left:6px;display:none;"></span>
+                        </h4>
+                        <button class="btn btn-sm btn-outline" onclick="DeliveryConsolidateModule.renderStaging()">
+                            <span class="material-symbols-outlined" style="font-size:1rem;">refresh</span>
+                        </button>
+                    </div>
+                    <div class="card-body" id="dpcStagingBody" style="padding:0;"></div>
+                </div>
+            </div>
+        `;
+
+        renderStaging();
+    }
+
+    // ── 붙여넣기 파싱 ──────────────────────────────────────────────
+    function _dateHeaderInfo(cell) {
+        // "8월 6일", "8월6일" 등 — 연도 없이 월/일만 표기된 헤더
+        const m = String(cell || '').trim().match(/^(\d{1,2})\s*월\s*(\d{1,2})\s*일$/);
+        if (!m) return null;
+        return { month: Number(m[1]), day: Number(m[2]) };
+    }
+
+    function parsePasted() {
+        const text = (document.getElementById('dpcPasteArea') || {}).value || '';
+        const statusEl = document.getElementById('dpcParseStatus');
+        const previewEl = document.getElementById('dpcPreviewArea');
+        if (!text.trim()) {
+            if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent-red);">붙여넣은 내용이 없습니다.</span>`;
+            return;
+        }
+
+        const grid = text.replace(/\r/g, '').split('\n')
+            .map(line => line.split('\t'))
+            .filter(row => row.some(c => String(c || '').trim() !== ''));
+
+        // 날짜 헤더 행 자동 탐색 — 날짜 패턴 셀이 가장 많은 행을 헤더로 채택
+        let headerRowIdx = -1;
+        let dateCols = [];
+        grid.forEach((row, ri) => {
+            const found = [];
+            row.forEach((cell, ci) => {
+                const d = _dateHeaderInfo(cell);
+                if (d) found.push({ col: ci, month: d.month, day: d.day });
+            });
+            if (found.length > dateCols.length) {
+                dateCols = found;
+                headerRowIdx = ri;
+            }
+        });
+
+        if (!dateCols.length) {
+            if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent-red);">"8월 6일" 형식의 날짜 헤더를 찾지 못했습니다. 날짜 헤더 행이 포함되도록 다시 복사해 주세요.</span>`;
+            if (previewEl) previewEl.innerHTML = '';
+            _parsedRows = [];
+            return;
+        }
+
+        const year = Number((document.getElementById('dpcYear') || {}).value) || new Date().getFullYear();
+        const carCol = (Number((document.getElementById('dpcCarCol') || {}).value) || 1) - 1;
+        const partCol = (Number((document.getElementById('dpcPartCol') || {}).value) || 2) - 1;
+        const packColRaw = Number((document.getElementById('dpcPackCol') || {}).value) || 0;
+        const packCol = packColRaw > 0 ? packColRaw - 1 : -1;
+        const customerColRaw = Number((document.getElementById('dpcCustomerCol') || {}).value) || 0;
+        const customerCol = customerColRaw > 0 ? customerColRaw - 1 : -1;
+
+        const rows = [];
+        let lastCarModel = '';
+        let lastCustomer = '';
+        for (let ri = headerRowIdx + 1; ri < grid.length; ri++) {
+            const row = grid[ri];
+            const partName = String(row[partCol] || '').trim();
+            const carModelRaw = String(row[carCol] || '').trim();
+            if (carModelRaw) lastCarModel = carModelRaw;
+            const customerRaw = customerCol >= 0 ? String(row[customerCol] || '').trim() : '';
+            if (customerRaw) lastCustomer = customerRaw;
+            if (!partName) continue; // 구분선/합계 행 등은 건너뜀
+
+            const packUnit = packCol >= 0 ? String(row[packCol] || '').trim() : '';
+
+            dateCols.forEach(function(dc) {
+                const qty = _num(row[dc.col]);
+                if (!qty) return; // '-' 또는 빈 칸, 0은 제외
+                const mm = String(dc.month).padStart(2, '0');
+                const dd = String(dc.day).padStart(2, '0');
+                rows.push({
+                    key: 'dpc__' + rows.length + '__' + Math.random().toString(36).slice(2, 7),
+                    date: `${year}-${mm}-${dd}`,
+                    carModel: lastCarModel,
+                    partName,
+                    packUnit,
+                    customer: lastCustomer,
+                    qty
+                });
+            });
+        }
+
+        _parsedRows = rows;
+
+        if (statusEl) {
+            statusEl.innerHTML = rows.length
+                ? `<span style="color:var(--accent-green);">날짜 열 ${dateCols.length}개 인식 · 납품계획 ${rows.length}건 파싱됨</span>`
+                : `<span style="color:var(--accent-orange,#f59e0b);">날짜 열은 찾았지만 수량이 있는 행이 없습니다. 열 번호 설정을 확인하세요.</span>`;
+        }
+        _renderParsePreview();
+    }
+
+    function _renderParsePreview() {
+        const el = document.getElementById('dpcPreviewArea');
+        if (!el) return;
+        if (!_parsedRows.length) { el.innerHTML = ''; return; }
+
+        const preview = _parsedRows.slice(0, 300); // 미리보기만 제한, 저장은 전체 반영
+        el.innerHTML = `
+            <div style="font-size:0.82rem;color:var(--text-muted);margin-bottom:6px;">
+                미리보기 (${preview.length}${_parsedRows.length > preview.length ? ` / 전체 ${_parsedRows.length}` : ''}건) — 필요 없는 행은 체크 해제하세요.
+            </div>
+            <div class="data-table-wrapper" style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:8px;">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th style="width:36px;"><input type="checkbox" checked onchange="DeliveryConsolidateModule.toggleParsePreviewAll(this.checked)"></th>
+                            <th>납품일</th><th>차종</th><th>품명</th><th>포장단위</th><th>납품처</th><th style="text-align:right;">수량</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${preview.map(r => `
+                            <tr data-key="${r.key}">
+                                <td style="text-align:center;"><input type="checkbox" class="dpc-parse-chk" data-key="${_esc(r.key)}" checked></td>
+                                <td>${_esc(r.date)}</td>
+                                <td>${_esc(r.carModel || '-')}</td>
+                                <td><strong>${_esc(r.partName)}</strong></td>
+                                <td>${_esc(r.packUnit || '-')}</td>
+                                <td>${_esc(r.customer || '-')}</td>
+                                <td style="text-align:right;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(r.qty)}</td>
+                            </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>
+            <div style="margin-top:10px;">
+                <button class="btn btn-primary" onclick="DeliveryConsolidateModule.saveToStaging()">
+                    <span class="material-symbols-outlined" style="font-size:0.9rem;">save</span> 선택 항목 취합 대기함에 저장
+                </button>
+            </div>`;
+    }
+
+    function toggleParsePreviewAll(checked) {
+        document.querySelectorAll('.dpc-parse-chk').forEach(el => { el.checked = checked; });
+    }
+
+    function clearPreview() {
+        _parsedRows = [];
+        const textEl = document.getElementById('dpcPasteArea');
+        const statusEl = document.getElementById('dpcParseStatus');
+        const previewEl = document.getElementById('dpcPreviewArea');
+        if (textEl) textEl.value = '';
+        if (statusEl) statusEl.innerHTML = '';
+        if (previewEl) previewEl.innerHTML = '';
+    }
+
+    async function saveToStaging() {
+        const checkedKeys = new Set();
+        document.querySelectorAll('.dpc-parse-chk:checked').forEach(chk => checkedKeys.add(chk.dataset.key));
+        const items = _parsedRows.filter(r => checkedKeys.has(r.key));
+        if (!items.length) { UIUtils.toast('저장할 항목을 선택하세요.', 'warning'); return; }
+
+        for (const item of items) {
+            await Storage.add(STAGING_STORE, {
+                date: item.date,
+                carModel: item.carModel,
+                partName: item.partName,
+                packUnit: item.packUnit,
+                customer: item.customer,
+                planQty: item.qty,
+                status: '대기',
+                source: '취합 시트 붙여넣기',
+                registeredAt: new Date().toISOString()
+            });
+        }
+
+        UIUtils.toast(`${items.length}건을 취합 대기함에 저장했습니다.`, 'success');
+        clearPreview();
+        renderStaging();
+    }
+
+    // ── 취합 대기함 ────────────────────────────────────────────────
+    function renderStaging() {
+        const body = document.getElementById('dpcStagingBody');
+        const badge = document.getElementById('dpcStagingBadge');
+        if (!body) return;
+
+        const items = (Storage.getAll(STAGING_STORE) || [])
+            .filter(r => r.status !== '반영완료')
+            .sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.carModel || '').localeCompare(b.carModel || ''));
+
+        if (badge) {
+            if (items.length) { badge.textContent = `${items.length}건`; badge.style.display = ''; }
+            else badge.style.display = 'none';
+        }
+
+        if (!items.length) {
+            body.innerHTML = `<div style="padding:18px;color:var(--text-muted);font-size:0.9rem;text-align:center;">대기 중인 취합 항목이 없습니다.</div>`;
+            return;
+        }
+
+        body.innerHTML = `
+            <div class="data-table-wrapper">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th style="width:36px;"><input type="checkbox" checked onchange="DeliveryConsolidateModule.toggleStagingAll(this.checked)"></th>
+                            <th>납품일</th><th>차종</th><th>품명</th><th>포장단위</th><th>납품처</th>
+                            <th style="text-align:right;">수량</th><th style="text-align:center;">작업</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${items.map(r => `
+                            <tr data-id="${r.id}">
+                                <td style="text-align:center;"><input type="checkbox" class="dpc-staging-chk" data-id="${r.id}" checked></td>
+                                <td>${_esc(r.date)}</td>
+                                <td>${_esc(r.carModel || '-')}</td>
+                                <td><strong>${_esc(r.partName)}</strong></td>
+                                <td>${_esc(r.packUnit || '-')}</td>
+                                <td>${_esc(r.customer || '-')}</td>
+                                <td style="text-align:right;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(r.planQty)}</td>
+                                <td style="text-align:center;">
+                                    <button class="btn btn-xs btn-outline" onclick="DeliveryConsolidateModule.removeStagingRow('${r.id}')">
+                                        <span class="material-symbols-outlined" style="font-size:14px;">close</span>
+                                    </button>
+                                </td>
+                            </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>
+            <div style="padding:12px 16px;border-top:1px solid var(--border-color);background:var(--bg-secondary);">
+                <button class="btn btn-primary" onclick="DeliveryConsolidateModule.commitStaging()">
+                    <span class="material-symbols-outlined" style="font-size:18px;">playlist_add_check</span> 선택 항목 납품계획에 반영
+                </button>
+            </div>`;
+    }
+
+    function toggleStagingAll(checked) {
+        document.querySelectorAll('.dpc-staging-chk').forEach(el => { el.checked = checked; });
+    }
+
+    function removeStagingRow(id) {
+        UIUtils.confirm('이 취합 항목을 삭제하시겠습니까?', async () => {
+            await Storage.remove(STAGING_STORE, id);
+            renderStaging();
+        });
+    }
+
+    async function commitStaging() {
+        const checkedIds = new Set();
+        document.querySelectorAll('.dpc-staging-chk:checked').forEach(chk => checkedIds.add(chk.dataset.id));
+        if (!checkedIds.size) { UIUtils.toast('반영할 항목을 선택하세요.', 'warning'); return; }
+
+        const items = (Storage.getAll(STAGING_STORE) || []).filter(r => checkedIds.has(r.id));
+        for (const item of items) {
+            await Storage.add(PLAN_STORE, {
+                date: item.date,
+                customer: item.customer || '',
+                carModel: item.carModel || '',
+                partName: item.partName || '',
+                color: '',
+                packUnit: item.packUnit || '',
+                planQty: item.planQty,
+                note: '취합 시트 붙여넣기로 반영'
+            });
+            await Storage.remove(STAGING_STORE, item.id);
+        }
+
+        UIUtils.toast(`${items.length}건을 납품계획에 반영했습니다.`, 'success');
+        renderStaging();
+    }
+
+    return {
+        init, render,
+        parsePasted, toggleParsePreviewAll, clearPreview, saveToStaging,
+        renderStaging, toggleStagingAll, removeStagingRow, commitStaging
     };
 })();
 

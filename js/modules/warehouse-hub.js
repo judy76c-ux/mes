@@ -19,6 +19,18 @@ var WarehouseHubModule = (function () {
         if (!dateStr) return 9999;
         return Math.floor((new Date() - new Date(dateStr)) / 86400000);
     }
+    /** FIFO 판정용 — LOT는 YYMMDD(6자리 유효 날짜)만 인정 */
+    function _isYymmddLot(lotNo) {
+        const s = String(lotNo || '').trim();
+        if (!/^\d{6}$/.test(s)) return false;
+        const yy = parseInt(s.slice(0, 2), 10);
+        const mm = parseInt(s.slice(2, 4), 10);
+        const dd = parseInt(s.slice(4, 6), 10);
+        if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return false;
+        const year = 2000 + yy;
+        const d = new Date(year, mm - 1, dd);
+        return d.getFullYear() === year && d.getMonth() === mm - 1 && d.getDate() === dd;
+    }
     function _badge(text, type) {
         const map = {
             success: 'background:#dcfce7;color:#15803d;border:1px solid #86efac;',
@@ -117,7 +129,7 @@ var WarehouseHubModule = (function () {
             lotsByItem[iKey].push(l);
         });
         Object.entries(lotsByItem).forEach(([iKey, lots]) => {
-            const withLot = lots.filter(l => l.lotNo);
+            const withLot = lots.filter(l => _isYymmddLot(l.lotNo));
             if (withLot.length < 2) return;
             const inStockLots = withLot.filter(l => l.stock > 0).sort((a, b) => a.lotNo.localeCompare(b.lotNo));
             const consumedLots = withLot.filter(l => l.stock <= 0 && l.lastOut).sort((a, b) => a.lotNo.localeCompare(b.lotNo));
@@ -232,7 +244,11 @@ var WarehouseHubModule = (function () {
             }
 
             // FIFO 위반: 오래된 LOT(낮은 lotKey) 재고 남아 있고 신 LOT이 먼저 소진
-            const allLots = Object.values(m.lots).filter(l => l.lotKey !== '__');
+            // YYMMDD 형식 LOT만 비교 (__nolot__, DEV-LOT 등 제외)
+            const allLots = Object.values(m.lots).filter(l => {
+                const key = l.lotNo || l.prodLot || l.lotKey || '';
+                return key !== '__' && _isYymmddLot(key);
+            });
             if (allLots.length >= 2) {
                 const inStockLots  = allLots.filter(l => l.qty > 0).sort((a, b) => a.lotKey.localeCompare(b.lotKey));
                 const consumedLots = allLots.filter(l => l.qty <= 0 && l.lastOut).sort((a, b) => a.lotKey.localeCompare(b.lotKey));

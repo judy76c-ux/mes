@@ -9,7 +9,6 @@
 // ===================================================================
 var InjectionIncomingModule = (function() {
     const STORE = DB.STORES.INJECTION_INSPECTIONS;
-    const INV_STORE = DB.STORES.INJECTION_INVENTORY;
 
     function render(container) {
         container.innerHTML = `

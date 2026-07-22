@@ -5,7 +5,7 @@
 
 const DB = (function() {
     const DB_NAME = 'ProductionMES_DB';
-    const DB_VERSION = 53;
+    const DB_VERSION = 55;
     let db = null;
 
     // 스토어 이름 - 전체 공정에 대응
@@ -128,6 +128,9 @@ const DB = (function() {
         // 사출 재공품 (v44)
         INJECTION_WIP: 'injection_wip',
 
+        // 리워크 재공품 (v54) — 도장 외관검사 리워크수
+        REWORK_WIP: 'rework_wip',
+
         // 로봇 프로그램 기준서 (v45)
         ROBOT_PG_STD_DATA: 'robot_pg_std_data',
 
@@ -147,6 +150,9 @@ const DB = (function() {
 
         // 수입검사 삭제 이력 (v50)
         INSPECTION_DELETE_LOGS: 'inspection_delete_logs', // 수입검사 삭제 감사 로그
+
+        // 납품계획 취합 붙여넣기 대기함 (v55)
+        DELIVERY_PLAN_STAGING: 'delivery_plan_staging', // 취합 시트 붙여넣기 → 검토 후 납품계획 반영 대기
 
         // 설정
         CONFIG: 'config'
@@ -556,6 +562,7 @@ const DB = (function() {
         [STORES.PRODUCT_OUTGOING]:           { remove: 'manager',  clear: 'admin'  },
         // ── 일상 작업 로그 ─────────────────────────────────────────
         [STORES.PAINTING_WORK]:              { remove: 'operator', clear: 'manager'},
+        [STORES.REWORK_WIP]:                 { remove: 'operator', clear: 'manager'},
         [STORES.PAINTING_INCOMING]:          { remove: 'operator', clear: 'manager'},
         [STORES.PAINTING_OUTGOING]:          { remove: 'operator', clear: 'manager'},
         [STORES.INJECTION_WORK_LOG]:         { remove: 'operator', clear: 'manager'},
@@ -1341,6 +1348,19 @@ const DB = (function() {
                     const s = database.createObjectStore(STORES.INSPECTION_DELETE_LOGS, { keyPath: 'id' });
                     s.createIndex('deletedAt', 'deletedAt', { unique: false });
                     s.createIndex('type',      'type',      { unique: false });
+                }
+                // v54: 리워크 재공품
+                if (oldVersion < 54 && !database.objectStoreNames.contains(STORES.REWORK_WIP)) {
+                    const store = database.createObjectStore(STORES.REWORK_WIP, { keyPath: 'id' });
+                    store.createIndex('date', 'date', { unique: false });
+                    store.createIndex('partName', 'partName', { unique: false });
+                    store.createIndex('type', 'type', { unique: false });
+                }
+                // v55: 납품계획 취합 붙여넣기 대기함
+                if (oldVersion < 55 && !database.objectStoreNames.contains(STORES.DELIVERY_PLAN_STAGING)) {
+                    const store = database.createObjectStore(STORES.DELIVERY_PLAN_STAGING, { keyPath: 'id' });
+                    store.createIndex('date', 'date', { unique: false });
+                    store.createIndex('status', 'status', { unique: false });
                 }
             };
         });

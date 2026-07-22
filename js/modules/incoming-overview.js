@@ -92,6 +92,9 @@ var IncomingOverviewModule = (function () {
 
                     <!-- ── 바로가기 카드 ── -->
                     <div id="incomingHubCards" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;"></div>
+
+                    <!-- ── 프로세스 경고 (메뉴 아래, 축소) ── -->
+                    <div id="incomingHubProcessWarning" style="margin-top:16px;"></div>
                 </div>
             </div>
         </div>`;
@@ -104,6 +107,9 @@ var IncomingOverviewModule = (function () {
                 _metricCard('green',  _inj.passCount,                      '사출 합격',       `불합격 ${_inj.failCount}건`),
                 _metricCard(_inj.certPending > 0 ? 'red' : '',
                                       _inj.certPending,                    '성적서 미접수',   '사출'),
+                _clickMetricCard(_inj.fifoCount > 0 ? 'orange' : 'green',
+                                      _inj.fifoCount,                      '선입선출 위반',   _inj.fifoCount > 0 ? '클릭하여 목록 보기' : '이달 위반 없음',
+                                      _inj.fifoCount > 0, 'IncomingOverviewModule.showInjFifo()'),
                 _metricCard('purple', _paint.count,                        '도료 검사건수',   `${UIUtils.formatNumber(_paint.totalQty)} L/kg`),
                 _metricCard(_paint.expiredCount > 0 ? 'red' : 'orange',
                                       _paint.expiredCount + _paint.expiringCount, '도료 유효기간 이슈', `만료 ${_paint.expiredCount} / 임박 ${_paint.expiringCount}`),
@@ -115,10 +121,11 @@ var IncomingOverviewModule = (function () {
         /* nav cards */
         const cardsEl = document.getElementById('incomingHubCards');
         if (cardsEl) {
+            const injFifoHint = _inj.fifoCount > 0 ? ` · FIFO ${_inj.fifoCount}건` : '';
             cardsEl.innerHTML = [
                 _homeCard('사출 입고',
                     '사출 자재 수입검사 등록 및 LOT·성적서·FIFO 관리',
-                    'fact_check', `${_inj.count}건`, "Router.navigate('injection-incoming')", 'blue'),
+                    'fact_check', `${_inj.count}건${injFifoHint}`, "Router.navigate('injection-incoming')", _inj.fifoCount > 0 ? 'orange' : 'blue'),
                 _homeCard('도료 입고',
                     '도료 수입검사 등록 및 유효기간·성적서 관리',
                     'colorize', `${_paint.count}건`, "Router.navigate('paint-incoming-inspection')", 'purple'),
@@ -134,6 +141,133 @@ var IncomingOverviewModule = (function () {
                     'photo_library', '-', "Router.navigate('inj-insp-std-photo')", 'blue'),
             ].join('');
         }
+
+        renderProcessViolationWarning();
+    }
+
+    /** 재고 오류 초기화 기록은 프로세스 위반 집계에서 제외 */
+    function _isStockErrorResetRecord(d) {
+        return !!(d && (d.isStockErrorReset || d.resetAction === 'stock_error_reset'
+            || /재고 오류 초기화/.test(String(d.source || ''))));
+    }
+
+    /** 수입검사 없이 창고 직접 입고된 건 = 프로세스 위반 */
+    function _isDirectInboundWithoutInsp(d) {
+        if (!d || d.type === '출고') return false;
+        if (_isStockErrorResetRecord(d)) return false;
+        const src = String(d.source || '');
+        return !(/수입검사/.test(src) || !!d.inspDate);
+    }
+
+    function _collectProcessViolations() {
+        return (Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [])
+            .filter(_isDirectInboundWithoutInsp)
+            .sort(function(a, b) { return String(b.date || '').localeCompare(String(a.date || '')); });
+    }
+
+    function renderProcessViolationWarning() {
+        const el = document.getElementById('incomingHubProcessWarning');
+        if (!el) return;
+
+        const violations = _collectProcessViolations();
+        const totalQty = violations.reduce(function(s, d) { return s + (Number(d.quantity) || 0); }, 0);
+        const preview = violations.slice(0, 5);
+        const fifoCount = (_inj && _inj.fifoCount) || 0;
+
+        const standingNotice = `
+            <div style="display:flex;align-items:flex-start;gap:8px;padding:8px 10px;
+                border-radius:${violations.length ? '8px 8px 0 0' : '8px'};
+                border:1px solid #f59e0b;background:rgba(245,158,11,0.06);">
+                <span class="material-symbols-outlined" style="color:#d97706;font-size:16px;flex-shrink:0;margin-top:1px;">gavel</span>
+                <div style="min-width:0;line-height:1.35;flex:1;">
+                    <div style="font-weight:700;color:#b45309;font-size:0.78rem;">프로세스 규칙 — 수입검사 필수</div>
+                    <div style="font-size:0.72rem;color:var(--text-secondary);margin-top:2px;">
+                        수입검사 없는 직접 입고는 <strong style="color:#dc2626;">프로세스 위반</strong>입니다.
+                        ${fifoCount > 0 ? `<span style="color:#ea580c;font-weight:600;"> · 선입선출 위반 ${fifoCount}건</span>` : ''}
+                    </div>
+                </div>
+                ${fifoCount > 0 ? `<button type="button" class="btn btn-sm btn-outline"
+                    onclick="IncomingOverviewModule.showInjFifo()"
+                    style="font-size:0.7rem;padding:2px 8px;border-color:#fb923c;color:#ea580c;white-space:nowrap;">FIFO 목록</button>` : ''}
+            </div>`;
+
+        if (!violations.length) {
+            el.innerHTML = standingNotice;
+            return;
+        }
+
+        function fmtDate(raw) {
+            const sp = String(raw || '').split(' ');
+            const pp = (sp[0] || '').split('-');
+            const tt = sp[1] ? sp[1].slice(0, 5) : '';
+            if (pp.length !== 3) return raw ? String(raw) : '-';
+            return '<span style="font-size:0.62rem;color:var(--text-muted);display:block;line-height:1;">' + pp[0] + '</span>' +
+                '<span style="font-weight:600;font-size:0.75rem;white-space:nowrap;">' + pp[1] + '-' + pp[2] + '</span>' +
+                (tt ? '<span style="font-size:0.62rem;color:var(--text-muted);display:block;line-height:1.3;">' + tt + '</span>' : '');
+        }
+
+        el.innerHTML = `
+            <div style="border:1px solid #f59e0b;border-radius:8px;overflow:hidden;background:#fff;">
+                ${standingNotice}
+                <div style="background:rgba(220,38,38,0.04);border-top:1px solid #fde68a;padding:6px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                    <div style="display:flex;align-items:center;gap:6px;font-size:0.74rem;">
+                        <span class="material-symbols-outlined" style="color:#dc2626;font-size:15px;">warning</span>
+                        <span style="font-weight:700;color:#dc2626;">직접 입고(미검사)</span>
+                        <span style="background:#dc2626;color:#fff;border-radius:10px;padding:0 7px;font-size:0.68rem;font-weight:700;">${violations.length}건</span>
+                        <span style="color:var(--text-muted);font-size:0.7rem;">${UIUtils.formatNumber(totalQty)} EA</span>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline"
+                        onclick="IncomingOverviewModule.goWarehouseIncomingHistory()"
+                        style="font-size:0.7rem;padding:2px 8px;border-color:#f59e0b;color:#b45309;">
+                        입고이력
+                    </button>
+                </div>
+                <div style="overflow-x:auto;">
+                    <table class="data-table" style="font-size:0.75rem;margin:0;">
+                        <thead>
+                            <tr>
+                                <th style="padding:5px 8px;font-size:0.7rem;">입고일</th>
+                                <th style="padding:5px 8px;font-size:0.7rem;">차종</th>
+                                <th style="padding:5px 8px;font-size:0.7rem;">품명</th>
+                                <th style="padding:5px 8px;font-size:0.7rem;">LOT</th>
+                                <th style="padding:5px 8px;font-size:0.7rem;text-align:right;">수량</th>
+                                <th style="padding:5px 8px;font-size:0.7rem;text-align:center;">작업</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${preview.map(function(d) {
+                                return `<tr style="background:rgba(245,158,11,0.03);">
+                                    <td style="padding:4px 8px;line-height:1.25;white-space:nowrap;">${fmtDate(d.date)}</td>
+                                    <td style="padding:4px 8px;">${d.carModel || '-'}</td>
+                                    <td style="padding:4px 8px;"><strong>${d.partName || '-'}</strong></td>
+                                    <td style="padding:4px 8px;font-family:monospace;font-weight:700;">${d.lotNo || '-'}</td>
+                                    <td style="padding:4px 8px;text-align:right;font-weight:700;color:#dc2626;">${UIUtils.formatNumber(d.quantity)}</td>
+                                    <td style="padding:4px 8px;text-align:center;">
+                                        <button type="button" class="btn btn-sm btn-outline"
+                                            onclick="InjectionWarehouseModule.openIncomingTxView('${d.id}')"
+                                            style="font-size:0.68rem;padding:1px 6px;">보기</button>
+                                    </td>
+                                </tr>`;
+                            }).join('')}
+                            ${violations.length > preview.length ? `
+                            <tr>
+                                <td colspan="6" style="text-align:center;padding:6px;font-size:0.7rem;color:var(--text-muted);">
+                                    외 ${violations.length - preview.length}건 — 입고이력에서 확인
+                                </td>
+                            </tr>` : ''}
+                        </tbody>
+                    </table>
+                </div>
+            </div>`;
+    }
+
+    function goWarehouseIncomingHistory() {
+        Router.navigate('injection-warehouse');
+        setTimeout(function() {
+            if (typeof InjectionWarehouseModule !== 'undefined' && InjectionWarehouseModule._switchTab) {
+                InjectionWarehouseModule._switchTab('incoming');
+            }
+        }, 120);
     }
 
     /* ── 홈 카드 ── */
@@ -168,6 +302,19 @@ var IncomingOverviewModule = (function () {
     function _metricCard(tone, value, label, subLabel) {
         return `
             <div class="stat-card ${tone}">
+                <div class="stat-card-value">${typeof value === 'number' ? value.toLocaleString() : value}</div>
+                <div class="stat-card-label">${label}</div>
+                ${subLabel ? `<div style="margin-top:4px;font-size:.76rem;color:var(--text-muted);">${subLabel}</div>` : ''}
+            </div>`;
+    }
+
+    function _clickMetricCard(tone, value, label, subLabel, clickable, onclickFn) {
+        if (!clickable) return _metricCard(tone, value, label, subLabel);
+        return `
+            <div class="stat-card ${tone}" onclick="${onclickFn}" style="cursor:pointer;"
+                title="클릭하여 상세 보기"
+                onmouseenter="this.style.filter='brightness(0.97)'"
+                onmouseleave="this.style.filter=''">
                 <div class="stat-card-value">${typeof value === 'number' ? value.toLocaleString() : value}</div>
                 <div class="stat-card-label">${label}</div>
                 ${subLabel ? `<div style="margin-top:4px;font-size:.76rem;color:var(--text-muted);">${subLabel}</div>` : ''}
@@ -366,6 +513,7 @@ var IncomingOverviewModule = (function () {
         init, render,
         showInjFail, showInjCert, showInjFifo,
         showPaintFail, showPaintCert, showPaintExpiring, showPaintExpired,
+        goWarehouseIncomingHistory,
     };
 })();
 

@@ -17834,9 +17834,31 @@ var PaintMixModule = (function() {
             const sd = (SPEC_ORD[a.paintSpec] ?? 9) - (SPEC_ORD[b.paintSpec] ?? 9);
             return sd !== 0 ? sd : (ROLE_ORD[a.role] ?? 9) - (ROLE_ORD[b.role] ?? 9);
         });
+        // 대체 그룹: 같은 도료사양(예: Primer)에 도료사가 다른 도료가 여러 개 등록돼 있으면
+        // 그중 하나만 골라 쓰는 대체재다. 그룹 내 어느 한 행에 사용량을 입력하면 나머지는 잠근다.
+        // (단, 과거 데이터에 이미 2개 이상 사용량이 남아있는 예외적인 경우엔 값 유실을 막기 위해 잠그지 않는다)
+        const altGroupCounts = {};
+        sortedComponents.forEach(c => {
+            const key = c.paintSpec || '';
+            altGroupCounts[key] = (altGroupCounts[key] || 0) + 1;
+        });
+        const altGroupUsedIds = {};
+        sortedComponents.forEach(c => {
+            const key = c.paintSpec || '';
+            if (altGroupCounts[key] > 1 && (Number(c.residualUseG ?? 0) || 0) > 0) {
+                (altGroupUsedIds[key] = altGroupUsedIds[key] || []).push(c.materialId);
+            }
+        });
+        const altGroupActiveId = {};
+        Object.keys(altGroupUsedIds).forEach(key => {
+            if (altGroupUsedIds[key].length === 1) altGroupActiveId[key] = altGroupUsedIds[key][0];
+        });
         const rows = sortedComponents.map((c, i) => {
             const materialId = c.materialId || '';
             const packUnit = Number(c.packUnit) || 0;
+            const altGroupKey = c.paintSpec || '';
+            const isAltGroup = altGroupCounts[altGroupKey] > 1;
+            const isAltLocked = isAltGroup && altGroupActiveId[altGroupKey] && altGroupActiveId[altGroupKey] !== materialId;
             // 배합실 도료재고 LOT: 저장값 없으면 배합실 도료재고 중 첫 번째 LOT 자동 선택
             const mixRoomAvailLots = _mixRoomLots(materialId, ignoreMixId);
             const residualProdLot = c.residualProdLot || c.prodLot
@@ -17853,8 +17875,9 @@ var PaintMixModule = (function() {
             const afterBal = Math.max(0, mixRoomBal - residualUseG);
             const afterBalDisplay = residualUseG > 0 ? `${UIUtils.formatNumber(afterBal)}g` : '-';
             const totalUseG = residualUseG + warehouseUseG;
+            const useGDisabled = !residualProdLot || isAltLocked;
             return `
-                <tr class="pmix-row" data-row="${i}" data-pack-unit="${packUnit}">
+                <tr class="pmix-row" data-row="${i}" data-pack-unit="${packUnit}" data-alt-group="${_esc(altGroupKey)}"${isAltLocked ? ' style="opacity:0.55;"' : ''}>
                     <!-- ① 도료명 -->
                     <td style="padding:8px 10px;min-width:140px;">
                         <input type="hidden" class="pmix-material-id" value="${_esc(materialId)}">
@@ -17866,7 +17889,10 @@ var PaintMixModule = (function() {
                         <div style="display:flex;align-items:flex-start;gap:5px;">
                             <span style="flex-shrink:0;font-size:0.68rem;font-weight:800;color:#fff;background:${specColor};border-radius:3px;padding:1px 4px;margin-top:2px;">${specLabel}</span>
                             <div>
-                                <strong style="font-size:0.84rem;">${_esc(c.paintName || '-')}</strong>
+                                <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;">
+                                    <strong style="font-size:0.84rem;">${_esc(c.paintName || '-')}</strong>
+                                    ${isAltGroup ? `<span title="같은 ${_esc(altGroupKey || '사양')}에 대체 가능한 도료가 여러 개 등록돼 있습니다. 실제 사용한 것 1개에만 사용량을 입력하세요." style="font-size:0.62rem;font-weight:700;color:#7c3aed;background:rgba(124,58,237,0.12);border:1px solid rgba(124,58,237,0.3);border-radius:999px;padding:1px 6px;white-space:nowrap;">대체 그룹</span>` : ''}
+                                </div>
                                 <div style="font-size:0.72rem;color:var(--text-muted);">${_esc(c.role || '')}${c.supplier ? ' · ' + c.supplier : ''}</div>
                             </div>
                         </div>
@@ -17884,23 +17910,23 @@ var PaintMixModule = (function() {
                             <span class="pmix-mix-room-bal" style="font-weight:700;font-size:0.85rem;">${residualProdLot ? `${UIUtils.formatNumber(mixRoomBal)}g` : '-'}</span>
                         </div>
                         <div style="margin-bottom:4px;">
-                            <select class="form-select pmix-residual-lot" style="font-size:0.78rem;width:100%;" onchange="PaintMixModule._onResidualLotChange(this,${i})">
-                                ${_mixRoomLotOptions(materialId, residualProdLot, ignoreMixId)}
+                            <select class="form-select pmix-residual-lot" style="font-size:0.78rem;width:100%;" ${isAltLocked ? 'disabled' : ''} onchange="PaintMixModule._onResidualLotChange(this,${i})">
+                                ${_mixRoomLotOptions(materialId, isAltLocked ? '' : residualProdLot, ignoreMixId)}
                             </select>
                         </div>
                         <div style="display:flex;align-items:center;gap:4px;">
                             <span style="font-size:0.7rem;color:var(--text-muted);white-space:nowrap;">사용량(g)</span>
-                            <input type="number" class="form-input pmix-residual-use-g" value="${residualUseG || ''}" min="0" step="1"
-                                style="text-align:right;width:90px;${!residualProdLot ? 'background:var(--bg-secondary);color:var(--text-muted);' : ''}"
-                                ${!residualProdLot ? 'disabled' : ''}
+                            <input type="number" class="form-input pmix-residual-use-g" value="${isAltLocked ? '' : (residualUseG || '')}" min="0" step="1"
+                                style="text-align:right;width:90px;${useGDisabled ? 'background:var(--bg-secondary);color:var(--text-muted);' : ''}"
+                                ${useGDisabled ? 'disabled' : ''}
                                 oninput="PaintMixModule._onRowCalc(${i})">
                         </div>
                     </td>
                     <!-- ④ 사용후 잔량(g) / 도료 LOT -->
                     <td style="text-align:center;vertical-align:middle;padding:8px 10px;min-width:90px;">
-                        <div class="pmix-after-bal" style="font-weight:700;font-size:0.95rem;">${afterBalDisplay}</div>
+                        <div class="pmix-after-bal" style="font-weight:700;font-size:0.95rem;">${isAltLocked ? '-' : afterBalDisplay}</div>
                         <div class="pmix-remaining-lot" style="font-size:0.72rem;color:var(--text-muted);margin-top:4px;word-break:break-all;">
-                            ${residualProdLot ? `LOT: ${_esc(residualProdLot)}` : ''}
+                            ${!isAltLocked && residualProdLot ? `LOT: ${_esc(residualProdLot)}` : ''}
                         </div>
                     </td>
                 </tr>`;
@@ -17994,6 +18020,41 @@ var PaintMixModule = (function() {
         }
         // 미입력 필드 실시간 표시
         _validateRow(row);
+        _applyAltGroupExclusivity(row);
+    }
+
+    // 대체 그룹(같은 도료사양에 도료사가 다른 도료 여러 개) 중 하나에 사용량을 입력하면
+    // 나머지는 잠가서 중복 입력을 막는다. 사용량을 지우면 다시 그룹 전체가 풀린다.
+    function _applyAltGroupExclusivity(row) {
+        const altGroup = row.dataset.altGroup || '';
+        if (!altGroup) return;
+        const groupRows = [...document.querySelectorAll('.pmix-row')].filter(r => (r.dataset.altGroup || '') === altGroup);
+        if (groupRows.length < 2) return;
+        const myUseG = Number(row.querySelector('.pmix-residual-use-g')?.value) || 0;
+        const activeRow = myUseG > 0
+            ? row
+            : groupRows.find(r => r !== row && (Number(r.querySelector('.pmix-residual-use-g')?.value) || 0) > 0);
+        groupRows.forEach(r => {
+            const locked = !!activeRow && r !== activeRow;
+            r.style.opacity = locked ? '0.55' : '';
+            const lotSelect = r.querySelector('.pmix-residual-lot');
+            const useGInput = r.querySelector('.pmix-residual-use-g');
+            if (lotSelect) lotSelect.disabled = locked;
+            if (useGInput) useGInput.disabled = locked || !lotSelect?.value;
+            if (locked && r !== row) {
+                if (lotSelect) lotSelect.value = '';
+                if (useGInput) useGInput.value = '';
+                const balCell = r.querySelector('.pmix-mix-room-bal');
+                if (balCell) balCell.textContent = '-';
+                const afterBalCell = r.querySelector('.pmix-after-bal');
+                if (afterBalCell) { afterBalCell.textContent = '-'; afterBalCell.style.color = ''; }
+                const totalUseEl = r.querySelector('.pmix-total-use-g');
+                if (totalUseEl) { totalUseEl.textContent = '-'; totalUseEl.style.color = 'var(--text-muted)'; }
+                const remLotEl = r.querySelector('.pmix-remaining-lot');
+                if (remLotEl) remLotEl.textContent = '';
+                _setFieldErr(lotSelect, false);
+            }
+        });
     }
 
     function _setFieldErr(el, isErr) {
@@ -19211,37 +19272,21 @@ var ProdQualityModule = (function() {
 
                 <div class="stat-cards" id="pqStats"></div>
 
-                <div class="card" style="margin-bottom:16px;">
-                    <div class="card-header">
-                        <h4><span class="material-symbols-outlined">format_paint</span> 도장 작업일지 기준 발행 대상</h4>
-                    </div>
-                    <div class="card-body" style="padding:0;">
-                        <div class="data-table-wrapper">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>작업일</th><th>라인</th><th>차종</th><th>품명</th><th>컬러</th><th>생산 LOT</th><th>산출수량</th><th>기준 양식</th><th>작업</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="pqWorkBody"></tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-
                 <div class="card">
-                    <div class="card-header">
-                        <h4><span class="material-symbols-outlined">receipt_long</span> 발행 이력</h4>
+                    <div class="card-header" style="flex-wrap:wrap;gap:8px;">
+                        <h4 style="margin:0;"><span class="material-symbols-outlined">format_paint</span> 도장 작업일지 · 기준 양식 발행</h4>
+                        <span style="font-size:0.78rem;color:var(--text-muted);">미발행 작업·DATA 미입력은 기간 밖이어도 목록에 유지됩니다.</span>
                     </div>
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
                             <table class="data-table">
                                 <thead>
                                     <tr>
-                                        <th>시간</th><th>라인</th><th>차종</th><th>품명</th><th>항목수</th><th>DATA 입력</th><th>작업</th>
+                                        <th>작업일</th><th>라인</th><th>차종</th><th>품명</th><th>컬러</th><th>생산 LOT</th><th>산출수량</th>
+                                        <th>기준 양식</th><th>DATA</th><th>작업</th>
                                     </tr>
                                 </thead>
-                                <tbody id="pqTableBody"></tbody>
+                                <tbody id="pqUnifiedBody"></tbody>
                             </table>
                         </div>
                     </div>
@@ -20534,84 +20579,40 @@ var ProdQualityModule = (function() {
             .sort((a, b) => issueSortKey(b).localeCompare(issueSortKey(a)));
 
         renderStats(works, data);
-        renderWorkTable(works);
-        renderTable(data);
+        renderUnifiedTable(works, data);
     }
 
     function renderStats(works, issues) {
-        const issuedWorkIds = new Set(issues.map(i => i.workId).filter(Boolean));
+        const allIssuedWorkIds = new Set(_issues().map(i => i.workId).filter(Boolean));
         const configuredCars = new Set(_templates().map(t => `${t.carModel || ''}||${t.color || ''}`));
         const el = document.getElementById('pqStats');
         if (!el) return;
         el.innerHTML = `
             <div class="stat-card blue"><div class="stat-card-value">${works.length}</div><div class="stat-card-label">도장 작업 건수</div></div>
             <div class="stat-card green"><div class="stat-card-value">${issues.length}</div><div class="stat-card-label">기준 양식 발행</div></div>
-            <div class="stat-card orange"><div class="stat-card-value">${works.filter(w => !issuedWorkIds.has(w.id)).length}</div><div class="stat-card-label">미발행</div></div>
+            <div class="stat-card orange"><div class="stat-card-value">${works.filter(w => !allIssuedWorkIds.has(w.id)).length}</div><div class="stat-card-label">미발행</div></div>
             <div class="stat-card purple"><div class="stat-card-value">${configuredCars.size}</div><div class="stat-card-label">기준설정 차종/컬러</div></div>
         `;
     }
 
-    function renderWorkTable(works) {
-        const tbody = document.getElementById('pqWorkBody');
-        if (!tbody) return;
-        if (!works.length) {
-            tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:30px;color:var(--text-muted);">해당 기간의 도장 작업일지가 없습니다.</td></tr>`;
-            return;
-        }
-        const issueMap = new Map(_issues().filter(i => i.workId).map(i => [i.workId, i]));
-        const canDelete = _isAdminUser();
-        const fmtPrintedAt = (iso) => {
-            if (!iso) return '';
-            const d = new Date(iso);
-            if (isNaN(d.getTime())) return String(iso).replace('T', ' ').slice(0, 16);
-            const p = n => String(n).padStart(2, '0');
-            return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-        };
-        // 작업일 컬럼: mm-dd / HHmm 2줄 (연도 제외)
-        const fmtWorkDateCell = (w) => {
-            const date = String(w.date || '');
-            const m = date.match(/^(\d{4})-(\d{2})-(\d{2})/);
-            const md = m ? `${m[2]}-${m[3]}` : (date || '-');
-            const t = String(w.startTime || '').match(/(\d{1,2}):(\d{2})/);
-            const hhmm = t ? `${t[1].padStart(2, '0')}:${t[2]}` : '';
-            return `<div style="text-align:center;line-height:1.25;font-size:0.78rem;">
-                <div style="font-weight:700;">${_esc(md)}</div>
-                ${hhmm ? `<div style="font-family:monospace;font-size:0.72rem;color:var(--text-secondary);">${_esc(hhmm)}</div>` : ''}
-            </div>`;
-        };
-        tbody.innerHTML = works.map(w => {
-            const tmpl = _templateFor(w.carModel, w.color);
-            const hasTemplate = !!tmpl;
-            const issue = issueMap.get(w.id);
-            const printed = !!(issue && issue.printedAt);
-            // 기준 양식 컬럼: 인쇄 완료(발행 완료) > 양식만 발행됨(인쇄 대기) > 항목 수 > 항목 설정 필요
-            const statusCell = printed
-                ? `<span class="badge badge-success" title="인쇄 완료">● 발행 완료</span><div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">${_esc(fmtPrintedAt(issue.printedAt))}</div>`
-                : (issue
-                    ? '<span class="badge badge-warning">인쇄 대기</span>'
-                    : (hasTemplate
-                        ? `<span class="badge badge-info">${(tmpl.items || []).length}항목</span>`
-                        : `<button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openTemplateModal('${_js(w.carModel || '')}','${_js(w.color || '')}')">항목설정필요</button>`));
-            // 작업 컬럼: 양식 미발행 → [발행] / 양식 있고 인쇄 전 → [인쇄물 발행] / 인쇄 완료 → [재인쇄]
-            const actionBtn = issue
-                ? `<button class="btn btn-sm ${printed ? 'btn-outline' : 'btn-primary'}" onclick="ProdQualityModule.printIssue('${_js(issue.id)}')">${printed ? '재인쇄' : '인쇄물 발행'}</button>`
-                : `<button class="btn btn-sm btn-primary" onclick="ProdQualityModule.issueAndPrintFromWork('${_js(w.id)}')">발행</button>`;
-            return `
-                <tr>
-                    <td>${fmtWorkDateCell(w)}</td>
-                    <td>${_esc(w.line || '-')}</td>
-                    <td><strong>${_esc(w.carModel || '-')}</strong></td>
-                    <td>${_esc(w.partName || '-')}</td>
-                    <td>${_esc(w.color || '-')}</td>
-                    <td style="font-family:monospace;font-size:0.8rem;">${_esc(w.lotNo || '-')}</td>
-                    <td style="text-align:right;">${UIUtils.formatNumber(w.productionQty || 0)}</td>
-                    <td>${statusCell}</td>
-                    <td style="white-space:nowrap;">
-                        ${actionBtn}
-                        ${canDelete ? `<button class="btn btn-sm btn-danger" onclick="ProdQualityModule.removeWorkLog('${_js(w.id)}')">삭제</button>` : ''}
-                    </td>
-                </tr>`;
-        }).join('');
+    function _fmtPrintedAt(iso) {
+        if (!iso) return '';
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return String(iso).replace('T', ' ').slice(0, 16);
+        const p = n => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+
+    function _fmtWorkDateCell(w) {
+        const date = String(w.date || '');
+        const m = date.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        const md = m ? `${m[2]}-${m[3]}` : (date || '-');
+        const t = String(w.startTime || '').match(/(\d{1,2}):(\d{2})/);
+        const hhmm = t ? `${t[1].padStart(2, '0')}:${t[2]}` : '';
+        return `<div style="text-align:center;line-height:1.25;font-size:0.78rem;">
+            <div style="font-weight:700;">${_esc(md)}</div>
+            ${hhmm ? `<div style="font-family:monospace;font-size:0.72rem;color:var(--text-secondary);">${_esc(hhmm)}</div>` : ''}
+        </div>`;
     }
 
     function _fmtIssueDateCell(d) {
@@ -20628,31 +20629,140 @@ var ProdQualityModule = (function() {
         </div>`;
     }
 
-    function renderTable(data) {
-        const tbody = document.getElementById('pqTableBody');
+    function _pqIsMainListVisible() {
+        return !!(document.getElementById('pqUnifiedBody') || document.getElementById('pqTableBody') || document.getElementById('pqWorkBody'));
+    }
+
+    function renderUnifiedTable(works, issues) {
+        const tbody = document.getElementById('pqUnifiedBody');
+        if (!tbody) return;
+
         const recordMap = new Map(_measureRecords().filter(r => r.issueId).map(r => [r.issueId, r]));
+        const issueByWork = new Map();
+        (issues || []).forEach(function(i) {
+            if (!i.workId) return;
+            const prev = issueByWork.get(i.workId);
+            if (!prev) {
+                issueByWork.set(i.workId, i);
+                return;
+            }
+            // 동일 작업에 여러 발행이 있으면 최신 발행 우선
+            const prevKey = String(prev.createdAt || prev.updatedAt || prev.id || prev.date || '');
+            const nextKey = String(i.createdAt || i.updatedAt || i.id || i.date || '');
+            if (nextKey.localeCompare(prevKey) > 0) issueByWork.set(i.workId, i);
+        });
+        // 전체 이슈 맵(필터 밖 작업에 연결된 발행 포함) — 동일 작업 복수 발행 시 최신 우선
+        const allIssueByWork = new Map();
+        _issues().filter(i => i.workId).forEach(function(i) {
+            const prev = allIssueByWork.get(i.workId);
+            if (!prev) { allIssueByWork.set(i.workId, i); return; }
+            const prevKey = String(prev.createdAt || prev.updatedAt || prev.id || prev.date || '');
+            const nextKey = String(i.createdAt || i.updatedAt || i.id || i.date || '');
+            if (nextKey.localeCompare(prevKey) > 0) allIssueByWork.set(i.workId, i);
+        });
         const canDelete = _isAdminUser();
-        tbody.innerHTML = data.length === 0 ? `<tr><td colspan="7" style="text-align:center;padding:30px;">기록이 없습니다.</td></tr>` :
-            data.map((d) => {
-                const record = recordMap.get(d.id);
-                return `
-                <tr>
+        const workIds = new Set((works || []).map(w => w.id));
+
+        const rows = [];
+
+        (works || []).forEach(function(w) {
+            const issue = issueByWork.get(w.id) || allIssueByWork.get(w.id) || null;
+            const record = issue ? recordMap.get(issue.id) : null;
+            const tmpl = _templateFor(w.carModel, w.color);
+            const hasTemplate = !!tmpl;
+            const printed = !!(issue && issue.printedAt);
+            const sortKey = String(w.date || '') + ' ' + String(w.startTime || '') + '|' + String(w.id || '');
+
+            const statusCell = printed
+                ? `<span class="badge badge-success" title="인쇄 완료">● 발행 완료</span><div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">${_esc(_fmtPrintedAt(issue.printedAt))}</div>`
+                : (issue
+                    ? '<span class="badge badge-warning">인쇄 대기</span>'
+                    : (hasTemplate
+                        ? `<span class="badge badge-info">${(tmpl.items || []).length}항목</span>`
+                        : `<button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openTemplateModal('${_js(w.carModel || '')}','${_js(w.color || '')}')">항목설정필요</button>`));
+
+            const dataCell = !issue
+                ? '<span class="badge badge-secondary">-</span>'
+                : (record
+                    ? '<span class="badge badge-success">입력완료</span>'
+                    : '<span class="badge badge-secondary">미입력</span>');
+
+            const printBtn = issue
+                ? `<button class="btn btn-sm ${printed ? 'btn-outline' : 'btn-primary'}" onclick="ProdQualityModule.printIssue('${_js(issue.id)}')">${printed ? '재인쇄' : '인쇄물 발행'}</button>`
+                : `<button class="btn btn-sm btn-primary" onclick="ProdQualityModule.issueAndPrintFromWork('${_js(w.id)}')">발행</button>`;
+            const dataBtn = issue
+                ? (record
+                    ? `<button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openDataView('${_js(issue.id)}')">DATA 보기</button>`
+                    : `<button class="btn btn-sm btn-primary" onclick="ProdQualityModule.openDataModal('${_js(issue.id)}')">DATA 입력</button>`)
+                : '';
+            const delBtn = canDelete
+                ? `<button class="btn btn-sm btn-danger" onclick="ProdQualityModule.removeWorkLog('${_js(w.id)}')">삭제</button>`
+                : '';
+
+            rows.push({
+                sortKey,
+                html: `<tr>
+                    <td>${_fmtWorkDateCell(w)}</td>
+                    <td>${_esc(w.line || '-')}</td>
+                    <td><strong>${_esc(w.carModel || '-')}</strong></td>
+                    <td>${_esc(w.partName || '-')}</td>
+                    <td>${_esc(w.color || '-')}</td>
+                    <td style="font-family:monospace;font-size:0.8rem;">${_esc(w.lotNo || '-')}</td>
+                    <td style="text-align:right;">${UIUtils.formatNumber(w.productionQty || 0)}</td>
+                    <td>${statusCell}</td>
+                    <td>${dataCell}</td>
+                    <td style="white-space:nowrap;">${printBtn}${dataBtn ? ' ' + dataBtn : ''}${delBtn ? ' ' + delBtn : ''}</td>
+                </tr>`
+            });
+        });
+
+        // 작업일지 없이 수동 발행된 양식, 또는 작업이 현재 목록에 없는 발행 건
+        (issues || []).forEach(function(d) {
+            if (d.workId && workIds.has(d.workId)) return;
+
+            const record = recordMap.get(d.id);
+            const printed = !!d.printedAt;
+            const sortKey = String(d.createdAt || d.updatedAt || d.id || d.date || '');
+            const statusCell = printed
+                ? `<span class="badge badge-success" title="인쇄 완료">● 발행 완료</span><div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">${_esc(_fmtPrintedAt(d.printedAt))}</div>`
+                : '<span class="badge badge-warning">인쇄 대기</span>';
+            const dataCell = record
+                ? '<span class="badge badge-success">입력완료</span>'
+                : '<span class="badge badge-secondary">미입력</span>';
+            const dataBtn = record
+                ? `<button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openDataView('${_js(d.id)}')">DATA 보기</button>`
+                : `<button class="btn btn-sm btn-primary" onclick="ProdQualityModule.openDataModal('${_js(d.id)}')">DATA 입력</button>`;
+            const delBtn = canDelete
+                ? `<button class="btn btn-sm btn-danger" onclick="ProdQualityModule.remove('${_js(d.id)}')">삭제</button>`
+                : '';
+
+            rows.push({
+                sortKey,
+                html: `<tr>
                     <td>${_fmtIssueDateCell(d)}</td>
                     <td>${_esc(d.line || '-')}</td>
                     <td><strong>${_esc(d.carModel || '-')}</strong></td>
                     <td>${_esc(d.partName || '-')}</td>
-                    <td style="text-align:center;">${(d.items || []).length}</td>
-                    <td>${record ? '<span class="badge badge-success">입력완료</span>' : '<span class="badge badge-secondary">미입력</span>'}</td>
+                    <td>${_esc(d.color || '-')}</td>
+                    <td style="font-family:monospace;font-size:0.8rem;">${_esc(d.lotNo || '-')}</td>
+                    <td style="text-align:right;">${UIUtils.formatNumber(d.productionQty || 0)}</td>
+                    <td>${statusCell}<div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">항목 ${(d.items || []).length}</div></td>
+                    <td>${dataCell}</td>
                     <td style="white-space:nowrap;">
-                        ${record
-                            ? `<button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openDataView('${_js(d.id)}')">DATA 보기</button>`
-                            : `<button class="btn btn-sm btn-primary" onclick="ProdQualityModule.openDataModal('${_js(d.id)}')">DATA 입력</button>`}
-                        <button class="btn btn-sm btn-outline" onclick="ProdQualityModule.printIssue('${_js(d.id)}')">재인쇄</button>
-                        ${canDelete ? `<button class="btn btn-sm btn-danger" onclick="ProdQualityModule.remove('${_js(d.id)}')">삭제</button>` : ''}
+                        <button class="btn btn-sm ${printed ? 'btn-outline' : 'btn-primary'}" onclick="ProdQualityModule.printIssue('${_js(d.id)}')">${printed ? '재인쇄' : '인쇄물 발행'}</button>
+                        ${dataBtn}${delBtn ? ' ' + delBtn : ''}
                     </td>
-                </tr>
-            `;
-            }).join('');
+                </tr>`
+            });
+        });
+
+        if (!rows.length) {
+            tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--text-muted);">해당 기간의 도장 작업·발행 이력이 없습니다.</td></tr>`;
+            return;
+        }
+
+        rows.sort(function(a, b) { return String(b.sortKey).localeCompare(String(a.sortKey)); });
+        tbody.innerHTML = rows.map(r => r.html).join('');
     }
 
     function _issues() {
@@ -20740,7 +20850,7 @@ var ProdQualityModule = (function() {
             printedAt: now,
             printHistory
         });
-        if (document.getElementById('pqTableBody')) search();
+        if (_pqIsMainListVisible()) search();
     }
 
     function _measureRecordForm(issue, record = {}) {
@@ -21057,7 +21167,7 @@ var ProdQualityModule = (function() {
         });
         UIUtils.closeModal();
         UIUtils.toast('초중종물 측정 DATA가 저장되었습니다.', 'success');
-        if (document.getElementById('pqTableBody')) search();
+        if (_pqIsMainListVisible()) search();
         const historyKind = document.getElementById('pqMeasureHistoryKind')?.value || '';
         if (historyKind) renderMeasureHistoryTable(historyKind);
     }

@@ -3288,6 +3288,52 @@ var LaserWipModule = (function() {
         setTimeout(function() { showResidualDetail(_productKey(carModel, partName, color)); }, 80);
     }
 
+    // LOT 지정 없이 LOT 미지정 잔량 자체를 삭제(수기 출고 처리)한다.
+    function confirmDeleteUnassignedResidual(keyEnc, qty) {
+        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 삭제할 수 있습니다.', 'warning'); return; }
+        const { carModel, partName, color } = _parseProductKey(keyEnc);
+        const amount = Math.max(0, Number(qty) || 0);
+        if (amount <= 0) return;
+        UIUtils.confirm(
+            `LOT 미지정 잔량 ${UIUtils.formatNumber(amount)} EA를 삭제하시겠습니까? 입출고 이력에 삭제 기록이 남으며 되돌릴 수 없습니다.`,
+            async () => {
+                await _deleteUnassignedResidual(carModel, partName, color, amount);
+            }
+        );
+    }
+
+    async function _deleteUnassignedResidual(carModel, partName, color, amount) {
+        const detail = _calcResidualLotDetail(carModel, partName, color);
+        const liveUnassigned = Math.max(0, Number(detail.manualAdj) || 0);
+        const targetQty = liveUnassigned > 0 ? Math.min(amount, liveUnassigned) : amount;
+        if (targetQty <= 0) {
+            UIUtils.toast('삭제할 LOT 미지정 잔량이 없습니다.', 'info');
+            return;
+        }
+        const prod = _getResidualProducts().find(function(p) {
+            return p.carModel === carModel && p.partName === partName && (!color || p.color === color);
+        });
+        const packUnit = prod ? _num(prod.packUnit || prod.packingUnit || prod.packageUnit || prod.packQty || prod.packingQty) : 0;
+        try {
+            await Storage.add(STORE_LASER, {
+                date: new Date().toISOString().slice(0, 10),
+                carModel, partName, color,
+                note: 'LOT 미지정 잔량 삭제',
+                packUnit, isManual: true,
+                quantity: targetQty,
+                isResidualManualOut: true,
+                author: _currentUserName()
+            });
+        } catch (err) {
+            console.error('[LaserWip] _deleteUnassignedResidual failed:', err);
+            UIUtils.toast('삭제에 실패했습니다.', 'error');
+            return;
+        }
+        UIUtils.toast(`LOT 미지정 잔량 ${UIUtils.formatNumber(targetQty)} EA를 삭제했습니다.`, 'success');
+        refresh();
+        setTimeout(function() { showResidualDetail(_productKey(carModel, partName, color)); }, 80);
+    }
+
     function openAdjustAfterLaserLotModal(keyEnc, paintLotEnc, lotNoEnc, currentQty) {
         if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
         const { carModel, partName, color } = _parseProductKey(keyEnc);
@@ -4306,6 +4352,10 @@ var LaserWipModule = (function() {
                     return `<button class="btn btn-sm btn-outline" style="font-size:0.72rem;padding:2px 8px;white-space:nowrap;"
                         onclick="UIUtils.closeModal();setTimeout(function(){LaserWipModule.openAssignResidualLotModal('${_jsArg(_keyJs)}',${Number(e.qty) || 0});},80);">
                         LOT 지정
+                    </button>
+                    <button class="btn btn-sm btn-danger" style="font-size:0.72rem;padding:2px 8px;white-space:nowrap;"
+                        onclick="LaserWipModule.confirmDeleteUnassignedResidual('${_jsArg(_keyJs)}',${Number(e.qty) || 0});">
+                        삭제
                     </button>`;
                 }
                 const _plJs = encodeURIComponent(e.paintLot || '');
@@ -4742,21 +4792,10 @@ var LaserWipModule = (function() {
         const emptyRow = function(label, colSpan) {
             return `<tr><td colspan="${colSpan}" style="text-align:center;color:var(--text-muted);padding:18px;font-size:0.84rem;">${label}</td></tr>`;
         };
-        // 입고/출고 표 열 폭 동기화 — 짧은 열은 좁게, 비고만 여유
-        const ioColgroup = `
-            <colgroup>
-                <col style="width:12%;">
-                <col style="width:6%;">
-                <col style="width:7%;">
-                <col style="width:9%;">
-                <col style="width:8%;">
-                <col style="width:8%;">
-                <col style="width:8%;">
-                <col style="width:12%;">
-                <col style="width:30%;">
-            </colgroup>`;
-        const ioTableStyle = 'font-size:0.85rem;width:100%;min-width:100%;table-layout:fixed;border-collapse:collapse;';
-        const thNowrap = 'white-space:nowrap;';
+        // 입고/출고 표 — 글자수 맞춤 (품명·컬러 공백/깨짐 방지). fixed+% col 사용 금지
+        const ioColgroup = '';
+        const ioTableStyle = 'font-size:0.85rem;width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;';
+        const thNowrap = 'white-space:nowrap;padding:8px 10px;';
         const rowHtml = function(r, kind) {
             const qtyColor = kind === 'in' ? 'var(--accent-green)' : 'var(--accent-blue)';
             const border = kind === 'in' ? 'var(--accent-green)' : 'var(--accent-blue)';
@@ -4768,15 +4807,15 @@ var LaserWipModule = (function() {
                         onclick="LaserWipModule.showWipDetail('${encKey}', event)"
                         onmouseover="this.style.background='rgba(139,92,246,0.06)'"
                         onmouseout="this.style.background=''">
-                <td style="white-space:nowrap;">${_esc(r.date || '-')}</td>
-                <td style="white-space:nowrap;"><strong>${_esc(r.carModel || '-')}</strong></td>
-                <td style="white-space:nowrap;">${_esc(r.partName || '-')}</td>
-                <td style="white-space:nowrap;">${_esc(r.color && r.color !== '-' ? r.color : '-')}</td>
-                <td style="text-align:right;color:${qtyColor};font-weight:700;white-space:nowrap;">${UIUtils.formatNumber(r.qty || 0)}</td>
-                <td style="font-family:monospace;font-size:0.8rem;color:var(--accent-green);white-space:nowrap;">${_esc(r.paintLot || '-')}</td>
-                <td style="font-family:monospace;font-size:0.8rem;white-space:nowrap;">${_esc(r.injLot || '-')}</td>
-                <td style="font-size:0.78rem;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${_esc(routeLabel)}">${_esc(routeLabel)}</td>
-                <td style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${_esc(noteText)}">${_esc(r.note || '')}${r.beforeReset ? ' <span style="color:#94a3b8;">(리셋 이전 기록)</span>' : ''}</td>
+                <td style="white-space:nowrap;padding:8px 10px;">${_esc(r.date || '-')}</td>
+                <td style="white-space:nowrap;padding:8px 10px;"><strong>${_esc(r.carModel || '-')}</strong></td>
+                <td style="white-space:nowrap;padding:8px 10px;">${_esc(r.partName || '-')}</td>
+                <td style="white-space:nowrap;padding:8px 10px;">${_esc(r.color && r.color !== '-' ? r.color : '-')}</td>
+                <td style="text-align:right;color:${qtyColor};font-weight:700;white-space:nowrap;padding:8px 10px;">${UIUtils.formatNumber(r.qty || 0)}</td>
+                <td style="font-family:monospace;font-size:0.8rem;color:var(--accent-green);white-space:nowrap;padding:8px 10px;">${_esc(r.paintLot || '-')}</td>
+                <td style="font-family:monospace;font-size:0.8rem;white-space:nowrap;padding:8px 10px;">${_esc(r.injLot || '-')}</td>
+                <td style="font-size:0.78rem;color:var(--text-secondary);white-space:nowrap;padding:8px 10px;" title="${_esc(routeLabel)}">${_esc(routeLabel)}</td>
+                <td style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;padding:8px 10px;" title="${_esc(noteText)}">${_esc(r.note || '')}${r.beforeReset ? ' <span style="color:#94a3b8;">(리셋 이전 기록)</span>' : ''}</td>
             </tr>`;
         };
 
@@ -5616,7 +5655,7 @@ var LaserWipModule = (function() {
              openAdjustResidualSingleLotModal, saveAdjustResidualSingleLotModal,
              openAdjustResidualLotModal, saveAdjustResidualLotModal,
              addAdjustResAllLotRow, removeAdjustResAllLotRow, onAdjustResAllLotQtyInput, onAdjustResAllTotalQtyInput,
-             openAssignResidualLotModal, saveAssignResidualLotModal,
+             openAssignResidualLotModal, saveAssignResidualLotModal, confirmDeleteUnassignedResidual,
              _openAfterLaserOutForPart, _openAfterLaserInForPart,
              _openResidualOutForPart, _openResidualInForPart,
              _validateLotFormat, _checkLotFormat };

@@ -2157,7 +2157,7 @@ const ShippingInspectionModule = (function() {
         overlay.id = 'siModal';
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px;';
         overlay.innerHTML = `
-            <div style="background:var(--bg-primary);border-radius:12px;width:100%;max-width:700px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+            <div style="background:var(--bg-primary);border-radius:12px;width:100%;max-width:min(1200px, calc(100vw - 32px));max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
                 <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 24px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg-primary);z-index:1;">
                     <h3 style="margin:0;font-size:1.1rem;">${title}</h3>
                     <button onclick="ShippingInspectionModule._closeModal()"
@@ -2298,8 +2298,8 @@ const ShippingInspectionModule = (function() {
                         </button>
                     </div>
                 </div>
-                <div style="overflow-x:auto;border:1px solid var(--border-color);border-radius:8px;">
-                    <table class="data-table" style="margin:0;width:max-content;min-width:100%;table-layout:auto;">
+                <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
+                    <table class="data-table" style="margin:0;width:100%;table-layout:auto;border-collapse:collapse;">
                         <thead><tr>
                             <th style="white-space:nowrap;">항목</th><th>기준</th><th style="white-space:nowrap;">확인방법</th>
                             <th style="white-space:nowrap;">시료</th><th style="white-space:nowrap;">결과</th>

@@ -31,6 +31,19 @@ var WarehouseOverviewModule = (function () {
     let _paint = null; // 도료 창고 계산 결과
     const _esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+    /** FIFO 판정용 — LOT는 YYMMDD(6자리 유효 날짜)만 인정. __nolot__, DEV-LOT 등은 제외 */
+    function _isYymmddLot(lotNo) {
+        const s = String(lotNo || '').trim();
+        if (!/^\d{6}$/.test(s)) return false;
+        const yy = parseInt(s.slice(0, 2), 10);
+        const mm = parseInt(s.slice(2, 4), 10);
+        const dd = parseInt(s.slice(4, 6), 10);
+        if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return false;
+        const year = 2000 + yy;
+        const d = new Date(year, mm - 1, dd);
+        return d.getFullYear() === year && d.getMonth() === mm - 1 && d.getDate() === dd;
+    }
+
     function init() {}
 
     // ── 대시보드 헬퍼 ────────────────────────────────────────────────────
@@ -262,10 +275,12 @@ var WarehouseOverviewModule = (function () {
             // FIFO 위반: 소비된 LOT 중 현재 활성 LOT보다 더 최근에 입고된 LOT가 있으면 위반
             // - 입고 기록이 실제로 있는 LOT만 대상 (hadIncoming=true, firstDate 유효)
             // - 출고만 있는 LOT(데이터 오류)는 제외
+            // - YYMMDD 형식 LOT만 비교 (__nolot__, DEV-LOT 등 제외)
+            const fifoActiveLots = activeLots.filter(([lot]) => _isYymmddLot(lot));
             const consumedLots = Object.entries(lots)
-                .filter(([, v]) => v.qty <= 0 && v.hadIncoming && v.firstDate);
-            if (activeLots.length > 0 && consumedLots.length > 0) {
-                const oldestActiveLotDate = activeLots[0][1].firstDate;
+                .filter(([lot, v]) => _isYymmddLot(lot) && v.qty <= 0 && v.hadIncoming && v.firstDate);
+            if (fifoActiveLots.length > 0 && consumedLots.length > 0) {
+                const oldestActiveLotDate = fifoActiveLots[0][1].firstDate;
                 // 소비된 LOT 중 현재 가장 오래된 활성 LOT보다 나중에 입고된 것이 있으면 위반
                 const newerConsumedLots = consumedLots
                     .filter(([, v]) => v.firstDate > oldestActiveLotDate)
@@ -278,7 +293,7 @@ var WarehouseOverviewModule = (function () {
                         color,
                         qty: netQty,
                         oldestDate: oldestActiveLotDate,
-                        oldLots: activeLots.map(([lot, v]) => ({ lot, qty: v.qty, firstDate: v.firstDate })),
+                        oldLots: fifoActiveLots.map(([lot, v]) => ({ lot, qty: v.qty, firstDate: v.firstDate })),
                         consumedLots: newerConsumedLots.map(([lot, v]) => ({ lot, firstDate: v.firstDate }))
                     });
                 }
@@ -359,10 +374,12 @@ var WarehouseOverviewModule = (function () {
                 }
             });
 
-            // FIFO 위반 체크
-            const consumedLots = Object.entries(lots).filter(([, v]) => v.qty <= 0);
-            if (activeLots.length > 0 && consumedLots.length > 0) {
-                const oldestActiveLotDate = activeLots[0][1].firstDate;
+            // FIFO 위반 체크 — YYMMDD 형식 LOT만 비교 (__nolot__, DEV-LOT, 비정상 LOT 제외)
+            const fifoActiveLots = activeLots.filter(([lot]) => _isYymmddLot(lot));
+            const consumedLots = Object.entries(lots)
+                .filter(([lot, v]) => _isYymmddLot(lot) && v.qty <= 0);
+            if (fifoActiveLots.length > 0 && consumedLots.length > 0) {
+                const oldestActiveLotDate = fifoActiveLots[0][1].firstDate;
                 const newerConsumedLots = consumedLots
                     .filter(([, v]) => (v.firstDate || '') > (oldestActiveLotDate || ''))
                     .sort(([, a], [, b]) => (a.firstDate || '').localeCompare(b.firstDate || ''));
@@ -373,7 +390,7 @@ var WarehouseOverviewModule = (function () {
                         supplier,
                         qty: netQty,
                         oldestDate: oldestActiveLotDate,
-                        oldLots: activeLots.map(([lot, v]) => ({ lot, qty: v.qty, firstDate: v.firstDate })),
+                        oldLots: fifoActiveLots.map(([lot, v]) => ({ lot, qty: v.qty, firstDate: v.firstDate })),
                         consumedLots: newerConsumedLots.map(([lot, v]) => ({ lot, firstDate: v.firstDate }))
                     });
                 }
@@ -426,40 +443,105 @@ var WarehouseOverviewModule = (function () {
             </table>`, '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>', 'lg');
     }
 
+    function _shortDate(v) {
+        const s = String(v || '').trim();
+        if (!s) return '-';
+        // YYYY-MM-DD HH:mm → MM-DD HH:mm
+        if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+            const d = s.slice(5, 10);
+            const t = s.length >= 16 ? s.slice(11, 16) : '';
+            return t ? (d + ' ' + t) : d;
+        }
+        return s;
+    }
+
+    function _fifoLotChips(lots, type) {
+        const list = lots || [];
+        if (!list.length) {
+            return '<span style="color:var(--text-muted);font-size:0.78rem;">-</span>';
+        }
+        const isOld = type === 'old';
+        const color = isOld ? '#2563eb' : '#ea580c';
+        const bg = isOld ? 'rgba(37,99,235,0.08)' : 'rgba(234,88,12,0.08)';
+        const border = isOld ? 'rgba(37,99,235,0.28)' : 'rgba(234,88,12,0.35)';
+        const maxShow = 4;
+        const shown = list.slice(0, maxShow);
+        const rest = list.length - shown.length;
+        const chips = shown.map(function(l) {
+            const qtyHtml = isOld
+                ? '<span style="font-weight:700;margin-left:6px;">' + UIUtils.formatNumber(l.qty || 0) + '</span>'
+                : '';
+            return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;' +
+                'background:' + bg + ';border:1px solid ' + border + ';white-space:nowrap;font-size:0.78rem;line-height:1.3;">' +
+                '<strong style="font-family:monospace;color:' + color + ';">' + _esc(l.lot || '-') + '</strong>' +
+                '<span style="color:var(--text-muted);font-size:0.72rem;" title="입고일시">' + _esc(_shortDate(l.firstDate)) + '</span>' +
+                qtyHtml +
+                '</span>';
+        }).join('');
+        const more = rest > 0
+            ? '<span style="font-size:0.72rem;color:var(--text-muted);padding:3px 6px;">+' + rest + '개</span>'
+            : '';
+        return '<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;max-width:460px;">' + chips + more + '</div>';
+    }
+
+    function _fifoSummaryLine(oldLot, consumedLot) {
+        return '<div style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:0.76rem;color:#9a3412;line-height:1.35;">' +
+            '<span style="font-family:monospace;font-weight:700;color:#2563eb;">' + _esc(oldLot.lot || '-') + '</span>' +
+            '<span style="color:var(--text-muted);">잔량</span>' +
+            '<span class="material-symbols-outlined" style="font-size:14px;color:#ea580c;">arrow_forward</span>' +
+            '<span style="font-family:monospace;font-weight:700;color:#ea580c;">' + _esc(consumedLot.lot || '-') + '</span>' +
+            '<span style="color:var(--text-muted);">선소진</span>' +
+            '</div>';
+    }
+
     /* 사출 — FIFO 위반 */
     function showInjFifo() {
         if (!_inj || !_inj.fifoItems.length) return;
-        const lotList = (lots, type) => (lots || []).map(l => `
-            <div style="display:flex;justify-content:space-between;gap:8px;margin:2px 0;">
-                <span style="font-family:monospace;font-weight:700;color:${type === 'old' ? '#2563eb' : '#ea580c'};">${_esc(l.lot || '-')}</span>
-                <span style="color:var(--text-muted);">${_esc(l.firstDate || '-')}</span>
-                ${type === 'old' ? `<span style="text-align:right;min-width:70px;">${UIUtils.formatNumber(l.qty || 0)} EA</span>` : ''}
-            </div>`).join('');
-        const rows = _inj.fifoItems.map(d => {
+        const rows = _inj.fifoItems.map(function(d, idx) {
             const oldLot = (d.oldLots || [])[0] || {};
             const consumedLot = (d.consumedLots || [])[0] || {};
             return `
-                <tr style="background:rgba(234,88,12,0.04);">
-                    <td>${_esc(d.carModel || '-')}</td>
-                    <td>${_esc(d.partName || '-')}</td>
-                    <td>${_esc(d.color || '-')}</td>
-                    <td style="text-align:right;">${UIUtils.formatNumber(d.qty)} EA</td>
-                    <td>${lotList(d.oldLots, 'old')}</td>
-                    <td>${lotList(d.consumedLots, 'consumed')}</td>
-                    <td style="font-size:0.78rem;color:#9a3412;line-height:1.5;">
-                        ${_esc(oldLot.lot || '-')} (${_esc(oldLot.firstDate || '-')}) 재고가 남아 있는데<br>
-                        더 늦게 입고된 ${_esc(consumedLot.lot || '-')} (${_esc(consumedLot.firstDate || '-')}) LOT가 먼저 소진됨
-                    </td>
+                <tr style="background:${idx % 2 ? 'rgba(234,88,12,0.03)' : 'transparent'};vertical-align:top;">
+                    <td style="white-space:nowrap;text-align:center;color:var(--text-muted);">${idx + 1}</td>
+                    <td style="white-space:nowrap;">${_esc(d.carModel || '-')}</td>
+                    <td style="white-space:nowrap;font-weight:600;">${_esc(d.partName || '-')}</td>
+                    <td style="white-space:nowrap;">${_esc(d.color || '-')}</td>
+                    <td style="white-space:nowrap;text-align:right;font-weight:700;">${UIUtils.formatNumber(d.qty)}</td>
+                    <td>${_fifoLotChips(d.oldLots, 'old')}</td>
+                    <td>${_fifoLotChips(d.consumedLots, 'consumed')}</td>
+                    <td style="white-space:nowrap;">${_fifoSummaryLine(oldLot, consumedLot)}</td>
                 </tr>`;
         }).join('');
         UIUtils.showModal('사출 자재 창고 — FIFO 위반 목록', `
-            <p style="font-size:0.83rem;color:var(--text-muted);margin-bottom:12px;">
-                오래된 LOT가 현재 재고로 남아 있는데, 그보다 더 최근에 입고된 LOT가 먼저 소진된 항목입니다.
-            </p>
-            <table class="data-table">
-                <thead><tr><th>차종</th><th>품명</th><th>컬러</th><th>현재 재고</th><th>남아 있는 구 LOT</th><th>먼저 소진된 신 LOT</th><th>위반 근거</th></tr></thead>
-                <tbody>${rows}</tbody>
-            </table>`, '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>', 'xl');
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+                <p style="font-size:0.83rem;color:var(--text-muted);margin:0;line-height:1.45;">
+                    구 LOT 재고가 남아 있는데 신 LOT가 먼저 소진된 항목입니다.
+                    <span style="color:var(--text-secondary);">※ YYMMDD(6자리) LOT만 판정</span>
+                </p>
+                <span style="font-size:0.78rem;font-weight:700;color:#ea580c;background:rgba(234,88,12,0.1);border:1px solid rgba(234,88,12,0.3);border-radius:999px;padding:3px 10px;white-space:nowrap;">
+                    ${_inj.fifoItems.length}건
+                </span>
+            </div>
+            <div class="data-table-wrapper" style="overflow:auto;max-height:min(70vh, 720px);">
+                <table class="data-table" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
+                    <thead>
+                        <tr>
+                            <th style="white-space:nowrap;text-align:center;">No</th>
+                            <th style="white-space:nowrap;">차종</th>
+                            <th style="white-space:nowrap;">품명</th>
+                            <th style="white-space:nowrap;">컬러</th>
+                            <th style="white-space:nowrap;text-align:right;">재고(EA)</th>
+                            <th style="white-space:nowrap;">남아 있는 구 LOT<br><span style="font-weight:400;font-size:0.7rem;color:var(--text-muted);">회색 = 입고일시</span></th>
+                            <th style="white-space:nowrap;">먼저 소진된 신 LOT<br><span style="font-weight:400;font-size:0.7rem;color:var(--text-muted);">회색 = 입고일시</span></th>
+                            <th style="white-space:nowrap;">요약</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>`,
+            '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>',
+            'xxxl'
+        );
     }
 
     /* 사출 — 다층 LOT */
@@ -549,36 +631,49 @@ var WarehouseOverviewModule = (function () {
     /* 도료 — FIFO 위반 */
     function showPaintFifo() {
         if (!_paint || !_paint.fifoItems.length) return;
-        const lotList = (lots, type) => (lots || []).map(l => `
-            <div style="display:flex;justify-content:space-between;gap:8px;margin:2px 0;">
-                <span style="font-family:monospace;font-weight:700;color:${type === 'old' ? '#2563eb' : '#ea580c'};">${_esc(l.lot || '-')}</span>
-                <span style="color:var(--text-muted);">${_esc(l.firstDate || '-')}</span>
-                ${type === 'old' ? `<span style="text-align:right;min-width:70px;">${UIUtils.formatNumber(l.qty || 0)}</span>` : ''}
-            </div>`).join('');
-        const rows = _paint.fifoItems.map(d => {
+        const rows = _paint.fifoItems.map(function(d, idx) {
             const oldLot = (d.oldLots || [])[0] || {};
             const consumedLot = (d.consumedLots || [])[0] || {};
             return `
-                <tr style="background:rgba(234,88,12,0.04);">
-                    <td><strong>${_esc(d.matName)}</strong></td>
-                    <td>${_esc(d.supplier)}</td>
-                    <td style="text-align:right;">${UIUtils.formatNumber(d.qty)}</td>
-                    <td>${lotList(d.oldLots, 'old')}</td>
-                    <td>${lotList(d.consumedLots, 'consumed')}</td>
-                    <td style="font-size:0.78rem;color:#9a3412;line-height:1.5;">
-                        ${_esc(oldLot.lot || '-')} (${_esc(oldLot.firstDate || '-')}) 재고가 남아 있는데<br>
-                        더 늦게 입고된 ${_esc(consumedLot.lot || '-')} (${_esc(consumedLot.firstDate || '-')}) LOT가 먼저 소진됨
-                    </td>
+                <tr style="background:${idx % 2 ? 'rgba(234,88,12,0.03)' : 'transparent'};vertical-align:top;">
+                    <td style="white-space:nowrap;text-align:center;color:var(--text-muted);">${idx + 1}</td>
+                    <td style="white-space:nowrap;font-weight:600;">${_esc(d.matName)}</td>
+                    <td style="white-space:nowrap;">${_esc(d.supplier)}</td>
+                    <td style="white-space:nowrap;text-align:right;font-weight:700;">${UIUtils.formatNumber(d.qty)}</td>
+                    <td>${_fifoLotChips(d.oldLots, 'old')}</td>
+                    <td>${_fifoLotChips(d.consumedLots, 'consumed')}</td>
+                    <td style="white-space:nowrap;">${_fifoSummaryLine(oldLot, consumedLot)}</td>
                 </tr>`;
         }).join('');
         UIUtils.showModal('도료 자재 창고 — FIFO 위반 목록', `
-            <p style="font-size:0.83rem;color:var(--text-muted);margin-bottom:12px;">
-                오래된 LOT가 현재 재고로 남아 있는데, 그보다 더 최근에 입고된 LOT가 먼저 소진된 원료입니다.
-            </p>
-            <table class="data-table">
-                <thead><tr><th>원료명</th><th>공급사</th><th>현재 재고</th><th>남아 있는 구 LOT</th><th>먼저 소진된 신 LOT</th><th>위반 근거</th></tr></thead>
-                <tbody>${rows}</tbody>
-            </table>`, '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>', 'xl');
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+                <p style="font-size:0.83rem;color:var(--text-muted);margin:0;line-height:1.45;">
+                    구 LOT 재고가 남아 있는데 신 LOT가 먼저 소진된 원료입니다.
+                    <span style="color:var(--text-secondary);">※ YYMMDD(6자리) LOT만 판정 (__nolot__, DEV-LOT 등 제외)</span>
+                </p>
+                <span style="font-size:0.78rem;font-weight:700;color:#ea580c;background:rgba(234,88,12,0.1);border:1px solid rgba(234,88,12,0.3);border-radius:999px;padding:3px 10px;white-space:nowrap;">
+                    ${_paint.fifoItems.length}건
+                </span>
+            </div>
+            <div class="data-table-wrapper" style="overflow:auto;max-height:min(70vh, 720px);">
+                <table class="data-table" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
+                    <thead>
+                        <tr>
+                            <th style="white-space:nowrap;text-align:center;">No</th>
+                            <th style="white-space:nowrap;">원료명</th>
+                            <th style="white-space:nowrap;">공급사</th>
+                            <th style="white-space:nowrap;text-align:right;">재고</th>
+                            <th style="white-space:nowrap;">남아 있는 구 LOT<br><span style="font-weight:400;font-size:0.7rem;color:var(--text-muted);">회색 = 입고일시</span></th>
+                            <th style="white-space:nowrap;">먼저 소진된 신 LOT<br><span style="font-weight:400;font-size:0.7rem;color:var(--text-muted);">회색 = 입고일시</span></th>
+                            <th style="white-space:nowrap;">요약</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>`,
+            '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>',
+            'xxxl'
+        );
     }
 
     return {
