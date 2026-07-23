@@ -747,6 +747,33 @@ const AuthModule = (function () {
         _updateTopbar();
         return true;
     }
+    // 로그인 사용자가 보내는 게 아니라, 시스템(자동 검증 로직 등)이 특정 사용자에게 보내는
+    // 쪽지. sendInternalMessage는 getCurrentUser()가 없으면 실패하는데, 백그라운드 자동
+    // 발송은 그 시점에 누가 로그인해 있는지와 무관해야 하므로 별도 경로로 둔다.
+    function sendSystemMessage(payload) {
+        const targetType = String(payload?.targetType || 'user');
+        const targetId = String(payload?.targetId || '');
+        const title = String(payload?.title || '').trim();
+        const body = String(payload?.body || '').trim();
+        if (!title || !body) return false;
+        if (targetType !== 'all' && !targetId) return false;
+        const rows = _getMessages();
+        rows.push({
+            id: _newMessageId(),
+            title,
+            body,
+            category: String(payload?.category || 'system'),
+            priority: String(payload?.priority || 'normal'),
+            senderId: 'system',
+            senderName: '시스템',
+            recipients: _cloneRecipients(targetType, targetId),
+            sentAt: new Date().toISOString(),
+            readBy: []
+        });
+        _saveMessages(rows);
+        _updateTopbar();
+        return true;
+    }
     function _popupStateKey(user) {
         return `${POPUP_STATE_PREFIX}${user?.id || 'guest'}`;
     }
@@ -1403,6 +1430,7 @@ const AuthModule = (function () {
         requireAdminAuth,
         getUnreadInboxCount,
         sendInternalMessage,
+        sendSystemMessage,
         openInboxModal,
         openComposeMessageModal,
         openPageRolePermissionWindow: _openPageRolePermissionWindow,

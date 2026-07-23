@@ -2719,7 +2719,6 @@ var LaserInspectionModule = (function() {
     }
 
     // 미검사 작업일지 목록 반환
-    // ※ 초중종(요구 단계) 입력이 모두 끝난 작업만 외관 검사 대기로 넘긴다.
     function getUninspectedWorks() {
         const works = Storage.getAll(DB.STORES.LASER_WORK_LOG) || [];
         const inspectedIds = getInspectedWorkIds();
@@ -2727,8 +2726,14 @@ var LaserInspectionModule = (function() {
             ? LaserWorkModule.isWorkQcFullyEntered
             : (w) => w && w.status !== 'in_progress';
         return works
-            // 부분검사 중(inspectionStatus:'partial')인 작업은 검사 이력이 있어도 계속 대기 목록에 남는다.
-            .filter(w => w.id && qcReady(w) && (!inspectedIds.has(w.id) || w.inspectionStatus === 'partial'))
+            // 작업중(in_progress)은 검사 대기 대상이 아니므로 계속 제외한다.
+            // ※ 예전엔 초/중/종(요구 단계) 입력이 모두 끝난 작업만 여기 넣었는데, 그러면
+            //   검사 완료 후(또는 검사 전) 작업일지 수량을 수정해 QC 요구 단계가 올라간 경우
+            //   (예: 8,000개 이하→초과로 중품 요구 추가) 그 작업이 검사대기/검사이력 어디에도
+            //   안 보이고 통째로 "유실"된 것처럼 사라지는 버그가 있었다. 이제는 목록에 남기고
+            //   _qcReady 플래그로 구분해, QC 미입력 상태를 화면에서 바로 알 수 있게 한다.
+            .filter(w => w.id && w.status !== 'in_progress' && (!inspectedIds.has(w.id) || w.inspectionStatus === 'partial'))
+            .map(w => Object.assign({}, w, { _qcReady: qcReady(w) }))
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     }
 
@@ -2939,6 +2944,10 @@ var LaserInspectionModule = (function() {
                             const draftBadge = _draft
                                 ? `<span class="badge" style="background:var(--accent-orange,#f59e0b);color:#fff;margin-left:4px;font-size:0.68rem;" title="임시 저장됨 (${_formatDraftTime(_draft.savedAt)})">임시저장</span>`
                                 : '';
+                            const qcMissing = w._qcReady === false;
+                            const qcMissingBadge = qcMissing
+                                ? `<span class="badge" style="background:var(--accent-red,#dc2626);color:#fff;margin-left:4px;font-size:0.68rem;" title="작업 수량 기준으로 요구되는 초/중/종품 QC 입력이 부족합니다(예: 수량 수정으로 요구 단계가 늘어남). 작업일지에서 QC를 마저 입력해야 검사를 시작할 수 있습니다.">QC 입력 필요</span>`
+                                : '';
                             const qtyDisplay = isPartial
                                 ? `${UIUtils.formatNumber(remainingQty)} <span style="font-size:0.72rem;color:var(--text-muted);">/ ${UIUtils.formatNumber(w.quantity || 0)}</span>`
                                 : UIUtils.formatNumber(w.quantity || 0);
@@ -2946,20 +2955,25 @@ var LaserInspectionModule = (function() {
                             const btnColor = isPartial ? 'var(--accent-blue)' : (_draft ? 'var(--accent-orange,#f59e0b)' : 'inherit');
                             const btnStyle = isPartial || _draft ? ` style="color:${btnColor};border-color:${btnColor};"` : '';
                             const btnClass = isPartial || _draft ? 'btn-outline' : 'btn-primary';
+                            const actionBtnHtml = qcMissing
+                                ? `<button class="btn btn-sm btn-outline" style="color:var(--accent-red,#dc2626);border-color:var(--accent-red,#dc2626);" onclick="LaserWorkModule.edit('${w.id}')">
+                                        <span class="material-symbols-outlined" style="font-size:0.9rem;">edit_note</span> QC 입력하기
+                                    </button>`
+                                : `<button class="btn btn-sm ${btnClass}" onclick="LaserInspectionModule.openInspFromWork('${w.id}')"${btnStyle}>
+                                        <span class="material-symbols-outlined" style="font-size:0.9rem;">add_task</span> ${btnText}
+                                    </button>`;
                             return `
-                            <tr${isPartial ? ' style="background:rgba(37,99,235,0.06);"' : (_draft ? ' style="background:rgba(245,158,11,0.06);"' : '')}>
+                            <tr${qcMissing ? ' style="background:rgba(220,38,38,0.05);"' : (isPartial ? ' style="background:rgba(37,99,235,0.06);"' : (_draft ? ' style="background:rgba(245,158,11,0.06);"' : ''))}>
                                 <td>${_dateStack(w.date, w.startTime)}</td>
                                 <td style="white-space:nowrap;"><span class="badge badge-info">${w.machine || '-'}</span></td>
                                 <td style="white-space:nowrap;font-size:0.82rem;">${w.carModel || '-'}</td>
-                                <td style="font-weight:600;">${w.partName || '-'}${partialBadge}${draftBadge}</td>
+                                <td style="font-weight:600;">${w.partName || '-'}${partialBadge}${draftBadge}${qcMissingBadge}</td>
                                 <td style="white-space:nowrap;">${w.color || '-'}</td>
                                 <td style="text-align:right; font-weight:700; color:var(--accent-blue);">${qtyDisplay}</td>
                                 <td>${_dateListHtml(info.paintDates)}</td>
                                 <td>${_lotListHtml(info.injectionLots)}</td>
                                 <td style="white-space:nowrap;">
-                                    <button class="btn btn-sm ${btnClass}" onclick="LaserInspectionModule.openInspFromWork('${w.id}')"${btnStyle}>
-                                        <span class="material-symbols-outlined" style="font-size:0.9rem;">add_task</span> ${btnText}
-                                    </button>${isAdmin ? `
+                                    ${actionBtnHtml}${isAdmin ? `
                                     <button class="btn btn-sm btn-danger" onclick="LaserInspectionModule._deleteStandbyWork('${w.id}')" style="margin-left:4px;">
                                         <span class="material-symbols-outlined" style="font-size:0.9rem;">delete</span> 삭제
                                     </button>` : ''}
@@ -5785,8 +5799,8 @@ var LaserStandbyModule = (function() {
             inventoryMap[key].manualOverride = override;
             inventoryMap[key].manualOverrideDate = overrideEventStamp;
 
-            // absoluteAfter=targetStock을 함께 실어, 이력 화면이 diff를 이전 잔량에 누적하지 않고
-            // targetStock으로 바로 덮어쓰게 한다 — 이력의 "현재 수량"이 항상 실제 재고와 일치해야 하므로.
+            // 단일 장부: 수기 보정은 targetStock과의 차이(delta)만 입·출고로 기록한다.
+            // absoluteAfter로 이력을 덮어쓰면 합산 재고(입고-출고)와 이력 재생이 어긋난다.
             if (diff > 0) {
                 inventoryMap[key].inQty += diff;
                 inventoryMap[key].inRecords.push({
@@ -5796,7 +5810,6 @@ var LaserStandbyModule = (function() {
                     eventStamp: overrideEventStamp,
                     paintingDate: _formatWorkDateTime(override.paintLot || override.date || '', ''),
                     qty: diff,
-                    absoluteAfter: targetStock,
                     lotNo: override.injectionLot || '',
                     injLotNo: override.injectionLot || '',
                     paintLot: override.paintLot || '',
@@ -5818,7 +5831,6 @@ var LaserStandbyModule = (function() {
                     injLotNo: override.injectionLot || '',
                     paintLot: override.paintLot || '',
                     qty: Math.abs(diff),
-                    absoluteAfter: targetStock,
                     author: override.author || '',
                     operator: override.author || '',
                     machine: override.note || (override.manualType === 'add' ? '수기추가'
@@ -5879,7 +5891,8 @@ var LaserStandbyModule = (function() {
         return allRows;
     }
 
-    /** 이력 재생 수량 vs 표시 재고 불일치 검사 (상세 모달·재공 현황 목록 공통) */
+    /** 이력 재생 수량 vs 표시 재고 불일치 검사 (상세 모달·재공 현황 목록 공통)
+     *  단일 장부: 입출고 델타만 누적. absoluteAfter는 이력 리셋 기준선만 허용. */
     function _computeReplayMismatch(stock, allRows) {
         const stockNum = Number(stock) || 0;
         if (typeof StockDetailUI === 'undefined' || typeof StockDetailUI.simpleReplaySteps !== 'function') {
@@ -5889,9 +5902,13 @@ var LaserStandbyModule = (function() {
         const replaySteps = StockDetailUI.simpleReplaySteps(simpleHistItems, function(histItem) {
             return histItem.isOut ? -(Number(histItem.qty) || 0) : (Number(histItem.qty) || 0);
         }, {
-            floorZero: true,
+            floorZero: false,
             getAbsoluteAfter: function(histItem) {
-                return (histItem && histItem.absoluteAfter != null) ? histItem.absoluteAfter : null;
+                // 이력 리셋 기준선만 절대값(시작 잔량). 수기보정 absoluteAfter는 사용하지 않음.
+                if (histItem && histItem.isHistoryReset && histItem.absoluteAfter != null) {
+                    return histItem.absoluteAfter;
+                }
+                return null;
             }
         });
         const liveSteps = replaySteps.filter(function(s) {
@@ -6007,9 +6024,8 @@ var LaserStandbyModule = (function() {
                 injLot: injLot,
                 lot: injLot,
                 qty: Number(r.qty) || 0,
-                absoluteAfter: isReset
-                    ? (Number(r.qty) || 0)
-                    : (r.absoluteAfter != null ? Number(r.absoluteAfter) : null),
+                // 단일 장부: 절대값 덮어쓰기는 이력 리셋 기준선만. 수기보정 absoluteAfter는 무시.
+                absoluteAfter: isReset ? (Number(r.qty) || 0) : null,
                 isHistoryReset: isReset,
                 beforeReset: !!r.beforeReset,
                 author: _standbyWho(r),
@@ -7333,7 +7349,6 @@ var LaserStandbyModule = (function() {
         const totalOut = snapshot.totalOut;
         const allRows = snapshot.allRows;
         const lotBalRows = _buildLotBalanceRows(key, snapshot.item);
-        const lotCount = lotBalRows.filter(r => (Number(r.qty) || 0) > 0).length;
 
         const _cmJs = String(carModel || '').replace(/'/g, "\\'");
         const _pnJs = String(partName || '').replace(/'/g, "\\'");
@@ -7385,7 +7400,7 @@ var LaserStandbyModule = (function() {
         }
 
         const historySection = StockDetailUI.buildSimpleHistorySection(simpleHistItems, {
-            floorZero: true,
+            floorZero: false,
             splitLots: true,
             showActions: canEdit,
             actionHtmlFn: canEdit ? function(item) {
@@ -7402,10 +7417,9 @@ var LaserStandbyModule = (function() {
                     : '';
                 return editBtn + deleteBtn;
             } : null,
-            // 이력 리셋뿐 아니라 수기 보정(override)도 절대값 지시이므로 그대로 반영한다.
-            // (override의 qty는 "변화량"이 아니라 targetStock 산출용 내부 보정치라 그대로 누적하면 실재고와 어긋난다)
+            // 단일 장부: 이력 리셋 기준선만 절대값. 수기보정은 입출고 델타로만 재생.
             getAbsoluteAfter: function(item) {
-                if (item && item.absoluteAfter != null) return item.absoluteAfter;
+                if (item && item.isHistoryReset && item.absoluteAfter != null) return item.absoluteAfter;
                 return null;
             }
         });
@@ -7419,6 +7433,11 @@ var LaserStandbyModule = (function() {
                 <span style="color:var(--text-muted);">·</span>
                 <span><strong>${partName}</strong></span>
                 ${color && color !== '-' ? `<span style="color:var(--text-muted);">·</span><span>${color}</span>` : ''}
+                <span style="margin-left:auto;font-size:0.82rem;color:var(--text-muted);">
+                    현재 재고 <strong style="color:var(--accent-blue);font-size:1rem;">${UIUtils.formatNumber(stock)}</strong> EA
+                    <span style="margin:0 6px;opacity:0.45;">·</span>
+                    입고 ${UIUtils.formatNumber(totalIn)} / 출고 ${UIUtils.formatNumber(totalOut)}
+                </span>
             </div>
             ${_stockMismatch ? `
             <div style="background:rgba(220,38,38,0.08);border:1px solid rgba(220,38,38,0.35);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.82rem;line-height:1.5;">
@@ -7455,24 +7474,6 @@ var LaserStandbyModule = (function() {
                 ${snapshot.item.historyReset.author ? ' · ' + _escapeHtml(snapshot.item.historyReset.author) : ''}
                 ${snapshot.item.historyReset.note ? ' · ' + _escapeHtml(snapshot.item.historyReset.note) : ''}
             </div>` : ''}
-            <div style="margin-bottom:16px;display:flex;gap:16px;flex-wrap:wrap;">
-                <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
-                    <div style="font-size:1.4rem;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(stock)}</div>
-                    <div style="font-size:0.8rem;color:var(--text-muted);">현재 재공 재고 (EA)</div>
-                </div>
-                <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
-                    <div style="font-size:1.4rem;font-weight:700;color:var(--accent-green);">${UIUtils.formatNumber(totalIn)}</div>
-                    <div style="font-size:0.8rem;color:var(--text-muted);">입고 합계 (EA)</div>
-                </div>
-                <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
-                    <div style="font-size:1.4rem;font-weight:700;color:var(--accent-red);">${UIUtils.formatNumber(totalOut)}</div>
-                    <div style="font-size:0.8rem;color:var(--text-muted);">출고 합계 (EA)</div>
-                </div>
-                <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
-                    <div style="font-size:1.4rem;font-weight:700;">${lotCount}</div>
-                    <div style="font-size:0.8rem;color:var(--text-muted);">보유 LOT 수</div>
-                </div>
-            </div>
             ${StockDetailUI.buildLotTableSection({
                 headers: canEdit ? ['도장 LOT', '사출 LOT', '현재 수량', ''] : ['도장 LOT', '사출 LOT', '현재 수량'],
                 colSpan: canEdit ? 4 : 3,

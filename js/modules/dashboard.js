@@ -437,7 +437,9 @@ const DashboardModule = (function() {
                 </tr>`).join('') + `</table>` : '';
 
             const lotErrorRows = lotErrors.length ? `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;">` +
-                lotErrors.slice(0, 20).map(e => `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
+                lotErrors.slice(0, 20).map(e => `<tr onclick="App.goToLotErrorSource('${_esc(e.src||'')}','${_esc(e.id||'')}')"
+                        title="문제 발생지로 이동" style="cursor:pointer;"
+                        onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
                     <td style="padding:4px 10px;white-space:nowrap;color:var(--text-muted);">${_esc((e.date||'-').split(' ')[0])}</td>
                     <td style="padding:4px 8px;font-size:0.72rem;color:#dc2626;font-weight:600;">${_esc(e.src||'')}</td>
                     <td style="padding:4px 8px;font-weight:600;">${_esc(e.partName||'')}</td>
@@ -451,7 +453,10 @@ const DashboardModule = (function() {
             el.innerHTML =
                 _alertCard('precision_manufacturing', '#8b5cf6', '사출 입고 대기', injPending.length, injRows, 'warehouse-overview', '사출 입고 대기 없음') +
                 _alertCard('edit_note',               '#f59e0b', '실적 미입력',    unenteredPlans.length, unenteredRows, 'painting-work-a', '미입력 계획 없음') +
-                _alertCard('barcode_scanner',         '#dc2626', '사출 LOT 형식 오류', lotErrors.length, lotErrorRows, null, 'LOT 형식 오류 없음', 'App.goToLotRepairTab()') +
+                _alertCard('barcode_scanner',         '#dc2626', '사출 LOT 형식 오류', lotErrors.length, lotErrorRows, null, 'LOT 형식 오류 없음',
+                    lotErrors.length === 1
+                        ? `App.goToLotErrorSource('${_esc(lotErrors[0].src||'')}','${_esc(lotErrors[0].id||'')}')`
+                        : 'App.goToLotRepairTab()') +
                 _alertCard('science',                 '#ef4444', '도료 사용 미등록', list.length, _paintRowsHtml(list), 'paint-mix', '도료 사용 모두 등록됨');
         }
 

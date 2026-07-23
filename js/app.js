@@ -867,37 +867,123 @@ const App = (function() {
         }, 300);
     }
 
+    // 대시보드 "사출 LOT 형식 오류" 카드의 개별 항목(또는 오류가 1건뿐일 때 헤더 바로가기)에서
+    // 스캐너(설정 화면)가 아니라 문제가 실제로 발생한 원본 기록으로 바로 이동시킨다.
+    function goToLotErrorSource(src, id) {
+        const s = String(src || '');
+        const recordId = String(id || '').trim();
+        if (!recordId) { goToLotRepairTab(); return; }
+        if (s.indexOf('수입검사') === 0) {
+            if (typeof InjectionIncomingModule !== 'undefined' && typeof InjectionIncomingModule.view === 'function') {
+                InjectionIncomingModule.view(recordId);
+            } else {
+                goToLotRepairTab();
+            }
+            return;
+        }
+        if (s.indexOf('재고') === 0) {
+            Router.navigate('warehouse-overview');
+            return;
+        }
+        goToLotRepairTab();
+    }
+
+    function _escHtml(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function(ch) {
+            return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+        });
+    }
+
+    // 오류 1건이면 어느 기록인지(품명·경로·원본값) 바로 알 수 있게 메시지에 위치를 밝힌다.
+    // 토스트는 클릭해서 이동하는 링크가 아니라 단순 알림 — 상세는 대시보드에서 확인하도록 안내한다.
+    function _lotErrorSummaryHtml(errors) {
+        if (errors.length === 1) {
+            const e = errors[0];
+            return `사출 LOT 번호 형식 오류 발견 — <strong>${_escHtml(e.partName || '-')}</strong> · ${_escHtml(e.src || '-')}
+                · LOT "${_escHtml(e.original || '(없음)')}" — 대시보드에서 확인하세요`;
+        }
+        return `사출 LOT 번호 형식 오류 <strong>${errors.length}건</strong> 발견 — 대시보드에서 확인하세요`;
+    }
+
     function _checkLotErrors() {
         try {
             if (typeof SettingsModule === 'undefined' || !SettingsModule.scanInjLotErrorsData) return;
 
-            const errorCount = SettingsModule.scanInjLotErrorsData().length;
-            if (errorCount === 0) return; // 오류 없음 → 알림 불필요
+            const errors = SettingsModule.scanInjLotErrorsData();
+            if (!errors.length) return; // 오류 없음 → 알림 불필요
 
-            // 토스트 알림 표시
+            // 토스트 알림 표시 (클릭 이동 없음 — 닫기(×)로만 닫는다)
             const toastEl = document.getElementById('toastContainer');
-            if (!toastEl) return;
-            const div = document.createElement('div');
-            div.className = 'toast warning';
-            div.style.cssText = 'cursor:pointer;position:relative;padding-right:34px;';
-            div.innerHTML = `
-                <span class="material-symbols-outlined">warning</span>
-                <span>사출 LOT 번호 형식 오류 <strong>${errorCount}건</strong> 발견
-                  — <u>클릭하여 수정</u></span>
-                <span class="material-symbols-outlined" title="닫기"
-                    style="position:absolute;top:6px;right:6px;font-size:16px;opacity:0.75;">close</span>`;
-            const dismiss = () => { if (div.parentNode) div.parentNode.removeChild(div); };
-            div.onclick = (ev) => {
-                if (ev.target && ev.target.textContent === 'close') { dismiss(); return; }
-                dismiss();
-                goToLotRepairTab();
-            };
-            toastEl.appendChild(div);
-            // 실사용자가 알아채고 클릭하기까지 시간이 걸리는 "조치가 필요한" 알림이라
-            // 일반 토스트(수 초)보다 훨씬 오래 유지한다. 그래도 안 눌러도 되게 닫기(×)를 뒀다.
-            setTimeout(dismiss, 120000);
+            if (toastEl) {
+                const div = document.createElement('div');
+                div.className = 'toast warning';
+                div.style.cssText = 'position:relative;padding-right:34px;';
+                div.innerHTML = `
+                    <span class="material-symbols-outlined">warning</span>
+                    <span>${_lotErrorSummaryHtml(errors)}</span>
+                    <span class="material-symbols-outlined" title="닫기"
+                        style="position:absolute;top:6px;right:6px;font-size:16px;opacity:0.75;cursor:pointer;">close</span>`;
+                const dismiss = () => { if (div.parentNode) div.parentNode.removeChild(div); };
+                div.querySelector('.material-symbols-outlined[title="닫기"]').onclick = dismiss;
+                toastEl.appendChild(div);
+                // 실사용자가 알아채고 클릭하기까지 시간이 걸리는 "조치가 필요한" 알림이라
+                // 일반 토스트(수 초)보다 훨씬 오래 유지한다. 그래도 안 눌러도 되게 닫기(×)를 뒀다.
+                setTimeout(dismiss, 120000);
+            }
+
+            // 담당 검사자에게 쪽지 자동 발송 (사출 수입검사 소스, 최초 1회만)
+            _notifyLotErrorInspectors(errors);
         } catch(e) {
             console.warn('[LOT Check]', e);
+        }
+    }
+
+    // 담당 검사자(inspector)에게 LOT 형식 오류를 쪽지로 통보한다.
+    // 앱을 여는 사용자마다(본인과 무관하게) 매번 실행되므로, 같은 오류(기록id+항목)는
+    // Config에 발송 기록을 남겨 딱 한 번만 보낸다. 오류가 수정되면 스캔 결과에서
+    // 빠지므로 자연히 재발송 대상에서도 제외된다.
+    const LOT_ERROR_NOTIFIED_KEY = 'inj_lot_error_notified_v1';
+    async function _notifyLotErrorInspectors(errors) {
+        try {
+            if (typeof AuthModule === 'undefined' || typeof AuthModule.sendSystemMessage !== 'function') return;
+            if (typeof DB === 'undefined' || typeof Storage === 'undefined' || typeof Storage.getById !== 'function') return;
+
+            const injErrors = errors.filter(e => String(e.src || '').indexOf('수입검사') === 0);
+            if (!injErrors.length) return;
+
+            let notifiedList = [];
+            try { notifiedList = (await Storage.getConfigValue(LOT_ERROR_NOTIFIED_KEY)) || []; } catch (e) { /* 무시 */ }
+            const notifiedSet = new Set(Array.isArray(notifiedList) ? notifiedList : []);
+
+            const users = (AuthModule.getUsers && AuthModule.getUsers()) || [];
+            let changed = false;
+
+            injErrors.forEach(e => {
+                const key = `${e.id}::${e.src}`;
+                if (notifiedSet.has(key)) return;
+                const insp = Storage.getById(DB.STORES.INJECTION_INSPECTIONS, e.id);
+                const inspectorName = String((insp && insp.inspector) || '').trim();
+                if (!inspectorName) return;
+                const user = users.find(u => String(u.displayName || '') === inspectorName || String(u.username || '') === inspectorName);
+                if (!user) return; // 검사자명이 사용자 계정과 매칭 안 되면 발송 대상 없음 — 조용히 건너뜀
+
+                AuthModule.sendSystemMessage({
+                    targetType: 'user',
+                    targetId: user.id,
+                    title: '사출 LOT 번호 형식 오류 확인 요청',
+                    body: `${e.partName || '-'} · ${e.src}\n검사일자: ${e.date || '-'}\nLOT 값: ${e.original || '(없음)'}\n\n입력하신 사출 수입검사 기록의 LOT 번호 형식에 문제가 있습니다. 확인 후 수정해 주세요.`,
+                    category: 'lot_error',
+                    priority: 'high'
+                });
+                notifiedSet.add(key);
+                changed = true;
+            });
+
+            if (changed) {
+                try { await Storage.setConfigValue(LOT_ERROR_NOTIFIED_KEY, Array.from(notifiedSet)); } catch (e) { /* 무시 */ }
+            }
+        } catch (e) {
+            console.warn('[LOT 오류 쪽지 발송]', e);
         }
     }
 
@@ -906,6 +992,7 @@ const App = (function() {
         loadSampleData,
         resetDB,
         applyCarModelUppercaseAll,
-        goToLotRepairTab
+        goToLotRepairTab,
+        goToLotErrorSource
     };
 })();

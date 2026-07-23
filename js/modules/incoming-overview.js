@@ -165,10 +165,56 @@ var IncomingOverviewModule = (function () {
             .sort(function(a, b) { return String(b.date || '').localeCompare(String(a.date || '')); });
     }
 
+    // 사출 수입검사 LOT 번호 형식 오류 — 이 화면(수입검사 메인)에 해당하는 항목만
+    // (재고 쪽 오류는 자재 창고 화면 몫이라 여기서는 src가 '수입검사'로 시작하는 것만 다룬다)
+    function _injLotFormatErrors() {
+        try {
+            if (typeof SettingsModule === 'undefined' || !SettingsModule.scanInjLotErrorsData) return [];
+            return SettingsModule.scanInjLotErrorsData().filter(function(e) {
+                return String(e.src || '').indexOf('수입검사') === 0;
+            });
+        } catch (e) { return []; }
+    }
+
+    function _lotErrorBannerHtml() {
+        const errors = _injLotFormatErrors();
+        if (!errors.length) return '';
+        const preview = errors.slice(0, 5);
+        return `
+            <div style="border:1px solid #ef4444;border-radius:8px;background:rgba(239,68,68,0.05);margin-bottom:10px;overflow:hidden;">
+                <div style="display:flex;align-items:center;gap:6px;padding:8px 10px;">
+                    <span class="material-symbols-outlined" style="color:#dc2626;font-size:16px;flex-shrink:0;">barcode_scanner</span>
+                    <span style="font-weight:700;color:#dc2626;font-size:0.78rem;">사출 LOT 번호 형식 오류</span>
+                    <span style="background:#dc2626;color:#fff;border-radius:10px;padding:0 7px;font-size:0.68rem;font-weight:700;">${errors.length}건</span>
+                    <span style="font-size:0.7rem;color:var(--text-muted);">LOT이 비어 있거나 형식이 잘못된 채로 등록된 수입검사 기록입니다.</span>
+                </div>
+                <table class="data-table" style="font-size:0.75rem;margin:0;">
+                    <tbody>
+                        ${preview.map(function(e) {
+                            return `<tr>
+                                <td style="padding:4px 10px;white-space:nowrap;color:var(--text-muted);">${(e.date || '-').split(' ')[0]}</td>
+                                <td style="padding:4px 8px;font-weight:600;">${e.partName || '-'}</td>
+                                <td style="padding:4px 8px;font-size:0.72rem;color:var(--text-muted);">${e.src || ''}</td>
+                                <td style="padding:4px 8px;font-family:monospace;color:#dc2626;">${e.original || '(없음)'}</td>
+                                <td style="padding:4px 8px;text-align:center;">
+                                    <button type="button" class="btn btn-sm btn-outline"
+                                        onclick="App.goToLotErrorSource('${String(e.src || '').replace(/'/g, "\\'")}','${String(e.id || '').replace(/'/g, "\\'")}')"
+                                        style="font-size:0.68rem;padding:1px 8px;border-color:#ef4444;color:#dc2626;">수정</button>
+                                </td>
+                            </tr>`;
+                        }).join('')}
+                        ${errors.length > preview.length ? `
+                        <tr><td colspan="5" style="text-align:center;padding:5px;font-size:0.7rem;color:var(--text-muted);">외 ${errors.length - preview.length}건</td></tr>` : ''}
+                    </tbody>
+                </table>
+            </div>`;
+    }
+
     function renderProcessViolationWarning() {
         const el = document.getElementById('incomingHubProcessWarning');
         if (!el) return;
 
+        const lotErrorBanner = _lotErrorBannerHtml();
         const violations = _collectProcessViolations();
         const totalQty = violations.reduce(function(s, d) { return s + (Number(d.quantity) || 0); }, 0);
         const preview = violations.slice(0, 5);
@@ -192,7 +238,7 @@ var IncomingOverviewModule = (function () {
             </div>`;
 
         if (!violations.length) {
-            el.innerHTML = standingNotice;
+            el.innerHTML = lotErrorBanner + standingNotice;
             return;
         }
 
@@ -206,7 +252,7 @@ var IncomingOverviewModule = (function () {
                 (tt ? '<span style="font-size:0.62rem;color:var(--text-muted);display:block;line-height:1.3;">' + tt + '</span>' : '');
         }
 
-        el.innerHTML = `
+        el.innerHTML = lotErrorBanner + `
             <div style="border:1px solid #f59e0b;border-radius:8px;overflow:hidden;background:#fff;">
                 ${standingNotice}
                 <div style="background:rgba(220,38,38,0.04);border-top:1px solid #fde68a;padding:6px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">

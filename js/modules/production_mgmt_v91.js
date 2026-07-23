@@ -16346,12 +16346,25 @@ var PaintMixModule = (function() {
         return _paintComponents(product, line).filter(c => c.role === '주제');
     }
 
-    // 작업 라인의 모든 도료가 등록됐으면 true
+    // 같은 도료사양(paintSpec)으로 묶는다 — 대체 그룹(같은 사양에 여러 도료 등록)은
+    // 도료사용등록에서 원래 그중 1개만 골라 쓰도록 돼 있으므로(대체 그룹 배지), 등록완료
+    // 판정도 그룹당 "1개 이상 등록"이면 충족으로 봐야 한다. 개별 도료 단위로 전부 다
+    // 요구하면, 대체 그룹의 나머지 도료는 애초에 쓸 일이 없어 영원히 "부분등록"에 갇힌다.
+    function _groupCompsBySpec(comps) {
+        const groups = {};
+        (comps || []).forEach(c => {
+            const key = c.paintSpec || '';
+            (groups[key] = groups[key] || []).push(c);
+        });
+        return Object.values(groups);
+    }
+
+    // 작업 라인의 모든 도료(사양 그룹)가 등록됐으면 true
     function _isWorkFullyReg(work, regMap) {
         const comps = _paintComponentsForWork(work);
         if (!comps.length) return regMap.has(work.id); // 도료 구성 미설정이면 기존 기준
         const regged = regMap.get(work.id) || new Set();
-        return comps.every(c => regged.has(c.materialId));
+        return _groupCompsBySpec(comps).every(group => group.some(c => regged.has(c.materialId)));
     }
 
     function search() {
@@ -16435,12 +16448,14 @@ var PaintMixModule = (function() {
                 : isPartial
                     ? 'background:rgba(234,179,8,0.05);border-left:3px solid #eab308;'
                     : 'background:rgba(239,68,68,0.05);border-left:3px solid #ef4444;';
-            const reggedCount = comps.length ? comps.filter(c => regged.has(c.materialId)).length : (hasAny ? 1 : 0);
+            const compGroups = _groupCompsBySpec(comps);
+            const reggedCount = compGroups.length ? compGroups.filter(g => g.some(c => regged.has(c.materialId))).length : (hasAny ? 1 : 0);
+            const compGroupCount = compGroups.length || 1;
             let statusBadge = '';
             if (isUnreg) {
                 statusBadge = `<span style="display:inline-flex;align-items:center;gap:3px;background:#fef2f2;border:1px solid #fca5a5;border-radius:4px;padding:1px 6px;font-size:0.72rem;color:#dc2626;margin-bottom:3px;"><span class="material-symbols-outlined" style="font-size:12px;">warning</span>미등록</span><br>`;
             } else if (isPartial) {
-                statusBadge = `<span style="display:inline-flex;align-items:center;gap:3px;background:#fefce8;border:1px solid #fde047;border-radius:4px;padding:1px 6px;font-size:0.72rem;color:#a16207;margin-bottom:3px;"><span class="material-symbols-outlined" style="font-size:12px;">pending</span>부분등록 ${reggedCount}/${comps.length}</span><br>`;
+                statusBadge = `<span style="display:inline-flex;align-items:center;gap:3px;background:#fefce8;border:1px solid #fde047;border-radius:4px;padding:1px 6px;font-size:0.72rem;color:#a16207;margin-bottom:3px;"><span class="material-symbols-outlined" style="font-size:12px;">pending</span>부분등록 ${reggedCount}/${compGroupCount}</span><br>`;
             }
             const btnLabel = isFullyReg ? '재등록' : '도료사용등록';
             const btnClass = isFullyReg ? 'btn-outline' : 'btn-primary';
@@ -16719,9 +16734,14 @@ var PaintMixModule = (function() {
                         : `<input type="text" class="form-input" value="${_esc(current ? current.paintName : '')}" readonly style="background:var(--bg-secondary);">`}
                 </div>
                 <div class="form-group">
-                    <label class="form-label">제조 LOT</label>
-                    <input type="text" class="form-input" id="pmixResLotNo" value="${_esc(lotNo || '')}"
-                        placeholder="예: 미기입" ${isNew ? '' : 'readonly style="background:var(--bg-secondary);"'}>
+                    <label class="form-label">제조 LOT <span style="color:var(--accent-red)">*</span></label>
+                    ${(() => {
+                        const lotInvalid = !isNew && lotNo && !_isValidPaintLot(lotNo);
+                        const editable = isNew || lotInvalid;
+                        return `<input type="text" class="form-input" id="pmixResLotNo" value="${_esc(lotNo || '')}"
+                            placeholder="예: 260424 (제조일자 YYMMDD)" ${editable ? 'onblur="PaintMixModule._onResLotBlur()"' : 'readonly style="background:var(--bg-secondary);"'}>
+                            ${lotInvalid ? `<div style="font-size:0.72rem;color:var(--accent-red);margin-top:3px;">현재 LOT 형식이 잘못됐습니다. YYMMDD로 바로잡아 저장하면 이 잔량이 새 LOT으로 옮겨집니다.</div>` : ''}`;
+                    })()}
                 </div>
             </div>
             <div class="form-row">
@@ -16749,6 +16769,48 @@ var PaintMixModule = (function() {
         `, 'lg');
     }
 
+    // 조정 모달에서 제조 LOT 입력란(잘못된 형식이라 편집 가능한 경우)을 벗어날 때
+    // 흔한 표기(2026-04-24, 20260424 등)를 YYMMDD로 자동 변환해 보여준다.
+    function _onResLotBlur() {
+        const el = document.getElementById('pmixResLotNo');
+        if (!el) return;
+        el.value = _normalizePaintLot(el.value);
+    }
+
+    // 제조 LOT을 잘못 등록한 뒤 바로잡을 때, 그 LOT으로 이미 쌓인 이력(창고 출고분/도료사용등록
+    // mix 사용 기록/배합실 실사·입고 조정)을 전부 새 LOT으로 옮긴다. 수량은 건드리지 않고
+    // 라벨만 바꾸는 것이라 잔량·이력 합계는 그대로 보존된다.
+    async function _renamePaintLot(materialId, oldLot, newLot) {
+        const invRows = (Storage.getAll(PAINT_INV_STORE) || []).filter(r =>
+            r.type === '출고' && !r.paintMixId && r.materialId === materialId && (r.prodLot || r.lotNo || '미기입') === oldLot);
+        for (const r of invRows) {
+            await Storage.update(PAINT_INV_STORE, r.id, { prodLot: newLot, lotNo: newLot });
+        }
+
+        const mixRows = _mixes();
+        for (const m of mixRows) {
+            let changed = false;
+            const usages = (m.usages || []).map(u => {
+                if (u.materialId !== materialId) return u;
+                const uLot = u.residualProdLot || u.prodLot || u.lotNo || '';
+                if (uLot !== oldLot) return u;
+                changed = true;
+                const nu = Object.assign({}, u);
+                if (nu.residualProdLot) nu.residualProdLot = newLot;
+                if (nu.prodLot) nu.prodLot = newLot;
+                if (!nu.residualProdLot && !nu.prodLot) nu.lotNo = newLot;
+                return nu;
+            });
+            if (changed) await Storage.update(STORE, m.id, { usages });
+        }
+
+        const adjRows = _residualAdjustments().filter(a =>
+            a.materialId === materialId && (a.lotNo || '미기입') === oldLot);
+        for (const a of adjRows) {
+            await Storage.update(STORE, a.id, { lotNo: newLot });
+        }
+    }
+
     async function saveMixResidualAdjust(materialId, lotNo) {
         if (!_canWritePaintMix()) {
             UIUtils.toast('배합작업 입력 권한이 없습니다.', 'warning');
@@ -16757,7 +16819,13 @@ var PaintMixModule = (function() {
         const isNew = !materialId;
         const matId = materialId || document.getElementById('pmixResMatId')?.value || '';
         if (!matId) { UIUtils.toast('도료를 선택하세요.', 'warning'); return; }
-        const finalLotNo = (document.getElementById('pmixResLotNo')?.value || '').trim() || '미기입';
+        const rawLotNo = (document.getElementById('pmixResLotNo')?.value || '').trim();
+        if (!rawLotNo) { UIUtils.toast('제조 LOT을 입력하세요.', 'warning'); return; }
+        const finalLotNo = _normalizePaintLot(rawLotNo);
+        if (!_isValidPaintLot(finalLotNo)) {
+            UIUtils.toast('제조 LOT은 제조일자 6자리(YYMMDD) 형식으로 입력하세요. 예: 260424', 'warning');
+            return;
+        }
         const actual = Number(document.getElementById('pmixResActualG')?.value);
         if (!Number.isFinite(actual) || actual < 0) {
             UIUtils.toast(isNew ? '입고량을 올바르게 입력하세요.' : '실사 잔량을 올바르게 입력하세요.', 'warning');
@@ -16768,11 +16836,16 @@ var PaintMixModule = (function() {
             return;
         }
 
+        // 조정 모달에서 기존 LOT을 바로잡은 경우 — 이력을 새 LOT으로 옮긴 뒤 그 기준으로 계산한다.
+        if (!isNew && lotNo && finalLotNo !== lotNo) {
+            await _renamePaintLot(matId, lotNo, finalLotNo);
+        }
+
         const current = _calcMixingRoomResiduals().find(r => r.materialId === matId && r.lotNo === finalLotNo);
         const currentG = current ? current.residualG : 0;
         // 신규 입고: 입력값이 입고량. 조정: 실사 잔량 − 전산 잔량
         const delta = isNew ? Math.round(actual) : Math.round(actual - currentG);
-        if (delta === 0) { UIUtils.toast('조정할 차이가 없습니다.', 'info'); UIUtils.closeModal(); return; }
+        if (delta === 0) { UIUtils.toast('조정할 차이가 없습니다.', 'info'); UIUtils.closeModal(); renderResidualTab(); return; }
 
         const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? AuthModule.getCurrentUser() : null;
         await Storage.add(STORE, {
@@ -17014,15 +17087,49 @@ var PaintMixModule = (function() {
         win.document.close();
     }
 
-    function _renderResidualSupplierRow(r) {
+    // 같은 도료(도료명 기준)가 배합실에 LOT이 2개 이상 열려 있으면 FIFO 주의 대상이다.
+    // 더 나아가, 오래된 LOT이 아직 남아 있는데(전량 미사용) 더 최근 LOT에 사용 기록이 있으면
+    // 실제로 신규 LOT을 먼저 꺼내 쓴 것 — 단순 "주의"가 아니라 "위반"으로 구분해 강조한다.
+    function _residualFifoMap(items) {
+        const byName = {};
+        items.forEach(r => {
+            const key = r.paintName || '';
+            (byName[key] = byName[key] || []).push(r);
+        });
+        const map = {};
+        Object.values(byName).forEach(group => {
+            if (group.length < 2) return;
+            const sorted = [...group].sort((a, b) => String(a.lotNo || '').localeCompare(String(b.lotNo || '')));
+            const oldest = sorted[0];
+            const oldestUnused = (Number(oldest.totalWithdrawG) || 0) - (Number(oldest.totalUsedG) || 0) > 0;
+            const violated = oldestUnused && sorted.slice(1).some(newer => (Number(newer.totalUsedG) || 0) > 0);
+            sorted.forEach(r => {
+                map[`${r.materialId}__${r.lotNo}`] = {
+                    level: violated ? 'violation' : 'warn',
+                    count: group.length,
+                    oldestLot: oldest.lotNo
+                };
+            });
+        });
+        return map;
+    }
+
+    function _renderResidualSupplierRow(r, fifo) {
         const pct = r.totalWithdrawG > 0 ? (r.residualG / r.totalWithdrawG * 100).toFixed(0) : 0;
         const color = Number(pct) > 50 ? '#15803d' : Number(pct) > 20 ? '#b45309' : '#b91c1c';
-        return `<tr>
+        const fifoBadge = !fifo ? '' : (fifo.level === 'violation'
+            ? `<span title="FIFO 위반 의심 — 오래된 LOT(${_esc(fifo.oldestLot)})이 아직 남아 있는데 더 최근 LOT을 먼저 사용했습니다." style="margin-left:4px;background:#dc2626;color:#fff;font-size:0.6rem;font-weight:700;padding:1px 5px;border-radius:999px;white-space:nowrap;vertical-align:middle;">FIFO 위반</span>`
+            : `<span title="동일 도료 LOT이 ${fifo.count}개 재고 중입니다. 오래된 LOT(${_esc(fifo.oldestLot)})부터 사용하세요." style="margin-left:4px;background:#f59e0b;color:#fff;font-size:0.6rem;font-weight:700;padding:1px 5px;border-radius:999px;white-space:nowrap;vertical-align:middle;">FIFO 주의</span>`);
+        const lotInvalid = !_isValidPaintLot(r.lotNo);
+        const lotBadge = lotInvalid
+            ? `<span title="제조 LOT은 제조일자 6자리(YYMMDD) 형식이어야 합니다. '조정' 버튼으로 바로잡아 주세요." style="margin-left:4px;background:#dc2626;color:#fff;font-size:0.6rem;font-weight:700;padding:1px 5px;border-radius:999px;white-space:nowrap;">수정 필요</span>`
+            : '';
+        return `<tr${fifo ? ` style="background:rgba(${fifo.level === 'violation' ? '220,38,38' : '245,158,11'},0.05);"` : ''}>
             <td style="width:120px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${_esc(r.paintName || '-')}">
                 <a href="javascript:void(0)" onclick="PaintMixModule.openResidualHistory('${_js(r.materialId)}','${_js(r.lotNo)}')"
-                   style="color:#0369a1;text-decoration:underline;font-weight:700;cursor:pointer;">${_esc(r.paintName || '-')}</a>
+                   style="color:#0369a1;text-decoration:underline;font-weight:700;cursor:pointer;">${_esc(r.paintName || '-')}</a>${fifoBadge}
             </td>
-            <td style="font-family:monospace;font-size:0.78rem;">${_esc(r.lotNo)}</td>
+            <td style="font-family:monospace;font-size:0.78rem;${lotInvalid ? 'color:#dc2626;' : ''}">${_esc(r.lotNo)}${lotBadge}</td>
             <td style="text-align:right;">${UIUtils.formatNumber(r.totalWithdrawG)}</td>
             <td style="text-align:right;">${UIUtils.formatNumber(r.totalUsedG)}</td>
             <td style="text-align:right;font-weight:700;color:${color};">${UIUtils.formatNumber(r.residualG)}</td>
@@ -17032,6 +17139,7 @@ var PaintMixModule = (function() {
 
     function _renderResidualSupplierCard(group) {
         const items = [...group.items].sort((a, b) => (a.paintName || '').localeCompare(b.paintName || '', 'ko'));
+        const fifoMap = _residualFifoMap(items);
         const manageCol = _canWritePaintMix() ? '<th style="width:44px;">관리</th>' : '';
         return `
             <div class="card" style="margin:0;">
@@ -17053,7 +17161,7 @@ var PaintMixModule = (function() {
                                 <th style="text-align:right;width:72px;">잔량(g)</th>
                                 ${manageCol}
                             </tr></thead>
-                            <tbody>${items.map(_renderResidualSupplierRow).join('')}</tbody>
+                            <tbody>${items.map(r => _renderResidualSupplierRow(r, fifoMap[`${r.materialId}__${r.lotNo}`])).join('')}</tbody>
                         </table>
                     </div>
                 </div>
@@ -17330,6 +17438,31 @@ var PaintMixModule = (function() {
 
     function _roundQty(v) {
         return Math.round((_num(v) + Number.EPSILON) * 1000) / 1000;
+    }
+
+    // 제조 LOT(YYMMDD) 형식 검증/정규화 — 배합실 도료재고의 "제조 LOT"은 제조일자 6자리를
+    // 기본 형식으로 쓴다. "DEV-LOT-001" 같은 임의 값은 형식 오류로 간주해 화면에서 바로
+    // 눈에 띄게 표시하고, 등록/조정 시엔 아예 저장이 안 되도록 막는다.
+    function _isValidPaintLot(v) {
+        const s = String(v || '').trim();
+        if (!/^\d{6}$/.test(s)) return false;
+        const yy = parseInt(s.slice(0, 2), 10);
+        const mm = parseInt(s.slice(2, 4), 10);
+        const dd = parseInt(s.slice(4, 6), 10);
+        const d = new Date(2000 + yy, mm - 1, dd);
+        return d.getFullYear() === 2000 + yy && d.getMonth() === mm - 1 && d.getDate() === dd;
+    }
+
+    // 2026-04-24 / 26.04.24 / 260424 등 흔한 표기를 YYMMDD 6자리로 자동 변환.
+    // 변환 후에도 유효한 날짜가 아니면 원본을 그대로 돌려줘 오류가 드러나게 한다.
+    function _normalizePaintLot(v) {
+        const raw = String(v || '').trim();
+        if (!raw) return raw;
+        const digits = raw.replace(/\D/g, '');
+        let candidate = raw;
+        if (digits.length === 8) candidate = digits.slice(2); // YYYYMMDD → YYMMDD
+        else if (digits.length === 6) candidate = digits;
+        return _isValidPaintLot(candidate) ? candidate : raw;
     }
 
     function _packState(balance, packUnit) {
@@ -18461,7 +18594,7 @@ var PaintMixModule = (function() {
         _onResidualLotChange, _onRowCalc,
         _validateRow, _validateAllRows,
         renderResidualStock, filterResidualStock, exportResidualData, openResidualAdjust, saveResidualAdjust,
-        openMixResidualAdjust, saveMixResidualAdjust, openResidualHistory,
+        openMixResidualAdjust, saveMixResidualAdjust, openResidualHistory, _onResLotBlur,
         onResCategoryChange, onResSupplierChange,
         saveNew, edit, saveEdit, remove, exportData,
         renderFormulaAsStandard, renderUsageAsStandard
