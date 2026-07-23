@@ -5897,7 +5897,7 @@ const PaintingInspectionModule = (function() {
                 }
             </style>
             <div style="position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.28); z-index:1000; pointer-events:none;">
-                <div id="${modalId}" style="position:fixed; top:4vh; left:50%; transform:translateX(-50%); background:white; border-radius:12px; max-width:85vw; max-height:92vh; width:85vw; overflow:auto; padding:16px 20px; box-shadow:0 10px 40px rgba(0,0,0,0.28); pointer-events:auto;">
+                <div id="${modalId}" style="position:fixed; top:4vh; left:50%; transform:translateX(-50%); background:white; border-radius:12px; max-width:90vw; max-height:92vh; width:90vw; overflow:auto; padding:16px 20px; box-shadow:0 10px 40px rgba(0,0,0,0.28); pointer-events:auto;">
                     <div id="${modalHandleId}" title="드래그하여 창 이동" style="display:flex; justify-content:space-between; align-items:center; margin:-4px -8px 12px; padding:8px 8px 10px; border-bottom:1px solid var(--border-color); cursor:move; user-select:none; touch-action:none;">
                         <h2 style="margin:0; font-size:1.1rem; display:flex; align-items:center; gap:6px; pointer-events:none;">
                             <span class="material-symbols-outlined" style="font-size:1.15rem; color:var(--text-muted);">drag_indicator</span>

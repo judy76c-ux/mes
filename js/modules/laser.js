@@ -3359,7 +3359,9 @@ var LaserInspectionModule = (function() {
         _closeModal();
         const modalEl = document.createElement('div');
         modalEl.id = 'liCustomModal';
-        modalEl.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);';
+        modalEl.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:999;pointer-events:none;background:rgba(0,0,0,0.28);';
+        const modalId = 'liCustomModalInner';
+        const handleId = 'liCustomModalHandle';
         modalEl.innerHTML = `
             <style>
                 @media print {
@@ -3371,14 +3373,172 @@ var LaserInspectionModule = (function() {
                     .form-input { border:1px solid #ccc!important; }
                 }
             </style>
-            <div id="liCustomModalInner" style="background:white;border-radius:12px;max-width:85vw;width:85vw;max-height:92vh;overflow:auto;padding:16px 20px;box-shadow:0 10px 40px rgba(0,0,0,0.2);">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-                    <h2 style="margin:0;font-size:1.1rem;">${title}</h2>
-                    <button onclick="LaserInspectionModule._closeModal()" style="background:none;border:none;font-size:24px;cursor:pointer;color:var(--text-muted);">✕</button>
+            <div id="${modalId}" style="position:fixed;top:4vh;left:50%;transform:translateX(-50%);background:white;border-radius:12px;max-width:85vw;width:85vw;max-height:92vh;overflow:auto;padding:16px 20px;box-shadow:0 10px 40px rgba(0,0,0,0.28);pointer-events:auto;">
+                <div id="${handleId}" title="드래그하여 창 이동" style="display:flex;justify-content:space-between;align-items:center;margin:-4px -8px 12px;padding:8px 8px 10px;border-bottom:1px solid var(--border-color);cursor:move;user-select:none;touch-action:none;">
+                    <h2 style="margin:0;font-size:1.1rem;display:flex;align-items:center;gap:6px;pointer-events:none;">
+                        <span class="material-symbols-outlined" style="font-size:1.15rem;color:var(--text-muted);">drag_indicator</span>
+                        ${title}
+                    </h2>
+                    <button onclick="LaserInspectionModule._closeModal()" style="background:none;border:none;font-size:24px;cursor:pointer;color:var(--text-muted);line-height:1;">✕</button>
                 </div>
                 <div style="display:flex;flex-direction:column;gap:10px;">${content}</div>
             </div>`;
         document.body.appendChild(modalEl);
+        _makeLaserInspModalDraggable(modalEl, modalId, handleId);
+        _makeLaserInspModalResizable(modalEl, modalId);
+    }
+
+    function _makeLaserInspModalDraggable(rootEl, modalId, handleId) {
+        const modalBox = rootEl.querySelector('#' + modalId);
+        const handle = rootEl.querySelector('#' + handleId);
+        if (!modalBox || !handle || handle.dataset.dragBound === '1') return;
+        handle.dataset.dragBound = '1';
+
+        let dragState = null;
+
+        function _clampPos(left, top) {
+            const w = modalBox.offsetWidth || 0;
+            const minVisibleX = 140;
+            const minVisibleY = 48;
+            const minLeft = Math.min(0, minVisibleX - w);
+            const maxLeft = Math.max(0, window.innerWidth - minVisibleX);
+            const minTop = 0;
+            const maxTop = Math.max(0, window.innerHeight - minVisibleY);
+            return {
+                left: Math.min(Math.max(left, minLeft), maxLeft),
+                top: Math.min(Math.max(top, minTop), maxTop)
+            };
+        }
+
+        function _syncResizeHandle() {
+            const rh = rootEl.querySelector('#' + modalId + 'Resize');
+            if (rh && typeof rh._place === 'function') rh._place();
+        }
+
+        function onPointerMove(event) {
+            if (!dragState) return;
+            const next = _clampPos(
+                dragState.startLeft + (event.clientX - dragState.startX),
+                dragState.startTop + (event.clientY - dragState.startY)
+            );
+            modalBox.style.left = next.left + 'px';
+            modalBox.style.top = next.top + 'px';
+            modalBox.style.right = 'auto';
+            modalBox.style.transform = 'none';
+            _syncResizeHandle();
+        }
+
+        function stopDrag(event) {
+            if (!dragState) return;
+            dragState = null;
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', stopDrag);
+            document.removeEventListener('pointercancel', stopDrag);
+            document.body.style.userSelect = '';
+            try {
+                if (event && event.pointerId != null) handle.releasePointerCapture(event.pointerId);
+            } catch (e) { /* ignore */ }
+        }
+
+        handle.addEventListener('pointerdown', function(event) {
+            if (event.button != null && event.button !== 0) return;
+            if (event.target.closest('button')) return;
+
+            const rect = modalBox.getBoundingClientRect();
+            modalBox.style.left = rect.left + 'px';
+            modalBox.style.top = rect.top + 'px';
+            modalBox.style.right = 'auto';
+            modalBox.style.margin = '0';
+            modalBox.style.transform = 'none';
+
+            dragState = {
+                startX: event.clientX,
+                startY: event.clientY,
+                startLeft: rect.left,
+                startTop: rect.top
+            };
+            document.body.style.userSelect = 'none';
+            try { handle.setPointerCapture(event.pointerId); } catch (e) { /* ignore */ }
+            document.addEventListener('pointermove', onPointerMove);
+            document.addEventListener('pointerup', stopDrag);
+            document.addEventListener('pointercancel', stopDrag);
+            event.preventDefault();
+        });
+    }
+
+    function _makeLaserInspModalResizable(rootEl, modalId) {
+        const modalBox = rootEl.querySelector('#' + modalId);
+        if (!modalBox) return;
+
+        const handleId = modalId + 'Resize';
+        const old = rootEl.querySelector('#' + handleId);
+        if (old) old.remove();
+
+        const handle = document.createElement('div');
+        handle.id = handleId;
+        handle.title = '드래그하여 창 너비 조절';
+        handle.style.pointerEvents = 'auto';
+
+        function placeHandle() {
+            const r = modalBox.getBoundingClientRect();
+            handle.style.cssText = [
+                'position:fixed',
+                'top:' + r.top + 'px',
+                'left:' + (r.right - 12) + 'px',
+                'width:12px',
+                'height:' + r.height + 'px',
+                'cursor:ew-resize',
+                'z-index:1001',
+                'pointer-events:auto',
+                'background:linear-gradient(to right,transparent,rgba(99,102,241,0.35))',
+                'border-radius:0 10px 10px 0',
+            ].join(';');
+        }
+        handle._place = placeHandle;
+
+        placeHandle();
+        rootEl.appendChild(handle);
+
+        handle.addEventListener('pointerdown', function(event) {
+            if (event.button != null && event.button !== 0) return;
+            event.preventDefault();
+            event.stopPropagation();
+
+            const rect = modalBox.getBoundingClientRect();
+            modalBox.style.left = rect.left + 'px';
+            modalBox.style.top = rect.top + 'px';
+            modalBox.style.transform = 'none';
+            modalBox.style.width = rect.width + 'px';
+            modalBox.style.maxWidth = 'none';
+
+            const startX = event.clientX;
+            const startW = rect.width;
+            const minW = Math.min(640, window.innerWidth * 0.45);
+            const maxW = window.innerWidth * 0.98;
+
+            document.body.style.userSelect = 'none';
+            document.body.style.cursor = 'ew-resize';
+            try { handle.setPointerCapture(event.pointerId); } catch (e) { /* ignore */ }
+
+            function onMove(ev) {
+                const newW = Math.max(minW, Math.min(startW + (ev.clientX - startX), maxW));
+                modalBox.style.width = newW + 'px';
+                placeHandle();
+            }
+            function onUp(ev) {
+                document.body.style.userSelect = '';
+                document.body.style.cursor = '';
+                document.removeEventListener('pointermove', onMove);
+                document.removeEventListener('pointerup', onUp);
+                document.removeEventListener('pointercancel', onUp);
+                try {
+                    if (ev && ev.pointerId != null) handle.releasePointerCapture(ev.pointerId);
+                } catch (e) { /* ignore */ }
+            }
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+            document.addEventListener('pointercancel', onUp);
+        });
     }
 
     function _closeModal() {
