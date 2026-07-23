@@ -5643,10 +5643,8 @@ var LaserStandbyModule = (function() {
         return { inventoryMap, allItems, stockItems };
     }
 
-    function _getDetailSnapshot(key) {
-        const { inventoryMap } = _buildInventorySnapshot();
-        const item = inventoryMap[key] || null;
-        if (!item) return { item: null, totalIn: 0, totalOut: 0, stock: 0, allRows: [] };
+    function _buildDetailRowsFromItem(key, item) {
+        if (!item) return [];
         const histReset = item.historyReset || _getHistoryResetForKey(key);
         let allRows = [
             ...((item.inRecords || []).map(r => ({ kind: 'in', ...r }))),
@@ -5684,6 +5682,40 @@ var LaserStandbyModule = (function() {
             });
         }
         allRows.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+        return allRows;
+    }
+
+    /** 이력 재생 수량 vs 표시 재고 불일치 검사 (상세 모달·재공 현황 목록 공통) */
+    function _computeReplayMismatch(stock, allRows) {
+        const stockNum = Number(stock) || 0;
+        if (typeof StockDetailUI === 'undefined' || typeof StockDetailUI.simpleReplaySteps !== 'function') {
+            return { mismatch: false, replayedStock: stockNum, stock: stockNum };
+        }
+        const simpleHistItems = _standbyToSimpleHistItems(allRows);
+        const replaySteps = StockDetailUI.simpleReplaySteps(simpleHistItems, function(histItem) {
+            return histItem.isOut ? -(Number(histItem.qty) || 0) : (Number(histItem.qty) || 0);
+        }, {
+            floorZero: true,
+            getAbsoluteAfter: function(histItem) {
+                return (histItem && histItem.absoluteAfter != null) ? histItem.absoluteAfter : null;
+            }
+        });
+        const liveSteps = replaySteps.filter(function(s) {
+            return !(s.archiveOnly || (s.item && (s.item.beforeReset || s.item.archiveOnly)));
+        });
+        const replayedStock = liveSteps.length ? Number(liveSteps[liveSteps.length - 1].stockAfter) || 0 : 0;
+        return {
+            mismatch: Math.abs(replayedStock - stockNum) > 0.001,
+            replayedStock: replayedStock,
+            stock: stockNum
+        };
+    }
+
+    function _getDetailSnapshot(key) {
+        const { inventoryMap } = _buildInventorySnapshot();
+        const item = inventoryMap[key] || null;
+        if (!item) return { item: null, totalIn: 0, totalOut: 0, stock: 0, allRows: [] };
+        const allRows = _buildDetailRowsFromItem(key, item);
         return {
             item,
             totalIn: Number(item.inQty) || 0,
@@ -6283,6 +6315,7 @@ var LaserStandbyModule = (function() {
                 const totalIn    = carItems.reduce((s, i) => s + i.inQty,  0);
                 const totalOut   = carItems.reduce((s, i) => s + i.outQty, 0);
 
+                let carHasMismatch = false;
                 const rows = carItems
                     .sort((a, b) => String(a.partName || '').localeCompare(String(b.partName || ''), 'ko') || String(a.color || '').localeCompare(String(b.color || '')))
                     .map(item => {
@@ -6293,6 +6326,12 @@ var LaserStandbyModule = (function() {
                         const lastIn = item.inRecords.length > 0
                             ? [...item.inRecords].sort((a,b)=>b.date.localeCompare(a.date))[0].date : '';
                         const itemKey = item.key || (item.carModel + '||' + item.partName + '||' + (item.color || ''));
+                        const mismatchInfo = _computeReplayMismatch(stock, _buildDetailRowsFromItem(itemKey, item));
+                        if (mismatchInfo.mismatch) carHasMismatch = true;
+                        const mismatchIcon = mismatchInfo.mismatch
+                            ? `<span class="material-symbols-outlined" title="이력과 재고가 일치하지 않습니다 (재고 ${UIUtils.formatNumber(mismatchInfo.stock)} / 이력재생 ${UIUtils.formatNumber(mismatchInfo.replayedStock)}). 클릭하여 상세 확인"
+                                style="font-size:1.05rem;color:var(--accent-red);vertical-align:-3px;margin-left:3px;cursor:help;">error</span>`
+                            : '';
                         const paintLotText = (() => {
                             try {
                                 const labels = _buildLotBalanceRows(itemKey, item)
@@ -6319,7 +6358,7 @@ var LaserStandbyModule = (function() {
                             onmouseover="this.style.background='var(--bg-secondary)'"
                             onmouseout="this.style.background=''">
                             <td style="padding:5px 8px;font-size:0.78rem;font-weight:600;border-bottom:1px solid var(--border-color);white-space:normal;word-break:break-word;line-height:1.3;">
-                                ${item.partName}
+                                ${item.partName}${mismatchIcon}
                                 ${item.unmatchedProduct ? `<span title="제품 마스터에 없는 품명입니다. 도장/사출 품명이 그대로 들어온 유령 품목일 수 있습니다." style="margin-left:4px;font-size:0.64rem;font-weight:700;color:var(--accent-red);background:rgba(239,68,68,.10);border:1px solid rgba(239,68,68,.35);border-radius:4px;padding:0 4px;white-space:nowrap;">⚠ 미등록 품명</span>` : ''}
                             </td>
                             <td style="padding:5px 6px;font-size:0.74rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
@@ -6346,6 +6385,7 @@ var LaserStandbyModule = (function() {
                             <span class="material-symbols-outlined" style="font-size:0.95rem;">directions_car</span>
                             ${carModel}
                             <span style="font-size:0.7rem;font-weight:400;opacity:0.85;">${carItems.length}종</span>
+                            ${carHasMismatch ? `<span class="material-symbols-outlined" title="이력과 재고가 일치하지 않는 품목이 있습니다" style="font-size:1rem;color:#fecaca;">error</span>` : ''}
                         </span>
                         <div style="font-size:0.75rem;">
                             재공 <strong>${UIUtils.formatNumber(totalStock)}</strong> EA
@@ -7141,12 +7181,9 @@ var LaserStandbyModule = (function() {
 
         // 안전장치: 이력을 재생한 "현재 수량"과 실제 재고(stock)가 어긋나면 조용히 틀린 값을 보여주지 않고
         // 화면에 경고를 띄운다. (수기 보정 diff 계산이 절대값 지시를 델타로 잘못 누적하는 등의 회귀를 조기에 잡기 위함)
-        const _replaySteps = StockDetailUI.simpleReplaySteps(simpleHistItems, function(item) {
-            return item.isOut ? -(Number(item.qty) || 0) : (Number(item.qty) || 0);
-        }, { floorZero: true, getAbsoluteAfter: function(item) { return (item && item.absoluteAfter != null) ? item.absoluteAfter : null; } });
-        const _liveSteps = _replaySteps.filter(function(s) { return !(s.archiveOnly || (s.item && (s.item.beforeReset || s.item.archiveOnly))); });
-        const _replayedStock = _liveSteps.length ? Number(_liveSteps[_liveSteps.length - 1].stockAfter) || 0 : 0;
-        const _stockMismatch = Math.abs(_replayedStock - (Number(stock) || 0)) > 0.001;
+        const _mismatchInfo = _computeReplayMismatch(stock, allRows);
+        const _replayedStock = _mismatchInfo.replayedStock;
+        const _stockMismatch = _mismatchInfo.mismatch;
         if (_stockMismatch) {
             console.error('[LaserStandby] 이력 재생 결과가 재고와 불일치:', {
                 key, carModel, partName, color, stock, replayedStock: _replayedStock
@@ -7162,8 +7199,14 @@ var LaserStandbyModule = (function() {
                 if (!item || !item.editKind || !item.sourceId || item.isHistoryReset || item.routeLabel === '이력 리셋') return '';
                 const st = encodeURIComponent(item.sourceType || '');
                 const sid = encodeURIComponent(item.sourceId || '');
-                return `<button class="btn btn-sm btn-outline" style="font-size:0.72rem;padding:2px 8px;"
+                const editBtn = `<button class="btn btn-sm btn-outline" style="font-size:0.72rem;padding:2px 8px;"
                     onclick="event.stopPropagation();UIUtils.closeModal();setTimeout(function(){LaserStandbyModule.openEditHistoryRecord('${item.editKind}','${st}','${sid}');},80);">수정</button>`;
+                // 삭제는 관리자 전용으로 하드코딩 — 수정 권한(canEdit)만으로는 원본 레코드를 지울 수 없다.
+                const deleteBtn = _isAdminUser()
+                    ? `<button class="btn btn-sm btn-danger" style="font-size:0.72rem;padding:2px 8px;margin-left:4px;"
+                        onclick="event.stopPropagation();UIUtils.closeModal();setTimeout(function(){LaserStandbyModule.deleteFlowRecord('${item.isOut ? 'out' : 'in'}','${st}','${sid}');},80);">삭제</button>`
+                    : '';
+                return editBtn + deleteBtn;
             } : null,
             // 이력 리셋뿐 아니라 수기 보정(override)도 절대값 지시이므로 그대로 반영한다.
             // (override의 qty는 "변화량"이 아니라 targetStock 산출용 내부 보정치라 그대로 누적하면 실재고와 어긋난다)

@@ -450,7 +450,7 @@ const DashboardModule = (function() {
             el.style.display = 'grid';
             el.innerHTML =
                 _alertCard('precision_manufacturing', '#8b5cf6', '사출 입고 대기', injPending.length, injRows, 'warehouse-overview', '사출 입고 대기 없음') +
-                _alertCard('edit_note',               '#f59e0b', '실적 미입력',    unenteredPlans.length, unenteredRows, 'painting-work', '미입력 계획 없음') +
+                _alertCard('edit_note',               '#f59e0b', '실적 미입력',    unenteredPlans.length, unenteredRows, 'painting-work-a', '미입력 계획 없음') +
                 _alertCard('barcode_scanner',         '#dc2626', '사출 LOT 형식 오류', lotErrors.length, lotErrorRows, null, 'LOT 형식 오류 없음', 'App.goToLotRepairTab()') +
                 _alertCard('science',                 '#ef4444', '도료 사용 미등록', list.length, _paintRowsHtml(list), 'paint-mix', '도료 사용 모두 등록됨');
         }
@@ -740,7 +740,9 @@ const DashboardModule = (function() {
 
         const todayPlans  = plans.filter(p => p.date === todayStr).length;
         const injTotal    = injInv.reduce((s,i)  => s + (Number(i.quantity) || 0), 0);
-        const paintToday  = paintWork.filter(p => p.date === todayStr).length;
+        const paintTodayRows = paintWork.filter(p => p.date === todayStr);
+        const paintTodayA = paintTodayRows.filter(p => !/도장[-\s]?B|\(B\)|B\s*라인|^B$/i.test(String(p.line || '').trim())).length;
+        const paintTodayB = paintTodayRows.filter(p => /도장[-\s]?B|\(B\)|B\s*라인|^B$/i.test(String(p.line || '').trim())).length;
         const defectToday = paintInsp.filter(p => p.date === todayStr)
                                      .reduce((s,d) => s + (Number(d.defectCount) || 0), 0);
         const prodTotal   = prodInv.reduce((s,i) => s + (Number(i.quantity) || 0), 0);
@@ -753,16 +755,19 @@ const DashboardModule = (function() {
                 <span class="material-symbols-outlined" style="font-size:13px;">factory</span>
                 생산 현황
             </div>
-            <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;">
+            <div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;">
                 ${_tile({ icon:'assignment',     title:'생산 계획 지시서', value: todayPlans,
                           valueColor:'#3b82f6',  sub:'오늘 계획 건수',    size:'sm',
                           onClick:"Router.navigate('production-plan')" })}
                 ${_tile({ icon:'warehouse',      title:'사출 창고 재고',   value: UIUtils.formatNumber(injTotal),
                           valueColor:'#8b5cf6',  sub:'전체 재고 (EA)',    size:'sm',
                           onClick:"Router.navigate('warehouse-overview')" })}
-                ${_tile({ icon:'format_paint',   title:'도장 작업일지',    value: paintToday,
-                          valueColor:'#0891b2',  sub:'오늘 도장 작업',    size:'sm',
-                          onClick:"Router.navigate('painting-work')" })}
+                ${_tile({ icon:'format_paint',   title:'도장-A 작업',     value: paintTodayA,
+                          valueColor:'#0891b2',  sub:'오늘 도장-A',       size:'sm',
+                          onClick:"Router.navigate('painting-work-a')" })}
+                ${_tile({ icon:'format_paint',   title:'도장-B 작업',     value: paintTodayB,
+                          valueColor:'#f59e0b',  sub:'오늘 도장-B',       size:'sm',
+                          onClick:"Router.navigate('painting-work-b')" })}
                 ${_tile({ icon:'report_problem', title:'도장 불량 현황',   value: defectToday,
                           valueColor: defectToday > 0 ? '#ef4444' : '#22c55e',
                           sub:'오늘 불량 수',    size:'sm',

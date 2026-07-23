@@ -57,7 +57,8 @@ const AuthModule = (function () {
         { id:'injection-wip',             label:'사출 재공품 현황',   group:'사출공정' },
         { id:'injection-room-layout',     label:'사출실 레이아웃',    group:'사출공정' },
         { id:'production-plan',           label:'생산 계획 지시서',   group:'도장공정' },
-        { id:'painting-work',             label:'도장작업',           group:'도장공정' },
+        { id:'painting-work-a',           label:'도장-A 작업',        group:'도장공정' },
+        { id:'painting-work-b',           label:'도장-B 작업',        group:'도장공정' },
         { id:'painting-inspection',       label:'도장 검사일지',      group:'도장공정' },
         { id:'painting-rework-wip',       label:'리워크 재공품',      group:'도장공정' },
         { id:'paint-mix',                 label:'배합작업',           group:'도장공정' },
@@ -148,7 +149,7 @@ const AuthModule = (function () {
         { key:'shipping',         label:'\ucd9c\ud558\uac80\uc0ac',      pages:['shipping-overview','shipping-standby','shipping-inspection','shipping-reliability','shipping-periodic-reli','shipping-certificate','shipping-standard','shipping-std-photo'] },
         { key:'injection',        label:'\uc0ac\ucd9c \uacf5\uc815',     pages:['injection-process','injection-work','injection-wip','injection-room-layout'] },
         { key:'production_plan',  label:'\uc0dd\uc0b0 \uacc4\ud68d \uc9c0\uc2dc\uc11c', pages:['production-plan'] },
-        { key:'painting_work',    label:'\ub3c4\uc7a5\uc791\uc5c5',       pages:['painting-work','painting-inspection','painting-rework-wip'] },
+        { key:'painting_work',    label:'\ub3c4\uc7a5\uc791\uc5c5',       pages:['painting-work-a','painting-work-b','painting-inspection','painting-rework-wip'] },
         { key:'paint_mix',        label:'\ubc30\ud569\uc791\uc5c5',       pages:['paint-mix'] },
         { key:'laser',            label:'\ub808\uc774\uc800 \uc791\uc5c5', pages:['laser-process','laser-standby','laser-wip','laser-work','laser-inspection','laser-layout','laser-jig-master','laser-jig-disposal','laser-jig-cleaning','laser-equipment-history'] },
         { key:'painting_jig',     label:'\ub3c4\uc7a5\uc9c0\uadf8',      pages:['painting-jig','jig-management','jig-life-standard','jig-master','jig-disposal','jig-cleaning','jig-change-history','jig-repair-history','jig-layout'] },
@@ -187,6 +188,9 @@ const AuthModule = (function () {
         'shipping-certificate': ['shipping-overview','shipping-standby','shipping-inspection','shipping-reliability','shipping-periodic-reli','shipping-certificate','shipping-standard','shipping-std-photo'],
         'shipping-standard': ['shipping-overview','shipping-standby','shipping-inspection','shipping-reliability','shipping-periodic-reli','shipping-certificate','shipping-standard','shipping-std-photo'],
         'shipping-std-photo': ['shipping-overview','shipping-standby','shipping-inspection','shipping-reliability','shipping-periodic-reli','shipping-certificate','shipping-standard','shipping-std-photo'],
+        'painting-work': ['painting-work-a','painting-work-b'],
+        'painting-work-a': ['painting-work-a','painting-work-b'],
+        'painting-work-b': ['painting-work-a','painting-work-b'],
         'painting-jig': ['painting-jig','jig-management','jig-life-standard','jig-master','jig-disposal','jig-cleaning','jig-change-history','jig-repair-history','jig-layout'],
         'prod-spc': ['prod-spc','spc-color','spc-film','spc-gloss'],
         'prod-standards': ['prod-standards','work-standard','robot-pg-std','drying-std','customer-return-nc-std'],
@@ -297,7 +301,7 @@ const AuthModule = (function () {
             'incoming-overview','injection-incoming','paint-incoming-inspection',
             'warehouse-overview','injection-warehouse','paint-inventory','raw-material-inventory',
             'injection-process','injection-work',
-            'production-plan','overtime-plan','painting-work','painting-inspection','painting-rework-wip','paint-mix',
+            'production-plan','overtime-plan','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip','paint-mix',
             'laser-standby','laser-wip','laser-work','laser-inspection',
             'shipping-standby','product-warehouse',
         ];
@@ -351,14 +355,14 @@ const AuthModule = (function () {
                 'dashboard',
                 'incoming-overview','paint-incoming-inspection',
                 'warehouse-overview','paint-inventory',
-                'production-plan','overtime-plan','painting-work','painting-inspection','painting-rework-wip','paint-mix',
+                'production-plan','overtime-plan','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip','paint-mix',
             ]),
 
             /* 자주검사자 — 공정 자주 검사 담당 */
             self_inspector: rw([
                 'dashboard',
                 'production-plan','overtime-plan',
-                'painting-work','painting-inspection','painting-rework-wip',
+                'painting-work-a','painting-work-b','painting-inspection','painting-rework-wip',
                 'prod-quality','quality-performance',
                 'laser-inspection',
             ]),
@@ -481,7 +485,27 @@ const AuthModule = (function () {
                 result[key] = { access: [], write: [] };
             }
         });
-        return _syncPageWritePolicies(_syncMenuAccessPages(result));
+        return _syncPageWritePolicies(_syncMenuAccessPages(_expandLegacyPaintingWorkPages(result)));
+    }
+
+    /* 구 페이지 ID painting-work → painting-work-a/b 로 권한 확장 */
+    function _expandLegacyPaintingWorkPages(perms) {
+        Object.keys(perms || {}).forEach(function(roleKey) {
+            if (roleKey === 'admin') return;
+            var rp = perms[roleKey];
+            if (!rp || rp === null || Array.isArray(rp)) return;
+            ['access', 'write'].forEach(function(field) {
+                if (!Array.isArray(rp[field])) return;
+                var set = new Set(rp[field]);
+                if (set.has('painting-work') || set.has('painting-work-a') || set.has('painting-work-b')) {
+                    set.add('painting-work-a');
+                    set.add('painting-work-b');
+                    set.delete('painting-work');
+                }
+                rp[field] = Array.from(set);
+            });
+        });
+        return perms;
     }
 
     function _getPermissions() {
@@ -492,6 +516,10 @@ const AuthModule = (function () {
     /* 역할 × 페이지 접근 허용 여부 */
     function isPageAccessGranted(roleKey, pageId) {
         if (pageId === 'dashboard') return true;
+        // 구 도장작업 페이지 → A/B 중 하나라도 있으면 허용
+        if (pageId === 'painting-work') {
+            return isPageAccessGranted(roleKey, 'painting-work-a') || isPageAccessGranted(roleKey, 'painting-work-b');
+        }
         if (Array.isArray(roleKey)) return roleKey.some(key => isPageAccessGranted(key, pageId));
         if (roleKey === 'admin') return true;
         const perms = _getPermissions();
@@ -505,6 +533,9 @@ const AuthModule = (function () {
     /* 역할 × 페이지 입력/등록 허용 여부 */
     function isPageWriteGranted(roleKey, pageId) {
         if (pageId === 'dashboard') return true;
+        if (pageId === 'painting-work') {
+            return isPageWriteGranted(roleKey, 'painting-work-a') || isPageWriteGranted(roleKey, 'painting-work-b');
+        }
         if (Array.isArray(roleKey)) return roleKey.some(key => isPageWriteGranted(key, pageId));
         if (roleKey === 'admin') return true;
         const perms = _getPermissions();

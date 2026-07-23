@@ -12,7 +12,8 @@
 var PaintingNavUI = (function() {
     // page: 라우터 페이지 ID, tab: PaintingInspectionModule 내부 탭 key (없으면 기본)
     var MENUS = [
-        { id: 'painting-work',         tab: '',                    icon: 'format_paint',    label: '도장 작업 현황',        sub: '도장 작업일지 입력·조회' },
+        { id: 'painting-work-a',       tab: '',                    icon: 'format_paint',    label: '도장-A 작업현황',       sub: '도장-A 작업일지 입력·조회' },
+        { id: 'painting-work-b',       tab: '',                    icon: 'format_paint',    label: '도장-B 작업현황',       sub: '도장-B 작업일지 입력·조회' },
         { id: 'painting-inspection',   tab: 'inspection',          icon: 'done_all',        label: '외관 검사',             sub: '도장 완료품 외관 검사 진행' },
         { id: 'painting-inspection',   tab: 'completion',          icon: 'task_alt',        label: '검사완료 실적',          sub: '외관 검사 완료 이력 조회' },
         { id: 'painting-rework-wip',   tab: '',                    icon: 'autorenew',       label: '리워크 재공품',         sub: '외관검사 리워크 재고 관리' },
@@ -549,6 +550,29 @@ const PaintingWorkModule = (function() {
         return s;
     }
 
+    function _resolvePaintLine(line) {
+        return _normalizePaintLine(line) === '도장-B' ? '도장-B' : '도장-A';
+    }
+
+    function _pageIdForLine(line) {
+        return _resolvePaintLine(line) === '도장-B' ? 'painting-work-b' : 'painting-work-a';
+    }
+
+    function _lineAccent(line) {
+        return _resolvePaintLine(line) === '도장-B' ? 'var(--accent-orange)' : 'var(--accent-blue)';
+    }
+
+    function _lineDomSuffix(line) {
+        return _resolvePaintLine(line) === '도장-B' ? 'B' : 'A';
+    }
+
+    function _matchesCurrentLine(rawLine) {
+        var normalized = _normalizePaintLine(rawLine);
+        if (_currentLine === '도장-B') return normalized === '도장-B';
+        // A 페이지: 명시적 B가 아니면 A(또는 미지정)로 취급
+        return normalized !== '도장-B';
+    }
+
     function _workActorLabel(user) {
         if (!user) return '';
         return String(user.displayName || user.name || user.username || user.id || '').trim();
@@ -736,157 +760,101 @@ const PaintingWorkModule = (function() {
     }
 
     function render(container) {
+        renderForLine(container, '도장-A');
+    }
+
+    function renderForLine(container, line) {
         _currentDate = UIUtils.today();
-        _currentLine = '도장-A';
+        _currentLine = _resolvePaintLine(line);
+        const accent = _lineAccent(_currentLine);
+        const suffix = _lineDomSuffix(_currentLine);
+        const pageId = _pageIdForLine(_currentLine);
 
         container.innerHTML = `
             <div class="fade-in-up">
-                ${PaintingNavUI.render('painting-work')}
+                ${PaintingNavUI.render(pageId)}
                 <!-- 페이지 목적 안내 -->
-                <div style="margin-bottom:0.75rem;padding:8px 14px;background:rgba(37,99,235,0.05);border-left:3px solid var(--accent-blue);border-radius:0 6px 6px 0;">
-                    <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;color:var(--accent-blue);margin-right:4px;">info</span>
+                <div style="margin-bottom:0.75rem;padding:8px 14px;background:rgba(37,99,235,0.05);border-left:3px solid ${accent};border-radius:0 6px 6px 0;">
+                    <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;color:${accent};margin-right:4px;">info</span>
                     <span style="font-size:0.82rem;color:var(--text-secondary);">
-                        도장 완료 작업의 실적을 계획 대비 기록하고 공정 효율을 추적합니다.
+                        <strong style="color:${accent};">${_currentLine}</strong> 완료 작업의 실적을 계획 대비 기록하고 공정 효율을 추적합니다.
                     </span>
                 </div>
-                <!-- 섹션 1: 생산계획 현황 (A/B 라인 동시 표시) -->
+                <!-- 섹션 1: 생산계획 현황 -->
                 <div class="card" style="margin-bottom:1rem;">
                     <div class="card-header" style="padding:8px 16px; background:var(--bg-secondary);
                         border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
                         <h4 style="margin:0;">
                             <span class="material-symbols-outlined" style="vertical-align:middle;margin-right:4px;font-size:18px;">assignment</span>
                             생산계획 현황
+                            <span style="margin-left:8px;padding:2px 8px;border-radius:999px;font-size:0.75rem;font-weight:700;color:#fff;background:${accent};">${_currentLine}</span>
                             <span id="pwPlanDateLabel" style="color:var(--text-muted);font-size:0.88rem;margin-left:8px;font-weight:400;"></span>
                         </h4>
-                        <span style="font-size:0.78rem;color:var(--text-muted);">계획 행의 [실적입력]을 클릭하면 해당 계획이 자동 반영됩니다.</span>
-                    </div>
-                    <div class="card-body" style="padding:12px; display:flex; flex-direction:column; gap:16px;">
-                        <!-- 도장-A 계획 -->
-                        <div style="width:100%;">
-                            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
-                                <div style="display:flex; align-items:center; gap:8px;">
-                                    <span style="width:12px; height:12px; background:var(--accent-blue); border-radius:3px;"></span>
-                                    <h5 style="margin:0; color:var(--accent-blue);">도장-A</h5>
-                                </div>
-                                <button class="btn btn-outline btn-sm" style="font-size:0.78rem;padding:4px 10px;"
-                                    onclick="PaintingWorkModule.openQuickAddPlanModal('도장-A')">
-                                    <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">add</span> 생산계획 추가
-                                </button>
-                            </div>
-                            <div class="data-table-wrapper" style="border:1px solid var(--border); border-radius:4px;">
-                                <table class="data-table compact">
-                                    <thead>
-                                        <tr>
-                                            <th style="width:100px;">시간대</th>
-                                            <th>차종/품명</th>
-                                            <th style="text-align:right;width:70px;">계획</th>
-                                            <th style="text-align:right;width:70px;">실적</th>
-                                            <th style="width:90px;">달성률</th>
-                                            <th style="width:85px;">입력</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="pwPlanBodyA"></tbody>
-                                </table>
-                            </div>
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                            <span style="font-size:0.78rem;color:var(--text-muted);">계획 행의 [실적입력]을 클릭하면 해당 계획이 자동 반영됩니다.</span>
+                            <button class="btn btn-outline btn-sm" style="font-size:0.78rem;padding:4px 10px;"
+                                onclick="PaintingWorkModule.openQuickAddPlanModal('${_currentLine}')">
+                                <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">add</span> 생산계획 추가
+                            </button>
                         </div>
-
-                        <!-- 도장-B 계획 -->
-                        <div style="width:100%;">
-                            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
-                                <div style="display:flex; align-items:center; gap:8px;">
-                                    <span style="width:12px; height:12px; background:var(--accent-orange); border-radius:3px;"></span>
-                                    <h5 style="margin:0; color:var(--accent-orange);">도장-B</h5>
-                                </div>
-                                <button class="btn btn-outline btn-sm" style="font-size:0.78rem;padding:4px 10px;"
-                                    onclick="PaintingWorkModule.openQuickAddPlanModal('도장-B')">
-                                    <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">add</span> 생산계획 추가
-                                </button>
-                            </div>
-                            <div class="data-table-wrapper" style="border:1px solid var(--border); border-radius:4px;">
-                                <table class="data-table compact">
-                                    <thead>
-                                        <tr>
-                                            <th style="width:100px;">시간대</th>
-                                            <th>차종/품명</th>
-                                            <th style="text-align:right;width:70px;">계획</th>
-                                            <th style="text-align:right;width:70px;">실적</th>
-                                            <th style="width:90px;">달성률</th>
-                                            <th style="width:85px;">입력</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="pwPlanBodyB"></tbody>
-                                </table>
-                            </div>
+                    </div>
+                    <div class="card-body" style="padding:12px;">
+                        <div class="data-table-wrapper" style="border:1px solid var(--border); border-radius:4px;">
+                            <table class="data-table compact">
+                                <thead>
+                                    <tr>
+                                        <th style="width:100px;">시간대</th>
+                                        <th>차종/품명</th>
+                                        <th style="text-align:right;width:70px;">계획</th>
+                                        <th style="text-align:right;width:70px;">실적</th>
+                                        <th style="width:90px;">달성률</th>
+                                        <th style="width:85px;">입력</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pwPlanBody${suffix}"></tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
 
-                <!-- 섹션 2: 실적 미입력 계획 (2열 분리) -->
+                <!-- 섹션 2: 실적 미입력 계획 -->
                 <div id="pwUnenteredSection" class="card" style="margin-bottom:1rem; border-top:3px solid var(--accent-orange); display:none;">
                     <div class="card-header" style="padding:8px 16px; background:rgba(255,152,0,0.05);
                         border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
                         <h4 style="margin:0; color:#e65100;">
                             <span class="material-symbols-outlined" style="vertical-align:middle;margin-right:4px;font-size:18px;">warning</span>
                             실적 미입력 계획 (전일 이전)
+                            <span style="margin-left:8px;padding:2px 8px;border-radius:999px;font-size:0.72rem;font-weight:700;color:#fff;background:${accent};">${_currentLine}</span>
                         </h4>
                         <span style="font-size:0.75rem;color:var(--text-muted);">계획은 있으나 실적이 등록되지 않은 항목입니다.</span>
                     </div>
-                    <div class="card-body" style="padding:12px; display:flex; gap:0; flex-wrap:wrap;">
-                        <!-- 도장-A -->
-                        <div style="flex:1; min-width:480px;">
-                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-                                <span style="width:12px; height:12px; background:var(--accent-blue); border-radius:3px;"></span>
-                                <h5 style="margin:0; color:var(--accent-blue);">도장-A</h5>
-                            </div>
-                            <div class="data-table-wrapper" style="border:1px solid var(--border); border-radius:4px; max-height:280px; overflow-y:auto;">
-                                <table class="data-table compact">
-                                    <thead style="position:sticky; top:0; z-index:1;">
-                                        <tr>
-                                            <th style="width:90px;">도장 작업일</th>
-                                            <th style="width:95px;">시간대</th>
-                                            <th>차종/품명</th>
-                                            <th style="text-align:right;width:65px;">계획</th>
-                                            <th style="width:150px;">작업</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="pwUnenteredBodyA"></tbody>
-                                </table>
-                            </div>
-                        </div>
-                        <!-- 구분선 -->
-                        <div style="width:1px; background:var(--border-color); margin:0 12px; align-self:stretch;"></div>
-                        <!-- 도장-B -->
-                        <div style="flex:1; min-width:480px;">
-                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-                                <span style="width:12px; height:12px; background:var(--accent-orange); border-radius:3px;"></span>
-                                <h5 style="margin:0; color:var(--accent-orange);">도장-B</h5>
-                            </div>
-                            <div class="data-table-wrapper" style="border:1px solid var(--border); border-radius:4px; max-height:280px; overflow-y:auto;">
-                                <table class="data-table compact">
-                                    <thead style="position:sticky; top:0; z-index:1;">
-                                        <tr>
-                                            <th style="width:90px;">도장 작업일</th>
-                                            <th style="width:95px;">시간대</th>
-                                            <th>차종/품명</th>
-                                            <th style="text-align:right;width:65px;">계획</th>
-                                            <th style="width:150px;">작업</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="pwUnenteredBodyB"></tbody>
-                                </table>
-                            </div>
+                    <div class="card-body" style="padding:12px;">
+                        <div class="data-table-wrapper" style="border:1px solid var(--border); border-radius:4px; max-height:280px; overflow-y:auto;">
+                            <table class="data-table compact">
+                                <thead style="position:sticky; top:0; z-index:1;">
+                                    <tr>
+                                        <th style="width:90px;">도장 작업일</th>
+                                        <th style="width:95px;">시간대</th>
+                                        <th>차종/품명</th>
+                                        <th style="text-align:right;width:65px;">계획</th>
+                                        <th style="width:150px;">작업</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pwUnenteredBody${suffix}"></tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
 
-                <!-- 섹션 3: 작업 실적 통계 + 목록 (라인별) -->
+                <!-- 섹션 3: 작업 실적 목록 -->
                 <div class="card">
                     <div class="card-header" style="padding:8px 16px; background:var(--bg-secondary);
                         border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
                         <h4 style="margin:0;">
                             <span class="material-symbols-outlined" style="vertical-align:middle;margin-right:4px;font-size:18px;">format_paint</span>
                             작업 실적 목록
-                            <span style="font-size:0.75rem;color:var(--text-muted);font-weight:500;margin-left:6px;">라인별</span>
+                            <span style="margin-left:8px;padding:2px 8px;border-radius:999px;font-size:0.75rem;font-weight:700;color:#fff;background:${accent};">${_currentLine}</span>
+                            <span id="pwWorkCount${suffix}" style="font-size:0.75rem;color:var(--text-muted);font-weight:500;margin-left:6px;">0건</span>
                         </h4>
                         <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
                             <label class="form-label" style="margin:0; font-size:0.82rem; white-space:nowrap;">기간</label>
@@ -906,72 +874,30 @@ const PaintingWorkModule = (function() {
                             </button>
                         </div>
                     </div>
-                    <div class="card-body" style="padding:14px;display:flex;flex-direction:column;gap:16px;">
-                        <div>
-                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding:0 2px;">
-                                <h5 style="margin:0;color:var(--accent-blue);display:flex;align-items:center;gap:6px;">
-                                    <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent-blue);"></span>
-                                    도장-A
-                                </h5>
-                                <span id="pwWorkCountA" style="font-size:0.75rem;color:var(--text-muted);">0건</span>
-                            </div>
-                            <div class="data-table-wrapper" style="overflow-x:auto;">
-                                <table class="data-table" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
-                                    <thead>
-                                        <tr>
-                                            <th style="white-space:nowrap;padding:8px 10px;">등록일</th>
-                                            <th style="white-space:nowrap;padding:8px 10px;">도장작업일</th>
-                                            <th style="white-space:nowrap;padding:8px 10px;">차종</th>
-                                            <th style="white-space:nowrap;padding:8px 10px;">품명</th>
-                                            <th style="white-space:nowrap;padding:8px 10px;">컬러</th>
-                                            <th style="white-space:nowrap;padding:8px 10px;">사출 LOT</th>
-                                            <th style="text-align:right;white-space:nowrap;padding:8px 10px;">투입수량</th>
-                                            <th style="text-align:right;white-space:nowrap;padding:8px 10px;">완료수량</th>
-                                            <th style="text-align:right;white-space:nowrap;padding:8px 10px;">불량</th>
-                                            <th style="white-space:nowrap;padding:8px 10px;">작업시간</th>
-                                            <th style="text-align:right;white-space:nowrap;padding:8px 10px;">작업C.T</th>
-                                            <th style="text-align:right;white-space:nowrap;padding:8px 10px;">효율</th>
-                                            <th style="text-align:center;white-space:nowrap;padding:8px 10px;">CVT</th>
-                                            <th style="text-align:right;white-space:nowrap;padding:8px 10px;">SPINDLE 수</th>
-                                            <th style="white-space:nowrap;padding:8px 10px;">작업</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="pwTableBodyA"></tbody>
-                                </table>
-                            </div>
-                        </div>
-                        <div>
-                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;padding:0 2px;">
-                                <h5 style="margin:0;color:var(--accent-orange);display:flex;align-items:center;gap:6px;">
-                                    <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent-orange);"></span>
-                                    도장-B
-                                </h5>
-                                <span id="pwWorkCountB" style="font-size:0.75rem;color:var(--text-muted);">0건</span>
-                            </div>
-                            <div class="data-table-wrapper" style="overflow-x:auto;">
-                                <table class="data-table" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
-                                    <thead>
-                                        <tr>
-                                            <th style="white-space:nowrap;padding:8px 10px;">등록일</th>
-                                            <th style="white-space:nowrap;padding:8px 10px;">도장작업일</th>
-                                            <th style="white-space:nowrap;padding:8px 10px;">차종</th>
-                                            <th style="white-space:nowrap;padding:8px 10px;">품명</th>
-                                            <th style="white-space:nowrap;padding:8px 10px;">컬러</th>
-                                            <th style="white-space:nowrap;padding:8px 10px;">사출 LOT</th>
-                                            <th style="text-align:right;white-space:nowrap;padding:8px 10px;">투입수량</th>
-                                            <th style="text-align:right;white-space:nowrap;padding:8px 10px;">완료수량</th>
-                                            <th style="text-align:right;white-space:nowrap;padding:8px 10px;">불량</th>
-                                            <th style="white-space:nowrap;padding:8px 10px;">작업시간</th>
-                                            <th style="text-align:right;white-space:nowrap;padding:8px 10px;">작업C.T</th>
-                                            <th style="text-align:right;white-space:nowrap;padding:8px 10px;">효율</th>
-                                            <th style="text-align:center;white-space:nowrap;padding:8px 10px;">CVT</th>
-                                            <th style="text-align:right;white-space:nowrap;padding:8px 10px;">SPINDLE 수</th>
-                                            <th style="white-space:nowrap;padding:8px 10px;">작업</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="pwTableBodyB"></tbody>
-                                </table>
-                            </div>
+                    <div class="card-body" style="padding:14px;">
+                        <div class="data-table-wrapper" style="overflow-x:auto;">
+                            <table class="data-table" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
+                                <thead>
+                                    <tr>
+                                        <th style="white-space:nowrap;padding:8px 10px;">등록일</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">도장작업일</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">차종</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">품명</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">컬러</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">사출 LOT</th>
+                                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">투입수량</th>
+                                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">완료수량</th>
+                                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">불량</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">작업시간</th>
+                                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">작업C.T</th>
+                                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">효율</th>
+                                        <th style="text-align:center;white-space:nowrap;padding:8px 10px;">CVT</th>
+                                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">SPINDLE 수</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">작업</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pwTableBody${suffix}"></tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
@@ -983,7 +909,7 @@ const PaintingWorkModule = (function() {
 
     // 라인 탭 전환
     function setLine(line) {
-        _currentLine = line;
+        _currentLine = _resolvePaintLine(line);
         loadAll();
     }
 
@@ -1006,7 +932,7 @@ const PaintingWorkModule = (function() {
         const section = document.getElementById('pwUnenteredSection');
         const bodyA = document.getElementById('pwUnenteredBodyA');
         const bodyB = document.getElementById('pwUnenteredBodyB');
-        if (!section || !bodyA || !bodyB) return;
+        if (!section || (!bodyA && !bodyB)) return;
 
         const allPlans = Storage.getAll(PLAN_STORE) || [];
         const allWorks = Storage.getAll(STORE) || [];
@@ -1017,6 +943,7 @@ const PaintingWorkModule = (function() {
         const unentered = allPlans.filter(p => {
             if (!p.date || p.date >= today) return false;  // 오늘 이후 제외
             if (!(p.carModel || p.partName)) return false;
+            if (!_matchesCurrentLine(p.line)) return false;
             return !allWorks.some(w => w.planId === p.id);
         }).sort((a, b) => b.date.localeCompare(a.date) || (a.startTime || '').localeCompare(b.startTime || ''));
 
@@ -1025,10 +952,8 @@ const PaintingWorkModule = (function() {
             return;
         }
 
-        // A라인 / B라인 분리 (line 값에 'b' 또는 'B' 포함이면 B라인)
-        const isLineB = p => /b/i.test(p.line || '');
-        const listA = unentered.filter(p => !isLineB(p));
-        const listB = unentered.filter(p =>  isLineB(p));
+        const listA = unentered.filter(p => _normalizePaintLine(p.line) !== '도장-B');
+        const listB = unentered.filter(p => _normalizePaintLine(p.line) === '도장-B');
 
         const makeRow = p => {
             const timeStr = p.startTime ? `${p.startTime}~${p.endTime || ''}` : (p.slot || '-');
@@ -1063,8 +988,8 @@ const PaintingWorkModule = (function() {
         const emptyRow = '<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--text-muted);font-size:0.82rem;">미입력 계획 없음</td></tr>';
 
         section.style.display = 'block';
-        bodyA.innerHTML = listA.length ? listA.map(makeRow).join('') : emptyRow;
-        bodyB.innerHTML = listB.length ? listB.map(makeRow).join('') : emptyRow;
+        if (bodyA) bodyA.innerHTML = listA.length ? listA.map(makeRow).join('') : emptyRow;
+        if (bodyB) bodyB.innerHTML = listB.length ? listB.map(makeRow).join('') : emptyRow;
     }
 
     // ──────────────────────────────────────────────
@@ -1074,7 +999,7 @@ const PaintingWorkModule = (function() {
         const bodyA = document.getElementById('pwPlanBodyA');
         const bodyB = document.getElementById('pwPlanBodyB');
         const label = document.getElementById('pwPlanDateLabel');
-        if (!bodyA || !bodyB) return;
+        if (!bodyA && !bodyB) return;
 
         const todayDate = UIUtils.today();  // 생산계획 현황은 항상 당일 고정
         if (label) label.textContent = `(${todayDate})`;
@@ -1082,24 +1007,25 @@ const PaintingWorkModule = (function() {
         const allPlans = Storage.getAll(PLAN_STORE) || [];
         const allWorks = Storage.getAll(STORE) || [];
 
-        // 라인별 렌더링 수행 (당일 고정)
-        bodyA.innerHTML = _renderLinePlanData(allPlans, allWorks, '도장-A', todayDate);
-        bodyB.innerHTML = _renderLinePlanData(allPlans, allWorks, '도장-B', todayDate);
+        // 현재 페이지에 있는 라인만 렌더
+        if (bodyA) bodyA.innerHTML = _renderLinePlanData(allPlans, allWorks, '도장-A', todayDate);
+        if (bodyB) bodyB.innerHTML = _renderLinePlanData(allPlans, allWorks, '도장-B', todayDate);
     }
 
     // 라인별 계획 데이터 HTML 생성 헬퍼
     function _renderLinePlanData(allPlans, allWorks, line, targetDate) {
         if (!targetDate) targetDate = UIUtils.today();
+        const targetLine = _resolvePaintLine(line);
         const plans = allPlans.filter(p =>
             p.date === targetDate &&
-            p.line === line &&
+            _resolvePaintLine(p.line) === targetLine &&
             (p.carModel || p.partName)
         ).sort((a, b) =>
             (a.startTime || a.slot || '').localeCompare(b.startTime || b.slot || '')
         );
 
         const dayWorks = allWorks.filter(w =>
-            w.date === targetDate && w.line === line
+            w.date === targetDate && _resolvePaintLine(w.line) === targetLine
         );
 
         if (plans.length === 0) {
@@ -1185,7 +1111,8 @@ const PaintingWorkModule = (function() {
         return Storage.getAll(STORE)
             .filter(d => {
                 const regDate = d.registeredAt ? d.registeredAt.slice(0, 10) : (d.date || '');
-                return regDate >= start && regDate <= end;
+                if (!(regDate >= start && regDate <= end)) return false;
+                return _matchesCurrentLine(d.line);
             })
             .sort((a, b) => {
                 const aReg = a.registeredAt || '';
@@ -1374,7 +1301,7 @@ const PaintingWorkModule = (function() {
         if (bodyB) bodyB.innerHTML = listB.length ? listB.map(_buildWorkListRowHtml).join('') : emptyRow;
         if (countA) countA.textContent = listA.length + '건';
         if (countB) countB.textContent = listB.length + '건';
-        if (legacyBody && !bodyA) {
+        if (legacyBody && !bodyA && !bodyB) {
             legacyBody.innerHTML = data.length
                 ? data.map(_buildWorkListRowHtml).join('')
                 : emptyRow;
@@ -2450,7 +2377,9 @@ const PaintingWorkModule = (function() {
             return false;
         }
         if (typeof AuthModule !== 'undefined' && typeof AuthModule.canWritePage === 'function' &&
-            AuthModule.canWritePage('painting-work')) {
+            (AuthModule.canWritePage('painting-work-a') ||
+             AuthModule.canWritePage('painting-work-b') ||
+             AuthModule.canWritePage('painting-work'))) {
             return user;
         }
         UIUtils.toast('도장 작업 입력 권한이 없습니다.', 'warning');
@@ -4517,6 +4446,7 @@ const PaintingWorkModule = (function() {
 
     return {
         render,
+        renderForLine,
         search,
         setLine,
         onDateChange,
@@ -5966,11 +5896,14 @@ const PaintingInspectionModule = (function() {
                     .form-select { border: 1px solid #ccc !important; }
                 }
             </style>
-            <div style="position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:1000;">
-                <div id="${modalId}" style="position:fixed; top:4vh; left:50%; transform:translateX(-50%); background:white; border-radius:12px; max-width:85vw; max-height:92vh; width:85vw; overflow:auto; padding:16px 20px; box-shadow:0 10px 40px rgba(0,0,0,0.2);">
-                    <div id="${modalHandleId}" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; cursor:move; user-select:none;">
-                        <h2 style="margin:0; font-size:1.1rem;">도장 검사 입력</h2>
-                        <button onclick="PaintingInspectionModule._closeInspectionModal()" style="background:none; border:none; font-size:24px; cursor:pointer; color:var(--text-muted);">✕</button>
+            <div style="position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.28); z-index:1000; pointer-events:none;">
+                <div id="${modalId}" style="position:fixed; top:4vh; left:50%; transform:translateX(-50%); background:white; border-radius:12px; max-width:85vw; max-height:92vh; width:85vw; overflow:auto; padding:16px 20px; box-shadow:0 10px 40px rgba(0,0,0,0.28); pointer-events:auto;">
+                    <div id="${modalHandleId}" title="드래그하여 창 이동" style="display:flex; justify-content:space-between; align-items:center; margin:-4px -8px 12px; padding:8px 8px 10px; border-bottom:1px solid var(--border-color); cursor:move; user-select:none; touch-action:none;">
+                        <h2 style="margin:0; font-size:1.1rem; display:flex; align-items:center; gap:6px; pointer-events:none;">
+                            <span class="material-symbols-outlined" style="font-size:1.15rem; color:var(--text-muted);">drag_indicator</span>
+                            도장 검사 입력
+                        </h2>
+                        <button onclick="PaintingInspectionModule._closeInspectionModal()" style="background:none; border:none; font-size:24px; cursor:pointer; color:var(--text-muted); line-height:1;">✕</button>
                     </div>
                     ${modalContent}
                 </div>
@@ -6027,39 +5960,78 @@ const PaintingInspectionModule = (function() {
     function _makeInspectionModalDraggable(rootEl, modalId, handleId) {
         const modalBox = rootEl.querySelector('#' + modalId);
         const handle = rootEl.querySelector('#' + handleId);
-        if (!modalBox || !handle) return;
+        if (!modalBox || !handle || handle.dataset.dragBound === '1') return;
+        handle.dataset.dragBound = '1';
 
         let dragState = null;
 
-        function onMouseMove(event) {
-            if (!dragState) return;
-            const nextLeft = dragState.startLeft + (event.clientX - dragState.startX);
-            const nextTop = dragState.startTop + (event.clientY - dragState.startY);
-            const maxLeft = Math.max(0, window.innerWidth - modalBox.offsetWidth);
-            const maxTop = Math.max(0, window.innerHeight - 60);
-            modalBox.style.left = Math.min(Math.max(0, nextLeft), maxLeft) + 'px';
-            modalBox.style.top = Math.min(Math.max(0, nextTop), maxTop) + 'px';
-            modalBox.style.transform = 'none';
+        function _clampPos(left, top) {
+            // 제목줄 일부만 화면에 남기면 되도록 — 창을 거의 화면 밖으로도 이동 가능
+            const w = modalBox.offsetWidth || 0;
+            const minVisibleX = 140;
+            const minVisibleY = 48;
+            const minLeft = Math.min(0, minVisibleX - w);
+            const maxLeft = Math.max(0, window.innerWidth - minVisibleX);
+            const minTop = 0;
+            const maxTop = Math.max(0, window.innerHeight - minVisibleY);
+            return {
+                left: Math.min(Math.max(left, minLeft), maxLeft),
+                top: Math.min(Math.max(top, minTop), maxTop)
+            };
         }
 
-        function stopDrag() {
+        function _syncResizeHandle() {
+            const rh = rootEl.querySelector('#' + modalId + 'Resize');
+            if (rh && typeof rh._place === 'function') rh._place();
+        }
+
+        function onPointerMove(event) {
+            if (!dragState) return;
+            const next = _clampPos(
+                dragState.startLeft + (event.clientX - dragState.startX),
+                dragState.startTop + (event.clientY - dragState.startY)
+            );
+            modalBox.style.left = next.left + 'px';
+            modalBox.style.top = next.top + 'px';
+            modalBox.style.right = 'auto';
+            modalBox.style.transform = 'none';
+            _syncResizeHandle();
+        }
+
+        function stopDrag(event) {
             if (!dragState) return;
             dragState = null;
-            document.removeEventListener('mousemove', onMouseMove);
-            document.removeEventListener('mouseup', stopDrag);
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', stopDrag);
+            document.removeEventListener('pointercancel', stopDrag);
+            document.body.style.userSelect = '';
+            try {
+                if (event && event.pointerId != null) handle.releasePointerCapture(event.pointerId);
+            } catch (e) { /* ignore */ }
         }
 
-        handle.addEventListener('mousedown', function(event) {
+        handle.addEventListener('pointerdown', function(event) {
+            if (event.button != null && event.button !== 0) return;
             if (event.target.closest('button')) return;
+
             const rect = modalBox.getBoundingClientRect();
+            modalBox.style.left = rect.left + 'px';
+            modalBox.style.top = rect.top + 'px';
+            modalBox.style.right = 'auto';
+            modalBox.style.margin = '0';
+            modalBox.style.transform = 'none';
+
             dragState = {
                 startX: event.clientX,
                 startY: event.clientY,
                 startLeft: rect.left,
                 startTop: rect.top
             };
-            document.addEventListener('mousemove', onMouseMove);
-            document.addEventListener('mouseup', stopDrag);
+            document.body.style.userSelect = 'none';
+            try { handle.setPointerCapture(event.pointerId); } catch (e) { /* ignore */ }
+            document.addEventListener('pointermove', onPointerMove);
+            document.addEventListener('pointerup', stopDrag);
+            document.addEventListener('pointercancel', stopDrag);
             event.preventDefault();
         });
     }
@@ -6075,6 +6047,7 @@ const PaintingInspectionModule = (function() {
         const handle = document.createElement('div');
         handle.id = handleId;
         handle.title = '드래그하여 창 너비 조절';
+        handle.style.pointerEvents = 'auto';
 
         function placeHandle() {
             const r = modalBox.getBoundingClientRect();
@@ -6086,15 +6059,18 @@ const PaintingInspectionModule = (function() {
                 'height:' + r.height + 'px',
                 'cursor:ew-resize',
                 'z-index:1001',
+                'pointer-events:auto',
                 'background:linear-gradient(to right,transparent,rgba(99,102,241,0.35))',
                 'border-radius:0 10px 10px 0',
             ].join(';');
         }
+        handle._place = placeHandle;
 
         placeHandle();
         rootEl.appendChild(handle);
 
-        handle.addEventListener('mousedown', function(event) {
+        handle.addEventListener('pointerdown', function(event) {
+            if (event.button != null && event.button !== 0) return;
             event.preventDefault();
             event.stopPropagation();
 
@@ -6112,20 +6088,26 @@ const PaintingInspectionModule = (function() {
 
             document.body.style.userSelect = 'none';
             document.body.style.cursor = 'ew-resize';
+            try { handle.setPointerCapture(event.pointerId); } catch (e) { /* ignore */ }
 
             function onMove(ev) {
                 const newW = Math.max(minW, Math.min(startW + (ev.clientX - startX), maxW));
                 modalBox.style.width = newW + 'px';
                 placeHandle();
             }
-            function onUp() {
+            function onUp(ev) {
                 document.body.style.userSelect = '';
                 document.body.style.cursor = '';
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('pointermove', onMove);
+                document.removeEventListener('pointerup', onUp);
+                document.removeEventListener('pointercancel', onUp);
+                try {
+                    if (ev && ev.pointerId != null) handle.releasePointerCapture(ev.pointerId);
+                } catch (e) { /* ignore */ }
             }
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+            document.addEventListener('pointercancel', onUp);
         });
     }
 

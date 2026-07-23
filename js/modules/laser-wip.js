@@ -192,8 +192,11 @@ var LaserWipModule = (function() {
         </div>`;
     }
 
-    function _historyResetBtnHtml(onClickJs) {
-        if (!_canEditWip()) return '';
+    function _historyResetBtnHtml(onClickJs, opts) {
+        // adminOnly: 레이져 잔량 수량 초기화(이력만 리셋)는 관리자 전용으로 하드코딩 —
+        // 일반 canEditWip(레이져운영자 등)은 버튼 자체가 보이지 않아야 한다.
+        const requireAdmin = !!(opts && opts.adminOnly);
+        if (requireAdmin ? !_isAdmin() : !_canEditWip()) return '';
         return `<button class="btn btn-sm btn-outline" style="font-size:0.78rem;border-color:var(--accent-red);color:var(--accent-red);"
             onclick="${onClickJs}">
             <span class="material-symbols-outlined" style="font-size:0.9rem;">restart_alt</span> 이력만 리셋
@@ -4407,7 +4410,7 @@ var LaserWipModule = (function() {
                     onclick="LaserWipModule._openResidualOutForPart('${_cmJs}','${_pnJs}','${_clJs}');">
                     <span class="material-symbols-outlined" style="font-size:0.9rem;">logout</span> 출고
                 </button>` : ''}
-                ${_historyResetBtnHtml("UIUtils.closeModal();setTimeout(()=>LaserWipModule.confirmResetResidual('" + _jsArg(_keyJs) + "'),80);")}
+                ${_historyResetBtnHtml("UIUtils.closeModal();setTimeout(()=>LaserWipModule.confirmResetResidual('" + _jsArg(_keyJs) + "'),80);", { adminOnly: true })}
             ` : '')}
             ${_residualMismatch ? `
             <div style="background:rgba(220,38,38,0.08);border:1px solid rgba(220,38,38,0.35);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.82rem;line-height:1.5;">
@@ -4460,8 +4463,9 @@ var LaserWipModule = (function() {
     }
 
     async function confirmResetResidual(keyEnc) {
-        if (!_canEditWip()) {
-            UIUtils.toast('관리자·레이져운영자만 이력만 리셋을 실행할 수 있습니다.', 'warning');
+        // 레이져 잔량 수량 초기화는 관리자 전용으로 하드코딩
+        if (!_isAdmin()) {
+            UIUtils.toast('관리자만 잔량 이력만 리셋을 실행할 수 있습니다.', 'warning');
             return;
         }
         await _ensureResidualHistoryResetsLoaded();
@@ -4504,8 +4508,9 @@ var LaserWipModule = (function() {
     }
 
     async function executeResetResidual(keyEnc) {
-        if (!_canEditWip()) {
-            UIUtils.toast('관리자·레이져운영자만 이력만 리셋을 실행할 수 있습니다.', 'warning');
+        // 레이져 잔량 수량 초기화는 관리자 전용으로 하드코딩
+        if (!_isAdmin()) {
+            UIUtils.toast('관리자만 잔량 이력만 리셋을 실행할 수 있습니다.', 'warning');
             return;
         }
         await _ensureResidualHistoryResetsLoaded();

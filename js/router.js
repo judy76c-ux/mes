@@ -63,7 +63,9 @@ const Router = (function() {
         'injection-layout': '보관창고 레이아웃',
         'injection-wip': '사출 재공품 현황',
         'injection-room-layout': '사출실 레이아웃',
-        'painting-work': '도장작업',
+        'painting-work': '도장-A 작업',
+        'painting-work-a': '도장-A 작업',
+        'painting-work-b': '도장-B 작업',
         'painting-inspection': '도장작업',
         'painting-quality-performance': '도장품 실적',
         'laser-process': '레이저 작업',
@@ -413,6 +415,7 @@ const Router = (function() {
     }
 
     function _sidebarHighlightPage(pageName) {
+        if (pageName === 'painting-work') return 'painting-work-a';
         if (pageName === 'injection-layout') {
             const cfg = _getLayoutBackConfig();
             if (document.querySelector('.nav-item[data-page="' + cfg.target + '"]')) {

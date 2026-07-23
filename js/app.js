@@ -254,7 +254,15 @@ const App = (function() {
         Router.registerModule('injection-layout', InjectionLayoutModule);
         Router.registerModule('injection-wip', InjectionWipModule);
         Router.registerModule('injection-room-layout', InjectionRoomLayoutModule);
-        Router.registerModule('painting-work', PaintingWorkModule);
+        Router.registerModule('painting-work', {
+            render: function(c) { PaintingWorkModule.renderForLine(c, '도장-A'); }
+        });
+        Router.registerModule('painting-work-a', {
+            render: function(c) { PaintingWorkModule.renderForLine(c, '도장-A'); }
+        });
+        Router.registerModule('painting-work-b', {
+            render: function(c) { PaintingWorkModule.renderForLine(c, '도장-B'); }
+        });
         Router.registerModule('painting-inspection', PaintingInspectionModule);
         Router.registerModule('painting-rework-wip', ReworkWipModule);
         Router.registerModule('painting-quality-performance', PaintingQualityPerformanceModule);

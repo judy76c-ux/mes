@@ -14873,7 +14873,15 @@ var PaintMixModule = (function() {
                     <span style="font-size:0.73rem;color:var(--text-muted);">${tab.desc}</span>
                 </span>
             </button>`;
-        }).join('');
+        }).join('') + `
+            <button type="button" onclick="Router.navigate('paint-inventory');"
+                style="display:flex;align-items:center;gap:8px;padding:12px 18px;border-radius:14px;
+                       border:1.5px solid var(--border-color);background:var(--bg-primary);
+                       color:var(--text-primary);cursor:pointer;margin-left:auto;align-self:center;
+                       box-shadow:0 1px 4px rgba(0,0,0,.06);">
+                <span class="material-symbols-outlined" style="font-size:20px;color:var(--text-muted);">warehouse</span>
+                <span style="font-size:0.86rem;font-weight:700;white-space:nowrap;">도료창고 가기</span>
+            </button>`;
     }
 
     function switchTab(tab) {
@@ -17697,10 +17705,24 @@ var PaintMixModule = (function() {
     }
 
     // ── 도료 창고 재고 (PAINT_INVENTORY 집계 — 도료 창고 화면과 동일) ──
+    // 같은 이름·공급사의 도료 마스터가 ID만 다르게 중복 등록돼 있으면(재입력·마이그레이션 등),
+    // 레시피가 가리키는 materialId와 실제 창고출고/배합실 입고에 찍힌 materialId가 갈라져
+    // 배합실 잔량이 있는데도 사용등록 화면 드롭다운에는 안 뜨는 문제가 생긴다.
+    // 이름+공급사가 같은 도료는 같은 도료로 보고 ID를 모두 함께 조회해 이 불일치를 흡수한다.
+    function _materialIdsByName(materialId) {
+        if (!materialId) return [materialId];
+        const mats = Storage.getAll(PAINT_MAT_STORE) || [];
+        const mat = mats.find(m => m.id === materialId);
+        if (!mat || !mat.name) return [materialId];
+        const dupes = mats.filter(m => m.name === mat.name && (m.supplier || '') === (mat.supplier || ''));
+        return dupes.length ? dupes.map(m => m.id) : [materialId];
+    }
+
     function _warehouseStockByLot(materialId) {
         const map = {};
+        const ids = _materialIdsByName(materialId);
         (Storage.getAll(PAINT_INV_STORE) || [])
-            .filter(r => r.materialId === materialId)
+            .filter(r => ids.includes(r.materialId))
             .forEach(r => {
                 const prodLot = r.prodLot || r.lotNo || '미표기';
                 if (!map[prodLot]) map[prodLot] = { prodLot, lotNo: r.lotNo || '', warehouseCans: 0 };
@@ -17714,8 +17736,9 @@ var PaintMixModule = (function() {
     // 출고 대기(PAINT_OUTGOING_STANDBY) — 아직 창고 출고 확인 전 예약 수량
     function _pendingOutboundByLot(materialId, ignoreMixId = '') {
         const map = {};
+        const ids = _materialIdsByName(materialId);
         (Storage.getAll(PAINT_OUT_STANDBY_STORE) || [])
-            .filter(r => r.materialId === materialId && r.status === '대기')
+            .filter(r => ids.includes(r.materialId) && r.status === '대기')
             .forEach(r => {
                 if (ignoreMixId && r.paintMixId === ignoreMixId) return;
                 const prodLot = r.prodLot || r.lotNo || '미표기';
@@ -17763,14 +17786,15 @@ var PaintMixModule = (function() {
 
     function _mixRoomLots(materialId, ignoreMixId = '') {
         const map = {};
+        const ids = _materialIdsByName(materialId);
 
         // ① 수동 창고 출고 → 배합실 입고 (paintMixId 없는 출고)
         const mats = Storage.getAll(PAINT_MAT_STORE) || [];
         (Storage.getAll(PAINT_INV_STORE) || []).forEach(r => {
             if (r.type !== '출고') return;
             if (r.paintMixId) return;
-            if (r.materialId !== materialId) return;
-            const mat = mats.find(x => x.id === materialId);
+            if (!ids.includes(r.materialId)) return;
+            const mat = mats.find(x => x.id === r.materialId);
             const packKg = Number(mat ? mat.packUnit : 0) || 0;
             const prodLot = r.prodLot || r.lotNo || '미기입';
             const inG = (Number(r.quantity) || 0) * packKg * 1000;
@@ -17782,7 +17806,7 @@ var PaintMixModule = (function() {
         (_mixes()).forEach(m => {
             if (ignoreMixId && m.id === ignoreMixId) return;
             (m.usages || []).forEach(u => {
-                if (u.materialId !== materialId) return;
+                if (!ids.includes(u.materialId)) return;
                 const prodLot = u.residualProdLot || u.prodLot || u.lotNo || '';
                 if (!prodLot) return;
                 if (!map[prodLot]) map[prodLot] = { prodLot, balanceG: 0 };
@@ -17806,15 +17830,16 @@ var PaintMixModule = (function() {
     // 배합실 도료재고: 해당 LOT에서 꺼낸 캔 합계g - 사용량 합계g
     function _mixRoomBalanceG(materialId, prodLot, ignoreMixId = '') {
         let takenG = 0, usedG = 0;
+        const ids = _materialIdsByName(materialId);
 
         // ① 수동 창고 출고 (paintMixId 없는 출고) → 배합실 입고
         const mats = Storage.getAll(PAINT_MAT_STORE) || [];
         (Storage.getAll(PAINT_INV_STORE) || []).forEach(r => {
             if (r.type !== '출고' || r.paintMixId) return;
-            if (r.materialId !== materialId) return;
+            if (!ids.includes(r.materialId)) return;
             const rLot = r.prodLot || r.lotNo || '미기입';
             if (rLot !== prodLot) return;
-            const mat = mats.find(x => x.id === materialId);
+            const mat = mats.find(x => x.id === r.materialId);
             const packKg = Number(mat ? mat.packUnit : 0) || 0;
             takenG += (Number(r.quantity) || 0) * packKg * 1000;
         });
@@ -17824,7 +17849,7 @@ var PaintMixModule = (function() {
             if (ignoreMixId && m.id === ignoreMixId) return;
             (m.usages || []).forEach(u => {
                 const sourceLot = u.residualProdLot || u.prodLot;
-                if (u.materialId !== materialId || sourceLot !== prodLot) return;
+                if (!ids.includes(u.materialId) || sourceLot !== prodLot) return;
                 takenG += (Number(u.warehouseCans) || 0) * (Number(u.packUnit) || 0) * 1000;
                 if (u.residualUseG != null || u.warehouseUseG != null) {
                     usedG += (Number(u.residualUseG) || 0) + (Number(u.warehouseUseG) || 0);

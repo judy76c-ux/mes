@@ -157,8 +157,14 @@ var StockDetailUI = (function() {
 
     function simpleReplaySteps(items, getSignedQty, opts) {
         opts = opts || {};
-        const floorZero = !!opts.floorZero;
         const perLotKey = typeof opts.perLotKey === 'function' ? opts.perLotKey : null;
+        // 0-절단은 LOT 단위 재생(perLotKey)에서만 적용한다 — 개별 LOT은 물리적으로 음수 잔량이
+        // 있을 수 없기 때문. 품목 전체(__ALL__) 집계 재생에서 절단하면, 출고 기록이 날짜상
+        // 대응 입고보다 먼저 저장된 경우(입력 순서 문제) 절단된 값이 이후 입고로 되메워지지 않고
+        // 사라져 재생된 "현재 수량"이 실제 재고(입고합계-출고합계)와 어긋나 보이는 오탐이 있었다.
+        // 집계 재생은 절단 없이 마이너스를 그대로 들고 가게 하면 최종값이 항상 실제 재고와
+        // 일치한다(날짜 순서와 무관하게 총합은 보존되므로).
+        const floorZero = !!opts.floorZero && !!perLotKey;
         const getAbsoluteAfter = typeof opts.getAbsoluteAfter === 'function' ? opts.getAbsoluteAfter : null;
         // date는 'YYYY-MM-DD'(시각 없음)와 'YYYY-MM-DDTHH:MM:SS...'(전체 타임스탬프)가 섞여 있다.
         // 문자열 그대로 비교하면 같은 날 안에서 시각 없는 값이 항상 "더 이르다"로 취급돼(짧은 문자열이
