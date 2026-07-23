@@ -176,11 +176,22 @@ var LaserWipModule = (function() {
     }
 
     function _getResidualHistoryReset(carModel, partName, color) {
-        const key = _productKeyRaw(carModel, partName, color);
+        // 레이져 후 재공과 동일하게 컬러 표기 차이(제품/도장)를 흡수한다.
+        const canon = (typeof _resolveWipColorKey === 'function')
+            ? _resolveWipColorKey(carModel, partName, color)
+            : String(color || '').trim();
+        const keys = new Set([
+            _productKeyRaw(carModel, partName, color),
+            _productKeyRaw(carModel, partName, canon)
+        ]);
         return (_residualHistoryResets || []).find(function(r) {
             if (!r) return false;
-            if (r.key && r.key === key) return true;
-            return _productKeyRaw(r.carModel, r.partName, r.color) === key;
+            const rk = (r && r.key) || _productKeyRaw(r.carModel, r.partName, r.color);
+            if (keys.has(rk)) return true;
+            const rCanon = (typeof _resolveWipColorKey === 'function')
+                ? _resolveWipColorKey(r.carModel, r.partName, r.color)
+                : String(r.color || '').trim();
+            return keys.has(_productKeyRaw(r.carModel, r.partName, rCanon));
         }) || null;
     }
 
@@ -5632,10 +5643,28 @@ var LaserWipModule = (function() {
             );
             if (same.length === 1) match = same[0];
             else if (same.length > 1 && clr) {
-                match = same.find(r => String(r.color || '').trim() === clr) || null;
+                // 정규화 컬러로 재시도
+                const canon = _resolveWipColorKey(car, part, clr);
+                match = same.find(r => String(r.color || '').trim() === clr)
+                    || same.find(r => _resolveWipColorKey(r.carModel, r.partName, r.color) === canon)
+                    || null;
             }
         }
         return match ? Math.max(0, Number(match.residualQty) || 0) : 0;
+    }
+
+    /** 검사 폼 등: 이력 리셋 로드 후 최신 레이져잔량 반환 */
+    async function getResidualQtyAsync(carModel, partName, color) {
+        await _ensureResidualHistoryResetsLoaded();
+        return getResidualQty(carModel, partName, color);
+    }
+
+    function isResidualHistoryResetsLoaded() {
+        return !!_residualHistoryResetsLoaded;
+    }
+
+    async function ensureResidualReady() {
+        return _ensureResidualHistoryResetsLoaded();
     }
 
     return { init, render, refresh, switchTab, openTab, _activeTabId, isAfterLaserDrainProduct, openManualInput,
@@ -5652,7 +5681,8 @@ var LaserWipModule = (function() {
              getWipStock, getWipLotDetail, _calcWip, showWipDetail, showResidualDetail,
              confirmResetAfterWip, executeResetAfterWip,
              confirmResetResidual, executeResetResidual,
-             getResidualQty, _calcLaserResidualWip,
+             getResidualQty, getResidualQtyAsync, ensureResidualReady, isResidualHistoryResetsLoaded,
+             _calcLaserResidualWip,
              adjustAfterLaserFromPopup, adjustResidualFromPopup,
              openAdjustAfterLaserModal, saveAdjustAfterLaserModal,
              openAdjustResidualModal, saveAdjustResidualModal,

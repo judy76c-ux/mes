@@ -17821,6 +17821,16 @@ var PaintMixModule = (function() {
             });
         });
 
+        // ③ 관리자 실사 조정 / 배합실에 잔량 도료 직접 등록(openMixResidualAdjust) —
+        // 잔량 목록(_calcMixingRoomResiduals)에는 반영되지만 이 함수엔 빠져 있어,
+        // 수동으로 등록한 배합실 재고가 사용등록 드롭다운에 안 뜨는 문제가 있었다.
+        _residualAdjustments().forEach(a => {
+            if (!ids.includes(a.materialId)) return;
+            const prodLot = a.lotNo || '미기입';
+            if (!map[prodLot]) map[prodLot] = { prodLot, balanceG: 0 };
+            map[prodLot].balanceG += (Number(a.adjustG) || 0);
+        });
+
         return Object.values(map)
             .map(l => ({ ...l, balanceG: Math.max(0, _roundQty(l.balanceG)) }))
             .filter(l => l.balanceG > 0)
@@ -17857,6 +17867,14 @@ var PaintMixModule = (function() {
                     usedG += (Number(u.usageG) || 0);
                 }
             });
+        });
+
+        // ③ 관리자 실사 조정 / 배합실에 잔량 도료 직접 등록
+        _residualAdjustments().forEach(a => {
+            if (!ids.includes(a.materialId)) return;
+            const aLot = a.lotNo || '미기입';
+            if (aLot !== prodLot) return;
+            takenG += (Number(a.adjustG) || 0);
         });
         return Math.max(0, _roundQty(takenG - usedG));
     }
