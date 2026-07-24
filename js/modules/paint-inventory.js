@@ -808,30 +808,35 @@ const PaintInventoryModule = (function() {
             .filter(d => d.materialId === matId)
             .sort(_paintInvSortStamp);
 
-        // 현재 재고 및 LOT별 집계
-        let totalStock = 0;
-        const lotMap = {};
-        records.forEach(d => {
-            const qty = Number(d.quantity) || 0;
-            const key = d.prodLot || d.lotNo || '__';
+        // 입출고 이력과 동일 원장(InvCalc FIFO)으로 LOT·총재고를 계산한다.
+        // LOT별 단순 합산은 다른 LOT로 표기된 출고가 FIFO로 차감될 때
+        // (예: 빈 LOT 출고 → 다른 LOT에서 차감) 보관 LOT(11)와 재고/이력(10)이 어긋난다.
+        const invRecords = _toPaintInvRecords(records);
+        const balance = InvCalc.lotBalances(invRecords);
+        const totalStock = balance.total;
+
+        // 표시용 메타(제조사 LOT, 제조/유효기한)는 원본 입고 기록에서 승계
+        const lotMeta = {};
+        records.forEach(function(d) {
+            const key = String(d.prodLot || d.lotNo || '').trim() || '무표기';
             const lotDates = _resolveLotDates(d, mat);
-            if (!lotMap[key]) lotMap[key] = {
-                prodLot: d.prodLot || '',
-                lotNo:   d.lotNo   || '',
-                mfgDate: lotDates.mfgDate || '',
-                expDate: lotDates.expDate || '',
-                inDate:  '',
-                qty: 0
-            };
-            if (d.type === '출고') { lotMap[key].qty -= qty; totalStock -= qty; }
-            else                   { lotMap[key].qty += qty; totalStock += qty;
-                const inStamp = InvCalc.recordStamp(d) || InvCalc.normDate(d.date).stamp || (d.date || '');
-                if (inStamp && (!lotMap[key].inDate || inStamp > lotMap[key].inDate))
-                    lotMap[key].inDate = inStamp;
-                if (lotDates.mfgDate && (!lotMap[key].mfgDate || lotDates.mfgDate < lotMap[key].mfgDate))
-                    lotMap[key].mfgDate = lotDates.mfgDate;
-                if (lotDates.expDate && (!lotMap[key].expDate || lotDates.expDate < lotMap[key].expDate))
-                    lotMap[key].expDate = lotDates.expDate;
+            if (!lotMeta[key]) {
+                lotMeta[key] = {
+                    prodLot: d.prodLot || key,
+                    lotNo: d.lotNo || '',
+                    mfgDate: lotDates.mfgDate || '',
+                    expDate: lotDates.expDate || ''
+                };
+            } else {
+                if (d.lotNo && d.prodLot && d.lotNo !== d.prodLot && !lotMeta[key].lotNo) {
+                    lotMeta[key].lotNo = d.lotNo;
+                }
+                if (lotDates.mfgDate && (!lotMeta[key].mfgDate || lotDates.mfgDate < lotMeta[key].mfgDate)) {
+                    lotMeta[key].mfgDate = lotDates.mfgDate;
+                }
+                if (lotDates.expDate && (!lotMeta[key].expDate || lotDates.expDate < lotMeta[key].expDate)) {
+                    lotMeta[key].expDate = lotDates.expDate;
+                }
             }
         });
 
@@ -839,10 +844,25 @@ const PaintInventoryModule = (function() {
         const price = Number(mat.purchasePrice || 0);
         const stockValue = totalStock * price;
 
-        // 활성 LOT 행
-        const activeLots = Object.values(lotMap)
-            .filter(l => l.qty > 0)
-            .sort((a, b) => (a.prodLot || a.lotNo).localeCompare(b.prodLot || b.lotNo));
+        // 활성 LOT 행 — InvCalc 잔량 기준 (이력 재생과 동일)
+        const activeLots = balance.lots
+            .filter(function(l) {
+                return l.lotNo !== InvCalc.UNMATCHED && (Number(l.qty) || 0) > 0;
+            })
+            .map(function(l) {
+                const meta = lotMeta[l.lotNo] || {};
+                return {
+                    prodLot: meta.prodLot || l.lotNo,
+                    lotNo: meta.lotNo && meta.lotNo !== (meta.prodLot || l.lotNo) ? meta.lotNo : (meta.lotNo || ''),
+                    mfgDate: meta.mfgDate || '',
+                    expDate: meta.expDate || '',
+                    inDate: l.date || '',
+                    qty: Number(l.qty) || 0
+                };
+            })
+            .sort(function(a, b) {
+                return String(a.prodLot || a.lotNo).localeCompare(String(b.prodLot || b.lotNo));
+            });
 
         const lotRows = activeLots.length > 0
             ? activeLots.map(l => {
@@ -866,11 +886,11 @@ const PaintInventoryModule = (function() {
                         onmouseover="this.style.background='rgba(239,68,68,0.07)'"
                         onmouseout="this.style.background=''">
                         <td style="white-space:nowrap;font-size:0.8rem;">${l.inDate || '-'}</td>
-                        <td style="font-family:monospace;font-weight:700;">${l.prodLot || '-'}</td>
-                        <td style="font-family:monospace;color:var(--text-muted);">${l.lotNo || '-'}</td>
-                        <td style="text-align:center;">${l.mfgDate || '-'}</td>
-                        <td>${expHtml}</td>
-                        <td style="text-align:right;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(l.qty)}</td>
+                        <td style="font-family:monospace;font-weight:700;white-space:nowrap;">${l.prodLot || '-'}</td>
+                        <td style="font-family:monospace;color:var(--text-muted);white-space:nowrap;">${l.lotNo || '-'}</td>
+                        <td style="text-align:center;white-space:nowrap;">${l.mfgDate || '-'}</td>
+                        <td style="white-space:nowrap;">${expHtml}</td>
+                        <td style="text-align:right;font-weight:700;color:var(--accent-blue);white-space:nowrap;">${UIUtils.formatNumber(l.qty)}</td>
                         <td style="text-align:center;padding:4px 8px;white-space:nowrap;">
                             ${adjustBtn}<span style="font-size:0.7rem;background:#fee2e2;color:#dc2626;border-radius:4px;padding:2px 6px;white-space:nowrap;">출고</span>
                         </td>
@@ -879,7 +899,6 @@ const PaintInventoryModule = (function() {
             : `<tr><td colspan="7" style="text-align:center;padding:14px;color:var(--text-muted);">재고 없음</td></tr>`;
 
         // 입출고 이력 (전체 · 최신순 · 기존/현재 수량)
-        const invRecords = _toPaintInvRecords(records);
         const historySection = StockDetailUI.buildInvHistorySection(invRecords, {
             routeFn: _paintInvRoute,
             lotFn: function(d) {
@@ -937,6 +956,9 @@ const PaintInventoryModule = (function() {
                 title: '현재 보관 LOT',
                 headers: ['입고일', '제조 LOT', '제조사 표기 LOT', '제조일자', '유효기한', '현재 수량', '출고'],
                 colSpan: 7,
+                qtyColIndex: 5,
+                totalQty: totalStock,
+                totalLabel: '보관 합계',
                 rowsHtml: lotRows
             })}
             ${historySection}
