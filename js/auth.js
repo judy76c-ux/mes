@@ -485,7 +485,21 @@ const AuthModule = (function () {
                 result[key] = { access: [], write: [] };
             }
         });
-        return _syncPageWritePolicies(_syncMenuAccessPages(_expandLegacyPaintingWorkPages(result)));
+        return _backfillAdjustPerms(_syncPageWritePolicies(_syncMenuAccessPages(_expandLegacyPaintingWorkPages(result))));
+    }
+
+    /* "수정/보정" 3단계 권한 도입 — 기존에 저장된 권한엔 adjust 배열이 없으므로, write를
+       그대로 복사해 채워 넣는다(처음 도입 시 기존 동작이 그대로 유지되게). 이후 관리/설정
+       화면에서 개별적으로 껐다 켰다 하면 write와 갈라진다. */
+    function _backfillAdjustPerms(perms) {
+        Object.keys(perms || {}).forEach(function(roleKey) {
+            const rp = perms[roleKey];
+            if (!rp || rp === null || Array.isArray(rp)) return;
+            if (!Array.isArray(rp.adjust)) {
+                rp.adjust = Array.isArray(rp.write) ? [...rp.write] : [];
+            }
+        });
+        return perms;
     }
 
     /* 구 페이지 ID painting-work → painting-work-a/b 로 권한 확장 */
@@ -544,6 +558,22 @@ const AuthModule = (function () {
         if (!rp) return false;
         if (Array.isArray(rp)) return rp.includes(pageId);
         return Array.isArray(rp.write) && rp.write.includes(pageId);
+    }
+
+    /* 입력(등록)과 별개로 "수정/보정"(이미 있는 기록을 고치거나 재고 수량을 보정하는 것)을
+       세 번째 단계로 가른다. write는 있는데 adjust가 아직 없는(마이그레이션 전) 역할은
+       _migratePerms에서 write를 그대로 복사해 초기값으로 채워, 이 권한을 도입해도 기존
+       사용자의 동작이 갑자기 막히지 않게 한다. */
+    function isPageAdjustGranted(roleKey, pageId) {
+        if (pageId === 'dashboard') return true;
+        if (Array.isArray(roleKey)) return roleKey.some(key => isPageAdjustGranted(key, pageId));
+        if (roleKey === 'admin') return true;
+        const perms = _getPermissions();
+        const rp = perms[roleKey];
+        if (rp === null) return true;
+        if (!rp) return false;
+        if (Array.isArray(rp)) return rp.includes(pageId);
+        return Array.isArray(rp.adjust) && rp.adjust.includes(pageId);
     }
 
     function _savePermissions(p) {
@@ -955,6 +985,13 @@ const AuthModule = (function () {
         const policy = _userPassesPageWritePolicy(user, pageId);
         if (policy !== null) return policy;
         return isPageWriteGranted(_roleKeys(user), pageId);
+    }
+
+    /* 현재 사용자가 특정 페이지에서 "수정/보정"(이미 있는 기록 고치기·수량 보정) 권한이 있는지 */
+    function canAdjustPage(pageId) {
+        const user = getCurrentUser();
+        if (!user) return false;
+        return isPageAdjustGranted(_roleKeys(user), pageId);
     }
 
     /* 관리자 여부 (roles 배열 + 대표 role 모두 확인) */
@@ -1416,10 +1453,12 @@ const AuthModule = (function () {
         savePermissions:      _savePermissions,
         isPageAccessGranted,
         isPageWriteGranted,
+        isPageAdjustGranted,
         getCurrentUser,
         canWrite,
         canAccessPage,
         canWritePage,
+        canAdjustPage,
         PAGE_WRITE_POLICY,
         isAdminUser,
         ensureAdminUser,

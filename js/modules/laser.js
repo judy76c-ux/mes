@@ -264,6 +264,17 @@ var LaserWorkModule = (function() {
         return false;
     }
 
+    // 완료된 작업일지 "수정"은 "입력"(신규 등록·이어서 입력)과 별개인 "수정/보정" 권한으로 게이트한다.
+    function _canAdjustLaserWork() {
+        try {
+            if (_isAdminUser()) return true;
+            return typeof AuthModule !== 'undefined' &&
+                typeof AuthModule.canAdjustPage === 'function' &&
+                AuthModule.canAdjustPage('laser-work');
+        } catch (e) { /* 무시 */ }
+        return false;
+    }
+
     function _normalizeFlowKey(value) {
         return String(value || '').trim().replace(/\s+/g, '').replace(/[-_]/g, '');
     }
@@ -1125,7 +1136,7 @@ var LaserWorkModule = (function() {
     function renderTable(data) {
         const tbody = document.getElementById('lwTableBody');
         const isAdmin = _isAdminUser();
-        const canEdit = _canWriteLaserWork();
+        const canEdit = _canAdjustLaserWork();
         // 잔량/재공 수기 입출고·보정은 재고 감사 이력이며 레이저 작업일지가 아니다.
         data = (data || []).filter(d => !_isInventoryCorrectionRecord(d));
         if (data.length === 0) {
@@ -2461,6 +2472,12 @@ var LaserWorkModule = (function() {
     function edit(id) {
         const d = Storage.getById(STORE, id);
         if (!d) return;
+        // 진행중(이어서 입력)은 "입력" 권한, 완료된 기록 수정은 "수정/보정" 권한으로 구분한다.
+        const needsAdjust = d.status !== 'in_progress';
+        if (needsAdjust ? !_canAdjustLaserWork() : !_canWriteLaserWork()) {
+            UIUtils.toast(needsAdjust ? '수정/보정 권한이 있는 사용자만 작업일지를 수정할 수 있습니다.' : '레이저 작업 입력 권한이 없습니다.', 'warning');
+            return;
+        }
         // 초/중/종품 사진 복원 — 미복원 시 재업로드 없이 저장하면 기존 사진 URL이 지워짐
         _qcPhotos = {
             First:  d.qcFirstPhotoUrl  ? { name: '', url: d.qcFirstPhotoUrl }  : null,
@@ -2520,6 +2537,12 @@ var LaserWorkModule = (function() {
     // 저장: 중품/종품이 아직 없어도 진행 중인 내용을 그대로 저장한다 (완료 처리는 아님).
     // status는 건드리지 않아 기존 상태(작업중/완료)를 그대로 유지한다 — 완료 전환은 '작업완료' 버튼에서만.
     async function saveEdit(id) {
+        const existing = Storage.getById(STORE, id);
+        const needsAdjust = existing && existing.status !== 'in_progress';
+        if (needsAdjust ? !_canAdjustLaserWork() : !_canWriteLaserWork()) {
+            UIUtils.toast(needsAdjust ? '수정/보정 권한이 있는 사용자만 작업일지를 수정할 수 있습니다.' : '레이저 작업 입력 권한이 없습니다.', 'warning');
+            return;
+        }
         const data = collectData();
         if (!validateWorkRequired(data, { strict: false })) return;
         if (!_checkLotQtyMatch(data)) return;
@@ -2529,8 +2552,13 @@ var LaserWorkModule = (function() {
         search();
     }
 
-    // 작업완료: 수량 기준 요구되는 초/중/종품이 모두 입력됐는지 엄격히 확인한 뒤 완료 처리한다.
+    // 작업완료: 진행중 → 완료 전환이므로 "입력" 권한으로 게이트한다(이미 완료된 건 수정은 edit/saveEdit 쪽).
+    // 수량 기준 요구되는 초/중/종품이 모두 입력됐는지 엄격히 확인한 뒤 완료 처리한다.
     async function completeWork(id) {
+        if (!_canWriteLaserWork()) {
+            UIUtils.toast('레이저 작업 입력 권한이 없습니다.', 'warning');
+            return;
+        }
         const data = collectData();
         if (!validateWorkRequired(data, { strict: true })) return;
         if (!_checkLotQtyMatch(data)) return;
@@ -2693,12 +2721,13 @@ var LaserInspectionModule = (function() {
         return !!(user && (user.role === 'admin' || (Array.isArray(user.roles) && user.roles.includes('admin'))));
     }
 
+    // 이미 저장된 검사 기록 수정 — "입력"(신규 검사 등록)과 별개인 "수정/보정" 권한으로 게이트한다.
     function _canEditInspection() {
         try {
             if (_isAdminUser()) return true;
             return typeof AuthModule !== 'undefined' &&
-                typeof AuthModule.canWritePage === 'function' &&
-                AuthModule.canWritePage('laser-inspection');
+                typeof AuthModule.canAdjustPage === 'function' &&
+                AuthModule.canAdjustPage('laser-inspection');
         } catch (e) { /* 무시 */ }
         return false;
     }
@@ -5596,6 +5625,17 @@ var LaserStandbyModule = (function() {
         return false;
     }
 
+    // 수량 보정 / 이력만 리셋 — "입력"(수동입고·출고 등록)과 별개인 "수정/보정" 3단계 권한.
+    function _canAdjustStandby() {
+        try {
+            if (_isAdminUser()) return true;
+            return typeof AuthModule !== 'undefined' &&
+                typeof AuthModule.canAdjustPage === 'function' &&
+                AuthModule.canAdjustPage('laser-standby');
+        } catch (e) { /* 무시 */ }
+        return false;
+    }
+
     function _deleteButton(row, kind) {
         if (!_isAdminUser() || !row.sourceType || !row.sourceId) return '';
         const label = kind === 'in' ? '입고' : '출고';
@@ -6980,14 +7020,16 @@ var LaserStandbyModule = (function() {
     }
 
     async function openAdjustModal(keyEnc = '', isAddMode = false) {
-        if (!_canEditStandby()) {
-            UIUtils.toast('레이져 대기품 입력 권한이 없습니다. (관리자·설정에서 입력 권한 부여된 역할만 가능)', 'warning');
+        const key = keyEnc ? decodeURIComponent(keyEnc) : '';
+        const addMode = isAddMode || !key;
+        // 신규 추가는 "입력" 권한, 기존 항목 수량 보정은 "수정/보정" 권한으로 구분한다.
+        if (addMode ? !_canEditStandby() : !_canAdjustStandby()) {
+            UIUtils.toast(addMode
+                ? '레이져 대기품 입력 권한이 없습니다. (관리자·설정에서 입력 권한 부여된 역할만 가능)'
+                : '수정/보정 권한이 있는 사용자만 수량을 보정할 수 있습니다.', 'warning');
             return;
         }
         await _ensureManualOverridesLoaded();
-
-        const key = keyEnc ? decodeURIComponent(keyEnc) : '';
-        const addMode = isAddMode || !key;
         const snapshot = key ? _getDetailSnapshot(key) : { item: null, stock: 0 };
         const item = snapshot.item;
         const override = key ? _getOverrideByKey(key) : null;
@@ -7141,14 +7183,15 @@ var LaserStandbyModule = (function() {
     }
 
     async function saveAdjustModal(keyEnc = '', isAddMode = false) {
-        if (!_canEditStandby()) {
-            UIUtils.toast('레이져 대기품 입력 권한이 없습니다. (관리자·설정에서 입력 권한 부여된 역할만 가능)', 'warning');
+        const originalKey = keyEnc ? decodeURIComponent(keyEnc) : '';
+        const addMode = isAddMode || !originalKey;
+        if (addMode ? !_canEditStandby() : !_canAdjustStandby()) {
+            UIUtils.toast(addMode
+                ? '레이져 대기품 입력 권한이 없습니다. (관리자·설정에서 입력 권한 부여된 역할만 가능)'
+                : '수정/보정 권한이 있는 사용자만 수량을 보정할 수 있습니다.', 'warning');
             return;
         }
         await _ensureManualOverridesLoaded();
-
-        const originalKey = keyEnc ? decodeURIComponent(keyEnc) : '';
-        const addMode = isAddMode || !originalKey;
         const carModel = document.getElementById('lsbAdjustCarModel')?.value || '';
         const partName = document.getElementById('lsbAdjustPartName')?.value || '';
         const color = document.getElementById('lsbAdjustColor')?.value || '';
@@ -7360,6 +7403,7 @@ var LaserStandbyModule = (function() {
         const _clJs = String(color || '').replace(/'/g, "\\'");
         const _keyJs = encodeURIComponent(key);
         const canEdit = _canEditStandby();
+        const canAdjust = _canAdjustStandby();
 
         // ✓ 도장LOT 기준으로 묶어서 1행으로 표시 — 사출LOT는 (수량) 태그로 참고 나열만 한다.
         const _lotGroupsByPaintLot = {};
@@ -7382,7 +7426,7 @@ var LaserStandbyModule = (function() {
                 <td style="font-family:monospace;color:var(--accent-green);white-space:nowrap;">${g.paintLot}</td>
                 <td><div style="display:flex;flex-wrap:wrap;gap:4px;">${lotTags}</div></td>
                 <td style="text-align:right;color:var(--accent-blue);font-weight:600;white-space:nowrap;">${UIUtils.formatNumber(g.totalQty)}</td>
-                ${canEdit ? `<td style="text-align:center;">
+                ${canAdjust ? `<td style="text-align:center;">
                     <button class="btn btn-sm btn-outline" style="font-size:0.72rem;padding:2px 8px;"
                         onclick="UIUtils.closeModal();setTimeout(()=>LaserStandbyModule.openAdjustModal('${_keyJs}'),80);">
                         수량 보정
@@ -7455,7 +7499,7 @@ var LaserStandbyModule = (function() {
                     '수량 보정'으로 실제 재고를 다시 맞춘 뒤에도 계속 보이면 데이터 담당자에게 문의하세요.
                 </div>
             </div>` : ''}
-            ${(canEdit || _isAdminUser()) ? `
+            ${(canEdit || canAdjust || _isAdminUser()) ? `
             <div style="display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px;align-items:center;">
                 ${canEdit ? `
                 <button class="btn btn-sm btn-primary" style="font-size:0.78rem;"
@@ -7466,7 +7510,7 @@ var LaserStandbyModule = (function() {
                     onclick="LaserStandbyModule._openStandbyOutForPart('${_cmJs}','${_pnJs}','${_clJs}');">
                     <span class="material-symbols-outlined" style="font-size:0.9rem;">logout</span> 수동 출고
                 </button>` : ''}
-                ${canEdit ? `<button class="btn btn-sm btn-outline" style="font-size:0.78rem;border-color:var(--accent-red);color:var(--accent-red);"
+                ${canAdjust ? `<button class="btn btn-sm btn-outline" style="font-size:0.78rem;border-color:var(--accent-red);color:var(--accent-red);"
                     onclick="UIUtils.closeModal();setTimeout(()=>LaserStandbyModule.confirmResetStandby('${_keyJs}'),80);">
                     <span class="material-symbols-outlined" style="font-size:0.9rem;">restart_alt</span> 이력만 리셋
                 </button>` : ''}
@@ -7480,8 +7524,8 @@ var LaserStandbyModule = (function() {
                 ${snapshot.item.historyReset.note ? ' · ' + _escapeHtml(snapshot.item.historyReset.note) : ''}
             </div>` : ''}
             ${StockDetailUI.buildLotTableSection({
-                headers: canEdit ? ['도장 LOT', '사출 LOT', '현재 수량', ''] : ['도장 LOT', '사출 LOT', '현재 수량'],
-                colSpan: canEdit ? 4 : 3,
+                headers: canAdjust ? ['도장 LOT', '사출 LOT', '현재 수량', ''] : ['도장 LOT', '사출 LOT', '현재 수량'],
+                colSpan: canAdjust ? 4 : 3,
                 qtyColIndex: 2,
                 totalQty: lotGroupRows.reduce((s, g) => s + (Number(g.totalQty) || 0), 0),
                 totalLabel: '보관 합계',
@@ -7495,8 +7539,8 @@ var LaserStandbyModule = (function() {
     }
 
     async function confirmResetStandby(keyEnc) {
-        if (!_canEditStandby()) {
-            UIUtils.toast('관리자·레이져운영자만 이력만 리셋을 실행할 수 있습니다.', 'warning');
+        if (!_canAdjustStandby()) {
+            UIUtils.toast('수정/보정 권한이 있는 사용자만 이력만 리셋을 실행할 수 있습니다.', 'warning');
             return;
         }
         await _ensureManualOverridesLoaded();
@@ -7545,8 +7589,8 @@ var LaserStandbyModule = (function() {
     }
 
     async function executeResetStandby(keyEnc) {
-        if (!_canEditStandby()) {
-            UIUtils.toast('관리자·레이져운영자만 이력만 리셋을 실행할 수 있습니다.', 'warning');
+        if (!_canAdjustStandby()) {
+            UIUtils.toast('수정/보정 권한이 있는 사용자만 이력만 리셋을 실행할 수 있습니다.', 'warning');
             return;
         }
         await _ensureManualOverridesLoaded();

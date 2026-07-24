@@ -30,7 +30,37 @@ var InvCalc = (function () {
         return { day: m[1], stamp: m[1] + ' ' + (m[2] || '00:00') };
     }
 
-    /** 기록 1건 저장용 날짜 문자열 — 항상 'YYYY-MM-DD HH:MM' 으로 만든다. */
+    /** ISO/로컬 일시 → 'YYYY-MM-DD HH:MM' (표시·정렬용) */
+    function _isoToLocalStamp(iso) {
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) {
+            const m = String(iso || '').match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/);
+            return m ? (m[1] + ' ' + m[2]) : '';
+        }
+        const y = d.getFullYear();
+        const mo = String(d.getMonth() + 1).padStart(2, '0');
+        const da = String(d.getDate()).padStart(2, '0');
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        return y + '-' + mo + '-' + da + ' ' + hh + ':' + mm;
+    }
+
+    /** 화면·정렬용 일시 — date에 시각이 없으면 createdAt/updatedAt에서 복원 */
+    function recordStamp(rec) {
+        if (!rec) return '';
+        const s = String(rec.date == null ? '' : rec.date).trim();
+        const m = s.match(/^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2})(?::\d{2})?)?/);
+        if (m && m[2] && m[2] !== '00:00') return m[1] + ' ' + m[2];
+        const fromIso = rec.updatedAt || rec.createdAt;
+        if (fromIso) {
+            const local = _isoToLocalStamp(fromIso);
+            if (local) return local;
+        }
+        if (m && m[2]) return m[1] + ' ' + m[2];
+        if (m) return m[1] + ' 00:00';
+        return s || '';
+    }
+
     function stampFor(dateLike) {
         const n = normDate(dateLike);
         if (!n.day) return '';
@@ -105,7 +135,7 @@ var InvCalc = (function () {
     }
 
     function _applyIncoming(map, rec, entriesList) {
-        const nd = normDate(rec.date);
+        const nd = normDate(recordStamp(rec) || rec.date);
         entriesList.forEach(e => {
             if (!map[e.lotNo]) map[e.lotNo] = { lotNo: e.lotNo, qty: 0, date: '', supplier: '' };
             map[e.lotNo].qty += e.qty;
@@ -123,10 +153,10 @@ var InvCalc = (function () {
 
     function _sortRecords(records) {
         return (records || []).slice().sort((a, b) => {
-            const da = normDate(a.date), db = normDate(b.date);
-            return da.day.localeCompare(db.day)
-                || ((a.type === '출고' ? 1 : 0) - (b.type === '출고' ? 1 : 0))
-                || da.stamp.localeCompare(db.stamp);
+            const sa = recordStamp(a);
+            const sb = recordStamp(b);
+            return sa.localeCompare(sb)
+                || ((a.type === '출고' ? 1 : 0) - (b.type === '출고' ? 1 : 0));
         });
     }
 
@@ -201,5 +231,5 @@ var InvCalc = (function () {
         return (records || []).reduce((s, rec) => s + signedQtyOf(rec), 0);
     }
 
-    return { normDate, stampFor, entries, qtyOf, signedQtyOf, isQtyCorrupted, lotBalances, replaySteps, totalStock, UNMATCHED };
+    return { normDate, stampFor, recordStamp, entries, qtyOf, signedQtyOf, isQtyCorrupted, lotBalances, replaySteps, totalStock, UNMATCHED };
 })();

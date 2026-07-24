@@ -38,6 +38,18 @@ var LaserWipModule = (function() {
         return false;
     }
 
+    // 수량 보정 / 이력만 리셋 — "입력"(수동입고·출고 등록)과 별개인 "수정/보정" 3단계 권한.
+    // 관리/설정 > 역할별 접근 권한의 "수정/보정" 체크(레이저 작업 그룹)로 조절한다.
+    function _canAdjustWip() {
+        try {
+            if (_isAdmin()) return true;
+            return typeof AuthModule !== 'undefined' &&
+                typeof AuthModule.canAdjustPage === 'function' &&
+                AuthModule.canAdjustPage('laser-wip');
+        } catch (e) { /* 무시 */ }
+        return false;
+    }
+
     // 잔량 수기 입/출고 기록에 남길 작성자 이름
     function _currentUserName() {
         try {
@@ -204,10 +216,11 @@ var LaserWipModule = (function() {
     }
 
     function _historyResetBtnHtml(onClickJs, opts) {
-        // adminOnly: 레이져 잔량 수량 초기화(이력만 리셋)는 관리자 전용으로 하드코딩 —
-        // 일반 canEditWip(레이져운영자 등)은 버튼 자체가 보이지 않아야 한다.
+        // adminOnly: 필요 시 관리자 전용으로 강제할 수 있는 옵션(현재는 사용 안 함).
+        // 기본은 "수정/보정" 권한(관리/설정 > 역할별 접근 권한)으로 게이트한다 — 입력(등록)
+        // 권한만으로는 이력만 리셋 같은 되돌리기 어려운 동작을 할 수 없다.
         const requireAdmin = !!(opts && opts.adminOnly);
-        if (requireAdmin ? !_isAdmin() : !_canEditWip()) return '';
+        if (requireAdmin ? !_isAdmin() : !_canAdjustWip()) return '';
         return `<button class="btn btn-sm btn-outline" style="font-size:0.78rem;border-color:var(--accent-red);color:var(--accent-red);"
             onclick="${onClickJs}">
             <span class="material-symbols-outlined" style="font-size:0.9rem;">restart_alt</span> 이력만 리셋
@@ -543,7 +556,7 @@ var LaserWipModule = (function() {
 
     // 재공/잔량 상세 팝업의 '수량 수정'(절대 수량 지정) — 관리자·레이져운영자만
     function openAdjustAfterLaserModal(keyEnc) {
-        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
+        if (!_canAdjustWip()) { UIUtils.toast('수정/보정 권한이 있는 사용자만 수량을 수정할 수 있습니다.', 'warning'); return; }
         _closeDetailPopup();
         const { carModel, partName, color } = _parseProductKey(keyEnc);
         const r = (_calcWip()).find(x => x.carModel === carModel && x.partName === partName && (x.color || '') === color);
@@ -583,7 +596,7 @@ var LaserWipModule = (function() {
     }
 
     async function saveAdjustAfterLaserModal(keyEnc) {
-        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
+        if (!_canAdjustWip()) { UIUtils.toast('수정/보정 권한이 있는 사용자만 수량을 수정할 수 있습니다.', 'warning'); return; }
         const { carModel, partName, color } = _parseProductKey(keyEnc);
         if (!_validateProductIdentity(carModel, partName, color)) { UIUtils.toast('품목 정보가 올바르지 않습니다.', 'warning'); return; }
 
@@ -618,7 +631,7 @@ var LaserWipModule = (function() {
     }
 
     function openAdjustResidualModal(keyEnc) {
-        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
+        if (!_canAdjustWip()) { UIUtils.toast('수정/보정 권한이 있는 사용자만 수량을 수정할 수 있습니다.', 'warning'); return; }
         _closeDetailPopup();
         const { carModel, partName, color } = _parseProductKey(keyEnc);
         const r = _calcLaserResidualWip().find(x => x.carModel === carModel && x.partName === partName && (x.color || '') === color);
@@ -660,7 +673,7 @@ var LaserWipModule = (function() {
     }
 
     async function saveAdjustResidualModal(keyEnc) {
-        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
+        if (!_canAdjustWip()) { UIUtils.toast('수정/보정 권한이 있는 사용자만 수량을 수정할 수 있습니다.', 'warning'); return; }
         const { carModel, partName, color } = _parseProductKey(keyEnc);
         if (!_validateProductIdentity(carModel, partName, color)) { UIUtils.toast('품목 정보가 올바르지 않습니다.', 'warning'); return; }
 
@@ -2710,7 +2723,7 @@ var LaserWipModule = (function() {
     }
 
     function openAdjustResidualSingleLotModal(keyEnc, paintLotEnc, injLotEnc, currentQty) {
-        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
+        if (!_canAdjustWip()) { UIUtils.toast('수정/보정 권한이 있는 사용자만 수량을 수정할 수 있습니다.', 'warning'); return; }
         const { carModel, partName, color } = _parseProductKey(keyEnc);
         const paintLot = _decodeArg(paintLotEnc);
         const injLot = _decodeArg(injLotEnc);
@@ -2751,7 +2764,7 @@ var LaserWipModule = (function() {
     }
 
     async function saveAdjustResidualSingleLotModal(keyEnc, paintLotEnc, injLotEnc, currentQty) {
-        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
+        if (!_canAdjustWip()) { UIUtils.toast('수정/보정 권한이 있는 사용자만 수량을 수정할 수 있습니다.', 'warning'); return; }
         const { carModel, partName, color } = _parseProductKey(keyEnc);
         if (!_validateProductIdentity(carModel, partName, color)) {
             UIUtils.toast('품목 정보가 올바르지 않습니다. 목록에서 다시 시도해 주세요.', 'error');
@@ -2814,7 +2827,7 @@ var LaserWipModule = (function() {
     }
 
     function openAdjustResidualLotModal(keyEnc) {
-        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
+        if (!_canAdjustWip()) { UIUtils.toast('수정/보정 권한이 있는 사용자만 수량을 수정할 수 있습니다.', 'warning'); return; }
         const { carModel, partName, color } = _parseProductKey(keyEnc);
         const { lots, manualAdj } = _calcResidualLotDetail(carModel, partName, color);
         const initialLots = lots.length > 0
@@ -2874,7 +2887,7 @@ var LaserWipModule = (function() {
     }
 
     async function saveAdjustResidualLotModal(keyEnc) {
-        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
+        if (!_canAdjustWip()) { UIUtils.toast('수정/보정 권한이 있는 사용자만 수량을 수정할 수 있습니다.', 'warning'); return; }
         const { carModel, partName, color } = _parseProductKey(keyEnc);
         if (!_validateProductIdentity(carModel, partName, color)) {
             UIUtils.toast('품목 정보가 올바르지 않습니다. 목록에서 다시 시도해 주세요.', 'error');
@@ -3349,7 +3362,7 @@ var LaserWipModule = (function() {
     }
 
     function openAdjustAfterLaserLotModal(keyEnc, paintLotEnc, lotNoEnc, currentQty) {
-        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
+        if (!_canAdjustWip()) { UIUtils.toast('수정/보정 권한이 있는 사용자만 수량을 수정할 수 있습니다.', 'warning'); return; }
         const { carModel, partName, color } = _parseProductKey(keyEnc);
         const paintLot = _decodeArg(paintLotEnc);
         const lotNo = _decodeArg(lotNoEnc);
@@ -3390,7 +3403,7 @@ var LaserWipModule = (function() {
     }
 
     async function saveAdjustAfterLaserLotModal(keyEnc, paintLotEnc, lotNoEnc, currentQty) {
-        if (!_canEditWip()) { UIUtils.toast('관리자·레이져운영자만 수량을 수정할 수 있습니다.', 'warning'); return; }
+        if (!_canAdjustWip()) { UIUtils.toast('수정/보정 권한이 있는 사용자만 수량을 수정할 수 있습니다.', 'warning'); return; }
         const { carModel, partName, color } = _parseProductKey(keyEnc);
         const paintLot = _decodeArg(paintLotEnc);
         const lotNo = _decodeArg(lotNoEnc);
@@ -4035,8 +4048,8 @@ var LaserWipModule = (function() {
     }
 
     async function confirmResetAfterWip(keyEnc) {
-        if (!_canEditWip()) {
-            UIUtils.toast('관리자·레이져운영자만 이력만 리셋을 실행할 수 있습니다.', 'warning');
+        if (!_canAdjustWip()) {
+            UIUtils.toast('수정/보정 권한이 있는 사용자만 이력만 리셋을 실행할 수 있습니다.', 'warning');
             return;
         }
         await _ensureAfterWipHistoryResetsLoaded();
@@ -4075,8 +4088,8 @@ var LaserWipModule = (function() {
     }
 
     async function executeResetAfterWip(keyEnc) {
-        if (!_canEditWip()) {
-            UIUtils.toast('관리자·레이져운영자만 이력만 리셋을 실행할 수 있습니다.', 'warning');
+        if (!_canAdjustWip()) {
+            UIUtils.toast('수정/보정 권한이 있는 사용자만 이력만 리셋을 실행할 수 있습니다.', 'warning');
             return;
         }
         await _ensureAfterWipHistoryResetsLoaded();
@@ -4421,7 +4434,7 @@ var LaserWipModule = (function() {
                     onclick="LaserWipModule._openResidualOutForPart('${_cmJs}','${_pnJs}','${_clJs}');">
                     <span class="material-symbols-outlined" style="font-size:0.9rem;">logout</span> 출고
                 </button>` : ''}
-                ${_historyResetBtnHtml("UIUtils.closeModal();setTimeout(()=>LaserWipModule.confirmResetResidual('" + _jsArg(_keyJs) + "'),80);", { adminOnly: true })}
+                ${_historyResetBtnHtml("UIUtils.closeModal();setTimeout(()=>LaserWipModule.confirmResetResidual('" + _jsArg(_keyJs) + "'),80);")}
             ` : '')}
             ${_residualMismatch ? `
             <div style="background:rgba(220,38,38,0.08);border:1px solid rgba(220,38,38,0.35);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.82rem;line-height:1.5;">
@@ -4478,9 +4491,8 @@ var LaserWipModule = (function() {
     }
 
     async function confirmResetResidual(keyEnc) {
-        // 레이져 잔량 수량 초기화는 관리자 전용으로 하드코딩
-        if (!_isAdmin()) {
-            UIUtils.toast('관리자만 잔량 이력만 리셋을 실행할 수 있습니다.', 'warning');
+        if (!_canAdjustWip()) {
+            UIUtils.toast('수정/보정 권한이 있는 사용자만 잔량 이력만 리셋을 실행할 수 있습니다.', 'warning');
             return;
         }
         await _ensureResidualHistoryResetsLoaded();
@@ -4523,9 +4535,8 @@ var LaserWipModule = (function() {
     }
 
     async function executeResetResidual(keyEnc) {
-        // 레이져 잔량 수량 초기화는 관리자 전용으로 하드코딩
-        if (!_isAdmin()) {
-            UIUtils.toast('관리자만 잔량 이력만 리셋을 실행할 수 있습니다.', 'warning');
+        if (!_canAdjustWip()) {
+            UIUtils.toast('수정/보정 권한이 있는 사용자만 잔량 이력만 리셋을 실행할 수 있습니다.', 'warning');
             return;
         }
         await _ensureResidualHistoryResetsLoaded();

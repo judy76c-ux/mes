@@ -926,9 +926,7 @@ const App = (function() {
                 const dismiss = () => { if (div.parentNode) div.parentNode.removeChild(div); };
                 div.querySelector('.material-symbols-outlined[title="닫기"]').onclick = dismiss;
                 toastEl.appendChild(div);
-                // 실사용자가 알아채고 클릭하기까지 시간이 걸리는 "조치가 필요한" 알림이라
-                // 일반 토스트(수 초)보다 훨씬 오래 유지한다. 그래도 안 눌러도 되게 닫기(×)를 뒀다.
-                setTimeout(dismiss, 120000);
+                setTimeout(dismiss, 5000);
             }
 
             // 담당 검사자에게 쪽지 자동 발송 (사출 수입검사 소스, 최초 1회만)

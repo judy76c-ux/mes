@@ -6453,16 +6453,17 @@ const PaintingInspectionModule = (function() {
                     <table class="data-table" style="font-size:0.9rem;">
                         <thead>
                             <tr>
-                                <th>검사일자</th>
-                                <th>도장작업일</th>
-                                <th>라인</th>
-                                <th>차종</th>
-                                <th>품명</th>
-                                <th>컬러</th>
-                                <th style="text-align:right;">검사수</th>
-                                <th style="text-align:right;">양품</th>
-                                <th style="text-align:right;">불량</th>
-                                <th style="text-align:right;">불량률</th>
+                                <th style="white-space:nowrap;">검사일자</th>
+                                <th style="white-space:nowrap;">도장작업일</th>
+                                <th style="white-space:nowrap;">라인</th>
+                                <th style="white-space:nowrap;">차종</th>
+                                <th style="white-space:nowrap;">품명</th>
+                                <th style="white-space:nowrap;">컬러</th>
+                                <th style="text-align:right;white-space:nowrap;">검사수</th>
+                                <th style="text-align:right;white-space:nowrap;">양품</th>
+                                <th style="text-align:right;white-space:nowrap;">불량</th>
+                                <th style="text-align:right;white-space:nowrap;">불량률</th>
+                                <th style="white-space:nowrap;">검사자</th>
                                 <th style="width:60px;"></th>
                             </tr>
                         </thead>
@@ -6471,6 +6472,9 @@ const PaintingInspectionModule = (function() {
                                 const insp = Number(i.inspectionQty) || 0;
                                 const defect = Number(i.defectQty) || 0;
                                 const rate = insp > 0 ? (defect / insp * 100).toFixed(1) : '0.0';
+                                const inspectorNames = Array.isArray(i.inspectors)
+                                    ? i.inspectors.filter(Boolean).join(', ')
+                                    : (i.inspector || i.inspectorName || '');
                                 const _ip = (i.date || '').split('-');
                                 const _ist = (i.inspectionStartTime || '').slice(0, 5);
                                 const _inspDateHtml = _ip.length === 3
@@ -6487,16 +6491,17 @@ const PaintingInspectionModule = (function() {
                                     : (i.paintingDate || '-');
                                 return `
                                 <tr>
-                                    <td style="line-height:1.3;">${_inspDateHtml}</td>
-                                    <td style="line-height:1.3;">${_workDateHtml}</td>
-                                    <td><span class="badge badge-info">${(_allWorks.find(w => w.id === (i.workId || i.productId)) || {}).line || '-'}</span></td>
-                                    <td>${i.carModel || '-'}</td>
-                                    <td><strong>${i.partName || '-'}</strong></td>
-                                    <td>${i.color || '-'}</td>
-                                    <td style="text-align:right;">${UIUtils.formatNumber(insp)}</td>
-                                    <td style="text-align:right;color:var(--accent-green);font-weight:600;">${UIUtils.formatNumber(Number(i.goodQty) || 0)}</td>
-                                    <td style="text-align:right;color:var(--accent-red);font-weight:600;">${UIUtils.formatNumber(defect)}</td>
-                                    <td style="text-align:right;font-weight:600;color:${defect > 0 ? 'var(--accent-red)' : 'var(--text-muted)'};">${rate}%</td>
+                                    <td style="line-height:1.3;white-space:nowrap;">${_inspDateHtml}</td>
+                                    <td style="line-height:1.3;white-space:nowrap;">${_workDateHtml}</td>
+                                    <td style="white-space:nowrap;"><span class="badge badge-info">${(_allWorks.find(w => w.id === (i.workId || i.productId)) || {}).line || '-'}</span></td>
+                                    <td style="white-space:nowrap;">${i.carModel || '-'}</td>
+                                    <td style="white-space:nowrap;"><strong>${i.partName || '-'}</strong></td>
+                                    <td style="white-space:nowrap;">${i.color || '-'}</td>
+                                    <td style="text-align:right;white-space:nowrap;">${UIUtils.formatNumber(insp)}</td>
+                                    <td style="text-align:right;color:var(--accent-green);font-weight:600;white-space:nowrap;">${UIUtils.formatNumber(Number(i.goodQty) || 0)}</td>
+                                    <td style="text-align:right;color:var(--accent-red);font-weight:600;white-space:nowrap;">${UIUtils.formatNumber(defect)}</td>
+                                    <td style="text-align:right;font-weight:600;color:${defect > 0 ? 'var(--accent-red)' : 'var(--text-muted)'};white-space:nowrap;">${rate}%</td>
+                                    <td style="white-space:nowrap;font-size:0.85rem;">${inspectorNames || '-'}</td>
                                     <td style="text-align:center;"><button class="btn btn-sm btn-outline" onclick="PaintingInspectionModule.showInspectionDetail('${i.id}')">보기</button></td>
                                 </tr>`;
                             }).join('')}
@@ -8237,20 +8242,25 @@ const PaintingInspectionModule = (function() {
             const defectRate = d.inspectionQty > 0 ?
                 ((d.defectQty / d.inspectionQty) * 100).toFixed(1) : '0.0';
 
+            const inspectorNames = Array.isArray(d.inspectors)
+                ? d.inspectors.filter(Boolean).join(', ')
+                : (d.inspector || d.inspectorName || '');
+
             return `
                 <tr>
-                    <td style="line-height:1.3;">${_fmtCompDate(d.date, d.inspectionStartTime)}</td>
-                    <td style="line-height:1.3;">${_fmtCompDate(_paintDate, _paintTime)}</td>
-                    <td><span class="badge badge-info">${_line}</span></td>
+                    <td style="line-height:1.3;white-space:nowrap;">${_fmtCompDate(d.date, d.inspectionStartTime)}</td>
+                    <td style="line-height:1.3;white-space:nowrap;">${_fmtCompDate(_paintDate, _paintTime)}</td>
+                    <td style="white-space:nowrap;"><span class="badge badge-info">${_line}</span></td>
                     <td style="white-space:nowrap;">${d.carModel || ''}</td>
-                    <td><strong>${d.partName || ''}</strong></td>
-                    <td>${d.color || ''}</td>
-                    <td style="text-align:right; font-weight:600;">${UIUtils.formatNumber(d.inspectionQty || 0)}</td>
-                    <td style="text-align:right; color:var(--accent-green); font-weight:600;">${UIUtils.formatNumber(d.goodQty || 0)}</td>
-                    <td style="text-align:right; color:var(--accent-red); font-weight:600;">${UIUtils.formatNumber(d.defectQty || 0)}</td>
-                    <td style="text-align:right; color:var(--accent-red); font-weight:700;">${defectRate}%</td>
+                    <td style="white-space:nowrap;"><strong>${d.partName || ''}</strong></td>
+                    <td style="white-space:nowrap;">${d.color || ''}</td>
+                    <td style="text-align:right;font-weight:600;white-space:nowrap;">${UIUtils.formatNumber(d.inspectionQty || 0)}</td>
+                    <td style="text-align:right;color:var(--accent-green);font-weight:600;white-space:nowrap;">${UIUtils.formatNumber(d.goodQty || 0)}</td>
+                    <td style="text-align:right;color:var(--accent-red);font-weight:600;white-space:nowrap;">${UIUtils.formatNumber(d.defectQty || 0)}</td>
+                    <td style="text-align:right;color:var(--accent-red);font-weight:700;white-space:nowrap;">${defectRate}%</td>
                     <td style="font-size:0.85rem;">${injectionDisplay}${paintingDisplay}</td>
-                    <td style="text-align:center; white-space:nowrap;" onclick="event.stopPropagation()">
+                    <td style="white-space:nowrap;font-size:0.85rem;">${inspectorNames || '-'}</td>
+                    <td style="text-align:center;white-space:nowrap;" onclick="event.stopPropagation()">
                         <button class="btn btn-sm btn-outline" onclick="PaintingInspectionModule._showCompletionDetail('${d.id}', event)" style="padding:4px 8px; font-size:0.8rem;">보기</button>
                     </td>
                 </tr>
@@ -8258,27 +8268,30 @@ const PaintingInspectionModule = (function() {
         }).join('');
 
         container.innerHTML = `
-            <table class="data-table">
+            <div class="data-table-wrapper">
+            <table class="data-table" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
                 <thead>
                     <tr>
-                        <th>검사일</th>
-                        <th>도장작업일</th>
-                        <th>라인</th>
-                        <th>차종</th>
-                        <th>품명</th>
-                        <th>컬러</th>
-                        <th>검사수</th>
-                        <th>양품</th>
-                        <th>불량</th>
-                        <th>불량률</th>
-                        <th>불량 유형</th>
-                        <th>작업</th>
+                        <th style="white-space:nowrap;">검사일</th>
+                        <th style="white-space:nowrap;">도장작업일</th>
+                        <th style="white-space:nowrap;">라인</th>
+                        <th style="white-space:nowrap;">차종</th>
+                        <th style="white-space:nowrap;">품명</th>
+                        <th style="white-space:nowrap;">컬러</th>
+                        <th style="white-space:nowrap;text-align:right;">검사수</th>
+                        <th style="white-space:nowrap;text-align:right;">양품</th>
+                        <th style="white-space:nowrap;text-align:right;">불량</th>
+                        <th style="white-space:nowrap;text-align:right;">불량률</th>
+                        <th style="white-space:nowrap;">불량 유형</th>
+                        <th style="white-space:nowrap;">검사자</th>
+                        <th style="white-space:nowrap;">작업</th>
                     </tr>
                 </thead>
                 <tbody>
                     ${tableRows}
                 </tbody>
             </table>
+            </div>
         `;
     }
 

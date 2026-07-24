@@ -91,6 +91,7 @@ const PaintInventoryModule = (function() {
         const suffix = isIn ? 'In' : 'Out';
         const title = isIn ? '입고 이력' : '출고 이력';
         const icon = isIn ? 'move_to_inbox' : 'outbox';
+        const dateHeader = isIn ? '입고 일자' : '출고 일자';
         return `
                 <div class="card">
                     <div class="card-header">
@@ -98,22 +99,22 @@ const PaintInventoryModule = (function() {
                     </div>
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
-                            <table class="data-table">
+                            <table class="data-table" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
                                 <thead>
                                     <tr>
-                                        <th>입고 일자</th>
-                                        <th>수입검사일</th>
-                                        <th>구매처</th>
-                                        <th>도료명</th>
-                                        <th>포장 단위</th>
-                                        <th>수량</th>
-                                        <th>제조 LOT</th>
-                                        <th>제조일자</th>
-                                        <th>유효기간</th>
-                                        <th>잔여 유효기간</th>
-                                        <th>유형</th>
-                                        ${isIn ? '<th>입고경로</th>' : ''}
-                                        <th>작업</th>
+                                        <th style="white-space:nowrap;">${dateHeader}</th>
+                                        <th style="white-space:nowrap;">수입검사일</th>
+                                        <th style="white-space:nowrap;">구매처</th>
+                                        <th style="white-space:nowrap;">도료명</th>
+                                        <th style="white-space:nowrap;">포장 단위</th>
+                                        <th style="white-space:nowrap;text-align:right;">수량</th>
+                                        <th style="white-space:nowrap;">제조 LOT</th>
+                                        <th style="white-space:nowrap;">제조일자</th>
+                                        <th style="white-space:nowrap;">유효기간</th>
+                                        <th style="white-space:nowrap;">잔여 유효기간</th>
+                                        <th style="white-space:nowrap;">유형</th>
+                                        ${isIn ? '<th style="white-space:nowrap;">입고경로</th>' : '<th style="white-space:nowrap;">출고자</th>'}
+                                        <th style="white-space:nowrap;">작업</th>
                                     </tr>
                                 </thead>
                                 <tbody id="paintInvTableBody${suffix}"></tbody>
@@ -125,13 +126,69 @@ const PaintInventoryModule = (function() {
     }
 
     function _fmtDateCell(raw) {
-        const sp = (raw || '').split(' ');
+        const stamp = (typeof InvCalc !== 'undefined' && InvCalc.normDate)
+            ? (InvCalc.normDate(raw).stamp || String(raw || '').trim())
+            : String(raw || '').trim();
+        const sp = (stamp || '').split(' ');
         const pp = (sp[0] || '').split('-');
         const tt = sp[1] ? sp[1].slice(0, 5) : '';
-        if (pp.length !== 3) return raw || '-';
-        return '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;">' + pp[0] + '</span>' +
+        if (pp.length !== 3) return stamp || '-';
+        return '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;white-space:nowrap;">' + pp[0] + '</span>' +
                '<span style="font-weight:600;white-space:nowrap;">' + pp[1] + '-' + pp[2] + '</span>' +
-               (tt ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1.4;">' + tt + '</span>' : '');
+               (tt && tt !== '00:00'
+                    ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1.4;white-space:nowrap;">' + tt + '</span>'
+                    : '');
+    }
+
+    /** 입·출고 일시 — date에 시각이 없으면 createdAt에서 복원 */
+    function _fmtRecordDateCell(rec) {
+        const stamp = (typeof InvCalc !== 'undefined' && InvCalc.recordStamp)
+            ? InvCalc.recordStamp(rec)
+            : (rec && rec.date) || '';
+        return _fmtDateCell(stamp);
+    }
+
+    /** 수입검사일 — 기록의 inspDate, 연동 검사, 동일 LOT 입고에서 복원 */
+    function _resolveInspDate(d) {
+        if (!d) return '';
+        if (d.inspDate) return d.inspDate;
+        try {
+            if (d.sourceInspectionId && typeof Storage !== 'undefined') {
+                const insp = Storage.getById(DB.STORES.PAINT_INCOMING_INSPECTIONS, d.sourceInspectionId);
+                if (insp && insp.date) return insp.date;
+            }
+        } catch (e) { /* ignore */ }
+
+        const matId = d.materialId || '';
+        const lotKey = String(d.prodLot || d.lotNo || '').trim();
+        if (!matId) return '';
+        const inbounds = (Storage.getAll(STORE) || [])
+            .filter(function(r) {
+                if (!r || r.type === '출고' || r.materialId !== matId) return false;
+                if (lotKey && String(r.prodLot || r.lotNo || '').trim() !== lotKey) return false;
+                return !!(r.inspDate || r.sourceInspectionId);
+            })
+            .sort(function(a, b) {
+                const sa = (typeof InvCalc !== 'undefined' && InvCalc.recordStamp) ? InvCalc.recordStamp(a) : (a.date || '');
+                const sb = (typeof InvCalc !== 'undefined' && InvCalc.recordStamp) ? InvCalc.recordStamp(b) : (b.date || '');
+                return String(sb).localeCompare(String(sa));
+            });
+        for (let i = 0; i < inbounds.length; i++) {
+            const r = inbounds[i];
+            if (r.inspDate) return r.inspDate;
+            try {
+                if (r.sourceInspectionId) {
+                    const insp = Storage.getById(DB.STORES.PAINT_INCOMING_INSPECTIONS, r.sourceInspectionId);
+                    if (insp && insp.date) return insp.date;
+                }
+            } catch (e) { /* ignore */ }
+        }
+        return '';
+    }
+
+    function _outWorkerName(d) {
+        if (!d) return '-';
+        return String(d.issuedBy || d.processedBy || '').trim() || '-';
     }
 
     function _buildTxRow(d, materials, isIn) {
@@ -142,6 +199,7 @@ const PaintInventoryModule = (function() {
         const mPackUnit = mat ? (mat.packUnit ? mat.packUnit + ' KG' : '-') : '-';
         const mSupplier = mat ? (mat.supplier || '-') : '-';
         const lotDates = _resolveLotDates(d, mat);
+        const inspDate = _resolveInspDate(d);
 
         let remainHtml = '-';
         if (lotDates.expDate) {
@@ -161,21 +219,21 @@ const PaintInventoryModule = (function() {
 
         return `
             <tr>
-                <td style="line-height:1.3;">${_fmtDateCell(d.date)}</td>
-                <td style="line-height:1.3;">${_fmtDateCell(d.inspDate || '')}</td>
-                <td>${mSupplier}</td>
-                <td><strong>${mName}</strong></td>
-                <td>${mPackUnit}</td>
-                <td style="text-align:right">${UIUtils.formatNumber(d.quantity)}</td>
-                <td style="font-family:monospace;color:var(--text-secondary);">${d.prodLot || '-'}</td>
-                <td style="font-size:0.82rem;">${lotDates.mfgDate || '-'}</td>
-                <td style="font-size:0.82rem;">${lotDates.expDate || '-'}</td>
-                <td style="font-size:0.82rem; white-space:nowrap;">${remainHtml}</td>
-                <td>${UIUtils.badge(d.type || '입고', typeBadge)}</td>
+                <td style="line-height:1.3;white-space:nowrap;">${_fmtRecordDateCell(d)}</td>
+                <td style="line-height:1.3;white-space:nowrap;">${_fmtDateCell(inspDate)}</td>
+                <td style="white-space:nowrap;">${mSupplier}</td>
+                <td style="white-space:nowrap;"><strong>${mName}</strong></td>
+                <td style="white-space:nowrap;">${mPackUnit}</td>
+                <td style="text-align:right;white-space:nowrap;">${UIUtils.formatNumber(d.quantity)}</td>
+                <td style="font-family:monospace;color:var(--text-secondary);white-space:nowrap;">${d.prodLot || '-'}</td>
+                <td style="font-size:0.82rem;white-space:nowrap;">${lotDates.mfgDate || '-'}</td>
+                <td style="font-size:0.82rem;white-space:nowrap;">${lotDates.expDate || '-'}</td>
+                <td style="font-size:0.82rem;white-space:nowrap;">${remainHtml}</td>
+                <td style="white-space:nowrap;">${UIUtils.badge(d.type || '입고', typeBadge)}</td>
                 ${isIn ? `<td style="white-space:nowrap;">
                     <span style="font-size:0.75rem;font-weight:700;padding:2px 8px;border-radius:999px;
                         border:1px solid ${path.color}44;background:${path.color}12;color:${path.color};">${path.label}</span>
-                </td>` : ''}
+                </td>` : `<td style="white-space:nowrap;">${_outWorkerName(d)}</td>`}
                 <td style="white-space:nowrap;">
                     <button class="btn btn-sm btn-outline" onclick="PaintInventoryModule.edit('${d.id}')">수정</button>
                     <button onclick="PaintInventoryModule.remove('${d.id}')"
@@ -201,7 +259,11 @@ const PaintInventoryModule = (function() {
         let arr = (Storage.getAll(STORE) || []).filter(function (d) {
             return isIn ? d.type !== '출고' : d.type === '출고';
         });
-        arr.sort(function (a, b) { return (b.date || '').localeCompare(a.date || ''); });
+        arr.sort(function (a, b) {
+            const sa = (typeof InvCalc !== 'undefined' && InvCalc.recordStamp) ? InvCalc.recordStamp(a) : (a.date || '');
+            const sb = (typeof InvCalc !== 'undefined' && InvCalc.recordStamp) ? InvCalc.recordStamp(b) : (b.date || '');
+            return String(sb).localeCompare(String(sa));
+        });
 
         let page = isIn ? _pageIn : _pageOut;
         let pageSize = isIn ? _pageSizeIn : _pageSizeOut;
@@ -212,7 +274,7 @@ const PaintInventoryModule = (function() {
         else _pageOut = safePage;
 
         if (total === 0) {
-            tbody.innerHTML = `<tr><td colspan="${isIn ? 13 : 12}" style="text-align:center;padding:40px;color:var(--text-muted);">${emptyMsg}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-muted);">${emptyMsg}</td></tr>`;
             if (paginationEl) paginationEl.innerHTML = '';
             return;
         }
@@ -719,6 +781,20 @@ const PaintInventoryModule = (function() {
         });
     }
 
+    /** 저장용 일시 — 날짜만 있으면 현재 시각을 붙인다. 기존 기록 수정 시 시각은 유지. */
+    function _paintInvSaveDate(dateValue, prevDate) {
+        const day = InvCalc.normDate(dateValue).day;
+        if (!day) return InvCalc.stampFor(dateValue);
+        const prev = String(prevDate || '');
+        const tm = prev.match(/(\d{2}:\d{2})/);
+        if (tm && tm[1] !== '00:00') return day + ' ' + tm[1];
+        return InvCalc.stampFor(dateValue);
+    }
+
+    function _paintInvSortStamp(a, b) {
+        return InvCalc.recordStamp(b).localeCompare(InvCalc.recordStamp(a));
+    }
+
     // ── 도료 품목 상세 팝업 ───────────────────────────────────────────
     function showPaintDetail(matId) {
         const materials = Storage.getAll(MATERIALS_STORE);
@@ -730,7 +806,7 @@ const PaintInventoryModule = (function() {
         const data = Storage.getAll(STORE);
         const records = data
             .filter(d => d.materialId === matId)
-            .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+            .sort(_paintInvSortStamp);
 
         // 현재 재고 및 LOT별 집계
         let totalStock = 0;
@@ -749,7 +825,7 @@ const PaintInventoryModule = (function() {
             };
             if (d.type === '출고') { lotMap[key].qty -= qty; totalStock -= qty; }
             else                   { lotMap[key].qty += qty; totalStock += qty;
-                const inStamp = InvCalc.normDate(d.date).stamp || (d.date || '');
+                const inStamp = InvCalc.recordStamp(d) || InvCalc.normDate(d.date).stamp || (d.date || '');
                 if (inStamp && (!lotMap[key].inDate || inStamp > lotMap[key].inDate))
                     lotMap[key].inDate = inStamp;
                 if (lotDates.mfgDate && (!lotMap[key].mfgDate || lotDates.mfgDate < lotMap[key].mfgDate))
@@ -1107,7 +1183,7 @@ const PaintInventoryModule = (function() {
         const loginUser = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? (AuthModule.getCurrentUser() || {}) : {};
 
         const data = {
-            date:       date,
+            date:       _paintInvSaveDate(date),
             type:       diff > 0 ? '입고' : '출고',
             materialId: matId,
             prodLot:    prodLot || '',
@@ -1615,10 +1691,18 @@ const PaintInventoryModule = (function() {
             }
         }
 
-        const date = _currentListupDate();
+        const date = _paintInvSaveDate(_currentListupDate());
+        const loginUser = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? (AuthModule.getCurrentUser() || {}) : {};
+        const processedBy = loginUser.displayName || loginUser.username || issuer;
         const txOps = [];
         checkedRows.forEach(item => {
             const mat = (Storage.getAll(MATERIALS_STORE) || []).find(m => m.id === item.materialId);
+            const inspDate = _resolveInspDate({
+                materialId: item.materialId,
+                prodLot: item.prodLot,
+                lotNo: item.prodLot,
+                type: '출고'
+            });
             txOps.push({
                 store: STORE,
                 op: 'add',
@@ -1634,8 +1718,9 @@ const PaintInventoryModule = (function() {
                     packUnit: mat ? (Number(mat.packUnit) || 0) : 0,
                     source: '도료 창고 리스트업 출고',
                     paintMixId: item.paintMixId || '',
+                    inspDate: inspDate || '',
                     issuedBy: issuer,
-                    processedBy: issuer
+                    processedBy: processedBy
                 }
             });
             if (item.standbyId) {
@@ -1643,7 +1728,7 @@ const PaintInventoryModule = (function() {
                     store: DB.STORES.PAINT_OUTGOING_STANDBY,
                     op: 'update',
                     id: item.standbyId,
-                    data: { status: '출고완료', processedBy: issuer, processedAt: new Date().toISOString() }
+                    data: { status: '출고완료', processedBy: processedBy, issuedBy: issuer, processedAt: new Date().toISOString() }
                 });
             }
         });
@@ -2703,7 +2788,7 @@ const PaintInventoryModule = (function() {
             }
         }
 
-        const date = (document.getElementById('paintBulkInvDate') || {}).value || UIUtils.today();
+        const date = _paintInvSaveDate((document.getElementById('paintBulkInvDate') || {}).value || UIUtils.today());
         const nowIso = new Date().toISOString();
         const newItems = [];
 
@@ -2741,7 +2826,7 @@ const PaintInventoryModule = (function() {
         const loginUser = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? (AuthModule.getCurrentUser() || {}) : {};
         const processedBy = loginUser.displayName || loginUser.username || '';
         const data = {
-            date: document.getElementById('addPaintInvDate').value,
+            date: _paintInvSaveDate(document.getElementById('addPaintInvDate').value),
             type: type,
             materialId: document.getElementById('addPaintInvMaterial').value,
             lotNo: document.getElementById('addPaintInvLot').value.trim(),
@@ -3042,8 +3127,9 @@ const PaintInventoryModule = (function() {
     }
 
     async function saveEdit(id, type) {
+        const existing = Storage.getById(STORE, id) || {};
         const data = {
-            date: document.getElementById('editPaintInvDate').value,
+            date: _paintInvSaveDate(document.getElementById('editPaintInvDate').value, existing.date),
             type: type,
             materialId: document.getElementById('editPaintInvMaterial').value,
             lotNo: document.getElementById('editPaintInvLot').value.trim(),

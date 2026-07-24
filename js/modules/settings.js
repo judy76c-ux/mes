@@ -12690,6 +12690,7 @@ const SettingsModule = (function() {
                 <div style="margin-left:auto;display:flex;gap:6px;">
                     <button class="btn btn-sm" onclick="SettingsModule.toggleAllGroupPerm('${roleKey}','access')">전체 접근 허용</button>
                     <button class="btn btn-sm" onclick="SettingsModule.toggleAllGroupPerm('${roleKey}','write')">전체 입력 허용</button>
+                    <button class="btn btn-sm" onclick="SettingsModule.toggleAllGroupPerm('${roleKey}','adjust')">전체 수정/보정 허용</button>
                     <button class="btn btn-sm" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;" onclick="SettingsModule.toggleAllGroupPerm('${roleKey}','clear')">전체 해제</button>
                 </div>
             </div>
@@ -12698,12 +12699,14 @@ const SettingsModule = (function() {
                     const pids = g.pages;
                     const accessAll = pids.every(pid => AuthModule.isPageAccessGranted(roleKey, pid));
                     const writeAll  = pids.every(pid => AuthModule.isPageWriteGranted(roleKey, pid));
+                    const adjustAll = pids.every(pid => AuthModule.isPageAdjustGranted(roleKey, pid));
                     const accessAny = pids.some(pid => AuthModule.isPageAccessGranted(roleKey, pid));
                     const writeAny  = pids.some(pid => AuthModule.isPageWriteGranted(roleKey, pid));
+                    const adjustAny = pids.some(pid => AuthModule.isPageAdjustGranted(roleKey, pid));
                     return `
                     <div style="border:1px solid var(--border-color);border-radius:8px;padding:10px 12px;background:var(--bg-primary);">
                         <div style="font-weight:700;font-size:0.82rem;margin-bottom:8px;color:var(--text-primary);">${_esc(g.label)}</div>
-                        <div style="display:flex;gap:16px;">
+                        <div style="display:flex;gap:12px;flex-wrap:wrap;">
                             <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.8rem;">
                                 <input type="checkbox" data-role="${roleKey}" data-group="${g.key}" data-type="access"
                                     ${accessAll ? 'checked' : ''}
@@ -12718,8 +12721,15 @@ const SettingsModule = (function() {
                                     style="width:15px;height:15px;cursor:pointer;accent-color:#dc2626;">
                                 <span style="color:#dc2626;font-weight:600;">입력</span>
                             </label>
+                            <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.8rem;" title="이미 등록된 기록을 수정하거나 수량을 보정하는 권한 (신규 등록은 '입력'만으로 가능)">
+                                <input type="checkbox" data-role="${roleKey}" data-group="${g.key}" data-type="adjust"
+                                    ${adjustAll ? 'checked' : ''}
+                                    onchange="SettingsModule.onGroupPermChange(this)"
+                                    style="width:15px;height:15px;cursor:pointer;accent-color:#7c3aed;">
+                                <span style="color:#7c3aed;font-weight:600;">수정/보정</span>
+                            </label>
                         </div>
-                        <div style="margin-top:5px;font-size:0.68rem;color:var(--text-muted);">${pids.length}개 페이지${accessAny && !accessAll ? ' (일부 접근)' : ''}${writeAny && !writeAll ? ' (일부 입력)' : ''}</div>
+                        <div style="margin-top:5px;font-size:0.68rem;color:var(--text-muted);">${pids.length}개 페이지${accessAny && !accessAll ? ' (일부 접근)' : ''}${writeAny && !writeAll ? ' (일부 입력)' : ''}${adjustAny && !adjustAll ? ' (일부 수정/보정)' : ''}</div>
                     </div>`;
                 }).join('')}
             </div>
@@ -13067,11 +13077,11 @@ const SettingsModule = (function() {
         let rp = perms[roleKey];
         if (rp === null) {
             const all = AuthModule.ALL_PAGES.map(p => p.id);
-            rp = { access: [...all], write: [...all] };
+            rp = { access: [...all], write: [...all], adjust: [...all] };
         } else if (!rp || typeof rp !== 'object') {
-            rp = { access: [], write: [] };
+            rp = { access: [], write: [], adjust: [] };
         } else {
-            rp = { access: [...(rp.access||[])], write: [...(rp.write||[])] };
+            rp = { access: [...(rp.access||[])], write: [...(rp.write||[])], adjust: [...(rp.adjust||rp.write||[])] };
         }
 
         const pids = group.pages;
@@ -13081,10 +13091,13 @@ const SettingsModule = (function() {
             } else {
                 rp.access = rp.access.filter(pid => !pids.includes(pid));
                 rp.write  = rp.write.filter(pid => !pids.includes(pid));
+                rp.adjust = rp.adjust.filter(pid => !pids.includes(pid));
                 const writeCb = document.querySelector(`input[data-role="${roleKey}"][data-group="${groupKey}"][data-type="write"]`);
                 if (writeCb) writeCb.checked = false;
+                const adjustCb = document.querySelector(`input[data-role="${roleKey}"][data-group="${groupKey}"][data-type="adjust"]`);
+                if (adjustCb) adjustCb.checked = false;
             }
-        } else {
+        } else if (type === 'write') {
             if (checked) {
                 pids.forEach(pid => {
                     if (!rp.access.includes(pid)) rp.access.push(pid);
@@ -13094,6 +13107,20 @@ const SettingsModule = (function() {
                 if (accessCb) accessCb.checked = true;
             } else {
                 rp.write = rp.write.filter(pid => !pids.includes(pid));
+                rp.adjust = rp.adjust.filter(pid => !pids.includes(pid));
+                const adjustCb = document.querySelector(`input[data-role="${roleKey}"][data-group="${groupKey}"][data-type="adjust"]`);
+                if (adjustCb) adjustCb.checked = false;
+            }
+        } else if (type === 'adjust') {
+            if (checked) {
+                pids.forEach(pid => {
+                    if (!rp.access.includes(pid)) rp.access.push(pid);
+                    if (!rp.adjust.includes(pid)) rp.adjust.push(pid);
+                });
+                const accessCb = document.querySelector(`input[data-role="${roleKey}"][data-group="${groupKey}"][data-type="access"]`);
+                if (accessCb) accessCb.checked = true;
+            } else {
+                rp.adjust = rp.adjust.filter(pid => !pids.includes(pid));
             }
         }
         perms[roleKey] = rp;
@@ -13110,18 +13137,23 @@ const SettingsModule = (function() {
             /* 참조 복사 방지: 깊은 복사 */
             const perms = JSON.parse(JSON.stringify(raw));
             const all = AuthModule.ALL_PAGES.map(p => p.id);
+            const cur = perms[roleKey] && typeof perms[roleKey] === 'object' && !Array.isArray(perms[roleKey]) ? perms[roleKey] : {};
             if (mode === 'access') {
-                perms[roleKey] = { access: [...all], write: perms[roleKey]?.write || [] };
+                perms[roleKey] = { access: [...all], write: cur.write || [], adjust: cur.adjust || [] };
             } else if (mode === 'write') {
-                perms[roleKey] = { access: [...all], write: [...all] };
+                perms[roleKey] = { access: [...all], write: [...all], adjust: cur.adjust || [] };
+            } else if (mode === 'adjust') {
+                perms[roleKey] = { access: [...all], write: [...all], adjust: [...all] };
             } else {
-                perms[roleKey] = { access: [], write: [] };
+                perms[roleKey] = { access: [], write: [], adjust: [] };
             }
             const message = mode === 'access'
                 ? '전체 접근 권한이 허용되었습니다.'
                 : mode === 'write'
                     ? '전체 입력 권한이 허용되었습니다.'
-                    : '전체 접근/입력 권한이 해제되었습니다.';
+                    : mode === 'adjust'
+                        ? '전체 수정/보정 권한이 허용되었습니다.'
+                        : '전체 권한이 해제되었습니다.';
             await _saveAndRefreshRolePerms(roleKey, perms, message);
         } finally {
             _permSaving = false;
