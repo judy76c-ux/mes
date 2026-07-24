@@ -2718,6 +2718,9 @@ var LaserInspectionModule = (function() {
         return new Set(inspections.map(i => i.workLogId).filter(Boolean));
     }
 
+    // QC 미완료를 검사대기 목록에 노출하기 시작하는 작업일 (이 날짜 미만 = 과거 미입력은 숨김)
+    const QC_GAP_VISIBLE_FROM = '2026-07-24';
+
     // 미검사 작업일지 목록 반환
     function getUninspectedWorks() {
         const works = Storage.getAll(DB.STORES.LASER_WORK_LOG) || [];
@@ -2726,13 +2729,15 @@ var LaserInspectionModule = (function() {
             ? LaserWorkModule.isWorkQcFullyEntered
             : (w) => w && w.status !== 'in_progress';
         return works
-            // 작업중(in_progress)은 검사 대기 대상이 아니므로 계속 제외한다.
-            // ※ 예전엔 초/중/종(요구 단계) 입력이 모두 끝난 작업만 여기 넣었는데, 그러면
-            //   검사 완료 후(또는 검사 전) 작업일지 수량을 수정해 QC 요구 단계가 올라간 경우
-            //   (예: 8,000개 이하→초과로 중품 요구 추가) 그 작업이 검사대기/검사이력 어디에도
-            //   안 보이고 통째로 "유실"된 것처럼 사라지는 버그가 있었다. 이제는 목록에 남기고
-            //   _qcReady 플래그로 구분해, QC 미입력 상태를 화면에서 바로 알 수 있게 한다.
-            .filter(w => w.id && w.status !== 'in_progress' && (!inspectedIds.has(w.id) || w.inspectionStatus === 'partial'))
+            // 작업중(in_progress)은 검사 대기 대상이 아니므로 제외.
+            // QC 미완료: 과거(QC_GAP_VISIBLE_FROM 미만)는 숨기고, 이후 작업일만 목록에 남겨
+            // "QC 입력 필요"로 관리한다. (수량 수정으로 요구 단계가 오른 건의 유실 방지)
+            .filter(w => {
+                if (!w.id || w.status === 'in_progress') return false;
+                if (inspectedIds.has(w.id) && w.inspectionStatus !== 'partial') return false;
+                if (qcReady(w)) return true;
+                return String(w.date || '') >= QC_GAP_VISIBLE_FROM;
+            })
             .map(w => Object.assign({}, w, { _qcReady: qcReady(w) }))
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     }
@@ -7477,6 +7482,9 @@ var LaserStandbyModule = (function() {
             ${StockDetailUI.buildLotTableSection({
                 headers: canEdit ? ['도장 LOT', '사출 LOT', '현재 수량', ''] : ['도장 LOT', '사출 LOT', '현재 수량'],
                 colSpan: canEdit ? 4 : 3,
+                qtyColIndex: 2,
+                totalQty: lotGroupRows.reduce((s, g) => s + (Number(g.totalQty) || 0), 0),
+                totalLabel: '보관 합계',
                 rowsHtml: lotRowsHtml
             })}
             ${historySection}

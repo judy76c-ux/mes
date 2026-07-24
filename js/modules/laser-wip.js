@@ -4463,6 +4463,10 @@ var LaserWipModule = (function() {
                 title: '현재 보관 LOT',
                 headers: canEdit ? ['도장 LOT', '사출 LOT', '현재 수량', ''] : ['도장 LOT', '사출 LOT', '현재 수량'],
                 colSpan: canEdit ? 4 : 3,
+                qtyColIndex: 2,
+                totalQty: residualQtyDisplay,
+                totalLabel: '보관 합계',
+                totalColor: 'var(--accent-orange,#f59e0b)',
                 emptyText: 'LOT 정보가 없습니다.',
                 rowsHtml: lotRowsHtml
             })}

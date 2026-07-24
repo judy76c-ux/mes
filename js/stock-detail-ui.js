@@ -319,16 +319,53 @@ var StockDetailUI = (function() {
             const right = /수량/.test(h) ? ' style="text-align:right;"' : '';
             return '<th' + right + '>' + h + '</th>';
         }).join('');
-        const body = opts.rowsHtml || ('<tr><td colspan="' + colSpan + '" style="text-align:center;padding:20px;color:var(--text-muted);">' + emptyText + '</td></tr>');
+        const hasRows = !!(opts.rowsHtml && String(opts.rowsHtml).trim());
+        const body = hasRows
+            ? opts.rowsHtml
+            : ('<tr><td colspan="' + colSpan + '" style="text-align:center;padding:20px;color:var(--text-muted);">' + emptyText + '</td></tr>');
+        const totalQty = opts.totalQty;
+        const showTotal = totalQty != null && isFinite(Number(totalQty));
+        const totalLabel = opts.totalLabel || '보관 합계';
+        const fmt = (typeof UIUtils !== 'undefined' && UIUtils.formatNumber)
+            ? UIUtils.formatNumber
+            : function(n) { return String(n); };
+        const totalColor = opts.totalColor || 'var(--accent-blue)';
+        const titleTotalHtml = showTotal
+            ? `<span style="margin-left:auto;font-size:0.82rem;color:var(--text-muted);white-space:nowrap;">
+                    ${totalLabel} <strong style="color:${totalColor};font-size:0.95rem;">${fmt(Number(totalQty))}</strong> EA
+               </span>`
+            : '';
+        let footerHtml = '';
+        if (showTotal && hasRows && opts.showFooterTotal !== false) {
+            const qtyIdx = opts.qtyColIndex != null
+                ? Number(opts.qtyColIndex)
+                : Math.max(0, headers.findIndex(function(h) { return /수량/.test(String(h || '')); }));
+            const cells = [];
+            for (let i = 0; i < colSpan; i++) {
+                if (i === 0) {
+                    cells.push(`<td colspan="${Math.max(1, qtyIdx)}" style="font-weight:700;white-space:nowrap;">합계</td>`);
+                    i = qtyIdx - 1;
+                    continue;
+                }
+                if (i === qtyIdx) {
+                    cells.push(`<td style="text-align:right;font-weight:700;color:${totalColor};white-space:nowrap;">${fmt(Number(totalQty))}</td>`);
+                } else {
+                    cells.push('<td></td>');
+                }
+            }
+            footerHtml = `<tfoot><tr style="background:var(--bg-secondary);">${cells.join('')}</tr></tfoot>`;
+        }
         return `
-            <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap;">
                 <span class="material-symbols-outlined" style="font-size:17px;color:var(--text-muted);">inventory_2</span>
                 <strong style="font-size:0.86rem;">${title}</strong>
+                ${titleTotalHtml}
             </div>
             <div style="overflow-x:auto;margin-bottom:4px;">
-                <table class="data-table">
+                <table class="data-table" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
                     <thead><tr>${headHtml}</tr></thead>
                     <tbody>${body}</tbody>
+                    ${footerHtml}
                 </table>
             </div>`;
     }

@@ -192,8 +192,33 @@ var InjectionWarehouseModule = (function() {
         return keys.map(function(value) { return String(value || '').trim(); }).includes(String(roleKey));
     }
 
-    /** 사출 출고자 — 사용자 역할 중 물류 담당(물류작업자)만 허용 */
-    const OUTGOING_ACTOR_ROLES = ['logistics_worker'];
+    /** 사출 출고자 — 물류작업자·생산관리자만 대상. "자재 창고 입력 권한이 있는 역할 전부"로
+     *  넓혀봤더니 품질검사자처럼 다른 이유로 자재 창고 입력 권한을 가진 역할까지 딸려 들어와서,
+     *  출고 처리를 실제로 담당하는 이 두 역할만 명시적으로 고정한다. 목록도 이 순서(물류작업자 →
+     *  생산관리자)로 묶어서 보여준다.
+     *
+     *  키가 아니라 라벨로 찾는 이유: 관리/설정 > 역할 관리에서 "역할 추가"로 물류작업자를
+     *  다시 만들었거나 키를 손으로 입력했다면(한글 등 비ASCII는 saveRole()에서 전부 '_'로
+     *  치환됨 — settings.js의 key.replace(/[^a-z0-9_]/gi,'_')), 실제 저장된 key가 기본값
+     *  'logistics_worker'/'prod_manager'와 달라져 있을 수 있다. 그 상태에서 key를 그대로
+     *  하드코딩해 비교하면 역할별 접근 권한 화면엔 정상으로 보여도(라벨 기준) 이 목록에서는
+     *  아무도 안 걸려 조용히 텅 비어 보인다 — 라벨로 먼저 찾고, 못 찾을 때만 기본 key로
+     *  폴백한다. */
+    const OUTGOING_ACTOR_ROLE_LABELS = ['물류작업자', '생산관리자'];
+    const OUTGOING_ACTOR_ROLES = ['logistics_worker', 'prod_manager'];
+
+    function _resolveOutgoingActorRoleKeys() {
+        try {
+            if (typeof AuthModule === 'undefined' || typeof AuthModule.getRoles !== 'function') return OUTGOING_ACTOR_ROLES;
+            const roles = AuthModule.getRoles() || [];
+            return OUTGOING_ACTOR_ROLE_LABELS.map(function(label, i) {
+                const found = roles.find(function(r) { return r && r.label === label; });
+                return found ? found.key : OUTGOING_ACTOR_ROLES[i];
+            }).filter(Boolean);
+        } catch (e) {
+            return OUTGOING_ACTOR_ROLES;
+        }
+    }
 
     function _userHasAnyRole(user, roleKeys) {
         if (!user || !roleKeys || !roleKeys.length) return false;
@@ -225,8 +250,19 @@ var InjectionWarehouseModule = (function() {
         return _getUsersByRoles(['prod_worker']);
     }
 
+    // 순서(물류작업자 → 생산관리자)대로 역할별로 묶어서 반환한다.
+    // _getUsersByRoles는 이름 가나다순으로만 섞어 역할 구분 없이 보여주므로 여기선 쓰지 않는다.
     function _getLogisticsWorkerUsers() {
-        return _getUsersByRoles(OUTGOING_ACTOR_ROLES);
+        const seen = new Set();
+        const result = [];
+        _resolveOutgoingActorRoleKeys().forEach(function(roleKey) {
+            _getUsersByRoles([roleKey]).forEach(function(u) {
+                if (seen.has(u.id)) return;
+                seen.add(u.id);
+                result.push(u);
+            });
+        });
+        return result;
     }
 
     function _isValidOutgoingActor(actorId) {
