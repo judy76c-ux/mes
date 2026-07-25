@@ -8904,6 +8904,19 @@ const SettingsModule = (function() {
     }
 
     /**
+     * LOT 형식 검사 제외 — 미차감 반영/리셋 등 LOT 번호가 의도적으로 없는 보정 원장.
+     * 이런 기록을 오류로 잡으면 대시보드 "사출 LOT 형식 오류"가 처리 직후 새로 생긴다.
+     */
+    function _isInjLotFormatExempt(item) {
+        if (!item) return false;
+        if (item.unmatchedAction === 'clear' || item.unmatchedAction === 'absorb') return true;
+        const src = String(item.source || '');
+        if (/미차감\s*(반영|리셋)/.test(src)) return true;
+        if (item.type === '보정' && /미차감/.test(src)) return true;
+        return false;
+    }
+
+    /**
      * 사출 LOT 형식 오류 스캔 — DOM에 손대지 않는 순수 함수.
      * scanInjLotNumbers(설정 화면)와 대시보드 알림 카드가 같은 스캔 로직을 공유하도록 분리했다.
      *
@@ -8918,6 +8931,7 @@ const SettingsModule = (function() {
         const errors = [];
 
         invenItems.forEach(item => {
+            if (_isInjLotFormatExempt(item)) return;
             if (!item.lotNo || !_isValidLot(item.lotNo)) {
                 const fixed = _fixLot(item.lotNo, item.date);
                 errors.push({
@@ -9013,6 +9027,7 @@ const SettingsModule = (function() {
 
         // ── 사출 재고 ──
         for (const item of invenItems) {
+            if (_isInjLotFormatExempt(item)) continue;
             let changed = false;
             const original = { lotNo: item.lotNo, lots: item.lots ? item.lots.map(l => ({...l})) : [] };
 

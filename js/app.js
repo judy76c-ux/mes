@@ -882,7 +882,18 @@ const App = (function() {
             return;
         }
         if (s.indexOf('재고') === 0) {
-            Router.navigate('warehouse-overview');
+            // 재고 오류 → 사출 자재 창고로 이동한 뒤, 해당 제품의 LOT 상세 팝업을 연다.
+            // 팝업의 문제 LOT 행에 '보정 수정' 버튼이 있어 빈/잘못된 LOT을 바로 고칠 수 있다.
+            var rec = recordId ? Storage.getById(DB.STORES.INJECTION_INVENTORY, recordId) : null;
+            Router.navigate('injection-warehouse');
+            if (rec && typeof InjectionWarehouseModule !== 'undefined'
+                    && typeof InjectionWarehouseModule.showPartDetail === 'function') {
+                setTimeout(function () {
+                    InjectionWarehouseModule.showPartDetail(rec.carModel || '', rec.partName || '', rec.color || '');
+                }, 150);
+            } else {
+                goToLotRepairTab();
+            }
             return;
         }
         goToLotRepairTab();

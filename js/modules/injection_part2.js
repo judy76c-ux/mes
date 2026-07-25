@@ -557,6 +557,14 @@ var InjectionWarehouseModule = (function() {
         return !!(d && (d.unmatchedAction === 'clear' || d.unmatchedAction === 'absorb'));
     }
 
+    /** 재고 수량 표시 — formatNumber(0)==='-' 이므로 0도 숫자로 보여준다 */
+    function _fmtStockQty(n) {
+        if (n == null || n === '') return '-';
+        const num = Number(n);
+        if (isNaN(num)) return String(n);
+        return num.toLocaleString('ko-KR');
+    }
+
     function _ensureActorOption(selectEl) {
         if (!selectEl) return;
         const actorId = _getCurrentActorId();
@@ -671,11 +679,11 @@ var InjectionWarehouseModule = (function() {
                     ${qtyHtml}
                 </td>
                 <td style="text-align:right;font-weight:700;color:${beforeColor};white-space:nowrap;">
-                    ${stockBefore != null ? UIUtils.formatNumber(stockBefore) : '-'}
+                    ${stockBefore != null ? _fmtStockQty(stockBefore) : '-'}
                 </td>
                 <td style="text-align:right;white-space:nowrap;"${dedTitle ? ` title="${dedTitle.replace(/"/g, '&quot;')}"` : ''}>
-                    <div style="font-weight:700;color:${afterColor};">${stockAfter != null ? UIUtils.formatNumber(stockAfter) : '-'}${isLast ? ' <span style="font-size:0.65rem;color:var(--text-muted);font-weight:600;">현재</span>' : ''}</div>
-                    ${unmatchedAfter > 0 ? `<div style="font-size:0.68rem;color:var(--accent-red);font-weight:700;">미차감 ${UIUtils.formatNumber(unmatchedAfter)}</div>` : ''}
+                    <div style="font-weight:700;color:${afterColor};">${stockAfter != null ? _fmtStockQty(stockAfter) : '-'}${isLast ? ' <span style="font-size:0.65rem;color:var(--text-muted);font-weight:600;">현재</span>' : ''}</div>
+                    ${unmatchedAfter > 0 ? `<div style="font-size:0.68rem;color:var(--accent-red);font-weight:700;">미차감 ${_fmtStockQty(unmatchedAfter)}</div>` : ''}
                 </td>
                 <td style="font-size:0.78rem;color:var(--text-muted);">${who || '-'}</td>
             </tr>`;
@@ -1488,6 +1496,48 @@ var InjectionWarehouseModule = (function() {
         );
     }
 
+    // 창고 LOT 형식 유효성 — RST + 숫자, 또는 유효한 YYMMDD(6자리 날짜)만 정상.
+    // 빈 값·'무표기'·자릿수/날짜 오류는 모두 형식 오류(대시보드 "사출 LOT 형식 오류"와 동일 기준).
+    function _isValidLotFormat(v) {
+        const s = String(v == null ? '' : v).trim();
+        if (!s || s === '무표기') return false;
+        if (/^RST\d+$/i.test(s)) return true;
+        if (!/^\d{6}$/.test(s)) return false;
+        const yy = parseInt(s.slice(0, 2), 10);
+        const mm = parseInt(s.slice(2, 4), 10);
+        const dd = parseInt(s.slice(4, 6), 10);
+        const fy = yy >= 50 ? 1900 + yy : 2000 + yy;
+        const d = new Date(fy, mm - 1, dd);
+        return d.getFullYear() === fy && d.getMonth() === mm - 1 && d.getDate() === dd;
+    }
+
+    // 표시용 LOT 키 — 빈 값/공백은 '무표기'로 통일 (currentLots 표시 기준과 동일).
+    function _lotKey(v) { return (String(v == null ? '' : v).trim() || '무표기'); }
+
+    // 레코드가 (차종/품명/컬러) 일치하고, 최상위 lotNo 또는 lots[] 안에 targetLot 을 포함하는가.
+    // 무표기 LOT은 lots[] 배열 안에만 있고 최상위 lotNo 는 다른 대표 LOT일 수 있어,
+    // 최상위만 비교하면 못 찾는다("변경할 재고 없음" 버그). lots[] 까지 훑는다.
+    function _recordMatchesLot(d, carModel, partName, color, targetLot) {
+        if (d.carModel !== carModel || d.partName !== partName || (d.color || '') !== (color || '')) return false;
+        if (Array.isArray(d.lots) && d.lots.length > 0) {
+            return d.lots.some(l => _lotKey(l.lotNo) === targetLot);
+        }
+        return _lotKey(d.lotNo) === targetLot;
+    }
+
+    // 레코드의 LOT을 oldLot → newLot 으로 교체한 updates 객체 생성.
+    // lots[] 가 있으면 그 안의 해당 항목만 바꾸고, 최상위 lotNo 는 그게 대표였을 때만 교체(다른 대표 LOT 보존).
+    function _buildLotRenameUpdates(d, oldLot, newLot) {
+        const updates = {};
+        if (Array.isArray(d.lots) && d.lots.length > 0) {
+            updates.lots = d.lots.map(l => (_lotKey(l.lotNo) === oldLot ? { ...l, lotNo: newLot } : l));
+            if (_lotKey(d.lotNo) === oldLot) updates.lotNo = newLot;
+        } else {
+            updates.lotNo = newLot;
+        }
+        return updates;
+    }
+
     // 품목 클릭 시 LOT 상세 팝업
     function showPartDetail(carModel, partName, color) {
         const data = Storage.getAll(STORE);
@@ -1539,9 +1589,9 @@ var InjectionWarehouseModule = (function() {
                                 <span style="color:var(--text-muted);">${actLabel} · ${_escapeHtml(who || '-')}</span>
                             </div>
                             <div style="margin-top:4px;color:var(--text-secondary);">
-                                미차감 ${UIUtils.formatNumber(d.unmatchedBefore != null ? d.unmatchedBefore : d.quantity)} EA
+                                미차감 ${_fmtStockQty(d.unmatchedBefore != null ? d.unmatchedBefore : d.quantity)} EA
                                 ${d.stockBefore != null && d.stockAfterTarget != null
-                                    ? ` · 재고 ${UIUtils.formatNumber(d.stockBefore)} → ${UIUtils.formatNumber(d.stockAfterTarget)} EA`
+                                    ? ` · 재고 ${_fmtStockQty(d.stockBefore)} → ${_fmtStockQty(d.stockAfterTarget)} EA`
                                     : ''}
                                 ${d.resetReason ? `<span style="margin-left:8px;">· 사유: ${_escapeHtml(d.resetReason)}</span>` : ''}
                             </div>
@@ -1588,22 +1638,29 @@ var InjectionWarehouseModule = (function() {
         const rows = currentLots.map(d => {
             const _lotJs = d.lot.replace(/'/g, "\\'");
             const isNeg = d.qty < 0;
+            // 형식 오류 LOT(빈 값·무표기·잘못된 날짜) → 빨간 강조 + 배지로 어느 행이 문제인지 즉시 보이게 한다.
+            const isBadLot = !isNeg && !_isValidLotFormat(d.lot);
             const isFifoHead = fifoHeadLot && d.lot === fifoHeadLot.lot && d.qty > 0;
             const fifoBadge = isFifoHead
                 ? ' <span style="font-size:0.65rem;background:#dcfce7;color:#15803d;border-radius:4px;padding:1px 5px;font-weight:700;">FIFO</span>'
                 : '';
+            const badLotBadge = isBadLot
+                ? ' <span title="LOT 번호 형식 오류 — 보정 수정으로 올바른 LOT을 입력하세요" style="font-size:0.65rem;background:#fee2e2;color:#b91c1c;border-radius:4px;padding:1px 5px;font-weight:700;">⚠ LOT 오류</span>'
+                : '';
+            const rowStyle = isNeg ? ' style="background:rgba(239,68,68,.06);"'
+                : (isBadLot ? ' style="background:rgba(239,68,68,.1);"' : '');
             return `
-                <tr${isNeg ? ' style="background:rgba(239,68,68,.06);"' : ''}>
+                <tr${rowStyle}>
                     <td style="white-space:nowrap;">${d.date || '-'}</td>
-                    <td>${d.lot || '-'}${fifoBadge}${isNeg ? ' <span title="입고보다 출고가 많아 어느 LOT에서도 차감하지 못한 수량" style="font-size:0.7rem;color:var(--accent-red);font-weight:700;">⚠ 과다출고</span>' : ''}</td>
+                    <td>${d.lot || '-'}${fifoBadge}${badLotBadge}${isNeg ? ' <span title="입고보다 출고가 많아 어느 LOT에서도 차감하지 못한 수량" style="font-size:0.7rem;color:var(--accent-red);font-weight:700;">⚠ 과다출고</span>' : ''}</td>
                     <td>${d.supplier || '-'}</td>
                     <td style="text-align:right; color:${isNeg ? 'var(--accent-red)' : 'var(--accent-green)'}; font-weight:600;">
                         ${UIUtils.formatNumber(d.qty)}
                     </td>
                     ${canEditLot ? `<td style="text-align:center;">
-                        ${isNeg ? '' : `<button class="btn btn-sm btn-outline" style="font-size:0.72rem;padding:2px 8px;"
+                        ${isNeg ? '' : `<button class="btn btn-sm ${isBadLot ? 'btn-primary' : 'btn-outline'}" style="font-size:0.72rem;padding:2px 8px;${isBadLot ? 'background:#dc2626;border-color:#dc2626;' : ''}"
                             onclick="InjectionWarehouseModule.openLotEditModal('${_cmJs}','${_pnJs}','${_clJs}','${_lotJs}',${Number(d.qty) || 0})">
-                            보정 수정
+                            ${isBadLot ? 'LOT 입력' : '보정 수정'}
                         </button>`}
                     </td>` : ''}
                     <td style="text-align:center;">
@@ -1646,11 +1703,11 @@ var InjectionWarehouseModule = (function() {
             </div>
             <div style="margin-bottom:16px; display:flex; gap:16px; flex-wrap:wrap;">
                 <div style="background:var(--bg-secondary); padding:12px 20px; border-radius:8px; text-align:center;">
-                    <div style="font-size:1.4rem; font-weight:700; color:var(--accent-blue);">${UIUtils.formatNumber(stock)}</div>
+                    <div style="font-size:1.4rem; font-weight:700; color:var(--accent-blue);">${_fmtStockQty(stock)}</div>
                     <div style="font-size:0.8rem; color:var(--text-muted);">현재 재고 (EA)</div>
                 </div>
                 <div style="background:var(--bg-secondary); padding:12px 20px; border-radius:8px; text-align:center;">
-                    <div style="font-size:1.4rem; font-weight:700; color:var(--accent-green);">${UIUtils.formatNumber(stock * price)}</div>
+                    <div style="font-size:1.4rem; font-weight:700; color:var(--accent-green);">${_fmtStockQty(stock * price)}</div>
                     <div style="font-size:0.8rem; color:var(--text-muted);">재고 금액 (₩)</div>
                 </div>
                 <div style="background:var(--bg-secondary); padding:12px 20px; border-radius:8px; text-align:center;">
@@ -1658,28 +1715,27 @@ var InjectionWarehouseModule = (function() {
                     <div style="font-size:0.8rem; color:var(--text-muted);">보유 LOT 수</div>
                 </div>
             </div>
-            ${(unmatchedQty || corruptedCount) ? `
+            ${unmatchedQty ? `
             <div style="margin-bottom:14px;padding:12px 14px;border-radius:8px;
                         border:1px solid rgba(239,68,68,.35);background:rgba(239,68,68,.07);
                         font-size:0.82rem;line-height:1.55;">
                 <div style="display:flex;align-items:flex-start;gap:8px;">
                     <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-red);flex-shrink:0;">error</span>
                     <div style="flex:1;">
-                        <strong style="color:var(--accent-red);">데이터 이상이 감지되었습니다.</strong>
-                        ${unmatchedQty ? `
+                        <strong style="color:var(--accent-red);">미차감(과다출고)이 남아 있습니다.</strong>
                         <div style="margin-top:8px;padding:10px 12px;border-radius:6px;background:var(--bg-primary);border:1px solid var(--border-color);">
                             <div style="display:flex;flex-wrap:wrap;gap:12px 18px;font-size:0.8rem;">
-                                <span>LOT 잔량 합계 <strong>${UIUtils.formatNumber(physicalLotSum)}</strong></span>
-                                <span>미차감(과다출고) <strong style="color:var(--accent-red);">−${UIUtils.formatNumber(unmatchedQty)}</strong></span>
-                                <span>표시 재고 <strong style="color:var(--accent-blue);">${UIUtils.formatNumber(stock)}</strong></span>
+                                <span>LOT 잔량 합계 <strong>${_fmtStockQty(physicalLotSum)}</strong></span>
+                                <span>미차감(과다출고) <strong style="color:var(--accent-red);">−${_fmtStockQty(unmatchedQty)}</strong></span>
+                                <span>표시 재고 <strong style="color:var(--accent-blue);">${_fmtStockQty(stock)}</strong></span>
                             </div>
                             <div style="margin-top:8px;color:var(--text-secondary);">
                                 과거 출고가 입고보다 많아 생긴 미차감입니다. 이후 입고로 자동 상쇄되지 않으니,
                                 <strong>이력을 확인</strong>한 뒤 <strong>반영</strong>할지 <strong>리셋</strong>할지 선택하세요.
                             </div>
                             <ul style="margin:8px 0 0;padding-left:18px;color:var(--text-secondary);">
-                                <li><strong>반영</strong> — LOT에서 미차감분(${UIUtils.formatNumber(unmatchedQty)} EA)을 FIFO 차감 → 표시 재고 <strong>${UIUtils.formatNumber(stock)}</strong> 유지, LOT 합계도 맞춤</li>
-                                <li><strong>리셋</strong> — 미차감 채무만 소멸 → 표시 재고가 LOT 합계 <strong>${UIUtils.formatNumber(physicalLotSum)}</strong>로 올라감 (실물 재고가 맞을 때)</li>
+                                <li><strong>반영</strong> — LOT에서 미차감분(${_fmtStockQty(unmatchedQty)} EA)을 FIFO 차감 → 표시 재고 <strong>${_fmtStockQty(stock)}</strong> 유지, LOT 합계도 맞춤</li>
+                                <li><strong>리셋</strong> — 미차감 채무만 소멸 → 표시 재고가 LOT 합계 <strong>${_fmtStockQty(physicalLotSum)}</strong>로 올라감 (실물 재고가 맞을 때)</li>
                                 <li><strong>이력 확인</strong> — 처리하지 않고 입출고 이력에서 원인 출고를 먼저 확인</li>
                             </ul>
                             <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;">
@@ -1690,16 +1746,41 @@ var InjectionWarehouseModule = (function() {
                                 ${_isAdminUser() ? `
                                 <button type="button" class="btn btn-sm" style="background:#b45309;color:#fff;border-color:#b45309;"
                                     onclick="InjectionWarehouseModule.openUnmatchedActionModal('${_emJs}','${_epJs}','${_ecJs}','absorb',${unmatchedQty},${stock},${physicalLotSum})">
-                                    <span class="material-symbols-outlined" style="font-size:0.9rem;">playlist_add_check</span> 반영 (${UIUtils.formatNumber(unmatchedQty)} EA)
+                                    <span class="material-symbols-outlined" style="font-size:0.9rem;">playlist_add_check</span> 반영 (${_fmtStockQty(unmatchedQty)} EA)
                                 </button>
                                 <button type="button" class="btn btn-sm" style="background:#0369a1;color:#fff;border-color:#0369a1;"
                                     onclick="InjectionWarehouseModule.openUnmatchedActionModal('${_emJs}','${_epJs}','${_ecJs}','clear',${unmatchedQty},${stock},${physicalLotSum})">
-                                    <span class="material-symbols-outlined" style="font-size:0.9rem;">restart_alt</span> 리셋 → ${UIUtils.formatNumber(physicalLotSum)} EA
+                                    <span class="material-symbols-outlined" style="font-size:0.9rem;">restart_alt</span> 리셋 → ${_fmtStockQty(physicalLotSum)} EA
                                 </button>` : `
                                 <span style="font-size:0.75rem;color:var(--text-muted);align-self:center;">반영·리셋은 관리자만 실행할 수 있습니다.</span>`}
                             </div>
-                        </div>` : ''}
-                        ${corruptedCount ? `<div style="margin-top:8px;">· <strong>수량 필드 손상 ${corruptedCount}건</strong> — quantity 값이 LOT별 수량 합계와 달라 LOT 수량 기준으로 계산했습니다.</div>` : ''}
+                        </div>
+                    </div>
+                </div>
+            </div>` : ''}
+            ${corruptedCount ? `
+            <div style="margin-bottom:14px;padding:12px 14px;border-radius:8px;
+                        border:1px solid rgba(180,83,9,.35);background:rgba(180,83,9,.07);
+                        font-size:0.82rem;line-height:1.55;">
+                <div style="display:flex;align-items:flex-start;gap:8px;">
+                    <span class="material-symbols-outlined" style="font-size:18px;color:#b45309;flex-shrink:0;">warning</span>
+                    <div style="flex:1;">
+                        <strong style="color:#b45309;">수량 필드 불일치 ${corruptedCount}건</strong>
+                        <div style="margin-top:6px;color:var(--text-secondary);">
+                            일부 입출고 기록의 <code>quantity</code> 값이 LOT별 수량 합계와 다릅니다.
+                            재고·LOT 계산은 이미 <strong>LOT 합계 기준</strong>이라 표시 숫자는 맞습니다.
+                            경고만 없애려면 아래 버튼으로 quantity 필드를 LOT 합계에 맞추면 됩니다.
+                            ${unmatchedQty ? '' : '<br><span style="color:var(--text-muted);">※ 미차감 반영/리셋과는 별개 이슈입니다.</span>'}
+                        </div>
+                        ${_isAdminUser() ? `
+                        <div style="margin-top:10px;">
+                            <button type="button" class="btn btn-sm" style="background:#b45309;color:#fff;border-color:#b45309;"
+                                onclick="InjectionWarehouseModule.fixCorruptedQtyFields('${_emJs}','${_epJs}','${_ecJs}')">
+                                <span class="material-symbols-outlined" style="font-size:0.9rem;">build</span>
+                                수량 필드 맞추기 (${corruptedCount}건)
+                            </button>
+                        </div>` : `
+                        <div style="margin-top:8px;font-size:0.75rem;color:var(--text-muted);">수량 필드 보정은 관리자만 실행할 수 있습니다.</div>`}
                     </div>
                 </div>
             </div>` : ''}
@@ -1789,12 +1870,7 @@ var InjectionWarehouseModule = (function() {
         }
 
         const data = Storage.getAll(STORE);
-        const targets = data.filter(d =>
-            d.carModel === carModel &&
-            d.partName === partName &&
-            (d.color || '') === (color || '') &&
-            (d.lotNo || '무표기') === oldLot
-        );
+        const targets = data.filter(d => _recordMatchesLot(d, carModel, partName, color, oldLot));
 
         if (targets.length === 0) {
             UIUtils.toast('변경할 재고 기록을 찾을 수 없습니다.', 'error');
@@ -1803,11 +1879,7 @@ var InjectionWarehouseModule = (function() {
 
         try {
             for (const d of targets) {
-                const updates = { lotNo: newLot };
-                if (Array.isArray(d.lots) && d.lots.length > 0) {
-                    updates.lots = d.lots.map(l => (l.lotNo === oldLot ? { ...l, lotNo: newLot } : l));
-                }
-                await Storage.update(STORE, d.id, updates);
+                await Storage.update(STORE, d.id, _buildLotRenameUpdates(d, oldLot, newLot));
             }
             UIUtils.closeModal();
             UIUtils.toast(`LOT번호가 ${newLot}(으)로 변경되었습니다.`, 'success');
@@ -1831,10 +1903,9 @@ var InjectionWarehouseModule = (function() {
         const _olJs = oldLot.replace(/'/g, "\\'");
         const displayLot = oldLot === '무표기' ? '' : oldLot;
 
-        // 이 LOT의 대표 입고 기록에서 입고일·생산처 기본값 조회
+        // 이 LOT의 대표 입고 기록에서 입고일·생산처 기본값 조회 (lots[] 안의 무표기도 매칭)
         const recs = (Storage.getAll(STORE) || []).filter(d =>
-            d.carModel === carModel && d.partName === partName &&
-            (d.color || '') === (color || '') && (d.lotNo || '무표기') === oldLot && d.type !== '출고');
+            d.type !== '출고' && _recordMatchesLot(d, carModel, partName, color, oldLot));
         recs.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
         const primary = recs[0] || {};
         const dateOnly = String(primary.date || '').slice(0, 10);
@@ -1899,9 +1970,7 @@ var InjectionWarehouseModule = (function() {
         }
 
         const all = Storage.getAll(STORE) || [];
-        const targets = all.filter(d =>
-            d.carModel === carModel && d.partName === partName &&
-            (d.color || '') === (color || '') && (d.lotNo || '무표기') === oldLot);
+        const targets = all.filter(d => _recordMatchesLot(d, carModel, partName, color, oldLot));
 
         if (targets.length === 0) {
             UIUtils.toast('변경할 재고 기록을 찾을 수 없습니다.', 'error');
@@ -1936,13 +2005,10 @@ var InjectionWarehouseModule = (function() {
     async function _commitLotEdit(carModel, partName, color, oldLot, newLot, newDate, newSupplier, targets, delta) {
         try {
             for (const d of targets) {
-                const updates = {};
-                // LOT번호 변경 — 입고/출고 기록 모두 반영
+                let updates = {};
+                // LOT번호 변경 — lots[] 안의 해당 항목만 교체(다른 대표 LOT 보존)
                 if (newLot !== oldLot) {
-                    updates.lotNo = newLot;
-                    if (Array.isArray(d.lots) && d.lots.length > 0) {
-                        updates.lots = d.lots.map(l => (l.lotNo === oldLot ? { ...l, lotNo: newLot } : l));
-                    }
+                    updates = _buildLotRenameUpdates(d, oldLot, newLot);
                 }
                 // 입고일·생산처는 입고 기록에만 반영
                 if (d.type !== '출고') {
@@ -4339,6 +4405,13 @@ var InjectionWarehouseModule = (function() {
             UIUtils.toast('처리할 미차감이 없습니다.', 'info');
             return;
         }
+        if (isAbsorb && lotSum < unmatched) {
+            UIUtils.toast(
+                `보유 LOT(${_fmtStockQty(lotSum)} EA)보다 미차감(${_fmtStockQty(unmatched)} EA)이 커서 반영할 수 없습니다. 리셋을 사용하세요.`,
+                'warning'
+            );
+            return;
+        }
         const title = isAbsorb ? '미차감 반영' : '미차감 리셋';
         const accent = isAbsorb ? '#b45309' : '#0369a1';
         const resultStock = isAbsorb ? stock : lotSum;
@@ -4416,6 +4489,13 @@ var InjectionWarehouseModule = (function() {
         const physicalLotSum = (balance.lots || [])
             .filter(function(l) { return l.lotNo !== InvCalc.UNMATCHED && (Number(l.qty) || 0) > 0; })
             .reduce(function(s, l) { return s + (Number(l.qty) || 0); }, 0);
+        if (isAbsorb && physicalLotSum < unmatched) {
+            UIUtils.toast(
+                `보유 LOT(${_fmtStockQty(physicalLotSum)} EA)보다 미차감(${_fmtStockQty(unmatched)} EA)이 커서 반영할 수 없습니다. 리셋을 사용하세요.`,
+                'warning'
+            );
+            return;
+        }
         const stockAfterTarget = isAbsorb ? stockBefore : physicalLotSum;
         const actor = _getResetActorFields();
         const nowStr = (UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' '));
@@ -4462,13 +4542,58 @@ var InjectionWarehouseModule = (function() {
             });
 
             UIUtils.closeModal();
-            UIUtils.toast(`${label} 완료 (재고 ${UIUtils.formatNumber(stockBefore)} → ${UIUtils.formatNumber(stockAfterTarget)} EA)`, 'success');
+            UIUtils.toast(`${label} 완료 (재고 ${_fmtStockQty(stockBefore)} → ${_fmtStockQty(stockAfterTarget)} EA)`, 'success');
             loadData();
             showPartDetail(carModel, partName, color);
         } catch (e) {
             console.error(label + ' 실패:', e);
             UIUtils.toast(label + ' 실패: ' + (e && e.message ? e.message : e), 'error');
         }
+    }
+
+    async function fixCorruptedQtyFields(carModelEnc, partNameEnc, colorEnc) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 수량 필드를 보정할 수 있습니다.', 'warning');
+            return;
+        }
+        const carModel = decodeURIComponent(carModelEnc || '');
+        const partName = decodeURIComponent(partNameEnc || '');
+        const color = decodeURIComponent(colorEnc || '');
+        const records = _filterProductRecords(carModel, partName, color);
+        const corrupted = records.filter(function(r) { return InvCalc.isQtyCorrupted(r); });
+        if (!corrupted.length) {
+            UIUtils.toast('보정할 수량 필드 불일치가 없습니다.', 'info');
+            return;
+        }
+
+        const lines = corrupted.slice(0, 5).map(function(r) {
+            const lotSum = InvCalc.qtyOf(r);
+            const declared = Number(r.quantity) || 0;
+            return `· ${(r.date || '-')} ${(r.type || '')} LOT합 ${lotSum} / quantity ${declared}`;
+        }).join('\n');
+        const more = corrupted.length > 5 ? `\n… 외 ${corrupted.length - 5}건` : '';
+
+        UIUtils.confirm(
+            `수량 필드(quantity)가 LOT 합계와 다른 ${corrupted.length}건을 LOT 합계로 맞춥니다.\n` +
+            `재고 계산은 이미 LOT 기준이라 표시 재고는 변하지 않고, 경고만 사라집니다.\n\n${lines}${more}`,
+            async function() {
+                try {
+                    let fixed = 0;
+                    for (let i = 0; i < corrupted.length; i++) {
+                        const rec = corrupted[i];
+                        const lotSum = InvCalc.qtyOf(rec);
+                        await Storage.update(STORE, rec.id, { quantity: lotSum });
+                        fixed += 1;
+                    }
+                    UIUtils.toast(`수량 필드 ${fixed}건을 LOT 합계에 맞췄습니다.`, 'success');
+                    loadData();
+                    showPartDetail(carModel, partName, color);
+                } catch (e) {
+                    console.error('수량 필드 보정 실패:', e);
+                    UIUtils.toast('보정 실패: ' + (e && e.message ? e.message : e), 'error');
+                }
+            }
+        );
     }
 
     // 재고 오류 초기화(보정 입고)에 자동으로 붙일 LOT — 사용자가 실물 없는 LOT 번호를
@@ -5636,6 +5761,7 @@ var InjectionWarehouseModule = (function() {
         confirmResetStockError,
         openUnmatchedActionModal,
         confirmUnmatchedAction,
+        fixCorruptedQtyFields,
         openBulkResetStockErrorsModal,
         removeBulkResetPreviewRow,
         confirmBulkResetStockErrors,
