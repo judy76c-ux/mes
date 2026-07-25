@@ -28,11 +28,79 @@ var StockDetailUI = (function() {
         return String(s || '').replace(/"/g, '&quot;');
     }
 
+    function _escHtml(s) {
+        return String(s ?? '').replace(/[&<>"']/g, function(ch) {
+            return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+        });
+    }
+
+    // LOT 칩 색상 — 도장 LOT은 녹색계열, 사출 LOT은 그 외 색상계열.
+    // 같은 LOT 번호는 어느 행에서든 같은 색이 나오도록 번호로 색을 고른다.
+    const _LOT_CHIP_PALETTES = {
+        paint: [
+            { bg: 'rgba(22,163,74,.12)',  bd: 'rgba(22,163,74,.40)',  fg: '#15803d' },
+            { bg: 'rgba(13,148,136,.12)', bd: 'rgba(13,148,136,.40)', fg: '#0f766e' },
+            { bg: 'rgba(101,163,13,.14)', bd: 'rgba(101,163,13,.40)', fg: '#4d7c0f' },
+            { bg: 'rgba(5,150,105,.12)',  bd: 'rgba(5,150,105,.40)',  fg: '#047857' }
+        ],
+        inj: [
+            { bg: 'rgba(37,99,235,.10)',  bd: 'rgba(37,99,235,.38)',  fg: '#1d4ed8' },
+            { bg: 'rgba(180,83,9,.12)',   bd: 'rgba(180,83,9,.38)',   fg: '#b45309' },
+            { bg: 'rgba(124,58,237,.10)', bd: 'rgba(124,58,237,.38)', fg: '#6d28d9' },
+            { bg: 'rgba(190,24,93,.10)',  bd: 'rgba(190,24,93,.38)',  fg: '#be185d' },
+            { bg: 'rgba(2,132,199,.10)',  bd: 'rgba(2,132,199,.38)',  fg: '#0369a1' }
+        ]
+    };
+    const _LOT_CHIP_MUTED = { bg: 'rgba(148,163,184,.14)', bd: 'rgba(148,163,184,.40)', fg: 'var(--text-muted)' };
+
+    function _lotChipColor(lotText, family) {
+        const s = String(lotText || '');
+        if (!s || !/\d/.test(s)) return _LOT_CHIP_MUTED;
+        const palette = _LOT_CHIP_PALETTES[family] || _LOT_CHIP_PALETTES.inj;
+        let hash = 0;
+        for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) % 99991;
+        return palette[hash % palette.length];
+    }
+
+    /** LOT 셀 — 한 칸에 LOT이 여러 개면 각각 다른 음영 칩으로 분리해 보여준다 */
+    function _renderLotChips(value, family) {
+        const raw = String(value == null ? '' : value).trim();
+        if (!raw || raw === '-') return '<span style="color:var(--text-muted);">-</span>';
+        const parts = raw.split(/[,\s]+/).map(function(v) { return v.trim(); }).filter(Boolean);
+        if (!parts.length) return '<span style="color:var(--text-muted);">-</span>';
+        const title = parts.length > 1 ? ` title="${_escAttr('LOT ' + parts.length + '건: ' + parts.join(', '))}"` : '';
+        const chips = parts.map(function(lot) {
+            const c = _lotChipColor(lot, family);
+            return `<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-family:monospace;
+                        font-size:0.76rem;font-weight:700;white-space:nowrap;
+                        background:${c.bg};border:1px solid ${c.bd};color:${c.fg};">${_escHtml(lot)}</span>`;
+        }).join('');
+        return `<span style="display:inline-flex;align-items:center;gap:4px;flex-wrap:nowrap;"${title}>${chips}</span>`;
+    }
+
+    /** 경로 배지 — link={onclick,title} 있으면 클릭 이동 */
+    function _renderRouteBadge(route, link) {
+        const badgeStyle = `font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:4px;
+                        border:1px solid ${route.color}44;background:${route.color}12;color:${route.color};`;
+        const label = _escHtml(route.label || '-');
+        if (!link || !link.onclick) {
+            return `<span style="${badgeStyle}">${label}</span>`;
+        }
+        const title = _escAttr(link.title || (route.label + '로 이동'));
+        return `<a href="javascript:void(0)" title="${title}"
+                    onclick="event.preventDefault();event.stopPropagation();${link.onclick}"
+                    style="${badgeStyle}display:inline-flex;align-items:center;gap:2px;text-decoration:none;cursor:pointer;">
+                    ${label}
+                    <span class="material-symbols-outlined" style="font-size:12px;">open_in_new</span>
+                </a>`;
+    }
+
     function renderInvStepRow(step, isCurrent, opts) {
         opts = opts || {};
         const d = step.rec;
         const isOut = d.type === '출고';
         const route = (opts.routeFn || function() { return { label: '-', color: '#6b7280', detail: '' }; })(d);
+        const routeLink = typeof opts.routeLinkFn === 'function' ? opts.routeLinkFn(d, route) : null;
         const splitLots = !!opts.splitLots;
         const qty = InvCalc.qtyOf(d);
         const who = opts.whoFn ? opts.whoFn(d) : (d.receivedBy || d.outgoingBy || d.issuedBy || '-');
@@ -53,15 +121,15 @@ var StockDetailUI = (function() {
             const injLot = opts.injLotFn
                 ? opts.injLotFn(d)
                 : (d.injLot || d.lotNo || '무표기');
-            lotCell = `<td style="font-size:0.8rem;font-family:monospace;white-space:nowrap;color:var(--accent-green);">${paintLot || '-'}</td>
-                       <td style="font-size:0.8rem;font-family:monospace;white-space:nowrap;">${injLot || '-'}</td>`;
+            lotCell = `<td style="white-space:nowrap;">${_renderLotChips(paintLot, 'paint')}</td>
+                       <td style="white-space:nowrap;">${_renderLotChips(injLot, 'inj')}</td>`;
         } else {
             const lotText = opts.lotFn
                 ? opts.lotFn(d)
                 : ((Array.isArray(d.lots) && d.lots.length)
                     ? d.lots.map(function(l) { return l.lotNo; }).filter(Boolean).join(', ')
                     : (d.lotNo || '무표기'));
-            lotCell = `<td style="font-size:0.8rem;">${lotText}</td>`;
+            lotCell = `<td style="white-space:nowrap;">${_renderLotChips(lotText, 'inj')}</td>`;
         }
 
         return `
@@ -73,8 +141,7 @@ var StockDetailUI = (function() {
                         color:${isOut ? '#dc2626' : '#16a34a'};">${isOut ? '출고' : '입고'}</span>
                 </td>
                 <td style="white-space:nowrap;">
-                    <span style="font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:4px;
-                        border:1px solid ${route.color}44;background:${route.color}12;color:${route.color};">${route.label}</span>
+                    ${_renderRouteBadge(route, routeLink)}
                     <div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;max-width:160px;
                         white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${detail}">${route.detail || ''}</div>
                 </td>
@@ -93,12 +160,6 @@ var StockDetailUI = (function() {
             </tr>`;
     }
 
-    function _escHtml(s) {
-        return String(s ?? '').replace(/[&<>"']/g, function(ch) {
-            return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
-        });
-    }
-
     function renderSimpleStepRow(step, isCurrent, opts) {
         opts = opts || {};
         const item = step.item;
@@ -108,6 +169,9 @@ var StockDetailUI = (function() {
             ? ((item.routeLabel || '-') + ' · 리셋 이전')
             : (item.routeLabel || '-');
         const route = { label: routeLabel, color: archiveOnly ? '#94a3b8' : (item.routeColor || '#6b7280'), detail: item.routeDetail || '' };
+        const routeLink = (!archiveOnly && typeof opts.routeLinkFn === 'function')
+            ? opts.routeLinkFn(item, route)
+            : null;
         const qty = Number(item.qty) || 0;
         const who = _escHtml(item.author || item.who || '-');
         const noteTitle = item.note ? _escAttr(item.note) : '';
@@ -116,27 +180,39 @@ var StockDetailUI = (function() {
         const afterColor = _stockColor(step.stockAfter);
         const detail = _escAttr(route.detail || item.note || '');
         const splitLots = !!opts.splitLots;
-        const paintLot = _escHtml(item.paintLot || '-');
-        const injLot = _escHtml(item.injLot || item.lot || '-');
+        const paintLot = item.paintLot || '-';
+        const injLot = item.injLot || item.lot || '-';
         const lotCell = splitLots
-            ? `<td style="font-size:0.8rem;font-family:monospace;white-space:nowrap;color:var(--accent-green);">${paintLot}</td>
-               <td style="font-size:0.8rem;font-family:monospace;white-space:nowrap;">${injLot}</td>`
-            : `<td style="font-size:0.8rem;font-family:monospace;white-space:nowrap;">${_escHtml(item.lot || '-')}</td>`;
-        const rowStyle = archiveOnly
-            ? ' style="opacity:0.72;background:rgba(148,163,184,0.08);"'
-            : (isCurrent ? ' style="background:rgba(37,99,235,.05);"' : '');
+            ? `<td style="white-space:nowrap;">${_renderLotChips(paintLot, 'paint')}</td>
+               <td style="white-space:nowrap;">${_renderLotChips(injLot, 'inj')}</td>`
+            : `<td style="white-space:nowrap;">${_renderLotChips(item.lot || '-', 'inj')}</td>`;
+        // 행 음영은 "도장 LOT" 기준 — 같은 도장 LOT 이력은 같은 좌측 컬러 바 + 옅은 배경으로 묶어 보인다.
+        const paintKeyLot = splitLots ? paintLot : (item.paintLot || item.lot || '-');
+        const paintShade = (!archiveOnly && /\d/.test(String(paintKeyLot || '')))
+            ? _lotChipColor(paintKeyLot, 'paint') : null;
+        let rowStyle;
+        let firstCellExtra = '';
+        if (archiveOnly) {
+            rowStyle = ' style="opacity:0.72;background:rgba(148,163,184,0.08);"';
+        } else if (paintShade) {
+            const bg = isCurrent ? 'rgba(37,99,235,.05)' : paintShade.bg;
+            rowStyle = ` style="background:${bg};"`;
+            firstCellExtra = `border-left:4px solid ${paintShade.fg};`;
+        } else {
+            rowStyle = isCurrent ? ' style="background:rgba(37,99,235,.05);"' : '';
+        }
+        const paintLotData = encodeURIComponent(String(paintKeyLot || '-'));
 
         return `
-            <tr${rowStyle}>
-                <td style="white-space:nowrap;font-size:0.8rem;">${dateStamp}</td>
+            <tr data-paint-lots="${paintLotData}"${rowStyle}>
+                <td style="white-space:nowrap;font-size:0.8rem;${firstCellExtra}">${dateStamp}</td>
                 <td style="white-space:nowrap;">
                     <span style="font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:999px;
                         background:${isOut ? 'rgba(220,38,38,.10)' : 'rgba(22,163,74,.10)'};
                         color:${isOut ? '#dc2626' : '#16a34a'};">${isOut ? '출고' : '입고'}</span>
                 </td>
                 <td style="white-space:nowrap;">
-                    <span style="font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:4px;
-                        border:1px solid ${route.color}44;background:${route.color}12;color:${route.color};">${_escHtml(route.label)}</span>
+                    ${_renderRouteBadge(route, routeLink)}
                     <div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;max-width:140px;
                         white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${detail}">${_escHtml(route.detail || '')}</div>
                 </td>
@@ -331,8 +407,12 @@ var StockDetailUI = (function() {
             : function(n) { return String(n); };
         const totalColor = opts.totalColor || 'var(--accent-blue)';
         const titleTotalHtml = showTotal
-            ? `<span style="margin-left:auto;font-size:0.82rem;color:var(--text-muted);white-space:nowrap;">
-                    ${totalLabel} <strong style="color:${totalColor};font-size:0.95rem;">${fmt(Number(totalQty))}</strong> EA
+            ? `<span style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;padding:5px 12px;
+                            border-radius:6px;background:rgba(100,116,139,.12);border:1px solid rgba(100,116,139,.28);
+                            font-size:0.82rem;color:var(--text-secondary);white-space:nowrap;">
+                    <span style="font-weight:600;color:var(--text-muted);">${totalLabel}</span>
+                    <strong style="color:${totalColor};font-size:0.98rem;">${fmt(Number(totalQty))}</strong>
+                    <span style="color:var(--text-muted);">EA</span>
                </span>`
             : '';
         let footerHtml = '';
@@ -340,20 +420,21 @@ var StockDetailUI = (function() {
             const qtyIdx = opts.qtyColIndex != null
                 ? Number(opts.qtyColIndex)
                 : Math.max(0, headers.findIndex(function(h) { return /수량/.test(String(h || '')); }));
+            const shade = 'background:rgba(100,116,139,.10);border-top:2px solid rgba(100,116,139,.35);';
             const cells = [];
             for (let i = 0; i < colSpan; i++) {
                 if (i === 0) {
-                    cells.push(`<td colspan="${Math.max(1, qtyIdx)}" style="font-weight:700;white-space:nowrap;">합계</td>`);
+                    cells.push(`<td colspan="${Math.max(1, qtyIdx)}" style="font-weight:700;white-space:nowrap;${shade}">${totalLabel}</td>`);
                     i = qtyIdx - 1;
                     continue;
                 }
                 if (i === qtyIdx) {
-                    cells.push(`<td style="text-align:right;font-weight:700;color:${totalColor};white-space:nowrap;">${fmt(Number(totalQty))}</td>`);
+                    cells.push(`<td style="text-align:right;font-weight:800;color:${totalColor};white-space:nowrap;${shade}">${fmt(Number(totalQty))} <span style="font-size:0.75rem;font-weight:600;color:var(--text-muted);">EA</span></td>`);
                 } else {
-                    cells.push('<td></td>');
+                    cells.push(`<td style="${shade}"></td>`);
                 }
             }
-            footerHtml = `<tfoot><tr style="background:var(--bg-secondary);">${cells.join('')}</tr></tfoot>`;
+            footerHtml = `<tfoot><tr>${cells.join('')}</tr></tfoot>`;
         }
         return `
             <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap;">
@@ -370,6 +451,12 @@ var StockDetailUI = (function() {
             </div>`;
     }
 
+    /** LOT 번호별 고정 음영 스타일 — 이력·LOT 표에서 같은 LOT이 같은 색으로 보이게 공용 사용 */
+    function lotChipStyle(lotText, family) {
+        const c = _lotChipColor(lotText, family);
+        return `background:${c.bg};border:1px solid ${c.bd};color:${c.fg};`;
+    }
+
     return {
         buildHistorySection,
         buildInvHistorySection,
@@ -378,6 +465,8 @@ var StockDetailUI = (function() {
         lotBalancesFromRecords,
         renderInvStepRow,
         renderSimpleStepRow,
+        renderLotChips: _renderLotChips,
+        lotChipStyle,
         simpleReplaySteps
     };
 })();

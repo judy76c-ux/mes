@@ -2820,6 +2820,37 @@ const PaintingWorkModule = (function() {
         });
     }
 
+    /**
+     * 외부(사출 창고 예약 뱃지 등)에서 해당 계획의 도장 실적입력 화면으로 이동한다.
+     * 라인에 맞는 도장-A/B 작업 페이지로 이동 → 계획일 선택 → 실적입력 모달 오픈.
+     */
+    function goToWorkFromPlan(planId) {
+        const plan = Storage.getById(PLAN_STORE, planId);
+        if (!plan) {
+            UIUtils.toast('계획 정보를 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const pageId = _pageIdForLine(plan.line);
+        const planDate = plan.date || '';
+        if (typeof Router !== 'undefined') {
+            Router.navigate(pageId);
+        }
+        setTimeout(function() {
+            if (planDate) {
+                const dateEl = document.getElementById('pwDate');
+                if (dateEl) {
+                    dateEl.value = planDate;
+                    _currentDate = planDate;
+                }
+                if (typeof onDateChange === 'function') onDateChange();
+                else loadAll();
+            }
+            setTimeout(function() {
+                openAddModalFromPlan(planId);
+            }, 200);
+        }, 350);
+    }
+
     // 신규 저장
     async function saveNew() {
         var _authUser = _checkWorkAuth();
@@ -4457,6 +4488,7 @@ const PaintingWorkModule = (function() {
         updateWorkPartFilter,
         openAddModal,
         openAddModalFromPlan,
+        goToWorkFromPlan,
         addLotRow,
         removeLotRow,
         onLotRowSelect,

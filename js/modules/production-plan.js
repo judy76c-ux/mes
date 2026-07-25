@@ -1481,8 +1481,8 @@ const ProductionPlanModule = (function() {
             const qty = Number(p.planQty) || 0;
             if (p.status === '대기')  { pending    += qty; return; }
             if (p.status === '진행') { inProgress += qty; return; }
-            // 완료 계획이지만 도장 작업실적이 없으면 → 아직 재고 미차감 → 예약으로 포함
-            if (p.status === '완료' && !workedPlanIds.has(p.id)) { pending += qty; }
+            // 완료 계획이지만 도장 작업실적이 없으면 → 미입력 실적 (예약 상세·도장 실적입력과 동일)
+            if (p.status === '완료' && !workedPlanIds.has(p.id)) { inProgress += qty; }
         });
         // 현재 생산계획 등록 모달이 실제로 열려있는 경우에만 폼 입력 수량을 예약으로 포함
         // ★ 모달이 닫혀있어도 DOM에 폼 요소가 남아 있어 오탐(팬텀 예약)이 발생할 수 있으므로
