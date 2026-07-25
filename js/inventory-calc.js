@@ -90,8 +90,9 @@ var InvCalc = (function () {
         return entries(rec).reduce((s, e) => s + e.qty, 0);
     }
 
-    /** 기록 1건의 부호 있는 수량 (출고는 음수). */
+    /** 기록 1건의 부호 있는 수량 (출고는 음수). 미차감 처리 기록은 순합계에 넣지 않는다. */
     function signedQtyOf(rec) {
+        if (rec && (rec.unmatchedAction === 'clear' || rec.unmatchedAction === 'absorb')) return 0;
         return (rec && rec.type === '출고' ? -1 : 1) * qtyOf(rec);
     }
 
@@ -160,6 +161,32 @@ var InvCalc = (function () {
         });
     }
 
+    /** 미차감 처리 — clear: 채무만 소멸 / absorb: 보유 LOT FIFO 차감 + 채무 소멸 */
+    function _applyUnmatchedAction(map, rec, unmatchedRef) {
+        const action = rec && rec.unmatchedAction;
+        if (action !== 'clear' && action !== 'absorb') return false;
+        const declared = _num(rec && rec.quantity);
+        const amount = declared > 0
+            ? Math.min(declared, unmatchedRef.value)
+            : unmatchedRef.value;
+        if (amount <= 0) {
+            unmatchedRef.value = 0;
+            return true;
+        }
+        if (action === 'absorb') {
+            const lotSumBefore = Object.values(map).reduce(function(s, l) { return s + (Number(l.qty) || 0); }, 0);
+            const sink = { value: 0 };
+            // 없는 LOT키 → 지정 매칭 실패 후 보유 LOT FIFO 차감
+            _applyOutgoing(map, [{ lotNo: '__UNMATCHED_ABSORB__', qty: amount }], sink, null);
+            const lotSumAfter = Object.values(map).reduce(function(s, l) { return s + (Number(l.qty) || 0); }, 0);
+            const absorbed = Math.max(0, lotSumBefore - lotSumAfter);
+            unmatchedRef.value = Math.max(0, unmatchedRef.value - absorbed);
+            return true;
+        }
+        unmatchedRef.value = Math.max(0, unmatchedRef.value - amount);
+        return true;
+    }
+
     /**
      * 원장을 시간순으로 재생하며 건별 거래 후 재고·차감 내역을 반환한다.
      * @returns {{ rec, stockBefore, stockAfter, unmatchedAfter, deductions }[]}
@@ -175,7 +202,9 @@ var InvCalc = (function () {
             const stockBefore = _totalFromMap(map, unmatchedRef.value);
             const deductions = rec.type === '출고' ? [] : null;
 
-            if (rec.type === '출고') {
+            if (_applyUnmatchedAction(map, rec, unmatchedRef)) {
+                // 미차감 clear/absorb
+            } else if (rec.type === '출고') {
                 _applyOutgoing(map, entries(rec), unmatchedRef, deductions);
             } else {
                 _applyIncoming(map, rec, entries(rec));
@@ -211,7 +240,9 @@ var InvCalc = (function () {
         _sortRecords(records).forEach(rec => {
             if (isQtyCorrupted(rec)) corrupted.push(rec);
 
-            if (rec.type === '출고') {
+            if (_applyUnmatchedAction(map, rec, unmatchedRef)) {
+                // 미차감 clear/absorb
+            } else if (rec.type === '출고') {
                 _applyOutgoing(map, entries(rec), unmatchedRef, null);
             } else {
                 _applyIncoming(map, rec, entries(rec));
