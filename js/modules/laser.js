@@ -7836,14 +7836,6 @@ var LaserStandbyModule = (function() {
                     <span class="material-symbols-outlined" style="font-size:0.9rem;">logout</span> 수동 출고
                 </button>` : ''}
             </div>` : ''}
-            ${snapshot.item && snapshot.item.historyReset ? `
-            <div style="margin-bottom:12px;padding:10px 12px;border-radius:8px;background:rgba(37,99,235,0.06);border:1px solid rgba(37,99,235,0.18);font-size:0.8rem;color:var(--text-secondary);">
-                <strong style="color:#2563eb;">이력만 리셋 적용</strong>
-                · ${_escapeHtml(String(snapshot.item.historyReset.historyResetAt || '').replace('T', ' ').slice(0, 16))}
-                이전 이력은 <strong>리셋 이전 기록</strong>으로 남기고, 재고·도장/사출 LOT는 유지합니다.
-                ${snapshot.item.historyReset.author ? ' · ' + _escapeHtml(snapshot.item.historyReset.author) : ''}
-                ${snapshot.item.historyReset.note ? ' · ' + _escapeHtml(snapshot.item.historyReset.note) : ''}
-            </div>` : ''}
             ${StockDetailUI.buildLotTableSection({
                 headers: canAdjust ? ['도장 LOT', '사출 LOT', '현재 수량', ''] : ['도장 LOT', '사출 LOT', '현재 수량'],
                 colSpan: canAdjust ? 4 : 3,
@@ -7852,11 +7844,70 @@ var LaserStandbyModule = (function() {
                 totalLabel: '보관 합계',
                 rowsHtml: lotRowsHtml
             })}
+            ${_standbyHistoryPaintLotFilterHtml(lotGroupRows)}
             <div id="lsbInvHistorySection">${historySection}</div>
             `,
             `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`,
             'lg'
         );
+    }
+
+    function _standbyHistoryPaintLotFilterHtml(lotGroupRows) {
+        const groups = (lotGroupRows || []).filter(function(group) {
+            return group && group.paintLot && group.paintLot !== '-' && group.paintLot !== 'LOT 미지정';
+        });
+        if (!groups.length) return '';
+        const sectionId = 'lsbInvHistorySection';
+        const buttons = groups.map(function(group) {
+            const lot = String(group.paintLot || '');
+            const qty = Number(group.totalQty) || 0;
+            return `<button type="button" class="btn btn-sm btn-outline lsb-history-lot-filter"
+                        data-history-section="${sectionId}" data-filter-lot="${encodeURIComponent(lot)}"
+                        onclick="LaserStandbyModule.filterHistoryByPaintLot('${sectionId}','${encodeURIComponent(lot)}')"
+                        style="font-size:0.74rem;padding:3px 9px;white-space:nowrap;">
+                        ${StockDetailUI.renderLotChips(lot, 'paint')}
+                        <strong style="margin-left:3px;">${UIUtils.formatNumber(qty)} EA</strong>
+                    </button>`;
+        }).join('');
+        return `
+            <div style="margin:16px 0 6px;padding:9px 11px;border-radius:8px;background:var(--bg-secondary);
+                        border:1px solid var(--border-color);display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                <strong style="font-size:0.78rem;margin-right:2px;">도장 LOT 이력 보기</strong>
+                <button type="button" class="btn btn-sm btn-primary lsb-history-lot-filter"
+                    data-history-section="${sectionId}" data-filter-lot=""
+                    onclick="LaserStandbyModule.filterHistoryByPaintLot('${sectionId}','')"
+                    style="font-size:0.74rem;padding:3px 9px;white-space:nowrap;">전체 이력</button>
+                ${buttons}
+                <span id="${sectionId}FilterLabel" style="font-size:0.72rem;color:var(--text-muted);margin-left:auto;">전체 LOT 표시 중</span>
+            </div>`;
+    }
+
+    function filterHistoryByPaintLot(sectionId, encodedPaintLot) {
+        const section = document.getElementById(sectionId);
+        if (!section) return;
+        const selected = encodedPaintLot ? decodeURIComponent(encodedPaintLot) : '';
+        const rows = section.querySelectorAll('tbody tr[data-paint-lots]');
+        let visible = 0;
+        rows.forEach(function(row) {
+            let raw = '';
+            try { raw = decodeURIComponent(row.getAttribute('data-paint-lots') || ''); } catch (e) { raw = ''; }
+            const lots = raw.split(/[,\s]+/).map(function(v) { return v.trim(); }).filter(Boolean);
+            const show = !selected || lots.indexOf(selected) >= 0;
+            row.style.display = show ? '' : 'none';
+            if (show) visible += 1;
+        });
+
+        document.querySelectorAll(`.lsb-history-lot-filter[data-history-section="${sectionId}"]`).forEach(function(button) {
+            const active = (button.getAttribute('data-filter-lot') || '') === (encodedPaintLot || '');
+            button.classList.toggle('btn-primary', active);
+            button.classList.toggle('btn-outline', !active);
+        });
+        const label = document.getElementById(sectionId + 'FilterLabel');
+        if (label) {
+            label.textContent = selected
+                ? `${selected} 이력 ${visible}건 표시 중`
+                : `전체 이력 ${visible}건 표시 중`;
+        }
     }
 
     // ── 레이져 대기품 수동입고 ────────────────────────────────────────────
@@ -8742,6 +8793,7 @@ var LaserStandbyModule = (function() {
         _openStandbyInForPart,
         _openStandbyOutForPart,
         _showItemDetail,
+        filterHistoryByPaintLot,
         ensureManualOverridesLoadedForWork,
         getStockSnapshotSync,
         getWorkLotSnapshotSync,

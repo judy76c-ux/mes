@@ -4137,12 +4137,6 @@ var LaserWipModule = (function() {
             historySectionId: 'lwAfterInvHistorySection'
         });
 
-        const resetHint = r.historyResetApplied
-            ? `<div style="margin-bottom:10px;padding:8px 12px;border-radius:8px;background:rgba(37,99,235,0.05);border:1px solid rgba(37,99,235,0.15);font-size:0.78rem;color:var(--text-secondary);">
-                입고·출고 합계는 <strong>전체 이력 기록</strong>입니다. 현재 재공은 <strong>이력 리셋 이후</strong> 기준입니다.
-               </div>`
-            : '';
-
         const _cmJs = String(carModel || '').replace(/'/g, "\\'");
         const _pnJs = String(partName || '').replace(/'/g, "\\'");
         const _clJs = String(color || '').replace(/'/g, "\\'");
@@ -4185,15 +4179,6 @@ var LaserWipModule = (function() {
         }).join('');
 
         const historySection = _wipHistorySection(displayHist, { splitLots: true, productLevelQty: true, floorZero: true });
-        const resetBanner = histReset ? `
-            <div style="margin-bottom:12px;padding:10px 12px;border-radius:8px;background:rgba(37,99,235,0.06);border:1px solid rgba(37,99,235,0.18);font-size:0.8rem;color:var(--text-secondary);">
-                <strong style="color:#2563eb;">이력만 리셋 적용</strong>
-                · ${_escapeHtml(String(histReset.historyResetAt || '').replace('T', ' ').slice(0, 16))}
-                이전 이력은 <strong>리셋 이전 기록</strong>으로 남기고, <strong>현재 재공</strong>은 리셋 시점부터 다시 계산합니다.
-                ${histReset.author ? ' · ' + _escapeHtml(histReset.author) : ''}
-                ${histReset.note ? ' · ' + _escapeHtml(histReset.note) : ''}
-            </div>` : '';
-
         UIUtils.showModal(
             `⚡ ${carModel} · ${partName}${color && color !== '-' ? ' · ' + color : ''}`,
             `
@@ -4220,8 +4205,6 @@ var LaserWipModule = (function() {
                 </button>` : ''}
             ` : '')}
             ${unmatchedBanner}
-            ${resetBanner}
-            ${resetHint}
             <div style="margin-bottom:16px;display:flex;gap:16px;flex-wrap:wrap;">
                 <div style="background:var(--bg-secondary);padding:12px 20px;border-radius:8px;text-align:center;">
                     <div style="font-size:1.4rem;font-weight:700;color:var(--accent-purple,#7c3aed);">${fmtStock(displayWip)}</div>
@@ -4530,15 +4513,6 @@ var LaserWipModule = (function() {
 
         // LOT별(도장+사출) 기존±입출고=현재 — 품목 합계 재생은 복수 도장 LOT에서 혼동을 일으킴
         const historySection = _wipHistorySection(displayHist, { splitLots: true, productLevelQty: false });
-        const resetBanner = histReset ? `
-            <div style="margin-bottom:12px;padding:10px 12px;border-radius:8px;background:rgba(37,99,235,0.06);border:1px solid rgba(37,99,235,0.18);font-size:0.8rem;color:var(--text-secondary);">
-                <strong style="color:#2563eb;">이력만 리셋 적용</strong>
-                · ${_escapeHtml(String(histReset.historyResetAt || '').replace('T', ' ').slice(0, 16))}
-                — 리셋 이전 이력은 <strong>기록으로 유지</strong>하고, <strong>현재 보관 LOT는 리셋 시점 스냅샷 + 이후 입출고만</strong>으로 계산합니다.
-                ${histReset.author ? ' · ' + _escapeHtml(histReset.author) : ''}
-                ${histReset.note ? ' · ' + _escapeHtml(histReset.note) : ''}
-            </div>` : '';
-
         UIUtils.showModal(
             `📦 ${carModel} · ${partName}${color && color !== '-' ? ' · ' + color : ''}`,
             `
@@ -4561,7 +4535,6 @@ var LaserWipModule = (function() {
                 </button>` : ''}
             ` : '')}
             ${unmatchedBanner}
-            ${resetBanner}
             <div style="margin-bottom:16px;display:flex;gap:16px;flex-wrap:wrap;align-items:stretch;">
                 <div style="background:var(--bg-secondary);padding:12px 16px;border-radius:8px;text-align:center;display:flex;align-items:center;gap:12px;">
                     <div>
