@@ -8897,9 +8897,19 @@ const SettingsModule = (function() {
         return `날짜 불일치 (MM=${mm}, DD=${dd})`;
     }
 
+    /** lots[] 한 항목의 수량(쉼표·문자 방어). 유령 오류 판별에만 쓴다. */
+    function _lotQty(lot) {
+        const n = parseFloat(String(lot && lot.qty != null ? lot.qty : '').replace(/,/g, ''));
+        return isNaN(n) ? 0 : n;
+    }
+
     /**
      * 사출 LOT 형식 오류 스캔 — DOM에 손대지 않는 순수 함수.
      * scanInjLotNumbers(설정 화면)와 대시보드 알림 카드가 같은 스캔 로직을 공유하도록 분리했다.
+     *
+     * 소진되어(qty ≤ 0) 창고 목록에 나타나지 않는 lots[] 잔재는 검사하지 않는다.
+     * 창고는 InvCalc.entries() 규칙(qty>0 인 LOT만 진실)으로 재고를 계산하므로,
+     * qty 0 짜리 빈 LOT을 오류로 잡으면 "바로가기 해도 창고에 그 오류가 없는" 유령이 된다.
      */
     function scanInjLotErrorsData() {
         const invenItems = Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [];
@@ -8921,9 +8931,10 @@ const SettingsModule = (function() {
                     suggested: fixed || '수정 불가'
                 });
             }
-            // lots 배열 안 LOT도 검사
+            // lots 배열 안 LOT도 검사 (소진된 잔재 qty≤0 은 창고에 안 보이므로 제외)
             if (item.lots && Array.isArray(item.lots)) {
                 item.lots.forEach((lot, idx) => {
+                    if (_lotQty(lot) <= 0) return;
                     if (!lot.lotNo || !_isValidLot(lot.lotNo)) {
                         const fixed = _fixLot(lot.lotNo, item.date);
                         errors.push({
@@ -8957,6 +8968,7 @@ const SettingsModule = (function() {
             }
             if (item.lots && Array.isArray(item.lots)) {
                 item.lots.forEach((lot, idx) => {
+                    if (_lotQty(lot) <= 0) return;
                     if (!lot.lotNo || !_isValidLot(lot.lotNo)) {
                         const fixed = _fixLot(lot.lotNo, item.date);
                         errors.push({
@@ -9017,9 +9029,10 @@ const SettingsModule = (function() {
                 }
             }
 
-            // lots[] 배열
+            // lots[] 배열 (소진된 잔재 qty≤0 은 창고에 안 보이므로 스캔과 동일하게 건너뜀)
             if (item.lots && Array.isArray(item.lots)) {
                 item.lots.forEach((lot, idx) => {
+                    if (_lotQty(lot) <= 0) return;
                     if (!_isValidLot(lot.lotNo)) {
                         const f = _fixLot(lot.lotNo, item.date);
                         if (f) {
@@ -9057,6 +9070,7 @@ const SettingsModule = (function() {
 
             if (item.lots && Array.isArray(item.lots)) {
                 item.lots.forEach((lot, idx) => {
+                    if (_lotQty(lot) <= 0) return;
                     if (!_isValidLot(lot.lotNo)) {
                         const f = _fixLot(lot.lotNo, item.date);
                         if (f) {

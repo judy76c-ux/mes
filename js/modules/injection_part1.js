@@ -1059,15 +1059,22 @@ var InjectionIncomingModule = (function() {
         // LOT 목록 수집
         const lotRows = document.querySelectorAll('#injLotRows .inj-lot-row');
         const lots = [];
+        let _missingLotNo = false;  // 수량은 있는데 LOT 번호가 빈 행
         lotRows.forEach(function(row) {
             const lotNo = ((row.querySelector('.inj-lot-no') || {}).value || '').trim();
             const qty = Number((row.querySelector('.inj-lot-qty') || {}).value) || 0;
             const certReceived = ((row.querySelector('.inj-lot-cert') || {}).checked) || false;
+            // LOT 번호 없이 수량만 입력하면 빈 LOT이 저장돼 창고까지 전파된다(추적 불가). 저장 차단.
+            if (qty > 0 && !lotNo) { _missingLotNo = true; return; }
             if (lotNo || qty > 0) {
                 lots.push({ lotNo: lotNo, qty: qty, certReceived: certReceived });
             }
         });
 
+        if (_missingLotNo) {
+            UIUtils.toast('LOT 번호 없이 수량만 입력된 행이 있습니다. LOT 번호를 입력하세요.', 'warning');
+            return;
+        }
         if (lots.length === 0) {
             UIUtils.toast('LOT 정보를 입력하세요.', 'warning');
             return;
@@ -1461,15 +1468,22 @@ var InjectionIncomingModule = (function() {
         // LOT 목록 수집
         const lotRows = document.querySelectorAll('#editInjLotRows .inj-lot-row');
         const lots = [];
+        let _missingLotNo = false;  // 수량은 있는데 LOT 번호가 빈 행
         lotRows.forEach(function(row) {
             const lotNo = ((row.querySelector('.inj-lot-no') || {}).value || '').trim();
             const qty = Number((row.querySelector('.inj-lot-qty') || {}).value) || 0;
             const certReceived = ((row.querySelector('.inj-lot-cert') || {}).checked) || false;
+            // LOT 번호 없이 수량만 입력하면 빈 LOT이 저장돼 창고까지 전파된다(추적 불가). 저장 차단.
+            if (qty > 0 && !lotNo) { _missingLotNo = true; return; }
             if (lotNo || qty > 0) {
                 lots.push({ lotNo: lotNo, qty: qty, certReceived: certReceived });
             }
         });
 
+        if (_missingLotNo) {
+            UIUtils.toast('LOT 번호 없이 수량만 입력된 행이 있습니다. LOT 번호를 입력하세요.', 'warning');
+            return;
+        }
         if (lots.length === 0) {
             UIUtils.toast('LOT 정보를 입력하세요.', 'warning');
             return;

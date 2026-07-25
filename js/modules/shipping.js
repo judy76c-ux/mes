@@ -2951,21 +2951,45 @@ const ProductWarehouseModule = (function() {
             </div>`;
         }
 
+        // 화면 너비에 맞춰 열 수를 정하고, 열 폭을 균등 분배(flex:1)한다.
+        // 예전 columns:280px 는 남는 폭을 비워 두어 오른쪽이 휑했다.
+        function _stockColCount(itemCount) {
+            const n = Math.max(1, itemCount || 1);
+            const host = blocksEl.parentElement || blocksEl;
+            const avail = Math.max(280, (host.clientWidth || window.innerWidth || 1200) - 24);
+            const byWidth = Math.max(1, Math.floor(avail / 260));
+            return Math.max(1, Math.min(n, byWidth, 6));
+        }
+
+        function _packCarBlocks(cars, isAs) {
+            const colCount = _stockColCount(cars.length);
+            const cols = Array.from({ length: colCount }, () => []);
+            const heights = Array(colCount).fill(0);
+            cars.forEach(function(car) {
+                const size = (byCarModel[car] || []).length || 1;
+                const minIdx = heights.indexOf(Math.min.apply(null, heights));
+                cols[minIdx].push(renderCarBlock(car, isAs));
+                heights[minIdx] += size + 1;
+            });
+            return `<div style="display:flex;gap:10px;align-items:flex-start;width:100%;">
+                ${cols.map(function(colHtml) {
+                    return `<div style="flex:1 1 0;min-width:0;display:flex;flex-direction:column;">${colHtml.join('')}</div>`;
+                }).join('')}
+            </div>`;
+        }
+
         let html = '';
 
         if (massanCars.length) {
             html += sectionDivider('양산품', massanCars.length, '#2563eb');
-            html += '<div style="columns:280px;column-gap:10px;">';
-            html += massanCars.map(car => renderCarBlock(car, false)).join('');
-            html += '</div>';
+            html += _packCarBlocks(massanCars, false);
         }
 
         if (asCars.length) {
             html += `<div style="margin-top:${massanCars.length ? '20px' : '0'};">`;
             html += sectionDivider('A/S 품목', asCars.length, '#64748b');
-            html += '<div style="columns:280px;column-gap:10px;">';
-            html += asCars.map(car => renderCarBlock(car, true)).join('');
-            html += '</div></div>';
+            html += _packCarBlocks(asCars, true);
+            html += '</div>';
         }
 
         blocksEl.innerHTML = html;
