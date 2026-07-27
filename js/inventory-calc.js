@@ -147,9 +147,10 @@ var InvCalc = (function () {
         });
     }
 
-    function _totalFromMap(map, unmatched) {
+    function _totalFromMap(map, unmatched, writeOff) {
         const total = Object.values(map).reduce((s, l) => s + l.qty, 0);
-        return unmatched > 0 ? total - unmatched : total;
+        const debt = (unmatched > 0 ? unmatched : 0) + (writeOff > 0 ? writeOff : 0);
+        return debt > 0 ? total - debt : total;
     }
 
     function _sortRecords(records) {
@@ -161,8 +162,12 @@ var InvCalc = (function () {
         });
     }
 
-    /** 미차감 처리 — clear: 채무만 소멸 / absorb: 보유 LOT FIFO 차감 + 채무 소멸 */
-    function _applyUnmatchedAction(map, rec, unmatchedRef) {
+    /**
+     * 미차감 처리
+     * - clear: 미차감만 0 (표시 재고 유지 — writeOff로 상쇄)
+     * - absorb: 보유 LOT FIFO 차감 + 미차감 소멸 (표시 재고 유지)
+     */
+    function _applyUnmatchedAction(map, rec, unmatchedRef, writeOffRef) {
         const action = rec && rec.unmatchedAction;
         if (action !== 'clear' && action !== 'absorb') return false;
         const declared = _num(rec && rec.quantity);
@@ -183,7 +188,9 @@ var InvCalc = (function () {
             unmatchedRef.value = Math.max(0, unmatchedRef.value - absorbed);
             return true;
         }
+        // clear: 미차감만 소멸. 표시 재고가 올라가지 않도록 writeOff에 동일 금액을 남긴다.
         unmatchedRef.value = Math.max(0, unmatchedRef.value - amount);
+        if (writeOffRef) writeOffRef.value += amount;
         return true;
     }
 
@@ -195,14 +202,15 @@ var InvCalc = (function () {
         const map = {};
         const corrupted = [];
         const unmatchedRef = { value: 0 };
+        const writeOffRef = { value: 0 };
         const steps = [];
 
         _sortRecords(records).forEach(rec => {
             if (isQtyCorrupted(rec)) corrupted.push(rec);
-            const stockBefore = _totalFromMap(map, unmatchedRef.value);
+            const stockBefore = _totalFromMap(map, unmatchedRef.value, writeOffRef.value);
             const deductions = rec.type === '출고' ? [] : null;
 
-            if (_applyUnmatchedAction(map, rec, unmatchedRef)) {
+            if (_applyUnmatchedAction(map, rec, unmatchedRef, writeOffRef)) {
                 // 미차감 clear/absorb
             } else if (rec.type === '출고') {
                 _applyOutgoing(map, entries(rec), unmatchedRef, deductions);
@@ -213,7 +221,7 @@ var InvCalc = (function () {
             steps.push({
                 rec,
                 stockBefore,
-                stockAfter: _totalFromMap(map, unmatchedRef.value),
+                stockAfter: _totalFromMap(map, unmatchedRef.value, writeOffRef.value),
                 unmatchedAfter: unmatchedRef.value,
                 deductions
             });
@@ -236,11 +244,12 @@ var InvCalc = (function () {
         const map = {};
         const corrupted = [];
         const unmatchedRef = { value: 0 };
+        const writeOffRef = { value: 0 };
 
         _sortRecords(records).forEach(rec => {
             if (isQtyCorrupted(rec)) corrupted.push(rec);
 
-            if (_applyUnmatchedAction(map, rec, unmatchedRef)) {
+            if (_applyUnmatchedAction(map, rec, unmatchedRef, writeOffRef)) {
                 // 미차감 clear/absorb
             } else if (rec.type === '출고') {
                 _applyOutgoing(map, entries(rec), unmatchedRef, null);
@@ -250,11 +259,12 @@ var InvCalc = (function () {
         });
 
         const unmatched = unmatchedRef.value;
+        const writeOff = writeOffRef.value;
         const lots = Object.values(map);
         if (unmatched > 0) lots.push({ lotNo: UNMATCHED, qty: -unmatched, date: '', supplier: '' });
 
-        const total = _totalFromMap(map, unmatched);
-        return { total, lots, unmatched, negatives: lots.filter(l => l.qty < 0), corrupted };
+        const total = _totalFromMap(map, unmatched, writeOff);
+        return { total, lots, unmatched, writeOff, negatives: lots.filter(l => l.qty < 0), corrupted };
     }
 
     /** 원장 기록 목록 → 총 재고(순합계). lotBalances().total 과 항상 같다. */

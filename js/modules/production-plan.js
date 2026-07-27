@@ -1324,9 +1324,99 @@ const ProductionPlanModule = (function() {
         return procs.slice(0, bIdx).some(v => v === '레이저' || v === '레이져');
     }
 
+    // 창고 '생산출고'가 이미 나간 만큼 예약을 차감한다.
+    // (도장 실적 자동 차감 폐지 이후: 물류 출고 → 도장 실적 순인데, 출고만 되면 예약이 남는 문제 방지)
+    // refWorkId 가 있는 출고는 도장 실적 연동분이므로 여기서 다시 빼지 않는다.
+    function _consumeReserveByWarehouseOut(injPartName, carModel, injColor, pendingPlans, inProgressPlans) {
+        const _injPN = (injPartName || '').trim();
+        const _targetColor = injColor ? _normalizeColorName(injColor) : '';
+        const plans = []
+            .concat((pendingPlans || []).map(function(p) {
+                return Object.assign({}, p, { remain: Number(p.planQty) || 0, bucket: 'pending' });
+            }))
+            .concat((inProgressPlans || []).map(function(p) {
+                return Object.assign({}, p, { remain: Number(p.planQty) || 0, bucket: 'inProgress' });
+            }))
+            .sort(function(a, b) {
+                return String(a.date || '').localeCompare(String(b.date || '')) ||
+                    String(a.id || '').localeCompare(String(b.id || ''));
+            });
+
+        if (!plans.length || !_injPN) {
+            return {
+                pending: 0,
+                inProgress: 0,
+                pendingPlans: pendingPlans || [],
+                inProgressPlans: inProgressPlans || []
+            };
+        }
+
+        function _outColorOk(outColor) {
+            if (!_targetColor) return true;
+            if (!outColor) return true;
+            const oc = _normalizeColorName(outColor);
+            if (!oc) return true;
+            return oc === _targetColor || oc.indexOf(_targetColor) >= 0 || _targetColor.indexOf(oc) >= 0
+                || ( _targetColor === 'black' && (oc === 'bk' || oc.indexOf('black') >= 0) )
+                || ( oc === 'black' && (_targetColor === 'bk' || _targetColor.indexOf('black') >= 0) );
+        }
+
+        const outs = (Storage.getAll(DB.STORES.INJECTION_INVENTORY) || []).filter(function(r) {
+            if (!r || r.type !== '출고') return false;
+            if ((r.partName || '').trim() !== _injPN) return false;
+            if (carModel && r.carModel && r.carModel !== carModel) return false;
+            if (!_outColorOk(r.color)) return false;
+            if (r.refWorkId) return false; // 도장 실적 연동 출고 — 예약은 실적(plan 완료)로 이미 해제
+            const oType = String(r.outgoingType || '').trim();
+            const src = String(r.source || '').trim();
+            return oType === '생산출고' || /도장\s*작업/.test(src) || src === '도장 입고';
+        }).sort(function(a, b) {
+            return String(a.date || '').localeCompare(String(b.date || '')) ||
+                String(a.createdAt || a.id || '').localeCompare(String(b.createdAt || b.id || ''));
+        });
+
+        outs.forEach(function(out) {
+            let qty = Number(out.quantity) || 0;
+            if (qty <= 0) return;
+            const outDay = String(out.date || '').slice(0, 10);
+            const planId = String(out.planId || '').trim();
+
+            if (planId) {
+                const hit = plans.find(function(p) { return String(p.id) === planId && p.remain > 0; });
+                if (hit) {
+                    const use = Math.min(hit.remain, qty);
+                    hit.remain -= use;
+                    qty -= use;
+                }
+            }
+            for (let i = 0; i < plans.length && qty > 0; i++) {
+                const p = plans[i];
+                if (p.remain <= 0) continue;
+                const planDay = String(p.date || '').slice(0, 10);
+                if (planDay && outDay && outDay < planDay) continue;
+                const use = Math.min(p.remain, qty);
+                p.remain -= use;
+                qty -= use;
+            }
+        });
+
+        const nextPending = plans.filter(function(p) { return p.bucket === 'pending' && p.remain > 0; })
+            .map(function(p) { return Object.assign({}, p, { planQty: p.remain }); });
+        const nextProgress = plans.filter(function(p) { return p.bucket === 'inProgress' && p.remain > 0; })
+            .map(function(p) { return Object.assign({}, p, { planQty: p.remain }); });
+
+        return {
+            pending: nextPending.reduce(function(s, p) { return s + (Number(p.planQty) || 0); }, 0),
+            inProgress: nextProgress.reduce(function(s, p) { return s + (Number(p.planQty) || 0); }, 0),
+            pendingPlans: nextPending,
+            inProgressPlans: nextProgress
+        };
+    }
+
     // 사출 자재명(injPartName) 기준으로 생산계획 예약 수량 집계
     // - 대기/진행: 예약으로 계산
     // - 완료: 도장 작업실적이 없으면 아직 재고가 차감되지 않은 것이므로 예약으로 포함
+    // - 창고 생산출고(도장 실적 미연동) 분은 예약에서 차감
     // 반환: { pending(대기+미실적완료), inProgress(진행) }
     function _calcInjPlanReserved(injPartName, excludePlanId, carModel, injColor, includeCurrentForm = true) {
         const injMats = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
@@ -1431,7 +1521,6 @@ const ProductionPlanModule = (function() {
         }
 
         const allPlans = Storage.getAll(STORE) || [];
-        let pending = 0, inProgress = 0;
 
         // ── 진단: 품목명이 일치하는 계획 목록 ───────────────────────
         // ★ .trim() — planPartNames에는 이미 trim된 값이 들어있으므로 p.partName도 trim 비교
@@ -1467,6 +1556,9 @@ const ProductionPlanModule = (function() {
             }
         }
 
+        const pendingPlans = [];
+        const inProgressPlans = [];
+
         allPlans.forEach(p => {
             if (excludePlanId && p.id === excludePlanId) return;
             // ★ v19: ID 매칭 우선, 없으면 텍스트 매칭 Fallback
@@ -1479,10 +1571,21 @@ const ProductionPlanModule = (function() {
             // ★ 도장-A → 레이저 → 도장-B 제품의 도장-B 계획은 레이저 재공품에서 소진되므로 제외
             if (_isPostLaserRepaintPlan(p, _allProducts)) return;
             const qty = Number(p.planQty) || 0;
-            if (p.status === '대기')  { pending    += qty; return; }
-            if (p.status === '진행') { inProgress += qty; return; }
+            const info = {
+                id: p.id,
+                date: p.date || '',
+                partName: p.partName || '',
+                color: p.color || '',
+                planQty: qty,
+                status: p.status || '',
+                line: p.line || ''
+            };
+            if (p.status === '대기')  { pendingPlans.push(info); return; }
+            if (p.status === '진행') { inProgressPlans.push(info); return; }
             // 완료 계획이지만 도장 작업실적이 없으면 → 미입력 실적 (예약 상세·도장 실적입력과 동일)
-            if (p.status === '완료' && !workedPlanIds.has(p.id)) { inProgress += qty; }
+            if (p.status === '완료' && !workedPlanIds.has(p.id)) {
+                inProgressPlans.push(Object.assign({}, info, { status: '완료(미실적)' }));
+            }
         });
         // 현재 생산계획 등록 모달이 실제로 열려있는 경우에만 폼 입력 수량을 예약으로 포함
         // ★ 모달이 닫혀있어도 DOM에 폼 요소가 남아 있어 오탐(팬텀 예약)이 발생할 수 있으므로
@@ -1494,9 +1597,21 @@ const ProductionPlanModule = (function() {
             const formQty   = Number((document.getElementById('sQty') || {}).value) || 0;
             // 폼 컬러가 명시적으로 선택된 경우에만, 이 자재의 컬러와 일치할 때 포함
             if (planPartNames.has(formPart) && formQty > 0 && formColor && _colorMatches(formColor)) {
-                pending += formQty;
+                pendingPlans.push({
+                    id: '__form__',
+                    date: UIUtils.today ? UIUtils.today() : '',
+                    partName: formPart,
+                    color: formColor,
+                    planQty: formQty,
+                    status: '대기(작성중)',
+                    line: ''
+                });
             }
         }
+
+        const consumed = _consumeReserveByWarehouseOut(_injPN, carModel, injColor, pendingPlans, inProgressPlans);
+        const pending = consumed.pending;
+        const inProgress = consumed.inProgress;
 
         console.log(`[예약집계] "${injPartName}"${_targetColor ? ` [${_targetColor}]` : ''}`
             + ` → pending=${pending}, inProgress=${inProgress}`
@@ -2920,7 +3035,9 @@ const ProductionPlanModule = (function() {
     // 반환: { pendingPlans, inProgressPlans, pendingTotal, inProgressTotal }
     //   pendingPlans    : 대기 상태 계획 목록 (당일 계획)
     //   inProgressPlans : 진행중 + 완료-미실적 목록 (미입력 실적)
-    function _getInjReserveDetail(injPartName, carModel, injColor) {
+    function _getInjReserveDetail(injPartName, carModel, injColor, options) {
+        options = options || {};
+        const skipWarehouseConsume = !!options.skipWarehouseConsume;
         const injMats      = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
         const planPartNames = new Set();
         const planColors    = new Set();
@@ -3016,11 +3133,21 @@ const ProductionPlanModule = (function() {
         pendingPlans.sort((a, b) => a.date.localeCompare(b.date));
         inProgressPlans.sort((a, b) => a.date.localeCompare(b.date));
 
+        if (skipWarehouseConsume) {
+            return {
+                pendingPlans,
+                inProgressPlans,
+                pendingTotal: pendingPlans.reduce((s, p) => s + p.planQty, 0),
+                inProgressTotal: inProgressPlans.reduce((s, p) => s + p.planQty, 0)
+            };
+        }
+
+        const consumed = _consumeReserveByWarehouseOut(_injPN, carModel, injColor, pendingPlans, inProgressPlans);
         return {
-            pendingPlans,
-            inProgressPlans,
-            pendingTotal:    pendingPlans.reduce((s, p) => s + p.planQty, 0),
-            inProgressTotal: inProgressPlans.reduce((s, p) => s + p.planQty, 0)
+            pendingPlans: consumed.pendingPlans,
+            inProgressPlans: consumed.inProgressPlans,
+            pendingTotal: consumed.pending,
+            inProgressTotal: consumed.inProgress
         };
     }
 

@@ -22,6 +22,82 @@ var LaserWipModule = (function() {
     let _afterWipUnmatchedLoaded = false;
     let _residualUnmatchedActions = [];
     let _residualUnmatchedLoaded = false;
+    let _alFilterCar = '';
+    let _alFilterPart = '';
+    let _resFilterCar = '';
+    let _resFilterPart = '';
+
+    function _matchCarPartFilter(row, carFilter, partFilter) {
+        if (!row) return false;
+        if (carFilter && String(row.carModel || '') !== carFilter) return false;
+        const needle = String(partFilter || '').trim().toLowerCase();
+        if (needle) {
+            const hay = [row.partName || '', row.color || '', row.carModel || ''].join(' ').toLowerCase();
+            if (hay.indexOf(needle) < 0) return false;
+        }
+        return true;
+    }
+
+    function _wipListFilterBarHtml(scope, cars, filteredCount, totalCount, carVal, partVal) {
+        const carId = scope === 'residual' ? 'resFilterCar' : 'alFilterCar';
+        const partId = scope === 'residual' ? 'resFilterPart' : 'alFilterPart';
+        const countId = scope === 'residual' ? 'resFilterCount' : 'alFilterCount';
+        const label = scope === 'residual' ? '잔량' : '재고';
+        return `
+            <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 12px;margin:0 0 14px;
+                        background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:8px;">
+                <strong style="font-size:0.78rem;color:var(--text-secondary);white-space:nowrap;">
+                    <span class="material-symbols-outlined" style="font-size:1rem;vertical-align:-3px;">filter_alt</span>
+                    차종·품목 검색
+                </strong>
+                <select id="${carId}" class="form-select" style="width:auto;min-width:120px;height:34px;"
+                    onchange="LaserWipModule.applyListFilter('${scope}')">
+                    <option value="">전체 차종</option>
+                    ${(cars || []).map(function(c) {
+                        return `<option value="${_esc(c)}"${c === carVal ? ' selected' : ''}>${_esc(c)}</option>`;
+                    }).join('')}
+                </select>
+                <input id="${partId}" class="form-input" type="search" style="width:auto;min-width:160px;height:34px;"
+                    placeholder="품명·컬러 검색" value="${_esc(partVal || '')}"
+                    oninput="LaserWipModule.applyListFilter('${scope}')">
+                <button type="button" class="btn btn-sm btn-outline" style="height:34px;"
+                    onclick="LaserWipModule.clearListFilter('${scope}')">초기화</button>
+                <span id="${countId}" style="font-size:0.72rem;color:var(--text-muted);margin-left:auto;white-space:nowrap;">
+                    ${label} ${filteredCount}/${totalCount}종
+                    ${(carVal || partVal) ? ' · 필터 적용 중' : ''}
+                </span>
+            </div>`;
+    }
+
+    function applyListFilter(scope) {
+        if (scope === 'residual') {
+            const carEl = document.getElementById('resFilterCar');
+            const partEl = document.getElementById('resFilterPart');
+            _resFilterCar = carEl ? String(carEl.value || '') : '';
+            _resFilterPart = partEl ? String(partEl.value || '') : '';
+            _refreshResidualListViews();
+            return;
+        }
+        const carEl = document.getElementById('alFilterCar');
+        const partEl = document.getElementById('alFilterPart');
+        _alFilterCar = carEl ? String(carEl.value || '') : '';
+        _alFilterPart = partEl ? String(partEl.value || '') : '';
+        _refreshAfterLaserListViews();
+    }
+
+    function clearListFilter(scope) {
+        if (scope === 'residual') {
+            _resFilterCar = '';
+            _resFilterPart = '';
+            const el = document.getElementById('wipTabContent');
+            if (el && _activeTab === 'after-laser-residual') _renderAfterLaserResidualTab(el);
+            return;
+        }
+        _alFilterCar = '';
+        _alFilterPart = '';
+        const el = document.getElementById('wipTabContent');
+        if (el && _activeTab === 'after-laser') _renderAfterLaserTab(el);
+    }
 
     function _isAdmin() {
         try {
@@ -215,7 +291,7 @@ var LaserWipModule = (function() {
                             </div>
                             <ul style="margin:8px 0 0;padding-left:18px;color:var(--text-secondary);">
                                 <li><strong>반영</strong> — LOT에서 미차감분(${_fmtWipStockQty(unmatchedQty)} EA)을 FIFO 차감 → 표시 재고 <strong>${_fmtWipStockQty(stock)}</strong> 유지</li>
-                                <li><strong>리셋</strong> — 미차감 채무만 소멸 → 표시 재고가 LOT 합계 <strong>${_fmtWipStockQty(physicalLotSum)}</strong>로 올라감</li>
+                                <li><strong>리셋</strong> — 미차감만 0 · 표시 재고 <strong>${_fmtWipStockQty(stock)}</strong> 유지 (현재 재고를 맞춘 뒤)</li>
                                 <li><strong>이력 확인</strong> — 원인 출고를 먼저 확인</li>
                             </ul>
                             <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;">
@@ -230,7 +306,7 @@ var LaserWipModule = (function() {
                                 </button>
                                 <button type="button" class="btn btn-sm" style="background:#0369a1;color:#fff;border-color:#0369a1;"
                                     onclick="LaserWipModule.openUnmatchedActionModal('${scope}','${opts.carModelEnc}','${opts.partNameEnc}','${opts.colorEnc}','clear',${unmatchedQty},${stock},${physicalLotSum})">
-                                    <span class="material-symbols-outlined" style="font-size:0.9rem;">restart_alt</span> 리셋 → ${_fmtWipStockQty(physicalLotSum)} EA
+                                    <span class="material-symbols-outlined" style="font-size:0.9rem;">restart_alt</span> 리셋 (미차감 0)
                                 </button>` : `
                                 <span style="font-size:0.75rem;color:var(--text-muted);align-self:center;">반영·리셋은 관리자만 실행할 수 있습니다.</span>`}
                             </div>
@@ -953,33 +1029,9 @@ var LaserWipModule = (function() {
     }
 
     // ── 탭 2: 레이져 후 재공품 현황 ──────────────────────────────────────
-    function _renderAfterLaserTab(el) {
-        const rows       = _calcWip();
-        const totalLaser = rows.reduce((s,r) => s + r.laserQty, 0);
-        const totalPaint = rows.reduce((s,r) => s + r.paintBQty, 0);
-        const totalWip   = rows.reduce((s,r) => s + (r.wip > 0 ? r.wip : 0), 0);
-        const waitCount  = rows.filter(r => r.wip > 0).length;
-        const unassignedWarn = _unassignedLotWarnHtml(
-            rows.filter(function(r) { return (Number(r.unassignedQty) || 0) > 0; })
-                .map(function(r) {
-                    const encKey = _productKey(r.carModel, r.partName, r.color || '');
-                    return {
-                        carModel: r.carModel,
-                        partName: r.partName,
-                        color: r.color,
-                        qty: r.unassignedQty,
-                        onClick: "LaserWipModule.showWipDetail('" + encKey + "')"
-                    };
-                }),
-            {
-                accent: 'var(--accent-orange,#f59e0b)',
-                hint: '도장/사출 LOT가 없는 재공 재고가 있습니다. 품목 상세에서 LOT 보정·수동입출고로 등록하세요.'
-            }
-        );
-
-        // 차종별 그룹핑
+    function _afterLaserInventoryHtml(rows) {
         const carGroups = {};
-        rows.forEach(r => {
+        (rows || []).forEach(r => {
             const car = r.carModel || '차종 미지정';
             if (!carGroups[car]) carGroups[car] = [];
             carGroups[car].push(r);
@@ -1047,12 +1099,58 @@ var LaserWipModule = (function() {
                 </div>`;
             }).join('');
 
-        const inventoryHtml = carCards
+        return carCards
             ? `<div style="column-count:2;column-gap:10px;">${carCards}</div>`
             : `<div style="text-align:center;padding:40px;color:var(--text-muted);">
                 <span class="material-symbols-outlined" style="font-size:2.5rem;display:block;opacity:0.3;margin-bottom:8px;">check_circle</span>
-                현재 레이져 후 재공품이 없습니다.
+                ${(_alFilterCar || _alFilterPart) ? '검색 조건에 맞는 재공품이 없습니다.' : '현재 레이져 후 재공품이 없습니다.'}
                </div>`;
+    }
+
+    function _refreshAfterLaserListViews() {
+        const rows = _calcWip();
+        const filtered = rows.filter(function(r) {
+            return _matchCarPartFilter(r, _alFilterCar, _alFilterPart);
+        });
+        const countEl = document.getElementById('alFilterCount');
+        if (countEl) {
+            countEl.textContent = '재고 ' + filtered.length + '/' + rows.length + '종'
+                + ((_alFilterCar || _alFilterPart) ? ' · 필터 적용 중' : '');
+        }
+        const invEl = document.getElementById('alInvBody');
+        if (invEl) invEl.innerHTML = _afterLaserInventoryHtml(filtered);
+        const flowEl = document.getElementById('alFlowBody');
+        if (flowEl) flowEl.innerHTML = _afterLaserFlowHistHtml({ car: _alFilterCar, part: _alFilterPart });
+    }
+
+    function _renderAfterLaserTab(el) {
+        const rows       = _calcWip();
+        const totalLaser = rows.reduce((s,r) => s + r.laserQty, 0);
+        const totalPaint = rows.reduce((s,r) => s + r.paintBQty, 0);
+        const totalWip   = rows.reduce((s,r) => s + (r.wip > 0 ? r.wip : 0), 0);
+        const waitCount  = rows.filter(r => r.wip > 0).length;
+        const filtered   = rows.filter(function(r) {
+            return _matchCarPartFilter(r, _alFilterCar, _alFilterPart);
+        });
+        const cars = [...new Set(rows.map(function(r) { return r.carModel; }).filter(Boolean))]
+            .sort(function(a, b) { return String(a).localeCompare(String(b), 'ko'); });
+        const unassignedWarn = _unassignedLotWarnHtml(
+            rows.filter(function(r) { return (Number(r.unassignedQty) || 0) > 0; })
+                .map(function(r) {
+                    const encKey = _productKey(r.carModel, r.partName, r.color || '');
+                    return {
+                        carModel: r.carModel,
+                        partName: r.partName,
+                        color: r.color,
+                        qty: r.unassignedQty,
+                        onClick: "LaserWipModule.showWipDetail('" + encKey + "')"
+                    };
+                }),
+            {
+                accent: 'var(--accent-orange,#f59e0b)',
+                hint: '도장/사출 LOT가 없는 재공 재고가 있습니다. 품목 상세에서 LOT 보정·수동입출고로 등록하세요.'
+            }
+        );
 
         el.innerHTML = `
             ${unassignedWarn}
@@ -1074,13 +1172,14 @@ var LaserWipModule = (function() {
                     <div class="stat-card-label">대기 품종 수</div>
                 </div>
             </div>
+            ${_wipListFilterBarHtml('after', cars, filtered.length, rows.length, _alFilterCar, _alFilterPart)}
             <div class="card" style="margin-bottom:20px;">
                 <div class="card-header">
                     <h4><span class="material-symbols-outlined">inventory_2</span> 재공 재고 현황</h4>
                     <span style="font-size:0.75rem;color:var(--text-muted);">레이져 완료 − 도장 투입 = 재공품 (레이져→도장 공정 제품만)</span>
                 </div>
-                <div class="card-body" style="padding:16px;display:flex;flex-direction:column;gap:14px;">
-                    ${inventoryHtml}
+                <div class="card-body" id="alInvBody" style="padding:16px;display:flex;flex-direction:column;gap:14px;">
+                    ${_afterLaserInventoryHtml(filtered)}
                 </div>
             </div>
             <div class="card">
@@ -1088,8 +1187,8 @@ var LaserWipModule = (function() {
                     <h4><span class="material-symbols-outlined">table_rows</span> 입출고 현황</h4>
                     <span style="font-size:0.75rem;color:var(--text-muted);">입고(레이져 완료) · 출고(도장 투입) 내역을 분리 표시</span>
                 </div>
-                <div class="card-body" style="padding:0;">
-                    ${_afterLaserFlowHistHtml()}
+                <div class="card-body" id="alFlowBody" style="padding:0;">
+                    ${_afterLaserFlowHistHtml({ car: _alFilterCar, part: _alFilterPart })}
                 </div>
             </div>
             ${_canEditWip() ? `
@@ -1320,6 +1419,11 @@ var LaserWipModule = (function() {
         const totalResidual = rows.reduce((s,r) => s + r.residualQty, 0);
         const totalGood     = rows.reduce((s,r) => s + r.goodQty, 0);
         const totalShip     = rows.reduce((s,r) => s + r.fullBoxQty, 0);
+        const filtered      = rows.filter(function(r) {
+            return _matchCarPartFilter(r, _resFilterCar, _resFilterPart);
+        });
+        const cars = [...new Set(rows.map(function(r) { return r.carModel; }).filter(Boolean))]
+            .sort(function(a, b) { return String(a).localeCompare(String(b), 'ko'); });
         const unassignedWarn = _unassignedLotWarnHtml(
             rows.filter(function(r) { return (Number(r.unassignedQty) || 0) > 0; })
                 .map(function(r) {
@@ -1337,9 +1441,63 @@ var LaserWipModule = (function() {
                 hint: '도장/사출 LOT가 없는 잔량이 있습니다. 품목 상세의 「LOT 지정」으로 등록하세요.'
             }
         );
-        // 차종별 그룹핑
+
+        el.innerHTML = `
+            ${unassignedWarn}
+            <div class="stat-cards" style="margin-bottom:16px;">
+                <div class="stat-card orange">
+                    <div class="stat-card-value">${UIUtils.formatNumber(totalResidual)}</div>
+                    <div class="stat-card-label">총 재고 (EA)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-card-value">${rows.length}</div>
+                    <div class="stat-card-label">잔량 품목 수</div>
+                </div>
+                <div class="stat-card green">
+                    <div class="stat-card-value">${UIUtils.formatNumber(totalShip)}</div>
+                    <div class="stat-card-label">출하가능 (EA)</div>
+                </div>
+                <div class="stat-card blue">
+                    <div class="stat-card-value">${UIUtils.formatNumber(totalGood)}</div>
+                    <div class="stat-card-label">총 양품 (EA)</div>
+                </div>
+            </div>
+            ${_wipListFilterBarHtml('residual', cars, filtered.length, rows.length, _resFilterCar, _resFilterPart)}
+            <div class="card" style="margin-bottom:20px;">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">inventory_2</span> 잔량 재고 현황</h4>
+                    <span style="font-size:0.75rem;color:var(--text-muted);">포장단위 미달로 출하 제외된 잔량</span>
+                </div>
+                <div class="card-body" id="resInvBody" style="padding:16px;display:flex;flex-direction:column;gap:14px;">
+                    ${_residualInventoryHtml(filtered)}
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">table_rows</span> 입출고 현황</h4>
+                    <span style="font-size:0.75rem;color:var(--text-muted);">입고(잔량 발생·수동입고) · 출고(수동출고) 내역을 분리 표시</span>
+                </div>
+                <div class="card-body" id="resFlowBody" style="padding:0;">
+                    ${_residualFlowHistHtml({ car: _resFilterCar, part: _resFilterPart })}
+                </div>
+            </div>
+            ${_canEditWip() ? `
+            <div class="card" style="margin-top:20px;">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined">edit_note</span> 잔량 수기 입출고 내역 관리
+                        <span style="font-size:0.78rem;color:var(--text-muted);font-weight:400;">(관리자·레이져운영자 전용)</span>
+                    </h4>
+                    ${_actionBtn('신규 등록', 'add', "LaserWipModule.openResidualInput()", 'var(--accent-green)')}
+                </div>
+                <div class="card-body" style="padding:0;">
+                    ${_residualManualEntriesTableHtml()}
+                </div>
+            </div>` : ''}`;
+    }
+
+    function _residualInventoryHtml(rows) {
         const carGroups = {};
-        rows.forEach(r => {
+        (rows || []).forEach(r => {
             const car = r.carModel || '차종 미지정';
             if (!carGroups[car]) carGroups[car] = [];
             carGroups[car].push(r);
@@ -1403,96 +1561,28 @@ var LaserWipModule = (function() {
                 </div>`;
             }).join('');
 
-        const inventoryHtml = carCards
+        return carCards
             ? `<div style="column-count:2;column-gap:10px;">${carCards}</div>`
             : `<div style="text-align:center;padding:40px;color:var(--text-muted);">
                 <span class="material-symbols-outlined" style="font-size:2.5rem;display:block;opacity:0.3;margin-bottom:8px;">check_circle</span>
-                현재 잔량이 없습니다.
+                ${(_resFilterCar || _resFilterPart) ? '검색 조건에 맞는 잔량이 없습니다.' : '현재 잔량이 없습니다.'}
                </div>`;
+    }
 
-        el.innerHTML = `
-            ${unassignedWarn}
-            <div class="stat-cards" style="margin-bottom:16px;">
-                <div class="stat-card orange">
-                    <div class="stat-card-value">${UIUtils.formatNumber(totalResidual)}</div>
-                    <div class="stat-card-label">총 재고 (EA)</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-card-value">${rows.length}</div>
-                    <div class="stat-card-label">잔량 품목 수</div>
-                </div>
-                <div class="stat-card green">
-                    <div class="stat-card-value">${UIUtils.formatNumber(totalShip)}</div>
-                    <div class="stat-card-label">출하가능 (EA)</div>
-                </div>
-                <div class="stat-card blue">
-                    <div class="stat-card-value">${UIUtils.formatNumber(totalGood)}</div>
-                    <div class="stat-card-label">총 양품 (EA)</div>
-                </div>
-            </div>
-            <div class="card" style="margin-bottom:20px;">
-                <div class="card-header">
-                    <h4><span class="material-symbols-outlined">inventory_2</span> 잔량 재고 현황</h4>
-                    <span style="font-size:0.75rem;color:var(--text-muted);">포장단위 미달로 출하 제외된 잔량</span>
-                </div>
-                <div class="card-body" style="padding:16px;display:flex;flex-direction:column;gap:14px;">
-                    ${inventoryHtml}
-                </div>
-            </div>
-            <div class="card">
-                <div class="card-header">
-                    <h4><span class="material-symbols-outlined">table_rows</span> 잔량 상세 내역 <span style="font-size:0.78rem;color:var(--text-muted);font-weight:600;">(입출고 현황)</span></h4>
-                    <span style="font-size:0.75rem;color:var(--text-muted);">레이져 작업 기준 잔량 발생 내역 · 수동입고/출고 포함</span>
-                </div>
-                <div class="card-body" style="padding:0;">
-                    <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
-                        <thead>
-                            <tr style="background:var(--bg-secondary);border-bottom:2px solid var(--border-color);">
-                                <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">차종</th>
-                                <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">품명</th>
-                                <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">컬러</th>
-                                <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">레이져작업일</th>
-                                <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">도장작업일</th>
-                                <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">사출LOT</th>
-                                <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--text-secondary);white-space:nowrap;">양품</th>
-                                <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--accent-green);white-space:nowrap;">출하가능</th>
-                                <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--text-secondary);white-space:nowrap;">포장단위</th>
-                                <th style="padding:9px 12px;text-align:right;font-weight:600;color:var(--accent-orange,#f59e0b);white-space:nowrap;">잔량</th>
-                                <th style="padding:9px 12px;text-align:center;font-weight:600;color:var(--text-secondary);white-space:nowrap;">상태</th>
-                                <th style="padding:9px 12px;text-align:left;font-weight:600;color:var(--text-secondary);white-space:nowrap;">작성자</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${(function() {
-                                const manualEntries = _residualManualEntries();
-                                if (rows.length === 0 && manualEntries.length === 0) {
-                                    return `<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-muted);">
-                                        <span class="material-symbols-outlined" style="font-size:2rem;display:block;margin-bottom:8px;opacity:0.4;">check_circle</span>
-                                        레이져 잔량 입고 대상이 없습니다.
-                                       </td></tr>`;
-                                }
-                                const combined = [
-                                    ...rows.map(r => ({ date: r.laserDates[0] || '', html: _laserResidualRow(r) })),
-                                    ...manualEntries.map(w => ({ date: w.date || '', html: _manualResidualHistoryRow(w) }))
-                                ].sort((a, b) => String(b.date).localeCompare(String(a.date)));
-                                return combined.map(item => item.html).join('');
-                            })()}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            ${_canEditWip() ? `
-            <div class="card" style="margin-top:20px;">
-                <div class="card-header">
-                    <h4><span class="material-symbols-outlined">edit_note</span> 잔량 수기 입출고 내역 관리
-                        <span style="font-size:0.78rem;color:var(--text-muted);font-weight:400;">(관리자·레이져운영자 전용)</span>
-                    </h4>
-                    ${_actionBtn('신규 등록', 'add', "LaserWipModule.openResidualInput()", 'var(--accent-green)')}
-                </div>
-                <div class="card-body" style="padding:0;">
-                    ${_residualManualEntriesTableHtml()}
-                </div>
-            </div>` : ''}`;
+    function _refreshResidualListViews() {
+        const rows = _calcLaserResidualWip();
+        const filtered = rows.filter(function(r) {
+            return _matchCarPartFilter(r, _resFilterCar, _resFilterPart);
+        });
+        const countEl = document.getElementById('resFilterCount');
+        if (countEl) {
+            countEl.textContent = '잔량 ' + filtered.length + '/' + rows.length + '종'
+                + ((_resFilterCar || _resFilterPart) ? ' · 필터 적용 중' : '');
+        }
+        const invEl = document.getElementById('resInvBody');
+        if (invEl) invEl.innerHTML = _residualInventoryHtml(filtered);
+        const flowEl = document.getElementById('resFlowBody');
+        if (flowEl) flowEl.innerHTML = _residualFlowHistHtml({ car: _resFilterCar, part: _resFilterPart });
     }
 
     // ── 레이져 잔량 수기 입출고 내역 관리 (관리자 전용) ────────────────
@@ -1829,7 +1919,8 @@ var LaserWipModule = (function() {
         // LOT 미지정 양수 잔량만 총량에 포함 (FIFO 후 남은 음수 미지정은 실재고가 아님)
         const unassigned = Math.max(0, Number(detail.manualAdj) || 0);
         const unmatched = Math.max(0, Number(detail.unmatched) || 0);
-        return Math.max(0, Math.round(lotSum + unassigned - unmatched));
+        const writeOff = Math.max(0, Number(detail.unmatchedWriteOff) || 0);
+        return Math.max(0, Math.round(lotSum + unassigned - unmatched - writeOff));
     }
 
     function _calcLaserResidualWip() {
@@ -2670,6 +2761,7 @@ var LaserWipModule = (function() {
         // 어느 LOT에서 얼마나 빠졌는지 fifoTrace에 남겨서, 이력표에도 실제 배분 내역을 보여줄 수 있게 한다.
         const fifoTrace = [];
         let unmatched = 0;
+        let unmatchedWriteOff = 0;
         function fifoDeductFromLots(amount, sourceEvent, trackUnmatched) {
             let remaining = amount;
             Object.values(lotMap)
@@ -2756,6 +2848,7 @@ var LaserWipModule = (function() {
             }
             if (action === 'clear') {
                 unmatched = Math.max(0, unmatched - amount);
+                unmatchedWriteOff += amount;
             }
         });
 
@@ -2773,7 +2866,8 @@ var LaserWipModule = (function() {
             lots: lots,
             manualAdj: manualAdj,
             fifoTrace: fifoTrace,
-            unmatched: Math.round(unmatched * 1000) / 1000
+            unmatched: Math.round(unmatched * 1000) / 1000,
+            unmatchedWriteOff: Math.round(unmatchedWriteOff * 1000) / 1000
         };
     }
 
@@ -3595,6 +3689,7 @@ var LaserWipModule = (function() {
         const histItems = _buildAfterWipHistItems(carModel, partName, color);
         const wipMap = {};
         let unmatched = 0;
+        let unmatchedWriteOff = 0;
 
         function _ensureLot(lotNo, paintLot) {
             const key = String(lotNo || '').trim() || '-';
@@ -3713,6 +3808,7 @@ var LaserWipModule = (function() {
             }
             if (action === 'clear') {
                 unmatched = Math.max(0, unmatched - amount);
+                unmatchedWriteOff += amount;
             }
         });
 
@@ -3721,6 +3817,7 @@ var LaserWipModule = (function() {
             .filter(function(l) { return (Number(l.balance) || 0) > 0; })
             .sort(function(a, b) { return String(a.lotNo || '').localeCompare(String(b.lotNo || '')); });
         rows.unmatched = Math.round(unmatched * 1000) / 1000;
+        rows.unmatchedWriteOff = Math.round(unmatchedWriteOff * 1000) / 1000;
         return rows;
     }
 
@@ -3729,7 +3826,8 @@ var LaserWipModule = (function() {
             return s + Math.max(0, Number(l && l.balance) || 0);
         }, 0);
         const unmatched = Math.max(0, Number(lotRows && lotRows.unmatched) || 0);
-        return Math.max(0, physical - unmatched);
+        const writeOff = Math.max(0, Number(lotRows && lotRows.unmatchedWriteOff) || 0);
+        return Math.max(0, physical - unmatched - writeOff);
     }
 
     // 레이져 후 재공에서 도장-B로 이동한 수량은 도장 "완료수량"이 아니라
@@ -4802,8 +4900,15 @@ function _num(value) {
         return { incomingRows: incomingRows, outgoingRows: outgoingRows };
     }
 
-    function _afterLaserFlowHistHtml() {
-        const { incomingRows, outgoingRows } = _buildAfterLaserFlowRows();
+    function _afterLaserFlowHistHtml(filter) {
+        filter = filter || {};
+        let { incomingRows, outgoingRows } = _buildAfterLaserFlowRows();
+        incomingRows = (incomingRows || []).filter(function(r) {
+            return _matchCarPartFilter(r, filter.car || '', filter.part || '');
+        });
+        outgoingRows = (outgoingRows || []).filter(function(r) {
+            return _matchCarPartFilter(r, filter.car || '', filter.part || '');
+        });
         const emptyRow = function(label, colSpan) {
             return `<tr><td colspan="${colSpan}" style="text-align:center;color:var(--text-muted);padding:18px;font-size:0.84rem;">${label}</td></tr>`;
         };
@@ -4836,7 +4941,7 @@ function _num(value) {
 
         if (!incomingRows.length && !outgoingRows.length) {
             return `<p style="color:var(--text-muted);font-size:0.88rem;padding:24px;text-align:center;">
-                레이져 후 도장 공정이 있는 제품의 입출고 이력이 없습니다.
+                ${(filter.car || filter.part) ? '검색 조건에 맞는 입출고 이력이 없습니다.' : '레이져 후 도장 공정이 있는 제품의 입출고 이력이 없습니다.'}
             </p>`;
         }
 
@@ -4890,6 +4995,197 @@ function _num(value) {
                     <div class="data-table-wrapper" style="overflow-x:auto;">
                         <table class="data-table" style="${ioTableStyle}">
                             ${ioColgroup}
+                            <thead>
+                                <tr>
+                                    <th style="${thNowrap}">출고일</th>
+                                    <th style="${thNowrap}">차종</th>
+                                    <th style="${thNowrap}">품명</th>
+                                    <th style="${thNowrap}">컬러</th>
+                                    <th style="text-align:right;${thNowrap}">출고수량</th>
+                                    <th style="${thNowrap}">도장 LOT</th>
+                                    <th style="${thNowrap}">사출 LOT</th>
+                                    <th style="${thNowrap}">경로</th>
+                                    <th style="${thNowrap}">비고</th>
+                                </tr>
+                            </thead>
+                            <tbody>${outgoingBody}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    function _buildResidualFlowRows() {
+        const laserWorks = Storage.getAll(STORE_LASER) || [];
+        let incomingRows = [];
+        let outgoingRows = [];
+
+        laserWorks.forEach(function(w) {
+            if (!w || w.isResidualAuditOnly) return;
+            const lots = _lotsFromLaserWork(w);
+            const date = _dateTime(w.date || '', w.endTime || w.startTime || '') || (w.date || '-');
+            const paintLot = w.residualPaintLot
+                ? _normalizePaintLot(w.residualPaintLot)
+                : lots.paintLot;
+            const injLot = w.lotNo ? String(w.lotNo).trim() : lots.injLot;
+            const base = {
+                carModel: w.carModel || '-',
+                partName: w.partName || '-',
+                color: w.color || '-',
+                date: date,
+                paintLot: paintLot || '-',
+                injLot: injLot || '-',
+                key: _productKey(w.carModel || '', w.partName || '', w.color || ''),
+                author: w.author || ''
+            };
+
+            if (w.isResidualManualOut) {
+                const qty = Number(w.quantity) || 0;
+                if (qty <= 0) return;
+                outgoingRows.push(Object.assign({}, base, {
+                    qty: qty,
+                    route: w.isResidualLotAdjust ? 'LOT 보정' : '수동 출고',
+                    note: w.note || w.machine || w.author || ''
+                }));
+                return;
+            }
+            if (w.isResidualManualIn) {
+                const qty = Number(w.quantity) || 0;
+                if (qty <= 0) return;
+                incomingRows.push(Object.assign({}, base, {
+                    qty: qty,
+                    route: w.isResidualLotAdjust ? 'LOT 보정' : '수동 입고',
+                    note: w.note || w.machine || w.author || ''
+                }));
+                return;
+            }
+
+            // 재공(후) 수기·일반 수동출고는 잔량 입출고에 포함하지 않음
+            if (w.isManualOut || w.isManual) return;
+
+            const goodQty = Number(w.inspectionGoodQty) || Number(w.completedQty) || Number(w.quantity) || 0;
+            const packUnit = Number(w.packUnit) || 0;
+            const resQty = Number(w.laserResidualQty) || (packUnit > 0
+                ? Math.max(0, goodQty - Math.floor(goodQty / packUnit) * packUnit)
+                : 0);
+            if (resQty <= 0) return;
+            incomingRows.push(Object.assign({}, base, {
+                qty: resQty,
+                route: '잔량 발생',
+                note: w.machine || w.note || ''
+            }));
+        });
+
+        incomingRows = incomingRows.map(function(row) {
+            const reset = _getResidualHistoryReset(row.carModel, row.partName, row.color);
+            if (reset && _isBeforeHistoryReset(row.date, reset.historyResetAt)) {
+                return Object.assign({}, row, { beforeReset: true });
+            }
+            return row;
+        });
+        outgoingRows = outgoingRows.map(function(row) {
+            const reset = _getResidualHistoryReset(row.carModel, row.partName, row.color);
+            if (reset && _isBeforeHistoryReset(row.date, reset.historyResetAt)) {
+                return Object.assign({}, row, { beforeReset: true });
+            }
+            return row;
+        });
+        incomingRows.sort(function(a, b) { return String(b.date || '').localeCompare(String(a.date || '')); });
+        outgoingRows.sort(function(a, b) { return String(b.date || '').localeCompare(String(a.date || '')); });
+        return { incomingRows: incomingRows, outgoingRows: outgoingRows };
+    }
+
+    function _residualFlowHistHtml(filter) {
+        filter = filter || {};
+        let { incomingRows, outgoingRows } = _buildResidualFlowRows();
+        incomingRows = (incomingRows || []).filter(function(r) {
+            return _matchCarPartFilter(r, filter.car || '', filter.part || '');
+        });
+        outgoingRows = (outgoingRows || []).filter(function(r) {
+            return _matchCarPartFilter(r, filter.car || '', filter.part || '');
+        });
+        const emptyRow = function(label, colSpan) {
+            return `<tr><td colspan="${colSpan}" style="text-align:center;color:var(--text-muted);padding:18px;font-size:0.84rem;">${label}</td></tr>`;
+        };
+        const ioTableStyle = 'font-size:0.85rem;width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;';
+        const thNowrap = 'white-space:nowrap;padding:8px 10px;';
+        const rowHtml = function(r, kind) {
+            const qtyColor = kind === 'in' ? 'var(--accent-orange,#f59e0b)' : 'var(--accent-blue)';
+            const border = kind === 'in' ? 'var(--accent-orange,#f59e0b)' : 'var(--accent-blue)';
+            const encKey = r.key || _productKey(r.carModel, r.partName, r.color || '');
+            const routeLabel = r.beforeReset ? ((r.route || '-') + ' · 리셋 이전') : (r.route || '-');
+            const rowOpacity = r.beforeReset ? 'opacity:0.72;' : '';
+            const noteText = (r.note || '') + (r.beforeReset ? ' (리셋 이전 기록)' : '');
+            return `<tr style="border-left:3px solid ${border};cursor:pointer;${rowOpacity}"
+                        onclick="LaserWipModule.showResidualDetail('${encKey}', event)"
+                        onmouseover="this.style.background='rgba(245,158,11,0.07)'"
+                        onmouseout="this.style.background=''">
+                <td style="white-space:nowrap;padding:8px 10px;">${_esc(r.date || '-')}</td>
+                <td style="white-space:nowrap;padding:8px 10px;"><strong>${_esc(r.carModel || '-')}</strong></td>
+                <td style="white-space:nowrap;padding:8px 10px;">${_esc(r.partName || '-')}</td>
+                <td style="white-space:nowrap;padding:8px 10px;">${_esc(r.color && r.color !== '-' ? r.color : '-')}</td>
+                <td style="text-align:right;color:${qtyColor};font-weight:700;white-space:nowrap;padding:8px 10px;">${UIUtils.formatNumber(r.qty || 0)}</td>
+                <td style="font-family:monospace;font-size:0.8rem;color:var(--accent-green);white-space:nowrap;padding:8px 10px;">${_esc(r.paintLot || '-')}</td>
+                <td style="font-family:monospace;font-size:0.8rem;white-space:nowrap;padding:8px 10px;">${_esc(r.injLot || '-')}</td>
+                <td style="font-size:0.78rem;color:var(--text-secondary);white-space:nowrap;padding:8px 10px;" title="${_esc(routeLabel)}">${_esc(routeLabel)}</td>
+                <td style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;padding:8px 10px;" title="${_esc(noteText)}">${_esc(r.note || '')}${r.beforeReset ? ' <span style="color:#94a3b8;">(리셋 이전 기록)</span>' : ''}</td>
+            </tr>`;
+        };
+
+        if (!incomingRows.length && !outgoingRows.length) {
+            return `<p style="color:var(--text-muted);font-size:0.88rem;padding:24px;text-align:center;">
+                ${(filter.car || filter.part) ? '검색 조건에 맞는 잔량 입출고 이력이 없습니다.' : '레이져 잔량 입출고 이력이 없습니다.'}
+            </p>`;
+        }
+
+        const incomingBody = incomingRows.length
+            ? incomingRows.map(function(r) { return rowHtml(r, 'in'); }).join('')
+            : emptyRow('입고 내역이 없습니다.', 9);
+        const outgoingBody = outgoingRows.length
+            ? outgoingRows.map(function(r) { return rowHtml(r, 'out'); }).join('')
+            : emptyRow('출고 내역이 없습니다.', 9);
+
+        return `
+            <div style="display:flex;flex-direction:column;gap:18px;padding:16px;">
+                <div>
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                        <h4 style="margin:0;display:flex;align-items:center;gap:6px;font-size:0.95rem;">
+                            <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-orange,#f59e0b);">input</span>
+                            입고현황
+                            <span style="font-size:0.75rem;color:var(--text-muted);font-weight:500;">(잔량 발생 · 수동입고)</span>
+                        </h4>
+                        <span style="font-size:0.75rem;color:var(--text-muted);">${incomingRows.length}건</span>
+                    </div>
+                    <div class="data-table-wrapper" style="overflow-x:auto;">
+                        <table class="data-table" style="${ioTableStyle}">
+                            <thead>
+                                <tr>
+                                    <th style="${thNowrap}">입고일</th>
+                                    <th style="${thNowrap}">차종</th>
+                                    <th style="${thNowrap}">품명</th>
+                                    <th style="${thNowrap}">컬러</th>
+                                    <th style="text-align:right;${thNowrap}">입고수량</th>
+                                    <th style="${thNowrap}">도장 LOT</th>
+                                    <th style="${thNowrap}">사출 LOT</th>
+                                    <th style="${thNowrap}">경로</th>
+                                    <th style="${thNowrap}">비고</th>
+                                </tr>
+                            </thead>
+                            <tbody>${incomingBody}</tbody>
+                        </table>
+                    </div>
+                </div>
+                <div>
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                        <h4 style="margin:0;display:flex;align-items:center;gap:6px;font-size:0.95rem;">
+                            <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-blue);">output</span>
+                            출고현황
+                            <span style="font-size:0.75rem;color:var(--text-muted);font-weight:500;">(수동출고 · LOT 보정)</span>
+                        </h4>
+                        <span style="font-size:0.75rem;color:var(--text-muted);">${outgoingRows.length}건</span>
+                    </div>
+                    <div class="data-table-wrapper" style="overflow-x:auto;">
+                        <table class="data-table" style="${ioTableStyle}">
                             <thead>
                                 <tr>
                                     <th style="${thNowrap}">출고일</th>
@@ -5706,14 +6002,15 @@ function _num(value) {
         }
         const title = isAbsorb ? '미차감 반영' : '미차감 리셋';
         const accent = isAbsorb ? '#b45309' : '#0369a1';
-        const resultStock = isAbsorb ? stock : lotSum;
+        const resultStock = stock;
         const scopeLabel = scope === 'residual' ? '레이져 잔량' : '레이져 후 재공';
         const explain = isAbsorb
             ? `보유 LOT에서 미차감 ${UIUtils.formatNumber(unmatched)} EA를 FIFO로 차감합니다.<br>
                · 표시 재고: <strong>${UIUtils.formatNumber(stock)}</strong> EA 유지<br>
                · LOT 잔량 합계: ${UIUtils.formatNumber(lotSum)} → <strong>${UIUtils.formatNumber(stock)}</strong> EA`
-            : `미차감 채무 ${UIUtils.formatNumber(unmatched)} EA만 소멸하고 LOT 잔량은 그대로 둡니다.<br>
-               · 표시 재고: ${UIUtils.formatNumber(stock)} → <strong>${UIUtils.formatNumber(lotSum)}</strong> EA`;
+            : `미차감 ${UIUtils.formatNumber(unmatched)} EA만 <strong>0</strong>으로 만듭니다.<br>
+               · 표시 재고: <strong>${UIUtils.formatNumber(stock)}</strong> EA 유지<br>
+               · 현재 재고를 맞춘 뒤 미차감 표시만 지울 때 사용합니다.`;
 
         UIUtils.showModal(title + ` (${scopeLabel})`, `
             <div style="background:${accent}12;border:1px solid ${accent}44;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:0.86rem;line-height:1.65;">
@@ -5807,7 +6104,7 @@ function _num(value) {
             return;
         }
 
-        const stockAfterTarget = isAbsorb ? stockBefore : physicalLotSum;
+        const stockAfterTarget = stockBefore;
         const label = isAbsorb ? '미차감 반영' : '미차감 리셋';
         const nowStr = (UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' '));
         const author = _currentUserName();
@@ -5823,7 +6120,7 @@ function _num(value) {
             stockBefore: stockBefore,
             stockAfterTarget: stockAfterTarget,
             reason: reason,
-            note: `[${label}] ${reason}`,
+            note: `[${label}] ${reason} · 미차감 ${UIUtils.formatNumber(unmatched)} EA → 0 · 재고 ${UIUtils.formatNumber(stockBefore)} EA 유지`,
             date: nowStr,
             createdAt: new Date().toISOString(),
             author: author
@@ -5863,7 +6160,7 @@ function _num(value) {
             }
 
             UIUtils.closeModal();
-            UIUtils.toast(`${label} 완료 (재고 ${_fmtWipStockQty(stockBefore)} → ${_fmtWipStockQty(stockAfterTarget)} EA)`, 'success');
+            UIUtils.toast(`${label} 완료 — 미차감 0 · 재고 ${_fmtWipStockQty(stockBefore)} EA 유지`, 'success');
             refresh();
             setTimeout(function() {
                 if (scope === 'residual') showResidualDetail(_productKey(carModel, partName, color));
@@ -5888,6 +6185,7 @@ function _num(value) {
              onEditLaserIdCarChange, onEditLaserIdPartChange,
              getWipStock, getWipLotDetail, _calcWip, showWipDetail, showResidualDetail,
              filterHistoryByPaintLot,
+             applyListFilter, clearListFilter,
              openHistRouteLink,
              openUnmatchedActionModal, confirmUnmatchedAction,
              getResidualQty, getResidualQtyAsync, ensureResidualReady, isResidualHistoryResetsLoaded,

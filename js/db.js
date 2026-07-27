@@ -5,7 +5,7 @@
 
 const DB = (function() {
     const DB_NAME = 'ProductionMES_DB';
-    const DB_VERSION = 55;
+    const DB_VERSION = 56;
     let db = null;
 
     // 스토어 이름 - 전체 공정에 대응
@@ -32,6 +32,7 @@ const DB = (function() {
 
         // 도장 공정
         PAINTING_INCOMING: 'painting_incoming', // 도장 입고
+        PAINTING_INPUT_INVENTORY: 'painting_input_inventory', // 도장 투입 자재 (A/B 현장 투입)
         PAINTING_WORK: 'painting_work', // 도장 작업일지
         PAINTING_INSPECTIONS: 'painting_inspections', // 도장 검사 (불량 집계)
         PAINTING_OUTGOING: 'painting_outgoing', // 도장품 출고
@@ -553,6 +554,7 @@ const DB = (function() {
         [STORES.SHIPPING_INSPECTIONS]:       { remove: 'manager', clear: 'admin'   },
         // ── 재고 원장 (무결성 보호) ────────────────────────────────
         [STORES.INJECTION_INVENTORY]:        { remove: 'operator', clear: 'admin'  },
+        [STORES.PAINTING_INPUT_INVENTORY]:   { remove: 'operator', clear: 'admin'  },
         [STORES.PAINT_INVENTORY]:            { remove: 'operator', clear: 'admin'  },
         [STORES.PAINT_OUTGOING_STANDBY]:     { remove: 'operator', clear: 'admin'  },
         [STORES.PRODUCT_INVENTORY]:          { remove: 'operator', clear: 'admin'  },
@@ -1361,6 +1363,14 @@ const DB = (function() {
                     const store = database.createObjectStore(STORES.DELIVERY_PLAN_STAGING, { keyPath: 'id' });
                     store.createIndex('date', 'date', { unique: false });
                     store.createIndex('status', 'status', { unique: false });
+                }
+                // v56: 도장 투입 자재 (도장-A/B 현장 투입 재고)
+                if (oldVersion < 56 && !database.objectStoreNames.contains(STORES.PAINTING_INPUT_INVENTORY)) {
+                    const store = database.createObjectStore(STORES.PAINTING_INPUT_INVENTORY, { keyPath: 'id' });
+                    store.createIndex('date', 'date', { unique: false });
+                    store.createIndex('line', 'line', { unique: false });
+                    store.createIndex('partName', 'partName', { unique: false });
+                    store.createIndex('type', 'type', { unique: false });
                 }
             };
         });

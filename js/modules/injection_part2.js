@@ -486,16 +486,18 @@ var InjectionWarehouseModule = (function() {
             paintLine = _normalizePaintLine(workLineMap[d.refWorkId]);
         }
 
+        // 생산출고(도장 투입) → 유형을 도장-A / 도장-B로 표시
+        if (paintLine === '도장-A' || paintLine === '도장-B') {
+            const bg = paintLine === '도장-B' ? '#ffedd5' : '#ede9fe';
+            const fg = paintLine === '도장-B' ? '#c2410c' : '#6d28d9';
+            const br = paintLine === '도장-B' ? '#fdba74' : '#c4b5fd';
+            return `<span style="font-size:0.75rem;background:${bg};color:${fg};border:1px solid ${br};padding:2px 8px;border-radius:10px;font-weight:700;">${paintLine}</span>`;
+        }
+
         let detailBadge = '';
-        if (src === '도장 작업 출고' || paintLine) {
-            const line = paintLine || '도장';
-            const bg = line === '도장-B' ? '#ffedd5' : '#ede9fe';
-            const fg = line === '도장-B' ? '#c2410c' : '#6d28d9';
-            const br = line === '도장-B' ? '#fdba74' : '#c4b5fd';
-            detailBadge = `<span style="margin-left:4px;font-size:0.72rem;background:${bg};color:${fg};border:1px solid ${br};padding:1px 7px;border-radius:10px;font-weight:700;">${line}</span>`;
-        } else if (d.outgoingType === '반출') {
+        if (d.outgoingType === '반출') {
             detailBadge = `<span style="margin-left:4px;font-size:0.72rem;background:#fef3c7;color:#b45309;border:1px solid #fcd34d;padding:1px 7px;border-radius:10px;font-weight:700;">반출</span>`;
-        } else if (d.outgoingType === '생산출고') {
+        } else if (d.outgoingType === '생산출고' || src === '도장 작업 출고') {
             detailBadge = `<span style="margin-left:4px;font-size:0.72rem;background:#ede9fe;color:#7c3aed;border:1px solid #c4b5fd;padding:1px 7px;border-radius:10px;font-weight:700;">생산출고</span>`;
         } else if (src === '도장 입고') {
             detailBadge = `<span style="margin-left:4px;font-size:0.72rem;background:#dbeafe;color:#2563eb;border:1px solid #93c5fd;padding:1px 7px;border-radius:10px;font-weight:700;">도장입고</span>`;
@@ -1425,10 +1427,18 @@ var InjectionWarehouseModule = (function() {
             return {
                 label: '미차감 리셋',
                 color: '#0369a1',
-                detail: reason || '미차감 채무만 소멸 · LOT 잔량은 그대로 · 표시 재고 증가'
+                detail: reason || '미차감만 0 · 표시 재고 유지'
             };
         }
         if (d && d.type === '출고') {
+            const paintLine = _normalizePaintLine(d.paintLine || '');
+            if (paintLine === '도장-A' || paintLine === '도장-B') {
+                return {
+                    label: paintLine,
+                    color: paintLine === '도장-B' ? '#c2410c' : '#6d28d9',
+                    detail: src || oType || '생산출고 → 도장 투입'
+                };
+            }
             const isProd = src === '도장 작업 출고' || src === '도장 입고' || oType === '생산출고';
             return isProd
                 ? { label: '생산 차감', color: '#7c3aed', detail: src || oType || '도장 투입' }
@@ -1537,7 +1547,26 @@ var InjectionWarehouseModule = (function() {
         }
 
         if (!work || !work.id) {
-            UIUtils.toast('연동된 도장 작업 실적을 찾을 수 없습니다.', 'warning');
+            // 창고 직접 생산출고(실적 미연동) → 예약 계획으로 안내
+            const detail = (typeof ProductionPlanModule !== 'undefined' && ProductionPlanModule._getInjReserveDetail)
+                ? ProductionPlanModule._getInjReserveDetail(d.partName || '', d.carModel || '', d.color || '', { skipWarehouseConsume: true })
+                : null;
+            const candidates = []
+                .concat((detail && detail.pendingPlans) || [])
+                .concat((detail && detail.inProgressPlans) || []);
+            let planId = String(d.planId || '').trim();
+            if (!planId && candidates.length) {
+                const day = String(d.date || '').slice(0, 10);
+                const sameDay = candidates.find(function(p) { return String(p.date || '').slice(0, 10) === day; });
+                planId = String((sameDay || candidates[0]).id || '').trim();
+            }
+            if (planId && typeof PaintingWorkModule !== 'undefined' && typeof PaintingWorkModule.goToWorkFromPlan === 'function') {
+                UIUtils.closeModal();
+                UIUtils.toast('도장 실적 미연동 출고입니다. 예약 계획 실적입력으로 이동합니다.', 'info');
+                PaintingWorkModule.goToWorkFromPlan(planId);
+                return;
+            }
+            UIUtils.toast('연동된 도장 작업 실적을 찾을 수 없습니다. (창고 직접 출고 — 예약 계획에서 실적을 입력하세요)', 'warning');
             return;
         }
 
@@ -1732,7 +1761,7 @@ var InjectionWarehouseModule = (function() {
                 ? ' <span style="font-size:0.65rem;background:#dcfce7;color:#15803d;border-radius:4px;padding:1px 5px;font-weight:700;">FIFO</span>'
                 : '';
             const badLotBadge = isBadLot
-                ? ' <span title="LOT 번호 형식 오류 — 보정 수정으로 올바른 LOT을 입력하세요" style="font-size:0.65rem;background:#fee2e2;color:#b91c1c;border-radius:4px;padding:1px 5px;font-weight:700;">⚠ LOT 오류</span>'
+                ? ' <span title="LOT 번호 형식 오류 — 수량 보정으로 올바른 LOT을 입력하세요" style="font-size:0.65rem;background:#fee2e2;color:#b91c1c;border-radius:4px;padding:1px 5px;font-weight:700;">⚠ LOT 오류</span>'
                 : '';
             const rowStyle = isNeg ? ' style="background:rgba(239,68,68,.06);"'
                 : (isBadLot ? ' style="background:rgba(239,68,68,.1);"' : '');
@@ -1745,9 +1774,9 @@ var InjectionWarehouseModule = (function() {
                         ${UIUtils.formatNumber(d.qty)}
                     </td>
                     ${canEditLot ? `<td style="text-align:center;">
-                        ${isNeg ? '' : `<button class="btn btn-sm ${isBadLot ? 'btn-primary' : 'btn-outline'}" style="font-size:0.72rem;padding:2px 8px;${isBadLot ? 'background:#dc2626;border-color:#dc2626;' : ''}"
+                        ${isNeg ? '' : `<button class="btn btn-sm ${isBadLot ? 'btn-primary' : 'btn-outline'}" style="font-size:0.72rem;padding:2px 8px;${isBadLot ? 'background:#7c3aed;border-color:#7c3aed;' : 'color:#7c3aed;border-color:#7c3aed;'}"
                             onclick="InjectionWarehouseModule.openLotEditModal('${_cmJs}','${_pnJs}','${_clJs}','${_lotJs}',${Number(d.qty) || 0})">
-                            ${isBadLot ? 'LOT 입력' : '보정 수정'}
+                            ${isBadLot ? 'LOT 입력' : '수량 보정'}
                         </button>`}
                     </td>` : ''}
                     <td style="text-align:center;">
@@ -1787,6 +1816,7 @@ var InjectionWarehouseModule = (function() {
             </div>
             <div style="margin-bottom:14px;padding:8px 12px;background:rgba(220,38,38,0.05);border-left:3px solid var(--accent-red);border-radius:0 6px 6px 0;font-size:0.8rem;color:var(--text-secondary);">
                 출고할 LOT 옆의 <strong style="color:#dc2626;">출고</strong> 버튼을 누르면 출고 목록에 담기고, 재고 현황 화면의 '출고 리스트업'에서 <strong>출고 완료</strong>를 눌러야 재고에서 차감됩니다.
+                <strong>생산출고</strong>는 도착 라인(도장-A/B)을 선택하면 <strong>도장 투입 자재</strong>로 이동합니다.
             </div>
             <div style="margin-bottom:16px; display:flex; gap:16px; flex-wrap:wrap;">
                 <div style="background:var(--bg-secondary); padding:12px 20px; border-radius:8px; text-align:center;">
@@ -1822,7 +1852,7 @@ var InjectionWarehouseModule = (function() {
                             </div>
                             <ul style="margin:8px 0 0;padding-left:18px;color:var(--text-secondary);">
                                 <li><strong>반영</strong> — LOT에서 미차감분(${_fmtStockQty(unmatchedQty)} EA)을 FIFO 차감 → 표시 재고 <strong>${_fmtStockQty(stock)}</strong> 유지, LOT 합계도 맞춤</li>
-                                <li><strong>리셋</strong> — 미차감 채무만 소멸 → 표시 재고가 LOT 합계 <strong>${_fmtStockQty(physicalLotSum)}</strong>로 올라감 (실물 재고가 맞을 때)</li>
+                                <li><strong>리셋</strong> — 미차감만 0 · 표시 재고 <strong>${_fmtStockQty(stock)}</strong> 유지 (현재 재고를 맞춘 뒤)</li>
                                 <li><strong>이력 확인</strong> — 처리하지 않고 입출고 이력에서 원인 출고를 먼저 확인</li>
                             </ul>
                             <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;">
@@ -1837,7 +1867,7 @@ var InjectionWarehouseModule = (function() {
                                 </button>
                                 <button type="button" class="btn btn-sm" style="background:#0369a1;color:#fff;border-color:#0369a1;"
                                     onclick="InjectionWarehouseModule.openUnmatchedActionModal('${_emJs}','${_epJs}','${_ecJs}','clear',${unmatchedQty},${stock},${physicalLotSum})">
-                                    <span class="material-symbols-outlined" style="font-size:0.9rem;">restart_alt</span> 리셋 → ${_fmtStockQty(physicalLotSum)} EA
+                                    <span class="material-symbols-outlined" style="font-size:0.9rem;">restart_alt</span> 리셋 (미차감 0)
                                 </button>` : `
                                 <span style="font-size:0.75rem;color:var(--text-muted);align-self:center;">반영·리셋은 관리자만 실행할 수 있습니다.</span>`}
                             </div>
@@ -1979,7 +2009,7 @@ var InjectionWarehouseModule = (function() {
     // LOT 정보 전체 수정 모달 — 입고일·생산처·LOT번호·현재 수량을 함께 편집한다.
     function openLotEditModal(carModel, partName, color, oldLot, currentQty) {
         if (!_canEditWarehouseLot()) {
-            UIUtils.toast('사출 창고 입력 권한이 있는 사용자만 LOT 수량을 수정할 수 있습니다.', 'warning');
+            UIUtils.toast('수량 보정 권한이 있는 사용자만 LOT 수량을 수정할 수 있습니다.', 'warning');
             return;
         }
         const _cmJs = carModel.replace(/'/g, "\\'");
@@ -1997,7 +2027,7 @@ var InjectionWarehouseModule = (function() {
         const supplier = String(primary.supplier || '').replace(/"/g, '&quot;');
 
         UIUtils.showModal(
-            'LOT 보정 수정',
+            '수량 보정',
             `
             <div style="padding:10px 12px;background:var(--bg-secondary);border-radius:8px;margin-bottom:14px;font-size:0.85rem;">
                 <div><strong>${carModel}</strong> · ${partName}${color ? ' · ' + color : ''}</div>
@@ -2030,14 +2060,14 @@ var InjectionWarehouseModule = (function() {
             <div style="font-size:0.75rem;color:var(--text-muted);margin-top:2px;">※ 수량을 변경하면 차이만큼 재고 보정 입·출고가 자동으로 기록됩니다.</div>
             `,
             `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-             <button class="btn btn-primary" onclick="InjectionWarehouseModule.saveLotEdit('${_cmJs}','${_pnJs}','${_clJs}','${_olJs}',${Number(currentQty) || 0})">저장</button>`,
+             <button class="btn btn-primary" style="background:#7c3aed;border-color:#7c3aed;" onclick="InjectionWarehouseModule.saveLotEdit('${_cmJs}','${_pnJs}','${_clJs}','${_olJs}',${Number(currentQty) || 0})">수량 보정 저장</button>`,
             'md'
         );
     }
 
     async function saveLotEdit(carModel, partName, color, oldLot, oldQty) {
         if (!_canEditWarehouseLot()) {
-            UIUtils.toast('사출 창고 입력 권한이 있는 사용자만 LOT 수량을 수정할 수 있습니다.', 'warning');
+            UIUtils.toast('수량 보정 권한이 있는 사용자만 LOT 수량을 수정할 수 있습니다.', 'warning');
             return;
         }
         const newLot      = ((document.getElementById('lotEditLot')      || {}).value || '').trim();
@@ -2231,6 +2261,20 @@ var InjectionWarehouseModule = (function() {
                     </label>
                 </div>
             </div>
+            <div id="injOutItemPaintLineGroup" class="form-group">
+                <label class="form-label">도착 라인 (도장 투입 자재) <span style="color:var(--accent-red)">*</span></label>
+                <div style="display:flex;gap:16px;align-items:center;padding:8px 0;">
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem;">
+                        <input type="radio" name="injOutItemPaintLine" id="injOutItemLineA" value="도장-A" checked>
+                        <span style="font-weight:700;color:#2563eb;">도장-A 자재</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem;">
+                        <input type="radio" name="injOutItemPaintLine" id="injOutItemLineB" value="도장-B">
+                        <span style="font-weight:700;color:#ea580c;">도장-B 자재</span>
+                    </label>
+                </div>
+                <div style="font-size:0.75rem;color:var(--text-muted);">생산출고 시 사출 창고에서 차감되고 선택한 라인의 도장 투입 자재로 입고됩니다.</div>
+            </div>
             <div id="injOutItemReturnReasonGroup" style="display:none;margin-bottom:12px;">
                 <label class="form-label">반출 사유 <span style="color:var(--accent-red)">*</span></label>
                 <input type="text" class="form-input" id="injOutItemReturnReason" placeholder="반출 사유를 입력하세요">
@@ -2256,6 +2300,8 @@ var InjectionWarehouseModule = (function() {
         const isReturn = !!(document.getElementById('injOutItemTypeReturn') || {}).checked;
         const grp = document.getElementById('injOutItemReturnReasonGroup');
         if (grp) grp.style.display = isReturn ? '' : 'none';
+        const lineGrp = document.getElementById('injOutItemPaintLineGroup');
+        if (lineGrp) lineGrp.style.display = isReturn ? 'none' : '';
     }
 
     function saveOutgoingListupItem(carModel, partName, color, lotNo, maxQty) {
@@ -2265,6 +2311,12 @@ var InjectionWarehouseModule = (function() {
         const outgoingType = isReturn ? '반출' : '생산출고';
         const returnReason = isReturn ? ((document.getElementById('injOutItemReturnReason') || {}).value || '').trim() : '';
         const memo = ((document.getElementById('injOutItemMemo') || {}).value || '').trim();
+        let paintLine = '';
+        if (!isReturn) {
+            const lineEl = document.querySelector('input[name="injOutItemPaintLine"]:checked');
+            paintLine = lineEl ? String(lineEl.value || '').trim() : '도장-A';
+            if (paintLine !== '도장-A' && paintLine !== '도장-B') paintLine = '도장-A';
+        }
 
         if (!date) { UIUtils.toast('출고 일자를 선택하세요.', 'warning'); return; }
         if (qty <= 0) { UIUtils.toast('출고 수량을 입력하세요.', 'warning'); return; }
@@ -2272,6 +2324,10 @@ var InjectionWarehouseModule = (function() {
         if (isReturn && !returnReason) {
             UIUtils.toast('반출 사유를 입력하세요.', 'warning');
             document.getElementById('injOutItemReturnReason')?.focus();
+            return;
+        }
+        if (!isReturn && !paintLine) {
+            UIUtils.toast('도착 라인(도장-A/B)을 선택하세요.', 'warning');
             return;
         }
 
@@ -2309,6 +2365,7 @@ var InjectionWarehouseModule = (function() {
             carModel, partName, color: color || '', lotNo,
             qty, maxQty: Number(maxQty) || qty,
             outgoingType, returnReason, memo,
+            paintLine: paintLine || undefined,
             fifoReason: fifoReason || undefined,
             date
         });
@@ -2358,7 +2415,9 @@ var InjectionWarehouseModule = (function() {
         const rowsHtml = rows.map(function(r) {
             const typeBadge = r.outgoingType === '반출'
                 ? '<span style="font-size:0.68rem;background:#fef3c7;color:#b45309;border-radius:4px;padding:1px 6px;white-space:nowrap;">반출</span>'
-                : '<span style="font-size:0.68rem;background:#ede9fe;color:#7c3aed;border-radius:4px;padding:1px 6px;white-space:nowrap;">생산출고</span>';
+                : (r.paintLine === '도장-B'
+                    ? '<span style="font-size:0.68rem;background:#ffedd5;color:#c2410c;border-radius:4px;padding:1px 6px;white-space:nowrap;font-weight:700;">도장-B</span>'
+                    : '<span style="font-size:0.68rem;background:#ede9fe;color:#6d28d9;border-radius:4px;padding:1px 6px;white-space:nowrap;font-weight:700;">도장-A</span>');
             const fifoBadge = r.fifoReason
                 ? '<span style="font-size:0.65rem;background:#fffbeb;color:#b45309;border:1px solid #fcd34d;border-radius:4px;padding:1px 5px;margin-left:4px;" title="' + _escapeHtml(r.fifoReason) + '">FIFO예외</span>'
                 : '';
@@ -2470,7 +2529,21 @@ var InjectionWarehouseModule = (function() {
         }
 
         for (const item of items) {
-            await Storage.add(STORE, {
+            let planId = '';
+            if (item.outgoingType === '생산출고' && typeof ProductionPlanModule !== 'undefined'
+                && typeof ProductionPlanModule._getInjReserveDetail === 'function') {
+                const detail = ProductionPlanModule._getInjReserveDetail(item.partName, item.carModel, item.color || '');
+                const plans = [].concat(detail.pendingPlans || [], detail.inProgressPlans || []);
+                if (plans.length) {
+                    const day = String(item.date || '').slice(0, 10);
+                    const sameDay = plans.find(function(p) { return String(p.date || '').slice(0, 10) === day; });
+                    planId = String((sameDay || plans[0]).id || '');
+                }
+            }
+            const paintLine = item.outgoingType === '생산출고'
+                ? (item.paintLine === '도장-B' ? '도장-B' : '도장-A')
+                : undefined;
+            const outRec = await Storage.add(STORE, {
                 date: item.date,
                 type: '출고',
                 outgoingType: item.outgoingType,
@@ -2484,12 +2557,28 @@ var InjectionWarehouseModule = (function() {
                 unit: 'EA',
                 note: item.memo || undefined,
                 fifoReason: item.fifoReason || undefined,
-                outgoingBy: issuer
+                outgoingBy: issuer,
+                planId: planId || undefined,
+                paintLine: paintLine,
+                line: paintLine,
+                source: item.outgoingType === '생산출고' ? '사출 창고 생산출고' : undefined
             });
+            if (paintLine && typeof PaintingInputModule !== 'undefined' && PaintingInputModule.receiveFromWarehouseOut) {
+                try {
+                    await PaintingInputModule.receiveFromWarehouseOut(Object.assign({}, outRec, {
+                        paintLine: paintLine,
+                        line: paintLine,
+                        outgoingBy: issuer
+                    }));
+                } catch (eRecv) {
+                    console.warn('[InjectionWarehouse] 도장 투입 입고 실패:', eRecv);
+                    UIUtils.toast('출고는 됐으나 도장 투입 입고에 실패했습니다. 관리자에게 문의하세요.', 'warning');
+                }
+            }
         }
 
         _injOutListupRows = (_injOutListupRows || []).filter(r => !checkedKeys.has(r.key));
-        UIUtils.toast(`${items.length}건 출고 완료되었습니다.`, 'success');
+        UIUtils.toast(`${items.length}건 출고 완료 — 생산출고분은 도장 투입 자재로 이동했습니다.`, 'success');
         renderOutgoingListup();
         loadData();
     }
@@ -2506,25 +2595,16 @@ var InjectionWarehouseModule = (function() {
         const inspections = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
         const inventory   = Storage.getAll(DB.STORES.INJECTION_INVENTORY)   || [];
 
-        // 창고 입고 기록: partName + lotNo 기준이되, "수량까지 같거나" "검사일시(inspDate)가 같을 때"만
-        // 이미 입고된 것으로 인정한다. LOT 번호는 생산일자 기준으로 매겨져 서로 다른 건이 같은 번호를
-        // 쓰는 경우가 있는데, 그럴 때 수량까지 우연히 같을 확률은 매우 낮으므로 오탐을 막을 수 있다.
-        // (inspDate가 없는 옛날 수동 입고 기록도 수량이 맞으면 정상적으로 "입고됨"으로 인식된다.)
+        // 창고 입고 기록 → "이미 입고됨" 판정 키. 검사 인스턴스(inspId > inspDate)를 우선 키로 쓰고,
+        // 둘 다 없는 옛 수동입고에 한해서만 수량 폴백을 쓴다. (LOT번호 재사용 오탐 방지 — _addInStockKeys)
         const inStockSet = new Set();
         inventory.filter(i => i.type === '입고').forEach(i => {
             if (i.lots && i.lots.length > 0) {
                 i.lots.forEach(function(lot) {
-                    if (!lot.lotNo) return;
-                    const qty = Number(lot.qty) || 0;
-                    if (qty <= 0) return;
-                    inStockSet.add(`${i.partName}||${lot.lotNo}||qty:${qty}`);
-                    if (i.inspDate) inStockSet.add(`${i.partName}||${lot.lotNo}||insp:${i.inspDate}`);
+                    _addInStockKeys(inStockSet, i.partName, lot.lotNo, _lotNum(lot.qty), i.inspId, i.inspDate);
                 });
             } else if (i.lotNo) {
-                const qty = Number(i.quantity) || 0;
-                if (qty <= 0) return;
-                inStockSet.add(`${i.partName}||${i.lotNo}||qty:${qty}`);
-                if (i.inspDate) inStockSet.add(`${i.partName}||${i.lotNo}||insp:${i.inspDate}`);
+                _addInStockKeys(inStockSet, i.partName, i.lotNo, _lotNum(i.quantity), i.inspId, i.inspDate);
             }
         });
 
@@ -2569,8 +2649,7 @@ var InjectionWarehouseModule = (function() {
         // 입고 대기 중인 항목만 필터링 (입고 완료된 항목 + 관리자가 삭제(숨김)한 항목 제외)
         const dismissedSet = new Set(_dismissedPending.map(d => _dismissedPendingKey(d.inspId, d.lotNo)));
         const pendingRows = rows.filter(r =>
-            !inStockSet.has(`${r.partName}||${r.lotNo}||qty:${Number(r.qty) || 0}`) &&
-            !inStockSet.has(`${r.partName}||${r.lotNo}||insp:${r.date}`) &&
+            !_lotInStock(inStockSet, r.partName, r.lotNo, r.qty, r.inspId, r.date) &&
             !dismissedSet.has(_dismissedPendingKey(r.inspId, r.lotNo))
         );
 
@@ -2829,26 +2908,39 @@ var InjectionWarehouseModule = (function() {
         }
     }
 
-    // 현재 창고(INJECTION_INVENTORY)에 이미 입고된 LOT 키(partName||lotNo||수량 또는 검사일시) 집합
-    // LOT 번호는 생산일자 기준으로 매겨져 서로 다른 검사건이 같은 번호를 쓸 수 있으므로,
-    // 수량까지 같거나 검사일시(inspDate)까지 같을 때만 "이미 입고됨"으로 인정한다.
+    // 콤마 포함 문자열 수량도 안전하게 숫자화 (InvCalc._num과 동일 규칙)
+    function _lotNum(v) { return Number(String(v == null ? '' : v).replace(/,/g, '')) || 0; }
+
+    // "이미 입고됨" 판정 키 등록.
+    // LOT 번호는 생산일자 기준이라 서로 다른 검사건이 같은 번호를 재사용한다. LOT번호+수량만으로
+    // 매칭하면 다른 검사건의 동일 LOT·동일 수량을 "이미 입고"로 오인해(오탐) 실제 입고가 누락된다.
+    // 따라서 검사 인스턴스를 특정하는 inspId > inspDate 를 우선 키로 쓰고, 둘 다 없는 옛 수동입고에
+    // 한해서만 수량 폴백(qtyonly)을 남긴다.
+    function _addInStockKeys(set, partName, lotNo, qty, inspId, inspDate) {
+        if (!lotNo || qty <= 0) return;
+        if (inspId)   set.add(`${partName}||${lotNo}||inspid:${inspId}`);
+        if (inspDate) set.add(`${partName}||${lotNo}||insp:${inspDate}`);
+        if (!inspId && !inspDate) set.add(`${partName}||${lotNo}||qtyonly:${qty}`);
+    }
+
+    // 검사건의 LOT 하나가 이미 창고에 반영됐는지 — 등록과 동일 우선순위로 확인
+    function _lotInStock(set, partName, lotNo, qty, inspId, inspDate) {
+        if (inspId   && set.has(`${partName}||${lotNo}||inspid:${inspId}`)) return true;
+        if (inspDate && set.has(`${partName}||${lotNo}||insp:${inspDate}`)) return true;
+        return set.has(`${partName}||${lotNo}||qtyonly:${_lotNum(qty)}`);
+    }
+
+    // 현재 창고(INJECTION_INVENTORY)에 이미 입고된 LOT 판정 키 집합 (_addInStockKeys 규칙)
     function _buildInStockLotSet() {
         const inventory = Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [];
         const inStockSet = new Set();
         inventory.filter(i => i.type === '입고').forEach(i => {
             if (i.lots && i.lots.length > 0) {
                 i.lots.forEach(function(lot) {
-                    if (!lot.lotNo) return;
-                    const qty = Number(lot.qty) || 0;
-                    if (qty <= 0) return;
-                    inStockSet.add(`${i.partName}||${lot.lotNo}||qty:${qty}`);
-                    if (i.inspDate) inStockSet.add(`${i.partName}||${lot.lotNo}||insp:${i.inspDate}`);
+                    _addInStockKeys(inStockSet, i.partName, lot.lotNo, _lotNum(lot.qty), i.inspId, i.inspDate);
                 });
             } else if (i.lotNo) {
-                const qty = Number(i.quantity) || 0;
-                if (qty <= 0) return;
-                inStockSet.add(`${i.partName}||${i.lotNo}||qty:${qty}`);
-                if (i.inspDate) inStockSet.add(`${i.partName}||${i.lotNo}||insp:${i.inspDate}`);
+                _addInStockKeys(inStockSet, i.partName, i.lotNo, _lotNum(i.quantity), i.inspId, i.inspDate);
             }
         });
         return inStockSet;
@@ -2860,11 +2952,9 @@ var InjectionWarehouseModule = (function() {
             ? insp.lots
             : (insp.lotNo ? [{ lotNo: insp.lotNo, qty: insp.passQty }] : []);
         return sourceLots.filter(l => {
-            const qty = Number(l.qty) || 0;
+            const qty = _lotNum(l.qty);
             if (qty <= 0) return false;
-            if (inStockSet.has(`${insp.partName}||${l.lotNo}||qty:${qty}`)) return false;
-            if (inStockSet.has(`${insp.partName}||${l.lotNo}||insp:${insp.date}`)) return false;
-            return true;
+            return !_lotInStock(inStockSet, insp.partName, l.lotNo, qty, insp.id, insp.date);
         });
     }
 
@@ -2892,6 +2982,7 @@ var InjectionWarehouseModule = (function() {
             unit: 'EA',
             source: '수입검사 합격수량 전체입고',
             injMaterialId: _matMatch ? _matMatch.id : undefined,
+            inspId: insp.id || undefined,
             inspDate: insp.date || undefined
         });
         return totalQty;
@@ -4105,13 +4196,19 @@ var InjectionWarehouseModule = (function() {
         });
     }
 
-    // 사출 LOT 정보 수정 권한: 사출 창고 입력 권한 보유자.
-    // 완제품 창고 권한까지 요구하면 생산관리자처럼 자재창고만 맡은 사용자가 보정할 수 없다.
+    // 사출 LOT 수량 보정 권한: "수량 보정"(adjust) 또는 입력(write) 보유자.
+    // 물류작업자는 입력 없이 수량 보정만 갖는 경우가 많으므로 adjust를 우선 인정한다.
     function _canEditWarehouseLot() {
         try {
             if (_isAdminUser()) return true;
-            if (typeof AuthModule !== 'undefined' && typeof AuthModule.canWritePage === 'function') {
-                return AuthModule.canWritePage('injection-warehouse');
+            if (typeof AuthModule !== 'undefined') {
+                if (typeof AuthModule.canAdjustPage === 'function') {
+                    if (AuthModule.canAdjustPage('injection-warehouse') ||
+                        AuthModule.canAdjustPage('warehouse-overview')) return true;
+                }
+                if (typeof AuthModule.canWritePage === 'function') {
+                    if (AuthModule.canWritePage('injection-warehouse')) return true;
+                }
             }
         } catch (e) { /* 무시 */ }
         return false;
@@ -4503,16 +4600,16 @@ var InjectionWarehouseModule = (function() {
         }
         const title = isAbsorb ? '미차감 반영' : '미차감 리셋';
         const accent = isAbsorb ? '#b45309' : '#0369a1';
-        const resultStock = isAbsorb ? stock : lotSum;
+        const resultStock = stock;
         const explain = isAbsorb
             ? `보유 LOT에서 미차감 ${UIUtils.formatNumber(unmatched)} EA를 FIFO로 차감합니다.<br>
                · 표시 재고: <strong>${UIUtils.formatNumber(stock)}</strong> EA 유지<br>
                · LOT 잔량 합계: ${UIUtils.formatNumber(lotSum)} → <strong>${UIUtils.formatNumber(stock)}</strong> EA<br>
                · 실물보다 시스템이 높게 잡고 있을 때(과다 출고가 맞을 때) 선택하세요.`
-            : `미차감 채무 ${UIUtils.formatNumber(unmatched)} EA만 소멸하고 LOT 잔량은 그대로 둡니다.<br>
-               · 표시 재고: ${UIUtils.formatNumber(stock)} → <strong>${UIUtils.formatNumber(lotSum)}</strong> EA<br>
-               · LOT에 남아 있는 수량이 실물과 맞을 때 선택하세요.<br>
-               · 오래된 과다 출고 이력이 잘못되었거나 원인을 더 이상 추적하지 않을 때 사용합니다.`;
+            : `미차감 ${UIUtils.formatNumber(unmatched)} EA만 <strong>0</strong>으로 만듭니다.<br>
+               · 표시 재고: <strong>${UIUtils.formatNumber(stock)}</strong> EA 유지 (이미 맞춘 재고 그대로)<br>
+               · LOT 수량은 변경하지 않습니다.<br>
+               · 현재 재고를 맞춘 뒤 미차감 표시만 지울 때 사용합니다.`;
 
         UIUtils.showModal(title, `
             <div style="background:${accent}12;border:1px solid ${accent}44;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:0.86rem;line-height:1.65;">
@@ -4585,7 +4682,7 @@ var InjectionWarehouseModule = (function() {
             );
             return;
         }
-        const stockAfterTarget = isAbsorb ? stockBefore : physicalLotSum;
+        const stockAfterTarget = stockBefore;
         const actor = _getResetActorFields();
         const nowStr = (UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' '));
         const label = isAbsorb ? '미차감 반영' : '미차감 리셋';
@@ -4604,7 +4701,7 @@ var InjectionWarehouseModule = (function() {
                 source: label,
                 unmatchedAction: action,
                 resetReason: reason,
-                note: `[${label}] ${reason} · 미차감 ${UIUtils.formatNumber(unmatched)} EA · 재고 ${UIUtils.formatNumber(stockBefore)} → ${UIUtils.formatNumber(stockAfterTarget)} EA`,
+                note: `[${label}] ${reason} · 미차감 ${UIUtils.formatNumber(unmatched)} EA → 0 · 재고 ${UIUtils.formatNumber(stockBefore)} EA 유지`,
                 unmatchedBefore: unmatched,
                 stockBefore: stockBefore,
                 stockAfterTarget: stockAfterTarget,
@@ -4631,7 +4728,7 @@ var InjectionWarehouseModule = (function() {
             });
 
             UIUtils.closeModal();
-            UIUtils.toast(`${label} 완료 (재고 ${_fmtStockQty(stockBefore)} → ${_fmtStockQty(stockAfterTarget)} EA)`, 'success');
+            UIUtils.toast(`${label} 완료 — 미차감 0 · 재고 ${_fmtStockQty(stockBefore)} EA 유지`, 'success');
             loadData();
             showPartDetail(carModel, partName, color);
         } catch (e) {
@@ -5102,7 +5199,7 @@ var InjectionWarehouseModule = (function() {
                 ${d.type === '출고' ? `
                 <div class="form-group">
                     <label class="form-label">출고 구분</label>
-                    <input type="text" class="form-input" value="${d.outgoingType || '생산출고'}" readonly
+                    <input type="text" class="form-input" value="${paintLine || d.outgoingType || '생산출고'}" readonly
                         style="background:var(--bg-secondary);">
                 </div>` : ''}
             </div>

@@ -12719,7 +12719,7 @@ const SettingsModule = (function() {
                 <div style="margin-left:auto;display:flex;gap:6px;">
                     <button class="btn btn-sm" onclick="SettingsModule.toggleAllGroupPerm('${roleKey}','access')">전체 접근 허용</button>
                     <button class="btn btn-sm" onclick="SettingsModule.toggleAllGroupPerm('${roleKey}','write')">전체 입력 허용</button>
-                    <button class="btn btn-sm" onclick="SettingsModule.toggleAllGroupPerm('${roleKey}','adjust')">전체 수정/보정 허용</button>
+                    <button class="btn btn-sm" onclick="SettingsModule.toggleAllGroupPerm('${roleKey}','adjust')">전체 수량 보정 허용</button>
                     <button class="btn btn-sm" style="background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;" onclick="SettingsModule.toggleAllGroupPerm('${roleKey}','clear')">전체 해제</button>
                 </div>
             </div>
@@ -12750,15 +12750,15 @@ const SettingsModule = (function() {
                                     style="width:15px;height:15px;cursor:pointer;accent-color:#dc2626;">
                                 <span style="color:#dc2626;font-weight:600;">입력</span>
                             </label>
-                            <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.8rem;" title="이미 등록된 기록을 수정하거나 수량을 보정하는 권한 (신규 등록은 '입력'만으로 가능)">
+                            <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.8rem;" title="이미 등록된 재고 수량을 보정하는 권한 (신규 입고/출고 등록은 '입력'만으로 가능)">
                                 <input type="checkbox" data-role="${roleKey}" data-group="${g.key}" data-type="adjust"
                                     ${adjustAll ? 'checked' : ''}
                                     onchange="SettingsModule.onGroupPermChange(this)"
                                     style="width:15px;height:15px;cursor:pointer;accent-color:#7c3aed;">
-                                <span style="color:#7c3aed;font-weight:600;">수정/보정</span>
+                                <span style="color:#7c3aed;font-weight:600;">수량 보정</span>
                             </label>
                         </div>
-                        <div style="margin-top:5px;font-size:0.68rem;color:var(--text-muted);">${pids.length}개 페이지${accessAny && !accessAll ? ' (일부 접근)' : ''}${writeAny && !writeAll ? ' (일부 입력)' : ''}${adjustAny && !adjustAll ? ' (일부 수정/보정)' : ''}</div>
+                        <div style="margin-top:5px;font-size:0.68rem;color:var(--text-muted);">${pids.length}개 페이지${accessAny && !accessAll ? ' (일부 접근)' : ''}${writeAny && !writeAll ? ' (일부 입력)' : ''}${adjustAny && !adjustAll ? ' (일부 수량 보정)' : ''}</div>
                     </div>`;
                 }).join('')}
             </div>
@@ -13181,7 +13181,7 @@ const SettingsModule = (function() {
                 : mode === 'write'
                     ? '전체 입력 권한이 허용되었습니다.'
                     : mode === 'adjust'
-                        ? '전체 수정/보정 권한이 허용되었습니다.'
+                        ? '전체 수량 보정 권한이 허용되었습니다.'
                         : '전체 권한이 해제되었습니다.';
             await _saveAndRefreshRolePerms(roleKey, perms, message);
         } finally {

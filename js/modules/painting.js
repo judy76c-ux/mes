@@ -12,6 +12,8 @@
 var PaintingNavUI = (function() {
     // page: 라우터 페이지 ID, tab: PaintingInspectionModule 내부 탭 key (없으면 기본)
     var MENUS = [
+        { id: 'painting-process',      tab: '',                    icon: 'dashboard',       label: '도장 작업 메인',       sub: '현황·바로가기' },
+        { id: 'painting-input',        tab: '',                    icon: 'inventory_2',     label: '도장 투입 자재',       sub: '도장-A/B 현장 투입' },
         { id: 'painting-work-a',       tab: '',                    icon: 'format_paint',    label: '도장-A 작업현황',       sub: '도장-A 작업일지 입력·조회' },
         { id: 'painting-work-b',       tab: '',                    icon: 'format_paint',    label: '도장-B 작업현황',       sub: '도장-B 작업일지 입력·조회' },
         { id: 'painting-inspection',   tab: 'inspection',          icon: 'done_all',        label: '외관 검사',             sub: '도장 완료품 외관 검사 진행' },
@@ -28,7 +30,12 @@ var PaintingNavUI = (function() {
     function render(activePage, activeTab) {
         return '<div class="mes-apple-menu-hero" style="padding:16px 20px;margin-bottom:20px;display:flex;gap:10px;flex-wrap:wrap;">' +
             MENUS.map(function(m, i) {
-                var active = m.id === activePage && (m.tab ? m.tab === activeTab : (!activeTab || !m.tab));
+                var active = false;
+                if (m.id === 'painting-input' && (activePage === 'painting-input' || activePage === 'painting-input-a' || activePage === 'painting-input-b')) {
+                    active = true;
+                } else {
+                    active = m.id === activePage && (m.tab ? m.tab === activeTab : (!activeTab || !m.tab));
+                }
                 return '<button type="button" onclick="PaintingNavUI._navigate(' + i + ')"' +
                     ' style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;' +
                     'border:' + (active ? '2px solid var(--accent-blue)' : '1.5px solid var(--border-color)') + ';' +
@@ -53,6 +60,40 @@ var PaintingNavUI = (function() {
     }
 
     return { render: render, _navigate: navigateByIndex };
+})();
+
+/** 도장 작업 메인 허브 */
+var PaintingProcessModule = (function () {
+    function _count(store) {
+        try { return (Storage.getAll(store) || []).length; } catch (e) { return 0; }
+    }
+    function _inputQty(line) {
+        try {
+            if (typeof PaintingInputModule === 'undefined') return 0;
+            var lots = PaintingInputModule.getLotsByCarPart(line, '', '');
+            return (lots || []).reduce(function (s, l) { return s + (Number(l.balance) || 0); }, 0);
+        } catch (e) { return 0; }
+    }
+    function render(container) {
+        var workCount = _count(DB.STORES.PAINTING_WORK);
+        var inspCount = _count(DB.STORES.PAINTING_INSPECTIONS);
+        var qtyA = _inputQty('도장-A');
+        var qtyB = _inputQty('도장-B');
+        var tabs = [
+            { label: '도장 투입 자재', icon: 'inventory_2', subtitle: 'A ' + UIUtils.formatNumber(qtyA) + ' · B ' + UIUtils.formatNumber(qtyB) + ' EA', accent: '#0891b2', onClick: "Router.navigate('painting-input')" },
+            { label: '도장-A 작업', icon: 'format_paint', subtitle: '작업일지 입력·조회', accent: '#2563eb', onClick: "Router.navigate('painting-work-a')" },
+            { label: '도장-B 작업', icon: 'format_paint', subtitle: '작업일지 입력·조회', accent: '#ea580c', onClick: "Router.navigate('painting-work-b')" },
+            { label: '외관 검사', icon: 'done_all', subtitle: inspCount + '건 · 검사 진행', accent: '#16a34a', onClick: "sessionStorage.setItem('paintingInspectionTab','inspection');Router.navigate('painting-inspection')" },
+            { label: '리워크 재공품', icon: 'autorenew', subtitle: '리워크 재고 관리', accent: '#f59e0b', onClick: "Router.navigate('painting-rework-wip')" },
+            { label: '작업 실적 전체', icon: 'assignment', subtitle: workCount + '건 · 누적 실적', accent: '#8b5cf6', onClick: "Router.navigate('painting-work-a')" }
+        ];
+        container.innerHTML =
+            '<div class="fade-in-up">' +
+                (typeof PaintingNavUI !== 'undefined' ? PaintingNavUI.render('painting-process', '') : '') +
+                ProdAppleMenu.strip(tabs) +
+            '</div>';
+    }
+    return { render: render, init: render };
 })();
 
 // ===================================================================
@@ -817,6 +858,36 @@ const PaintingWorkModule = (function() {
                     </div>
                 </div>
 
+                <!-- 섹션 1.5: 도장 투입 자재 (현장 대기) -->
+                <div class="card" style="margin-bottom:1rem;" id="pwInputStockCard${suffix}">
+                    <div class="card-header" style="padding:8px 16px; background:var(--bg-secondary);
+                        border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+                        <h4 style="margin:0;">
+                            <span class="material-symbols-outlined" style="vertical-align:middle;margin-right:4px;font-size:18px;">inventory_2</span>
+                            ${_currentLine} 자재
+                            <span style="margin-left:8px;padding:2px 8px;border-radius:999px;font-size:0.75rem;font-weight:700;color:#fff;background:${accent};">${_currentLine}</span>
+                            <span id="pwInputStockSummary${suffix}" style="font-size:0.75rem;color:var(--text-muted);font-weight:500;margin-left:6px;"></span>
+                        </h4>
+                        <span style="font-size:0.78rem;color:var(--text-muted);">사출 창고 생산출고 → 현장 투입 대기 · 실적 입력 시 LOT 차감</span>
+                    </div>
+                    <div class="card-body" style="padding:12px;">
+                        <div class="data-table-wrapper" style="border:1px solid var(--border); border-radius:4px; overflow-x:auto;">
+                            <table class="data-table compact" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
+                                <thead>
+                                    <tr>
+                                        <th style="white-space:nowrap;padding:8px 10px;">차종</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">품명</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">컬러</th>
+                                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">재고(EA)</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">LOT</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pwInputStockBody${suffix}"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- 섹션 2: 실적 미입력 계획 -->
                 <div id="pwUnenteredSection" class="card" style="margin-bottom:1rem; border-top:3px solid var(--accent-orange); display:none;">
                     <div class="card-header" style="padding:8px 16px; background:rgba(255,152,0,0.05);
@@ -921,8 +992,33 @@ const PaintingWorkModule = (function() {
 
     function loadAll() {
         renderPlanSummary();
+        renderInputStockSection();
         renderUnenteredPlans();
         renderWorkList();
+    }
+
+    // ──────────────────────────────────────────────
+    // 도장 투입 자재 (생산계획 현황 아래)
+    // ──────────────────────────────────────────────
+    function renderInputStockSection() {
+        const suffix = _lineDomSuffix(_currentLine);
+        const body = document.getElementById('pwInputStockBody' + suffix);
+        const summary = document.getElementById('pwInputStockSummary' + suffix);
+        if (!body) return;
+
+        if (typeof PaintingInputModule === 'undefined' || !PaintingInputModule.renderEmbedTableBody) {
+            body.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted);">투입 자재 모듈을 불러올 수 없습니다.</td></tr>`;
+            if (summary) summary.textContent = '';
+            return;
+        }
+
+        const result = PaintingInputModule.renderEmbedTableBody(_currentLine);
+        body.innerHTML = result.html;
+        if (summary) {
+            summary.textContent = result.itemCount
+                ? (result.itemCount + '종 · ' + UIUtils.formatNumber(result.total) + ' EA')
+                : '대기 없음';
+        }
     }
 
     // ──────────────────────────────────────────────
@@ -1312,6 +1408,9 @@ const PaintingWorkModule = (function() {
     // 사출 LOT 목록 (잔량 계산)
     // ──────────────────────────────────────────────
     function getInjectionLots(carModel, partName) {
+        if (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.getLotsByCarPart) {
+            return PaintingInputModule.getLotsByCarPart(_currentLine, carModel, partName);
+        }
         const all = Storage.getAll(INJ_INV_STORE) || [];
         const lotMap = {};
         all.forEach(item => {
@@ -1503,11 +1602,13 @@ const PaintingWorkModule = (function() {
         });
     }
 
-    // injPartName으로 사출 창고 LOT를 조회
+    // injPartName으로 현장 투입(도장 투입 자재) LOT 조회 — 레이져→B는 재공품 경로 유지
     // planColor: 사출 소재 컬러와 일치하는 LOT 우선 — 불일치 시 전체 반환 (폴백)
-    // 도장 컬러(DYS 등)와 사출 소재 컬러(GRAY 등)가 다를 수 있으므로
-    // 컬러 필터 후 결과가 없으면 해당 injPartName의 전체 LOT를 반환
     function getInjectionLotsByInjPart(injPartName, planColor) {
+        if (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.getLotsByInjPart) {
+            return PaintingInputModule.getLotsByInjPart(_currentLine, injPartName, planColor);
+        }
+        // 폴백(구버전): 사출 창고 직접 조회
         var all = Storage.getAll(INJ_INV_STORE) || [];
         var lotMap = {};
         all.forEach(function(item) {
@@ -1529,10 +1630,8 @@ const PaintingWorkModule = (function() {
         var allLots = Object.values(lotMap).filter(function(l) {
             return l.balance > 0;
         }).sort(function(a, b) {
-            return a.lotNo.localeCompare(b.lotNo); // 선입선출
+            return a.lotNo.localeCompare(b.lotNo);
         });
-        // 컬러 필터: 도장 컬러와 사출 소재 컬러가 일치하면 해당 LOT만 반환
-        // 불일치(DYS vs GRAY 등)이면 전체 반환 — 소재 컬러는 도장 컬러와 다를 수 있음
         if (planColor) {
             var filtered = allLots.filter(function(l) {
                 if (!l.color) return true;
@@ -1599,7 +1698,7 @@ const PaintingWorkModule = (function() {
         var btn = document.getElementById('pwAddLotBtn');
         if (btn) {
             btn.disabled = lotCount <= 1;
-            btn.title = lotCount <= 1 ? '사출 창고 LOT가 1개 이하여서 추가할 수 없습니다' : '';
+            btn.title = lotCount <= 1 ? '현장 투입 LOT가 1개 이하여서 추가할 수 없습니다' : '';
         }
     }
 
@@ -2023,7 +2122,7 @@ const PaintingWorkModule = (function() {
         var btn = document.getElementById('pwAddLotBtn');
         if (btn) {
             btn.disabled = !hasMore;
-            btn.title = !hasMore ? '사출 창고 LOT가 더 이상 없습니다' : '';
+            btn.title = !hasMore ? '현장 투입 LOT가 더 이상 없습니다' : '';
         }
     }
 
@@ -2600,9 +2699,9 @@ const PaintingWorkModule = (function() {
         var _lotSectionDesc  = isLaserWipProduct
             ? '(레이져 후 재공품 잔량 기준 조회 · 복수 LOT 입력 가능)'
             : '(사출 창고 잔량 기준 조회 · 복수 LOT 입력 가능)';
-        var _lotColHeader = isLaserWipProduct ? '재공품 LOT 선택' : '사출 창고 LOT 선택';
+        var _lotColHeader = isLaserWipProduct ? '재공품 LOT 선택' : '현장 투입 LOT 선택';
         var _lotAddBtnDisabled = initialLotCount <= 1
-            ? ' disabled title="' + (isLaserWipProduct ? '재공품 LOT가 1개 이하여서 추가할 수 없습니다' : '사출 창고 LOT가 1개 이하여서 추가할 수 없습니다') + '"'
+            ? ' disabled title="' + (isLaserWipProduct ? '재공품 LOT가 1개 이하여서 추가할 수 없습니다' : '현장 투입 LOT가 1개 이하여서 추가할 수 없습니다') + '"'
             : '';
 
         var lotSectionHtml =
@@ -3177,9 +3276,13 @@ const PaintingWorkModule = (function() {
             }
         }
 
-        // 사출 창고 출고는 물류 담당자가 사출 창고 화면에서 직접 등록한다.
-        // (도장 작업실적 입력 시 자동으로 재고를 차감하던 기능은 폐지 — 출고 방법을 하나로 통일)
+        // 현장 투입 자재에서 LOT 차감 (사출 창고 생산출고 → 도장 투입 → 실적 차감)
         var savedWork = await Storage.add(STORE, data);
+        var isLaserWipSave = ((document.getElementById('addPwIsLaserWip') || {}).value || '') === '1';
+        if (!isLaserWipSave && typeof PaintingInputModule !== 'undefined' && PaintingInputModule.deductForWork) {
+            try { await PaintingInputModule.deductForWork(savedWork || data); }
+            catch (eDeduct) { console.warn('[PaintingWork] 투입 자재 차감 실패:', eDeduct); }
+        }
 
         UIUtils.closeModal();
 
@@ -3913,7 +4016,7 @@ const PaintingWorkModule = (function() {
             '<div style="background:var(--bg-secondary);border-radius:8px;padding:10px 12px;">' +
             '<div style="display:grid;grid-template-columns:2.5fr 1.8fr 1fr 34px;gap:8px;' +
             'font-size:0.71rem;color:var(--text-muted);margin-bottom:5px;padding:0 4px;">' +
-            '<div>사출 창고 LOT 선택</div><div>LOT번호</div><div style="text-align:right;">수량(EA)</div><div></div></div>' +
+            '<div>현장 투입 LOT 선택</div><div>LOT번호</div><div style="text-align:right;">수량(EA)</div><div></div></div>' +
             '<div id="pwLotRows">' + initialLotRows + '</div>' +
             '<button class="btn btn-outline btn-sm" onclick="PaintingWorkModule.addLotRow()"' +
             ' style="margin-top:7px;font-size:0.82rem;">' +
@@ -3961,6 +4064,23 @@ const PaintingWorkModule = (function() {
 
     async function saveEdit(id) {
         const lots = _collectLots();
+
+        // 사출 LOT 필수 검증 (saveNew와 동일) — LOT 행을 모두 지운 채 저장하면
+        // 레이저 대기 입고가 LOT 없이 들어가 "LOT 미지정" 재고가 생기므로 원천에서 막는다.
+        if (lots.length === 0) {
+            UIUtils.toast('사출 LOT를 선택하거나 직접 입력해 주세요.', 'warning');
+            const firstLotNo = document.querySelector('#pwLotRows .pw-lot-no');
+            if (firstLotNo) firstLotNo.focus();
+            return;
+        }
+        const hasInvalidLot = lots.some(function(l) { return !l.qty || l.qty <= 0; });
+        if (hasInvalidLot) {
+            UIUtils.toast('사출 LOT 수량을 입력해 주세요.', 'warning');
+            const firstLotQty = document.querySelector('#pwLotRows .pw-lot-qty');
+            if (firstLotQty) firstLotQty.focus();
+            return;
+        }
+
         const lotNo = lots.length > 0 ? lots[0].lotNo : '';
         const startTime = (document.getElementById('editPwStartTime') || {}).value || '';
         const endTime = (document.getElementById('editPwEndTime') || {}).value || '';

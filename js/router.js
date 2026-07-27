@@ -63,6 +63,10 @@ const Router = (function() {
         'injection-layout': '보관창고 레이아웃',
         'injection-wip': '사출 재공품 현황',
         'injection-room-layout': '사출실 레이아웃',
+        'painting-process': '도장 작업',
+        'painting-input': '도장 투입 자재',
+        'painting-input-a': '도장-A 자재',
+        'painting-input-b': '도장-B 자재',
         'painting-work': '도장-A 작업',
         'painting-work-a': '도장-A 작업',
         'painting-work-b': '도장-B 작업',
@@ -156,6 +160,13 @@ const Router = (function() {
         'injection-warehouse': { target: 'warehouse-overview', label: '자재 창고로 돌아가기' },
         'paint-inventory': { target: 'warehouse-overview', label: '자재 창고로 돌아가기' },
         'injection-layout': { target: 'warehouse-overview', label: '자재 창고로 돌아가기' },
+        'painting-input': { target: 'painting-process', label: '도장 작업으로 돌아가기' },
+        'painting-input-a': { target: 'painting-process', label: '도장 작업으로 돌아가기' },
+        'painting-input-b': { target: 'painting-process', label: '도장 작업으로 돌아가기' },
+        'painting-work-a': { target: 'painting-process', label: '도장 작업으로 돌아가기' },
+        'painting-work-b': { target: 'painting-process', label: '도장 작업으로 돌아가기' },
+        'painting-inspection': { target: 'painting-process', label: '도장 작업으로 돌아가기' },
+        'painting-rework-wip': { target: 'painting-process', label: '도장 작업으로 돌아가기' },
 
         'injection-work': { target: 'injection-process', label: '사출 공정으로 돌아가기' },
         'raw-material-inventory': { target: 'injection-process', label: '사출 공정으로 돌아가기' },
@@ -415,6 +426,12 @@ const Router = (function() {
     }
 
     function _sidebarHighlightPage(pageName) {
+        if (pageName === 'painting-work' || pageName === 'painting-work-a' || pageName === 'painting-work-b'
+            || pageName === 'painting-input' || pageName === 'painting-input-a' || pageName === 'painting-input-b'
+            || pageName === 'painting-inspection' || pageName === 'painting-rework-wip'
+            || pageName === 'painting-quality-performance' || pageName === 'painting-process') {
+            if (document.querySelector('.nav-item[data-page="painting-process"]')) return 'painting-process';
+        }
         if (pageName === 'painting-work') return 'painting-work-a';
         if (pageName === 'injection-layout') {
             const cfg = _getLayoutBackConfig();
