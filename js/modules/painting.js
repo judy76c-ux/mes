@@ -343,10 +343,12 @@ var PaintingProcessModule = (function () {
                     '<div class="data-table-wrapper" style="border:1px solid var(--border);border-radius:4px;overflow-x:auto;">' +
                         '<table class="data-table compact" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">' +
                             '<thead><tr>' +
+                                '<th style="white-space:nowrap;padding:8px 4px;width:34px;"></th>' +
                                 '<th style="white-space:nowrap;padding:8px 10px;">입고시간</th>' +
                                 '<th style="white-space:nowrap;padding:8px 10px;">차종</th>' +
                                 '<th style="white-space:nowrap;padding:8px 10px;">품명</th>' +
                                 '<th style="text-align:right;white-space:nowrap;padding:8px 10px;">수량</th>' +
+                                '<th style="white-space:nowrap;padding:8px 8px;">이동</th>' +
                             '</tr></thead>' +
                             '<tbody id="ppShipBody' + suffix + '">' + result.html + '</tbody>' +
                         '</table>' +
@@ -374,7 +376,7 @@ var PaintingProcessModule = (function () {
         _bindShipmentDnD();
     }
 
-    /** 도장-A ↔ 도장-B 출고 자재 드래그 이동 */
+    /** 도장-A ↔ 도장-B 출고 자재 드래그 이동 (핸들 기반 — tr 드래그는 Chrome에서 불가) */
     function _bindShipmentDnD() {
         ['A', 'B'].forEach(function (suffix) {
             var card = document.getElementById('ppShipCard' + suffix);
@@ -384,31 +386,48 @@ var PaintingProcessModule = (function () {
             var accent = suffix === 'B' ? '#ea580c' : '#2563eb';
 
             card.addEventListener('dragstart', function (e) {
-                var tr = e.target && e.target.closest ? e.target.closest('tr[data-ship-out-id]') : null;
-                if (!tr) return;
-                if (tr.getAttribute('data-ship-draggable') !== '1') {
-                    e.preventDefault();
+                var handle = e.target && e.target.closest
+                    ? e.target.closest('.pp-ship-drag-handle[data-ship-out-id]')
+                    : null;
+                if (!handle) {
+                    // tr 자체 드래그는 브라우저마다 무시됨 — 핸들만 허용
+                    var badTr = e.target && e.target.closest ? e.target.closest('tr[data-ship-out-id]') : null;
+                    if (badTr) e.preventDefault();
                     return;
                 }
-                var id = tr.getAttribute('data-ship-out-id') || '';
+                var id = handle.getAttribute('data-ship-out-id') || '';
+                var from = handle.getAttribute('data-ship-from') || '';
                 if (!id) { e.preventDefault(); return; }
-                e.dataTransfer.setData('text/plain', id);
-                e.dataTransfer.setData('application/x-paint-ship-from', tr.getAttribute('data-ship-from') || '');
-                e.dataTransfer.effectAllowed = 'move';
-                tr.style.opacity = '0.45';
+                try {
+                    e.dataTransfer.setData('text/plain', id);
+                    e.dataTransfer.setData('text', id);
+                    e.dataTransfer.setData('application/x-paint-ship-from', from);
+                    e.dataTransfer.effectAllowed = 'move';
+                } catch (err) { /* IE 등 */ }
+                handle.style.opacity = '0.45';
+                handle.style.cursor = 'grabbing';
+                var tr = handle.closest('tr');
+                if (tr) tr.style.opacity = '0.45';
             });
 
             card.addEventListener('dragend', function (e) {
-                var tr = e.target && e.target.closest ? e.target.closest('tr[data-ship-out-id]') : null;
-                if (tr) tr.style.opacity = '';
+                card.querySelectorAll('.pp-ship-drag-handle, tr[data-ship-out-id]').forEach(function (el) {
+                    el.style.opacity = '';
+                    if (el.classList && el.classList.contains('pp-ship-drag-handle')) el.style.cursor = 'grab';
+                });
                 card.style.outline = '';
                 card.style.boxShadow = '';
+                ['A', 'B'].forEach(function (s) {
+                    var c = document.getElementById('ppShipCard' + s);
+                    if (c) { c.style.outline = ''; c.style.boxShadow = ''; }
+                });
             });
 
             card.addEventListener('dragover', function (e) {
                 if (!e.dataTransfer) return;
                 e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
+                e.stopPropagation();
+                try { e.dataTransfer.dropEffect = 'move'; } catch (err) {}
                 card.style.outline = '2px dashed ' + accent;
                 card.style.boxShadow = '0 0 0 3px ' + accent + '22';
             });
@@ -421,12 +440,21 @@ var PaintingProcessModule = (function () {
 
             card.addEventListener('drop', function (e) {
                 e.preventDefault();
+                e.stopPropagation();
                 card.style.outline = '';
                 card.style.boxShadow = '';
-                var outId = e.dataTransfer ? e.dataTransfer.getData('text/plain') : '';
-                var from = e.dataTransfer ? e.dataTransfer.getData('application/x-paint-ship-from') : '';
-                if (!outId) return;
-                if (from && PaintingInputModule.normLine(from) === toLine) {
+                var outId = '';
+                var from = '';
+                try {
+                    outId = (e.dataTransfer && (e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('text'))) || '';
+                    from = (e.dataTransfer && e.dataTransfer.getData('application/x-paint-ship-from')) || '';
+                } catch (err) { outId = ''; }
+                if (!outId) {
+                    UIUtils.toast('이동할 항목을 인식하지 못했습니다. →A/→B 버튼을 사용해 주세요.', 'warning');
+                    return;
+                }
+                if (from && typeof PaintingInputModule !== 'undefined'
+                    && PaintingInputModule.normLine(from) === toLine) {
                     UIUtils.toast('이미 ' + toLine + ' 목록입니다.', 'info');
                     return;
                 }
@@ -484,7 +512,7 @@ var PaintingProcessModule = (function () {
 
                 '<div style="margin:4px 0 10px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;">' +
                     '<h3 style="margin:0;font-size:1rem;">금일 현장 입고 자재 목록</h3>' +
-                    '<span style="font-size:0.8rem;color:var(--text-muted);">자재 창고 출고 시간 기준 · 좌 A / 우 B · <strong style="color:var(--text-secondary);">드래그로 A↔B 이동</strong>(입고 완료 건 제외)</span>' +
+                    '<span style="font-size:0.8rem;color:var(--text-muted);">자재 창고 출고 시간 기준 · 좌 A / 우 B · <strong style="color:var(--text-secondary);">⋮⋮ 핸들 드래그 또는 →A/→B 버튼</strong>(입고 완료 건 제외)</span>' +
                 '</div>' +
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;">' +
                     _shipmentSectionHtml('도장-A', '#2563eb') +
@@ -5373,12 +5401,16 @@ const PaintingInspectionModule = (function() {
     // false → 다음 공정이 레이저가 아님 (도장 검사 → 출하대기로 이동)
     function _laserAfterPaintLine(product, paintLineName) {
         if (!product || !paintLineName) return false;
+        const norm = function (v) {
+            return String(v || '').trim().replace(/\s+/g, '').replace(/[-_]/g, '');
+        };
         const procs = [product.process1, product.process2, product.process3, product.process4]
             .map(p => (p || '').trim()).filter(Boolean);
-        const paintIdx = procs.findIndex(p => p === paintLineName);
+        const paintKey = norm(paintLineName);
+        const paintIdx = procs.findIndex(p => norm(p) === paintKey);
         if (paintIdx < 0 || paintIdx >= procs.length - 1) return false; // 못 찾거나 마지막 공정
         const nextProc = procs[paintIdx + 1];
-        return nextProc.includes('레이저') || nextProc.includes('레이져');
+        return nextProc.includes('레이저') || nextProc.includes('레이져') || /laser/i.test(nextProc);
     }
 
     function _currentUser() {

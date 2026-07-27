@@ -289,14 +289,17 @@ var PaintingInputModule = (function () {
             || AuthModule.canWritePage('painting-process');
     }
 
-    /** A↔B 라인 이동 권한 — 도장 작업/메인 또는 사출 창고 입력 권한 */
+    /** A↔B 라인 이동 권한 — 도장 메인/작업/창고 입력 권한 */
     function _canMoveShipmentLine() {
         if (typeof AuthModule === 'undefined' || !AuthModule.canWritePage) return true;
+        if (typeof AuthModule.isAdminUser === 'function' && AuthModule.isAdminUser()) return true;
         if (typeof AuthModule.isAdmin === 'function' && AuthModule.isAdmin()) return true;
         return _canConfirmInbound('도장-A')
             || _canConfirmInbound('도장-B')
+            || AuthModule.canWritePage('painting-process')
             || AuthModule.canWritePage('injection-warehouse')
-            || AuthModule.canWritePage('warehouse');
+            || AuthModule.canWritePage('warehouse')
+            || AuthModule.canWritePage('warehouse-hub');
     }
 
     function _findReceiveByOutId(outId) {
@@ -421,7 +424,7 @@ var PaintingInputModule = (function () {
         const inspMap = _buildInspDateMap();
         const confirmFn = opts.confirmFn || 'PaintingWorkModule.confirmInputInbound';
         const compact = !!opts.compact;
-        const colSpan = compact ? 4 : 10;
+        const colSpan = compact ? 6 : 10;
 
         if (!list.length) {
             return {
@@ -437,6 +440,8 @@ var PaintingInputModule = (function () {
 
         if (compact) {
             const canMove = _canMoveShipmentLine();
+            const otherLine = want === '도장-B' ? '도장-A' : '도장-B';
+            const otherShort = want === '도장-B' ? 'A' : 'B';
             const html = list.map(function (r) {
                 const stamp = _outDisplayStamp(r);
                 const outDt = _splitDateTime(stamp);
@@ -446,17 +451,37 @@ var PaintingInputModule = (function () {
                 const canDrag = canMove && !r.received && !!r.id;
                 const title = r.received
                     ? '입고 완료 — 이동 불가'
-                    : (canDrag ? '드래그하여 도장-A ↔ 도장-B 이동' : '라인 이동 권한 없음');
-                return `<tr draggable="${canDrag ? 'true' : 'false'}"
-                    data-ship-out-id="${_esc(r.id || '')}"
+                    : (canDrag ? '핸들을 드래그하거나 →' + otherShort + ' 버튼으로 이동' : '라인 이동 권한 없음');
+                const handleHtml = canDrag
+                    ? `<span class="pp-ship-drag-handle" draggable="true"
+                            data-ship-out-id="${_esc(r.id || '')}"
+                            data-ship-from="${_esc(want)}"
+                            title="드래그하여 ${ _esc(otherLine) }로 이동"
+                            style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;
+                                   cursor:grab;border-radius:6px;color:var(--text-muted);user-select:none;
+                                   -webkit-user-drag:element;touch-action:none;">
+                            <span class="material-symbols-outlined" style="font-size:18px;pointer-events:none;">drag_indicator</span>
+                       </span>`
+                    : `<span style="display:inline-block;width:28px;color:var(--text-muted);opacity:0.35;">·</span>`;
+                const moveBtn = canDrag
+                    ? `<button type="button" class="btn btn-sm btn-outline"
+                            style="padding:2px 8px;font-size:0.72rem;white-space:nowrap;"
+                            title="${_esc(otherLine)}로 이동"
+                            onclick="event.stopPropagation();PaintingProcessModule.moveShipmentToLine('${_esc(r.id)}','${_esc(otherLine)}')">→${otherShort}</button>`
+                    : (r.received
+                        ? '<span style="font-size:0.7rem;color:var(--text-muted);">입고완료</span>'
+                        : '');
+                return `<tr data-ship-out-id="${_esc(r.id || '')}"
                     data-ship-from="${_esc(want)}"
                     data-ship-draggable="${canDrag ? '1' : '0'}"
                     title="${_esc(title)}"
-                    style="${muted}cursor:${canDrag ? 'grab' : 'default'};">
+                    style="${muted}">
+                    <td style="white-space:nowrap;padding:6px 4px 6px 8px;width:34px;">${handleHtml}</td>
                     <td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">${_esc(timeTxt.trim() || '-')}</td>
                     <td style="white-space:nowrap;padding:8px 10px;"><strong>${_esc(r.carModel || '-')}</strong></td>
                     <td style="white-space:nowrap;padding:8px 10px;">${_esc(r.partName || '-')}</td>
                     <td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:800;">${_fmt(r.quantity)}</td>
+                    <td style="white-space:nowrap;padding:6px 8px;text-align:center;">${moveBtn}</td>
                 </tr>`;
             }).join('');
             return {

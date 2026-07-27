@@ -6528,10 +6528,9 @@ var LaserStandbyModule = (function() {
             const w = _canonicalStandbyRecord(raw, products, injectionMaterials);
             if ((w.carModel || '') !== carModel || (w.partName || '') !== partName || ((w.color || '') !== (color || ''))) return;
             // _buildInventorySnapshot과 동일한 필터: 이 도장 작업이 레이저 대기 인바운드인지 확인
-            const prod = products.find(function(p) {
-                return String(p.carModel||'').trim() === String(w.carModel||'').trim() &&
-                       String(p.partName||'').trim() === String(w.partName||'').trim();
-            });
+            const prod = (w.productId && products.find(function (p) { return String(p.id || '') === String(w.productId); }))
+                || findProduct(products, w)
+                || _resolveProductForStandby(w, products, injectionMaterials);
             if (!_isPaintingWorkLaserStandbyInbound(w, prod)) return;
             const recordDate = _inventoryEventStamp(w, w.date || '', w.endTime || w.startTime || '');
             if (overrideDateStamp && String(recordDate || '') <= overrideDateStamp) return;
@@ -7337,11 +7336,9 @@ var LaserStandbyModule = (function() {
         let inboundQty = 0;
         let inboundRecords = 0;
         paintingWorks.forEach(w => {
-            const prod = findProduct(products, w);
+            const prod = findProduct(products, w) || _resolveProductForStandby(w, products, []);
             if (!_isPaintingWorkLaserStandbyInbound(w, prod)) return;
-            // 확인 후 입고: 미확인(입고 대기) 실적은 재고에 반영되지 않으므로 이상 감지에서도 제외한다.
-            const stamp = _inventoryEventStamp(w, w.date || '', w.endTime || w.startTime || '');
-            if (_isConfirmGated(stamp) && !_getInboundConfirm(w.id)) return;
+            // 미확인 실적도 산출수량으로 재고 반영하므로 이상 감지에 포함한다.
             const conf = _getInboundConfirm(w.id);
             const qty = conf ? _normalizeQty(conf.actualQty) : (Number(w.productionQty) || 0);
             if (qty <= 0) return;
