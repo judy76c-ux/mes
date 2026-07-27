@@ -100,7 +100,7 @@ var PaintingProcessModule = (function () {
     function _planDashForLine(line, today, plans, works) {
         var want = _normLine(line);
         var linePlans = plans.filter(function (p) {
-            return p.date === today && _normLine(p.line) === want && (p.carModel || p.partName);
+            return _dateKey(p.date) === today && _normLine(p.line) === want && (p.carModel || p.partName);
         });
         var entered = 0;
         var unentered = 0;
@@ -125,6 +125,131 @@ var PaintingProcessModule = (function () {
             prodQty: prodQty
         };
     }
+
+    function _workProdQty(w) {
+        return Number(w && w.productionQty) || Number(w && w.inputQty) || 0;
+    }
+
+    /** 금일 라인별 생산계획 목록 행 */
+    function _todayPlanRowsHtml(line, today, plans, works) {
+        var want = _normLine(line);
+        var pageId = want === '도장-B' ? 'painting-work-b' : 'painting-work-a';
+        var linePlans = plans.filter(function (p) {
+            return _dateKey(p.date) === today && _normLine(p.line) === want && (p.carModel || p.partName);
+        }).sort(function (a, b) {
+            return String(a.startTime || a.slot || '').localeCompare(String(b.startTime || b.slot || ''));
+        });
+        var dayWorks = works.filter(function (w) {
+            return _dateKey(w.date) === today && _normLine(w.line) === want;
+        });
+
+        if (!linePlans.length) {
+            return '<tr><td colspan="6" style="text-align:center;padding:18px;color:var(--text-muted);font-size:0.82rem;">금일 등록된 계획이 없습니다.</td></tr>';
+        }
+
+        var now = new Date();
+        var nowHm = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+
+        return linePlans.map(function (plan) {
+            var planQty = Number(plan.planQty) || 0;
+            var achieved = dayWorks.filter(function (w) {
+                return w.carModel === plan.carModel
+                    && w.partName === plan.partName
+                    && (w.color || '') === (plan.color || '');
+            }).reduce(function (s, w) { return s + _workProdQty(w); }, 0);
+            var rate = planQty > 0 ? Math.min(100, Math.round(achieved / planQty * 100)) : 0;
+            var rateColor = rate >= 100 ? '#16a34a' : (rate >= 70 ? '#2563eb' : (rate > 0 ? '#ea580c' : 'var(--text-muted)'));
+            var timeStr = plan.startTime
+                ? (plan.startTime + '~' + (plan.endTime || ''))
+                : (plan.slot || '-');
+            var isCompleted = dayWorks.some(function (w) { return w.planId === plan.id; });
+            var planStart = plan.startTime || plan.slot || '';
+            var isFuture = !isCompleted && !!planStart && planStart > nowHm;
+            var statusHtml = isCompleted
+                ? '<span style="font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:999px;background:rgba(22,163,74,0.12);color:#16a34a;">입력완료</span>'
+                : (isFuture
+                    ? '<span style="font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:999px;background:rgba(148,163,184,0.18);color:#64748b;">대기</span>'
+                    : '<span style="font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:999px;background:rgba(234,88,12,0.12);color:#ea580c;">미입력</span>');
+            var actionHtml = isCompleted
+                ? '<span style="font-size:0.75rem;color:var(--text-muted);">—</span>'
+                : ('<button type="button" class="btn btn-sm btn-primary" style="padding:3px 8px;font-size:0.75rem;white-space:nowrap;"'
+                    + ' onclick="event.stopPropagation();PaintingProcessModule.openPlanWork(\'' + _esc(pageId) + '\',\'' + _esc(plan.id) + '\')">'
+                    + '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">edit_note</span> 실적'
+                    + '</button>');
+
+            return '<tr style="cursor:default;">'
+                + '<td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">' + _esc(timeStr) + '</td>'
+                + '<td style="padding:8px 10px;line-height:1.25;">'
+                    + '<strong style="white-space:nowrap;">' + _esc(plan.carModel || '-') + '</strong>'
+                    + '<div style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">'
+                        + _esc(plan.partName || '-') + ' · ' + _esc(plan.color || '-')
+                    + '</div>'
+                + '</td>'
+                + '<td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:700;">' + _fmt(planQty) + '</td>'
+                + '<td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:700;color:' + rateColor + ';">' + _fmt(achieved) + '</td>'
+                + '<td style="padding:8px 10px;min-width:72px;">'
+                    + '<div style="display:flex;align-items:center;gap:4px;">'
+                        + '<div style="flex:1;height:6px;background:var(--border);border-radius:3px;overflow:hidden;">'
+                            + '<div style="width:' + rate + '%;height:100%;background:' + rateColor + ';"></div>'
+                        + '</div>'
+                        + '<span style="font-size:0.72rem;min-width:28px;text-align:right;">' + rate + '%</span>'
+                    + '</div>'
+                + '</td>'
+                + '<td style="white-space:nowrap;padding:8px 10px;">' + statusHtml + ' ' + actionHtml + '</td>'
+                + '</tr>';
+        }).join('');
+    }
+
+    function _planSectionHtml(line, accent, pageId, today, plans, works) {
+        var d = _planDashForLine(line, today, plans, works);
+        var suffix = line === '도장-B' ? 'B' : 'A';
+        var summary = !d.planCount
+            ? '계획 없음'
+            : (d.planCount + '건 · 계획 ' + _fmt(d.planQty) + ' EA · 실적 ' + _fmt(d.prodQty) + ' EA'
+                + (d.unentered ? ' · 미입력 ' + d.unentered : '')
+                + (d.entered ? ' · 입력 ' + d.entered : ''));
+        return '' +
+            '<div class="card" style="margin:0;min-width:0;" id="ppPlanCard' + suffix + '">' +
+                '<div class="card-header" style="padding:8px 14px;background:var(--bg-secondary);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">' +
+                    '<h4 style="margin:0;font-size:0.95rem;">' +
+                        '<span class="material-symbols-outlined" style="vertical-align:middle;margin-right:4px;font-size:18px;">assignment</span>' +
+                        _esc(line) + ' 계획' +
+                        '<span style="margin-left:8px;padding:2px 8px;border-radius:999px;font-size:0.72rem;font-weight:700;color:#fff;background:' + accent + ';">' + _esc(line) + '</span>' +
+                        '<span id="ppPlanSummary' + suffix + '" style="font-size:0.72rem;color:var(--text-muted);font-weight:500;margin-left:6px;">' + _esc(summary) + '</span>' +
+                    '</h4>' +
+                    '<button type="button" class="btn btn-sm btn-outline" style="padding:3px 8px;font-size:0.75rem;" onclick="Router.navigate(\'' + pageId + '\')">' +
+                        '작업현황 <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">chevron_right</span>' +
+                    '</button>' +
+                '</div>' +
+                '<div class="card-body" style="padding:10px;">' +
+                    '<div class="data-table-wrapper" style="border:1px solid var(--border);border-radius:4px;overflow-x:auto;max-height:280px;overflow-y:auto;">' +
+                        '<table class="data-table compact" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">' +
+                            '<thead style="position:sticky;top:0;z-index:1;background:var(--bg-secondary);"><tr>' +
+                                '<th style="white-space:nowrap;padding:8px 10px;">시간대</th>' +
+                                '<th style="white-space:nowrap;padding:8px 10px;">차종/품명</th>' +
+                                '<th style="text-align:right;white-space:nowrap;padding:8px 10px;">계획</th>' +
+                                '<th style="text-align:right;white-space:nowrap;padding:8px 10px;">실적</th>' +
+                                '<th style="white-space:nowrap;padding:8px 10px;">달성</th>' +
+                                '<th style="white-space:nowrap;padding:8px 10px;">상태</th>' +
+                            '</tr></thead>' +
+                            '<tbody id="ppPlanBody' + suffix + '">' + _todayPlanRowsHtml(line, today, plans, works) + '</tbody>' +
+                        '</table>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+    }
+
+    function openPlanWork(pageId, planId) {
+        if (!pageId) return;
+        Router.navigate(pageId);
+        if (!planId) return;
+        setTimeout(function () {
+            if (typeof PaintingWorkModule !== 'undefined' && typeof PaintingWorkModule.openAddModalFromPlan === 'function') {
+                PaintingWorkModule.openAddModalFromPlan(planId);
+            }
+        }, 280);
+    }
+
     function _dashCard(title, accent, pageId, d) {
         var rate = d.planCount > 0 ? Math.round(d.entered / d.planCount * 100) : 0;
         return '' +
@@ -246,6 +371,77 @@ var PaintingProcessModule = (function () {
                         + (result.doneCount ? ' · 입고 ' + result.doneCount : ''));
             }
         });
+        _bindShipmentDnD();
+    }
+
+    /** 도장-A ↔ 도장-B 출고 자재 드래그 이동 */
+    function _bindShipmentDnD() {
+        ['A', 'B'].forEach(function (suffix) {
+            var card = document.getElementById('ppShipCard' + suffix);
+            if (!card || card.dataset.dndBound === '1') return;
+            card.dataset.dndBound = '1';
+            var toLine = suffix === 'B' ? '도장-B' : '도장-A';
+            var accent = suffix === 'B' ? '#ea580c' : '#2563eb';
+
+            card.addEventListener('dragstart', function (e) {
+                var tr = e.target && e.target.closest ? e.target.closest('tr[data-ship-out-id]') : null;
+                if (!tr) return;
+                if (tr.getAttribute('data-ship-draggable') !== '1') {
+                    e.preventDefault();
+                    return;
+                }
+                var id = tr.getAttribute('data-ship-out-id') || '';
+                if (!id) { e.preventDefault(); return; }
+                e.dataTransfer.setData('text/plain', id);
+                e.dataTransfer.setData('application/x-paint-ship-from', tr.getAttribute('data-ship-from') || '');
+                e.dataTransfer.effectAllowed = 'move';
+                tr.style.opacity = '0.45';
+            });
+
+            card.addEventListener('dragend', function (e) {
+                var tr = e.target && e.target.closest ? e.target.closest('tr[data-ship-out-id]') : null;
+                if (tr) tr.style.opacity = '';
+                card.style.outline = '';
+                card.style.boxShadow = '';
+            });
+
+            card.addEventListener('dragover', function (e) {
+                if (!e.dataTransfer) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                card.style.outline = '2px dashed ' + accent;
+                card.style.boxShadow = '0 0 0 3px ' + accent + '22';
+            });
+
+            card.addEventListener('dragleave', function (e) {
+                if (e.relatedTarget && card.contains(e.relatedTarget)) return;
+                card.style.outline = '';
+                card.style.boxShadow = '';
+            });
+
+            card.addEventListener('drop', function (e) {
+                e.preventDefault();
+                card.style.outline = '';
+                card.style.boxShadow = '';
+                var outId = e.dataTransfer ? e.dataTransfer.getData('text/plain') : '';
+                var from = e.dataTransfer ? e.dataTransfer.getData('application/x-paint-ship-from') : '';
+                if (!outId) return;
+                if (from && PaintingInputModule.normLine(from) === toLine) {
+                    UIUtils.toast('이미 ' + toLine + ' 목록입니다.', 'info');
+                    return;
+                }
+                moveShipmentToLine(outId, toLine);
+            });
+        });
+    }
+
+    async function moveShipmentToLine(outId, toLine) {
+        if (typeof PaintingInputModule === 'undefined' || !PaintingInputModule.moveShipmentLine) {
+            UIUtils.toast('투입 자재 모듈을 불러올 수 없습니다.', 'error');
+            return;
+        }
+        var updated = await PaintingInputModule.moveShipmentLine(outId, toLine);
+        if (updated) refreshShipments();
     }
 
     async function confirmInputInbound(outId, line) {
@@ -268,6 +464,15 @@ var PaintingProcessModule = (function () {
             '<div class="fade-in-up">' +
                 (typeof PaintingNavUI !== 'undefined' ? PaintingNavUI.render('painting-process', '') : '') +
 
+                '<div style="margin:4px 0 10px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;">' +
+                    '<h3 style="margin:0;font-size:1rem;">금일 생산계획</h3>' +
+                    '<span style="font-size:0.8rem;color:var(--text-muted);">' + _esc(today) + ' · 라인별 리스트 · 좌 A / 우 B</span>' +
+                '</div>' +
+                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px;align-items:start;">' +
+                    _planSectionHtml('도장-A', '#2563eb', 'painting-work-a', today, plans, works) +
+                    _planSectionHtml('도장-B', '#ea580c', 'painting-work-b', today, plans, works) +
+                '</div>' +
+
                 '<div style="margin:4px 0 10px;display:flex;align-items:baseline;gap:8px;">' +
                     '<h3 style="margin:0;font-size:1rem;">금일 실적 입력 현황</h3>' +
                     '<span style="font-size:0.8rem;color:var(--text-muted);">' + _esc(today) + ' · 생산계획 대비</span>' +
@@ -277,21 +482,25 @@ var PaintingProcessModule = (function () {
                     _dashCard('도장-B', '#ea580c', 'painting-work-b', dashB) +
                 '</div>' +
 
-                '<div style="margin:4px 0 10px;display:flex;align-items:baseline;gap:8px;">' +
+                '<div style="margin:4px 0 10px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;">' +
                     '<h3 style="margin:0;font-size:1rem;">금일 현장 입고 자재 목록</h3>' +
-                    '<span style="font-size:0.8rem;color:var(--text-muted);">자재 창고 출고 시간 기준 · 좌 A / 우 B</span>' +
+                    '<span style="font-size:0.8rem;color:var(--text-muted);">자재 창고 출고 시간 기준 · 좌 A / 우 B · <strong style="color:var(--text-secondary);">드래그로 A↔B 이동</strong>(입고 완료 건 제외)</span>' +
                 '</div>' +
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;">' +
                     _shipmentSectionHtml('도장-A', '#2563eb') +
                     _shipmentSectionHtml('도장-B', '#ea580c') +
                 '</div>' +
             '</div>';
+
+        _bindShipmentDnD();
     }
 
     return {
         render: render,
         init: render,
         confirmInputInbound: confirmInputInbound,
+        moveShipmentToLine: moveShipmentToLine,
+        openPlanWork: openPlanWork,
         refreshShipments: refreshShipments
     };
 })();

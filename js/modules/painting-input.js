@@ -289,11 +289,69 @@ var PaintingInputModule = (function () {
             || AuthModule.canWritePage('painting-process');
     }
 
+    /** A↔B 라인 이동 권한 — 도장 작업/메인 또는 사출 창고 입력 권한 */
+    function _canMoveShipmentLine() {
+        if (typeof AuthModule === 'undefined' || !AuthModule.canWritePage) return true;
+        if (typeof AuthModule.isAdmin === 'function' && AuthModule.isAdmin()) return true;
+        return _canConfirmInbound('도장-A')
+            || _canConfirmInbound('도장-B')
+            || AuthModule.canWritePage('injection-warehouse')
+            || AuthModule.canWritePage('warehouse');
+    }
+
     function _findReceiveByOutId(outId) {
         if (!outId) return null;
         return (Storage.getAll(STORE) || []).find(function (r) {
             return String(r.refOutId || '') === String(outId) && String(r.type || '') === '입고';
         }) || null;
+    }
+
+    /** 출고 표시용 일시 (시각 없으면 createdAt 복원) */
+    function _outDisplayStamp(r) {
+        if (typeof InvCalc !== 'undefined' && typeof InvCalc.recordStamp === 'function') {
+            const s = InvCalc.recordStamp(r);
+            if (s) return String(s).slice(0, 16);
+        }
+        return String((r && r.date) || '').trim();
+    }
+
+    /**
+     * 금일 창고 출고 건의 도착 라인을 도장-A ↔ 도장-B로 변경
+     * (현장 입고 완료 건은 불가)
+     */
+    async function moveShipmentLine(outId, toLine) {
+        const want = _normLine(toLine);
+        if (!_canMoveShipmentLine()) {
+            UIUtils.toast('라인 이동 권한이 없습니다.', 'warning');
+            return null;
+        }
+        const injStore = DB.STORES.INJECTION_INVENTORY;
+        const out = Storage.getById(injStore, outId);
+        if (!out) {
+            UIUtils.toast('출고 기록을 찾을 수 없습니다.', 'error');
+            return null;
+        }
+        if (_findReceiveByOutId(outId)) {
+            UIUtils.toast('이미 현장 입고된 건은 라인을 변경할 수 없습니다.', 'warning');
+            return null;
+        }
+        const from = _normLine(out.paintLine || out.line);
+        if (from === want) {
+            UIUtils.toast('이미 ' + want + ' 라인입니다.', 'info');
+            return out;
+        }
+        try {
+            await Storage.update(injStore, outId, {
+                paintLine: want,
+                line: want
+            });
+            UIUtils.toast(from + ' → ' + want + ' 이동 완료', 'success');
+            return Storage.getById(injStore, outId);
+        } catch (e) {
+            console.warn('[PaintingInput] moveShipmentLine failed:', e);
+            UIUtils.toast('라인 이동 실패: ' + (e.message || e), 'error');
+            return null;
+        }
     }
 
     /** 금일 자재창고→해당 라인 생산출고 목록 (+ 현장 입고 여부) */
@@ -378,12 +436,24 @@ var PaintingInputModule = (function () {
         }
 
         if (compact) {
+            const canMove = _canMoveShipmentLine();
             const html = list.map(function (r) {
-                const outDt = _splitDateTime(r.date || '');
-                const timeTxt = (outDt.day !== '-' ? outDt.day + ' ' : '') + (outDt.time !== '-' ? outDt.time : '');
+                const stamp = _outDisplayStamp(r);
+                const outDt = _splitDateTime(stamp);
+                const timeTxt = (outDt.day !== '-' ? outDt.day : '')
+                    + (outDt.time !== '-' ? ' ' + outDt.time : '');
                 const muted = r.received ? 'opacity:0.55;' : '';
-                return `<tr style="${muted}">
-                    <td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">${_esc(timeTxt || '-')}</td>
+                const canDrag = canMove && !r.received && !!r.id;
+                const title = r.received
+                    ? '입고 완료 — 이동 불가'
+                    : (canDrag ? '드래그하여 도장-A ↔ 도장-B 이동' : '라인 이동 권한 없음');
+                return `<tr draggable="${canDrag ? 'true' : 'false'}"
+                    data-ship-out-id="${_esc(r.id || '')}"
+                    data-ship-from="${_esc(want)}"
+                    data-ship-draggable="${canDrag ? '1' : '0'}"
+                    title="${_esc(title)}"
+                    style="${muted}cursor:${canDrag ? 'grab' : 'default'};">
+                    <td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">${_esc(timeTxt.trim() || '-')}</td>
                     <td style="white-space:nowrap;padding:8px 10px;"><strong>${_esc(r.carModel || '-')}</strong></td>
                     <td style="white-space:nowrap;padding:8px 10px;">${_esc(r.partName || '-')}</td>
                     <td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:800;">${_fmt(r.quantity)}</td>
@@ -612,7 +682,8 @@ var PaintingInputModule = (function () {
         getLotsByInjPart: getLotsByInjPart,
         getLotsByCarPart: getLotsByCarPart,
         receiveFromWarehouseOut: receiveFromWarehouseOut,
-        deductForWork: deductForWork,
+        moveShipmentLine: moveShipmentLine,
+        canMoveShipmentLine: _canMoveShipmentLine,
         normLine: _normLine
     };
 })();

@@ -2273,12 +2273,36 @@ var InjectionWarehouseModule = (function() {
                         inputmode="numeric" enterkeyhint="done" style="text-align:right;">
                 </div>
             </div>
+            <div class="form-group">
+                <label class="form-label">처리 사유 <span style="color:var(--accent-red)">*</span></label>
+                <textarea id="lotEditReason" class="form-textarea" rows="2"
+                    placeholder="예: 실사 재고와 차이 확인 — 250 EA 부족분 반영"></textarea>
+            </div>
             <div style="font-size:0.75rem;color:var(--text-muted);margin-top:2px;">※ 수량을 변경하면 차이만큼 재고 보정 입·출고가 자동으로 기록됩니다.</div>
             `,
             `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
              <button class="btn btn-primary" style="background:#7c3aed;border-color:#7c3aed;" onclick="InjectionWarehouseModule.saveLotEdit('${_cmJs}','${_pnJs}','${_clJs}','${_olJs}',${Number(currentQty) || 0})">수량 보정 저장</button>`,
             'md'
         );
+    }
+
+    // 같은 LOT을 아주 짧은 시간 안에 반복 보정하는 것을 감지 — 저장할 때마다 차이만큼 레코드가
+    // '추가'되는 방식이라(값을 덮어쓰는 게 아님), 재시도를 반복하면 매번 누적돼 실제 의도보다
+    // 훨씬 큰 보정이 쌓이는 사고가 실제로 있었다(예: 47분 사이 5회 저장, 합계 13,338 EA).
+    function _recentLotEditWarning(carModel, partName, color, lotNo) {
+        const WINDOW_MIN = 30;
+        const now = Date.now();
+        const all = Storage.getAll(STORE) || [];
+        const recent = all.filter(d => {
+            if (d.source !== '재고 수정 보정') return false;
+            if (!_recordMatchesLot(d, carModel, partName, color, lotNo)) return false;
+            const t = new Date(d.createdAt || d.date).getTime();
+            return !isNaN(t) && (now - t) >= 0 && (now - t) <= WINDOW_MIN * 60000;
+        });
+        if (recent.length === 0) return '';
+        const sum = recent.reduce((s, d) => s + (Number(d.quantity) || 0), 0);
+        return `⚠ 최근 ${WINDOW_MIN}분 안에 같은 LOT을 이미 ${recent.length}번 보정했습니다(합계 ${UIUtils.formatNumber(sum)} EA).\n` +
+               `저장할 때마다 차이만큼 새로 누적되니, 중복 저장이 아닌지 다시 확인해 주세요.\n\n그래도 계속하시겠습니까?`;
     }
 
     async function saveLotEdit(carModel, partName, color, oldLot, oldQty) {
@@ -2290,6 +2314,8 @@ var InjectionWarehouseModule = (function() {
         const newDate     = ((document.getElementById('lotEditDate')     || {}).value || '').trim();
         const newSupplier = ((document.getElementById('lotEditSupplier') || {}).value || '').trim();
         const newQty      = Number((document.getElementById('lotEditQty') || {}).value);
+        const reasonEl     = document.getElementById('lotEditReason');
+        const reason       = reasonEl ? reasonEl.value.trim() : '';
 
         if (!/^\d{6}$/.test(newLot)) {
             UIUtils.toast('LOT번호는 YYMMDD 형식 6자리 숫자로 입력하세요.', 'warning');
@@ -2297,6 +2323,11 @@ var InjectionWarehouseModule = (function() {
         }
         if (isNaN(newQty) || newQty < 0) {
             UIUtils.toast('현재 수량을 0 이상으로 입력하세요.', 'warning');
+            return;
+        }
+        if (!reason) {
+            UIUtils.toast('처리 사유를 입력해주세요.', 'warning');
+            if (reasonEl) reasonEl.focus();
             return;
         }
 
@@ -2310,30 +2341,38 @@ var InjectionWarehouseModule = (function() {
 
         const delta = newQty - (Number(oldQty) || 0);
 
-        // ★ 이 보정을 적용했을 때 해당 품목의 전체 재고(모든 LOT 합산)가
-        //   마이너스가 되면 그대로 진행하지 않고 먼저 확인을 받는다.
-        //   (LOT 하나만 보고 수정하면 다른 LOT과 합산한 실제 재고가 이미
-        //    부족한 상태를 놓쳐 마이너스 재고 오류로 이어질 수 있음)
-        if (delta !== 0) {
-            const productItems = (all || []).filter(function(d) {
-                return d.carModel === carModel && d.partName === partName && (d.color || '') === (color || '');
-            });
-            const currentTotal = InvCalc.lotBalances(productItems).total;
-            const projected = currentTotal + delta;
-            if (projected < 0) {
-                UIUtils.confirm(
-                    `이 수정을 적용하면 "${partName}"의 전체 재고가 ${UIUtils.formatNumber(projected)} EA(마이너스)가 됩니다.\n` +
-                    `다른 LOT의 실제 재고나 이전 입출고 기록을 다시 확인해 주세요.\n\n그래도 계속하시겠습니까?`,
-                    () => _commitLotEdit(carModel, partName, color, oldLot, newLot, newDate, newSupplier, targets, delta)
-                );
-                return;
+        const proceed = () => {
+            // ★ 이 보정을 적용했을 때 해당 품목의 전체 재고(모든 LOT 합산)가
+            //   마이너스가 되면 그대로 진행하지 않고 먼저 확인을 받는다.
+            //   (LOT 하나만 보고 수정하면 다른 LOT과 합산한 실제 재고가 이미
+            //    부족한 상태를 놓쳐 마이너스 재고 오류로 이어질 수 있음)
+            if (delta !== 0) {
+                const productItems = (all || []).filter(function(d) {
+                    return d.carModel === carModel && d.partName === partName && (d.color || '') === (color || '');
+                });
+                const currentTotal = InvCalc.lotBalances(productItems).total;
+                const projected = currentTotal + delta;
+                if (projected < 0) {
+                    UIUtils.confirm(
+                        `이 수정을 적용하면 "${partName}"의 전체 재고가 ${UIUtils.formatNumber(projected)} EA(마이너스)가 됩니다.\n` +
+                        `다른 LOT의 실제 재고나 이전 입출고 기록을 다시 확인해 주세요.\n\n그래도 계속하시겠습니까?`,
+                        () => _commitLotEdit(carModel, partName, color, oldLot, newLot, newDate, newSupplier, targets, delta, reason)
+                    );
+                    return;
+                }
             }
-        }
+            _commitLotEdit(carModel, partName, color, oldLot, newLot, newDate, newSupplier, targets, delta, reason);
+        };
 
-        await _commitLotEdit(carModel, partName, color, oldLot, newLot, newDate, newSupplier, targets, delta);
+        const dupWarning = delta !== 0 ? _recentLotEditWarning(carModel, partName, color, oldLot) : '';
+        if (dupWarning) {
+            UIUtils.confirm(dupWarning, proceed);
+            return;
+        }
+        proceed();
     }
 
-    async function _commitLotEdit(carModel, partName, color, oldLot, newLot, newDate, newSupplier, targets, delta) {
+    async function _commitLotEdit(carModel, partName, color, oldLot, newLot, newDate, newSupplier, targets, delta, reason) {
         try {
             for (const d of targets) {
                 let updates = {};
@@ -2368,6 +2407,8 @@ var InjectionWarehouseModule = (function() {
                     quantity: adjQty,
                     unit: 'EA',
                     source: '재고 수정 보정',
+                    resetReason: reason,
+                    note: reason,
                     ..._actorFieldsForRecord(delta > 0 ? '입고' : '출고')
                 });
             }

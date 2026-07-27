@@ -789,19 +789,24 @@ var LaserWorkModule = (function() {
                 || null;
         };
 
+        // 도장 작업 완료품이 레이저 대기 재고에 포함되는지
+        // (LaserStandbyModule과 동일: 공정명 정규화 + 라인 이후 레이저)
         const laserPaintWorks = paintingWorks.map(normalizeStandbyRecord).filter(w => {
             const prod = _exactProductFor(w.carModel, w.partName, w.color) || _findProductForWork(w.carModel, w.partName, w.color);
             if (!prod || !_hasLaserProcess(prod)) return false;
-            // 이 작업의 도장 라인 이후에 레이저가 있을 때만 레이저 대기에 포함
-            // (도장-B가 레이저 뒤에 있으면 도장-B 완료품은 레이저 대기 대상 아님)
             const procs = [prod.process1, prod.process2, prod.process3, prod.process4]
-                .map(p => (p || '').trim());
-            const paintLine = (w.line || '').trim();
-            const paintIdx  = procs.indexOf(paintLine);
-            const laserIdx  = procs.findIndex(p => p.includes('레이저') || p.includes('레이져'));
+                .map(p => (p || '').trim()).filter(Boolean);
+            const paintLine = String(w.line || '').trim();
+            const paintKey = String(paintLine).replace(/\s+/g, '').replace(/[-_]/g, '');
+            const paintIdx = paintKey
+                ? procs.findIndex(function (p) {
+                    return String(p).replace(/\s+/g, '').replace(/[-_]/g, '') === paintKey;
+                })
+                : -1;
+            const laserIdx = procs.findIndex(p => p.includes('레이저') || p.includes('레이져') || /laser/i.test(p));
             if (laserIdx < 0) return false;
-            if (paintIdx < 0) return true;   // 라인 정보 없으면 안전하게 포함
-            return laserIdx > paintIdx;       // 레이저가 이 도장 이후에 위치할 때만
+            if (!paintLine || paintIdx < 0) return true;
+            return laserIdx > paintIdx;
         });
 
         // 도장 작업일 + 사출 LOT 단위로 레이저 처리 수량 집계
@@ -5334,7 +5339,8 @@ var LaserStandbyModule = (function() {
             }
             : row;
         const prod = findProduct(products, identityRow)
-            || _findProductByInjectionPart(products, injectionMaterials, identityRow);
+            || _findProductByInjectionPart(products, injectionMaterials, identityRow)
+            || _resolveProductForStandby(identityRow, products, injectionMaterials);
 
         // ⚠ 제품 마스터에 매칭되는 제품이 없으면 예전에는 원본 행을 그대로 통과시켰다.
         // 그 결과 도장/사출 쪽 품명(예: 'PAO COVER (WHITE)')이 재공 현황에 제품 품명인 척
@@ -5426,17 +5432,56 @@ var LaserStandbyModule = (function() {
             .some(_isLaserProcessName);
     }
 
-    // 도장 작업 완료품이 레이저 대기 재고에 포함되는지 (LaserWorkModule.getLaserStandbyItems와 동일 기준)
+    /**
+     * 도장 작업 → 레이저 대기 인바운드 여부
+     * process 표기 차이(도장-A / 도장A / 도장(A))를 정규화해 비교한다.
+     */
     function _isPaintingWorkLaserStandbyInbound(paintingWork, prod) {
         if (!prod || !_hasLaserProcess(prod)) return false;
         const procs = [prod.process1, prod.process2, prod.process3, prod.process4]
-            .map(p => String(p || '').trim());
-        const paintLine = _normalizePaintLine(paintingWork.line || '');
-        const paintIdx = procs.indexOf(paintLine);
-        const laserIdx = procs.findIndex(p => p.includes('레이저') || p.includes('레이져'));
+            .map(function (p) { return String(p || '').trim(); })
+            .filter(Boolean);
+        const paintLine = _normalizePaintLine(paintingWork && paintingWork.line || '');
+        const paintKey = _normalizeFlowKey(paintLine);
+        const paintIdx = paintKey
+            ? procs.findIndex(function (p) { return _normalizeFlowKey(p) === paintKey; })
+            : -1;
+        const laserIdx = procs.findIndex(_isLaserProcessName);
         if (laserIdx < 0) return false;
+        // 라인 정보 없거나 마스터 표기와 다르면 안전하게 포함 (구데이터 호환)
         if (!paintLine || paintIdx < 0) return true;
         return laserIdx > paintIdx;
+    }
+
+    /** 레이저 대기용 제품 해석 — 컬러 불일치·사출명 매핑 폴백 */
+    function _resolveProductForStandby(row, products, injectionMaterials) {
+        if (!row) return null;
+        let prod = findProduct(products, row)
+            || _findProductByInjectionPart(products, injectionMaterials, row);
+        if (prod) return prod;
+
+        const car = String(row.carModel || '').trim();
+        const part = String(row.partName || '').trim();
+        const color = String(row.color || '').trim();
+        if (!car || !part) return null;
+
+        const sameName = (products || []).filter(function (p) {
+            return String(p.carModel || '').trim() === car
+                && String(p.partName || '').trim() === part;
+        });
+        const laserOnes = sameName.filter(_hasLaserProcess);
+        const pool = laserOnes.length ? laserOnes : sameName;
+        if (!pool.length) return null;
+        if (color) {
+            const exact = pool.find(function (p) { return _sameText(p.color, color); });
+            if (exact) return exact;
+            const soft = pool.find(function (p) {
+                const pc = String(p.color || '').trim();
+                return pc && (pc.indexOf(color) >= 0 || color.indexOf(pc) >= 0);
+            });
+            if (soft) return soft;
+        }
+        return pool.length === 1 ? pool[0] : (laserOnes[0] || pool[0] || null);
     }
 
     function _getLaserRelatedProducts() {
@@ -5781,7 +5826,9 @@ var LaserStandbyModule = (function() {
         const laserPaintWorks = paintingWorks
             .map(w => _canonicalStandbyRecord(w, products, injectionMaterials))
             .filter(w => {
-            const prod = findProduct(products, w);
+            const prod = (w.productId && products.find(function (p) { return String(p.id || '') === String(w.productId); }))
+                || findProduct(products, w)
+                || _resolveProductForStandby(w, products, injectionMaterials);
             return _isPaintingWorkLaserStandbyInbound(w, prod);
         });
 
@@ -5794,25 +5841,33 @@ var LaserStandbyModule = (function() {
                 : '');
             let note = w.note || '';
             let confirm = null;
+            let pendingConfirm = false;
 
             // ── 확인 후 입고 게이팅 ──
-            // 전환 기준선 이후 도장 실적은 레이저 운영자가 실수량을 확인·입고 처리한 것만 재고에 반영한다.
-            // 미확인 실적은 여기서 건너뛰고(재고 미반영) _collectPendingInbound에서 "입고 대기"로 표시한다.
+            // 전환 기준선 이후 도장 실적: 확인되면 실입고수량 사용.
+            // 미확인이어도 산출수량으로 재고에 먼저 반영하고(대기 누락 방지),
+            // 상단 "입고 대기"에서 레이저 운영자가 재확인할 수 있게 한다.
             if (_isConfirmGated(stamp)) {
                 confirm = _getInboundConfirm(w.id);
-                if (!confirm) return;
-                qty = _normalizeQty(confirm.actualQty);
-                if (Array.isArray(confirm.lots) && confirm.lots.length > 0) {
-                    injLot = [...new Set(confirm.lots.map(l => l.injectionLot || l.lotNo).filter(Boolean))].join(', ');
-                    const cp = [...new Set(confirm.lots.map(l => l.paintLot).filter(Boolean))];
-                    if (cp.length > 0) paintLot = cp.join(', ');
+                if (confirm) {
+                    qty = _normalizeQty(confirm.actualQty);
+                    if (Array.isArray(confirm.lots) && confirm.lots.length > 0) {
+                        injLot = [...new Set(confirm.lots.map(l => l.injectionLot || l.lotNo).filter(Boolean))].join(', ');
+                        const cp = [...new Set(confirm.lots.map(l => l.paintLot).filter(Boolean))];
+                        if (cp.length > 0) paintLot = cp.join(', ');
+                    }
+                    note = _inboundConfirmNote(confirm) + (w.note ? ' · ' + w.note : '');
+                } else {
+                    pendingConfirm = true;
+                    note = '입고확인 대기' + (w.note ? ' · ' + w.note : '');
                 }
-                note = _inboundConfirmNote(confirm) + (w.note ? ' · ' + w.note : '');
             }
+
+            if (qty <= 0) return;
 
             const key = _itemKey(w.carModel, w.partName, w.color || '');
             const histReset = _getHistoryResetForKey(key);
-            const prod = findProduct(products, w);
+            const prod = findProduct(products, w) || _resolveProductForStandby(w, products, injectionMaterials);
             if (!inventoryMap[key]) {
                 inventoryMap[key] = {
                     key,
@@ -5843,6 +5898,7 @@ var LaserStandbyModule = (function() {
                 paintLot: paintLot || '',
                 line: w.line || '',
                 note: note,
+                pendingConfirm: pendingConfirm,
                 confirmedBy: confirm ? (confirm.operator || '') : '',
                 inboundDiff: confirm ? (Number(confirm.diff) || 0) : 0
             });
@@ -6485,17 +6541,19 @@ var LaserStandbyModule = (function() {
             let confirmLots = null;
             if (_isConfirmGated(recordDate)) {
                 const confirm = _getInboundConfirm(w.id);
-                if (!confirm) return; // 미확인 실적은 LOT 잔량 계산에서도 제외
-                totalQty = _normalizeQty(confirm.actualQty);
-                if (Array.isArray(confirm.lots) && confirm.lots.length > 0) {
-                    confirmLots = confirm.lots.map(function(l) {
-                        return {
-                            lotNo: String((l && (l.injectionLot || l.lotNo)) || '').trim(),
-                            paintLot: String((l && l.paintLot) || '').trim(),
-                            qty: _normalizeQty(l && l.qty)
-                        };
-                    }).filter(function(l) { return l.lotNo && l.qty > 0; });
+                if (confirm) {
+                    totalQty = _normalizeQty(confirm.actualQty);
+                    if (Array.isArray(confirm.lots) && confirm.lots.length > 0) {
+                        confirmLots = confirm.lots.map(function(l) {
+                            return {
+                                lotNo: String((l && (l.injectionLot || l.lotNo)) || '').trim(),
+                                paintLot: String((l && l.paintLot) || '').trim(),
+                                qty: _normalizeQty(l && l.qty)
+                            };
+                        }).filter(function(l) { return l.lotNo && l.qty > 0; });
+                    }
                 }
+                // 미확인: 산출수량으로 LOT 잔량에도 반영 (재고 누락 방지)
             }
             if (totalQty <= 0) return;
             const paintLot = String(_paintingWorkDateTime(w) || w.date || '').replace(/-/g, '').slice(2, 8);
@@ -6785,7 +6843,9 @@ var LaserStandbyModule = (function() {
         const list = [];
         paintingWorks.forEach(function(raw) {
             const w = _canonicalStandbyRecord(raw, products, injectionMaterials);
-            const prod = findProduct(products, w);
+            const prod = (w.productId && products.find(function (p) { return String(p.id || '') === String(w.productId); }))
+                || findProduct(products, w)
+                || _resolveProductForStandby(w, products, injectionMaterials);
             if (!_isPaintingWorkLaserStandbyInbound(w, prod)) return;
             const stamp = _inventoryEventStamp(w, w.date || '', w.endTime || w.startTime || '');
             if (!_isConfirmGated(stamp)) return;   // 기준선 이전 → 자동입고(대기 아님)
@@ -7059,12 +7119,12 @@ var LaserStandbyModule = (function() {
                     border:1px solid rgba(37,99,235,0.30);border-radius:8px;">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
                 <span class="material-symbols-outlined" style="font-size:1.15rem;color:${accent};">pending_actions</span>
-                <strong style="font-size:0.9rem;color:${accent};">입고 대기 (레이저 운영자 확인 후 입고)</strong>
+                <strong style="font-size:0.9rem;color:${accent};">입고 확인 대기 (재고에는 산출수량으로 반영됨)</strong>
                 <span style="font-size:0.78rem;color:var(--text-secondary);">
                     ${list.length}건 · 산출 ${UIUtils.formatNumber(totalQty)} EA
                 </span>
                 <span style="font-size:0.72rem;color:var(--text-muted);margin-left:auto;">
-                    도장 산출수량이 아니라 <strong>실입고수량</strong>을 확인해 입고 처리하세요. 오차는 이력에 기록됩니다.
+                    재공 재고에는 이미 포함되어 있습니다. 실입고수량이 다르면 <strong>입고처리</strong>로 보정하세요.
                 </span>
             </div>
             <div class="data-table-wrapper" style="overflow-x:auto;">
