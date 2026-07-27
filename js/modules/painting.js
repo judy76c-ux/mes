@@ -13,7 +13,6 @@ var PaintingNavUI = (function() {
     // page: 라우터 페이지 ID, tab: PaintingInspectionModule 내부 탭 key (없으면 기본)
     var MENUS = [
         { id: 'painting-process',      tab: '',                    icon: 'dashboard',       label: '도장 작업 메인',       sub: '현황·바로가기' },
-        { id: 'painting-input',        tab: '',                    icon: 'inventory_2',     label: '도장 투입 자재',       sub: '도장-A/B 현장 투입' },
         { id: 'painting-work-a',       tab: '',                    icon: 'format_paint',    label: '도장-A 작업현황',       sub: '도장-A 작업일지 입력·조회' },
         { id: 'painting-work-b',       tab: '',                    icon: 'format_paint',    label: '도장-B 작업현황',       sub: '도장-B 작업일지 입력·조회' },
         { id: 'painting-inspection',   tab: 'inspection',          icon: 'done_all',        label: '외관 검사',             sub: '도장 완료품 외관 검사 진행' },
@@ -30,12 +29,7 @@ var PaintingNavUI = (function() {
     function render(activePage, activeTab) {
         return '<div class="mes-apple-menu-hero" style="padding:16px 20px;margin-bottom:20px;display:flex;gap:10px;flex-wrap:wrap;">' +
             MENUS.map(function(m, i) {
-                var active = false;
-                if (m.id === 'painting-input' && (activePage === 'painting-input' || activePage === 'painting-input-a' || activePage === 'painting-input-b')) {
-                    active = true;
-                } else {
-                    active = m.id === activePage && (m.tab ? m.tab === activeTab : (!activeTab || !m.tab));
-                }
+                var active = m.id === activePage && (m.tab ? m.tab === activeTab : (!activeTab || !m.tab));
                 return '<button type="button" onclick="PaintingNavUI._navigate(' + i + ')"' +
                     ' style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;' +
                     'border:' + (active ? '2px solid var(--accent-blue)' : '1.5px solid var(--border-color)') + ';' +
@@ -62,38 +56,244 @@ var PaintingNavUI = (function() {
     return { render: render, _navigate: navigateByIndex };
 })();
 
-/** 도장 작업 메인 허브 */
+/** 도장 작업 메인 허브 — 투입 자재 · 금일 입고 · 실적 입력/미입력 */
 var PaintingProcessModule = (function () {
-    function _count(store) {
-        try { return (Storage.getAll(store) || []).length; } catch (e) { return 0; }
+    function _esc(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
-    function _inputQty(line) {
+    function _fmt(n) {
+        if (typeof UIUtils !== 'undefined' && UIUtils.formatNumber) return UIUtils.formatNumber(n || 0);
+        return Number(n || 0).toLocaleString('ko-KR');
+    }
+    function _normLine(line) {
+        var s = String(line || '').trim();
+        if (/도장[-\s]?B|\(B\)|B\s*라인|^B$/i.test(s)) return '도장-B';
+        return '도장-A';
+    }
+    function _dateKey(d) {
+        return String(d || '').trim().slice(0, 10);
+    }
+    function _stockSummary(line) {
         try {
-            if (typeof PaintingInputModule === 'undefined') return 0;
-            var lots = PaintingInputModule.getLotsByCarPart(line, '', '');
-            return (lots || []).reduce(function (s, l) { return s + (Number(l.balance) || 0); }, 0);
-        } catch (e) { return 0; }
+            if (typeof PaintingInputModule === 'undefined' || !PaintingInputModule.groupStock) {
+                return { items: [], total: 0, count: 0 };
+            }
+            var items = PaintingInputModule.groupStock(line) || [];
+            var total = items.reduce(function (s, g) { return s + (Number(g.stock) || 0); }, 0);
+            return { items: items, total: total, count: items.length };
+        } catch (e) {
+            return { items: [], total: 0, count: 0 };
+        }
     }
+    function _todayIncomingList() {
+        var today = UIUtils.today();
+        var store = DB.STORES.PAINTING_INPUT_INVENTORY;
+        return (Storage.getAll(store) || []).filter(function (r) {
+            if (String(r.type || '') !== '입고') return false;
+            return _dateKey(r.date) === today;
+        }).sort(function (a, b) {
+            return String(b.date || '').localeCompare(String(a.date || ''));
+        });
+    }
+    function _planDashForLine(line, today, plans, works) {
+        var want = _normLine(line);
+        var linePlans = plans.filter(function (p) {
+            return p.date === today && _normLine(p.line) === want && (p.carModel || p.partName);
+        });
+        var entered = 0;
+        var unentered = 0;
+        var planQty = 0;
+        linePlans.forEach(function (p) {
+            planQty += Number(p.planQty) || 0;
+            if (works.some(function (w) { return w.planId === p.id; })) entered += 1;
+            else unentered += 1;
+        });
+        var workToday = works.filter(function (w) {
+            return _dateKey(w.date) === today && _normLine(w.line) === want;
+        });
+        var prodQty = workToday.reduce(function (s, w) {
+            return s + (Number(w.productionQty) || Number(w.inputQty) || 0);
+        }, 0);
+        return {
+            planCount: linePlans.length,
+            entered: entered,
+            unentered: unentered,
+            workCount: workToday.length,
+            planQty: planQty,
+            prodQty: prodQty
+        };
+    }
+    function _dashCard(title, accent, pageId, d) {
+        var rate = d.planCount > 0 ? Math.round(d.entered / d.planCount * 100) : 0;
+        return '' +
+            '<div class="card" style="cursor:pointer;border-top:3px solid ' + accent + ';" onclick="Router.navigate(\'' + pageId + '\')">' +
+                '<div class="card-header" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;">' +
+                    '<h4 style="margin:0;color:' + accent + ';">' + _esc(title) + '</h4>' +
+                    '<span class="material-symbols-outlined" style="color:' + accent + ';">chevron_right</span>' +
+                '</div>' +
+                '<div class="card-body" style="padding:14px;">' +
+                    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">' +
+                        '<div style="padding:12px;border-radius:10px;background:rgba(22,163,74,0.08);border:1px solid rgba(22,163,74,0.2);">' +
+                            '<div style="font-size:0.72rem;color:#15803d;font-weight:700;">실적 입력</div>' +
+                            '<div style="font-size:1.55rem;font-weight:800;color:#16a34a;line-height:1.2;">' + d.entered +
+                                '<span style="font-size:0.78rem;font-weight:600;color:var(--text-muted);margin-left:4px;">/ ' + d.planCount + '건</span></div>' +
+                        '</div>' +
+                        '<div style="padding:12px;border-radius:10px;background:rgba(234,88,12,0.08);border:1px solid rgba(234,88,12,0.2);">' +
+                            '<div style="font-size:0.72rem;color:#c2410c;font-weight:700;">미입력</div>' +
+                            '<div style="font-size:1.55rem;font-weight:800;color:#ea580c;line-height:1.2;">' + d.unentered +
+                                '<span style="font-size:0.78rem;font-weight:600;color:var(--text-muted);margin-left:4px;">건</span></div>' +
+                        '</div>' +
+                    '</div>' +
+                    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+                        '<div style="flex:1;height:8px;background:var(--border);border-radius:999px;overflow:hidden;">' +
+                            '<div style="width:' + rate + '%;height:100%;background:' + accent + ';"></div>' +
+                        '</div>' +
+                        '<span style="font-size:0.78rem;font-weight:700;color:' + accent + ';min-width:36px;text-align:right;">' + rate + '%</span>' +
+                    '</div>' +
+                    '<div style="font-size:0.78rem;color:var(--text-muted);">' +
+                        '계획 ' + _fmt(d.planQty) + ' EA · 실적 ' + _fmt(d.prodQty) + ' EA · 작업 ' + d.workCount + '건' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+    }
+    function _stockCard(line, accent, pageId) {
+        var s = _stockSummary(line);
+        return '' +
+            '<div class="card" style="cursor:pointer;" onclick="Router.navigate(\'' + pageId + '\')">' +
+                '<div class="card-header" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;">' +
+                    '<h4 style="margin:0;color:' + accent + ';">' + _esc(line) + ' 자재</h4>' +
+                    '<span class="material-symbols-outlined" style="color:' + accent + ';">chevron_right</span>' +
+                '</div>' +
+                '<div class="card-body" style="padding:14px;">' +
+                    '<div style="font-size:1.6rem;font-weight:800;color:' + accent + ';">' + _fmt(s.total) + ' EA</div>' +
+                    '<div style="font-size:0.8rem;color:var(--text-muted);margin-top:4px;">' + s.count + '종 · 현장 투입 대기</div>' +
+                '</div>' +
+            '</div>';
+    }
+    function _incomingRowsHtml(list) {
+        if (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.renderTodayReceiptRows) {
+            return PaintingInputModule.renderTodayReceiptRows(list).html;
+        }
+        if (!list.length) {
+            return '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-muted);">금일 현장 입고 자재가 없습니다.</td></tr>';
+        }
+        return list.map(function (r) {
+            var dt = String(r.receivedAt || r.date || '');
+            return '<tr>' +
+                '<td style="white-space:nowrap;padding:8px 10px;">' + _esc(dt.slice(0, 10) || '-') + '</td>' +
+                '<td style="white-space:nowrap;padding:8px 10px;">' + _esc(dt.length > 11 ? dt.slice(11, 16) : '-') + '</td>' +
+                '<td style="white-space:nowrap;padding:8px 10px;"><strong>' + _esc(r.carModel || '-') + '</strong></td>' +
+                '<td style="white-space:nowrap;padding:8px 10px;">' + _esc(r.partName || '-') + '</td>' +
+                '<td style="white-space:nowrap;padding:8px 10px;">' + _esc(r.color || '-') + '</td>' +
+                '<td style="white-space:nowrap;padding:8px 10px;font-family:monospace;">' + _esc(r.lotNo || '-') + '</td>' +
+                '<td style="white-space:nowrap;padding:8px 10px;">-</td>' +
+                '<td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:800;">' + _fmt(r.quantity) + '</td>' +
+                '</tr>';
+        }).join('');
+    }
+
+    function _shipmentSectionHtml(line, accent) {
+        var result = (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.renderTodayShipmentTable)
+            ? PaintingInputModule.renderTodayShipmentTable(line, { compact: true })
+            : { itemCount: 0, pendingCount: 0, doneCount: 0, total: 0, html: '<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--text-muted);">모듈을 불러올 수 없습니다.</td></tr>' };
+        var summary = !result.itemCount
+            ? '출고 없음'
+            : (result.itemCount + '건 · ' + _fmt(result.total) + ' EA'
+                + (result.pendingCount ? ' · 미입고 ' + result.pendingCount : '')
+                + (result.doneCount ? ' · 입고 ' + result.doneCount : ''));
+        var suffix = line === '도장-B' ? 'B' : 'A';
+        return '' +
+            '<div class="card" style="margin:0;min-width:0;" id="ppShipCard' + suffix + '">' +
+                '<div class="card-header" style="padding:8px 14px;background:var(--bg-secondary);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">' +
+                    '<h4 style="margin:0;font-size:0.95rem;">' +
+                        '<span class="material-symbols-outlined" style="vertical-align:middle;margin-right:4px;font-size:18px;">inventory_2</span>' +
+                        _esc(line) + ' 자재' +
+                        '<span style="margin-left:8px;padding:2px 8px;border-radius:999px;font-size:0.72rem;font-weight:700;color:#fff;background:' + accent + ';">' + _esc(line) + '</span>' +
+                        '<span id="ppShipSummary' + suffix + '" style="font-size:0.72rem;color:var(--text-muted);font-weight:500;margin-left:6px;">' + _esc(summary) + '</span>' +
+                    '</h4>' +
+                '</div>' +
+                '<div class="card-body" style="padding:10px;">' +
+                    '<div class="data-table-wrapper" style="border:1px solid var(--border);border-radius:4px;overflow-x:auto;">' +
+                        '<table class="data-table compact" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">' +
+                            '<thead><tr>' +
+                                '<th style="white-space:nowrap;padding:8px 10px;">입고시간</th>' +
+                                '<th style="white-space:nowrap;padding:8px 10px;">차종</th>' +
+                                '<th style="white-space:nowrap;padding:8px 10px;">품명</th>' +
+                                '<th style="text-align:right;white-space:nowrap;padding:8px 10px;">수량</th>' +
+                            '</tr></thead>' +
+                            '<tbody id="ppShipBody' + suffix + '">' + result.html + '</tbody>' +
+                        '</table>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+    }
+
+    function refreshShipments() {
+        ['도장-A', '도장-B'].forEach(function (line) {
+            var suffix = line === '도장-B' ? 'B' : 'A';
+            var body = document.getElementById('ppShipBody' + suffix);
+            var summary = document.getElementById('ppShipSummary' + suffix);
+            if (!body || typeof PaintingInputModule === 'undefined' || !PaintingInputModule.renderTodayShipmentTable) return;
+            var result = PaintingInputModule.renderTodayShipmentTable(line, { compact: true });
+            body.innerHTML = result.html;
+            if (summary) {
+                summary.textContent = !result.itemCount
+                    ? '출고 없음'
+                    : (result.itemCount + '건 · ' + _fmt(result.total) + ' EA'
+                        + (result.pendingCount ? ' · 미입고 ' + result.pendingCount : '')
+                        + (result.doneCount ? ' · 입고 ' + result.doneCount : ''));
+            }
+        });
+    }
+
+    async function confirmInputInbound(outId, line) {
+        if (typeof PaintingInputModule === 'undefined' || !PaintingInputModule.confirmSiteInbound) {
+            UIUtils.toast('투입 자재 모듈을 불러올 수 없습니다.', 'error');
+            return;
+        }
+        await PaintingInputModule.confirmSiteInbound(outId, line || '도장-A');
+        refreshShipments();
+    }
+
     function render(container) {
-        var workCount = _count(DB.STORES.PAINTING_WORK);
-        var inspCount = _count(DB.STORES.PAINTING_INSPECTIONS);
-        var qtyA = _inputQty('도장-A');
-        var qtyB = _inputQty('도장-B');
-        var tabs = [
-            { label: '도장 투입 자재', icon: 'inventory_2', subtitle: 'A ' + UIUtils.formatNumber(qtyA) + ' · B ' + UIUtils.formatNumber(qtyB) + ' EA', accent: '#0891b2', onClick: "Router.navigate('painting-input')" },
-            { label: '도장-A 작업', icon: 'format_paint', subtitle: '작업일지 입력·조회', accent: '#2563eb', onClick: "Router.navigate('painting-work-a')" },
-            { label: '도장-B 작업', icon: 'format_paint', subtitle: '작업일지 입력·조회', accent: '#ea580c', onClick: "Router.navigate('painting-work-b')" },
-            { label: '외관 검사', icon: 'done_all', subtitle: inspCount + '건 · 검사 진행', accent: '#16a34a', onClick: "sessionStorage.setItem('paintingInspectionTab','inspection');Router.navigate('painting-inspection')" },
-            { label: '리워크 재공품', icon: 'autorenew', subtitle: '리워크 재고 관리', accent: '#f59e0b', onClick: "Router.navigate('painting-rework-wip')" },
-            { label: '작업 실적 전체', icon: 'assignment', subtitle: workCount + '건 · 누적 실적', accent: '#8b5cf6', onClick: "Router.navigate('painting-work-a')" }
-        ];
+        var today = UIUtils.today();
+        var plans = Storage.getAll(DB.STORES.PRODUCTION_PLANS) || [];
+        var works = Storage.getAll(DB.STORES.PAINTING_WORK) || [];
+        var dashA = _planDashForLine('도장-A', today, plans, works);
+        var dashB = _planDashForLine('도장-B', today, plans, works);
+
         container.innerHTML =
             '<div class="fade-in-up">' +
                 (typeof PaintingNavUI !== 'undefined' ? PaintingNavUI.render('painting-process', '') : '') +
-                ProdAppleMenu.strip(tabs) +
+
+                '<div style="margin:4px 0 10px;display:flex;align-items:baseline;gap:8px;">' +
+                    '<h3 style="margin:0;font-size:1rem;">금일 실적 입력 현황</h3>' +
+                    '<span style="font-size:0.8rem;color:var(--text-muted);">' + _esc(today) + ' · 생산계획 대비</span>' +
+                '</div>' +
+                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px;">' +
+                    _dashCard('도장-A', '#2563eb', 'painting-work-a', dashA) +
+                    _dashCard('도장-B', '#ea580c', 'painting-work-b', dashB) +
+                '</div>' +
+
+                '<div style="margin:4px 0 10px;display:flex;align-items:baseline;gap:8px;">' +
+                    '<h3 style="margin:0;font-size:1rem;">금일 현장 입고 자재 목록</h3>' +
+                    '<span style="font-size:0.8rem;color:var(--text-muted);">자재 창고 출고 시간 기준 · 좌 A / 우 B</span>' +
+                '</div>' +
+                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;">' +
+                    _shipmentSectionHtml('도장-A', '#2563eb') +
+                    _shipmentSectionHtml('도장-B', '#ea580c') +
+                '</div>' +
             '</div>';
     }
-    return { render: render, init: render };
+
+    return {
+        render: render,
+        init: render,
+        confirmInputInbound: confirmInputInbound,
+        refreshShipments: refreshShipments
+    };
 })();
 
 // ===================================================================
@@ -858,7 +1058,7 @@ const PaintingWorkModule = (function() {
                     </div>
                 </div>
 
-                <!-- 섹션 1.5: 도장 투입 자재 (현장 대기) -->
+                <!-- 섹션 1.5: 금일 자재창고 출고 → 현장 입고 -->
                 <div class="card" style="margin-bottom:1rem;" id="pwInputStockCard${suffix}">
                     <div class="card-header" style="padding:8px 16px; background:var(--bg-secondary);
                         border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
@@ -868,18 +1068,23 @@ const PaintingWorkModule = (function() {
                             <span style="margin-left:8px;padding:2px 8px;border-radius:999px;font-size:0.75rem;font-weight:700;color:#fff;background:${accent};">${_currentLine}</span>
                             <span id="pwInputStockSummary${suffix}" style="font-size:0.75rem;color:var(--text-muted);font-weight:500;margin-left:6px;"></span>
                         </h4>
-                        <span style="font-size:0.78rem;color:var(--text-muted);">사출 창고 생산출고 → 현장 투입 대기 · 실적 입력 시 LOT 차감</span>
+                        <span style="font-size:0.78rem;color:var(--text-muted);">금일 자재 창고에서 출고된 자재 목록입니다</span>
                     </div>
                     <div class="card-body" style="padding:12px;">
                         <div class="data-table-wrapper" style="border:1px solid var(--border); border-radius:4px; overflow-x:auto;">
                             <table class="data-table compact" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
                                 <thead>
                                     <tr>
+                                        <th style="white-space:nowrap;padding:8px 10px;">입고일</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">시간</th>
                                         <th style="white-space:nowrap;padding:8px 10px;">차종</th>
-                                        <th style="white-space:nowrap;padding:8px 10px;">품명</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">사출명</th>
                                         <th style="white-space:nowrap;padding:8px 10px;">컬러</th>
-                                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">재고(EA)</th>
-                                        <th style="white-space:nowrap;padding:8px 10px;">LOT</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">사출LOT</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">수입검사일</th>
+                                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">수량</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">상태</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">작업</th>
                                     </tr>
                                 </thead>
                                 <tbody id="pwInputStockBody${suffix}"></tbody>
@@ -1006,19 +1211,32 @@ const PaintingWorkModule = (function() {
         const summary = document.getElementById('pwInputStockSummary' + suffix);
         if (!body) return;
 
-        if (typeof PaintingInputModule === 'undefined' || !PaintingInputModule.renderEmbedTableBody) {
-            body.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted);">투입 자재 모듈을 불러올 수 없습니다.</td></tr>`;
+        if (typeof PaintingInputModule === 'undefined' || !PaintingInputModule.renderTodayShipmentTable) {
+            body.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-muted);">투입 자재 모듈을 불러올 수 없습니다.</td></tr>`;
             if (summary) summary.textContent = '';
             return;
         }
 
-        const result = PaintingInputModule.renderEmbedTableBody(_currentLine);
+        const result = PaintingInputModule.renderTodayShipmentTable(_currentLine);
         body.innerHTML = result.html;
         if (summary) {
-            summary.textContent = result.itemCount
-                ? (result.itemCount + '종 · ' + UIUtils.formatNumber(result.total) + ' EA')
-                : '대기 없음';
+            if (!result.itemCount) {
+                summary.textContent = '출고 없음';
+            } else {
+                summary.textContent = result.itemCount + '건 · ' + UIUtils.formatNumber(result.total) + ' EA'
+                    + (result.pendingCount ? ' · 미입고 ' + result.pendingCount : '')
+                    + (result.doneCount ? ' · 입고 ' + result.doneCount : '');
+            }
         }
+    }
+
+    async function confirmInputInbound(outId, line) {
+        if (typeof PaintingInputModule === 'undefined' || !PaintingInputModule.confirmSiteInbound) {
+            UIUtils.toast('투입 자재 모듈을 불러올 수 없습니다.', 'error');
+            return;
+        }
+        await PaintingInputModule.confirmSiteInbound(outId, line || _currentLine);
+        renderInputStockSection();
     }
 
     // ──────────────────────────────────────────────
@@ -4635,6 +4853,7 @@ const PaintingWorkModule = (function() {
         _qapOnCarModelChange,
         _qapOnPartNameChange,
         saveQuickAddPlan,
+        confirmInputInbound,
         _validateLotFormat,
         _checkLotFormat,
         _validateLotQty,

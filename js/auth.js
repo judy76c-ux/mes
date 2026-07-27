@@ -58,9 +58,6 @@ const AuthModule = (function () {
         { id:'injection-room-layout',     label:'사출실 레이아웃',    group:'사출공정' },
         { id:'production-plan',           label:'생산 계획 지시서',   group:'도장공정' },
         { id:'painting-process',          label:'도장 작업',          group:'도장공정' },
-        { id:'painting-input',            label:'도장 투입 자재',      group:'도장공정' },
-        { id:'painting-input-a',          label:'도장-A 자재',        group:'도장공정' },
-        { id:'painting-input-b',          label:'도장-B 자재',        group:'도장공정' },
         { id:'painting-work-a',           label:'도장-A 작업',        group:'도장공정' },
         { id:'painting-work-b',           label:'도장-B 작업',        group:'도장공정' },
         { id:'painting-inspection',       label:'도장 검사일지',      group:'도장공정' },
@@ -153,7 +150,7 @@ const AuthModule = (function () {
         { key:'shipping',         label:'\ucd9c\ud558\uac80\uc0ac',      pages:['shipping-overview','shipping-standby','shipping-inspection','shipping-reliability','shipping-periodic-reli','shipping-certificate','shipping-standard','shipping-std-photo'] },
         { key:'injection',        label:'\uc0ac\ucd9c \uacf5\uc815',     pages:['injection-process','injection-work','injection-wip','injection-room-layout'] },
         { key:'production_plan',  label:'\uc0dd\uc0b0 \uacc4\ud68d \uc9c0\uc2dc\uc11c', pages:['production-plan'] },
-        { key:'painting_work',    label:'\ub3c4\uc7a5\uc791\uc5c5',       pages:['painting-process','painting-input','painting-input-a','painting-input-b','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip'] },
+        { key:'painting_work',    label:'\ub3c4\uc7a5\uc791\uc5c5',       pages:['painting-process','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip'] },
         { key:'paint_mix',        label:'\ubc30\ud569\uc791\uc5c5',       pages:['paint-mix'] },
         { key:'laser',            label:'\ub808\uc774\uc800 \uc791\uc5c5', pages:['laser-process','laser-standby','laser-wip','laser-work','laser-inspection','laser-layout','laser-jig-master','laser-jig-disposal','laser-jig-cleaning','laser-equipment-history'] },
         { key:'painting_jig',     label:'\ub3c4\uc7a5\uc9c0\uadf8',      pages:['painting-jig','jig-management','jig-life-standard','jig-master','jig-disposal','jig-cleaning','jig-change-history','jig-repair-history','jig-layout'] },
@@ -192,10 +189,7 @@ const AuthModule = (function () {
         'shipping-certificate': ['shipping-overview','shipping-standby','shipping-inspection','shipping-reliability','shipping-periodic-reli','shipping-certificate','shipping-standard','shipping-std-photo'],
         'shipping-standard': ['shipping-overview','shipping-standby','shipping-inspection','shipping-reliability','shipping-periodic-reli','shipping-certificate','shipping-standard','shipping-std-photo'],
         'shipping-std-photo': ['shipping-overview','shipping-standby','shipping-inspection','shipping-reliability','shipping-periodic-reli','shipping-certificate','shipping-standard','shipping-std-photo'],
-        'painting-process': ['painting-process','painting-input','painting-input-a','painting-input-b','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip'],
-        'painting-input': ['painting-input','painting-input-a','painting-input-b'],
-        'painting-input-a': ['painting-input','painting-input-a','painting-input-b'],
-        'painting-input-b': ['painting-input','painting-input-a','painting-input-b'],
+        'painting-process': ['painting-process','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip'],
         'painting-work': ['painting-process','painting-work-a','painting-work-b'],
         'painting-work-a': ['painting-process','painting-work-a','painting-work-b'],
         'painting-work-b': ['painting-process','painting-work-a','painting-work-b'],
@@ -309,7 +303,7 @@ const AuthModule = (function () {
             'incoming-overview','injection-incoming','paint-incoming-inspection',
             'warehouse-overview','injection-warehouse','paint-inventory','raw-material-inventory',
             'injection-process','injection-work',
-            'production-plan','overtime-plan','painting-process','painting-input','painting-input-a','painting-input-b','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip','paint-mix',
+            'production-plan','overtime-plan','painting-process','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip','paint-mix',
             'laser-standby','laser-wip','laser-work','laser-inspection',
             'shipping-standby','product-warehouse',
         ];
@@ -363,14 +357,14 @@ const AuthModule = (function () {
                 'dashboard',
                 'incoming-overview','paint-incoming-inspection',
                 'warehouse-overview','paint-inventory',
-                'production-plan','overtime-plan','painting-process','painting-input','painting-input-a','painting-input-b','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip','paint-mix',
+                'production-plan','overtime-plan','painting-process','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip','paint-mix',
             ]),
 
             /* 자주검사자 — 공정 자주 검사 담당 */
             self_inspector: rw([
                 'dashboard',
                 'production-plan','overtime-plan',
-                'painting-process','painting-input','painting-input-a','painting-input-b','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip',
+                'painting-process','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip',
                 'prod-quality','quality-performance',
                 'laser-inspection',
             ]),
@@ -520,14 +514,15 @@ const AuthModule = (function () {
                 if (!Array.isArray(rp[field])) return;
                 var set = new Set(rp[field]);
                 if (set.has('painting-work') || set.has('painting-work-a') || set.has('painting-work-b')
-                    || set.has('painting-process') || set.has('painting-input')) {
+                    || set.has('painting-process') || set.has('painting-input')
+                    || set.has('painting-input-a') || set.has('painting-input-b')) {
                     set.add('painting-process');
-                    set.add('painting-input');
-                    set.add('painting-input-a');
-                    set.add('painting-input-b');
                     set.add('painting-work-a');
                     set.add('painting-work-b');
                     set.delete('painting-work');
+                    set.delete('painting-input');
+                    set.delete('painting-input-a');
+                    set.delete('painting-input-b');
                 }
                 rp[field] = Array.from(set);
             });
@@ -551,15 +546,7 @@ const AuthModule = (function () {
             return isPageAccessGranted(roleKey, 'painting-work-a') || isPageAccessGranted(roleKey, 'painting-work-b');
         }
         if (pageId === 'painting-input' || pageId === 'painting-input-a' || pageId === 'painting-input-b') {
-            if (roleKey === 'admin') return true;
-            const permsEarly = _getPermissions();
-            const rpEarly = permsEarly[roleKey];
-            if (rpEarly === null) return true;
-            const list = Array.isArray(rpEarly) ? rpEarly : ((rpEarly && rpEarly.access) || []);
-            if (list.indexOf('painting-input') >= 0 || list.indexOf('painting-input-a') >= 0 || list.indexOf('painting-input-b') >= 0) return true;
-            if (list.indexOf('painting-work-a') >= 0 || list.indexOf('painting-work-b') >= 0 || list.indexOf('painting-process') >= 0) return true;
-            if (list.indexOf('warehouse-overview') >= 0 || list.indexOf('injection-warehouse') >= 0) return true;
-            return false;
+            return isPageAccessGranted(roleKey, 'painting-process');
         }
         if (Array.isArray(roleKey)) return roleKey.some(key => isPageAccessGranted(key, pageId));
         if (roleKey === 'admin') return true;

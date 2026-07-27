@@ -587,9 +587,11 @@ const Storage = (function() {
     URL.revokeObjectURL(url);
   }
 
-  // 오늘 날짜
+  // 오늘 날짜 (로컬 기준 — UTC toISOString는 새벽 KST에서 하루 전으로 어긋남)
   function today() {
-    return new Date().toISOString().split('T')[0];
+    const d = new Date();
+    const p = function (n) { return String(n).padStart(2, '0'); };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
   }
 
   // 초기화 여부

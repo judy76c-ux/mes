@@ -22,6 +22,37 @@ var InjectionWarehouseModule = (function() {
         return _dismissedPending;
     }
 
+    // ── 수량 보정 시점(컷오버) 이전 검사건은 입고 대기에서 제외 ──────────────
+    // 보정 시점 이전의 과거 검사건은 창고 재고가 이미 (수동)정합 처리된 것으로 보고, 입고 대기 목록과
+    // 일괄입고 대상에서 제외한다. LOT번호가 생산일자 기준으로 재사용되는 탓에 과거 항목이 다시 대기로
+    // 떠서 이중 입고되는 문제를 원천 차단하기 위함이며, 검사(INJECTION_INSPECTIONS)·재고 원본은 보존한다.
+    // (서버 공유 config에 최초 활성화 '일자'를 고정 저장 — 이후 검사건만 입고 대기 대상)
+    const PENDING_CUTOVER_KEY = 'injection_inbound_pending_cutover_v1';
+    let _pendingCutover = '';        // 'YYYY-MM-DD' (day). '' = 미설정(제외 안 함)
+    let _pendingCutoverLoaded = false;
+
+    function _cutoverDay(v) { return String(v == null ? '' : v).trim().slice(0, 10); }
+
+    async function _ensurePendingCutoverLoaded(forceReload) {
+        if (_pendingCutoverLoaded && !forceReload) return _pendingCutover;
+        let v = await Storage.getConfigValue(PENDING_CUTOVER_KEY);
+        if (!v) {
+            v = _cutoverDay(Storage.today());
+            try { await Storage.setConfigValue(PENDING_CUTOVER_KEY, v); } catch (e) {}
+        }
+        _pendingCutover = _cutoverDay(v);
+        _pendingCutoverLoaded = true;
+        return _pendingCutover;
+    }
+
+    // 검사일(day)이 컷오버 이전이면 true → 입고 대기·일괄입고에서 제외
+    function _isBeforePendingCutover(inspDate) {
+        if (!_pendingCutover) return false;
+        const d = _cutoverDay(inspDate);
+        if (!d) return false;                 // 날짜 불명은 제외하지 않음
+        return d < _pendingCutover;
+    }
+
     // key/표시용 문자열 정규화 (콤마/공백/트림)
     function _normKeyStr(v) {
         return String(v || '')
@@ -311,14 +342,29 @@ var InjectionWarehouseModule = (function() {
         return v;
     }
 
+    /** 입출고 기록의 정렬·표시용 일시 (date에 시각이 없으면 createdAt/updatedAt 복원) */
+    function _txRecordStamp(d) {
+        if (typeof InvCalc !== 'undefined' && typeof InvCalc.recordStamp === 'function') {
+            const s = InvCalc.recordStamp(d);
+            if (s) return String(s).slice(0, 16);
+        }
+        const raw = String((d && d.date) || '').trim();
+        if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(raw)) return raw.slice(0, 16).replace('T', ' ');
+        if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw + ' 00:00';
+        return raw;
+    }
+
     function _fmtTxDateCell(raw) {
-        const sp = String(raw || '').split(' ');
+        const stamp = String(raw || '').trim().replace('T', ' ');
+        const sp = stamp.split(' ');
         const pp = (sp[0] || '').split('-');
         const tt = sp[1] ? sp[1].slice(0, 5) : '';
         if (pp.length !== 3) return raw ? String(raw) : '-';
         return '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1;">' + pp[0] + '</span>' +
                '<span style="font-weight:600;white-space:nowrap;">' + pp[1] + '-' + pp[2] + '</span>' +
-               (tt ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1.4;">' + tt + '</span>' : '');
+               (tt
+                   ? '<span style="font-size:0.72rem;color:var(--text-secondary);display:block;line-height:1.4;font-weight:600;">' + tt + '</span>'
+                   : '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1.4;">--:--</span>');
     }
 
     function _buildInspDateContext() {
@@ -460,9 +506,123 @@ var InjectionWarehouseModule = (function() {
     function _normalizePaintLine(line) {
         const s = String(line || '').trim();
         if (!s) return '';
-        if (/도장[-\s]?B|\(B\)|B\s*라인|^B$/i.test(s)) return '도장-B';
-        if (/도장[-\s]?A|\(A\)|A\s*라인|^A$/i.test(s)) return '도장-A';
+        if (/도장[-\s]?B|\(B\)|B\s*라인|^B$/i.test(s) || s === '도장(B)') return '도장-B';
+        if (/도장[-\s]?A|\(A\)|A\s*라인|^A$/i.test(s) || s === '도장(A)') return '도장-A';
         return s;
+    }
+
+    /** 제품 마스터 제조공정 → 도장-A/B 목록 */
+    function _productPaintProcs(product) {
+        if (!product) return [];
+        return [product.process1, product.process2, product.process3, product.process4]
+            .map(_normalizePaintLine)
+            .filter(function (p) { return p === '도장-A' || p === '도장-B'; });
+    }
+
+    /** 사출 품명 → 연동 제품 마스터 목록 */
+    function _productsForInjPart(carModel, partName, color) {
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const mats = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+        const mat = _findMatEntryForTile(mats, carModel, partName, color);
+        const byId = {};
+
+        function add(p) {
+            if (p && p.id) byId[p.id] = p;
+        }
+
+        if (mat) {
+            (mat.productIds || []).forEach(function (id) {
+                add(Storage.getById(DB.STORES.PRODUCTS, id));
+            });
+            const names = [_normKeyStr(mat.mfgProductName), _normKeyStr(mat.mfgProductName2)].filter(Boolean);
+            products.forEach(function (p) {
+                if (_normKeyStr(p.carModel) !== _normKeyStr(carModel)) return;
+                if (names.indexOf(_normKeyStr(p.partName)) >= 0) add(p);
+            });
+        }
+
+        products.forEach(function (p) {
+            if (_normKeyStr(p.carModel) === _normKeyStr(carModel)
+                && _normKeyStr(p.partName) === _normKeyStr(partName)) {
+                add(p);
+            }
+        });
+
+        return Object.keys(byId).map(function (k) { return byId[k]; });
+    }
+
+    /**
+     * 기초정보(제품 마스터 제조공정·도장A/B 컬러)로 도착 라인 자동 판정
+     * - 도장-A만 → A / 도장-B만 → B
+     * - 둘 다 있으면 paintColorA/B 와 사출 컬러 매칭
+     * - 오늘 생산계획 line 폴백
+     */
+    function _inferPaintLineFromMaster(carModel, partName, color) {
+        const prods = _productsForInjPart(carModel, partName, color);
+        let voteA = 0;
+        let voteB = 0;
+        const colorStr = String(color || '').trim();
+
+        prods.forEach(function (product) {
+            const procs = [];
+            _productPaintProcs(product).forEach(function (p) {
+                if (procs.indexOf(p) < 0) procs.push(p);
+            });
+            const hasA = procs.indexOf('도장-A') >= 0;
+            const hasB = procs.indexOf('도장-B') >= 0;
+            if (hasA && !hasB) { voteA += 1; return; }
+            if (hasB && !hasA) { voteB += 1; return; }
+            if (hasA && hasB) {
+                const cA = String(product.paintColorA || '').trim();
+                const cB = String(product.paintColorB || '').trim();
+                if (colorStr && cA && _colorsMatch(cA, colorStr)) { voteA += 2; return; }
+                if (colorStr && cB && _colorsMatch(cB, colorStr)) { voteB += 2; return; }
+                const base = String(product.color || '').trim();
+                if (colorStr && base && _colorsMatch(base, colorStr)) {
+                    // 기본 컬러만 있으면 A 우선(단일 라인 관례)
+                    voteA += 1;
+                    return;
+                }
+            }
+        });
+
+        if (voteB > voteA) return { line: '도장-B', source: '제품 마스터' };
+        if (voteA > voteB) return { line: '도장-A', source: '제품 마스터' };
+
+        // 오늘 생산계획 라인 폴백
+        try {
+            const today = UIUtils.today ? UIUtils.today() : '';
+            const plans = Storage.getAll(DB.STORES.PRODUCTION_PLANS) || [];
+            const hit = plans.find(function (p) {
+                if (!p || String(p.date || '').slice(0, 10) !== today) return false;
+                if (_normKeyStr(p.carModel) !== _normKeyStr(carModel)) return false;
+                const line = _normalizePaintLine(p.line);
+                if (line !== '도장-A' && line !== '도장-B') return false;
+                const pn = _normKeyStr(p.partName);
+                return pn === _normKeyStr(partName)
+                    || prods.some(function (pr) { return _normKeyStr(pr.partName) === pn; });
+            });
+            if (hit) {
+                return { line: _normalizePaintLine(hit.line), source: '생산계획' };
+            }
+        } catch (e) { /* ignore */ }
+
+        if (voteB && !voteA) return { line: '도장-B', source: '제품 마스터' };
+        return { line: '도장-A', source: prods.length ? '제품 마스터' : '기본값' };
+    }
+
+    function _applyPaintLineRadio(radioName, line, hintElId) {
+        const want = line === '도장-B' ? '도장-B' : '도장-A';
+        document.querySelectorAll('input[name="' + radioName + '"]').forEach(function (el) {
+            el.checked = el.value === want;
+        });
+        if (hintElId) {
+            const hint = document.getElementById(hintElId);
+            if (hint) {
+                hint.textContent = '기초정보 기준 자동 선택: ' + want
+                    + ' · 필요 시 변경 가능';
+            }
+        }
     }
 
     function _buildPaintWorkLineMap() {
@@ -473,31 +633,76 @@ var InjectionWarehouseModule = (function() {
         return map;
     }
 
+    /** 도장 투입 입고(refOutId) → 라인 맵 (출고 이력에 paintLine 없을 때 복원) */
+    function _buildPaintLineFromInputMap() {
+        const byOutId = {};
+        const byKey = {};
+        const store = DB.STORES.PAINTING_INPUT_INVENTORY;
+        if (!store) return { byOutId: byOutId, byKey: byKey };
+        (Storage.getAll(store) || []).forEach(function(r) {
+            if (String(r.type || '') !== '입고') return;
+            const line = _normalizePaintLine(r.paintLine || r.line);
+            if (line !== '도장-A' && line !== '도장-B') return;
+            if (r.refOutId) byOutId[String(r.refOutId)] = line;
+            const day = String(r.date || '').slice(0, 10);
+            const lot = String(r.lotNo || (r.lots && r.lots[0] && r.lots[0].lotNo) || '').trim();
+            const key = [day, r.carModel || '', r.partName || '', r.color || '', lot].join('||');
+            if (day) byKey[key] = line;
+        });
+        return { byOutId: byOutId, byKey: byKey };
+    }
+
+    function _resolveOutgoingPaintLine(d, workLineMap, inputMaps) {
+        if (!d) return '';
+        let paintLine = _normalizePaintLine(
+            d.paintLine || d.line || d.paint_line || d.destinationLine || d.destLine || ''
+        );
+        if (paintLine === '도장-A' || paintLine === '도장-B') return paintLine;
+
+        if (d.refWorkId && workLineMap && workLineMap[d.refWorkId]) {
+            paintLine = _normalizePaintLine(workLineMap[d.refWorkId]);
+            if (paintLine === '도장-A' || paintLine === '도장-B') return paintLine;
+        }
+
+        if (inputMaps && d.id && inputMaps.byOutId[String(d.id)]) {
+            return inputMaps.byOutId[String(d.id)];
+        }
+
+        if (inputMaps && inputMaps.byKey) {
+            const day = String(d.date || '').slice(0, 10);
+            const lot = String(d.lotNo || (d.lots && d.lots[0] && d.lots[0].lotNo) || '').trim();
+            const key = [day, d.carModel || '', d.partName || '', d.color || '', lot].join('||');
+            if (inputMaps.byKey[key]) return inputMaps.byKey[key];
+        }
+
+        // 비고/출처에 도장-A/B 표기가 있으면 사용
+        paintLine = _normalizePaintLine(String(d.note || '') + ' ' + String(d.source || ''));
+        if (paintLine === '도장-A' || paintLine === '도장-B') return paintLine;
+        return '';
+    }
+
     function _outgoingActorLabel(d) {
         const direct = String(d.outgoingByName || '').trim();
         if (direct) return direct;
         return _formatActorLabel(d.outgoingBy || d.processedBy || '');
     }
 
-    function _outgoingTypeHtml(d, workLineMap) {
+    function _outgoingTypeHtml(d, workLineMap, inputMaps) {
         const src = String(d.source || '').trim();
-        let paintLine = _normalizePaintLine(d.paintLine || '');
-        if (!paintLine && d.refWorkId && workLineMap[d.refWorkId]) {
-            paintLine = _normalizePaintLine(workLineMap[d.refWorkId]);
-        }
+        const paintLine = _resolveOutgoingPaintLine(d, workLineMap, inputMaps);
 
         // 생산출고(도장 투입) → 유형을 도장-A / 도장-B로 표시
         if (paintLine === '도장-A' || paintLine === '도장-B') {
             const bg = paintLine === '도장-B' ? '#ffedd5' : '#ede9fe';
             const fg = paintLine === '도장-B' ? '#c2410c' : '#6d28d9';
             const br = paintLine === '도장-B' ? '#fdba74' : '#c4b5fd';
-            return `<span style="font-size:0.75rem;background:${bg};color:${fg};border:1px solid ${br};padding:2px 8px;border-radius:10px;font-weight:700;">${paintLine}</span>`;
+            return `<span style="display:inline-block;font-size:0.78rem;background:${bg};color:${fg};border:1px solid ${br};padding:2px 10px;border-radius:10px;font-weight:800;letter-spacing:-0.02em;">${paintLine}</span>`;
         }
 
         let detailBadge = '';
         if (d.outgoingType === '반출') {
             detailBadge = `<span style="margin-left:4px;font-size:0.72rem;background:#fef3c7;color:#b45309;border:1px solid #fcd34d;padding:1px 7px;border-radius:10px;font-weight:700;">반출</span>`;
-        } else if (d.outgoingType === '생산출고' || src === '도장 작업 출고') {
+        } else if (d.outgoingType === '생산출고' || src === '도장 작업 출고' || src === '사출 창고 생산출고') {
             detailBadge = `<span style="margin-left:4px;font-size:0.72rem;background:#ede9fe;color:#7c3aed;border:1px solid #c4b5fd;padding:1px 7px;border-radius:10px;font-weight:700;">생산출고</span>`;
         } else if (src === '도장 입고') {
             detailBadge = `<span style="margin-left:4px;font-size:0.72rem;background:#dbeafe;color:#2563eb;border:1px solid #93c5fd;padding:1px 7px;border-radius:10px;font-weight:700;">도장입고</span>`;
@@ -725,7 +930,7 @@ var InjectionWarehouseModule = (function() {
                             <table class="data-table">
                                 <thead>
                                     <tr>
-                                        <th>${isIn ? '창고 입고일' : '출고일'}</th>
+                                        <th style="white-space:nowrap;">${isIn ? '창고 입고일' : '출고일시'}</th>
                                         <th>수입검사일</th>
                                         <th>차종</th>
                                         <th>품명</th>
@@ -841,8 +1046,14 @@ var InjectionWarehouseModule = (function() {
             if (iconBox) iconBox.style.background = isActive ? 'var(--accent-blue)' : 'var(--bg-secondary)';
             if (icon) icon.style.color = isActive ? '#fff' : 'var(--text-muted)';
         });
-        if (tab === 'incoming') filterTransactions('incoming');
-        if (tab === 'outgoing') filterTransactions('outgoing');
+        // 종료일이 오늘보다 이전이면 보정 (UTC today 버그·장시간 열린 탭 대비)
+        if (tab === 'incoming' || tab === 'outgoing') {
+            const suffix = tab === 'incoming' ? 'In' : 'Out';
+            const todayStr = UIUtils.today ? UIUtils.today() : '';
+            const endEl = document.getElementById('injTxEnd' + suffix);
+            if (endEl && todayStr && (!endEl.value || endEl.value < todayStr)) endEl.value = todayStr;
+            filterTransactions(tab);
+        }
     }
 
     function _buildDisplayStockMap() {
@@ -1278,15 +1489,19 @@ var InjectionWarehouseModule = (function() {
         const part   = (document.getElementById('injTxPart' + suffix)  || {}).value || '';
 
         const filtered = data.filter(d => {
-            if (start && (d.date || '') < start) return false;
-            if (end   && (d.date || '') > end)   return false;
+            const day = String(d.date || '').slice(0, 10);
+            if (start && day < start) return false;
+            if (end   && day > end)   return false;
             if (car   && d.carModel !== car)      return false;
             if (part  && d.partName !== part)     return false;
             if (d.type !== typeFixed)             return false;
             return true;
         });
 
-        filtered.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        // 최신 일시순 (시각 포함 — date만 있는 구기록은 createdAt으로 복원)
+        filtered.sort(function (a, b) {
+            return _txRecordStamp(b).localeCompare(_txRecordStamp(a));
+        });
         renderTxTable(filtered, materials, 'injInvTableBody' + suffix, typeFixed);
     }
 
@@ -1353,6 +1568,7 @@ var InjectionWarehouseModule = (function() {
         const mats = materials || Storage.getAll(DB.STORES.INJECTION_MATERIALS);
         const inspCtx = _buildInspDateContext();
         const workLineMap = isIncoming ? {} : _buildPaintWorkLineMap();
+        const inputMaps = isIncoming ? null : _buildPaintLineFromInputMap();
 
         tbody.innerHTML = data.map(d => {
             const mat   = mats.find(m => m.carModel === d.carModel && m.injPartName === d.partName);
@@ -1375,10 +1591,10 @@ var InjectionWarehouseModule = (function() {
                                 onclick="InjectionWarehouseModule.remove('${d.id}')">삭제</button>` : ''}`;
             const typeCell = isIncoming
                 ? `${UIUtils.badge(d.type || '입고', typeBadge)}`
-                : _outgoingTypeHtml(d, workLineMap);
+                : _outgoingTypeHtml(d, workLineMap, inputMaps);
             return `
                 <tr>
-                    <td style="white-space:nowrap;line-height:1.3;">${_fmtTxDateCell(d.date)}</td>
+                    <td style="white-space:nowrap;line-height:1.3;">${_fmtTxDateCell(_txRecordStamp(d))}</td>
                     <td style="white-space:nowrap;">${inspDateHtml}</td>
                     <td>${d.carModel || '-'}</td>
                     <td><strong>${d.partName || '-'}</strong></td>
@@ -1431,7 +1647,7 @@ var InjectionWarehouseModule = (function() {
             };
         }
         if (d && d.type === '출고') {
-            const paintLine = _normalizePaintLine(d.paintLine || '');
+            const paintLine = _resolveOutgoingPaintLine(d, null, _buildPaintLineFromInputMap());
             if (paintLine === '도장-A' || paintLine === '도장-B') {
                 return {
                     label: paintLine,
@@ -1439,7 +1655,7 @@ var InjectionWarehouseModule = (function() {
                     detail: src || oType || '생산출고 → 도장 투입'
                 };
             }
-            const isProd = src === '도장 작업 출고' || src === '도장 입고' || oType === '생산출고';
+            const isProd = src === '도장 작업 출고' || src === '도장 입고' || src === '사출 창고 생산출고' || oType === '생산출고';
             return isProd
                 ? { label: '생산 차감', color: '#7c3aed', detail: src || oType || '도장 투입' }
                 : { label: '수동 차감', color: '#dc2626', detail: src || oType || '수기 출고' };
@@ -1816,7 +2032,7 @@ var InjectionWarehouseModule = (function() {
             </div>
             <div style="margin-bottom:14px;padding:8px 12px;background:rgba(220,38,38,0.05);border-left:3px solid var(--accent-red);border-radius:0 6px 6px 0;font-size:0.8rem;color:var(--text-secondary);">
                 출고할 LOT 옆의 <strong style="color:#dc2626;">출고</strong> 버튼을 누르면 출고 목록에 담기고, 재고 현황 화면의 '출고 리스트업'에서 <strong>출고 완료</strong>를 눌러야 재고에서 차감됩니다.
-                <strong>생산출고</strong>는 도착 라인(도장-A/B)을 선택하면 <strong>도장 투입 자재</strong>로 이동합니다.
+                <strong>생산출고</strong>는 도착 라인(도장-A/B)을 선택하면 해당 라인 작업현황의 <strong>입고 처리</strong> 대상이 됩니다.
             </div>
             <div style="margin-bottom:16px; display:flex; gap:16px; flex-wrap:wrap;">
                 <div style="background:var(--bg-secondary); padding:12px 20px; border-radius:8px; text-align:center;">
@@ -2265,7 +2481,7 @@ var InjectionWarehouseModule = (function() {
                 <label class="form-label">도착 라인 (도장 투입 자재) <span style="color:var(--accent-red)">*</span></label>
                 <div style="display:flex;gap:16px;align-items:center;padding:8px 0;">
                     <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem;">
-                        <input type="radio" name="injOutItemPaintLine" id="injOutItemLineA" value="도장-A" checked>
+                        <input type="radio" name="injOutItemPaintLine" id="injOutItemLineA" value="도장-A">
                         <span style="font-weight:700;color:#2563eb;">도장-A 자재</span>
                     </label>
                     <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem;">
@@ -2273,7 +2489,7 @@ var InjectionWarehouseModule = (function() {
                         <span style="font-weight:700;color:#ea580c;">도장-B 자재</span>
                     </label>
                 </div>
-                <div style="font-size:0.75rem;color:var(--text-muted);">생산출고 시 사출 창고에서 차감되고 선택한 라인의 도장 투입 자재로 입고됩니다.</div>
+                <div id="injOutItemPaintLineHint" style="font-size:0.75rem;color:var(--text-muted);">기초정보(제품 마스터) 기준으로 자동 선택됩니다.</div>
             </div>
             <div id="injOutItemReturnReasonGroup" style="display:none;margin-bottom:12px;">
                 <label class="form-label">반출 사유 <span style="color:var(--accent-red)">*</span></label>
@@ -2291,6 +2507,8 @@ var InjectionWarehouseModule = (function() {
         );
 
         setTimeout(() => {
+            const inferred = _inferPaintLineFromMaster(carModel, partName, color);
+            _applyPaintLineRadio('injOutItemPaintLine', inferred.line, 'injOutItemPaintLineHint');
             const qtyInput = document.getElementById('injOutItemQty');
             if (qtyInput) qtyInput.focus();
         }, 100);
@@ -2314,8 +2532,10 @@ var InjectionWarehouseModule = (function() {
         let paintLine = '';
         if (!isReturn) {
             const lineEl = document.querySelector('input[name="injOutItemPaintLine"]:checked');
-            paintLine = lineEl ? String(lineEl.value || '').trim() : '도장-A';
-            if (paintLine !== '도장-A' && paintLine !== '도장-B') paintLine = '도장-A';
+            paintLine = lineEl ? String(lineEl.value || '').trim() : '';
+            if (paintLine !== '도장-A' && paintLine !== '도장-B') {
+                paintLine = _inferPaintLineFromMaster(carModel, partName, color).line;
+            }
         }
 
         if (!date) { UIUtils.toast('출고 일자를 선택하세요.', 'warning'); return; }
@@ -2528,59 +2748,88 @@ var InjectionWarehouseModule = (function() {
             }
         }
 
-        for (const item of items) {
-            let planId = '';
-            if (item.outgoingType === '생산출고' && typeof ProductionPlanModule !== 'undefined'
-                && typeof ProductionPlanModule._getInjReserveDetail === 'function') {
-                const detail = ProductionPlanModule._getInjReserveDetail(item.partName, item.carModel, item.color || '');
-                const plans = [].concat(detail.pendingPlans || [], detail.inProgressPlans || []);
-                if (plans.length) {
-                    const day = String(item.date || '').slice(0, 10);
-                    const sameDay = plans.find(function(p) { return String(p.date || '').slice(0, 10) === day; });
-                    planId = String((sameDay || plans[0]).id || '');
+        // 출고일(YYYY-MM-DD) + 현재 시각 — 이력 필터/정렬이 시각 포함 문자열과 섞여도 끊기지 않게
+        const nowStamp = (UIUtils.now ? UIUtils.now() : '').slice(0, 16);
+        const nowTime = nowStamp.length >= 16 ? nowStamp.slice(11, 16) : '00:00';
+
+        let savedCount = 0;
+        try {
+            for (const item of items) {
+                let planId = '';
+                if (item.outgoingType === '생산출고' && typeof ProductionPlanModule !== 'undefined'
+                    && typeof ProductionPlanModule._getInjReserveDetail === 'function') {
+                    const detail = ProductionPlanModule._getInjReserveDetail(item.partName, item.carModel, item.color || '');
+                    const plans = [].concat(detail.pendingPlans || [], detail.inProgressPlans || []);
+                    if (plans.length) {
+                        const day = String(item.date || '').slice(0, 10);
+                        const sameDay = plans.find(function(p) { return String(p.date || '').slice(0, 10) === day; });
+                        planId = String((sameDay || plans[0]).id || '');
+                    }
                 }
+                const paintLine = item.outgoingType === '생산출고'
+                    ? (item.paintLine === '도장-B' ? '도장-B' : '도장-A')
+                    : undefined;
+                const day = String(item.date || '').slice(0, 10)
+                    || (nowStamp ? nowStamp.slice(0, 10) : '');
+                const dateStamp = day ? (day + ' ' + nowTime) : nowStamp;
+
+                await _addInventoryRecord({
+                    date: dateStamp,
+                    type: '출고',
+                    outgoingType: item.outgoingType,
+                    returnReason: item.returnReason || undefined,
+                    carModel: item.carModel,
+                    partName: item.partName,
+                    color: item.color || '',
+                    lots: [{ lotNo: item.lotNo, qty: item.qty, fifoReason: item.fifoReason || undefined }],
+                    lotNo: item.lotNo,
+                    quantity: item.qty,
+                    unit: 'EA',
+                    note: item.memo || undefined,
+                    fifoReason: item.fifoReason || undefined,
+                    outgoingBy: issuer,
+                    planId: planId || undefined,
+                    paintLine: paintLine,
+                    line: paintLine,
+                    source: item.outgoingType === '생산출고' ? '사출 창고 생산출고' : undefined
+                });
+                savedCount++;
+                // 도장 투입 재고는 라인 운영자가 작업현황에서 「입고 처리」할 때 반영
             }
-            const paintLine = item.outgoingType === '생산출고'
-                ? (item.paintLine === '도장-B' ? '도장-B' : '도장-A')
-                : undefined;
-            const outRec = await Storage.add(STORE, {
-                date: item.date,
-                type: '출고',
-                outgoingType: item.outgoingType,
-                returnReason: item.returnReason || undefined,
-                carModel: item.carModel,
-                partName: item.partName,
-                color: item.color || '',
-                lots: [{ lotNo: item.lotNo, qty: item.qty, fifoReason: item.fifoReason || undefined }],
-                lotNo: item.lotNo,
-                quantity: item.qty,
-                unit: 'EA',
-                note: item.memo || undefined,
-                fifoReason: item.fifoReason || undefined,
-                outgoingBy: issuer,
-                planId: planId || undefined,
-                paintLine: paintLine,
-                line: paintLine,
-                source: item.outgoingType === '생산출고' ? '사출 창고 생산출고' : undefined
-            });
-            if (paintLine && typeof PaintingInputModule !== 'undefined' && PaintingInputModule.receiveFromWarehouseOut) {
-                try {
-                    await PaintingInputModule.receiveFromWarehouseOut(Object.assign({}, outRec, {
-                        paintLine: paintLine,
-                        line: paintLine,
-                        outgoingBy: issuer
-                    }));
-                } catch (eRecv) {
-                    console.warn('[InjectionWarehouse] 도장 투입 입고 실패:', eRecv);
-                    UIUtils.toast('출고는 됐으나 도장 투입 입고에 실패했습니다. 관리자에게 문의하세요.', 'warning');
-                }
+        } catch (e) {
+            console.error('[confirmOutgoingListup] 저장 실패:', e);
+            UIUtils.toast(
+                savedCount > 0
+                    ? `출고 일부만 저장됨(${savedCount}/${items.length}건). 나머지를 다시 시도하세요: ${e.message || e}`
+                    : `출고 저장 실패: ${e.message || e}`,
+                'error'
+            );
+            // 성공분만 목록에서 제거
+            if (savedCount > 0) {
+                const doneKeys = new Set(items.slice(0, savedCount).map(function (it) { return it.key; }));
+                _injOutListupRows = (_injOutListupRows || []).filter(r => !doneKeys.has(r.key));
+                renderOutgoingListup();
             }
+            loadData();
+            return;
         }
 
         _injOutListupRows = (_injOutListupRows || []).filter(r => !checkedKeys.has(r.key));
-        UIUtils.toast(`${items.length}건 출고 완료 — 생산출고분은 도장 투입 자재로 이동했습니다.`, 'success');
+        const hasPaintOut = items.some(function (it) { return it.outgoingType === '생산출고'; });
+        UIUtils.toast(
+            hasPaintOut
+                ? `${items.length}건 출고 완료 — 도장 라인에서 입고 처리하세요.`
+                : `${items.length}건 출고 완료`,
+            'success'
+        );
         renderOutgoingListup();
         loadData();
+
+        // 출고 이력 탭으로 이동해 방금 저장분이 보이게 (종료일이 오늘보다 이전이면 보정)
+        const todayStr = UIUtils.today ? UIUtils.today() : '';
+        const endEl = document.getElementById('injTxEndOut');
+        if (endEl && todayStr && (!endEl.value || endEl.value < todayStr)) endEl.value = todayStr;
+        _switchTab('outgoing');
     }
 
     // ── 수입 검사 완료품 입고 대기 섹션 ──────────────────────────────
@@ -2590,6 +2839,9 @@ var InjectionWarehouseModule = (function() {
 
         if (!_dismissedPendingLoaded) {
             _ensureDismissedPendingLoaded().then(renderInspStandby).catch(() => {});
+        }
+        if (!_pendingCutoverLoaded) {
+            _ensurePendingCutoverLoaded().then(renderInspStandby).catch(() => {});
         }
 
         const inspections = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
@@ -2649,6 +2901,7 @@ var InjectionWarehouseModule = (function() {
         // 입고 대기 중인 항목만 필터링 (입고 완료된 항목 + 관리자가 삭제(숨김)한 항목 제외)
         const dismissedSet = new Set(_dismissedPending.map(d => _dismissedPendingKey(d.inspId, d.lotNo)));
         const pendingRows = rows.filter(r =>
+            !_isBeforePendingCutover(r.date) &&
             !_lotInStock(inStockSet, r.partName, r.lotNo, r.qty, r.inspId, r.date) &&
             !dismissedSet.has(_dismissedPendingKey(r.inspId, r.lotNo))
         );
@@ -2948,6 +3201,8 @@ var InjectionWarehouseModule = (function() {
 
     // 검사 1건의 미입고 LOT 목록(성적서 접수 여부 무관, qty>0, 아직 창고 미반영) 반환
     function _pendingLotsForInspection(insp, inStockSet) {
+        // 수량 보정 시점 이전 검사건은 입고 대상에서 제외 (이미 재고 정합 처리됨)
+        if (_isBeforePendingCutover(insp.date)) return [];
         const sourceLots = (insp.lots && insp.lots.length > 0)
             ? insp.lots
             : (insp.lotNo ? [{ lotNo: insp.lotNo, qty: insp.passQty }] : []);
@@ -2993,6 +3248,7 @@ var InjectionWarehouseModule = (function() {
         const insp = Storage.getById(DB.STORES.INJECTION_INSPECTIONS, inspId);
         if (!insp) { UIUtils.toast('검사 정보를 찾을 수 없습니다.', 'error'); return; }
 
+        await _ensurePendingCutoverLoaded();
         const pendingLots = _pendingLotsForInspection(insp, _buildInStockLotSet());
         if (pendingLots.length === 0) {
             UIUtils.toast('이미 모두 입고 처리되었습니다.', 'info');
@@ -3017,6 +3273,7 @@ var InjectionWarehouseModule = (function() {
 
     // 현재 대기 중인 모든 검사건의 미입고 LOT을 일괄 창고 입고 처리 (성적서 접수 여부 무관, 합격수량 전체 반영)
     async function addAllPendingInspections() {
+        await _ensurePendingCutoverLoaded();
         const inspections = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
         const inStockSet = _buildInStockLotSet();
 
@@ -3225,6 +3482,20 @@ var InjectionWarehouseModule = (function() {
                             <span style="font-weight:600;color:var(--accent-orange,#f59e0b);">반출</span>
                         </label>
                     </div>
+                </div>
+                <div class="form-group" id="addInvPaintLineGroup">
+                    <label class="form-label">도착 라인 <span style="color:var(--accent-red)">*</span></label>
+                    <div style="display:flex;gap:12px;align-items:center;padding:8px 0;">
+                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem;">
+                            <input type="radio" name="addInvPaintLine" value="도장-A">
+                            <span style="font-weight:700;color:#2563eb;">도장-A</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem;">
+                            <input type="radio" name="addInvPaintLine" value="도장-B">
+                            <span style="font-weight:700;color:#ea580c;">도장-B</span>
+                        </label>
+                    </div>
+                    <div id="addInvPaintLineHint" style="font-size:0.75rem;color:var(--text-muted);">기초정보(제품 마스터) 기준으로 자동 선택됩니다.</div>
                 </div>
             </div>
             <div id="returnReasonGroup" style="display:none; margin-bottom:12px;">
@@ -3589,21 +3860,38 @@ var InjectionWarehouseModule = (function() {
         }, 50);
     }
 
-    // 컬러 변경 → LOT 재고 목록 갱신
+    // 컬러 변경 → LOT 재고 목록 갱신 + 도착 라인 자동 선택
     function onModalColorChange() {
         const carModel = (document.getElementById('addInvCarModel') || {}).value || '';
         const partName = (document.getElementById('addInvPart') || {}).value || '';
         if (carModel && partName) updateLotStockList(carModel, partName);
+        _syncAddInvPaintLineFromMaster();
+    }
+
+    function _syncAddInvPaintLineFromMaster() {
+        const type = (document.getElementById('addInvType') || {}).value || '';
+        if (type !== '출고') return;
+        const isReturn = !!(document.getElementById('outTypeReturn') || {}).checked;
+        if (isReturn) return;
+        const carModel = (document.getElementById('addInvCarModel') || {}).value || '';
+        const partName = (document.getElementById('addInvPart') || {}).value || '';
+        const color = (document.getElementById('addInvColor') || {}).value || '';
+        if (!carModel || !partName) return;
+        const inferred = _inferPaintLineFromMaster(carModel, partName, color);
+        _applyPaintLineRadio('addInvPaintLine', inferred.line, 'addInvPaintLineHint');
     }
 
     // 출고 구분 변경 → 반출 사유 표시/숨김
     function onOutTypeChange() {
         const isReturn = document.getElementById('outTypeReturn')?.checked;
         const reasonGroup = document.getElementById('returnReasonGroup');
+        const paintGroup = document.getElementById('addInvPaintLineGroup');
         if (reasonGroup) reasonGroup.style.display = isReturn ? '' : 'none';
+        if (paintGroup) paintGroup.style.display = isReturn ? 'none' : '';
         if (!isReturn) {
             const reasonInput = document.getElementById('returnReasonInput');
             if (reasonInput) reasonInput.value = '';
+            _syncAddInvPaintLineFromMaster();
         }
     }
 
@@ -4395,7 +4683,11 @@ var InjectionWarehouseModule = (function() {
         const currentMap = _getCurrentStockMap();
         const today = UIUtils.today ? UIUtils.today() : new Date().toISOString().slice(0, 10);
         const nowTime = new Date().toTimeString().slice(0, 5);
-        const lotNo = today.slice(2).replace(/-/g, '');
+        // 'RST' 접두사 필수 — 순수 YYMMDD LOT은 같은 날짜의 진짜 생산 LOT과 형식이 겹쳐
+        // (실사례: 260526/260615 배치가 무관한 수십 품목에 뒤섞이고, 이후 근거 레코드가 지워지면
+        // 미차감(과다출고)만 영구히 남음) 반드시 구분되는 코드를 쓴다. RST\d+ 는 _isValidLotFormat()에서
+        // 이미 "생산 LOT과 무관한 별도 용도"로 인정하는 형식이라 LOT 형식 오류로도 잡히지 않는다.
+        const lotNo = 'RST' + today.slice(2).replace(/-/g, '') + nowTime.replace(':', '');
         let materialAdded = 0;
         let adjusted = 0;
 
@@ -4783,10 +5075,17 @@ var InjectionWarehouseModule = (function() {
     }
 
     // 재고 오류 초기화(보정 입고)에 자동으로 붙일 LOT — 사용자가 실물 없는 LOT 번호를
-    // 직접 입력·검증할 필요가 없도록 오늘 날짜(YYMMDD)로 시스템이 부여한다.
+    // 직접 입력·검증할 필요가 없도록 시스템이 부여한다.
+    // 'RST' 접두사 필수: 순수 YYMMDD(예: '260526')를 쓰면 같은 날짜에 생산된 진짜 LOT번호와
+    // 형식이 완전히 같아져 재고 계산기(InvCalc)·입고 중복판정이 서로 다른 두 항목을 같은
+    // LOT으로 오인한다(실사례: 일괄 현재고 보정이 이 방식으로 LOT을 만들어 무관한 품목 수십 건이
+    // 뒤섞이고, 원본 입고가 삭제되면 미차감(과다출고)만 영구히 남는 문제가 발생함).
+    // RST\d+ 형식은 _isValidLotFormat()에서 이미 "생산 LOT과 무관한 별도 용도"로 인정하는 규칙이라
+    // LOT 형식 오류로도 잡히지 않는다.
     function _autoResetLot() {
         const today = UIUtils.today ? UIUtils.today() : new Date().toISOString().slice(0, 10);
-        return today.slice(2).replace(/-/g, '');
+        const nowTime = new Date().toTimeString().slice(0, 5).replace(':', '');
+        return 'RST' + today.slice(2).replace(/-/g, '') + nowTime;
     }
 
     async function confirmResetStockError(carModelEnc, partNameEnc, colorEnc) {
@@ -5057,6 +5356,7 @@ var InjectionWarehouseModule = (function() {
         let _outgoingType = '';
         let _returnReason = '';
         let _outgoingBy = '';
+        let _paintLine = '';
         if (_type === '출고') {
             const outTypeEl = document.querySelector('input[name="outgoingType"]:checked');
             _outgoingType = outTypeEl ? outTypeEl.value : '생산출고';
@@ -5078,6 +5378,12 @@ var InjectionWarehouseModule = (function() {
                     document.getElementById('returnReasonInput')?.focus();
                     return;
                 }
+            } else {
+                const lineEl = document.querySelector('input[name="addInvPaintLine"]:checked');
+                _paintLine = lineEl ? String(lineEl.value || '').trim() : '';
+                if (_paintLine !== '도장-A' && _paintLine !== '도장-B') {
+                    _paintLine = _inferPaintLineFromMaster(_invCarModel, _invPartName, _resolvedInvColor || _invColor).line;
+                }
             }
         }
 
@@ -5094,13 +5400,17 @@ var InjectionWarehouseModule = (function() {
             lotNo: lots.length > 0 ? lots[0].lotNo : '',
             quantity: totalQty,
             unit: (document.getElementById('addInvUnit') || { value: 'EA', textContent: 'EA' }).value || 'EA',
-            source: ((document.getElementById('addInvSource') || {}).value || '').trim(),
+            source: _type === '출고' && _outgoingType === '생산출고'
+                ? '사출 창고 생산출고'
+                : (((document.getElementById('addInvSource') || {}).value || '').trim() || undefined),
             injMaterialId: _injMaterialId || undefined,  // v19
             inspDate: _pendingInspDate || undefined,
             receivedBy: _type === '입고'
                 ? (((document.getElementById('addInvReceivedBy') || {}).value || '').trim() || actorId)
                 : undefined,
-            outgoingBy: _type === '출고' ? _outgoingBy : undefined
+            outgoingBy: _type === '출고' ? _outgoingBy : undefined,
+            paintLine: _paintLine || undefined,
+            line: _paintLine || undefined
         };
         _pendingInspDate = '';
 
@@ -5173,7 +5483,7 @@ var InjectionWarehouseModule = (function() {
         const inspCtx = _buildInspDateContext();
         const inspDateHtml = _formatInspDateCell(d, d.type !== '출고', inspCtx.inspDateMap, inspCtx.inboundInspMap);
         const workLineMap = _buildPaintWorkLineMap();
-        const paintLine = _normalizePaintLine(d.paintLine || (d.refWorkId && workLineMap[d.refWorkId]) || '');
+        const paintLine = _resolveOutgoingPaintLine(d, workLineMap, _buildPaintLineFromInputMap());
         const outgoingActor = _outgoingActorLabel(d);
         UIUtils.showModal(
             `<span class="material-symbols-outlined" style="vertical-align:middle;color:${typeColor};margin-right:4px;">edit</span> 입출고 이력 수정`,

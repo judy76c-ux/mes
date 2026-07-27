@@ -43,24 +43,38 @@ const UIUtils = (function () {
     }
 
     // ── 날짜 유틸 ────────────────────────────────────────────────────────
+    // 로컬(브라우저) 기준 날짜 — toISOString(UTC)는 KST 00:00~08:59에 하루 전으로 어긋남
+    function _pad2(n) {
+        return String(n).padStart(2, '0');
+    }
+
+    function _localYmd(d) {
+        return d.getFullYear() + '-' + _pad2(d.getMonth() + 1) + '-' + _pad2(d.getDate());
+    }
+
+    function _localHm(d) {
+        return _pad2(d.getHours()) + ':' + _pad2(d.getMinutes());
+    }
+
     function today() {
-        return new Date().toISOString().split('T')[0];
+        return _localYmd(new Date());
     }
 
     function now() {
-        return new Date().toISOString().replace('T', ' ').slice(0, 19);
+        const d = new Date();
+        return _localYmd(d) + ' ' + _localHm(d) + ':' + _pad2(d.getSeconds());
     }
 
     function monthAgo() {
         const d = new Date();
         d.setMonth(d.getMonth() - 1);
-        return d.toISOString().split('T')[0];
+        return _localYmd(d);
     }
 
     function daysAgo(n) {
         const d = new Date();
         d.setDate(d.getDate() - n);
-        return d.toISOString().split('T')[0];
+        return _localYmd(d);
     }
 
     // ── 숫자 포맷 ─────────────────────────────────────────────────────────

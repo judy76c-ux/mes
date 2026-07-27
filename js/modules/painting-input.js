@@ -23,6 +23,96 @@ var PaintingInputModule = (function () {
         return Number(n || 0).toLocaleString('ko-KR');
     }
 
+    function _dateKey(d) {
+        return String(d || '').trim().slice(0, 10);
+    }
+
+    function _splitDateTime(dt) {
+        const s = String(dt || '').trim();
+        if (!s) return { day: '-', time: '-' };
+        return { day: s.slice(0, 10), time: s.length > 11 ? s.slice(11, 16) : '-' };
+    }
+
+    function _primaryLot(r) {
+        if (Array.isArray(r.lots) && r.lots.length) {
+            return String(r.lots[0].lotNo || '').trim();
+        }
+        return String(r.lotNo || '').trim();
+    }
+
+    function _buildInspDateMap() {
+        const map = {};
+        (Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || []).forEach(function (insp) {
+            const lots = (insp.lots && insp.lots.length)
+                ? insp.lots
+                : (insp.lotNo ? [{ lotNo: insp.lotNo }] : []);
+            lots.forEach(function (lot) {
+                const lotNo = String(lot.lotNo || '').trim();
+                const part = String(insp.partName || '').trim();
+                if (!lotNo || !part) return;
+                const k = part + '||' + lotNo;
+                if (!map[k]) map[k] = _dateKey(insp.date);
+            });
+        });
+        (Storage.getAll(DB.STORES.INJECTION_INVENTORY) || []).forEach(function (r) {
+            if (String(r.type || '') === '출고' || !r.partName || !r.lotNo) return;
+            const k = String(r.partName) + '||' + String(r.lotNo);
+            if (!map[k] && r.inspDate) map[k] = _dateKey(r.inspDate);
+        });
+        return map;
+    }
+
+    function _resolveInspDate(partName, lotNo, direct, inspMap) {
+        if (direct) return _dateKey(direct);
+        const k = String(partName || '') + '||' + String(lotNo || '');
+        return inspMap[k] || '-';
+    }
+
+    function _receiptColsHtml(opts) {
+        return '' +
+            '<th style="white-space:nowrap;padding:8px 10px;">입고일</th>' +
+            '<th style="white-space:nowrap;padding:8px 10px;">시간</th>' +
+            '<th style="white-space:nowrap;padding:8px 10px;">차종</th>' +
+            '<th style="white-space:nowrap;padding:8px 10px;">사출명</th>' +
+            '<th style="white-space:nowrap;padding:8px 10px;">컬러</th>' +
+            '<th style="white-space:nowrap;padding:8px 10px;">사출LOT</th>' +
+            '<th style="white-space:nowrap;padding:8px 10px;">수입검사일</th>' +
+            '<th style="text-align:right;white-space:nowrap;padding:8px 10px;">수량</th>' +
+            (opts && opts.withAction
+                ? '<th style="white-space:nowrap;padding:8px 10px;">상태</th><th style="white-space:nowrap;padding:8px 10px;">작업</th>'
+                : '');
+    }
+
+    /** 금일 현장 입고 완료 건 (painting_input_inventory) */
+    function renderTodayReceiptRows(list) {
+        const inspMap = _buildInspDateMap();
+        if (!list.length) {
+            return {
+                itemCount: 0,
+                total: 0,
+                html: '<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--text-muted);">금일 현장 입고 자재가 없습니다.</td></tr>'
+            };
+        }
+        const total = list.reduce(function (s, r) { return s + (Number(r.quantity) || 0); }, 0);
+        const html = list.map(function (r) {
+            const recvDt = r.receivedAt || r.date || '';
+            const dt = _splitDateTime(recvDt);
+            const lotNo = _primaryLot(r);
+            const inspDate = _resolveInspDate(r.partName, lotNo, r.inspDate, inspMap);
+            return '<tr>' +
+                '<td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">' + _esc(dt.day) + '</td>' +
+                '<td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">' + _esc(dt.time) + '</td>' +
+                '<td style="white-space:nowrap;padding:8px 10px;"><strong>' + _esc(r.carModel || '-') + '</strong></td>' +
+                '<td style="white-space:nowrap;padding:8px 10px;">' + _esc(r.partName || '-') + '</td>' +
+                '<td style="white-space:nowrap;padding:8px 10px;">' + _esc(r.color || '-') + '</td>' +
+                '<td style="white-space:nowrap;padding:8px 10px;font-family:monospace;font-size:0.8rem;">' + _esc(lotNo || '-') + '</td>' +
+                '<td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">' + _esc(inspDate) + '</td>' +
+                '<td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:800;">' + _fmt(r.quantity) + '</td>' +
+                '</tr>';
+        }).join('');
+        return { itemCount: list.length, total: total, html: html };
+    }
+
     function _recordsForLine(line) {
         const want = _normLine(line);
         return (Storage.getAll(STORE) || []).filter(function (r) {
@@ -148,17 +238,21 @@ var PaintingInputModule = (function () {
             .sort(function (a, b) { return String(a.lotNo).localeCompare(String(b.lotNo)); });
     }
 
-    /** 사출 창고 생산출고 완료 시 도장 라인으로 입고 */
+    /** 사출 창고 생산출고 → 현장 입고 처리 시 도장 투입 재고 반영 */
     async function receiveFromWarehouseOut(outRec) {
         if (!outRec) return null;
         const line = _normLine(outRec.paintLine || outRec.line);
         const qty = Number(outRec.quantity) || 0;
         if (qty <= 0) return null;
+        if (outRec.id && _findReceiveByOutId(outRec.id)) {
+            return _findReceiveByOutId(outRec.id);
+        }
         const lots = Array.isArray(outRec.lots) && outRec.lots.length
             ? outRec.lots.map(function (l) {
                 return { lotNo: String(l.lotNo || outRec.lotNo || '').trim() || '무표기', qty: Number(l.qty) || 0 };
             }).filter(function (l) { return l.qty > 0; })
             : [{ lotNo: String(outRec.lotNo || '').trim() || '무표기', qty: qty }];
+        const actor = _currentActorLabel();
         return Storage.add(STORE, {
             date: outRec.date || (UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' ')),
             type: '입고',
@@ -173,9 +267,175 @@ var PaintingInputModule = (function () {
             unit: 'EA',
             source: '사출 창고 생산출고',
             refOutId: outRec.id || '',
-            receivedBy: outRec.outgoingBy || '',
+            siteReceived: true,
+            receivedBy: outRec.receivedBy || actor || outRec.outgoingBy || '',
+            receivedAt: UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' '),
             note: outRec.note || outRec.memo || ''
         });
+    }
+
+    function _currentActorLabel() {
+        if (typeof AuthModule === 'undefined' || !AuthModule.getCurrentUser) return '';
+        const u = AuthModule.getCurrentUser();
+        if (!u) return '';
+        return String(u.displayName || u.name || u.username || u.id || '');
+    }
+
+    function _canConfirmInbound(line) {
+        if (typeof AuthModule === 'undefined' || !AuthModule.canWritePage) return true;
+        const page = _normLine(line) === '도장-B' ? 'painting-work-b' : 'painting-work-a';
+        return AuthModule.canWritePage(page)
+            || AuthModule.canWritePage('painting-work')
+            || AuthModule.canWritePage('painting-process');
+    }
+
+    function _findReceiveByOutId(outId) {
+        if (!outId) return null;
+        return (Storage.getAll(STORE) || []).find(function (r) {
+            return String(r.refOutId || '') === String(outId) && String(r.type || '') === '입고';
+        }) || null;
+    }
+
+    /** 금일 자재창고→해당 라인 생산출고 목록 (+ 현장 입고 여부) */
+    function listTodayWarehouseShipments(line, date) {
+        const want = _normLine(line);
+        const today = date || (UIUtils.today ? UIUtils.today() : '');
+        const injStore = DB.STORES.INJECTION_INVENTORY;
+        return (Storage.getAll(injStore) || []).filter(function (r) {
+            if (String(r.type || '') !== '출고') return false;
+            const oType = String(r.outgoingType || '');
+            const src = String(r.source || '');
+            if (oType !== '생산출고' && src !== '사출 창고 생산출고') return false;
+            if (_normLine(r.paintLine || r.line) !== want) return false;
+            return String(r.date || '').slice(0, 10) === today;
+        }).sort(function (a, b) {
+            return String(b.date || '').localeCompare(String(a.date || ''));
+        }).map(function (r) {
+            const recv = _findReceiveByOutId(r.id);
+            return Object.assign({}, r, {
+                received: !!recv,
+                receiveRec: recv || null
+            });
+        });
+    }
+
+    async function confirmSiteInbound(outId, line) {
+        if (!_canConfirmInbound(line)) {
+            UIUtils.toast('도장작업 입력 권한이 있는 사용자만 입고 처리할 수 있습니다.', 'warning');
+            return null;
+        }
+        const out = Storage.getById(DB.STORES.INJECTION_INVENTORY, outId);
+        if (!out) {
+            UIUtils.toast('출고 기록을 찾을 수 없습니다.', 'error');
+            return null;
+        }
+        if (_findReceiveByOutId(outId)) {
+            UIUtils.toast('이미 입고 처리된 건입니다.', 'info');
+            return _findReceiveByOutId(outId);
+        }
+        const want = _normLine(line || out.paintLine || out.line);
+        try {
+            const rec = await receiveFromWarehouseOut(Object.assign({}, out, {
+                paintLine: want,
+                line: want,
+                receivedBy: _currentActorLabel()
+            }));
+            UIUtils.toast('현장 입고 처리가 완료되었습니다.', 'success');
+            return rec;
+        } catch (e) {
+            console.warn('[PaintingInput] confirmSiteInbound failed:', e);
+            UIUtils.toast('입고 처리에 실패했습니다.', 'error');
+            return null;
+        }
+    }
+
+    /** 도장 작업현황 — 금일 창고 출고 목록 + 입고 처리
+     *  opts.compact: 메인용 간단 표 (입고시간|차종|품명|수량)
+     */
+    function renderTodayShipmentTable(line, opts) {
+        opts = opts || {};
+        const want = _normLine(line);
+        const canWrite = _canConfirmInbound(want);
+        const list = listTodayWarehouseShipments(want);
+        const pending = list.filter(function (r) { return !r.received; });
+        const done = list.filter(function (r) { return r.received; });
+        const totalQty = list.reduce(function (s, r) { return s + (Number(r.quantity) || 0); }, 0);
+        const inspMap = _buildInspDateMap();
+        const confirmFn = opts.confirmFn || 'PaintingWorkModule.confirmInputInbound';
+        const compact = !!opts.compact;
+        const colSpan = compact ? 4 : 10;
+
+        if (!list.length) {
+            return {
+                itemCount: 0,
+                pendingCount: 0,
+                doneCount: 0,
+                total: 0,
+                html: `<tr><td colspan="${colSpan}" style="text-align:center;padding:20px;color:var(--text-muted);">
+                    금일 자재 창고에서 ${_esc(want)}로 출고된 자재가 없습니다.
+                </td></tr>`
+            };
+        }
+
+        if (compact) {
+            const html = list.map(function (r) {
+                const outDt = _splitDateTime(r.date || '');
+                const timeTxt = (outDt.day !== '-' ? outDt.day + ' ' : '') + (outDt.time !== '-' ? outDt.time : '');
+                const muted = r.received ? 'opacity:0.55;' : '';
+                return `<tr style="${muted}">
+                    <td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">${_esc(timeTxt || '-')}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;"><strong>${_esc(r.carModel || '-')}</strong></td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${_esc(r.partName || '-')}</td>
+                    <td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:800;">${_fmt(r.quantity)}</td>
+                </tr>`;
+            }).join('');
+            return {
+                itemCount: list.length,
+                pendingCount: pending.length,
+                doneCount: done.length,
+                total: totalQty,
+                html: html
+            };
+        }
+
+        const html = list.map(function (r) {
+            const recv = r.receiveRec || null;
+            const recvDt = recv ? (recv.receivedAt || recv.date || '') : '';
+            const dt = recv ? _splitDateTime(recvDt) : { day: '-', time: '-' };
+            const lotNo = _primaryLot(r);
+            const inspDate = _resolveInspDate(r.partName, lotNo, r.inspDate, inspMap);
+            const statusHtml = r.received
+                ? '<span style="font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:999px;background:rgba(22,163,74,0.12);color:#16a34a;">입고완료</span>'
+                : '<span style="font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:999px;background:rgba(234,88,12,0.12);color:#ea580c;">미입고</span>';
+            const actionHtml = r.received
+                ? `<span style="font-size:0.75rem;color:var(--text-muted);">${_esc((recv && recv.receivedBy) || '-')}</span>`
+                : (canWrite
+                    ? `<button type="button" class="btn btn-sm btn-primary" style="padding:4px 10px;font-size:0.78rem;white-space:nowrap;"
+                        onclick="${confirmFn}('${_esc(r.id)}','${_esc(want)}')">
+                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">move_to_inbox</span> 입고 처리
+                       </button>`
+                    : '<span style="font-size:0.75rem;color:var(--text-muted);">입력 권한 필요</span>');
+            return `<tr>
+                <td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">${_esc(dt.day)}</td>
+                <td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">${_esc(dt.time)}</td>
+                <td style="white-space:nowrap;padding:8px 10px;"><strong>${_esc(r.carModel || '-')}</strong></td>
+                <td style="white-space:nowrap;padding:8px 10px;">${_esc(r.partName || '-')}</td>
+                <td style="white-space:nowrap;padding:8px 10px;">${_esc(r.color || '-')}</td>
+                <td style="white-space:nowrap;padding:8px 10px;font-family:monospace;font-size:0.8rem;">${_esc(lotNo || '-')}</td>
+                <td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">${_esc(inspDate)}</td>
+                <td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:800;">${_fmt(r.quantity)}</td>
+                <td style="white-space:nowrap;padding:8px 10px;">${statusHtml}</td>
+                <td style="white-space:nowrap;padding:8px 10px;">${actionHtml}</td>
+            </tr>`;
+        }).join('');
+
+        return {
+            itemCount: list.length,
+            pendingCount: pending.length,
+            doneCount: done.length,
+            total: totalQty,
+            html: html
+        };
     }
 
     /** 도장 작업 실적 등록 시 현장 투입 LOT 차감 */
@@ -331,34 +591,9 @@ var PaintingInputModule = (function () {
         renderHub(container);
     }
 
-    /** 도장 작업현황 임베드용 — 라인별 재고 행 HTML */
+    /** 도장 작업현황 임베드용 — 금일 출고 목록 */
     function renderEmbedTableBody(line) {
-        const want = _normLine(line);
-        const accent = _lineAccent(want);
-        const items = _groupStock(want);
-        const total = items.reduce(function (s, g) { return s + g.stock; }, 0);
-        if (!items.length) {
-            return {
-                itemCount: 0,
-                total: 0,
-                html: `<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted);">
-                    투입 대기 자재가 없습니다. 사출 창고에서 생산출고 시 도착 라인을 <strong>${_esc(want)}</strong>로 선택하세요.
-                </td></tr>`
-            };
-        }
-        const html = items.map(function (g) {
-            const lotTxt = (g.lots || []).map(function (l) {
-                return `<span style="font-family:monospace;font-size:0.78rem;background:var(--bg-secondary);padding:1px 6px;border-radius:4px;margin-right:4px;white-space:nowrap;">${_esc(l.lotNo)} ${_fmt(l.qty)}</span>`;
-            }).join('') || '-';
-            return `<tr>
-                <td style="white-space:nowrap;padding:8px 10px;"><strong>${_esc(g.carModel)}</strong></td>
-                <td style="white-space:nowrap;padding:8px 10px;">${_esc(g.partName)}</td>
-                <td style="white-space:nowrap;padding:8px 10px;">${_esc(g.color || '-')}</td>
-                <td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:800;color:${accent};">${_fmt(g.stock)}</td>
-                <td style="padding:8px 10px;">${lotTxt}</td>
-            </tr>`;
-        }).join('');
-        return { itemCount: items.length, total: total, html: html };
+        return renderTodayShipmentTable(line);
     }
 
     return {
@@ -367,6 +602,12 @@ var PaintingInputModule = (function () {
         renderHub: renderHub,
         renderForLine: renderForLine,
         renderEmbedTableBody: renderEmbedTableBody,
+        renderTodayShipmentTable: renderTodayShipmentTable,
+        renderTodayReceiptRows: renderTodayReceiptRows,
+        receiptTableHeaders: _receiptColsHtml,
+        listTodayWarehouseShipments: listTodayWarehouseShipments,
+        confirmSiteInbound: confirmSiteInbound,
+        canConfirmInbound: _canConfirmInbound,
         groupStock: _groupStock,
         getLotsByInjPart: getLotsByInjPart,
         getLotsByCarPart: getLotsByCarPart,

@@ -255,12 +255,14 @@ const App = (function() {
         Router.registerModule('injection-wip', InjectionWipModule);
         Router.registerModule('injection-room-layout', InjectionRoomLayoutModule);
         Router.registerModule('painting-process', PaintingProcessModule);
-        Router.registerModule('painting-input', PaintingInputModule);
+        Router.registerModule('painting-input', {
+            render: function(c) { PaintingProcessModule.render(c); }
+        });
         Router.registerModule('painting-input-a', {
-            render: function(c) { PaintingInputModule.renderForLine(c, '도장-A'); }
+            render: function(c) { PaintingProcessModule.render(c); }
         });
         Router.registerModule('painting-input-b', {
-            render: function(c) { PaintingInputModule.renderForLine(c, '도장-B'); }
+            render: function(c) { PaintingProcessModule.render(c); }
         });
         Router.registerModule('painting-work', {
             render: function(c) { PaintingWorkModule.renderForLine(c, '도장-A'); }
