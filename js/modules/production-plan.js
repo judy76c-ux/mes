@@ -622,10 +622,14 @@ const ProductionPlanModule = (function() {
 
         // 18:00 이후(잔업) 슬롯에 실제 계획이 있으면 "잔업 계획" 체크박스를 자동으로 켜서
         // 기본적으로 숨겨지는 잔업 행이 사용자가 따로 토글하지 않아도 바로 보이게 한다.
+        // 계획 자체가 18:00 이전에 시작해도 종료 시간이 18:00을 넘어가면(예: 12:18~21:18)
+        // 그 이후 구간도 잔업 행이라 시작 시각뿐 아니라 종료 시각도 함께 확인해야 한다.
         const _otSuffix = lineName === '도장-B' ? 'B' : 'A';
-        const hasOvertimePlan = Object.keys(slotData).some(s =>
-            s >= '18:00' && slotData[s] && (slotData[s].carModel || slotData[s].partName || Number(slotData[s].planQty) > 0)
-        );
+        const hasOvertimePlan = Object.keys(slotData).some(s => {
+            const item = slotData[s];
+            if (!item || !(item.carModel || item.partName || Number(item.planQty) > 0)) return false;
+            return s >= '18:00' || (item.endTime && item.endTime > '18:00');
+        });
         if (hasOvertimePlan) {
             const otToggle = document.getElementById('overtimeToggle' + _otSuffix);
             const otWrap = document.getElementById('planGridWrap' + _otSuffix);
@@ -815,9 +819,15 @@ const ProductionPlanModule = (function() {
             }
 
             const isOvertimeSlot = slot >= '18:00';
+            const dragAttrs = hasData && item.id
+                ? `draggable="true" ondragstart="ProductionPlanModule.onPlanDragStart(event,'${item.id}')" ondragend="ProductionPlanModule.onPlanDragEnd(event)"`
+                : '';
+            const dropAttrs = !isLunch
+                ? `ondragover="ProductionPlanModule.onPlanDragOver(event)" ondragleave="ProductionPlanModule.onPlanDragLeave(event)" ondrop="ProductionPlanModule.onPlanDrop(event,'${slot}','${lineName}')"`
+                : '';
 
             return exchangeRow + `
-                <tr class="${rowClass} hover-row ${isOvertimeStart ? 'overtime-start' : ''} ${isOvertimeSlot ? 'overtime-slot' : ''}" style="cursor: ${trCursor}; ${bgColorStyle}">
+                <tr class="${rowClass} hover-row ${isOvertimeStart ? 'overtime-start' : ''} ${isOvertimeSlot ? 'overtime-slot' : ''}" ${dragAttrs} ${dropAttrs} style="cursor: ${hasData ? 'grab' : trCursor}; ${bgColorStyle}">
                     <td class="sticky-col time-cell" style="position:relative;padding-bottom:7px;" ${trClick}>${timeCellText}${barHTML}</td>
                     <td class="editable-cell" ${trClick}>${item.carModel || (clickable ? '<span style="color:#ccc;">(클릭하여 입력)</span>' : `<span style="color:#aaa;">${activeItem?.carModel || ''}</span>`)}</td>
                     <td class="editable-cell" ${trClick}>${item.partName || (!hasData && activeItem ? `<span style="color:#aaa;">${activeItem.partName || ''}</span>` : '')}</td>
@@ -1639,6 +1649,7 @@ const ProductionPlanModule = (function() {
 
     /** 도장 라인 현장 자재 수량 (입고 잔량 + 미입고 출고)
      *  matchedMats: getInjPartNamesForPlan 결과
+     *  — 미입고는 도장 자재 목록과 동일하게 "해당일 창고→라인 출고"만 집계 (과거 미연결 출고 과다합산 방지)
      */
     function _getSiteInjStockForPlan(line, matchedMats, carModel) {
         const empty = { total: 0, received: 0, pending: 0, rows: [], line: '' };
@@ -1658,7 +1669,7 @@ const ProductionPlanModule = (function() {
             byPart[n] = { partName: n, received: 0, pending: 0 };
         });
 
-        // ① 현장 입고 잔량 (painting_input_inventory)
+        // ① 현장 입고 잔량 (painting_input_inventory — 실잔량)
         names.forEach(function (injName) {
             let qty = 0;
             if (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.getLotsByInjPart) {
@@ -1676,29 +1687,45 @@ const ProductionPlanModule = (function() {
             byPart[injName].received += qty;
         });
 
-        // ② 창고→라인 생산출고 중 미입고 (현장 대기)
-        const receivedOutIds = {};
-        const piStore = DB.STORES.PAINTING_INPUT_INVENTORY;
-        if (piStore) {
-            (Storage.getAll(piStore) || []).forEach(function (r) {
-                if (String(r.type || '') !== '입고') return;
-                const oid = String(r.refOutId || '').trim();
-                if (oid) receivedOutIds[oid] = true;
+        // ② 미입고: 도장 자재 목록과 동일 소스 (해당일 생산출고 · 미입고만)
+        //    과거 전체 출고를 합산하면 refOutId 없는 이력까지 잡혀 수량이 부풀려짐
+        const day = ((document.getElementById('planDateFilter') || {}).value
+            || (UIUtils.today ? UIUtils.today() : '')).slice(0, 10);
+        let dayShipments = [];
+        if (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.listTodayWarehouseShipments) {
+            dayShipments = PaintingInputModule.listTodayWarehouseShipments(want, day) || [];
+        } else {
+            const receivedOutIds = {};
+            const piStore = DB.STORES.PAINTING_INPUT_INVENTORY;
+            if (piStore) {
+                (Storage.getAll(piStore) || []).forEach(function (r) {
+                    if (String(r.type || '') !== '입고') return;
+                    const oid = String(r.refOutId || '').trim();
+                    if (oid) receivedOutIds[oid] = true;
+                });
+            }
+            dayShipments = (Storage.getAll(DB.STORES.INJECTION_INVENTORY) || []).filter(function (r) {
+                if (String(r.type || '') !== '출고') return false;
+                const oType = String(r.outgoingType || '');
+                const src = String(r.source || '');
+                if (oType !== '생산출고' && src !== '사출 창고 생산출고') return false;
+                const outLine = (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.normLine)
+                    ? PaintingInputModule.normLine(r.paintLine || r.line)
+                    : String(r.paintLine || r.line || '');
+                if (outLine !== want) return false;
+                if (String(r.date || '').slice(0, 10) !== day) return false;
+                return !receivedOutIds[String(r.id || '')];
+            }).map(function (r) {
+                return Object.assign({}, r, { received: false });
             });
         }
-        (Storage.getAll(DB.STORES.INJECTION_INVENTORY) || []).forEach(function (r) {
-            if (String(r.type || '') !== '출고') return;
-            const oType = String(r.outgoingType || '');
-            const src = String(r.source || '');
-            if (oType !== '생산출고' && src !== '사출 창고 생산출고') return;
-            const outLine = (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.normLine)
-                ? PaintingInputModule.normLine(r.paintLine || r.line)
-                : String(r.paintLine || r.line || '');
-            if (outLine !== want) return;
-            if (r.id && receivedOutIds[String(r.id)]) return;
+
+        dayShipments.forEach(function (r) {
+            if (r.received) return; // 입고완료 건은 ① 잔량에 포함
             const pName = String(r.partName || '').trim();
             if (!nameSet[pName]) return;
             if (carModel && r.carModel && r.carModel !== carModel) return;
+            if (!byPart[pName]) byPart[pName] = { partName: pName, received: 0, pending: 0 };
             byPart[pName].pending += Number(r.quantity) || 0;
         });
 
@@ -2849,6 +2876,97 @@ const ProductionPlanModule = (function() {
         });
     }
 
+    // ── 계획 드래그 이동 ────────────────────────────────────────────────
+    // 계획 행을 잡아 다른 시간대(빈 칸)에 놓으면, 원래 소요 시간(분량)을 그대로 유지한 채
+    // 시작 시간만 옮긴다. 겹침·과거 시간 확인은 saveSlot과 동일 기준을 재사용한다.
+    let _dragPlanId = '';
+
+    function onPlanDragStart(ev, planId) {
+        if (!planId) { ev.preventDefault(); return; }
+        _dragPlanId = planId;
+        ev.dataTransfer.effectAllowed = 'move';
+        try { ev.dataTransfer.setData('text/plain', planId); } catch (e) { /* 일부 브라우저 무시 */ }
+        if (ev.currentTarget) ev.currentTarget.style.opacity = '0.5';
+    }
+
+    function onPlanDragEnd(ev) {
+        if (ev.currentTarget) ev.currentTarget.style.opacity = '';
+        document.querySelectorAll('.plan-drop-hover').forEach(el => el.classList.remove('plan-drop-hover'));
+        _dragPlanId = '';
+    }
+
+    function onPlanDragOver(ev) {
+        if (!_dragPlanId) return;
+        ev.preventDefault();
+        ev.dataTransfer.dropEffect = 'move';
+        if (ev.currentTarget) ev.currentTarget.classList.add('plan-drop-hover');
+    }
+
+    function onPlanDragLeave(ev) {
+        if (ev.currentTarget) ev.currentTarget.classList.remove('plan-drop-hover');
+    }
+
+    async function onPlanDrop(ev, targetSlot, line) {
+        ev.preventDefault();
+        if (ev.currentTarget) ev.currentTarget.classList.remove('plan-drop-hover');
+        const planId = _dragPlanId || (ev.dataTransfer && ev.dataTransfer.getData('text/plain'));
+        _dragPlanId = '';
+        if (!planId) return;
+
+        const date = document.getElementById('planDateFilter').value;
+        const plan = Storage.getById(STORE, planId);
+        if (!plan) return;
+        if (plan.slot === targetSlot) return; // 같은 자리에 놓음 — 아무 것도 안 함
+
+        const oldStart = plan.startTime || plan.slot;
+        const oldEndMin = _timeToMinPlan(plan.endTime);
+        const rawDuration = (plan.endTime && !isNaN(oldEndMin)) ? (oldEndMin - _timeToMinPlan(oldStart)) : NaN;
+        // 저장된 종료시간이 손상돼(예: 자정 넘김 계산 오류) 말이 안 되는 값이면(0분 이하 또는 20시간 초과) 기본 30분으로 대체
+        const durationMin = (!isNaN(rawDuration) && rawDuration > 0 && rawDuration <= 20 * 60) ? rawDuration : 30;
+        const newStartMin = _timeToMinPlan(targetSlot);
+        if (isNaN(newStartMin)) return;
+        const newStart = targetSlot;
+        let newEnd = '';
+        if (durationMin > 0) {
+            const newEndMin = newStartMin + durationMin;
+            if (newEndMin < 24 * 60) {
+                newEnd = `${String(Math.floor(newEndMin / 60)).padStart(2, '0')}:${String(newEndMin % 60).padStart(2, '0')}`;
+            }
+        }
+
+        // 겹침 확인 (자기 자신 제외)
+        const freshData = Storage.getAll(STORE);
+        const overlap = freshData.find(item => {
+            if (item.date !== date || item.line !== line || item.id === planId) return false;
+            const iStart = item.startTime || item.slot;
+            const iEnd = item.endTime;
+            if (!iStart) return false;
+            if (iEnd && newEnd) return newStart < iEnd && newEnd > iStart;
+            return iStart === newStart;
+        });
+        if (overlap) {
+            UIUtils.toast(`[${overlap.startTime || overlap.slot}${overlap.endTime ? ' ~ ' + overlap.endTime : ''}] 시간대에 이미 다른 작업이 있습니다.`, 'warning');
+            return;
+        }
+
+        const proceed = async () => {
+            await Storage.update(STORE, planId, { slot: newStart, startTime: newStart, endTime: newEnd });
+            search();
+            if (_activePlanDateModal) {
+                setTimeout(() => openDayPlan(date, _activePlanLineModal), 0);
+            }
+            UIUtils.toast(`계획을 ${newStart}로 이동했습니다.`, 'success');
+        };
+
+        const _now = new Date();
+        const _nowHHMM = String(_now.getHours()).padStart(2, '0') + ':' + String(_now.getMinutes()).padStart(2, '0');
+        if (date === UIUtils.today() && newStart < _nowHHMM) {
+            UIUtils.confirm('지나간 시간에 등록을 하려고 하는데 등록 하시겠습니까?', proceed);
+            return;
+        }
+        await proceed();
+    }
+
     function printWorkOrder(line) {
         const date = document.getElementById('planDateFilter').value;
         const allData = Storage.getAll(STORE);
@@ -3430,6 +3548,11 @@ const ProductionPlanModule = (function() {
         editSlot,
         saveSlot,
         removeSlot,
+        onPlanDragStart,
+        onPlanDragEnd,
+        onPlanDragOver,
+        onPlanDragLeave,
+        onPlanDrop,
         printWorkOrder,
         updateFooterOT,
         updateDropdowns,
