@@ -105,8 +105,6 @@ var InvCalc = (function () {
 
     /** 어느 LOT에서도 차감하지 못한 출고를 담는 가상 LOT 이름 */
     const UNMATCHED = '(미차감 출고)';
-    /** '미차감 리셋(clear)'으로 상쇄된 몫을 담는 가상 LOT 이름 */
-    const WRITEOFF = '(미차감 리셋 반영)';
 
     function _applyOutgoing(map, entriesList, unmatchedRef, deductionsRef) {
         entriesList.forEach(e => {
@@ -166,7 +164,7 @@ var InvCalc = (function () {
 
     /**
      * 미차감 처리
-     * - clear: 미차감만 0 (표시 재고 유지 — writeOff로 상쇄)
+     * - clear: 오차를 착오로 판단해 소멸 — 미차감 0, 표시 재고는 실물 LOT 합계로 복원(증가 가능)
      * - absorb: 보유 LOT FIFO 차감 + 미차감 소멸 (표시 재고 유지)
      */
     function _applyUnmatchedAction(map, rec, unmatchedRef, writeOffRef) {
@@ -190,9 +188,9 @@ var InvCalc = (function () {
             unmatchedRef.value = Math.max(0, unmatchedRef.value - absorbed);
             return true;
         }
-        // clear: 미차감만 소멸. 표시 재고가 올라가지 않도록 writeOff에 동일 금액을 남긴다.
+        // clear: 미차감만 소멸. writeOff로 영구히 깎지 않는다 — 리셋 이후 표시 재고는
+        // 실물 LOT 합계 그대로(= 오차가 애초에 없었던 것처럼) 보인다.
         unmatchedRef.value = Math.max(0, unmatchedRef.value - amount);
-        if (writeOffRef) writeOffRef.value += amount;
         return true;
     }
 
@@ -264,10 +262,6 @@ var InvCalc = (function () {
         const writeOff = writeOffRef.value;
         const lots = Object.values(map);
         if (unmatched > 0) lots.push({ lotNo: UNMATCHED, qty: -unmatched, date: '', supplier: '' });
-        // writeOff도 unmatched와 동일하게 가상 LOT행으로 남겨야 "총재고 = LOT 잔량 합계" 불변식이
-        // 유지된다. 이게 빠지면(과거 상태) 미차감 리셋(clear) 이후 "현재 보관 LOT" 표 합계가
-        // 헤더 총재고보다 writeOff만큼 항상 더 크게 보이는 오류가 생긴다.
-        if (writeOff > 0) lots.push({ lotNo: WRITEOFF, qty: -writeOff, date: '', supplier: '' });
 
         const total = _totalFromMap(map, unmatched, writeOff);
         return { total, lots, unmatched, writeOff, negatives: lots.filter(l => l.qty < 0), corrupted };
@@ -278,5 +272,5 @@ var InvCalc = (function () {
         return (records || []).reduce((s, rec) => s + signedQtyOf(rec), 0);
     }
 
-    return { normDate, stampFor, recordStamp, entries, qtyOf, signedQtyOf, isQtyCorrupted, lotBalances, replaySteps, totalStock, UNMATCHED, WRITEOFF };
+    return { normDate, stampFor, recordStamp, entries, qtyOf, signedQtyOf, isQtyCorrupted, lotBalances, replaySteps, totalStock, UNMATCHED };
 })();

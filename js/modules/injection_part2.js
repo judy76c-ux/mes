@@ -1974,7 +1974,6 @@ var InjectionWarehouseModule = (function() {
         const rows = currentLots.map(d => {
             const _lotJs = d.lot.replace(/'/g, "\\'");
             const isNeg = d.qty < 0;
-            const isWriteoff = d.lot === InvCalc.WRITEOFF;
             const pendingQty = listupPendingByLot[_normInvLotNo(d.lot)] || 0;
             const availQty = isNeg ? d.qty : Math.max(0, (Number(d.qty) || 0) - pendingQty);
             // 형식 오류 LOT(빈 값·무표기·잘못된 날짜) → 빨간 강조 + 배지로 어느 행이 문제인지 즉시 보이게 한다.
@@ -1989,8 +1988,7 @@ var InjectionWarehouseModule = (function() {
             const badLotBadge = isBadLot
                 ? ' <span title="LOT 번호 형식 오류 — 수량 보정으로 올바른 LOT을 입력하세요" style="font-size:0.65rem;background:#fee2e2;color:#b91c1c;border-radius:4px;padding:1px 5px;font-weight:700;">⚠ LOT 오류</span>'
                 : '';
-            const rowStyle = isWriteoff ? ' style="background:rgba(100,116,139,.06);"'
-                : isNeg ? ' style="background:rgba(239,68,68,.06);"'
+            const rowStyle = isNeg ? ' style="background:rgba(239,68,68,.06);"'
                 : (isBadLot ? ' style="background:rgba(239,68,68,.1);"'
                 : (pendingQty > 0 && availQty <= 0 ? ' style="background:rgba(220,38,38,.04);opacity:0.85;"' : ''));
             const qtyCell = pendingQty > 0
@@ -2012,13 +2010,9 @@ var InjectionWarehouseModule = (function() {
             return `
                 <tr${rowStyle}>
                     <td style="white-space:nowrap;">${d.date || '-'}</td>
-                    <td>${d.lot || '-'}${fifoBadge}${pendingBadge}${badLotBadge}${isNeg
-                        ? (d.lot === InvCalc.WRITEOFF
-                            ? ' <span title="미차감(과다출고)을 리셋 처리하며 상쇄된 몫 — 이미 해결됨, 표시 재고에 반영됨" style="font-size:0.7rem;color:var(--text-muted);font-weight:700;">ⓘ 미차감 리셋 반영</span>'
-                            : ' <span title="입고보다 출고가 많아 어느 LOT에서도 차감하지 못한 수량" style="font-size:0.7rem;color:var(--accent-red);font-weight:700;">⚠ 과다출고</span>')
-                        : ''}</td>
+                    <td>${d.lot || '-'}${fifoBadge}${pendingBadge}${badLotBadge}${isNeg ? ' <span title="입고보다 출고가 많아 어느 LOT에서도 차감하지 못한 수량" style="font-size:0.7rem;color:var(--accent-red);font-weight:700;">⚠ 과다출고</span>' : ''}</td>
                     <td>${d.supplier || '-'}</td>
-                    <td style="text-align:right; color:${isWriteoff ? 'var(--text-muted)' : (isNeg ? 'var(--accent-red)' : 'var(--accent-green)')}; font-weight:600;">
+                    <td style="text-align:right; color:${isNeg ? 'var(--accent-red)' : 'var(--accent-green)'}; font-weight:600;">
                         ${qtyCell}
                     </td>
                     ${canEditLot ? `<td style="text-align:center;">

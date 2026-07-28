@@ -798,6 +798,10 @@ const SettingsModule = (function() {
                         </select>
                     </div>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        <button class="btn btn-outline" onclick="SettingsModule.downloadProductCSV()"
+                            title="제품 마스터를 CSV로 다운로드">
+                            <span class="material-symbols-outlined">download</span> CSV 다운로드
+                        </button>
                         <button class="btn btn-secondary" onclick="SettingsModule.showDuplicatePartNameReport()"
                             style="border-color:#d97706;color:#d97706;"
                             title="동일 품명 제품 현황 진단">
