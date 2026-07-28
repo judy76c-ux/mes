@@ -5662,6 +5662,15 @@ var LaserStandbyModule = (function() {
         return dateStamp < resetStamp;
     }
 
+    /** 이력 리셋 이전 건 판정: 업무 발생일(date) 우선 — eventStamp/createdAt이 재저장으로 밀려도 아카이브.
+     *  paintingDate(도장 LOT일)는 쓰지 않음 — 리셋 이후 레이저 출고가 옛 도장 LOT을 쓰면 오판정됨. */
+    function _shouldArchiveAsBeforeReset(row, resetAt) {
+        if (!row || !resetAt) return false;
+        const workDate = row.date || '';
+        if (workDate && _isBeforeHistoryReset(workDate, resetAt, row.createdAt || row.eventStamp)) return true;
+        return _isBeforeHistoryReset(row.eventStamp || row.date, resetAt, row.createdAt || row.eventStamp);
+    }
+
     function _getHistoryResetForKey(key) {
         const k = String(key || '');
         return (_historyResets || []).find(function(r) {
@@ -6133,10 +6142,11 @@ var LaserStandbyModule = (function() {
         });
 
         // 이력만 리셋: 재고/LOT 집계는 전체 유지, 리셋 이전 이력은 기록으로 남기고(재고 재생 제외)
+        // → 수량 보정(targetStock) 후 재생 최종값 = 표시 재고가 되어 불일치 배너가 뜨지 않음
         if (histReset && histReset.historyResetAt) {
+            const resetAt = histReset.historyResetAt;
             allRows = allRows.map(function(r) {
-                const cmpStamp = r.eventStamp || r.date;
-                if (_isBeforeHistoryReset(cmpStamp, histReset.historyResetAt, r.createdAt || r.eventStamp)) {
+                if (_shouldArchiveAsBeforeReset(r, resetAt)) {
                     return Object.assign({}, r, { beforeReset: true });
                 }
                 return r;
@@ -6149,14 +6159,13 @@ var LaserStandbyModule = (function() {
                 return String((l && (l.lotNo || l.injectionLot || l.injLot)) || '').trim();
             }).filter(function(v) { return v && v !== '-'; }))];
 
-            // 저장된 openingStock이 이후 데이터 보정/미차감 처리로 어긋날 수 있다.
-            // 표시 재고(targetStock) − 리셋 이후 순증감 으로 기준선을 다시 맞춰
-            // 이력 맨 위 "현재 수량"이 보관 LOT·헤더 재고와 항상 같아지게 한다.
+            // 표시 재고(targetStock, 수량 보정 반영) − 리셋 이후 순증감 으로 기준선 역산
+            // 리셋 전 건이 beforeReset 누락돼도 postNet에 넣지 않도록 이중 판정
             let openingStock = Number(histReset.openingStock != null ? histReset.openingStock : histReset.prevStock) || 0;
             if (targetStock != null && Number.isFinite(Number(targetStock))) {
                 let postNet = 0;
                 allRows.forEach(function(r) {
-                    if (r.beforeReset) return;
+                    if (r.beforeReset || _shouldArchiveAsBeforeReset(r, resetAt)) return;
                     postNet += (r.kind === 'out' ? -1 : 1) * (Number(r.qty) || 0);
                 });
                 openingStock = Number(targetStock) - postNet;

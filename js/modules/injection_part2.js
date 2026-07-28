@@ -897,6 +897,7 @@ var InjectionWarehouseModule = (function() {
 
     let _activeTab = 'stock';
     let _injOutListupRows = [];
+    let _injOutListupIssuerId = '';
 
     function _txHistoryCard(tab) {
         const isIn = tab === 'incoming';
@@ -1944,7 +1945,10 @@ var InjectionWarehouseModule = (function() {
             .filter(item => item.qty !== 0)
             .sort((a, b) => (a.date || '').localeCompare(b.date || '') || a.lot.localeCompare(b.lot));
 
-        const fifoHeadLot = currentLots.find(d => d.qty > 0);
+        // 출고 리스트업 대기분 반영 — 이미 담은 LOT은 가용 수량에서 빼고 재선택 불가
+        const listupPendingByLot = _getPendingOutgoingByLot(carModel, partName, color, null);
+        const fifoHead = _getNextFifoLot(carModel, partName, color, null);
+        const fifoHeadLotNo = fifoHead ? fifoHead.lotNo : '';
 
         const unmatchedQty   = balance.unmatched || 0;
         const corruptedCount = balance.corrupted.length;
@@ -1970,24 +1974,46 @@ var InjectionWarehouseModule = (function() {
         const rows = currentLots.map(d => {
             const _lotJs = d.lot.replace(/'/g, "\\'");
             const isNeg = d.qty < 0;
+            const pendingQty = listupPendingByLot[_normInvLotNo(d.lot)] || 0;
+            const availQty = isNeg ? d.qty : Math.max(0, (Number(d.qty) || 0) - pendingQty);
             // 형식 오류 LOT(빈 값·무표기·잘못된 날짜) → 빨간 강조 + 배지로 어느 행이 문제인지 즉시 보이게 한다.
             const isBadLot = !isNeg && !_isValidLotFormat(d.lot);
-            const isFifoHead = fifoHeadLot && d.lot === fifoHeadLot.lot && d.qty > 0;
+            const isFifoHead = !!(fifoHeadLotNo && _normInvLotNo(d.lot) === fifoHeadLotNo && availQty > 0);
             const fifoBadge = isFifoHead
                 ? ' <span style="font-size:0.65rem;background:#dcfce7;color:#15803d;border-radius:4px;padding:1px 5px;font-weight:700;">FIFO</span>'
+                : '';
+            const pendingBadge = pendingQty > 0
+                ? ` <span title="출고 리스트업 대기 ${UIUtils.formatNumber(pendingQty)} EA" style="font-size:0.65rem;background:#fee2e2;color:#b91c1c;border-radius:4px;padding:1px 5px;font-weight:700;">리스트업 ${UIUtils.formatNumber(pendingQty)}</span>`
                 : '';
             const badLotBadge = isBadLot
                 ? ' <span title="LOT 번호 형식 오류 — 수량 보정으로 올바른 LOT을 입력하세요" style="font-size:0.65rem;background:#fee2e2;color:#b91c1c;border-radius:4px;padding:1px 5px;font-weight:700;">⚠ LOT 오류</span>'
                 : '';
             const rowStyle = isNeg ? ' style="background:rgba(239,68,68,.06);"'
-                : (isBadLot ? ' style="background:rgba(239,68,68,.1);"' : '');
+                : (isBadLot ? ' style="background:rgba(239,68,68,.1);"'
+                : (pendingQty > 0 && availQty <= 0 ? ' style="background:rgba(220,38,38,.04);opacity:0.85;"' : ''));
+            const qtyCell = pendingQty > 0
+                ? `<span style="text-decoration:line-through;color:var(--text-muted);font-weight:500;">${UIUtils.formatNumber(d.qty)}</span>
+                   <span style="margin-left:6px;color:${availQty > 0 ? 'var(--accent-green)' : 'var(--text-muted)'};font-weight:700;">${UIUtils.formatNumber(availQty)}</span>`
+                : UIUtils.formatNumber(d.qty);
+            let outBtnHtml = '';
+            if (!isNeg) {
+                if (availQty <= 0) {
+                    outBtnHtml = `<span style="font-size:0.72rem;color:var(--text-muted);white-space:nowrap;">리스트업 중</span>`;
+                } else {
+                    outBtnHtml = `<button class="btn btn-sm btn-outline" style="font-size:0.72rem;padding:2px 8px;color:#dc2626;border-color:#dc2626;"
+                            title="이 LOT을 출고 목록에 추가 (가용 ${UIUtils.formatNumber(availQty)} EA)"
+                            onclick="InjectionWarehouseModule.openOutgoingListupItemModal('${_cmJs}','${_pnJs}','${_clJs}','${_lotJs}',${availQty})">
+                            출고
+                        </button>`;
+                }
+            }
             return `
                 <tr${rowStyle}>
                     <td style="white-space:nowrap;">${d.date || '-'}</td>
-                    <td>${d.lot || '-'}${fifoBadge}${badLotBadge}${isNeg ? ' <span title="입고보다 출고가 많아 어느 LOT에서도 차감하지 못한 수량" style="font-size:0.7rem;color:var(--accent-red);font-weight:700;">⚠ 과다출고</span>' : ''}</td>
+                    <td>${d.lot || '-'}${fifoBadge}${pendingBadge}${badLotBadge}${isNeg ? ' <span title="입고보다 출고가 많아 어느 LOT에서도 차감하지 못한 수량" style="font-size:0.7rem;color:var(--accent-red);font-weight:700;">⚠ 과다출고</span>' : ''}</td>
                     <td>${d.supplier || '-'}</td>
                     <td style="text-align:right; color:${isNeg ? 'var(--accent-red)' : 'var(--accent-green)'}; font-weight:600;">
-                        ${UIUtils.formatNumber(d.qty)}
+                        ${qtyCell}
                     </td>
                     ${canEditLot ? `<td style="text-align:center;">
                         ${isNeg ? '' : `<button class="btn btn-sm ${isBadLot ? 'btn-primary' : 'btn-outline'}" style="font-size:0.72rem;padding:2px 8px;${isBadLot ? 'background:#7c3aed;border-color:#7c3aed;' : 'color:#7c3aed;border-color:#7c3aed;'}"
@@ -1996,11 +2022,7 @@ var InjectionWarehouseModule = (function() {
                         </button>`}
                     </td>` : ''}
                     <td style="text-align:center;">
-                        ${isNeg ? '' : `<button class="btn btn-sm btn-outline" style="font-size:0.72rem;padding:2px 8px;color:#dc2626;border-color:#dc2626;"
-                            title="이 LOT을 출고 목록에 추가"
-                            onclick="InjectionWarehouseModule.openOutgoingListupItemModal('${_cmJs}','${_pnJs}','${_clJs}','${_lotJs}',${Number(d.qty) || 0})">
-                            출고
-                        </button>`}
+                        ${outBtnHtml}
                     </td>
                 </tr>
             `;
@@ -2461,7 +2483,22 @@ var InjectionWarehouseModule = (function() {
     }
 
     function openOutgoingListupItemModal(carModel, partName, color, lotNo, maxQty) {
-        const qtyMax = Number(maxQty) || 0;
+        // 호출부 maxQty와 무관하게, 실재고 − 리스트업 대기분을 가용 상한으로 다시 계산
+        const { lots: balLots } = _getLotBalancesForProduct(carModel, partName, color);
+        const lotBal = Number((balLots.find(l => _normInvLotNo(l.lotNo) === _normInvLotNo(lotNo)) || {}).qty) || 0;
+        const pendingMap = _getPendingOutgoingByLot(carModel, partName, color, null);
+        const pendingQty = pendingMap[_normInvLotNo(lotNo)] || 0;
+        const avail = Math.max(0, lotBal - pendingQty);
+        const qtyMax = Math.min(Number(maxQty) > 0 ? Number(maxQty) : avail, avail);
+        if (qtyMax <= 0) {
+            UIUtils.toast(
+                pendingQty > 0
+                    ? `LOT ${lotNo}은(는) 이미 출고 리스트업에 담겨 있습니다. (대기 ${UIUtils.formatNumber(pendingQty)} EA)`
+                    : `LOT ${lotNo} 출고 가능 수량이 없습니다.`,
+                'warning'
+            );
+            return;
+        }
         const todayStr = UIUtils.today();
         const _cmJs = carModel.replace(/'/g, "\\'");
         const _pnJs = partName.replace(/'/g, "\\'");
@@ -2477,7 +2514,8 @@ var InjectionWarehouseModule = (function() {
                 <span style="font-weight:700;">${carModel} · ${partName}${color ? ' · ' + color : ''}</span><br>
                 <span>LOT: <strong style="font-family:monospace;">${lotNo}</strong>
                 <span style="color:var(--text-muted);margin:0 8px;">|</span>
-                현재 재고: <strong style="color:var(--accent-blue);">${UIUtils.formatNumber(qtyMax)} EA</strong></span>
+                가용 수량: <strong style="color:var(--accent-blue);">${UIUtils.formatNumber(qtyMax)} EA</strong>
+                ${pendingQty > 0 ? `<span style="color:var(--text-muted);margin-left:6px;">(재고 ${UIUtils.formatNumber(lotBal)} − 리스트업 ${UIUtils.formatNumber(pendingQty)})</span>` : ''}</span>
                 ${fifoHead ? `<br><span style="font-size:0.78rem;color:var(--text-muted);margin-top:4px;display:inline-block;">선입선출 우선 LOT: <strong style="font-family:monospace;color:#16a34a;">${fifoHead.lotNo}</strong>${fifoHead.date ? ' (' + fifoHead.date + ')' : ''}</span>` : ''}
             </div>
             ${fifoViolated ? `
@@ -2594,7 +2632,9 @@ var InjectionWarehouseModule = (function() {
 
         // 이미 목록에 대기 중인 같은 LOT 수량까지 감안해 잔량 초과를 막는다.
         const pending = (_injOutListupRows || [])
-            .filter(r => r.carModel === carModel && r.partName === partName && (r.color || '') === (color || '') && r.lotNo === lotNo)
+            .filter(r => r.carModel === carModel && r.partName === partName
+                && (r.color || '') === (color || '')
+                && _normInvLotNo(r.lotNo) === _normInvLotNo(lotNo))
             .reduce((s, r) => s + (Number(r.qty) || 0), 0);
         if (pending + qty > Number(maxQty)) {
             UIUtils.toast(
@@ -2621,6 +2661,7 @@ var InjectionWarehouseModule = (function() {
             return;
         }
 
+        _syncOutgoingListupFromDom();
         _injOutListupRows.push({
             key: 'inj__' + Storage.generateId(),
             carModel, partName, color: color || '', lotNo,
@@ -2628,7 +2669,8 @@ var InjectionWarehouseModule = (function() {
             outgoingType, returnReason, memo,
             paintLine: paintLine || undefined,
             fifoReason: fifoReason || undefined,
-            date
+            date,
+            selected: true
         });
 
         UIUtils.toast('출고 목록에 추가되었습니다. 출고자 선택 후 출고 완료를 누르세요.', 'success');
@@ -2637,12 +2679,38 @@ var InjectionWarehouseModule = (function() {
         _scrollToOutgoingListup();
     }
 
+    /** 재렌더 전에 체크·수량 입력을 메모리에 반영 — 새로고침/loadData 시 선택이 다시 켜지지 않게 */
+    function _syncOutgoingListupFromDom() {
+        document.querySelectorAll('.inj-out-listup-chk').forEach(function(chk) {
+            const row = (_injOutListupRows || []).find(r => r.key === chk.dataset.key);
+            if (row) row.selected = !!chk.checked;
+        });
+        document.querySelectorAll('.inj-out-listup-qty').forEach(function(inp) {
+            const row = (_injOutListupRows || []).find(r => r.key === inp.dataset.key);
+            if (row) row.qty = Math.max(1, parseInt(inp.value, 10) || 1);
+        });
+        const issuerEl = document.getElementById('injOutListupIssuer');
+        if (issuerEl) _injOutListupIssuerId = issuerEl.value || '';
+    }
+
+    function setOutgoingListupSelected(key, checked) {
+        const row = (_injOutListupRows || []).find(r => r.key === key);
+        if (row) row.selected = !!checked;
+        const all = document.querySelectorAll('.inj-out-listup-chk');
+        const allChk = document.getElementById('injOutListupCheckAll');
+        if (allChk && all.length) {
+            allChk.checked = Array.prototype.every.call(all, function(el) { return el.checked; });
+        }
+    }
+
     function removeOutgoingListupRow(key) {
+        _syncOutgoingListupFromDom();
         _injOutListupRows = (_injOutListupRows || []).filter(r => r.key !== key);
         renderOutgoingListup();
     }
 
     function toggleOutgoingListupAll(checked) {
+        (_injOutListupRows || []).forEach(function(r) { r.selected = !!checked; });
         document.querySelectorAll('.inj-out-listup-chk').forEach(el => { el.checked = checked; });
     }
 
@@ -2650,6 +2718,9 @@ var InjectionWarehouseModule = (function() {
         const body = document.getElementById('injOutListupBody');
         const badge = document.getElementById('injOutListupBadge');
         if (!body) return;
+
+        // loadData/새로고침으로 다시 그려질 때 체크 해제가 날아가지 않도록 DOM → 메모리 동기화
+        if (body.querySelector('.inj-out-listup-chk')) _syncOutgoingListupFromDom();
 
         const rows = _injOutListupRows || [];
         if (badge) {
@@ -2666,12 +2737,13 @@ var InjectionWarehouseModule = (function() {
             return;
         }
 
-        const defaultActorId = _getCurrentActorId();
+        const defaultActorId = _injOutListupIssuerId || _getCurrentActorId();
         const issuerOpts = '<option value="">-- 출고자 선택 --</option>' +
             _getLogisticsWorkerUsers().map(function(u) {
                 const sel = u.id === defaultActorId && _isValidOutgoingActor(defaultActorId) ? ' selected' : '';
                 return `<option value="${_escapeHtml(u.id)}"${sel}>${_escapeHtml(u.name)}</option>`;
             }).join('');
+        const allSelected = rows.every(function(r) { return r.selected !== false; });
 
         const rowsHtml = rows.map(function(r) {
             const typeBadge = r.outgoingType === '반출'
@@ -2682,9 +2754,11 @@ var InjectionWarehouseModule = (function() {
             const fifoBadge = r.fifoReason
                 ? '<span style="font-size:0.65rem;background:#fffbeb;color:#b45309;border:1px solid #fcd34d;border-radius:4px;padding:1px 5px;margin-left:4px;" title="' + _escapeHtml(r.fifoReason) + '">FIFO예외</span>'
                 : '';
+            const isChecked = r.selected !== false;
             return `
                 <tr data-key="${r.key}">
-                    <td style="text-align:center;"><input type="checkbox" class="inj-out-listup-chk" data-key="${_escapeHtml(r.key)}" checked></td>
+                    <td style="text-align:center;"><input type="checkbox" class="inj-out-listup-chk" data-key="${_escapeHtml(r.key)}"${isChecked ? ' checked' : ''}
+                        onchange="InjectionWarehouseModule.setOutgoingListupSelected('${r.key}', this.checked)"></td>
                     <td><strong>${_escapeHtml(r.carModel)}</strong></td>
                     <td>${_escapeHtml(r.partName)}</td>
                     <td>${_escapeHtml(r.color || '-')}</td>
@@ -2715,7 +2789,8 @@ var InjectionWarehouseModule = (function() {
                     <thead>
                         <tr>
                             <th style="width:42px;text-align:center;">
-                                <input type="checkbox" checked onchange="InjectionWarehouseModule.toggleOutgoingListupAll(this.checked)" title="전체 선택">
+                                <input type="checkbox" id="injOutListupCheckAll"${allSelected ? ' checked' : ''}
+                                    onchange="InjectionWarehouseModule.toggleOutgoingListupAll(this.checked)" title="전체 선택">
                             </th>
                             <th>차종</th><th>품명</th><th>컬러</th><th>LOT</th>
                             <th style="text-align:right;width:90px;">수량</th>
@@ -2734,27 +2809,26 @@ var InjectionWarehouseModule = (function() {
                     <span class="material-symbols-outlined" style="font-size:18px;">logout</span> 출고 완료
                 </button>
             </div>`;
+        // issuer onchange → 모듈 변수 동기화 (인라인 window 대신)
+        const issuerSel = document.getElementById('injOutListupIssuer');
+        if (issuerSel) {
+            issuerSel.onchange = function() { _injOutListupIssuerId = this.value || ''; };
+        }
     }
 
     async function confirmOutgoingListup() {
-        const issuer = ((document.getElementById('injOutListupIssuer') || {}).value || '').trim();
+        _syncOutgoingListupFromDom();
+        const issuer = ((document.getElementById('injOutListupIssuer') || {}).value || '').trim()
+            || _injOutListupIssuerId;
         if (!issuer) { UIUtils.toast('출고자를 선택하세요.', 'warning'); return; }
         if (!_isValidOutgoingActor(issuer)) {
             UIUtils.toast('출고자는 물류 담당자(물류작업자)만 선택할 수 있습니다.', 'warning');
             return;
         }
 
-        const checkedKeys = new Set();
-        document.querySelectorAll('.inj-out-listup-chk:checked').forEach(chk => checkedKeys.add(chk.dataset.key));
-        if (!checkedKeys.size) { UIUtils.toast('출고할 품목을 1건 이상 선택하세요.', 'warning'); return; }
-
-        // 화면에서 수정했을 수 있는 최신 수량 값을 반영
-        document.querySelectorAll('.inj-out-listup-qty').forEach(inp => {
-            const row = (_injOutListupRows || []).find(r => r.key === inp.dataset.key);
-            if (row) row.qty = Math.max(1, parseInt(inp.value, 10) || 1);
-        });
-
-        const items = (_injOutListupRows || []).filter(r => checkedKeys.has(r.key));
+        const items = (_injOutListupRows || []).filter(r => r.selected !== false);
+        if (!items.length) { UIUtils.toast('출고할 품목을 1건 이상 선택하세요.', 'warning'); return; }
+        const checkedKeys = new Set(items.map(r => r.key));
 
         // 목록에 담은 뒤 다른 경로로 재고가 바뀌었을 수 있으니 실행 직전 다시 검증한다.
         for (const item of items) {
@@ -4783,6 +4857,9 @@ var InjectionWarehouseModule = (function() {
 
     function _yymmddLotError(value) {
         const val = String(value == null ? '' : value).trim();
+        // RST 접두사(재고 오류 초기화가 _autoResetLot()로 자동 생성)는 실물 LOT이 아니므로
+        // YYMMDD 형식·날짜 유효성 검사 대상이 아니다 — _isValidLotFormat()과 동일 기준.
+        if (/^RST\d+$/i.test(val)) return null;
         if (!/^\d{6}$/.test(val)) return 'LOT번호는 YYMMDD 형식(6자리 숫자)으로 입력하세요.';
         const mm = parseInt(val.slice(2, 4), 10);
         const dd = parseInt(val.slice(4, 6), 10);
@@ -6357,6 +6434,7 @@ var InjectionWarehouseModule = (function() {
         _onOutItemTypeChange,
         saveOutgoingListupItem,
         removeOutgoingListupRow,
+        setOutgoingListupSelected,
         toggleOutgoingListupAll,
         confirmOutgoingListup
     };
