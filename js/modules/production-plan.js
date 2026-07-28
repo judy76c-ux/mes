@@ -620,6 +620,19 @@ const ProductionPlanModule = (function() {
         const foot = document.getElementById(footId);
         const selectedDate = (document.getElementById('planDateFilter') || {}).value || UIUtils.today();
 
+        // 18:00 이후(잔업) 슬롯에 실제 계획이 있으면 "잔업 계획" 체크박스를 자동으로 켜서
+        // 기본적으로 숨겨지는 잔업 행이 사용자가 따로 토글하지 않아도 바로 보이게 한다.
+        const _otSuffix = lineName === '도장-B' ? 'B' : 'A';
+        const hasOvertimePlan = Object.keys(slotData).some(s =>
+            s >= '18:00' && slotData[s] && (slotData[s].carModel || slotData[s].partName || Number(slotData[s].planQty) > 0)
+        );
+        if (hasOvertimePlan) {
+            const otToggle = document.getElementById('overtimeToggle' + _otSuffix);
+            const otWrap = document.getElementById('planGridWrap' + _otSuffix);
+            if (otToggle) otToggle.checked = true;
+            if (otWrap) otWrap.classList.add('show-overtime');
+        }
+
         let totalQty = 0;
         let totalMinutes = 0;
 
@@ -889,6 +902,8 @@ const ProductionPlanModule = (function() {
                     <td colspan="1"></td>
                 </tr>
             `;
+            // 잔업 계획을 자동으로 켰다면(위 hasOvertimePlan) 방금 만든 푸터도 잔업 기준 표시로 맞춘다.
+            if (hasOvertimePlan) updateFooterOT(_otSuffix, true);
         }
     }
 
@@ -1619,10 +1634,99 @@ const ProductionPlanModule = (function() {
         return { pending, inProgress };
     }
 
-    // 모달 내 사출 재고 패널 갱신 — 자재명 | 현재고 | 계획예약 | 사용가능
+    // 모달 내 사출 재고 패널 갱신 — 창고 + 현장(라인) 수량
     // overridePartName / overrideCarModel : 편집 모달 초기화 시 DOM 값 대신 직접 전달
-    function _getInjectionAvailableForPlan(partName, carModel, color, productId, excludePlanId) {
-        if (!partName) return { available: 0, total: 0, matched: [], lots: [] };
+
+    /** 도장 라인 현장 자재 수량 (입고 잔량 + 미입고 출고)
+     *  matchedMats: getInjPartNamesForPlan 결과
+     */
+    function _getSiteInjStockForPlan(line, matchedMats, carModel) {
+        const empty = { total: 0, received: 0, pending: 0, rows: [], line: '' };
+        const want = (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.normLine)
+            ? PaintingInputModule.normLine(line)
+            : (String(line || '').indexOf('B') >= 0 ? '도장-B' : '도장-A');
+        const nameSet = {};
+        (matchedMats || []).forEach(function (m) {
+            const n = String((m && m.injPartName) || '').trim();
+            if (n) nameSet[n] = true;
+        });
+        const names = Object.keys(nameSet);
+        if (!names.length) return Object.assign({}, empty, { line: want });
+
+        const byPart = {};
+        names.forEach(function (n) {
+            byPart[n] = { partName: n, received: 0, pending: 0 };
+        });
+
+        // ① 현장 입고 잔량 (painting_input_inventory)
+        names.forEach(function (injName) {
+            let qty = 0;
+            if (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.getLotsByInjPart) {
+                (PaintingInputModule.getLotsByInjPart(want, injName, null) || []).forEach(function (l) {
+                    if (carModel && l.carModel && l.carModel !== carModel) return;
+                    qty += Number(l.balance) || 0;
+                });
+            } else if (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.groupStock) {
+                (PaintingInputModule.groupStock(want) || []).forEach(function (g) {
+                    if (String(g.partName || '') !== injName) return;
+                    if (carModel && g.carModel && g.carModel !== carModel) return;
+                    qty += Number(g.stock) || 0;
+                });
+            }
+            byPart[injName].received += qty;
+        });
+
+        // ② 창고→라인 생산출고 중 미입고 (현장 대기)
+        const receivedOutIds = {};
+        const piStore = DB.STORES.PAINTING_INPUT_INVENTORY;
+        if (piStore) {
+            (Storage.getAll(piStore) || []).forEach(function (r) {
+                if (String(r.type || '') !== '입고') return;
+                const oid = String(r.refOutId || '').trim();
+                if (oid) receivedOutIds[oid] = true;
+            });
+        }
+        (Storage.getAll(DB.STORES.INJECTION_INVENTORY) || []).forEach(function (r) {
+            if (String(r.type || '') !== '출고') return;
+            const oType = String(r.outgoingType || '');
+            const src = String(r.source || '');
+            if (oType !== '생산출고' && src !== '사출 창고 생산출고') return;
+            const outLine = (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.normLine)
+                ? PaintingInputModule.normLine(r.paintLine || r.line)
+                : String(r.paintLine || r.line || '');
+            if (outLine !== want) return;
+            if (r.id && receivedOutIds[String(r.id)]) return;
+            const pName = String(r.partName || '').trim();
+            if (!nameSet[pName]) return;
+            if (carModel && r.carModel && r.carModel !== carModel) return;
+            byPart[pName].pending += Number(r.quantity) || 0;
+        });
+
+        let received = 0, pending = 0;
+        const rows = Object.values(byPart).filter(function (row) {
+            return (row.received + row.pending) > 0;
+        }).map(function (row) {
+            received += row.received;
+            pending += row.pending;
+            return {
+                partName: row.partName,
+                received: row.received,
+                pending: row.pending,
+                total: row.received + row.pending
+            };
+        });
+
+        return {
+            line: want,
+            received: received,
+            pending: pending,
+            total: received + pending,
+            rows: rows
+        };
+    }
+
+    function _getInjectionAvailableForPlan(partName, carModel, color, productId, excludePlanId, line) {
+        if (!partName) return { available: 0, total: 0, warehouse: 0, site: 0, matched: [], lots: [] };
         let matched = getInjPartNamesForPlan(partName, carModel, productId, color);
         if (matched.length === 0 && carModel) matched = getInjPartNamesForPlan(partName, '', productId, color);
         if (matched.length === 0) matched = getInjPartNamesForPlan(partName, carModel, productId);
@@ -1636,14 +1740,43 @@ const ProductionPlanModule = (function() {
             grouped[key].balance += Number(l.balance) || 0;
         });
 
-        let total = 0;
-        let available = 0;
+        let warehouse = 0;
+        let reservedSum = 0;
+        const seenReserve = {};
         Object.values(grouped).forEach(g => {
+            const rk = `${g.partName}||${g.color || ''}`;
             const reserved = _calcInjPlanReserved(g.partName, excludePlanId, carModel, g.color, false);
-            total += g.balance;
-            available += g.balance - reserved.pending - reserved.inProgress;
+            warehouse += g.balance;
+            if (!seenReserve[rk]) {
+                seenReserve[rk] = true;
+                reservedSum += reserved.pending + reserved.inProgress;
+            }
         });
-        return { available: Math.max(0, available), total, matched, lots };
+        // 창고 행이 없어도 예약은 자재명 기준으로 남을 수 있음 → matched 자재로 보완
+        if (Object.keys(grouped).length === 0) {
+            matched.forEach(function (m) {
+                if (!m.injPartName) return;
+                const rk = `${m.injPartName}||${m.injColor || ''}`;
+                if (seenReserve[rk]) return;
+                seenReserve[rk] = true;
+                const reserved = _calcInjPlanReserved(m.injPartName, excludePlanId, carModel, m.injColor || '', false);
+                reservedSum += reserved.pending + reserved.inProgress;
+            });
+        }
+
+        const site = _getSiteInjStockForPlan(line || '', matched, carModel);
+        const total = warehouse + site.total;
+        const available = total - reservedSum;
+        return {
+            available: Math.max(0, available),
+            total: total,
+            warehouse: warehouse,
+            site: site.total,
+            siteDetail: site,
+            reserved: reservedSum,
+            matched: matched,
+            lots: lots
+        };
     }
 
     function updateInjStockPanel(overridePartName, overrideCarModel) {
@@ -1686,16 +1819,11 @@ const ProductionPlanModule = (function() {
         if (matched.length === 0 && carModel) matched = getInjPartNamesForPlan(partName, '', productId);
 
         const lots  = getInjStockLots(matched, colorVal);
-        const total = lots.reduce((s, l) => s + l.balance, 0);
+        const warehouseTotal = lots.reduce((s, l) => s + l.balance, 0);
+        const site = _getSiteInjStockForPlan(lineName, matched, carModel);
+        const combinedTotal = warehouseTotal + site.total;
 
         panel.style.display = 'block';
-
-        if (lots.length === 0) {
-            totalEl.textContent = '재고 없음';
-            totalEl.style.color = 'var(--accent-red)';
-            lotsEl.innerHTML = `<div style="text-align:center;padding:6px 0;color:var(--text-muted);">재고 없음</div>`;
-            return;
-        }
 
         // 자재명+컬러 기준 집계 (LOT 합산)
         const grouped = {};
@@ -1705,35 +1833,48 @@ const ProductionPlanModule = (function() {
             grouped[key].balance += l.balance;
         });
 
-        // 전체 가용수량 = 실재고 - 대기예약 - 진행중
+        // 전체 가용수량 = (창고 + 현장) - 대기예약 - 진행중
         let totalPending = 0, totalInProgress = 0;
         const reserveMap = {};
-        Object.values(grouped).forEach(g => {
+        const reserveKeys = Object.keys(grouped).length
+            ? Object.values(grouped)
+            : matched.map(function (m) { return { partName: m.injPartName, color: m.injColor || '' }; });
+        const seenReserve = {};
+        reserveKeys.forEach(g => {
+            if (!g.partName) return;
+            const rk = `${g.partName}||${g.color || ''}`;
+            if (seenReserve[rk]) return;
+            seenReserve[rk] = true;
             const r = _calcInjPlanReserved(g.partName, currentPlanId, carModel, g.color);
-            reserveMap[`${g.partName}||${g.color || ''}`] = r;
+            reserveMap[rk] = r;
             totalPending    += r.pending;
             totalInProgress += r.inProgress;
         });
 
-        const totalAvailable = total - totalPending - totalInProgress;
         const totalReserved  = totalPending + totalInProgress;
+        const totalAvailable = combinedTotal - totalReserved;
+        const siteLineLabel = site.line || lineName || '현장';
+
         // 가용 재고는 예약 여부와 무관하게 항상 표시
-        totalEl.innerHTML = `${UIUtils.formatNumber(total)} EA`
+        totalEl.innerHTML = `합계 <strong>${UIUtils.formatNumber(combinedTotal)}</strong> EA`
             + (totalReserved > 0
                 ? ` <span style="font-size:0.72rem;color:var(--accent-red);">예약 -${UIUtils.formatNumber(totalReserved)}</span>`
                 : '')
             + ` <span style="font-size:0.75rem;color:var(--text-muted);">→ 가용 <strong style="color:${totalAvailable > 0 ? 'var(--accent-blue)' : 'var(--accent-red)'};">${UIUtils.formatNumber(totalAvailable)}</strong> EA</span>`;
-        totalEl.style.color = total > 0 ? 'var(--accent-blue)' : 'var(--accent-red)';
+        totalEl.style.color = combinedTotal > 0 ? 'var(--accent-blue)' : 'var(--accent-red)';
 
-        lotsEl.innerHTML = Object.values(grouped).map(g => {
+        const titleEl = panel.querySelector('[data-inj-stock-title]');
+        if (titleEl) {
+            titleEl.textContent = '사출 자재 재고 (창고 + 현장)';
+        }
+
+        const whRows = Object.values(grouped).map(g => {
             const encPart  = encodeURIComponent(g.partName);
             const encColor = encodeURIComponent(g.color || '');
             const encModel = encodeURIComponent(carModel || '');
             const r = reserveMap[`${g.partName}||${g.color || ''}`] || { pending: 0, inProgress: 0 };
-            const available  = g.balance - r.pending - r.inProgress;
             const reservedAmt = r.pending + r.inProgress;
 
-            // 예약/사용중 뱃지
             let reserveBadge = '';
             if (r.inProgress > 0) {
                 reserveBadge = `<span style="font-size:0.7rem;background:rgba(234,88,12,0.12);color:#ea580c;
@@ -1744,14 +1885,6 @@ const ProductionPlanModule = (function() {
                     border:1px solid rgba(234,179,8,0.3);border-radius:4px;padding:0 5px;margin-left:5px;white-space:nowrap;">
                     예약 -${UIUtils.formatNumber(r.pending)}</span>`;
             }
-
-            // 가용수량 — 항상 표시 (현재고 - 예약 = 가용)
-            const availColor = available > 0 ? 'var(--accent-blue)' : 'var(--accent-red)';
-            const stockStr   = reservedAmt > 0
-                ? `<span style="color:var(--text-muted);text-decoration:line-through;font-size:0.72rem;">${UIUtils.formatNumber(g.balance)}</span>
-                   <span style="font-weight:700;color:${availColor};margin-left:4px;">${UIUtils.formatNumber(available)} EA</span>`
-                : `<span style="font-weight:700;color:${availColor};">${UIUtils.formatNumber(g.balance)} EA</span>
-                   <span style="font-size:0.68rem;color:var(--accent-green);margin-left:3px;">(가용)</span>`;
 
             return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 6px;
                         border-bottom:1px solid var(--border-color);font-size:0.78rem;
@@ -1766,9 +1899,45 @@ const ProductionPlanModule = (function() {
                     ${reserveBadge}
                     <span style="font-size:0.7rem;color:var(--accent-blue);margin-left:4px;">🔍</span>
                 </span>
-                <span style="white-space:nowrap;">${stockStr}</span>
+                <span style="white-space:nowrap;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(g.balance)} EA</span>
             </div>`;
         }).join('');
+
+        const siteRows = (site.rows || []).map(function (row) {
+            const detail = [];
+            if (row.received > 0) detail.push('입고 ' + UIUtils.formatNumber(row.received));
+            if (row.pending > 0) detail.push('미입고 ' + UIUtils.formatNumber(row.pending));
+            return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 6px;
+                        border-bottom:1px solid var(--border-color);font-size:0.78rem;">
+                <span><strong>${row.partName}</strong>
+                    <span style="color:var(--text-muted);margin-left:6px;font-size:0.7rem;">${detail.join(' · ') || '-'}</span>
+                </span>
+                <span style="white-space:nowrap;font-weight:700;color:#0f766e;">${UIUtils.formatNumber(row.total)} EA</span>
+            </div>`;
+        }).join('');
+
+        if (warehouseTotal <= 0 && site.total <= 0) {
+            lotsEl.innerHTML = `<div style="text-align:center;padding:6px 0;color:var(--text-muted);">창고·현장 재고 없음</div>`;
+            return;
+        }
+
+        lotsEl.innerHTML =
+            `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;font-size:0.78rem;">
+                <span style="padding:3px 8px;border-radius:6px;background:rgba(37,99,235,0.08);color:#1d4ed8;font-weight:700;">
+                    창고 ${UIUtils.formatNumber(warehouseTotal)} EA
+                </span>
+                <span style="padding:3px 8px;border-radius:6px;background:rgba(15,118,110,0.10);color:#0f766e;font-weight:700;">
+                    현장(${siteLineLabel}) ${UIUtils.formatNumber(site.total)} EA
+                    ${site.pending > 0 ? `<span style="font-weight:600;font-size:0.7rem;opacity:0.85;"> · 미입고 ${UIUtils.formatNumber(site.pending)}</span>` : ''}
+                </span>
+            </div>`
+            + `<div style="font-size:0.72rem;font-weight:700;color:var(--text-muted);margin:2px 0 4px;">창고 현재고</div>`
+            + (whRows || `<div style="padding:4px 6px;color:var(--text-muted);font-size:0.75rem;">창고 재고 없음</div>`)
+            + `<div style="font-size:0.72rem;font-weight:700;color:var(--text-muted);margin:8px 0 4px;">현장 자재 (${siteLineLabel})</div>`
+            + (siteRows || `<div style="padding:4px 6px;color:var(--text-muted);font-size:0.75rem;">현장 자재 없음 (미입고·입고 잔량)</div>`)
+            + `<div style="margin-top:6px;font-size:0.72rem;color:var(--text-muted);line-height:1.4;">
+                ※ 계획 수립이 늦어 자재가 먼저 현장에 올라간 경우, <strong>창고 + 현장</strong> 합계로 가용 수량을 판단합니다.
+               </div>`;
     }
 
     function _buildLaserWipLotsHtml(carModel, partName, colorVal, lineName, wip) {
@@ -2300,11 +2469,11 @@ const ProductionPlanModule = (function() {
                 <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
                     <span style="font-size:0.82rem; color:var(--text-secondary); font-weight:600; display:flex; align-items:center; gap:4px;">
                         <span class="material-symbols-outlined" style="font-size:15px;">inventory_2</span>
-                        사출 창고 현재고
+                        <span data-inj-stock-title>사출 자재 재고 (창고 + 현장)</span>
                     </span>
                     <span id="injStockTotal" style="font-size:0.9rem; font-weight:700; color:var(--accent-blue);">${_injTotalHtml}</span>
                 </div>
-                <div id="injStockLots" style="font-size:0.78rem; color:var(--text-secondary); max-height:120px; overflow-y:auto;">${_injLotsHtml}</div>
+                <div id="injStockLots" style="font-size:0.78rem; color:var(--text-secondary); max-height:220px; overflow-y:auto;">${_injLotsHtml}</div>
             </div>
             <div id="laserWipPanel" data-current-plan-id="${_planId}"
                  style="display:${_laserWipDisplay}; margin-bottom:8px; padding:10px 14px; background:rgba(99,102,241,0.06); border-radius:8px; border:1px solid rgba(99,102,241,0.25);">
@@ -2541,10 +2710,17 @@ const ProductionPlanModule = (function() {
                     return;
                 }
             } else {
-                // 일반 도장 품목: 사출 창고 가용 재고 검사
-                const stockCheck = _getInjectionAvailableForPlan(partName, carModel, color, productId, currentPlanId);
+                // 일반 도장 품목: 창고 + 현장 합산 가용 재고 검사
+                const stockCheck = _getInjectionAvailableForPlan(partName, carModel, color, productId, currentPlanId, line);
                 if (stockCheck.available < planQty) {
-                    UIUtils.toast(`사출 창고 가용 재고보다 많은 계획은 등록할 수 없습니다. 가용 ${UIUtils.formatNumber(stockCheck.available)} EA / 계획 ${UIUtils.formatNumber(planQty)} EA`, 'warning');
+                    UIUtils.toast(
+                        `사출 자재 가용 재고(창고+현장)보다 많은 계획은 등록할 수 없습니다.`
+                        + ` 창고 ${UIUtils.formatNumber(stockCheck.warehouse || 0)}`
+                        + ` + 현장 ${UIUtils.formatNumber(stockCheck.site || 0)}`
+                        + ` = 가용 ${UIUtils.formatNumber(stockCheck.available)} EA`
+                        + ` / 계획 ${UIUtils.formatNumber(planQty)} EA`,
+                        'warning'
+                    );
                     const qtyEl = document.getElementById('sQty');
                     if (qtyEl) { qtyEl.focus(); qtyEl.select(); }
                     updateInjStockPanel(partName, carModel);
@@ -2604,38 +2780,50 @@ const ProductionPlanModule = (function() {
             }
         }
 
-        // ④ 현재 계획 저장
-        if (existingId) {
-            if (!carModel && !partName && planQty === 0) {
-                await Storage.remove(STORE, existingId);
+        const _commitSlotSave = async () => {
+            // ④ 현재 계획 저장
+            if (existingId) {
+                if (!carModel && !partName && planQty === 0) {
+                    await Storage.remove(STORE, existingId);
+                } else {
+                    await Storage.update(STORE, existingId, {
+                        slot: newSlot, carModel, partName, color, itemType, planQty,
+                        startTime, endTime, status, mealTimeWork,
+                        productId: productId || undefined
+                    });
+                }
             } else {
-                await Storage.update(STORE, existingId, {
-                    slot: newSlot, carModel, partName, color, itemType, planQty,
-                    startTime, endTime, status, mealTimeWork,
-                    productId: productId || undefined
-                });
+                if (carModel || partName || planQty > 0) {
+                    await Storage.add(STORE, {
+                        date, line, slot: newSlot, carModel, partName, color, itemType, planQty,
+                        startTime, endTime, status, mealTimeWork,
+                        productId: productId || undefined
+                    });
+                }
             }
-        } else {
-            if (carModel || partName || planQty > 0) {
-                await Storage.add(STORE, {
-                    date, line, slot: newSlot, carModel, partName, color, itemType, planQty,
-                    startTime, endTime, status, mealTimeWork,
-                    productId: productId || undefined
-                });
+
+            UIUtils.closeModal();
+            search();
+            if (_activePlanDateModal) {
+                setTimeout(() => openDayPlan(date, _activePlanLineModal), 0);
             }
+            if (shiftedCount > 0) {
+                const delta = _timeToMinPlan(endTime) - _timeToMinPlan(oldEndTime);
+                UIUtils.toast(`저장 완료 — 이후 ${shiftedCount}개 계획 시간이 ${delta > 0 ? '+' : ''}${delta}분 조정되었습니다.`, 'success');
+            } else {
+                UIUtils.toast('계획이 저장되었습니다.', 'success');
+            }
+        };
+
+        // 오늘 날짜에 이미 지나간 시작 시간으로 등록하려는 경우 — 실수 방지 확인
+        const _now = new Date();
+        const _nowHHMM = String(_now.getHours()).padStart(2, '0') + ':' + String(_now.getMinutes()).padStart(2, '0');
+        if (date === UIUtils.today() && startTime && startTime < _nowHHMM) {
+            UIUtils.confirm('지나간 시간에 등록을 하려고 하는데 등록 하시겠습니까?', _commitSlotSave);
+            return;
         }
 
-        UIUtils.closeModal();
-        search();
-        if (_activePlanDateModal) {
-            setTimeout(() => openDayPlan(date, _activePlanLineModal), 0);
-        }
-        if (shiftedCount > 0) {
-            const delta = _timeToMinPlan(endTime) - _timeToMinPlan(oldEndTime);
-            UIUtils.toast(`저장 완료 — 이후 ${shiftedCount}개 계획 시간이 ${delta > 0 ? '+' : ''}${delta}분 조정되었습니다.`, 'success');
-        } else {
-            UIUtils.toast('계획이 저장되었습니다.', 'success');
-        }
+        await _commitSlotSave();
     }
 
     function removeSlot(slot, line) {
