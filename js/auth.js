@@ -1256,8 +1256,15 @@ const AuthModule = (function () {
         if (targetType === 'all') {
             return [{ type: 'all', id: 'all', label: '전체 사용자' }];
         }
-        const users = _getUsers().filter(user => user.active !== false);
         const ids = Array.isArray(targetIds) ? targetIds : [targetIds];
+        if (targetType === 'role') {
+            return ids.map(function(targetId) {
+                const id = String(targetId || '').trim();
+                if (!id) return null;
+                return { type: 'role', id: id, label: _roleLabel(id) };
+            }).filter(Boolean);
+        }
+        const users = _getUsers().filter(user => user.active !== false);
         const recipients = ids.map(targetId => {
             const user = users.find(row =>
                 String(row.id) === String(targetId) ||

@@ -1974,6 +1974,7 @@ var InjectionWarehouseModule = (function() {
         const rows = currentLots.map(d => {
             const _lotJs = d.lot.replace(/'/g, "\\'");
             const isNeg = d.qty < 0;
+            const isWriteoff = d.lot === InvCalc.WRITEOFF;
             const pendingQty = listupPendingByLot[_normInvLotNo(d.lot)] || 0;
             const availQty = isNeg ? d.qty : Math.max(0, (Number(d.qty) || 0) - pendingQty);
             // 형식 오류 LOT(빈 값·무표기·잘못된 날짜) → 빨간 강조 + 배지로 어느 행이 문제인지 즉시 보이게 한다.
@@ -1988,7 +1989,8 @@ var InjectionWarehouseModule = (function() {
             const badLotBadge = isBadLot
                 ? ' <span title="LOT 번호 형식 오류 — 수량 보정으로 올바른 LOT을 입력하세요" style="font-size:0.65rem;background:#fee2e2;color:#b91c1c;border-radius:4px;padding:1px 5px;font-weight:700;">⚠ LOT 오류</span>'
                 : '';
-            const rowStyle = isNeg ? ' style="background:rgba(239,68,68,.06);"'
+            const rowStyle = isWriteoff ? ' style="background:rgba(100,116,139,.06);"'
+                : isNeg ? ' style="background:rgba(239,68,68,.06);"'
                 : (isBadLot ? ' style="background:rgba(239,68,68,.1);"'
                 : (pendingQty > 0 && availQty <= 0 ? ' style="background:rgba(220,38,38,.04);opacity:0.85;"' : ''));
             const qtyCell = pendingQty > 0
@@ -2010,9 +2012,13 @@ var InjectionWarehouseModule = (function() {
             return `
                 <tr${rowStyle}>
                     <td style="white-space:nowrap;">${d.date || '-'}</td>
-                    <td>${d.lot || '-'}${fifoBadge}${pendingBadge}${badLotBadge}${isNeg ? ' <span title="입고보다 출고가 많아 어느 LOT에서도 차감하지 못한 수량" style="font-size:0.7rem;color:var(--accent-red);font-weight:700;">⚠ 과다출고</span>' : ''}</td>
+                    <td>${d.lot || '-'}${fifoBadge}${pendingBadge}${badLotBadge}${isNeg
+                        ? (d.lot === InvCalc.WRITEOFF
+                            ? ' <span title="미차감(과다출고)을 리셋 처리하며 상쇄된 몫 — 이미 해결됨, 표시 재고에 반영됨" style="font-size:0.7rem;color:var(--text-muted);font-weight:700;">ⓘ 미차감 리셋 반영</span>'
+                            : ' <span title="입고보다 출고가 많아 어느 LOT에서도 차감하지 못한 수량" style="font-size:0.7rem;color:var(--accent-red);font-weight:700;">⚠ 과다출고</span>')
+                        : ''}</td>
                     <td>${d.supplier || '-'}</td>
-                    <td style="text-align:right; color:${isNeg ? 'var(--accent-red)' : 'var(--accent-green)'}; font-weight:600;">
+                    <td style="text-align:right; color:${isWriteoff ? 'var(--text-muted)' : (isNeg ? 'var(--accent-red)' : 'var(--accent-green)')}; font-weight:600;">
                         ${qtyCell}
                     </td>
                     ${canEditLot ? `<td style="text-align:center;">
@@ -5580,9 +5586,54 @@ var InjectionWarehouseModule = (function() {
         }
 
         await _addInventoryRecord(data);
+
+        // 사출 창고 '사출입고' 버튼 = 수입검사 우회 임의입고 → 수입검사 담당에 통보
+        if (data.type === '입고' && !data.inspDate && !data.inspId
+            && !/수입검사/.test(String(data.source || ''))) {
+            _notifyInspectorsOfDirectInbound(data);
+        }
+
         UIUtils.closeModal();
         UIUtils.toast(`${data.type} 등록이 완료되었습니다.`, 'success');
         loadData();
+    }
+
+    /** 수입검사 없이 창고 직접 입고된 경우 — 품질관리자·물류작업자(수입검사 담당)에게 쪽지 */
+    function _notifyInspectorsOfDirectInbound(data) {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+        try {
+            const lotText = Array.isArray(data.lots) && data.lots.length
+                ? data.lots.map(function(l) {
+                    return (l.lotNo || '-') + ' ' + UIUtils.formatNumber(l.qty) + ' EA';
+                }).join(', ')
+                : ((data.lotNo || '-') + ' ' + UIUtils.formatNumber(data.quantity) + ' EA');
+            const ok = AuthModule.sendInternalMessage({
+                targetType: 'role',
+                targetIds: ['quality_manager', 'logistics_worker'],
+                title: '사출 창고 임의입고 — 수입검사 미실시 통보',
+                body: [
+                    '수입검사를 거치지 않고 사출 창고에 직접 입고되었습니다.',
+                    '수입검사 절차 확인 및 후속 조치가 필요합니다.',
+                    '',
+                    '입고일시: ' + (data.date || '-'),
+                    '차종: ' + (data.carModel || '-'),
+                    '사출명: ' + (data.partName || '-'),
+                    '컬러: ' + (data.color || '-'),
+                    '사출처: ' + (data.supplier || '-'),
+                    'LOT/수량: ' + lotText,
+                    '총수량: ' + UIUtils.formatNumber(data.quantity) + ' EA',
+                    '입고자: ' + (_formatActorLabel(data.receivedBy) || '-'),
+                    data.source ? ('비고: ' + data.source) : ''
+                ].filter(Boolean).join('\n'),
+                category: 'injection-direct-inbound',
+                priority: 'high'
+            });
+            if (ok) {
+                UIUtils.toast('수입검사 담당자에게 임의입고 통보를 보냈습니다.', 'info');
+            }
+        } catch (e) {
+            console.warn('[InjectionWarehouse] 수입검사 통보 실패:', e);
+        }
     }
 
     function remove(id) {

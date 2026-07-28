@@ -477,8 +477,7 @@ var PaintingProcessModule = (function () {
             UIUtils.toast('투입 자재 모듈을 불러올 수 없습니다.', 'error');
             return;
         }
-        await PaintingInputModule.confirmSiteInbound(outId, line || '도장-A');
-        refreshShipments();
+        PaintingInputModule.confirmSiteInbound(outId, line || '도장-A');
     }
 
     function render(container) {
@@ -1305,7 +1304,7 @@ const PaintingWorkModule = (function() {
                             <span style="margin-left:8px;padding:2px 8px;border-radius:999px;font-size:0.75rem;font-weight:700;color:#fff;background:${accent};">${_currentLine}</span>
                             <span id="pwInputStockSummary${suffix}" style="font-size:0.75rem;color:var(--text-muted);font-weight:500;margin-left:6px;"></span>
                         </h4>
-                        <span style="font-size:0.78rem;color:var(--text-muted);">금일 자재 창고에서 출고된 자재 목록입니다</span>
+                        <span style="font-size:0.78rem;color:var(--text-muted);">금일 계획된 생산 자재입니다. 생산 자재가 맞는지 확인하세요</span>
                     </div>
                     <div class="card-body" style="padding:12px;">
                         <div class="data-table-wrapper" style="border:1px solid var(--border); border-radius:4px; overflow-x:auto;">
@@ -1398,8 +1397,11 @@ const PaintingWorkModule = (function() {
                                         <th style="white-space:nowrap;padding:8px 10px;">품명</th>
                                         <th style="white-space:nowrap;padding:8px 10px;">컬러</th>
                                         <th style="white-space:nowrap;padding:8px 10px;">사출 LOT</th>
+                                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">자재 분출 수량</th>
+                                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">과잉/유실</th>
                                         <th style="text-align:right;white-space:nowrap;padding:8px 10px;">투입수량</th>
                                         <th style="text-align:right;white-space:nowrap;padding:8px 10px;">완료수량</th>
+                                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">분실</th>
                                         <th style="text-align:right;white-space:nowrap;padding:8px 10px;">불량</th>
                                         <th style="white-space:nowrap;padding:8px 10px;">작업시간</th>
                                         <th style="text-align:right;white-space:nowrap;padding:8px 10px;">작업C.T</th>
@@ -1472,8 +1474,7 @@ const PaintingWorkModule = (function() {
             UIUtils.toast('투입 자재 모듈을 불러올 수 없습니다.', 'error');
             return;
         }
-        await PaintingInputModule.confirmSiteInbound(outId, line || _currentLine);
-        renderInputStockSection();
+        PaintingInputModule.confirmSiteInbound(outId, line || _currentLine);
     }
 
     // ──────────────────────────────────────────────
@@ -1793,6 +1794,39 @@ const PaintingWorkModule = (function() {
               (workStartTime ? '<span style="font-size:0.68rem;color:var(--text-muted);display:block;line-height:1.4;">' + workStartTime + '</span>' : '')
             : (d.date || '-');
 
+        const _qtys = _workQtys(d);
+        const _inQ = Number(_qtys.inputQty) || 0;
+        const _prodQ = Number(_qtys.productionQty) || 0;
+        const _issued = (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.getIssuedQtyForWork)
+            ? Number(PaintingInputModule.getIssuedQtyForWork(d.line || _currentLine, {
+                carModel: d.carModel,
+                partName: d.partName,
+                color: d.color,
+                date: d.date,
+                lots: d.lots,
+                lotNo: d.lotNo,
+                injPartName: d.injPartName
+            })) || 0
+            : 0;
+        const _xl = _issued - _inQ;
+        const _miss = _inQ - _prodQ;
+        // 현장 입고(분출) 없으면 과잉/유실 비교 불가 → "-"
+        const issuedHtml = _issued > 0
+            ? UIUtils.formatNumber(_issued)
+            : '<span style="color:var(--text-muted);">-</span>';
+        const xlHtml = _issued <= 0
+            ? '<span style="color:var(--text-muted);">-</span>'
+            : (Math.abs(_xl) < 0.001
+                ? '<span style="color:#16a34a;font-weight:600;">0</span>'
+                : (_xl > 0
+                    ? '<span style="color:#d97706;font-weight:700;" title="분출 &gt; 투입 (과잉)">과잉 ' + UIUtils.formatNumber(_xl) + '</span>'
+                    : '<span style="color:#dc2626;font-weight:700;" title="분출 &lt; 투입 (유실)">유실 ' + UIUtils.formatNumber(Math.abs(_xl)) + '</span>'));
+        const missHtml = Math.abs(_miss) < 0.001
+            ? '<span style="color:#16a34a;font-weight:600;">0</span>'
+            : (_miss > 0
+                ? '<span style="color:#dc2626;font-weight:700;">' + UIUtils.formatNumber(_miss) + '</span>'
+                : '<span style="color:#d97706;font-weight:600;">' + UIUtils.formatNumber(_miss) + '</span>');
+
         const td = 'padding:8px 10px;';
         return '<tr style="' + (isInspectionCompleted ? 'background:rgba(22,163,74,0.05);' : '') + '">' +
             '<td style="' + td + 'line-height:1.3;">' + regDate + '</td>' +
@@ -1801,8 +1835,11 @@ const PaintingWorkModule = (function() {
             '<td style="' + td + 'white-space:nowrap;">' + (d.partName || '-') + '</td>' +
             '<td style="' + td + 'white-space:nowrap;">' + (d.color || '-') + '</td>' +
             '<td style="' + td + '">' + lotDisplay + '</td>' +
-            '<td style="' + td + 'text-align:right;white-space:nowrap;">' + UIUtils.formatNumber(_workQtys(d).inputQty) + '</td>' +
-            '<td style="' + td + 'text-align:right;font-weight:600;white-space:nowrap;">' + UIUtils.formatNumber(_workQtys(d).productionQty) + '</td>' +
+            '<td style="' + td + 'text-align:right;font-weight:700;color:var(--accent-blue);white-space:nowrap;">' + issuedHtml + '</td>' +
+            '<td style="' + td + 'text-align:right;white-space:nowrap;">' + xlHtml + '</td>' +
+            '<td style="' + td + 'text-align:right;white-space:nowrap;">' + UIUtils.formatNumber(_inQ) + '</td>' +
+            '<td style="' + td + 'text-align:right;font-weight:600;white-space:nowrap;">' + UIUtils.formatNumber(_prodQ) + '</td>' +
+            '<td style="' + td + 'text-align:right;white-space:nowrap;">' + missHtml + '</td>' +
             '<td style="' + td + 'text-align:right;color:var(--accent-red);white-space:nowrap;">' + UIUtils.formatNumber(d.defectQty) + '</td>' +
             '<td style="' + td + 'font-size:0.82rem;white-space:nowrap;">' + timeStr + '</td>' +
             '<td style="' + td + 'text-align:right;line-height:1.4;white-space:nowrap;">' + ctStr + '</td>' +
@@ -1840,7 +1877,7 @@ const PaintingWorkModule = (function() {
         const listA = data.filter(d => _normalizePaintLine(d.line) !== '도장-B');
         const listB = data.filter(d => _normalizePaintLine(d.line) === '도장-B');
 
-        const emptyRow = '<tr><td colspan="15" style="text-align:center;padding:28px;color:var(--text-muted);">데이터가 없습니다.</td></tr>';
+        const emptyRow = '<tr><td colspan="18" style="text-align:center;padding:28px;color:var(--text-muted);">데이터가 없습니다.</td></tr>';
         const bodyA = document.getElementById('pwTableBodyA');
         const bodyB = document.getElementById('pwTableBodyB');
         const countA = document.getElementById('pwWorkCountA');
@@ -5091,6 +5128,7 @@ const PaintingWorkModule = (function() {
         _qapOnPartNameChange,
         saveQuickAddPlan,
         confirmInputInbound,
+        renderInputStockSection,
         _validateLotFormat,
         _checkLotFormat,
         _validateLotQty,

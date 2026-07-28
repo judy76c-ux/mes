@@ -105,6 +105,8 @@ var InvCalc = (function () {
 
     /** 어느 LOT에서도 차감하지 못한 출고를 담는 가상 LOT 이름 */
     const UNMATCHED = '(미차감 출고)';
+    /** '미차감 리셋(clear)'으로 상쇄된 몫을 담는 가상 LOT 이름 */
+    const WRITEOFF = '(미차감 리셋 반영)';
 
     function _applyOutgoing(map, entriesList, unmatchedRef, deductionsRef) {
         entriesList.forEach(e => {
@@ -262,6 +264,10 @@ var InvCalc = (function () {
         const writeOff = writeOffRef.value;
         const lots = Object.values(map);
         if (unmatched > 0) lots.push({ lotNo: UNMATCHED, qty: -unmatched, date: '', supplier: '' });
+        // writeOff도 unmatched와 동일하게 가상 LOT행으로 남겨야 "총재고 = LOT 잔량 합계" 불변식이
+        // 유지된다. 이게 빠지면(과거 상태) 미차감 리셋(clear) 이후 "현재 보관 LOT" 표 합계가
+        // 헤더 총재고보다 writeOff만큼 항상 더 크게 보이는 오류가 생긴다.
+        if (writeOff > 0) lots.push({ lotNo: WRITEOFF, qty: -writeOff, date: '', supplier: '' });
 
         const total = _totalFromMap(map, unmatched, writeOff);
         return { total, lots, unmatched, writeOff, negatives: lots.filter(l => l.qty < 0), corrupted };
@@ -272,5 +278,5 @@ var InvCalc = (function () {
         return (records || []).reduce((s, rec) => s + signedQtyOf(rec), 0);
     }
 
-    return { normDate, stampFor, recordStamp, entries, qtyOf, signedQtyOf, isQtyCorrupted, lotBalances, replaySteps, totalStock, UNMATCHED };
+    return { normDate, stampFor, recordStamp, entries, qtyOf, signedQtyOf, isQtyCorrupted, lotBalances, replaySteps, totalStock, UNMATCHED, WRITEOFF };
 })();
