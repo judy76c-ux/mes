@@ -69,7 +69,7 @@ const ProductionPlanModule = (function() {
     function getSlotClass(slot) {
         if (slot === '12:30' || slot === '13:00') return 'lunch-time';
         if (slot === '17:30') return 'dinner-time';
-        if (slot >= '18:00' && slot <= '20:00') return 'overtime';
+        if (slot >= '18:00') return 'overtime';
         return '';
     }
 
@@ -641,6 +641,22 @@ const ProductionPlanModule = (function() {
         let totalMinutes = 0;
 
         const allSlots = Array.from(new Set([...TIME_SLOTS, ...Object.keys(slotData)])).sort();
+
+        // 계획 종료 시간이 정의된 슬롯 범위(TIME_SLOTS, 20:00까지)를 넘어가면(예: 12:18~21:18)
+        // 그 종료 시각을 담을 30분 단위 행을 동적으로 추가한다 — 안 그러면 표가 20:00에서
+        // 끊겨서 실제 완료(종료) 시간이 어디에도 표시되지 않는다.
+        const maxEndMin = Object.values(slotData).reduce((max, item) => {
+            if (!item || !item.endTime) return max;
+            const m = _parseMin(item.endTime);
+            return (m > max && m < 24 * 60) ? m : max;
+        }, -1);
+        if (maxEndMin >= 0) {
+            const lastSlotMin = _parseMin(allSlots[allSlots.length - 1]);
+            for (let m = lastSlotMin + 30; m <= maxEndMin; m += 30) {
+                allSlots.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
+            }
+            allSlots.sort();
+        }
 
         // 계획 순서 정렬 후 이전 계획 매핑 (교체 감지)
         const sortedPlans = Object.values(slotData)
