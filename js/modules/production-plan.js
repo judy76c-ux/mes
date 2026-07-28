@@ -409,10 +409,10 @@ const ProductionPlanModule = (function() {
                     return '계획';
                 };
                 const lineSummary = (plans, line, label, color) => {
-                    const items = plans.filter(p => p.carModel || Number(p.planQty));
+                    const items = plans.filter(p => p.carModel || p.partName || Number(p.planQty));
                     const itemLabel = p => {
                         const statusLabel = planActualStatus(p);
-                        return `${p.carModel || '-'} : ${UIUtils.formatNumber(Number(p.planQty) || 0)} (${statusLabel})`;
+                        return `${p.partName || p.carModel || '-'} : ${UIUtils.formatNumber(Number(p.planQty) || 0)} (${statusLabel})`;
                     };
                     const text = items.map(itemLabel).join(', ');
                     const rows = items.slice(0, 4).map(p => {
@@ -423,7 +423,7 @@ const ProductionPlanModule = (function() {
                         const badgeBg = inspected ? 'rgba(16,185,129,0.15)' : (worked ? 'rgba(20,184,166,0.15)' : 'rgba(100,116,139,0.12)');
                         const badgeColor = inspected ? '#065f46' : (worked ? '#0f766e' : '#475569');
                         return `<div style="display:flex;align-items:center;gap:3px;white-space:nowrap;overflow:hidden;">
-                            <span style="font-size:0.68rem;font-weight:700;color:${rowColor};overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;">${p.carModel || '-'} : ${UIUtils.formatNumber(Number(p.planQty) || 0)}</span>
+                            <span style="font-size:0.68rem;font-weight:700;color:${rowColor};overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;">${p.partName || p.carModel || '-'} : ${UIUtils.formatNumber(Number(p.planQty) || 0)}</span>
                             <span style="font-size:0.58rem;font-weight:800;color:${badgeColor};background:${badgeBg};border-radius:4px;padding:1px 4px;flex-shrink:0;">${actualStatus}</span>
                         </div>`;
                     }).join('');

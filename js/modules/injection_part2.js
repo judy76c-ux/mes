@@ -1175,11 +1175,6 @@ var InjectionWarehouseModule = (function() {
                 const r = (typeof ProductionPlanModule !== 'undefined' && ProductionPlanModule._calcInjPlanReserved)
                     ? ProductionPlanModule._calcInjPlanReserved(item.partName, null, item.carModel, item.color)
                     : { pending: 0, inProgress: 0 };
-                const reserved   = r.pending + r.inProgress;
-                const available  = item.stock - reserved;
-                // 예약이 실재고보다 많아도 "가용재고"를 마이너스로 보여주지 않는다(실물 재고 오류와 헷갈림) — 0으로 바닥 처리.
-                // 부족분 자체는 옆의 예약/미입력실적 배지에 그대로 남아 확인 가능하다.
-                const availableDisplay = Math.max(0, available);
 
                 // ── 제작품목 미설정 경고 뱃지 ──────────────────────────
                 // v19+: 타일 쪽 partName은 _normKeyStr()로 canonicalize 될 수 있어 .trim() 단독 비교는 매칭 실패 가능
@@ -1214,12 +1209,13 @@ var InjectionWarehouseModule = (function() {
                             별칭삭제
                        </button>`
                     : '';
+                // 예약/미입력실적은 재고에서 차감하지 않는다 — "현재 재고"는 항상 실물 원장 그대로,
+                // 예약 수량은 참고용 배지로만 별도 표시한다.
                 let stockHtml;
                 if (r.inProgress > 0) {
                     stockHtml = `
                         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:1px;">
-                            <span style="font-size:0.7rem;color:var(--text-muted);text-decoration:line-through;">${UIUtils.formatNumber(item.stock)}</span>
-                            <span style="font-size:0.85rem;font-weight:700;color:${availableDisplay > 0 ? 'var(--accent-blue)' : 'var(--accent-red)'};">${UIUtils.formatNumber(availableDisplay)} EA</span>
+                            <span style="font-size:0.85rem;font-weight:700;color:${item.stock > 0 ? 'var(--accent-blue)' : 'var(--accent-red)'};">${UIUtils.formatNumber(item.stock)} EA</span>
                             <span onclick="event.stopPropagation();InjectionWarehouseModule.showReserveDetailPopup(event,'${_ep}','${_em}','${_ec}')"
                                   style="font-size:0.68rem;background:rgba(234,88,12,0.12);color:#ea580c;border:1px solid rgba(234,88,12,0.3);border-radius:3px;padding:0 4px;white-space:nowrap;cursor:pointer;"
                                   title="클릭하여 예약 상세 보기">미입력실적 -${UIUtils.formatNumber(r.inProgress)} ℹ</span>
@@ -1227,8 +1223,7 @@ var InjectionWarehouseModule = (function() {
                 } else if (r.pending > 0) {
                     stockHtml = `
                         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:1px;">
-                            <span style="font-size:0.7rem;color:var(--text-muted);text-decoration:line-through;">${UIUtils.formatNumber(item.stock)}</span>
-                            <span style="font-size:0.85rem;font-weight:700;color:${availableDisplay > 0 ? 'var(--accent-blue)' : 'var(--accent-red)'};">${UIUtils.formatNumber(availableDisplay)} EA</span>
+                            <span style="font-size:0.85rem;font-weight:700;color:${item.stock > 0 ? 'var(--accent-blue)' : 'var(--accent-red)'};">${UIUtils.formatNumber(item.stock)} EA</span>
                             <span onclick="event.stopPropagation();InjectionWarehouseModule.showReserveDetailPopup(event,'${_ep}','${_em}','${_ec}')"
                                   style="font-size:0.68rem;background:rgba(234,179,8,0.12);color:#ca8a04;border:1px solid rgba(234,179,8,0.3);border-radius:3px;padding:0 4px;white-space:nowrap;cursor:pointer;"
                                   title="클릭하여 예약 상세 보기">예약 -${UIUtils.formatNumber(r.pending)} ℹ</span>
