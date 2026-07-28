@@ -1970,6 +1970,7 @@ var InjectionWarehouseModule = (function() {
             _normKeyStr(color) !== _normKeyStr(_resolvedDetailColor) &&
             _colorsMatch(color, _resolvedDetailColor);
         const canEditLot = _canEditWarehouseLot();
+        const canDeleteLot = _isAdminUser();
 
         const rows = currentLots.map(d => {
             const _lotJs = d.lot.replace(/'/g, "\\'");
@@ -2023,6 +2024,11 @@ var InjectionWarehouseModule = (function() {
                     </td>` : ''}
                     <td style="text-align:center;">
                         ${outBtnHtml}
+                        ${(canDeleteLot && !isNeg) ? `<button class="btn btn-sm btn-outline" style="font-size:0.72rem;padding:2px 8px;margin-left:4px;color:#991b1b;border-color:#991b1b;"
+                                title="이 LOT의 입출고 기록을 완전히 삭제합니다(관리자 전용, 되돌릴 수 없음)"
+                                onclick="InjectionWarehouseModule.openDeleteLotModal('${_cmJs}','${_pnJs}','${_clJs}','${_lotJs}',${Number(d.qty) || 0})">
+                                삭제
+                            </button>` : ''}
                     </td>
                 </tr>
             `;
@@ -2442,6 +2448,105 @@ var InjectionWarehouseModule = (function() {
         } catch (e) {
             console.error('LOT 정보 수정 실패:', e);
             UIUtils.toast('LOT 정보 수정 실패: ' + e.message, 'error');
+        }
+    }
+
+    // ── 잘못된 LOT 삭제 (관리자 전용) ──────────────────────────────────
+    // "현재 보관 LOT" 표에서 특정 LOT의 입출고 기록을 완전히 삭제한다. 되돌릴 수 없으므로
+    // 사유를 필수로 받고, 삭제 전 이력을 INSPECTION_DELETE_LOGS에 남긴다.
+    // 한 레코드가 여러 LOT을 담고 있으면(lots[] 다건) 그 레코드 전체를 지우지 않고
+    // 대상 LOT 항목만 lots[]에서 제거해 다른 LOT의 데이터를 보존한다.
+    function openDeleteLotModal(carModel, partName, color, lotNo, qty) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 LOT을 삭제할 수 있습니다.', 'warning');
+            return;
+        }
+        const _cmJs = carModel.replace(/'/g, "\\'");
+        const _pnJs = partName.replace(/'/g, "\\'");
+        const _clJs = (color || '').replace(/'/g, "\\'");
+        const _lnJs = lotNo.replace(/'/g, "\\'");
+
+        UIUtils.showModal('LOT 삭제', `
+            <div style="padding:10px 12px;background:rgba(153,27,27,.08);border:1px solid rgba(153,27,27,.3);border-radius:8px;margin-bottom:14px;font-size:0.85rem;line-height:1.6;">
+                <div><strong>${_escapeHtml(carModel)}</strong> · ${_escapeHtml(partName)}${color ? ' · ' + _escapeHtml(color) : ''}</div>
+                <div style="margin-top:4px;">LOT <strong>${_escapeHtml(lotNo)}</strong> · 현재 수량 <strong>${UIUtils.formatNumber(qty)} EA</strong></div>
+                <div style="margin-top:8px;color:#991b1b;font-weight:600;">이 LOT의 입출고 기록을 완전히 삭제합니다. 되돌릴 수 없습니다.</div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">삭제 사유 <span style="color:var(--accent-red)">*</span></label>
+                <textarea id="lotDeleteReason" class="form-textarea" rows="3"
+                    placeholder="예: 재고 오류 초기화 시 잘못 생성된 LOT — 실물 없음"></textarea>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" style="background:#991b1b;border-color:#991b1b;"
+                onclick="InjectionWarehouseModule.confirmDeleteLot('${_cmJs}','${_pnJs}','${_clJs}','${_lnJs}',${Number(qty) || 0})">
+                <span class="material-symbols-outlined">delete_forever</span> 삭제 실행
+            </button>
+        `, 'md');
+
+        setTimeout(function() {
+            const el = document.getElementById('lotDeleteReason');
+            if (el) el.focus();
+        }, 100);
+    }
+
+    async function confirmDeleteLot(carModel, partName, color, lotNo, qty) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 LOT을 삭제할 수 있습니다.', 'warning');
+            return;
+        }
+        const reasonEl = document.getElementById('lotDeleteReason');
+        const reason = reasonEl ? reasonEl.value.trim() : '';
+        if (!reason) {
+            UIUtils.toast('삭제 사유를 입력해주세요.', 'warning');
+            if (reasonEl) reasonEl.focus();
+            return;
+        }
+
+        try {
+            const all = Storage.getAll(STORE) || [];
+            const targets = all.filter(d => _recordMatchesLot(d, carModel, partName, color, _lotKey(lotNo)));
+            if (targets.length === 0) {
+                UIUtils.toast('삭제할 기록을 찾을 수 없습니다.', 'error');
+                return;
+            }
+
+            let deletedCount = 0, trimmedCount = 0;
+            for (const d of targets) {
+                if (Array.isArray(d.lots) && d.lots.length > 1) {
+                    // 여러 LOT을 담은 레코드 — 대상 LOT 항목만 제거, 나머지 LOT은 보존
+                    const remaining = d.lots.filter(l => _lotKey(l.lotNo) !== _lotKey(lotNo));
+                    const newQty = remaining.reduce(function(s, l) { return s + (Number(l.qty) || 0); }, 0);
+                    const updates = { lots: remaining, quantity: newQty };
+                    if (_lotKey(d.lotNo) === _lotKey(lotNo)) updates.lotNo = remaining[0] ? remaining[0].lotNo : '';
+                    await Storage.update(STORE, d.id, updates);
+                    trimmedCount++;
+                } else {
+                    await Storage.remove(STORE, d.id);
+                    deletedCount++;
+                }
+            }
+
+            const actor = _getResetActorFields();
+            await Storage.add(DB.STORES.INSPECTION_DELETE_LOGS, {
+                id: Storage.generateId(),
+                type: 'injection_lot_delete',
+                typeLabel: '사출 창고 LOT 삭제',
+                deletedAt: actor.resetAt,
+                deletedBy: actor.resetBy,
+                reason: reason,
+                originalData: { carModel, partName, color: color || '', lotNo, qty, deletedCount, trimmedCount },
+                summary: `${carModel} / ${partName} ${color || ''} / LOT ${lotNo} (${UIUtils.formatNumber(qty)} EA) 삭제 — 레코드 ${deletedCount}건 삭제, ${trimmedCount}건 부분정리`
+            });
+
+            UIUtils.closeModal();
+            UIUtils.toast(`LOT ${lotNo} 삭제 완료 (레코드 ${deletedCount}건 삭제, ${trimmedCount}건 부분정리)`, 'success');
+            loadData();
+            showPartDetail(carModel, partName, color);
+        } catch (e) {
+            console.error('LOT 삭제 실패:', e);
+            UIUtils.toast('LOT 삭제 실패: ' + e.message, 'error');
         }
     }
 
@@ -6428,6 +6533,8 @@ var InjectionWarehouseModule = (function() {
         saveLotRename,
         openLotEditModal,
         saveLotEdit,
+        openDeleteLotModal,
+        confirmDeleteLot,
         _openAddModalForPart,
         openAddModal,
         openAddFromInspection,
