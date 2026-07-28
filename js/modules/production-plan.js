@@ -1114,7 +1114,7 @@ const ProductionPlanModule = (function() {
             const name = _paintMatName(matId);
             const qtyColor = qty > 0 ? 'var(--accent-green)' : 'var(--accent-red)';
             return `<td style="padding:2px 8px;font-size:0.76rem;white-space:nowrap;cursor:pointer;border-radius:4px;"
-                        onclick="PaintInventoryModule.showPaintDetail('${matId}')"
+                        onclick="PaintInventoryModule.showPaintDetail('${matId}',{asChild:true})"
                         onmouseover="this.style.background='rgba(99,102,241,0.1)'"
                         onmouseout="this.style.background=''"
                         title="클릭하여 LOT 정보 보기">
@@ -2215,7 +2215,7 @@ const ProductionPlanModule = (function() {
                         const qty = _paintMatBalance(matId), name = _paintMatName(matId);
                         const qc  = qty > 0 ? 'var(--accent-green)' : 'var(--accent-red)';
                         return `<td style="padding:2px 8px;font-size:0.76rem;white-space:nowrap;cursor:pointer;border-radius:4px;"
-                            onclick="PaintInventoryModule.showPaintDetail('${matId}')"
+                            onclick="PaintInventoryModule.showPaintDetail('${matId}',{asChild:true})"
                             onmouseover="this.style.background='rgba(99,102,241,0.1)'"
                             onmouseout="this.style.background=''"
                             title="클릭하여 LOT 정보 보기">
@@ -2973,7 +2973,7 @@ const ProductionPlanModule = (function() {
                 </tr>`).join('')
             : `<tr><td colspan="3" style="text-align:center;padding:14px;color:var(--text-muted);">재고 없음</td></tr>`;
 
-        UIUtils.showModal(
+        UIUtils.showChildModal(
             `📦 ${carModel ? carModel + ' · ' : ''}${partName}${color ? ' · ' + color : ''} — LOT 재고`,
             `<div style="margin-bottom:14px;padding:10px 14px;background:var(--bg-secondary);border-radius:8px;display:flex;gap:24px;font-size:0.85rem;flex-wrap:wrap;">
                 ${carModel ? `<span>차종: <strong>${carModel}</strong></span>` : ''}
@@ -2989,7 +2989,7 @@ const ProductionPlanModule = (function() {
                 </tr></thead>
                 <tbody>${rows}</tbody>
             </table>`,
-            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`
+            `<button class="btn btn-secondary" onclick="UIUtils.closeChildModal()">닫기</button>`
         );
     }
 

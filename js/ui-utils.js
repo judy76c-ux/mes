@@ -247,12 +247,105 @@ const UIUtils = (function () {
     // options: { title, body, footer, buttons, size }
     // buttons: [{ label, class, onClick }]
     // size: 'sm' | 'md' | 'lg' | 'xl' | 'xxl'
+    //
+    // 중첩 모달: 이미 열린 상태에서 showModal 하면 현재 내용을 스택에 저장하고,
+    // closeModal 시 한 단계만 닫아 이전 창(예: 생산 계획 등록)을 복원한다.
+    let _modalStack = [];
+    let _modalCurrentOptions = null;
+
+    function _syncFormValuesToDom(root) {
+        if (!root) return;
+        root.querySelectorAll('input, select, textarea').forEach(function(el) {
+            const tag = (el.tagName || '').toUpperCase();
+            const type = String(el.type || '').toLowerCase();
+            if (tag === 'TEXTAREA') {
+                el.textContent = el.value;
+            } else if (tag === 'SELECT') {
+                Array.from(el.options).forEach(function(opt) {
+                    if (opt.selected) opt.setAttribute('selected', 'selected');
+                    else opt.removeAttribute('selected');
+                });
+            } else if (type === 'checkbox' || type === 'radio') {
+                if (el.checked) el.setAttribute('checked', 'checked');
+                else el.removeAttribute('checked');
+            } else {
+                el.setAttribute('value', el.value);
+            }
+        });
+    }
+
+    function _captureModalSnapshot() {
+        const overlay = document.getElementById('modal');
+        const titleEl = document.getElementById('modalTitle');
+        const bodyEl = document.getElementById('modalBody');
+        const footerEl = document.getElementById('modalFooter');
+        if (!overlay || !overlay.classList.contains('active')) return null;
+        _syncFormValuesToDom(bodyEl);
+        _syncFormValuesToDom(footerEl);
+        const container = overlay.querySelector('.modal-container');
+        const header = overlay.querySelector('.modal-header');
+        return {
+            title: titleEl ? titleEl.innerHTML : '',
+            body: bodyEl ? bodyEl.innerHTML : '',
+            footer: footerEl ? footerEl.innerHTML : '',
+            maxWidth: container ? (container.style.getPropertyValue('max-width') || '') : '',
+            borderTop: container ? container.style.borderTop : '',
+            boxShadow: container ? container.style.boxShadow : '',
+            headerClassName: header ? header.className : '',
+            options: _modalCurrentOptions
+        };
+    }
+
+    function _bindModalChrome(options) {
+        options = options || {};
+        const overlay = document.getElementById('modal');
+        const container = overlay && overlay.querySelector('.modal-container');
+        const header = overlay && overlay.querySelector('.modal-header');
+        const closeBtn = document.getElementById('modalCloseBtn');
+        if (closeBtn) closeBtn.onclick = function() { closeModal(); };
+        if (overlay) {
+            overlay.onclick = function(e) {
+                if (e.target === overlay && options.allowBackdropClose === true) closeModal();
+            };
+        }
+        if (container && header) makeDraggableModal(container, header);
+    }
+
+    function _restoreModalSnapshot(snap) {
+        if (!snap) return;
+        const overlay = document.getElementById('modal');
+        const titleEl = document.getElementById('modalTitle');
+        const bodyEl = document.getElementById('modalBody');
+        const footerEl = document.getElementById('modalFooter');
+        const container = overlay && overlay.querySelector('.modal-container');
+        const header = overlay && overlay.querySelector('.modal-header');
+        if (titleEl) titleEl.innerHTML = snap.title || '';
+        if (bodyEl) bodyEl.innerHTML = snap.body || '';
+        if (footerEl) footerEl.innerHTML = snap.footer || '';
+        if (container) {
+            if (snap.maxWidth) container.style.setProperty('max-width', snap.maxWidth, 'important');
+            container.style.borderTop = snap.borderTop || '';
+            container.style.boxShadow = snap.boxShadow || '';
+            _resetModalPosition(container);
+        }
+        if (header && snap.headerClassName) header.className = snap.headerClassName;
+        _modalCurrentOptions = snap.options || null;
+        overlay.classList.add('active');
+        _bindModalChrome(_modalCurrentOptions || {});
+    }
+
     function openModal(options) {
         const overlay = document.getElementById('modal');
         const titleEl = document.getElementById('modalTitle');
         const bodyEl  = document.getElementById('modalBody');
         const footerEl= document.getElementById('modalFooter');
         if (!overlay) return;
+
+        // 이미 열린 모달이 있으면 스택에 보존 후 교체 (입력값 포함)
+        if (overlay.classList.contains('active')) {
+            const snap = _captureModalSnapshot();
+            if (snap) _modalStack.push(snap);
+        }
 
         const container = overlay.querySelector('.modal-container');
         const header = overlay.querySelector('.modal-header');
@@ -298,24 +391,125 @@ const UIUtils = (function () {
             }
         }
 
+        _modalCurrentOptions = options;
         overlay.classList.add('active');
         _armModalBackGuard();
-        makeDraggableModal(container, header);
+        _bindModalChrome(options);
+    }
 
-        // 닫기 버튼
-        const closeBtn = document.getElementById('modalCloseBtn');
-        if (closeBtn) {
-            closeBtn.onclick = () => closeModal();
+    // showModal: 객체 형식({ title, body, footer, size }) 또는 위치 인자(title, body, footer, size) 모두 지원
+    function showModal(titleOrOptions, body, footer, size) {
+        if (titleOrOptions !== null && typeof titleOrOptions === 'object') {
+            openModal(titleOrOptions);
+        } else {
+            openModal({ title: titleOrOptions, body, footer, size });
         }
-        // 오버레이 클릭 닫기 (noBackdropClose 옵션이면 비활성)
-        // Backdrop clicks are ignored by default so form modals do not close accidentally.
-        // Pass allowBackdropClose:true only for simple preview dialogs that should dismiss this way.
-        overlay.onclick = (e) => {
-            if (e.target === overlay && options.allowBackdropClose === true) closeModal();
+    }
+
+    function isPrimaryModalOpen() {
+        const overlay = document.getElementById('modal');
+        return !!(overlay && overlay.classList.contains('active'));
+    }
+
+    function isChildModalOpen() {
+        const overlay = document.getElementById('modalChild');
+        return !!(overlay && overlay.classList.contains('active'));
+    }
+
+    /** 기본 모달(#modal)과 별도 레이어 — 생산계획 등록 창을 유지한 채 사출/도료 정보 표시 */
+    function openChildModal(options) {
+        options = options || {};
+        let overlay = document.getElementById('modalChild');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'modalChild';
+            overlay.className = 'modal-overlay modal-child-overlay';
+            overlay.innerHTML =
+                '<div class="modal-container">' +
+                '<div class="modal-header" data-modal-drag-handle="true">' +
+                '<h3 id="modalChildTitle"></h3>' +
+                '<button class="modal-close-btn" id="modalChildCloseBtn" type="button">' +
+                '<span class="material-symbols-outlined">close</span></button></div>' +
+                '<div class="modal-body" id="modalChildBody"></div>' +
+                '<div class="modal-footer" id="modalChildFooter"></div></div>';
+            document.body.appendChild(overlay);
+        }
+        const titleEl = document.getElementById('modalChildTitle');
+        const bodyEl = document.getElementById('modalChildBody');
+        const footerEl = document.getElementById('modalChildFooter');
+        const container = overlay.querySelector('.modal-container');
+        const header = overlay.querySelector('.modal-header');
+
+        if (container) {
+            _resetModalPosition(container);
+            const sizeMap = {
+                sm: 'min(420px, calc(100vw - 32px))',
+                md: 'min(920px, calc(100vw - 32px))',
+                lg: 'min(1100px, calc(100vw - 32px))',
+                xl: 'min(1240px, calc(100vw - 32px))',
+                xxl: 'min(1360px, calc(100vw - 24px))',
+                xxxl: 'min(1500px, calc(100vw - 16px))'
+            };
+            const resolvedWidth = sizeMap[options.size || 'md'] || options.size || sizeMap.md;
+            container.style.setProperty('max-width', resolvedWidth, 'important');
+        }
+        if (titleEl) titleEl.innerHTML = options.title || '';
+        if (bodyEl) bodyEl.innerHTML = options.body || '';
+        if (footerEl) {
+            if (options.footer) footerEl.innerHTML = options.footer;
+            else if (Array.isArray(options.buttons) && options.buttons.length) {
+                footerEl.innerHTML = options.buttons.map(function(b) {
+                    return `<button class="btn ${b.class || 'btn-secondary'}" data-child-btn="${_esc(b.label)}">${_esc(b.label)}</button>`;
+                }).join('');
+                options.buttons.forEach(function(b) {
+                    const el = footerEl.querySelector(`[data-child-btn="${CSS.escape(b.label)}"]`);
+                    if (el && typeof b.onClick === 'function') el.addEventListener('click', b.onClick);
+                });
+            } else {
+                footerEl.innerHTML = '<button class="btn btn-secondary" type="button" onclick="UIUtils.closeChildModal()">닫기</button>';
+            }
+        }
+
+        overlay.classList.add('active');
+        const closeBtn = document.getElementById('modalChildCloseBtn');
+        if (closeBtn) closeBtn.onclick = function() { closeChildModal(); };
+        overlay.onclick = function(e) {
+            if (e.target === overlay && options.allowBackdropClose === true) closeChildModal();
         };
+        if (container && header) makeDraggableModal(container, header);
+    }
+
+    function showChildModal(titleOrOptions, body, footer, size) {
+        if (titleOrOptions !== null && typeof titleOrOptions === 'object') {
+            openChildModal(titleOrOptions);
+        } else {
+            openChildModal({ title: titleOrOptions, body: body, footer: footer, size: size });
+        }
+    }
+
+    function closeChildModal() {
+        const overlay = document.getElementById('modalChild');
+        if (!overlay) return;
+        overlay.classList.remove('active');
+        const container = overlay.querySelector('.modal-container');
+        if (container) _resetModalPosition(container);
+        const bodyEl = document.getElementById('modalChildBody');
+        const footerEl = document.getElementById('modalChildFooter');
+        if (bodyEl) bodyEl.innerHTML = '';
+        if (footerEl) footerEl.innerHTML = '';
     }
 
     function closeModal() {
+        // 하위 정보창이 있으면 먼저 닫음
+        if (isChildModalOpen()) closeChildModal();
+
+        // 중첩 모달이면 한 단계만 닫고 이전 창 복원
+        if (_modalStack.length) {
+            const snap = _modalStack.pop();
+            _restoreModalSnapshot(snap);
+            return;
+        }
+
         const overlay = document.getElementById('modal');
         if (overlay) {
             overlay.classList.remove('active');
@@ -331,16 +525,9 @@ const UIUtils = (function () {
                 _resetModalPosition(container);
             }
         }
+        _modalCurrentOptions = null;
+        _modalStack = [];
         _releaseModalBackGuard();
-    }
-
-    // showModal: 객체 형식({ title, body, footer, size }) 또는 위치 인자(title, body, footer, size) 모두 지원
-    function showModal(titleOrOptions, body, footer, size) {
-        if (titleOrOptions !== null && typeof titleOrOptions === 'object') {
-            openModal(titleOrOptions);
-        } else {
-            openModal({ title: titleOrOptions, body, footer, size });
-        }
     }
 
     // ── 확인 다이얼로그 ───────────────────────────────────────────────────
@@ -365,7 +552,6 @@ const UIUtils = (function () {
         };
         const keyHandler = (e) => {
             if (e.key === 'Enter') {
-                // 텍스트 입력 중에는 무시 — confirm 모달에 입력 필드는 없지만 안전 가드
                 const tag = (e.target && e.target.tagName || '').toLowerCase();
                 if (tag === 'textarea' || (tag === 'input' && e.target.type === 'text')) return;
                 e.preventDefault();
@@ -384,9 +570,8 @@ const UIUtils = (function () {
             ]
         });
         document.addEventListener('keydown', keyHandler, true);
-        // 확인 버튼에 포커스
         setTimeout(() => {
-            const btn = document.querySelector('.modal .modal-footer .btn-primary, .modal-footer .btn-primary');
+            const btn = document.querySelector('#modal .modal-footer .btn-primary, .modal-footer .btn-primary');
             if (btn) btn.focus();
         }, 50);
     }
@@ -562,6 +747,11 @@ const UIUtils = (function () {
         openModal,
         closeModal,
         showModal,
+        openChildModal,
+        closeChildModal,
+        showChildModal,
+        isPrimaryModalOpen,
+        isChildModalOpen,
         confirm,
         badge,
         itemTypeBadge,

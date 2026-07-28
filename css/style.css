@@ -1385,6 +1385,11 @@ input[type="time"] {
     animation: fadeIn 0.2s ease;
 }
 
+.modal-overlay.modal-child-overlay {
+    z-index: 260;
+    background: rgba(0, 0, 0, 0.45);
+}
+
 .modal-overlay.active {
     display: flex;
 }

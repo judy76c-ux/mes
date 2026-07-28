@@ -796,12 +796,16 @@ const PaintInventoryModule = (function() {
     }
 
     // ── 도료 품목 상세 팝업 ───────────────────────────────────────────
-    function showPaintDetail(matId) {
+    function showPaintDetail(matId, opts) {
+        opts = opts || {};
+        // 생산계획 등록 등 기본 모달이 열린 상태에서 열리면 별도 창(asChild)으로 띄워 등록 창을 유지
+        const asChild = !!(opts.asChild || opts.child
+            || (typeof UIUtils.isPrimaryModalOpen === 'function' && UIUtils.isPrimaryModalOpen()));
         const materials = Storage.getAll(MATERIALS_STORE);
         const mat = materials.find(m => m.id === matId);
         if (!mat) { UIUtils.toast('도료 정보를 찾을 수 없습니다.', 'error'); return; }
 
-        const canEditStock = _canEditPaintStock();
+        const canEditStock = _canEditPaintStock() && !asChild;
 
         const data = Storage.getAll(STORE);
         const records = data
@@ -880,20 +884,23 @@ const PaintInventoryModule = (function() {
                             onclick="event.stopPropagation(); PaintInventoryModule._openDetailAdjust('${matId}','${prodLotEsc}','${lotNoEsc}',${l.qty})"
                             style="font-size:0.7rem;border:1px solid var(--border-color);border-radius:4px;padding:2px 6px;margin-right:4px;background:transparent;color:var(--text-secondary);cursor:pointer;white-space:nowrap;">수정</button>`
                     : '';
+                const outCol = asChild
+                    ? `<td style="text-align:center;padding:4px 8px;white-space:nowrap;color:var(--text-muted);font-size:0.72rem;">조회</td>`
+                    : `<td style="text-align:center;padding:4px 8px;white-space:nowrap;">
+                            ${adjustBtn}<span style="font-size:0.7rem;background:#fee2e2;color:#dc2626;border-radius:4px;padding:2px 6px;white-space:nowrap;">출고</span>
+                        </td>`;
                 return `
-                    <tr style="cursor:pointer;" title="클릭하여 출고 목록에 추가"
+                    <tr${asChild ? '' : ` style="cursor:pointer;" title="클릭하여 출고 목록에 추가"
                         onclick="PaintInventoryModule._openDetailOutgoing('${matId}','${prodLotEsc}','${lotNoEsc}',${l.qty})"
                         onmouseover="this.style.background='rgba(239,68,68,0.07)'"
-                        onmouseout="this.style.background=''">
+                        onmouseout="this.style.background=''"`}>
                         <td style="white-space:nowrap;font-size:0.8rem;">${l.inDate || '-'}</td>
                         <td style="font-family:monospace;font-weight:700;white-space:nowrap;">${l.prodLot || '-'}</td>
                         <td style="font-family:monospace;color:var(--text-muted);white-space:nowrap;">${l.lotNo || '-'}</td>
                         <td style="text-align:center;white-space:nowrap;">${l.mfgDate || '-'}</td>
                         <td style="white-space:nowrap;">${expHtml}</td>
                         <td style="text-align:right;font-weight:700;color:var(--accent-blue);white-space:nowrap;">${UIUtils.formatNumber(l.qty)}</td>
-                        <td style="text-align:center;padding:4px 8px;white-space:nowrap;">
-                            ${adjustBtn}<span style="font-size:0.7rem;background:#fee2e2;color:#dc2626;border-radius:4px;padding:2px 6px;white-space:nowrap;">출고</span>
-                        </td>
+                        ${outCol}
                     </tr>`;
             }).join('')
             : `<tr><td colspan="7" style="text-align:center;padding:14px;color:var(--text-muted);">재고 없음</td></tr>`;
@@ -922,7 +929,13 @@ const PaintInventoryModule = (function() {
             ? `<span style="font-size:0.75rem;background:${typeBg};color:#fff;border-radius:4px;padding:2px 8px;margin-right:6px;">${mat.paintType || mat.type}</span>`
             : '';
 
-        UIUtils.showModal(
+        const closeBtn = asChild
+            ? `<button class="btn btn-secondary" onclick="UIUtils.closeChildModal()">닫기</button>`
+            : `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`;
+        const openFn = asChild && typeof UIUtils.showChildModal === 'function'
+            ? UIUtils.showChildModal
+            : UIUtils.showModal;
+        openFn(
             `🎨 ${mat.name}`,
             `
             <!-- 기본 정보 -->
@@ -954,7 +967,9 @@ const PaintInventoryModule = (function() {
             <!-- 활성 LOT 테이블 -->
             ${StockDetailUI.buildLotTableSection({
                 title: '현재 보관 LOT',
-                headers: ['입고일', '제조 LOT', '제조사 표기 LOT', '제조일자', '유효기한', '현재 수량', '출고'],
+                headers: asChild
+                    ? ['입고일', '제조 LOT', '제조사 표기 LOT', '제조일자', '유효기한', '현재 수량', '']
+                    : ['입고일', '제조 LOT', '제조사 표기 LOT', '제조일자', '유효기한', '현재 수량', '출고'],
                 colSpan: 7,
                 qtyColIndex: 5,
                 totalQty: totalStock,
@@ -963,7 +978,7 @@ const PaintInventoryModule = (function() {
             })}
             ${historySection}
             `,
-            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`,
+            closeBtn,
             'lg'
         );
     }
