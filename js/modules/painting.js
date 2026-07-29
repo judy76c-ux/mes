@@ -1018,6 +1018,7 @@ const PaintingWorkModule = (function() {
     // 현재 선택된 날짜/라인 (모듈 내 상태)
     let _currentDate = '';
     let _currentLine = '도장-A';
+    let _autoInboundTimer = null;
 
     function _normalizePaintLine(line) {
         var s = String(line || '').trim();
@@ -1300,11 +1301,17 @@ const PaintingWorkModule = (function() {
                         border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
                         <h4 style="margin:0;">
                             <span class="material-symbols-outlined" style="vertical-align:middle;margin-right:4px;font-size:18px;">inventory_2</span>
-                            ${_currentLine} 자재
+                            ${_currentLine} 현장 사출 입고 : 금일 현장으로 입고된 사출품
                             <span style="margin-left:8px;padding:2px 8px;border-radius:999px;font-size:0.75rem;font-weight:700;color:#fff;background:${accent};">${_currentLine}</span>
                             <span id="pwInputStockSummary${suffix}" style="font-size:0.75rem;color:var(--text-muted);font-weight:500;margin-left:6px;"></span>
                         </h4>
-                        <span style="font-size:0.78rem;color:var(--text-muted);">금일 계획된 생산 자재입니다. 생산 자재가 맞는지 확인하세요</span>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span style="font-size:0.78rem;color:var(--text-muted);">금일 현장으로 입고된 사출품입니다. 계획 대비 오차를 확인하세요.</span>
+                            <button type="button" class="btn btn-sm btn-outline" style="padding:3px 10px;font-size:0.75rem;white-space:nowrap;"
+                                onclick="PaintingWorkModule.openMaterialHistory('${_currentLine}')">
+                                <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:2px;">history</span>이력조회
+                            </button>
+                        </div>
                     </div>
                     <div class="card-body" style="padding:12px;">
                         <div class="data-table-wrapper" style="border:1px solid var(--border); border-radius:4px; overflow-x:auto;">
@@ -1319,6 +1326,9 @@ const PaintingWorkModule = (function() {
                                         <th style="white-space:nowrap;padding:8px 10px;">사출LOT</th>
                                         <th style="white-space:nowrap;padding:8px 10px;">수입검사일</th>
                                         <th style="text-align:right;white-space:nowrap;padding:8px 10px;">수량</th>
+                                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">계획수량</th>
+                                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">오차</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">완료시간</th>
                                         <th style="white-space:nowrap;padding:8px 10px;">상태</th>
                                         <th style="white-space:nowrap;padding:8px 10px;">작업</th>
                                     </tr>
@@ -1420,6 +1430,25 @@ const PaintingWorkModule = (function() {
         `;
 
         loadAll();
+        _startAutoInboundTimer();
+    }
+
+    function _stopAutoInboundTimer() {
+        if (_autoInboundTimer) {
+            clearInterval(_autoInboundTimer);
+            _autoInboundTimer = null;
+        }
+    }
+
+    function _startAutoInboundTimer() {
+        _stopAutoInboundTimer();
+        if (typeof PaintingInputModule === 'undefined' || !PaintingInputModule.runAutoSiteInbound) return;
+        PaintingInputModule.runAutoSiteInbound(_currentLine);
+        _autoInboundTimer = setInterval(function () {
+            if (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.runAutoSiteInbound) {
+                PaintingInputModule.runAutoSiteInbound(_currentLine);
+            }
+        }, 30000);
     }
 
     // 라인 탭 전환
@@ -1451,7 +1480,7 @@ const PaintingWorkModule = (function() {
         if (!body) return;
 
         if (typeof PaintingInputModule === 'undefined' || !PaintingInputModule.renderTodayShipmentTable) {
-            body.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-muted);">투입 자재 모듈을 불러올 수 없습니다.</td></tr>`;
+            body.innerHTML = `<tr><td colspan="13" style="text-align:center;padding:20px;color:var(--text-muted);">투입 자재 모듈을 불러올 수 없습니다.</td></tr>`;
             if (summary) summary.textContent = '';
             return;
         }
@@ -1460,11 +1489,19 @@ const PaintingWorkModule = (function() {
         body.innerHTML = result.html;
         if (summary) {
             if (!result.itemCount) {
-                summary.textContent = '출고 없음';
+                const planTxt = result.planTotal ? ' · 계획 ' + UIUtils.formatNumber(result.planTotal) + ' EA' : '';
+                summary.textContent = '출고 없음' + planTxt;
             } else {
-                summary.textContent = result.itemCount + '건 · ' + UIUtils.formatNumber(result.total) + ' EA'
-                    + (result.pendingCount ? ' · 미입고 ' + result.pendingCount : '')
-                    + (result.doneCount ? ' · 입고 ' + result.doneCount : '');
+                let txt = result.itemCount + '건 · 출고 ' + UIUtils.formatNumber(result.total) + ' EA';
+                if (result.planTotal) {
+                    txt += ' · 계획 ' + UIUtils.formatNumber(result.planTotal) + ' EA';
+                    const diff = Number(result.varianceTotal) || 0;
+                    if (diff === 0) txt += ' · 오차 0';
+                    else txt += ' · 오차 ' + (diff > 0 ? '+' : '') + UIUtils.formatNumber(diff);
+                }
+                if (result.pendingCount) txt += ' · 미입고 ' + result.pendingCount;
+                if (result.doneCount) txt += ' · 입고 ' + result.doneCount;
+                summary.textContent = txt;
             }
         }
     }
@@ -1761,9 +1798,17 @@ const PaintingWorkModule = (function() {
             : '<span style="color:var(--text-muted);">-</span>';
 
         const isInspectionCompleted = d.inspectionStatus === 'completed';
-        const statusBadge = isInspectionCompleted ?
-            '<span style="display:inline-block; background:var(--accent-green); color:white; padding:2px 8px; border-radius:4px; font-size:0.75rem; font-weight:600; margin-right:4px;">✓ 검사완료</span>' :
-            '';
+        // 도장-A → 레이저로 이어지는 품목은 도장검사 없이 레이저대기로 넘어가므로 inspectionStatus가 남지 않는다.
+        // 그 대신 레이저대기 입고처리(LaserStandbyModule 확인 기록)가 완료되면 같은 자리에 녹색으로 표시한다.
+        const isLaserInboundConfirmed = (!isInspectionCompleted &&
+            typeof LaserStandbyModule !== 'undefined' && typeof LaserStandbyModule.isLaserInboundConfirmed === 'function')
+            ? LaserStandbyModule.isLaserInboundConfirmed(d.id)
+            : false;
+        const statusBadge = isInspectionCompleted
+            ? '<span style="display:inline-block; background:var(--accent-green); color:white; padding:2px 8px; border-radius:4px; font-size:0.75rem; font-weight:600; margin-right:4px;">✓ 검사완료</span>'
+            : (isLaserInboundConfirmed
+                ? '<span style="display:inline-block; background:var(--accent-green); color:white; padding:2px 8px; border-radius:4px; font-size:0.75rem; font-weight:600; margin-right:4px;">✓ 레이져대기입고</span>'
+                : '');
         const overPlanBadge = d.overPlanQty
             ? '<span style="display:inline-block;background:#f59e0b;color:#fff;padding:2px 7px;border-radius:4px;font-size:0.7rem;font-weight:700;margin-right:3px;" title="계획수량 초과 등록됨">⚠ 초과</span>'
             : '';
@@ -1819,8 +1864,10 @@ const PaintingWorkModule = (function() {
             : (Math.abs(_xl) < 0.001
                 ? '<span style="color:#16a34a;font-weight:600;">0</span>'
                 : (_xl > 0
-                    ? '<span style="color:#d97706;font-weight:700;" title="분출 &gt; 투입 (과잉)">과잉 ' + UIUtils.formatNumber(_xl) + '</span>'
-                    : '<span style="color:#dc2626;font-weight:700;" title="분출 &lt; 투입 (유실)">유실 ' + UIUtils.formatNumber(Math.abs(_xl)) + '</span>'));
+                    // 분출(창고 출고) > 투입(현장 실적) → 분출된 자재 중 일부가 투입 기록에 잡히지 않음 = 유실
+                    ? '<span style="color:#dc2626;font-weight:700;" title="분출 &gt; 투입 (유실)">유실 ' + UIUtils.formatNumber(_xl) + '</span>'
+                    // 투입 > 분출 → 공식 분출량보다 더 많이 투입 기록됨 = 과잉
+                    : '<span style="color:#d97706;font-weight:700;" title="분출 &lt; 투입 (과잉)">과잉 ' + UIUtils.formatNumber(Math.abs(_xl)) + '</span>'));
         const missHtml = Math.abs(_miss) < 0.001
             ? '<span style="color:#16a34a;font-weight:600;">0</span>'
             : (_miss > 0
@@ -2546,6 +2593,93 @@ const PaintingWorkModule = (function() {
         } else {
             UIUtils.toast('쪽지 발송에 실패했습니다. 로그인·물류 담당자 계정을 확인하세요.', 'error');
         }
+    }
+
+    function openMaterialHistory(line) {
+        const want = line || _currentLine || '도장-A';
+        const STORE_INV = DB.STORES.PAINTING_INCOMING;
+        const today = UIUtils.today();
+        const all = (Storage.getAll(STORE_INV) || []).filter(function (r) {
+            return (r.line || r.paintLine || '').replace(/\s/g, '') === want.replace(/\s/g, '');
+        });
+        const past = all.filter(function (r) {
+            const d = String(r.useDate || r.date || '').slice(0, 10);
+            return d && d < today;
+        }).sort(function (a, b) {
+            return (b.useDate || b.date || '').localeCompare(a.useDate || a.date || '');
+        });
+
+        let filterDate = '';
+        const _render = function () {
+            const filtered = filterDate
+                ? past.filter(r => String(r.useDate || r.date || '').slice(0, 10) === filterDate)
+                : past.slice(0, 100);
+            const rows = filtered.length
+                ? filtered.map(function (r) {
+                    const d = String(r.useDate || r.date || '').slice(0, 10);
+                    const t = String(r.receivedAt || r.date || '');
+                    const time = t.length > 11 ? t.slice(11, 16) : '-';
+                    const lotNo = (Array.isArray(r.lots) && r.lots.length) ? r.lots[0].lotNo : (r.lotNo || '-');
+                    const qty = Number(r.quantity) || 0;
+                    const typeLabel = String(r.type || '입고');
+                    return `<tr>
+                        <td style="white-space:nowrap;padding:6px 10px;font-size:0.82rem;">${_esc(d)}</td>
+                        <td style="white-space:nowrap;padding:6px 10px;font-size:0.82rem;">${_esc(time)}</td>
+                        <td style="white-space:nowrap;padding:6px 10px;"><strong>${_esc(r.carModel || '-')}</strong></td>
+                        <td style="white-space:nowrap;padding:6px 10px;">${_esc(r.partName || '-')}</td>
+                        <td style="white-space:nowrap;padding:6px 10px;">${_esc(r.color || '-')}</td>
+                        <td style="white-space:nowrap;padding:6px 10px;font-family:monospace;font-size:0.8rem;">${_esc(lotNo)}</td>
+                        <td style="text-align:right;white-space:nowrap;padding:6px 10px;font-weight:700;">${_fmt(qty)}</td>
+                        <td style="white-space:nowrap;padding:6px 10px;font-size:0.78rem;">${_esc(typeLabel)}</td>
+                    </tr>`;
+                }).join('')
+                : `<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--text-muted);">해당 일자의 이력이 없습니다.</td></tr>`;
+            const tbody = document.getElementById('pwMatHistBody');
+            if (tbody) tbody.innerHTML = rows;
+            const countEl = document.getElementById('pwMatHistCount');
+            if (countEl) countEl.textContent = filtered.length + '건';
+        };
+
+        UIUtils.showModal(`${_esc(want)} 자재 이력`, `
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+                <label style="font-size:0.82rem;font-weight:600;">날짜 선택:</label>
+                <input type="date" id="pwMatHistDate" class="form-input" style="width:160px;padding:4px 8px;"
+                    value="" max="${today}">
+                <button type="button" class="btn btn-sm btn-primary" onclick="(function(){
+                    var v=document.getElementById('pwMatHistDate');
+                    window.__pwMatHistFilter=v?v.value:'';
+                    PaintingWorkModule._matHistRender();
+                })()">조회</button>
+                <button type="button" class="btn btn-sm btn-outline" onclick="(function(){
+                    document.getElementById('pwMatHistDate').value='';
+                    window.__pwMatHistFilter='';
+                    PaintingWorkModule._matHistRender();
+                })()">전체</button>
+                <span id="pwMatHistCount" style="font-size:0.78rem;color:var(--text-muted);margin-left:auto;">${past.length}건</span>
+            </div>
+            <div class="data-table-wrapper" style="max-height:420px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;">
+                <table class="data-table compact" style="width:100%;border-collapse:collapse;">
+                    <thead><tr>
+                        <th style="white-space:nowrap;padding:6px 10px;">날짜</th>
+                        <th style="white-space:nowrap;padding:6px 10px;">시간</th>
+                        <th style="white-space:nowrap;padding:6px 10px;">차종</th>
+                        <th style="white-space:nowrap;padding:6px 10px;">품명</th>
+                        <th style="white-space:nowrap;padding:6px 10px;">컬러</th>
+                        <th style="white-space:nowrap;padding:6px 10px;">LOT</th>
+                        <th style="text-align:right;white-space:nowrap;padding:6px 10px;">수량</th>
+                        <th style="white-space:nowrap;padding:6px 10px;">유형</th>
+                    </tr></thead>
+                    <tbody id="pwMatHistBody"></tbody>
+                </table>
+            </div>
+        `, { width: '820px' });
+
+        window.__pwMatHistFilter = '';
+        PaintingWorkModule._matHistRender = function () {
+            filterDate = window.__pwMatHistFilter || '';
+            _render();
+        };
+        _render();
     }
 
     function _updateLotSummary() {
@@ -5328,6 +5462,8 @@ const PaintingWorkModule = (function() {
         _qapOnPartNameChange,
         saveQuickAddPlan,
         confirmInputInbound,
+        openMaterialHistory,
+        _matHistRender: function() {},
         renderInputStockSection,
         _validateLotFormat,
         _checkLotFormat,

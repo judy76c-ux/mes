@@ -2459,7 +2459,9 @@ const ShippingInspectionModule = (function() {
                 lotNo    : record.lotNo,
                 quantity : lotSize,
                 type     : '입고',
-                source   : '출하검사 합격'
+                source   : '출하검사 합격',
+                // 도장작업 이력(사출 LOT 수입검사일·사용 도료 LOT) 역추적용 — 제품 창고 상세 모달에서 사용
+                standbyId: standbyId || ''
             });
         }
 
@@ -2818,12 +2820,23 @@ const ProductWarehouseModule = (function() {
             const color = d.color    || '';
             const key   = `${car}||${part}||${color}`;
             if (!itemMap[key]) {
-                itemMap[key] = { car, part, color, inQty: 0, outQty: 0, lastDate: '' };
+                itemMap[key] = { car, part, color, inQty: 0, outQty: 0, lastDate: '', traceable: false };
             }
             const qty = Number(d.quantity) || 0;
             if (d.type === '출고') itemMap[key].outQty += qty;
             else                   itemMap[key].inQty  += qty;
             if (d.date > itemMap[key].lastDate) itemMap[key].lastDate = d.date;
+
+            // 역추적(도장작업→사출 수입검사일·사용 도료 LOT) 가능 여부 — 확인용 * 표시
+            if (!itemMap[key].traceable && d.type !== '출고' && d.standbyId) {
+                const work = _findPaintingWorkForInv(d);
+                if (work) {
+                    const injPartName = work.injPartName || work.partName || part;
+                    const inspDates = _injectionInspDatesForLot(injPartName, car, d.lotNo);
+                    const paintLots = _paintLotsForPaintingWork(work.id);
+                    if (inspDates.length && paintLots.length) itemMap[key].traceable = true;
+                }
+            }
         });
 
         const items   = Object.values(itemMap);
@@ -2864,6 +2877,7 @@ const ProductWarehouseModule = (function() {
         }
 
         // 차종별 그룹핑
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
         const byCarModel = {};
         items.forEach(i => {
             const car = i.car || '차종 미지정';
@@ -2871,26 +2885,73 @@ const ProductWarehouseModule = (function() {
             byCarModel[car].push(i);
         });
 
-        const isAsItem = i => {
+        const _normItemType = raw => {
+            const t = String(raw || '').trim();
+            if (!t) return '';
+            if (t === '양산품' || t === '양산') return '양산품';
+            if (t === 'A/S품' || t === 'A/S') return 'A/S';
+            if (t === '개발품' || t === '개발') return '개발품';
+            if (/A\/?S/i.test(t)) return 'A/S';
+            if (/개발/.test(t)) return '개발품';
+            if (/양산/.test(t)) return '양산품';
+            return t;
+        };
+        const _itemTypeRank = t => {
+            if (t === '양산품') return 0;
+            if (t === 'A/S') return 1;
+            if (t === '개발품') return 2;
+            return 3;
+        };
+        // 공백/줄바꿈 표기 차이로 제품마스터 매칭이 실패해 품목구분(양산/A-S/개발) 판정이
+        // 틀어지는 사례가 있어 정규화 비교 + 컬러 불일치 시 차종·품명만으로 재시도한다.
+        const _normKey = s => String(s || '').trim().replace(/\s+/g, ' ');
+        const _findProduct = i => {
+            const car = _normKey(i.car), part = _normKey(i.part), color = _normKey(i.color);
+            const exact = products.find(p =>
+                _normKey(p.carModel) === car && _normKey(p.partName) === part && _normKey(p.color) === color
+            );
+            if (exact) return exact;
+            // 컬러 표기가 다르거나 비어 있어도 차종+품명이 일치하면 그 품목의 구분을 그대로 사용
+            return products.find(p => _normKey(p.carModel) === car && _normKey(p.partName) === part);
+        };
+        const resolveItemType = i => {
+            const prod = _findProduct(i);
+            if (prod && prod.itemType) return _normItemType(prod.itemType);
             const text = `${i.car || ''} ${i.part || ''} ${i.color || ''}`;
-            return /(^|[^A-Z0-9])A\/?S([^A-Z0-9]|$)/i.test(text) || /애프터|서비스/.test(text);
+            if (/(^|[^A-Z0-9])A\/?S([^A-Z0-9]|$)/i.test(text) || /애프터|서비스/.test(text)) return 'A/S';
+            return '양산품';
+        };
+        items.forEach(i => { i.itemType = resolveItemType(i); });
+
+        const getCarSection = car => {
+            const types = (byCarModel[car] || []).map(i => i.itemType);
+            if (types.length && types.every(t => t === 'A/S')) return 'as';
+            if (types.length && types.every(t => t === '개발품')) return 'dev';
+            return 'mass';
         };
 
-        // 양산 / A/S 차종 분리
+        // 양산품 → A/S → 개발품 차종 분리
         const sortBySize = cars => cars.sort((a, b) =>
             (byCarModel[b].length - byCarModel[a].length) || a.localeCompare(b, 'ko'));
-        const massanCars = sortBySize(Object.keys(byCarModel).filter(car => !byCarModel[car].every(isAsItem)));
-        const asCars     = sortBySize(Object.keys(byCarModel).filter(car =>  byCarModel[car].every(isAsItem)));
+        const allCars = Object.keys(byCarModel);
+        const massanCars = sortBySize(allCars.filter(car => getCarSection(car) === 'mass'));
+        const asCars     = sortBySize(allCars.filter(car => getCarSection(car) === 'as'));
+        const devCars    = sortBySize(allCars.filter(car => getCarSection(car) === 'dev'));
 
-        function renderCarBlock(car, isAs) {
-            const headerColor = isAs ? '#475569' : '#2563eb';
-            const group = byCarModel[car].sort((a, b) => {
-                const aAs = isAsItem(a) ? 1 : 0;
-                const bAs = isAsItem(b) ? 1 : 0;
-                return aAs - bAs ||
-                    (a.part || '').localeCompare(b.part, 'ko') ||
-                    (a.color || '').localeCompare(b.color, 'ko');
-            });
+        const _sectionStyle = section => {
+            if (section === 'as') return { header: '#475569', label: 'A/S 품목' };
+            if (section === 'dev') return { header: '#7c3aed', label: '개발품' };
+            return { header: '#2563eb', label: '양산품' };
+        };
+
+        function renderCarBlock(car, section) {
+            const style = _sectionStyle(section);
+            const headerColor = style.header;
+            const group = byCarModel[car].sort((a, b) =>
+                _itemTypeRank(a.itemType) - _itemTypeRank(b.itemType) ||
+                (a.part || '').localeCompare(b.part, 'ko') ||
+                (a.color || '').localeCompare(b.color, 'ko')
+            );
             const groupTotal = group.reduce((s, i) => s + (i.inQty - i.outQty), 0);
 
             const rows = group.map(i => {
@@ -2901,8 +2962,14 @@ const ProductWarehouseModule = (function() {
                     ? 'var(--accent-orange)'
                     : 'var(--accent-green)';
                 const keyEnc = encodeURIComponent(`${i.car}||${i.part}||${i.color}`);
-                const asTag = isAsItem(i)
+                const typeTag = i.itemType === 'A/S'
                     ? '<span style="font-size:0.58rem;background:#e2e8f0;color:#64748b;border-radius:3px;padding:0 3px;margin-left:3px;vertical-align:middle;">A/S</span>'
+                    : i.itemType === '개발품'
+                    ? '<span style="font-size:0.58rem;background:#ede9fe;color:#7c3aed;border-radius:3px;padding:0 3px;margin-left:3px;vertical-align:middle;">개발</span>'
+                    : '';
+                // 임시 확인용 표시 — 도장작업→사출 수입검사일·사용 도료 LOT 역추적 체인이 정상 동작하는 품목
+                const traceMark = i.traceable
+                    ? '<span title="역추적 가능: 상세 모달에서 사출 LOT 수입검사일 · 사용 도료 LOT 확인됨" style="color:var(--accent-blue);font-weight:800;margin-left:2px;cursor:help;">*</span>'
                     : '';
                 return `
                 <tr onclick="ProductWarehouseModule._showHistory('${keyEnc}', event)"
@@ -2910,7 +2977,7 @@ const ProductWarehouseModule = (function() {
                     onmouseover="this.style.background='var(--bg-secondary)'"
                     onmouseout="this.style.background=''">
                     <td style="padding:5px 8px;font-size:0.8rem;font-weight:600;border-bottom:1px solid var(--border-color);line-height:1.28;white-space:normal;word-break:break-word;min-width:150px;max-width:220px;">
-                        <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;" title="${_escapeHtml(i.part)}">${i.part}</span>${asTag}
+                        <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;" title="${_escapeHtml(i.part)}">${i.part}</span>${traceMark}${typeTag}
                     </td>
                     <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">${i.color || ''}</td>
                     <td style="padding:5px 8px;text-align:right;border-bottom:1px solid var(--border-color);white-space:nowrap;">
@@ -2961,14 +3028,14 @@ const ProductWarehouseModule = (function() {
             return Math.max(1, Math.min(n, byWidth, 6));
         }
 
-        function _packCarBlocks(cars, isAs) {
+        function _packCarBlocks(cars, section) {
             const colCount = _stockColCount(cars.length);
             const cols = Array.from({ length: colCount }, () => []);
             const heights = Array(colCount).fill(0);
             cars.forEach(function(car) {
                 const size = (byCarModel[car] || []).length || 1;
                 const minIdx = heights.indexOf(Math.min.apply(null, heights));
-                cols[minIdx].push(renderCarBlock(car, isAs));
+                cols[minIdx].push(renderCarBlock(car, section));
                 heights[minIdx] += size + 1;
             });
             return `<div style="display:flex;gap:10px;align-items:flex-start;width:100%;">
@@ -2979,18 +3046,21 @@ const ProductWarehouseModule = (function() {
         }
 
         let html = '';
+        let prevSection = false;
 
-        if (massanCars.length) {
-            html += sectionDivider('양산품', massanCars.length, '#2563eb');
-            html += _packCarBlocks(massanCars, false);
+        function appendSection(section, cars) {
+            if (!cars.length) return;
+            const style = _sectionStyle(section);
+            if (prevSection) html += '<div style="margin-top:20px;">';
+            html += sectionDivider(style.label, cars.length, style.header);
+            html += _packCarBlocks(cars, section);
+            if (prevSection) html += '</div>';
+            prevSection = true;
         }
 
-        if (asCars.length) {
-            html += `<div style="margin-top:${massanCars.length ? '20px' : '0'};">`;
-            html += sectionDivider('A/S 품목', asCars.length, '#64748b');
-            html += _packCarBlocks(asCars, true);
-            html += '</div>';
-        }
+        appendSection('mass', massanCars);
+        appendSection('as', asCars);
+        appendSection('dev', devCars);
 
         blocksEl.innerHTML = html;
     }
@@ -3151,6 +3221,45 @@ const ProductWarehouseModule = (function() {
             </div>`;
     }
 
+    // ── LOT 역추적: 제품창고 LOT(사출 LOT) → 도장작업 → 사출 수입검사일 / 사용 도료 LOT ──
+    // 제품창고 입고 기록의 standbyId(출하검사대기 id) → paintingWorkId(도장 작업 id)를 거쳐
+    // 도장 작업이 실제 사용한 사출 LOT(injPartName)과 배합실 대장(paint_mix, workId로 연결)을 찾는다.
+    function _findPaintingWorkForInv(rec) {
+        if (!rec || !rec.standbyId) return null;
+        const sb = Storage.getById(DB.STORES.SHIPPING_STANDBY, rec.standbyId);
+        if (!sb || !sb.paintingWorkId) return null;
+        return Storage.getById(DB.STORES.PAINTING_WORK, sb.paintingWorkId) || null;
+    }
+
+    // 사출 LOT(lotNo) + 사출품명(injPartName) + 차종으로 사출 수입검사 이력에서 검사일을 찾는다.
+    function _injectionInspDatesForLot(injPartName, carModel, lotNo) {
+        if (!lotNo) return [];
+        const inspections = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
+        const dates = new Set();
+        inspections.forEach(d => {
+            if (injPartName && d.partName !== injPartName) return;
+            if (carModel && d.carModel && d.carModel !== carModel) return;
+            const lotList = (Array.isArray(d.lots) && d.lots.length) ? d.lots : (d.lotNo ? [{ lotNo: d.lotNo }] : []);
+            if (lotList.some(l => String(l.lotNo || '') === String(lotNo))) dates.add(d.date || '');
+        });
+        return [...dates].filter(Boolean).sort();
+    }
+
+    // 도장 작업(workId)에 연결된 배합실 대장(paint_mix)에서 실제 사용한 도료명+제조LOT 목록을 찾는다.
+    function _paintLotsForPaintingWork(workId) {
+        if (!workId) return [];
+        const mixes = (Storage.getAll(DB.STORES.PROD_CONDITIONS) || [])
+            .filter(m => m._docKind === 'paint_mix' && m.workId === workId);
+        const out = [];
+        mixes.forEach(m => (m.usages || []).forEach(u => {
+            const lot = u.prodLot || u.lotNo || '';
+            if (!lot) return;
+            const label = u.paintName ? `${u.paintName}(${lot})` : lot;
+            if (!out.includes(label)) out.push(label);
+        }));
+        return out;
+    }
+
     // ── 품목 상세 모달 (사출 창고 패턴) ─────────────────────────────────
     async function _showHistory(keyEnc, event) {
         if (event) event.stopPropagation();
@@ -3172,6 +3281,14 @@ const ProductWarehouseModule = (function() {
         const outQty = records.filter(r => r.type === '출고').reduce((s, r) => s + (Number(r.quantity) || 0), 0);
         const currentLots = balance.lots;
 
+        // LOT(사출 LOT) → 도장 LOT(paintingDate)/standbyId 를 알아내기 위한 대표 입고 기록 매핑
+        const incomingByLot = {};
+        records.filter(r => r.type !== '출고').forEach(r => {
+            const lot = r.lotNo || '';
+            if (!lot) return;
+            if (!incomingByLot[lot] || String(r.date || '') > String(incomingByLot[lot].date || '')) incomingByLot[lot] = r;
+        });
+
         const lotRows = currentLots.map(l => {
             const lotNoAttr = _escapeHtml(l.lotNo || '').replace(/'/g, "\\'");
             const dateAttr = _escapeHtml(l.date || '').replace(/'/g, "\\'");
@@ -3180,10 +3297,21 @@ const ProductWarehouseModule = (function() {
                         style="margin-left:8px;font-size:0.72rem;padding:2px 8px;vertical-align:middle;"
                         onclick="event.stopPropagation();ProductWarehouseModule._openLotAdjust('${keyEnc}','${lotNoAttr}','${dateAttr}',${Number(l.qty) || 0})">수량 보정</button>`
                 : '';
+
+            const srcRec = incomingByLot[l.lotNo] || {};
+            const work = _findPaintingWorkForInv(srcRec);
+            const injPartName = work ? (work.injPartName || work.partName || part) : part;
+            const inspDates = _injectionInspDatesForLot(injPartName, car, l.lotNo);
+            const paintLots = _paintLotsForPaintingWork(work && work.id);
+            const paintLotsText = paintLots.length ? paintLots.join(', ') : '-';
+
             return `
             <tr>
                 <td style="white-space:nowrap;">${l.date || '-'}</td>
+                <td style="white-space:nowrap;">${_escapeHtml(srcRec.paintingDate || '-')}</td>
                 <td style="font-family:monospace;">${l.lotNo || '-'}</td>
+                <td style="white-space:nowrap;">${inspDates.length ? _escapeHtml(inspDates.join(', ')) : '-'}</td>
+                <td style="white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;" title="${_escapeHtml(paintLotsText)}">${_escapeHtml(paintLotsText)}</td>
                 <td style="text-align:right;white-space:nowrap;">
                     <span style="font-weight:600;color:var(--accent-green);">${UIUtils.formatNumber(l.qty)}</span>
                     ${adjustBtn}
@@ -3192,8 +3320,8 @@ const ProductWarehouseModule = (function() {
         }).join('');
 
         const lotSection = StockDetailUI.buildLotTableSection({
-            headers: ['입고일', 'LOT번호', '현재 수량'],
-            colSpan: 3,
+            headers: ['입고일', '도장 LOT', '사출 LOT', '수입검사일', '사용 도료 LOT', '현재 수량'],
+            colSpan: 6,
             rowsHtml: lotRows
         });
 

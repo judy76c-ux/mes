@@ -16863,6 +16863,30 @@ var PaintMixModule = (function() {
         renderResidualTab();
     }
 
+    // 배합실 도료 잔량 삭제(관리자 전용) — 잔량 데이터 자체가 창고출고·도료사용등록·실사조정
+    // 3개 원장을 합산한 계산값이라 원장을 직접 지우지 않고, 잔량을 0으로 만드는 상쇄
+    // 조정 기록을 남긴다(조정 이력과 동일한 방식 — 실사 잔량 0 입력과 결과가 같다).
+    function deleteMixResidual(materialId, lotNo) {
+        if (!_isAdmin()) { UIUtils.toast('관리자만 삭제할 수 있습니다.', 'warning'); return; }
+        const current = _calcMixingRoomResiduals().find(r => r.materialId === materialId && r.lotNo === lotNo);
+        if (!current) { UIUtils.toast('잔량 정보를 찾을 수 없습니다.', 'warning'); return; }
+        UIUtils.confirm(`${current.paintName} (LOT ${lotNo}) 잔량 ${UIUtils.formatNumber(current.residualG)}g을 삭제하시겠습니까?`, async () => {
+            const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? AuthModule.getCurrentUser() : null;
+            await Storage.add(STORE, {
+                _docKind: 'paint_residual_adjust',
+                kind: 'adjust',
+                materialId,
+                lotNo,
+                adjustG: -current.residualG,
+                date: UIUtils.today(),
+                note: '관리자 삭제 처리',
+                operator: user ? (user.name || '') : ''
+            });
+            UIUtils.toast('배합실 잔량이 삭제되었습니다.', 'success');
+            renderResidualTab();
+        });
+    }
+
     function _residualSupplierKey(r) {
         return (r.supplier || r.manufacturer || '미지정').trim() || '미지정';
     }
@@ -17124,6 +17148,12 @@ var PaintMixModule = (function() {
         const lotBadge = lotInvalid
             ? `<span title="제조 LOT은 제조일자 6자리(YYMMDD) 형식이어야 합니다. '조정' 버튼으로 바로잡아 주세요." style="margin-left:4px;background:#dc2626;color:#fff;font-size:0.6rem;font-weight:700;padding:1px 5px;border-radius:999px;white-space:nowrap;">수정 필요</span>`
             : '';
+        const canWrite = _canWritePaintMix();
+        const canDelete = _isAdmin();
+        const manageBtns = [
+            canWrite ? `<button class="btn btn-sm btn-outline" onclick="PaintMixModule.openMixResidualAdjust('${_js(r.materialId)}','${_js(r.lotNo)}')">조정</button>` : '',
+            canDelete ? `<button class="btn btn-sm btn-danger" onclick="PaintMixModule.deleteMixResidual('${_js(r.materialId)}','${_js(r.lotNo)}')" style="margin-left:4px;">삭제</button>` : ''
+        ].filter(Boolean).join('');
         return `<tr${fifo ? ` style="background:rgba(${fifo.level === 'violation' ? '220,38,38' : '245,158,11'},0.05);"` : ''}>
             <td style="width:120px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${_esc(r.paintName || '-')}">
                 <a href="javascript:void(0)" onclick="PaintMixModule.openResidualHistory('${_js(r.materialId)}','${_js(r.lotNo)}')"
@@ -17133,14 +17163,14 @@ var PaintMixModule = (function() {
             <td style="text-align:right;">${UIUtils.formatNumber(r.totalWithdrawG)}</td>
             <td style="text-align:right;">${UIUtils.formatNumber(r.totalUsedG)}</td>
             <td style="text-align:right;font-weight:700;color:${color};">${UIUtils.formatNumber(r.residualG)}</td>
-            ${_canWritePaintMix() ? `<td style="white-space:nowrap;"><button class="btn btn-sm btn-outline" onclick="PaintMixModule.openMixResidualAdjust('${_js(r.materialId)}','${_js(r.lotNo)}')">조정</button></td>` : ''}
+            ${(canWrite || canDelete) ? `<td style="white-space:nowrap;">${manageBtns}</td>` : ''}
         </tr>`;
     }
 
     function _renderResidualSupplierCard(group) {
         const items = [...group.items].sort((a, b) => (a.paintName || '').localeCompare(b.paintName || '', 'ko'));
         const fifoMap = _residualFifoMap(items);
-        const manageCol = _canWritePaintMix() ? '<th style="width:44px;">관리</th>' : '';
+        const manageCol = (_canWritePaintMix() || _isAdmin()) ? '<th style="width:88px;">관리</th>' : '';
         return `
             <div class="card" style="margin:0;">
                 <div class="card-header" style="padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
@@ -18594,7 +18624,7 @@ var PaintMixModule = (function() {
         _onResidualLotChange, _onRowCalc,
         _validateRow, _validateAllRows,
         renderResidualStock, filterResidualStock, exportResidualData, openResidualAdjust, saveResidualAdjust,
-        openMixResidualAdjust, saveMixResidualAdjust, openResidualHistory, _onResLotBlur,
+        openMixResidualAdjust, saveMixResidualAdjust, deleteMixResidual, openResidualHistory, _onResLotBlur,
         onResCategoryChange, onResSupplierChange,
         saveNew, edit, saveEdit, remove, exportData,
         renderFormulaAsStandard, renderUsageAsStandard

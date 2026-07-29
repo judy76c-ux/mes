@@ -165,47 +165,8 @@ const DashboardModule = (function() {
             <!-- 운영 게시판 -->
             <div id="dashBoardSection"></div>
 
-            <!-- 하단: 개선활동(좌) + 차트 2×2(우) -->
-            <div style="display:grid;grid-template-columns:minmax(220px,1fr) minmax(0,2.4fr);gap:10px;min-height:0;">
-                <div id="dashImprovementTiles"></div>
-                <div class="card" style="margin-bottom:0;padding:10px 14px;">
-                    <div style="font-size:.65rem;font-weight:700;color:var(--text-muted);letter-spacing:.07em;
-                                text-transform:uppercase;display:flex;align-items:center;gap:5px;margin-bottom:8px;">
-                        <span class="material-symbols-outlined" style="font-size:13px;">analytics</span>
-                        차트 (최근 30일)
-                    </div>
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-                        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;">
-                            <div style="font-size:.63rem;font-weight:700;color:var(--text-secondary);
-                                        display:flex;align-items:center;gap:4px;margin-bottom:6px;">
-                                <span class="material-symbols-outlined" style="font-size:12px;">bar_chart</span>공정별 처리 현황
-                            </div>
-                            <canvas id="processChart" style="max-height:140px;"></canvas>
-                        </div>
-                        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;">
-                            <div style="font-size:.63rem;font-weight:700;color:var(--text-secondary);
-                                        display:flex;align-items:center;gap:4px;margin-bottom:6px;">
-                                <span class="material-symbols-outlined" style="font-size:12px;">trending_up</span>일별 생산 추이
-                            </div>
-                            <canvas id="trendChart" style="max-height:140px;"></canvas>
-                        </div>
-                        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;">
-                            <div style="font-size:.63rem;font-weight:700;color:var(--text-secondary);
-                                        display:flex;align-items:center;gap:4px;margin-bottom:6px;">
-                                <span class="material-symbols-outlined" style="font-size:12px;">pie_chart</span>불량 유형별 분포
-                            </div>
-                            <canvas id="defectPieChart" style="max-height:140px;"></canvas>
-                        </div>
-                        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;">
-                            <div style="font-size:.63rem;font-weight:700;color:var(--text-secondary);
-                                        display:flex;align-items:center;gap:4px;margin-bottom:6px;">
-                                <span class="material-symbols-outlined" style="font-size:12px;">analytics</span>불량률 추이
-                            </div>
-                            <canvas id="defectRateChart" style="max-height:140px;"></canvas>
-                        </div>
-                    </div>
-                </div>
-            </div>
+            <!-- 하단: 개선활동 -->
+            <div id="dashImprovementTiles"></div>
         </div>`;
 
         renderProductionTiles();
@@ -217,7 +178,6 @@ const DashboardModule = (function() {
         _scheduleIdleWork(renderMonitorTiles);   // async + config fetch
         renderImprovementTiles();
         renderBoardSection();
-        _scheduleIdleWork(renderCharts);
         _bindCacheWarmRefreshOnce();
     }
 
@@ -1143,129 +1103,6 @@ const DashboardModule = (function() {
             </div>
             <div style="overflow:hidden;">${rows}</div>
         </div>`;
-    }
-
-    /* ══════════════════════════════════════════════════════════
-       차트
-    ══════════════════════════════════════════════════════════ */
-    var _charts = { process: null, trend: null, defectPie: null, defectRate: null };
-
-    function _destroyCharts() {
-        Object.keys(_charts).forEach(k => {
-            if (_charts[k]) { try { _charts[k].destroy(); } catch (e) {} _charts[k] = null; }
-        });
-    }
-
-    function renderCharts() {
-        if (typeof Chart === 'undefined') return;
-        _destroyCharts();
-        const s = UIUtils.monthAgo();
-        const e = UIUtils.today();
-        renderProcessChart(s, e);
-        renderTrendChart(s, e);
-        renderDefectPieChart(s, e);
-        renderDefectRateChart(s, e);
-    }
-
-    function renderProcessChart(start, end) {
-        const ctx = document.getElementById('processChart');
-        if (!ctx) return;
-        const data = [
-            { label:'생산계획', count: Storage.getByDateRange(STORE.PRODUCTION_PLANS, start, end).length,    color:'#3b82f6' },
-            { label:'사출검사', count: Storage.getByDateRange(STORE.INJECTION_INSPECTIONS, start, end).length, color:'#8b5cf6' },
-            { label:'도장입고', count: Storage.getByDateRange(STORE.PAINTING_INCOMING, start, end).length,    color:'#06b6d4' },
-            { label:'도장작업', count: Storage.getByDateRange(STORE.PAINTING_WORK, start, end).length,        color:'#0891b2' },
-            { label:'도장검사', count: Storage.getByDateRange(STORE.PAINTING_INSPECTIONS, start, end).length, color:'#f97316' },
-            { label:'출하검사', count: Storage.getByDateRange(STORE.SHIPPING_INSPECTIONS, start, end).length, color:'#f59e0b' },
-            { label:'제품출고', count: Storage.getByDateRange(STORE.PRODUCT_OUTGOING, start, end).length,     color:'#10b981' }
-        ];
-        _charts.process = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: data.map(d => d.label),
-                datasets: [{ label:'처리 건수', data: data.map(d => d.count),
-                    backgroundColor: data.map(d => d.color), borderRadius: 6, borderSkipped: false }]
-            },
-            options: { responsive:true, maintainAspectRatio:false,
-                plugins:{ legend:{ display:false } },
-                scales:{ y:{ beginAtZero:true, ticks:{ stepSize:1 } } } }
-        });
-    }
-
-    function renderTrendChart(start, end) {
-        const ctx = document.getElementById('trendChart');
-        if (!ctx) return;
-        const byDate = {};
-        Storage.getByDateRange(STORE.PAINTING_WORK, start, end).forEach(w => {
-            if (!byDate[w.date]) byDate[w.date] = 0;
-            byDate[w.date] += Number(w.productionQty) || 0;
-        });
-        const dates = Object.keys(byDate).sort();
-        _charts.trend = new Chart(ctx, {
-            type: 'line',
-            data: { labels: dates, datasets: [{
-                label:'생산량', data: dates.map(d => byDate[d]),
-                borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,0.1)',
-                fill:true, tension:0.4, pointRadius:4, pointHoverRadius:6
-            }] },
-            options: { responsive:true, maintainAspectRatio:false,
-                plugins:{ legend:{ display:false } },
-                scales:{ y:{ beginAtZero:true } } }
-        });
-    }
-
-    function renderDefectPieChart(start, end) {
-        const ctx = document.getElementById('defectPieChart');
-        if (!ctx) return;
-        const byType = {};
-        Storage.getByDateRange(STORE.PAINTING_INSPECTIONS, start, end).forEach(d => {
-            const n = d.defectName || '기타';
-            if (!byType[n]) byType[n] = 0;
-            byType[n] += Number(d.defectCount) || 0;
-        });
-        const labels = Object.keys(byType);
-        const values = Object.values(byType);
-        const colors = ['#ef4444','#f97316','#f59e0b','#84cc16','#22c55e','#06b6d4','#3b82f6','#8b5cf6','#ec4899','#6366f1'];
-        if (!labels.length) {
-            ctx.parentElement.innerHTML += '<div class="empty-state"><p>데이터가 없습니다.</p></div>';
-            ctx.style.display = 'none'; return;
-        }
-        _charts.defectPie = new Chart(ctx, {
-            type: 'doughnut',
-            data: { labels, datasets: [{
-                data: values, backgroundColor: colors.slice(0, labels.length),
-                borderWidth: 2, borderColor: '#fff'
-            }] },
-            options: { responsive:true, maintainAspectRatio:false,
-                plugins:{ legend:{ position:'right', labels:{ boxWidth:12 } } } }
-        });
-    }
-
-    function renderDefectRateChart(start, end) {
-        const ctx = document.getElementById('defectRateChart');
-        if (!ctx) return;
-        const prodByDate = {}, defByDate = {};
-        Storage.getByDateRange(STORE.PAINTING_WORK, start, end).forEach(w => {
-            if (!prodByDate[w.date]) prodByDate[w.date] = 0;
-            prodByDate[w.date] += Number(w.productionQty) || 0;
-        });
-        Storage.getByDateRange(STORE.PAINTING_INSPECTIONS, start, end).forEach(d => {
-            if (!defByDate[d.date]) defByDate[d.date] = 0;
-            defByDate[d.date] += Number(d.defectCount) || 0;
-        });
-        const dates = [...new Set([...Object.keys(prodByDate), ...Object.keys(defByDate)])].sort();
-        const rates = dates.map(d => ((defByDate[d] || 0) / Math.max(prodByDate[d] || 1, 1) * 100).toFixed(1));
-        _charts.defectRate = new Chart(ctx, {
-            type: 'line',
-            data: { labels: dates, datasets: [{
-                label:'불량률 (%)', data: rates,
-                borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,0.1)',
-                fill:true, tension:0.4, pointRadius:4
-            }] },
-            options: { responsive:true, maintainAspectRatio:false,
-                plugins:{ legend:{ display:false } },
-                scales:{ y:{ beginAtZero:true, title:{ display:true, text:'불량률 (%)' } } } }
-        });
     }
 
     /* ══════════════════════════════════════════════════════════

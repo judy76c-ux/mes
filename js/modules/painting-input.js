@@ -579,6 +579,153 @@ var PaintingInputModule = (function () {
         } catch (e) { /* ignore */ }
     }
 
+    function _nowHm() {
+        const d = new Date();
+        const p = function (n) { return String(n).padStart(2, '0'); };
+        return p(d.getHours()) + ':' + p(d.getMinutes());
+    }
+
+    function _resolveProductNamesFromInjPart(carModel, injPartName) {
+        const names = {};
+        const inj = String(injPartName || '').trim();
+        if (inj) names[inj] = true;
+        try {
+            (Storage.getAll(DB.STORES.INJECTION_MATERIALS) || []).forEach(function (m) {
+                if (!m || !m.injPartName) return;
+                if (carModel && m.carModel && m.carModel !== carModel) return;
+                if (String(m.injPartName).trim() !== inj) return;
+                const mfg1 = String(m.mfgProductName || '').trim();
+                const mfg2 = String(m.mfgProductName2 || '').trim();
+                if (mfg1) names[mfg1] = true;
+                if (mfg2) names[mfg2] = true;
+            });
+        } catch (e) { /* ignore */ }
+        return names;
+    }
+
+    /** 금일 생산계획 중 출고 건과 매칭되는 계획 목록 */
+    function findPlansForShipment(record, line, date) {
+        if (!record) return [];
+        const today = String(date || (UIUtils.today ? UIUtils.today() : '')).slice(0, 10);
+        const want = _normLine(line || record.paintLine || record.line);
+        const plans = (Storage.getAll(DB.STORES.PRODUCTION_PLANS) || []).filter(function (p) {
+            if (!p || String(p.date || '').slice(0, 10) !== today) return false;
+            return _normLine(p.line) === want;
+        });
+        if (record.planId) {
+            const byId = plans.find(function (p) { return p.id === record.planId; });
+            if (byId) return [byId];
+        }
+        const car = String(record.carModel || '').trim();
+        const injPart = String(record.partName || '').trim();
+        const color = String(record.color || '').trim();
+        const productNames = _resolveProductNamesFromInjPart(car, injPart);
+        return plans.filter(function (p) {
+            if (car && p.carModel && p.carModel !== car) return false;
+            const pPart = String(p.partName || '').trim();
+            if (pPart && !productNames[pPart] && pPart !== injPart) return false;
+            if (color && p.color && p.color !== color) return false;
+            return true;
+        });
+    }
+
+    function getPlanQtyForShipment(record, line, date) {
+        return findPlansForShipment(record, line, date).reduce(function (s, p) {
+            return s + (Number(p.planQty) || 0);
+        }, 0);
+    }
+
+    function getPlanEndTimeForShipment(record, line, date) {
+        let end = '';
+        findPlansForShipment(record, line, date).forEach(function (p) {
+            const t = String(p.endTime || '').trim();
+            if (t && (!end || t > end)) end = t;
+        });
+        return end;
+    }
+
+    function getTodayLinePlanTotal(line, date) {
+        const today = String(date || (UIUtils.today ? UIUtils.today() : '')).slice(0, 10);
+        const want = _normLine(line);
+        return (Storage.getAll(DB.STORES.PRODUCTION_PLANS) || []).reduce(function (s, p) {
+            if (!p || String(p.date || '').slice(0, 10) !== today) return s;
+            if (_normLine(p.line) !== want) return s;
+            return s + (Number(p.planQty) || 0);
+        }, 0);
+    }
+
+    function _fmtVarianceHtml(actual, planQty) {
+        const plan = Number(planQty) || 0;
+        const act = Number(actual) || 0;
+        if (!plan) {
+            return '<span style="font-size:0.78rem;color:var(--text-muted);">—</span>';
+        }
+        const diff = act - plan;
+        if (diff === 0) {
+            return '<span style="font-weight:700;color:#16a34a;">0</span>';
+        }
+        const color = diff > 0 ? '#ea580c' : '#2563eb';
+        const sign = diff > 0 ? '+' : '';
+        return '<span style="font-weight:700;color:' + color + ';" title="출고 ' + _fmt(act) + ' − 계획 ' + _fmt(plan) + '">'
+            + sign + _fmt(diff) + '</span>';
+    }
+
+    /** 모달 없이 현장 입고 (작업 완료 시각 자동 처리용) */
+    async function autoReceiveFromWarehouseOut(outId, line) {
+        if (!_canConfirmInbound(line)) return null;
+        const out = Storage.getById(DB.STORES.INJECTION_INVENTORY, outId);
+        if (!out) return null;
+        if (_findReceiveByOutId(outId)) return _findReceiveByOutId(outId);
+        const want = _normLine(line || out.paintLine || out.line);
+        const shipQty = Number(out.quantity) || 0;
+        if (shipQty <= 0) return null;
+        const today = UIUtils.today ? UIUtils.today() : '';
+        try {
+            return await receiveFromWarehouseOut(Object.assign({}, out, {
+                paintLine: want,
+                line: want
+            }), {
+                actualQty: shipQty,
+                useDate: today,
+                receivedBy: _currentActorLabel() || '자동입고'
+            });
+        } catch (e) {
+            console.warn('[PaintingInput] autoReceiveFromWarehouseOut failed:', e);
+            return null;
+        }
+    }
+
+    let _autoInboundBusy = false;
+
+    /** 생산계획 작업 완료 시각(endTime) 경과 시 미입고 건 자동 입고 */
+    async function runAutoSiteInbound(line) {
+        const want = _normLine(line);
+        if (!_canConfirmInbound(want) || _autoInboundBusy) return { processed: 0 };
+        const today = UIUtils.today ? UIUtils.today() : '';
+        const nowHm = _nowHm();
+        const pending = listTodayWarehouseShipments(want, today).filter(function (r) { return !r.received; });
+        if (!pending.length) return { processed: 0 };
+
+        _autoInboundBusy = true;
+        let processed = 0;
+        try {
+            for (let i = 0; i < pending.length; i++) {
+                const r = pending[i];
+                const endTime = getPlanEndTimeForShipment(r, want, today);
+                if (!endTime || nowHm < endTime) continue;
+                const rec = await autoReceiveFromWarehouseOut(r.id, want);
+                if (rec) processed++;
+            }
+            if (processed > 0) {
+                UIUtils.toast('작업 완료 시각 도달 — 자동 입고 ' + processed + '건 처리', 'success');
+                _refreshInboundViews();
+            }
+        } finally {
+            _autoInboundBusy = false;
+        }
+        return { processed: processed };
+    }
+
     /** 도장 작업현황 — 금일 창고 출고 목록 + 입고 처리
      *  opts.compact: 메인용 간단 표 (입고시간|차종|품명|수량)
      */
@@ -593,7 +740,10 @@ var PaintingInputModule = (function () {
         const inspMap = _buildInspDateMap();
         const confirmFn = opts.confirmFn || 'PaintingWorkModule.confirmInputInbound';
         const compact = !!opts.compact;
-        const colSpan = compact ? 6 : 10;
+        const colSpan = compact ? 6 : 13;
+        const today = UIUtils.today ? UIUtils.today() : '';
+        const planTotal = getTodayLinePlanTotal(want, today);
+        const varianceTotal = totalQty - planTotal;
 
         if (!list.length) {
             return {
@@ -601,6 +751,8 @@ var PaintingInputModule = (function () {
                 pendingCount: 0,
                 doneCount: 0,
                 total: 0,
+                planTotal: planTotal,
+                varianceTotal: varianceTotal,
                 html: `<tr><td colspan="${colSpan}" style="text-align:center;padding:20px;color:var(--text-muted);">
                     금일 자재 창고에서 ${_esc(want)}로 출고된 자재가 없습니다.
                 </td></tr>`
@@ -658,12 +810,17 @@ var PaintingInputModule = (function () {
                 pendingCount: pending.length,
                 doneCount: done.length,
                 total: totalQty,
+                planTotal: planTotal,
+                varianceTotal: varianceTotal,
                 html: html
             };
         }
 
         const html = list.map(function (r) {
             const recv = r.receiveRec || null;
+            const planQty = getPlanQtyForShipment(r, want, today);
+            const shipQty = Number(r.quantity) || 0;
+            const endTime = getPlanEndTimeForShipment(r, want, today);
             // 미입고: 창고 출고일시(라인 대기 시작) · 입고완료: 현장 입고일시
             // A↔B 이동 후에도 출고일시는 유지되므로 빈칸("-")이 되지 않음
             const stamp = r.received
@@ -688,7 +845,10 @@ var PaintingInputModule = (function () {
                         <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">move_to_inbox</span> 입고 처리
                        </button>`
                     : '<span style="font-size:0.75rem;color:var(--text-muted);">입력 권한 필요</span>');
-            return `<tr>
+            const endHint = endTime && !r.received
+                ? ' title="작업 완료 ' + _esc(endTime) + ' 이후 자동 입고"'
+                : '';
+            return `<tr${endHint}>
                 <td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">${_esc(dt.day)}</td>
                 <td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">${_esc(dt.time)}</td>
                 <td style="white-space:nowrap;padding:8px 10px;"><strong>${_esc(r.carModel || '-')}</strong></td>
@@ -696,7 +856,10 @@ var PaintingInputModule = (function () {
                 <td style="white-space:nowrap;padding:8px 10px;">${_esc(r.color || '-')}</td>
                 <td style="white-space:nowrap;padding:8px 10px;font-family:monospace;font-size:0.8rem;">${_esc(lotNo || '-')}</td>
                 <td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">${_esc(inspDate)}</td>
-                <td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:800;">${_fmt(r.quantity)}</td>
+                <td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:800;">${_fmt(shipQty)}</td>
+                <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${planQty ? _fmt(planQty) : '<span style="color:var(--text-muted);">—</span>'}</td>
+                <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${_fmtVarianceHtml(shipQty, planQty)}</td>
+                <td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">${_esc(endTime || '—')}</td>
                 <td style="white-space:nowrap;padding:8px 10px;">${statusHtml}</td>
                 <td style="white-space:nowrap;padding:8px 10px;">${actionHtml}</td>
             </tr>`;
@@ -707,6 +870,8 @@ var PaintingInputModule = (function () {
             pendingCount: pending.length,
             doneCount: done.length,
             total: totalQty,
+            planTotal: planTotal,
+            varianceTotal: varianceTotal,
             html: html
         };
     }
@@ -1160,6 +1325,12 @@ var PaintingInputModule = (function () {
         getLotsByInjPart: getLotsByInjPart,
         getLotsByCarPart: getLotsByCarPart,
         receiveFromWarehouseOut: receiveFromWarehouseOut,
+        autoReceiveFromWarehouseOut: autoReceiveFromWarehouseOut,
+        runAutoSiteInbound: runAutoSiteInbound,
+        findPlansForShipment: findPlansForShipment,
+        getPlanQtyForShipment: getPlanQtyForShipment,
+        getPlanEndTimeForShipment: getPlanEndTimeForShipment,
+        getTodayLinePlanTotal: getTodayLinePlanTotal,
         moveShipmentLine: moveShipmentLine,
         canMoveShipmentLine: _canMoveShipmentLine,
         normLine: _normLine

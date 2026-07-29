@@ -60,6 +60,58 @@ var IncomingOverviewModule = (function () {
     let _inj   = null;
     let _paint = null;
 
+    function _esc(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function _isAdminUser() {
+        return typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function'
+            && AuthModule.isAdminUser();
+    }
+
+    function _cutoverDay(v) {
+        return String(v == null ? '' : v).trim().slice(0, 10);
+    }
+
+    // MES 도입 초기 보정·오류 이력 — 직접입고(미검사) 목록에서 제외할 컷오버 시점
+    const VIOLATION_CUTOVER_KEY = 'incoming_direct_inbound_violation_cutover_v1';
+    let _violationCutover = '';
+    let _violationCutoverMeta = null;
+    let _violationCutoverLoaded = false;
+
+    function _parseCutoverConfig(v) {
+        if (!v) return { day: '', meta: null };
+        if (typeof v === 'string') return { day: _cutoverDay(v), meta: null };
+        if (typeof v === 'object') {
+            return { day: _cutoverDay(v.cutoverDate || v.date || ''), meta: v };
+        }
+        return { day: '', meta: null };
+    }
+
+    async function _ensureViolationCutoverLoaded(forceReload) {
+        if (_violationCutoverLoaded && !forceReload) return _violationCutover;
+        try {
+            const raw = await Storage.getConfigValue(VIOLATION_CUTOVER_KEY);
+            const parsed = _parseCutoverConfig(raw);
+            _violationCutover = parsed.day;
+            _violationCutoverMeta = parsed.meta;
+        } catch (e) {
+            _violationCutover = '';
+            _violationCutoverMeta = null;
+        }
+        _violationCutoverLoaded = true;
+        return _violationCutover;
+    }
+
+    function _isBeforeViolationCutover(recordDate) {
+        if (!_violationCutover) return false;
+        const d = _cutoverDay(recordDate);
+        if (!d) return false;
+        return d < _violationCutover;
+    }
+
     function init() {}
 
     function render(container) {
@@ -142,30 +194,84 @@ var IncomingOverviewModule = (function () {
             ].join('');
         }
 
-        renderProcessViolationWarning();
+        _ensureViolationCutoverLoaded().then(renderProcessViolationWarning).catch(renderProcessViolationWarning);
     }
 
-    /** 재고 오류 초기화 기록은 프로세스 위반 집계에서 제외 */
+    function _collectProcessViolationsRaw() {
+        const ctx = _buildInspLinkContext();
+        return (Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [])
+            .filter(function (d) { return _isDirectInboundWithoutInsp(d, ctx); })
+            .sort(function(a, b) { return String(b.date || '').localeCompare(String(a.date || '')); });
+    }
+
+    function _collectProcessViolations() {
+        return _collectProcessViolationsRaw().filter(function (d) {
+            return !_isBeforeViolationCutover(d.date);
+        });
+    }
     function _isStockErrorResetRecord(d) {
         return !!(d && (d.isStockErrorReset || d.resetAction === 'stock_error_reset'
             || /재고 오류 초기화/.test(String(d.source || ''))));
     }
 
+    /** 사출 창고 입고 ↔ 수입검사 연동 여부 (창고 상세·수입검사일 표시와 동일 기준) */
+    function _buildInspLinkContext() {
+        const inspDateMap = {};
+        (Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || []).forEach(function (insp) {
+            const lots = (insp.lots && insp.lots.length)
+                ? insp.lots
+                : (insp.lotNo ? [{ lotNo: insp.lotNo }] : []);
+            lots.forEach(function (lot) {
+                const lotNo = String(lot.lotNo || '').trim();
+                const part = String(insp.partName || '').trim();
+                if (!lotNo || !part) return;
+                const k = part + '||' + lotNo;
+                if (!inspDateMap[k]) inspDateMap[k] = insp.date || '';
+            });
+        });
+        const inboundInspMap = {};
+        (Storage.getAll(DB.STORES.INJECTION_INVENTORY) || []).forEach(function (r) {
+            if (r.type === '출고' || !r.partName || !r.lotNo) return;
+            const k = String(r.partName) + '||' + String(r.lotNo);
+            if (inboundInspMap[k]) return;
+            const src = String(r.source || '');
+            inboundInspMap[k] = {
+                inspDate: r.inspDate || '',
+                fromInsp: /수입검사/.test(src) || !!r.inspDate
+            };
+        });
+        return { inspDateMap: inspDateMap, inboundInspMap: inboundInspMap };
+    }
+
+    function _hasLinkedIncomingInspection(d, ctx) {
+        if (!d) return false;
+        if (d.inspId) return true;
+        if (d.inspDate) return true;
+        if (/수입검사/.test(String(d.source || ''))) return true;
+        const part = String(d.partName || '').trim();
+        const lotNo = String(d.lotNo || '').trim();
+        if (!part || !lotNo) return false;
+        const key = part + '||' + lotNo;
+        if (ctx.inspDateMap[key]) return true;
+        const inbound = ctx.inboundInspMap[key];
+        return !!(inbound && (inbound.fromInsp || inbound.inspDate));
+    }
+
     /** 수입검사 없이 창고 직접 입고된 건 = 프로세스 위반 */
-    function _isDirectInboundWithoutInsp(d) {
-        if (!d || d.type === '출고') return false;
+    function _isDirectInboundWithoutInsp(d, ctx) {
+        // 수입검사 누락으로 잡아내려는 대상은 "실제 외부/공급자 입고"입니다.
+        // 재고 정합을 위한 "보정/리셋/실사 반영" 기록까지 포함되면 누락 탐지가 오탐이 됩니다.
+        if (!d || d.type !== '입고') return false;
         if (_isStockErrorResetRecord(d)) return false;
         const src = String(d.source || '');
-        return !(/수입검사/.test(src) || !!d.inspDate);
+        // 재고 정합/실사 보정/일괄 보정 계열은 "수입검사 누락"이 아니라 "정정 이력"이므로 제외
+        if (/재고 수정 보정|일괄 현재고 보정/.test(src)) return false;
+        if (/실사 보정/.test(src)) return false;
+        if (_hasLinkedIncomingInspection(d, ctx)) return false;
+        return true;
     }
 
-    function _collectProcessViolations() {
-        return (Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [])
-            .filter(_isDirectInboundWithoutInsp)
-            .sort(function(a, b) { return String(b.date || '').localeCompare(String(a.date || '')); });
-    }
-
-    // 사출 수입검사 LOT 번호 형식 오류 — 이 화면(수입검사 메인)에 해당하는 항목만
+    /** 재고 오류 초기화 기록은 프로세스 위반 집계에서 제외 */
     // (재고 쪽 오류는 자재 창고 화면 몫이라 여기서는 src가 '수입검사'로 시작하는 것만 다룬다)
     function _injLotFormatErrors() {
         try {
@@ -219,6 +325,18 @@ var IncomingOverviewModule = (function () {
         const totalQty = violations.reduce(function(s, d) { return s + (Number(d.quantity) || 0); }, 0);
         const preview = violations.slice(0, 5);
         const fifoCount = (_inj && _inj.fifoCount) || 0;
+        const cutoverNote = _violationCutover
+            ? `<span style="color:var(--text-muted);font-weight:600;"> · 초기화 시점 ${_esc(_violationCutover)} 이전 제외</span>`
+            : '';
+        const adminBtns = _isAdminUser()
+            ? `<button type="button" class="btn btn-sm btn-outline"
+                    onclick="IncomingOverviewModule.openViolationCutoverModal()"
+                    style="font-size:0.7rem;padding:2px 8px;border-color:#94a3b8;color:#475569;white-space:nowrap;"
+                    title="MES 도입 초기 이력 제외 시점 설정">
+                    <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">history_toggle_off</span>
+                    이력 초기화
+               </button>`
+            : '';
 
         const standingNotice = `
             <div style="display:flex;align-items:flex-start;gap:8px;padding:8px 10px;
@@ -229,12 +347,17 @@ var IncomingOverviewModule = (function () {
                     <div style="font-weight:700;color:#b45309;font-size:0.78rem;">프로세스 규칙 — 수입검사 필수</div>
                     <div style="font-size:0.72rem;color:var(--text-secondary);margin-top:2px;">
                         수입검사 없는 직접 입고는 <strong style="color:#dc2626;">프로세스 위반</strong>입니다.
+                        ${violations.length ? `<span style="color:#dc2626;font-weight:700;"> · 직접 입고(미검사) ${violations.length}건</span>` : ''}
                         ${fifoCount > 0 ? `<span style="color:#ea580c;font-weight:600;"> · 선입선출 위반 ${fifoCount}건</span>` : ''}
+                        ${cutoverNote}
                     </div>
                 </div>
+                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                ${adminBtns}
                 ${fifoCount > 0 ? `<button type="button" class="btn btn-sm btn-outline"
                     onclick="IncomingOverviewModule.showInjFifo()"
                     style="font-size:0.7rem;padding:2px 8px;border-color:#fb923c;color:#ea580c;white-space:nowrap;">FIFO 목록</button>` : ''}
+                </div>
             </div>`;
 
         if (!violations.length) {
@@ -262,11 +385,14 @@ var IncomingOverviewModule = (function () {
                         <span style="background:#dc2626;color:#fff;border-radius:10px;padding:0 7px;font-size:0.68rem;font-weight:700;">${violations.length}건</span>
                         <span style="color:var(--text-muted);font-size:0.7rem;">${UIUtils.formatNumber(totalQty)} EA</span>
                     </div>
+                    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
                     <button type="button" class="btn btn-sm btn-outline"
                         onclick="IncomingOverviewModule.goWarehouseIncomingHistory()"
                         style="font-size:0.7rem;padding:2px 8px;border-color:#f59e0b;color:#b45309;">
                         입고이력
                     </button>
+                    ${adminBtns}
+                    </div>
                 </div>
                 <div style="overflow-x:auto;">
                     <table class="data-table" style="font-size:0.75rem;margin:0;">
@@ -401,22 +527,53 @@ var IncomingOverviewModule = (function () {
         return b;
     }
 
+    /* ── 사출 FIFO 위반 분석 (사출 입고 화면과 동일 기준) ── */
+    function _analyzeInjFifoViolations(data) {
+        const fifoViolations = new Set();
+        const fifoViolationLots = {};
+        const fifoPriorMaxLot = {};
+        const sorted = (data || []).slice().sort(function (a, b) {
+            return String(a.date || '').localeCompare(String(b.date || ''));
+        });
+        const maxLotByPart = {};
+        sorted.forEach(function (r) {
+            const key = (r.carModel || '') + '|' + (r.partName || '');
+            const lots = (r.lots && r.lots.length) ? r.lots : (r.lotNo ? [{ lotNo: r.lotNo }] : []);
+            const lotNos = lots.map(function (l) { return l.lotNo || ''; }).filter(Boolean);
+            const badLots = maxLotByPart[key]
+                ? lotNos.filter(function (ln) { return ln < maxLotByPart[key]; })
+                : [];
+            if (badLots.length) {
+                fifoViolations.add(r.id);
+                fifoViolationLots[r.id] = badLots;
+                fifoPriorMaxLot[r.id] = maxLotByPart[key];
+            }
+            const maxLot = lotNos.slice().sort().pop();
+            if (maxLot && (!maxLotByPart[key] || maxLot > maxLotByPart[key])) {
+                maxLotByPart[key] = maxLot;
+            }
+        });
+        return { fifoViolations: fifoViolations, fifoViolationLots: fifoViolationLots, fifoPriorMaxLot: fifoPriorMaxLot };
+    }
+
+    function _fifoReasonHtml(badLots, priorMax) {
+        if (!badLots || !badLots.length) {
+            return '<span style="color:var(--text-muted);">-</span>';
+        }
+        const prior = _esc(priorMax || '-');
+        const lots = badLots.map(function (ln) { return _esc(ln); }).join(', ');
+        return '<span style="font-size:0.76rem;line-height:1.45;color:#9a3412;">' +
+            '이전 검사 기준 최대 LOT <strong style="color:#ea580c;">' + prior + '</strong>보다 ' +
+            '이른 LOT <strong style="color:#ea580c;">' + lots + '</strong>를 나중에 검사함' +
+            '</span>';
+    }
+
     /* ── 사출 통계 ── */
     function _calcInjStats(monthStr) {
         const all  = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
         const data = all.filter(d => (d.date || '').startsWith(monthStr));
-        const fifoViolations = new Set();
-        const sorted = data.slice().sort((a, b) => (a.date||'').localeCompare(b.date||''));
-        const maxLot = {};
-        sorted.forEach(r => {
-            const key  = (r.carModel||'') + '|' + (r.partName||'');
-            const lots = (r.lots && r.lots.length) ? r.lots : (r.lotNo ? [{ lotNo: r.lotNo }] : []);
-            const lotNos = lots.map(l => l.lotNo||'').filter(Boolean);
-            const minL = lotNos.slice().sort()[0];
-            const maxL = lotNos.slice().sort().pop();
-            if (maxLot[key] && minL && minL < maxLot[key]) fifoViolations.add(r.id);
-            if (maxL && (!maxLot[key] || maxL > maxLot[key])) maxLot[key] = maxL;
-        });
+        const fifoAnalysis = _analyzeInjFifoViolations(data);
+        const fifoViolations = fifoAnalysis.fifoViolations;
         const certPending = data.filter(d => {
             const lots = (d.lots && d.lots.length) ? d.lots : (d.lotNo ? [{ lotNo: d.lotNo, certReceived: d.certReceived||false }] : []);
             return lots.length > 0 && !lots.some(l => l.certReceived);
@@ -430,7 +587,7 @@ var IncomingOverviewModule = (function () {
             failCount: failItems.length,
             certPending: certPending.length,
             fifoCount: fifoItems.length,
-            data, failItems, certPendingItems: certPending, fifoItems,
+            data, failItems, certPendingItems: certPending, fifoItems, fifoAnalysis,
         };
     }
 
@@ -495,17 +652,87 @@ var IncomingOverviewModule = (function () {
     }
     function showInjFifo() {
         if (!_inj || !_inj.fifoItems.length) return;
-        const rows = _inj.fifoItems.map(d => {
+        const analysis = _inj.fifoAnalysis || _analyzeInjFifoViolations(_inj.data);
+        const rows = _inj.fifoItems.map(function (d) {
             const lots = (d.lots && d.lots.length) ? d.lots : (d.lotNo ? [{ lotNo: d.lotNo }] : []);
-            return `<tr><td>${d.date||'-'}</td><td>${d.carModel||'-'}</td><td>${d.partName||'-'}</td>
-                <td style="text-align:right;">${UIUtils.formatNumber(d.incomingQty)}</td>
-                <td style="font-family:monospace;color:#ea580c;font-weight:700;">${lots.map(l=>l.lotNo||'-').join(', ')}</td>
-                <td>${d.supplierName||'-'}</td></tr>`;
+            const badLots = analysis.fifoViolationLots[d.id] || [];
+            const badSet = {};
+            badLots.forEach(function (ln) { badSet[ln] = true; });
+            const lotHtml = lots.map(function (l) {
+                const ln = l.lotNo || '-';
+                if (badSet[ln]) {
+                    return '<span style="font-family:monospace;color:#ea580c;font-weight:800;background:#fff7ed;' +
+                        'border:1px solid #fdba74;border-radius:4px;padding:0 4px;margin:0 2px 2px 0;">' +
+                        _esc(ln) + '</span>';
+                }
+                return '<span style="font-family:monospace;margin:0 2px 2px 0;">' + _esc(ln) + '</span>';
+            }).join('');
+            const reasonHtml = _fifoReasonHtml(badLots, analysis.fifoPriorMaxLot[d.id]);
+            const idEsc = _esc(d.id);
+            return '<tr style="background:rgba(234,88,12,0.03);">' +
+                '<td style="white-space:nowrap;font-size:0.8rem;">' + _esc(d.date || '-') + '</td>' +
+                '<td>' + _esc(d.carModel || '-') + '</td>' +
+                '<td><strong>' + _esc(d.partName || '-') + '</strong></td>' +
+                '<td style="text-align:right;">' + UIUtils.formatNumber(d.incomingQty) + '</td>' +
+                '<td style="min-width:120px;">' + (lotHtml || '-') + '</td>' +
+                '<td style="min-width:220px;max-width:300px;">' + reasonHtml + '</td>' +
+                '<td style="min-width:180px;">' +
+                    '<input type="text" class="form-input" value="' + _esc(d.fifoMeasure || '') + '"' +
+                    ' placeholder="조치 내용 입력 (예: 긴급 출하 승인)"' +
+                    ' style="font-size:0.76rem;padding:4px 6px;width:100%;"' +
+                    ' onchange="IncomingOverviewModule.saveFifoMeasure(\'' + idEsc + '\', this.value)">' +
+                '</td>' +
+                '<td style="white-space:nowrap;text-align:center;">' +
+                    '<button type="button" class="btn btn-sm btn-outline"' +
+                    ' onclick="InjectionIncomingModule.view(\'' + idEsc + '\')">보기</button>' +
+                '</td>' +
+                '</tr>';
         }).join('');
-        UIUtils.showModal('사출 수입검사 — FIFO 위반 목록', `<table class="data-table">
-            <thead><tr><th>검사일자</th><th>차종</th><th>품명</th><th>입고수량</th><th>LOT</th><th>사출처</th></tr></thead>
-            <tbody>${rows}</tbody></table>`,
-            '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>', 'lg');
+        UIUtils.showModal('사출 수입검사 — FIFO 위반 목록',
+            '<div style="padding:10px 12px;margin-bottom:10px;background:#fff7ed;border:1px solid #fdba74;' +
+                'border-radius:8px;font-size:0.78rem;line-height:1.5;color:#9a3412;">' +
+                '<strong>선입선출(FIFO) 위반 기준</strong><br>' +
+                '같은 차종·품명에서 이미 더 큰(최신) LOT를 검사한 뒤, ' +
+                '그보다 이른 LOT를 나중에 검사하면 위반입니다. ' +
+                '주황색 LOT가 위반 LOT입니다.' +
+            '</div>' +
+            '<div class="data-table-wrapper" style="max-height:480px;overflow:auto;">' +
+            '<table class="data-table" style="font-size:0.8rem;">' +
+            '<thead><tr>' +
+                '<th>검사일자</th><th>차종</th><th>품명</th><th>입고수량</th>' +
+                '<th>LOT</th><th>위반 사유</th><th>조치 내용</th><th>작업</th>' +
+            '</tr></thead>' +
+            '<tbody>' + rows + '</tbody></table></div>',
+            '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>',
+            'min(1100px, calc(100vw - 32px))');
+    }
+
+    async function saveFifoMeasure(id, measure) {
+        const trimmed = String(measure || '').trim();
+        if (typeof InjectionIncomingModule !== 'undefined' && InjectionIncomingModule.saveFifoMeasure) {
+            await InjectionIncomingModule.saveFifoMeasure(id, trimmed);
+        } else {
+            const record = Storage.getById(DB.STORES.INJECTION_INSPECTIONS, id);
+            if (!record) {
+                UIUtils.toast('기록을 찾을 수 없습니다.', 'error');
+                return;
+            }
+            try {
+                await Storage.update(DB.STORES.INJECTION_INSPECTIONS, id, { fifoMeasure: trimmed });
+                UIUtils.toast('조치 내용이 저장되었습니다.', 'success');
+            } catch (e) {
+                UIUtils.toast('저장 실패: ' + e.message, 'error');
+                return;
+            }
+        }
+        if (_inj) {
+            (_inj.fifoItems || []).forEach(function (item) {
+                if (item.id === id) item.fifoMeasure = trimmed;
+            });
+            (_inj.data || []).forEach(function (item) {
+                if (item.id === id) item.fifoMeasure = trimmed;
+            });
+        }
     }
     function showPaintFail() {
         if (!_paint || !_paint.failItems.length) return;
@@ -555,11 +782,143 @@ var IncomingOverviewModule = (function () {
             '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>', 'lg');
     }
 
+    function openViolationCutoverModal() {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 이력 초기화를 설정할 수 있습니다.', 'warning');
+            return;
+        }
+        const all = _collectProcessViolationsRaw();
+        const current = _violationCutover || '';
+        const defaultDate = current || (UIUtils.today ? UIUtils.today() : new Date().toISOString().slice(0, 10));
+        const meta = _violationCutoverMeta || {};
+        const appliedBy = meta.resetBy ? _esc(meta.resetBy) : '';
+        const appliedAt = meta.resetAt ? _esc(String(meta.resetAt).slice(0, 16).replace('T', ' ')) : '';
+
+        UIUtils.showModal(
+            '직접 입고(미검사) 이력 초기화',
+            '<div style="padding:10px 12px;margin-bottom:12px;background:rgba(59,130,246,0.06);' +
+                'border:1px solid rgba(59,130,246,0.25);border-radius:8px;font-size:0.8rem;line-height:1.55;">' +
+                'MES 도입 초기의 보정·오류 수정 등 <strong>과거 직접 입고 이력</strong>을 목록에서 제외합니다.<br>' +
+                '<strong>창고 입고 원본 데이터는 삭제·변경되지 않습니다.</strong>' +
+            '</div>' +
+            '<div class="form-group" style="margin-bottom:10px;">' +
+                '<label class="form-label">초기화 시점 <span style="color:var(--accent-red);">*</span></label>' +
+                '<input type="date" class="form-input" id="ioViolationCutoverDate" value="' + _esc(defaultDate) + '"' +
+                ' onchange="IncomingOverviewModule._previewViolationCutover()">' +
+                '<div style="font-size:0.75rem;color:var(--text-muted);margin-top:6px;">' +
+                    '이 날짜 <strong>이전</strong> 입고 건은 직접 입고(미검사) 목록에서 숨깁니다.' +
+                '</div>' +
+            '</div>' +
+            '<div id="ioViolationCutoverPreview" style="font-size:0.78rem;padding:8px 10px;background:var(--bg-secondary);' +
+                'border-radius:6px;color:var(--text-secondary);"></div>' +
+            (current
+                ? '<div style="margin-top:10px;font-size:0.76rem;color:var(--text-muted);">' +
+                    '현재 적용: <strong>' + _esc(current) + '</strong> 이전 제외' +
+                    (appliedBy ? ' · ' + appliedBy : '') +
+                    (appliedAt ? ' (' + appliedAt + ')' : '') +
+                  '</div>'
+                : ''),
+            '<button type="button" class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>' +
+            (current
+                ? '<button type="button" class="btn btn-outline" style="color:#dc2626;border-color:#fca5a5;"' +
+                    ' onclick="IncomingOverviewModule.clearViolationCutover()">초기화 해제</button>'
+                : '') +
+            '<button type="button" class="btn btn-primary" onclick="IncomingOverviewModule.saveViolationCutover()">적용</button>',
+            '520px'
+        );
+        _previewViolationCutover(all.length);
+    }
+
+    function _previewViolationCutover(totalRaw) {
+        const el = document.getElementById('ioViolationCutoverDate');
+        const preview = document.getElementById('ioViolationCutoverPreview');
+        if (!preview) return;
+        const day = _cutoverDay(el && el.value);
+        const raw = _collectProcessViolationsRaw();
+        const total = typeof totalRaw === 'number' ? totalRaw : raw.length;
+        if (!day) {
+            preview.textContent = '날짜를 선택하면 제외 건수를 미리 볼 수 있습니다.';
+            return;
+        }
+        const excluded = raw.filter(function (d) { return _cutoverDay(d.date) < day; }).length;
+        const remain = raw.filter(function (d) { return _cutoverDay(d.date) >= day; }).length;
+        preview.innerHTML = '<strong>' + _esc(day) + '</strong> 이전 <strong style="color:#dc2626;">' +
+            excluded.toLocaleString('ko-KR') + '건</strong> 제외 · 이후 표시 <strong style="color:#2563eb;">' +
+            remain.toLocaleString('ko-KR') + '건</strong> (전체 ' + total.toLocaleString('ko-KR') + '건)';
+    }
+
+    async function saveViolationCutover() {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 이력 초기화를 설정할 수 있습니다.', 'warning');
+            return;
+        }
+        const el = document.getElementById('ioViolationCutoverDate');
+        const day = _cutoverDay(el && el.value);
+        if (!day) {
+            UIUtils.toast('초기화 시점 날짜를 선택하세요.', 'warning');
+            return;
+        }
+        const raw = _collectProcessViolationsRaw();
+        const excluded = raw.filter(function (d) { return _cutoverDay(d.date) < day; }).length;
+        const remain = raw.length - excluded;
+
+        UIUtils.confirm(
+            day + ' 이전 직접 입고(미검사) ' + excluded.toLocaleString('ko-KR') + '건을 목록에서 제외합니다.\n' +
+            '이후 표시: ' + remain.toLocaleString('ko-KR') + '건\n\n' +
+            '창고 입고 원본 데이터는 변경되지 않습니다. 적용하시겠습니까?',
+            async function () {
+                const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
+                    ? AuthModule.getCurrentUser() : null;
+                const payload = {
+                    cutoverDate: day,
+                    resetAt: new Date().toISOString(),
+                    resetBy: (user && (user.displayName || user.username)) || ''
+                };
+                try {
+                    await Storage.setConfigValue(VIOLATION_CUTOVER_KEY, payload);
+                    _violationCutover = day;
+                    _violationCutoverMeta = payload;
+                    _violationCutoverLoaded = true;
+                    UIUtils.closeModal();
+                    UIUtils.toast('초기화 시점 ' + day + ' 적용 완료', 'success');
+                    renderProcessViolationWarning();
+                } catch (e) {
+                    UIUtils.toast('저장 실패: ' + (e && e.message ? e.message : e), 'error');
+                }
+            }
+        );
+    }
+
+    async function clearViolationCutover() {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 초기화를 해제할 수 있습니다.', 'warning');
+            return;
+        }
+        UIUtils.confirm(
+            '직접 입고(미검사) 이력 초기화 설정을 해제하고 전체 이력을 다시 표시하시겠습니까?',
+            async function () {
+                try {
+                    await Storage.setConfigValue(VIOLATION_CUTOVER_KEY, null);
+                    _violationCutover = '';
+                    _violationCutoverMeta = null;
+                    _violationCutoverLoaded = true;
+                    UIUtils.closeModal();
+                    UIUtils.toast('이력 초기화 설정이 해제되었습니다.', 'success');
+                    renderProcessViolationWarning();
+                } catch (e) {
+                    UIUtils.toast('해제 실패: ' + (e && e.message ? e.message : e), 'error');
+                }
+            }
+        );
+    }
+
     return {
         init, render,
-        showInjFail, showInjCert, showInjFifo,
+        showInjFail, showInjCert, showInjFifo, saveFifoMeasure,
         showPaintFail, showPaintCert, showPaintExpiring, showPaintExpired,
         goWarehouseIncomingHistory,
+        openViolationCutoverModal, saveViolationCutover, clearViolationCutover,
+        _previewViolationCutover,
     };
 })();
 

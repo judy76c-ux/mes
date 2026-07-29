@@ -1052,6 +1052,14 @@ var JigModule = (function () {
         return lines[0] || 'A라인';
     }
 
+    const APPLIED_LINE_OPTIONS = ['도장-A', '도장-B'];
+
+    function _appliedLineBadges(appliedLines) {
+        const lines = Array.isArray(appliedLines) ? appliedLines.filter(Boolean) : [];
+        if (!lines.length) return '<span style="color:var(--text-muted);">-</span>';
+        return lines.map(l => `<span style="background:var(--accent-blue);color:#fff;padding:1px 6px;border-radius:4px;font-size:0.7rem;margin-right:4px;white-space:nowrap;">${_esc(l)}</span>`).join('');
+    }
+
     function _photoThumbs(jig, key) {
         const photos = Array.isArray(jig[key]) ? jig[key].filter(Boolean).slice(0, 2) : [];
         if (!photos.length) return '<span style="color:var(--text-muted);">-</span>';
@@ -1115,6 +1123,8 @@ var JigModule = (function () {
                                     <th>구분</th>
                                     <th>품명</th>
                                     <th>수명 횟수</th>
+                                    <th>발주 수량</th>
+                                    <th>적용 라인</th>
                                     <th>재질</th>
                                     <th>구매처</th>
                                     <th>제작일</th>
@@ -1130,6 +1140,8 @@ var JigModule = (function () {
                                         <td>${_itemTypeBadge(itemTypeMap[`${j.carModel || ''}||${j.partName || ''}`])}</td>
                                         <td>${_esc(j.partName || '-')}</td>
                                         <td style="text-align:right;">${_fmt(j.maxCount || 0)}</td>
+                                        <td style="text-align:right;">${j.orderQty ? _fmt(j.orderQty) : '-'}</td>
+                                        <td>${_appliedLineBadges(j.appliedLines)}</td>
                                         <td>${_esc(j.material || '-')}</td>
                                         <td>${_esc(j.supplier || '-')}</td>
                                         <td>${_esc(j.madeDate || j.registDate || '-')}</td>
@@ -1140,7 +1152,7 @@ var JigModule = (function () {
                                         </td>
                                     </tr>
                                 `).join('') : `
-                                    <tr><td colspan="10" style="text-align:center;padding:36px;color:var(--text-muted);">등록된 도장 지그가 없습니다.</td></tr>
+                                    <tr><td colspan="12" style="text-align:center;padding:36px;color:var(--text-muted);">등록된 도장 지그가 없습니다.</td></tr>
                                 `}
                             </tbody>
                         </table>
@@ -1477,6 +1489,23 @@ var JigModule = (function () {
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
                 <div class="form-group">
+                    <label class="form-label">발주 수량</label>
+                    <input type="number" class="form-input" id="jigMasterOrderQty" value="${d.orderQty || ''}" min="0" placeholder="예: 2"${roAttr}>
+                </div>
+                <div class="form-group" style="grid-column:span 2;">
+                    <label class="form-label">적용 라인</label>
+                    <div style="display:flex;gap:14px;align-items:center;height:38px;">
+                        ${APPLIED_LINE_OPTIONS.map(line => `
+                            <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem;cursor:${readOnly ? 'default' : 'pointer'};">
+                                <input type="checkbox" class="jigMasterAppliedLine" value="${_esc(line)}" ${(Array.isArray(d.appliedLines) && d.appliedLines.includes(line)) ? 'checked' : ''}${roAttr}>
+                                ${_esc(line)}
+                            </label>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                <div class="form-group">
                     <label class="form-label">재질</label>
                     <input type="text" class="form-input" id="jigMasterMaterial" value="${_esc(d.material || '')}" placeholder="예: SUS, AL"${roAttr}>
                 </div>
@@ -1515,12 +1544,15 @@ var JigModule = (function () {
         if (!maxCount) { UIUtils.toast('수명 횟수를 입력하세요.', 'warning'); return null; }
         const prev = id ? (Storage.getById(STORE, id) || {}) : {};
         const madeDate = document.getElementById('jigMasterMadeDate')?.value || _today();
+        const appliedLines = Array.from(document.querySelectorAll('.jigMasterAppliedLine:checked')).map(el => el.value);
         return {
             ...prev,
             carModel,
             partName,
             line: prev.line || _lineForMaster(carModel, partName),
             maxCount,
+            orderQty: parseInt(document.getElementById('jigMasterOrderQty')?.value || 0) || 0,
+            appliedLines,
             material: document.getElementById('jigMasterMaterial')?.value.trim() || '',
             supplier: document.getElementById('jigMasterSupplier')?.value.trim() || '',
             madeDate,

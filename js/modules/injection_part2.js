@@ -3641,6 +3641,21 @@ var InjectionWarehouseModule = (function() {
         const titleIcon = type === '출고' ? 'do_not_disturb_on' : 'add_circle';
 
         UIUtils.showModal(`<span class="material-symbols-outlined" style="vertical-align:middle;color:${colorClass};">${titleIcon}</span> 사출 ${type} 등록`, `
+            ${type === '입고' ? `
+            <div style="margin-bottom:14px;padding:10px 14px;background:rgba(220,38,38,0.06);
+                border:1px solid rgba(220,38,38,0.35);border-radius:8px;line-height:1.55;">
+                <div style="display:flex;align-items:flex-start;gap:8px;">
+                    <span class="material-symbols-outlined" style="color:#dc2626;font-size:20px;flex-shrink:0;margin-top:1px;">warning</span>
+                    <div style="min-width:0;">
+                        <div style="font-size:0.84rem;font-weight:700;color:#dc2626;margin-bottom:4px;">
+                            수입 검사 공정에 수입검사 등록 지연인지 혹은 누락인지 통보부터 하세요. 프로세스 규칙에 어긋납니다.
+                        </div>
+                        <div style="font-size:0.76rem;color:#991b1b;font-weight:600;">
+                            Please report first whether incoming inspection registration is delayed or omitted in the incoming inspection process. This violates process rules.
+                        </div>
+                    </div>
+                </div>
+            </div>` : ''}
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">${type}일시</label>

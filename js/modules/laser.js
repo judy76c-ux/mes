@@ -5563,6 +5563,11 @@ var LaserStandbyModule = (function() {
         return (_inboundConfirms || []).find(function(r) { return String(r && r.sourceId) === id; }) || null;
     }
 
+    // 도장 작업 목록(painting.js)에서 "레이져대기입고" 배지 표시 여부 확인용 — 캐시 로드 후 동기 조회
+    function isLaserInboundConfirmed(paintingWorkId) {
+        return !!_getInboundConfirm(paintingWorkId);
+    }
+
     // 전환 기준선: 최초 1회 now로 세팅해 기존 실적을 자동 grandfather(확인완료 간주)한다.
     async function _ensureConfirmCutoverLoaded(forceReload = false) {
         if (_confirmCutoverLoaded && !forceReload) return _confirmCutover;
@@ -9428,6 +9433,8 @@ var LaserStandbyModule = (function() {
         applyListFilter,
         clearListFilter,
         ensureManualOverridesLoadedForWork,
+        ensureInboundConfirmLoaded: _ensureInboundConfirmLoaded,
+        isLaserInboundConfirmed,
         getStockSnapshotSync,
         getWorkLotSnapshotSync,
         normalizeStandbyRecord: function(row, products, injectionMaterials) {
