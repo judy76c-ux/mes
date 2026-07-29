@@ -1896,7 +1896,12 @@ const PaintingWorkModule = (function() {
             '<td style="' + td + 'white-space:nowrap;">' + overPlanBadge + timeChangeBadge + statusBadge + actionButtons + '</td></tr>';
     }
 
-    function renderWorkList() {
+    async function renderWorkList() {
+        // "레이져대기입고" 배지 판정에 필요한 확인 캐시를 먼저 채워둔다(없으면 항상 미확인으로 보임).
+        if (typeof LaserStandbyModule !== 'undefined' && typeof LaserStandbyModule.ensureInboundConfirmLoaded === 'function') {
+            try { await LaserStandbyModule.ensureInboundConfirmLoaded(); } catch (e) { console.warn('[PaintingWorkModule] laser inbound confirm preload failed:', e); }
+        }
+
         let data = _getWorkListBaseData();
 
         const uniqueCarModels = UIUtils.sortCarModels(data.map(d => d.carModel));
