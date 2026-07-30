@@ -930,26 +930,9 @@ var LaserWipModule = (function() {
     }
 
     function _tabNav() {
-        // 재공품 현황 레이아웃(보관 위치/박스 배치 편집기)은 대기품·후 재공품 탭에서만 의미가 있다(잔량 탭 제외).
-        const layoutAction = (_activeTab === 'standby' || _activeTab === 'after-laser')
-            ? _actionBtn('재공품 현황 레이아웃', 'map', "LaserStandbyModule.openLayout()")
-            : '';
-        const standbyActions = _canEditWip() ? `
-            ${_actionBtn('수동입고', 'arrow_downward', "LaserWipModule.openManualInput()", 'var(--accent-green)')}
-            ${_actionBtn('수동출고', 'arrow_upward',   "LaserStandbyModule.openStandbyOutModal()", 'var(--accent-red)')}` : '';
-        const afterActions = _canEditWip() ? `
-            ${_actionBtn('수동입고', 'arrow_downward', "LaserWipModule.openAfterLaserInput()", 'var(--accent-green)')}
-            ${_actionBtn('수동출고', 'arrow_upward',   "LaserWipModule.openAfterLaserOut()", 'var(--accent-red)')}` : '';
-        const residualActions = _canEditWip() ? `
-            ${_actionBtn('수동입고', 'arrow_downward', "LaserWipModule.openResidualInput()", 'var(--accent-green)')}
-            ${_actionBtn('수동출고', 'arrow_upward',   "LaserWipModule.openResidualOut()", 'var(--accent-red)')}` : '';
-        const currentActions = _activeTab === 'standby' ? standbyActions
-            : (_activeTab === 'after-laser' ? afterActions : residualActions);
-        return `
-        <div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
-            ${layoutAction}
-            ${currentActions}
-        </div>`;
+        // 재공품 현황 레이아웃 → 상단 LaserProcessUI 메뉴로 이동
+        // 수동입고/수동출고 → 숨김 (수량 보정·상세에서 처리)
+        return '';
     }
     function render(container) {
         _restoreActiveTab();
@@ -4292,14 +4275,6 @@ var LaserWipModule = (function() {
                 <button class="btn btn-sm btn-outline" style="font-size:0.78rem;"
                     onclick="UIUtils.closeModal();setTimeout(()=>LaserWipModule.openAdjustAfterLaserModal('${_jsArg(_keyJs)}'),80);">
                     <span class="material-symbols-outlined" style="font-size:0.9rem;">edit</span> 재공 보정
-                </button>
-                <button class="btn btn-sm btn-primary" style="font-size:0.78rem;"
-                    onclick="LaserWipModule._openAfterLaserInForPart('${_cmJs}','${_pnJs}','${_clJs}');">
-                    <span class="material-symbols-outlined" style="font-size:0.9rem;">login</span> 수동입고
-                </button>
-                <button class="btn btn-sm btn-danger" style="font-size:0.78rem;"
-                    onclick="LaserWipModule._openAfterLaserOutForPart('${_cmJs}','${_pnJs}','${_clJs}');">
-                    <span class="material-symbols-outlined" style="font-size:0.9rem;">logout</span> 수동 출고
                 </button>` : ''}
             ` : '')}
             ${unmatchedBanner}

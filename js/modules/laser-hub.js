@@ -16,6 +16,7 @@ var LaserProcessUI = (function () {
         { id: 'laser-wip-standby', label: '레이져 대기품',     subtitle: '도장 완료 후 대기',    icon: 'hourglass_top', accent: '#f97316', onclick: "LaserWipModule.openTab('standby')" },
         { id: 'laser-wip-after',   label: '레이져 후 재공품',  subtitle: '레이져 완료 재공품',   icon: 'bolt',          accent: '#8b5cf6', onclick: "LaserWipModule.openTab('after-laser')" },
         { id: 'laser-wip-residual',label: '레이져 잔량',       subtitle: '포장 미만 잔량',       icon: 'inventory_2',   accent: '#06b6d4', onclick: "LaserWipModule.openTab('after-laser-residual')" },
+        { id: 'laser-wip-layout',  label: '재공품 현황 레이아웃', subtitle: '보관 위치·배치',     icon: 'map',           accent: '#0d9488', onclick: "LaserStandbyModule.openLayout()" },
         { id: 'laser-jig-master',  label: '레이져 지그대장',   subtitle: '지그 기본 정보',       icon: 'view_list',     accent: '#ef4444' },
     ];
 

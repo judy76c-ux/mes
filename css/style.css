@@ -1406,11 +1406,11 @@ input[type="time"] {
 }
 
 .modal-container.modal-lg {
-    max-width: 1040px !important;
+    max-width: 1320px !important;
 }
 
 .modal-container.modal-xl {
-    max-width: 1248px !important;
+    max-width: 1488px !important;
     max-height: 110vh;
 }
 
@@ -2252,6 +2252,21 @@ input[type="time"] {
     to {
         opacity: 1;
     }
+}
+
+/* 수기조정(재고 감소) 이력 행 강조 — 상세 이력에서 조용히 묻히지 않도록 깜빡임 */
+@keyframes manualAdjustBlink {
+    0%, 100% {
+        background-color: rgba(234, 88, 12, 0.16);
+    }
+
+    50% {
+        background-color: rgba(234, 88, 12, 0.42);
+    }
+}
+
+.manual-adjust-loss-row {
+    animation: manualAdjustBlink 1.4s ease-in-out infinite;
 }
 
 @keyframes slideUp {
@@ -3377,6 +3392,12 @@ td {
 .modal-header {
     padding: 18px 24px;
     border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+    cursor: grab;
+    user-select: none;
+}
+
+.modal-header:active {
+    cursor: grabbing;
 }
 
 .modal-header h3 {

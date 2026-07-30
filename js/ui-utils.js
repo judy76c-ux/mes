@@ -160,15 +160,24 @@ const UIUtils = (function () {
     function makeDraggableModal(box, handle) {
         if (!box) return;
         const dragHandle = handle || _findDragHandle(box);
-        if (!dragHandle || box.dataset.draggableModalBound === 'true') return;
+        if (!dragHandle) return;
 
+        // 모달을 다시 열 때마다 핸들을 갱신 (이전 바인딩으로 드래그가 죽은 경우 복구)
+        if (box._modalDragCleanup) {
+            try { box._modalDragCleanup(); } catch (e) { /* ignore */ }
+            box._modalDragCleanup = null;
+        }
         box.dataset.draggableModalBound = 'true';
         dragHandle.dataset.modalDragHandle = 'true';
-        if (!dragHandle.style.cursor) dragHandle.style.cursor = 'move';
+        dragHandle.style.cursor = 'grab';
+        if (!dragHandle.getAttribute('title')) {
+            dragHandle.setAttribute('title', '드래그하여 창 이동');
+        }
 
-        dragHandle.addEventListener('mousedown', (event) => {
+        function onHandleDown(event) {
             if (event.button !== 0) return;
             if (event.target.closest('button, a, input, select, textarea, label, [role="button"], .btn, .modal-close-btn')) return;
+            event.preventDefault();
 
             _primeDraggableBoxPosition(box);
             const rect = box.getBoundingClientRect();
@@ -176,12 +185,15 @@ const UIUtils = (function () {
             const startY = event.clientY;
             const startLeft = rect.left;
             const startTop = rect.top;
+            const boxW = rect.width;
+            const boxH = rect.height;
 
             document.body.style.userSelect = 'none';
+            dragHandle.style.cursor = 'grabbing';
 
             function onMove(moveEvent) {
-                const nextLeft = _clamp(startLeft + (moveEvent.clientX - startX), 8, Math.max(8, window.innerWidth - rect.width - 8));
-                const nextTop = _clamp(startTop + (moveEvent.clientY - startY), 8, Math.max(8, window.innerHeight - rect.height - 8));
+                const nextLeft = _clamp(startLeft + (moveEvent.clientX - startX), 8, Math.max(8, window.innerWidth - boxW - 8));
+                const nextTop = _clamp(startTop + (moveEvent.clientY - startY), 8, Math.max(8, window.innerHeight - Math.min(boxH, window.innerHeight) - 8));
                 box.style.left = `${nextLeft}px`;
                 box.style.top = `${nextTop}px`;
             }
@@ -190,11 +202,18 @@ const UIUtils = (function () {
                 document.removeEventListener('mousemove', onMove);
                 document.removeEventListener('mouseup', onUp);
                 document.body.style.userSelect = '';
+                dragHandle.style.cursor = 'grab';
             }
 
             document.addEventListener('mousemove', onMove);
             document.addEventListener('mouseup', onUp);
-        });
+        }
+
+        dragHandle.addEventListener('mousedown', onHandleDown);
+        box._modalDragCleanup = function() {
+            dragHandle.removeEventListener('mousedown', onHandleDown);
+            delete box.dataset.draggableModalBound;
+        };
     }
 
     function _looksLikeFullOverlay(el) {
@@ -359,15 +378,22 @@ const UIUtils = (function () {
             container.style.boxShadow = '';
             _resetModalPosition(container);
             const sizeMap = {
-                sm: 'min(420px, calc(100vw - 32px))',
-                md: 'min(920px, calc(100vw - 32px))',
-                lg: 'min(1100px, calc(100vw - 32px))',
-                xl: 'min(1240px, calc(100vw - 32px))',
-                xxl: 'min(1360px, calc(100vw - 24px))',
-                xxxl: 'min(1500px, calc(100vw - 16px))'
+                sm: 'min(504px, calc(100vw - 32px))',
+                md: 'min(1104px, calc(100vw - 32px))',
+                lg: 'min(1320px, calc(100vw - 32px))',
+                xl: 'min(1488px, calc(100vw - 24px))',
+                xxl: 'min(1632px, calc(100vw - 16px))',
+                xxxl: 'min(1800px, calc(100vw - 16px))'
             };
             const resolvedWidth = sizeMap[options.size || 'md'] || options.size || sizeMap.md;
             container.style.setProperty('max-width', resolvedWidth, 'important');
+            // 클래스도 맞춤 (CSS !important 와의 충돌 방지)
+            container.classList.remove('modal-sm', 'modal-md', 'modal-lg', 'modal-xl', 'modal-xxl', 'modal-xxxl');
+            if (options.size && sizeMap[options.size]) {
+                container.classList.add('modal-' + options.size);
+            } else if (!options.size) {
+                container.classList.add('modal-md');
+            }
         }
 
         if (titleEl) titleEl.innerHTML = options.title || '';
@@ -443,15 +469,21 @@ const UIUtils = (function () {
         if (container) {
             _resetModalPosition(container);
             const sizeMap = {
-                sm: 'min(420px, calc(100vw - 32px))',
-                md: 'min(920px, calc(100vw - 32px))',
-                lg: 'min(1100px, calc(100vw - 32px))',
-                xl: 'min(1240px, calc(100vw - 32px))',
-                xxl: 'min(1360px, calc(100vw - 24px))',
-                xxxl: 'min(1500px, calc(100vw - 16px))'
+                sm: 'min(504px, calc(100vw - 32px))',
+                md: 'min(1104px, calc(100vw - 32px))',
+                lg: 'min(1320px, calc(100vw - 32px))',
+                xl: 'min(1488px, calc(100vw - 24px))',
+                xxl: 'min(1632px, calc(100vw - 16px))',
+                xxxl: 'min(1800px, calc(100vw - 16px))'
             };
             const resolvedWidth = sizeMap[options.size || 'md'] || options.size || sizeMap.md;
             container.style.setProperty('max-width', resolvedWidth, 'important');
+            container.classList.remove('modal-sm', 'modal-md', 'modal-lg', 'modal-xl', 'modal-xxl', 'modal-xxxl');
+            if (options.size && sizeMap[options.size]) {
+                container.classList.add('modal-' + options.size);
+            } else if (!options.size) {
+                container.classList.add('modal-md');
+            }
         }
         if (titleEl) titleEl.innerHTML = options.title || '';
         if (bodyEl) bodyEl.innerHTML = options.body || '';

@@ -190,9 +190,15 @@ var StockDetailUI = (function() {
         const paintKeyLot = splitLots ? paintLot : (item.paintLot || item.lot || '-');
         const paintShade = (!archiveOnly && /\d/.test(String(paintKeyLot || '')))
             ? _lotChipColor(paintKeyLot, 'paint') : null;
+        // 수기조정으로 재고가 줄어든 이력(sourceType=manual_override 출고)은 이력표에 조용히
+        // 묻히지 않도록 깜빡이는 배경으로 강조한다 (css/style.css의 manual-adjust-loss-row).
+        const isManualLossRow = !archiveOnly && isOut && String(item.sourceType || '') === 'manual_override';
         let rowStyle;
+        let rowClass = '';
         let firstCellExtra = '';
-        if (archiveOnly) {
+        if (isManualLossRow) {
+            rowClass = ' class="manual-adjust-loss-row"';
+        } else if (archiveOnly) {
             rowStyle = ' style="opacity:0.72;background:rgba(148,163,184,0.08);"';
         } else if (paintShade) {
             const bg = isCurrent ? 'rgba(37,99,235,.05)' : paintShade.bg;
@@ -204,7 +210,7 @@ var StockDetailUI = (function() {
         const paintLotData = encodeURIComponent(String(paintKeyLot || '-'));
 
         return `
-            <tr data-paint-lots="${paintLotData}"${rowStyle}>
+            <tr data-paint-lots="${paintLotData}"${rowStyle || ''}${rowClass}>
                 <td style="white-space:nowrap;font-size:0.8rem;${firstCellExtra}">${dateStamp}</td>
                 <td style="white-space:nowrap;">
                     <span style="font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:999px;

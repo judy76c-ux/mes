@@ -10,7 +10,7 @@
     <title>생산 공정 관리 시스템 (MES)</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231d4ed8'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-size='16' fill='white' font-family='Arial'%3EM%3C/text%3E%3C/svg%3E">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&display=swap" />
-    <link rel="stylesheet" href="css/style.css?v=15">
+    <link rel="stylesheet" href="css/style.css?v=16">
 </head>
 
 <body>
@@ -86,7 +86,7 @@
     </div>
     <div id="modal" class="modal-overlay">
         <div class="modal-container">
-            <div class="modal-header">
+            <div class="modal-header" data-modal-drag-handle="true" title="드래그하여 창 이동">
                 <h3 id="modalTitle"></h3><button class="modal-close-btn" id="modalCloseBtn"><span class="material-symbols-outlined">close</span></button>
             </div>
             <div class="modal-body" id="modalBody"></div>
@@ -110,7 +110,7 @@
     <script src="js/db.js?v=5"></script>
     <script src="js/api-client.js?v=8"></script>
     <script src="js/storage.js?v=6"></script>
-    <script src="js/ui-utils.js?v=8"></script>
+    <script src="js/ui-utils.js?v=9"></script>
     <script src="js/inventory-calc.js?v=8"></script>
     <script src="js/stock-detail-ui.js?v=24"></script>
     <script src="js/ui.js?v=1"></script>
@@ -124,7 +124,7 @@
     <script src="js/modules/board.js?v=1"></script>
     <script src="js/modules/production-plan.js?v=50"></script>
     <script src="js/modules/overtime-plan.js?v=4"></script>
-    <script src="js/modules/injection_part1.js?v=29"></script>
+    <script src="js/modules/injection_part1.js?v=30"></script>
     <script src="js/modules/injection_part2.js?v=78"></script>
     <script src="js/modules/injection-process.js?v=5"></script>
     <script src="js/modules/injection_work.js?v=5"></script>
@@ -138,16 +138,16 @@
     <script src="js/modules/painting-input.js?v=16"></script>
     <script src="js/modules/painting.js?v=129"></script>
     <script src="js/modules/rework-wip.js?v=1"></script>
-    <script src="js/modules/laser.js?v=180"></script>
-    <script src="js/modules/laser-wip.js?v=88"></script>
-    <script src="js/modules/laser-hub.js?v=16"></script>
+    <script src="js/modules/laser.js?v=187"></script>
+    <script src="js/modules/laser-wip.js?v=89"></script>
+    <script src="js/modules/laser-hub.js?v=17"></script>
     <script src="js/modules/laser-layout.js?v=5"></script>
     <script src="js/modules/sales.js?v=25"></script>
     <!-- production_mgmt_v91.js: lazy load (router가 필요 시 동적 로드) -->
     <script src="js/modules/improvement.js?v=18"></script>
     <script src="js/modules/shipping.js?v=63"></script>
     <script src="js/modules/shipping-hub.js?v=10"></script>
-    <script src="js/modules/jig.js?v=26"></script>
+    <script src="js/modules/jig.js?v=30"></script>
     <script src="js/modules/jig-layout.js?v=5"></script>
     <script src="js/modules/5s-management.js?v=7"></script>
     <script src="js/modules/certification-hub.js?v=4"></script>

@@ -1128,6 +1128,14 @@ var InjectionIncomingModule = (function() {
             UIUtils.toast('날짜와 품명은 필수입니다.', 'warning');
             return;
         }
+        if (!data.carModel) {
+            UIUtils.toast('차종을 선택하세요.', 'warning');
+            return;
+        }
+        if (!data.color) {
+            UIUtils.toast('컬러를 선택하세요.', 'warning');
+            return;
+        }
         if (!data.inspector) {
             UIUtils.toast('검사자를 선택하세요.', 'warning');
             return;
@@ -1526,6 +1534,18 @@ var InjectionIncomingModule = (function() {
             }
         });
 
+        if (!updateData.partName) {
+            UIUtils.toast('품명을 선택하세요.', 'warning');
+            return;
+        }
+        if (!updateData.carModel) {
+            UIUtils.toast('차종을 선택하세요.', 'warning');
+            return;
+        }
+        if (!updateData.color) {
+            UIUtils.toast('컬러를 선택하세요.', 'warning');
+            return;
+        }
         if (!updateData.inspector) {
             UIUtils.toast('검사자를 선택하세요.', 'warning');
             return;

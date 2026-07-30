@@ -147,10 +147,14 @@ var InvCalc = (function () {
         });
     }
 
+    // 총 재고 = LOT 잔량(map)의 합만 쓴다. map의 각 LOT은 이미 0 밑으로 안 내려가게
+    // 드레인됐으므로(_applyOutgoing) 이 합은 항상 실물 잔량이다. 과거에는 여기서 미차감(debt)을
+    // 다시 빼서 "총재고 = 단순 누적(입고-출고)"과 억지로 맞췄는데, 그러면 과거 어느 시점의
+    // 과다출고 한 건이 이후에 새로 들어온 정상 재고까지 영구히 깎아먹는 문제가 있었다.
+    // 미차감은 총재고에서 빼지 않고 unmatched로만 별도 추적 — LOT이 소진되면 그 LOT만 카운트를
+    // 멈추고, 못 맞춘 초과분은 미차감으로 표시해서 관리자가 반영/리셋으로 처리하게 한다.
     function _totalFromMap(map, unmatched, writeOff) {
-        const total = Object.values(map).reduce((s, l) => s + l.qty, 0);
-        const debt = (unmatched > 0 ? unmatched : 0) + (writeOff > 0 ? writeOff : 0);
-        return debt > 0 ? total - debt : total;
+        return Object.values(map).reduce((s, l) => s + l.qty, 0);
     }
 
     function _sortRecords(records) {
@@ -267,9 +271,9 @@ var InvCalc = (function () {
         return { total, lots, unmatched, writeOff, negatives: lots.filter(l => l.qty < 0), corrupted };
     }
 
-    /** 원장 기록 목록 → 총 재고(순합계). lotBalances().total 과 항상 같다. */
+    /** 원장 기록 목록 → 총 재고. lotBalances().total 과 항상 같다(LOT 기준, 미차감 제외). */
     function totalStock(records) {
-        return (records || []).reduce((s, rec) => s + signedQtyOf(rec), 0);
+        return lotBalances(records).total;
     }
 
     return { normDate, stampFor, recordStamp, entries, qtyOf, signedQtyOf, isQtyCorrupted, lotBalances, replaySteps, totalStock, UNMATCHED };

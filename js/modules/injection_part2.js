@@ -2093,8 +2093,8 @@ var InjectionWarehouseModule = (function() {
                                 <strong>이력을 확인</strong>한 뒤 <strong>반영</strong>할지 <strong>리셋</strong>할지 선택하세요.
                             </div>
                             <ul style="margin:8px 0 0;padding-left:18px;color:var(--text-secondary);">
-                                <li><strong>반영</strong> — LOT에서 미차감분(${_fmtStockQty(unmatchedQty)} EA)을 FIFO 차감 → 표시 재고 <strong>${_fmtStockQty(stock)}</strong> 유지, LOT 합계도 맞춤</li>
-                                <li><strong>리셋</strong> — 미차감만 0 · 표시 재고 <strong>${_fmtStockQty(stock)}</strong> 유지 (현재 재고를 맞춘 뒤)</li>
+                                <li><strong>반영</strong> — LOT에서 미차감분(${_fmtStockQty(unmatchedQty)} EA)을 FIFO 차감 → 표시 재고가 <strong>${_fmtStockQty(Math.max(0, stock - unmatchedQty))}</strong>로 줄어듭니다 (실물이 실제로 그만큼 부족했던 경우)</li>
+                                <li><strong>리셋</strong> — 미차감만 0 · 표시 재고 <strong>${_fmtStockQty(stock)}</strong> 그대로 유지 (과거 출고 기록 자체가 착오였던 경우)</li>
                                 <li><strong>이력 확인</strong> — 처리하지 않고 입출고 이력에서 원인 출고를 먼저 확인</li>
                             </ul>
                             <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;">
@@ -5128,16 +5128,16 @@ var InjectionWarehouseModule = (function() {
         }
         const title = isAbsorb ? '미차감 반영' : '미차감 리셋';
         const accent = isAbsorb ? '#b45309' : '#0369a1';
-        const resultStock = stock;
+        const resultStock = isAbsorb ? Math.max(0, stock - unmatched) : stock;
         const explain = isAbsorb
             ? `보유 LOT에서 미차감 ${UIUtils.formatNumber(unmatched)} EA를 FIFO로 차감합니다.<br>
-               · 표시 재고: <strong>${UIUtils.formatNumber(stock)}</strong> EA 유지<br>
-               · LOT 잔량 합계: ${UIUtils.formatNumber(lotSum)} → <strong>${UIUtils.formatNumber(stock)}</strong> EA<br>
-               · 실물보다 시스템이 높게 잡고 있을 때(과다 출고가 맞을 때) 선택하세요.`
+               · 표시 재고: ${UIUtils.formatNumber(stock)} → <strong>${UIUtils.formatNumber(resultStock)}</strong> EA로 감소<br>
+               · LOT 잔량 합계: ${UIUtils.formatNumber(lotSum)} → <strong>${UIUtils.formatNumber(resultStock)}</strong> EA<br>
+               · 실물이 실제로 그만큼 부족했던 경우(과다 출고가 맞을 때) 선택하세요.`
             : `미차감 ${UIUtils.formatNumber(unmatched)} EA만 <strong>0</strong>으로 만듭니다.<br>
-               · 표시 재고: <strong>${UIUtils.formatNumber(stock)}</strong> EA 유지 (이미 맞춘 재고 그대로)<br>
+               · 표시 재고: <strong>${UIUtils.formatNumber(stock)}</strong> EA 그대로 유지<br>
                · LOT 수량은 변경하지 않습니다.<br>
-               · 현재 재고를 맞춘 뒤 미차감 표시만 지울 때 사용합니다.`;
+               · 과거 출고 기록 자체가 착오였다고 판단될 때(실물은 부족하지 않을 때) 사용합니다.`;
 
         UIUtils.showModal(title, `
             <div style="background:${accent}12;border:1px solid ${accent}44;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:0.86rem;line-height:1.65;">
@@ -5210,10 +5210,13 @@ var InjectionWarehouseModule = (function() {
             );
             return;
         }
-        const stockAfterTarget = stockBefore;
+        const stockAfterTarget = isAbsorb ? Math.max(0, stockBefore - unmatched) : stockBefore;
         const actor = _getResetActorFields();
         const nowStr = (UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' '));
         const label = isAbsorb ? '미차감 반영' : '미차감 리셋';
+        const noteQtyText = isAbsorb
+            ? `재고 ${UIUtils.formatNumber(stockBefore)} → ${UIUtils.formatNumber(stockAfterTarget)} EA로 감소`
+            : `재고 ${UIUtils.formatNumber(stockBefore)} EA 유지`;
 
         try {
             await _addInventoryRecord({
@@ -5229,7 +5232,7 @@ var InjectionWarehouseModule = (function() {
                 source: label,
                 unmatchedAction: action,
                 resetReason: reason,
-                note: `[${label}] ${reason} · 미차감 ${UIUtils.formatNumber(unmatched)} EA → 0 · 재고 ${UIUtils.formatNumber(stockBefore)} EA 유지`,
+                note: `[${label}] ${reason} · 미차감 ${UIUtils.formatNumber(unmatched)} EA → 0 · ${noteQtyText}`,
                 unmatchedBefore: unmatched,
                 stockBefore: stockBefore,
                 stockAfterTarget: stockAfterTarget,
