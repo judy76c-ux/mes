@@ -2769,7 +2769,7 @@ var InjectionWarehouseModule = (function() {
             </div>
             <div id="injOutItemPaintLineGroup" class="form-group">
                 <label class="form-label">도착 라인 (도장 투입 자재) <span style="color:var(--accent-red)">*</span></label>
-                <div style="display:flex;gap:16px;align-items:center;padding:8px 0;">
+                <div style="display:flex;gap:28px;align-items:center;padding:8px 0;flex-wrap:wrap;">
                     <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem;">
                         <input type="radio" name="injOutItemPaintLine" id="injOutItemLineA" value="도장-A">
                         <span style="font-weight:700;color:#2563eb;">도장-A 자재</span>
@@ -3830,7 +3830,7 @@ var InjectionWarehouseModule = (function() {
                 </div>
                 <div class="form-group" id="addInvPaintLineGroup">
                     <label class="form-label">도착 라인 <span style="color:var(--accent-red)">*</span></label>
-                    <div style="display:flex;gap:12px;align-items:center;padding:8px 0;">
+                    <div style="display:flex;gap:28px;align-items:center;padding:8px 0;flex-wrap:wrap;">
                         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem;">
                             <input type="radio" name="addInvPaintLine" value="도장-A">
                             <span style="font-weight:700;color:#2563eb;">도장-A</span>
