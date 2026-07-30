@@ -1313,11 +1313,7 @@ var JigModule = (function () {
                                         <td>${_photoThumbs(j, 'productFitPhotos')}</td>
                                         <td>${_photoThumbs(j, 'thicknessPointPhotos')}</td>
                                         <td>
-                                            <div style="display:flex;gap:4px;flex-wrap:nowrap;white-space:nowrap;">
-                                                <button class="btn btn-outline btn-sm" onclick="JigModule.openJigMasterModal('${_js(j.id)}')">보기</button>
-                                                <button class="btn btn-outline btn-sm" onclick="JigModule.enableJigMasterEdit('${_js(j.id)}')">수정</button>
-                                                <button class="btn btn-danger btn-sm" onclick="JigModule.remove('${_js(j.id)}')">삭제</button>
-                                            </div>
+                                            <button class="btn btn-outline btn-sm" onclick="JigModule.openJigMasterModal('${_js(j.id)}')">보기</button>
                                         </td>
                                     </tr>`;
                                 }).join('') : `
@@ -2118,7 +2114,13 @@ var JigModule = (function () {
         UIUtils.showModal(
             '도장 지그 대장 수정',
             _masterFormHtml(jig, { readOnly: false }),
-            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="JigModule.saveJigMaster('${_js(id)}')">저장</button>`,
+            `<div style="display:flex;width:100%;align-items:center;gap:8px;">
+                <button class="btn btn-danger" onclick="JigModule.remove('${_js(id)}')">삭제</button>
+                <div style="margin-left:auto;display:flex;gap:8px;">
+                    <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+                    <button class="btn btn-primary" onclick="JigModule.saveJigMaster('${_js(id)}')">저장</button>
+                </div>
+            </div>`,
             'xl'
         );
         _ensureJigPasteListener();
