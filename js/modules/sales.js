@@ -52,7 +52,8 @@ var SalesProcessUI = (function () {
         { id: 'sales-delivery-consolidate', label: '납품계획 취합', desc: '취합 시트 붙여넣기 → 검토 후 반영', icon: 'content_paste', accent: '#eab308' },
         { id: 'sales-today-shipment', label: '납품 출하(금일)', desc: '금일 출하 계획품 관리', icon: 'outbox', accent: '#f97316' },
         { id: 'sales-delivery', label: '출고 등록', desc: '출고 리스트·납품처별 실적', icon: 'local_shipping', accent: '#8b5cf6' },
-        { id: 'sales-analytics', label: '영업관리', desc: '연간·월간·주간 매출 분석', icon: 'analytics', accent: '#10b981' }
+        { id: 'sales-analytics', label: '영업관리', desc: '연간·월간·주간 매출 분석', icon: 'analytics', accent: '#10b981' },
+        { id: 'sales-outsourcing', label: '외주처 관리', desc: '외주처 등록 · 외주처 출고 목록', icon: 'handshake', accent: '#0d9488' }
     ];
     function renderSection(activePage) {
         return `
@@ -4381,4 +4382,243 @@ var SalesTodayShipmentModule = (function () {
     }
 
     return { init, render, renderList, openForm, onCarChange, onPartChange, onLotChange, saveForm, remove };
+})();
+
+/**
+ * 6) 외주처 관리 — 외주처 마스터(등록·수정·삭제) + 자재창고에서 "외주처"로 출고된 목록 조회
+ *    (자재창고 출고 등록에서 출고구분=외주처로 저장된 INJECTION_INVENTORY 출고 기록을 그대로 조회한다)
+ */
+var SalesOutsourcingModule = (function() {
+    const CONFIG_KEY = 'outsourcing_partners_v1';
+    let _partners = [];
+    let _partnersLoaded = false;
+
+    function _esc(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    async function _ensurePartnersLoaded(force) {
+        if (_partnersLoaded && !force) return _partners;
+        const rows = await Storage.getConfigValue(CONFIG_KEY);
+        _partners = Array.isArray(rows) ? rows : [];
+        _partnersLoaded = true;
+        return _partners;
+    }
+
+    async function _savePartners() {
+        await Storage.setConfigValue(CONFIG_KEY, _partners);
+    }
+
+    // 자재창고 출고 모달의 "외주처" datalist 등에서 참조 — 동기 조회
+    function getPartnerNames() {
+        return _partners.map(function(p) { return p.name; }).filter(Boolean);
+    }
+
+    async function init() {
+        await _ensurePartnersLoaded();
+    }
+
+    async function render(container) {
+        await _ensurePartnersLoaded();
+        container.innerHTML = SalesProcessUI.renderSection('sales-outsourcing') + `
+            <div class="fade-in-up">
+                <div class="page-header">
+                    <div class="page-header-left">
+                        <h3>외주처 관리</h3>
+                        <p>외주처를 등록하고, 자재창고에서 외주처로 출고된 내역을 확인합니다.</p>
+                    </div>
+                    <div class="page-actions">
+                        <button class="btn btn-primary" onclick="SalesOutsourcingModule.openPartnerModal()">
+                            <span class="material-symbols-outlined">add</span> 외주처 등록
+                        </button>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-bottom:20px;">
+                    <div class="card-header">
+                        <h4><span class="material-symbols-outlined">handshake</span> 외주처 목록</h4>
+                        <span style="font-size:0.78rem;color:var(--text-muted);">${_partners.length}개 등록됨</span>
+                    </div>
+                    <div class="card-body" style="padding:0;">
+                        <div class="data-table-wrapper">
+                            <table class="data-table">
+                                <thead><tr><th>외주처명</th><th>담당자/연락처</th><th>비고</th><th style="width:130px;">작업</th></tr></thead>
+                                <tbody id="outsourcingPartnerBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h4><span class="material-symbols-outlined">local_shipping</span> 외주처 출고 목록</h4>
+                        <span id="outsourcingOutSummary" style="font-size:0.78rem;color:var(--text-muted);"></span>
+                    </div>
+                    <div class="filter-bar" style="flex-wrap:wrap;gap:10px;padding:10px 16px;">
+                        <input type="date" class="form-input" id="outsourcingFilterStart" value="${UIUtils.daysAgo(30)}" style="width:auto;" onchange="SalesOutsourcingModule.renderOutList()">
+                        <span style="align-self:center;">~</span>
+                        <input type="date" class="form-input" id="outsourcingFilterEnd" value="${UIUtils.today()}" style="width:auto;" onchange="SalesOutsourcingModule.renderOutList()">
+                        <select class="form-select" id="outsourcingFilterPartner" style="width:auto;" onchange="SalesOutsourcingModule.renderOutList()">
+                            <option value="">전체 외주처</option>
+                        </select>
+                    </div>
+                    <div class="card-body" style="padding:0;">
+                        <div class="data-table-wrapper">
+                            <table class="data-table">
+                                <thead><tr>
+                                    <th>출고일</th><th>외주처</th><th>차종</th><th>품명</th><th>컬러</th>
+                                    <th style="text-align:right;">수량</th><th>LOT</th><th>비고</th>
+                                </tr></thead>
+                                <tbody id="outsourcingOutBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+        _renderPartnerTable();
+        _populatePartnerFilter();
+        renderOutList();
+    }
+
+    function _renderPartnerTable() {
+        const body = document.getElementById('outsourcingPartnerBody');
+        if (!body) return;
+        if (!_partners.length) {
+            body.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:24px;color:var(--text-muted);">등록된 외주처가 없습니다.</td></tr>';
+            return;
+        }
+        body.innerHTML = _partners.map(function(p) {
+            return `<tr>
+                <td style="font-weight:600;">${_esc(p.name)}</td>
+                <td>${_esc(p.contact || '-')}</td>
+                <td style="color:var(--text-muted);">${_esc(p.memo || '-')}</td>
+                <td>
+                    <button class="btn btn-sm btn-outline" onclick="SalesOutsourcingModule.openPartnerModal('${_esc(p.id)}')">수정</button>
+                    <button class="btn btn-sm btn-danger" onclick="SalesOutsourcingModule.removePartner('${_esc(p.id)}')">삭제</button>
+                </td>
+            </tr>`;
+        }).join('');
+    }
+
+    function _populatePartnerFilter() {
+        const sel = document.getElementById('outsourcingFilterPartner');
+        if (!sel) return;
+        const current = sel.value;
+        sel.innerHTML = '<option value="">전체 외주처</option>' +
+            _partners.map(function(p) { return `<option value="${_esc(p.name)}">${_esc(p.name)}</option>`; }).join('');
+        sel.value = current;
+    }
+
+    function _collectOutsourcingOutRecords() {
+        const rows = Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [];
+        return rows.filter(function(r) {
+            return r && String(r.type || '') === '출고' && String(r.outgoingType || '') === '외주처';
+        }).sort(function(a, b) { return String(b.date || '').localeCompare(String(a.date || '')); });
+    }
+
+    function renderOutList() {
+        const body = document.getElementById('outsourcingOutBody');
+        const summaryEl = document.getElementById('outsourcingOutSummary');
+        if (!body) return;
+        const start = (document.getElementById('outsourcingFilterStart') || {}).value || '';
+        const end = (document.getElementById('outsourcingFilterEnd') || {}).value || '';
+        const partnerFilter = (document.getElementById('outsourcingFilterPartner') || {}).value || '';
+        let rows = _collectOutsourcingOutRecords();
+        rows = rows.filter(function(r) {
+            const day = String(r.date || '').slice(0, 10);
+            if (start && day < start) return false;
+            if (end && day > end) return false;
+            if (partnerFilter && String(r.outsourcingName || '') !== partnerFilter) return false;
+            return true;
+        });
+        if (summaryEl) {
+            summaryEl.textContent = `${rows.length}건 · ${UIUtils.formatNumber(rows.reduce(function(s, r) { return s + (Number(r.quantity) || 0); }, 0))} EA`;
+        }
+        if (!rows.length) {
+            body.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-muted);">조회된 외주처 출고 내역이 없습니다.</td></tr>';
+            return;
+        }
+        body.innerHTML = rows.map(function(r) {
+            const lotText = Array.isArray(r.lots) && r.lots.length
+                ? r.lots.map(function(l) { return l.lotNo; }).filter(Boolean).join(', ')
+                : (r.lotNo || '-');
+            return `<tr>
+                <td style="white-space:nowrap;">${_esc(r.date || '-')}</td>
+                <td style="font-weight:600;">${_esc(r.outsourcingName || '-')}</td>
+                <td>${_esc(r.carModel || '-')}</td>
+                <td>${_esc(r.partName || '-')}</td>
+                <td>${_esc(r.color || '-')}</td>
+                <td style="text-align:right;font-weight:600;">${UIUtils.formatNumber(r.quantity || 0)}</td>
+                <td style="font-family:monospace;font-size:0.8rem;">${_esc(lotText)}</td>
+                <td style="font-size:0.8rem;color:var(--text-muted);">${_esc(r.memo || r.note || '-')}</td>
+            </tr>`;
+        }).join('');
+    }
+
+    function openPartnerModal(id) {
+        const existing = id ? _partners.find(function(p) { return p.id === id; }) : null;
+        UIUtils.showModal(existing ? '외주처 수정' : '외주처 등록', `
+            <input type="hidden" id="outsourcingPartnerId" value="${existing ? _esc(existing.id) : ''}">
+            <div class="form-group">
+                <label class="form-label">외주처명 <span style="color:var(--accent-red)">*</span></label>
+                <input type="text" class="form-input" id="outsourcingPartnerName" value="${existing ? _esc(existing.name) : ''}" placeholder="예: 대한금형">
+            </div>
+            <div class="form-group">
+                <label class="form-label">담당자/연락처</label>
+                <input type="text" class="form-input" id="outsourcingPartnerContact" value="${existing ? _esc(existing.contact || '') : ''}" placeholder="예: 홍길동 010-1234-5678">
+            </div>
+            <div class="form-group">
+                <label class="form-label">비고</label>
+                <textarea class="form-textarea" id="outsourcingPartnerMemo" rows="2">${existing ? _esc(existing.memo || '') : ''}</textarea>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="SalesOutsourcingModule.savePartner()">저장</button>
+        `, 'md');
+    }
+
+    async function savePartner() {
+        const id = (document.getElementById('outsourcingPartnerId') || {}).value || '';
+        const name = ((document.getElementById('outsourcingPartnerName') || {}).value || '').trim();
+        const contact = ((document.getElementById('outsourcingPartnerContact') || {}).value || '').trim();
+        const memo = ((document.getElementById('outsourcingPartnerMemo') || {}).value || '').trim();
+        if (!name) { UIUtils.toast('외주처명을 입력하세요.', 'warning'); return; }
+        if (id) {
+            const idx = _partners.findIndex(function(p) { return p.id === id; });
+            if (idx >= 0) _partners[idx] = Object.assign({}, _partners[idx], { name: name, contact: contact, memo: memo });
+        } else {
+            if (_partners.some(function(p) { return p.name === name; })) {
+                UIUtils.toast('이미 등록된 외주처명입니다.', 'warning');
+                return;
+            }
+            _partners.push({ id: Storage.generateId(), name: name, contact: contact, memo: memo, createdAt: new Date().toISOString() });
+        }
+        await _savePartners();
+        UIUtils.closeModal();
+        UIUtils.toast('외주처 정보가 저장되었습니다.', 'success');
+        _renderPartnerTable();
+        _populatePartnerFilter();
+    }
+
+    function removePartner(id) {
+        UIUtils.confirm('이 외주처를 삭제하시겠습니까? (이미 등록된 출고 이력은 남습니다)', async function() {
+            _partners = _partners.filter(function(p) { return p.id !== id; });
+            await _savePartners();
+            _renderPartnerTable();
+            _populatePartnerFilter();
+            UIUtils.toast('삭제되었습니다.', 'success');
+        });
+    }
+
+    return {
+        init: init,
+        render: render,
+        renderOutList: renderOutList,
+        openPartnerModal: openPartnerModal,
+        savePartner: savePartner,
+        removePartner: removePartner,
+        getPartnerNames: getPartnerNames,
+        ensurePartnersLoaded: _ensurePartnersLoaded
+    };
 })();

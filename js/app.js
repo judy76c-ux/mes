@@ -301,6 +301,7 @@ const App = (function() {
         Router.registerModule('sales-delivery-consolidate', DeliveryConsolidateModule);
         Router.registerModule('sales-today-shipment', SalesTodayShipmentModule);
         Router.registerModule('sales-analytics', SalesAnalyticsModule);
+        Router.registerModule('sales-outsourcing', SalesOutsourcingModule);
         Router.registerModule('painting-jig', {
             render: function(container) {
                 JigModule.renderHub(container);

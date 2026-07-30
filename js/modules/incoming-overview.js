@@ -106,10 +106,19 @@ var IncomingOverviewModule = (function () {
     }
 
     function _isBeforeViolationCutover(recordDate) {
-        if (!_violationCutover) return false;
+        const cutover = _getEffectiveViolationCutover();
         const d = _cutoverDay(recordDate);
         if (!d) return false;
-        return d < _violationCutover;
+        return d < cutover;
+    }
+
+    function _todayCutover() {
+        return UIUtils.today ? UIUtils.today() : new Date().toISOString().slice(0, 10);
+    }
+
+    /** 과거 직접입고 이력은 경고 대상 아님 — 당일(또는 관리자 지정일)부터만 모니터 */
+    function _getEffectiveViolationCutover() {
+        return _violationCutover || _todayCutover();
     }
 
     function init() {}
@@ -214,6 +223,37 @@ var IncomingOverviewModule = (function () {
             || /재고 오류 초기화/.test(String(d.source || ''))));
     }
 
+    /** 사출자재 마스터·입고 기록 기준 수입검사 대상 여부 (injection_part1: 외부 공급처만) */
+    function _isIncomingInspectionTarget(d, ctx) {
+        if (!d) return false;
+        const recordSupplier = String(d.supplier || '').trim();
+        if (recordSupplier === '사내') return false;
+
+        const car = String(d.carModel || '').trim();
+        const part = String(d.partName || '').trim();
+        const color = String(d.color || '').trim();
+        if (!car || !part) return true;
+
+        const materials = (ctx && ctx.materials) || Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+        let candidates = materials.filter(function (m) {
+            return String(m.carModel || '').trim() === car
+                && String(m.injPartName || m.partName || '').trim() === part;
+        });
+        if (color) {
+            const byColor = candidates.filter(function (m) {
+                const mc = String(m.injColor || m.color || '').trim();
+                return !mc || mc === color;
+            });
+            if (byColor.length) candidates = byColor;
+        }
+        if (!candidates.length) {
+            return recordSupplier !== '' && recordSupplier !== '사내';
+        }
+        return candidates.some(function (m) {
+            return String(m.supplier || '').trim() !== '사내';
+        });
+    }
+
     /** 사출 창고 입고 ↔ 수입검사 연동 여부 (창고 상세·수입검사일 표시와 동일 기준) */
     function _buildInspLinkContext() {
         const inspDateMap = {};
@@ -240,7 +280,11 @@ var IncomingOverviewModule = (function () {
                 fromInsp: /수입검사/.test(src) || !!r.inspDate
             };
         });
-        return { inspDateMap: inspDateMap, inboundInspMap: inboundInspMap };
+        return {
+            inspDateMap: inspDateMap,
+            inboundInspMap: inboundInspMap,
+            materials: Storage.getAll(DB.STORES.INJECTION_MATERIALS) || []
+        };
     }
 
     function _hasLinkedIncomingInspection(d, ctx) {
@@ -267,6 +311,7 @@ var IncomingOverviewModule = (function () {
         // 재고 정합/실사 보정/일괄 보정 계열은 "수입검사 누락"이 아니라 "정정 이력"이므로 제외
         if (/재고 수정 보정|일괄 현재고 보정/.test(src)) return false;
         if (/실사 보정/.test(src)) return false;
+        if (!_isIncomingInspectionTarget(d, ctx)) return false;
         if (_hasLinkedIncomingInspection(d, ctx)) return false;
         return true;
     }
@@ -325,9 +370,8 @@ var IncomingOverviewModule = (function () {
         const totalQty = violations.reduce(function(s, d) { return s + (Number(d.quantity) || 0); }, 0);
         const preview = violations.slice(0, 5);
         const fifoCount = (_inj && _inj.fifoCount) || 0;
-        const cutoverNote = _violationCutover
-            ? `<span style="color:var(--text-muted);font-weight:600;"> · 초기화 시점 ${_esc(_violationCutover)} 이전 제외</span>`
-            : '';
+        const monitorFrom = _getEffectiveViolationCutover();
+        const cutoverNote = `<span style="color:var(--text-muted);font-weight:600;"> · ${ _esc(monitorFrom) } 이전 직접입고 이력 미표시</span>`;
         const adminBtns = _isAdminUser()
             ? `<button type="button" class="btn btn-sm btn-outline"
                     onclick="IncomingOverviewModule.openViolationCutoverModal()"
@@ -347,6 +391,7 @@ var IncomingOverviewModule = (function () {
                     <div style="font-weight:700;color:#b45309;font-size:0.78rem;">프로세스 규칙 — 수입검사 필수</div>
                     <div style="font-size:0.72rem;color:var(--text-secondary);margin-top:2px;">
                         수입검사 없는 직접 입고는 <strong style="color:#dc2626;">프로세스 위반</strong>입니다.
+                        <span style="color:var(--text-muted);">(사내 사출품·과거 이력 제외, 당일부터 모니터)</span>
                         ${violations.length ? `<span style="color:#dc2626;font-weight:700;"> · 직접 입고(미검사) ${violations.length}건</span>` : ''}
                         ${fifoCount > 0 ? `<span style="color:#ea580c;font-weight:600;"> · 선입선출 위반 ${fifoCount}건</span>` : ''}
                         ${cutoverNote}
@@ -789,7 +834,7 @@ var IncomingOverviewModule = (function () {
         }
         const all = _collectProcessViolationsRaw();
         const current = _violationCutover || '';
-        const defaultDate = current || (UIUtils.today ? UIUtils.today() : new Date().toISOString().slice(0, 10));
+        const defaultDate = current || _todayCutover();
         const meta = _violationCutoverMeta || {};
         const appliedBy = meta.resetBy ? _esc(meta.resetBy) : '';
         const appliedAt = meta.resetAt ? _esc(String(meta.resetAt).slice(0, 16).replace('T', ' ')) : '';
@@ -799,7 +844,8 @@ var IncomingOverviewModule = (function () {
             '<div style="padding:10px 12px;margin-bottom:12px;background:rgba(59,130,246,0.06);' +
                 'border:1px solid rgba(59,130,246,0.25);border-radius:8px;font-size:0.8rem;line-height:1.55;">' +
                 'MES 도입 초기의 보정·오류 수정 등 <strong>과거 직접 입고 이력</strong>을 목록에서 제외합니다.<br>' +
-                '<strong>창고 입고 원본 데이터는 삭제·변경되지 않습니다.</strong>' +
+                '<strong>창고 입고 원본 데이터는 삭제·변경되지 않습니다.</strong><br>' +
+                '<span style="color:var(--text-muted);">기본값: 당일 이전 이력은 표시하지 않습니다.</span>' +
             '</div>' +
             '<div class="form-group" style="margin-bottom:10px;">' +
                 '<label class="form-label">초기화 시점 <span style="color:var(--accent-red);">*</span></label>' +
@@ -817,11 +863,13 @@ var IncomingOverviewModule = (function () {
                     (appliedBy ? ' · ' + appliedBy : '') +
                     (appliedAt ? ' (' + appliedAt + ')' : '') +
                   '</div>'
-                : ''),
+                : '<div style="margin-top:10px;font-size:0.76rem;color:var(--text-muted);">' +
+                    '현재: 기본 정책(<strong>' + _esc(_todayCutover()) + '</strong> 이전 미표시)' +
+                  '</div>'),
             '<button type="button" class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>' +
             (current
                 ? '<button type="button" class="btn btn-outline" style="color:#dc2626;border-color:#fca5a5;"' +
-                    ' onclick="IncomingOverviewModule.clearViolationCutover()">초기화 해제</button>'
+                    ' onclick="IncomingOverviewModule.clearViolationCutover()">기본값 복원</button>'
                 : '') +
             '<button type="button" class="btn btn-primary" onclick="IncomingOverviewModule.saveViolationCutover()">적용</button>',
             '520px'
@@ -895,7 +943,7 @@ var IncomingOverviewModule = (function () {
             return;
         }
         UIUtils.confirm(
-            '직접 입고(미검사) 이력 초기화 설정을 해제하고 전체 이력을 다시 표시하시겠습니까?',
+            '직접 입고(미검사) 모니터 시작일을 기본값(당일)으로 되돌리시겠습니까?\n과거 입고 이력은 계속 표시하지 않습니다.',
             async function () {
                 try {
                     await Storage.setConfigValue(VIOLATION_CUTOVER_KEY, null);
@@ -903,7 +951,7 @@ var IncomingOverviewModule = (function () {
                     _violationCutoverMeta = null;
                     _violationCutoverLoaded = true;
                     UIUtils.closeModal();
-                    UIUtils.toast('이력 초기화 설정이 해제되었습니다.', 'success');
+                    UIUtils.toast('모니터 시작일이 기본값(당일)으로 복원되었습니다.', 'success');
                     renderProcessViolationWarning();
                 } catch (e) {
                     UIUtils.toast('해제 실패: ' + (e && e.message ? e.message : e), 'error');

@@ -3826,6 +3826,11 @@ var InjectionWarehouseModule = (function() {
                                 onchange="InjectionWarehouseModule.onOutTypeChange()">
                             <span style="font-weight:600;color:var(--accent-orange,#f59e0b);">반출</span>
                         </label>
+                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem;">
+                            <input type="radio" name="outgoingType" id="outTypeOutsourcing" value="외주처"
+                                onchange="InjectionWarehouseModule.onOutTypeChange()">
+                            <span style="font-weight:600;color:#0d9488;">외주처</span>
+                        </label>
                     </div>
                 </div>
                 <div class="form-group" id="addInvPaintLineGroup">
@@ -3850,6 +3855,15 @@ var InjectionWarehouseModule = (function() {
             <div id="returnReasonGroup" style="display:none; margin-bottom:12px;">
                 <label class="form-label">반출 사유 <span style="color:var(--accent-red)">*</span></label>
                 <input type="text" class="form-input" id="returnReasonInput" placeholder="반출 사유를 입력하세요" style="width:100%; box-sizing:border-box;">
+            </div>
+            <div id="outsourcingGroup" style="display:none; margin-bottom:12px;">
+                <label class="form-label">외주처 <span style="color:var(--accent-red)">*</span></label>
+                <input type="text" class="form-input" id="outsourcingNameInput" list="outsourcingPartnerDatalist"
+                    placeholder="외주처를 선택하거나 입력하세요" style="width:100%; box-sizing:border-box;">
+                <datalist id="outsourcingPartnerDatalist">
+                    ${(typeof SalesOutsourcingModule !== 'undefined' ? SalesOutsourcingModule.getPartnerNames() : [])
+                        .map(function(n) { return `<option value="${String(n).replace(/"/g, '&quot;')}"></option>`; }).join('')}
+                </datalist>
             </div>` : ''}
             <div style="margin-bottom:16px;">
 
@@ -3941,6 +3955,16 @@ var InjectionWarehouseModule = (function() {
             addInvLotRow();
             _prefillActorSelect(type);
         }, 100);
+
+        // 외주처 목록이 아직 로드 안 됐으면(외주처 관리 화면을 아직 안 연 경우) 비동기로 채워 넣는다.
+        if (type === '출고' && typeof SalesOutsourcingModule !== 'undefined') {
+            SalesOutsourcingModule.ensurePartnersLoaded().then(function() {
+                const dl = document.getElementById('outsourcingPartnerDatalist');
+                if (!dl) return;
+                dl.innerHTML = SalesOutsourcingModule.getPartnerNames()
+                    .map(function(n) { return `<option value="${String(n).replace(/"/g, '&quot;')}"></option>`; }).join('');
+            });
+        }
     }
 
     /**
@@ -4233,13 +4257,22 @@ var InjectionWarehouseModule = (function() {
     // 출고 구분 변경 → 반출 사유 표시/숨김
     function onOutTypeChange() {
         const isReturn = document.getElementById('outTypeReturn')?.checked;
+        const isOutsourcing = document.getElementById('outTypeOutsourcing')?.checked;
         const reasonGroup = document.getElementById('returnReasonGroup');
         const paintGroup = document.getElementById('addInvPaintLineGroup');
+        const outsourcingGroup = document.getElementById('outsourcingGroup');
         if (reasonGroup) reasonGroup.style.display = isReturn ? '' : 'none';
-        if (paintGroup) paintGroup.style.display = isReturn ? 'none' : '';
+        if (paintGroup) paintGroup.style.display = (isReturn || isOutsourcing) ? 'none' : '';
+        if (outsourcingGroup) outsourcingGroup.style.display = isOutsourcing ? '' : 'none';
         if (!isReturn) {
             const reasonInput = document.getElementById('returnReasonInput');
             if (reasonInput) reasonInput.value = '';
+        }
+        if (!isOutsourcing) {
+            const outsourcingInput = document.getElementById('outsourcingNameInput');
+            if (outsourcingInput) outsourcingInput.value = '';
+        }
+        if (!isReturn && !isOutsourcing) {
             _syncAddInvPaintLineFromMaster();
         }
     }
@@ -4767,6 +4800,34 @@ var InjectionWarehouseModule = (function() {
             (m.injPartName || '') === partName &&
             !_splitMasterColors(m).length
         ) || null;
+    }
+
+    /** 외부 공급 사출자재만 수입검사 대상 (사내 사출품 제외) */
+    function _requiresIncomingInspection(carModel, partName, color, recordSupplier) {
+        const supplier = String(recordSupplier || '').trim();
+        if (supplier === '사내') return false;
+        const car = String(carModel || '').trim();
+        const part = String(partName || '').trim();
+        const col = String(color || '').trim();
+        if (!car || !part) return true;
+        const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+        let candidates = materials.filter(function (m) {
+            return String(m.carModel || '').trim() === car
+                && String(m.injPartName || m.partName || '').trim() === part;
+        });
+        if (col) {
+            const byColor = candidates.filter(function (m) {
+                const mc = String(m.injColor || m.color || '').trim();
+                return !mc || mc === col;
+            });
+            if (byColor.length) candidates = byColor;
+        }
+        if (!candidates.length) {
+            return supplier !== '' && supplier !== '사내';
+        }
+        return candidates.some(function (m) {
+            return String(m.supplier || '').trim() !== '사내';
+        });
     }
 
     function _isProductMasterName(carModel, partName) {
@@ -5707,9 +5768,10 @@ var InjectionWarehouseModule = (function() {
         const _type = document.getElementById('addInvType').value;
         const actorId = _getCurrentActorId();
 
-        // 출고 구분 (생산출고 / 반출)
+        // 출고 구분 (생산출고 / 반출 / 외주처)
         let _outgoingType = '';
         let _returnReason = '';
+        let _outsourcingName = '';
         let _outgoingBy = '';
         let _paintLine = '';
         if (_type === '출고') {
@@ -5733,6 +5795,13 @@ var InjectionWarehouseModule = (function() {
                     document.getElementById('returnReasonInput')?.focus();
                     return;
                 }
+            } else if (_outgoingType === '외주처') {
+                _outsourcingName = ((document.getElementById('outsourcingNameInput') || {}).value || '').trim();
+                if (!_outsourcingName) {
+                    UIUtils.toast('외주처를 입력하세요.', 'warning');
+                    document.getElementById('outsourcingNameInput')?.focus();
+                    return;
+                }
             } else {
                 const lineEl = document.querySelector('input[name="addInvPaintLine"]:checked');
                 _paintLine = lineEl ? String(lineEl.value || '').trim() : '';
@@ -5745,8 +5814,9 @@ var InjectionWarehouseModule = (function() {
         const data = {
             date: `${dateVal} ${timeVal}`.trim(),
             type: _type,
-            outgoingType: _outgoingType || undefined,   // 생산출고 / 반출
+            outgoingType: _outgoingType || undefined,   // 생산출고 / 반출 / 외주처
             returnReason: _returnReason || undefined,    // 반출 사유
+            outsourcingName: _outsourcingName || undefined,   // 외주처명
             carModel: _invCarModel,
             partName: _invPartName,
             color: _resolvedInvColor || _invColor,
@@ -5818,9 +5888,10 @@ var InjectionWarehouseModule = (function() {
 
         await _addInventoryRecord(data);
 
-        // 사출 창고 '사출입고' 버튼 = 수입검사 우회 임의입고 → 수입검사 담당에 통보
+        // 사출 창고 '사출입고' 버튼 = 수입검사 우회 임의입고 → 외부 공급 건만 수입검사 담당에 통보
         if (data.type === '입고' && !data.inspDate && !data.inspId
-            && !/수입검사/.test(String(data.source || ''))) {
+            && !/수입검사/.test(String(data.source || ''))
+            && _requiresIncomingInspection(data.carModel, data.partName, data.color, data.supplier)) {
             _notifyInspectorsOfDirectInbound(data);
         }
 
