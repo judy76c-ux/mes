@@ -5867,8 +5867,16 @@ var LaserStandbyModule = (function() {
 
     // 수량 보정 / 이력만 리셋 — 도장-A 자동입고·수기입고가 갖춰진 뒤로는
     // 일반 역할 권한 부여 없이 관리자 전용으로 제한한다(재고 왜곡 방지).
+    // 입고처리 · 수량 보정 — "입력"과 별개인 "수정/보정" 3단계 권한.
+    // 관리/설정 > 역할별 접근 권한의 "수정/보정" 체크(레이저 작업 그룹)로 조절한다.
     function _canAdjustStandby() {
-        return _isAdminUser();
+        try {
+            if (_isAdminUser()) return true;
+            return typeof AuthModule !== 'undefined' &&
+                typeof AuthModule.canAdjustPage === 'function' &&
+                AuthModule.canAdjustPage('laser-standby');
+        } catch (e) { /* 무시 */ }
+        return false;
     }
 
     function _deleteButton(row, kind) {

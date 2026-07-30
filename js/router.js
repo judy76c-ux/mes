@@ -295,13 +295,17 @@ const Router = (function() {
             && AuthModule.isPageAccessGranted(roleKeys, pageId));
         const canWrite = !pageId || (typeof AuthModule.canWritePage === 'function'
             && AuthModule.canWritePage(pageId));
+        const canAdjust = !pageId || (typeof AuthModule.canAdjustPage === 'function'
+            && AuthModule.canAdjustPage(pageId));
 
         const accessBadge = `<span class="topbar-perm-status ${canAccess ? 'is-ok' : 'is-deny'}" title="현재 페이지 내 접근 권한">접근 ${canAccess ? '✓' : '✗'}</span>`;
         const writeBadge = `<span class="topbar-perm-status ${canWrite ? 'is-ok' : 'is-deny'}" title="현재 페이지 내 입력·등록 권한">입력 ${canWrite ? '✓' : '✗'}</span>`;
+        const adjustBadge = `<span class="topbar-perm-status ${canAdjust ? 'is-ok' : 'is-deny'}" title="현재 페이지 내 수정/보정 권한">수정/보정 ${canAdjust ? '✓' : '✗'}</span>`;
 
-        const html = accessBadge + writeBadge
+        const html = accessBadge + writeBadge + adjustBadge
             + '<button type="button" class="topbar-permission-link" onclick="AuthModule.openPageRolePermissionWindow(\'access\')" title="이 페이지 접근 가능 역할 보기">역할별 접근</button>'
-            + '<button type="button" class="topbar-permission-link" onclick="AuthModule.openPageRolePermissionWindow(\'write\')" title="이 페이지 입력 가능 역할 보기">역할별 입력</button>';
+            + '<button type="button" class="topbar-permission-link" onclick="AuthModule.openPageRolePermissionWindow(\'write\')" title="이 페이지 입력 가능 역할 보기">역할별 입력</button>'
+            + '<button type="button" class="topbar-permission-link" onclick="AuthModule.openPageRolePermissionWindow(\'adjust\')" title="이 페이지 수정/보정 가능 역할 보기">역할별 수정/보정</button>';
 
         if (tools.getAttribute('data-perm-html') === html) return;
         tools.setAttribute('data-perm-html', html);

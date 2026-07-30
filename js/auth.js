@@ -631,7 +631,8 @@ const AuthModule = (function () {
         return [...new Set(scope.concat(pageId).map(String).filter(Boolean))];
     }
     function _hasScopedPermission(roleKey, pageId, permissionType) {
-        const checker = permissionType === 'write' ? isPageWriteGranted : isPageAccessGranted;
+        const checker = permissionType === 'write' ? isPageWriteGranted
+            : (permissionType === 'adjust' ? isPageAdjustGranted : isPageAccessGranted);
         return _getPermissionScopePages(pageId).some(scopePageId => checker(roleKey, scopePageId));
     }
     function _pageLabel(pageId) {
@@ -661,11 +662,12 @@ const AuthModule = (function () {
             UIUtils.toast('현재 페이지를 확인할 수 없습니다.', 'warning');
             return;
         }
-        const isWrite = permissionType === 'write';
-        const roles = _rolesAllowedForPage(pageId, isWrite ? 'write' : 'access');
+        const type = permissionType === 'write' ? 'write' : (permissionType === 'adjust' ? 'adjust' : 'access');
+        const roles = _rolesAllowedForPage(pageId, type);
         const pageLabel = _pageLabel(pageId);
-        const permLabel = isWrite ? '입력 가능' : '접근 가능';
-        const emptyMessage = isWrite ? '입력 가능한 역할이 없습니다.' : '접근 가능한 역할이 없습니다.';
+        const permLabel = type === 'write' ? '입력 가능' : (type === 'adjust' ? '수정/보정 가능' : '접근 가능');
+        const permColor = type === 'write' ? '#16a34a' : (type === 'adjust' ? '#d97706' : '#2563eb');
+        const emptyMessage = `${permLabel}한 역할이 없습니다.`;
         const rowsHtml = roles.length
             ? roles.map(role => `
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid #e5e7eb;border-radius:10px;background:#ffffff;">
@@ -688,7 +690,7 @@ const AuthModule = (function () {
             <div style="font-family:'Segoe UI',sans-serif;background:#f8fafc;min-height:100vh;margin:0;padding:20px;box-sizing:border-box;">
                 <div style="max-width:420px;margin:0 auto;">
                     <div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:18px 18px 16px;box-shadow:0 12px 28px rgba(15,23,42,0.08);">
-                        <div style="font-size:12px;font-weight:700;color:${isWrite ? '#16a34a' : '#2563eb'};margin-bottom:8px;">${permLabel}</div>
+                        <div style="font-size:12px;font-weight:700;color:${permColor};margin-bottom:8px;">${permLabel}</div>
                         <h1 style="margin:0 0 6px;font-size:20px;color:#0f172a;">${_esc(pageLabel)}</h1>
                         <div style="font-size:12px;color:#64748b;margin-bottom:14px;">페이지 ID: ${_esc(pageId)}</div>
                         <div style="display:grid;gap:10px;">${rowsHtml}</div>
