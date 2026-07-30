@@ -1449,12 +1449,12 @@ const SettingsModule = (function() {
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:85px;">제조공정-1 <span style="color:var(--accent-red)">*</span></label>
                         <select class="form-input" id="${idPrefix}Process1" style="margin-top:0;" onchange="SettingsModule.onProductProcessChange('${idPrefix}')">${processOptions(v('process1'))}</select>
                     </div>
-                    <div style="display:flex; align-items:center; gap:8px; flex: 0 0 200px;">
-                        <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:50px;">CVT</label>
+                    <div style="display:flex; align-items:center; gap:4px; flex: 0 0 200px;">
+                        <label class="form-label" style="white-space:nowrap; margin-bottom:0;">CVT</label>
                         <input type="text" class="form-input" id="${idPrefix}Cvt1" placeholder="예: 1" value="${v('cvt1')}" style="margin-top:0;">
                     </div>
-                    <div style="display:flex; align-items:center; gap:8px; flex: 0 0 220px;">
-                        <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:65px;">C.TIME</label>
+                    <div style="display:flex; align-items:center; gap:4px; flex: 0 0 220px;">
+                        <label class="form-label" style="white-space:nowrap; margin-bottom:0;">C.TIME</label>
                         <input type="text" class="form-input" id="${idPrefix}Ct1" placeholder="예: 60" value="${v('ct1')}" style="margin-top:0;">
                         <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">sec</span>
                     </div>
@@ -1474,12 +1474,12 @@ const SettingsModule = (function() {
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:85px;">제조공정-2</label>
                         <select class="form-input" id="${idPrefix}Process2" style="margin-top:0;" onchange="SettingsModule.onProductProcessChange('${idPrefix}')">${processOptions(v('process2'))}</select>
                     </div>
-                    <div style="display:flex; align-items:center; gap:8px; flex: 0 0 200px;">
-                        <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:50px;">CVT</label>
+                    <div style="display:flex; align-items:center; gap:4px; flex: 0 0 200px;">
+                        <label class="form-label" style="white-space:nowrap; margin-bottom:0;">CVT</label>
                         <input type="text" class="form-input" id="${idPrefix}Cvt2" placeholder="예: 1" value="${v('cvt2')}" style="margin-top:0;">
                     </div>
-                    <div style="display:flex; align-items:center; gap:8px; flex: 0 0 220px;">
-                        <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:65px;">C.TIME</label>
+                    <div style="display:flex; align-items:center; gap:4px; flex: 0 0 220px;">
+                        <label class="form-label" style="white-space:nowrap; margin-bottom:0;">C.TIME</label>
                         <input type="text" class="form-input" id="${idPrefix}Ct2" placeholder="예: 60" value="${v('ct2')}" style="margin-top:0;">
                         <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">sec</span>
                     </div>
@@ -1504,12 +1504,12 @@ const SettingsModule = (function() {
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:85px;">제조공정-3</label>
                         <select class="form-input" id="${idPrefix}Process3" style="margin-top:0;" onchange="SettingsModule.onProductProcessChange('${idPrefix}')">${processOptions(v('process3'))}</select>
                     </div>
-                    <div style="display:flex; align-items:center; gap:8px; flex: 0 0 200px;">
-                        <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:50px;">CVT</label>
+                    <div style="display:flex; align-items:center; gap:4px; flex: 0 0 200px;">
+                        <label class="form-label" style="white-space:nowrap; margin-bottom:0;">CVT</label>
                         <input type="text" class="form-input" id="${idPrefix}Cvt3" placeholder="예: 1" value="${v('cvt3')}" style="margin-top:0;">
                     </div>
-                    <div style="display:flex; align-items:center; gap:8px; flex: 0 0 220px;">
-                        <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:65px;">C.TIME</label>
+                    <div style="display:flex; align-items:center; gap:4px; flex: 0 0 220px;">
+                        <label class="form-label" style="white-space:nowrap; margin-bottom:0;">C.TIME</label>
                         <input type="text" class="form-input" id="${idPrefix}Ct3" placeholder="예: 60" value="${v('ct3')}" style="margin-top:0;">
                         <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">sec</span>
                     </div>
@@ -1534,12 +1534,12 @@ const SettingsModule = (function() {
                         <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:85px;">제조공정-4</label>
                         <select class="form-input" id="${idPrefix}Process4" style="margin-top:0;" onchange="SettingsModule.onProductProcessChange('${idPrefix}')">${processOptions(v('process4'))}</select>
                     </div>
-                    <div style="display:flex; align-items:center; gap:8px; flex: 0 0 200px;">
-                        <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:50px;">CVT</label>
+                    <div style="display:flex; align-items:center; gap:4px; flex: 0 0 200px;">
+                        <label class="form-label" style="white-space:nowrap; margin-bottom:0;">CVT</label>
                         <input type="text" class="form-input" id="${idPrefix}Cvt4" placeholder="예: 1" value="${v('cvt4')}" style="margin-top:0;">
                     </div>
-                    <div style="display:flex; align-items:center; gap:8px; flex: 0 0 220px;">
-                        <label class="form-label" style="white-space:nowrap; margin-bottom:0; width:65px;">C.TIME</label>
+                    <div style="display:flex; align-items:center; gap:4px; flex: 0 0 220px;">
+                        <label class="form-label" style="white-space:nowrap; margin-bottom:0;">C.TIME</label>
                         <input type="text" class="form-input" id="${idPrefix}Ct4" placeholder="예: 60" value="${v('ct4')}" style="margin-top:0;">
                         <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">sec</span>
                     </div>
@@ -1577,12 +1577,12 @@ const SettingsModule = (function() {
                     </div>
                 </div>
                 <div style="display:flex;align-items:center;gap:12px;flex-wrap:nowrap;">
-                    <div style="display:flex;align-items:center;gap:8px;flex:0 0 220px;">
-                        <label class="form-label" style="white-space:nowrap;margin-bottom:0;width:50px;">CVT</label>
+                    <div style="display:flex;align-items:center;gap:4px;flex:0 0 220px;">
+                        <label class="form-label" style="white-space:nowrap;margin-bottom:0;">CVT</label>
                         <input type="text" class="form-input" id="${idPrefix}AppearanceCvt" placeholder="예: 1" value="${_appDefaults.cvt}" style="margin-top:0;">
                     </div>
-                    <div style="display:flex;align-items:center;gap:8px;flex:0 0 240px;">
-                        <label class="form-label" style="white-space:nowrap;margin-bottom:0;width:70px;">C.TIME</label>
+                    <div style="display:flex;align-items:center;gap:4px;flex:0 0 240px;">
+                        <label class="form-label" style="white-space:nowrap;margin-bottom:0;">C.TIME</label>
                         <input type="text" class="form-input" id="${idPrefix}AppearanceCt" placeholder="예: 60" value="${_appDefaults.ct}" style="margin-top:0;">
                         <span style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;">sec</span>
                     </div>
