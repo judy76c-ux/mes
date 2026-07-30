@@ -1313,7 +1313,11 @@ var JigModule = (function () {
                                         <td>${_photoThumbs(j, 'productFitPhotos')}</td>
                                         <td>${_photoThumbs(j, 'thicknessPointPhotos')}</td>
                                         <td>
-                                            <button class="btn btn-outline btn-sm" onclick="JigModule.openJigMasterModal('${_js(j.id)}')">보기</button>
+                                            <div style="display:flex;gap:4px;flex-wrap:nowrap;white-space:nowrap;">
+                                                <button class="btn btn-outline btn-sm" onclick="JigModule.openJigMasterModal('${_js(j.id)}')">보기</button>
+                                                <button class="btn btn-outline btn-sm" onclick="JigModule.enableJigMasterEdit('${_js(j.id)}')">수정</button>
+                                                <button class="btn btn-danger btn-sm" onclick="JigModule.remove('${_js(j.id)}')">삭제</button>
+                                            </div>
                                         </td>
                                     </tr>`;
                                 }).join('') : `
@@ -1613,23 +1617,54 @@ var JigModule = (function () {
         return !!document.getElementById('jigMasterIntegratedJig')?.checked;
     }
 
-    function _calcLineOrderQty(carModel, partName, appliedLine, spindle, integrated) {
+    function _getIntegratedJigCvt() {
+        if (!_isIntegratedJigChecked()) return 0;
+        return Number(document.getElementById('jigMasterIntegratedJigCvt')?.value) || 0;
+    }
+
+    function _syncIntegratedJigCvtField() {
+        const wrap = document.getElementById('jigMasterIntegratedJigCvtWrap');
+        if (!wrap) return;
+        wrap.style.display = _isIntegratedJigChecked() ? '' : 'none';
+    }
+
+    function onIntegratedJigToggle() {
+        _syncIntegratedJigCvtField();
+        recalcMasterOrderQty();
+    }
+
+    function _calcLineOrderQty(carModel, partName, appliedLine, spindle, integrated, integratedCvt) {
         const masterCvt = _getProductCvtForAppliedLine(carModel, partName, appliedLine);
         if (!masterCvt && !integrated) {
             return { orderQty: 0, needQty: 0, cvt: 0, masterCvt: 0, hint: appliedLine + ' CVT 없음' };
         }
-        const calcCvt = integrated ? 1 : masterCvt;
+        if (integrated) {
+            const manualCvt = Number(integratedCvt) || 0;
+            if (!manualCvt) {
+                return { orderQty: 0, needQty: 0, cvt: 0, masterCvt: masterCvt, hint: appliedLine + ' 일체형 CVT 입력 필요' };
+            }
+            const needQty = spindle * manualCvt;
+            const orderQty = Math.max(1, Math.ceil(needQty * LINE_ORDER_RATE));
+            const cvtLabel = masterCvt > 0 && masterCvt !== manualCvt
+                ? ('CVT ' + masterCvt + '→' + manualCvt + '(일체형)')
+                : ('CVT ' + manualCvt + '(일체형)');
+            return {
+                orderQty: orderQty,
+                needQty: needQty,
+                cvt: manualCvt,
+                masterCvt: masterCvt,
+                hint: spindle.toLocaleString('ko-KR') + ' × ' + cvtLabel + ' = 필요 ' + needQty.toLocaleString('ko-KR') + ' EA × 101% → ' + orderQty.toLocaleString('ko-KR') + ' EA'
+            };
+        }
+        const calcCvt = masterCvt;
         const needQty = spindle * calcCvt;
         const orderQty = Math.max(1, Math.ceil(needQty * LINE_ORDER_RATE));
-        const cvtLabel = integrated && masterCvt > 1
-            ? ('CVT ' + masterCvt + '→1(일체형)')
-            : ('CVT ' + calcCvt);
         return {
             orderQty: orderQty,
             needQty: needQty,
             cvt: calcCvt,
             masterCvt: masterCvt,
-            hint: spindle.toLocaleString('ko-KR') + ' × ' + cvtLabel + ' = 필요 ' + needQty.toLocaleString('ko-KR') + ' EA × 101% → ' + orderQty.toLocaleString('ko-KR') + ' EA'
+            hint: spindle.toLocaleString('ko-KR') + ' × CVT ' + calcCvt + ' = 필요 ' + needQty.toLocaleString('ko-KR') + ' EA × 101% → ' + orderQty.toLocaleString('ko-KR') + ' EA'
         };
     }
 
@@ -1662,13 +1697,15 @@ var JigModule = (function () {
         const hints = [];
         let totalOrder = 0;
         const integrated = _isIntegratedJigChecked();
+        const integratedCvt = _getIntegratedJigCvt();
+        _syncIntegratedJigCvtField();
         if (autoLines.includes('도장-A')) {
-            const calcA = _calcLineOrderQty(carModel, partName, '도장-A', A_LINE_CYCLE, integrated);
+            const calcA = _calcLineOrderQty(carModel, partName, '도장-A', A_LINE_CYCLE, integrated, integratedCvt);
             if (calcA.orderQty > 0) totalOrder += calcA.orderQty;
             hints.push('도장-A: ' + calcA.hint);
         }
         if (autoLines.includes('도장-B')) {
-            const calcB = _calcLineOrderQty(carModel, partName, '도장-B', B_LINE_CYCLE, integrated);
+            const calcB = _calcLineOrderQty(carModel, partName, '도장-B', B_LINE_CYCLE, integrated, integratedCvt);
             if (calcB.orderQty > 0) totalOrder += calcB.orderQty;
             hints.push('도장-B: ' + calcB.hint);
         }
@@ -1689,21 +1726,36 @@ var JigModule = (function () {
         return (typeof ApiClient !== 'undefined' && ApiClient.photoUrl) ? ApiClient.photoUrl(src) : src;
     }
 
-    const MASTER_PHOTO_THUMB_CSS = 'width:100%;max-width:110px;height:72px;object-fit:contain;background:#fff;border:1px solid var(--border-color);border-radius:6px;cursor:zoom-in;display:block;margin:0 auto;';
-    const MASTER_PHOTO_EMPTY_CSS = 'width:100%;max-width:110px;height:72px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);border:1px dashed var(--border-color);border-radius:6px;font-size:0.68rem;text-align:center;margin:0 auto;padding:4px;';
+    const JIG_PHOTO_UPLOAD_OPTS = { maxSize: 4096, quality: 0.98 };
+    const MASTER_PHOTO_VIEW_PX = 600;
+    const MASTER_PHOTO_VIEW_IMG_STYLE = 'display:block;margin:0 auto;width:' + MASTER_PHOTO_VIEW_PX + 'px;height:' + MASTER_PHOTO_VIEW_PX + 'px;max-width:100%;object-fit:contain;border-radius:8px;box-shadow:0 4px 24px rgba(0,0,0,.12);background:#fff;border:1px solid var(--border-color);';
+    const JIG_PHOTO_VIEW_IMG_STYLE = 'display:block;margin:0 auto;width:auto;height:auto;max-width:min(96vw,100%);max-height:85vh;object-fit:contain;border-radius:8px;box-shadow:0 4px 24px rgba(0,0,0,.12);background:#fff;border:1px solid var(--border-color);';
+    const MASTER_PHOTO_THUMB_W = 172; // 143px + 20%
+    const MASTER_PHOTO_THUMB_H = 113; // 94px + 20%
+    const MASTER_PHOTO_THUMB_CSS = 'width:100%;max-width:' + MASTER_PHOTO_THUMB_W + 'px;height:' + MASTER_PHOTO_THUMB_H + 'px;object-fit:contain;background:#fff;border:1px solid var(--border-color);border-radius:6px;cursor:zoom-in;display:block;margin:0 auto;';
+    const MASTER_PHOTO_EMPTY_CSS = 'width:100%;max-width:' + MASTER_PHOTO_THUMB_W + 'px;height:' + MASTER_PHOTO_THUMB_H + 'px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);border:1px dashed var(--border-color);border-radius:6px;font-size:0.68rem;text-align:center;margin:0 auto;padding:4px;';
+
+    function _isJigNativePhotoTarget(targetId) {
+        if (!targetId) return false;
+        const id = String(targetId).replace(/Preview$/, '');
+        return /^(jigPhoto|productFitPhoto)\d+$/.test(id)
+            || /^view_지그_사진_|^view_제품_결합_사진_/.test(id);
+    }
 
     function _masterPhotoThumbHtml(photoSrc, targetId, emptyLabel) {
         const url = _jigPhotoSrc(photoSrc);
+        const nativeView = _isJigNativePhotoTarget(targetId);
         if (!photoSrc) {
             return '<div id="' + targetId + 'Preview" style="' + MASTER_PHOTO_EMPTY_CSS + '">' + (emptyLabel || '사진 없음') + '</div>';
         }
         return '<img id="' + targetId + 'Preview" src="' + _esc(url) + '" alt="" style="' + MASTER_PHOTO_THUMB_CSS + '" title="클릭하여 확대"' +
-            ' onclick="JigModule.viewJigMasterPhoto(\'' + _js(url) + '\')">';
+            ' onclick="JigModule.viewJigMasterPhoto(\'' + _js(url) + '\', ' + nativeView + ')">';
     }
 
     function _bindMasterPhotoPreview(preview, src) {
         if (!preview) return;
         const url = _jigPhotoSrc(src);
+        const nativeView = _isJigNativePhotoTarget(preview.id);
         if (preview.tagName === 'IMG') {
             if (!src) {
                 const empty = document.createElement('div');
@@ -1716,7 +1768,7 @@ var JigModule = (function () {
             preview.src = url;
             preview.style.cssText = MASTER_PHOTO_THUMB_CSS;
             preview.title = '클릭하여 확대';
-            preview.onclick = function () { viewJigMasterPhoto(url); };
+            preview.onclick = function () { viewJigMasterPhoto(url, nativeView); };
             preview.style.display = 'block';
             return;
         }
@@ -1727,7 +1779,7 @@ var JigModule = (function () {
             img.src = url;
             img.style.cssText = MASTER_PHOTO_THUMB_CSS;
             img.title = '클릭하여 확대';
-            img.onclick = function () { viewJigMasterPhoto(url); };
+            img.onclick = function () { viewJigMasterPhoto(url, nativeView); };
             preview.replaceWith(img);
         } else {
             preview.style.cssText = MASTER_PHOTO_EMPTY_CSS;
@@ -1885,9 +1937,16 @@ var JigModule = (function () {
                     </div>
                     <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:0.8rem;cursor:${readOnly ? 'default' : 'pointer'};">
                         <input type="checkbox" id="jigMasterIntegratedJig" ${d.integratedJig ? 'checked' : ''}${roAttr}
-                            onchange="JigModule.recalcMasterOrderQty()">
-                        <span><strong>CVT 일체형 지그</strong> <span style="color:var(--text-muted);font-weight:400;">(6거치 일체 지그 등 — 발주 계산 시 CVT를 1로 적용)</span></span>
+                            onchange="JigModule.onIntegratedJigToggle()">
+                        <span><strong>CVT 일체형 지그</strong> <span style="color:var(--text-muted);font-weight:400;">(6거치 일체 지그 등 — CVT 직접 입력)</span></span>
                     </label>
+                    ${readOnly && d.integratedJig
+                        ? `<div style="font-size:0.78rem;margin-top:6px;color:var(--text-secondary);">일체형 CVT: <strong>${d.integratedJigCvt || 1}</strong></div>`
+                        : `<div id="jigMasterIntegratedJigCvtWrap" style="display:${d.integratedJig ? '' : 'none'};margin-top:6px;">
+                            <label class="form-label" style="font-size:0.78rem;margin-bottom:4px;">일체형 CVT <span style="color:var(--accent-red)">*</span></label>
+                            <input type="number" class="form-input" id="jigMasterIntegratedJigCvt" value="${d.integratedJigCvt || (d.integratedJig ? 1 : '')}" min="1" step="1" placeholder="예: 6"${roAttr}
+                                oninput="JigModule.recalcMasterOrderQty()">
+                        </div>`}
                 </div>
                 <div class="form-group" style="grid-column:span 2;">
                     <label class="form-label">적용 라인</label>
@@ -2005,6 +2064,7 @@ var JigModule = (function () {
             maxCount,
             orderQty: parseInt(document.getElementById('jigMasterOrderQty')?.value || 0) || 0,
             integratedJig: !!document.getElementById('jigMasterIntegratedJig')?.checked,
+            integratedJigCvt: _getIntegratedJigCvt() || null,
             appliedLines,
             material: document.getElementById('jigMasterMaterial')?.value.trim() || '',
             supplier: document.getElementById('jigMasterSupplier')?.value.trim() || '',
@@ -2068,14 +2128,22 @@ var JigModule = (function () {
         }, 0);
     }
 
-    function viewJigMasterPhoto(src) {
+    function _masterPhotoViewBody(src, nativeView) {
+        const style = nativeView ? JIG_PHOTO_VIEW_IMG_STYLE : MASTER_PHOTO_VIEW_IMG_STYLE;
+        return '<div style="text-align:center;padding:8px 0;overflow:auto;max-height:85vh;">' +
+            '<img src="' + _esc(src) + '" alt="" style="' + style + '">' +
+            '</div>';
+    }
+
+    async function _uploadJigPhoto(file) {
+        return ApiClient.uploadPhoto(file, 'paint_jig', JIG_PHOTO_UPLOAD_OPTS);
+    }
+
+    function viewJigMasterPhoto(src, nativeView) {
         if (!src) return;
-        UIUtils.showModal('사진 보기',
-            '<div style="text-align:center;padding:4px 0;">' +
-                '<img src="' + _esc(src) + '" alt="" style="max-width:100%;max-height:90vh;object-fit:contain;border-radius:8px;box-shadow:0 4px 24px rgba(0,0,0,.12);">' +
-            '</div>',
+        UIUtils.showModal('사진 보기', _masterPhotoViewBody(src, !!nativeView),
             '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>',
-            'xxxl');
+            'xl');
     }
 
     async function saveJigMaster(id = '') {
@@ -2094,7 +2162,7 @@ var JigModule = (function () {
         if (!file) return;
         try {
             UIUtils.toast('사진 업로드 중...', 'info');
-            const url = await ApiClient.uploadPhoto(file, 'paint_jig');
+            const url = await _uploadJigPhoto(file);
             _setJigMasterPhoto(targetId, url);
             UIUtils.toast('사진이 NAS에 등록되었습니다.', 'success');
         } catch (e) {
@@ -2114,7 +2182,7 @@ var JigModule = (function () {
         if (!targetId || !blob) return false;
         try {
             UIUtils.toast('사진 업로드 중...', 'info');
-            const url = await ApiClient.uploadPhoto(blob, 'paint_jig');
+            const url = await _uploadJigPhoto(blob);
             _setJigMasterPhoto(targetId, url);
             UIUtils.toast('스크린샷이 NAS에 등록되었습니다.', 'success');
             return true;
@@ -2248,13 +2316,13 @@ var JigModule = (function () {
         const jig = Storage.getById(STORE, id);
         const src = jig && Array.isArray(jig[key]) ? jig[key][idx] : '';
         if (!src) return;
-        UIUtils.showModal('사진 보기', `<div style="text-align:center;"><img src="${_esc(_jigPhotoSrc(src))}" alt="" style="max-width:100%;max-height:90vh;object-fit:contain;border-radius:8px;"></div>`, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'xxxl');
+        UIUtils.showModal('사진 보기', _masterPhotoViewBody(_jigPhotoSrc(src), true), `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'xl');
     }
 
     function viewResetPhoto(photoUrl) {
         if (!photoUrl) return;
         const src = ApiClient.photoUrl(photoUrl);
-        UIUtils.showModal('교체일 작성 사진', `<div style="text-align:center;"><img src="${src}" alt="" style="max-width:100%;max-height:72vh;object-fit:contain;border-radius:8px;"></div>`, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'lg');
+        UIUtils.showModal('교체일 작성 사진', _masterPhotoViewBody(src, true), `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'xl');
     }
 
     function _historyMeta(type) {
@@ -2517,6 +2585,7 @@ var JigModule = (function () {
             UIUtils.closeModal();
             UIUtils.toast('삭제되었습니다.', 'success');
             loadAll();
+            renderJigMaster();
         });
     }
 
@@ -2563,7 +2632,7 @@ var JigModule = (function () {
         const statusEl = document.getElementById('jigResetPhotoStatus');
         if (statusEl) statusEl.textContent = '업로드 중...';
         try {
-            const url = await ApiClient.uploadPhoto(file, 'paint_jig');
+            const url = await _uploadJigPhoto(file);
             _resetPhotoUrl = url;
             if (statusEl) statusEl.textContent = file.name;
             const wrap = document.getElementById('jigResetPhotoPreviewWrap');
@@ -2750,6 +2819,7 @@ var JigModule = (function () {
         enableJigMasterEdit,
         recalcMasterLifeFromThickness,
         recalcMasterOrderQty,
+        onIntegratedJigToggle,
         viewJigMasterPhoto,
         openAddModal,
         openEditModal,

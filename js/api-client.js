@@ -229,7 +229,7 @@ const ApiClient = (function() {
   }
 
   async function uploadPhoto(file, subdir, options = {}) {
-    const uploadFile = await compressImageFile(file);
+    const uploadFile = await compressImageFile(file, options);
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = async function(e) {
