@@ -348,7 +348,6 @@ var PaintingProcessModule = (function () {
                                 '<th style="white-space:nowrap;padding:8px 10px;">차종</th>' +
                                 '<th style="white-space:nowrap;padding:8px 10px;">품명</th>' +
                                 '<th style="text-align:right;white-space:nowrap;padding:8px 10px;">수량</th>' +
-                                '<th style="white-space:nowrap;padding:8px 8px;">이동</th>' +
                             '</tr></thead>' +
                             '<tbody id="ppShipBody' + suffix + '">' + result.html + '</tbody>' +
                         '</table>' +
@@ -450,7 +449,7 @@ var PaintingProcessModule = (function () {
                     from = (e.dataTransfer && e.dataTransfer.getData('application/x-paint-ship-from')) || '';
                 } catch (err) { outId = ''; }
                 if (!outId) {
-                    UIUtils.toast('이동할 항목을 인식하지 못했습니다. →A/→B 버튼을 사용해 주세요.', 'warning');
+                    UIUtils.toast('이동할 항목을 인식하지 못했습니다. ⋮⋮ 핸들로 다시 드래그해 주세요.', 'warning');
                     return;
                 }
                 if (from && typeof PaintingInputModule !== 'undefined'
@@ -511,7 +510,7 @@ var PaintingProcessModule = (function () {
 
                 '<div style="margin:4px 0 10px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;">' +
                     '<h3 style="margin:0;font-size:1rem;">금일 현장 입고 자재 목록</h3>' +
-                    '<span style="font-size:0.8rem;color:var(--text-muted);">자재 창고 출고 시간 기준 · 좌 A / 우 B · <strong style="color:var(--text-secondary);">⋮⋮ 핸들 드래그 또는 →A/→B 버튼</strong>(입고 완료 건 제외)</span>' +
+                    '<span style="font-size:0.8rem;color:var(--text-muted);">자재 창고 출고 시간 기준 · 좌 A / 우 B · <strong style="color:var(--text-secondary);">⋮⋮ 핸들 드래그로 라인 이동</strong>(입고 완료 건 제외)</span>' +
                 '</div>' +
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;">' +
                     _shipmentSectionHtml('도장-A', '#2563eb') +
@@ -1282,10 +1281,11 @@ const PaintingWorkModule = (function() {
                                 <thead>
                                     <tr>
                                         <th style="width:100px;">시간대</th>
-                                        <th>차종/품명</th>
+                                        <th style="width:90px;">차종</th>
+                                        <th>품명</th>
+                                        <th style="width:150px;">생산 진행 상황</th>
                                         <th style="text-align:right;width:70px;">계획</th>
                                         <th style="text-align:right;width:70px;">실적</th>
-                                        <th style="width:90px;">달성률</th>
                                         <th style="width:85px;">입력</th>
                                     </tr>
                                 </thead>
@@ -1601,6 +1601,34 @@ const PaintingWorkModule = (function() {
         if (bodyB) bodyB.innerHTML = _renderLinePlanData(allPlans, allWorks, '도장-B', todayDate);
     }
 
+    // 계획 시간대(startTime~endTime) 대비 "현재 시각이 몇 % 지점"인지 추정 — 실적과 무관한
+    // 시간 진행률이다. 과거 날짜는 100%, 미래 날짜는 0%, 오늘은 현재 시각으로 보간한다.
+    function _estimateTimeProgress(plan, targetDate) {
+        const start = plan.startTime || plan.slot || '';
+        const end = plan.endTime || '';
+        if (!start || !end) return null;
+        const toMin = function(t) {
+            const m = String(t).match(/^(\d{1,2}):(\d{2})/);
+            if (!m) return null;
+            return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+        };
+        let startMin = toMin(start);
+        let endMin = toMin(end);
+        if (startMin == null || endMin == null) return null;
+        if (endMin <= startMin) endMin += 24 * 60; // 자정을 넘어가는 슬롯(예: 20:00~02:00) 보정
+
+        const today = UIUtils.today();
+        if (targetDate < today) return 100;
+        if (targetDate > today) return 0;
+
+        const now = new Date();
+        let nowMin = now.getHours() * 60 + now.getMinutes();
+        if (nowMin < startMin - 12 * 60) nowMin += 24 * 60; // 자정 넘어 진행 중인 슬롯 보정
+        if (nowMin <= startMin) return 0;
+        if (nowMin >= endMin) return 100;
+        return Math.round(((nowMin - startMin) / (endMin - startMin)) * 100);
+    }
+
     // 라인별 계획 데이터 HTML 생성 헬퍼
     function _renderLinePlanData(allPlans, allWorks, line, targetDate) {
         if (!targetDate) targetDate = UIUtils.today();
@@ -1620,7 +1648,7 @@ const PaintingWorkModule = (function() {
         if (plans.length === 0) {
             return `
                 <tr>
-                    <td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted);font-size:0.82rem;">
+                    <td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted);font-size:0.82rem;">
                         등록된 계획 없음
                     </td>
                 </tr>`;
@@ -1638,7 +1666,20 @@ const PaintingWorkModule = (function() {
             const rateColor = rate >= 100 ? 'var(--accent-green)' : (rate >= 70 ? 'var(--accent-blue)' : (rate > 0 ? 'var(--accent-orange)' : 'var(--text-muted)'));
 
             const timeStr = plan.startTime ? `${plan.startTime}~${plan.endTime || ''}` : (plan.slot || '-');
-            const infoStr = `<strong>${plan.carModel || ''}</strong><br><span style="font-size:0.78rem;color:var(--text-muted);">${plan.partName || ''} (${plan.color || '-'})</span>`;
+            const timeProgress = _estimateTimeProgress(plan, targetDate);
+            const tpColor = timeProgress == null ? 'var(--text-muted)'
+                : timeProgress >= 100 ? 'var(--accent-green)'
+                : timeProgress >= 50 ? 'var(--accent-blue)'
+                : timeProgress > 0 ? 'var(--accent-orange)' : 'var(--text-muted)';
+            const timeProgressHtml = timeProgress == null
+                ? '<span style="font-size:0.75rem;color:var(--text-muted);">-</span>'
+                : `
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <div style="flex:1;height:7px;background:var(--border);border-radius:4px;overflow:hidden;" title="시간대 기준 예상 진행률(실적과 무관)">
+                        <div style="width:${timeProgress}%;height:100%;background:${tpColor};"></div>
+                    </div>
+                    <span style="font-size:0.75rem;min-width:30px;text-align:right;color:${tpColor};font-weight:600;">${timeProgress}%</span>
+                </div>`;
 
             const isCompleted = dayWorks.some(w => w.planId === plan.id);
 
@@ -1663,17 +1704,13 @@ const PaintingWorkModule = (function() {
             return `
                 <tr>
                     <td style="font-size:0.82rem; white-space:nowrap;">${timeStr}</td>
-                    <td style="line-height:1.2;">${infoStr}</td>
+                    <td style="font-weight:600;white-space:nowrap;">${plan.carModel || ''}</td>
+                    <td style="line-height:1.2;">
+                        <span style="font-size:0.78rem;color:var(--text-muted);">${plan.partName || ''} (${plan.color || '-'})</span>
+                    </td>
+                    <td>${timeProgressHtml}</td>
                     <td style="text-align:right; font-weight:600;">${UIUtils.formatNumber(planQty)}</td>
                     <td style="text-align:right; font-weight:600; color:${rateColor};">${UIUtils.formatNumber(achieved)}</td>
-                    <td>
-                        <div style="display:flex;align-items:center;gap:4px;">
-                            <div style="flex:1;height:6px;background:var(--border);border-radius:3px;overflow:hidden;">
-                                <div style="width:${rate}%;height:100%;background:${rateColor};"></div>
-                            </div>
-                            <span style="font-size:0.75rem;min-width:28px;text-align:right;">${rate}%</span>
-                        </div>
-                    </td>
                     <td>
                         <button class="btn btn-xs"
                             style="padding:6px 12px; font-size:0.8rem; background:${btnBg}; color:#fff; border:none; border-radius:4px; display:inline-flex; align-items:center; gap:6px; transition:all 0.2s; box-shadow:0 2px 4px ${btnShadow}; white-space:nowrap; width:max-content; opacity:${btnOpacity}; cursor:${btnDisabled ? 'default' : 'pointer'};"
@@ -5821,6 +5858,68 @@ const PaintingInspectionModule = (function() {
         return String(user.displayName || user.username || user.id || '미확인 사용자');
     }
 
+    /** 외관검사 등록 사용자 표시명 (목록·상세용) */
+    function _registeredByName(rec) {
+        if (!rec) return '-';
+        const named = String(rec.registeredByName || rec.createdByName || '').trim();
+        if (named) return named;
+        const by = rec.registeredBy || rec.createdBy;
+        if (by && typeof by === 'object') {
+            const n = String(by.name || by.displayName || by.username || '').trim();
+            if (n) return n;
+        }
+        if (typeof by === 'string' && by.trim()) return by.trim();
+        return '-';
+    }
+
+    function _inspGood(rec) { return Number(rec && rec.goodQty) || 0; }
+    function _inspRework(rec) { return Number(rec && rec.reworkQty) || 0; }
+    function _inspDefectOnly(rec) { return Number(rec && rec.defectQty) || 0; }
+    function _inspDefectTotal(rec) {
+        const good = _inspGood(rec);
+        const defect = _inspDefectOnly(rec);
+        const rework = _inspRework(rec);
+        const inspQty = Number(rec && rec.inspectionQty) || 0;
+        if (inspQty > 0 && rework > 0) {
+            if (good + defect === inspQty) return defect;
+            if (good + defect + rework === inspQty) return defect + rework;
+        }
+        return defect;
+    }
+    function _inspInspectionQty(rec) {
+        const stored = Number(rec && rec.inspectionQty) || 0;
+        if (stored > 0) return stored;
+        return _inspGood(rec) + _inspDefectTotal(rec);
+    }
+
+    function _getPartialInspectionQtys(work) {
+        const productionQty = Number(work && work.productionQty) || 0;
+        const workKey = work && (work.id || work.workId);
+        const inspections = Storage.getAll(STORE) || [];
+        const consumedFromHistory = inspections
+            .filter(i => (i.workId || i.productId) === workKey)
+            .reduce((s, i) => s + _inspInspectionQty(i), 0);
+        const inspectedQty = Math.max(Number(work && work.inspectedQty) || 0, consumedFromHistory);
+        const storedRemain = Number(work && work.remainingQty);
+        const remainingQty = Number.isFinite(storedRemain) && storedRemain >= 0
+            ? storedRemain
+            : Math.max(0, productionQty - inspectedQty);
+        return { productionQty, inspectedQty, remainingQty };
+    }
+
+    function _captureRegisteredBy() {
+        const user = _currentUser();
+        const name = _currentUserDisplayName();
+        return {
+            registeredByName: name,
+            registeredBy: user ? {
+                id: String(user.id || user.username || ''),
+                name: name,
+                role: user.role || ''
+            } : { id: '', name: name, role: '' }
+        };
+    }
+
     function _getManagerNotifyUsers() {
         if (typeof AuthModule === 'undefined' || typeof AuthModule.getUsers !== 'function') return [];
         const users = AuthModule.getUsers() || [];
@@ -6011,12 +6110,12 @@ const PaintingInspectionModule = (function() {
             // 검사 진행 탭
             tabContent.innerHTML = `
                 <!-- 검사대기품 (도장 작업 완료 목록) -->
-                <div class="card" style="margin-bottom:20px;">
+                <div class="card" style="margin-bottom:20px;width:100%;">
                     <div class="card-header">
                         <h4><span class="material-symbols-outlined">done_all</span> 외관 검사 대기품</h4>
                         <span style="font-size:0.75rem;color:var(--text-muted);">도장 작업 완료된 제품을 외관 검사합니다.</span>
                     </div>
-                    <div class="card-body" id="inspectionWaitingList"></div>
+                    <div class="card-body" id="inspectionWaitingList" style="width:100%;"></div>
                 </div>
 
                 <!-- 선택 정보 -->
@@ -6213,7 +6312,7 @@ const PaintingInspectionModule = (function() {
                     <td style="text-align:right;font-weight:700;color:var(--accent-orange);">${UIUtils.formatNumber(item.residualQty || 0)}</td>
                     <td style="text-align:right;">${item.packUnit ? UIUtils.formatNumber(item.packUnit) : '-'}</td>
                     <td style="font-family:monospace;font-size:0.78rem;">${item.lotNo || '-'}</td>
-                    <td style="font-size:0.78rem;color:var(--text-muted);">${Array.isArray(item.inspectors) ? item.inspectors.join(', ') : '-'}</td>
+                    <td style="font-size:0.78rem;color:var(--text-muted);">${_registeredByName(item)}</td>
                 </tr>
             `;
         }).join('');
@@ -6237,7 +6336,7 @@ const PaintingInspectionModule = (function() {
                                 <th style="text-align:right;">잔량</th>
                                 <th style="text-align:right;">포장단위</th>
                                 <th>사출 LOT</th>
-                                <th>검사자</th>
+                                <th>등록자</th>
                             </tr>
                         </thead>
                         <tbody>${rows}</tbody>
@@ -6356,26 +6455,86 @@ const PaintingInspectionModule = (function() {
                 || products.find(p => p.carModel === w.carModel && p.partName === w.partName);
         }
 
-        // 검사 실적이 이미 있는 도장 작업 ID 세트 만들기
-        const inspectedWorkIds = new Set(inspections.map(i => i.workId || i.id).filter(Boolean));
+        function workPartialHistory(workId) {
+            return inspections
+                .filter(i => (i.workId || i.productId) === workId)
+                .sort((a, b) =>
+                    String(a.date || '').localeCompare(String(b.date || ''))
+                    || String(a.inspectionStartTime || '').localeCompare(String(b.inspectionStartTime || ''))
+                    || String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
+                );
+        }
+
+        // 검사수량 = 양품 + 불량(리워크 포함). 리워크는 불량의 일부(재도장 소재).
+        function inspGood(i) { return _inspGood(i); }
+        function inspRework(i) { return _inspRework(i); }
+        function inspDefectTotal(i) { return _inspDefectTotal(i); }
+        function inspInspectionQty(i) { return _inspInspectionQty(i); }
+        function inspConsumed(i) { return _inspInspectionQty(i); }
+
+        function qtyCell(main, subHtml) {
+            return `<td style="text-align:right;line-height:1.35;white-space:nowrap;">
+                <div style="font-weight:800;">${main}</div>
+                ${subHtml ? `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">${subHtml}</div>` : ''}
+            </td>`;
+        }
+        function numCell(val, color) {
+            const n = Number(val) || 0;
+            if (!n && val !== 0) {
+                return `<td style="text-align:right;white-space:nowrap;color:var(--text-muted);">—</td>`;
+            }
+            return `<td style="text-align:right;white-space:nowrap;font-weight:700;color:${color || 'var(--text-primary)'};">${UIUtils.formatNumber(n)}</td>`;
+        }
+        const PARTIAL_PARENT_BG = '#f3ede3';
+        const PARTIAL_PARENT_BORDER = 'rgba(146, 95, 30, 0.22)';
+        const PARTIAL_CHILD_BG = '#faf7f2';
+        const PARTIAL_ACCENT = '#92400e';
+        const PARTIAL_ACCENT_LINE = 'rgba(146, 95, 30, 0.42)';
+        const partialParentTdBase = `background:${PARTIAL_PARENT_BG} !important;border-top:1px solid ${PARTIAL_PARENT_BORDER};border-bottom:1px solid ${PARTIAL_PARENT_BORDER};`;
+        function parentQtyCell(main, subHtml) {
+            return `<td style="text-align:right;line-height:1.35;white-space:nowrap;${partialParentTdBase}">
+                <div style="font-weight:800;">${main}</div>
+                ${subHtml ? `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">${subHtml}</div>` : ''}
+            </td>`;
+        }
+        function parentNumCell(val, color) {
+            const n = Number(val) || 0;
+            if (!n && val !== 0) {
+                return `<td style="text-align:right;white-space:nowrap;color:var(--text-muted);${partialParentTdBase}">—</td>`;
+            }
+            return `<td style="text-align:right;white-space:nowrap;font-weight:700;color:${color || 'var(--text-primary)'};${partialParentTdBase}">${UIUtils.formatNumber(n)}</td>`;
+        }
+        function childRowLabel(html) {
+            return `<td colspan="6" style="padding:8px 10px 8px 20px;white-space:nowrap;border-top:1px solid ${PARTIAL_PARENT_BORDER};background:${PARTIAL_CHILD_BG};border-left:3px solid ${PARTIAL_ACCENT_LINE};">${html}</td>`;
+        }
+        function childQtyCell(main, subHtml) {
+            return `<td style="text-align:right;line-height:1.35;white-space:nowrap;border-top:1px solid ${PARTIAL_PARENT_BORDER};background:${PARTIAL_CHILD_BG};">
+                <div style="font-weight:800;">${main}</div>
+                ${subHtml ? `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">${subHtml}</div>` : ''}
+            </td>`;
+        }
+        function childNumCell(val, color) {
+            const base = `border-top:1px solid ${PARTIAL_PARENT_BORDER};background:${PARTIAL_CHILD_BG};`;
+            const n = Number(val) || 0;
+            if (!n && val !== 0) {
+                return `<td style="text-align:right;white-space:nowrap;color:var(--text-muted);${base}">—</td>`;
+            }
+            return `<td style="text-align:right;white-space:nowrap;font-weight:700;color:${color || 'var(--text-primary)'};${base}">${UIUtils.formatNumber(n)}</td>`;
+        }
+        function childActionCell(html) {
+            return `<td style="text-align:center;white-space:nowrap;border-top:1px solid ${PARTIAL_PARENT_BORDER};background:${PARTIAL_CHILD_BG};">${html}</td>`;
+        }
+        function childEmptyCell() {
+            return `<td style="text-align:right;white-space:nowrap;color:var(--text-muted);border-top:1px solid ${PARTIAL_PARENT_BORDER};background:${PARTIAL_CHILD_BG};">—</td>`;
+        }
 
         // 검사 미완료 작업 (inspectionStatus !== 'completed')만 필터링
         const inspectionWorks = paintingWorks.filter(w => {
-            // 검사 완료된 작업은 제외
             if (w.inspectionStatus === 'completed') return false;
-
-            // 제품이 없으면 제외
             const product = findProduct(w);
             if (!product) return false;
-
-            // 제품의 전체 공정 슬롯 검사
-            const allProcs = [product.process1, product.process2, product.process3, product.process4]
-                .map(p => (p || '').trim());
-
-            // 현재 완료된 도장 라인 이후에 레이저가 남아있으면 레이저 대기품으로 처리
             const paintLineName = (w.line || '').trim();
             if (_laserAfterPaintLine(product, paintLineName)) return false;
-
             return true;
         });
 
@@ -6403,61 +6562,160 @@ const PaintingInspectionModule = (function() {
                 ? `<span class="badge" title="임시 저장됨 (${_formatDraftTime(_draft.savedAt)})" style="background:var(--accent-orange);color:#fff;margin-left:6px;font-size:0.68rem;">임시저장</span>`
                 : '';
 
-            // ✓ Case 1: 부분 검사된 도장 작업 표시
+            const originalQty = Number(w.productionQty) || 0;
             const isPartial = w.inspectionStatus === 'partial';
-            const inspectedQty = w.inspectedQty || 0;
-            const remainingQty = w.remainingQty || (w.productionQty || 0);
-            const progressPercent = (w.productionQty && inspectedQty) ? Math.round((inspectedQty / w.productionQty) * 100) : 0;
+            const history = isPartial ? workPartialHistory(w.id) : [];
+            const consumedFromHistory = history.reduce((s, i) => s + inspConsumed(i), 0);
+            const inspectedQty = Number(w.inspectedQty) || consumedFromHistory;
+            const remainingStored = Number(w.remainingQty);
+            const remain = Number.isFinite(remainingStored) && remainingStored >= 0
+                ? remainingStored
+                : Math.max(0, originalQty - Math.max(inspectedQty, consumedFromHistory));
+            const progressPercent = originalQty > 0
+                ? Math.round((Math.max(inspectedQty, consumedFromHistory) / originalQty) * 100)
+                : 0;
 
             const partialBadge = isPartial
-                ? `<span class="badge" style="background:var(--accent-blue);color:#fff;margin-left:6px;font-size:0.68rem;" title="부분 검사됨">부분 ${progressPercent}%</span>`
+                ? `<span class="badge" style="background:${PARTIAL_ACCENT};color:#fff;margin-left:6px;font-size:0.68rem;" title="부분 검사 진행 중">부분 ${progressPercent}%</span>`
                 : '';
 
-            const qtyDisplay = isPartial
-                ? `<div style="text-align:right;font-weight:600;">${UIUtils.formatNumber(remainingQty)}<span style="font-size:0.75rem;color:var(--text-muted);margin-left:2px;">/ ${UIUtils.formatNumber(w.productionQty || 0)}</span></div>`
-                : `<div style="text-align:right;font-weight:600;">${UIUtils.formatNumber(w.productionQty || 0)}</div>`;
+            // 미부분: 단행 + 검사 버튼 / 부분: 상단 원수량(버튼 없음) + 회차 이력(보기) + 하단 대기(계속 검사)
+            if (!isPartial) {
+                const btnText = _draft ? '이어서 검사' : '외관 검사';
+                const btnClass = _draft ? 'btn-outline' : 'btn-primary';
+                const btnStyle = _draft ? ' style="color:var(--accent-orange);border-color:var(--accent-orange);"' : '';
+                return `
+                <tr${_draft ? ' style="background:rgba(245,158,11,0.06);"' : ''}>
+                    <td style="line-height:1.3;white-space:nowrap;">${_workDateHtml}</td>
+                    <td style="white-space:nowrap;"><span class="badge badge-info">${w.line || '-'}</span></td>
+                    <td style="white-space:nowrap;">${w.carModel || '-'}</td>
+                    <td style="white-space:nowrap;"><strong>${w.partName || '-'}</strong>${draftBadge}</td>
+                    <td style="white-space:nowrap;">${w.color || '-'}</td>
+                    <td style="font-family:monospace;font-size:0.85rem;white-space:nowrap;">${lotDisplay}</td>
+                    ${qtyCell(UIUtils.formatNumber(originalQty) + ' <span style="font-size:0.68rem;font-weight:600;color:var(--text-muted);">원수량</span>', '')}
+                    ${numCell(null)}
+                    ${numCell(null)}
+                    ${numCell(null)}
+                    ${numCell(null)}
+                    <td style="text-align:center;white-space:nowrap;">
+                        <button class="btn btn-sm ${btnClass}" type="button" data-open-painting-inspection="${waitKey}"${btnStyle}>
+                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:2px;">edit</span>${btnText}
+                        </button>
+                    </td>
+                </tr>`;
+            }
 
-            const btnText = isPartial ? '계속 검사' : (_draft ? '이어서 검사' : '외관 검사');
-            const btnColor = isPartial ? 'var(--accent-blue)' : (_draft ? 'var(--accent-orange)' : 'inherit');
-            const btnStyle = isPartial || _draft ? ` style="color:${btnColor};border-color:${btnColor};"` : '';
+            const parentRow = `
+                <tr style="background:${PARTIAL_PARENT_BG};">
+                    <td style="line-height:1.3;white-space:nowrap;font-weight:700;${partialParentTdBase}">${_workDateHtml}</td>
+                    <td style="white-space:nowrap;font-weight:700;${partialParentTdBase}"><span class="badge badge-info">${w.line || '-'}</span></td>
+                    <td style="white-space:nowrap;font-weight:700;${partialParentTdBase}">${w.carModel || '-'}</td>
+                    <td style="white-space:nowrap;font-weight:800;${partialParentTdBase}"><strong>${w.partName || '-'}</strong>${partialBadge}${draftBadge}</td>
+                    <td style="white-space:nowrap;font-weight:700;${partialParentTdBase}">${w.color || '-'}</td>
+                    <td style="font-family:monospace;font-size:0.85rem;white-space:nowrap;font-weight:700;${partialParentTdBase}">${lotDisplay}</td>
+                    ${parentQtyCell(
+                        UIUtils.formatNumber(originalQty) + ' <span style="font-size:0.68rem;font-weight:600;color:var(--text-muted);">원수량</span>',
+                        ''
+                    )}
+                    ${parentNumCell(null)}
+                    ${parentNumCell(null)}
+                    ${parentNumCell(null)}
+                    ${parentNumCell(null)}
+                    <td style="text-align:center;white-space:nowrap;color:${PARTIAL_ACCENT};font-size:0.75rem;font-weight:700;${partialParentTdBase}">진행중</td>
+                </tr>`;
 
-            return `
-                                <tr${isPartial ? ' style="background:rgba(37,99,235,0.06);"' : (_draft ? ' style="background:rgba(245,158,11,0.06);"' : '')}>
-                                    <td style="line-height:1.3;">${_workDateHtml}</td>
-                                    <td><span class="badge badge-info">${w.line || '-'}</span></td>
-                                    <td>${w.carModel || '-'}</td>
-                                    <td><strong>${w.partName || '-'}</strong>${partialBadge}${draftBadge}</td>
-                                    <td>${w.color || '-'}</td>
-                                    <td style="font-family:monospace;font-size:0.85rem;">${lotDisplay}</td>
-                                    <td>${qtyDisplay}</td>
-                                    <td style="text-align:center;">
-                                        <button class="btn btn-sm ${isPartial || _draft ? 'btn-outline' : 'btn-primary'}" type="button" data-open-painting-inspection="${waitKey}"${btnStyle}>
-                                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:2px;">edit</span>${btnText}
-                                        </button>
-                                    </td>
-                                </tr>
-                            `;
+            let availableBefore = originalQty;
+            const historyRows = history.map((insp, hi) => {
+                const round = hi + 1;
+                const goodQty = inspGood(insp);
+                const reworkQty = inspRework(insp);
+                const defectTotal = inspDefectTotal(insp);
+                const inspectionQty = inspInspectionQty(insp);
+                availableBefore = Math.max(0, availableBefore - inspectionQty);
+
+                const _ip = String(insp.date || '').split('-');
+                const _ist = String(insp.inspectionStartTime || '').slice(0, 5);
+                const inspDateShort = _ip.length === 3
+                    ? `${_ip[1]}-${_ip[2]}${_ist ? ' ' + _ist : ''}`
+                    : (insp.date || '-');
+                const regName = _registeredByName(insp);
+
+                return `
+                <tr>
+                    ${childRowLabel(
+                        `<span style="color:${PARTIAL_ACCENT};font-weight:800;margin-right:4px;">ㄴ</span>` +
+                        `<span style="font-size:0.82rem;font-weight:700;color:var(--text-secondary);">${round}차 부분검사</span>` +
+                        `<span style="font-size:0.72rem;color:var(--text-muted);margin-left:8px;">${inspDateShort}</span>` +
+                        `<span style="font-size:0.72rem;color:var(--text-muted);margin-left:6px;">등록 ${regName}</span>`
+                    )}
+                    ${childEmptyCell()}
+                    ${childNumCell(inspectionQty, 'var(--text-primary)')}
+                    ${childNumCell(goodQty, 'var(--accent-green)')}
+                    ${childNumCell(defectTotal, 'var(--accent-red)')}
+                    ${childNumCell(reworkQty, '#ea580c')}
+                    ${childActionCell(
+                        insp.id
+                            ? `<button class="btn btn-sm btn-outline" type="button" onclick="PaintingInspectionModule.showInspectionDetail('${insp.id}')">보기</button>`
+                            : '<span style="color:var(--text-muted);font-size:0.75rem;">-</span>'
+                    )}
+                </tr>`;
+            }).join('');
+
+            const nextRound = history.length + 1;
+            const waitingRow = `
+                <tr>
+                    ${childRowLabel(
+                        `<span style="color:${PARTIAL_ACCENT};font-weight:800;margin-right:4px;">ㄴ</span>` +
+                        `<span style="font-size:0.82rem;font-weight:800;color:${PARTIAL_ACCENT};">${nextRound}차 검사대기</span>` +
+                        '<span style="font-size:0.72rem;color:var(--text-muted);margin-left:6px;">원수량 − 누적검사</span>'
+                    )}
+                    ${childQtyCell(
+                        UIUtils.formatNumber(remain) + ' <span style="font-size:0.68rem;font-weight:600;color:' + PARTIAL_ACCENT + ';">' + nextRound + '차 대기</span>',
+                        `원 ${UIUtils.formatNumber(originalQty)} − 누적 ${UIUtils.formatNumber(Math.max(inspectedQty, consumedFromHistory))}`
+                    )}
+                    ${childEmptyCell()}
+                    ${childNumCell(null)}
+                    ${childNumCell(null)}
+                    ${childNumCell(null)}
+                    ${childNumCell(null)}
+                    ${childActionCell(
+                        `<button class="btn btn-sm btn-outline" type="button" data-open-painting-inspection="${waitKey}"
+                            style="color:${PARTIAL_ACCENT};border-color:${PARTIAL_ACCENT};">
+                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:2px;">edit</span>계속 검사
+                        </button>`
+                    )}
+                </tr>`;
+
+            return parentRow + historyRows + waitingRow;
         }).join('');
 
         el.innerHTML = `
-            <div class="data-table-wrapper">
-                <table class="data-table">
+            <div class="data-table-wrapper" style="overflow-x:auto;width:100%;">
+                <table class="data-table" style="width:100%;min-width:100%;table-layout:auto;border-collapse:collapse;">
                     <thead>
                         <tr>
-                            <th>도장작업일</th>
-                            <th>라인</th>
-                            <th>차종</th>
-                            <th>품명</th>
-                            <th>컬러</th>
-                            <th>사출 LOT</th>
-                            <th style="text-align:right;">도장 완료(검사대기) 수량</th>
-                            <th style="width:120px;">외관 검사</th>
+                            <th style="white-space:nowrap;width:1%;">도장작업일</th>
+                            <th style="white-space:nowrap;width:1%;">라인</th>
+                            <th style="white-space:nowrap;width:1%;">차종</th>
+                            <th style="white-space:nowrap;">품명</th>
+                            <th style="white-space:nowrap;width:1%;">컬러</th>
+                            <th style="white-space:nowrap;width:1%;">사출 LOT</th>
+                            <th style="text-align:right;white-space:nowrap;width:1%;">도장완료/검사대기 수량</th>
+                            <th style="text-align:right;white-space:nowrap;width:1%;">검사 수량</th>
+                            <th style="text-align:right;white-space:nowrap;width:1%;">양품</th>
+                            <th style="text-align:right;white-space:nowrap;width:1%;" title="불량 합계(리워크 포함)">불량</th>
+                            <th style="text-align:right;white-space:nowrap;width:1%;" title="불량 중 재도장 소재">리워크</th>
+                            <th style="white-space:nowrap;width:1%;">외관 검사</th>
                         </tr>
                     </thead>
                     <tbody>
                         ${waitingRowsHtml}
                     </tbody>
                 </table>
+            </div>
+            <div style="margin-top:8px;font-size:0.72rem;color:var(--text-muted);line-height:1.45;">
+                부분검사 진행: 윗줄(N차 결과: 검사수량·양품·불량·리워크) → 아랫줄(다음 차 대기 = 원수량 − 누적검사) ·
+                <strong>리워크는 불량 중 일부</strong>이며 재도장 소재 재고로 별도 관리됩니다.
             </div>
         `;
 
@@ -6547,7 +6805,21 @@ const PaintingInspectionModule = (function() {
             }
 
             _piWorkId = workId;
-            _piWorkInspectedQty = Number(work.inspectedQty) || 0;
+
+            const lotDisplay = work.lots && work.lots.length > 0 ?
+                work.lots.map(l => l.lotNo).join(', ') :
+                (work.lotNo || '-');
+            const injectionMeta = _getInjectionMetaForWork(work);
+
+        // ✓ Case 1: 부분 검사 도장 작업 처리
+            const isPartialWork = work.inspectionStatus === 'partial';
+            const partialQtys = isPartialWork ? _getPartialInspectionQtys(work) : null;
+            const inspectedQty = partialQtys ? partialQtys.inspectedQty : 0;
+            const remainingQty = partialQtys
+                ? partialQtys.remainingQty
+                : (Number(work.productionQty) || 0);
+            _piWorkInspectedQty = inspectedQty;
+            const baseInspQty = isPartialWork ? remainingQty : (Number(work.productionQty) || 0);
 
             const allDefects = Storage.getAll(DEFECT_STORE) || [];
             const injectionDefects = allDefects.filter(d => d && (d.type === 'injection' || !d.type));
@@ -6560,18 +6832,9 @@ const PaintingInspectionModule = (function() {
                 : [];
             const inspectors = Storage.getAll(DB.STORES.INSPECTORS) || [];
 
-            const lotDisplay = work.lots && work.lots.length > 0 ?
-                work.lots.map(l => l.lotNo).join(', ') :
-                (work.lotNo || '-');
-            const injectionMeta = _getInjectionMetaForWork(work);
-
-        // ✓ Case 1: 부분 검사 도장 작업 처리
-            const isPartialWork = work.inspectionStatus === 'partial';
-            const baseInspQty = isPartialWork ? (work.remainingQty || 0) : (work.productionQty || 0);
-
         // 포장 단위(제품 마스터) · 검사 수량 초기값
             const packUnitVal = _findPaintProductPackUnit(work.carModel, work.partName, work.color);
-            const initGoodQty = baseInspQty; // ✓ Case 1: 부분 검사인 경우 remainingQty 사용
+            const initGoodQty = Number(UIUtils.toInputNumber(baseInspQty, 0)) || 0;
 
         // 표준 검사 시간 → 예상 검사 시간 계산 (제품 정보의 외관검사 C.TIME 기준)
             const _stdPerEaSec    = _getInspectionStdPerEaSec(work);
@@ -6583,7 +6846,7 @@ const PaintingInspectionModule = (function() {
                             <span style="font-size:0.72rem;color:var(--text-muted);">예상 검사 시간</span>
                             <strong id="inspExpectedTimeVal" style="font-size:1rem;color:var(--accent-blue);">${_formatDurationSec(_currentInspectionExpectedSec)}</strong>
                         </div>
-                        <div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">표준 ${_stdPerEaSec.toFixed(1)}초/EA × ${UIUtils.formatNumber(_inspQtyForEst)} EA</div>
+                        <div id="inspExpectedTimeDetail" style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">표준 ${_stdPerEaSec.toFixed(1)}초/EA × ${UIUtils.formatNumber(_inspQtyForEst)} EA</div>
                         <div id="inspExpectedTimeCompare" style="font-size:0.7rem;margin-top:3px;color:var(--text-secondary);"></div>
                    </div>`
                 : `<div style="margin-top:2px;padding:8px 10px;background:var(--bg-secondary);border:1px dashed var(--border);border-radius:6px;font-size:0.72rem;color:var(--text-muted);line-height:1.4;">
@@ -6597,8 +6860,8 @@ const PaintingInspectionModule = (function() {
                 ? `<div style="background:rgba(37,99,235,0.1); border:1px solid rgba(37,99,235,0.3); border-radius:8px; padding:8px 14px; font-size:0.82rem; color:var(--text-primary); display:flex; align-items:center; gap:8px;">
                     <span class="material-symbols-outlined" style="color:var(--accent-blue); font-size:20px;">restart_alt</span>
                     <div>
-                        <strong>부분 검사 계속</strong>: 이전 ${UIUtils.formatNumber(work.inspectedQty || 0)}개 검사 완료,
-                        <strong style="color:var(--accent-blue);">${UIUtils.formatNumber(work.remainingQty || 0)}개</strong> 남음
+                        <strong>부분 검사 계속</strong>: 이전 ${UIUtils.formatNumber(inspectedQty)}개 검사 완료,
+                        <strong style="color:var(--accent-blue);">${UIUtils.formatNumber(remainingQty)}개</strong> 남음
                     </div>
                   </div>`
                 : '';
@@ -6627,7 +6890,8 @@ const PaintingInspectionModule = (function() {
                     <span style="color:var(--border);">|</span>
                     <span style="font-size:0.75rem; color:var(--text-muted);">${isPartialWork ? '남은 검사수량' : '검사 대상'}&nbsp;<strong id="piBannerInspQty" style="color:var(--accent-blue); font-size:0.95rem;">${UIUtils.formatNumber(baseInspQty)} EA</strong>
                         <input type="hidden" id="inpInspectionQty" value="${baseInspQty}">
-                        <input type="hidden" id="piInspectedQtyHidden" value="${work.inspectedQty || 0}">
+                        <input type="hidden" id="piInspectedQtyHidden" value="${inspectedQty}">
+                        <input type="hidden" id="piProductionQtyHidden" value="${Number(work.productionQty) || 0}">
                         <input type="hidden" id="piIsPartialWorkFlag" value="${isPartialWork ? '1' : '0'}">
                         <input type="hidden" id="piStdPerEaHidden" value="${_stdPerEaSec}">
                     </span>
@@ -6679,7 +6943,7 @@ const PaintingInspectionModule = (function() {
                         </div>
 
                         <!-- 작업 수량 (작업일지 연동) -->
-                        ${_buildWorkQtyCard(work, isPartialWork)}
+                        ${_buildWorkQtyCard(work, isPartialWork, inspectedQty, remainingQty)}
 
                         <!-- 검사 수량 -->
                         <div class="card">
@@ -6712,7 +6976,7 @@ const PaintingInspectionModule = (function() {
                                 <!-- ✓ Case 1: 부분 검사 시 설명 (최대 입력 가능 수량 안내) -->
                                 <div id="piPartialInspectionInfo" style="display:none; margin-top:8px; padding:8px 10px; background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.25); border-radius:6px; font-size:0.75rem; color:var(--text-secondary); line-height:1.4;">
                                     <span class="material-symbols-outlined" style="font-size:16px; vertical-align:middle; color:var(--accent-orange);">info</span>
-                                    <span style="margin-left:4px;">부분 검사 시 입력한 수량(양품+불량+리워크, 최대 <strong>${UIUtils.formatNumber(baseInspQty)}</strong> EA)만 검사 완료되며, 나머지는 외관검사 대기로 유지됩니다.</span>
+                                    <span style="margin-left:4px;">부분 검사 시 입력한 수량(양품+불량, 최대 <strong>${UIUtils.formatNumber(baseInspQty)}</strong> EA)만 검사 완료되며, 나머지는 외관검사 대기로 유지됩니다. 리워크는 불량 중에서만 지정합니다.</span>
                                 </div>
                             </div>
                         </div>
@@ -6829,7 +7093,7 @@ const PaintingInspectionModule = (function() {
                         </div>
                         <div style="width:1px;align-self:stretch;background:var(--border-color);flex:0 0 1px;min-height:36px;"></div>
                         <!-- ② 리워크 → 리워크 재공품 입고 -->
-                        <div style="display:flex;align-items:flex-end;gap:8px;flex:0 0 auto;flex-wrap:nowrap;" title="입력 수량은 리워크 재공품으로 입고됩니다.">
+                        <div style="display:flex;align-items:flex-end;gap:8px;flex:0 0 auto;flex-wrap:nowrap;" title="불량수 이내에서만 입력. 검사수량·양품수는 변경되지 않습니다.">
                             <span style="font-size:0.78rem;font-weight:700;color:var(--text-primary);white-space:nowrap;display:flex;align-items:center;gap:3px;align-self:center;padding-bottom:6px;">
                                 <span class="material-symbols-outlined" style="font-size:16px;color:#ea580c;">autorenew</span>리워크
                             </span>
@@ -6843,11 +7107,11 @@ const PaintingInspectionModule = (function() {
                         </div>
                         <div style="width:1px;align-self:stretch;background:var(--border-color);flex:0 0 1px;min-height:36px;"></div>
                         <!-- ③ 검사자 -->
-                        <div style="display:flex;align-items:flex-end;gap:6px;flex:1 1 auto;min-width:180px;flex-wrap:nowrap;">
+                        <div style="display:flex;align-items:flex-end;gap:6px;flex:0 1 auto;flex-wrap:nowrap;">
                             <span style="font-size:0.78rem;font-weight:700;color:var(--text-primary);white-space:nowrap;align-self:center;padding-bottom:6px;">
                                 검사자 <span style="color:var(--accent-red);">*</span>
                             </span>
-                            <div style="display:flex;align-items:flex-end;gap:6px;flex:1 1 auto;flex-wrap:nowrap;min-width:0;" id="inspectorContainer"></div>
+                            <div style="display:flex;align-items:flex-end;gap:6px;flex:0 0 auto;flex-wrap:nowrap;" id="inspectorContainer"></div>
                             <button type="button" class="btn btn-sm btn-primary" onclick="PaintingInspectionModule._addInspectorField()" id="addInspectorBtn" style="gap:3px;padding:4px 8px;font-size:0.72rem;flex:0 0 auto;align-self:flex-end;">
                                 <span class="material-symbols-outlined" style="font-size:14px;">add</span> 추가
                             </button>
@@ -6906,6 +7170,9 @@ const PaintingInspectionModule = (function() {
         `;
 
             document.body.appendChild(modalEl);
+            if (typeof UIUtils !== 'undefined' && UIUtils.sanitizeNumberInputs) {
+                UIUtils.sanitizeNumberInputs(modalEl);
+            }
             _makeInspectionModalDraggable(modalEl, modalId, modalHandleId);
             _makeInspectionModalResizable(modalEl, modalId);
 
@@ -7458,7 +7725,7 @@ const PaintingInspectionModule = (function() {
                                 <th style="text-align:right;white-space:nowrap;">양품</th>
                                 <th style="text-align:right;white-space:nowrap;">불량</th>
                                 <th style="text-align:right;white-space:nowrap;">불량률</th>
-                                <th style="white-space:nowrap;">검사자</th>
+                                <th style="white-space:nowrap;">등록자</th>
                                 <th style="width:60px;"></th>
                             </tr>
                         </thead>
@@ -7467,9 +7734,7 @@ const PaintingInspectionModule = (function() {
                                 const insp = Number(i.inspectionQty) || 0;
                                 const defect = Number(i.defectQty) || 0;
                                 const rate = insp > 0 ? (defect / insp * 100).toFixed(1) : '0.0';
-                                const inspectorNames = Array.isArray(i.inspectors)
-                                    ? i.inspectors.filter(Boolean).join(', ')
-                                    : (i.inspector || i.inspectorName || '');
+                                const registeredName = _registeredByName(i);
                                 const _ip = (i.date || '').split('-');
                                 const _ist = (i.inspectionStartTime || '').slice(0, 5);
                                 const _inspDateHtml = _ip.length === 3
@@ -7496,7 +7761,7 @@ const PaintingInspectionModule = (function() {
                                     <td style="text-align:right;color:var(--accent-green);font-weight:600;white-space:nowrap;">${UIUtils.formatNumber(Number(i.goodQty) || 0)}</td>
                                     <td style="text-align:right;color:var(--accent-red);font-weight:600;white-space:nowrap;">${UIUtils.formatNumber(defect)}</td>
                                     <td style="text-align:right;font-weight:600;color:${defect > 0 ? 'var(--accent-red)' : 'var(--text-muted)'};white-space:nowrap;">${rate}%</td>
-                                    <td style="white-space:nowrap;font-size:0.85rem;">${inspectorNames || '-'}</td>
+                                    <td style="white-space:nowrap;font-size:0.85rem;">${registeredName}</td>
                                     <td style="text-align:center;"><button class="btn btn-sm btn-outline" onclick="PaintingInspectionModule.showInspectionDetail('${i.id}')">보기</button></td>
                                 </tr>`;
                             }).join('')}
@@ -7517,9 +7782,10 @@ const PaintingInspectionModule = (function() {
         const i = allInspections.find(r => r.id === id);
         if (!i) { UIUtils.toast('검사 기록을 찾을 수 없습니다.', 'error'); return; }
 
-        const insp = Number(i.inspectionQty) || 0;
-        const good = Number(i.goodQty) || 0;
-        const defect = Number(i.defectQty) || 0;
+        const insp = _inspInspectionQty(i);
+        const good = _inspGood(i);
+        const defect = _inspDefectTotal(i);
+        const rework = _inspRework(i);
         const rate = insp > 0 ? (defect / insp * 100).toFixed(1) : '0.0';
 
         function fmtDate(d) {
@@ -7546,7 +7812,7 @@ const PaintingInspectionModule = (function() {
         const paintingDate = fmtDate(i.paintingDate);
         const inspectionTime = i.inspectionStartTime ? String(i.inspectionStartTime).slice(0, 5) : '-';
         const inspectionRange = (i.inspectionStartTime || '-') + (i.inspectionEndTime ? ' ~ ' + i.inspectionEndTime : '');
-        const inspectorText = (i.inspectors && i.inspectors.length > 0) ? i.inspectors.join(', ') : '-';
+        const registeredName = _registeredByName(i);
         const defectRows = (i.defects || []).map(function (d) {
             const sourceLabel = d.defectType === 'painting' ? '도장' : '사출';
             const sourceBg = d.defectType === 'painting' ? 'rgba(59,130,246,0.12)' : 'rgba(249,115,22,0.12)';
@@ -7579,7 +7845,7 @@ const PaintingInspectionModule = (function() {
                                 '<div style="font-size:1.45rem;font-weight:900;color:var(--text-primary);margin-top:6px;">' + (i.carModel || '-') + ' / ' + (i.partName || '-') + '</div>' +
                                 '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">' +
                                     '<span style="display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;background:#fff;border:1px solid rgba(148,163,184,0.16);font-size:0.78rem;color:var(--text-secondary);font-weight:700;">컬러&nbsp;&nbsp;<strong style="color:var(--text-primary);">' + (i.color || '-') + '</strong></span>' +
-                                    '<span style="display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;background:#fff;border:1px solid rgba(148,163,184,0.16);font-size:0.78rem;color:var(--text-secondary);font-weight:700;">검사자&nbsp;&nbsp;<strong style="color:var(--text-primary);">' + inspectorText + '</strong></span>' +
+                                    '<span style="display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;background:#fff;border:1px solid rgba(148,163,184,0.16);font-size:0.78rem;color:var(--text-secondary);font-weight:700;">등록자&nbsp;&nbsp;<strong style="color:var(--text-primary);">' + registeredName + '</strong></span>' +
                                 '</div>' +
                             '</div>' +
                             '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;">' +
@@ -7598,14 +7864,15 @@ const PaintingInspectionModule = (function() {
                         infoRow('검사 시간', inspectionRange) +
                         infoRow('도장 작업일', paintingDate.raw ? paintingDate.raw : '-') +
                         infoRow('사출 LOT', i.lotNo || '-') +
-                        infoRow('검사자', inspectorText) +
+                        infoRow('등록자', registeredName) +
                     '</div>' +
                     '<div style="padding:16px 18px;border-radius:20px;background:#fff;border:1px solid rgba(148,163,184,0.14);box-shadow:0 14px 28px rgba(15,23,42,0.05);">' +
                         '<div style="font-size:0.86rem;font-weight:900;color:var(--text-primary);margin-bottom:6px;">판정 요약</div>' +
                         infoRow('차종 / 품명', (i.carModel || '-') + ' / ' + (i.partName || '-')) +
                         infoRow('컬러', i.color || '-') +
                         infoRow('양품', '<span style="color:var(--accent-green);font-weight:800;">' + UIUtils.formatNumber(good) + '</span>') +
-                        infoRow('불량', '<span style="color:var(--accent-red);font-weight:800;">' + UIUtils.formatNumber(defect) + '</span>') +
+                        infoRow('불량', '<span style="color:var(--accent-red);font-weight:800;">' + UIUtils.formatNumber(defect) + '</span>' +
+                            (rework > 0 ? ' <span style="font-size:0.78rem;color:var(--text-muted);">(폐기 ' + UIUtils.formatNumber(Math.max(0, defect - rework)) + ' · 리워크 ' + UIUtils.formatNumber(rework) + ')</span>' : '')) +
                         infoRow('불량률', '<span style="font-weight:800;color:' + (defect > 0 ? 'var(--accent-red)' : 'var(--text-muted)') + ';">' + rate + '%</span>') +
                     '</div>' +
                 '</div>' +
@@ -8067,28 +8334,37 @@ const PaintingInspectionModule = (function() {
         }
     }
 
-    function _buildWorkQtyCard(work, isPartialWork) {
-        const workQty = Number(work.productionQty) || 0;
-        const inspected = Number(work.inspectedQty) || 0;
-        const available = isPartialWork ? Math.max(0, workQty - inspected) : workQty;
+    function _buildWorkQtyCard(work, isPartialWork, inspectedQty, remainingQty) {
+        const productionQty = Number(work.productionQty) || 0;
+        const inspected = Number(inspectedQty) || 0;
+        const available = isPartialWork
+            ? Math.max(0, Number(remainingQty) || Math.max(0, productionQty - inspected))
+            : productionQty;
+        const displayQty = isPartialWork ? available : productionQty;
+        const displayQtyVal = (typeof UIUtils !== 'undefined' && UIUtils.toInputNumber)
+            ? UIUtils.toInputNumber(displayQty, 0)
+            : String(displayQty);
+        const qtyLabel = isPartialWork ? '검사수량' : '작업수량';
         const sourceLabel = _isLaserWipWork(work) ? '레이저 후 재공품' : '사출 출고';
+        const editBtnHtml = isPartialWork ? '' : `
+                        <button type="button" id="piWorkQtyEditBtn" class="btn btn-sm btn-outline"
+                            onclick="PaintingInspectionModule._enableWorkQtyEdit()"
+                            style="padding:4px 10px;font-size:0.75rem;white-space:nowrap;gap:3px;flex-shrink:0;">
+                            <span class="material-symbols-outlined" style="font-size:14px;">edit</span> 변경
+                        </button>`;
         return `
         <div class="card">
             <div class="card-body" style="padding:12px;">
                 <h5 style="margin:0 0 10px 0;font-size:0.85rem;color:var(--text-primary);">작업 수량</h5>
                 <div style="display:flex;flex-direction:column;gap:8px;">
                     <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-                        <label class="form-label" style="font-size:0.72rem;margin:0;flex:0 0 auto;white-space:nowrap;">작업수량</label>
-                        <input type="number" class="form-input" id="piWorkQty" value="${workQty}" min="0" readonly
+                        <label class="form-label" style="font-size:0.72rem;margin:0;flex:0 0 auto;white-space:nowrap;">${qtyLabel}</label>
+                        <input type="number" class="form-input" id="piWorkQty" value="${displayQtyVal}" min="0" readonly
                             style="text-align:right;font-weight:700;font-size:0.95rem;padding:5px 8px;flex:1 1 110px;min-width:110px;max-width:100%;background:var(--bg-secondary);">
                         <span style="font-size:0.72rem;color:var(--text-muted);flex-shrink:0;">EA</span>
-                        <button type="button" id="piWorkQtyEditBtn" class="btn btn-sm btn-outline"
-                            onclick="PaintingInspectionModule._enableWorkQtyEdit()"
-                            style="padding:4px 10px;font-size:0.75rem;white-space:nowrap;gap:3px;flex-shrink:0;">
-                            <span class="material-symbols-outlined" style="font-size:14px;">edit</span> 변경
-                        </button>
+                        ${editBtnHtml}
                     </div>
-                    ${isPartialWork ? `<div style="font-size:0.72rem;color:var(--text-muted);">이미 검사 <strong style="color:var(--accent-orange);">${UIUtils.formatNumber(inspected)}</strong> EA · 남은 검사 <strong id="piAvailInspLabel" style="color:var(--accent-blue);">${UIUtils.formatNumber(available)}</strong> EA</div>` : ''}
+                    ${isPartialWork ? `<div style="font-size:0.72rem;color:var(--text-muted);">원수량 <strong>${UIUtils.formatNumber(productionQty)}</strong> EA · 이미 검사 <strong style="color:var(--accent-orange);">${UIUtils.formatNumber(inspected)}</strong> EA · 남은 검사 <strong id="piAvailInspLabel" style="color:var(--accent-blue);">${UIUtils.formatNumber(available)}</strong> EA</div>` : ''}
                     <div style="background:rgba(59,130,246,0.08);border-radius:6px;padding:6px 10px;display:flex;justify-content:space-between;align-items:center;">
                         <span style="font-size:0.72rem;color:var(--text-muted);">검사 대상</span>
                         <strong id="piInspAvailLabel" style="font-size:0.95rem;color:var(--accent-blue);">${UIUtils.formatNumber(available)} EA</strong>
@@ -8100,11 +8376,7 @@ const PaintingInspectionModule = (function() {
     }
 
     function _getInspAvailableFromForm() {
-        const workQty = Math.max(0, Number(document.getElementById('piWorkQty')?.value) || 0);
-        const inspected = Math.max(0, Number(document.getElementById('piInspectedQtyHidden')?.value) || 0);
-        const isPartialWork = (document.getElementById('piIsPartialWorkFlag') || {}).value === '1';
-        if (isPartialWork) return Math.max(0, workQty - inspected);
-        return workQty;
+        return Math.max(0, Number(document.getElementById('piWorkQty')?.value) || 0);
     }
 
     function _refreshWorkQtyDisplay() {
@@ -8122,6 +8394,8 @@ const PaintingInspectionModule = (function() {
             _currentInspectionExpectedSec = stdPerEa * available;
             const expEl = document.getElementById('inspExpectedTimeVal');
             if (expEl) expEl.textContent = _formatDurationSec(_currentInspectionExpectedSec);
+            const expDetail = document.getElementById('inspExpectedTimeDetail');
+            if (expDetail) expDetail.textContent = `표준 ${stdPerEa.toFixed(1)}초/EA × ${UIUtils.formatNumber(available)} EA`;
         }
         const partialInfo = document.getElementById('piPartialInspectionInfo');
         if (partialInfo) {
@@ -8151,32 +8425,28 @@ const PaintingInspectionModule = (function() {
     function _recalcInspQuantities() {
         _refreshWorkQtyDisplay();
         const available = _getInspAvailableFromForm();
-        // 불량수는 항상 불량 유형 입력 합계가 권위 값이다.
         const failQty = _sumDefectTypeInputs();
         const failEl = document.getElementById('inpDefectQty');
         if (failEl) failEl.value = failQty;
 
         let reworkQty = _getReworkQtyFromForm();
         const reworkEl = document.getElementById('inpReworkQty');
-        if (!_isPartialInspectionMode() && available > 0) {
-            const maxRework = Math.max(0, available - failQty);
-            if (reworkQty > maxRework) {
-                reworkQty = maxRework;
-                if (reworkEl) reworkEl.value = maxRework > 0 ? String(maxRework) : '';
-            }
+        if (reworkQty > failQty) {
+            reworkQty = failQty;
+            if (reworkEl) reworkEl.value = reworkQty > 0 ? String(reworkQty) : '';
         }
 
+        const goodEl = document.getElementById('inpGoodQty');
+        const totalEl = document.getElementById('inpTotalQty');
+
         if (_isPartialInspectionMode()) {
-            const goodQty = parseInt(document.getElementById('inpGoodQty')?.value || 0, 10) || 0;
-            const totalEl = document.getElementById('inpTotalQty');
-            if (totalEl) totalEl.value = UIUtils.formatNumber(goodQty + failQty + reworkQty);
+            const goodQty = parseInt(goodEl?.value || 0, 10) || 0;
+            if (totalEl) totalEl.value = UIUtils.formatNumber(goodQty + failQty);
             return;
         }
-        const goodQty = Math.max(0, available - failQty - reworkQty);
-        const goodEl = document.getElementById('inpGoodQty');
+        const goodQty = Math.max(0, available - failQty);
         if (goodEl) goodEl.value = goodQty;
-        const totalEl = document.getElementById('inpTotalQty');
-        if (totalEl) totalEl.value = UIUtils.formatNumber(goodQty + failQty + reworkQty);
+        if (totalEl) totalEl.value = UIUtils.formatNumber(goodQty + failQty);
     }
 
     function _enableWorkQtyEdit() {
@@ -8309,6 +8579,13 @@ const PaintingInspectionModule = (function() {
     function _applyInspectionDraft(draft) {
         if (!draft) return;
         const setV = (id, val) => { const el = document.getElementById(id); if (el && val != null && val !== '') el.value = val; };
+        const setNum = (id, val) => {
+            const el = document.getElementById(id);
+            if (!el || val == null || val === '') return;
+            el.value = (typeof UIUtils !== 'undefined' && UIUtils.toInputNumber)
+                ? UIUtils.toInputNumber(val, 0)
+                : String(val).replace(/,/g, '');
+        };
         setV('inpInspectionDate',      draft.date);
         setV('inpInspectionStartTime', draft.startTime);
         setV('inpInspectionEndTime',   draft.endTime);
@@ -8327,8 +8604,8 @@ const PaintingInspectionModule = (function() {
         _updateDefectTotal();
         // 불량이 하나도 없으면 양품수·리워크수는 저장값 유지
         if (!draft.defects || Object.keys(draft.defects).length === 0) {
-            setV('inpGoodQty',   draft.goodQty);
-            setV('inpDefectQty', draft.defectQty);
+            setNum('inpGoodQty', draft.goodQty);
+            setNum('inpDefectQty', draft.defectQty);
             setV('inpReworkQty', draft.reworkQty);
         }
         _calculateInspectionTime();
@@ -8404,19 +8681,22 @@ const PaintingInspectionModule = (function() {
         // 불량수 자동 입력
         const defectQtyEl = document.getElementById('inpDefectQty');
         if (defectQtyEl) defectQtyEl.value = defectSum;
-        const reworkQty = _getReworkQtyFromForm();
+        let reworkQty = _getReworkQtyFromForm();
+        const reworkEl = document.getElementById('inpReworkQty');
+        if (reworkQty > defectSum) {
+            reworkQty = defectSum;
+            if (reworkEl) reworkEl.value = reworkQty > 0 ? String(reworkQty) : '';
+        }
 
-        // 양품수 = 검사수량 - 불량수 - 리워크수
         const goodQtyEl = document.getElementById('inpGoodQty');
         if (inspectionQtyEl && goodQtyEl) {
             const inspQty = parseInt(inspectionQtyEl.value.replace(/,/g, '') || 0);
-            goodQtyEl.value = Math.max(0, inspQty - defectSum - reworkQty);
+            goodQtyEl.value = Math.max(0, inspQty - defectSum);
         }
 
-        // 합계 = 양품수 + 불량수 + 리워크수
         const goodQty = parseInt(goodQtyEl ? goodQtyEl.value || 0 : 0);
         const totalEl = document.getElementById('inpTotalQty');
-        if (totalEl) totalEl.value = UIUtils.formatNumber(goodQty + defectSum + reworkQty);
+        if (totalEl) totalEl.value = UIUtils.formatNumber(goodQty + defectSum);
     }
 
     function _getPaintingWorkQty(work) {
@@ -8524,7 +8804,7 @@ const PaintingInspectionModule = (function() {
         // availableQty = 이번에 검사 가능한 전체(남은) 수량 — 부분완료 회차의 상한선으로 사용
         const availableQty = parseInt(document.getElementById('inpInspectionQty').value.replace(/,/g, '') || 0);
 
-        // ✓ Case 1: 부분 완료 여부 (양품수+불량수+리워크 = 이번 회차 실제 검사수량)
+        // ✓ Case 1: 부분 완료 여부 (양품수+불량수 = 이번 회차 실제 검사수량)
         const isPartialCheckbox = document.getElementById('inpIsPartialInspection');
         const isPartial = !!(isPartialCheckbox && isPartialCheckbox.checked);
 
@@ -8532,12 +8812,18 @@ const PaintingInspectionModule = (function() {
         const packUnit = parseInt(document.getElementById('piPackUnit')?.value || 0) ||
             _findPaintProductPackUnit(work.carModel, work.partName, work.color) || 0;
 
-        // ✓ 검사 수량 산정: 부분완료는 실제 입력한 양품+불량+리워크 합이 "이번 회차 검사수량"
+        // ✓ 검사 수량 산정: 검사수량 = 양품 + 불량 (리워크는 불량 중 일부)
         const effectiveInspQty = isPartial
-            ? (goodQty + defectQty + reworkQty)
-            : (availableQty > 0 ? availableQty : (goodQty + defectQty + reworkQty));
+            ? (goodQty + defectQty)
+            : (availableQty > 0 ? availableQty : (goodQty + defectQty));
         if (effectiveInspQty === 0) {
             UIUtils.toast('검사수량이 0입니다. 양품수를 입력해주세요.', 'warning');
+            return;
+        }
+        if (reworkQty > defectQty) {
+            UIUtils.toast(`리워크수(${UIUtils.formatNumber(reworkQty)})는 불량수(${UIUtils.formatNumber(defectQty)})를 초과할 수 없습니다.`, 'warning');
+            const reworkEl = document.getElementById('inpReworkQty');
+            if (reworkEl) reworkEl.focus();
             return;
         }
         // ✓ 부분완료 시 이번 회차 검사수량이 남은 수량을 초과할 수 없음
@@ -8550,8 +8836,8 @@ const PaintingInspectionModule = (function() {
             if (defectQtyEl) defectQtyEl.focus();
             return;
         }
-        if (goodQty + defectQty + reworkQty !== effectiveInspQty) {
-            UIUtils.toast('양품수 + 불량수 + 리워크수가 검사수량과 맞지 않습니다.', 'warning');
+        if (goodQty + defectQty !== effectiveInspQty) {
+            UIUtils.toast('양품수 + 불량수가 검사수량과 맞지 않습니다.', 'warning');
             return;
         }
 
@@ -8589,6 +8875,7 @@ const PaintingInspectionModule = (function() {
         const inspectionEndTime = inspectionEndTimeEl ? inspectionEndTimeEl.value : '';
 
         const productDisplay = `${work.carModel} ${work.partName} ${work.color}`;
+        const registered = _captureRegisteredBy();
         const baseData = {
             date: inspectionDate,
             inspectionStartTime,
@@ -8607,6 +8894,9 @@ const PaintingInspectionModule = (function() {
             defectQty,
             reworkQty,
             inspectors,
+            registeredBy: registered.registeredBy,
+            registeredByName: registered.registeredByName,
+            createdBy: registered.registeredBy,
             packUnit,
             prevResidualQty: 0,
             packBoxCount: 0,
@@ -9237,9 +9527,7 @@ const PaintingInspectionModule = (function() {
             const defectRate = d.inspectionQty > 0 ?
                 ((d.defectQty / d.inspectionQty) * 100).toFixed(1) : '0.0';
 
-            const inspectorNames = Array.isArray(d.inspectors)
-                ? d.inspectors.filter(Boolean).join(', ')
-                : (d.inspector || d.inspectorName || '');
+            const registeredName = _registeredByName(d);
 
             return `
                 <tr>
@@ -9254,7 +9542,7 @@ const PaintingInspectionModule = (function() {
                     <td style="text-align:right;color:var(--accent-red);font-weight:600;white-space:nowrap;">${UIUtils.formatNumber(d.defectQty || 0)}</td>
                     <td style="text-align:right;color:var(--accent-red);font-weight:700;white-space:nowrap;">${defectRate}%</td>
                     <td style="font-size:0.85rem;">${injectionDisplay}${paintingDisplay}</td>
-                    <td style="white-space:nowrap;font-size:0.85rem;">${inspectorNames || '-'}</td>
+                    <td style="white-space:nowrap;font-size:0.85rem;">${registeredName}</td>
                     <td style="text-align:center;white-space:nowrap;" onclick="event.stopPropagation()">
                         <button class="btn btn-sm btn-outline" onclick="PaintingInspectionModule._showCompletionDetail('${d.id}', event)" style="padding:4px 8px; font-size:0.8rem;">보기</button>
                     </td>
@@ -9278,7 +9566,7 @@ const PaintingInspectionModule = (function() {
                         <th style="white-space:nowrap;text-align:right;">불량</th>
                         <th style="white-space:nowrap;text-align:right;">불량률</th>
                         <th style="white-space:nowrap;">불량 유형</th>
-                        <th style="white-space:nowrap;">검사자</th>
+                        <th style="white-space:nowrap;">등록자</th>
                         <th style="white-space:nowrap;">작업</th>
                     </tr>
                 </thead>
@@ -9416,10 +9704,9 @@ const PaintingInspectionModule = (function() {
                 ${defectRowsHtml(paintDefects,'도장 불량', '#16a34a')}
             </div>` : `<div style="color:var(--text-muted); font-size:0.82rem; text-align:center; padding:4px 0;">불량 내역 없음</div>`}
 
-            ${d.inspectors && d.inspectors.length > 0 ? `
             <div style="border-top:1px solid var(--border); padding-top:10px; margin-top:10px; font-size:0.8rem; color:var(--text-muted);">
-                검사자: <strong style="color:var(--text-primary);">${d.inspectors.join(', ')}</strong>
-            </div>` : ''}
+                등록자: <strong style="color:var(--text-primary);">${_registeredByName(d)}</strong>
+            </div>
 
             ${(() => {
                 const canWrite = _canWriteInspection();
@@ -9566,18 +9853,18 @@ const PaintingInspectionModule = (function() {
                     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
                         <div style="background:rgba(59,130,246,0.08);border:1.5px solid rgba(59,130,246,0.2);border-radius:8px;padding:12px;text-align:center;">
                             <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:6px;font-weight:600;">검사수량</div>
-                            <input type="number" id="editInspQty" value="${insp.inspectionQty || 0}" class="form-input"
+                            <input type="number" id="editInspQty" value="${(typeof UIUtils !== 'undefined' && UIUtils.toInputNumber) ? UIUtils.toInputNumber(insp.inspectionQty, 0) : (insp.inspectionQty || 0)}" class="form-input"
                                 style="text-align:center;font-weight:700;font-size:1.1rem;border:none;background:transparent;padding:0;color:var(--accent-blue);" readonly>
                         </div>
                         <div style="background:rgba(16,185,129,0.08);border:1.5px solid rgba(16,185,129,0.2);border-radius:8px;padding:12px;text-align:center;">
                             <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:6px;font-weight:600;">양품수</div>
-                            <input type="number" id="editGoodQty" value="${insp.goodQty || 0}" class="form-input"
+                            <input type="number" id="editGoodQty" value="${(typeof UIUtils !== 'undefined' && UIUtils.toInputNumber) ? UIUtils.toInputNumber(insp.goodQty, 0) : (insp.goodQty || 0)}" class="form-input"
                                 style="text-align:center;font-weight:700;font-size:1.1rem;border:none;background:transparent;padding:0;color:var(--accent-green);"
                                 onchange="this.dispatchEvent(new Event('change'))">
                         </div>
                         <div style="background:rgba(239,68,68,0.08);border:1.5px solid rgba(239,68,68,0.2);border-radius:8px;padding:12px;text-align:center;">
                             <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:6px;font-weight:600;">불량수</div>
-                            <input type="number" id="editDefectQty" value="${insp.defectQty || 0}" class="form-input"
+                            <input type="number" id="editDefectQty" value="${(typeof UIUtils !== 'undefined' && UIUtils.toInputNumber) ? UIUtils.toInputNumber(insp.defectQty, 0) : (insp.defectQty || 0)}" class="form-input"
                                 style="text-align:center;font-weight:700;font-size:1.1rem;border:none;background:transparent;padding:0;color:var(--accent-red);"
                                 onchange="this.dispatchEvent(new Event('change'))">
                         </div>

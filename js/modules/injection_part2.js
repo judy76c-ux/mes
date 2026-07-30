@@ -557,6 +557,21 @@ var InjectionWarehouseModule = (function() {
      * - 둘 다 있으면 paintColorA/B 와 사출 컬러 매칭
      * - 오늘 생산계획 line 폴백
      */
+    /** 도장 단계 없이 사출 → 레이져로 바로 가는 제품인가 (예: A3 PA KNOB-ECALL) */
+    function _hasDirectLaserRoute(product) {
+        if (!product) return false;
+        const procs = [product.process1, product.process2, product.process3, product.process4]
+            .map(function (p) { return String(p || '').trim(); })
+            .filter(Boolean);
+        if (!procs.length) return false;
+        const hasPaint = procs.some(function (p) {
+            const n = _normalizePaintLine(p);
+            return n === '도장-A' || n === '도장-B';
+        });
+        if (hasPaint) return false;
+        return procs.some(function (p) { return /레이저|레이져/.test(p); });
+    }
+
     function _inferPaintLineFromMaster(carModel, partName, color) {
         const prods = _productsForInjPart(carModel, partName, color);
         let voteA = 0;
@@ -589,6 +604,11 @@ var InjectionWarehouseModule = (function() {
         if (voteB > voteA) return { line: '도장-B', source: '제품 마스터' };
         if (voteA > voteB) return { line: '도장-A', source: '제품 마스터' };
 
+        // 도장 단계가 아예 없고 레이져로 바로 가는 구성이면(사출→레이져) 레이져를 목적지로 추정
+        if (!voteA && !voteB && prods.length && prods.some(_hasDirectLaserRoute)) {
+            return { line: '레이져', source: '제품 마스터(레이져 직행)' };
+        }
+
         // 오늘 생산계획 라인 폴백
         try {
             const today = UIUtils.today ? UIUtils.today() : '';
@@ -612,7 +632,7 @@ var InjectionWarehouseModule = (function() {
     }
 
     function _applyPaintLineRadio(radioName, line, hintElId) {
-        const want = line === '도장-B' ? '도장-B' : '도장-A';
+        const want = line === '도장-B' ? '도장-B' : (line === '레이져' ? '레이져' : '도장-A');
         document.querySelectorAll('input[name="' + radioName + '"]').forEach(function (el) {
             el.checked = el.value === want;
         });
@@ -741,6 +761,61 @@ var InjectionWarehouseModule = (function() {
             resetById: actorId || '',
             resetAt: new Date().toISOString()
         };
+    }
+
+    // ── 수량 보정 → 생산관리자 통보 (선택형) ────────────────────────────
+    function _getProdManagerUsers() {
+        try {
+            if (typeof AuthModule === 'undefined' || typeof AuthModule.getUsers !== 'function') return [];
+            return (AuthModule.getUsers() || [])
+                .filter(function(u) { return u && u.active !== false && u.role === 'prod_manager'; })
+                .map(function(u) { return { id: String(u.id || ''), name: String(u.displayName || u.username || u.id || '') }; });
+        } catch (e) { return []; }
+    }
+
+    function _buildAdjustNotifyHtml(prefix) {
+        const users = _getProdManagerUsers();
+        if (!users.length) return '';
+        const checks = users.map(function(u) {
+            return `<label style="display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid rgba(220,38,38,0.18);border-radius:6px;background:var(--bg-primary);font-size:0.8rem;cursor:pointer;">
+                <input type="checkbox" class="${prefix}-notify-user" value="${_escapeHtml(u.id)}" checked style="width:14px;height:14px;accent-color:#dc2626;">
+                ${_escapeHtml(u.name)}
+            </label>`;
+        }).join('');
+        return `
+            <div style="margin-top:14px;padding:12px;border:1px solid rgba(220,38,38,0.25);border-radius:8px;background:rgba(220,38,38,0.03);">
+                <label style="display:flex;align-items:center;gap:8px;font-size:0.84rem;font-weight:700;color:#dc2626;cursor:pointer;">
+                    <input type="checkbox" id="${prefix}NotifyEnable" checked
+                        onchange="document.getElementById('${prefix}NotifyUserWrap').style.display=this.checked?'grid':'none';">
+                    생산관리자에게 해당 사항을 전달합니다.
+                </label>
+                <div id="${prefix}NotifyUserWrap" style="margin-top:8px;display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;">
+                    ${checks}
+                </div>
+            </div>`;
+    }
+
+    function _sendAdjustNotify(prefix, opts) {
+        try {
+            if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+            const enableEl = document.getElementById(prefix + 'NotifyEnable');
+            if (!enableEl || !enableEl.checked) return;
+            const userIds = Array.from(document.querySelectorAll('.' + prefix + '-notify-user:checked'))
+                .map(function(el) { return String(el.value || '').trim(); })
+                .filter(Boolean);
+            userIds.forEach(function(userId) {
+                AuthModule.sendInternalMessage({
+                    targetType: 'user',
+                    targetId: userId,
+                    title: opts.title,
+                    body: opts.body,
+                    category: opts.category || 'injection-warehouse',
+                    priority: opts.priority || 'high'
+                });
+            });
+        } catch (e) {
+            console.warn('[InjectionWarehouseModule] 생산관리자 통보 실패:', e);
+        }
     }
 
     function _formatResetHistoryDetail(d) {
@@ -2305,6 +2380,7 @@ var InjectionWarehouseModule = (function() {
                     placeholder="예: 실사 재고와 차이 확인 — 250 EA 부족분 반영"></textarea>
             </div>
             <div style="font-size:0.75rem;color:var(--text-muted);margin-top:2px;">※ 수량을 변경하면 차이만큼 재고 보정 입·출고가 자동으로 기록됩니다.</div>
+            ${_buildAdjustNotifyHtml('injLotEdit')}
             `,
             `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
              <button class="btn btn-primary" style="background:#7c3aed;border-color:#7c3aed;" onclick="InjectionWarehouseModule.saveLotEdit('${_cmJs}','${_pnJs}','${_clJs}','${_olJs}',${Number(currentQty) || 0})">수량 보정 저장</button>`,
@@ -2367,6 +2443,13 @@ var InjectionWarehouseModule = (function() {
 
         const delta = newQty - (Number(oldQty) || 0);
 
+        // 확인 다이얼로그를 거치는 동안 모달 DOM이 바뀔 수 있으므로, 통보 대상은
+        // 여기서(사용자가 실제로 체크한 시점) 미리 읽어 끝까지 값으로 들고 간다.
+        const notifyEnabled = !!(document.getElementById('injLotEditNotifyEnable') || {}).checked;
+        const notifyUserIds = Array.from(document.querySelectorAll('.injLotEdit-notify-user:checked'))
+            .map(function(el) { return String(el.value || '').trim(); })
+            .filter(Boolean);
+
         const proceed = () => {
             // ★ 이 보정을 적용했을 때 해당 품목의 전체 재고(모든 LOT 합산)가
             //   마이너스가 되면 그대로 진행하지 않고 먼저 확인을 받는다.
@@ -2382,12 +2465,12 @@ var InjectionWarehouseModule = (function() {
                     UIUtils.confirm(
                         `이 수정을 적용하면 "${partName}"의 전체 재고가 ${UIUtils.formatNumber(projected)} EA(마이너스)가 됩니다.\n` +
                         `다른 LOT의 실제 재고나 이전 입출고 기록을 다시 확인해 주세요.\n\n그래도 계속하시겠습니까?`,
-                        () => _commitLotEdit(carModel, partName, color, oldLot, newLot, newDate, newSupplier, targets, delta, reason)
+                        () => _commitLotEdit(carModel, partName, color, oldLot, newLot, newDate, newSupplier, targets, delta, reason, notifyEnabled, notifyUserIds)
                     );
                     return;
                 }
             }
-            _commitLotEdit(carModel, partName, color, oldLot, newLot, newDate, newSupplier, targets, delta, reason);
+            _commitLotEdit(carModel, partName, color, oldLot, newLot, newDate, newSupplier, targets, delta, reason, notifyEnabled, notifyUserIds);
         };
 
         const dupWarning = delta !== 0 ? _recentLotEditWarning(carModel, partName, color, oldLot) : '';
@@ -2398,7 +2481,7 @@ var InjectionWarehouseModule = (function() {
         proceed();
     }
 
-    async function _commitLotEdit(carModel, partName, color, oldLot, newLot, newDate, newSupplier, targets, delta, reason) {
+    async function _commitLotEdit(carModel, partName, color, oldLot, newLot, newDate, newSupplier, targets, delta, reason, notifyEnabled, notifyUserIds) {
         try {
             for (const d of targets) {
                 let updates = {};
@@ -2437,6 +2520,31 @@ var InjectionWarehouseModule = (function() {
                     note: reason,
                     ..._actorFieldsForRecord(delta > 0 ? '입고' : '출고')
                 });
+            }
+
+            if (notifyEnabled && notifyUserIds && notifyUserIds.length
+                    && typeof AuthModule !== 'undefined' && typeof AuthModule.sendInternalMessage === 'function') {
+                try {
+                    notifyUserIds.forEach(function(userId) {
+                        AuthModule.sendInternalMessage({
+                            targetType: 'user',
+                            targetId: userId,
+                            title: '사출창고 수량 보정 알림',
+                            body: [
+                                `차종: ${carModel}`,
+                                `품명: ${partName}`,
+                                `컬러: ${color || '-'}`,
+                                `LOT: ${oldLot}${newLot !== oldLot ? ' → ' + newLot : ''}`,
+                                delta !== 0 ? `수량 변경: ${delta > 0 ? '+' : ''}${UIUtils.formatNumber(delta)} EA` : null,
+                                `사유: ${reason}`
+                            ].filter(Boolean).join('\n'),
+                            category: 'injection-warehouse',
+                            priority: 'high'
+                        });
+                    });
+                } catch (e) {
+                    console.warn('[InjectionWarehouseModule] 생산관리자 통보 실패:', e);
+                }
             }
 
             UIUtils.closeModal();
@@ -2670,6 +2778,10 @@ var InjectionWarehouseModule = (function() {
                         <input type="radio" name="injOutItemPaintLine" id="injOutItemLineB" value="도장-B">
                         <span style="font-weight:700;color:#ea580c;">도장-B 자재</span>
                     </label>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem;">
+                        <input type="radio" name="injOutItemPaintLine" id="injOutItemLineLaser" value="레이져">
+                        <span style="font-weight:700;color:#7c3aed;">레이져 (도장 없이 직행)</span>
+                    </label>
                 </div>
                 <div id="injOutItemPaintLineHint" style="font-size:0.75rem;color:var(--text-muted);">기초정보(제품 마스터) 기준으로 자동 선택됩니다.</div>
             </div>
@@ -2715,7 +2827,7 @@ var InjectionWarehouseModule = (function() {
         if (!isReturn) {
             const lineEl = document.querySelector('input[name="injOutItemPaintLine"]:checked');
             paintLine = lineEl ? String(lineEl.value || '').trim() : '';
-            if (paintLine !== '도장-A' && paintLine !== '도장-B') {
+            if (paintLine !== '도장-A' && paintLine !== '도장-B' && paintLine !== '레이져') {
                 paintLine = _inferPaintLineFromMaster(carModel, partName, color).line;
             }
         }
@@ -2729,7 +2841,7 @@ var InjectionWarehouseModule = (function() {
             return;
         }
         if (!isReturn && !paintLine) {
-            UIUtils.toast('도착 라인(도장-A/B)을 선택하세요.', 'warning');
+            UIUtils.toast('도착 라인(도장-A/B/레이져)을 선택하세요.', 'warning');
             return;
         }
 
@@ -3726,6 +3838,10 @@ var InjectionWarehouseModule = (function() {
                         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem;">
                             <input type="radio" name="addInvPaintLine" value="도장-B">
                             <span style="font-weight:700;color:#ea580c;">도장-B</span>
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem;">
+                            <input type="radio" name="addInvPaintLine" value="레이져">
+                            <span style="font-weight:700;color:#7c3aed;">레이져 (도장 없이 직행)</span>
                         </label>
                     </div>
                     <div id="addInvPaintLineHint" style="font-size:0.75rem;color:var(--text-muted);">기초정보(제품 마스터) 기준으로 자동 선택됩니다.</div>
@@ -5620,7 +5736,7 @@ var InjectionWarehouseModule = (function() {
             } else {
                 const lineEl = document.querySelector('input[name="addInvPaintLine"]:checked');
                 _paintLine = lineEl ? String(lineEl.value || '').trim() : '';
-                if (_paintLine !== '도장-A' && _paintLine !== '도장-B') {
+                if (_paintLine !== '도장-A' && _paintLine !== '도장-B' && _paintLine !== '레이져') {
                     _paintLine = _inferPaintLineFromMaster(_invCarModel, _invPartName, _resolvedInvColor || _invColor).line;
                 }
             }

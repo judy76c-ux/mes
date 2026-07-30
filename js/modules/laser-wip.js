@@ -141,6 +141,61 @@ var LaserWipModule = (function() {
         return '';
     }
 
+    // ── 수량 보정 → 생산관리자 통보 (선택형) ────────────────────────────
+    function _getProdManagerUsers() {
+        try {
+            if (typeof AuthModule === 'undefined' || typeof AuthModule.getUsers !== 'function') return [];
+            return (AuthModule.getUsers() || [])
+                .filter(function(u) { return u && u.active !== false && u.role === 'prod_manager'; })
+                .map(function(u) { return { id: String(u.id || ''), name: String(u.displayName || u.username || u.id || '') }; });
+        } catch (e) { return []; }
+    }
+
+    function _buildAdjustNotifyHtml(prefix) {
+        const users = _getProdManagerUsers();
+        if (!users.length) return '';
+        const checks = users.map(function(u) {
+            return `<label style="display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid rgba(220,38,38,0.18);border-radius:6px;background:var(--bg-primary);font-size:0.8rem;cursor:pointer;">
+                <input type="checkbox" class="${prefix}-notify-user" value="${_escapeHtml(u.id)}" checked style="width:14px;height:14px;accent-color:#dc2626;">
+                ${_escapeHtml(u.name)}
+            </label>`;
+        }).join('');
+        return `
+            <div style="margin-top:14px;padding:12px;border:1px solid rgba(220,38,38,0.25);border-radius:8px;background:rgba(220,38,38,0.03);">
+                <label style="display:flex;align-items:center;gap:8px;font-size:0.84rem;font-weight:700;color:#dc2626;cursor:pointer;">
+                    <input type="checkbox" id="${prefix}NotifyEnable" checked
+                        onchange="document.getElementById('${prefix}NotifyUserWrap').style.display=this.checked?'grid':'none';">
+                    생산관리자에게 해당 사항을 전달합니다.
+                </label>
+                <div id="${prefix}NotifyUserWrap" style="margin-top:8px;display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;">
+                    ${checks}
+                </div>
+            </div>`;
+    }
+
+    function _sendAdjustNotify(prefix, opts) {
+        try {
+            if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+            const enableEl = document.getElementById(prefix + 'NotifyEnable');
+            if (!enableEl || !enableEl.checked) return;
+            const userIds = Array.from(document.querySelectorAll('.' + prefix + '-notify-user:checked'))
+                .map(function(el) { return String(el.value || '').trim(); })
+                .filter(Boolean);
+            userIds.forEach(function(userId) {
+                AuthModule.sendInternalMessage({
+                    targetType: 'user',
+                    targetId: userId,
+                    title: opts.title,
+                    body: opts.body,
+                    category: opts.category || 'laser-wip',
+                    priority: opts.priority || 'high'
+                });
+            });
+        } catch (e) {
+            console.warn('[LaserWipModule] 생산관리자 통보 실패:', e);
+        }
+    }
+
     // onclick 인자용 — URI 인코딩은 1회만. 따옴표만 이스케이프한다.
     function _jsArg(value) {
         return String(value == null ? '' : value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
@@ -290,8 +345,8 @@ var LaserWipModule = (function() {
                                 <strong>이력을 확인</strong>한 뒤 <strong>반영</strong>할지 <strong>리셋</strong>할지 선택하세요.
                             </div>
                             <ul style="margin:8px 0 0;padding-left:18px;color:var(--text-secondary);">
-                                <li><strong>반영</strong> — LOT에서 미차감분(${_fmtWipStockQty(unmatchedQty)} EA)을 FIFO 차감 → 표시 재고 <strong>${_fmtWipStockQty(stock)}</strong> 유지</li>
-                                <li><strong>리셋</strong> — 미차감만 0 · 표시 재고 <strong>${_fmtWipStockQty(stock)}</strong> 유지 (현재 재고를 맞춘 뒤)</li>
+                                <li><strong>반영</strong> — LOT에서 미차감분(${_fmtWipStockQty(unmatchedQty)} EA)을 FIFO 차감 → 표시 재고가 <strong>${_fmtWipStockQty(Math.max(0, stock - unmatchedQty))}</strong>로 줄어듭니다 (실물이 실제로 그만큼 부족했던 경우)</li>
+                                <li><strong>리셋</strong> — 미차감만 0 · 표시 재고 <strong>${_fmtWipStockQty(stock)}</strong> 그대로 유지 (과거 출고 기록 자체가 착오였던 경우)</li>
                                 <li><strong>이력 확인</strong> — 원인 출고를 먼저 확인</li>
                             </ul>
                             <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;">
@@ -764,6 +819,7 @@ var LaserWipModule = (function() {
             <div style="font-size:0.78rem;color:var(--text-muted);">
                 입력한 수량과 현재 재고의 차이만큼 수동입고/출고로 반영됩니다.
             </div>
+            ${_buildAdjustNotifyHtml('lwAdjAfter')}
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="LaserWipModule.saveAdjustAfterLaserModal('${_jsArg(keyEnc || '')}')">저장</button>
@@ -799,6 +855,18 @@ var LaserWipModule = (function() {
                 isManual: true, isManualOut: true, author: _currentUserName()
             });
         }
+
+        _sendAdjustNotify('lwAdjAfter', {
+            title: '레이저 후 재공품 수량 보정 알림',
+            body: [
+                `차종: ${carModel}`,
+                `품명: ${partName}`,
+                `컬러: ${color || '-'}`,
+                `수량: ${UIUtils.formatNumber(currentQty)} → ${UIUtils.formatNumber(targetQty)} EA`,
+                `사유: ${note}`,
+                `처리자: ${_currentUserName() || '-'}`
+            ].join('\n')
+        });
 
         UIUtils.closeModal();
         UIUtils.toast(`재공품 수량이 ${UIUtils.formatNumber(currentQty)} → ${UIUtils.formatNumber(targetQty)} EA로 수정되었습니다.`, 'success');
@@ -841,6 +909,7 @@ var LaserWipModule = (function() {
             <div style="font-size:0.78rem;color:var(--text-muted);">
                 입력한 잔량과 현재 잔량의 차이만큼 수동입고/출고로 반영됩니다.
             </div>
+            ${_buildAdjustNotifyHtml('lwAdjRes')}
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="LaserWipModule.saveAdjustResidualModal('${_jsArg(keyEnc || '')}')">저장</button>
@@ -877,6 +946,18 @@ var LaserWipModule = (function() {
                 isManual: true, isResidualManualOut: true, author: _currentUserName()
             });
         }
+
+        _sendAdjustNotify('lwAdjRes', {
+            title: '레이저 잔량 수량 보정 알림',
+            body: [
+                `차종: ${carModel}`,
+                `품명: ${partName}`,
+                `컬러: ${color || '-'}`,
+                `잔량: ${UIUtils.formatNumber(currentQty)} → ${UIUtils.formatNumber(targetQty)} EA`,
+                `사유: ${note}`,
+                `처리자: ${_currentUserName() || '-'}`
+            ].join('\n')
+        });
 
         UIUtils.closeModal();
         UIUtils.toast(`잔량이 ${UIUtils.formatNumber(currentQty)} → ${UIUtils.formatNumber(targetQty)} EA로 수정되었습니다.`, 'success');
@@ -1895,15 +1976,16 @@ var LaserWipModule = (function() {
         });
     }
 
+    // 표시 잔량 = 실물 LOT 잔량 합만 쓴다(+ 미지정 잔량). 미차감(unmatched/writeOff)은 여기서
+    // 다시 빼지 않는다 — 과거 한 번의 과다출고가 이후 정상 입고분까지 영구히 깎아먹는 문제를
+    // 막기 위함. 미차감은 별도로 배지·경고로만 추적한다.
     function _residualQtyFromLotDetail(detail) {
         const lotSum = (detail.lots || []).reduce(function(s, l) {
             return s + Math.max(0, Number(l.qty) || 0);
         }, 0);
         // LOT 미지정 양수 잔량만 총량에 포함 (FIFO 후 남은 음수 미지정은 실재고가 아님)
         const unassigned = Math.max(0, Number(detail.manualAdj) || 0);
-        const unmatched = Math.max(0, Number(detail.unmatched) || 0);
-        const writeOff = Math.max(0, Number(detail.unmatchedWriteOff) || 0);
-        return Math.max(0, Math.round(lotSum + unassigned - unmatched - writeOff));
+        return Math.max(0, Math.round(lotSum + unassigned));
     }
 
     function _calcLaserResidualWip() {
@@ -3804,13 +3886,12 @@ var LaserWipModule = (function() {
         return rows;
     }
 
+    // 표시 재공 = 실물 LOT 잔량 합만 쓴다. 미차감(unmatched/writeOff)은 여기서 다시 빼지 않고
+    // 별도 배지·경고로만 추적한다(사출/도료/제품창고·레이져 대기와 동일 규칙 — inventory-calc.js 참고).
     function _wipQtyFromLotRows(lotRows) {
-        const physical = (lotRows || []).reduce(function(s, l) {
+        return (lotRows || []).reduce(function(s, l) {
             return s + Math.max(0, Number(l && l.balance) || 0);
         }, 0);
-        const unmatched = Math.max(0, Number(lotRows && lotRows.unmatched) || 0);
-        const writeOff = Math.max(0, Number(lotRows && lotRows.unmatchedWriteOff) || 0);
-        return Math.max(0, physical - unmatched - writeOff);
     }
 
     // 레이져 후 재공에서 도장-B로 이동한 수량은 도장 "완료수량"이 아니라
@@ -5977,15 +6058,15 @@ function _num(value) {
         }
         const title = isAbsorb ? '미차감 반영' : '미차감 리셋';
         const accent = isAbsorb ? '#b45309' : '#0369a1';
-        const resultStock = stock;
+        const resultStock = isAbsorb ? Math.max(0, stock - unmatched) : stock;
         const scopeLabel = scope === 'residual' ? '레이져 잔량' : '레이져 후 재공';
         const explain = isAbsorb
             ? `보유 LOT에서 미차감 ${UIUtils.formatNumber(unmatched)} EA를 FIFO로 차감합니다.<br>
-               · 표시 재고: <strong>${UIUtils.formatNumber(stock)}</strong> EA 유지<br>
-               · LOT 잔량 합계: ${UIUtils.formatNumber(lotSum)} → <strong>${UIUtils.formatNumber(stock)}</strong> EA`
+               · 표시 재고: ${UIUtils.formatNumber(stock)} → <strong>${UIUtils.formatNumber(resultStock)}</strong> EA로 감소<br>
+               · LOT 잔량 합계: ${UIUtils.formatNumber(lotSum)} → <strong>${UIUtils.formatNumber(resultStock)}</strong> EA`
             : `미차감 ${UIUtils.formatNumber(unmatched)} EA만 <strong>0</strong>으로 만듭니다.<br>
-               · 표시 재고: <strong>${UIUtils.formatNumber(stock)}</strong> EA 유지<br>
-               · 현재 재고를 맞춘 뒤 미차감 표시만 지울 때 사용합니다.`;
+               · 표시 재고: <strong>${UIUtils.formatNumber(stock)}</strong> EA 그대로 유지<br>
+               · 과거 출고 기록 자체가 착오였다고 판단될 때 사용합니다.`;
 
         UIUtils.showModal(title + ` (${scopeLabel})`, `
             <div style="background:${accent}12;border:1px solid ${accent}44;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:0.86rem;line-height:1.65;">
@@ -6079,8 +6160,11 @@ function _num(value) {
             return;
         }
 
-        const stockAfterTarget = stockBefore;
+        const stockAfterTarget = isAbsorb ? Math.max(0, stockBefore - unmatched) : stockBefore;
         const label = isAbsorb ? '미차감 반영' : '미차감 리셋';
+        const noteQtyText = isAbsorb
+            ? `재고 ${UIUtils.formatNumber(stockBefore)} → ${UIUtils.formatNumber(stockAfterTarget)} EA로 감소`
+            : `재고 ${UIUtils.formatNumber(stockBefore)} EA 유지`;
         const nowStr = (UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' '));
         const author = _currentUserName();
         const record = {
@@ -6095,7 +6179,7 @@ function _num(value) {
             stockBefore: stockBefore,
             stockAfterTarget: stockAfterTarget,
             reason: reason,
-            note: `[${label}] ${reason} · 미차감 ${UIUtils.formatNumber(unmatched)} EA → 0 · 재고 ${UIUtils.formatNumber(stockBefore)} EA 유지`,
+            note: `[${label}] ${reason} · 미차감 ${UIUtils.formatNumber(unmatched)} EA → 0 · ${noteQtyText}`,
             date: nowStr,
             createdAt: new Date().toISOString(),
             author: author

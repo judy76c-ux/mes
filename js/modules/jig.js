@@ -1213,26 +1213,26 @@ var JigModule = (function () {
                         · <strong>수명 관리 설정 횟수 = 도달 횟수 × 90%</strong> (내림)
                     </div>
                     <div class="data-table-wrapper" style="overflow-x:auto;">
-                        <table class="data-table" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
+                        <table class="data-table data-table--content">
                             <thead>
                                 <tr>
-                                    <th style="white-space:nowrap;padding:8px 10px;">차종</th>
-                                    <th style="white-space:nowrap;padding:8px 10px;">구분</th>
-                                    <th style="white-space:nowrap;padding:8px 10px;">품명</th>
-                                    <th style="text-align:right;white-space:nowrap;padding:8px 10px;">초기 지그두께<br><small style="font-weight:400;">(mm)</small></th>
-                                    <th style="text-align:right;white-space:nowrap;padding:8px 10px;">1회 도막두께<br><small style="font-weight:400;">(mm)</small></th>
-                                    <th style="text-align:right;white-space:nowrap;padding:8px 10px;">JIG 제한 두께<br><small style="font-weight:400;">(mm)</small></th>
-                                    <th style="text-align:right;white-space:nowrap;padding:8px 10px;">제한 두께 도달<br>도장횟수 (회)</th>
-                                    <th style="text-align:right;white-space:nowrap;padding:8px 10px;">수명 관리 설정<br>횟수 (회)</th>
-                                    <th style="text-align:right;white-space:nowrap;padding:8px 10px;">발주 수량</th>
-                                    <th style="white-space:nowrap;padding:8px 10px;">적용 라인</th>
-                                    <th style="white-space:nowrap;padding:8px 10px;">재질</th>
-                                    <th style="white-space:nowrap;padding:8px 10px;">구매처</th>
-                                    <th style="white-space:nowrap;padding:8px 10px;">제작일</th>
-                                    <th style="white-space:nowrap;padding:8px 10px;">지그 사진</th>
-                                    <th style="white-space:nowrap;padding:8px 10px;">제품결합 사진</th>
-                                    <th style="white-space:nowrap;padding:8px 10px;">두께측정<br>포인트</th>
-                                    <th style="white-space:nowrap;padding:8px 10px;">작업</th>
+                                    <th>차종</th>
+                                    <th>구분</th>
+                                    <th>품명</th>
+                                    <th style="text-align:right;">초기두께<br><small style="font-weight:400;">(mm)</small></th>
+                                    <th style="text-align:right;">1회도막<br><small style="font-weight:400;">(mm)</small></th>
+                                    <th style="text-align:right;">제한두께<br><small style="font-weight:400;">(mm)</small></th>
+                                    <th style="text-align:right;">도달횟수<br><small style="font-weight:400;">(회)</small></th>
+                                    <th style="text-align:right;">관리횟수<br><small style="font-weight:400;">(회)</small></th>
+                                    <th style="text-align:right;">발주</th>
+                                    <th>적용라인</th>
+                                    <th>재질</th>
+                                    <th>구매처</th>
+                                    <th>제작일</th>
+                                    <th>지그사진</th>
+                                    <th>결합사진</th>
+                                    <th>측정포인트</th>
+                                    <th>작업</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -1244,31 +1244,31 @@ var JigModule = (function () {
                                     const aliases = allParts.filter(p => p !== j.partName);
                                     return `
                                     <tr>
-                                        <td style="white-space:nowrap;padding:8px 10px;"><strong>${_esc(j.carModel || '-')}</strong></td>
-                                        <td style="white-space:nowrap;padding:8px 10px;">${_itemTypeBadge(itemTypeMap[`${j.carModel || ''}||${j.partName || ''}`])}</td>
-                                        <td style="padding:8px 10px;min-width:160px;">
-                                            <div style="font-weight:600;">${_esc(j.partName || '-')}</div>
-                                            ${aliases.length ? `<div style="font-size:0.72rem;color:var(--text-muted);margin-top:3px;line-height:1.35;">공용: ${aliases.map(_esc).join(', ')}</div>` : ''}
+                                        <td><strong>${_esc(j.carModel || '-')}</strong></td>
+                                        <td>${_itemTypeBadge(itemTypeMap[`${j.carModel || ''}||${j.partName || ''}`])}</td>
+                                        <td title="${_esc(allParts.join(', '))}">
+                                            <span style="font-weight:600;">${_esc(j.partName || '-')}</span>
+                                            ${aliases.length ? `<span style="font-size:0.72rem;color:var(--text-muted);margin-left:6px;">+${aliases.length}</span>` : ''}
                                         </td>
-                                        <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${_fmtMm(j.initialThicknessMm)}</td>
-                                        <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${_fmtMm(j.filmThicknessMm)}</td>
-                                        <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${_fmtMm(j.limitThicknessMm)}</td>
-                                        <td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:600;">${_fmtCountOrDash(limitCoat)}</td>
-                                        <td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:800;color:var(--accent-blue);">${_fmtCountOrDash(manage)}</td>
-                                        <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${j.orderQty ? _fmt(j.orderQty) : '-'}</td>
-                                        <td style="white-space:nowrap;padding:8px 10px;">${_appliedLineBadges(j.appliedLines)}</td>
-                                        <td style="white-space:nowrap;padding:8px 10px;">${_esc(j.material || '-')}</td>
-                                        <td style="white-space:nowrap;padding:8px 10px;">${_esc(j.supplier || '-')}</td>
-                                        <td style="white-space:nowrap;padding:8px 10px;">${_esc(j.madeDate || j.registDate || '-')}</td>
-                                        <td style="white-space:nowrap;padding:8px 10px;">${_photoThumbs(j, 'jigPhotos')}</td>
-                                        <td style="white-space:nowrap;padding:8px 10px;">${_photoThumbs(j, 'productFitPhotos')}</td>
-                                        <td style="white-space:nowrap;padding:8px 10px;">${_photoThumbs(j, 'thicknessPointPhotos')}</td>
-                                        <td style="white-space:nowrap;padding:8px 10px;">
+                                        <td style="text-align:right;">${_fmtMm(j.initialThicknessMm)}</td>
+                                        <td style="text-align:right;">${_fmtMm(j.filmThicknessMm)}</td>
+                                        <td style="text-align:right;">${_fmtMm(j.limitThicknessMm)}</td>
+                                        <td style="text-align:right;font-weight:600;">${_fmtCountOrDash(limitCoat)}</td>
+                                        <td style="text-align:right;font-weight:800;color:var(--accent-blue);">${_fmtCountOrDash(manage)}</td>
+                                        <td style="text-align:right;">${j.orderQty ? _fmt(j.orderQty) : '-'}</td>
+                                        <td>${_appliedLineBadges(j.appliedLines)}</td>
+                                        <td>${_esc(j.material || '-')}</td>
+                                        <td>${_esc(j.supplier || '-')}</td>
+                                        <td>${_esc(j.madeDate || j.registDate || '-')}</td>
+                                        <td>${_photoThumbs(j, 'jigPhotos')}</td>
+                                        <td>${_photoThumbs(j, 'productFitPhotos')}</td>
+                                        <td>${_photoThumbs(j, 'thicknessPointPhotos')}</td>
+                                        <td>
                                             <button class="btn btn-outline btn-sm" onclick="JigModule.openJigMasterModal('${_js(j.id)}')">보기</button>
                                         </td>
                                     </tr>`;
                                 }).join('') : `
-                                    <tr><td colspan="17" style="text-align:center;padding:36px;color:var(--text-muted);">등록된 도장 지그가 없습니다.</td></tr>
+                                    <tr><td colspan="17" style="text-align:center;padding:36px;color:var(--text-muted);white-space:normal;">등록된 도장 지그가 없습니다.</td></tr>
                                 `}
                             </tbody>
                         </table>

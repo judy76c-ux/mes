@@ -740,7 +740,7 @@ var PaintingInputModule = (function () {
         const inspMap = _buildInspDateMap();
         const confirmFn = opts.confirmFn || 'PaintingWorkModule.confirmInputInbound';
         const compact = !!opts.compact;
-        const colSpan = compact ? 6 : 13;
+        const colSpan = compact ? 5 : 13;
         const today = UIUtils.today ? UIUtils.today() : '';
         const planTotal = getTodayLinePlanTotal(want, today);
         const varianceTotal = totalQty - planTotal;
@@ -762,7 +762,6 @@ var PaintingInputModule = (function () {
         if (compact) {
             const canMove = _canMoveShipmentLine();
             const otherLine = want === '도장-B' ? '도장-A' : '도장-B';
-            const otherShort = want === '도장-B' ? 'A' : 'B';
             const html = list.map(function (r) {
                 const stamp = _outDisplayStamp(r);
                 const outDt = _splitDateTime(stamp);
@@ -772,7 +771,7 @@ var PaintingInputModule = (function () {
                 const canDrag = canMove && !r.received && !!r.id;
                 const title = r.received
                     ? '입고 완료 — 이동 불가'
-                    : (canDrag ? '핸들을 드래그하거나 →' + otherShort + ' 버튼으로 이동' : '라인 이동 권한 없음');
+                    : (canDrag ? '⋮⋮ 핸들을 드래그하여 ' + otherLine + '로 이동' : '라인 이동 권한 없음');
                 const handleHtml = canDrag
                     ? `<span class="pp-ship-drag-handle" draggable="true"
                             data-ship-out-id="${_esc(r.id || '')}"
@@ -784,14 +783,6 @@ var PaintingInputModule = (function () {
                             <span class="material-symbols-outlined" style="font-size:18px;pointer-events:none;">drag_indicator</span>
                        </span>`
                     : `<span style="display:inline-block;width:28px;color:var(--text-muted);opacity:0.35;">·</span>`;
-                const moveBtn = canDrag
-                    ? `<button type="button" class="btn btn-sm btn-outline"
-                            style="padding:2px 8px;font-size:0.72rem;white-space:nowrap;"
-                            title="${_esc(otherLine)}로 이동"
-                            onclick="event.stopPropagation();PaintingProcessModule.moveShipmentToLine('${_esc(r.id)}','${_esc(otherLine)}')">→${otherShort}</button>`
-                    : (r.received
-                        ? '<span style="font-size:0.7rem;color:var(--text-muted);">입고완료</span>'
-                        : '');
                 return `<tr data-ship-out-id="${_esc(r.id || '')}"
                     data-ship-from="${_esc(want)}"
                     data-ship-draggable="${canDrag ? '1' : '0'}"
@@ -802,7 +793,6 @@ var PaintingInputModule = (function () {
                     <td style="white-space:nowrap;padding:8px 10px;"><strong>${_esc(r.carModel || '-')}</strong></td>
                     <td style="white-space:nowrap;padding:8px 10px;">${_esc(r.partName || '-')}</td>
                     <td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:800;">${_fmt(r.quantity)}</td>
-                    <td style="white-space:nowrap;padding:6px 8px;text-align:center;">${moveBtn}</td>
                 </tr>`;
             }).join('');
             return {

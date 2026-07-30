@@ -31,6 +31,34 @@ var WarehouseHubModule = (function () {
         const d = new Date(year, mm - 1, dd);
         return d.getFullYear() === year && d.getMonth() === mm - 1 && d.getDate() === dd;
     }
+    function _findProductForItem(carModel, partName, color) {
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        return products.find(p => p.carModel === carModel && p.partName === partName && (!color || !p.color || p.color === color))
+            || products.find(p => p.carModel === carModel && p.partName === partName);
+    }
+    function _normItemType(raw) {
+        if (!raw) return '';
+        return String(raw).replace(/품$/, '').trim();
+    }
+    function _isPlatingItem(carModel, partName, color) {
+        const colorText = String(color || '').trim();
+        if (/(crom|chrom|chrome|도금)/i.test(colorText)) return true;
+        const prod = _findProductForItem(carModel, partName, color);
+        if (!prod) return false;
+        for (let i = 1; i <= 4; i++) {
+            if (/도금/i.test(String(prod['process' + i] || ''))) return true;
+        }
+        return /(crom|chrom|chrome|도금)/i.test(String(prod.color || '').trim());
+    }
+    function _isAsItem(carModel, partName, color) {
+        const prod = _findProductForItem(carModel, partName, color);
+        if (!prod) return false;
+        const t = _normItemType(prod.itemType);
+        return t === 'A/S' || /^A\/?S/i.test(t);
+    }
+    function _isExcludedFromZeroStock(carModel, partName, color) {
+        return _isPlatingItem(carModel, partName, color) || _isAsItem(carModel, partName, color);
+    }
     function _badge(text, type) {
         const map = {
             success: 'background:#dcfce7;color:#15803d;border:1px solid #86efac;',
@@ -111,7 +139,7 @@ var WarehouseHubModule = (function () {
         const inStock = items.filter(i => i.stock > 0);
 
         // ② 재고 부족 (stock <= 0 but had records)
-        const stockout = items.filter(i => i.stock <= 0 && i.firstIn);
+        const stockout = items.filter(i => i.stock <= 0 && i.firstIn && !_isExcludedFromZeroStock(i.carModel, i.partName, i.color));
 
         // ③ 장기재고: 재고 있고 마지막 출고(또는 입고) 후 INJ_LONG_DAYS 이상 지남
         const longStock = inStock.filter(i => {
@@ -151,11 +179,11 @@ var WarehouseHubModule = (function () {
             }
         });
 
-        // ⑤ 다중 LOT 재고 (FIFO 주의 품목)
+        // ⑤ 다중 LOT 재고 (활성 LOT 4개 이상 — FIFO 주의 품목)
         const multiLot = [];
         Object.entries(lotsByItem).forEach(([iKey, lots]) => {
             const active = lots.filter(l => l.stock > 0 && l.lotNo);
-            if (active.length >= 2) {
+            if (active.length >= 4) {
                 const base = itemMap[iKey];
                 if (base) multiLot.push({ ...base, activeLots: active.sort((a, b) => a.lotNo.localeCompare(b.lotNo)) });
             }

@@ -44,6 +44,41 @@ var WarehouseOverviewModule = (function () {
         return d.getFullYear() === year && d.getMonth() === mm - 1 && d.getDate() === dd;
     }
 
+    function _findProductForItem(carModel, partName, color) {
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        return products.find(p => p.carModel === carModel && p.partName === partName && (!color || !p.color || p.color === color))
+            || products.find(p => p.carModel === carModel && p.partName === partName);
+    }
+
+    function _normItemType(raw) {
+        if (!raw) return '';
+        return String(raw).replace(/품$/, '').trim();
+    }
+
+    /** 도금 품 — 재고 없음 집계에서 제외 */
+    function _isPlatingItem(carModel, partName, color) {
+        const colorText = String(color || '').trim();
+        if (/(crom|chrom|chrome|도금)/i.test(colorText)) return true;
+        const prod = _findProductForItem(carModel, partName, color);
+        if (!prod) return false;
+        for (let i = 1; i <= 4; i++) {
+            if (/도금/i.test(String(prod['process' + i] || ''))) return true;
+        }
+        return /(crom|chrom|chrome|도금)/i.test(String(prod.color || '').trim());
+    }
+
+    /** A/S 품 — 재고 없음 집계에서 제외 */
+    function _isAsItem(carModel, partName, color) {
+        const prod = _findProductForItem(carModel, partName, color);
+        if (!prod) return false;
+        const t = _normItemType(prod.itemType);
+        return t === 'A/S' || /^A\/?S/i.test(t);
+    }
+
+    function _isExcludedFromZeroStock(carModel, partName, color) {
+        return _isPlatingItem(carModel, partName, color) || _isAsItem(carModel, partName, color);
+    }
+
     function init() {}
 
     // ── 대시보드 헬퍼 ────────────────────────────────────────────────────
@@ -100,7 +135,7 @@ var WarehouseOverviewModule = (function () {
         if (_paint.fifoCount     > 0) issues.push({ sev:'critical', icon:'swap_vert',     label:'도료 FIFO 위반',    desc: _paint.fifoCount + '건 선입선출 위반',          fn:'WarehouseOverviewModule.showPaintFifo()' });
         if (_inj.longStock       > 0) issues.push({ sev:'critical', icon:'schedule',      label:'사출 장기재고',      desc: _inj.longStock + '건 ' + LONG_STOCK_DAYS + '일 이상 보관', fn:'WarehouseOverviewModule.showInjLong()' });
         if (_inj.zeroStock       > 0) issues.push({ sev:'warning',  icon:'inventory',     label:'사출 재고 없음',     desc: _inj.zeroStock + '종 재고 부족',               fn:'WarehouseOverviewModule.showInjZero()' });
-        if (_inj.multiLot        > 0) issues.push({ sev:'warning',  icon:'layers',        label:'사출 다층 LOT',      desc: _inj.multiLot + '품목 복수 LOT 혼재',          fn:'WarehouseOverviewModule.showInjMultiLot()' });
+        if (_inj.multiLot        > 0) issues.push({ sev:'warning',  icon:'layers',        label:'사출 다층 LOT',      desc: _inj.multiLot + '품목 (LOT 4개 이상)',          fn:'WarehouseOverviewModule.showInjMultiLot()' });
         if (_paint.longStock     > 0) issues.push({ sev:'warning',  icon:'schedule',      label:'도료 장기재고',      desc: _paint.longStock + '건 ' + LONG_STOCK_DAYS + '일 이상',  fn:'WarehouseOverviewModule.showPaintLong()' });
         if (_paint.expiringCount > 0) issues.push({ sev:'warning',  icon:'event_available',label:'도료 유효기간 임박', desc: _paint.expiringCount + '건 30일 이내 만료',    fn:'WarehouseOverviewModule.showPaintExpiring()' });
 
@@ -240,8 +275,8 @@ var WarehouseOverviewModule = (function () {
             const netQty = Object.values(lots).reduce((s, v) => s + v.qty, 0);
 
             if (netQty <= 0) {
-                // 이력은 있지만 재고 0
-                const hadStock = Object.values(lots).some(v => v.qty !== 0 || true); // 항상 이력 있음
+                // 도금·A/S 품은 사출 재고 없음 집계에서 제외
+                if (_isExcludedFromZeroStock(carModel, partName, color)) return;
                 zeroStock++;
                 zeroItems.push({ carModel, partName, color });
                 return;
@@ -254,8 +289,8 @@ var WarehouseOverviewModule = (function () {
                 .filter(([, v]) => v.qty > 0)
                 .sort(([, a], [, b]) => (a.firstDate || '').localeCompare(b.firstDate || ''));
 
-            // 다층 LOT: 활성 LOT 2개 이상
-            if (activeLots.length > 1) {
+            // 다층 LOT: 활성 LOT 4개 이상
+            if (activeLots.length >= 4) {
                 multiLot++;
                 multiLotItems.push({ carModel, partName, color, lotCount: activeLots.length, qty: netQty });
             }
@@ -557,7 +592,7 @@ var WarehouseOverviewModule = (function () {
             </tr>`).join('');
         UIUtils.showModal('사출 자재 창고 — 다층 LOT 목록', `
             <p style="font-size:0.83rem;color:var(--text-muted);margin-bottom:12px;">
-                2개 이상의 LOT가 동시에 창고에 보관 중인 항목입니다.
+                4개 이상의 LOT가 동시에 창고에 보관 중인 항목입니다.
             </p>
             <table class="data-table">
                 <thead><tr><th>차종</th><th>품명</th><th>컬러</th><th>현재 재고</th><th>LOT 수</th></tr></thead>

@@ -86,6 +86,28 @@ const UIUtils = (function () {
         return num.toLocaleString('ko-KR');
     }
 
+    /** number input value용 — 쉼표 제거, 유효하지 않으면 0 */
+    function toInputNumber(n, fallback) {
+        if (n == null || n === '') return String(fallback == null ? 0 : fallback);
+        const cleaned = String(n).replace(/,/g, '').replace(/\s+/g, '').trim();
+        if (!cleaned || cleaned === '-') return String(fallback == null ? 0 : fallback);
+        const num = Number(cleaned);
+        return Number.isFinite(num) ? String(num) : String(fallback == null ? 0 : fallback);
+    }
+
+    function sanitizeNumberInputs(root) {
+        if (!root || !root.querySelectorAll) return;
+        root.querySelectorAll('input[type="number"]').forEach(function(el) {
+            const raw = el.getAttribute('value');
+            const current = el.value;
+            const src = raw != null && raw !== '' ? raw : current;
+            if (src == null || src === '') return;
+            if (/[,\s]/.test(String(src)) || src === '-') {
+                el.value = toInputNumber(src, 0);
+            }
+        });
+    }
+
     // ── 토스트 알림 ───────────────────────────────────────────────────────
     // type: 'success' | 'error' | 'warning' | 'info'
     function toast(message, type) {
@@ -397,7 +419,10 @@ const UIUtils = (function () {
         }
 
         if (titleEl) titleEl.innerHTML = options.title || '';
-        if (bodyEl)  bodyEl.innerHTML  = options.body  || '';
+        if (bodyEl) {
+            bodyEl.innerHTML = options.body || '';
+            sanitizeNumberInputs(bodyEl);
+        }
 
         // 버튼
         if (footerEl) {
@@ -775,6 +800,8 @@ const UIUtils = (function () {
         monthAgo,
         daysAgo,
         formatNumber,
+        toInputNumber,
+        sanitizeNumberInputs,
         toast,
         openModal,
         closeModal,

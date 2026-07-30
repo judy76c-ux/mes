@@ -927,6 +927,27 @@ body.sidebar-hidden .sidebar-show-btn {
     font-size: 0.88rem;
 }
 
+/* 내용(글자수) 기준 열 폭 — 짧은 열이 화면 가득 늘어나지 않음 */
+.data-table.data-table--content {
+    display: inline-table;
+    width: max-content !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    table-layout: auto !important;
+}
+.data-table.data-table--content th,
+.data-table.data-table--content td {
+    width: 1%;
+    white-space: nowrap;
+    vertical-align: middle;
+}
+/* 긴 설명만 예외적으로 wrap 허용 */
+.data-table.data-table--content th.wrap,
+.data-table.data-table--content td.wrap {
+    width: auto;
+    white-space: normal;
+}
+
 /* 관리항목 드래그 피드백 */
 .pq-master-item-row.pq-drag-over {
     outline: 2px dashed var(--accent-blue);

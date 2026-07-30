@@ -5981,6 +5981,87 @@ var LaserStandbyModule = (function() {
             });
         });
 
+        // 도장 단계 없이 사출 → 레이져로 바로 가는 제품(예: A3 PA KNOB-ECALL) — 자재창고(사출)
+        // 출고 시 도착 라인을 "레이져"로 선택하면 도장을 거치지 않고 곧바로 레이져 대기 입고로
+        // 잡는다. 도장 실적(PAINTING_WORK)과 동일한 "확인 후 입고" 게이팅을 그대로 재사용한다.
+        const injDirectLaserOut = (Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [])
+            .filter(r => r && String(r.type || '') === '출고'
+                && String(r.paintLine || r.line || '').trim() === '레이져')
+            .map(r => _canonicalStandbyRecord(r, products, injectionMaterials));
+
+        injDirectLaserOut.forEach(w => {
+            const stamp = _inventoryEventStamp(w, w.date || '', '');
+            let qty = Number(w.quantity) || 0;
+            const rawQty = qty;
+            const injLot = w.lotNo || (w.lots && w.lots.length > 0
+                ? [...new Set(w.lots.map(l => l.lotNo).filter(Boolean))].join(', ')
+                : '');
+            const paintLot = String(w.date || '').replace(/-/g, '').slice(2, 8);
+            let note = w.note || w.memo || '';
+            let confirm = null;
+            let pendingConfirm = false;
+            let actualQty = null;
+
+            if (_isConfirmGated(stamp)) {
+                confirm = _getInboundConfirm(w.id);
+                if (confirm) {
+                    actualQty = _normalizeQty(confirm.actualQty);
+                    qty = actualQty;
+                    note = _inboundConfirmNote(confirm) + (w.note ? ' · ' + w.note : '');
+                } else {
+                    pendingConfirm = true;
+                    note = '입고확인 대기' + (w.note ? ' · ' + w.note : '');
+                }
+            } else {
+                actualQty = rawQty;
+            }
+
+            if (qty <= 0) return;
+
+            const key = _itemKey(w.carModel, w.partName, w.color || '');
+            const histReset = _getHistoryResetForKey(key);
+            const prod = findProduct(products, w) || _resolveProductForStandby(w, products, injectionMaterials);
+            if (!inventoryMap[key]) {
+                inventoryMap[key] = {
+                    key,
+                    carModel: w.carModel || '-',
+                    partName: w.partName || '-',
+                    color: w.color || '-',
+                    itemType: prod ? (prod.process2 || '-') : '-',
+                    unmatchedProduct: !!w._unmatchedProduct,
+                    inQty: 0,
+                    outQty: 0,
+                    inRecords: [],
+                    outRecords: [],
+                    historyReset: histReset || null
+                };
+            } else if (histReset) {
+                inventoryMap[key].historyReset = histReset;
+            }
+            inventoryMap[key].inQty += qty;
+            const inboundDiff = confirm
+                ? (Number(confirm.diff) || (_normalizeQty(confirm.paintQty != null ? confirm.paintQty : rawQty) - actualQty))
+                : 0;
+            inventoryMap[key].inRecords.push({
+                sourceType: 'injection_direct_laser',
+                sourceId: w.id || '',
+                date: _recordedDateTime(w, w.date || '', ''),
+                eventStamp: stamp,
+                paintingDate: '',
+                qty,
+                paintQty: _normalizeQty(confirm && confirm.paintQty != null ? confirm.paintQty : rawQty),
+                actualQty: actualQty,
+                lotNo: injLot,
+                injLotNo: injLot,
+                paintLot: paintLot || '',
+                line: '레이져',
+                note: note || '사출 창고 출고(레이져 직행)',
+                pendingConfirm: pendingConfirm,
+                confirmedBy: confirm ? (confirm.operator || '') : '',
+                inboundDiff: inboundDiff
+            });
+        });
+
         // 수기 입고/보정 품목은 실제 날짜와 관계없이 아래 레이져 작업 루프보다 먼저
         // 품목 바구니를 준비한다. 기존 코드는 데이터 날짜가 7/10 입고 → 7/16 출고여도
         // 스토어 종류별로 도장입고 → 레이져작업 → 수기보정 순서로 처리하여,
@@ -6656,6 +6737,45 @@ var LaserStandbyModule = (function() {
             events.push({ kind: 'in', stamp: String(recordDate || ''), lots: lots, paintLot: paintLot });
         });
 
+        // 도장 단계 없이 사출 → 레이져 직행인 제품 — _buildInventorySnapshot과 동일 소스/게이팅
+        (Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [])
+            .filter(function(r) { return r && String(r.type || '') === '출고' && String(r.paintLine || r.line || '').trim() === '레이져'; })
+            .map(function(r) { return _canonicalStandbyRecord(r, products, injectionMaterials); })
+            .forEach(function(w) {
+                if ((w.carModel || '') !== carModel || (w.partName || '') !== partName || ((w.color || '') !== (color || ''))) return;
+                const recordDate = _inventoryEventStamp(w, w.date || '', '');
+                if (overrideDateStamp && String(recordDate || '') <= overrideDateStamp) return;
+
+                let totalQty = Number(w.quantity) || 0;
+                let confirmLots = null;
+                if (_isConfirmGated(recordDate)) {
+                    const confirm = _getInboundConfirm(w.id);
+                    if (confirm) {
+                        totalQty = _normalizeQty(confirm.actualQty);
+                        if (Array.isArray(confirm.lots) && confirm.lots.length > 0) {
+                            confirmLots = confirm.lots.map(function(l) {
+                                return {
+                                    lotNo: String((l && (l.injectionLot || l.lotNo)) || '').trim(),
+                                    paintLot: String((l && l.paintLot) || '').trim(),
+                                    qty: _normalizeQty(l && l.qty)
+                                };
+                            }).filter(function(l) { return l.lotNo && l.qty > 0; });
+                        }
+                    }
+                }
+                if (totalQty <= 0) return;
+                const paintLot = String(w.date || '').replace(/-/g, '').slice(2, 8);
+                const lots = (confirmLots && confirmLots.length > 0)
+                    ? confirmLots
+                    : _expandLotQuantities(
+                        totalQty,
+                        Array.isArray(w.lots) && w.lots.length > 0 ? w.lots : [{ lotNo: w.lotNo || '', qty: totalQty, paintDate: w.date || '' }],
+                        w.lotNo || '',
+                        paintLot
+                    );
+                events.push({ kind: 'in', stamp: String(recordDate || ''), lots: lots, paintLot: paintLot });
+            });
+
         laserWorks.forEach(function(raw) {
             // isManual 레코드(잔량·재공 수기조정)는 대기품 LOT 잔량 계산에 포함하지 않는다.
             if (raw && raw.isManual) return;
@@ -6947,6 +7067,7 @@ var LaserStandbyModule = (function() {
                 }).filter(function(l) { return l.injectionLot && l.qty > 0; })
                 : (w.lotNo ? [{ paintLot: paintLot, injectionLot: String(w.lotNo).trim(), qty: paintQty }] : []);
             list.push({
+                sourceType: DB.STORES.PAINTING_WORK,
                 sourceId: w.id || '',
                 key: _itemKey(w.carModel, w.partName, w.color || ''),
                 carModel: w.carModel || '-',
@@ -6961,6 +7082,40 @@ var LaserStandbyModule = (function() {
                 line: w.line || ''
             });
         });
+
+        // 도장 없이 사출 → 레이져 직행인 제품의 사출 출고도 같은 방식으로 입고 대기에 노출
+        (Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [])
+            .filter(function(r) { return r && String(r.type || '') === '출고' && String(r.paintLine || r.line || '').trim() === '레이져'; })
+            .map(function(r) { return _canonicalStandbyRecord(r, products, injectionMaterials); })
+            .forEach(function(w) {
+                const stamp = _inventoryEventStamp(w, w.date || '', '');
+                if (!_isConfirmGated(stamp)) return;
+                if (_getInboundConfirm(w.id)) return;
+                const outQty = Number(w.quantity) || 0;
+                if (outQty <= 0) return;
+                const paintLot = String(w.date || '').replace(/-/g, '').slice(2, 8);
+                const lots = (Array.isArray(w.lots) && w.lots.length > 0)
+                    ? w.lots.map(function(l) {
+                        return { paintLot: paintLot, injectionLot: String((l && l.lotNo) || '').trim(), qty: _normalizeQty(l && l.qty) };
+                    }).filter(function(l) { return l.injectionLot && l.qty > 0; })
+                    : (w.lotNo ? [{ paintLot: paintLot, injectionLot: String(w.lotNo).trim(), qty: outQty }] : []);
+                list.push({
+                    sourceType: 'injection_direct_laser',
+                    sourceId: w.id || '',
+                    key: _itemKey(w.carModel, w.partName, w.color || ''),
+                    carModel: w.carModel || '-',
+                    partName: w.partName || '-',
+                    color: w.color || '-',
+                    paintQty: outQty,
+                    lots: lots,
+                    paintLot: paintLot,
+                    injLot: [...new Set(lots.map(function(l) { return l.injectionLot; }).filter(Boolean))].join(', '),
+                    paintingDate: _recordedDateTime(w, w.date || '', ''),
+                    stamp: stamp,
+                    line: '레이져'
+                });
+            });
+
         return list.sort(function(a, b) { return String(a.stamp).localeCompare(String(b.stamp)); });
     }
 
@@ -7256,11 +7411,12 @@ var LaserStandbyModule = (function() {
         const totalQty = list.reduce(function(s, i) { return s + (Number(i.paintQty) || 0); }, 0);
         const rows = list.map(function(i) {
             const enc = encodeURIComponent(i.sourceId);
+            const typeEnc = encodeURIComponent(i.sourceType || DB.STORES.PAINTING_WORK);
             const label = [i.carModel, i.partName, i.color && i.color !== '-' ? i.color : ''].filter(Boolean).join(' · ');
             const action = canConfirm
                 ? `<button type="button" class="btn btn-sm btn-primary" style="padding:3px 10px;font-size:0.74rem;"
                         title="산출수량과 다를 때 여기서 실입고수량을 입력·보정합니다"
-                        onclick="LaserStandbyModule.openInboundConfirmModal('${enc}')">입고처리 · 수량보정</button>`
+                        onclick="LaserStandbyModule.openInboundConfirmModal('${enc}','${typeEnc}')">입고처리 · 수량보정</button>`
                 : `<span style="font-size:0.72rem;color:var(--text-muted);">운영자 확인 대기</span>`;
             return `<tr>
                 <td style="white-space:nowrap;">${_escapeHtml(i.paintingDate || '-')}</td>
@@ -7310,21 +7466,33 @@ var LaserStandbyModule = (function() {
     }
 
     // 입고처리 모달 — pending(미확인) 또는 기존 확인 레코드(재확인) 모두 처리.
-    async function openInboundConfirmModal(sourceIdEnc) {
+    function _inboundSourceStore(sourceType) {
+        return sourceType === 'injection_direct_laser' ? DB.STORES.INJECTION_INVENTORY : DB.STORES.PAINTING_WORK;
+    }
+
+    async function openInboundConfirmModal(sourceIdEnc, sourceTypeEnc) {
         if (!_canAdjustStandby()) {
             UIUtils.toast('입고 처리 권한이 있는 레이저 운영자(수정/보정)만 처리할 수 있습니다.', 'warning');
             return;
         }
         await _ensureInboundConfirmLoaded();
         const sourceId = decodeURIComponent(sourceIdEnc || '');
-        const raw = Storage.getById(DB.STORES.PAINTING_WORK, sourceId);
-        if (!raw) { UIUtils.toast('도장 실적을 찾을 수 없습니다.', 'warning'); return; }
+        const sourceType = decodeURIComponent(sourceTypeEnc || '') || DB.STORES.PAINTING_WORK;
+        const isDirectLaser = sourceType === 'injection_direct_laser';
+        const raw = Storage.getById(_inboundSourceStore(sourceType), sourceId);
+        if (!raw) {
+            UIUtils.toast(isDirectLaser ? '사출 출고 기록을 찾을 수 없습니다.' : '도장 실적을 찾을 수 없습니다.', 'warning');
+            return;
+        }
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
         const injectionMaterials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
         const w = _canonicalStandbyRecord(raw, products, injectionMaterials);
-        const paintQty = Number(w.productionQty) || 0;
+        const paintQty = isDirectLaser ? (Number(w.quantity) || 0) : (Number(w.productionQty) || 0);
+        const sourceDateTime = isDirectLaser ? _recordedDateTime(w, w.date || '', '') : _paintingWorkDateTime(w);
         const existing = _getInboundConfirm(sourceId);
-        const paintLot = String(_paintingWorkDateTime(w) || w.date || '').replace(/-/g, '').slice(2, 8);
+        const paintLot = isDirectLaser
+            ? String(w.date || '').replace(/-/g, '').slice(2, 8)
+            : String(_paintingWorkDateTime(w) || w.date || '').replace(/-/g, '').slice(2, 8);
         const initialLots = (existing && Array.isArray(existing.lots) && existing.lots.length > 0)
             ? existing.lots
             : ((Array.isArray(w.lots) && w.lots.length > 0)
@@ -7335,11 +7503,12 @@ var LaserStandbyModule = (function() {
 
         UIUtils.showModal(existing ? '레이저 입고 확인 (재확인)' : '레이저 입고 확인', `
             <input type="hidden" id="lsbConfirmSourceId" value="${_escapeAttr(sourceId)}">
+            <input type="hidden" id="lsbConfirmSourceType" value="${_escapeAttr(sourceType)}">
             <input type="hidden" id="lsbConfirmPaintQty" value="${paintQty}">
             <div style="background:rgba(37,99,235,0.06);border:1px solid rgba(37,99,235,0.15);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:0.84rem;">
                 <div style="color:var(--text-secondary);margin-bottom:4px;">${_escapeHtml(label)}</div>
-                <div>도장 산출수량 <strong style="color:var(--accent-blue);">${UIUtils.formatNumber(paintQty)} EA</strong>
-                    <span style="color:var(--text-muted);margin-left:6px;">(${_escapeHtml(w.line || '-')} · ${_escapeHtml(_paintingWorkDateTime(w) || '-')})</span></div>
+                <div>${isDirectLaser ? '사출 출고수량' : '도장 산출수량'} <strong style="color:var(--accent-blue);">${UIUtils.formatNumber(paintQty)} EA</strong>
+                    <span style="color:var(--text-muted);margin-left:6px;">(${_escapeHtml(w.line || (isDirectLaser ? '레이져' : '-'))} · ${_escapeHtml(sourceDateTime || '-')})</span></div>
                 <div style="margin-top:8px;padding:8px 10px;border-radius:6px;background:#fff;border:1px dashed rgba(37,99,235,0.35);font-size:0.78rem;line-height:1.45;color:var(--text-secondary);">
                     <strong style="color:var(--accent-blue);">수량 수정 위치:</strong>
                     아래 <strong>실입고수량</strong>에 실제 입고된 수량을 입력하세요.
@@ -7376,7 +7545,7 @@ var LaserStandbyModule = (function() {
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" onclick="LaserStandbyModule.saveInboundConfirm('${encodeURIComponent(sourceId)}')">${existing ? '재확인 저장' : '입고 처리'}</button>
+            <button class="btn btn-primary" onclick="LaserStandbyModule.saveInboundConfirm('${encodeURIComponent(sourceId)}','${encodeURIComponent(sourceType)}')">${existing ? '재확인 저장' : '입고 처리'}</button>
         `, 'lg');
 
         setTimeout(function() { onConfirmQtyInput(actualDefault); }, 0);
@@ -7400,19 +7569,26 @@ var LaserStandbyModule = (function() {
         }
     }
 
-    async function saveInboundConfirm(sourceIdEnc) {
+    async function saveInboundConfirm(sourceIdEnc, sourceTypeEnc) {
         if (!_canAdjustStandby()) {
             UIUtils.toast('입고 처리 권한이 있는 레이저 운영자(수정/보정)만 처리할 수 있습니다.', 'warning');
             return;
         }
         await _ensureInboundConfirmLoaded();
         const sourceId = decodeURIComponent(sourceIdEnc || '');
-        const raw = Storage.getById(DB.STORES.PAINTING_WORK, sourceId);
-        if (!raw) { UIUtils.toast('도장 실적을 찾을 수 없습니다.', 'warning'); return; }
+        const sourceType = decodeURIComponent(sourceTypeEnc || '')
+            || String((document.getElementById('lsbConfirmSourceType') || {}).value || '')
+            || DB.STORES.PAINTING_WORK;
+        const isDirectLaser = sourceType === 'injection_direct_laser';
+        const raw = Storage.getById(_inboundSourceStore(sourceType), sourceId);
+        if (!raw) {
+            UIUtils.toast(isDirectLaser ? '사출 출고 기록을 찾을 수 없습니다.' : '도장 실적을 찾을 수 없습니다.', 'warning');
+            return;
+        }
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
         const injectionMaterials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
         const w = _canonicalStandbyRecord(raw, products, injectionMaterials);
-        const paintQty = Number(w.productionQty) || 0;
+        const paintQty = isDirectLaser ? (Number(w.quantity) || 0) : (Number(w.productionQty) || 0);
         const actualQty = _normalizeQty((document.getElementById('lsbConfirmActualQty') || {}).value || 0);
         if (actualQty <= 0) {
             UIUtils.toast('실입고수량을 1개 이상 입력해 주세요.', 'warning');
@@ -7700,7 +7876,7 @@ var LaserStandbyModule = (function() {
         if (!el) return;
         const isAdmin = _isAdminUser();
         const deleteHeader = isAdmin ? '<th style="text-align:center;white-space:nowrap;">삭제</th>' : '';
-        const deleteColspan = isAdmin ? 11 : 10;
+        const deleteColspan = isAdmin ? 12 : 11;
 
         // 모든 입고/출고 레코드를 분리 평탄화
         const incomingRows = [];
@@ -7730,6 +7906,7 @@ var LaserStandbyModule = (function() {
                     actualQty: actualQty,
                     inboundDiff: inboundDiff,
                     pendingConfirm: pending,
+                    confirmedBy: r.confirmedBy || '',
                     paintingDate: r.paintingDate || r.paintLot || '',
                     lotNo: r.injectionLot || r.lotNo || '',
                     note: r.note || '',
@@ -7801,6 +7978,7 @@ var LaserStandbyModule = (function() {
                     <td style="white-space:nowrap;padding:8px 10px;">${r.color || '-'}</td>
                     <td style="text-align:right;color:var(--accent-green);font-weight:700;white-space:nowrap;padding:8px 10px;">${UIUtils.formatNumber(r.paintQty != null ? r.paintQty : (r.qty || 0))}</td>
                     <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${processQtyHtml}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;font-size:0.8rem;color:var(--text-secondary);">${r.confirmedBy ? _escapeHtml(r.confirmedBy) : '<span style="color:var(--text-muted);">—</span>'}</td>
                     <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${_fmtInboundDiff(r.inboundDiff)}</td>
                     <td style="white-space:nowrap;padding:8px 10px;">${r.paintingDate || '-'}</td>
                     <td style="font-family:monospace;font-size:0.78rem;color:var(--text-secondary);white-space:nowrap;padding:8px 10px;">${r.lotNo || '-'}</td>
@@ -7847,6 +8025,7 @@ var LaserStandbyModule = (function() {
                                     <th style="white-space:nowrap;">컬러</th>
                                     <th style="text-align:right;white-space:nowrap;" title="도장 산출수량">입고수량</th>
                                     <th style="text-align:right;white-space:nowrap;" title="입고처리에서 확정한 실입고수량">입고처리수량</th>
+                                    <th style="white-space:nowrap;" title="입고처리를 실행한 사용자">입고처리자</th>
                                     <th style="text-align:right;white-space:nowrap;" title="입고수량 − 입고처리수량">오차수량</th>
                                     <th style="white-space:nowrap;">도장작업일<br><small style="font-weight:400;">(년월일시분)</small></th>
                                     <th style="white-space:nowrap;">사출 LOT</th>
@@ -8252,6 +8431,7 @@ var LaserStandbyModule = (function() {
                 </div>
                 <div id="lsbAdjustLotRows">${initialLots.map(_adjustLotRowHtml).join('')}</div>
             </div>
+            ${!addMode ? _buildAdjustNotifyHtml('lsbAdjust') : ''}
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="LaserStandbyModule.saveAdjustModal('${encodeURIComponent(key)}', ${addMode ? 'true' : 'false'})">${addMode ? '등록' : '저장'}</button>
@@ -8276,6 +8456,61 @@ var LaserStandbyModule = (function() {
             const u = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? AuthModule.getCurrentUser() : null;
             return (u && (u.displayName || u.username)) || '';
         } catch (e) { return ''; }
+    }
+
+    // ── 수량 보정 → 생산관리자 통보 (선택형) ────────────────────────────
+    function _getProdManagerUsers() {
+        try {
+            if (typeof AuthModule === 'undefined' || typeof AuthModule.getUsers !== 'function') return [];
+            return (AuthModule.getUsers() || [])
+                .filter(function(u) { return u && u.active !== false && u.role === 'prod_manager'; })
+                .map(function(u) { return { id: String(u.id || ''), name: String(u.displayName || u.username || u.id || '') }; });
+        } catch (e) { return []; }
+    }
+
+    function _buildAdjustNotifyHtml(prefix) {
+        const users = _getProdManagerUsers();
+        if (!users.length) return '';
+        const checks = users.map(function(u) {
+            return `<label style="display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid rgba(220,38,38,0.18);border-radius:6px;background:var(--bg-primary);font-size:0.8rem;cursor:pointer;">
+                <input type="checkbox" class="${prefix}-notify-user" value="${_escapeAttr(u.id)}" checked style="width:14px;height:14px;accent-color:#dc2626;">
+                ${_escapeHtml(u.name)}
+            </label>`;
+        }).join('');
+        return `
+            <div style="margin-top:14px;padding:12px;border:1px solid rgba(220,38,38,0.25);border-radius:8px;background:rgba(220,38,38,0.03);">
+                <label style="display:flex;align-items:center;gap:8px;font-size:0.84rem;font-weight:700;color:#dc2626;cursor:pointer;">
+                    <input type="checkbox" id="${prefix}NotifyEnable" checked
+                        onchange="document.getElementById('${prefix}NotifyUserWrap').style.display=this.checked?'grid':'none';">
+                    생산관리자에게 해당 사항을 전달합니다.
+                </label>
+                <div id="${prefix}NotifyUserWrap" style="margin-top:8px;display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;">
+                    ${checks}
+                </div>
+            </div>`;
+    }
+
+    function _sendAdjustNotify(prefix, opts) {
+        try {
+            if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+            const enableEl = document.getElementById(prefix + 'NotifyEnable');
+            if (!enableEl || !enableEl.checked) return;
+            const userIds = Array.from(document.querySelectorAll('.' + prefix + '-notify-user:checked'))
+                .map(function(el) { return String(el.value || '').trim(); })
+                .filter(Boolean);
+            userIds.forEach(function(userId) {
+                AuthModule.sendInternalMessage({
+                    targetType: 'user',
+                    targetId: userId,
+                    title: opts.title,
+                    body: opts.body,
+                    category: opts.category || 'laser-standby',
+                    priority: opts.priority || 'high'
+                });
+            });
+        } catch (e) {
+            console.warn('[LaserStandbyModule] 생산관리자 통보 실패:', e);
+        }
     }
 
     async function saveAdjustModal(keyEnc = '', isAddMode = false) {
@@ -8466,6 +8701,20 @@ var LaserStandbyModule = (function() {
             } catch (e) {
                 console.warn('[LaserStandbyModule] 생산관리자 통보 실패:', e);
             }
+        }
+
+        if (!addMode) {
+            _sendAdjustNotify('lsbAdjust', {
+                title: '레이저 대기 수량 보정 알림',
+                body: [
+                    `차종: ${normalizedCarModel}`,
+                    `품명: ${normalizedPartName}`,
+                    `컬러: ${normalizedColor || '-'}`,
+                    `수정 후 수량: ${UIUtils.formatNumber(actualQty)} EA`,
+                    adjustReason ? `사유: ${adjustReason}` : null,
+                    `처리자: ${author || '-'}`
+                ].filter(Boolean).join('\n')
+            });
         }
 
         UIUtils.closeModal();
