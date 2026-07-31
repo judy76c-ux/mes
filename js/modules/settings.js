@@ -7318,7 +7318,7 @@ const SettingsModule = (function() {
         if (t === '양산') return UIUtils.badge('양산', 'success');
         if (t === '개발용') return UIUtils.badge('개발용', 'info');
         if (t === 'A/S용') return `<span class="badge" style="background:rgba(245,158,11,0.15);color:#d97706;border:1px solid #d97706;">A/S용</span>`;
-        return t ? UIUtils.badge(t, 'secondary') : '<span style="color:var(--text-muted);">-</span>';
+        return t ? UIUtils.badge(t, 'secondary') : '<span class="badge" style="background:rgba(239,68,68,0.1);color:#dc2626;border:1px solid #fca5a5;">미지정</span>';
     }
     function _paintItemTypeOptions(selected) {
         const cur = _normPaintItemType(selected);
@@ -7326,6 +7326,43 @@ const SettingsModule = (function() {
             PAINT_ITEM_TYPES.map(t =>
                 `<option value="${t}" ${cur === t ? 'selected' : ''}>${t}</option>`
             ).join('');
+    }
+    function _paintItemTypeInlineSelect(id, selected) {
+        const cur = _normPaintItemType(selected);
+        const escId = String(id || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        return `<select class="form-select" style="font-size:0.75rem;padding:2px 6px;min-width:88px;${cur ? '' : 'border-color:#fca5a5;color:#dc2626;'}"
+                    onchange="SettingsModule.setPaintItemType('${escId}', this.value)" title="양산 / 개발용 / A/S용">
+                    <option value="" ${!cur ? 'selected' : ''}>미지정</option>
+                    ${PAINT_ITEM_TYPES.map(t =>
+                        `<option value="${t}" ${cur === t ? 'selected' : ''}>${t}</option>`
+                    ).join('')}
+                </select>`;
+    }
+    /** 제품 마스터에 연결된 도료 → 제품 구분으로 도료 구분 추론 */
+    function _inferPaintItemTypesFromProducts() {
+        const paints = Storage.getAll(PAINT_STORE) || [];
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const paintIds = new Set(paints.map(p => p.id).filter(Boolean));
+        const usage = {};
+        products.forEach(prod => {
+            const it = _normPaintItemType(prod.itemType);
+            if (!it) return;
+            (prod.paintMaterials || []).forEach(row => {
+                ['mainId', 'paintMaterialId', 'hardId', 'thinnerId'].forEach(key => {
+                    const id = row && row[key];
+                    if (!id || !paintIds.has(id)) return;
+                    if (!usage[id]) usage[id] = new Set();
+                    usage[id].add(it);
+                });
+            });
+        });
+        const result = [];
+        paints.forEach(p => {
+            if (_normPaintItemType(p.itemType)) return;
+            const types = usage[p.id] ? [...usage[p.id]] : [];
+            if (types.length === 1) result.push({ id: p.id, name: p.name || '', itemType: types[0] });
+        });
+        return result;
     }
     function _paintItemTypeRank(raw) {
         const t = _normPaintItemType(raw);
@@ -7414,7 +7451,8 @@ const SettingsModule = (function() {
             const rowItemType = row.getAttribute('data-item-type') || '';
             const matchSupplier = selectedSupplier === '' || rowSupplier === selectedSupplier;
             const matchManufacturer = selectedManufacturer === '' || rowManufacturer === selectedManufacturer;
-            const matchItemType = selectedItemType === '' || rowItemType === selectedItemType;
+            const matchItemType = selectedItemType === ''
+                || (selectedItemType === '__unset__' ? !rowItemType : rowItemType === selectedItemType);
             if (matchSupplier && matchManufacturer && matchItemType) {
                 row.style.display = '';
                 visibleCount++;
@@ -7435,15 +7473,19 @@ const SettingsModule = (function() {
         );
         const uniqueSuppliers = [...new Set(paints.map(p => p.supplier).filter(Boolean))].sort();
         const uniqueManufacturers = [...new Set(paints.map(p => p.manufacturer).filter(Boolean))].sort();
+        const unsetCount = paints.filter(p => !_normPaintItemType(p.itemType)).length;
+        const inferCandidates = unsetCount ? _inferPaintItemTypesFromProducts() : [];
 
         el.innerHTML = `
             <div class="card">
                 <div class="card-header" style="flex-wrap: wrap; gap: 10px;">
                     <div style="display:flex; align-items:center; gap: 12px;flex-wrap:wrap;">
                         <h4 style="margin:0;"><span class="material-symbols-outlined">palette</span> 도료 정보 (<span id="paintCount">${paints.length}</span>건)</h4>
+                        ${unsetCount ? `<span style="font-size:0.78rem;color:#dc2626;font-weight:600;">구분 미지정 ${unsetCount}건</span>` : ''}
                         <select id="paintItemTypeFilter" class="form-input" style="width: 120px; padding: 4px 8px;" onchange="SettingsModule.filterPaintList()">
                             <option value="">전체 구분</option>
                             ${PAINT_ITEM_TYPES.map(t => `<option value="${t}">${t}</option>`).join('')}
+                            <option value="__unset__">미지정만</option>
                         </select>
                         <select id="paintSupplierFilter" class="form-input" style="width: 150px; padding: 4px 8px;" onchange="SettingsModule.filterPaintList()">
                             <option value="">전체 구매처</option>
@@ -7455,6 +7497,11 @@ const SettingsModule = (function() {
                         </select>
                     </div>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        ${inferCandidates.length ? `
+                        <button class="btn btn-outline" style="border-color:#059669;color:#059669;" onclick="SettingsModule.autoFillPaintItemTypes()"
+                            title="제품 마스터에 연결된 도료의 구분을 제품 구분으로 채웁니다.">
+                            <span class="material-symbols-outlined">auto_fix</span> 구분 자동채우기 (${inferCandidates.length})
+                        </button>` : ''}
                         <button class="btn btn-outline" style="border-color:#6366f1;color:#4f46e5;" onclick="SettingsModule.openPaintValidationModal()">
                             <span class="material-symbols-outlined">verified</span> 도료 검증
                         </button>
@@ -7495,7 +7542,7 @@ const SettingsModule = (function() {
                                         return `
                                         <tr data-supplier="${escA(p.supplier || '')}" data-manufacturer="${escA(p.manufacturer || '')}" data-item-type="${escA(itemType)}">
                                             <td>${i + 1}</td>
-                                            <td style="white-space:nowrap;">${paintItemTypeBadge(itemType)}</td>
+                                            <td style="white-space:nowrap;">${_paintItemTypeInlineSelect(p.id, itemType)}</td>
                                             <td>${p.supplier || '-'}</td>
                                             <td><strong>${p.name || '-'}</strong></td>
                                             <td>${p.feature || '-'}</td>
@@ -8046,6 +8093,55 @@ const SettingsModule = (function() {
             <button class="btn btn-secondary" onclick="${returnToValidation ? 'SettingsModule.openPaintValidationModal()' : 'UIUtils.closeModal()'}">취소</button>
             <button class="btn btn-primary" onclick="SettingsModule.updatePaint('${id}', ${returnToValidation ? 'true' : 'false'})">저장</button>
         `);
+    }
+
+    async function setPaintItemType(id, value) {
+        const p = Storage.getById(PAINT_STORE, id);
+        if (!p) {
+            UIUtils.toast('도료를 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const itemType = _normPaintItemType(value);
+        try {
+            await Storage.update(PAINT_STORE, id, { ...p, itemType });
+            document.querySelectorAll('#settingsContent .data-table tbody tr').forEach(tr => {
+                const sel = tr.querySelector('select[onchange*="setPaintItemType(\'' + id.replace(/'/g, "\\'") + '\'"]');
+                if (!sel) return;
+                tr.setAttribute('data-item-type', itemType);
+                sel.style.borderColor = itemType ? '' : '#fca5a5';
+                sel.style.color = itemType ? '' : '#dc2626';
+            });
+            UIUtils.toast(itemType ? `구분을 '${itemType}'(으)로 저장했습니다.` : '구분을 미지정으로 저장했습니다.', 'success');
+            filterPaintList();
+        } catch (e) {
+            UIUtils.toast('구분 저장 실패: ' + (e.message || e), 'error');
+        }
+    }
+
+    async function autoFillPaintItemTypes() {
+        const candidates = _inferPaintItemTypesFromProducts();
+        if (!candidates.length) {
+            UIUtils.toast('자동으로 채울 도료가 없습니다. (제품에 연결된 미지정 도료만 대상)', 'info');
+            return;
+        }
+        UIUtils.confirm(
+            `제품 마스터에 연결된 도료 ${candidates.length}건의 구분을 자동으로 채우겠습니까?\n(이미 구분이 있는 도료는 변경하지 않습니다)`,
+            async () => {
+                let ok = 0;
+                for (const c of candidates) {
+                    const p = Storage.getById(PAINT_STORE, c.id);
+                    if (!p || _normPaintItemType(p.itemType)) continue;
+                    try {
+                        await Storage.update(PAINT_STORE, c.id, { ...p, itemType: c.itemType });
+                        ok++;
+                    } catch (e) {
+                        console.warn('[Settings] paint itemType autoFill failed', c.id, e);
+                    }
+                }
+                UIUtils.toast(`도료 구분 ${ok}건을 자동 채웠습니다.`, 'success');
+                renderTabContent();
+            }
+        );
     }
 
     async function updatePaint(id, returnToValidation = false) {
@@ -13399,6 +13495,8 @@ const SettingsModule = (function() {
         viewPaint,
         editPaint,
         updatePaint,
+        setPaintItemType,
+        autoFillPaintItemTypes,
         openPaintValidationModal,
         clearMissingPaintRef,
         deleteUnlinkedPaintFromValidation,

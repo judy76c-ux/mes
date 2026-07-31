@@ -5201,6 +5201,8 @@ var LaserStandbyModule = (function() {
     // 도장 실적 "확인 후 입고" — 확인 레코드(painting work id별)와 전환 기준선(cutover)
     const INBOUND_CONFIRM_KEY = 'laser_standby_inbound_confirm_v1';
     const CONFIRM_CUTOVER_KEY = 'laser_standby_confirm_cutover_v1';
+    // 입고 오차 발생 시 통보할 도장 담당자 — 매번 선택하지 않도록 고정 목록으로 저장해 둔다.
+    const NOTIFY_RECIPIENTS_KEY = 'laser_standby_notify_recipients_v1';
     let _manualOverrides = [];
     let _manualOverridesLoaded = false;
     let _historyResets = [];
@@ -5211,6 +5213,8 @@ var LaserStandbyModule = (function() {
     let _inboundConfirmsLoaded = false;
     let _confirmCutover = '';
     let _confirmCutoverLoaded = false;
+    let _notifyRecipients = [];
+    let _notifyRecipientsLoaded = false;
     let _lsbFilterCar = '';
     let _lsbFilterPart = '';
 
@@ -5614,6 +5618,20 @@ var LaserStandbyModule = (function() {
         await Storage.setConfigValue(INBOUND_CONFIRM_KEY, _inboundConfirms);
     }
 
+    async function _ensureNotifyRecipientsLoaded(forceReload = false) {
+        if (_notifyRecipientsLoaded && !forceReload) return _notifyRecipients;
+        const rows = await Storage.getConfigValue(NOTIFY_RECIPIENTS_KEY);
+        _notifyRecipients = Array.isArray(rows) ? rows.map(String).filter(Boolean) : [];
+        _notifyRecipientsLoaded = true;
+        return _notifyRecipients;
+    }
+
+    async function _saveNotifyRecipients(ids) {
+        _notifyRecipients = Array.isArray(ids) ? [...new Set(ids.map(String).filter(Boolean))] : [];
+        await Storage.setConfigValue(NOTIFY_RECIPIENTS_KEY, _notifyRecipients);
+        return _notifyRecipients;
+    }
+
     function _getInboundConfirm(sourceId) {
         const id = String(sourceId || '');
         if (!id) return null;
@@ -5623,6 +5641,25 @@ var LaserStandbyModule = (function() {
     // 도장 작업 목록(painting.js)에서 "레이져대기입고" 배지 표시 여부 확인용 — 캐시 로드 후 동기 조회
     function isLaserInboundConfirmed(paintingWorkId) {
         return !!_getInboundConfirm(paintingWorkId);
+    }
+
+    // 도장 작업 목록(painting.js)에서 "후공정 수량 오류 · 실적 확인 재요청" 배지·상단고정용.
+    // 오차가 1% 허용범위를 넘어 아직 해결되지 않은 확인 기록만 반환한다.
+    function getInboundConfirmDiffInfo(paintingWorkId) {
+        const rec = _getInboundConfirm(paintingWorkId);
+        if (!rec || !rec.diff || rec.resolved) return null;
+        return rec;
+    }
+
+    // 도장 담당자가 작업일보를 정정한 뒤 배지를 해제할 때 사용.
+    async function resolveInboundConfirmDiff(paintingWorkId) {
+        await _ensureInboundConfirmLoaded();
+        const rec = _getInboundConfirm(paintingWorkId);
+        if (!rec) return false;
+        rec.resolved = true;
+        rec.resolvedAt = new Date().toISOString();
+        await _saveInboundConfirms();
+        return true;
     }
 
     // 전환 기준선: 최초 1회 now로 세팅해 기존 실적을 자동 grandfather(확인완료 간주)한다.
@@ -5865,10 +5902,16 @@ var LaserStandbyModule = (function() {
         return false;
     }
 
-    // 수량 보정 / 이력만 리셋 — 도장-A 자동입고·수기입고가 갖춰진 뒤로는
-    // 일반 역할 권한 부여 없이 관리자 전용으로 제한한다(재고 왜곡 방지).
     // 입고처리 · 수량 보정 — "입력"과 별개인 "수정/보정" 3단계 권한.
     // 관리/설정 > 역할별 접근 권한의 "수정/보정" 체크(레이저 작업 그룹)로 조절한다.
+    // 오차가 산출수량의 1% 이내면 정상 편차로 보고 사유 입력·통보 없이 바로 처리한다.
+    function _standbyDiffNeedsFollowUp(paintQty, actualQty) {
+        const diff = (Number(paintQty) || 0) - (Number(actualQty) || 0);
+        if (diff === 0) return false;
+        const tolerance = (Number(paintQty) || 0) * 0.01;
+        return Math.abs(diff) > tolerance;
+    }
+
     function _canAdjustStandby() {
         try {
             if (_isAdminUser()) return true;
@@ -5877,6 +5920,136 @@ var LaserStandbyModule = (function() {
                 AuthModule.canAdjustPage('laser-standby');
         } catch (e) { /* 무시 */ }
         return false;
+    }
+
+    // ── 도장 담당자 통보 헬퍼 (painting.js 투입/산출 오차 통보와 동일 패턴) ──────────
+    // 입고 확인 시 산출-실입고 오차가 발생하면, "도장 작업일보 수정 필요"를 실제로
+    // 도장 작업일지 입력 권한이 있는 역할의 사용자에게만 통보 대상으로 보여준다.
+    function _getPaintingNotifyUsers() {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.getUsers !== 'function') return [];
+        const users = AuthModule.getUsers() || [];
+        const roleMap = (AuthModule.ROLES || []).reduce(function(map, role) { map[role.key] = role; return map; }, {});
+        const canWrite = typeof AuthModule.isPageWriteGranted === 'function' ? AuthModule.isPageWriteGranted : null;
+        return users
+            .filter(function(user) {
+                if (!user || user.active === false) return false;
+                if (!canWrite) return true;
+                const keys = Array.isArray(user.roles) && user.roles.length ? user.roles : [user.role];
+                return keys.some(function(key) {
+                    return canWrite(key, 'painting-work-a') || canWrite(key, 'painting-work-b');
+                });
+            })
+            .map(function(user) {
+                const role = roleMap[user.role] || null;
+                return {
+                    id: String(user.id || ''),
+                    name: String(user.displayName || user.username || user.id || ''),
+                    role: String(user.role || ''),
+                    roleLabel: role ? role.label : String(user.role || '미지정'),
+                    roleColor: role ? role.color : 'var(--text-muted)'
+                };
+            });
+    }
+
+    // 통보 대상은 매번 고르지 않고 한 번 저장해 두면 계속 재사용한다.
+    // 평소엔 저장된 대상 목록만 보여주고(_renderStandbyNotifyDisplay), "변경"을 누르면
+    // 같은 박스 안에서 체크박스 편집 화면으로 바뀐다(_renderStandbyNotifyEditor).
+    function _notifyRecipientNames(ids) {
+        const idSet = new Set((ids || []).map(String));
+        return _getPaintingNotifyUsers().filter(function(u) { return idSet.has(u.id); });
+    }
+
+    function _renderStandbyNotifyDisplay() {
+        const recipients = _notifyRecipientNames(_notifyRecipients);
+        const chips = recipients.length
+            ? recipients.map(function(u) {
+                return '<span style="display:inline-block;padding:3px 9px;border-radius:999px;font-size:0.76rem;font-weight:600;background:#fff;border:1px solid rgba(217,119,6,0.3);color:#d97706;">' + _escapeHtml(u.name) + '</span>';
+            }).join('')
+            : '<span style="font-size:0.78rem;color:var(--text-muted);">지정된 통보 대상이 없습니다. 「변경」을 눌러 먼저 설정하세요.</span>';
+        return '<div id="lsbConfirmNotifyWrap" style="margin-top:10px;border:1px solid rgba(217,119,6,0.3);border-radius:8px;background:rgba(217,119,6,0.05);padding:10px;">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">' +
+            '<div style="font-size:0.78rem;font-weight:700;color:#d97706;">통보 대상 · 도장 작업일보 수정 필요</div>' +
+            '<button type="button" class="btn btn-outline btn-sm" onclick="LaserStandbyModule.toggleStandbyNotifyEditor(true)">변경</button>' +
+            '</div>' +
+            '<div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:8px;">산출수량과 실입고수량이 다르면 저장 시 아래 대상에게 자동으로 통보됩니다.</div>' +
+            '<div style="display:flex;flex-wrap:wrap;gap:6px;">' + chips + '</div>' +
+            '</div>';
+    }
+
+    function _renderStandbyNotifyEditor() {
+        const users = _getPaintingNotifyUsers();
+        const savedSet = new Set(_notifyRecipients.map(String));
+        const body = users.length
+            ? (function() {
+                const groups = {};
+                users.forEach(function(user) {
+                    const key = user.role || '__none__';
+                    if (!groups[key]) groups[key] = { label: user.roleLabel, color: user.roleColor, items: [] };
+                    groups[key].items.push(user);
+                });
+                return Object.keys(groups).map(function(key) {
+                    const group = groups[key];
+                    return '<div style="display:flex;flex-direction:column;gap:6px;">' +
+                        '<div style="font-size:0.74rem;font-weight:700;color:' + group.color + ';">' + _escapeHtml(group.label) + '</div>' +
+                        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px;">' +
+                        group.items.map(function(user) {
+                            return '<label style="display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid rgba(217,119,6,0.2);border-radius:8px;background:#fff;cursor:pointer;">' +
+                                '<input type="checkbox" class="lsbStandby-notify-user" value="' + _escapeAttr(user.id) + '" ' + (savedSet.has(user.id) ? 'checked' : '') + ' style="width:15px;height:15px;accent-color:#d97706;">' +
+                                '<span style="font-size:0.78rem;color:var(--text-primary);font-weight:600;">' + _escapeHtml(user.name) + '</span>' +
+                                '</label>';
+                        }).join('') +
+                        '</div></div>';
+                }).join('');
+            })()
+            : '<div style="font-size:0.78rem;color:var(--text-muted);">통보 가능한 도장 담당자 계정이 없습니다.</div>';
+        return '<div id="lsbConfirmNotifyWrap" style="margin-top:10px;border:1px solid rgba(217,119,6,0.3);border-radius:8px;background:rgba(217,119,6,0.05);padding:10px;">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">' +
+            '<div style="font-size:0.78rem;font-weight:700;color:#d97706;">통보 대상 편집 (한 번 저장하면 계속 재사용)</div>' +
+            '<button type="button" class="btn btn-outline btn-sm" onclick="LaserStandbyModule.toggleStandbyNotifyUsers(true)">전체 선택</button>' +
+            '</div>' +
+            '<div style="display:flex;flex-direction:column;gap:10px;max-height:160px;overflow:auto;margin-bottom:8px;">' + body + '</div>' +
+            '<div style="display:flex;gap:6px;justify-content:flex-end;">' +
+            '<button type="button" class="btn btn-secondary btn-sm" onclick="LaserStandbyModule.toggleStandbyNotifyEditor(false)">취소</button>' +
+            '<button type="button" class="btn btn-primary btn-sm" onclick="LaserStandbyModule.saveStandbyNotifyRecipients()">저장</button>' +
+            '</div></div>';
+    }
+
+    function toggleStandbyNotifyEditor(showEditor) {
+        const wrap = document.getElementById('lsbConfirmNotifyWrap');
+        if (!wrap) return;
+        wrap.outerHTML = showEditor ? _renderStandbyNotifyEditor() : _renderStandbyNotifyDisplay();
+    }
+
+    async function saveStandbyNotifyRecipients() {
+        const ids = Array.from(document.querySelectorAll('.lsbStandby-notify-user:checked'))
+            .map(function(el) { return String(el.value || '').trim(); })
+            .filter(Boolean);
+        await _saveNotifyRecipients(ids);
+        const wrap = document.getElementById('lsbConfirmNotifyWrap');
+        if (wrap) wrap.outerHTML = _renderStandbyNotifyDisplay();
+        UIUtils.toast('통보 대상을 저장했습니다. 다음부터는 다시 선택하지 않아도 됩니다.', 'success');
+    }
+
+    function toggleStandbyNotifyUsers(forceCheck) {
+        const checks = Array.from(document.querySelectorAll('.lsbStandby-notify-user'));
+        if (!checks.length) return;
+        const shouldCheck = typeof forceCheck === 'boolean'
+            ? forceCheck
+            : checks.some(function(c) { return !c.checked; });
+        checks.forEach(function(c) { c.checked = shouldCheck; });
+    }
+
+    function _sendPaintingWorkNotification(title, body, recipientIds) {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return false;
+        if (!Array.isArray(recipientIds) || !recipientIds.length) return false;
+        return AuthModule.sendInternalMessage({
+            targetType: 'user',
+            targetIds: recipientIds,
+            title: title,
+            body: body,
+            category: 'manager_notice',
+            priority: 'high'
+        });
     }
 
     function _deleteButton(row, kind) {
@@ -7484,6 +7657,7 @@ var LaserStandbyModule = (function() {
             return;
         }
         await _ensureInboundConfirmLoaded();
+        await _ensureNotifyRecipientsLoaded();
         const sourceId = decodeURIComponent(sourceIdEnc || '');
         const sourceType = decodeURIComponent(sourceTypeEnc || '') || DB.STORES.PAINTING_WORK;
         const isDirectLaser = sourceType === 'injection_direct_laser';
@@ -7508,6 +7682,7 @@ var LaserStandbyModule = (function() {
                 : [{ paintLot: paintLot, injectionLot: String(w.lotNo || '').trim(), qty: paintQty }]);
         const actualDefault = existing ? _normalizeQty(existing.actualQty) : paintQty;
         const label = [w.carModel, w.partName, w.color && w.color !== '-' ? w.color : ''].filter(Boolean).join(' · ');
+        const initialNeedsFollowUp = _standbyDiffNeedsFollowUp(paintQty, actualDefault);
 
         UIUtils.showModal(existing ? '레이저 입고 확인 (재확인)' : '레이저 입고 확인', `
             <input type="hidden" id="lsbConfirmSourceId" value="${_escapeAttr(sourceId)}">
@@ -7534,10 +7709,9 @@ var LaserStandbyModule = (function() {
                     <label class="form-label">오차 (산출−실입고)</label>
                     <div id="lsbConfirmDiff" style="padding:9px 0;font-weight:700;">0</div>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">오차 사유 (선택)</label>
-                    <input type="text" class="form-input" id="lsbConfirmDiffReason" value="${_escapeAttr(existing ? (existing.diffReason || '') : '')}" placeholder="예: 검사 불량 · 계수 오차">
-                </div>
+            </div>
+            <div id="lsbConfirmNotifyOuter" style="display:${initialNeedsFollowUp ? 'block' : 'none'};margin-bottom:12px;">
+                ${_renderStandbyNotifyDisplay()}
             </div>
             <div style="border:1px solid var(--border-color);border-radius:8px;padding:12px;">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
@@ -7563,17 +7737,42 @@ var LaserStandbyModule = (function() {
         const paintQty = _normalizeQty((document.getElementById('lsbConfirmPaintQty') || {}).value || 0);
         const actual = _normalizeQty(val);
         const diff = paintQty - actual;
+        const needsFollowUp = _standbyDiffNeedsFollowUp(paintQty, actual);
         const diffEl = document.getElementById('lsbConfirmDiff');
         if (diffEl) {
             const shown = diff === 0 ? '0' : ((diff > 0 ? '-' : '+') + UIUtils.formatNumber(Math.abs(diff)));
-            diffEl.textContent = shown + (diff === 0 ? ' (오차 없음)' : (diff > 0 ? ' EA (부족)' : ' EA (초과)'));
-            diffEl.style.color = diff === 0 ? 'var(--text-muted)' : 'var(--accent-red)';
+            const toleranceNote = (diff !== 0 && !needsFollowUp) ? ' (허용범위 내)' : '';
+            diffEl.textContent = shown + (diff === 0 ? ' (오차 없음)' : (diff > 0 ? ' EA (부족)' : ' EA (초과)')) + toleranceNote;
+            diffEl.style.color = needsFollowUp ? 'var(--accent-red)' : 'var(--text-muted)';
         }
-        // 단일 LOT 행이면 실입고수량에 맞춰 자동 배분
+        const notifyOuterEl = document.getElementById('lsbConfirmNotifyOuter');
+        if (notifyOuterEl) notifyOuterEl.style.display = needsFollowUp ? 'block' : 'none';
+        // LOT 행별 실입고수량 자동 배분 — 단일 행이면 그대로, 여러 행이면 "원래 비율"(행이
+        // 처음 렌더될 때의 수량, data-base-qty)대로 나눠 실입고수량에 맞춘다(마지막 행이
+        // 반올림 잔여분을 흡수). 반드시 원래 비율을 기준으로 계산해야 한다 — 매 입력마다
+        // 이미 덮어쓴 화면값을 기준으로 다시 나누면, 작은 값을 입력하는 순간 나머지 행이
+        // 0으로 반올림되고 그 0이 다음 계산의 기준이 되어 영영 0에 머무는 문제가 있었다.
         const rows = document.querySelectorAll('#lsbAdjustLotRows .lsb-adjust-lot-row');
         if (rows.length === 1) {
             const qtyEl = rows[0].querySelector('.lsb-adjust-lot-qty');
             if (qtyEl) qtyEl.value = actual;
+        } else if (rows.length > 1) {
+            const qtyEls = Array.from(rows).map(function(r) { return r.querySelector('.lsb-adjust-lot-qty'); });
+            const baseQtys = qtyEls.map(function(el) { return _normalizeQty(el && el.dataset.baseQty) || 0; });
+            const baseSum = baseQtys.reduce(function(s, v) { return s + v; }, 0);
+            if (baseSum > 0) {
+                let allocated = 0;
+                qtyEls.forEach(function(el, idx) {
+                    if (!el) return;
+                    if (idx === qtyEls.length - 1) {
+                        el.value = Math.max(0, actual - allocated);
+                        return;
+                    }
+                    const share = Math.round(actual * (baseQtys[idx] / baseSum));
+                    el.value = share;
+                    allocated += share;
+                });
+            }
         }
     }
 
@@ -7626,14 +7825,25 @@ var LaserStandbyModule = (function() {
             );
             return;
         }
-        const diffReason = String((document.getElementById('lsbConfirmDiffReason') || {}).value || '').trim();
+        const diff = paintQty - actualQty;
+        // 오차가 산출수량의 1% 이내면 정상 편차로 보고 사유·통보 없이 바로 입고 처리한다.
+        const tolerance = paintQty * 0.01;
+        const withinTolerance = Math.abs(diff) <= tolerance;
+        const needsFollowUp = diff !== 0 && !withinTolerance;
+        // 오차가 1%를 넘어도 레이저 대기 입고 처리 자체는 막지 않는다 — 통보·전공정 재요청은
+        // 별도로 진행하되, 실입고수량 기준 입고 처리는 그대로 진행한다.
+        let notifyRecipients = [];
+        if (needsFollowUp) {
+            await _ensureNotifyRecipientsLoaded();
+            notifyRecipients = _notifyRecipients.slice();
+        }
         const record = {
             sourceId: sourceId,
             key: _itemKey(w.carModel, w.partName, w.color || ''),
             paintQty: paintQty,
             actualQty: actualQty,
-            diff: paintQty - actualQty,
-            diffReason: diffReason,
+            diff: diff,
+            resolved: !needsFollowUp,
             lots: lots,
             operator: _currentAuthorName(),
             confirmedAt: new Date().toISOString()
@@ -7643,11 +7853,27 @@ var LaserStandbyModule = (function() {
         await _saveInboundConfirms();
         UIUtils.closeModal();
         renderAll();
-        const diff = paintQty - actualQty;
+        let notified = false;
+        if (needsFollowUp && notifyRecipients.length) {
+            const label = [w.carModel, w.partName, w.color && w.color !== '-' ? w.color : ''].filter(Boolean).join(' · ');
+            const sourceDateTime = isDirectLaser ? _recordedDateTime(w, w.date || '', '') : _paintingWorkDateTime(w);
+            const body = [
+                label,
+                `도장작업일: ${sourceDateTime || w.date || '-'} (${w.line || '-'})`,
+                `산출수량 ${UIUtils.formatNumber(paintQty)} EA → 실입고수량 ${UIUtils.formatNumber(actualQty)} EA`,
+                `오차: ${diff > 0 ? '-' : '+'}${UIUtils.formatNumber(Math.abs(diff))} EA (${diff > 0 ? '부족' : '초과'})`,
+                '',
+                '레이저 입고 확인 중 산출-실입고 오차가 확인되어 도장 작업일보 수정이 필요합니다. 확인 후 정정해 주세요.'
+            ].join('\n');
+            notified = !!_sendPaintingWorkNotification('도장 작업일보 수정 필요', body, notifyRecipients);
+        }
+        const followUpNote = !needsFollowUp
+            ? (withinTolerance ? ' (허용범위 내)' : '')
+            : (notified ? ' · 도장 담당자에게 통보·재요청했습니다.' : ' · 통보 대상 미설정(통보 대상 박스 「변경」에서 설정하세요)');
         UIUtils.toast(
             diff === 0
                 ? `입고 처리 완료 — ${UIUtils.formatNumber(actualQty)} EA`
-                : `입고 처리 완료 — 실입고 ${UIUtils.formatNumber(actualQty)} EA (오차 ${diff > 0 ? '-' : '+'}${UIUtils.formatNumber(Math.abs(diff))})`,
+                : `입고 처리 완료 — 실입고 ${UIUtils.formatNumber(actualQty)} EA (오차 ${diff > 0 ? '-' : '+'}${UIUtils.formatNumber(Math.abs(diff))})${followUpNote}`,
             'success'
         );
     }
@@ -8211,7 +8437,7 @@ var LaserStandbyModule = (function() {
                 </div>
                 <div class="form-group" style="margin:0;">
                     <label class="form-label">LOT 수량</label>
-                    <input type="number" class="form-input lsb-adjust-lot-qty" value="${qty || ''}" min="0" placeholder="0" oninput="LaserStandbyModule.onAdjustLotQtyInput()">
+                    <input type="number" class="form-input lsb-adjust-lot-qty" value="${qty || ''}" min="0" placeholder="0" data-base-qty="${qty || 0}" oninput="LaserStandbyModule.onAdjustLotQtyInput()">
                 </div>
                 <button type="button" class="btn btn-sm btn-danger" style="height:38px;padding:0;"
                     title="LOT 행 삭제" onclick="LaserStandbyModule.removeAdjustLotRow(this)">−</button>
@@ -9935,6 +10161,9 @@ var LaserStandbyModule = (function() {
         openInboundConfirmModal,
         onConfirmQtyInput,
         saveInboundConfirm,
+        toggleStandbyNotifyUsers,
+        toggleStandbyNotifyEditor,
+        saveStandbyNotifyRecipients,
         openStandbyOutModal,
         onStandbyOutCarChange,
         onStandbyOutPartChange,
@@ -9958,6 +10187,8 @@ var LaserStandbyModule = (function() {
         ensureManualOverridesLoadedForWork,
         ensureInboundConfirmLoaded: _ensureInboundConfirmLoaded,
         isLaserInboundConfirmed,
+        getInboundConfirmDiffInfo,
+        resolveInboundConfirmDiff,
         getStockSnapshotSync,
         openManualAdjustList,
         getWorkLotSnapshotSync,

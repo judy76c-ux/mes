@@ -256,6 +256,10 @@ var PaintingInputModule = (function () {
         const stampDate = useDate
             ? (useDate + (nowTime ? ' ' + nowTime : ''))
             : (outRec.date || (UIUtils.now ? UIUtils.now() : ''));
+        // 실제 창고 출고(= 실질적인 현장 도착) 일시 — 확인 처리를 늦게(자동 캐치업 등) 하더라도
+        // "언제 실제로 입고됐는지"는 이 값을 우선 써야 한다. date/useDate는 확인 처리 시각·예정
+        // 사용일이라 배치로 늦게 확인하면 전부 "오늘"로 뭉쳐 보이는 문제가 있었다.
+        const shipStamp = _outDisplayStamp(outRec);
 
         let lots = Array.isArray(outRec.lots) && outRec.lots.length
             ? outRec.lots.map(function (l) {
@@ -268,6 +272,7 @@ var PaintingInputModule = (function () {
         return Storage.add(STORE, {
             date: stampDate,
             useDate: useDate || undefined,
+            shipDate: shipStamp || undefined,
             type: '입고',
             line: line,
             paintLine: line,
@@ -426,6 +431,51 @@ var PaintingInputModule = (function () {
         });
     }
 
+    /** 최근 N일 생산출고 중 현장 미입고 건 (실적 LOT 부족 진단용) */
+    function listPendingWarehouseShipments(line, opts) {
+        opts = opts || {};
+        const want = _normLine(line);
+        const days = Math.max(1, Number(opts.days) || 14);
+        const end = String(opts.date || (UIUtils.today ? UIUtils.today() : '')).slice(0, 10);
+        let start = end;
+        try {
+            const d = new Date(end + 'T00:00:00');
+            d.setDate(d.getDate() - (days - 1));
+            start = d.toISOString().slice(0, 10);
+        } catch (e) { /* keep end */ }
+
+        const injStore = DB.STORES.INJECTION_INVENTORY;
+        return (Storage.getAll(injStore) || []).filter(function (r) {
+            if (String(r.type || '') !== '출고') return false;
+            const oType = String(r.outgoingType || '');
+            const src = String(r.source || '');
+            if (oType !== '생산출고' && src !== '사출 창고 생산출고') return false;
+            if (_normLine(r.paintLine || r.line) !== want) return false;
+            const day = String(r.date || '').slice(0, 10);
+            if (!day || day < start || day > end) return false;
+            if (opts.carModel && String(r.carModel || '') !== String(opts.carModel)) return false;
+            if (opts.partName && String(r.partName || '') !== String(opts.partName)) return false;
+            if (_findReceiveByOutId(r.id)) return false;
+            return true;
+        }).sort(function (a, b) {
+            return String(b.date || '').localeCompare(String(a.date || ''));
+        }).map(function (r) {
+            return Object.assign({}, r, { received: false, receiveRec: null });
+        });
+    }
+
+    /** 현장 입고(도장 투입) 이력 존재 여부 — 잔량 0이어도 입고 이력 판별용 */
+    function hasSiteInboundHistory(line, opts) {
+        opts = opts || {};
+        const want = _normLine(line);
+        return (_recordsForLine(want) || []).some(function (r) {
+            if (String(r.type || '') !== '입고') return false;
+            if (opts.carModel && String(r.carModel || '') !== String(opts.carModel)) return false;
+            if (opts.partName && String(r.partName || '') !== String(opts.partName)) return false;
+            return true;
+        });
+    }
+
     /** 입고 처리 진입 — 사용일·실수량 확인 모달 후 저장 */
     function confirmSiteInbound(outId, line) {
         return openConfirmSiteInboundModal(outId, line);
@@ -467,14 +517,16 @@ var PaintingInputModule = (function () {
                 <div class="form-group">
                     <label class="form-label">사용 예정일 <span style="color:var(--accent-red)">*</span>
                         <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(언제 사용할 자재인지 · 기본 당일)</span></label>
-                    <input type="date" class="form-input" id="piInboundUseDate" value="${_esc(today)}">
+                    <input type="date" class="form-input" id="piInboundUseDate" value="${_esc(today)}"
+                        onkeydown="if(event.key==='Enter'){event.preventDefault();PaintingInputModule.submitConfirmSiteInbound();}">
                 </div>
                 <div class="form-group">
                     <label class="form-label">실수량 (EA) <span style="color:var(--accent-red)">*</span>
                         <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(확인 후 수정 가능)</span></label>
                     <input type="number" class="form-input" id="piInboundActualQty" min="1" max="${shipQty}" step="1"
                         value="${shipQty}"
-                        oninput="this.value=Math.min(Math.max(parseInt(this.value,10)||0,1),${shipQty})">
+                        oninput="this.value=Math.min(Math.max(parseInt(this.value,10)||0,1),${shipQty})"
+                        onkeydown="if(event.key==='Enter'){event.preventDefault();PaintingInputModule.submitConfirmSiteInbound();}">
                     <div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">출고수량 ${_fmt(shipQty)} EA 이하로 입력하세요.</div>
                 </div>
             </div>
@@ -603,6 +655,31 @@ var PaintingInputModule = (function () {
         return names;
     }
 
+    /** 복합 컬러 호환 판정 — BLACK ↔ BK+CLEAR, BK ↔ BLACK 등 */
+    function _colorTokens(raw) {
+        const s = String(raw || '').trim();
+        if (!s) return [];
+        const parts = s.split(/[,，\/+\-|]/).map(function (t) { return t.trim(); }).filter(Boolean);
+        const tokens = parts.length ? parts : [s];
+        return tokens.map(function (t) {
+            if (typeof UIUtils !== 'undefined' && UIUtils.normalizeColorAlias) {
+                return UIUtils.normalizeColorAlias(t);
+            }
+            return t.toLowerCase().replace(/\s+/g, '');
+        }).filter(Boolean);
+    }
+
+    function _colorsCompatible(a, b) {
+        if (!a || !b) return true;
+        const na = String(a).trim().toLowerCase().replace(/\s+/g, '');
+        const nb = String(b).trim().toLowerCase().replace(/\s+/g, '');
+        if (na === nb) return true;
+        const ta = _colorTokens(a);
+        const tb = _colorTokens(b);
+        if (!ta.length || !tb.length) return true;
+        return ta.some(function (x) { return tb.indexOf(x) >= 0; });
+    }
+
     /** 금일 생산계획 중 출고 건과 매칭되는 계획 목록 */
     function findPlansForShipment(record, line, date) {
         if (!record) return [];
@@ -620,11 +697,13 @@ var PaintingInputModule = (function () {
         const injPart = String(record.partName || '').trim();
         const color = String(record.color || '').trim();
         const productNames = _resolveProductNamesFromInjPart(car, injPart);
+
         return plans.filter(function (p) {
             if (car && p.carModel && p.carModel !== car) return false;
             const pPart = String(p.partName || '').trim();
             if (pPart && !productNames[pPart] && pPart !== injPart) return false;
-            if (color && p.color && p.color !== color) return false;
+            // BLACK ↔ BK+CLEAR 등 복합/별칭 컬러 허용
+            if (!_colorsCompatible(color, p.color || '')) return false;
             return true;
         });
     }
@@ -1304,6 +1383,8 @@ var PaintingInputModule = (function () {
         renderTodayReceiptRows: renderTodayReceiptRows,
         receiptTableHeaders: _receiptColsHtml,
         listTodayWarehouseShipments: listTodayWarehouseShipments,
+        listPendingWarehouseShipments: listPendingWarehouseShipments,
+        hasSiteInboundHistory: hasSiteInboundHistory,
         confirmSiteInbound: confirmSiteInbound,
         openConfirmSiteInboundModal: openConfirmSiteInboundModal,
         submitConfirmSiteInbound: submitConfirmSiteInbound,

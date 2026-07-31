@@ -12,6 +12,11 @@ var InjectionWarehouseModule = (function() {
     let _dismissedPending = [];
     let _dismissedPendingLoaded = false;
 
+    // 현장 입고 필요 수량 중 창고 재고 부족분 — 사유 입력 후 에러 처리(확인) 기록
+    const SITE_INBOUND_SHORTAGE_ACK_KEY = 'injection_site_inbound_shortage_ack_v1';
+    let _siteInboundShortageAcks = {}; // { [car||part||color]: { ackedQty, reason, resolvedAt, resolvedBy, ... } }
+    let _siteInboundShortageAcksLoaded = false;
+
     function _dismissedPendingKey(inspId, lotNo) { return `${inspId}||${lotNo}`; }
 
     async function _ensureDismissedPendingLoaded(forceReload) {
@@ -20,6 +25,366 @@ var InjectionWarehouseModule = (function() {
         _dismissedPending = Array.isArray(rows) ? rows : [];
         _dismissedPendingLoaded = true;
         return _dismissedPending;
+    }
+
+    function _siteInboundShortageKey(carModel, partName, color) {
+        return [_normKeyStr(carModel), _normKeyStr(partName), _normKeyStr(color)].join('||');
+    }
+
+    async function _ensureSiteInboundShortageAcksLoaded(forceReload) {
+        if (_siteInboundShortageAcksLoaded && !forceReload) return _siteInboundShortageAcks;
+        const raw = await Storage.getConfigValue(SITE_INBOUND_SHORTAGE_ACK_KEY);
+        _siteInboundShortageAcks = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+        _siteInboundShortageAcksLoaded = true;
+        return _siteInboundShortageAcks;
+    }
+
+    function _getSiteInboundAckedQty(carModel, partName, color) {
+        const rec = _siteInboundShortageAcks[_siteInboundShortageKey(carModel, partName, color)];
+        return Math.max(0, Number(rec && rec.ackedQty) || 0);
+    }
+
+    /** 현장 입고 필요 표시량·부족량 (창고 재고 대비, 에러 처리분 차감)
+     *  대기+진행(미실적) 계획 합계 — 현장에 아직 안 넣은 전체 필요량
+     */
+    function _calcSiteInboundNeed(item, reserved) {
+        const stock = Math.max(0, Number(item && item.stock) || 0);
+        const pending = Math.max(0, Number(reserved && reserved.pending) || 0);
+        const inProgress = Math.max(0, Number(reserved && reserved.inProgress) || 0);
+        const rawNeed = pending + inProgress;
+        const acked = _getSiteInboundAckedQty(item.carModel, item.partName, item.color);
+        const need = Math.max(0, rawNeed - Math.min(acked, rawNeed));
+        const shortage = Math.max(0, need - stock);
+        return {
+            rawNeed: rawNeed,
+            pending: pending,
+            inProgress: inProgress,
+            need: need,
+            stock: stock,
+            shortage: shortage,
+            acked: acked
+        };
+    }
+
+    function _collectSiteInboundShortages(stockMap) {
+        const rows = [];
+        Object.values(stockMap || {}).forEach(function (item) {
+            if (!item || !item.partName) return;
+            if (_isDisplayInvalidColor && _isDisplayInvalidColor(item.color)) return;
+            const r = (typeof ProductionPlanModule !== 'undefined' && ProductionPlanModule._calcInjPlanReserved)
+                ? ProductionPlanModule._calcInjPlanReserved(item.partName, null, item.carModel, item.color)
+                : { pending: 0, inProgress: 0 };
+            const calc = _calcSiteInboundNeed(item, r);
+            if (calc.shortage <= 0) return;
+            rows.push({
+                carModel: item.carModel || '',
+                partName: item.partName || '',
+                color: item.color || '',
+                need: calc.need,
+                stock: calc.stock,
+                shortage: calc.shortage
+            });
+        });
+        rows.sort(function (a, b) {
+            return b.shortage - a.shortage
+                || String(a.carModel).localeCompare(String(b.carModel))
+                || String(a.partName).localeCompare(String(b.partName));
+        });
+        return rows;
+    }
+
+    function _renderSiteInboundShortageList(stockMap) {
+        const card = document.getElementById('injSiteInboundShortageCard');
+        const body = document.getElementById('injSiteInboundShortageBody');
+        const badge = document.getElementById('injSiteInboundShortageBadge');
+        if (!card || !body) return;
+        const rows = _collectSiteInboundShortages(stockMap);
+        if (!rows.length) {
+            card.style.display = 'none';
+            body.innerHTML = '';
+            if (badge) badge.textContent = '';
+            return;
+        }
+        card.style.display = '';
+        if (badge) badge.textContent = rows.length + '건';
+        body.innerHTML = rows.map(function (row) {
+            const em = encodeURIComponent(row.carModel);
+            const ep = encodeURIComponent(row.partName);
+            const ec = encodeURIComponent(row.color || '');
+            return '<tr>' +
+                '<td style="white-space:nowrap;"><strong>' + (row.carModel || '-') + '</strong></td>' +
+                '<td style="white-space:nowrap;">' + (row.partName || '-') + '</td>' +
+                '<td style="white-space:nowrap;">' + (row.color || '-') + '</td>' +
+                '<td style="text-align:right;font-weight:700;color:#ea580c;">' + UIUtils.formatNumber(row.need) + '</td>' +
+                '<td style="text-align:right;font-weight:700;color:' + (row.stock > 0 ? 'var(--accent-blue)' : 'var(--accent-red)') + ';">' +
+                    UIUtils.formatNumber(row.stock) + '</td>' +
+                '<td style="text-align:right;font-weight:800;color:var(--accent-red);">' + UIUtils.formatNumber(row.shortage) + '</td>' +
+                '<td style="white-space:nowrap;">' +
+                    '<button type="button" class="btn btn-sm" style="background:#ea580c;color:#fff;border:none;padding:4px 10px;"' +
+                    ' onclick="InjectionWarehouseModule.openSiteInboundShortageResolve(\'' + em + '\',\'' + ep + '\',\'' + ec + '\',' +
+                    row.need + ',' + row.stock + ',' + row.shortage + ')">' +
+                    '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">task_alt</span> 에러 처리' +
+                    '</button>' +
+                '</td></tr>';
+        }).join('');
+    }
+
+    // 현장 입고 부족 사유 보고 쪽지 — 생산관리자·도장라인운영자 대상 (선택값 저장)
+    const SITE_INBOUND_SHORTAGE_NOTIFY_KEY = 'injection_site_inbound_shortage_notify_recipients_v1';
+    let _siteInboundShortageNotifyIds = null; // string[] | null (미로드)
+
+    async function _ensureSiteInboundShortageNotifyIdsLoaded(forceReload) {
+        if (_siteInboundShortageNotifyIds !== null && !forceReload) return _siteInboundShortageNotifyIds;
+        try {
+            const raw = await Storage.getConfigValue(SITE_INBOUND_SHORTAGE_NOTIFY_KEY);
+            _siteInboundShortageNotifyIds = Array.isArray(raw) ? raw.map(String) : [];
+        } catch (e) {
+            _siteInboundShortageNotifyIds = [];
+        }
+        return _siteInboundShortageNotifyIds;
+    }
+
+    function _getSiteInboundShortageNotifyCandidates() {
+        try {
+            if (typeof AuthModule === 'undefined' || typeof AuthModule.getUsers !== 'function') return [];
+            const roleMap = (AuthModule.ROLES || []).reduce(function (map, role) {
+                map[role.key] = role;
+                return map;
+            }, {});
+            const allow = { prod_manager: true, paint_line_op: true };
+            return (AuthModule.getUsers() || [])
+                .filter(function (u) {
+                    return u && u.active !== false && allow[u.role];
+                })
+                .map(function (u) {
+                    const role = roleMap[u.role] || null;
+                    return {
+                        id: String(u.id || ''),
+                        name: String(u.displayName || u.username || u.id || ''),
+                        role: String(u.role || ''),
+                        roleLabel: role ? role.label : String(u.role || ''),
+                        roleColor: role ? role.color : 'var(--text-muted)'
+                    };
+                })
+                .filter(function (u) { return u.id; });
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function _buildSiteInboundShortageNotifyHtml(savedIds) {
+        const users = _getSiteInboundShortageNotifyCandidates();
+        const saved = Array.isArray(savedIds) ? savedIds.map(String) : [];
+        const useSaved = saved.length > 0;
+        if (!users.length) {
+            return '<div style="margin-top:12px;padding:10px 12px;border:1px dashed rgba(234,88,12,0.35);border-radius:8px;font-size:0.8rem;color:var(--text-muted);">' +
+                '쪽지 대상(생산관리자·도장라인운영자) 계정이 없습니다.</div>';
+        }
+        const groups = {};
+        users.forEach(function (u) {
+            if (!groups[u.role]) groups[u.role] = { label: u.roleLabel, color: u.roleColor, items: [] };
+            groups[u.role].items.push(u);
+        });
+        const order = ['prod_manager', 'paint_line_op'];
+        const blocks = order.filter(function (k) { return groups[k]; }).map(function (key) {
+            const g = groups[key];
+            return '<div style="display:flex;flex-direction:column;gap:6px;">' +
+                '<div style="font-size:0.78rem;font-weight:700;color:' + g.color + ';">' + g.label + '</div>' +
+                '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px;">' +
+                g.items.map(function (u) {
+                    const checked = useSaved ? (saved.indexOf(u.id) >= 0) : true;
+                    return '<label style="display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid rgba(234,88,12,0.22);border-radius:8px;background:#fff;cursor:pointer;">' +
+                        '<input type="checkbox" class="inj-site-shortage-notify-user" value="' + _escapeHtml(u.id) + '"' +
+                        (checked ? ' checked' : '') + ' style="width:15px;height:15px;accent-color:#ea580c;">' +
+                        '<span style="font-size:0.82rem;font-weight:600;">' + _escapeHtml(u.name) + '</span></label>';
+                }).join('') +
+                '</div></div>';
+        }).join('');
+        return '<div style="margin-top:12px;padding:12px;border:1px solid rgba(234,88,12,0.28);border-radius:8px;background:rgba(234,88,12,0.04);">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">' +
+            '<div style="font-size:0.84rem;font-weight:700;color:#ea580c;display:flex;align-items:center;gap:6px;">' +
+            '<span class="material-symbols-outlined" style="font-size:18px;">mail</span> 사유 보고 (쪽지)</div>' +
+            '<button type="button" class="btn btn-outline btn-sm" style="padding:2px 8px;font-size:0.72rem;" ' +
+            'onclick="InjectionWarehouseModule.toggleSiteInboundShortageNotify(true)">전체 선택</button></div>' +
+            '<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:10px;">' +
+            '생산관리자·도장라인운영자를 선택하세요. 선택한 대상은 저장되며, 에러 처리 시 쪽지로 발송됩니다.</div>' +
+            '<div style="display:flex;flex-direction:column;gap:12px;max-height:200px;overflow:auto;">' + blocks + '</div></div>';
+    }
+
+    function toggleSiteInboundShortageNotify(forceCheck) {
+        const checks = Array.from(document.querySelectorAll('.inj-site-shortage-notify-user'));
+        if (!checks.length) return;
+        const shouldCheck = typeof forceCheck === 'boolean'
+            ? forceCheck
+            : checks.some(function (c) { return !c.checked; });
+        checks.forEach(function (c) { c.checked = shouldCheck; });
+    }
+
+    function _getSelectedSiteInboundShortageNotifyIds() {
+        return Array.from(document.querySelectorAll('.inj-site-shortage-notify-user:checked'))
+            .map(function (el) { return String(el.value || '').trim(); })
+            .filter(Boolean);
+    }
+
+    async function _saveSiteInboundShortageNotifyIds(ids) {
+        const list = Array.isArray(ids) ? ids.map(String).filter(Boolean) : [];
+        _siteInboundShortageNotifyIds = list;
+        try {
+            await Storage.setConfigValue(SITE_INBOUND_SHORTAGE_NOTIFY_KEY, list);
+        } catch (e) {
+            console.warn('[InjectionWarehouse] 쪽지 대상 저장 실패:', e);
+        }
+    }
+
+    function _sendSiteInboundShortageReport(opts) {
+        opts = opts || {};
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') {
+            return { ok: false, reason: 'no_api' };
+        }
+        const ids = Array.isArray(opts.recipientIds) ? opts.recipientIds.filter(Boolean) : [];
+        if (!ids.length) return { ok: false, reason: 'no_recipients' };
+        try {
+            AuthModule.sendInternalMessage({
+                targetType: 'user',
+                targetIds: ids,
+                title: opts.title || '현장 입고 부족 사유 보고',
+                body: opts.body || '',
+                category: 'injection_site_inbound_shortage',
+                priority: 'high'
+            });
+            return { ok: true, count: ids.length };
+        } catch (e) {
+            console.warn('[InjectionWarehouse] 사유 보고 쪽지 실패:', e);
+            return { ok: false, reason: 'send_failed' };
+        }
+    }
+
+    function openSiteInboundShortageResolve(carEnc, partEnc, colorEnc, need, stock, shortage) {
+        const carModel = decodeURIComponent(carEnc || '');
+        const partName = decodeURIComponent(partEnc || '');
+        const color = decodeURIComponent(colorEnc || '');
+        const needQty = Number(need) || 0;
+        const stockQty = Number(stock) || 0;
+        const shortQty = Number(shortage) || 0;
+
+        function _show(savedIds) {
+            UIUtils.showModal(
+                '현장 입고 부족 에러 처리',
+                '<div style="margin-bottom:12px;padding:10px 12px;border-radius:8px;background:rgba(234,88,12,0.08);border:1px solid rgba(234,88,12,0.25);font-size:0.85rem;">' +
+                    '<div><strong>' + _escapeHtml(carModel || '-') + '</strong> / ' + _escapeHtml(partName || '-') +
+                    (color ? ' / ' + _escapeHtml(color) : '') + '</div>' +
+                    '<div style="margin-top:6px;color:var(--text-secondary);">' +
+                        '현장 입고 필요 <strong style="color:#ea580c;">' + UIUtils.formatNumber(needQty) + '</strong> EA · ' +
+                        '현재고 <strong>' + UIUtils.formatNumber(stockQty) + '</strong> EA · ' +
+                        '부족 <strong style="color:var(--accent-red);">' + UIUtils.formatNumber(shortQty) + '</strong> EA' +
+                    '</div>' +
+                    '<div style="margin-top:6px;font-size:0.78rem;color:var(--text-muted);">' +
+                        '창고 재고가 부족해 현장 입고가 불가한 경우 사유를 남기고, 선택한 관리자에게 쪽지로 보고합니다. (재고 수량은 변경되지 않습니다)' +
+                    '</div>' +
+                '</div>' +
+                '<div class="form-group">' +
+                    '<label class="form-label">사유 <span style="color:var(--accent-red);">*</span></label>' +
+                    '<textarea id="injSiteInboundShortageReason" class="form-input" rows="3" ' +
+                        'placeholder="예: IL 자재 부족으로 현장 입고 불가 — 추가 사출 대기" style="width:100%;resize:vertical;"></textarea>' +
+                '</div>' +
+                _buildSiteInboundShortageNotifyHtml(savedIds),
+                '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>' +
+                '<button class="btn btn-primary" style="background:#ea580c;border-color:#ea580c;" ' +
+                    'onclick="InjectionWarehouseModule.confirmSiteInboundShortageResolve(\'' +
+                    encodeURIComponent(carModel) + '\',\'' + encodeURIComponent(partName) + '\',\'' +
+                    encodeURIComponent(color) + '\',' + needQty + ',' + stockQty + ',' + shortQty + ')">' +
+                    '<span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">send</span> 저장하고 보내기</button>',
+                'md'
+            );
+        }
+
+        _ensureSiteInboundShortageNotifyIdsLoaded().then(_show).catch(function () { _show([]); });
+    }
+
+    async function confirmSiteInboundShortageResolve(carEnc, partEnc, colorEnc, need, stock, shortage) {
+        const reasonEl = document.getElementById('injSiteInboundShortageReason');
+        const reason = reasonEl ? String(reasonEl.value || '').trim() : '';
+        if (!reason) {
+            UIUtils.toast('사유를 입력하세요.', 'warning');
+            return;
+        }
+        const recipientIds = _getSelectedSiteInboundShortageNotifyIds();
+        if (!recipientIds.length) {
+            UIUtils.toast('쪽지 대상(생산관리자·도장라인운영자)을 선택하세요.', 'warning');
+            return;
+        }
+        const carModel = decodeURIComponent(carEnc || '');
+        const partName = decodeURIComponent(partEnc || '');
+        const color = decodeURIComponent(colorEnc || '');
+        const needQty = Number(need) || 0;
+        const stockQty = Number(stock) || 0;
+        const shortQty = Number(shortage) || 0;
+        if (shortQty <= 0) {
+            UIUtils.toast('처리할 부족 수량이 없습니다.', 'info');
+            UIUtils.closeModal();
+            return;
+        }
+
+        await _saveSiteInboundShortageNotifyIds(recipientIds);
+
+        const actor = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
+            ? AuthModule.getCurrentUser() : null;
+        const actorLabel = actor
+            ? String(actor.displayName || actor.name || actor.username || actor.id || '')
+            : '';
+        const reportBody =
+            '[현장 입고 부족 사유 보고]\n' +
+            '차종/사출명/컬러: ' + (carModel || '-') + ' / ' + (partName || '-') + (color ? ' / ' + color : '') + '\n' +
+            '현장 입고 필요: ' + UIUtils.formatNumber(needQty) + ' EA\n' +
+            '현재고: ' + UIUtils.formatNumber(stockQty) + ' EA\n' +
+            '부족: ' + UIUtils.formatNumber(shortQty) + ' EA\n' +
+            '사유: ' + reason + '\n' +
+            '보고자: ' + (actorLabel || '-');
+        const sendResult = _sendSiteInboundShortageReport({
+            recipientIds: recipientIds,
+            title: '현장 입고 부족 사유 보고 — ' + (partName || carModel || ''),
+            body: reportBody
+        });
+        if (!sendResult.ok) {
+            if (sendResult.reason === 'no_api') {
+                UIUtils.toast('쪽지 기능을 사용할 수 없습니다.', 'error');
+            } else {
+                UIUtils.toast('쪽지 발송에 실패했습니다. 로그인·대상 계정을 확인하세요.', 'error');
+            }
+            return;
+        }
+
+        await _ensureSiteInboundShortageAcksLoaded();
+        const key = _siteInboundShortageKey(carModel, partName, color);
+        const prev = _siteInboundShortageAcks[key] || {};
+        _siteInboundShortageAcks[key] = {
+            ackedQty: Math.max(0, Number(prev.ackedQty) || 0) + shortQty,
+            reason: reason,
+            needAtResolve: needQty,
+            stockAtResolve: stockQty,
+            shortageAtResolve: shortQty,
+            notifiedUserIds: recipientIds,
+            resolvedAt: (UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' ')),
+            resolvedBy: actorLabel,
+            history: (Array.isArray(prev.history) ? prev.history : []).concat([{
+                reason: reason,
+                shortage: shortQty,
+                need: needQty,
+                stock: stockQty,
+                notifiedUserIds: recipientIds,
+                at: UIUtils.now ? UIUtils.now() : new Date().toISOString(),
+                by: actorLabel
+            }]).slice(-20)
+        };
+        try {
+            await Storage.setConfigValue(SITE_INBOUND_SHORTAGE_ACK_KEY, _siteInboundShortageAcks);
+        } catch (e) {
+            UIUtils.toast('에러 처리 저장에 실패했습니다. (쪽지는 발송됨)', 'error');
+            return;
+        }
+        UIUtils.closeModal();
+        UIUtils.toast('사유 보고 쪽지를 보내고 에러 처리했습니다. (' + sendResult.count + '명)', 'success');
+        loadData();
     }
 
     // ── 수량 보정 시점(컷오버) 이전 검사건은 입고 대기에서 제외 ──────────────
@@ -1079,6 +1444,34 @@ var InjectionWarehouseModule = (function() {
                         </div>
                         <div class="card-body" id="injOutListupBody" style="padding:0;"></div>
                     </div>
+                    <div class="card" id="injSiteInboundShortageCard" style="margin-bottom:20px; border-left:3px solid #ea580c; display:none;">
+                        <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                            <h4 style="display:flex;align-items:center;gap:8px;margin:0;">
+                                <span class="material-symbols-outlined" style="color:#ea580c;">error</span>
+                                현장 입고 부족 에러
+                                <span id="injSiteInboundShortageBadge" style="font-size:0.78rem;background:#ea580c;color:#fff;padding:2px 8px;border-radius:12px;font-weight:600;"></span>
+                            </h4>
+                            <span style="font-size:0.75rem;color:var(--text-muted);">계획 대비 현장 입고가 필요한데 창고 재고가 부족합니다. 사유 입력 후 에러 처리하세요.</span>
+                        </div>
+                        <div class="card-body" style="padding:0;">
+                            <div class="data-table-wrapper" style="overflow-x:auto;">
+                                <table class="data-table compact" style="width:100%;">
+                                    <thead>
+                                        <tr>
+                                            <th style="white-space:nowrap;">차종</th>
+                                            <th style="white-space:nowrap;">사출명</th>
+                                            <th style="white-space:nowrap;">컬러</th>
+                                            <th style="text-align:right;white-space:nowrap;">현장 입고 필요</th>
+                                            <th style="text-align:right;white-space:nowrap;">현재고</th>
+                                            <th style="text-align:right;white-space:nowrap;">부족</th>
+                                            <th style="white-space:nowrap;">작업</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="injSiteInboundShortageBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
                     <div class="card" style="margin-bottom:20px;">
                         <div class="card-header" style="flex-wrap:wrap;gap:8px;">
                             <h4><span class="material-symbols-outlined">grid_view</span> 차종별 재고 현황</h4>
@@ -1226,7 +1619,11 @@ var InjectionWarehouseModule = (function() {
         });
 
         // ── 차종별 타일 렌더링 ─────────────────────────────────────
-        renderCarTiles(stockMap, data);
+        _ensureSiteInboundShortageAcksLoaded().then(function () {
+            renderCarTiles(stockMap, data);
+        }).catch(function () {
+            renderCarTiles(stockMap, data);
+        });
 
         if (_activeTab === 'incoming') filterTransactions('incoming');
         else if (_activeTab === 'outgoing') filterTransactions('outgoing');
@@ -1284,24 +1681,35 @@ var InjectionWarehouseModule = (function() {
                             별칭삭제
                        </button>`
                     : '';
-                // 예약/미입력실적은 재고에서 차감하지 않는다 — "현재 재고"는 항상 실물 원장 그대로,
-                // 예약 수량은 참고용 배지로만 별도 표시한다.
+                // 현장 입고 필요 = 대기+진행 잔량(창고 출고 차감 후)
+                // 도장 실적 미입력 = 출고와 무관하게 진행/완료(미실적) 계획 잔량
+                const siteNeed = _calcSiteInboundNeed(item, r);
+                let paintUnentered = 0;
+                if (typeof ProductionPlanModule !== 'undefined' && ProductionPlanModule._getInjReserveDetail) {
+                    const rawDetail = ProductionPlanModule._getInjReserveDetail(
+                        item.partName, item.carModel, item.color, { skipWarehouseConsume: true }
+                    );
+                    paintUnentered = Math.max(0, Number(rawDetail && rawDetail.inProgressTotal) || 0);
+                }
                 let stockHtml;
-                if (r.inProgress > 0) {
+                if (siteNeed.need > 0) {
+                    const shortageHint = siteNeed.shortage > 0
+                        ? ' · 재고부족 ' + UIUtils.formatNumber(siteNeed.shortage)
+                        : '';
+                    stockHtml = `
+                        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:1px;">
+                            <span style="font-size:0.85rem;font-weight:700;color:${item.stock > 0 ? 'var(--accent-blue)' : 'var(--accent-red)'};">${UIUtils.formatNumber(item.stock)} EA</span>
+                            <span onclick="event.stopPropagation();InjectionWarehouseModule.showReserveDetailPopup(event,'${_ep}','${_em}','${_ec}')"
+                                  style="font-size:0.68rem;background:${siteNeed.shortage > 0 ? 'rgba(220,38,38,0.12)' : 'rgba(234,88,12,0.12)'};color:${siteNeed.shortage > 0 ? '#dc2626' : '#ea580c'};border:1px solid ${siteNeed.shortage > 0 ? 'rgba(220,38,38,0.35)' : 'rgba(234,88,12,0.3)'};border-radius:3px;padding:0 4px;white-space:nowrap;cursor:pointer;"
+                                  title="대기 ${UIUtils.formatNumber(siteNeed.pending)} + 진행 ${UIUtils.formatNumber(siteNeed.inProgress)} = 현장 입고 필요${shortageHint}">현장 입고 필요 -${UIUtils.formatNumber(siteNeed.need)} ℹ</span>
+                        </div>`;
+                } else if (paintUnentered > 0) {
                     stockHtml = `
                         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:1px;">
                             <span style="font-size:0.85rem;font-weight:700;color:${item.stock > 0 ? 'var(--accent-blue)' : 'var(--accent-red)'};">${UIUtils.formatNumber(item.stock)} EA</span>
                             <span onclick="event.stopPropagation();InjectionWarehouseModule.showReserveDetailPopup(event,'${_ep}','${_em}','${_ec}')"
                                   style="font-size:0.68rem;background:rgba(234,88,12,0.12);color:#ea580c;border:1px solid rgba(234,88,12,0.3);border-radius:3px;padding:0 4px;white-space:nowrap;cursor:pointer;"
-                                  title="클릭하여 예약 상세 보기">미입력실적 -${UIUtils.formatNumber(r.inProgress)} ℹ</span>
-                        </div>`;
-                } else if (r.pending > 0) {
-                    stockHtml = `
-                        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:1px;">
-                            <span style="font-size:0.85rem;font-weight:700;color:${item.stock > 0 ? 'var(--accent-blue)' : 'var(--accent-red)'};">${UIUtils.formatNumber(item.stock)} EA</span>
-                            <span onclick="event.stopPropagation();InjectionWarehouseModule.showReserveDetailPopup(event,'${_ep}','${_em}','${_ec}')"
-                                  style="font-size:0.68rem;background:rgba(234,179,8,0.12);color:#ca8a04;border:1px solid rgba(234,179,8,0.3);border-radius:3px;padding:0 4px;white-space:nowrap;cursor:pointer;"
-                                  title="클릭하여 예약 상세 보기">예약 -${UIUtils.formatNumber(r.pending)} ℹ</span>
+                                  title="창고 출고는 됐지만 도장 작업 실적이 없습니다">도장 실적 미입력 -${UIUtils.formatNumber(paintUnentered)} ℹ</span>
                         </div>`;
                 } else {
                     stockHtml = `<span style="font-size:0.85rem;font-weight:700;color:${item.stock > 0 ? 'var(--accent-blue)' : 'var(--accent-red)'};">${UIUtils.formatNumber(item.stock)} EA</span>`;
@@ -1475,6 +1883,8 @@ var InjectionWarehouseModule = (function() {
         const entries = Object.entries(byCarModel);
         if (entries.length === 0) {
             tilesEl.innerHTML = `<p style="color:var(--text-muted); padding:20px;">재고 데이터가 없습니다.</p>`;
+            _renderStockErrorAdminBar(mergedMap);
+            _renderSiteInboundShortageList(mergedMap);
             return;
         }
 
@@ -1503,6 +1913,7 @@ var InjectionWarehouseModule = (function() {
         `).join('');
 
         _renderStockErrorAdminBar(mergedMap);
+        _renderSiteInboundShortageList(mergedMap);
     }
 
     function _getNegativeStockItems(stockMap) {
@@ -2125,6 +2536,10 @@ var InjectionWarehouseModule = (function() {
                         <span class="material-symbols-outlined" style="font-size:0.9rem;">delete_sweep</span>
                         ${color} 별칭 이력 삭제
                     </button>` : ''}
+                    <button class="btn btn-sm btn-outline" style="font-size:0.78rem;color:#dc2626;border-color:#dc2626;"
+                        onclick="InjectionWarehouseModule.openBulkOutgoingListupModal('${_cmJs}','${_pnJs}','${_clJs}')">
+                        <span class="material-symbols-outlined" style="font-size:0.9rem;">output</span> 전체 출고
+                    </button>
                     <button class="btn btn-sm btn-primary" style="font-size:0.78rem;"
                         onclick="UIUtils.closeModal();setTimeout(()=>InjectionWarehouseModule._openAddModalForPart('입고','${_cmJs}','${_pnJs}','${_clJs}'),80);">
                         <span class="material-symbols-outlined" style="font-size:0.9rem;">login</span> 입고
@@ -2806,6 +3221,170 @@ var InjectionWarehouseModule = (function() {
             const qtyInput = document.getElementById('injOutItemQty');
             if (qtyInput) qtyInput.focus();
         }, 100);
+    }
+
+    // 보관 중인 LOT 전체를 한 번에 출고 목록에 담는다. 남김없이 전부 내보내는 동작이라
+    // 개별 LOT 모달과 달리 선입선출 미준수 사유는 물을 필요가 없다(뒤에 남는 LOT이 없으므로).
+    function _bulkOutAvailableLots(carModel, partName, color) {
+        const pendingMap = _getPendingOutgoingByLot(carModel, partName, color, null);
+        return _getFifoOrderedLots(carModel, partName, color)
+            .map(function(l) {
+                const lotBal = Number(l.qty) || 0;
+                const pendingQty = pendingMap[_normInvLotNo(l.lotNo)] || 0;
+                return { lotNo: l.lotNo, date: l.date, avail: Math.max(0, lotBal - pendingQty) };
+            })
+            .filter(function(l) { return l.avail > 0; });
+    }
+
+    function openBulkOutgoingListupModal(carModel, partName, color) {
+        const availableLots = _bulkOutAvailableLots(carModel, partName, color);
+        if (!availableLots.length) {
+            UIUtils.toast('출고 가능한 LOT이 없습니다.', 'warning');
+            return;
+        }
+        const totalQty = availableLots.reduce(function(s, l) { return s + l.avail; }, 0);
+        const todayStr = UIUtils.today();
+        const _cmJs = carModel.replace(/'/g, "\\'");
+        const _pnJs = partName.replace(/'/g, "\\'");
+        const _clJs = (color || '').replace(/'/g, "\\'");
+        const lotRowsHtml = availableLots.map(function(l) {
+            return `<tr><td style="font-family:monospace;">${l.lotNo}</td><td>${l.date || '-'}</td>
+                <td style="text-align:right;font-weight:600;">${UIUtils.formatNumber(l.avail)}</td></tr>`;
+        }).join('');
+
+        UIUtils.showModal(
+            `<span class="material-symbols-outlined" style="vertical-align:middle;color:var(--accent-red);">output</span> 전체 출고 등록`,
+            `
+            <div style="margin-bottom:12px;padding:10px 14px;background:var(--bg-secondary);border-radius:8px;font-size:0.85rem;">
+                <span style="font-weight:700;">${carModel} · ${partName}${color ? ' · ' + color : ''}</span><br>
+                현재 보관 중인 <strong style="color:var(--accent-blue);">${availableLots.length}개 LOT · ${UIUtils.formatNumber(totalQty)} EA</strong> 전체를 출고 목록에 한 번에 추가합니다.
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">출고 일자 <span style="color:var(--accent-red)">*</span></label>
+                    <input type="date" class="form-input" id="injBulkOutDate" value="${todayStr}">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">출고 구분 <span style="color:var(--accent-red)">*</span></label>
+                <div style="display:flex;gap:16px;align-items:center;padding:8px 0;">
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem;">
+                        <input type="radio" name="injBulkOutType" id="injBulkOutTypeProd" value="생산출고" checked
+                            onchange="InjectionWarehouseModule._onBulkOutTypeChange()">
+                        <span style="font-weight:600;color:var(--accent-blue);">생산 출고</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem;">
+                        <input type="radio" name="injBulkOutType" id="injBulkOutTypeReturn" value="반출"
+                            onchange="InjectionWarehouseModule._onBulkOutTypeChange()">
+                        <span style="font-weight:600;color:var(--accent-orange,#f59e0b);">반출</span>
+                    </label>
+                </div>
+            </div>
+            <div id="injBulkOutPaintLineGroup" class="form-group">
+                <label class="form-label">도착 라인 (도장 투입 자재) <span style="color:var(--accent-red)">*</span></label>
+                <div style="display:flex;gap:28px;align-items:center;padding:8px 0;flex-wrap:wrap;">
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem;">
+                        <input type="radio" name="injBulkOutPaintLine" id="injBulkOutLineA" value="도장-A">
+                        <span style="font-weight:700;color:#2563eb;">도장-A 자재</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem;">
+                        <input type="radio" name="injBulkOutPaintLine" id="injBulkOutLineB" value="도장-B">
+                        <span style="font-weight:700;color:#ea580c;">도장-B 자재</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9rem;">
+                        <input type="radio" name="injBulkOutPaintLine" id="injBulkOutLineLaser" value="레이져">
+                        <span style="font-weight:700;color:#7c3aed;">레이져 (도장 없이 직행)</span>
+                    </label>
+                </div>
+                <div id="injBulkOutPaintLineHint" style="font-size:0.75rem;color:var(--text-muted);">기초정보(제품 마스터) 기준으로 자동 선택됩니다.</div>
+            </div>
+            <div id="injBulkOutReturnReasonGroup" style="display:none;margin-bottom:12px;">
+                <label class="form-label">반출 사유 <span style="color:var(--accent-red)">*</span></label>
+                <input type="text" class="form-input" id="injBulkOutReturnReason" placeholder="반출 사유를 입력하세요">
+            </div>
+            <div class="form-group">
+                <label class="form-label">비고 (선택)</label>
+                <input type="text" class="form-input" id="injBulkOutMemo" placeholder="출고 용도 또는 메모">
+            </div>
+            <div style="margin-top:10px;max-height:220px;overflow:auto;border:1px solid var(--border-color);border-radius:8px;">
+                <table class="data-table" style="width:100%;font-size:0.82rem;">
+                    <thead><tr><th>LOT번호</th><th>입고일</th><th style="text-align:right;">출고수량</th></tr></thead>
+                    <tbody>${lotRowsHtml}</tbody>
+                </table>
+            </div>
+            `,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+             <button class="btn btn-primary"
+                onclick="InjectionWarehouseModule.saveBulkOutgoingListup('${_cmJs}','${_pnJs}','${_clJs}')">
+                전체 출고 목록에 추가 (${availableLots.length}건)
+             </button>`
+        );
+
+        setTimeout(() => {
+            const inferred = _inferPaintLineFromMaster(carModel, partName, color);
+            _applyPaintLineRadio('injBulkOutPaintLine', inferred.line, 'injBulkOutPaintLineHint');
+        }, 100);
+    }
+
+    function _onBulkOutTypeChange() {
+        const isReturn = !!(document.getElementById('injBulkOutTypeReturn') || {}).checked;
+        const grp = document.getElementById('injBulkOutReturnReasonGroup');
+        if (grp) grp.style.display = isReturn ? '' : 'none';
+        const lineGrp = document.getElementById('injBulkOutPaintLineGroup');
+        if (lineGrp) lineGrp.style.display = isReturn ? 'none' : '';
+    }
+
+    function saveBulkOutgoingListup(carModel, partName, color) {
+        const date = (document.getElementById('injBulkOutDate') || {}).value || '';
+        const isReturn = !!(document.getElementById('injBulkOutTypeReturn') || {}).checked;
+        const outgoingType = isReturn ? '반출' : '생산출고';
+        const returnReason = isReturn ? ((document.getElementById('injBulkOutReturnReason') || {}).value || '').trim() : '';
+        const memo = ((document.getElementById('injBulkOutMemo') || {}).value || '').trim();
+        let paintLine = '';
+        if (!isReturn) {
+            const lineEl = document.querySelector('input[name="injBulkOutPaintLine"]:checked');
+            paintLine = lineEl ? String(lineEl.value || '').trim() : '';
+            if (paintLine !== '도장-A' && paintLine !== '도장-B' && paintLine !== '레이져') {
+                paintLine = _inferPaintLineFromMaster(carModel, partName, color).line;
+            }
+        }
+        if (!date) { UIUtils.toast('출고 일자를 선택하세요.', 'warning'); return; }
+        if (isReturn && !returnReason) {
+            UIUtils.toast('반출 사유를 입력하세요.', 'warning');
+            document.getElementById('injBulkOutReturnReason')?.focus();
+            return;
+        }
+        if (!isReturn && !paintLine) {
+            UIUtils.toast('도착 라인(도장-A/B/레이져)을 선택하세요.', 'warning');
+            return;
+        }
+
+        // 모달이 열려 있는 사이 다른 곳에서 리스트업했을 수 있으니 최신 가용 수량으로 다시 계산.
+        const availableLots = _bulkOutAvailableLots(carModel, partName, color);
+        if (!availableLots.length) {
+            UIUtils.toast('출고 가능한 LOT이 없습니다.', 'warning');
+            return;
+        }
+
+        _syncOutgoingListupFromDom();
+        availableLots.forEach(function(l) {
+            _injOutListupRows.push({
+                key: 'inj__' + Storage.generateId(),
+                carModel, partName, color: color || '', lotNo: l.lotNo,
+                qty: l.avail, maxQty: l.avail,
+                outgoingType, returnReason, memo,
+                paintLine: paintLine || undefined,
+                fifoReason: undefined,
+                date,
+                selected: true
+            });
+        });
+
+        const totalQty = availableLots.reduce(function(s, l) { return s + l.avail; }, 0);
+        UIUtils.toast(`${availableLots.length}개 LOT · ${UIUtils.formatNumber(totalQty)} EA를 출고 목록에 추가했습니다. 출고자 선택 후 출고 완료를 누르세요.`, 'success');
+        UIUtils.closeModal();
+        renderOutgoingListup();
+        _scrollToOutgoingListup();
     }
 
     function _onOutItemTypeChange() {
@@ -6483,7 +7062,7 @@ var InjectionWarehouseModule = (function() {
     }
 
     // ── 예약 집계 상세 팝업 ──────────────────────────────────────────
-    // 사출 창고 목록의 예약 뱃지 클릭 시 호출 — 당일 계획 / 미입력 실적 분리 표시
+    // 사출 창고 목록의 뱃지 클릭 시 호출 — 당일 계획 / 현장 입고 필요 분리 표시
     function showReserveDetailPopup(event, encPart, encModel, encColor) {
         event.stopPropagation();
 
@@ -6503,7 +7082,9 @@ var InjectionWarehouseModule = (function() {
             : { pendingPlans: [], inProgressPlans: [], pendingTotal: 0, inProgressTotal: 0 };
 
         const { pendingPlans, inProgressPlans, pendingTotal, inProgressTotal } = detail;
-        const totalReserved = pendingTotal + inProgressTotal;
+        const acked = _getSiteInboundAckedQty(carModel, partName, color);
+        const rawSiteNeed = (Number(pendingTotal) || 0) + (Number(inProgressTotal) || 0);
+        const displaySiteNeed = Math.max(0, rawSiteNeed - Math.min(acked, rawSiteNeed));
         const isAdmin = _isAdminUser();
         const canEditPlan = _canEditReservedPlan();
 
@@ -6524,7 +7105,7 @@ var InjectionWarehouseModule = (function() {
             return `<span style="display:flex;gap:2px;margin-left:2px;flex-shrink:0;">${editBtn}${deleteBtn}</span>`;
         }
 
-        // 계획 목록 행 생성 (대기·미입력 공통 — 클릭 시 도장 실적입력으로 이동)
+        // 계획 목록 행 생성 (대기·현장입고필요 공통 — 클릭 시 도장 실적입력으로 이동)
         function _clickableRows(plans, bgColor, accentColor) {
             if (!plans.length) return `<div style="font-size:0.75rem;color:var(--text-muted);padding:4px 0;">해당 없음</div>`;
             const accent = accentColor || '#ea580c';
@@ -6573,17 +7154,22 @@ var InjectionWarehouseModule = (function() {
             <!-- 요약 카드 -->
             <div style="background:var(--bg-secondary);border-radius:7px;padding:10px 12px;margin-bottom:10px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;">
-                    <span style="font-size:0.83rem;color:var(--text-secondary);">당일 계획 (대기)</span>
+                    <span style="font-size:0.83rem;color:var(--text-secondary);">대기 계획</span>
                     <span style="font-weight:700;color:var(--accent-blue);font-size:0.92rem;">${UIUtils.formatNumber(pendingTotal)} 개</span>
                 </div>
                 <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;">
-                    <span style="font-size:0.83rem;color:var(--text-secondary);">미입력 실적</span>
+                    <span style="font-size:0.83rem;color:var(--text-secondary);">진행 계획 (실적 전)</span>
                     <span style="font-weight:700;color:${inProgressTotal > 0 ? '#ea580c' : 'var(--text-muted)'};font-size:0.92rem;">${UIUtils.formatNumber(inProgressTotal)} 개</span>
                 </div>
+                ${acked > 0 ? `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;">
+                    <span style="font-size:0.78rem;color:var(--text-muted);">부족 에러 처리분</span>
+                    <span style="font-size:0.78rem;color:var(--text-muted);">-${UIUtils.formatNumber(Math.min(acked, rawSiteNeed))} 개</span>
+                </div>` : ''}
                 <div style="display:flex;justify-content:space-between;align-items:center;
                             padding:6px 0 2px;margin-top:4px;border-top:1.5px solid var(--border-color);">
-                    <span style="font-size:0.85rem;font-weight:600;">합계 예약</span>
-                    <span style="font-weight:800;color:var(--accent-red);font-size:0.98rem;">${UIUtils.formatNumber(totalReserved)} 개</span>
+                    <span style="font-size:0.85rem;font-weight:600;">현장 입고 필요</span>
+                    <span style="font-weight:800;color:var(--accent-red);font-size:0.98rem;">${UIUtils.formatNumber(displaySiteNeed)} 개</span>
                 </div>
             </div>
 
@@ -6600,13 +7186,13 @@ var InjectionWarehouseModule = (function() {
                 </div>
             </div>` : ''}
 
-            <!-- 미입력 실적 목록 -->
+            <!-- 진행 계획 (실적 전) 목록 -->
             ${inProgressPlans.length > 0 ? `
             <div>
                 <div style="font-size:0.76rem;font-weight:600;color:#ea580c;
                             margin-bottom:4px;display:flex;align-items:center;gap:4px;">
-                    <span class="material-symbols-outlined" style="font-size:14px;">warning</span>
-                    미입력 실적 (${inProgressPlans.length}건)
+                    <span class="material-symbols-outlined" style="font-size:14px;">play_circle</span>
+                    진행 계획 · 실적 전 (${inProgressPlans.length}건)
                 </div>
                 <div style="max-height:90px;overflow-y:auto;">
                     ${_clickableRows(inProgressPlans, 'rgba(234,88,12,0.12)', '#ea580c')}
@@ -6614,7 +7200,7 @@ var InjectionWarehouseModule = (function() {
             </div>` : ''}
 
             <div style="margin-top:8px;text-align:center;font-size:0.68rem;color:var(--text-muted);">
-                계획 행 클릭 → 도장 실적입력으로 이동
+                합계가 현장 입고 필요량입니다. 계획 행 클릭 → 도장 실적입력
             </div>`;
 
         // 위치 지정 (화면 경계 보정)
@@ -6630,14 +7216,14 @@ var InjectionWarehouseModule = (function() {
         popup.style.left = left + 'px';
         popup.style.top  = top  + 'px';
 
-        // 외부 클릭 시 닫기 (팝업 내부 클릭은 닫지 않음 — 미입력 실적 행 클릭 허용)
+        // 외부 클릭 시 닫기 (팝업 내부 클릭은 닫지 않음)
         const _close = (e) => {
             if (!popup.contains(e.target)) { popup.remove(); document.removeEventListener('click', _close); }
         };
         setTimeout(() => document.addEventListener('click', _close), 10);
     }
 
-    // 예약/미입력 실적 행 클릭 → 도장 실적입력 페이지로 이동
+    // 예약/현장 입고 필요 행 클릭 → 도장 실적입력 페이지로 이동
     function _goToPlan(rowEl) {
         const planId = rowEl && rowEl.dataset ? rowEl.dataset.planId : '';
         const date = rowEl && rowEl.dataset ? rowEl.dataset.planDate : '';
@@ -6780,6 +7366,9 @@ var InjectionWarehouseModule = (function() {
         deleteInvalidColorRecords,
         filterStock,
         showReserveDetailPopup,
+        openSiteInboundShortageResolve,
+        confirmSiteInboundShortageResolve,
+        toggleSiteInboundShortageNotify,
         _goToPlan,
         editReservedPlan,
         _saveReservedPlanQty,
@@ -6788,6 +7377,9 @@ var InjectionWarehouseModule = (function() {
         openOutgoingListupItemModal,
         _onOutItemTypeChange,
         saveOutgoingListupItem,
+        openBulkOutgoingListupModal,
+        _onBulkOutTypeChange,
+        saveBulkOutgoingListup,
         removeOutgoingListupRow,
         setOutgoingListupSelected,
         toggleOutgoingListupAll,

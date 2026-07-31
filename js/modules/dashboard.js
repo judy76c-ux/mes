@@ -328,13 +328,39 @@ const DashboardModule = (function() {
             });
         });
 
-        /* ② 실적 미입력 (전일 이전 계획 중 작업일지 없음) */
+        /* ② 실적 미입력 (전일·금일 시작분 — 수량 있는 작업실적 없음)
+           - status '완료'는 종료시각 자동갱신일 수 있음
+           - planId 연동 + 수량>0 인 실적만 "입력됨"으로 본다 */
         const plans = Storage.getAll(DB.STORES.PRODUCTION_PLANS) || [];
         const works = Storage.getAll(DB.STORES.PAINTING_WORK)    || [];
-        const workedPlanIds = new Set(works.map(w => w.planId).filter(Boolean));
+        const nowD = new Date();
+        const nowHm = String(nowD.getHours()).padStart(2, '0') + ':' + String(nowD.getMinutes()).padStart(2, '0');
+        function _dashPlanDay(p) { return String(p.date || '').trim().slice(0, 10); }
+        function _dashWorkFulfills(w, planId) {
+            if (!w || planId == null || planId === '') return false;
+            if (String(w.planId) !== String(planId)) return false;
+            const input = Number(w.inputQty) || 0;
+            const prod = Number(w.productionQty) || 0;
+            const lotSum = Array.isArray(w.lots)
+                ? w.lots.reduce(function (s, l) { return s + (Number(l && l.qty) || 0); }, 0) : 0;
+            return (input + prod + lotSum) > 0;
+        }
         const unenteredPlans = plans
-            .filter(p => p.date && p.date < today && (p.carModel || p.partName) && !workedPlanIds.has(p.id))
-            .sort((a, b) => b.date.localeCompare(a.date));
+            .filter(function (p) {
+                const day = _dashPlanDay(p);
+                if (!day || day > today) return false;
+                if (day === today) {
+                    const start = String(p.startTime || p.slot || '').trim();
+                    if (start && start > nowHm) return false;
+                }
+                if (!(p.carModel || p.partName)) return false;
+                if (!(Number(p.planQty) > 0)) return false;
+                if (!p.id) return false;
+                return !works.some(function (w) { return _dashWorkFulfills(w, p.id); });
+            })
+            .sort(function (a, b) {
+                return String(b.date || '').localeCompare(String(a.date || ''));
+            });
 
         /* ③ 도료 사용 미등록 (전일 이전 작업일지 중 도료 배합 기록 없음)
            - 도료사용등록 대상에서 '제외'한 작업은 알림에서도 빼 둔다 */

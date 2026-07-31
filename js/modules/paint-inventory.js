@@ -305,7 +305,7 @@ const PaintInventoryModule = (function() {
 
     function _switchTab(tab) {
         _activeTab = tab;
-        ['stock', 'incoming', 'outgoing'].forEach(function (t) {
+        ['stock', 'incoming', 'outgoing', 'demand'].forEach(function (t) {
             const panelEl = document.getElementById('paintTab' + t.charAt(0).toUpperCase() + t.slice(1));
             if (panelEl) panelEl.style.display = t === tab ? '' : 'none';
         });
@@ -319,6 +319,12 @@ const PaintInventoryModule = (function() {
         });
         if (tab === 'incoming') _renderHistoryTable('incoming');
         if (tab === 'outgoing') _renderHistoryTable('outgoing');
+        if (tab === 'demand') {
+            const el = document.getElementById('paintTabDemand');
+            if (el && typeof PaintDemandPlanModule !== 'undefined') {
+                PaintDemandPlanModule.render(el, { embedded: true });
+            }
+        }
     }
 
     function render(container) {
@@ -337,7 +343,8 @@ const PaintInventoryModule = (function() {
                     ${[
                         { tab:'stock',    icon:'palette',       title:'도료 재고 현황', sub:'공급사별 재고·입고대기', active:true  },
                         { tab:'incoming', icon:'move_to_inbox', title:'입고이력',       sub:'도료 입고 기록',         active:false },
-                        { tab:'outgoing', icon:'outbox',        title:'출고 이력',      sub:'도료 출고 기록',         active:false }
+                        { tab:'outgoing', icon:'outbox',        title:'출고 이력',      sub:'도료 출고 기록',         active:false },
+                        { tab:'demand',   icon:'calculate',     title:'도료 소요계획',  sub:'영업계획·부족·발주',     active:false }
                     ].map(m => `
                         <button type="button" class="paint-tab-btn${m.active?' paint-tab-active':''}" data-tab="${m.tab}"
                             onclick="PaintInventoryModule._switchTab('${m.tab}')"
@@ -410,11 +417,16 @@ const PaintInventoryModule = (function() {
                 <div id="paintTabOutgoing" style="display:none;">
                     ${_historyCard('outgoing')}
                 </div>
+                <div id="paintTabDemand" style="display:none;"></div>
             </div>
         `;
         _activeTab = 'stock';
         renderAuthorBar();
         loadData();
+        // 딥링크: paint-inventory?tab=demand 또는 별도 라우트에서 탭 지정
+        if (container && container.dataset && container.dataset.paintTab === 'demand') {
+            setTimeout(function () { _switchTab('demand'); }, 0);
+        }
     }
 
     // ── 작성 담당자(작성 책임자) 표시 바 ──────────────────────────────
@@ -587,6 +599,15 @@ const PaintInventoryModule = (function() {
                 const typeBadge = item.paintType
                     ? `<span style="font-size:0.68rem;background:${typeBg};color:#fff;border-radius:3px;padding:1px 5px;margin-right:4px;">${item.paintType}</span>`
                     : '';
+                const itRaw = String(item.itemType || '').replace(/품$/, '').trim();
+                const itNorm = (itRaw === '개발' || itRaw === '개발용') ? '개발용'
+                    : (itRaw === 'A/S' || itRaw === 'A/S용' || itRaw === 'AS' || itRaw === 'AS용') ? 'A/S용'
+                    : (itRaw === '양산' || itRaw === '양산용') ? '양산' : itRaw;
+                const itColors = { '양산': '#059669', '개발용': '#2563eb', 'A/S용': '#d97706' };
+                const itColor = itColors[itNorm] || '#9ca3af';
+                const itemTypeBadge = itNorm
+                    ? `<span style="font-size:0.65rem;background:${itColor}18;color:${itColor};border:1px solid ${itColor};border-radius:3px;padding:0 5px;margin-right:4px;font-weight:700;">${itNorm}</span>`
+                    : '';
 
                 // 활성 LOT 인라인 뱃지 (도료명과 같은 행)
                 const lotBadges = item.activeLots.map(lot => {
@@ -610,7 +631,7 @@ const PaintInventoryModule = (function() {
                         onmouseout="this.style.background=''">
                         <td style="padding:5px 8px; font-size:0.82rem;">
                             <div style="display:flex; align-items:center; flex-wrap:wrap; gap:2px;">
-                                ${typeBadge}<span style="font-weight:600;">${item.name}</span>${expHtml}${lotBadges}
+                                ${itemTypeBadge}${typeBadge}<span style="font-weight:600;">${item.name}</span>${expHtml}${lotBadges}
                             </div>
                         </td>
                         <td style="padding:5px 8px; font-size:0.82rem; color:var(--text-muted); text-align:center;">
@@ -723,6 +744,7 @@ const PaintInventoryModule = (function() {
                 matId:      mat.id,
                 name:       mat.name      || '-',
                 paintType:  mat.paintType || mat.type || '',
+                itemType:   mat.itemType  || '',
                 packUnit:   mat.packUnit  || '',
                 stock:      ms.stock,
                 activeLots: ms.activeLots || [],
@@ -928,6 +950,15 @@ const PaintInventoryModule = (function() {
         const typeBadge = (mat.paintType || mat.type)
             ? `<span style="font-size:0.75rem;background:${typeBg};color:#fff;border-radius:4px;padding:2px 8px;margin-right:6px;">${mat.paintType || mat.type}</span>`
             : '';
+        const itRaw = String(mat.itemType || '').replace(/품$/, '').trim();
+        const itNorm = (itRaw === '개발' || itRaw === '개발용') ? '개발용'
+            : (itRaw === 'A/S' || itRaw === 'A/S용' || itRaw === 'AS' || itRaw === 'AS용') ? 'A/S용'
+            : (itRaw === '양산' || itRaw === '양산용') ? '양산' : itRaw;
+        const itColors = { '양산': '#059669', '개발용': '#2563eb', 'A/S용': '#d97706' };
+        const itColor = itColors[itNorm] || '';
+        const itemTypeBadge = itNorm
+            ? `<span style="font-size:0.72rem;background:${itColor}18;color:${itColor};border:1px solid ${itColor};border-radius:4px;padding:2px 8px;margin-right:6px;font-weight:700;">${itNorm}</span>`
+            : '';
 
         const closeBtn = asChild
             ? `<button class="btn btn-secondary" onclick="UIUtils.closeChildModal()">닫기</button>`
@@ -941,7 +972,7 @@ const PaintInventoryModule = (function() {
             <!-- 기본 정보 -->
             <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;padding:12px 14px;
                         background:var(--bg-secondary);border-radius:8px;font-size:0.85rem;">
-                <span>${typeBadge}<strong>${mat.name}</strong></span>
+                <span>${itemTypeBadge}${typeBadge}<strong>${mat.name}</strong></span>
                 <span style="color:var(--text-muted);">|</span>
                 <span>공급사: <strong>${mat.supplier || '-'}</strong></span>
                 <span style="color:var(--text-muted);">|</span>

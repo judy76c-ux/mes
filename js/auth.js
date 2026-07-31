@@ -1,4 +1,4 @@
-﻿/**
+/**
  * MES 사용자 인증 / 접근 권한 모듈 (AuthModule)
  *
  * 동작 방식:
@@ -50,6 +50,7 @@ const AuthModule = (function () {
         { id:'warehouse-overview',        label:'자재 창고 현황',     group:'창고' },
         { id:'injection-warehouse',       label:'사출 창고',          group:'창고' },
         { id:'paint-inventory',           label:'도료 창고',          group:'창고' },
+        { id:'paint-demand-plan',         label:'도료 소요 계획',     group:'창고' },
         { id:'raw-material-inventory',    label:'원재료입출고',       group:'사출공정' },
         { id:'injection-process',         label:'사출 공정',          group:'사출공정' },
         { id:'injection-work',            label:'사출 작업일지',      group:'사출공정' },
@@ -145,7 +146,7 @@ const AuthModule = (function () {
         { key:'sales_menu',       label:'\uc601\uc5c5 \uad00\ub9ac',     pages:['sales-delivery-plan','sales-today-shipment','sales-delivery','sales-analytics','sales-outsourcing'] },
         { key:'board',            label:'\uac8c\uc2dc\ud310',            pages:['board'] },
         { key:'incoming',         label:'\uc218\uc785\uac80\uc0ac',      pages:['incoming-overview','injection-incoming','paint-incoming-inspection','inj-incoming-std','paint-incoming-std','inj-insp-std-photo'] },
-        { key:'material_wh',      label:'\uc790\uc7ac \ucc3d\uace0',     pages:['warehouse-overview','injection-warehouse','paint-inventory','raw-material-inventory','injection-layout'] },
+        { key:'material_wh',      label:'\uc790\uc7ac \ucc3d\uace0',     pages:['warehouse-overview','injection-warehouse','paint-inventory','paint-demand-plan','raw-material-inventory','injection-layout'] },
         { key:'product_wh',       label:'\uc644\uc81c\ud488 \ucc3d\uace0', pages:['product-warehouse','product-outgoing','injection-layout'] },
         { key:'shipping',         label:'\ucd9c\ud558\uac80\uc0ac',      pages:['shipping-overview','shipping-standby','shipping-inspection','shipping-reliability','shipping-periodic-reli','shipping-certificate','shipping-standard','shipping-std-photo'] },
         { key:'injection',        label:'\uc0ac\ucd9c \uacf5\uc815',     pages:['injection-process','injection-work','injection-wip','injection-room-layout'] },
@@ -177,7 +178,7 @@ const AuthModule = (function () {
         'sales-delivery-plan': ['sales-delivery-plan','sales-today-shipment','sales-delivery','sales-analytics','sales-outsourcing'],
         'sales-today-shipment': ['sales-delivery-plan','sales-today-shipment','sales-delivery','sales-analytics','sales-outsourcing'],
         'incoming-overview': ['incoming-overview','injection-incoming','paint-incoming-inspection','inj-incoming-std','paint-incoming-std','inj-insp-std-photo'],
-        'warehouse-overview': ['warehouse-overview','injection-warehouse','paint-inventory','raw-material-inventory','injection-layout'],
+        'warehouse-overview': ['warehouse-overview','injection-warehouse','paint-inventory','paint-demand-plan','raw-material-inventory','injection-layout'],
         'product-warehouse': ['product-warehouse','product-outgoing','injection-layout'],
         'injection-process': ['injection-process','injection-work','injection-wip','injection-room-layout'],
         'laser-process': ['laser-process','laser-standby','laser-wip','laser-work','laser-inspection','laser-layout','laser-jig-master','laser-jig-disposal','laser-jig-cleaning','laser-equipment-history'],
@@ -301,7 +302,7 @@ const AuthModule = (function () {
         const prodWorkerPages = [
             'dashboard',
             'incoming-overview','injection-incoming','paint-incoming-inspection',
-            'warehouse-overview','injection-warehouse','paint-inventory','raw-material-inventory',
+            'warehouse-overview','injection-warehouse','paint-inventory','paint-demand-plan','raw-material-inventory',
             'injection-process','injection-work',
             'production-plan','overtime-plan','painting-process','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip','paint-mix',
             'laser-standby','laser-wip','laser-work','laser-inspection',
@@ -321,7 +322,7 @@ const AuthModule = (function () {
             logistics_worker: rw([
                 'dashboard',
                 'incoming-overview','injection-incoming','paint-incoming-inspection',
-                'warehouse-overview','injection-warehouse','paint-inventory','raw-material-inventory',
+                'warehouse-overview','injection-warehouse','paint-inventory','paint-demand-plan','raw-material-inventory',
                 'shipping-standby','shipping-inspection',
                 'product-warehouse','product-outgoing',
             ]),
@@ -356,7 +357,7 @@ const AuthModule = (function () {
             paint_line_op: rw([
                 'dashboard',
                 'incoming-overview','paint-incoming-inspection',
-                'warehouse-overview','paint-inventory',
+                'warehouse-overview','paint-inventory','paint-demand-plan',
                 'production-plan','overtime-plan','painting-process','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip','paint-mix',
             ]),
 

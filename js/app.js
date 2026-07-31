@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 메인 앱 초기화
  * 모든 모듈을 라우터에 등록하고 시스템을 부트스트랩
  */
@@ -250,6 +250,18 @@ const App = (function() {
         Router.registerModule('injection-work', InjectionWorkLogModule);
         Router.registerModule('raw-material-inventory', RawMaterialInventoryModule);
         Router.registerModule('paint-inventory', PaintInventoryModule);
+        Router.registerModule('paint-demand-plan', {
+            render: function (container) {
+                // 도료 창고 내 탭으로 통합 — 진입 시 도료 창고 + 소요계획 탭 오픈
+                if (container) container.dataset.paintTab = 'demand';
+                PaintInventoryModule.render(container);
+                setTimeout(function () {
+                    if (typeof PaintInventoryModule._switchTab === 'function') {
+                        PaintInventoryModule._switchTab('demand');
+                    }
+                }, 50);
+            }
+        });
         Router.registerModule('paint-layout', PaintLayoutModule);
         Router.registerModule('injection-layout', InjectionLayoutModule);
         Router.registerModule('injection-wip', InjectionWipModule);
