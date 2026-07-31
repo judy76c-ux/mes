@@ -1212,30 +1212,34 @@ var PaintingInputModule = (function () {
             });
         } catch (e) { /* ignore */ }
 
+        const dayRecords = (_recordsForLine(want) || []).filter(function (r) {
+            if (String(r.type || '') !== '입고') return false;
+            if (_resolveActualInboundStamp(r).slice(0, 10) !== day) return false;
+            if (opts.carModel && r.carModel && r.carModel !== opts.carModel) return false;
+            return true;
+        });
+
         let total = 0;
-        (_recordsForLine(want) || []).forEach(function (r) {
-            if (String(r.type || '') !== '입고') return;
-            const rDay = _resolveActualInboundStamp(r).slice(0, 10);
-            if (rDay !== day) return;
-            if (opts.carModel && r.carModel && r.carModel !== opts.carModel) return;
-
-            const rLots = Array.isArray(r.lots) && r.lots.length
-                ? r.lots
-                : [{ lotNo: r.lotNo, qty: Number(r.quantity) || 0 }];
-
-            if (hasLots) {
+        if (hasLots) {
+            dayRecords.forEach(function (r) {
+                const rLots = Array.isArray(r.lots) && r.lots.length
+                    ? r.lots
+                    : [{ lotNo: r.lotNo, qty: Number(r.quantity) || 0 }];
                 rLots.forEach(function (l) {
                     const n = String(l.lotNo || '').trim();
                     if (n && lotSet[n]) total += Number(l.qty) || 0;
                 });
-                return;
-            }
-
-            const rPart = String(r.partName || '').trim();
-            if (rPart && injNames[rPart]) {
-                total += Number(r.quantity) || 0;
-            }
-        });
+            });
+        }
+        // LOT번호로 못 찾았으면(또는 이 실적에 LOT이 아예 없으면) 사출명(품명) 기준으로도
+        // 다시 시도한다 — 실적에 적힌 LOT번호 표기가 실제 입고 LOT과 달라도(과거 데이터,
+        // 수기입력 오차 등) 실제로 입고된 자재를 "-"로 놓치지 않기 위한 안전망이다.
+        if (total <= 0) {
+            dayRecords.forEach(function (r) {
+                const rPart = String(r.partName || '').trim();
+                if (rPart && injNames[rPart]) total += Number(r.quantity) || 0;
+            });
+        }
         return total;
     }
 

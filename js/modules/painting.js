@@ -2313,8 +2313,7 @@ const PaintingWorkModule = (function() {
             ' data-balance="' + l.balance + '"' +
             ' data-part-name="' + String(l.partName || '').replace(/"/g, '&quot;') + '"' +
             ' data-color="' + String(l.color || '').replace(/"/g, '&quot;') + '">' +
-            l.lotNo + ' │ ' + (l.partName || l.carModel) +
-            ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA' + stampTags + '</option>';
+            (l.partName || l.carModel) + stampTags + '</option>';
         }).join('');
     }
 
@@ -2522,8 +2521,7 @@ const PaintingWorkModule = (function() {
                 ' data-balance="' + l.balance + '"' +
                 ' data-part-name="' + String(l.partName || '').replace(/"/g, '&quot;') + '"' +
                 ' data-color="' + String(l.color || '').replace(/"/g, '&quot;') + '">' +
-                l.lotNo + ' │ ' + (l.partName || l.carModel) + colorTag +
-                ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA' + stampTags + '</option>';
+                (l.partName || l.carModel) + colorTag + stampTags + '</option>';
         }).join('');
     }
 
@@ -2545,8 +2543,7 @@ const PaintingWorkModule = (function() {
                         ' data-balance="' + l.balance + '"' +
                         ' data-part-name="' + String(l.partName || '').replace(/"/g, '&quot;') + '"' +
                         ' data-color="' + String(l.color || '').replace(/"/g, '&quot;') + '">' +
-                        l.lotNo + ' │ ' + (l.partName || l.carModel) + colorTag +
-                        ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA' + stampTags + '</option>';
+                        (l.partName || l.carModel) + colorTag + stampTags + '</option>';
                 }).join('');
         } else {
             var cm = (document.getElementById('addPwCarModelHidden') || {}).value || '';
@@ -2657,8 +2654,7 @@ const PaintingWorkModule = (function() {
                 ' data-balance="' + l.balance + '"' +
                 ' data-part-name="' + String(l.partName || '').replace(/"/g, '&quot;') + '"' +
                 ' data-color="' + String(l.color || '').replace(/"/g, '&quot;') + '">' +
-                l.lotNo + ' │ ' + (l.partName || l.carModel) + colorTag +
-                ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA' + stampTags + '</option>';
+                (l.partName || l.carModel) + colorTag + stampTags + '</option>';
         }
 
         var html = '<option value="" data-balance="">-- LOT 선택 --</option>';
@@ -4699,10 +4695,29 @@ const PaintingWorkModule = (function() {
         }, 0);
     }
 
+    // 같은 날짜·차종·라인·사출자재로 등록된 작업일지가 여러 건일 수 있다(교대/배치 분리 등).
+    // 이 실적 하나의 투입수량만 실제 입고 총량과 비교하면, 다른 실적이 이미 정상 소진한 몫까지
+    // "이 실적의 실적 오류"로 잘못 잡힌다. 그래서 같은 날 같은 조건의 실적 전체 투입수량 합으로
+    // 비교해야 한다.
+    function _siblingLoggedInputQty(d) {
+        var line = String((d && d.line) || '').replace(/\s/g, '');
+        var carModel = String((d && d.carModel) || '').trim();
+        var day = String((d && d.date) || '').slice(0, 10);
+        if (!line || !carModel || !day) return Number(d && d.inputQty || 0);
+        var injPartName = _resolveInjPartNameForWork(carModel, d && d.partName, d && d.color);
+        return (Storage.getAll(STORE) || []).reduce(function (sum, w) {
+            if (String(w.date || '').slice(0, 10) !== day) return sum;
+            if (String(w.line || '').replace(/\s/g, '') !== line) return sum;
+            if (String(w.carModel || '') !== carModel) return sum;
+            if (injPartName && _resolveInjPartNameForWork(carModel, w.partName, w.color) !== injPartName) return sum;
+            return sum + (Number(w.inputQty) || 0);
+        }, 0);
+    }
+
     function _buildWorkAlerts(d) {
         var alerts = [];
         var actualInput = _actualInputMaterialQty(d);
-        var loggedInput = Number(d.inputQty || 0);
+        var loggedInput = _siblingLoggedInputQty(d);
         var shortfall = actualInput - loggedInput;
         if (actualInput > 0 && shortfall > Math.max(1, actualInput * 0.01)) {
             alerts.push(
@@ -4711,7 +4726,7 @@ const PaintingWorkModule = (function() {
                 '<span class="material-symbols-outlined" style="color:#dc2626;font-size:22px;flex-shrink:0;margin-top:1px;">report_problem</span>' +
                 '<div><div style="font-weight:700;color:#dc2626;margin-bottom:4px;">⚠ 실적 오류 의심 — 실제 입고 자재가 실적보다 많습니다</div>' +
                 '<div style="font-size:0.84rem;">이 작업일(' + (d.date || '-') + ')에 실제 현장 입고된 사출자재 합계 <strong>' + UIUtils.formatNumber(actualInput) + ' EA</strong> · ' +
-                '이 작업일지의 투입수량 <strong>' + UIUtils.formatNumber(loggedInput) + ' EA</strong> · ' +
+                '같은 차종·사출자재 작업일지 투입수량 합계 <strong>' + UIUtils.formatNumber(loggedInput) + ' EA</strong> · ' +
                 '<span style="color:#dc2626;font-weight:700;">차이 ' + UIUtils.formatNumber(shortfall) + ' EA</span></div>' +
                 '<div style="font-size:0.82rem;margin-top:4px;color:var(--text-secondary);">자재는 계획대로 입고됐는데 실적만 적게 등록된 것으로 보입니다(등록 후 추가 입고분을 실적에 반영하지 않은 경우 자주 발생). ' +
                 '실적 등록 오류라면 「수정」으로 투입/완료수량을 실제 입고량에 맞게 바로잡으세요.</div></div></div>'
@@ -5278,16 +5293,27 @@ const PaintingWorkModule = (function() {
         if (!line || !carModel || !day) return [];
         var injPartName = _resolveInjPartNameForWork(carModel, d.partName, d.color);
 
+        // 같은 날짜·차종·라인·사출자재로 등록된 작업일지가 이 실적 하나뿐이라는 보장이 없다
+        // (여러 교대/배치로 나눠 등록되는 경우가 흔하다). 지금 보는 이 실적의 LOT만 보고 "미반영"
+        // 판단하면, 실제로는 "같은 날 다른 실적"이 이미 정상적으로 소진한 LOT까지 "이 실적에
+        // 반영 안 됨"으로 잘못 표시된다. 그래서 같은 날 같은 조건의 작업일지 전체가 이미 사용한
+        // 수량을 합산해서 빼야 진짜 미반영분만 남는다.
         var usedQtyByLot = {};
-        (d.lots || []).forEach(function (l) {
-            if (!l || !l.lotNo) return;
-            var lotNo = String(l.lotNo).trim();
-            usedQtyByLot[lotNo] = (usedQtyByLot[lotNo] || 0) + (Number(l.qty) || 0);
+        (Storage.getAll(STORE) || []).forEach(function (w) {
+            if (String(w.date || '').slice(0, 10) !== day) return;
+            if (String(w.line || '').replace(/\s/g, '') !== line) return;
+            if (String(w.carModel || '') !== carModel) return;
+            if (injPartName && _resolveInjPartNameForWork(carModel, w.partName, w.color) !== injPartName) return;
+            (w.lots || []).forEach(function (l) {
+                if (!l || !l.lotNo) return;
+                var lotNo = String(l.lotNo).trim();
+                usedQtyByLot[lotNo] = (usedQtyByLot[lotNo] || 0) + (Number(l.qty) || 0);
+            });
+            if (w.lotNo && !(w.lots && w.lots.length)) {
+                var soloLot = String(w.lotNo).trim();
+                usedQtyByLot[soloLot] = (usedQtyByLot[soloLot] || 0) + (Number(w.inputQty) || 0);
+            }
         });
-        if (d.lotNo && !(d.lots && d.lots.length)) {
-            var soloLot = String(d.lotNo).trim();
-            usedQtyByLot[soloLot] = (usedQtyByLot[soloLot] || 0) + (Number(d.inputQty) || 0);
-        }
 
         var receivedQtyByLot = {};
         (Storage.getAll(DB.STORES.PAINTING_INPUT_INVENTORY) || []).forEach(function (r) {
@@ -5359,35 +5385,20 @@ const PaintingWorkModule = (function() {
             '<tbody>' + lines + '</tbody></table></div>';
     }
 
-    // 임시 진단용 — 왜 매칭 누락 LOT이 0건으로 나오는지 화면에서 바로 볼 수 있게 값들을 찍는다.
-    // 원인 확인되면 이 함수와 호출부는 제거해도 된다.
-    function _debugUnmatchedInboundInfo(d) {
-        try {
-            var line = String(d.line || '').replace(/\s/g, '');
-            var carModel = String(d.carModel || '').trim();
-            var day = String(d.date || '').slice(0, 10);
-            var injPartName = _resolveInjPartNameForWork(carModel, d.partName, d.color);
-            var all = Storage.getAll(DB.STORES.PAINTING_INPUT_INVENTORY) || [];
-            var sameCarLine = all.filter(function (r) {
-                return String(r.type || '') === '입고' &&
-                    String(r.line || r.paintLine || '').replace(/\s/g, '') === line &&
-                    String(r.carModel || '') === carModel;
-            });
-            var samePart = sameCarLine.filter(function (r) { return !injPartName || String(r.partName || '') === injPartName; });
-            var rowsInfo = samePart.slice(0, 8).map(function (r) {
-                return '[partName=' + (r.partName || '-') + ' rday=' + _resolveInboundStamp(r).slice(0, 10) + ' qty=' + (r.quantity || 0) + ']';
-            }).join(' ');
-            return '<div style="margin-top:6px;padding:6px 8px;background:#fff;border:1px dashed #94a3b8;border-radius:6px;font-size:0.7rem;color:#475569;">' +
-                '진단: line=' + _pwEsc(line) + ' carModel=' + _pwEsc(carModel) + ' day=' + _pwEsc(day) + ' injPartName=' + _pwEsc(injPartName || '(못찾음)') +
-                ' | 라인+차종 일치 입고건=' + sameCarLine.length + ' | 사출명까지 일치=' + samePart.length +
-                (rowsInfo ? '<br>' + _pwEsc(rowsInfo) : '') + '</div>';
-        } catch (e) {
-            return '<div style="margin-top:6px;font-size:0.7rem;color:#dc2626;">진단 오류: ' + _pwEsc(e && e.message) + '</div>';
-        }
-    }
-
     function _buildUnmatchedInboundWarningHtml(d) {
         var unmatched = _findUnmatchedSiteInboundLots(d);
+        var dayInboundListHtml = _buildDayInboundListHtml(d);
+
+        // 문제 없으면(전부 반영됨) 경고를 띄우지 않는다 — 빨간색은 이상 신호로 보이므로,
+        // 정상일 때는 녹색 바탕으로 입고된 사출자재 목록만 보여준다.
+        if (!unmatched.length) {
+            return '<div id="pwUnmatchedInboundWarn" style="margin-bottom:8px;padding:10px 12px;border-radius:8px;border:1px solid rgba(22,163,74,0.35);' +
+                'background:rgba(22,163,74,0.06);font-size:0.82rem;">' +
+                '<div style="font-weight:700;color:#16a34a;margin-bottom:6px;">✓ 이 도장작업일 입고 사출자재가 모두 반영되었습니다.</div>' +
+                dayInboundListHtml +
+                '</div>';
+        }
+
         var totalQty = unmatched.reduce(function (s, u) { return s + u.qty; }, 0);
         var chips = unmatched.map(function (u) {
             return '<button type="button" class="pw-unmatched-lot-chip" data-lot="' + _pwEsc(u.lotNo) + '" data-qty="' + u.qty + '"' +
@@ -5402,8 +5413,8 @@ const PaintingWorkModule = (function() {
             '<div style="font-weight:700;color:#dc2626;margin-bottom:6px;">⚠ 이 도장작업일(' + (d.date || '-') + ')에 입고됐지만 아래 LOT 목록에 반영 안 된 사출 LOT — ' +
             unmatched.length + '건 · ' + UIUtils.formatNumber(totalQty) + ' EA</div>' +
             '<div style="display:flex;flex-wrap:wrap;gap:6px;">' + chips + '</div>' +
-            (unmatched.length ? '<div style="font-size:0.76rem;color:var(--text-secondary);margin-top:6px;">클릭하면 해당 LOT·수량으로 행이 자동 추가됩니다. 추가 후 투입/완료수량도 그만큼 늘려 저장하세요.</div>' : _debugUnmatchedInboundInfo(d)) +
-            _buildDayInboundListHtml(d) +
+            '<div style="font-size:0.76rem;color:var(--text-secondary);margin-top:6px;">클릭하면 해당 LOT·수량으로 행이 자동 추가됩니다. 추가 후 투입/완료수량도 그만큼 늘려 저장하세요.</div>' +
+            dayInboundListHtml +
             '</div>';
     }
 
@@ -5430,7 +5441,7 @@ const PaintingWorkModule = (function() {
         var lotOptRe = new RegExp('value="' + lotNo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"');
         if (!lotOptRe.test(lotsHtml)) {
             var missingOpt = '<option value="' + _pwEsc(lotNo) + '" data-balance="' + qty + '" selected>' +
-                _pwEsc(lotNo) + ' │ 이 도장작업일 미반영분 │ 잔량 ' + UIUtils.formatNumber(qty) + ' EA</option>';
+                '이 도장작업일 미반영분 │ ' + UIUtils.formatNumber(qty) + ' EA</option>';
             lotsHtml = missingOpt + lotsHtml;
         }
         container.insertAdjacentHTML('beforeend', _buildLotRow(lotsHtml, lotNo, qty));
@@ -6717,21 +6728,38 @@ const PaintingInspectionModule = (function() {
         }) || null;
     }
 
-    // 지정된 도장 라인 완료 후 바로 다음 공정이 레이저인지 판단
-    // true  → 다음 공정이 레이저 (레이저 대기품으로 이동)
-    // false → 다음 공정이 레이저가 아님 (도장 검사 → 출하대기로 이동)
+    // 도장 작업 → 레이저 대기 입고 대상인지 판단 (LaserStandbyModule 과 동일 기준)
+    // true  → 레이저 대기품으로 이동 (외관검사 대기 제외)
+    // false → 도장 외관검사 → 출하대기
+    // ※ 예전에는 "바로 다음 공정이 레이저"만 봐서, 마스터가 도장-B→레이저인데
+    //   실적이 도장-A로 등록된 경우 외관검사에만 남고 레이저에도 안 잡히는 공백이 생겼다.
     function _laserAfterPaintLine(product, paintLineName) {
-        if (!product || !paintLineName) return false;
+        if (!product) return false;
+        if (typeof LaserStandbyModule !== 'undefined'
+            && typeof LaserStandbyModule.isPaintingWorkLaserStandbyInbound === 'function') {
+            return !!LaserStandbyModule.isPaintingWorkLaserStandbyInbound(
+                { line: paintLineName || '' },
+                product
+            );
+        }
         const norm = function (v) {
             return String(v || '').trim().replace(/\s+/g, '').replace(/[-_]/g, '');
         };
+        const isLaserName = function (p) {
+            const s = String(p || '');
+            return s.includes('레이저') || s.includes('레이져') || /laser/i.test(s);
+        };
+        const alias = { '도장(A)': '도장-A', '도장(B)': '도장-B' };
+        const paintLine = alias[String(paintLineName || '').trim()] || String(paintLineName || '').trim();
         const procs = [product.process1, product.process2, product.process3, product.process4]
-            .map(p => (p || '').trim()).filter(Boolean);
-        const paintKey = norm(paintLineName);
-        const paintIdx = procs.findIndex(p => norm(p) === paintKey);
-        if (paintIdx < 0 || paintIdx >= procs.length - 1) return false; // 못 찾거나 마지막 공정
-        const nextProc = procs[paintIdx + 1];
-        return nextProc.includes('레이저') || nextProc.includes('레이져') || /laser/i.test(nextProc);
+            .map(function (p) { return (p || '').trim(); }).filter(Boolean);
+        const paintKey = norm(paintLine);
+        const paintIdx = paintKey ? procs.findIndex(function (p) { return norm(p) === paintKey; }) : -1;
+        const laserIdx = procs.findIndex(isLaserName);
+        if (laserIdx < 0) return false;
+        // 라인 미기재·마스터 표기 불일치 → 레이저 대기로 (구데이터 호환)
+        if (!paintLine || paintIdx < 0) return true;
+        return laserIdx > paintIdx;
     }
 
     function _currentUser() {
@@ -7996,7 +8024,7 @@ const PaintingInspectionModule = (function() {
                         <!-- ② 리워크 → 리워크 재공품 입고 -->
                         <div style="display:flex;align-items:flex-end;gap:8px;flex:0 0 auto;flex-wrap:nowrap;" title="불량수 이내에서만 입력. 검사수량·양품수는 변경되지 않습니다.">
                             <span style="font-size:0.78rem;font-weight:700;color:var(--text-primary);white-space:nowrap;display:flex;align-items:center;gap:3px;align-self:center;padding-bottom:6px;">
-                                <span class="material-symbols-outlined" style="font-size:16px;color:#ea580c;">autorenew</span>리워크
+                                <span class="material-symbols-outlined" style="font-size:16px;color:#ea580c;">autorenew</span>리워크로 보내기
                             </span>
                             <div style="display:flex;flex-direction:column;gap:2px;min-width:88px;">
                                 <label class="form-label" style="font-size:0.68rem;margin:0;color:var(--text-muted);">리워크수 (EA)</label>

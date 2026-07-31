@@ -805,7 +805,22 @@ var LaserWorkModule = (function() {
                 : -1;
             const laserIdx = procs.findIndex(p => p.includes('레이저') || p.includes('레이져') || /laser/i.test(p));
             if (laserIdx < 0) return false;
-            if (!paintLine || paintIdx < 0) return true;
+            // LaserStandbyModule._isPaintingWorkLaserStandbyInbound 와 동일:
+            // 라인 불일치여도 마스터에 도장→레이저 흐름이 있으면 대기 입고 대상
+            if (!paintLine || paintIdx < 0) {
+                const seq = procs.map(function (p) {
+                    return String(p || '').trim().replace(/\s+/g, '').replace(/[-_]/g, '');
+                });
+                const idxPaintA = seq.findIndex(function (v) { return v === '도장A'; });
+                const idxPaintB = seq.findIndex(function (v) { return v === '도장B'; });
+                const idxLaser = seq.findIndex(function (v) { return v === '레이저' || v === '레이져'; });
+                if (idxLaser < 0) return false;
+                const idxPaint = Math.min(
+                    idxPaintA >= 0 ? idxPaintA : Infinity,
+                    idxPaintB >= 0 ? idxPaintB : Infinity
+                );
+                return idxPaint < idxLaser;
+            }
             return laserIdx > paintIdx;
         });
 
@@ -5509,8 +5524,10 @@ var LaserStandbyModule = (function() {
             : -1;
         const laserIdx = procs.findIndex(_isLaserProcessName);
         if (laserIdx < 0) return false;
-        // 라인 정보 없거나 마스터 표기와 다르면 안전하게 포함 (구데이터 호환)
-        if (!paintLine || paintIdx < 0) return true;
+        // 라인 정보 없거나 마스터 표기와 다르면:
+        // 마스터에 도장→레이저 흐름만 있으면 포함 (예: 마스터 도장-B→레이저, 실적 도장-A).
+        // 도장 없는 레이저 직행은 사출→레이져 출고 경로에서 별도 처리.
+        if (!paintLine || paintIdx < 0) return _hasLaserAfterPaintFlow(prod);
         return laserIdx > paintIdx;
     }
 
@@ -10193,6 +10210,7 @@ var LaserStandbyModule = (function() {
         ensureManualOverridesLoadedForWork,
         ensureInboundConfirmLoaded: _ensureInboundConfirmLoaded,
         isLaserInboundConfirmed,
+        isPaintingWorkLaserStandbyInbound: _isPaintingWorkLaserStandbyInbound,
         getInboundConfirmRecord,
         getInboundConfirmDiffInfo,
         resolveInboundConfirmDiff,
