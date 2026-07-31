@@ -714,6 +714,25 @@ var PaintingInputModule = (function () {
         }, 0);
     }
 
+    // 계획수량이 "-"로 뜰 때 왜 매칭이 안 됐는지 바로 알 수 있게(마우스 오버) 진단 문구를 만든다.
+    function _debugPlanMatchInfo(record, line, date) {
+        try {
+            const today = String(date || (UIUtils.today ? UIUtils.today() : '')).slice(0, 10);
+            const want = _normLine(line || record.paintLine || record.line);
+            const allTodayPlans = (Storage.getAll(DB.STORES.PRODUCTION_PLANS) || []).filter(function (p) {
+                return p && String(p.date || '').slice(0, 10) === today;
+            });
+            const sameLine = allTodayPlans.filter(function (p) { return _normLine(p.line) === want; });
+            const sameLineCar = sameLine.filter(function (p) { return String(p.carModel || '').trim() === String(record.carModel || '').trim(); });
+            const productNames = _resolveProductNamesFromInjPart(record.carModel, record.partName);
+            const planPartsToday = sameLineCar.map(function (p) { return p.partName || '-'; }).join(', ') || '(없음)';
+            return '오늘(' + today + ')·' + want + ' 계획 ' + allTodayPlans.length + '건 중 같은 라인 ' + sameLine.length + '건, 같은 차종(' + (record.carModel || '-') + ') ' + sameLineCar.length + '건. ' +
+                '그 계획들의 품명: ' + planPartsToday + ' | 이 사출자재(' + (record.partName || '-') + ')로 매칭 시도한 제품명 후보: ' + (Object.keys(productNames).join(', ') || '(없음 — 사출자재 마스터에 매핑 없음)');
+        } catch (e) {
+            return '진단 오류: ' + (e && e.message ? e.message : e);
+        }
+    }
+
     function getPlanEndTimeForShipment(record, line, date) {
         let end = '';
         findPlansForShipment(record, line, date).forEach(function (p) {
@@ -926,7 +945,7 @@ var PaintingInputModule = (function () {
                 <td style="white-space:nowrap;padding:8px 10px;font-family:monospace;font-size:0.8rem;">${_esc(lotNo || '-')}</td>
                 <td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">${_esc(inspDate)}</td>
                 <td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:800;">${_fmt(shipQty)}</td>
-                <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${planQty ? _fmt(planQty) : '<span style="color:var(--text-muted);">—</span>'}</td>
+                <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${planQty ? _fmt(planQty) : '<span style="color:var(--text-muted);cursor:help;border-bottom:1px dotted var(--text-muted);" title="' + _esc(_debugPlanMatchInfo(r, want, today)) + '">—</span>'}</td>
                 <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${_fmtVarianceHtml(shipQty, planQty)}</td>
                 <td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">${_esc(endTime || '—')}</td>
                 <td style="white-space:nowrap;padding:8px 10px;">${statusHtml}</td>
@@ -1103,9 +1122,65 @@ var PaintingInputModule = (function () {
         return renderTodayShipmentTable(line);
     }
 
+    // shipDate가 없는(확인 처리를 늦게 한) 과거 기록은 useDate/date가 실제 입고일이 아니라
+    // 확인 처리한 날짜라 도장일과 매칭이 안 될 수 있다 — refOutId로 원본 출고 기록을 찾아
+    // 실제 일시로 대체한다. openMaterialHistory 등 다른 곳과 같은 방식.
+    function _resolveActualInboundStamp(r) {
+        if (r.shipDate) return String(r.shipDate);
+        const outId = r.refOutId || '';
+        if (outId) {
+            try {
+                const out = Storage.getById(DB.STORES.INJECTION_INVENTORY, outId);
+                if (out && out.date) return String(out.date);
+            } catch (e) { /* 무시 */ }
+        }
+        return String(r.useDate || r.date || '');
+    }
+
     /** 도장일 기준 현장 입고(분출) 수량 — 작업 실적 매칭용
      *  opts: { carModel, partName, color, date, lots[], injPartName }
      */
+    // "사출현장입고수"가 "-"로 뜰 때 왜 매칭이 안 됐는지 화면 툴팁으로 바로 보여주기 위한 진단.
+    // getIssuedQtyForWork와 정확히 같은 매칭 규칙을 그대로 따라가며 이유를 문장으로 남긴다.
+    function _debugIssuedQtyInfo(line, opts) {
+        try {
+            opts = opts || {};
+            const want = _normLine(line);
+            const day = String(opts.date || '').slice(0, 10);
+            if (!day) return '도장작업일이 없어 조회할 수 없습니다.';
+
+            const workLots = [];
+            (opts.lots || []).forEach(function (l) {
+                const n = String((l && l.lotNo) || '').trim();
+                if (n) workLots.push(n);
+            });
+            if (opts.lotNo) workLots.push(String(opts.lotNo).trim());
+            const hasLots = workLots.length > 0;
+
+            const sameDayCarLine = (_recordsForLine(want) || []).filter(function (r) {
+                if (String(r.type || '') !== '입고') return false;
+                if (_resolveActualInboundStamp(r).slice(0, 10) !== day) return false;
+                if (opts.carModel && r.carModel && r.carModel !== opts.carModel) return false;
+                return true;
+            });
+            const availLots = [];
+            sameDayCarLine.forEach(function (r) {
+                const rLots = Array.isArray(r.lots) && r.lots.length ? r.lots : [{ lotNo: r.lotNo, qty: r.quantity }];
+                rLots.forEach(function (l) { if (l && l.lotNo) availLots.push(String(l.lotNo).trim()); });
+            });
+
+            if (hasLots) {
+                return '이 실적의 LOT: ' + (workLots.join(', ') || '(없음)') +
+                    ' | 같은 날짜·차종·라인 입고 LOT: ' + (availLots.length ? availLots.join(', ') : '(없음)') +
+                    ' — LOT번호가 정확히 일치해야 합산됩니다.';
+            }
+            return '이 실적에 LOT이 입력되어 있지 않아 품명(사출명)으로 매칭합니다. ' +
+                '같은 날짜·차종·라인 입고 건: ' + sameDayCarLine.length + '건.';
+        } catch (e) {
+            return '진단 오류: ' + (e && e.message ? e.message : e);
+        }
+    }
+
     function getIssuedQtyForWork(line, opts) {
         opts = opts || {};
         const want = _normLine(line);
@@ -1140,7 +1215,7 @@ var PaintingInputModule = (function () {
         let total = 0;
         (_recordsForLine(want) || []).forEach(function (r) {
             if (String(r.type || '') !== '입고') return;
-            const rDay = String(r.useDate || r.date || '').slice(0, 10);
+            const rDay = _resolveActualInboundStamp(r).slice(0, 10);
             if (rDay !== day) return;
             if (opts.carModel && r.carModel && r.carModel !== opts.carModel) return;
 
@@ -1391,6 +1466,7 @@ var PaintingInputModule = (function () {
         openInboundMatchView: openInboundMatchView,
         refreshInboundMatchPanel: refreshInboundMatchPanel,
         getIssuedQtyForWork: getIssuedQtyForWork,
+        debugIssuedQtyInfo: _debugIssuedQtyInfo,
         canConfirmInbound: _canConfirmInbound,
         groupStock: _groupStock,
         getLotsByInjPart: getLotsByInjPart,

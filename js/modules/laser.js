@@ -5643,6 +5643,12 @@ var LaserStandbyModule = (function() {
         return !!_getInboundConfirm(paintingWorkId);
     }
 
+    // 도장 작업 목록에 "후공정 입고 확인수/오차 수량"을 매 행 표시하기 위한 원본 확인 기록.
+    // getInboundConfirmDiffInfo와 달리 resolved(해결됨) 여부·오차 유무와 무관하게 항상 반환한다.
+    function getInboundConfirmRecord(paintingWorkId) {
+        return _getInboundConfirm(paintingWorkId);
+    }
+
     // 도장 작업 목록(painting.js)에서 "후공정 수량 오류 · 실적 확인 재요청" 배지·상단고정용.
     // 오차가 1% 허용범위를 넘어 아직 해결되지 않은 확인 기록만 반환한다.
     function getInboundConfirmDiffInfo(paintingWorkId) {
@@ -10187,6 +10193,7 @@ var LaserStandbyModule = (function() {
         ensureManualOverridesLoadedForWork,
         ensureInboundConfirmLoaded: _ensureInboundConfirmLoaded,
         isLaserInboundConfirmed,
+        getInboundConfirmRecord,
         getInboundConfirmDiffInfo,
         resolveInboundConfirmDiff,
         getStockSnapshotSync,
