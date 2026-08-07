@@ -1496,6 +1496,41 @@ var LaserWorkModule = (function() {
         renderLotRows();
     }
 
+    /** 이 (도장LOT일자·사출LOT)이 실제로 레이저 대기품 목록(_standbyItems)에 있는지 확인.
+     *  "수기 등록" 칸에 아무 LOT이나 타이핑해도 그대로 저장되던 구멍을 막기 위함 —
+     *  대기품에 없는 LOT로 실적을 등록하면 이후 재고·잔량 계산이 무의미해진다. */
+    function _isStandbyLotVerified(paintDate, lotNo) {
+        const lot = String(lotNo || '').trim();
+        if (!lot) return false;
+        return (_standbyItems || []).some(function (w) {
+            if (paintDate && w.date && String(w.date) !== String(paintDate)) return false;
+            const lots = Array.isArray(w.lots) && w.lots.length ? w.lots : [{ lotNo: w.lotNo || '' }];
+            return lots.some(function (l) { return String((l && l.lotNo) || '').trim() === lot; });
+        });
+    }
+
+    /** 저장 직전 수기 등록 LOT을 검증 — 대기품에 없으면 관리자만 예외적으로 계속할 수 있다. */
+    async function _confirmUnverifiedStandbyLots() {
+        const manualRows = (_selectedLots || []).filter(function (l) { return l && l.manual; });
+        const unverified = manualRows.filter(function (l) { return !_isStandbyLotVerified(l.paintDate, l.lotNo); });
+        if (!unverified.length) return true;
+
+        const isAdmin = typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function' && AuthModule.isAdminUser();
+        const lotList = unverified.map(function (l) { return l.lotNo || '(빈 LOT)'; }).join(', ');
+        if (!isAdmin) {
+            UIUtils.toast('LOT ' + lotList + '은(는) 레이저 대기품에 없는 수기 입력입니다. 실제 대기품에 있는 LOT만 사용할 수 있습니다.', 'error');
+            return false;
+        }
+        return new Promise(function (resolve) {
+            UIUtils.confirm(
+                'LOT ' + lotList + '은(는) 레이저 대기품에 없는 수기 입력입니다.\n' +
+                '관리자 권한으로 예외적으로 계속 저장하시겠습니까?',
+                function () { resolve(true); },
+                function () { resolve(false); }
+            );
+        });
+    }
+
     function removeLotRow(idx) {
         _selectedLots.splice(idx, 1);
         _syncSelectedLotQty();
@@ -2458,6 +2493,7 @@ var LaserWorkModule = (function() {
         const data = collectData();
         if (!validateWorkRequired(data, { strict: false })) return;
         if (!_checkLotQtyMatch(data)) return;
+        if (!(await _confirmUnverifiedStandbyLots())) return;
 
         // 등록은 항상 '작업중' 상태 — 완료 처리는 오직 '작업완료' 버튼으로만 한다.
         // (초품만 필요한 소량 작업도 등록 시점엔 작업중으로 두고, 명시적 완료를 거쳐 이력으로 이동)
@@ -2608,6 +2644,7 @@ var LaserWorkModule = (function() {
         const data = collectData();
         if (!validateWorkRequired(data, { strict: false })) return;
         if (!_checkLotQtyMatch(data)) return;
+        if (!(await _confirmUnverifiedStandbyLots())) return;
         await Storage.update(STORE, id, data);
         UIUtils.closeModal();
         UIUtils.toast('저장되었습니다.', 'success');
@@ -6639,6 +6676,12 @@ var LaserStandbyModule = (function() {
                 || /레이저|레이져/.test(note);
             if (isLaserWork) {
                 return { label: '레이져 생산', color: '#7c3aed', detail: machine || note || '레이져 작업' };
+            }
+            // 수량 보정(재고 실사·오차 정정)으로 수량이 줄어든 경우 — 실제로 뭔가를 내보낸
+            // "출고"가 아니라 재고 숫자 자체를 맞춘 것이므로, 의도적 반출("수동 출고")과
+            // 라벨을 구분한다. manualType==='out'(수기출고)만 진짜 의도적 출고로 본다.
+            if (srcType === 'manual_override' && !/수기출고/.test(note)) {
+                return { label: '수량 보정', color: '#d97706', detail: note || '재고 수량 보정(감소)' };
             }
             return { label: '수동 출고', color: '#dc2626', detail: note || machine || '수기 출고' };
         }
