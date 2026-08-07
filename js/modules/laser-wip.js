@@ -2623,6 +2623,16 @@ var LaserWipModule = (function() {
                     return `<button class="btn btn-sm btn-outline" style="font-size:0.72rem;padding:2px 8px;"
                         onclick="event.stopPropagation();UIUtils.closeModal();setTimeout(function(){LaserWipModule.openEditLaserWorkIdentity('${_jsArg(item.sourceId)}');},80);">수정</button>`;
                 }
+                if (item.editKind === 'wip_unmatched') {
+                    // 미차감 반영/리셋은 만들 때와 같은 권한(관리자)으로만 고치거나 지울 수 있다.
+                    if (!_isAdmin()) return '';
+                    const scope = item.unmatchedScope || 'after';
+                    const editBtn = `<button class="btn btn-sm btn-outline" style="font-size:0.72rem;padding:2px 8px;"
+                        onclick="event.stopPropagation();UIUtils.closeModal();setTimeout(function(){LaserWipModule.openUnmatchedActionEdit('${scope}','${_jsArg(item.sourceId)}');},80);">수정</button>`;
+                    const deleteBtn = `<button class="btn btn-sm btn-danger" style="font-size:0.72rem;padding:2px 8px;margin-left:4px;"
+                        onclick="event.stopPropagation();UIUtils.closeModal();setTimeout(function(){LaserWipModule.deleteUnmatchedAction('${scope}','${_jsArg(item.sourceId)}');},80);">삭제</button>`;
+                    return editBtn + deleteBtn;
+                }
                 return '';
             } : null,
             perLotKey: productLevelQty ? null : function(item) {
@@ -4148,6 +4158,33 @@ var LaserWipModule = (function() {
                 _seq: w.createdAt || w.id || ''
             });
         });
+
+        // 미차감 반영/리셋: 재고 잔량 계산에는 이미 반영되지만(_calcWipLotDetail),
+        // 이력에 안 남으면 "언제 왜 재공이 줄었는지" 추적이 안 된다. qty=0으로 넣어
+        // 델타 재생값이 흐트러지지 않게 하고, "보정" 행으로 별도 표시한다.
+        _unmatchedActionsForProduct(_afterWipUnmatchedActions, carModel, partName, color).forEach(function(act) {
+            const isAbsorb = act.unmatchedAction === 'absorb';
+            const label = isAbsorb ? '미차감 반영' : '미차감 리셋';
+            histItems.push({
+                date: act.date || String(act.createdAt || '').replace('T', ' ').slice(0, 16),
+                isOut: false,
+                qty: 0,
+                routeLabel: label,
+                routeColor: isAbsorb ? '#b45309' : '#0369a1',
+                routeDetail: act.reason ? (label + ': ' + act.reason) : label,
+                lot: '-', paintLot: '-', injLot: '-',
+                note: act.note || (act.reason ? (label + ': ' + act.reason) : label),
+                author: act.author || '-',
+                sourceId: act.id || '',
+                sourceType: isAbsorb ? 'unmatched_absorb' : 'unmatched_clear',
+                editKind: 'wip_unmatched',
+                unmatchedScope: 'after',
+                isAdjustOnly: true,
+                unmatchedHandled: Math.max(0, Number(act.quantity) || 0),
+                createdAt: act.createdAt || '',
+                _seq: act.createdAt || act.date || ''
+            });
+        });
         return histItems;
     }
 
@@ -4544,6 +4581,33 @@ var LaserWipModule = (function() {
                 createdAt: t.createdAt || '',
                 sourceId: t.sourceId || '',
                 editKind: null
+            });
+        });
+
+        // 미차감 반영/리셋: LOT 잔량 계산(_calcResidualLotDetail)에는 이미 반영되지만
+        // 이력에 안 남으면 추적이 안 된다. qty=0 "보정" 행으로 남긴다.
+        _unmatchedActionsForProduct(_residualUnmatchedActions, carModel, partName, color).forEach(function(act) {
+            const isAbsorb = act.unmatchedAction === 'absorb';
+            const label = isAbsorb ? '미차감 반영' : '미차감 리셋';
+            histItems.push({
+                date: act.date || String(act.createdAt || '').replace('T', ' ').slice(0, 16),
+                isOut: false,
+                qty: 0,
+                routeLabel: label,
+                routeColor: isAbsorb ? '#b45309' : '#0369a1',
+                routeDetail: act.reason ? (label + ': ' + act.reason) : label,
+                lot: '-', paintLot: '-', injLot: '-',
+                lotKey: '__UNMATCHED__|' + (act.id || ''),
+                note: act.note || (act.reason ? (label + ': ' + act.reason) : label),
+                author: act.author || '-',
+                sourceId: act.id || '',
+                sourceType: isAbsorb ? 'unmatched_absorb' : 'unmatched_clear',
+                editKind: 'wip_unmatched',
+                unmatchedScope: 'residual',
+                isAdjustOnly: true,
+                unmatchedHandled: Math.max(0, Number(act.quantity) || 0),
+                createdAt: act.createdAt || '',
+                _seq: act.createdAt || act.date || ''
             });
         });
         histItems.sort(function(a, b) { return String(b.date).localeCompare(String(a.date)); });
@@ -6219,7 +6283,12 @@ function _num(value) {
             }
 
             UIUtils.closeModal();
-            UIUtils.toast(`${label} 완료 — 미차감 0 · 재고 ${_fmtWipStockQty(stockBefore)} EA 유지`, 'success');
+            UIUtils.toast(
+                isAbsorb
+                    ? `${label} 완료 — 미차감 0 · 재고 ${_fmtWipStockQty(stockBefore)} → ${_fmtWipStockQty(stockAfterTarget)} EA로 감소`
+                    : `${label} 완료 — 미차감 0 · 재고 ${_fmtWipStockQty(stockBefore)} EA 유지`,
+                'success'
+            );
             refresh();
             setTimeout(function() {
                 if (scope === 'residual') showResidualDetail(_productKey(carModel, partName, color));
@@ -6229,6 +6298,201 @@ function _num(value) {
             console.error(label + ' 실패:', e);
             UIUtils.toast(label + ' 실패: ' + (e && e.message ? e.message : e), 'error');
         }
+    }
+
+    function _unmatchedActionListFor(scope) {
+        return scope === 'residual' ? _residualUnmatchedActions : _afterWipUnmatchedActions;
+    }
+
+    async function _ensureUnmatchedListLoaded(scope, forceReload) {
+        return scope === 'residual'
+            ? _ensureResidualUnmatchedLoaded(forceReload)
+            : _ensureAfterWipUnmatchedLoaded(forceReload);
+    }
+
+    async function _saveUnmatchedList(scope) {
+        return scope === 'residual' ? _saveResidualUnmatched() : _saveAfterWipUnmatched();
+    }
+
+    function _findUnmatchedAction(scope, id) {
+        const target = String(id || '');
+        return (_unmatchedActionListFor(scope) || []).find(function(r) { return r && String(r.id || '') === target; }) || null;
+    }
+
+    function _reopenUnmatchedDetail(scope, carModel, partName, color) {
+        setTimeout(function() {
+            if (scope === 'residual') showResidualDetail(_productKey(carModel, partName, color));
+            else showWipDetail(_productKey(carModel, partName, color));
+        }, 120);
+    }
+
+    /** 미차감 반영/리셋 이력 수정 — 유형·수량·사유만 고친다(처리 시각은 재고 순서를 바꾸므로 고정). */
+    async function openUnmatchedActionEdit(scope, idEnc) {
+        if (!_isAdmin()) {
+            UIUtils.toast('관리자만 미차감 처리 내역을 수정할 수 있습니다.', 'warning');
+            return;
+        }
+        await _ensureUnmatchedListLoaded(scope, true);
+        const id = decodeURIComponent(idEnc || '');
+        const act = _findUnmatchedAction(scope, id);
+        if (!act) {
+            UIUtils.toast('미차감 처리 내역을 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const isAbsorb = act.unmatchedAction === 'absorb';
+        const idJs = encodeURIComponent(id);
+        const scopeLabel = scope === 'residual' ? '레이져 잔량' : '레이져 후 재공';
+
+        UIUtils.showModal('미차감 처리 내역 수정' + ` (${scopeLabel})`, `
+            <div style="margin-bottom:12px;padding:10px 14px;background:var(--bg-secondary);border-radius:8px;font-size:0.84rem;">
+                <strong>${_esc(act.carModel || '')}</strong> · <strong>${_esc(act.partName || '')}</strong>${act.color ? ' · ' + _esc(act.color) : ''}
+                <span style="margin-left:8px;color:var(--text-muted);font-size:0.78rem;">처리 일시 ${_esc(act.date || '')} · ${_esc(act.author || '-')}</span>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">처리 유형</label>
+                    <select class="form-select" id="lwUmEditAction">
+                        <option value="absorb"${isAbsorb ? ' selected' : ''}>반영 — LOT에서 차감 (재고 감소)</option>
+                        <option value="clear"${!isAbsorb ? ' selected' : ''}>리셋 — 미차감만 0 (재고 유지)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">처리 수량 (EA)</label>
+                    <input type="number" class="form-input" id="lwUmEditQty" min="0" step="1" value="${Number(act.quantity) || 0}">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">처리 사유 <span style="color:var(--accent-red)">*</span></label>
+                <textarea class="form-input" id="lwUmEditReason" rows="3">${_esc(act.reason || '')}</textarea>
+            </div>
+            <div style="font-size:0.78rem;color:var(--text-secondary);line-height:1.55;background:rgba(180,83,9,.07);
+                        border:1px solid rgba(180,83,9,.3);border-radius:6px;padding:9px 12px;">
+                저장하면 이 시점 이후의 LOT 잔량·미차감이 다시 계산됩니다.
+                처리 일시는 재고 계산 순서를 바꾸므로 수정할 수 없습니다 — 시각이 잘못됐으면 삭제 후 다시 처리하세요.
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-danger" onclick="LaserWipModule.deleteUnmatchedAction('${scope}','${idJs}')">삭제</button>
+            <button class="btn btn-primary" onclick="LaserWipModule.saveUnmatchedActionEdit('${scope}','${idJs}')">저장</button>
+        `, 'md');
+    }
+
+    async function saveUnmatchedActionEdit(scope, idEnc) {
+        if (!_isAdmin()) {
+            UIUtils.toast('관리자만 미차감 처리 내역을 수정할 수 있습니다.', 'warning');
+            return;
+        }
+        const id = decodeURIComponent(idEnc || '');
+        const actionEl = document.getElementById('lwUmEditAction');
+        const qtyEl = document.getElementById('lwUmEditQty');
+        const reasonEl = document.getElementById('lwUmEditReason');
+        const action = actionEl ? actionEl.value : '';
+        if (action !== 'absorb' && action !== 'clear') {
+            UIUtils.toast('처리 유형을 선택해주세요.', 'warning');
+            return;
+        }
+        const quantity = Math.max(0, Number(qtyEl ? qtyEl.value : 0) || 0);
+        if (!(quantity > 0)) {
+            UIUtils.toast('처리 수량은 0보다 커야 합니다.', 'warning');
+            if (qtyEl) qtyEl.focus();
+            return;
+        }
+        const reason = reasonEl ? reasonEl.value.trim() : '';
+        if (!reason) {
+            UIUtils.toast('처리 사유를 입력해주세요.', 'warning');
+            if (reasonEl) reasonEl.focus();
+            return;
+        }
+
+        await _ensureUnmatchedListLoaded(scope, true);
+        const list = _unmatchedActionListFor(scope);
+        const idx = (list || []).findIndex(function(r) { return r && String(r.id || '') === String(id); });
+        if (idx < 0) {
+            UIUtils.toast('미차감 처리 내역을 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const prev = list[idx];
+        const label = action === 'absorb' ? '미차감 반영' : '미차감 리셋';
+
+        try {
+            list[idx] = Object.assign({}, prev, {
+                unmatchedAction: action,
+                quantity: quantity,
+                reason: reason,
+                note: `[${label}] ${reason} · 미차감 ${UIUtils.formatNumber(quantity)} EA 처리`,
+                updatedAt: new Date().toISOString(),
+                updatedBy: _currentUserName()
+            });
+            await _saveUnmatchedList(scope);
+            UIUtils.closeModal();
+            UIUtils.toast(`${label} 내역을 수정했습니다.`, 'success');
+            refresh();
+            _reopenUnmatchedDetail(scope, prev.carModel, prev.partName, prev.color);
+        } catch (e) {
+            list[idx] = prev;
+            console.error('[LaserWipModule] 미차감 처리 수정 실패:', e);
+            UIUtils.toast('수정 실패: ' + (e && e.message ? e.message : e), 'error');
+        }
+    }
+
+    async function deleteUnmatchedAction(scope, idEnc) {
+        if (!_isAdmin()) {
+            UIUtils.toast('관리자만 미차감 처리 내역을 삭제할 수 있습니다.', 'warning');
+            return;
+        }
+        await _ensureUnmatchedListLoaded(scope, true);
+        const id = decodeURIComponent(idEnc || '');
+        const act = _findUnmatchedAction(scope, id);
+        if (!act) {
+            UIUtils.toast('미차감 처리 내역을 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const isAbsorb = act.unmatchedAction === 'absorb';
+        const label = isAbsorb ? '미차감 반영' : '미차감 리셋';
+        const qty = Number(act.quantity) || 0;
+
+        UIUtils.confirm(
+            `${label} 내역을 삭제하시겠습니까?\n\n` +
+            `처리 수량 ${UIUtils.formatNumber(qty)} EA · ${act.date || ''}\n` +
+            (isAbsorb
+                ? 'LOT에서 차감했던 수량이 되돌아오고, 미차감이 다시 나타납니다.'
+                : '지웠던 미차감이 다시 나타납니다.'),
+            async () => {
+                const list = _unmatchedActionListFor(scope);
+                const backup = (list || []).slice();
+                try {
+                    const filtered = (list || []).filter(function(r) { return !r || String(r.id || '') !== String(id); });
+                    if (scope === 'residual') _residualUnmatchedActions = filtered;
+                    else _afterWipUnmatchedActions = filtered;
+                    await _saveUnmatchedList(scope);
+
+                    if (typeof Storage !== 'undefined' && DB.STORES && DB.STORES.INSPECTION_DELETE_LOGS) {
+                        await Storage.add(DB.STORES.INSPECTION_DELETE_LOGS, {
+                            id: Storage.generateId(),
+                            type: scope === 'after'
+                                ? (isAbsorb ? 'laser_after_wip_unmatched_absorb_delete' : 'laser_after_wip_unmatched_clear_delete')
+                                : (isAbsorb ? 'laser_residual_unmatched_absorb_delete' : 'laser_residual_unmatched_clear_delete'),
+                            typeLabel: (scope === 'after' ? '레이져 후 재공 ' : '레이져 잔량 ') + label + ' 삭제',
+                            deletedAt: new Date().toISOString(),
+                            deletedBy: _currentUserName(),
+                            reason: act.reason || '',
+                            originalData: act,
+                            summary: `${act.carModel || ''} / ${act.partName || ''} ${act.color || ''} / ${label} ${UIUtils.formatNumber(qty)} EA 삭제`
+                        });
+                    }
+
+                    UIUtils.closeModal();
+                    UIUtils.toast(`${label} 내역을 삭제했습니다 — 미차감이 복원됩니다.`, 'success');
+                    refresh();
+                    _reopenUnmatchedDetail(scope, act.carModel, act.partName, act.color);
+                } catch (e) {
+                    if (scope === 'residual') _residualUnmatchedActions = backup;
+                    else _afterWipUnmatchedActions = backup;
+                    console.error('[LaserWipModule] 미차감 처리 삭제 실패:', e);
+                    UIUtils.toast('삭제 실패: ' + (e && e.message ? e.message : e), 'error');
+                }
+            }
+        );
     }
 
     return { init, render, refresh, switchTab, openTab, _activeTabId, isAfterLaserDrainProduct, openManualInput,
@@ -6247,6 +6511,7 @@ function _num(value) {
              applyListFilter, clearListFilter,
              openHistRouteLink,
              openUnmatchedActionModal, confirmUnmatchedAction,
+             openUnmatchedActionEdit, saveUnmatchedActionEdit, deleteUnmatchedAction,
              getResidualQty, getResidualQtyAsync, ensureResidualReady, isResidualHistoryResetsLoaded,
              _calcLaserResidualWip,
              adjustAfterLaserFromPopup, adjustResidualFromPopup,

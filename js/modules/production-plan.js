@@ -3373,9 +3373,16 @@ const ProductionPlanModule = (function() {
                 .some(c => c === _targetColor || c.includes(_targetColor) || _targetColor.includes(c));
         };
 
-        const _matchedMats = injMats.filter(m =>
+        let _matchedMats = injMats.filter(m =>
             (m.injPartName || '').trim() === _injPN &&
             (!carModel || !m.carModel || m.carModel === carModel) && _mc(m.injColor));
+        // 차종까지 엄격히 맞춘 매칭이 하나도 없으면 차종 조건을 풀어 재시도 — 사출자재
+        // 마스터의 carModel 값이 계획과 정확히 안 맞는(오탈자·차종 공유 등) 경우, 이 매칭이
+        // 통째로 비어버려 계획 예약 수량·"—" 표시로 이어지는 사고를 막는다.
+        if (_matchedMats.length === 0 && carModel) {
+            _matchedMats = injMats.filter(m =>
+                (m.injPartName || '').trim() === _injPN && _mc(m.injColor));
+        }
 
         const _allProducts  = Storage.getAll(DB.STORES.PRODUCTS) || [];
         const _productIdSet = new Set();

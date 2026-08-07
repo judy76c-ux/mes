@@ -7327,17 +7327,9 @@ const SettingsModule = (function() {
                 `<option value="${t}" ${cur === t ? 'selected' : ''}>${t}</option>`
             ).join('');
     }
-    function _paintItemTypeInlineSelect(id, selected) {
-        const cur = _normPaintItemType(selected);
-        const escId = String(id || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-        return `<select class="form-select" style="font-size:0.75rem;padding:2px 6px;min-width:88px;${cur ? '' : 'border-color:#fca5a5;color:#dc2626;'}"
-                    onchange="SettingsModule.setPaintItemType('${escId}', this.value)" title="양산 / 개발용 / A/S용">
-                    <option value="" ${!cur ? 'selected' : ''}>미지정</option>
-                    ${PAINT_ITEM_TYPES.map(t =>
-                        `<option value="${t}" ${cur === t ? 'selected' : ''}>${t}</option>`
-                    ).join('')}
-                </select>`;
-    }
+    // 도료 목록(관리/설정)의 구분 열은 "읽기 전용 배지"다. 목록에서 직접 바꾸는 인라인
+    // 드롭다운은 오조작으로 마스터 구분이 바뀌는 사고가 있어 제거했다.
+    // 구분 변경은 반드시 [보기] → [수정] 모달(editPaintItemType)에서만 한다.
     /** 제품 마스터에 연결된 도료 → 제품 구분으로 도료 구분 추론 */
     function _inferPaintItemTypesFromProducts() {
         const paints = Storage.getAll(PAINT_STORE) || [];
@@ -7542,7 +7534,7 @@ const SettingsModule = (function() {
                                         return `
                                         <tr data-supplier="${escA(p.supplier || '')}" data-manufacturer="${escA(p.manufacturer || '')}" data-item-type="${escA(itemType)}">
                                             <td>${i + 1}</td>
-                                            <td style="white-space:nowrap;">${_paintItemTypeInlineSelect(p.id, itemType)}</td>
+                                            <td style="white-space:nowrap;">${paintItemTypeBadge(itemType)}</td>
                                             <td>${p.supplier || '-'}</td>
                                             <td><strong>${p.name || '-'}</strong></td>
                                             <td>${p.feature || '-'}</td>
@@ -8093,29 +8085,6 @@ const SettingsModule = (function() {
             <button class="btn btn-secondary" onclick="${returnToValidation ? 'SettingsModule.openPaintValidationModal()' : 'UIUtils.closeModal()'}">취소</button>
             <button class="btn btn-primary" onclick="SettingsModule.updatePaint('${id}', ${returnToValidation ? 'true' : 'false'})">저장</button>
         `);
-    }
-
-    async function setPaintItemType(id, value) {
-        const p = Storage.getById(PAINT_STORE, id);
-        if (!p) {
-            UIUtils.toast('도료를 찾을 수 없습니다.', 'warning');
-            return;
-        }
-        const itemType = _normPaintItemType(value);
-        try {
-            await Storage.update(PAINT_STORE, id, { ...p, itemType });
-            document.querySelectorAll('#settingsContent .data-table tbody tr').forEach(tr => {
-                const sel = tr.querySelector('select[onchange*="setPaintItemType(\'' + id.replace(/'/g, "\\'") + '\'"]');
-                if (!sel) return;
-                tr.setAttribute('data-item-type', itemType);
-                sel.style.borderColor = itemType ? '' : '#fca5a5';
-                sel.style.color = itemType ? '' : '#dc2626';
-            });
-            UIUtils.toast(itemType ? `구분을 '${itemType}'(으)로 저장했습니다.` : '구분을 미지정으로 저장했습니다.', 'success');
-            filterPaintList();
-        } catch (e) {
-            UIUtils.toast('구분 저장 실패: ' + (e.message || e), 'error');
-        }
     }
 
     async function autoFillPaintItemTypes() {
@@ -13495,7 +13464,6 @@ const SettingsModule = (function() {
         viewPaint,
         editPaint,
         updatePaint,
-        setPaintItemType,
         autoFillPaintItemTypes,
         openPaintValidationModal,
         clearMissingPaintRef,

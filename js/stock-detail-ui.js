@@ -173,6 +173,10 @@ var StockDetailUI = (function() {
             ? opts.routeLinkFn(item, route)
             : null;
         const qty = Number(item.qty) || 0;
+        // 미차감 반영/리셋처럼 입출고 델타가 없는 "보정" 기록은 입고 +0으로 보이면 오해를 사므로
+        // 구분/수량 열을 따로 표시한다(처리한 미차감 수량은 아래 줄에 빨간 글씨로).
+        const adjustOnly = !!item.isAdjustOnly;
+        const unmatchedHandled = Math.max(0, Number(item.unmatchedHandled) || 0);
         const who = _escHtml(item.author || item.who || '-');
         const noteTitle = item.note ? _escAttr(item.note) : '';
         const dateStamp = _escHtml(item.date || '-');
@@ -213,9 +217,12 @@ var StockDetailUI = (function() {
             <tr data-paint-lots="${paintLotData}"${rowStyle || ''}${rowClass}>
                 <td style="white-space:nowrap;font-size:0.8rem;${firstCellExtra}">${dateStamp}</td>
                 <td style="white-space:nowrap;">
-                    <span style="font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:999px;
-                        background:${isOut ? 'rgba(220,38,38,.10)' : 'rgba(22,163,74,.10)'};
-                        color:${isOut ? '#dc2626' : '#16a34a'};">${isOut ? '출고' : '입고'}</span>
+                    ${adjustOnly
+                        ? `<span style="font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:999px;
+                            background:rgba(180,83,9,.10);color:#b45309;">보정</span>`
+                        : `<span style="font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:999px;
+                            background:${isOut ? 'rgba(220,38,38,.10)' : 'rgba(22,163,74,.10)'};
+                            color:${isOut ? '#dc2626' : '#16a34a'};">${isOut ? '출고' : '입고'}</span>`}
                 </td>
                 <td style="white-space:nowrap;">
                     ${_renderRouteBadge(route, routeLink)}
@@ -223,9 +230,14 @@ var StockDetailUI = (function() {
                         white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${detail}">${_escHtml(route.detail || '')}</div>
                 </td>
                 ${lotCell}
-                <td style="text-align:right;font-weight:600;color:${isOut ? 'var(--accent-red)' : 'var(--accent-green)'};white-space:nowrap;">
-                    ${isOut ? '−' : '+'}${_formatStockQty(qty)}
-                </td>
+                ${adjustOnly
+                    ? `<td style="text-align:right;white-space:nowrap;">
+                        <div style="font-weight:600;color:var(--text-muted);">±0</div>
+                        ${unmatchedHandled > 0 ? `<div style="font-size:0.68rem;color:var(--accent-red);font-weight:700;">미차감 −${_formatStockQty(unmatchedHandled)}</div>` : ''}
+                       </td>`
+                    : `<td style="text-align:right;font-weight:600;color:${isOut ? 'var(--accent-red)' : 'var(--accent-green)'};white-space:nowrap;">
+                        ${isOut ? '−' : '+'}${_formatStockQty(qty)}
+                       </td>`}
                 <td style="text-align:right;font-weight:700;color:${beforeColor};white-space:nowrap;">
                     ${archiveOnly ? '—' : _formatStockQty(step.stockBefore)}
                 </td>

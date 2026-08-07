@@ -6480,9 +6480,18 @@ var LaserStandbyModule = (function() {
             ...((item.outRecords || []).map(r => ({ kind: 'out', ...r })))
         ];
 
-        // 미차감 리셋(clear): 이력에 보정 기록만 남기고 재고 수량에는 가산하지 않음
+        // 미차감 처리(리셋 clear / 반영 absorb): 이력에 보정 기록만 남기고 입출고 델타는 0.
+        //  - clear  : 미차감만 0. 표시 재고 그대로.
+        //  - absorb : LOT에서 미차감분을 FIFO 차감(표시 재고 −N) + 미차감 −N.
+        // 어느 쪽도 "입출고 누적(입고−출고)"은 바꾸지 않으므로(원인 출고는 이미 이력에 있음)
+        // qty=0으로 넣어야 재생값과 표시 재고 검증(_computeReplayMismatch)이 그대로 맞는다.
+        // 예전에는 clear만 이력에 남겨서, 반영(absorb)으로 LOT이 줄어도 이력에 아무 흔적이
+        // 없어 "누가 언제 재고를 깎았는지" 추적이 안 되는 문제가 있었다.
         _getUnmatchedActionsForKey(key).forEach(function(act) {
-            if (!act || act.unmatchedAction !== 'clear') return;
+            if (!act) return;
+            const isAbsorb = act.unmatchedAction === 'absorb';
+            if (!isAbsorb && act.unmatchedAction !== 'clear') return;
+            const label = isAbsorb ? '미차감 반영' : '미차감 리셋';
             const stamp = act.createdAt || act.date || '';
             allRows.push({
                 kind: 'adj',
@@ -6490,9 +6499,9 @@ var LaserStandbyModule = (function() {
                 eventStamp: _eventStamp(stamp),
                 qty: 0,
                 unmatchedHandled: Math.max(0, Number(act.quantity) || 0),
-                sourceType: 'unmatched_clear',
+                sourceType: isAbsorb ? 'unmatched_absorb' : 'unmatched_clear',
                 sourceId: act.id || '',
-                note: act.reason ? ('미차감 리셋: ' + act.reason) : '미차감 리셋',
+                note: act.reason ? (label + ': ' + act.reason) : label,
                 author: act.author || '',
                 operator: act.author || '',
                 lotNo: '',
@@ -6617,6 +6626,9 @@ var LaserStandbyModule = (function() {
         if (srcType === 'unmatched_clear') {
             return { label: '미차감 리셋', color: '#0369a1', detail: note || '미차감 채무 소멸' };
         }
+        if (srcType === 'unmatched_absorb') {
+            return { label: '미차감 반영', color: '#b45309', detail: note || 'LOT에서 미차감분 차감' };
+        }
 
         if (r && r.kind === 'out') {
             // 레이져 작업일지로 대기품을 소진한 경우 → 수동 출고가 아니라 레이져 생산
@@ -6677,11 +6689,14 @@ var LaserStandbyModule = (function() {
             const isReset = r.sourceType === 'history_reset_baseline' || !!r.isHistoryReset;
             const srcType = String(r.sourceType || '').trim();
             const srcId = String(r.sourceId || '').trim();
+            // 미차감 반영/리셋은 입출고가 아니라 "보정" 기록 — 수량 열을 ±0으로 표시한다.
+            const isAdjustOnly = srcType === 'unmatched_clear' || srcType === 'unmatched_absorb';
             let editKind = '';
             if (!isReset && srcId) {
                 if (srcType === 'manual_override') editKind = 'standby_override';
                 else if (srcType === DB.STORES.PAINTING_WORK || srcType === 'painting_work') editKind = 'standby_paint';
                 else if (srcType === DB.STORES.LASER_WORK_LOG || srcType === 'laser_work_log') editKind = 'standby_laser';
+                else if (isAdjustOnly) editKind = 'standby_unmatched';
             }
             return {
                 date: r.date,
@@ -6696,6 +6711,8 @@ var LaserStandbyModule = (function() {
                 // 단일 장부: 절대값 덮어쓰기는 이력 리셋 기준선만. 수기보정 absoluteAfter는 무시.
                 absoluteAfter: isReset ? (Number(r.qty) || 0) : null,
                 isHistoryReset: isReset,
+                isAdjustOnly: isAdjustOnly,
+                unmatchedHandled: Math.max(0, Number(r.unmatchedHandled) || 0),
                 beforeReset: !!r.beforeReset,
                 author: _standbyWho(r),
                 note: r.note || '',
@@ -9135,6 +9152,8 @@ var LaserStandbyModule = (function() {
             actionHtmlFn: canEdit ? function(item) {
                 // 이력 리셋 스냅샷만 제외. 리셋 이전 기록도 입력 실수 교정 가능
                 if (!item || !item.editKind || !item.sourceId || item.isHistoryReset || item.routeLabel === '이력 리셋') return '';
+                // 미차감 반영/리셋은 만들 때와 같은 권한(관리자)으로만 고치거나 지울 수 있다.
+                if (item.editKind === 'standby_unmatched' && !_isAdminUser()) return '';
                 const st = encodeURIComponent(item.sourceType || '');
                 const sid = encodeURIComponent(item.sourceId || '');
                 const editBtn = `<button class="btn btn-sm btn-outline" style="font-size:0.72rem;padding:2px 8px;"
@@ -9198,8 +9217,11 @@ var LaserStandbyModule = (function() {
                                 <strong>이력을 확인</strong>한 뒤 <strong>반영</strong>할지 <strong>리셋</strong>할지 선택하세요.
                             </div>
                             <ul style="margin:8px 0 0;padding-left:18px;color:var(--text-secondary);">
-                                <li><strong>반영</strong> — LOT에서 미차감분(${_fmtStockQty(unmatchedQty)} EA)을 FIFO 차감 → 표시 재고 <strong>${_fmtStockQty(stock)}</strong> 유지, LOT 합계도 맞춤</li>
-                                <li><strong>리셋</strong> — 미차감만 0 · 표시 재고 <strong>${_fmtStockQty(stock)}</strong> 유지 (현재 재고를 맞춘 뒤)</li>
+                                <li><strong>반영</strong> — 보유 LOT에서 미차감분(${_fmtStockQty(unmatchedQty)} EA)을 FIFO 차감
+                                    → 표시 재고 <strong>${_fmtStockQty(stock)}</strong> → <strong style="color:var(--accent-red);">${_fmtStockQty(Math.max(0, stock - unmatchedQty))}</strong> 로 <u>줄어듭니다</u>.
+                                    실제로 그만큼 더 나간 게 맞을 때만 선택하세요.</li>
+                                <li><strong>리셋</strong> — 미차감만 0 · 표시 재고 <strong>${_fmtStockQty(stock)}</strong> <u>그대로 유지</u>.
+                                    지난 LOT에서 생긴 오차라 지금 재고와 무관할 때 선택하세요.</li>
                                 <li><strong>이력 확인</strong> — 처리하지 않고 입출고 이력에서 원인 출고를 먼저 확인</li>
                             </ul>
                             <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;">
@@ -9723,6 +9745,12 @@ var LaserStandbyModule = (function() {
             return;
         }
 
+        // 미차감 반영/리셋은 스토어 레코드가 아니라 CONFIG에 쌓인 처리 이력이므로 전용 경로로 보낸다.
+        if (sourceType === 'unmatched_absorb' || sourceType === 'unmatched_clear') {
+            await deleteUnmatchedAction(encodeURIComponent(sourceId));
+            return;
+        }
+
         const label = kind === 'in' ? '입고' : '출고';
         UIUtils.confirm(`${label} 내역을 삭제하시겠습니까?`, async () => {
             try {
@@ -9847,6 +9875,10 @@ var LaserStandbyModule = (function() {
         }
         const sourceType = decodeURIComponent(sourceTypeEnc || '');
         const sourceId = decodeURIComponent(sourceIdEnc || '');
+        if (editKind === 'standby_unmatched') {
+            await openUnmatchedActionEdit(encodeURIComponent(sourceId));
+            return;
+        }
         if (editKind === 'standby_override') {
             await _ensureManualOverridesLoaded(true);
             const ov = (_manualOverrides || []).find(function(r) { return String(r.id || '') === String(sourceId); });
@@ -10015,15 +10047,17 @@ var LaserStandbyModule = (function() {
         }
         const title = isAbsorb ? '미차감 반영' : '미차감 리셋';
         const accent = isAbsorb ? '#b45309' : '#0369a1';
-        const resultStock = stock;
+        // 표시 재고 = 실물 LOT 합계이므로, 반영(LOT FIFO 차감)은 재고를 그만큼 "떨어뜨린다".
+        // (예전 문구는 재고를 단순누적으로 잡던 시절 기준이라 '재고 유지'라고 잘못 안내했다)
+        const resultStock = isAbsorb ? Math.max(0, stock - unmatched) : stock;
         const explain = isAbsorb
             ? `보유 LOT에서 미차감 ${UIUtils.formatNumber(unmatched)} EA를 FIFO로 차감합니다.<br>
-               · 표시 재고: <strong>${UIUtils.formatNumber(stock)}</strong> EA 유지<br>
-               · LOT 잔량 합계: ${UIUtils.formatNumber(lotSum)} → <strong>${UIUtils.formatNumber(stock)}</strong> EA<br>
-               · 실물보다 시스템이 높게 잡고 있을 때(과다 출고가 맞을 때) 선택하세요.`
+               · 표시 재고: ${UIUtils.formatNumber(stock)} → <strong style="color:var(--accent-red);">${UIUtils.formatNumber(resultStock)}</strong> EA (감소)<br>
+               · LOT 잔량 합계: ${UIUtils.formatNumber(lotSum)} → <strong>${UIUtils.formatNumber(resultStock)}</strong> EA<br>
+               · 실물이 시스템보다 적을 때(그만큼 실제로 더 나간 게 맞을 때) 선택하세요.`
             : `미차감 ${UIUtils.formatNumber(unmatched)} EA만 <strong>0</strong>으로 만듭니다.<br>
-               · 표시 재고: <strong>${UIUtils.formatNumber(stock)}</strong> EA 유지<br>
-               · 현재 재고를 맞춘 뒤 미차감 표시만 지울 때 사용합니다.`;
+               · 표시 재고: <strong>${UIUtils.formatNumber(stock)}</strong> EA 그대로 유지 (LOT 잔량 ${UIUtils.formatNumber(lotSum)} 손대지 않음)<br>
+               · 지난 LOT에서 생긴 오차라 지금 보유 LOT과 무관할 때 선택하세요.`;
 
         UIUtils.showModal(title, `
             <div style="background:${accent}12;border:1px solid ${accent}44;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:0.86rem;line-height:1.65;">
@@ -10154,13 +10188,193 @@ var LaserStandbyModule = (function() {
             }
 
             UIUtils.closeModal();
-            UIUtils.toast(`${label} 완료 — 미차감 0 · 재고 ${_fmtStockQty(stockBefore)} EA 유지`, 'success');
+            UIUtils.toast(
+                isAbsorb
+                    ? `${label} 완료 — 미차감 0 · 재고 ${_fmtStockQty(stockBefore)} → ${_fmtStockQty(stockAfterTarget)} EA로 감소`
+                    : `${label} 완료 — 미차감 0 · 재고 ${_fmtStockQty(stockBefore)} EA 유지`,
+                'success'
+            );
             renderAll();
             _showItemDetail(encodeURIComponent(key));
         } catch (e) {
             console.error(label + ' 실패:', e);
             UIUtils.toast(label + ' 실패: ' + (e && e.message ? e.message : e), 'error');
         }
+    }
+
+    function _findUnmatchedAction(id) {
+        const target = String(id || '');
+        return (_unmatchedActions || []).find(function(r) { return r && String(r.id || '') === target; }) || null;
+    }
+
+    function _unmatchedActionKey(act) {
+        if (!act) return '';
+        return act.key || _itemKey(act.carModel, act.partName, act.color || '');
+    }
+
+    /** 미차감 반영/리셋 이력 수정 — 유형·수량·사유만 고친다(처리 시각은 재고 순서를 바꾸므로 고정). */
+    async function openUnmatchedActionEdit(idEnc) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 미차감 처리 내역을 수정할 수 있습니다.', 'warning');
+            return;
+        }
+        await _ensureUnmatchedActionsLoaded(true);
+        const id = decodeURIComponent(idEnc || '');
+        const act = _findUnmatchedAction(id);
+        if (!act) {
+            UIUtils.toast('미차감 처리 내역을 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const isAbsorb = act.unmatchedAction === 'absorb';
+        const idJs = encodeURIComponent(id);
+
+        UIUtils.showModal('미차감 처리 내역 수정', `
+            <div style="margin-bottom:12px;padding:10px 14px;background:var(--bg-secondary);border-radius:8px;font-size:0.84rem;">
+                <strong>${_escapeAttr(act.carModel || '')}</strong> · <strong>${_escapeAttr(act.partName || '')}</strong>${act.color ? ' · ' + _escapeAttr(act.color) : ''}
+                <span style="margin-left:8px;color:var(--text-muted);font-size:0.78rem;">처리 일시 ${_escapeAttr(act.date || '')} · ${_escapeAttr(act.author || '-')}</span>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">처리 유형</label>
+                    <select class="form-select" id="lsbUmEditAction">
+                        <option value="absorb"${isAbsorb ? ' selected' : ''}>반영 — LOT에서 차감 (재고 감소)</option>
+                        <option value="clear"${!isAbsorb ? ' selected' : ''}>리셋 — 미차감만 0 (재고 유지)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">처리 수량 (EA)</label>
+                    <input type="number" class="form-input" id="lsbUmEditQty" min="0" step="1" value="${Number(act.quantity) || 0}">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">처리 사유 <span style="color:var(--accent-red)">*</span></label>
+                <textarea class="form-input" id="lsbUmEditReason" rows="3">${_escapeAttr(act.reason || '')}</textarea>
+            </div>
+            <div style="font-size:0.78rem;color:var(--text-secondary);line-height:1.55;background:rgba(180,83,9,.07);
+                        border:1px solid rgba(180,83,9,.3);border-radius:6px;padding:9px 12px;">
+                저장하면 이 시점 이후의 LOT 잔량·미차감이 다시 계산됩니다.
+                처리 일시는 재고 계산 순서를 바꾸므로 수정할 수 없습니다 — 시각이 잘못됐으면 삭제 후 다시 처리하세요.
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-danger" onclick="LaserStandbyModule.deleteUnmatchedAction('${idJs}')">삭제</button>
+            <button class="btn btn-primary" onclick="LaserStandbyModule.saveUnmatchedActionEdit('${idJs}')">저장</button>
+        `, 'md');
+    }
+
+    async function saveUnmatchedActionEdit(idEnc) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 미차감 처리 내역을 수정할 수 있습니다.', 'warning');
+            return;
+        }
+        const id = decodeURIComponent(idEnc || '');
+        const actionEl = document.getElementById('lsbUmEditAction');
+        const qtyEl = document.getElementById('lsbUmEditQty');
+        const reasonEl = document.getElementById('lsbUmEditReason');
+        const action = actionEl ? actionEl.value : '';
+        if (action !== 'absorb' && action !== 'clear') {
+            UIUtils.toast('처리 유형을 선택해주세요.', 'warning');
+            return;
+        }
+        const quantity = _normalizeQty(qtyEl ? qtyEl.value : 0);
+        if (!(quantity > 0)) {
+            UIUtils.toast('처리 수량은 0보다 커야 합니다.', 'warning');
+            if (qtyEl) qtyEl.focus();
+            return;
+        }
+        const reason = reasonEl ? reasonEl.value.trim() : '';
+        if (!reason) {
+            UIUtils.toast('처리 사유를 입력해주세요.', 'warning');
+            if (reasonEl) reasonEl.focus();
+            return;
+        }
+
+        await _ensureUnmatchedActionsLoaded(true);
+        const idx = (_unmatchedActions || []).findIndex(function(r) { return r && String(r.id || '') === String(id); });
+        if (idx < 0) {
+            UIUtils.toast('미차감 처리 내역을 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const prev = _unmatchedActions[idx];
+        const label = action === 'absorb' ? '미차감 반영' : '미차감 리셋';
+
+        try {
+            _unmatchedActions[idx] = Object.assign({}, prev, {
+                unmatchedAction: action,
+                quantity: quantity,
+                reason: reason,
+                note: `[${label}] ${reason} · 미차감 ${UIUtils.formatNumber(quantity)} EA 처리`,
+                updatedAt: new Date().toISOString(),
+                updatedBy: _currentAuthorName()
+            });
+            await _saveUnmatchedActions();
+            UIUtils.closeModal();
+            UIUtils.toast(`${label} 내역을 수정했습니다.`, 'success');
+            renderAll();
+            const key = _unmatchedActionKey(prev);
+            if (key) _showItemDetail(encodeURIComponent(key));
+        } catch (e) {
+            _unmatchedActions[idx] = prev;
+            console.error('[LaserStandbyModule] 미차감 처리 수정 실패:', e);
+            UIUtils.toast('수정 실패: ' + (e && e.message ? e.message : e), 'error');
+        }
+    }
+
+    async function deleteUnmatchedAction(idEnc) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 미차감 처리 내역을 삭제할 수 있습니다.', 'warning');
+            return;
+        }
+        await _ensureUnmatchedActionsLoaded(true);
+        const id = decodeURIComponent(idEnc || '');
+        const act = _findUnmatchedAction(id);
+        if (!act) {
+            UIUtils.toast('미차감 처리 내역을 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const isAbsorb = act.unmatchedAction === 'absorb';
+        const label = isAbsorb ? '미차감 반영' : '미차감 리셋';
+        const qty = Number(act.quantity) || 0;
+        const key = _unmatchedActionKey(act);
+
+        UIUtils.confirm(
+            `${label} 내역을 삭제하시겠습니까?\n\n` +
+            `처리 수량 ${UIUtils.formatNumber(qty)} EA · ${act.date || ''}\n` +
+            (isAbsorb
+                ? 'LOT에서 차감했던 수량이 되돌아오고, 미차감이 다시 나타납니다.'
+                : '지웠던 미차감이 다시 나타납니다.'),
+            async () => {
+                const backup = (_unmatchedActions || []).slice();
+                try {
+                    _unmatchedActions = (_unmatchedActions || []).filter(function(r) {
+                        return !r || String(r.id || '') !== String(id);
+                    });
+                    await _saveUnmatchedActions();
+
+                    if (typeof Storage !== 'undefined' && DB.STORES && DB.STORES.INSPECTION_DELETE_LOGS) {
+                        await Storage.add(DB.STORES.INSPECTION_DELETE_LOGS, {
+                            id: Storage.generateId(),
+                            type: isAbsorb ? 'laser_standby_unmatched_absorb_delete' : 'laser_standby_unmatched_clear_delete',
+                            typeLabel: '레이져 대기품 ' + label + ' 삭제',
+                            deletedAt: new Date().toISOString(),
+                            deletedBy: _currentAuthorName(),
+                            reason: act.reason || '',
+                            originalData: act,
+                            summary: `${act.carModel || ''} / ${act.partName || ''} ${act.color || ''} / ${label} ${UIUtils.formatNumber(qty)} EA 삭제`
+                        });
+                    }
+
+                    UIUtils.closeModal();
+                    UIUtils.toast(`${label} 내역을 삭제했습니다 — 미차감이 복원됩니다.`, 'success');
+                    renderAll();
+                    if (key) _showItemDetail(encodeURIComponent(key));
+                } catch (e) {
+                    _unmatchedActions = backup;
+                    console.error('[LaserStandbyModule] 미차감 처리 삭제 실패:', e);
+                    UIUtils.toast('삭제 실패: ' + (e && e.message ? e.message : e), 'error');
+                }
+            }
+        );
     }
 
     return {
@@ -10199,6 +10413,9 @@ var LaserStandbyModule = (function() {
         saveEditHistoryRecord,
         openUnmatchedActionModal,
         confirmUnmatchedAction,
+        openUnmatchedActionEdit,
+        saveUnmatchedActionEdit,
+        deleteUnmatchedAction,
         _validateLotFormat,
         _checkLotFormat,
         _openStandbyInForPart,

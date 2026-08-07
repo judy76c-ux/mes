@@ -1444,6 +1444,36 @@ var InjectionWarehouseModule = (function() {
                         </div>
                         <div class="card-body" id="injOutListupBody" style="padding:0;"></div>
                     </div>
+                    <div class="card" id="injSiteReturnCard" style="margin-bottom:20px; border-left:3px solid #7c2d12; display:none;">
+                        <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                            <h4 style="display:flex;align-items:center;gap:8px;margin:0;">
+                                <span class="material-symbols-outlined" style="color:#7c2d12;">undo</span>
+                                도장현장 반납 입고 확인 대기
+                                <span id="injSiteReturnBadge" style="font-size:0.78rem;background:#7c2d12;color:#fff;padding:2px 8px;border-radius:12px;font-weight:600;"></span>
+                            </h4>
+                            <span style="font-size:0.75rem;color:var(--text-muted);">도장현장에서 계획 미달 등으로 반납한 사출 소재입니다. 실물을 확인한 뒤 입고 처리하세요.</span>
+                        </div>
+                        <div class="card-body" style="padding:0;">
+                            <div class="data-table-wrapper" style="overflow-x:auto;">
+                                <table class="data-table compact" style="width:100%;">
+                                    <thead>
+                                        <tr>
+                                            <th style="white-space:nowrap;">반납일시</th>
+                                            <th style="white-space:nowrap;">차종</th>
+                                            <th style="white-space:nowrap;">사출명</th>
+                                            <th style="white-space:nowrap;">컬러</th>
+                                            <th style="white-space:nowrap;">LOT(수량)</th>
+                                            <th style="text-align:right;white-space:nowrap;">합계수량</th>
+                                            <th style="white-space:nowrap;">반납 사유</th>
+                                            <th style="white-space:nowrap;">반납자</th>
+                                            <th style="white-space:nowrap;">작업</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="injSiteReturnBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
                     <div class="card" id="injSiteInboundShortageCard" style="margin-bottom:20px; border-left:3px solid #ea580c; display:none;">
                         <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
                             <h4 style="display:flex;align-items:center;gap:8px;margin:0;">
@@ -1630,6 +1660,7 @@ var InjectionWarehouseModule = (function() {
 
         renderInspStandby();
         renderOutgoingListup();
+        renderSiteReturns();
     }
 
     // 차종 카드 HTML 생성
@@ -2069,7 +2100,9 @@ var InjectionWarehouseModule = (function() {
                 ? `<button class="btn btn-sm btn-outline" onclick="InjectionWarehouseModule.openIncomingTxView('${d.id}')">
                         <span class="material-symbols-outlined" style="font-size:0.9rem;">visibility</span> 보기
                    </button>`
-                : `<button class="btn btn-sm btn-outline" onclick="InjectionWarehouseModule.openEditModal('${d.id}')">수정</button>
+                : `<button class="btn btn-sm btn-outline" onclick="InjectionWarehouseModule.openOutgoingTxView('${d.id}')">
+                        <span class="material-symbols-outlined" style="font-size:0.9rem;">visibility</span> 보기
+                   </button>
                         ${_isAdminUser() ? `
                         <button class="btn btn-sm btn-outline" style="color:#dc2626;border-color:#fca5a5;margin-left:4px;"
                                 title="이 입출고 기록을 삭제합니다. 재고 오류(마이너스 재고) 수정 시 사용하세요."
@@ -2122,7 +2155,7 @@ var InjectionWarehouseModule = (function() {
                 return {
                     label: '미차감 반영',
                     color: '#b45309',
-                    detail: reason || '보유 LOT에서 미차감분 FIFO 차감 · 표시 재고 유지'
+                    detail: reason || '보유 LOT에서 미차감분 FIFO 차감 · 표시 재고 감소'
                 };
             }
             return {
@@ -2302,6 +2335,24 @@ var InjectionWarehouseModule = (function() {
         return { label: '직접 입고', color: route.color, detail: route.detail };
     }
 
+    /** LOT별 수량 표시 — d.lotNo만 보면 lots[]가 여러 건이어도 항상 첫 LOT 하나만 보인다
+     *  (d.lotNo는 대표값으로 항상 채워져 있어 "d.lotNo || lots 목록" 같은 폴백이 절대 lots로
+     *  안 넘어감). lots[]가 있으면 그걸 우선해서 LOT마다 수량을 같이 보여준다. */
+    function _lotBreakdownHtml(d) {
+        if (Array.isArray(d.lots) && d.lots.length) {
+            if (d.lots.length === 1) {
+                return _escapeHtml(d.lots[0].lotNo || d.lotNo || '-');
+            }
+            return d.lots.map(function (l) {
+                return '<span style="display:inline-flex;align-items:center;gap:4px;margin:2px 6px 2px 0;' +
+                    'padding:1px 8px;border-radius:999px;background:var(--bg-secondary);border:1px solid var(--border-color);' +
+                    'font-family:monospace;font-size:0.82rem;">' +
+                    _escapeHtml(l.lotNo || '-') + '<strong>(' + UIUtils.formatNumber(l.qty) + ')</strong></span>';
+            }).join('');
+        }
+        return _escapeHtml(d.lotNo || '-');
+    }
+
     function openIncomingTxView(id) {
         const d = Storage.getById(STORE, id);
         if (!d) { UIUtils.toast('기록을 찾을 수 없습니다.', 'error'); return; }
@@ -2354,7 +2405,7 @@ var InjectionWarehouseModule = (function() {
                 ${row('품명', '<strong>' + _escapeHtml(d.partName || '-') + '</strong>')}
                 ${row('컬러', _escapeHtml(d.color || '-'))}
                 ${row('사출처', _escapeHtml(d.supplier || '-'))}
-                ${row('LOT번호', _escapeHtml(d.lotNo || (d.lots ? d.lots.map(l => l.lotNo).join(', ') : '-')))}
+                ${row('LOT번호', _lotBreakdownHtml(d))}
                 ${isReset ? '' : row('수량', UIUtils.formatNumber(d.quantity || 0) + ' EA')}
                 ${isReset ? '' : row('금액', UIUtils.formatNumber(value) + '원')}
                 ${row('입고자', _escapeHtml(who || '미등록'))}
@@ -3739,6 +3790,113 @@ var InjectionWarehouseModule = (function() {
         const endEl = document.getElementById('injTxEndOut');
         if (endEl && todayStr && (!endEl.value || endEl.value < todayStr)) endEl.value = todayStr;
         _switchTab('outgoing');
+    }
+
+    // ── 도장현장 반납 입고 확인 대기 ──────────────────────────────────
+    // 도장 작업 실적에서 계획 미달로 남은 사출 소재를 도장현장이 "반납 처리"하면
+    // PAINTING_INPUT_INVENTORY에 반납 대기(pending) 기록이 생긴다. 여기서는 그 기록을 눈으로
+    // 확인하고, 물류담당자가 실물을 확인한 뒤 「입고 처리」를 눌러야 비로소 이 창고 재고로
+    // 정식 편입된다 — 도장현장 처리만으로 자동 재입고되지 않는다("반납"과 "재입고"의 구분).
+    function renderSiteReturns() {
+        const card = document.getElementById('injSiteReturnCard');
+        const body = document.getElementById('injSiteReturnBody');
+        const badge = document.getElementById('injSiteReturnBadge');
+        if (!card || !body) return;
+        if (typeof PaintingInputModule === 'undefined' || !PaintingInputModule.listPendingReturns) {
+            card.style.display = 'none';
+            return;
+        }
+        const list = PaintingInputModule.listPendingReturns();
+        if (!list.length) {
+            card.style.display = 'none';
+            body.innerHTML = '';
+            return;
+        }
+        card.style.display = '';
+        if (badge) badge.textContent = list.length + '건';
+        body.innerHTML = list.map(function (r) {
+            const lotsTxt = (Array.isArray(r.lots) && r.lots.length)
+                ? r.lots.map(function (l) { return (l.lotNo || '-') + '(' + UIUtils.formatNumber(l.qty) + ')'; }).join(', ')
+                : (r.lotNo || '-');
+            return `<tr>
+                <td style="white-space:nowrap;font-size:0.82rem;">${_escapeHtml(String(r.date || '-').slice(0, 16))}</td>
+                <td style="white-space:nowrap;"><strong>${_escapeHtml(r.carModel || '-')}</strong></td>
+                <td style="white-space:nowrap;">${_escapeHtml(r.partName || '-')}</td>
+                <td style="white-space:nowrap;">${_escapeHtml(r.color || '-')}</td>
+                <td>${_escapeHtml(lotsTxt)}</td>
+                <td style="text-align:right;font-weight:800;white-space:nowrap;">${UIUtils.formatNumber(r.quantity)}</td>
+                <td style="font-size:0.8rem;color:var(--text-secondary);max-width:220px;">${_escapeHtml(r.returnReason || '-')}</td>
+                <td style="white-space:nowrap;font-size:0.82rem;">${_escapeHtml(r.returnedBy || '-')}</td>
+                <td style="white-space:nowrap;">
+                    <button type="button" class="btn btn-sm btn-primary" style="padding:4px 10px;font-size:0.78rem;"
+                        onclick="InjectionWarehouseModule.openConfirmSiteReturnModal('${r.id}')">
+                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">move_to_inbox</span> 입고 처리
+                    </button>
+                </td>
+            </tr>`;
+        }).join('');
+    }
+
+    function openConfirmSiteReturnModal(id) {
+        if (typeof PaintingInputModule === 'undefined') return;
+        const list = PaintingInputModule.listPendingReturns();
+        const r = list.find(function (x) { return String(x.id) === String(id); });
+        if (!r) { UIUtils.toast('반납 기록을 찾을 수 없습니다.', 'warning'); return; }
+        const lotsTxt = (Array.isArray(r.lots) && r.lots.length)
+            ? r.lots.map(function (l) { return (l.lotNo || '-') + ' (' + UIUtils.formatNumber(l.qty) + ' EA)'; }).join(', ')
+            : (r.lotNo || '-');
+
+        UIUtils.showModal('도장현장 반납 입고 처리', `
+            <div style="padding:10px 12px;background:var(--bg-secondary);border-radius:8px;font-size:0.85rem;margin-bottom:14px;line-height:1.6;">
+                <div><strong>${_escapeHtml(r.carModel || '-')}</strong> / <strong>${_escapeHtml(r.partName || '-')}</strong>${r.color ? ' / ' + _escapeHtml(r.color) : ''}</div>
+                <div>반납 LOT: ${_escapeHtml(lotsTxt)}</div>
+                <div>합계 수량: <strong>${UIUtils.formatNumber(r.quantity)} EA</strong></div>
+                <div>반납 사유: ${_escapeHtml(r.returnReason || '-')}</div>
+                <div>반납자: ${_escapeHtml(r.returnedBy || '-')} · ${_escapeHtml(String(r.date || '-').slice(0, 16))}</div>
+            </div>
+            <div style="font-size:0.82rem;color:var(--text-secondary);background:rgba(124,45,18,.07);border:1px solid rgba(124,45,18,.25);border-radius:6px;padding:9px 12px;">
+                실물을 확인한 뒤 입고 처리하세요. 처리 즉시 이 사출 소재가 창고 재고(입고)로 반영됩니다.
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="InjectionWarehouseModule.confirmSiteReturn('${id}')">
+                <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">move_to_inbox</span> 입고 처리
+            </button>
+        `);
+    }
+
+    async function confirmSiteReturn(id) {
+        if (typeof PaintingInputModule === 'undefined') return;
+        const list = PaintingInputModule.listPendingReturns();
+        const r = list.find(function (x) { return String(x.id) === String(id); });
+        if (!r) { UIUtils.toast('반납 기록을 찾을 수 없습니다.', 'warning'); return; }
+        const actor = _getResetActorFields();
+
+        try {
+            await _addInventoryRecord({
+                date: InvCalc.stampFor(UIUtils.today()),
+                type: '입고',
+                carModel: r.carModel || '',
+                partName: r.partName || '',
+                color: r.color || '',
+                lots: (r.lots || []).map(function (l) { return { lotNo: l.lotNo, qty: Number(l.qty) || 0 }; }),
+                lotNo: r.lotNo || (r.lots && r.lots[0] && r.lots[0].lotNo) || '',
+                quantity: Number(r.quantity) || 0,
+                unit: 'EA',
+                source: '도장현장 반납',
+                receivedBy: actor.receivedBy,
+                refReturnId: r.id
+            });
+            await PaintingInputModule.confirmSiteReturn(r.id, { confirmedBy: actor.resetBy });
+
+            UIUtils.closeModal();
+            UIUtils.toast(`입고 처리 완료 — ${UIUtils.formatNumber(r.quantity)} EA`, 'success');
+            renderSiteReturns();
+            loadData();
+        } catch (e) {
+            console.error('[InjectionWarehouseModule] 반납 입고 처리 실패:', e);
+            UIUtils.toast('입고 처리 실패: ' + (e && e.message ? e.message : e), 'error');
+        }
     }
 
     // ── 수입 검사 완료품 입고 대기 섹션 ──────────────────────────────
@@ -6015,7 +6173,12 @@ var InjectionWarehouseModule = (function() {
             });
 
             UIUtils.closeModal();
-            UIUtils.toast(`${label} 완료 — 미차감 0 · 재고 ${_fmtStockQty(stockBefore)} EA 유지`, 'success');
+            UIUtils.toast(
+                isAbsorb
+                    ? `${label} 완료 — 미차감 0 · 재고 ${_fmtStockQty(stockBefore)} → ${_fmtStockQty(stockAfterTarget)} EA로 감소`
+                    : `${label} 완료 — 미차감 0 · 재고 ${_fmtStockQty(stockBefore)} EA 유지`,
+                'success'
+            );
             loadData();
             showPartDetail(carModel, partName, color);
         } catch (e) {
@@ -6526,6 +6689,54 @@ var InjectionWarehouseModule = (function() {
         });
     }
 
+    /** 출고 이력 "보기" — 클릭 즉시 수정 화면으로 들어가던 것을, 입고 이력과 동일하게
+     *  먼저 상세를 보여주고 그 안의 [수정] 버튼을 눌러야 편집 화면으로 넘어가게 한다. */
+    function openOutgoingTxView(id) {
+        const d = Storage.getById(STORE, id);
+        if (!d) { UIUtils.toast('기록을 찾을 수 없습니다.', 'error'); return; }
+
+        const inspCtx = _buildInspDateContext();
+        const inspDateHtml = _formatInspDateCell(d, false, inspCtx.inspDateMap, inspCtx.inboundInspMap);
+        const workLineMap = _buildPaintWorkLineMap();
+        const paintLine = _resolveOutgoingPaintLine(d, workLineMap, _buildPaintLineFromInputMap());
+        const outgoingActor = _outgoingActorLabel(d);
+        const lotTotal = Array.isArray(d.lots) && d.lots.length
+            ? d.lots.reduce(function (s, l) { return s + (Number(l.qty) || 0); }, 0)
+            : (Number(d.quantity) || 0);
+
+        const row = (label, val) => `
+            <div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-color);">
+                <span style="min-width:96px;font-size:0.82rem;color:var(--text-muted);flex-shrink:0;">${label}</span>
+                <span style="font-size:0.88rem;color:var(--text-primary);word-break:break-word;">${val}</span>
+            </div>`;
+
+        const adminDel = _isAdminUser()
+            ? `<button class="btn btn-outline" style="color:#dc2626;border-color:#fca5a5;"
+                    onclick="UIUtils.closeModal();InjectionWarehouseModule.remove('${id}')">삭제</button>`
+            : '';
+
+        UIUtils.showModal(
+            '<span class="material-symbols-outlined" style="vertical-align:middle;color:var(--accent-red);">outbox</span> 출고 이력 상세',
+            `<div style="background:var(--bg-secondary);border-radius:10px;padding:12px 14px;">
+                ${row('출고일시', _escapeHtml((d.date || '-') + (d.time ? ' ' + d.time : '')))}
+                ${row('차종', _escapeHtml(d.carModel || '-'))}
+                ${row('품명', '<strong>' + _escapeHtml(d.partName || '-') + '</strong>')}
+                ${row('컬러', _escapeHtml(d.color || '-'))}
+                ${row('LOT별 수량', _lotBreakdownHtml(d))}
+                ${row('합계 수량', UIUtils.formatNumber(lotTotal) + ' EA')}
+                ${paintLine ? row('출고 구분', _escapeHtml(paintLine)) : ''}
+                ${d.returnReason ? row('반출 사유', _escapeHtml(d.returnReason)) : ''}
+                ${row('수입검사일', inspDateHtml)}
+                ${row('출고자', _escapeHtml(outgoingActor || '미등록'))}
+                ${row('비고', _escapeHtml(d.note || d.source || '-'))}
+            </div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+             <button class="btn btn-primary" onclick="UIUtils.closeModal();InjectionWarehouseModule.openEditModal('${id}')">수정</button>
+             ${adminDel}`,
+            'min(720px, calc(100vw - 32px))'
+        );
+    }
+
     function openEditModal(id) {
         const d = Storage.getById(STORE, id);
         if (!d) { UIUtils.toast('기록을 찾을 수 없습니다.', 'error'); return; }
@@ -6535,27 +6746,48 @@ var InjectionWarehouseModule = (function() {
         const workLineMap = _buildPaintWorkLineMap();
         const paintLine = _resolveOutgoingPaintLine(d, workLineMap, _buildPaintLineFromInputMap());
         const outgoingActor = _outgoingActorLabel(d);
+        const hasMultiLot = Array.isArray(d.lots) && d.lots.length > 1;
+        // LOT이 여러 건이면 총량 한 칸만 고치는 게 아니라 LOT별로 수량을 따로 고칠 수 있어야
+        // 한다 — 안 그러면 총량만 바뀌고 lots[] 각 항목은 예전 값 그대로 남아 총합이 어긋난다.
+        const qtyFieldHtml = hasMultiLot
+            ? `<div class="form-group">
+                <label class="form-label">LOT별 수량 (EA) <span style="color:var(--accent-red)">*</span></label>
+                <div id="editInvLotRows" style="background:var(--bg-secondary);border-radius:8px;padding:8px 10px;">
+                    ${d.lots.map(function (l, i) {
+                        return `<div style="display:grid;grid-template-columns:1.2fr 1fr;gap:8px;align-items:center;margin-bottom:5px;">
+                            <span style="font-family:monospace;font-size:0.86rem;">${_escapeHtml(l.lotNo || '-')}</span>
+                            <input type="number" class="form-input edit-inv-lot-qty" data-lot="${_escapeHtml(l.lotNo || '')}"
+                                value="${Number(l.qty) || 0}" min="0" style="text-align:right;font-weight:700;"
+                                oninput="InjectionWarehouseModule._updateEditInvLotTotal()">
+                        </div>`;
+                    }).join('')}
+                </div>
+                <div style="margin-top:6px;font-size:0.82rem;color:var(--text-secondary);text-align:right;">
+                    합계 <strong id="editInvLotTotal" style="color:var(--text-primary);">${UIUtils.formatNumber(d.quantity || 0)}</strong> EA
+                </div>
+               </div>`
+            : `<div class="form-group">
+                <label class="form-label">수량 (EA) <span style="color:var(--accent-red)">*</span></label>
+                <input type="number" class="form-input" id="editInvQty" value="${d.quantity || 0}" min="1"
+                    style="font-size:1.1rem;font-weight:700;text-align:right;">
+               </div>`;
         UIUtils.showModal(
             `<span class="material-symbols-outlined" style="vertical-align:middle;color:${typeColor};margin-right:4px;">edit</span> 입출고 이력 수정`,
             `<div style="padding:10px 12px;background:var(--bg-secondary);border-radius:8px;margin-bottom:14px;font-size:0.85rem;">
-                <div style="display:flex;gap:16px;flex-wrap:wrap;">
+                <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
                     <span><strong>일자:</strong> ${d.date || '-'} ${d.time || ''}</span>
                     <span><strong>구분:</strong> <span style="color:${typeColor};font-weight:700;">${d.type || '-'}</span></span>
                     <span><strong>차종:</strong> ${d.carModel || '-'}</span>
                     <span><strong>품명:</strong> ${d.partName || '-'}</span>
                     <span><strong>컬러:</strong> ${d.color || '-'}</span>
-                    <span><strong>LOT:</strong> ${d.lotNo || (d.lots ? d.lots.map(l=>l.lotNo).join(', ') : '-')}</span>
+                    <span><strong>LOT:</strong> ${_lotBreakdownHtml(d)}</span>
                     ${d.type === '출고' && paintLine ? `<span><strong>출고구분:</strong> ${paintLine}</span>` : ''}
                     ${d.type === '출고' ? `<span><strong>출고자:</strong> ${outgoingActor || '미등록'}</span>` : ''}
                     <span><strong>수입검사일:</strong> ${inspDateHtml}</span>
                 </div>
             </div>
             <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">수량 (EA) <span style="color:var(--accent-red)">*</span></label>
-                    <input type="number" class="form-input" id="editInvQty" value="${d.quantity || 0}" min="1"
-                        style="font-size:1.1rem;font-weight:700;text-align:right;">
-                </div>
+                ${qtyFieldHtml}
                 ${d.type === '출고' ? `
                 <div class="form-group">
                     <label class="form-label">출고 구분</label>
@@ -6578,14 +6810,53 @@ var InjectionWarehouseModule = (function() {
         );
     }
 
+    /** LOT별 수량 입력을 고칠 때마다 합계를 즉시 다시 계산해 보여준다 */
+    function _updateEditInvLotTotal() {
+        const total = Array.prototype.reduce.call(
+            document.querySelectorAll('#editInvLotRows .edit-inv-lot-qty'),
+            function (s, el) { return s + (Number(el.value) || 0); },
+            0
+        );
+        const label = document.getElementById('editInvLotTotal');
+        if (label) label.textContent = UIUtils.formatNumber(total);
+    }
+
     async function saveEdit(id) {
-        const qtyEl = document.getElementById('editInvQty');
-        const qty = Number((qtyEl || {}).value) || 0;
-        if (!qty) { UIUtils.toast('수량을 입력하세요.', 'warning'); if (qtyEl) qtyEl.focus(); return; }
+        const lotInputs = document.querySelectorAll('#editInvLotRows .edit-inv-lot-qty');
         const note        = (document.getElementById('editInvNote') || {}).value || '';
         const returnReason = (document.getElementById('editReturnReason') || {}).value || undefined;
-        const updates = { quantity: qty, note };
+        const updates = { note };
         if (returnReason !== undefined) updates.returnReason = returnReason;
+
+        if (lotInputs.length) {
+            // LOT별 수량 편집 — lots[] 각 항목과 합계(quantity)를 함께 갱신해야
+            // "총량만 바뀌고 LOT별 내역은 예전 그대로"인 불일치가 안 생긴다.
+            const lots = [];
+            lotInputs.forEach(function (el) {
+                const q = Number(el.value) || 0;
+                if (q <= 0) return;
+                lots.push({ lotNo: el.getAttribute('data-lot') || '', qty: q });
+            });
+            if (!lots.length) { UIUtils.toast('LOT별 수량을 입력하세요.', 'warning'); return; }
+            const total = lots.reduce(function (s, l) { return s + l.qty; }, 0);
+            updates.lots = lots;
+            updates.lotNo = lots[0].lotNo;
+            updates.quantity = total;
+        } else {
+            const qtyEl = document.getElementById('editInvQty');
+            const qty = Number((qtyEl || {}).value) || 0;
+            if (!qty) { UIUtils.toast('수량을 입력하세요.', 'warning'); if (qtyEl) qtyEl.focus(); return; }
+            updates.quantity = qty;
+            // InvCalc는 lots[]가 있으면 quantity를 무시하고 lots[]를 진실로 삼는다 — LOT이
+            // 1건뿐이라도 lots[]가 있는 레코드면 그 항목의 qty도 같이 맞춰야, 여기서 고친
+            // 수량이 실제 재고 계산에 반영된다(quantity만 바꾸면 화면 숫자만 바뀐 것처럼 보이고
+            // 잔량 계산은 예전 값을 그대로 씀).
+            const orig = Storage.getById(STORE, id);
+            if (orig && Array.isArray(orig.lots) && orig.lots.length === 1) {
+                updates.lots = [{ lotNo: orig.lots[0].lotNo, qty: qty }];
+            }
+        }
+
         await Storage.update(STORE, id, updates);
         UIUtils.closeModal();
         UIUtils.toast('수정되었습니다.', 'success');
@@ -7353,9 +7624,11 @@ var InjectionWarehouseModule = (function() {
         saveNew,
         remove,
         openIncomingTxView,
+        openOutgoingTxView,
         openLinkedInspection,
         openEditModal,
         saveEdit,
+        _updateEditInvLotTotal,
         exportData,
         onLotInput,
         showStockModal,
@@ -7374,6 +7647,9 @@ var InjectionWarehouseModule = (function() {
         _saveReservedPlanQty,
         removeReservedPlan,
         renderOutgoingListup,
+        renderSiteReturns,
+        openConfirmSiteReturnModal,
+        confirmSiteReturn,
         openOutgoingListupItemModal,
         _onOutItemTypeChange,
         saveOutgoingListupItem,
