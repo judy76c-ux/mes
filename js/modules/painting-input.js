@@ -1344,6 +1344,18 @@ var PaintingInputModule = (function () {
                 rLots.forEach(function (l) { if (l && l.lotNo) availLots.push(String(l.lotNo).trim()); });
             });
 
+            if (opts.planId) {
+                const withPlanId = sameDayCarLine.filter(function (r) {
+                    if (!r.refOutId) return false;
+                    const outRec = Storage.getById(DB.STORES.INJECTION_INVENTORY, r.refOutId);
+                    return !!(outRec && String(outRec.planId || '') === String(opts.planId));
+                });
+                if (withPlanId.length) {
+                    return 'planId(' + opts.planId + ') 매칭 성공 — 이 계획으로 출고된 입고 건 ' + withPlanId.length + '건을 합산했습니다.';
+                }
+                return 'planId(' + opts.planId + ')로 매칭되는 입고 건이 없어(원본 사출 출고에 이 계획ID가 안 걸려있음) LOT/품명 매칭으로 넘어갑니다. ' +
+                    '이 실적의 LOT: ' + (workLots.join(', ') || '(없음)') + ' | 같은 날짜·차종·라인 입고 LOT: ' + (availLots.length ? availLots.join(', ') : '(없음)');
+            }
             if (hasLots) {
                 return '이 실적의 LOT: ' + (workLots.join(', ') || '(없음)') +
                     ' | 같은 날짜·차종·라인 입고 LOT: ' + (availLots.length ? availLots.join(', ') : '(없음)') +
@@ -1394,6 +1406,26 @@ var PaintingInputModule = (function () {
             if (opts.carModel && r.carModel && r.carModel !== opts.carModel) return false;
             return true;
         });
+
+        // 0순위: planId 매칭 — 이 작업실적이 속한 생산계획(opts.planId)과 정확히 같은
+        // planId로 사출창고에서 출고된 입고 건만 골라낸다. refOutId로 원본 사출 출고
+        // 이력까지 거슬러 올라가 그 출고 건의 planId를 확인한다. LOT 번호 문자열이 어긋나도
+        // (선입선출 자동배분·비례배분·수기수정 등으로 흔함) 이 매칭은 영향받지 않고, 같은 날
+        // 같은 차종·품명 실적이 여러 건이어도 정확히 이 실적 몫만 구분되는 가장 신뢰도 높은
+        // 매칭 방법이다.
+        if (opts.planId && typeof DB !== 'undefined' && DB.STORES && DB.STORES.INJECTION_INVENTORY) {
+            let planTotal = 0;
+            let planMatched = false;
+            dayRecords.forEach(function (r) {
+                if (!r.refOutId) return;
+                const outRec = Storage.getById(DB.STORES.INJECTION_INVENTORY, r.refOutId);
+                if (outRec && outRec.planId && String(outRec.planId) === String(opts.planId)) {
+                    planMatched = true;
+                    planTotal += Number(r.quantity) || 0;
+                }
+            });
+            if (planMatched) return planTotal;
+        }
 
         let total = 0;
         if (hasLots) {

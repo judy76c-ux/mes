@@ -2153,7 +2153,8 @@ const PaintingWorkModule = (function() {
             lots: d.lots,
             lotNo: d.lotNo,
             injPartName: d.injPartName,
-            workId: d.id
+            workId: d.id,
+            planId: d.planId
         };
         const _issued = (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.getIssuedQtyForWork)
             ? Number(PaintingInputModule.getIssuedQtyForWork(d.line || _currentLine, _issuedOpts)) || 0
@@ -3387,6 +3388,49 @@ const PaintingWorkModule = (function() {
             .sort(function (a, b) { return String(a.lotNo).localeCompare(String(b.lotNo)); });
     }
 
+    /** 이 LOT이 실제로 현장 입고 확인(또는 재공품 편입) 기록이 있는 LOT인지 확인.
+     *  "LOT번호 (직접입력 가능)" 칸에 아무 번호나 타이핑해도 그대로 저장되던 구멍을 막기
+     *  위함이다 — 현장에 도착 확인된 적 없는 LOT로 실적을 등록하면 자재과잉/유실 계산이
+     *  비교할 대상이 없어 무의미해진다. 잔량이 아니라 "입고된 적 있는지"만 본다(이 저장으로
+     *  잔량이 소진되는 정상적인 경우까지 막으면 안 되므로). */
+    function _isLotConfirmedReceived(lotNo, carModel, injPartName, isLaserWipProduct, partName) {
+        var lot = String(lotNo || '').trim();
+        if (!lot) return false;
+        if (isLaserWipProduct) {
+            var wipLots = getLaserWipLots(carModel, partName);
+            return wipLots.some(function (l) { return l.lotNo === lot; });
+        }
+        if (!injPartName) return true; // 사출명이 특정 안 되면(마스터 미등록 등) 기존 동작 유지
+        if (typeof PaintingInputModule === 'undefined' || !PaintingInputModule.getExactLotLedger) return true;
+        var ledger = PaintingInputModule.getExactLotLedger(_currentLine, carModel, injPartName, lot);
+        return (ledger.received || 0) > 0.001;
+    }
+
+    /** 저장 직전 LOT 목록을 검증 — 미확인 LOT이 있으면 관리자만 예외적으로 계속할 수 있다.
+     *  반환: true면 저장 진행, false면 저장 중단(이미 안내는 표시했음). */
+    async function _confirmUnverifiedLots(lots, carModel, injPartName, isLaserWipProduct, partName) {
+        var unverified = lots.filter(function (l) {
+            return !_isLotConfirmedReceived(l.lotNo, carModel, injPartName, isLaserWipProduct, partName);
+        });
+        if (!unverified.length) return true;
+
+        var isAdmin = typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function' && AuthModule.isAdminUser();
+        var lotList = unverified.map(function (l) { return l.lotNo; }).join(', ');
+        if (!isAdmin) {
+            UIUtils.toast('LOT ' + lotList + '은(는) 현장 입고 확인 기록이 없습니다. 실제 입고 확인된 LOT만 사용할 수 있습니다.', 'error');
+            return false;
+        }
+        return new Promise(function (resolve) {
+            UIUtils.confirm(
+                'LOT ' + lotList + '은(는) 현장 입고 확인 기록이 없습니다.\n' +
+                '이 상태로 저장하면 이후 자재과잉/유실 계산이 부정확해집니다.\n' +
+                '관리자 권한으로 예외적으로 계속 저장하시겠습니까?',
+                function () { resolve(true); },
+                function () { resolve(false); }
+            );
+        });
+    }
+
     function _execAutoFill() {
         var inputQtyEl = document.getElementById('addPwInputQty') || document.getElementById('editPwInputQty');
         var needed = Number(inputQtyEl ? inputQtyEl.value : 0) || 0;
@@ -4585,6 +4629,14 @@ const PaintingWorkModule = (function() {
             if (firstLotQty) firstLotQty.focus();
             return;
         }
+
+        // 현장 입고 확인 안 된 LOT 차단 (관리자만 예외 허용)
+        var _lotCarModel = (document.getElementById('addPwCarModelHidden') || {}).value || '';
+        var _lotPartName = (document.getElementById('addPwPartNameHidden') || {}).value || '';
+        var _lotInjPartName = (document.getElementById('pwInjPartSelect') || {}).value || '';
+        var _lotIsWip = (document.getElementById('addPwIsLaserWip') || {}).value === '1';
+        var _lotsOk = await _confirmUnverifiedLots(lots, _lotCarModel, _lotInjPartName, _lotIsWip, _lotPartName);
+        if (!_lotsOk) return;
 
         // 선입선출 위반 시 사유 필수 검증
         var fifoViolatedRows = [];
@@ -6194,6 +6246,13 @@ const PaintingWorkModule = (function() {
             if (firstLotQty) firstLotQty.focus();
             return;
         }
+
+        // 현장 입고 확인 안 된 LOT 차단 (관리자만 예외 허용)
+        const _lotCarModel = (document.getElementById('editPwCarModel') || {}).value || '';
+        const _lotPartName = (document.getElementById('editPwPartName') || {}).value || '';
+        const _lotInjPartName = (document.getElementById('pwInjPartSelect') || {}).value || '';
+        const _lotsOk = await _confirmUnverifiedLots(lots, _lotCarModel, _lotInjPartName, false, _lotPartName);
+        if (!_lotsOk) return;
 
         const lotNo = lots.length > 0 ? lots[0].lotNo : '';
         const startTime = (document.getElementById('editPwStartTime') || {}).value || '';
