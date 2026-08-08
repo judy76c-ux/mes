@@ -16596,12 +16596,17 @@ var PaintMixModule = (function() {
         });
 
         // ② 도료사용등록 warehouseCans → 배합실 입고 (기존 방식 유지)
+        // LOT 결정 우선순위는 _mixRoomLots()와 반드시 같아야 한다 — u.prodLot은
+        // (폐지된) "창고 캔 오픈" 시 warehouseProdLot이 우선 채워져 residualProdLot과
+        // 다른 값일 수 있는데, 실제로 소진되는 건 residualProdLot(배합실 잔량 LOT)이다.
+        // 이 우선순위가 두 함수에서 서로 달라서, 같은 사용 기록의 소진량이 표와
+        // 모달에서 서로 다른 LOT 버킷에 잡혀 잔량이 어긋나는 불일치가 있었다.
         mixes.forEach(m => {
             (m.usages || []).forEach(u => {
                 const matId   = u.materialId || '';
                 const mat     = mats.find(x => x.id === matId);
                 if (!mat) return;
-                const lotNo   = u.prodLot || u.lotNo || '미기입';
+                const lotNo   = u.residualProdLot || u.prodLot || u.lotNo || '미기입';
                 const key     = `${matId}__${lotNo}`;
                 if (!map[key]) {
                     map[key] = {
@@ -17947,16 +17952,19 @@ var PaintMixModule = (function() {
             lots.map(l => `<option value="${_esc(l.prodLot)}" data-balance-g="${l.balanceG}" ${l.prodLot === selected ? 'selected' : ''}>${_esc(l.prodLot)} · 잔량 ${UIUtils.formatNumber(l.balanceG)}g</option>`).join('');
     }
 
+    // ★ materialId는 정확히 일치하는 것만 센다 — 이유는 _mixRoomBalanceG 주석 참고.
+    // 이전엔 _materialIdsByName로 같은 이름+구매처의 다른 자재 마스터 id까지 넓혀서
+    // 합쳐서, "배합실 도료재고" 표(_calcMixingRoomResiduals, 정확 일치)와 이 드롭다운의
+    // 잔량이 서로 다르게 보였다.
     function _mixRoomLots(materialId, ignoreMixId = '') {
         const map = {};
-        const ids = _materialIdsByName(materialId);
 
         // ① 수동 창고 출고 → 배합실 입고 (paintMixId 없는 출고)
         const mats = Storage.getAll(PAINT_MAT_STORE) || [];
         (Storage.getAll(PAINT_INV_STORE) || []).forEach(r => {
             if (r.type !== '출고') return;
             if (r.paintMixId) return;
-            if (!ids.includes(r.materialId)) return;
+            if (r.materialId !== materialId) return;
             const mat = mats.find(x => x.id === r.materialId);
             const packKg = Number(mat ? mat.packUnit : 0) || 0;
             const prodLot = r.prodLot || r.lotNo || '미기입';
@@ -17969,7 +17977,7 @@ var PaintMixModule = (function() {
         (_mixes()).forEach(m => {
             if (ignoreMixId && m.id === ignoreMixId) return;
             (m.usages || []).forEach(u => {
-                if (!ids.includes(u.materialId)) return;
+                if (u.materialId !== materialId) return;
                 const prodLot = u.residualProdLot || u.prodLot || u.lotNo || '';
                 if (!prodLot) return;
                 if (!map[prodLot]) map[prodLot] = { prodLot, balanceG: 0 };
@@ -17988,7 +17996,7 @@ var PaintMixModule = (function() {
         // 잔량 목록(_calcMixingRoomResiduals)에는 반영되지만 이 함수엔 빠져 있어,
         // 수동으로 등록한 배합실 재고가 사용등록 드롭다운에 안 뜨는 문제가 있었다.
         _residualAdjustments().forEach(a => {
-            if (!ids.includes(a.materialId)) return;
+            if (a.materialId !== materialId) return;
             const prodLot = a.lotNo || '미기입';
             if (!map[prodLot]) map[prodLot] = { prodLot, balanceG: 0 };
             map[prodLot].balanceG += (Number(a.adjustG) || 0);
@@ -18001,15 +18009,19 @@ var PaintMixModule = (function() {
     }
 
     // 배합실 도료재고: 해당 LOT에서 꺼낸 캔 합계g - 사용량 합계g
+    // ★ materialId는 정확히 일치하는 것만 센다(_materialIdsByName로 같은 이름+구매처의
+    // 다른 자재 마스터 id까지 넓혀서 합치지 않는다). 잔량 목록(_calcMixingRoomResiduals,
+    // "배합실 도료재고" 표)은 원래부터 materialId 정확 일치로만 집계해왔는데, 이 함수만
+    // 이름 기준으로 넓게 합쳐서 표와 사용등록 모달의 잔량이 서로 다르게 보이는 불일치가
+    // 있었다 — 표 쪽 계산 방식에 맞춰 통일한다.
     function _mixRoomBalanceG(materialId, prodLot, ignoreMixId = '') {
         let takenG = 0, usedG = 0;
-        const ids = _materialIdsByName(materialId);
 
         // ① 수동 창고 출고 (paintMixId 없는 출고) → 배합실 입고
         const mats = Storage.getAll(PAINT_MAT_STORE) || [];
         (Storage.getAll(PAINT_INV_STORE) || []).forEach(r => {
             if (r.type !== '출고' || r.paintMixId) return;
-            if (!ids.includes(r.materialId)) return;
+            if (r.materialId !== materialId) return;
             const rLot = r.prodLot || r.lotNo || '미기입';
             if (rLot !== prodLot) return;
             const mat = mats.find(x => x.id === r.materialId);
@@ -18022,7 +18034,7 @@ var PaintMixModule = (function() {
             if (ignoreMixId && m.id === ignoreMixId) return;
             (m.usages || []).forEach(u => {
                 const sourceLot = u.residualProdLot || u.prodLot;
-                if (!ids.includes(u.materialId) || sourceLot !== prodLot) return;
+                if (u.materialId !== materialId || sourceLot !== prodLot) return;
                 takenG += (Number(u.warehouseCans) || 0) * (Number(u.packUnit) || 0) * 1000;
                 if (u.residualUseG != null || u.warehouseUseG != null) {
                     usedG += (Number(u.residualUseG) || 0) + (Number(u.warehouseUseG) || 0);
@@ -18034,7 +18046,7 @@ var PaintMixModule = (function() {
 
         // ③ 관리자 실사 조정 / 배합실에 잔량 도료 직접 등록
         _residualAdjustments().forEach(a => {
-            if (!ids.includes(a.materialId)) return;
+            if (a.materialId !== materialId) return;
             const aLot = a.lotNo || '미기입';
             if (aLot !== prodLot) return;
             takenG += (Number(a.adjustG) || 0);

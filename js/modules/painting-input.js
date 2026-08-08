@@ -299,6 +299,35 @@ var PaintingInputModule = (function () {
             .sort(function (a, b) { return String(a.lotNo).localeCompare(String(b.lotNo)); });
     }
 
+    /** getLotsByCarPart와 달리 InvCalc 스필오버 잔량(balance>0)으로 거르지 않고, 이 차종·
+     *  사출명으로 "입고" 기록이 한 번이라도 있었던 LOT을 전부 반환한다 — 다른 LOT 출고가
+     *  스필오버로 이 LOT 잔량을 갉아먹어 0으로 보이는 경우에도(반납 화면처럼 LOT별 정확
+     *  원장(getExactLotLedger)으로 실제 잔량을 다시 계산해야 하는 화면에서) 후보에서 아예
+     *  누락되지 않도록 하기 위함이다. */
+    function getReceivedLotNosByCarPart(line, carModel, partName) {
+        const want = _normLine(line);
+        const records = _recordsForLine(want).filter(function (r) {
+            if (String(r.type || '') !== '입고') return false;
+            if (carModel && String(r.carModel || '') !== String(carModel)) return false;
+            if (partName && String(r.partName || '') !== String(partName)) return false;
+            return true;
+        });
+        const lotMap = {};
+        records.forEach(function (r) {
+            const es = (Array.isArray(r.lots) && r.lots.length)
+                ? r.lots
+                : (r.lotNo ? [{ lotNo: r.lotNo }] : []);
+            es.forEach(function (e) {
+                const lotNo = String((e && e.lotNo) || '').trim();
+                if (!lotNo) return;
+                if (!lotMap[lotNo]) {
+                    lotMap[lotNo] = { lotNo: lotNo, partName: r.partName || '', carModel: r.carModel || '', color: r.color || '' };
+                }
+            });
+        });
+        return Object.values(lotMap).sort(function (a, b) { return String(a.lotNo).localeCompare(String(b.lotNo)); });
+    }
+
     /** LOT별 "정확히 그 LOT 번호로 기록된" 입고/출고만 집계 — InvCalc.lotBalances가 하는
      *  교차 LOT FIFO 스필오버(한 LOT 출고량이 그 LOT 잔량을 넘으면 다른 오래된 LOT에서
      *  끌어다 채우는 동작)를 거치지 않는다. 전체 재고 총량 계산에는 스필오버가 맞지만,
@@ -1745,6 +1774,21 @@ var PaintingInputModule = (function () {
         return rec;
     }
 
+    /** confirmSiteReturn을 되돌린다 — 컬러 없이 잘못 확정된 반납 건을 다시 "반납 대기"로
+     *  되돌려, 사출창고 쪽의 (컬러 누락) 입고 레코드를 지운 뒤 이 반납을 재처리할 수 있게 한다. */
+    async function revertSiteReturn(id) {
+        if (!id) return null;
+        const rec = Storage.getById(STORE, id);
+        if (!rec) return null;
+        if (rec.returnStatus !== 'confirmed') return rec;
+        await Storage.update(STORE, id, {
+            returnStatus: 'pending',
+            returnConfirmedAt: '',
+            returnConfirmedBy: ''
+        });
+        return rec;
+    }
+
     return {
         render: render,
         init: render,
@@ -1769,10 +1813,12 @@ var PaintingInputModule = (function () {
         groupStock: _groupStock,
         getLotsByInjPart: getLotsByInjPart,
         getLotsByCarPart: getLotsByCarPart,
+        getReceivedLotNosByCarPart: getReceivedLotNosByCarPart,
         getExactLotLedger: getExactLotLedger,
         createSiteReturn: createSiteReturn,
         listPendingReturns: listPendingReturns,
         confirmSiteReturn: confirmSiteReturn,
+        revertSiteReturn: revertSiteReturn,
         receiveFromWarehouseOut: receiveFromWarehouseOut,
         autoReceiveFromWarehouseOut: autoReceiveFromWarehouseOut,
         runAutoSiteInbound: runAutoSiteInbound,

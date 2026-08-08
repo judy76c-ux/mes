@@ -3837,6 +3837,19 @@ var InjectionWarehouseModule = (function() {
         }).join('');
     }
 
+    // 이 차종+품명으로 창고에 이미 등록된 컬러 목록 — 반납 건에 컬러가 비어 있을 때(도장 쪽에서
+    // 컬러를 안 넘긴 과거 건 포함) 물류담당자가 실물을 보고 바로 골라 넣을 수 있게 후보로 제공.
+    function _knownColorsFor(carModel, partName) {
+        const seen = {};
+        (Storage.getAll(DB.STORES.INJECTION_INVENTORY) || []).forEach(function (r) {
+            if (String(r.carModel || '') !== String(carModel || '')) return;
+            if (String(r.partName || '') !== String(partName || '')) return;
+            const c = String(r.color || '').trim();
+            if (c) seen[c] = true;
+        });
+        return Object.keys(seen).sort();
+    }
+
     function openConfirmSiteReturnModal(id) {
         if (typeof PaintingInputModule === 'undefined') return;
         const list = PaintingInputModule.listPendingReturns();
@@ -3845,14 +3858,25 @@ var InjectionWarehouseModule = (function() {
         const lotsTxt = (Array.isArray(r.lots) && r.lots.length)
             ? r.lots.map(function (l) { return (l.lotNo || '-') + ' (' + UIUtils.formatNumber(l.qty) + ' EA)'; }).join(', ')
             : (r.lotNo || '-');
+        const knownColors = _knownColorsFor(r.carModel, r.partName);
+        const colorMissing = !r.color;
 
         UIUtils.showModal('도장현장 반납 입고 처리', `
             <div style="padding:10px 12px;background:var(--bg-secondary);border-radius:8px;font-size:0.85rem;margin-bottom:14px;line-height:1.6;">
-                <div><strong>${_escapeHtml(r.carModel || '-')}</strong> / <strong>${_escapeHtml(r.partName || '-')}</strong>${r.color ? ' / ' + _escapeHtml(r.color) : ''}</div>
+                <div><strong>${_escapeHtml(r.carModel || '-')}</strong> / <strong>${_escapeHtml(r.partName || '-')}</strong></div>
                 <div>반납 LOT: ${_escapeHtml(lotsTxt)}</div>
                 <div>합계 수량: <strong>${UIUtils.formatNumber(r.quantity)} EA</strong></div>
                 <div>반납 사유: ${_escapeHtml(r.returnReason || '-')}</div>
                 <div>반납자: ${_escapeHtml(r.returnedBy || '-')} · ${_escapeHtml(String(r.date || '-').slice(0, 16))}</div>
+            </div>
+            <div class="form-group" style="margin-bottom:12px;">
+                <label class="form-label">컬러 ${colorMissing ? '<span style="color:var(--accent-red);">* 확인 필요</span>' : ''}</label>
+                <input type="text" class="form-input" id="injSiteReturnColorInput" value="${_escapeHtml(r.color || '')}"
+                    list="injSiteReturnColorList" placeholder="예: CROM">
+                <datalist id="injSiteReturnColorList">
+                    ${knownColors.map(function (c) { return `<option value="${_escapeHtml(c)}">`; }).join('')}
+                </datalist>
+                ${colorMissing ? '<div style="font-size:0.74rem;color:var(--accent-red);margin-top:3px;">이 반납 건에는 컬러 정보가 없습니다. 실물을 보고 정확한 컬러를 입력해야 같은 창고 품목으로 입고됩니다.</div>' : ''}
             </div>
             <div style="font-size:0.82rem;color:var(--text-secondary);background:rgba(124,45,18,.07);border:1px solid rgba(124,45,18,.25);border-radius:6px;padding:9px 12px;">
                 실물을 확인한 뒤 입고 처리하세요. 처리 즉시 이 사출 소재가 창고 재고(입고)로 반영됩니다.
@@ -3871,6 +3895,8 @@ var InjectionWarehouseModule = (function() {
         const r = list.find(function (x) { return String(x.id) === String(id); });
         if (!r) { UIUtils.toast('반납 기록을 찾을 수 없습니다.', 'warning'); return; }
         const actor = _getResetActorFields();
+        const colorInput = document.getElementById('injSiteReturnColorInput');
+        const confirmedColor = colorInput ? colorInput.value.trim() : (r.color || '');
 
         try {
             await _addInventoryRecord({
@@ -3878,7 +3904,7 @@ var InjectionWarehouseModule = (function() {
                 type: '입고',
                 carModel: r.carModel || '',
                 partName: r.partName || '',
-                color: r.color || '',
+                color: confirmedColor,
                 lots: (r.lots || []).map(function (l) { return { lotNo: l.lotNo, qty: Number(l.qty) || 0 }; }),
                 lotNo: r.lotNo || (r.lots && r.lots[0] && r.lots[0].lotNo) || '',
                 quantity: Number(r.quantity) || 0,
@@ -6960,6 +6986,11 @@ var InjectionWarehouseModule = (function() {
             if (_isInvalidColor(d.color)) return true;
             return !_recordMatchesMaster(d, materials);
         });
+        // 도장현장 반납 입고 처리에서 컬러 없이 확정된 건(과거 버그) — 그냥 삭제하면 수량이
+        // 그대로 사라지므로, 반납 대기 상태로 되돌려 물류담당자가 컬러를 채워 다시 처리하게 한다.
+        const badReturnRecords = badRecords.filter(function(d) {
+            return d.source === '도장현장 반납' && d.refReturnId;
+        });
 
         if (aliasRecords.length === 0 && badRecords.length === 0) {
             UIUtils.showToast('정리할 컬러 데이터가 없습니다.', 'success');
@@ -7029,6 +7060,13 @@ var InjectionWarehouseModule = (function() {
                     별칭 삭제 (${aliasRecords.length}건)
                 </button>`);
         }
+        if (badReturnRecords.length) {
+            footerBtns.push(`
+                <button class="btn btn-primary" onclick="InjectionWarehouseModule.revertSiteReturnBadRecords()">
+                    <span class="material-symbols-outlined" style="font-size:1rem;">undo</span>
+                    반납 대기로 되돌리기 (${badReturnRecords.length}건)
+                </button>`);
+        }
         if (badRecords.length) {
             footerBtns.push(`
                 <button class="btn btn-danger" onclick="InjectionWarehouseModule.deleteInvalidColorRecords()">
@@ -7070,6 +7108,7 @@ var InjectionWarehouseModule = (function() {
                 <div style="margin-top:8px;padding:8px 10px;background:#fff7ed;border:1px solid #fed7aa;
                             border-radius:6px;font-size:0.78rem;color:#92400e;">
                     ⚠ 삭제하면 해당 입출고 이력이 영구 제거됩니다.
+                    ${badReturnRecords.length ? ' 이 중 도장현장 반납 입고 건(' + badReturnRecords.length + '건)은 삭제 대신 "반납 대기로 되돌리기"를 쓰면 수량을 잃지 않고 컬러를 채워 다시 처리할 수 있습니다.' : ''}
                 </div>
             </div>` : ''}
         `, footerBtns.join(''), 'min(900px, calc(100vw - 32px))');
@@ -7168,6 +7207,40 @@ var InjectionWarehouseModule = (function() {
             loadData();
         } catch (e) {
             UIUtils.showToast('통합 중 오류: ' + e.message, 'error');
+        }
+    }
+
+    /** 컬러 없이 확정된 도장현장 반납 입고를 되돌린다 — 이 창고 입고 레코드를 지우고,
+     *  연결된 반납 건(PAINTING_INPUT_INVENTORY)을 다시 "반납 대기"로 되돌려 물류담당자가
+     *  실물 컬러를 채워 재확인할 수 있게 한다(수량을 잃지 않는 삭제 대안). */
+    async function revertSiteReturnBadRecords() {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 실행할 수 있습니다.', 'warning');
+            return;
+        }
+        const data      = Storage.getAll(STORE) || [];
+        const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+        const targets = data.filter(function(d) {
+            const bad = _isInvalidColor(d.color) || !_recordMatchesMaster(d, materials);
+            return bad && d.source === '도장현장 반납' && d.refReturnId;
+        });
+        if (!targets.length) {
+            UIUtils.showToast('되돌릴 반납 입고 건이 없습니다.', 'info');
+            UIUtils.closeModal();
+            return;
+        }
+        try {
+            for (const rec of targets) {
+                await Storage.remove(STORE, rec.id);
+                if (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.revertSiteReturn) {
+                    await PaintingInputModule.revertSiteReturn(rec.refReturnId);
+                }
+            }
+            UIUtils.closeModal();
+            UIUtils.showToast(`${targets.length}건을 반납 대기로 되돌렸습니다. 도장 작업 화면 또는 이 페이지의 "도장현장 반납 입고 확인 대기"에서 컬러를 채워 다시 입고 처리하세요.`, 'success');
+            loadData();
+        } catch (e) {
+            UIUtils.showToast('되돌리는 중 오류가 발생했습니다: ' + e.message, 'error');
         }
     }
 
@@ -7637,6 +7710,7 @@ var InjectionWarehouseModule = (function() {
         deleteAliasColorRecords,
         deleteProductColorRecords,
         deleteInvalidColorRecords,
+        revertSiteReturnBadRecords,
         filterStock,
         showReserveDetailPopup,
         openSiteInboundShortageResolve,

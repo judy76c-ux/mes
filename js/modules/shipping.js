@@ -2181,12 +2181,11 @@ const ShippingInspectionModule = (function() {
         return `<tr>
             <td style="padding:3px;white-space:nowrap;"><input class="si-item form-input" value="${_esc(it.item || '')}" style="font-size:0.82rem;padding:4px 6px;min-width:5em;"></td>
             <td style="padding:3px;"><input class="si-std form-input" value="${_esc(it.standard || '')}" style="font-size:0.82rem;padding:4px 6px;width:100%;"></td>
-            <td style="padding:3px;white-space:nowrap;"><input class="si-method form-input" value="${_esc(it.method || '')}" style="font-size:0.82rem;padding:4px 6px;min-width:3em;"></td>
-            <td style="padding:3px;white-space:nowrap;"><input class="si-sample form-input" value="${_esc(it.sample || '')}" style="font-size:0.82rem;padding:4px 6px;min-width:4em;"></td>
-            <td style="padding:3px;"><input class="si-result form-input" value="${_esc(it.resultValue || '')}" placeholder="결과" style="font-size:0.82rem;padding:4px 6px;"></td>
+            <td style="padding:3px;white-space:nowrap;"><input class="si-method form-input" value="${_esc(it.method || '')}" style="font-size:0.82rem;padding:4px 6px;width:100%;"></td>
+            <td style="padding:3px;white-space:nowrap;"><input class="si-sample form-input" value="${_esc(it.sample || '')}" style="font-size:0.82rem;padding:4px 6px;width:100%;"></td>
             <td style="padding:3px;text-align:center;">
                 <select class="si-judge form-select" style="font-size:0.82rem;padding:4px 6px;width:88px;">
-                    ${opt('')}${opt('합격')}${opt('불합격')}${opt('N/A')}
+                    ${opt('')}${opt('합격')}${opt('불합격')}
                 </select>
             </td>
             <td style="padding:3px;text-align:center;">
@@ -2299,10 +2298,14 @@ const ShippingInspectionModule = (function() {
                     </div>
                 </div>
                 <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
-                    <table class="data-table" style="margin:0;width:100%;table-layout:auto;border-collapse:collapse;">
+                    <table class="data-table" style="margin:0;width:100%;table-layout:fixed;border-collapse:collapse;">
+                        <colgroup>
+                            <col style="width:12%"><col style="width:46%"><col style="width:11%">
+                            <col style="width:11%"><col style="width:12%"><col style="width:40px">
+                        </colgroup>
                         <thead><tr>
                             <th style="white-space:nowrap;">항목</th><th>기준</th><th style="white-space:nowrap;">확인방법</th>
-                            <th style="white-space:nowrap;">시료</th><th style="white-space:nowrap;">결과</th>
+                            <th style="white-space:nowrap;">시료</th>
                             <th style="text-align:center;white-space:nowrap;">판정</th><th style="width:40px;"></th>
                         </tr></thead>
                         <tbody id="siItemsBody">${items.length ? items.map(_siItemRowHtml).join('') : _siItemRowHtml({})}</tbody>
@@ -2410,9 +2413,9 @@ const ShippingInspectionModule = (function() {
             const standard = (tr.querySelector('.si-std') || {}).value || '';
             const method = (tr.querySelector('.si-method') || {}).value || '';
             const sample = (tr.querySelector('.si-sample') || {}).value || '';
-            const resultValue = (tr.querySelector('.si-result') || {}).value || '';
+            const resultValue = '';
             const judge = (tr.querySelector('.si-judge') || {}).value || '';
-            if (item || standard || resultValue || judge) {
+            if (item || standard || judge) {
                 items.push({ item, standard, method, sample, resultValue, judge, group: 'appearance' });
             }
         });
