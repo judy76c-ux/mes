@@ -571,8 +571,34 @@ const ShippingStandbyModule = (function() {
 
     const SHIP_STD_CONFIG_KEY = 'shipping_inspection_standards_v1';
 
+    // 편집 표(8열, 구분/± 포함)에 저장된 열 폭 비율에서 앞 7개(보기/출력용, 관리 열 제외)만
+    // 뽑아 합이 100%가 되도록 다시 스케일한다. 저장값이 없으면 기본 비율을 쓴다.
+    function _sstdScale7ColWidths(saved8) {
+        const fallback = ['6%', '6%', '13%', '44%', '11%', '9%', '11%'];
+        if (!Array.isArray(saved8) || saved8.length < 7) return fallback;
+        const nums = saved8.slice(0, 7).map(w => parseFloat(w) || 0);
+        const sum = nums.reduce((a, b) => a + b, 0);
+        if (sum <= 0) return fallback;
+        return nums.map(n => (n / sum * 100).toFixed(2) + '%');
+    }
+
     function _stdProductKey(product) {
         return product.id || `${product.carModel || ''}||${product.partName || ''}||${product.color || ''}`;
+    }
+
+    // 출하검사 기준서 목록 정렬용 — 양산품 위, A/S 아래(개발품은 맨 아래)
+    function _sstdItemTypeRank(itemType) {
+        const t = String(itemType || '').replace(/품$/, '').trim();
+        if (t === '양산') return 0;
+        if (t === 'A/S' || /A\/?S/i.test(t)) return 1;
+        if (t === '개발') return 2;
+        return 0;
+    }
+    function _sstdProductSort(a, b) {
+        return _sstdItemTypeRank(a.itemType) - _sstdItemTypeRank(b.itemType) ||
+            (a.carModel || '').localeCompare(b.carModel || '', 'ko') ||
+            (a.partName || '').localeCompare(b.partName || '', 'ko') ||
+            (a.color || '').localeCompare(b.color || '', 'ko');
     }
 
     function _stdProductLabel(product) {
@@ -917,9 +943,7 @@ const ShippingStandbyModule = (function() {
     async function openShippingStandardList() {
         const products = (Storage.getAll(DB.STORES.PRODUCTS) || [])
             .slice()
-            .sort((a, b) => (a.carModel || '').localeCompare(b.carModel || '', 'ko') ||
-                (a.partName || '').localeCompare(b.partName || '', 'ko') ||
-                (a.color || '').localeCompare(b.color || '', 'ko'));
+            .sort(_sstdProductSort);
         const standards = await _loadShipStandards();
         const regCount = products.filter(p => standards[_stdProductKey(p)]).length;
         const rows = products.map(p => _sstdListRowHtml(p, standards)).join('');
@@ -955,9 +979,7 @@ const ShippingStandbyModule = (function() {
         if (!container) return;
         const products = (Storage.getAll(DB.STORES.PRODUCTS) || [])
             .slice()
-            .sort((a, b) => (a.carModel || '').localeCompare(b.carModel || '', 'ko') ||
-                (a.partName || '').localeCompare(b.partName || '', 'ko') ||
-                (a.color || '').localeCompare(b.color || '', 'ko'));
+            .sort(_sstdProductSort);
         const standards = await _loadShipStandards();
         const regCount = products.filter(p => standards[_stdProductKey(p)]).length;
         const rows = products.map(p => _sstdListRowHtml(p, standards)).join('');
@@ -1203,6 +1225,15 @@ const ShippingStandbyModule = (function() {
         _sstdImages = (data.images || []).map(_sstdNormImg);
 
         const ptRows = _sstdBuildCheckBodyHtml(data.checkPoints || []);
+        // 마우스로 조절했던 표 레이아웃(좌우 폭·블록 높이·주요검사Point 열 폭)을 저장값에서 복원
+        const _layout = data.layout || {};
+        // 퍼센트 합 100 — table-layout:fixed + width:100%와 함께 써야 스크롤 없이 표 폭 안에서만
+        // 조절된다(픽셀 고정폭을 쓰면 전체 폭이 늘어나 가로 스크롤이 생긴다).
+        const _ptColDefaults = ['5%', '5%', '11%', '38%', '10%', '8%', '9%', '14%'];
+        const _ptColWidths = _ptColDefaults.map((def, i) => (_layout.ptColWidths && _layout.ptColWidths[i]) || def);
+        const _splitLeftWidth = _layout.splitLeftWidth || '360px';
+        const _splitHeightStyle = _layout.splitHeight ? `min-height:${_esc(_layout.splitHeight)};` : '';
+        const _bottomLeftWidth = _layout.bottomLeftWidth || '48%';
         const _rawRevs = (data.revisions || []).filter(r => !!(r.no || r.reason));
         const revs = _rawRevs.length ? _rawRevs : [{ no: '00', date: data.createdDate || UIUtils.today(), reason: '최초 작성', confirmer: '' }];
         const revRows = revs.map(_sstdRevRowHtml).join('');
@@ -1264,6 +1295,13 @@ const ShippingStandbyModule = (function() {
             #sstdDoc .doc-input:focus { background:#fffbeb; border-radius:2px; }
             #sstdDoc > table + table { margin-top:-1px; }
             #sstdDoc .sstd-split-left { width:360px; max-width:360px; }
+            #sstdDoc .sstd-split-handle:hover { background:rgba(37,99,235,0.35); }
+            #sstdDoc .sstd-split-vresize:hover { background:rgba(37,99,235,0.35); }
+            /* 조절 가능한 경계임을 항상 옅게 표시하고, 마우스를 올리면 진하게 */
+            #sstdDoc .sstd-pt-col-handle { background:rgba(37,99,235,0.14); }
+            #sstdDoc .sstd-pt-col-handle:hover { background:rgba(37,99,235,0.55); }
+            #sstdDoc .sstd-split-handle { background:rgba(37,99,235,0.14); }
+            #sstdDoc .sstd-split-vresize { background:rgba(37,99,235,0.10); }
             #sstdDoc .sstd-pt-table { width:max-content; min-width:100%; table-layout:auto; }
             #sstdDoc .sstd-pt-table .doc-th { white-space:nowrap; }
             #sstdDoc .sstd-pt-table .sstd-pt-std { white-space:pre-wrap; min-width:10em; }
@@ -1320,10 +1358,13 @@ const ShippingStandbyModule = (function() {
                 </td>
             </tr>
         </table>
-        <table class="sstd-split" style="margin-top:0;table-layout:fixed;width:100%;">
-            <colgroup><col style="width:360px"><col></colgroup>
+        <table class="sstd-split" id="sstdSplitTable" style="margin-top:0;table-layout:fixed;width:100%;${_splitHeightStyle}">
+            <colgroup><col id="sstdSplitLeftCol" style="width:${_esc(_splitLeftWidth)}"><col></colgroup>
             <tr>
-                <td class="sstd-split-left" style="width:360px;border:1px solid #888;padding:0;height:1px;vertical-align:top;">
+                <td class="sstd-split-left" style="width:${_esc(_splitLeftWidth)};border:1px solid #888;padding:0;height:1px;vertical-align:top;position:relative;">
+                    <div class="sstd-split-handle" title="드래그해서 표 간격 조절"
+                        onmousedown="ShippingStandbyModule._sstdStartSplitResize(event)"
+                        style="position:absolute;top:0;right:-4px;width:8px;height:100%;cursor:col-resize;z-index:5;"></div>
                     <div class="doc-sec" style="display:flex;align-items:center;justify-content:space-between;padding:5px 8px;">
                         <span>외관 / 치수포인트</span>
                         <label style="display:flex;align-items:center;gap:3px;cursor:pointer;font-size:.72rem;font-weight:400;color:#2563eb;white-space:nowrap;">
@@ -1343,17 +1384,19 @@ const ShippingStandbyModule = (function() {
                 </td>
                 <td class="sstd-split-right" style="vertical-align:top;border:1px solid #888;padding:0;height:100%;">
                     <div class="doc-sec">주요검사 Point <span style="font-weight:400;font-size:10px;color:#555;">(외관 / 신뢰성 · 행마다 구분 선택)</span></div>
-                    <div style="overflow:auto;">
-                    <table class="sstd-pt-table" style="font-size:10px;width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
+                    <div>
+                    <table class="sstd-pt-table" id="sstdPtTable" style="font-size:10px;width:100%;table-layout:fixed;border-collapse:collapse;">
+                        <colgroup>
+                            ${_ptColWidths.map((w, i) => `<col id="sstdPtCol${i}" style="width:${_esc(w)}">`).join('')}
+                        </colgroup>
                         <thead><tr>
-                            <td class="doc-th" style="white-space:nowrap;">구분</td>
-                            <td class="doc-th" style="white-space:nowrap;">No</td>
-                            <td class="doc-th" style="white-space:nowrap;">항 목</td>
-                            <td class="doc-th" style="min-width:10em;">기 준</td>
-                            <td class="doc-th" style="white-space:nowrap;">확인방법</td>
-                            <td class="doc-th" style="white-space:nowrap;font-size:8px;">시 료</td>
-                            <td class="doc-th" style="white-space:nowrap;font-size:8px;">관리방안</td>
-                            <td class="doc-th" style="white-space:nowrap;">구분/±</td>
+                            ${['구분','No','항 목','기 준','확인방법','시 료','관리방안','구분/±'].map((label, ci) => `
+                            <td class="doc-th" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:relative;${ci >= 4 && ci <= 5 ? 'font-size:8px;' : ''}">
+                                ${label}
+                                ${ci < 7 ? `<div class="sstd-pt-col-handle" title="드래그해서 열 폭 조절"
+                                    onmousedown="ShippingStandbyModule._sstdStartPtColResize(event,${ci})"
+                                    style="position:absolute;top:0;right:0;width:7px;height:100%;cursor:col-resize;z-index:5;"></div>` : ''}
+                            </td>`).join('')}
                         </tr></thead>
                         <tbody id="sstdCheckBody">${ptRows}</tbody>
                     </table>
@@ -1361,10 +1404,16 @@ const ShippingStandbyModule = (function() {
                 </td>
             </tr>
         </table>
-        <table class="sstd-bottom" style="margin-top:0;table-layout:fixed;width:100%;">
-            <colgroup><col style="width:48%"><col style="width:52%"></colgroup>
+        <div class="sstd-split-vresize" title="드래그해서 표 높이 조절"
+            onmousedown="ShippingStandbyModule._sstdStartSplitVResize(event)"
+            style="height:7px;margin:-1px 0;cursor:row-resize;position:relative;z-index:4;"></div>
+        <table class="sstd-bottom" id="sstdBottomTable" style="margin-top:0;table-layout:fixed;width:100%;">
+            <colgroup><col id="sstdBottomLeftCol" style="width:${_esc(_bottomLeftWidth)}"><col></colgroup>
             <tr>
-                <td style="vertical-align:top;border:1px solid #888;padding:0;">
+                <td style="vertical-align:top;border:1px solid #888;padding:0;position:relative;">
+                    <div class="sstd-split-handle" title="드래그해서 표 간격 조절"
+                        onmousedown="ShippingStandbyModule._sstdStartBottomResize(event)"
+                        style="position:absolute;top:0;right:-4px;width:8px;height:100%;cursor:col-resize;z-index:5;"></div>
                     <div class="doc-sec">검 사 순 서</div>
                     <div style="padding:6px;">
                         <textarea id="sstdProcedure"
@@ -1509,6 +1558,15 @@ const ShippingStandbyModule = (function() {
             if (no || reason) revisions.push({ no, date, reason, confirmer });
         });
 
+        // 마우스로 조절한 표 레이아웃(좌우 폭·블록 높이·주요검사Point 열 폭)도 그대로 저장 —
+        // 안 그러면 편집 화면을 다시 열거나 보기/출력할 때 매번 기본값으로 되돌아가 버린다.
+        const layout = {
+            splitLeftWidth: (document.getElementById('sstdSplitLeftCol') || {}).style.width || '',
+            splitHeight: (document.getElementById('sstdSplitTable') || {}).style.minHeight || '',
+            ptColWidths: [0, 1, 2, 3, 4, 5, 6, 7].map(i => (document.getElementById('sstdPtCol' + i) || {}).style.width || ''),
+            bottomLeftWidth: (document.getElementById('sstdBottomLeftCol') || {}).style.width || ''
+        };
+
         const payload = {
             processNo:   g('sstdProcessNo').trim() || '100',
             processName: g('sstdProcessName').trim() || '출하검사',
@@ -1532,6 +1590,7 @@ const ShippingStandbyModule = (function() {
             procedure:   g('sstdProcedure'),
             corrective:  g('sstdCorrective'),
             revisions,
+            layout,
             updatedAt:   new Date().toISOString()
         };
 
@@ -1607,6 +1666,14 @@ const ShippingStandbyModule = (function() {
 
         const ptRows = _sstdViewCheckRowsHtml(data.checkPoints || []);
 
+        // 편집 화면에서 마우스로 조절해 저장한 표 레이아웃을 보기 화면에도 그대로 적용.
+        // 편집 표는 "구분/±" 열(관리용, 8번째)까지 포함해 저장되지만 보기 표엔 그 열이 없으므로
+        // 앞 7개 비율만 뽑아 합이 100%가 되도록 다시 스케일한다.
+        const _layout = data.layout || {};
+        const _ptColWidths = _sstdScale7ColWidths(_layout.ptColWidths);
+        const _splitLeftWidth = _layout.splitLeftWidth || '360px';
+        const _bottomLeftWidth = _layout.bottomLeftWidth || '48%';
+
         const _rawRevs = (data.revisions || []).filter(r => !!(r.no || r.reason));
         const revs = _rawRevs.length ? _rawRevs : [{ no: '00', date: data.createdDate || UIUtils.today(), reason: '최초 작성', confirmer: '' }];
         const revRows = revs.map(r => {
@@ -1658,16 +1725,17 @@ const ShippingStandbyModule = (function() {
                 <tr style="height:20px;"><td class="dlb">품 명</td><td style="text-align:center;font-weight:700;color:#1d4ed8;min-width:260px;white-space:nowrap;">${_esc(data.partName || '')}${data.color ? ' / ' + _esc(data.color) : ''}</td></tr>
             </table>
             <table class="sstd-split" style="margin-top:0;table-layout:fixed;width:100%;">
-                <colgroup><col style="width:360px"><col></colgroup>
+                <colgroup><col style="width:${_esc(_splitLeftWidth)}"><col></colgroup>
                 <tr>
-                    <td class="sstd-split-left" style="width:360px;vertical-align:top;padding:0;">
+                    <td class="sstd-split-left" style="width:${_esc(_splitLeftWidth)};vertical-align:top;padding:0;">
                         <div class="dsec">외관 / 치수포인트</div>
                         <div style="padding:6px;display:grid;grid-template-columns:${imgs.length > 1 ? '1fr 1fr' : '1fr'};gap:4px;">${imgHtml}</div>
                     </td>
                     <td class="sstd-split-right" style="vertical-align:top;padding:0;">
                         <div class="dsec">주요검사 Point <span style="font-weight:400;font-size:10px;">(외관 / 신뢰성)</span></div>
-                        <div style="overflow:auto;">
-                        <table class="sstd-pt-table" style="font-size:10px;width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
+                        <div>
+                        <table class="sstd-pt-table" style="font-size:10px;width:100%;table-layout:fixed;border-collapse:collapse;">
+                            <colgroup>${_ptColWidths.map(w => `<col style="width:${_esc(w)}">`).join('')}</colgroup>
                             <thead><tr>
                                 <td class="dth" style="white-space:nowrap;">구분</td>
                                 <td class="dth" style="white-space:nowrap;">No</td>
@@ -1684,7 +1752,7 @@ const ShippingStandbyModule = (function() {
                 </tr>
             </table>
             <table class="sstd-bottom" style="margin-top:0;table-layout:fixed;width:100%;">
-                <colgroup><col style="width:48%"><col style="width:52%"></colgroup>
+                <colgroup><col style="width:${_esc(_bottomLeftWidth)}"><col></colgroup>
                 <tr>
                     <td style="vertical-align:top;padding:0;">
                         <div class="dsec">검 사 순 서</div>
@@ -1730,6 +1798,12 @@ const ShippingStandbyModule = (function() {
         const px2mm = px => (Number(px) * 0.2646).toFixed(1);
 
         const ptRows = _sstdPrintCheckRowsHtml(std.checkPoints || []);
+
+        // 편집 화면에서 마우스로 조절해 저장한 표 레이아웃을 출력에도 그대로 적용
+        const _pLayout = std.layout || {};
+        const _pPtColWidths = _sstdScale7ColWidths(_pLayout.ptColWidths);
+        const _pSplitLeftWidth = _pLayout.splitLeftWidth || '360px';
+        const _pBottomLeftWidth = _pLayout.bottomLeftWidth || '48%';
 
         const imgHtml = (std.images || []).map(_sstdNormImg).map(o => `<div style="border:1px solid #ccc;padding:2px;">
                 ${o.label ? `<div style="font-size:9px;font-weight:700;text-align:center;padding:2px 0;background:#e8edf2;">${_esc(o.label)}</div>` : ''}
@@ -1781,15 +1855,16 @@ const ShippingStandbyModule = (function() {
             <tr style="height:20px;"><td class="doc-label">품 명</td><td style="text-align:center;font-weight:700;color:#1d4ed8;white-space:nowrap;">${_esc(std.partName || '')}${std.color ? ' / ' + _esc(std.color) : ''}</td></tr>
         </table>
         <table class="sstd-split" style="margin-top:0;table-layout:fixed;width:100%;">
-            <colgroup><col style="width:360px"><col></colgroup>
+            <colgroup><col style="width:${_esc(_pSplitLeftWidth)}"><col></colgroup>
             <tr>
-                <td class="sstd-split-left" style="width:360px;vertical-align:top;padding:0;">
+                <td class="sstd-split-left" style="width:${_esc(_pSplitLeftWidth)};vertical-align:top;padding:0;">
                     <div class="doc-sec">외관 / 치수포인트</div>
                     <div style="padding:4px;display:grid;grid-template-columns:${(std.images || []).length > 1 ? '1fr 1fr' : '1fr'};gap:4px;align-items:start;">${imgHtml || '<div style="text-align:center;padding:20px;color:#aaa;">이미지 없음</div>'}</div>
                 </td>
                 <td class="sstd-split-right" style="vertical-align:top;padding:0;">
                     <div class="doc-sec">주요검사 Point (외관 / 신뢰성)</div>
-                    <table class="sstd-pt-table" style="font-size:10px;width:max-content;min-width:100%;table-layout:auto;">
+                    <table class="sstd-pt-table" style="font-size:10px;width:100%;table-layout:fixed;">
+                        <colgroup>${_pPtColWidths.map(w => `<col style="width:${_esc(w)}">`).join('')}</colgroup>
                         <thead><tr>
                             <th class="doc-th" style="white-space:nowrap;">구분</th>
                             <th class="doc-th" style="white-space:nowrap;">No</th>
@@ -1805,7 +1880,7 @@ const ShippingStandbyModule = (function() {
             </tr>
         </table>
         <table class="sstd-bottom" style="margin-top:0;table-layout:fixed;width:100%;">
-            <colgroup><col style="width:48%"><col style="width:52%"></colgroup>
+            <colgroup><col style="width:${_esc(_pBottomLeftWidth)}"><col></colgroup>
             <tr>
                 <td style="vertical-align:top;padding:0;">
                     <div class="doc-sec">검 사 순 서</div>
@@ -1910,6 +1985,99 @@ const ShippingStandbyModule = (function() {
             document.removeEventListener('mousemove', onMove);
             document.removeEventListener('mouseup', onUp);
             if (card) card.draggable = true;
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    }
+
+    // 외관/치수포인트(좌) ↔ 주요검사 Point(우) 표 사이 간격을 마우스 드래그로 조절
+    function _sstdStartSplitResize(e) {
+        e.preventDefault();
+        const col = document.getElementById('sstdSplitLeftCol');
+        const td = document.querySelector('#sstdDoc .sstd-split-left');
+        if (!col) return;
+        const startX = e.clientX;
+        const startW = parseInt(col.style.width, 10) || 360;
+        function onMove(ev) {
+            const dx = ev.clientX - startX;
+            const newW = Math.max(200, Math.min(760, startW + dx));
+            col.style.width = newW + 'px';
+            if (td) td.style.width = newW + 'px';
+        }
+        function onUp() {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    }
+
+    // 외관/치수포인트·주요검사 Point 표 블록 전체의 높이를 아래로 드래그해 조절
+    function _sstdStartSplitVResize(e) {
+        e.preventDefault();
+        const table = document.getElementById('sstdSplitTable');
+        if (!table) return;
+        const startY = e.clientY;
+        const startH = table.getBoundingClientRect().height;
+        function onMove(ev) {
+            const dy = ev.clientY - startY;
+            const newH = Math.max(120, Math.min(1200, startH + dy));
+            table.style.minHeight = newH + 'px';
+        }
+        function onUp() {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    }
+
+    // 검사순서 ↔ 조치사항/개정이력 표 사이 경계를 마우스로 조절
+    function _sstdStartBottomResize(e) {
+        e.preventDefault();
+        const col = document.getElementById('sstdBottomLeftCol');
+        const table = document.getElementById('sstdBottomTable');
+        if (!col || !table) return;
+        const startX = e.clientX;
+        const tableWidth = table.getBoundingClientRect().width || 1;
+        let startW = parseFloat(col.style.width) || 48;
+        if (String(col.style.width).indexOf('%') >= 0) startW = (startW / 100) * tableWidth;
+        function onMove(ev) {
+            const dx = ev.clientX - startX;
+            const newW = Math.max(80, Math.min(tableWidth - 80, startW + dx));
+            col.style.width = newW + 'px';
+        }
+        function onUp() {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    }
+
+    // 주요검사 Point 표(구분/No/항목/기준/확인방법/시료/관리방안/구분±) 열 경계를 마우스로 조절.
+    // 이 열(colIndex)만 늘리면 표 전체 폭이 넓어져 가로 스크롤이 생긴다 — 옆 열(colIndex+1)에서
+    // 같은 만큼 빼와서 표 전체 폭(=100%)은 그대로 유지한다(엑셀 열 크기 조절과 같은 방식).
+    function _sstdStartPtColResize(e, colIndex) {
+        e.preventDefault();
+        const col = document.getElementById('sstdPtCol' + colIndex);
+        const nextCol = document.getElementById('sstdPtCol' + (colIndex + 1));
+        const table = document.getElementById('sstdPtTable');
+        if (!col || !nextCol || !table) return;
+        const tableWidth = table.getBoundingClientRect().width || 1;
+        const startX = e.clientX;
+        const startColPct = parseFloat(col.style.width) || 10;
+        const startNextPct = parseFloat(nextCol.style.width) || 10;
+        const minPct = 3;
+        function onMove(ev) {
+            let dPct = ((ev.clientX - startX) / tableWidth) * 100;
+            dPct = Math.max(minPct - startColPct, Math.min(startNextPct - minPct, dPct));
+            col.style.width = (startColPct + dPct) + '%';
+            nextCol.style.width = (startNextPct - dPct) + '%';
+        }
+        function onUp() {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
         }
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
@@ -2083,7 +2251,9 @@ const ShippingStandbyModule = (function() {
         summarizeCheckPoints: _stdPointsSummary,
         // 출하검사 기준서 문서형 편집기 핸들러
         _sstdPrint, _sstdCloseModal,
+        stdProductKey: _stdProductKey,
         _sstdAddImages, _sstdOnPaste, _sstdRemoveImage, _sstdUpdateImgLabel,
+        _sstdStartSplitResize, _sstdStartSplitVResize, _sstdStartPtColResize, _sstdStartBottomResize,
         _sstdDragStart, _sstdDragOver, _sstdDragEnd, _sstdDragDrop, _sstdStartResize,
         _sstdAddCheckRow, _sstdInsertCheckRowAfter, _sstdRenumberCheckRows, _sstdRefreshCheckLayout,
         _sstdChangeCheckGroup,
@@ -2392,6 +2562,23 @@ const ShippingInspectionModule = (function() {
         }
         tb.innerHTML = fromStd.map(_siItemRowHtml).join('');
         UIUtils.toast(`기준서 외관 항목 ${fromStd.length}건을 불러왔습니다.`, 'success');
+
+        // 표에 값만 채우지 않고, 원본 기준서 문서도 새 창으로 띄워 대조할 수 있게 한다.
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const matchProduct = products.find(p =>
+            String(p.carModel || '').trim() === String(carModel || '').trim() &&
+            String(p.partName || '').trim() === String(partName || '').trim() &&
+            String(p.color || '').trim() === String(color || '').trim()
+        ) || products.find(p =>
+            String(p.carModel || '').trim() === String(carModel || '').trim() &&
+            String(p.partName || '').trim() === String(partName || '').trim()
+        );
+        if (matchProduct && typeof ShippingStandbyModule !== 'undefined' && ShippingStandbyModule._sstdPrint) {
+            const key = ShippingStandbyModule.stdProductKey
+                ? ShippingStandbyModule.stdProductKey(matchProduct)
+                : (matchProduct.id || `${matchProduct.carModel || ''}||${matchProduct.partName || ''}||${matchProduct.color || ''}`);
+            ShippingStandbyModule._sstdPrint(encodeURIComponent(key));
+        }
     }
 
     // ── 저장 ─────────────────────────────────────────────────────────
