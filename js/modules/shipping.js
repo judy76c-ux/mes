@@ -1232,7 +1232,7 @@ const ShippingStandbyModule = (function() {
         const _ptColDefaults = ['5%', '5%', '11%', '38%', '10%', '8%', '9%', '14%'];
         const _ptColWidths = _ptColDefaults.map((def, i) => (_layout.ptColWidths && _layout.ptColWidths[i]) || def);
         const _splitLeftWidth = _layout.splitLeftWidth || '360px';
-        const _splitHeightStyle = _layout.splitHeight ? `min-height:${_esc(_layout.splitHeight)};` : '';
+        const _splitHeightStyle = _layout.splitHeight ? `height:${_esc(_layout.splitHeight)};` : '';
         const _bottomLeftWidth = _layout.bottomLeftWidth || '48%';
         const _rawRevs = (data.revisions || []).filter(r => !!(r.no || r.reason));
         const revs = _rawRevs.length ? _rawRevs : [{ no: '00', date: data.createdDate || UIUtils.today(), reason: '최초 작성', confirmer: '' }];
@@ -1302,9 +1302,13 @@ const ShippingStandbyModule = (function() {
             #sstdDoc .sstd-pt-col-handle:hover { background:rgba(37,99,235,0.55); }
             #sstdDoc .sstd-split-handle { background:rgba(37,99,235,0.14); }
             #sstdDoc .sstd-split-vresize { background:rgba(37,99,235,0.10); }
-            #sstdDoc .sstd-pt-table { width:max-content; min-width:100%; table-layout:auto; }
-            #sstdDoc .sstd-pt-table .doc-th { white-space:nowrap; }
-            #sstdDoc .sstd-pt-table .sstd-pt-std { white-space:pre-wrap; min-width:10em; }
+            /* 열 폭을 colgroup(%)으로만 정한다 — max-content/min-width가 남아 있으면 열을 줄여도
+               내용이 셀을 밀어내 폭이 안 줄고 가로 스크롤이 생긴다. */
+            #sstdDoc .sstd-pt-table { width:100%; table-layout:fixed; }
+            #sstdDoc .sstd-pt-table .doc-th { white-space:nowrap; overflow:hidden; }
+            #sstdDoc .sstd-pt-table td { overflow:hidden; }
+            #sstdDoc .sstd-pt-table .sstd-pt-std { white-space:pre-wrap; word-break:break-all; }
+            #sstdDoc .sstd-pt-table input { width:100% !important; min-width:0 !important; }
             </style>`;
 
         UIUtils.showModal(`출하검사 기준서 ${isEdit ? '수정' : '등록'} — ${_stdProductLabel(product)}`, `
@@ -1364,7 +1368,7 @@ const ShippingStandbyModule = (function() {
                 <td class="sstd-split-left" style="width:${_esc(_splitLeftWidth)};border:1px solid #888;padding:0;height:1px;vertical-align:top;position:relative;">
                     <div class="sstd-split-handle" title="드래그해서 표 간격 조절"
                         onmousedown="ShippingStandbyModule._sstdStartSplitResize(event)"
-                        style="position:absolute;top:0;right:-4px;width:8px;height:100%;cursor:col-resize;z-index:5;"></div>
+                        style="position:absolute;top:0;bottom:0;right:-4px;width:8px;cursor:col-resize;z-index:5;"></div>
                     <div class="doc-sec" style="display:flex;align-items:center;justify-content:space-between;padding:5px 8px;">
                         <span>외관 / 치수포인트</span>
                         <label style="display:flex;align-items:center;gap:3px;cursor:pointer;font-size:.72rem;font-weight:400;color:#2563eb;white-space:nowrap;">
@@ -1395,7 +1399,7 @@ const ShippingStandbyModule = (function() {
                                 ${label}
                                 ${ci < 7 ? `<div class="sstd-pt-col-handle" title="드래그해서 열 폭 조절"
                                     onmousedown="ShippingStandbyModule._sstdStartPtColResize(event,${ci})"
-                                    style="position:absolute;top:0;right:0;width:7px;height:100%;cursor:col-resize;z-index:5;"></div>` : ''}
+                                    style="position:absolute;top:0;bottom:0;right:0;width:7px;cursor:col-resize;z-index:5;"></div>` : ''}
                             </td>`).join('')}
                         </tr></thead>
                         <tbody id="sstdCheckBody">${ptRows}</tbody>
@@ -1413,7 +1417,7 @@ const ShippingStandbyModule = (function() {
                 <td style="vertical-align:top;border:1px solid #888;padding:0;position:relative;">
                     <div class="sstd-split-handle" title="드래그해서 표 간격 조절"
                         onmousedown="ShippingStandbyModule._sstdStartBottomResize(event)"
-                        style="position:absolute;top:0;right:-4px;width:8px;height:100%;cursor:col-resize;z-index:5;"></div>
+                        style="position:absolute;top:0;bottom:0;right:-4px;width:8px;cursor:col-resize;z-index:5;"></div>
                     <div class="doc-sec">검 사 순 서</div>
                     <div style="padding:6px;">
                         <textarea id="sstdProcedure"
@@ -1426,7 +1430,7 @@ const ShippingStandbyModule = (function() {
                         <colgroup><col style="width:1%"><col style="width:1%"><col style="width:1%"><col><col style="width:1%"><col style="width:1%"></colgroup>
                         <tbody>
                         <tr>
-                            <td colspan="6" style="padding:0;border:none;">
+                            <td colspan="6" style="padding:0;border:none;vertical-align:top;">
                                 <div class="doc-sec" style="border:none;border-bottom:1px solid #888;">조 치 사 항</div>
                                 <div style="padding:6px;">
                                     <textarea id="sstdCorrective"
@@ -1562,7 +1566,7 @@ const ShippingStandbyModule = (function() {
         // 안 그러면 편집 화면을 다시 열거나 보기/출력할 때 매번 기본값으로 되돌아가 버린다.
         const layout = {
             splitLeftWidth: (document.getElementById('sstdSplitLeftCol') || {}).style.width || '',
-            splitHeight: (document.getElementById('sstdSplitTable') || {}).style.minHeight || '',
+            splitHeight: (document.getElementById('sstdSplitTable') || {}).style.height || '',
             ptColWidths: [0, 1, 2, 3, 4, 5, 6, 7].map(i => (document.getElementById('sstdPtCol' + i) || {}).style.width || ''),
             bottomLeftWidth: (document.getElementById('sstdBottomLeftCol') || {}).style.width || ''
         };
@@ -2022,7 +2026,9 @@ const ShippingStandbyModule = (function() {
         function onMove(ev) {
             const dy = ev.clientY - startY;
             const newH = Math.max(120, Math.min(1200, startH + dy));
-            table.style.minHeight = newH + 'px';
+            // <table>에는 min-height가 안 먹는다(브라우저가 무시). table의 height는 "최소 높이"로
+            // 동작해 내용이 더 크면 알아서 늘어나므로 height를 쓰는 게 맞다.
+            table.style.height = newH + 'px';
         }
         function onUp() {
             document.removeEventListener('mousemove', onMove);
